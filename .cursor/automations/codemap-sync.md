@@ -1,80 +1,62 @@
-# Codemap sync automation — operator setup
+# Codemap sync — operator setup
 
-Cursor automations are configured in the **UI only** (no config-as-code). This file is the
-checklist. The **when** gate lives in `.github/workflows/codemap-sync-trigger.yml`; the **what**
-lives in `.cursor/agents/fanops-codemap-sync.md`.
+## Division of labor
+
+| **You (UI, quick)** | **Script (`scripts/codemap-sync-operator-setup.sh`)** |
+|---------------------|--------------------------------------------------------|
+| Cursor automation: remove PR-merged/push triggers, webhook-only, paste prompt, copy URL+token | Close all `codemaps-source-alignment-*` PRs |
+| Merge `cursor/codemaps-sync` when agent opens it | Delete matching stale remote branches |
+| Paste URL/token when script prompts | `gh secret set` for both secrets |
+| | Verify PR inventory + drift check |
+| | Optional smoke-test workflow dispatch |
+
+Cursor UI cannot be scripted (platform has no config-as-code). Everything with `gh`/`git` bulk clicks is scripted.
+
+## 1. You — Cursor UI (once, ~2 min)
+
+Open [Codemap sync on merge](https://cursor.com/automations/be112a2b-7a13-11f1-ba66-0e7d0216e441):
+
+| Setting | Value |
+|---------|-------|
+| **Trigger** | **Webhook only** — remove PR merged / push-to-main |
+| **Repository** | `Fleezyflo/fanops`, branch `main` |
+| **Prompt** | See below |
+| **Tools** | PR creation ON |
+
+**Prompt:**
+
+```
+Run the fanops-codemap-sync subagent (.cursor/agents/fanops-codemap-sync.md).
+Follow it exactly. No-op when scripts/codemap_drift.py exits 0.
+```
+
+Save → keep webhook URL + `crsr_…` token handy for the script.
+
+## 2. Script — paste into terminal
+
+```bash
+cd /path/to/fanops && git pull origin main && ./scripts/codemap-sync-operator-setup.sh
+```
+
+Runs: legacy cleanup → secrets (prompts for URL/token) → verify → optional smoke test.
+
+Subcommands if you need to re-run pieces: `cleanup` | `secrets` | `verify` | `smoke`
+
+## 3. You — merge the sync PR
+
+When the agent opens `cursor/codemaps-sync`, merge it when CI is green. Cloud agents cannot `gh pr merge`.
 
 ## Architecture
 
 ```
-push main + src/** changed
-        ↓
-.github/workflows/codemap-sync-trigger.yml   ← WHEN (path filter + concurrency debounce)
-        ↓ POST webhook
-Cursor automation (Webhook trigger)          ← launch cloud agent
-        ↓
-fanops-codemap-sync subagent                 ← WHAT (drift detect, single PR, no-op)
+push main + src/** → GHA preflight (free) → webhook if drift → fanops-codemap-sync → ≤1 PR
 ```
 
-**Do not use "Pull request merged" or "Push to branch main" as the Cursor trigger.** Those fire
-per merge with no path filter — that is what produced 26 `codemaps-source-alignment-*` drafts.
+## When it runs
 
-## 1. Cursor UI — edit automation
+| Runs | Doesn't |
+|------|---------|
+| `main` + `src/**` + drift | Docs-only merges |
+| `workflow_dispatch` | Preflight OK (no agent) |
 
-Open [Codemap sync on merge](https://cursor.com/automations/be112a2b-7a13-11f1-ba66-0e7d0216e441)
-(or create a replacement and delete the old one).
-
-| Setting | Value |
-|---------|-------|
-| **Trigger** | **Webhook only** — remove PR merged / push-to-main if present |
-| **Repository** | `Fleezyflo/fanops`, branch `main` |
-| **Active** | On |
-| **Prompt** | See below |
-| **Tools** | Pull request creation ON; others as needed |
-
-**Prompt** (short — do not put schedule/debounce logic here; GHA owns that):
-
-```
-Run the fanops-codemap-sync subagent (.cursor/agents/fanops-codemap-sync.md).
-Follow it exactly. No-op when docs already match main.
-```
-
-Save → **Generate auth header** → copy webhook URL + `crsr_…` token.
-
-## 2. GitHub secrets
-
-Repo → Settings → Secrets and variables → Actions:
-
-| Secret | Value |
-|--------|-------|
-| `CURSOR_CODEMAP_SYNC_WEBHOOK_URL` | Full webhook URL from automation settings |
-| `CURSOR_CODEMAP_SYNC_WEBHOOK_TOKEN` | Token only (`crsr_…`, no `Bearer` prefix) |
-
-Until both are set, the workflow skips the POST (exit 0, logs a message).
-
-## 3. Verify
-
-```bash
-# Manual fire (bypasses path filter — for smoke test only)
-gh workflow run codemap-sync-trigger.yml --repo Fleezyflo/fanops
-
-# Or curl the webhook directly with the auth header from the UI
-```
-
-Expect: one cloud agent run → either no-op or a single `cursor/codemaps-sync` PR.
-
-## When it runs / doesn't run
-
-| Runs | Doesn't run |
-|------|-------------|
-| `main` push that touches `src/**` | Docs-only / tooling-only merges to `main` |
-| After concurrency coalesces a merge wave | Every individual PR merge (old broken behavior) |
-| `workflow_dispatch` (manual) | While secrets are unset (workflow skips) |
-
-Agent-level no-op (no PR opened) is a **second** gate inside `fanops-codemap-sync` when
-codemaps already match — the webhook still fires and bills one run.
-
-## One-time legacy cleanup
-
-Close (do not merge) open `cursor/codemaps-source-alignment-*` PRs. Optionally land current
-doc drift via one manual `workflow_dispatch` or `fanops-codemap-sync` invoke after setup.
+Codemap PRs count toward `orchestrate.py done` — land or close before claiming wave done.

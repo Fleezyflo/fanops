@@ -1,9 +1,9 @@
 ---
 name: fanops-codemap-sync
 description: >-
-  Codemap sync worker — invoked by the Cursor webhook automation (see .cursor/automations/codemap-sync.md).
-  WHEN to run is gated by .github/workflows/codemap-sync-trigger.yml (src/** on main + concurrency).
-  WHAT: drift-detect, no-op if current, one cursor/codemaps-sync PR max, self-heal legacy alignment PRs.
+  Codemap sync worker — launched by Cursor webhook (see .cursor/automations/codemap-sync.md).
+  WHEN: GHA codemap-sync-trigger.yml (src/** on main + drift preflight). WHAT: drift script,
+  surgical doc edits, one cursor/codemaps-sync PR, legacy PR cleanup.
 model: auto
 readonly: false
 is_background: true
@@ -11,143 +11,82 @@ is_background: true
 
 # FanOps codemap sync (worker)
 
-You keep `docs/CODEMAPS/` aligned with `src/fanops/` **without PR landfill**.
+Keep `docs/CODEMAPS/` aligned with `src/fanops/`. **You are not the scheduler.**
 
-**You are not the scheduler.** When this runs is decided upstream:
-- `.github/workflows/codemap-sync-trigger.yml` — path filter (`src/**`), concurrency debounce
-- `.cursor/automations/codemap-sync.md` — webhook automation wiring (Cursor UI)
+| Layer | Owner |
+|-------|-------|
+| WHEN (path filter, debounce, drift preflight) | `.github/workflows/codemap-sync-trigger.yml` |
+| Drift detection (machine-checkable) | `scripts/codemap_drift.py` |
+| WHAT (semantic edits + PR) | **this agent** |
 
-The old automation used **PR merged** + new random branch per run → 26 drafts in one wave. That trigger
-is retired; do not recreate it.
+Read first: `docs/CODEMAPS/README.md`, `docs/CODEMAPS/full-trace-index.md`.
 
-Read first: `docs/CODEMAPS/README.md`, `docs/CODEMAPS/full-trace-index.md` → "How to regenerate".
+## Invariants
 
-## Non-negotiable invariants
+1. **No-op is success.** `python scripts/codemap_drift.py` exit 0 → print `codemap sync: no-op @ <sha>` and stop.
+2. **One branch:** `cursor/codemaps-sync` only. Never `codemaps-source-alignment-*`.
+3. **One open PR max** on that branch. Push updates the existing PR.
+4. **Docs-only.** Touch only `docs/CODEMAPS/**`.
+5. **Historical snapshots stay historical.** Do not rewrite `lifecycle-full-picture.md` body.
 
-1. **No-op is success.** If codemaps already match `origin/main`, exit 0 with **no branch, no PR, no commit**.
-2. **One inflight artifact.** Fixed branch `cursor/codemaps-sync` only. Never mint `codemaps-source-alignment-*`.
-3. **At most one open codemap PR** at any time. Update it in place; never open a second.
-4. **Docs-only scope.** Touch only `docs/CODEMAPS/**`. Never edit `src/`, `tests/`, or control data.
-5. **Land or skip — never linger.** Merge when CI green; if nothing to land, leave zero open codemap PRs.
-6. **Historical snapshots stay historical.** Do not rewrite `lifecycle-full-picture.md` body (dated audit);
-   preserve its superseded-by banner if present.
-
-## Phase 0 — self-heal repo hygiene (always)
+## Phase 0 — hygiene (every run)
 
 ```bash
 git fetch origin --prune
 git checkout main && git pull origin main
 ```
 
-**Legacy cleanup (mandatory on every run):** close every open PR whose head matches
-`cursor/codemaps-source-alignment-*`. These are corpses from the old automation — do not merge them.
+Close legacy PRs (old automation corpses):
 
 ```bash
-gh pr list --repo Fleezyflo/fanops --state open \
-  --json number,headRefName \
+gh pr list --repo Fleezyflo/fanops --state open --json number,headRefName \
   --jq '.[] | select(.headRefName | test("^cursor/codemaps-source-alignment-")) | .number' \
 | while read -r n; do gh pr close "$n" --repo Fleezyflo/fanops; done
 ```
 
-If `gh pr close` returns 403, **stop and report** the exact loop for the operator — do not claim success.
+If `gh pr close` returns 403, stop and paste the loop for the operator.
 
-Also close any duplicate open PR on `cursor/codemaps-sync` except the newest (keep one).
-
-## Phase 1 — restore extractors + drift detection (idempotent gate)
-
-Extractors live in `.reports/` (gitignored). Restore if missing:
+## Phase 1 — drift gate
 
 ```bash
-git show 20c96d4:.reports/ast_extract.py > .reports/ast_extract.py
-git show 20c96d4:.reports/build_graphs.py > .reports/build_graphs.py
-chmod +x .reports/ast_extract.py .reports/build_graphs.py
+python scripts/codemap_drift.py
 ```
 
-Run deterministic layer (stdlib-only, local verification — do not commit `.reports/` output):
+Exit 0 → **no-op, done.** Exit 1 → read reasons, proceed. Exit 2 → report error.
+
+Regen reference artifacts locally (do not commit `.codemap-cache/`):
 
 ```bash
-python3 .reports/ast_extract.py src > .reports/structural_index.json
-python3 .reports/build_graphs.py
+python3 scripts/codemap_extract/ast_extract.py src > .codemap-cache/structural_index.json
+python3 scripts/codemap_extract/build_graphs.py --index .codemap-cache/structural_index.json --out-dir .codemap-cache
 ```
 
-**Drift signals** (any → proceed to Phase 2; none → Phase 4 no-op):
+## Phase 2 — surgical semantic edits
 
-| Check | How |
-|-------|-----|
-| Deterministic counts stale | `full-trace-index.md` callable/module counts disagree with `.reports/structural_index.json` / `call_graph.json` |
-| Known semantic rot | `rg` live claims for removed machinery: `moment_casting` as active gate, `AccountSelection`, `FANOPS_ACCOUNT_CASTING` as LLM casting stage, `crosspost.py:269` birth site (live is `:228-232` post-P11) |
-| SCHEMA drift | `data.md` / C1 ledger version ≠ current `SCHEMA_VERSION` in `src/fanops/models.py` |
-| Recent main delta | `git log origin/main --oneline -20 -- src/fanops/` touched files whose cluster trace likely stale |
+Fix only what `codemap_drift.py` flagged plus obvious cluster traces for files changed on main.
 
-**If all checks pass:** print `codemap sync: no drift @ <main-sha> — no-op` and **exit 0**. Do not open a PR.
-
-## Phase 2 — edit semantic layer (surgical, not wholesale)
-
-Update only files that actually drifted. Priority order:
-
-1. `full-trace-index.md` — counts, module coverage, safety-verdict table if invariant changed
-2. Affected `subsystem-traces/C*.md` — only clusters whose `src/` files changed on main
-3. `system-lens-map.md`, `architecture.md`, `data.md`, `dependencies.md`, `anomalies.md` — grep-driven fixes
-4. `fresh-ingestion-trace.md` — only when pipeline semantics changed (owner-moment, gates, approval flow)
+Priority: `full-trace-index.md` counts → affected `subsystem-traces/C*.md` → `system-lens-map.md`, `data.md`.
 
 Rules:
+- Every live claim needs a verified `file:line` (re-grep; ±30 line drift — trust the symbol).
+- Removed code → note as removed (P11/MOL-152); never describe dead paths as live.
+- Update `<!-- Generated: YYYY-MM-DD -->` on every file touched.
+- Do **not** wholesale-regenerate all C1–C10 traces.
 
-- Every live claim needs a **verified `file:line`** (re-grep; anchors drift ±30 lines — trust the symbol).
-- Removed code → document as removed with ticket/P11 note; never describe dead paths as live.
-- Do not regenerate all 10 C1–C10 traces unless a cluster's **intent** changed materially.
-- Update the `<!-- Generated: YYYY-MM-DD -->` header date on every file you touch.
-
-## Phase 3 — single-branch PR (update-in-place)
+## Phase 3 — single-branch PR
 
 ```bash
 MAIN_SHA=$(git rev-parse --short origin/main)
-git checkout -B cursor/codemaps-sync origin/main   # reset branch to main tip
-# … apply doc edits …
+git checkout -B cursor/codemaps-sync origin/main
+# … apply edits …
 git add docs/CODEMAPS/
-git commit -m "docs(codemaps): sync to ${MAIN_SHA} — <one-line drift summary>"
+git commit -m "docs(codemaps): sync to ${MAIN_SHA} — <one-line summary>"
 git push -u origin cursor/codemaps-sync --force-with-lease
 ```
 
-**PR policy:**
+PR policy:
+- Update existing PR on `cursor/codemaps-sync` if one exists; else `gh pr create`.
+- **Not a draft.** Title: `docs(codemaps): sync to ${MAIN_SHA}`.
+- Cloud agent token may not `gh pr merge` (403) — leave PR ready; operator merges when CI green.
 
-- If an open PR exists on `cursor/codemaps-sync`: the push **updates** it (same PR number).
-- If none exists: `gh pr create --repo Fleezyflo/fanops --base main --head cursor/codemaps-sync \
-  --title "docs(codemaps): sync to ${MAIN_SHA}" --body "<drift summary + test plan>"`
-- **Not a draft.** Docs-only; CI `unit` job is the gate.
-- Enable auto-merge when checks pass: `gh pr merge --auto --squash` (or operator merges manually).
-
-On conflict (branch behind after wave): `git fetch origin && git rebase origin/main`, re-run Phase 1
-extractors, re-apply edits, force-push **same branch** — never fork a new branch.
-
-## Phase 4 — finish
-
-| Outcome | Action |
-|---------|--------|
-| No drift | Exit 0, zero open codemap PRs |
-| PR merged | `git push origin --delete cursor/codemaps-sync` (optional hygiene), exit 0 |
-| PR open, CI pending | Report PR URL + "waiting on CI"; orchestrator may re-invoke after green |
-| `gh` 403 on close/merge | Stop; give operator exact commands |
-
-Verify finish line for orchestration waves:
-
-```bash
-python scripts/orchestrate.py status   # codemap PRs must not pollute open-PR count after land
-```
-
-## Failure modes → self-heal
-
-| Failure | Fix |
-|---------|-----|
-| 26 stale `codemaps-source-alignment-*` PRs | Phase 0 close loop (never merge) |
-| Extractors missing | Restore from `20c96d4` |
-| PR conflict | Rebase `cursor/codemaps-sync` onto `origin/main`, regen, force-push same branch |
-| Behind main | Update same PR; do not open another |
-| Docs-only CI red | Fix ruff/markdown issues in touched files; push to same branch |
-| False positive drift | Tighten grep checks; no-op must stay trustworthy |
-
-## Out of scope
-
-- Editing `src/` or `tests/` (file a MOL ticket instead)
-- Running live `fanops` publish/metrics verbs
-- Rewriting `lifecycle-full-picture.md` as a living doc
-- MOL-223 live recovery / operator Mac workflows
+On conflict: `git fetch origin && git rebase origin/main`, re-run drift script, force-push same branch.
