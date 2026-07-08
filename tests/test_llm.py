@@ -343,3 +343,68 @@ def test_claude_json_raises_schema_error_when_repair_fails(mocker):
     mocker.patch("fanops.llm.subprocess.run", return_value=R())
     with pytest.raises(LlmSchemaError, match="was not JSON"):
         claude_json("q", _SCHEMA)
+
+
+# --- MOL-248: no-tools finalizer turn on vision path when repair empty ---
+
+def test_claude_json_meta_vision_prose_triggers_one_no_tools_finalizer(mocker):
+    from fanops.llm import claude_json_meta
+    prose = "I see the frames but here is my reasoning, not JSON."
+    seq = iter([json.dumps({"structured_output": None, "result": prose, "num_turns": 2}),
+                json.dumps({"structured_output": {"x": 4}, "num_turns": 1})])
+    def fake(cmd, **kw):
+        return type("R", (), {"returncode": 0, "stdout": next(seq), "stderr": ""})()
+    run = mocker.patch("fanops.llm.subprocess.run", side_effect=fake)
+    out, _, _ = claude_json_meta("judge", _SCHEMA, images=["/f/1.jpg"])
+    assert out == {"x": 4}
+    assert run.call_count == 2
+    final_cmd = run.call_args_list[1][0][0]
+    i = final_cmd.index("--allowedTools"); assert final_cmd[i + 1] == ""
+    final_prompt = run.call_args_list[1].kwargs["input"]
+    assert "ONLY" in final_prompt and json.dumps(_SCHEMA) in final_prompt
+
+def test_claude_json_meta_finalizer_success_avoids_schema_error(mocker):
+    from fanops.llm import claude_json_meta
+    seq = iter([json.dumps({"structured_output": None, "result": "no json here", "num_turns": 2}),
+                json.dumps({"structured_output": {"x": 11}, "num_turns": 1})])
+    def fake(cmd, **kw):
+        return type("R", (), {"returncode": 0, "stdout": next(seq), "stderr": ""})()
+    mocker.patch("fanops.llm.subprocess.run", side_effect=fake)
+    out, _, _ = claude_json_meta("judge", _SCHEMA, images=["/f/1.jpg"])
+    assert out == {"x": 11}
+
+def test_claude_json_meta_no_finalizer_when_structured_output_present(mocker):
+    from fanops.llm import claude_json_meta
+    run = mocker.patch("fanops.llm.subprocess.run", return_value=type("R", (), {
+        "returncode": 0, "stdout": json.dumps({"structured_output": {"x": 3}, "num_turns": 2}), "stderr": ""})())
+    out, _, _ = claude_json_meta("judge", _SCHEMA, images=["/f/1.jpg"])
+    assert out == {"x": 3} and run.call_count == 1
+
+def test_claude_json_meta_no_finalizer_when_repair_salvages(mocker):
+    from fanops.llm import claude_json_meta
+    picks = {"x": 8}
+    prose = f'vision prose {json.dumps(picks)}'
+    run = mocker.patch("fanops.llm.subprocess.run", return_value=type("R", (), {
+        "returncode": 0, "stdout": json.dumps({"structured_output": None, "result": prose, "num_turns": 2}), "stderr": ""})())
+    out, _, _ = claude_json_meta("judge", _SCHEMA, images=["/f/1.jpg"])
+    assert out == picks and run.call_count == 1
+
+def test_claude_json_no_finalizer_without_images_even_when_repair_fails(mocker):
+    from fanops.llm import LlmSchemaError
+    envelope = {"structured_output": None, "result": "prose with no json object"}
+    run = mocker.patch("fanops.llm.subprocess.run", return_value=type("R", (), {
+        "returncode": 0, "stdout": json.dumps(envelope), "stderr": ""})())
+    with pytest.raises(LlmSchemaError):
+        claude_json("q", _SCHEMA)
+    assert run.call_count == 1
+
+def test_claude_json_meta_finalizer_still_raises_when_it_also_fails(mocker):
+    from fanops.llm import LlmSchemaError, claude_json_meta
+    seq = iter([json.dumps({"structured_output": None, "result": "no json", "num_turns": 2}),
+                json.dumps({"structured_output": None, "result": "still no json", "num_turns": 1})])
+    def fake(cmd, **kw):
+        return type("R", (), {"returncode": 0, "stdout": next(seq), "stderr": ""})()
+    run = mocker.patch("fanops.llm.subprocess.run", side_effect=fake)
+    with pytest.raises(LlmSchemaError):
+        claude_json_meta("judge", _SCHEMA, images=["/f/1.jpg"])
+    assert run.call_count == 2
