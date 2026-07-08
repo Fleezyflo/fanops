@@ -348,6 +348,16 @@ def create_app(cfg: Config) -> Flask:
                                             inflight=st.counts.get("inflight", 0),
                                             blocked_gates=strip.get("blocked_gates", 0), next_params=np)}
 
+    @app.get("/healthz")
+    def healthz():
+        """MOL-299: first machine-readable Studio route — unified health model as JSON."""
+        from flask import jsonify
+        from fanops.health_model import build_health_report
+        rep = build_health_report(cfg)
+        body = rep.to_json_dict()
+        code = 200 if body["healthy"] else 503
+        return jsonify(body), code
+
     @app.get("/")
     def index():
         # Face 2: a real read-only status home (accounts + connection + headline counts + batch entry + per-
