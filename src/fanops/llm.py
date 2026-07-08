@@ -39,6 +39,13 @@ class LlmContextLimitError(RuntimeError):
     """`claude -p` rejected the request as too large for the model context. Typed (AGENT-2) so the responder
     turns a payload-too-big failure into a VISIBLE degraded gate state instead of an infinite-pending wedge."""
 
+class LlmSchemaError(RuntimeError):
+    """`claude -p` returned output that could not be parsed/validated into the requested JSON
+    schema (unparseable envelope, non-object envelope, non-JSON `result`, or no structured
+    payload). Typed so the responder can stamp a VISIBLE degraded gate state on a schema failure
+    instead of letting it fall through as a generic RuntimeError. Subclass of RuntimeError so
+    every existing `raises(RuntimeError)` assertion (e.g. test_llm.py) stays green."""
+
 _CONTEXT_LIMIT_MARKERS = ("prompt is too long", "context length", "exceeds the maximum", "too many tokens",
                           "maximum context")
 def _is_context_limit(text: str) -> bool:
