@@ -3,7 +3,7 @@
 
 A projection of [CODEMAPS/system-lens-map.md](CODEMAPS/system-lens-map.md) §1.2–1.3 (the authoritative table,
 each row with a verified `config.py` read-line). Read that for the read-site line numbers; read THIS for the
-operator/dev overview. **64 distinct env vars** — **13 Studio-settable** (Go-Live tab via `golive._dual_write`,
+operator/dev overview. **63 distinct env vars** — **13 Studio-settable** (Go-Live tab via `golive._dual_write`,
 which writes both `.env` and `os.environ`), **51 `.env`/shell-ONLY** (no UI). `Set` column: **S** = Studio-settable,
 `.env` = shell-only. Defaults are the CODE defaults.
 
@@ -77,7 +77,6 @@ which writes both `.env` and `os.environ`), **51 `.env`/shell-ONLY** (no UI). `S
 | `FANOPS_ADJUST_PER_SURFACE` | off | Per-surface winner ranking | .env |
 | `FANOPS_P4_DIM_BIAS` | off | Creative-dim reach amplify (length/opening/framing) | .env |
 | `FANOPS_TIMING_BIAS` | off | Reach-winning publish-hour schedule bias | .env |
-| `FANOPS_CASTING_BIAS` | off | Per-(account,profile) reach casting hint | .env |
 | `FANOPS_MOMENT_HOOK_LEARNING` | off | Feed winning hook styles to the moment author | .env |
 | `FANOPS_IG_RETENTION_PROOF` | off | Require IG retention to prove learning | .env |
 | `FANOPS_P4_MIN_REACH_GAP` | 0.0 | P4/timing comparative reach margin | .env |
