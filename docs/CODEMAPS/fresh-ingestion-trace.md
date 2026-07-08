@@ -1,6 +1,6 @@
 # Fresh-Ingestion End-to-End Trace — one video → posts across the 5 accounts
 
-> Code-verified against `origin/main` @ `6395ce3` on 2026-07-07. Method: read `pipeline.advance()`
+> Code-verified against `origin/main` @ `5a02a15` on 2026-07-08. Method: read `pipeline.advance()`
 > + every stage fn, two parallel deep-trace agents (fan-out arithmetic + external-service map),
 > then re-verified the load-bearing claims (casting teardown, `affinity_admits`, R2 path) against
 > the live code. This is the operator's field guide for a fresh live test: drop a video, watch each
@@ -70,7 +70,7 @@ All 5 accounts are single-platform → **exactly 5 surfaces**, all **9:16**:
 
 | Multiplier | Value | Where |
 |---|---|---|
-| moments per video | **M — uncapped, model-driven** (no `_target_pick_count`; validity + within-owner overlap dedup only) | `moments.py:4-5,301`, `validate_pick` `:159`, `_drop_overlaps` `:145` |
+| moments per video | **M — uncapped, model-driven** (prompt `_target_pick_count` is a CEILING hint only, capped at 30; ingest has no hard pick-count gate — validity + within-owner overlap dedup only) | `prompts.py:58-68,174`, `moments.py:301`, `validate_pick` `:159`, `_drop_overlaps` `:145` |
 | clips per moment (aspects) | **×1** — IG and TikTok both map to `Fmt.r9x16` | `pipeline.py:36` `_aspects_for`, `models.py:156-158` `PLATFORM_ASPECT` |
 | surfaces total | **5** | `accounts.py:268`; accounts.json |
 | posts per clip — casting ON (default) | **×1** — owner subset (single-owner moment → its owner surface) | `crosspost.py:166`, `casting.affinity_admits` `:22` |
@@ -153,7 +153,7 @@ runtime switch is `account_casting`, not a separate CV flag.
 | **LLM — moments** (`claude -p`) | `responder.py:67`→`llm.py:103,117` | pick (vision) | `FANOPS_RESPONDER=llm`; **opus** (`config.py:84`); frames granted | `MomentDecision` JSON; provenance line in run.log | gate pending+quarantine; `frames_unread` breadcrumb |
 | **LLM — moment_hooks** | same | hook (vision) | `=llm`; **opus** | `MomentHookDecision`; hook stamped | pending; `hook_frames_unread:True` |
 | **LLM — captions** | same | caption (text) | `=llm`; **sonnet** (NOT opus); no frames | `CaptionSet` (caption + ≤4 tags) | pending/quarantine |
-| LLM auth | `llm.py:9-21` | — | operator's existing `claude` login (NOT `ANTHROPIC_API_KEY`); `--strict-mcp-config --allowedTools ""` | structured_output JSON | `ToolchainMissingError`/`LlmRateLimitError`(429/503/529) typed |
+| LLM auth | `llm.py:9-21` | — | operator's existing `claude` login (NOT `ANTHROPIC_API_KEY`); `--strict-mcp-config --allowedTools ""` (text gates) or `Read` (vision gates); MOL-248 schema-only finalizer on empty vision JSON | structured_output JSON | `ToolchainMissingError`/`LlmRateLimitError`(429/503/529)/`LlmSchemaError` typed |
 | ~~casting LLM~~ | **REMOVED** (P11/MOL-152) | — | `affinity_admits` pure predicate | — | — |
 | **whisper/faster-whisper** | `transcribe.py:106/119`, run `:223` | transcribe | extra `[asr]` (faster-whisper) or `[transcribe]` (legacy); `FANOPS_ASR_MODEL`; timeout 2700s×scale | transcript JSON, `meta.transcribed=True` | `Source: error` + reason; distinguishes []-no-speech vs None-not-run |
 | **ffmpeg** signals | `signals.py:131,175` | signals | ffmpeg on PATH | detect sidecar, `signalled` | fail-open, may quarantine |

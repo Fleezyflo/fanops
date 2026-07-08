@@ -1,4 +1,4 @@
-<!-- Generated: 2026-06-19 | Files scanned: models.py, ledger.py, config.py, accounts.py, ingest.py, router.py, stitch_render.py, impact_cut.py, intro_match.py, compose.py, cutover.py, post/run.py, studio/views.py | Token estimate: ~1080 | incl. content-lifecycle + Account-First (SCHEMA_VERSION=8, born-awaiting_approval, day-bucket archive, batches/renders/selection_facts maps) -->
+<!-- Generated: 2026-07-08 | Files scanned: models.py, ledger.py, config.py, accounts.py, ingest.py, router.py, stitch_render.py, impact_cut.py, intro_match.py, compose.py, cutover.py, post/run.py, studio/views.py | Token estimate: ~1080 | incl. content-lifecycle + Account-First (SCHEMA_VERSION=11, born-awaiting_approval, day-bucket archive, batches/renders maps; selection_facts/account_selections dropped v11) -->
 # FanOps Data
 
 No database. ONE JSON ledger + operator-editable control files, all under the data tree.
@@ -27,20 +27,23 @@ No database. ONE JSON ledger + operator-editable control files, all under the da
   guarantees a complete file). Malformed JSON -> typed ControlFileError (clean exit 2).
 - Doc shape: 4 unit maps keyed by content-addressed id + `variant_streaks` + `tag_log` + `stitch_plans`
   (M3 structural-hooks) + `batches` (Account-First: named, account-targeted ingest groups) + `renders`
-  (per-account Render foundation: the per-account shippable artifacts) + `selection_facts` (M4: durable
-  per-(moment, account) selection audit). Versioned:
-  `SCHEMA_VERSION=8` + `_MIGRATIONS` hop-chain (ledger.py; v1→v2 injects the empty `stitch_plans` map;
+  (per-account Render foundation: the per-account shippable artifacts) + `imported_media` (ledger-rebuild
+  IG probe rows). Versioned:
+  `SCHEMA_VERSION=11` + `_MIGRATIONS` hop-chain (ledger.py; v1→v2 injects the empty `stitch_plans` map;
   v2→v3 `_migrate_v3_created_at` backfills `created_at` — Source from file mtime, Post from a tz-aware
   `scheduled_time` else the migration stamp; v3→v4 `_migrate_v4_metrics_series` back-fills ONE 'legacy'-tagged
   metrics_series row per post that already carries metrics; v4→v5 the additive `{**raw, "batches": raw.get(
   "batches", {})}` lambda injects the empty `batches` map; v5→v6 injects the empty `renders` map (per-account
-  Render foundation); v6→v7 injects the empty `selection_facts` map (M4 filing/naming/tracking); v7→v8 the
-  latest additive step; all idempotent, never raise, do NOT backfill
-  `published_at` — old ledgers load clean, proven on the real 51-post ledger); a NEWER on-disk version →
+  Render foundation); v6→v7 injects the empty `selection_facts` map (transient — dropped again at v11);
+  v8→v9 `_migrate_v8_account_selections` lifts legacy affinities into transient `account_selections` (also
+  dropped at v11); v10→v11 `_migrate_v11_drop_selection_maps` drops `account_selections` + `selection_facts`;
+  all idempotent, never raise, do NOT backfill
+  `published_at` — old ledgers load clean); a NEWER on-disk version →
   `_NewerSchema` refuses to load (exit 2) rather than silently drop fields. New OPTIONAL entity fields
   (Moment.{hook_strategy, intro_matches, affinities}, StitchPlan.*, Source.{created_at, batch_id}, Post.
-  {created_at, published_at, batch_id, variant_hook}, Batch.*, Render.*, SelectionFact.*) ride pydantic defaults. Inner dicts of
-  variant_streaks/tag_log remain untyped (known gap).
+  {created_at, published_at, batch_id, variant_hook}, Batch.*, Render.*) ride pydantic defaults. Inner dicts of
+  variant_streaks/tag_log remain untyped (known gap). Crosspost routing reads `Moment.affinities` only
+  (`casting.affinity_admits`) — no separate selection table post-v11.
 
 ## Units & lifecycles (models.py, pydantic)
 
