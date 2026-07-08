@@ -14,8 +14,8 @@ from typing import Callable, Optional
 from pydantic import ValidationError
 from fanops.config import Config
 from fanops.models import MomentDecision, MomentHookDecision, CaptionSet
-from fanops.agentstep import pending, request_path, write_response, latest_request_id
-from fanops.llm import claude_json_meta, LlmTimeoutError, LlmContextLimitError
+from fanops.agentstep import pending, request_path, write_response, latest_request_id, clear_attempts
+from fanops.llm import claude_json_meta, LlmTimeoutError, LlmContextLimitError, LlmSchemaError
 from fanops.prompts import moment_pick_prompt, moment_hook_prompt, caption_prompt
 from fanops.control import guidance_sha
 from fanops.log import get_logger
@@ -123,6 +123,7 @@ class LlmResponder:
             obj = model_cls(**out)          # decision (a): validate; ValidationError -> pending + log
             obj = screen_model_text(obj)    # MOL-166: screen model-authored text once at the responder boundary
             write_response(cfg, kind, key, obj.model_dump_json(indent=2))   # ATOMIC (audit): no torn-read window for a concurrent reader
+            clear_attempts(cfg, kind, key)    # MOL-236: success resets the per-gate attempt counter
             return True
         except LlmContextLimitError as e:   # AGENT-2: a too-big payload is a LABELLED degraded state, never an
             log("responder", f"{kind}:{key}", "context_limit", err=str(e)[:160])   # infinite-pending wedge
@@ -131,6 +132,9 @@ class LlmResponder:
         except ValidationError as e:        # present-but-invalid: log "invalid", gate stays pending
             log("responder", f"{kind}:{key}", "invalid", err=str(e)[:160])
             self._mark_gate_degraded(cfg, kind, key, f"agent gate {kind} schema invalid: {str(e)[:160]}")
+        except LlmSchemaError as e:         # MOL-227: unparseable LLM envelope -> labelled degrade, not transient
+            log("responder", f"{kind}:{key}", "schema_error", err=str(e)[:160])
+            self._mark_gate_degraded(cfg, kind, key, f"agent gate {kind} schema error: {str(e)[:160]}")
         except Exception as e:              # transient model/CLI failure (incl. ToolchainMissing): log, leave pending
             log("responder", f"{kind}:{key}", "error", err=str(e)[:160])
         return False

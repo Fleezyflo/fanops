@@ -385,6 +385,64 @@ def test_validation_error_marks_source_degraded(tmp_path, monkeypatch):
     assert src.degraded_reason and "invalid" in src.degraded_reason.lower()   # LABELLED, not silent-pending
 
 
+def test_llm_schema_error_marks_source_degraded(tmp_path, monkeypatch):
+    # MOL-227: an LlmSchemaError in the gate path stamps degraded_reason; gate stays pending.
+    from fanops.ledger import Ledger
+    from fanops.models import Source, SourceState
+    from fanops.agentstep import write_request, response_path
+    from fanops.responder import LlmResponder
+    from fanops.llm import LlmSchemaError
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg); led.add_source(Source(id="src_1", source_path="/s.mp4", state=SourceState.signalled)); led.save()
+    write_request(cfg, kind="moments", key="src_1",
+                  payload={"source_id": "src_1", "duration": 10.0, "transcript": [], "signal_peaks": []})
+    def schema_fail(kind, payload): raise LlmSchemaError("claude -p returned non-JSON envelope")
+    n = LlmResponder(cfg, model=schema_fail).answer_pending(cfg)
+    assert n == 0
+    assert not response_path(cfg, "moments", "src_1").exists()
+    src = Ledger.load(cfg).sources["src_1"]
+    assert src.degraded_reason and "schema error" in src.degraded_reason.lower()
+
+
+def test_bare_exception_does_not_stamp_degraded(tmp_path, monkeypatch):
+    # MOL-227: a generic Exception caught by the bare except must NOT stamp degraded_reason.
+    from fanops.ledger import Ledger
+    from fanops.models import Source, SourceState
+    from fanops.agentstep import write_request, response_path
+    from fanops.responder import LlmResponder
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg); led.add_source(Source(id="src_1", source_path="/s.mp4", state=SourceState.signalled)); led.save()
+    write_request(cfg, kind="moments", key="src_1",
+                  payload={"source_id": "src_1", "duration": 10.0, "transcript": [], "signal_peaks": []})
+    def transient(kind, payload): raise RuntimeError("transient LLM 500")
+    n = LlmResponder(cfg, model=transient).answer_pending(cfg)
+    assert n == 0
+    assert not response_path(cfg, "moments", "src_1").exists()
+    src = Ledger.load(cfg).sources["src_1"]
+    assert not src.degraded_reason
+
+
+def test_successful_write_clears_attempts(tmp_path, monkeypatch):
+    # MOL-236: a successful write_response resets the per-gate attempt counter to zero.
+    from fanops.agentstep import write_request, bump_attempts, _attempts_path
+    from fanops.responder import LlmResponder
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    cfg = Config(root=tmp_path)
+    write_request(cfg, kind="moments", key="src_1",
+                  payload={"source_id": "src_1", "duration": 20.0,
+                           "transcript": [{"start": 14, "end": 18, "text": "x"}], "signal_peaks": []})
+    bump_attempts(cfg, "moments", "src_1"); bump_attempts(cfg, "moments", "src_1"); bump_attempts(cfg, "moments", "src_1")
+    def ok_model(kind, payload):
+        return {"source_id": payload["source_id"],
+                "picks": [{"start": 14.0, "end": 18.0, "reason": "punchline"}]}
+    n = LlmResponder(cfg, model=ok_model).answer_pending(cfg)
+    assert n == 1
+    assert not _attempts_path(cfg, "moments", "src_1").exists()
+    assert bump_attempts(cfg, "moments", "src_1") == 1   # subsequent failure starts from 1
+
+
 def test_context_limit_marks_source_degraded_for_captions_gate(tmp_path):
     # context-limit-no-source-mark: a captions gate that hits the LLM context limit must mark its SOURCE
     # degraded (the no-silent-degradation principle), same as the moment gates. Captions key on a CLIP id, so
