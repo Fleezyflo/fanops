@@ -217,16 +217,17 @@ def install(cfg: Config, *, interval: int, responder: str = "inherit") -> dict:
 def status(cfg: Config, *, interval: int = 600) -> dict:
     """Read-only liveness: is the agent loaded (launchctl list) AND actually firing (heartbeat fresh)?
     `interval` is the installed cadence — alive iff the last heartbeat is younger than 3 intervals."""
+    from fanops.health_model import heartbeat_stale
     r = _launchctl("list", LABEL)
     loaded = r.returncode == 0
     pid = _grep_int(r.stdout, "PID") if loaded else None
     last_exit = _grep_int(r.stdout, "LastExitStatus") if loaded else None
-    age = _heartbeat_age_s(cfg)
+    age, stale, iv = heartbeat_stale(cfg, interval=installed_interval(cfg) or interval)
     if not loaded:
         verdict = "not installed"
     elif age is None:
         verdict = "loaded but no heartbeat yet"
-    elif age < 3 * interval:
+    elif not stale:
         verdict = "alive"
     else:
         verdict = f"loaded but stale (last heartbeat {int(age)}s ago)"
