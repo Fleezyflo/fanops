@@ -1,6 +1,7 @@
 # tests/test_config.py
 import json
 import logging
+import pytest
 from fanops.config import Config
 
 def _tuning_cfg(tmp_path, obj):
@@ -297,14 +298,13 @@ def test_variant_transfer_env_overrides(monkeypatch, tmp_path):
     assert c.variant_transfer_max_hooks == 1
 
 
-def test_variant_transfer_bad_ints_fall_back(monkeypatch, tmp_path):
+def test_variant_transfer_bad_ints_raise_at_construct(tmp_path, monkeypatch):
+    from pydantic import ValidationError
     from fanops.config import Config
     monkeypatch.setenv("FANOPS_VARIANT_TRANSFER", "1")
     monkeypatch.setenv("FANOPS_VARIANT_TRANSFER_MIN_DONORS", "notanint")
-    monkeypatch.setenv("FANOPS_VARIANT_TRANSFER_MAX_HOOKS", "")
-    c = Config(root=tmp_path)
-    assert c.variant_transfer_min_donors == 2          # bad int -> default, no crash
-    assert c.variant_transfer_max_hooks == 2
+    with pytest.raises(ValidationError):
+        Config(root=tmp_path)
 
 
 def test_config_has_review_dir(tmp_path):
@@ -340,15 +340,12 @@ def test_variant_amplify_env_overrides(monkeypatch, tmp_path):
     assert c.variant_amplify_min_streak == 5
 
 
-def test_variant_amplify_bad_env_falls_back(monkeypatch, tmp_path):
+def test_variant_amplify_bad_env_raises_at_construct(tmp_path, monkeypatch):
+    from pydantic import ValidationError
     from fanops.config import Config
     monkeypatch.setenv("FANOPS_VARIANT_AMPLIFY_MIN_POSTS", "nope")
-    monkeypatch.setenv("FANOPS_VARIANT_AMPLIFY_MIN_GAP", "nan-ish?")
-    monkeypatch.setenv("FANOPS_VARIANT_AMPLIFY_MIN_STREAK", "x")
-    c = Config(root=tmp_path)
-    assert c.variant_amplify_min_posts == 8
-    assert c.variant_amplify_min_gap == 25.0
-    assert c.variant_amplify_min_streak == 3
+    with pytest.raises(ValidationError):
+        Config(root=tmp_path)
 
 
 def test_variant_ucb_defaults_off_and_sqrt2(monkeypatch, tmp_path):
@@ -367,13 +364,12 @@ def test_variant_ucb_env_overrides(monkeypatch, tmp_path):
     c = Config(root=tmp_path)
     assert c.variant_ucb is True and c.variant_ucb_c == 0.5
 
-def test_variant_ucb_c_bad_or_negative_falls_back(monkeypatch, tmp_path):
+def test_variant_ucb_c_bad_raises_at_construct(tmp_path, monkeypatch):
+    from pydantic import ValidationError
     from fanops.config import Config
-    import math
-    monkeypatch.setenv("FANOPS_VARIANT_UCB_C", "abc")          # unparseable -> default
-    assert Config(root=tmp_path).variant_ucb_c == math.sqrt(2)
-    monkeypatch.setenv("FANOPS_VARIANT_UCB_C", "-1")           # negative -> default (no anti-exploration)
-    assert Config(root=tmp_path).variant_ucb_c == math.sqrt(2)
+    monkeypatch.setenv("FANOPS_VARIANT_UCB_C", "abc")
+    with pytest.raises(ValidationError):
+        Config(root=tmp_path)
 
 
 def test_publish_lead_minutes_default_zero(monkeypatch):
@@ -386,10 +382,12 @@ def test_publish_lead_minutes_reads_env(monkeypatch):
     monkeypatch.setenv("FANOPS_PUBLISH_LEAD_MINUTES", "120")
     assert Config().publish_lead_minutes == 120
 
-def test_publish_lead_minutes_non_int_falls_back_to_zero(monkeypatch):
+def test_publish_lead_minutes_non_int_raises_at_construct(monkeypatch, tmp_path):
+    from pydantic import ValidationError
     from fanops.config import Config
     monkeypatch.setenv("FANOPS_PUBLISH_LEAD_MINUTES", "not-a-number")
-    assert Config().publish_lead_minutes == 0
+    with pytest.raises(ValidationError):
+        Config(root=tmp_path)
 
 def test_publish_lead_minutes_negative_clamps_to_zero(monkeypatch):
     # A negative lead would shift the anchor BEFORE base and could invert the editable window;
@@ -424,9 +422,12 @@ def test_gc_keep_days_config(monkeypatch, tmp_path):
     assert Config(root=tmp_path).gc_keep_days == 30                      # default
     monkeypatch.setenv("FANOPS_GC_KEEP_DAYS", "90")
     assert Config(root=tmp_path).gc_keep_days == 90
-    for bad in ("0", "-1", "garbage", ""):
-        monkeypatch.setenv("FANOPS_GC_KEEP_DAYS", bad)
-        assert Config(root=tmp_path).gc_keep_days == 30                  # 0/negative/non-int -> clamp to default
+def test_gc_keep_days_bad_int_raises_at_construct(monkeypatch, tmp_path):
+    from pydantic import ValidationError
+    from fanops.config import Config
+    monkeypatch.setenv("FANOPS_GC_KEEP_DAYS", "garbage")
+    with pytest.raises(ValidationError):
+        Config(root=tmp_path)
 
 def test_concurrent_sources_default_off_and_opt_in(tmp_path, monkeypatch):
     # Parallel per-source pipeline is OPT-IN (mirrors burn_subs): default OFF -> the byte-identical
@@ -454,5 +455,24 @@ def test_concurrent_workers_default_and_clamp(tmp_path, monkeypatch):
     assert Config(root=tmp_path).concurrent_workers == 1                 # clamped up from 0 (no hang)
     monkeypatch.setenv("FANOPS_CONCURRENT_WORKERS", "-3")
     assert Config(root=tmp_path).concurrent_workers == 1                 # clamped up from negative
+def test_concurrent_workers_bad_int_raises_at_construct(tmp_path, monkeypatch):
+    from pydantic import ValidationError
     monkeypatch.setenv("FANOPS_CONCURRENT_WORKERS", "notanint")
-    assert Config(root=tmp_path).concurrent_workers == 4                 # bad int -> default
+    with pytest.raises(ValidationError):
+        Config(root=tmp_path)
+
+
+def test_settings_live_reread_after_env_mutation(tmp_path, monkeypatch):
+    # MOL-292: go-live dual-write must be visible on the next Config(), not a cached import-time read.
+    monkeypatch.delenv("FANOPS_LIVE", raising=False)
+    assert Config(root=tmp_path).is_live is False
+    monkeypatch.setenv("FANOPS_LIVE", "1")
+    assert Config(root=tmp_path).is_live is True
+
+
+def test_settings_bad_numeric_names_field_in_validation_error(tmp_path, monkeypatch):
+    from pydantic import ValidationError
+    monkeypatch.setenv("FANOPS_CONCURRENT_WORKERS", "four")
+    with pytest.raises(ValidationError) as ei:
+        Config(root=tmp_path)
+    assert "FANOPS_CONCURRENT_WORKERS" in str(ei.value)
