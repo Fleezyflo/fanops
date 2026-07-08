@@ -5,7 +5,9 @@
    banner + checks update after every action. #}
 <div id="golive-panel" aria-live="polite">
   {% set gs = step|default(none) %}
-  {% if status.is_live %}
+  {% if status.half_live %}
+    <div class="banner half-live" role="alert">▲ LIVE (nothing routes) — {{ status.half_live_hint }}</div>
+  {% elif status.is_live %}
     <div class="banner live">● LIVE ({{ status.mode }}) — reviewed posts publish to REAL accounts</div>
   {% else %}
     <div class="banner dryrun">● DRYRUN — writes payloads, posts nothing</div>
@@ -298,7 +300,12 @@
 
   <section class="golive-step golive-flip">
     <h3>5 · Go live</h3>
-    {% if status.is_live %}
+    {% if status.half_live %}
+      <p class="muted">The LIVE flag is set but nothing routes live — posts stay queued. Route a channel to a live backend above, or flip back to dryrun.</p>
+      <form hx-post="{{ url_for('do_golive_dryrun') }}" hx-target="#golive-panel" hx-swap="outerHTML">
+        <button type="submit">Back to dryrun</button>
+      </form>
+    {% elif status.is_live %}
       <p class="muted">Publishing is LIVE — reviewed posts go to real accounts. Flip back to dryrun to stop.</p>
       <form hx-post="{{ url_for('do_golive_dryrun') }}" hx-target="#golive-panel" hx-swap="outerHTML">
         <button type="submit">Back to dryrun (stop publishing)</button>
