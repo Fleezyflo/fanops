@@ -10,7 +10,11 @@ None of the entries below are CRITICAL/blocking findings — the codebase's core
 (no-auto-publish, wipe-confirmation, dryrun/live boundary, ledger cascade protection, bias-scope
 isolation) all independently HOLD, verified per-cluster (see the verdict table in
 full-trace-index.md). These are code-quality/legibility findings: dead code, unlogged swallows,
-one wiring bug, one docs-staleness item.
+one wiring bug, one docs-staleness item. **Taxonomy note (added by W5e / trace-remediation,
+MOL-254):** the invariants above measure *doesn't-publish-wrong / doesn't-crash / doesn't-cascade*;
+they had **no axis for fail-silently-and-forever** (a gate that fails deterministically, logs, and
+re-requests every tick with no operator-visible terminal). That class is now named below under C6.
+`logging ≠ surfacing`.
 
 ## C1 — Core data model & persistence
 
@@ -69,6 +73,7 @@ one wiring bug, one docs-staleness item.
 - `post/postiz.py:73-86` `_postiz_permalink` — **always returns `None` by design**. The `submitted → published` promotion in `_publish_one` can therefore never fire for a fresh Postiz publish inside `_publish_one` alone — it necessarily waits for `reconcile.py` to backfill the URL later. A real, intentional two-phase-commit-style dependency, flagged for visibility, not a bug.
 - `post/run.py:_publish_throttle_last` — a plain module-level dict, the one piece of true global mutable state in this cluster. In-process-only by design; would need revisiting if `fanops` ever ran as multiple concurrent processes.
 - No bare `except:` and no untraced `except Exception: pass` anywhere in the 17 files — every broad except logs, sets a typed reason, or is a documented best-effort decoration.
+- `responder.py:131,133` `_answer_one` — **SILENT INFINITE-PENDING GATE (new class, was mis-blessed).** The `ValidationError` and generic-`Exception` branches log and leave the gate pending — no `degraded_reason`, no source mark, no ceiling. A DETERMINISTIC gate failure (prose-not-JSON picker answer) is therefore re-requested forever, invisible in status/digest/Studio (the reducer stages' `_quarantine` terminal path does NOT reach the responder gate path). Distinct from an 'unlogged swallow' (this LOGS) — the taxonomy blind spot was conflating logged with surfaced. Parked `src_90d3c565022f` at `moments_requested`. Fixed by W1–W3; guarded by `test_responder.py` (W5b) + `test_llm.py` (W5a/W5c/W5d). See MOL-221 (parent) / MOL-254 (this entry).
 
 ## C7 — Metrics, reconcile & learning
 
