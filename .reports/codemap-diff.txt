@@ -1,39 +1,36 @@
-Codemap update — 2026-06-21 (IG account-connection resolution)
-================================================================
-Prior scan: 2026-06-19 (feat/content-lifecycle, post-approval lifecycle).
+Codemap update — 2026-07-08 (post-P11 single-owner sync @ a0886fb)
+====================================================================
+Prior scan: 2026-07-07 (fresh-ingestion-trace @ 6395ce3).
 
-Trigger: connected perca.late + cisumwolfhom to Postiz; root-caused the day-long
-connect failure (wrong INSTAGRAM_APP_SECRET in the Postiz container env).
+Trigger: PR #400 merged to main; automation re-sync of docs/CODEMAPS/ against live src/fanops/.
 
-CODEMAPS UPDATED
-- docs/CODEMAPS/account-connection.md  (REWRITTEN, < 30% threshold → in place)
-    * Verified state: all THREE fan accounts now connected + mapped
-      (markmakmouly cmqeb1uuv0001o579bjcdj7my, perca.late cmqno51tb0001p68ez9tx5a6k,
-       cisumwolfhom cmqno5ops0003p68ea2k3kgzs).
-    * "BLOCKER (unresolved)" -> "RESOLVED connect failure": root cause = wrong
-      INSTAGRAM_APP_SECRET in container env; Meta's "redirect_uri identical" is its
-      generic bad-client-secret error; fix = correct secret in compose + docker compose up -d.
-    * App-id reference corrected to the IG app id 976142145032195 (OAuth client_id).
-    * Non-stock cookie/data[] patches reclassified NOT-required-for-connect (stock connected).
+DETERMINISTIC ARTIFACTS REGENERATED
+- .reports/ast_extract.py + build_graphs.py (re-created — were documented but not committed)
+- .reports/structural_index.json (109 modules)
+- .reports/import_graph.json, call_graph.json (1314 callables), unreferenced_candidates.json (379 leads)
 
-CODEMAPS NOT CHANGED (verified still accurate)
-- docs/CODEMAPS/architecture.md   (no connection-state claims; FanOps structure unchanged)
-- docs/CODEMAPS/data.md           (data model + accounts.json schema unchanged)
-- docs/CODEMAPS/dependencies.md   (Postiz dependency unchanged; only a config VALUE was wrong)
+CODEMAPS UPDATED (semantic hand-sync)
+- docs/CODEMAPS/data.md — SCHEMA_VERSION 8→11; v10→v11 drops account_selections/selection_facts;
+  Post.variant_hook removed from live model
+- docs/CODEMAPS/architecture.md — owner-stamped affinities + affinity_admits (no LLM casting stage);
+  pipeline DAG includes moment_hooks pass
+- docs/CODEMAPS/system-lens-map.md — persona→downstream chains no longer cite casting.py:78/energy;
+  creative_variation documentation-only
+- docs/CODEMAPS/subsystem-traces/C4_moments_casting_personas.md — stale casting.py callers removed;
+  Persona.energy retired; validate() no longer gates on creative_variation
+- docs/CODEMAPS/subsystem-traces/C5_caption_hooks_hashtags.md — _target_pick_count is prompt ceiling only
+- docs/CODEMAPS/subsystem-traces/C6_crosspost_publish_post.md — Postiz title from m.hook; _materialize_variant_media no-op;
+  _mark_context_limit no moment_casting
+- docs/CODEMAPS/subsystem-traces/C9_studio_backend.md — reburn_hook/approve_with_hook/preview_media P9 model;
+  FANOPS_CREATIVE_VARIATION env-only
+- docs/CODEMAPS/subsystem-traces/C10_studio_views.md — gate_rows omits moment_casting; variant_hook is UI projection
+- docs/CODEMAPS/anomalies.md — casting.py _record_fact removed P11
+- docs/CODEMAPS/hashtag-lifecycle.md — tag_lean retired (folded into corpus)
+- docs/CODEMAPS/full-trace-index.md — regenerated counts + sync date
+- docs/CODEMAPS/fresh-ingestion-trace.md — header sha/date bump
 
-SCAN DELTA
-- Source changes this session: NONE (git status --porcelain src/ empty) -> structural
-  codemaps remain current; no regeneration needed.
-- Data changes: MohFlow-FanOps/00_control/accounts.json (perca.late + cisumwolfhom
-  integrations['instagram'] populated via accounts.write_integration).
-- New dependencies: none. New routes/services: none.
+CODEMAPS NOT REWRITTEN (dated audit snapshots — superseded banner retained)
+- docs/CODEMAPS/lifecycle-full-picture.md (2026-06-27 audit; pre-P11 casting claims are historical)
 
-COMPANION DOCS (rewritten same session, narrative)
-- docs/INSTAGRAM_CONNECT.md  (full guide: root cause, proof, fix, false-elimination warnings)
-- docs/POSTIZ_SETUP.md       (Instagram callout corrected)
-
-STALENESS NOTE
-- No doc > 90 days stale. The previous account-connection codemap + guide enshrined a WRONG
-  root cause (redirect/scopes/multi-hop) and an actively harmful false elimination
-  ("INSTAGRAM_APP_SECRET valid") — both corrected. Lesson: do not record an unproven
-  hypothesis as a ruled-out fact in a codemap.
+GROUND TRUTH
+- docs/CODEMAPS/fresh-ingestion-trace.md §3 (single-owner Moment.affinities + affinity_admits)

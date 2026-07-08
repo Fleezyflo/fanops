@@ -83,7 +83,7 @@ Note: `_result.html`, `_publish_outcome.html`, `error.html` are rendered from **
 
 - `GoLiveChannel` (`@dataclass`) — one platform's Postiz integration id + optional backend override for a GoLiveAccount. Pure data holder.
 - `GoLiveAccount` (`@dataclass`) — one active account's Go-Live row: handle, persona, channels, persona_id, ig_user_id, `meta_token_set` (BOOL only — token itself never carried). Pure data holder.
-- `GoLiveStatus` (`@dataclass`) — the whole Go-Live tab read-model: mode/is_live/postiz_url/`key_set` (BOOL only)/accounts/checks/notes/zernio/learning_validated/creative_variation/account_casting/clip_profile/responder_mode/daemon/demoted/variant_* flags. Pure data holder — no secret value ever stored here (only booleans for "is it set").
+- `GoLiveStatus` (`@dataclass`) — the whole Go-Live tab read-model: mode/is_live/postiz_url/`key_set` (BOOL only)/accounts/checks/notes/zernio/learning_validated/`creative_variation` (hardcoded `False` in `golive_status` — `FANOPS_CREATIVE_VARIATION` is env-dual-written only)/account_casting/clip_profile/responder_mode/daemon/demoted/variant_* flags.
 - `HomeStatus` (`@dataclass`) — the `/` status-home read-model: mode/is_live/counts/accounts/by_account. Pure data holder.
 - `HomeBatch` (`@dataclass`) — one batch row for Home's deep-link list: id/name/targets/state/created_at/posts_born/is_zero_result. Pure data holder.
 - `review_candidates(cfg)` — **PURE-READ**. Globs `cfg.review/*.jpg` (top-level only, excludes `approved/`) for discover-candidate thumbnails. Filesystem read only, no ledger. Called by `app.create_app` (feeds `candidates.html`).
@@ -120,7 +120,7 @@ Note: `_result.html`, `_publish_outcome.html`, `error.html` are rendered from **
 - `_SPINE_ORDER` (module const) — the 4-tuple ordering of spine stages.
 - `build_spine(*, counts, has_accounts, here, inflight=0, blocked_gates=0, next_params=None)` — **PURE-READ** (pure function over already-computed counts, no I/O). Derives stage done/active/todo state + severity + the single next-CTA sentence. Called by `app.create_app`.
 - `golive_status(cfg)` — **PURE-READ**. Assembles the full Go-Live tab dataclass: `_publish_mode_label`, `golive_accounts`, `doctor.doctor_report` (wrapped in `try/except Exception`, logs `doctor_error`, degrades to an empty report), `validation_gate.learning_validated`, and every operator-flag boolean from `cfg`. Called by `app_routes_golive.register_golive_routes`.
-- `gate_rows(cfg)` — **PURE-READ**. Enumerates every pending agent gate (moments/moment_hooks/moment_casting/captions) via `agentstep.pending`/`request_path`, reading each request JSON; a torn/unreadable request file is silently `continue`d (fail-open, matches its own docstring — the corruption is already logged elsewhere by `latest_request_id`). Called by `app.create_app` (feeds `gates.html`).
+- `gate_rows(cfg)` — **PURE-READ**. Enumerates every pending agent gate (`moments` / `moment_hooks` / `captions` only — `moment_casting` removed P11) via `agentstep.pending`/`request_path` (`views.py:852`), reading each request JSON; a torn/unreadable request file is silently `continue`d (fail-open). Called by `app.create_app` (feeds `gates.html`).
 
 ### `views_common.py` — shared read-model primitives (pagination, glossary, time math, Postiz-health cache)
 
@@ -151,7 +151,7 @@ Note: `_result.html`, `_publish_outcome.html`, `error.html` are rendered from **
 
 ### `views_results.py` — Schedule / Posted / Lift read-models
 
-- `ScheduleRow` (`@dataclass`) — the Schedule tab's per-post row: post_id/scheduled_time/account/platform/clip_id/state/imminent/editable/integration_id/lane/delivery/submission_id/backend/error_reason/suggested_time/batch_id/batch_title/caption/variant_hook/ready/ready_reason/why_suggested. Pure data holder.
+- `ScheduleRow` (`@dataclass`) — the Schedule tab's per-post row: … `variant_hook` (UI projection of owner `Moment.hook` via `_hook_for_post`, not a `Post` field) …
 - `LiftRow` (`@dataclass`) — the Lift tab's per-variant row: variant_hook/account/platform/lift_score/loop_state/amplify_state/lift_degraded/lift_missing/scheduled_time/metric breakdown/clip_id/sibling_count/rank/delta_vs_best. Pure data holder.
 - `LiftView` (`@dataclass`) — `{variant_rows, variant_empty_reason, amplify_present, amplify_rows, amplify_empty_reason}`. Pure data holder.
 - `_SHIPPABLE_RENDER` (module const) — the `RenderState` tuple a shippable artifact must be in.
@@ -193,7 +193,7 @@ Note: `_result.html`, `_publish_outcome.html`, `error.html` are rendered from **
 - `_handle_display_map(acct_by_handle)` — **PURE-READ** (pure function). Maps normalized handle → display handle. Called by `_card`, `account_lanes`, `review_matrix`.
 - `_display_handle(handle, by_norm)` — **PURE-READ** (pure lookup). Called by `_display_handles`, `account_lanes`.
 - `_display_handles(handles, by_norm)` — **PURE-READ** (pure function). Called by `_card`, `account_lanes`, `review_matrix`.
-- `SurfacePost` (`@dataclass`) — the per-account-per-platform Review surface row: post_id/account/platform/persona/caption/hashtags/scheduled_time/media_url/state/imminent/editable/suggested_time/hook_preburn/persona_hook_removed/variant_hook/length_label/is_account_cut/framing/hook_source/length_cause/framing_cause/cast_cause/day/tag_sources/thumb_url/ready/ready_reason. Pure data holder — the richest dataclass in the cluster (S2 provenance chips + M3a differentiation fields).
+- `SurfacePost` (`@dataclass`) — … `variant_hook` (UI mirror of `Moment.hook` for the post's owner-moment — not persisted on `Post`) …
 - `ReviewCard` (`@dataclass`) — one clip's Review card: clip_id/preview_url/source_name/label/moment_window/reason/language/subtitles_burned/held/held_reason/transcript_excerpt/surfaces/bucket/clip_state/day/hook_removed/batch fields/affinities/source_key. Pure data holder.
 - `_personas(accounts)` — **PURE-READ** (pure lookup). `{handle: persona}` map. Called by `account_lanes`, `review_buckets`, `surface_for_post`.
 - `_timecode(seconds)` — **PURE-READ** (pure function). Whole-second m:ss label, degrades non-finite to 0:00. Called by `_lineage_for_clip`.

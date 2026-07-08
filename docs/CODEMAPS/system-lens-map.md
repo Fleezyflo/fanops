@@ -373,20 +373,19 @@ validation vocab, clause maps, and catalog cannot drift (`persona_levers.py:1-8`
 **Link-failure behavior:** FAIL-OPEN. A dangling `persona_id`, absent/corrupt personas.json, or any error
 leaves the account's inline values intact — byte-identical when unlinked (`accounts.py:250-255`). **Observable?**
 The failure itself is SILENT (no log/badge — the `except Exception: return` at `accounts.py:250-251` swallows).
-Downstream, `Accounts.validate` (`accounts.py:207-216`) surfaces a "no persona linked" or "cut spec matches
-global" problem string when `creative_variation` is on, and `advance` logs those as `differentiation_warn`
-(`pipeline.py:385-387`). So a link that fails to resolve is not itself flagged, but its DOWNSTREAM effect
-(no differentiation) is a validate-time warning. `delete_persona` deliberately leaves accounts with a dangling
-id that falls open (`studio/personas.py:97-99`).
+Downstream, `Accounts.validate` (`accounts.py:218-255`) surfaces routing/integration problems;
+`pipeline.advance` logs any problem containing `"persona"` or `"shared-cut"` as `differentiation_warn`
+(`pipeline.py:383-385`). (`cfg.creative_variation` / `FANOPS_CREATIVE_VARIATION` is documentation-only —
+no `getenv` in `config.py`; Go-Live dual-writes `.env` but views hardcode `creative_variation=False`.)
 
 ### 3.4 Downstream effects — every consumer of every field
 
 | Field | Lands at (payload/render key) | Full chain (file:line) |
 |-------|-------------------------------|------------------------|
-| `voice` | casting/hook/caption prompt per-account slot | `_base_voice` (`persona_directives.py:56`) → leads `casting_directive` (`:68`), `hook_directive` (`:82`), `caption_directive` (`:107`) → carried in casting `personas[].persona` (`casting.py:78`), hook `personas[].persona` (`moments.py:243`), caption `surfaces[].persona` (`caption.py:209,226`) |
-| `content_focus` | casting SELECTION language + DERIVED cut LENGTH | `_FOCUS_CLAUSE` → `casting_directive` "Clip for this account: ..." (`persona_directives.py:75-76`); `_FOCUS_PROFILE` → `derive_cut_spec` length tier (`:41`) → `resolved_cut_spec` → `acc.clip_profile` → `cfg.resolve_clip_profile(acct)` (`config.py:433`) → `crosspost.account_render_spec` — `resolve_clip_profile` call at `crosspost.py:86`, `wants_cut` decision `crosspost.py:86-91` → `render_account_cut` band (`clip.py:706,723`) — physically cuts the clip length |
-| `energy` | casting energy clause + DERIVED framing | `_ENERGY_CLAUSE` → `casting_directive` (`persona_directives.py:77-78`); `_ENERGY_FRAMING` → `derive_cut_spec` framing (`:42`) → `acc.framing` → `cfg.resolve_top_bias(acct)` (`config.py:443`) → `top_bias` in `render_account_cut`/`reframe_filter` (`clip.py:310-311`), and stamped on `Post.top_bias` at mint (`crosspost.py:294`) |
-| `hook_angle` | on-screen hook strategy | `_ANGLE_CLAUSE` → `hook_directive` (`persona_directives.py:88-89`) → `hook_author_slot` → owner-only hook gate (`moments._hook_personas_for_moment` `moments.py:384`) → `Moment.hook` → burned at render (`clip.render_account_cut`) → surfaced as `variant_hook` in Studio |
+| `voice` | pick/hook/caption prompt per-owner slot | `_base_voice` (`persona_directives.py:56`) → `casting_directive` (`:68`), `hook_directive` (`:82`), `caption_directive` (`:107`) → pick lenses in `moments._pick_personas` (`moments.py:261+`), owner hook gate (`moments._hook_personas_for_moment` `:384`), caption `surfaces[].persona` (`caption.py:209,226`) |
+| `content_focus` | moment-pick SELECTION language + DERIVED cut LENGTH | `_FOCUS_CLAUSE` → `casting_directive` (`persona_directives.py:75-76`); `_FOCUS_PROFILE` → `derive_cut_spec` (`:41`) → stamped on `Moment.clip_profile` at pick (`moments._stamp_owner_spec`) → `cfg.resolve_clip_profile` → `render_account_cut` band (`clip.py:869`) |
+| `selection_scope` | moment-pick credibility vs controversy lens | `_SCOPE_CLAUSE` → `casting_directive` → `moments._pick_personas` payload `scope_lens` (`persona_directives.py:75-76`) |
+| `hook_angle` | on-screen hook strategy | `_ANGLE_CLAUSE` → `hook_directive` (`persona_directives.py:88-89`) → `hook_author_slot` → owner-only hook gate (`moments._hook_personas_for_moment` `moments.py:384`) → `Moment.hook` → burned at `render_account_cut` → Studio `SurfacePost.variant_hook` (UI projection of `m.hook`, not a `Post` field) |
 | `hashtag_corpus` | caption hashtags (deterministic post-step) | hydrated `acc.hashtag_corpus` → `corpora[handle]` in caption request (`caption.py:213`) → surface `corpus` key (`caption.py:227`) → prompt "PREFER ... corpus" (`prompts.py:429-431`) AND `vet_hashtags(corpus=...)` float+floor+backfill (`caption.py:330`, `hashtags.py:159-205`) |
 | `intake.genre` | Graph research seeds only | `_seed_tags` (`fanops_hashtags.py:32`) + `discover_corpus` — never a live caption |
 
@@ -498,9 +497,9 @@ generation and schedule toward measured reach, but never past the operator appro
 
 3. **A persona-link resolution failure is silent at the point of failure and only surfaces indirectly.**
    `_hydrate_from_personas` swallows every exception with `return` (`accounts.py:250-251`); a dangling
-   `persona_id` leaves inline values with NO log/badge. The downstream "no differentiation" is only caught by
-   `Accounts.validate` → `differentiation_warn` and ONLY when `creative_variation` is on
-   (`accounts.py:207-216`, `pipeline.py:385-387`). Evidence: the two cited spans.
+   `persona_id` leaves inline values with NO log/badge. Downstream validate problems containing `"persona"` or
+   `"shared-cut"` surface as `differentiation_warn` (`pipeline.py:383-385`). (`FANOPS_CREATIVE_VARIATION` has no
+   `config.py` property — see [fresh-ingestion-trace.md](fresh-ingestion-trace.md) §4.) Evidence: the cited spans.
 
 4. **`learning_validated` is a single global boolean (`cutover.json metrics_confirmed`) that gates all
    validation-frozen actuators at once, and auto-flips on the FIRST qualifying live metric.** One

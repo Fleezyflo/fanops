@@ -45,7 +45,7 @@ one wiring bug, one docs-staleness item.
 - `accounts.py:576` `set_ig_user_id` — **NOT dead (corrected on validation).** Called via `set_ig_user_id as _accounts_set_ig_user_id` at `studio/golive.py:381`.
 - `persona_levers.py:87` `is_exempt` — dead code, zero callers (confirmed by sweep).
 - `persona_levers.py:107` `channels` — dead code, zero callers; own docstring claim ("the M4 manifest reads it") is inaccurate — `manifest` actually calls `channels_of`.
-- `casting.py:40` `_record_fact` — `except Exception: pass`. Deliberate best-effort audit-trail write ("must never lose the casting"), documented.
+- ~~`casting.py:40` `_record_fact`~~ — **REMOVED P11** (`casting.py` is now 22 lines / `affinity_admits` only).
 - `persona_directives.py:287` `persona_facts` — `except Exception: store = None`. **Silently swallows any hashtag-store load error with no logging** — the one unlogged handler in this cluster; every sibling fail-open path logs via `get_logger` first.
 - `persona_research.py:56` `discover_corpus` — `except Exception: cands = []`. Documented fail-open.
 - `accounts.py:250` `_hydrate_from_personas` — `except Exception: return`. Documented fail-open, leaves inline values untouched.
