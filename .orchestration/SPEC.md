@@ -12,7 +12,13 @@ Cursor's hook payloads do **not** identify the calling agent (`preToolUse` has n
 `docs/hooks.md`), and `readonly` (the only per-agent "cannot write" lever) also blocks the orchestrator's
 git. So the hard guarantees are placed at boundaries the hook CAN judge deterministically from the command
 string / event payload, wired in `.cursor/hooks.json` (cloud-executed) and implemented in
-`.cursor/hooks/orchestration_gate.py`:
+`.cursor/hooks/orchestration_gate.py`.
+
+**Activation (no collateral):** the gate is **inert unless the orchestration environment is engaged** — so
+committing `.cursor/hooks.json` to the repo does NOT change behavior for normal or other-agent Cursor
+sessions. It enforces only when `FANOPS_ORCHESTRATED` ∈ {1,true,yes,on} (operator env — robust) **or** the
+marker `.orchestration/state/ACTIVE` exists. While active, both are tamper-protected (the marker lives under
+the guarded state dir; an env var can't be unset by the agent). Enforced guarantees while active:
 
 | Guardrail | Mechanism | Hardness |
 |---|---|---|

@@ -29,6 +29,14 @@ sub-agent verification record exists** for every unit on the PR (`.orchestration
 anything first — a merge conflict, a failing check, a rebase, a cleanup, a missing piece — you do **not**
 touch it; you **spawn a sub-agent** to do that work fully, wait for its verification, then land.
 
+## Activation (operator prerequisite)
+
+The enforcement is **inert by default** so it never disrupts normal / other-agent Cursor sessions on this
+repo. The operator engages it for an orchestration run by setting **`FANOPS_ORCHESTRATED=1`** (robust — the
+agent can't unset an env var) or creating the marker **`.orchestration/state/ACTIVE`**. Confirm it is active
+before you start: `python scripts/repo_sweep.py` runs read-only regardless, but the land-gate/attribution
+only bind when active. If you were launched without activation, STOP and report — do not proceed ungated.
+
 ## Your loop
 
 1. **Intake** — take the Linear tasks (team *Molham homsi*, via the Linear MCP). Also run
