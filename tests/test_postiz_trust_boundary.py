@@ -274,6 +274,32 @@ def test_doctor_flags_half_live_config(tmp_path, monkeypatch):
     assert coh[0]["hint"]                                         # names the fix
 
 
+def test_golive_panel_half_live_shows_warning_not_live_banner(tmp_path, monkeypatch):
+    # MOL-297: the go-live panel must use the same half_live truth as the system strip — never solid-green LIVE.
+    from fanops.studio.app import create_app
+    cfg = _clean(monkeypatch, tmp_path)
+    monkeypatch.setenv("FANOPS_LIVE", "1"); monkeypatch.setenv("FANOPS_POSTER", "postizz")   # typo -> dryrun
+    _seed(cfg, [{"handle": "@ig", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    app = create_app(cfg); app.config.update(TESTING=True)
+    r = app.test_client().get("/golive")
+    assert r.status_code == 200
+    html = r.data.decode()
+    assert "banner half-live" in html or 'class="banner half-live"' in html
+    assert "nothing routes" in html.lower()
+    assert "postizz" in html
+    assert 'class="banner live"' not in html          # the pulsing solid-green LIVE banner must NOT appear
+
+
+def test_golive_status_half_live_matches_system_strip(tmp_path, monkeypatch):
+    cfg = _clean(monkeypatch, tmp_path)
+    monkeypatch.setenv("FANOPS_LIVE", "1"); monkeypatch.setenv("FANOPS_POSTER", "postizz")
+    _seed(cfg, [{"handle": "@ig", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    strip = views.build_system_strip(cfg)
+    status = views.golive_status(cfg)
+    assert status.half_live is True and strip["half_live"] is True
+    assert status.half_live_hint == strip["half_live_hint"]
+
+
 def test_doctor_does_not_flag_genuine_live(tmp_path, monkeypatch):
     from fanops.doctor import doctor_report
     cfg = _clean(monkeypatch, tmp_path)
