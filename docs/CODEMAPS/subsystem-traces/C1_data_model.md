@@ -130,7 +130,7 @@ Clip    1──* StitchPlan
 Batch   1──* Source, Post (denormalized batch_id)
 ImportedMedia — standalone, no lineage
 ```
-(Moment.affinities is the crosspost gate input — no separate AccountSelection table post-v11.)
+(Moment.affinities is the crosspost gate input — the removed v11 selection table is gone.)
 
 ## Per-file breakdown
 
