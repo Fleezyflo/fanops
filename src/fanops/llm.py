@@ -223,11 +223,36 @@ def claude_json_meta(prompt: str, schema: dict, *, timeout: float = 300.0,
     else:
         env = _run(prompt)
 
+    def _resolve_from_env(e: dict) -> tuple[dict | None, bool]:
+        """Return (parsed object, repair_empty). repair_empty is True when `result` was prose that
+        survived neither json.loads nor _extract_json_object — the vision-finalizer gate signal."""
+        so = e.get("structured_output")
+        if isinstance(so, dict):
+            return so, False
+        result = e.get("result")
+        if isinstance(result, str):
+            try:
+                return json.loads(result), False
+            except Exception:
+                salvaged = _extract_json_object(result)
+                if salvaged is not None:
+                    logger.warning("claude -p result salvaged via JSON-repair (prose-wrapped reply)")
+                    return salvaged, False
+                return None, True
+        return None, False
+
     rep = env.get("model")                                   # the model that actually answered, if reported
     resolved = rep if isinstance(rep, str) and rep.strip() else model   # else fall back to the pinned value
-    so = env.get("structured_output")
-    if isinstance(so, dict):
-        return so, resolved, frames_unread
+    obj, repair_empty = _resolve_from_env(env)
+    if obj is None and images and repair_empty:
+        env = _run("Your previous reply did not include the required JSON object. Respond with ONLY "
+                   "a single JSON object conforming to this schema — no prose, no markdown, no tool calls:\n"
+                   + json.dumps(schema) + "\n\nOriginal task:\n" + prompt, allowed="")
+        rep = env.get("model")
+        resolved = rep if isinstance(rep, str) and rep.strip() else resolved
+        obj, repair_empty = _resolve_from_env(env)
+    if obj is not None:
+        return obj, resolved, frames_unread
     result = env.get("result")
     if isinstance(result, str):
         try:
