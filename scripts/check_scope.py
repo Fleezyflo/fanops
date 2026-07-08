@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 _OVERRIDES: dict[str, tuple[str, ...]] = {
     "src/fanops/_fwrun.py": ("tests/test_fwrun.py",),
     "src/fanops/audit.py": ("tests/test_audit_trail.py",),
-    "src/fanops/controlio.py": ("tests/test_cutover.py",),
+    "src/fanops/controlio.py": ("tests/test_controlio.py",),
     "src/fanops/cutover_postiz.py": ("tests/test_cutover.py",),
     "src/fanops/errors.py": ("tests/test_cli.py",),
     "src/fanops/framing.py": ("tests/test_smart_framing.py",),
