@@ -14,7 +14,6 @@ on the publish path. Two design rules, both load-bearing:
      app). Meta deprecated hashtag media_count, so the trend signal is engagement summed over top_media."""
 from __future__ import annotations
 import json
-import os
 import re
 from datetime import datetime, timedelta, timezone
 from typing import NamedTuple, Optional
@@ -56,18 +55,13 @@ def resolve_meta_creds(cfg: Config, *, handle: Optional[str] = None) -> MetaCred
     the global creds (mirrors load_accounts_safe), so a read path can't be crashed by config. The token is a
     SECRET — this returns it for use as the access_token param; the caller must never log/echo it."""
     ig = cfg.meta_ig_user_id                                     # global fallback (per-field)
-    tok = cfg.meta_graph_token
+    tok = cfg.meta_token_for(handle)
     if handle:
         from fanops.accounts import load_accounts_safe          # lazy: accounts imports config, not meta_graph
         accts, _err = load_accounts_safe(cfg)                    # never raises -> global fallback on a torn file
         acc = next((a for a in accts.accounts if a.handle == handle), None)
         if acc is not None and (acc.ig_user_id or "").strip():
             ig = acc.ig_user_id.strip()                          # per-account IG Business id wins
-        key = per_account_token_env_key(handle)
-        if key:
-            v = os.getenv(key)
-            if v and v.strip():
-                tok = v.strip()                                  # per-handle access token wins
     return MetaCreds(ig_user_id=ig, token=tok)
 
 
@@ -86,9 +80,7 @@ def resolvable_meta_tokens(cfg: Config) -> list[tuple[str, str]]:
     accts, _err = load_accounts_safe(cfg)
     for a in accts.active():
         if Platform.instagram not in a.platforms: continue
-        key = per_account_token_env_key(a.handle)
-        v = os.getenv(key) if key else None
-        v = v.strip() if v and v.strip() else None
+        v = cfg._per_handle_meta_token(a.handle)
         if v and v not in seen: seen.add(v); out.append((a.handle, v))
     return out
 
