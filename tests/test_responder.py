@@ -364,6 +364,27 @@ def test_gate_stamps_authoritative_rid_ignores_model_echo(tmp_path, monkeypatch)
     assert not any("rid_mismatch" in ev for ev in events)
 
 
+def test_validation_error_marks_source_degraded(tmp_path, monkeypatch):
+    # MOL-226: a present-but-invalid model response (ValidationError) must LABEL the source degraded,
+    # not leave it silently stalled — mirrors the context-limit labelling contract.
+    from fanops.ledger import Ledger
+    from fanops.models import Source, SourceState
+    from fanops.agentstep import write_request, response_path
+    from fanops.responder import LlmResponder
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg); led.add_source(Source(id="src_1", source_path="/s.mp4", state=SourceState.signalled)); led.save()
+    write_request(cfg, kind="moments", key="src_1",
+                  payload={"source_id": "src_1", "duration": 10.0, "transcript": [], "signal_peaks": []})
+    # model returns a pick missing required `reason` -> pydantic raises ValidationError
+    def bad_model(kind, payload): return {"picks": [{"start": 1.0, "end": 4.0}]}
+    n = LlmResponder(cfg, model=bad_model).answer_pending(cfg)
+    assert n == 0
+    assert not response_path(cfg, "moments", "src_1").exists()   # gate stays pending
+    src = Ledger.load(cfg).sources["src_1"]
+    assert src.degraded_reason and "invalid" in src.degraded_reason.lower()   # LABELLED, not silent-pending
+
+
 def test_context_limit_marks_source_degraded_for_captions_gate(tmp_path):
     # context-limit-no-source-mark: a captions gate that hits the LLM context limit must mark its SOURCE
     # degraded (the no-silent-degradation principle), same as the moment gates. Captions key on a CLIP id, so
