@@ -158,13 +158,14 @@ def claude_json_meta(prompt: str, schema: dict, *, timeout: float = 300.0,
     # could hit ARG_MAX -> E2BIG, surfaced misleadingly as "claude not found". STDIN has neither limit.
     # --model (when pinned) is appended LAST so it never lands between --allowedTools and its value
     # (the argv-order the tests assert on — audit H).
-    cmd = ["claude", "-p",
-           "--output-format", "json",
-           "--json-schema", json.dumps(schema),
-           "--allowedTools", allowed,
-           "--strict-mcp-config"] + (["--model", model] if model else [])
+    def _build_cmd(allowed: str) -> list[str]:
+        return ["claude", "-p",
+                "--output-format", "json",
+                "--json-schema", json.dumps(schema),
+                "--allowedTools", allowed,
+                "--strict-mcp-config"] + (["--model", model] if model else [])
 
-    def _run(stdin_prompt: str) -> dict:
+    def _run(stdin_prompt: str, allowed: str = allowed) -> dict:
         # Rate-limit backoff (mirrors the publishers' jittered exponential retry (postiz/zernio)):
         # a 429/503/529 is rejected pre-processing and SAFE to retry. Without this a usage spike turned
         # the whole autonomous run into a silent no-op (one log line per gate). A timeout / hard nonzero
@@ -172,7 +173,7 @@ def claude_json_meta(prompt: str, schema: dict, *, timeout: float = 300.0,
         delay = _RL_BASE_DELAY
         for attempt in range(_MAX_RL_RETRIES + 1):
             try:
-                r = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=timeout, input=stdin_prompt)
+                r = subprocess.run(_build_cmd(allowed), check=False, capture_output=True, text=True, timeout=timeout, input=stdin_prompt)
             except (FileNotFoundError, OSError) as e:
                 raise ToolchainMissingError(
                     f"claude not found on PATH — install Claude Code to run the autonomous responder "
@@ -222,16 +223,45 @@ def claude_json_meta(prompt: str, schema: dict, *, timeout: float = 300.0,
     else:
         env = _run(prompt)
 
+    def _resolve_from_env(e: dict) -> tuple[dict | None, bool]:
+        """Return (parsed object, repair_empty). repair_empty is True when `result` was prose that
+        survived neither json.loads nor _extract_json_object — the vision-finalizer gate signal."""
+        so = e.get("structured_output")
+        if isinstance(so, dict):
+            return so, False
+        result = e.get("result")
+        if isinstance(result, str):
+            try:
+                return json.loads(result), False
+            except Exception:
+                salvaged = _extract_json_object(result)
+                if salvaged is not None:
+                    logger.warning("claude -p result salvaged via JSON-repair (prose-wrapped reply)")
+                    return salvaged, False
+                return None, True
+        return None, False
+
     rep = env.get("model")                                   # the model that actually answered, if reported
     resolved = rep if isinstance(rep, str) and rep.strip() else model   # else fall back to the pinned value
-    so = env.get("structured_output")
-    if isinstance(so, dict):
-        return so, resolved, frames_unread
+    obj, repair_empty = _resolve_from_env(env)
+    if obj is None and images and repair_empty:
+        env = _run("Your previous reply did not include the required JSON object. Respond with ONLY "
+                   "a single JSON object conforming to this schema — no prose, no markdown, no tool calls:\n"
+                   + json.dumps(schema) + "\n\nOriginal task:\n" + prompt, allowed="")
+        rep = env.get("model")
+        resolved = rep if isinstance(rep, str) and rep.strip() else resolved
+        obj, repair_empty = _resolve_from_env(env)
+    if obj is not None:
+        return obj, resolved, frames_unread
     result = env.get("result")
     if isinstance(result, str):
         try:
             return json.loads(result), resolved, frames_unread
         except Exception as e:
+            salvaged = _extract_json_object(result)
+            if salvaged is not None:
+                logger.warning("claude -p result salvaged via JSON-repair (prose-wrapped reply)")
+                return salvaged, resolved, frames_unread
             raise LlmSchemaError(f"claude -p `result` was not JSON: {result[:300]}") from e
     raise LlmSchemaError(f"claude -p envelope had no structured_output or JSON result: {env}")
 
