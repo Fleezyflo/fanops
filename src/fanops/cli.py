@@ -772,6 +772,17 @@ def _heartbeat(cfg: Config, s: dict) -> None:
     get_logger(cfg)("heartbeat", "-", "ok", **hb)
 
 
+def _dep_health_event(cfg: Config) -> None:
+    """MOL-300: red/green dependency-health event beside heartbeat — headless run.log visibility."""
+    from fanops.health_model import build_health_report, report_is_healthy
+    rep = build_health_report(cfg)
+    healthy = report_is_healthy(rep)
+    deps = [{"name": d.name, "ok": d.ok, "detail": d.detail} for d in rep.deps]
+    evt = {"dep_health": "ok" if healthy else "DOWN", "deps": deps}
+    print(json.dumps(evt))
+    get_logger(cfg)("dep_health", "-", "ok" if healthy else "down", deps=deps)
+
+
 def _dispatch(cfg: Config, args) -> int:
     if args.cmd == "status":   return cmd_status(cfg)
     if args.cmd == "recover":
@@ -1005,7 +1016,9 @@ def _dispatch(cfg: Config, args) -> int:
             get_logger(cfg)("hashtags", "-", "refresh_error", err=f"{type(e).__name__}: {str(e)[:120]}")
         # E2: emit one heartbeat for the WHOLE run from the final advance summary (so
         # published_in_run/last_published_age_hours reflect this run incl. the learning pass effect).
-        _heartbeat(cfg, s); print(s); return 0
+        _heartbeat(cfg, s)
+        _dep_health_event(cfg)
+        print(s); return 0
     return 1
 
 if __name__ == "__main__":
