@@ -1,5 +1,8 @@
 # Delegation-only orchestration protocol
 
+> **Just want to use it?** See the one-screen quickstart: [`ORCHESTRATION.md`](../ORCHESTRATION.md). The
+> single command is `python scripts/orchestrate.py start | status | done`. This file is the deep reference.
+
 This directory is the machine-checkable contract behind the `fanops-orchestrator` agent. The orchestrator
 **coordinates**; it never does the work. Every unit of work — investigation/scoping, implementation,
 validation, verification against acceptance criteria, fixing, and any cleanup/conflict-resolution/rebase
