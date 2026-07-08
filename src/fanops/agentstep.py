@@ -60,6 +60,7 @@ def write_request(cfg: Config, *, kind: str, key: str, payload: dict) -> str:
     rp = response_path(cfg, kind, key)
     if rp.exists():
         rp.unlink()
+    clear_attempts(cfg, kind, key)
     return rid
 
 def write_response(cfg: Config, kind: str, key: str, json_text: str) -> None:
@@ -103,6 +104,7 @@ def discard_gate(cfg: Config, kind: str, key: str) -> None:
             p.unlink()
         except FileNotFoundError:
             pass
+    clear_attempts(cfg, kind, key)
 
 def discard_gates_for(cfg: Config, kind: str, key_prefix: str) -> int:
     """Discard every gate of `kind` whose key starts with `key_prefix` — e.g. all of a source's per-pick
