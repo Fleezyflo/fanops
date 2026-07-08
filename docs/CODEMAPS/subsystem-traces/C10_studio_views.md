@@ -215,8 +215,8 @@ Note: `_result.html`, `_publish_outcome.html`, `error.html` are rendered from **
 - `_state_matches(post, state)` — **PURE-READ** (pure predicate). Called by `account_lanes`, `review_matrix`.
 - `_empty_cell_reason(handle, platform, *, targets, affinities, acct)` — **PURE-READ** (pure function, fail-open to `None`). Names why a matrix cell is empty (off-target > budget > no-platform). Called by `review_matrix`.
 - `review_matrix(led, accounts, cfg, *, source_id, now, state=None)` — **PURE-READ**. Builds the moment×account grid in one pass over moments/clips/posts, reusing `_surface` for cell content. Called by `app_routes_review.register_review_routes`.
-- `LaneRow` (`@dataclass`) — one account-lane's per-moment row: moment_id/window/reason/hook/is_cast/preview_url/post. Pure data holder.
-- `AccountLane` (`@dataclass`) — one account's full lane: account/rows/method/cast_count/moment_count/fans_all/zero_cast. Pure data holder.
+- `LaneRow` (`@dataclass`) — one account-lane's per-moment row: moment_id/window/reason/hook/is_cast/preview_url/post. `is_cast` = handle ∈ `Moment.affinities` for that moment (via `_affinity_index`, not post existence). Pure data holder.
+- `AccountLane` (`@dataclass`) — one account's full lane: account/rows/method/cast_count/moment_count/fans_all/zero_cast. `method` is always `None` post-P11 (affinities carry no provenance label). Pure data holder.
 - `LaneView` (`@dataclass`) — `{source_id, source_name, lanes}`. Pure data holder.
 - `account_lanes(led, accounts, cfg, *, source_id, now, state=None)` — **PURE-READ**. Builds the RF6 account-first lane view: one lane per account showing every decided moment's cast state from `Moment.affinities` via `_affinity_index` (not post existence). Called by `app_routes_review.register_review_routes`.
 - `_STATE_TO_BUCKET` (module const dict) — maps the `?state=` query word to a `ReviewCard.bucket` value.

@@ -1,4 +1,4 @@
-<!-- Generated: 2026-07-08 | Method: deterministic AST extraction (.reports/ast_extract.py) + derived call/import graphs (.reports/build_graphs.py) + hand-verified semantic sync | Files scanned: 109/109 src/fanops/*.py @ 05f353d | Token estimate: ~2400 -->
+<!-- Generated: 2026-07-08 | Method: deterministic AST extraction (.reports/ast_extract.py) + derived call/import graphs (.reports/build_graphs.py) + hand-verified semantic sync | Files scanned: 109/109 src/fanops/*.py @ c7df849 | Token estimate: ~2400 -->
 # FanOps Full-Codebase Trace Index
 
 Master index for a zero-omission, function-by-function trace of every module under `src/fanops/`.

@@ -64,14 +64,13 @@ One per (clip, account, platform) posting surface. `parent_id` → Clip.id.
 - `scheduled_time: Optional[str]`, `submission_id: Optional[str]` (fanops_ prefix = idempotency token, not real backend id — see `is_real_submission_id`)
 - `public_url: Optional[str]`, `media_id: Optional[str]` (IG Graph media id), `product_type: Optional[str]`
 - `error_reason`, `metrics: dict` (latest snapshot), `metrics_series: list[dict]` (append-only time series, P3)
-- `render_id: Optional[str]` → Render.id
-- `variant_key`, `variant_hook` (read-only mirror of Render.hook_text)
+- `render_id: Optional[str]` → Render.id (optional pointer to a per-account `Render`; hook text lives on `Render.hook_text`, surfaced in Studio as `variant_hook` — **not** a persisted Post field; removed P9)
 - P1 attribution: `first_frame_kind`, `clip_profile`, `cut_seconds`, `variation_axis`
 - Leg 3 attribution: `top_bias: Optional[bool]`, `publish_hour: Optional[int]`, `publish_dow: Optional[int]`
 - `batch_id: Optional[str]` (denormalized), `created_at`, `published_at`
 - **`@model_validator(mode="after") _enforce_published_url_invariant`** (R1 invariant): `published`/`analyzed`/`retired` states MUST carry a non-empty `public_url`, else raises `ValueError` at construction. `_POST_TERMINAL_REQUIRES_URL = frozenset({published, analyzed, retired})` module constant backs this.
 
-### `Render` (models.py:325-358)
+### `Render` (models.py:407-437)
 Per-account shippable artifact, content-addressed child of Clip. `clip_id` → Clip.id.
 - `id` (child_id of clip+hook+band+framing), `clip_id`, `account: str`, `surface_key: str`
 - `hook_text: Optional[str]` (single source of truth for burned hook)

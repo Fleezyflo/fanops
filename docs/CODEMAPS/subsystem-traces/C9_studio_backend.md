@@ -325,13 +325,11 @@ via `golive.py`, line 158-164), `GET /golive/connect` / `GET /golive/accounts` /
   (default) or an injected `model`, re-runs `caption.brand_risk_flag` on the result (same guard as
   ingest — no bypass), then re-guards + writes inside a **fresh** short transaction (the model call
   can take ~180s outside any lock).
-- `reburn_hook(cfg, post_id, hook, *, now=None)` (lines 172-241) — **ffmpeg subprocess, no LLM**.
-  Gated on `cfg.creative_variation` (line 183-184). Computes the content-addressed render id via
-  `account_render_spec`, attempts an account-specific re-cut (`render_account_cut`) or falls back
-  to `overlay.burn_hook_only` — both run *outside* the lock; the `Render` entity is
-  added/pointed-at inside a short re-guarded transaction. `hook_burn_failed` is surfaced as
-  `ok=True, detail.hook_burned=False` (a warning, not a rollback, since this is an edit not an
-  approve).
+- `reburn_hook(cfg, post_id, hook, *, now=None)` (lines 176-212) — **ffmpeg subprocess, no LLM (P9)**.
+  Updates `Moment.hook` for the clip's parent moment and re-renders via `render_moment` (owner-moment
+  hook burned onto the shared clip — no per-post `variant_hook` field). Rolls back on render error or
+  `hook_burn_failed`. Not gated on `cfg.creative_variation` (that env var has no `getenv` in `config.py`;
+  Studio hardcodes `creative_variation=False`).
 - `approve_candidate(cfg, eid)` (lines 244-260) — **filesystem move only, no ledger**. Validates
   `eid` has no `/`, `\`, or `..` before constructing a path under `cfg.review`, then
   `src.rename(dst)` into `approved/`.
@@ -386,25 +384,13 @@ via `golive.py`, line 158-164), `GET /golive/connect` / `GET /golive/accounts` /
 - `release_held_clip(cfg, clip_id)` (lines 985-995) — browser twin of `fanops unhold`; rejects a
   non-held clip.
 
-### `actions_approve.py` — the approval spine (burn-on-approve)
+### `actions_approve.py` — the approval spine (P9: promote only — render already done upstream)
 
-- `_acct_for(accts, handle)` (lines 24-25) — pure lookup.
-- `_warm_renders(cfg, snap, ids, accts)` (lines 27-65) — **lock-free** parallel (`ThreadPoolExecutor`,
-  up to 4 workers) ffmpeg pre-render of every distinct (clip, hook) variant a batch of posts needs,
-  off a throwaway `Ledger.load` snapshot. Per-post fail-open: a render error is logged and just
-  omitted from the returned plan map.
-- `_adopt_render(led, cfg, post, plan, accts)` (lines 67-103) — **in-lock**. Adopts a warmed render
-  (or leaves the post un-materialized if the hook changed mid-flight — never burns ffmpeg under the
-  flock). Enforces the per-platform duration cap (`PLATFORM_MAX_SECONDS`) on an account-cut render —
-  over-cap sets `post.error_reason` and returns without pointing the post at media (spine's
-  no-media guard then skips approving it).
-- `_approve_ids_with_render(cfg, *, resolve_ids, now, detail)` (lines 105-161) — **the shared
-  approve engine**. Warms renders lock-free, then in one transaction: resolves ids *again* in-lock
-  (guards against a concurrent state change), computes a batch-aware spread
-  (`suggest_times_for_batch`), and for each id either adopts its render + calls
-  `led.approve_post(pid, now_iso=..., suggested_iso=...)`, or (if the render couldn't materialize)
-  stamps `RENDER_PENDING_REASON` and skips — **never queues a variant post without its burned
-  file**. Audited on success (`write_audit`).
+- `_approve_ids_with_render(cfg, *, resolve_ids, now, detail)` (lines 17-60) — **the shared
+  approve engine (P9)**. In one transaction: resolves ids in-lock, enforces per-platform duration cap
+  (`PLATFORM_MAX_SECONDS`), computes batch-aware schedule (`suggest_times_for_batch`), and calls
+  `led.approve_post` for each id. No render warm/materialize step — owner-moment clip is already rendered
+  upstream. Audited on success (`write_audit`).
 - `BULK_APPROVE_CONFIRM_AT = 15` (line 163) — bulk-approve confirm threshold.
 - `approve_posts(cfg, ids, *, now=None, confirmed=False)` (lines 165-174) — **confirmed when count
   > 15**, else refused with an error naming the count. This is the human approval gate reached
@@ -414,12 +400,10 @@ via `golive.py`, line 158-164), `GET /golive/connect` / `GET /golive/accounts` /
 - `_warm_hooked_render(cfg, moment_id, aspect, hook)` (lines 198-217) — lock-free pre-render of a
   restored-hook clip via `render_moment` on a throwaway snapshot; returns `False` only on a genuine
   ffmpeg failure (never silently swallowed — logged).
-- `approve_with_hook(cfg, clip_id, *, now=None)` (lines 219-271) — **refuses outright when
-  `cfg.creative_variation` is ON** (line 228-230 — per-surface hooks own the burn then). Restores
-  `moment.hook`, re-renders (fingerprint-skip adopts the lock-free warm), **rolls back the whole
-  transaction** if the render errors or if `rc.hook_burn_failed` (a successful-but-textless render
-  would otherwise ship the post clean without the hook the operator explicitly asked for — the
-  docstring calls this out as CRITICAL). Then approves every `awaiting_approval` post of the clip.
+- `approve_with_hook(cfg, clip_id, *, now=None)` (lines 102-138 in `actions_approve.py`) — restores
+  `moment.hook` from `hook_removed`, re-renders via `render_moment` (rolls back the whole transaction
+  on render error or `hook_burn_failed`), then approves every `awaiting_approval` post on the clip.
+  No `creative_variation` gate (P9 owner-moment model).
 - `_approve_matching(cfg, pred=None, *, pred_for=None, now=None, detail=None)` (lines 273-287) —
   the shared spine for every scoped bulk-approve (`approve_clip`/`approve_batch`/`approve_account`/
   `approve_moment`), delegating to `_approve_ids_with_render`.
@@ -599,14 +583,10 @@ via `golive.py`, line 158-164), `GET /golive/connect` / `GET /golive/accounts` /
 
 ### `preview_media.py` — WYSIWYG preview media resolution
 
-- `preview_media_path(cfg, led, post_id)` (lines 10-47) — **pure read + lock-free ffmpeg burn on
-  demand**. Resolution ladder: (1) `post.render_id` → existing `Render.path` if it exists on disk;
-  (2) if `post.variant_hook` and `cfg.creative_variation`, compute the deterministic render path
-  via `account_render_spec` and return it if already rendered, else **actually render it now**
-  via `render_account_file(..., caller="preview")` (a real ffmpeg call, not just a lookup) so the
-  Review WYSIWYG can show the burned hook before approval; (3) fall back to `media_urls[0]` (local
-  file only) or the base `clip.path`. All exception paths are swallowed with `except Exception:
-  pass` (lines 31-32, 36-38) — fail-open to the next rung of the ladder, never a crash.
+- `preview_media_path(cfg, led, post_id)` (lines 8-27) — **pure read, no on-demand burn (P9)**.
+  Resolution ladder: (1) `post.render_id` → existing `Render.path` if on disk; (2) `post.media_urls[0]`
+  when it is a local `file://` or bare path that exists; (3) fall back to the shared `clip.path`.
+  Owner-moment hook is already burned at render time — preview serves what exists, never shells ffmpeg.
 
 ## Cluster-specific analysis
 
