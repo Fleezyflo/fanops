@@ -312,3 +312,43 @@ class TestExtractJsonObject:
     def test_nested_object(self):
         text = '{"outer": {"inner": [1, 2]}}'
         assert _extract_json_object(text) == {"outer": {"inner": [1, 2]}}
+
+
+# --- MOL-241: wire JSON-repair into result-resolution tail ---
+
+def test_claude_json_salvages_prose_wrapped_result(mocker):
+    picks = {"picks": [{"id": "m1", "score": 0.9}]}
+    prose = f'Here are my picks: {json.dumps(picks)}'
+    envelope = {"structured_output": None, "result": prose, "session_id": "s"}
+    class R: returncode = 0; stdout = json.dumps(envelope); stderr = ""
+    mocker.patch("fanops.llm.subprocess.run", return_value=R())
+    assert claude_json("pick moments", _SCHEMA) == picks
+
+def test_claude_json_salvage_logs_warning_breadcrumb(mocker, caplog):
+    import logging
+    picks = {"x": 7}
+    prose = f'prose {json.dumps(picks)}'
+    envelope = {"structured_output": None, "result": prose}
+    class R: returncode = 0; stdout = json.dumps(envelope); stderr = ""
+    mocker.patch("fanops.llm.subprocess.run", return_value=R())
+    with caplog.at_level(logging.WARNING, logger="fanops.llm"):
+        claude_json("q", _SCHEMA)
+    salvage = [r for r in caplog.records if "salvaged via JSON-repair" in r.message]
+    assert len(salvage) == 1
+
+def test_claude_json_happy_path_no_salvage_warning(mocker, caplog):
+    import logging
+    envelope = {"structured_output": {"x": 7}, "result": '{"x": 7}'}
+    class R: returncode = 0; stdout = json.dumps(envelope); stderr = ""
+    mocker.patch("fanops.llm.subprocess.run", return_value=R())
+    with caplog.at_level(logging.WARNING, logger="fanops.llm"):
+        assert claude_json("q", _SCHEMA) == {"x": 7}
+    assert not any("salvaged via JSON-repair" in r.message for r in caplog.records)
+
+def test_claude_json_raises_schema_error_when_repair_fails(mocker):
+    from fanops.llm import LlmSchemaError
+    envelope = {"structured_output": None, "result": "prose with no json object"}
+    class R: returncode = 0; stdout = json.dumps(envelope); stderr = ""
+    mocker.patch("fanops.llm.subprocess.run", return_value=R())
+    with pytest.raises(LlmSchemaError, match="was not JSON"):
+        claude_json("q", _SCHEMA)
