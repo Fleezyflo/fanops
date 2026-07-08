@@ -1,8 +1,8 @@
 # FanOps Lifecycle — Full-Picture Audit
 
 > **Superseded for casting/routing and live fan-out arithmetic** by [fresh-ingestion-trace.md](fresh-ingestion-trace.md)
-> (verified 2026-07-07, post-P11 single-owner model). This document remains a dated 2026-06-27 maximum-depth
-> audit snapshot — do not treat its casting-stage claims as live.
+> (verified 2026-07-08 @ `0d46e72`, post-P11 single-owner model). This document remains a dated 2026-06-27 maximum-depth
+> audit snapshot — do not treat its casting-stage claims, `account_selection_admits` risks, or `casting.py` line refs as live.
 
 > Maximum-depth read-only audit of the entire production pipeline (ingest → transcribe → asset-prep → moments → hooks → casting → render/caption → structural-hooks → culmination + the cross-cutting spine).
 > Method: 9 parallel per-cluster deep-reads → adversarial verify on every finding → cross-stage completeness critic → synthesis. Generated 2026-06-27.

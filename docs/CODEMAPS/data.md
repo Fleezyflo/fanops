@@ -39,7 +39,8 @@ No database. ONE JSON ledger + operator-editable control files, all under the da
   `published_at` — old ledgers load clean, proven on the real 51-post ledger); a NEWER on-disk version →
   `_NewerSchema` refuses to load (exit 2) rather than silently drop fields. New OPTIONAL entity fields
   (Moment.{hook_strategy, intro_matches, affinities}, StitchPlan.*, Source.{created_at, batch_id}, Post.
-  {created_at, published_at, batch_id, variant_hook}, Batch.*, Render.*, SelectionFact.*) ride pydantic defaults. Inner dicts of
+  {created_at, published_at, batch_id}, Batch.*, Render.*) ride pydantic defaults. (`SelectionFact.*` /
+  `AccountSelection.*` **removed v11** — historical only.) Inner dicts of
   variant_streaks/tag_log remain untyped (known gap).
 
 ## Units & lifecycles (models.py, pydantic)

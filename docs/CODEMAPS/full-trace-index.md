@@ -1,4 +1,4 @@
-<!-- Generated: 2026-07-07 | Method: deterministic AST extraction (.reports/ast_extract.py) + derived call/import graphs (.reports/build_graphs.py) + hand-verified semantic sync | Files scanned: 109/109 src/fanops/*.py | Token estimate: ~2400 -->
+<!-- Generated: 2026-07-08 | Method: deterministic AST extraction (.reports/ast_extract.py) + derived call/import graphs (.reports/build_graphs.py) + hand-verified semantic sync | Files scanned: 109/109 src/fanops/*.py | Token estimate: ~2400 -->
 # FanOps Full-Codebase Trace Index
 
 Master index for a zero-omission, function-by-function trace of every module under `src/fanops/`.
@@ -15,8 +15,8 @@ this file is the raw coverage ledger and anomaly index.
 |---|---|---|
 | `structural_index.json` | Every module's imports/functions/classes/methods/module-level calls/line numbers, AST-parsed | `.reports/` |
 | `import_graph.json` | Per-module `imports_from` / `imported_by`, resolved incl. relative imports | `.reports/` |
-| `call_graph.json` | Name-based reverse call graph: 1,067 callables, each with `calls`/`called_by_in_repo` | `.reports/` |
-| `unreferenced_candidates.json` | 55 best-effort dead-code leads (excludes dunders/decorated/tests) — **leads, not verdicts**; see Dead-code below | `.reports/` |
+| `call_graph.json` | Name-based reverse call graph: 1,318 callables, each with `calls`/`called_by_in_repo` | `.reports/` |
+| `unreferenced_candidates.json` | 356 best-effort dead-code leads (excludes dunders/decorated/tests) — **leads, not verdicts**; see Dead-code below | `.reports/` |
 | `ruff_report.json` | Full-repo `ruff check` — **0 findings against src/** (2 historical findings were in the analysis scratch script itself, fixed) | `.reports/` |
 | `ast_extract.py` / `build_graphs.py` | The two extractor scripts themselves (stdlib-only, re-runnable) | `.reports/` |
 
@@ -46,7 +46,7 @@ union − 109 paths = ∅, zero paths assigned twice).
 | C9 | Studio backend (Flask routes + actions) | studio/{__init__,app,app_routes_golive,app_routes_live,app_routes_personas,app_routes_review,app_routes_run,app_routes_schedule,actions,actions_approve,actions_casting,actions_common,actions_run,actions_wipe,golive,personas,preview_media} (17) | [C9_studio_backend.md](subsystem-traces/C9_studio_backend.md) | 892 |
 | C10 | Studio views (read-only projections) | studio/{views,views_common,views_live,views_results,views_review} (5) | [C10_studio_views.md](subsystem-traces/C10_studio_views.md) | 302 |
 
-**109/109 modules covered. 3,646 total lines of per-function trace documentation.**
+**109/109 modules covered. 3,655 total lines of per-function trace documentation.**
 
 ## Data-flow spine (cluster → cluster)
 
@@ -164,7 +164,7 @@ are low-traffic paths (wipe-safety check, preview rendering, one persona-store l
 | C1 | 10 | ~90 (full state-machine + ~55 env vars enumerated) |
 | C2 | 9 | ~55 |
 | C3 | 8 | ~95 (incl. full reframe/render ladder) |
-| C4 | 10 | ~75 |
+| C4 | 9 | ~75 |
 | C5 | 9 | ~68 |
 | C6 | 17 | ~140 (largest single cluster by file count) |
 | C7 | 12 | ~68 |
@@ -172,9 +172,9 @@ are low-traffic paths (wipe-safety check, preview rendering, one persona-store l
 | C9 | 17 | ~150 (largest single cluster by trace length, 892 lines) |
 | C10 | 5 | ~60 |
 
-Totals reconcile against the deterministic count: 889 top-level functions + 178 class methods
-(113 classes) = 1,067 callables in `call_graph.json`, matching the AST extractor's structural
-index exactly (108/108 modules parsed with zero AST errors).
+Totals reconcile against the deterministic count: 1,138 top-level functions + 180 class methods
+(111 classes) = 1,318 callables in `call_graph.json`, matching the AST extractor's structural
+index exactly (109/109 modules parsed with zero AST errors).
 
 ## How to regenerate
 
