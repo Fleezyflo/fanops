@@ -90,7 +90,7 @@ class Config:
     def __init__(self, root: Path | str | None = None):
         self.root = Path(root) if root else Path.cwd()
         load_dotenv(self.root / ".env", override=True)   # .env is operator truth — beat stale shell env (Studio restart)
-        self._settings = Settings()                      # MOL-292: fresh typed env read every Config() (live-reread)
+        Settings()                                       # eager validate — bad operator numerics fail LOUD at construct
         self.base = self.root / "MohFlow-FanOps"
         for attr, name in _STAGE.items():
             setattr(self, attr, self.base / name)
@@ -111,6 +111,12 @@ class Config:
         self.timing_bias_path = self.control / "timing_bias.json"  # Leg 3 (timing): the reach-winning operator-local publish HOUR prior; absent -> no timing bias (byte-identical). apply_timing_bias writes it, surface_time's caller reads it (window-clamped)
         self.learn_doctor_path = self.control / "learn_doctor.json"   # F2 read-only learning field-shape verdict; M4 gates on it
         self.log_path = self.reports / "run.log"
+
+    @property
+    def _settings(self) -> Settings:
+        # MOL-292: typed env boundary — rebuilt on every read so go-live dual-writes (os.environ +
+        # .env) and test monkeypatches are visible without a new Config() or process restart.
+        return Settings()
 
     def render_path(self, batch_id, source_id, render_id: str, aspect) -> str:
         """Per-account Render file location. Hierarchical under clips/ by (batch, source) so every
