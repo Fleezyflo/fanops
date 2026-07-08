@@ -27,7 +27,6 @@
   - `dryrun` (default, offline, file:// media, never publishes)
   - `postiz` (Postiz self-hosted, the headline live IG path, operator-gated via Studio Go-Live tab)
   - `zernio` (hosted TikTok poster)
-  - (`rest`/`mcp` Blotato posters were deleted in the Blotato-removal leg — codemap `insights-culmination.md`)
 
 ## Python deps (pyproject)
 
