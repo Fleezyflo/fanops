@@ -539,6 +539,23 @@ def cmd_daemon(cfg: Config, args) -> int:
         print(f"daemon: {e}", file=sys.stderr)
         return 2
 
+def cmd_init(cfg: Config, args) -> int:
+    """MOL-303: thin setup walk — doctor checklist + golive setters, idempotent/resumable."""
+    from fanops.init_flow import run_init
+    res = run_init(cfg, postiz_url=getattr(args, "postiz_url", "") or "",
+                   postiz_key=getattr(args, "postiz_key", "") or "",
+                   go_live=getattr(args, "go_live", False),
+                   validate_learning=getattr(args, "validate_learning", False))
+    print(f"fanops init — setup={res['state']} next={res['next']}")
+    for s in res["steps"]:
+        print(f"  · {s}")
+    if res["doctor_clean"]:
+        print("  readiness -> doctor-clean")
+    else:
+        print(f"  still needs work ({res['failed_checks']} check(s) failing) — run `fanops doctor`")
+    return 0 if res["doctor_clean"] else 1
+
+
 def cmd_autopilot(cfg: Config, args) -> int:
     # One command -> autonomous: enable the llm responder (durably, in .env) + install the supervising
     # daemon, then print a readiness report. dryrun by default (publishes nothing); going
@@ -611,6 +628,11 @@ def main(argv: list[str] | None = None) -> int:
     p_doctor.add_argument("--fix-routing", action="store_true",
                           help="(R2) READ-ONLY: list every accounts.json (handle, platform) routing-drift state with a proposed fix")
     p_doctor.add_argument("--json", action="store_true", help="machine-readable health JSON (exit 1 when unhealthy)")
+    p_init = sub.add_parser("init", help="walk a fresh checkout to doctor-clean ready-to-go-live")
+    p_init.add_argument("--postiz-url", default="", help="Postiz instance URL (optional; connects when set)")
+    p_init.add_argument("--postiz-key", default="", help="Postiz public API key (optional)")
+    p_init.add_argument("--go-live", action="store_true", help="optionally flip live via golive.go_live (all gates apply)")
+    p_init.add_argument("--validate-learning", action="store_true", help="optionally run golive.validate_learning")
     p_health = sub.add_parser("health", help="runtime dependency health (docker/postiz/zernio) from the unified model")
     p_health.add_argument("--json", action="store_true", help="machine-readable JSON (exit 1 when unhealthy)")
     sub.add_parser("publish-queue", help="list queued posts to publish BY HAND (manual / no-service free path)")
@@ -844,6 +866,7 @@ def _dispatch(cfg: Config, args) -> int:
             from fanops.lever_docs import cmd_lever_docs
             return cmd_lever_docs(cfg)
         return 2
+    if args.cmd == "init":     return cmd_init(cfg, args)
     if args.cmd == "health":   return cmd_health(cfg, args)
     if args.cmd == "config":   return cmd_config(cfg)
     if args.cmd == "doctor":   return cmd_doctor(cfg, args)
