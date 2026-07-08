@@ -84,7 +84,7 @@ Downstream of cataloguing, `transcribe.transcribe_source` (called from `pipeline
 - **Class `Band(NamedTuple)`** — `lo: float`, `hi: float`; property `span` = midpoint `(lo+hi)/2`.
 - `TALK = Band(12.0, 22.0)`, `SONG = Band(18.0, 35.0)`, `SHORT = Band(8.0, 15.0)`, `MEDIUM = Band(16.0, 26.0)`, `LONG = Band(28.0, 45.0)` — module-level constant instances.
 - `_PROFILES` (dict), `PROFILE_NAMES = frozenset(_PROFILES)` — the validatable set of profile name strings.
-- `band_for(profile: str | None) -> Band` — case-insensitive, whitespace-tolerant lookup in `_PROFILES`; unknown/None/empty → `TALK` (safe default, never raises). Pure. Called from many places outside this cluster: `accounts.Accounts.validate`, `clip.render_account_cut`/`render_moment`, `crosspost.account_render_spec`, `moments.request_moment_hooks`, `persona_directives.*`, `persona_levers.build_catalog`, `prompts.moment_pick_prompt`, `studio.views_review._length_label`.
+- `band_for(profile: str | None) -> Band` — case-insensitive, whitespace-tolerant lookup in `_PROFILES`; unknown/None/empty → `TALK` (safe default, never raises). Pure. Called from many places outside this cluster: `accounts.Accounts.validate`, `clip.render_account_cut`/`render_moment`, `crosspost.render_spec`, `moments.request_moment_hooks`, `persona_directives.*`, `persona_levers.build_catalog`, `prompts.moment_pick_prompt`, `studio.views_review._length_label`.
 
 ### frames.py — pure first-frame strength scoring (no subprocess itself; consumed by clip.py which owns the ffmpeg call)
 
