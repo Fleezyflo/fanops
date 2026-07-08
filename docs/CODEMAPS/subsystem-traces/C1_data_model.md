@@ -85,7 +85,7 @@ Per-account shippable artifact, content-addressed child of Clip. `clip_id` → C
 ### `SelectionFact` / `AccountSelection` — **REMOVED v11 (P12/MOL-154)**
 
 > Frozen models deleted from `models.py`. Legacy `account_selections` / `selection_facts` ledger maps are
-> dropped on load via `_migrate_v11_drop_selection_maps` (`ledger.py:179`). Crosspost routing now reads
+> dropped on load via `_migrate_v10_drop_selections` (`ledger.py:178-183`). Crosspost routing now reads
 > `Moment.affinities` only (`casting.affinity_admits`). v8→v9 lift migration (`_migrate_v8_account_selections`)
 > remains for old ledgers upgrading through v9 but the maps do not survive v11.
 
@@ -159,7 +159,7 @@ Single source of truth persistence layer: one JSON document holding id→unit ma
 - `_migrate_v3_created_at(raw) -> dict` (ledger.py:25-55) — v2→v3 pure-dict transform, backfills `created_at` on Source/Post rows. Never raises.
 - `_migrate_v4_metrics_series(raw) -> dict` (ledger.py:58-77) — v3→v4, back-fills one `"legacy"`-tagged metrics_series row. Never raises.
 - `_migrate_v8_account_selections(raw) -> dict` (ledger.py:148-175) — v8→v9 hop (lifts legacy affinities into transient `account_selections`; dropped again at v11).
-- `_migrate_v11_drop_selection_maps(raw) -> dict` (ledger.py:179+) — v10→v11, drops `account_selections` + `selection_facts`.
+- `_migrate_v10_drop_selections(raw) -> dict` (ledger.py:178-183) — v10→v11, drops `account_selections` + `selection_facts`.
 - `_migrate(raw, from_version) -> dict` (ledger.py:209-221) — hop-chains through `_MIGRATIONS` dict; raises `ControlFileError` on a chain gap.
 - `_MIGRATIONS` dict (ledger.py:182-191) — version N ← transform table, versions 1-10.
 - `SCHEMA_VERSION = 11` (ledger.py) — v11 drops retired selection maps (P12/MOL-154).
@@ -173,34 +173,34 @@ Single source of truth persistence layer: one JSON document holding id→unit ma
 - `_fallback_iso(suggested_iso, now_iso) -> str` (ledger.py:259-272) — pure time helper for `approve_post`'s fallback logic.
 
 **`Ledger` class:**
-- `__init__(cfg)` (ledger.py:276-307) — initializes empty dict maps.
-- `Ledger.load(cfg) -> Ledger` (classmethod, ledger.py:309-350) — reads, checks schema_version, migrates, dedupes, constructs models. Wraps any exception as `ControlFileError`. Called by 60+ sites.
-- `Ledger.transaction(cfg, timeout=None)` (classmethod contextmanager, ledger.py:352-370) — holds `_file_lock` across load-mutate-save. Called by ~40 sites.
-- `_save_unlocked()` (ledger.py:372-405) — writes whole ledger dict to `.json.tmp`, chmod 0o600 best-effort, `os.replace` atomic.
-- `save()` (ledger.py:407-414) — standalone save, acquires lock itself.
-- `Ledger.snapshot(cfg, now=None) -> Path` (classmethod, ledger.py:421-434) — timestamped byte-copy under lock.
-- `Ledger.restore_snapshot(cfg, snapshot_path)` (classmethod, ledger.py:436-447) — atomic restore under lock.
-- Idempotent adds (ledger.py:450-459): `add_source`, `add_moment`, `add_clip`, `add_post`, `add_render`, `get_render`, `add_selection_fact`, `get_selection_fact`, `add_imported_media`, `get_imported_media`.
-- `add_account_selection(s)` (ledger.py:460-468) — normalizes handle, dedups @-aliases, overwrites canonical slot.
-- `account_selection_for`, `selections_of_source`, `drop_account_selection` (ledger.py:469-474) — query/delete helpers.
-- `moment_ids_selected_for(source_id, account) -> set` (ledger.py:475-482) — read-model only, never the gate.
-- `cast_handles_for(source_id, moment_id) -> list` (ledger.py:483-491) — display helper for Review matrix.
-- Typed state setters (ledger.py:497-500): `set_source_state`, `set_moment_state`, `set_clip_state`, `set_post_state` — immutable `model_copy`.
-- `approve_post(uid, *, now_iso, suggested_iso=None)` (ledger.py:503-519) — the human-approval gate.
-- `reject_post(uid)` (ledger.py:520-523) — no-op unless awaiting_approval.
-- `unapprove_post(uid)` (ledger.py:524-527) — no-op unless queued.
-- Queries (ledger.py:530-555): `already_seen`, `sources_in_state`, `clips_in_state`, `posts_in_state`, `moments_of`, `clips_of`, `posts_of`, `posts_of_account`, `selection_facts_of_account`, `selection_facts_of_moment` — O(n) scans.
-- `reconcile_moments(source_id, keep)` (ledger.py:558-576) — upsert+cascade-delete core.
-- `_prune_orphan_selection_ids(source_id)` (ledger.py:578-595) — post-reconcile selection cleanup.
-- `_delete_moment_cascade(moment_id)` (ledger.py:614-636) — cascade delete/retire logic.
-- `retire_clip`, `is_retired_clip`, `is_retired_moment` (ledger.py:639-647).
-- `retire_source(source_id)` (ledger.py:650-657) — cascades via empty-keep reconcile; leaves file on disk deliberately.
-- `is_retired_source(source_id)` (ledger.py:658-660).
-- `rebuild_catalog(cfg)` (ledger.py:662-679) — reconciles disk vs ledger, orphan files become `discovered` sources.
-- `add_stitch_plan`, `approve_stitch_plan`, `dismiss_stitch_plan` (ledger.py:682-691) — guarded state-check no-ops.
-- `add_batch`, `get_batch`, `batches_for_account` (ledger.py:694-699).
+- `__init__(cfg)` (ledger.py:320) — initializes empty dict maps.
+- `Ledger.load(cfg) -> Ledger` (classmethod, ledger.py:348) — reads, checks schema_version, migrates, dedupes, constructs models. Wraps any exception as `ControlFileError`. Called by 60+ sites.
+- `Ledger.transaction(cfg, timeout=None)` (classmethod contextmanager, ledger.py:390) — holds `_file_lock` across load-mutate-save. Called by ~40 sites.
+- `_save_unlocked()` (ledger.py:408) — writes whole ledger dict to `.json.tmp`, chmod 0o600 best-effort, `os.replace` atomic.
+- `save()` (ledger.py:441) — standalone save, acquires lock itself.
+- `Ledger.snapshot(cfg, now=None) -> Path` (classmethod, ledger.py:456) — timestamped byte-copy under lock.
+- `Ledger.restore_snapshot(cfg, snapshot_path)` (classmethod, ledger.py:472) — atomic restore under lock.
+- Idempotent adds (ledger.py:485-492): `add_source`, `add_moment`, `add_clip`, `add_post`, `add_render`, `get_render`, `add_imported_media`, `get_imported_media`.
+- Typed state setters (ledger.py:498-501): `set_source_state`, `set_moment_state`, `set_clip_state`, `set_post_state` — immutable `model_copy`.
+- `approve_post(uid, *, now_iso, suggested_iso=None)` (ledger.py:504-519) — the human-approval gate.
+- `reject_post(uid)` (ledger.py:521-523) — no-op unless awaiting_approval.
+- `unapprove_post(uid)` (ledger.py:525-527) — no-op unless queued.
+- Queries (ledger.py:531-547): `already_seen`, `sources_in_state`, `clips_in_state`, `posts_in_state`, `moments_of`, `clips_of`, `posts_of`, `posts_of_account` — O(n) scans.
+- `reconcile_moments(source_id, keep)` (ledger.py:555-589) — upsert+cascade-delete core.
+- `_delete_moment_cascade(moment_id)` (ledger.py:591-620) — cascade delete/retire logic.
+- `retire_clip`, `is_retired_clip`, `is_retired_moment` (ledger.py:622-631).
+- `retire_source(source_id)` (ledger.py:633-639) — cascades via empty-keep reconcile; leaves file on disk deliberately.
+- `is_retired_source(source_id)` (ledger.py:641-643).
+- `rebuild_catalog(cfg)` (ledger.py:645-663) — reconciles disk vs ledger, orphan files become `discovered` sources.
+- `add_stitch_plan`, `approve_stitch_plan`, `dismiss_stitch_plan` (ledger.py:665-675) — guarded state-check no-ops.
+- `add_batch`, `get_batch`, `batches_for_account` (ledger.py:677-683).
 
-Class attributes: `_LIVE_CLIP_STATES`, `_LIVE_POST_STATES`, `_PROTECTED_POST_STATES` (ledger.py:601-612).
+> **Removed v11 (P12/MOL-154):** `add_selection_fact`, `get_selection_fact`, `add_account_selection`,
+> `account_selection_for`, `selections_of_source`, `drop_account_selection`, `moment_ids_selected_for`,
+> `cast_handles_for`, `selection_facts_of_account`, `selection_facts_of_moment`, `_prune_orphan_selection_ids`.
+> Crosspost routing reads `Moment.affinities` via `casting.affinity_admits` only.
+
+Class attributes: `_LIVE_CLIP_STATES`, `_LIVE_POST_STATES`, `_PROTECTED_POST_STATES` (ledger.py:593-600).
 
 ### `ledger_wipe.py` — purpose
 The "fall-away" (M4 wipe) — removes ledger rows whose entire descendant closure carries no kept post. Snapshot-first, code-enforced gates.
@@ -270,7 +270,7 @@ Per-stage producer lock (mutex) keyed by `(stage, source_id)`.
 
 ## Cross-cutting: locking/atomicity/persistence contract
 
-**File format:** one JSON document at `00_control/ledger.json` with `{"schema_version": int, "sources": {}, "moments": {}, "clips": {}, "posts": {}, "tag_log": {}, "variant_streaks": {}, "stitch_plans": {}, "batches": {}, "renders": {}, "selection_facts": {}, "account_selections": {}, "imported_media": {}}`.
+**File format:** one JSON document at `00_control/ledger.json` with `{"schema_version": int, "sources": {}, "moments": {}, "clips": {}, "posts": {}, "tag_log": {}, "variant_streaks": {}, "stitch_plans": {}, "batches": {}, "renders": {}, "imported_media": {}}`. (`selection_facts` / `account_selections` were dropped at SCHEMA_VERSION 11 — P12/MOL-154.)
 
 **Locking strategy — confirmed `fcntl.flock`-based, exactly per CLAUDE.md:**
 - `ledger._file_lock` (ledger.py:224-256): `fcntl.flock(fd, LOCK_EX|LOCK_NB)` poll loop, 30s default timeout, `LockBusyError` on timeout. Kernel releases lock on process death — self-healing, unlike an `O_EXCL` sentinel file.

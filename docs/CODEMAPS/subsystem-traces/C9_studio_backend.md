@@ -325,13 +325,10 @@ via `golive.py`, line 158-164), `GET /golive/connect` / `GET /golive/accounts` /
   (default) or an injected `model`, re-runs `caption.brand_risk_flag` on the result (same guard as
   ingest — no bypass), then re-guards + writes inside a **fresh** short transaction (the model call
   can take ~180s outside any lock).
-- `reburn_hook(cfg, post_id, hook, *, now=None)` (lines 172-241) — **ffmpeg subprocess, no LLM**.
-  Gated on `cfg.creative_variation` (line 183-184). Computes the content-addressed render id via
-  `account_render_spec`, attempts an account-specific re-cut (`render_account_cut`) or falls back
-  to `overlay.burn_hook_only` — both run *outside* the lock; the `Render` entity is
-  added/pointed-at inside a short re-guarded transaction. `hook_burn_failed` is surfaced as
-  `ok=True, detail.hook_burned=False` (a warning, not a rollback, since this is an edit not an
-  approve).
+- `reburn_hook(cfg, post_id, hook, *, now=None)` (lines 176-241) — **ffmpeg subprocess, no LLM**.
+  P9 owner-moment re-burn: updates `m.hook` and re-renders the shared clip via `render_moment` (no
+  `cfg.creative_variation` gate — that property was removed; per-account differentiation is intrinsic
+  when `account_casting` is ON). Runs outside the lock; transaction adopts the warm render.
 - `approve_candidate(cfg, eid)` (lines 244-260) — **filesystem move only, no ledger**. Validates
   `eid` has no `/`, `\`, or `..` before constructing a path under `cfg.review`, then
   `src.rename(dst)` into `approved/`.
@@ -414,12 +411,10 @@ via `golive.py`, line 158-164), `GET /golive/connect` / `GET /golive/accounts` /
 - `_warm_hooked_render(cfg, moment_id, aspect, hook)` (lines 198-217) — lock-free pre-render of a
   restored-hook clip via `render_moment` on a throwaway snapshot; returns `False` only on a genuine
   ffmpeg failure (never silently swallowed — logged).
-- `approve_with_hook(cfg, clip_id, *, now=None)` (lines 219-271) — **refuses outright when
-  `cfg.creative_variation` is ON** (line 228-230 — per-surface hooks own the burn then). Restores
-  `moment.hook`, re-renders (fingerprint-skip adopts the lock-free warm), **rolls back the whole
-  transaction** if the render errors or if `rc.hook_burn_failed` (a successful-but-textless render
-  would otherwise ship the post clean without the hook the operator explicitly asked for — the
-  docstring calls this out as CRITICAL). Then approves every `awaiting_approval` post of the clip.
+- `approve_with_hook(cfg, clip_id, *, now=None)` (lines 102-138) — restores `moment.hook` from
+  `hook_removed`, re-renders via `render_moment` (rolls back the transaction on render error or
+  `hook_burn_failed`), then approves every `awaiting_approval` post of the clip. No
+  `creative_variation` gate (removed — owner-moment hook is always the burn source under P9).
 - `_approve_matching(cfg, pred=None, *, pred_for=None, now=None, detail=None)` (lines 273-287) —
   the shared spine for every scoped bulk-approve (`approve_clip`/`approve_batch`/`approve_account`/
   `approve_moment`), delegating to `_approve_ids_with_render`.
@@ -535,10 +530,11 @@ via `golive.py`, line 158-164), `GET /golive/connect` / `GET /golive/accounts` /
 - `add_account(cfg, handle, platforms, persona="")` (lines 198-216) — onboards a new account via
   `accounts.add_account`; validates non-blank handle + ≥1 platform before any write.
 - `set_per_account_hooks`, `set_account_casting`, `set_ai_responder`, `set_clip_profile` (lines
-  219-296) — each a single `_dual_write` of one named env var, each documented as **not** a
-  publish-affecting switch (creative_variation/account_casting/responder/clip_profile all
-  orthogonal to `FANOPS_LIVE`). `set_ai_responder` is explicitly called out as "the ONLY intended
-  way to turn the LLM responder on/off."
+  219-296) — each a single `_dual_write` of one named env var. `FANOPS_CREATIVE_VARIATION` is
+  dual-written by `set_per_account_hooks` but has **no `getenv` in `config.py`** (documentation-only
+  runtime flag; Studio hardcodes `creative_variation=False` in views). `set_account_casting` toggles
+  `FANOPS_ACCOUNT_CASTING` (DEFAULT ON). None of these are publish-affecting switches orthogonal to
+  `FANOPS_LIVE`.
 - `install_daemon(cfg, interval="10m")` / `uninstall_daemon(cfg)` (lines 256-280) — launchd
   install/uninstall via `fanops.daemon`; explicitly documented as scheduling-only, inheriting the
   ambient responder setting rather than forcing it on.
@@ -599,14 +595,10 @@ via `golive.py`, line 158-164), `GET /golive/connect` / `GET /golive/accounts` /
 
 ### `preview_media.py` — WYSIWYG preview media resolution
 
-- `preview_media_path(cfg, led, post_id)` (lines 10-47) — **pure read + lock-free ffmpeg burn on
-  demand**. Resolution ladder: (1) `post.render_id` → existing `Render.path` if it exists on disk;
-  (2) if `post.variant_hook` and `cfg.creative_variation`, compute the deterministic render path
-  via `account_render_spec` and return it if already rendered, else **actually render it now**
-  via `render_account_file(..., caller="preview")` (a real ffmpeg call, not just a lookup) so the
-  Review WYSIWYG can show the burned hook before approval; (3) fall back to `media_urls[0]` (local
-  file only) or the base `clip.path`. All exception paths are swallowed with `except Exception:
-  pass` (lines 31-32, 36-38) — fail-open to the next rung of the ladder, never a crash.
+- `preview_media_path(cfg, led, post_id)` (lines 8-27) — **pure read**. Resolution ladder:
+  (1) `post.render_id` → existing `Render.path` if on disk; (2) `post.media_urls[0]` local file;
+  (3) base `clip.path`. Owner-moment hook is burned at `render_moment` — no on-demand ffmpeg render
+  and no `cfg.creative_variation` gate (removed). Fail-open on parse/path errors.
 
 ## Cluster-specific analysis
 
