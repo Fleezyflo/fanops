@@ -537,6 +537,10 @@ def cmd_autopilot(cfg: Config, args) -> int:
     # One command -> autonomous: enable the llm responder (durably, in .env) + install the supervising
     # daemon, then print a readiness report. dryrun by default (publishes nothing); going
     # live is a separate, deliberate step via Postiz or the manual publish-queue.
+    rc = _bring_up_and_verify(cfg)
+    if rc:
+        print(f"autopilot: bring-up verify failed (exit {rc})", file=sys.stderr)
+        return rc
     try:
         interval = daemon.parse_interval(args.interval)
         res = autopilot.autopilot(cfg, interval=interval, install_daemon=not args.no_daemon)
@@ -606,6 +610,7 @@ def main(argv: list[str] | None = None) -> int:
     p_doctor.add_argument("--json", action="store_true", help="machine-readable health JSON (exit 1 when unhealthy)")
     p_health = sub.add_parser("health", help="runtime dependency health (docker/postiz/zernio) from the unified model")
     p_health.add_argument("--json", action="store_true", help="machine-readable JSON (exit 1 when unhealthy)")
+    sub.add_parser("up", help="self-healing bring-up: start deps + preflight + health verify (headless)")
     sub.add_parser("publish-queue", help="list queued posts to publish BY HAND (manual / no-service free path)")
     p_audit = sub.add_parser("audit", help="(R3) operator audit-trail commands")
     audit_sub = p_audit.add_subparsers(dest="audit_cmd")
@@ -758,6 +763,28 @@ def _check_preflight(cfg: Config) -> int:
     return 0
 
 
+def _bring_up_and_verify(cfg: Config) -> int:
+    """MOL-301: compose health.ensure_up + postiz_lifecycle.ensure_up + preflight + B2 verify."""
+    from fanops.health import ensure_up
+    from fanops.postiz_lifecycle import ensure_up as postiz_ensure_up
+    from fanops.health_model import build_health_report, report_is_healthy
+    for line in ensure_up(cfg):
+        print(f"  {line}")
+    postiz_ensure_up(cfg)
+    if (rc := _check_preflight(cfg)):
+        return rc
+    rep = build_health_report(cfg)
+    for d in rep.deps:
+        print(f"  [{'ok  ' if d.ok else 'DOWN'}] {d.name}: {d.detail}")
+    return 0 if report_is_healthy(rep) else 1
+
+
+def cmd_up(cfg: Config, args=None) -> int:
+    """Headless self-healing bring-up — studio launch block minus Flask, exit-coded."""
+    print("fanops up — bringing dependencies up and verifying health")
+    return _bring_up_and_verify(cfg)
+
+
 def _heartbeat(cfg: Config, s: dict) -> None:
     """B5/E2: emit a heartbeat line every run/advance so an external monitor diffing consecutive
     lines can tell 'alive-but-idle' (ts advances, published_in_run may be 0) from 'cron is dead'
@@ -849,6 +876,7 @@ def _dispatch(cfg: Config, args) -> int:
             return cmd_lever_docs(cfg)
         return 2
     if args.cmd == "health":   return cmd_health(cfg, args)
+    if args.cmd == "up":       return cmd_up(cfg, args)
     if args.cmd == "doctor":   return cmd_doctor(cfg, args)
     if args.cmd == "publish-queue": return cmd_publish_queue(cfg)
     if args.cmd == "daemon":   return cmd_daemon(cfg, args)
@@ -910,15 +938,11 @@ def _dispatch(cfg: Config, args) -> int:
         # module top — keeps `import fanops.cli` (hence every other verb) working on a core,
         # no-[studio] install. Mirrors the discover/intake lazy-import idiom (cli.py:325,334).
         from fanops.studio.app import create_app
-        from fanops.health import ensure_up, system_health
-        # Launch the WHOLE system, not just the UI: bring up any down dependency the system knows how to
-        # start (Docker daemon, Postiz compose) BEFORE serving — so nothing sits silently off (Issue 1).
-        for line in ensure_up(cfg):
-            print(f"  {line}")
+        rc = _bring_up_and_verify(cfg)
+        if rc:
+            print(f"studio: bring-up verify returned {rc} — starting UI anyway", file=sys.stderr)
         app = create_app(cfg)
         print(f"FanOps Studio on http://{args.host}:{args.port}  (Ctrl-C to stop)")
-        for d in system_health(cfg):                       # the live dependency verdict at launch — visible, not buried
-            print(f"  [{'ok  ' if d.ok else 'DOWN'}] {d.name}: {d.detail}")
         # debug EXPLICITLY off (stage-5 audit): a stray FLASK_DEBUG=1 in the operator's env would
         # otherwise enable the Werkzeug interactive debugger — arbitrary code exec on the cockpit.
         app.run(host=args.host, port=args.port, debug=False)
