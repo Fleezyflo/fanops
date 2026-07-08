@@ -4,7 +4,7 @@ description: >-
   Minimal land-only sub-agent. Spawned by fanops-orchestrator ONLY when the orchestrator runs
   readonly:true (max-enforcement mode) and therefore cannot run git itself. Its single job is to run the
   land commands for an already-verified unit. It writes no code and fixes nothing.
-model: inherit
+model: auto
 readonly: false
 is_background: false
 ---

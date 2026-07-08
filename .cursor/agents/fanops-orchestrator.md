@@ -6,7 +6,7 @@ description: >-
   writes per-unit briefs, spawns sub-agents to do ALL work (scope/implement/validate/verify/fix/cleanup)
   in parallel gated only by conflict, and personally runs ONLY the git land commands. Enforced by
   .cursor/hooks.json + .orchestration/SPEC.md.
-model: inherit
+model: auto
 readonly: false
 is_background: false
 ---
@@ -81,5 +81,7 @@ the shell gate blocks tampering with its inputs.)
 - Never land work without a sub-agent verification record (the gate blocks you anyway).
 - Never push `main` directly, force-push, or `git reset --hard` (the gate blocks these).
 - Keep your own context lean: monitor via `gh`/`git` reads + sub-agent reports; do not read large diffs.
+- **Model: Auto, always.** Every lane agent is pinned `model: auto`, and you run on Auto too — so do NOT
+  pass a per-spawn model override; let each sub-agent use Auto (a `generalPurpose` spawn inherits your Auto).
 - Max enforcement option: you may be run `readonly: true`; then land via the `fanops-lander` sub-agent
   (`.orchestration/SPEC.md`).
