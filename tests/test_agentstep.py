@@ -169,3 +169,30 @@ def test_attempts_no_effect_on_request_response(tmp_path):
     clear_attempts(cfg, "moments", "src_1")
     assert latest_request_id(cfg, "moments", "src_1") == rid   # request untouched
     assert pending(cfg, kind="moments") == ["src_1"]            # still pending
+
+# MOL-231 — clear_attempts lifecycle: write_request + discard_gate
+def test_write_request_clears_attempts(tmp_path):
+    # A re-written request re-opens the gate; prior attempt count must be reset so the
+    # next bump_attempts starts from 1 (not from N+1 after a prior failed run).
+    cfg = Config(root=tmp_path)
+    write_request(cfg, kind="moments", key="src_1", payload={"source_id": "src_1"})
+    bump_attempts(cfg, "moments", "src_1")
+    bump_attempts(cfg, "moments", "src_1")
+    # second write_request re-opens gate — attempts sidecar must be removed
+    write_request(cfg, kind="moments", key="src_1", payload={"source_id": "src_1", "v": 2})
+    assert not _attempts_path(cfg, "moments", "src_1").exists()   # sidecar gone
+    assert bump_attempts(cfg, "moments", "src_1") == 1            # count restarts from 1
+
+def test_discard_gate_clears_attempts(tmp_path):
+    # Discarding a gate removes its sidecar so a re-created gate under the same key
+    # starts with a clean attempt count.
+    cfg = Config(root=tmp_path)
+    from fanops.agentstep import discard_gate
+    write_request(cfg, kind="moments", key="src_1", payload={"source_id": "src_1"})
+    bump_attempts(cfg, "moments", "src_1")
+    bump_attempts(cfg, "moments", "src_1")
+    discard_gate(cfg, "moments", "src_1")
+    assert not _attempts_path(cfg, "moments", "src_1").exists()   # sidecar gone
+    # re-creating the gate starts clean
+    write_request(cfg, kind="moments", key="src_1", payload={"source_id": "src_1"})
+    assert bump_attempts(cfg, "moments", "src_1") == 1
