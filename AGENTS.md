@@ -34,7 +34,7 @@ git fetch origin
 git worktree add ../fanops-<mol-id> -b <ticket-branch> origin/main
 cd ../fanops-<mol-id>
 python -m venv .venv && ./.venv/bin/pip install -e '.[dev,studio]'   # each worktree needs its OWN venv
-git config --local core.hooksPath .githooks                          # wire the repo policy hooks
+./scripts/setup-hooks.sh                                             # wire the repo policy hooks (idempotent; MOL-198 — check.sh no longer auto-wires)
 ```
 `pre-commit` = secret scan + staged ruff + scoped `check.sh` when `src/`/`tests/` `.py` is staged
 (`BASE=HEAD` — not the full suite); `pre-push` = block main/force-push only (no tests, ever). Keep
