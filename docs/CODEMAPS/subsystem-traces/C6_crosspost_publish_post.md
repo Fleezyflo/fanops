@@ -2,8 +2,8 @@
 
 > **POST-REBUILD (P15 / MOL-156).** Crosspost mints posts only on owner-admitted surfaces
 > (`casting.affinity_admits` — `Moment.affinities` single-owner). No `account_selection_admits`,
-> `repair_casting_selections`, casting-gate defer, `hooks_by_persona`, or `Post.variant_hook`.
-> Captions scope via `pipeline._owner_caption_surfaces` (same predicate). Closed-loop proof:
+> casting-gate defer, or `hooks_by_persona`. `Post.variant_hook` was removed (P9) — owner hook is
+> `Moment.hook`; Studio surfaces resolve via `variant_learning._hook_for_post`. Captions scope via `pipeline._owner_caption_surfaces` (same predicate). Closed-loop proof:
 > `tests/test_per_persona_e2e.py`.
 
 ## Files covered (all 17 read in full, cross-checked against structural_index.json — function/class/method lists match exactly)
@@ -261,7 +261,7 @@ Module constants: `_SIL_END`, `_SCD` (regexes), `_SIDECAR_V=3`, `_MAX_PEAKS=400`
 - `_status_of(exc) -> int | None` — regex-extracts a status code from a `RuntimeError` message. Pure. Called by `postiz_health_probe`.
 - `postiz_check_auth(cfg) -> bool` — thin bool wrapper over `postiz_health_probe`, re-deriving the legacy raise-on-401 contract (the Go-Live "Save & test" button needs to name the key on 401). Called outside this cluster (`studio.actions_golive`, `doctor.py`).
 - `PostizPoster.__init__(self, cfg)` — resolves base URL + auth header.
-- `PostizPoster._youtube_title(self, post) -> str` — reuses `post.variant_hook` (the per-account burned hook) as the YouTube title, floored to `cfg.artist_name` if too short/empty. Called by `publish`.
+- `PostizPoster._youtube_title(self, post, led=None) -> str` — uses the owner-moment hook (`m.hook` via ledger lookup), floored to `cfg.artist_name` if too short/empty. Called by `publish`.
 - `PostizPoster.publish(self, led, post_id) -> Ledger` — **THE actual publish network call**: builds the payload, retries up to `_MAX_RETRIES=4` with exponential backoff+jitter on 429, and on completion:
   - `RequestException` (never reached the server, or response lost) → `needs_reconcile` (ambiguous, may be live)
   - 200/201 → extract id; no id → `needs_reconcile` ("2xx but no recognizable id"); id found → `submitted` + `submission_id` + `public_url = _postiz_permalink(...)` (always `None` today, so effectively `post.public_url` stays whatever it was, typically empty)
@@ -295,7 +295,7 @@ Module constant: `PROVIDERS = {"postiz": ..., "zernio": ..., "dryrun": ...}`.
 - `_publish_throttle_key(provider, account_id) -> tuple[str,str]` — pure key builder. Called by `_publish_throttle_wait`.
 - `_publish_throttle_wait(cfg, provider, account_id) -> None` — sleeps if the last publish on this `(provider, integration)` pair was too recent; **Postiz-only, live-only** (`cfg.postiz_publish_per_min`). Mutates the module-level `_publish_throttle_last` dict. Called by `_publish_one`.
 - `_post_provider(cfg, accounts, post) -> str | None` — **the per-post provider resolver**: `"dryrun"` unconditionally when `not cfg.is_live` (the global switch cannot be bypassed by any per-channel override); when live, delegates to `accounts.effective_provider(post.account, post.platform)`, which may return `None` if the channel has no configured provider (never global-defaults a new deployment). Called by `publish_due`, `publish_post`.
-- `_materialize_variant_media(led, cfg, post, accts) -> None` — **the publish-time safety net**: a queued post with a `variant_hook` but no matching burned render (approve-time warm-miss, legacy row, or cleared `media_urls`) MUST NOT ship the hookless base clip. Re-checks `Render.hook_text == post.variant_hook` (the render is the source of truth; a mismatch means a stale render from before a re-burn/restore) and re-burns via `crosspost.render_account_file` if needed. **Side effect**: mutates `led.renders`, `post.render_id`, `post.media_urls` in-memory (the caller's throwaway network-phase ledger). A render failure is caught, logged (`variant_materialize_failed`), and simply returns (leaving the post to fail the subsequent hookless-ship guard in `_ensure_media`, never silently shipping the wrong file). Called by `_ensure_media`.
+- `_materialize_variant_media(led, cfg, post, accts) -> None` — **no-op stub (P9):** owner-moment hook is burned on the shared clip at render/crosspost; there is no per-post publish-time materialize path (`run.py:173-175`). Called by `_ensure_media` (harmless).
 - `_resolve_publish_account_id(accounts, post, *, cfg=None) -> str | None` — re-resolves the CURRENT integration id at publish time (a Go-Live remap since crosspost minted the post would otherwise use a frozen stale id); fail-open to `None` on any resolution error, with a breadcrumb when `cfg` is supplied. Called by `publish_due`, `publish_post`.
 - `_ensure_media(led, cfg, post, backend, *, account_id=None) -> None` — resolves `post.media_urls` to network-fetchable URLs: calls `_materialize_variant_media` first, applies shrink if the backend has an upload cap, **raises `RuntimeError`** if a variant hook exists but couldn't be burned ("refusing to ship the hookless base clip" — a hard guard), then either uploads the clip fresh (`ensure_clip_media`) or, for a pre-stamped variant post, uploads the actual per-account render file (`ensure_render_media`) rather than the parent clip's base render (a past bug shipped the wrong hookless file to hosted backends). Called by `_publish_one`.
 - **`_publish_one(cfg, post_id, backend, *, account_id=None) -> str | None`** — **THE per-post publish state machine, the highest-priority function in this audit.** Three phases:
