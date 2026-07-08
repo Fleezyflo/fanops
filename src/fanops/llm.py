@@ -238,11 +238,6 @@ def claude_json_meta(prompt: str, schema: dict, *, timeout: float = 300.0,
                 logger.warning("claude -p result salvaged via JSON-repair (prose-wrapped reply)")
                 return salvaged, resolved, frames_unread
             raise LlmSchemaError(f"claude -p `result` was not JSON: {result[:300]}") from e
-    if isinstance(result, str):
-        salvaged = _extract_json_object(result)
-        if salvaged is not None:
-            logger.warning("claude -p result salvaged via JSON-repair (prose-wrapped reply)")
-            return salvaged, resolved, frames_unread
     raise LlmSchemaError(f"claude -p envelope had no structured_output or JSON result: {env}")
 
 def claude_json(prompt: str, schema: dict, *, timeout: float = 300.0,
