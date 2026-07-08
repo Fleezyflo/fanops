@@ -158,13 +158,14 @@ def claude_json_meta(prompt: str, schema: dict, *, timeout: float = 300.0,
     # could hit ARG_MAX -> E2BIG, surfaced misleadingly as "claude not found". STDIN has neither limit.
     # --model (when pinned) is appended LAST so it never lands between --allowedTools and its value
     # (the argv-order the tests assert on — audit H).
-    cmd = ["claude", "-p",
-           "--output-format", "json",
-           "--json-schema", json.dumps(schema),
-           "--allowedTools", allowed,
-           "--strict-mcp-config"] + (["--model", model] if model else [])
+    def _build_cmd(allowed: str) -> list[str]:
+        return ["claude", "-p",
+                "--output-format", "json",
+                "--json-schema", json.dumps(schema),
+                "--allowedTools", allowed,
+                "--strict-mcp-config"] + (["--model", model] if model else [])
 
-    def _run(stdin_prompt: str) -> dict:
+    def _run(stdin_prompt: str, allowed: str = allowed) -> dict:
         # Rate-limit backoff (mirrors the publishers' jittered exponential retry (postiz/zernio)):
         # a 429/503/529 is rejected pre-processing and SAFE to retry. Without this a usage spike turned
         # the whole autonomous run into a silent no-op (one log line per gate). A timeout / hard nonzero
@@ -172,7 +173,7 @@ def claude_json_meta(prompt: str, schema: dict, *, timeout: float = 300.0,
         delay = _RL_BASE_DELAY
         for attempt in range(_MAX_RL_RETRIES + 1):
             try:
-                r = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=timeout, input=stdin_prompt)
+                r = subprocess.run(_build_cmd(allowed), check=False, capture_output=True, text=True, timeout=timeout, input=stdin_prompt)
             except (FileNotFoundError, OSError) as e:
                 raise ToolchainMissingError(
                     f"claude not found on PATH — install Claude Code to run the autonomous responder "
