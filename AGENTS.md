@@ -34,7 +34,7 @@ git fetch origin
 git worktree add ../fanops-<mol-id> -b <ticket-branch> origin/main
 cd ../fanops-<mol-id>
 python -m venv .venv && ./.venv/bin/pip install -e '.[dev,studio]'   # each worktree needs its OWN venv
-git config --local core.hooksPath .githooks                          # wire the repo policy hooks
+./scripts/setup-hooks.sh                                             # wire the repo policy hooks (idempotent; MOL-198 — check.sh no longer auto-wires)
 ```
 `pre-commit` = secret scan + staged ruff + scoped `check.sh` when `src/`/`tests/` `.py` is staged
 (`BASE=HEAD` — not the full suite); `pre-push` = block main/force-push only (no tests, ever). Keep
@@ -194,3 +194,12 @@ Non-obvious caveats found during setup:
   (add account, ingest) write real files like `00_control/accounts.json`. `cd` into a temp dir that has
   its own `MohFlow-FanOps/00_control/context.md` and run `fanops studio` from there (backend stays
   `dryrun` — nothing publishes). Per the root guardrails, never run live publish/metrics verbs.
+
+## CI dependency locks (MOL-195)
+
+CI installs from **hash-verified** lockfiles, not floating `pyproject` pins: `requirements/ci-unit.txt`
+(fast PR job) and `requirements/ci-e2e.txt` (real-tooling job), both `pip-compile --generate-hashes`. CI
+runs `pip install --require-hashes -r <lock>` then `pip install -e . --no-deps`. **When you change a
+dependency in `pyproject.toml`, regenerate the locks** with `./scripts/lock-deps.sh` (linux/py3.12, to
+match CI) and commit them — a CI drift guard (`scripts/check-locks.sh`) fails the PR otherwise. `[asr]` is
+nightly-only and intentionally unlocked. Local dev is unchanged: `pip install -e '.[dev,studio]'`.
