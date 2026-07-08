@@ -1,7 +1,7 @@
 # Codemap — insights culmination (stamp → aggregate → actuator, per varied dimension)
 
 The closed loop that lets **analyzed reach bias the creative dimensions it doesn't yet reach**. Every clip
-varies along several axes (length, opening frame, framing, casting, timing); this map traces, per axis, where
+varies along several axes (length, opening frame, framing, owner attribution, timing); this map traces, per axis, where
 the axis is **stamped** onto a `Post`, how it is **aggregated** by reach, and which **actuator** feeds the
 winner back into generation/scheduling. Built by Legs 2–3 of the insights rebuild
 (`.claude/plans/insights-culmination-MASTER.plan.md`); Leg 2 makes the reach authoritative, Leg 3 closes the
