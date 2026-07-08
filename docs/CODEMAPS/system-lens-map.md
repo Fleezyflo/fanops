@@ -373,8 +373,8 @@ validation vocab, clause maps, and catalog cannot drift (`persona_levers.py:1-8`
 **Link-failure behavior:** FAIL-OPEN. A dangling `persona_id`, absent/corrupt personas.json, or any error
 leaves the account's inline values intact — byte-identical when unlinked (`accounts.py:250-255`). **Observable?**
 The failure itself is SILENT (no log/badge — the `except Exception: return` at `accounts.py:250-251` swallows).
-Downstream, `Accounts.validate` (`accounts.py:207-216`) surfaces a "no persona linked" or "cut spec matches
-global" problem string when `creative_variation` is on, and `advance` logs those as `differentiation_warn`
+Downstream, `Accounts.validate` (`accounts.py:256-265`) surfaces a "no persona linked" or "cut spec matches
+global" problem string when `cfg.account_casting` is ON, and `advance` logs those as `differentiation_warn`
 (`pipeline.py:385-387`). So a link that fails to resolve is not itself flagged, but its DOWNSTREAM effect
 (no differentiation) is a validate-time warning. `delete_persona` deliberately leaves accounts with a dangling
 id that falls open (`studio/personas.py:97-99`).
@@ -499,8 +499,8 @@ generation and schedule toward measured reach, but never past the operator appro
 3. **A persona-link resolution failure is silent at the point of failure and only surfaces indirectly.**
    `_hydrate_from_personas` swallows every exception with `return` (`accounts.py:250-251`); a dangling
    `persona_id` leaves inline values with NO log/badge. The downstream "no differentiation" is only caught by
-   `Accounts.validate` → `differentiation_warn` and ONLY when `creative_variation` is on
-   (`accounts.py:207-216`, `pipeline.py:385-387`). Evidence: the two cited spans.
+   `Accounts.validate` → `differentiation_warn` when `cfg.account_casting` is ON
+   (`accounts.py:256-265`, `pipeline.py:383-385`). Evidence: the two cited spans.
 
 4. **`learning_validated` is a single global boolean (`cutover.json metrics_confirmed`) that gates all
    validation-frozen actuators at once, and auto-flips on the FIRST qualifying live metric.** One
