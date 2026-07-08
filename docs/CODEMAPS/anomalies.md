@@ -49,7 +49,7 @@ re-requests every tick with no operator-visible terminal). That class is now nam
 - `accounts.py:576` `set_ig_user_id` — **NOT dead (corrected on validation).** Called via `set_ig_user_id as _accounts_set_ig_user_id` at `studio/golive.py:381`.
 - `persona_levers.py:87` `is_exempt` — dead code, zero callers (confirmed by sweep).
 - `persona_levers.py:107` `channels` — dead code, zero callers; own docstring claim ("the M4 manifest reads it") is inaccurate — `manifest` actually calls `channels_of`.
-- `casting.py:40` `_record_fact` — `except Exception: pass`. Deliberate best-effort audit-trail write ("must never lose the casting"), documented.
+- ~~`casting.py:40` `_record_fact`~~ — **REMOVED P11** (module is 22 lines; `affinity_admits` only).
 - `persona_directives.py:287` `persona_facts` — `except Exception: store = None`. **Silently swallows any hashtag-store load error with no logging** — the one unlogged handler in this cluster; every sibling fail-open path logs via `get_logger` first.
 - `persona_research.py:56` `discover_corpus` — `except Exception: cands = []`. Documented fail-open.
 - `accounts.py:250` `_hydrate_from_personas` — `except Exception: return`. Documented fail-open, leaves inline values untouched.
@@ -101,7 +101,7 @@ re-requests every tick with no operator-visible terminal). That class is now nam
 
 - `app_routes_live.py:29-34` `do_wipe_confirm` — **no server-side check that `do_wipe_preview` ran first**; "preview before confirm" is enforced only by the template hiding the confirm form, not by the server. Does not bypass the typed-word/snapshot/restorability code gates, but means "operator sees preview before confirming" is a UI convention, not a server-enforced invariant.
 - `golive.py:452-478` `discover_channels` — an unsupported platform is silently downgraded to a note rather than surfaced as an error. Documented fail-soft, produces a silently-smaller `channels` list with only a best-effort textual note as the trail.
-- `preview_media.py:31-32,36-38` — **two bare `except Exception: pass` blocks with zero logging** in the WYSIWYG preview resolution ladder — the one place in the cluster where an exception is swallowed with zero logging at all. Low severity (read-only), but a silently-failing `render_account_file` call here means Review could keep showing a stale/wrong preview with no trail to debug why.
+- `preview_media.py` — **CORRECTED post-P9:** no on-demand ffmpeg burn; pure read ladder (`render_id` → local `media_urls` → `clip.path`). Prior doc claimed silent `render_account_file` failures — that path was removed with per-post variant materialize (P9/P11).
 - `app.py:158-160` `_account_arg` — `except Exception: pass` around handle resolution. Intentional/low-risk, but same unlogged-swallow pattern as `preview_media.py` — this cluster logs its swallows in the mutation layer but not consistently in the read-helper layer.
 - `golive.py:652-657` — CLAUDE.md's claim that `FANOPS_POSTER=postiz` is set through the Go-Live path is stale relative to current code (`go_live` explicitly never writes `FANOPS_POSTER`, per its own comment "D12: go_live NEVER writes FANOPS_POSTER"). The real live-routing setter is `set_account_backend`. Documentation/reality drift, not a code defect — the underlying safety property still holds under the current per-channel design.
 - No TODO/FIXME found. No dead/unreachable functions found — every public function in this cluster has at least one route caller.

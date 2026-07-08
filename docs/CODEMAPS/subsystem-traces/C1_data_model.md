@@ -56,7 +56,7 @@ A rendered video file. `parent_id` → Moment.id.
 - `meta_captions: dict` (surface → {caption, hashtags})
 - `error_reason`, `hook_burn_failed: bool = False`
 
-### `Post` (models.py:217-304)
+### `Post` (models.py:301+)
 One per (clip, account, platform) posting surface. `parent_id` → Clip.id.
 - `id`, `parent_id`, `state: PostState = awaiting_approval` (RF1: born unapproved)
 - `account: str`, `account_id: str`, `platform: Platform`
@@ -64,8 +64,7 @@ One per (clip, account, platform) posting surface. `parent_id` → Clip.id.
 - `scheduled_time: Optional[str]`, `submission_id: Optional[str]` (fanops_ prefix = idempotency token, not real backend id — see `is_real_submission_id`)
 - `public_url: Optional[str]`, `media_id: Optional[str]` (IG Graph media id), `product_type: Optional[str]`
 - `error_reason`, `metrics: dict` (latest snapshot), `metrics_series: list[dict]` (append-only time series, P3)
-- `render_id: Optional[str]` → Render.id
-- `variant_key`, `variant_hook` (read-only mirror of Render.hook_text)
+- `render_id: Optional[str]` → Render.id (optional per-surface render artifact; owner hook burns on the shared clip at `render_moment` — P9)
 - P1 attribution: `first_frame_kind`, `clip_profile`, `cut_seconds`, `variation_axis`
 - Leg 3 attribution: `top_bias: Optional[bool]`, `publish_hour: Optional[int]`, `publish_dow: Optional[int]`
 - `batch_id: Optional[str]` (denormalized), `created_at`, `published_at`
