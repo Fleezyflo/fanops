@@ -13,8 +13,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable, Optional
 from pydantic import ValidationError
 from fanops.config import Config
-from fanops.models import MomentDecision, MomentHookDecision, CaptionSet
-from fanops.agentstep import pending, request_path, write_response, latest_request_id, clear_attempts
+from fanops.models import MomentDecision, MomentHookDecision, CaptionSet, SourceState
+from fanops.agentstep import pending, request_path, write_response, latest_request_id, clear_attempts, bump_attempts
 from fanops.llm import claude_json_meta, LlmTimeoutError, LlmContextLimitError, LlmSchemaError
 from fanops.prompts import moment_pick_prompt, moment_hook_prompt, caption_prompt
 from fanops.control import guidance_sha
@@ -46,6 +46,16 @@ def screen_model_text(obj):
 _SCHEMA = {"moments": MomentDecision, "moment_hooks": MomentHookDecision, "captions": CaptionSet}
 _PROMPT = {"moments": moment_pick_prompt, "moment_hooks": moment_hook_prompt, "captions": caption_prompt}
 _VISION_GATES = ("moments", "moment_hooks")   # gates whose payload MAY carry top-level `frames` to attach
+_GATE_DETERMINISTIC_MAX = 3   # MOL-235: after N same-gate deterministic failures, escalate source to error
+
+def _gate_source_id(led, kind: str, key: str) -> str | None:
+    """Resolve the owning source id for a gate key — moments/moment_hooks key on source id directly;
+    captions keys on a clip id -> clip.parent=moment, moment.parent=source."""
+    if kind in ("moments", "moment_hooks"):
+        return key.split(".", 1)[0]
+    clip = led.clips.get(key)
+    mom = led.moments.get(clip.parent_id) if clip is not None else None
+    return mom.parent_id if mom is not None else None
 
 class ManualResponder:
     def __init__(self, cfg: Config): self.cfg = cfg
@@ -131,30 +141,51 @@ class LlmResponder:
             return False
         except ValidationError as e:        # present-but-invalid: log "invalid", gate stays pending
             log("responder", f"{kind}:{key}", "invalid", err=str(e)[:160])
-            self._mark_gate_degraded(cfg, kind, key, f"agent gate {kind} schema invalid: {str(e)[:160]}")
+            self._on_deterministic_fail(cfg, kind, key, f"agent gate {kind} schema invalid: {str(e)[:160]}", log)
         except LlmSchemaError as e:         # MOL-227: unparseable LLM envelope -> labelled degrade, not transient
             log("responder", f"{kind}:{key}", "schema_error", err=str(e)[:160])
-            self._mark_gate_degraded(cfg, kind, key, f"agent gate {kind} schema error: {str(e)[:160]}")
+            self._on_deterministic_fail(cfg, kind, key, f"agent gate {kind} schema error: {str(e)[:160]}", log)
         except Exception as e:              # transient model/CLI failure (incl. ToolchainMissing): log, leave pending
             log("responder", f"{kind}:{key}", "error", err=str(e)[:160])
         return False
 
+    def _on_deterministic_fail(self, cfg: Config, kind: str, key: str, reason: str, log) -> None:
+        """MOL-235: stamp degraded AND burn the per-gate deterministic-attempt ceiling. On the Nth failure,
+        promote the owning source to SourceState.error so a permanently-broken gate lands in status/digest
+        instead of retrying forever. Transient failures never reach here."""
+        self._mark_gate_degraded(cfg, kind, key, reason)
+        n = bump_attempts(cfg, kind, key)
+        if n >= _GATE_DETERMINISTIC_MAX:
+            self._terminate_gate_source(cfg, kind, key, reason)
+            clear_attempts(cfg, kind, key)
+
+    def _terminate_gate_source(self, cfg: Config, kind: str, key: str, reason: str) -> None:
+        """MOL-235 ceiling: stamp the owning source SourceState.error + error_reason (mirrors moments.py:347-348).
+        Load+save OUTSIDE the flock; lazy Ledger import. Fail-closed: never writes a response."""
+        from fanops.ledger import Ledger
+        try:
+            led = Ledger.load(cfg)
+            sid = _gate_source_id(led, kind, key)
+            src = led.sources.get(sid) if sid else None
+            if src is not None and src.state != SourceState.error:
+                led.sources[sid] = src.model_copy(update={
+                    "state": SourceState.error,
+                    "error_reason": f"agent gate {kind} failed {_GATE_DETERMINISTIC_MAX}x (deterministic): {reason}"[:200]})
+                led.save()
+        except Exception as e:
+            with contextlib.suppress(Exception):
+                get_logger(cfg)("responder", f"{kind}:{key}", "terminate_failed", err=str(e)[:120])
+
     def _mark_gate_degraded(self, cfg: Config, kind: str, key: str, reason: str) -> None:
         """AGENT-2: park the wedged gate's source-owner with a VISIBLE degraded_reason so the operator sees WHY
         it stalls (master principle: no silent degradation). Best-effort + a breadcrumb; the gate stays pending
-        (operator can shrink the source / re-request) but is now diagnosable. The moment gates key on the source id directly;
-        the captions gate keys on a CLIP id, so its source is resolved clip->moment->source (else it stalls invisibly) — the context_limit breadcrumb above still fires.
+        (operator can shrink the source / re-request) but is now diagnosable.
         Loads + saves the ledger OUTSIDE the advance() flock (gates live outside the lock), so a fresh load+save
         is safe. Ledger imported lazily to avoid a module cycle (ledger imports widely)."""
         from fanops.ledger import Ledger
         try:
             led = Ledger.load(cfg)
-            if kind in ("moments", "moment_hooks"):
-                sid = key.split(".", 1)[0]
-            else:                                          # captions gate keys on a CLIP id -> clip.parent=moment, moment.parent=source
-                clip = led.clips.get(key)
-                mom = led.moments.get(clip.parent_id) if clip is not None else None
-                sid = mom.parent_id if mom is not None else None
+            sid = _gate_source_id(led, kind, key)
             src = led.sources.get(sid) if sid else None
             if src is not None:
                 led.sources[sid] = src.model_copy(update={"degraded_reason": reason})
