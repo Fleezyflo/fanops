@@ -8,23 +8,23 @@
 
 ## Files covered (all 17 read in full, cross-checked against structural_index.json — function/class/method lists match exactly)
 
-- `src/fanops/crosspost.py` (342 lines) — read
-- `src/fanops/pipeline.py` (446 lines) — read
+- `src/fanops/crosspost.py` (281 lines) — read
+- `src/fanops/pipeline.py` (442 lines) — read
 - `src/fanops/router.py` (69 lines) — read
-- `src/fanops/responder.py` (172 lines) — read
-- `src/fanops/signals.py` (154 lines) — read
-- `src/fanops/agentstep.py` (137 lines) — read
+- `src/fanops/responder.py` (185 lines) — read
+- `src/fanops/signals.py` (202 lines) — read
+- `src/fanops/agentstep.py` (150 lines) — read
 - `src/fanops/autopilot.py` (102 lines) — read
-- `src/fanops/postiz_lifecycle.py` (70 lines) — read
-- `src/fanops/post/__init__.py` (42 lines) — read
-- `src/fanops/post/compress.py` (131 lines) — read
-- `src/fanops/post/dryrun.py` (42 lines) — read
-- `src/fanops/post/media.py` (62 lines) — read
-- `src/fanops/post/metrics.py` (460 lines) — read
-- `src/fanops/post/postiz.py` (328 lines) — read
-- `src/fanops/post/providers.py` (57 lines) — read
-- `src/fanops/post/run.py` (408 lines) — read
-- `src/fanops/post/zernio.py` (271 lines) — read
+- `src/fanops/postiz_lifecycle.py` (69 lines) — read
+- `src/fanops/post/__init__.py` (41 lines) — read
+- `src/fanops/post/compress.py` (130 lines) — read
+- `src/fanops/post/dryrun.py` (41 lines) — read
+- `src/fanops/post/media.py` (61 lines) — read
+- `src/fanops/post/metrics.py` (607 lines) — read
+- `src/fanops/post/postiz.py` (426 lines) — read
+- `src/fanops/post/providers.py` (56 lines) — read
+- `src/fanops/post/run.py` (479 lines) — read
+- `src/fanops/post/zernio.py` (274 lines) — read
 
 Plus ground truth: `src/fanops/models.py` `PostState` enum (lines 54-77), `src/fanops/ledger.py`
 `approve_post`/`reject_post`/`unapprove_post` (lines 503-527) and the state-protection sets
@@ -183,6 +183,9 @@ Module constants: `_SIL_END`, `_SCD` (regexes), `_SIDECAR_V=3`, `_MAX_PEAKS=400`
 - `read_response(cfg, kind, key, model) -> T | None` — reads + validates the response against `model`, returning `None` on corruption (logged), staleness (`request_id` mismatch — silently ignored, by design: this is the real safety net against applying a stale answer), or `ValidationError`. Called widely by ingest-side gate consumers (moments.py, caption.py, casting.py, intro_match.py — outside this cluster).
 - `discard_gate(cfg, kind, key) -> None` — unlinks both request+response files, idempotent. Called outside this cluster (amplify/re-pick flows).
 - `discard_gates_for(cfg, kind, key_prefix) -> int` — globs and discards every gate under a prefix; returns count. Called outside this cluster.
+- `_attempts_path(cfg, kind, key) -> Path` — sidecar path for `{kind}__{key}.attempts.json` (MOL-229 gate-attempt counter). Pure. Called by `bump_attempts`, `clear_attempts`.
+- `bump_attempts(cfg, kind, key) -> int` — increments and persists the attempt counter for a gate key; returns the new count. **Side effect**: disk write. **No callers in `src/` yet** (MOL-229 helpers — wired by follow-up responder work).
+- `clear_attempts(cfg, kind, key) -> None` — unlinks the attempts sidecar, idempotent. **No callers in `src/` yet** (MOL-229).
 - `pending(cfg, *, kind) -> list[str]` — globs all request files of `kind`, returns keys whose response is missing or stale (mismatched `request_id`); logs `corrupt_response_in_pending` on a torn response file (fail-closed: stays pending). Called by `pipeline.pending_gate_count`, `pipeline._build_summary`, `LlmResponder.answer_pending`.
 
 ### autopilot.py — one-command "make autonomous" (env + daemon install), NEVER publishes

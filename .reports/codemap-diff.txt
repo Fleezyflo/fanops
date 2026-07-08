@@ -1,32 +1,28 @@
-Codemap sync — 2026-07-08 (auto-sync to eff0c8f)
-=================================================
-Prior scan: 2026-07-07 (P11 casting + SCHEMA v11 drift, commit a0886fb).
+Codemap update — 2026-07-08 (post-PR #403 / MOL-229 on main @ 38c3451)
+================================================================================
+Prior scan: 2026-07-07 fresh-ingestion trace + partial sync on branch 021f (never merged).
 
-Trigger: MOL-228 merged `LlmSchemaError` to main; deterministic extractors re-run;
-semantic pass against current src/fanops/.
+Trigger: PR #403 merged to main; automation re-sync of docs/CODEMAPS/ against current src/fanops/.
 
-EXTRACTORS (re-created + run)
-- .reports/ast_extract.py — stdlib AST structural index (was missing from repo)
-- .reports/build_graphs.py — import/call graphs + unreferenced leads
-- .reports/structural_index.json — 109/109 modules
-- .reports/import_graph.json, call_graph.json, unreferenced_candidates.json
+DETERMINISTIC ARTIFACTS REGENERATED
+- .reports/ast_extract.py + build_graphs.py restored (stdlib extractors; were absent from main)
+- .reports/structural_index.json — 109 modules, 1317 callables
+- .reports/call_graph.json, import_graph.json, unreferenced_candidates.json (356 leads)
 
-CODEMAPS UPDATED
-- data.md — SCHEMA_VERSION 11; selection_facts/account_selections dropped v10→v11;
-  Post.variant_hook / SelectionFact removed from live model
-- architecture.md — SCHEMA v11; casting = affinity_admits only; re-burn = Moment.hook
-- full-trace-index.md — regen date; callable-count note (name-based graph)
-- fresh-ingestion-trace.md — verified @ eff0c8f; LlmSchemaError row
-- C1_data_model.md — removed live refs to AccountSelection/selection_facts ledger APIs;
-  SelectionMethod enum gone
-- C4_moments_casting_personas.md — Accounts.active/validate callers; no casting.py helpers
-- C5_caption_hooks_hashtags.md — _target_pick_count = prompt ceiling only; LlmSchemaError
-- C6_crosspost_publish_post.md — _youtube_title reads Moment.hook; _materialize_variant_media no-op;
-  _mark_context_limit without moment_casting
-- C9_studio_backend.md — reburn_hook/approve_with_hook/preview_media P9 owner-moment model
-- C10_studio_views.md — gate_rows omits moment_casting
+DRIFT CORRECTED (semantic layer)
+- P11 casting teardown: affinity_admits-only model reaffirmed across C4/C6/system-lens-map;
+  removed live references to request_moment_casting, AccountSelection, account_selection_admits,
+  _stage_casting, hooks_by_persona, casting_gate_pending
+- Ledger SCHEMA_VERSION 11: account_selections/selection_facts dropped v10→v11 (data.md, C1)
+- P9 hook model: Moment.hook owner-moment burn; Post.variant_hook removed; Studio variant_hook =
+  UI projection only (C6, C9, data.md)
+- Moment lifecycle: picked → decided → clipped documented (data.md)
+- FANOPS_ACCOUNT_CASTING = predicate gate, not an LLM stage (architecture.md, dependencies.md)
+- gate_rows: moments/moment_hooks/captions only (C10)
+- _target_pick_count = LLM prompt ceiling in prompts.py, not an ingest cap (C5, fresh-ingestion)
+- MOL-229: agentstep bump_attempts/clear_attempts sidecar helpers documented (C6); no src callers yet
+- File:line counts refreshed for C6 cluster modules
+- fresh-ingestion-trace + README pinned to 38c3451
 
-UNCHANGED (already correct or dated audit snapshots)
-- lifecycle-full-picture.md — superseded banner present; body kept as 2026-06-27 audit
-- insights-culmination.md, persona-levers.md, hashtag-lifecycle.md — P11 removals already noted
-- system-lens-map.md — FANOPS_CREATIVE_VARIATION / casting_bias strikethroughs current
+UNCHANGED BY DESIGN (dated audit snapshots — superseded banners kept)
+- lifecycle-full-picture.md — 2026-06-27 audit; superseded by fresh-ingestion-trace.md for casting/routing

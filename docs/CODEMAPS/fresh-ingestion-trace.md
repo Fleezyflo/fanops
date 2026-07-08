@@ -1,6 +1,6 @@
 # Fresh-Ingestion End-to-End Trace — one video → posts across the 5 accounts
 
-> Code-verified against `origin/main` @ `eff0c8f` on 2026-07-08. Method: read `pipeline.advance()`
+> Code-verified against `origin/main` @ `38c3451` on 2026-07-08. Method: read `pipeline.advance()`
 > + every stage fn, two parallel deep-trace agents (fan-out arithmetic + external-service map),
 > then re-verified the load-bearing claims (casting teardown, `affinity_admits`, R2 path) against
 > the live code. This is the operator's field guide for a fresh live test: drop a video, watch each

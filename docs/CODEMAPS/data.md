@@ -49,7 +49,8 @@ No database. ONE JSON ledger + operator-editable control files, all under the da
 ```
 Source: catalogued -> transcribed -> signalled -> moments_requested -> moments_decided | error
         | retired (M1 retire_source: cascade-drop descendants, file KEPT on disk) | discovered (M1 rebuild_catalog orphan — inert until confirmed)
-Moment: decided -> clipped | retired | error    (M2: router stamps .hook_strategy on a `decided` moment, renders nothing;
+Moment: picked (birth, NOT renderable) -> decided -> clipped | retired | error
+        (M2: router stamps .hook_strategy on a `decided` moment, renders nothing;
         M6: .intro_matches holds the LLM-vision matcher's ranked intro pairings for an intro_tease-reserved moment)
 Clip:   rendered -> captions_requested -> captioned -> queued -> published -> analyzed
         | held | retired | error
