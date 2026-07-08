@@ -107,7 +107,7 @@ jobs:
           FANOPS_REQUIRE_E2E: "1"
           FANOPS_REQUIRE_STUDIO: "1"
           FANOPS_WHISPER_MODEL: "tiny"
-        run: python -m pytest -q -m "integration and not ci_hook_regression" -rs
+        run: python -m pytest -q -m "integration and not ci_hook_regression and not asr" -rs   # MOL-197: [asr] is nightly-only (torch too heavy for PR path)
       - name: Slow cross-face proofs (hermetic — no real toolchain required)
         env:
           FANOPS_REQUIRE_STUDIO: "1"

@@ -1,0 +1,58 @@
+name: nightly
+
+# MOL-197 / CI-17 — the heavy [asr] extra (demucs + faster-whisper + torch) is too slow to install on
+# every PR, so its real toolchain was never proven in CI. This scheduled job installs it and runs the
+# asr smoke (`-m "integration and asr"`, FANOPS_REQUIRE_E2E=1 so a skip is a failure). It is SEPARATE from
+# ci.yml: it never runs on the PR path, so PR CI is unchanged. Trigger manually via workflow_dispatch.
+
+on:
+  schedule:
+    - cron: "0 3 * * *"   # 03:00 UTC daily
+  workflow_dispatch:
+
+concurrency:
+  group: nightly-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  asr-smoke:
+    name: "[asr] toolchain smoke (nightly)"
+    timeout-minutes: 45
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install real toolchain (ffmpeg + espeak TTS)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg espeak
+      - name: Install (dev + transcribe + asr = demucs/faster-whisper/torch + studio)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e '.[dev,transcribe,asr,studio]'
+      - name: Cache demucs model checkpoints
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/torch
+          key: demucs-htdemucs-${{ hashFiles('pyproject.toml') }}-${{ runner.os }}
+          restore-keys: |
+            demucs-htdemucs-${{ runner.os }}-
+      - name: ASR smoke (must run, not skip)
+        env:
+          FANOPS_REQUIRE_E2E: "1"
+        run: python -m pytest -q -m "integration and asr" -rs
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: nightly-asr-logs
+          path: |
+            MohFlow-FanOps/00_control/*.log
+          if-no-files-found: ignore
