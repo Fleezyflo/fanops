@@ -10,6 +10,7 @@
   {% else %}
     <div class="banner dryrun">● DRYRUN — writes payloads, posts nothing</div>
   {% endif %}
+  <div class="banner setup">setup: {{ status.setup_state }} — {{ status.setup_next }}</div>
 
   {% if result %}
     <div class="result {{ 'ok' if result.ok else 'err' }}">

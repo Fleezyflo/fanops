@@ -332,3 +332,67 @@ def doctor_report(cfg: Config, *, get=None, postiz_probe=None, zernio_auth=None)
         notes.append(f"review queue: {n} candidate(s) in 00_review/ awaiting Finder approval — "
                      "move keepers to 00_review/approved/ then `fanops intake`")
     return {"checks": checks, "notes": notes}
+
+
+class SetupState:
+    """MOL-302: derived setup position — never persisted, recomputed on every read."""
+    NOT_CONFIGURED = "NOT_CONFIGURED"
+    CONFIGURED = "CONFIGURED"
+    CONNECTED = "CONNECTED"
+    VALIDATED = "VALIDATED"
+    LIVE = "LIVE"
+
+
+def _brief_ok(cfg: Config) -> bool:
+    try:
+        return bool(cfg.context_path.read_text().strip()) if cfg.context_path.exists() else False
+    except OSError:
+        return False
+
+
+def _accounts_problems(cfg: Config) -> list[str]:
+    try:
+        return Accounts.load(cfg).validate()
+    except Exception as e:
+        return [str(e)[:160]]
+
+
+def setup_state(cfg: Config) -> str:
+    """Derive the operator's setup position from existing signals (never cached)."""
+    if not _brief_ok(cfg) or _accounts_problems(cfg):
+        return SetupState.NOT_CONFIGURED
+    if cfg.postiz_api_key is None:
+        return SetupState.CONFIGURED
+    try:
+        ready = bool(Accounts.load(cfg).live_ready_channels())
+    except Exception:
+        ready = False
+    if not ready:
+        return SetupState.CONNECTED
+    if not learning_validated(cfg):
+        return SetupState.CONNECTED
+    if not cfg.is_live:
+        return SetupState.VALIDATED
+    return SetupState.LIVE
+
+
+def setup_next_action(cfg: Config) -> str:
+    """Next operator action for the current setup_state — mirrors doctor Postiz-learning hints."""
+    state = setup_state(cfg)
+    problems = _accounts_problems(cfg)
+    if state == SetupState.NOT_CONFIGURED:
+        if not _brief_ok(cfg):
+            return f"create {cfg.context_path} — it steers every clip/caption"
+        return "; ".join(problems) + " — add accounts + map each channel in the Studio Go-Live tab"
+    if state == SetupState.CONFIGURED:
+        return "Connect Postiz (Go-Live > 1 · Connect Postiz)"
+    if state == SetupState.CONNECTED:
+        if problems:
+            return "map every channel (Go-Live > 3 · Map each channel to Postiz)"
+        if not learning_validated(cfg):
+            return "run the Studio Validate learning step (Go-Live > 5 · Validate learning)"
+        return "map every channel (Go-Live > 3 · Map each channel to Postiz)"
+    if state == SetupState.VALIDATED:
+        return "go live when ready (Go-Live > flip to LIVE, or `fanops init --go-live`)"
+    return "operating — run `fanops run` or open the Studio"
+
