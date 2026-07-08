@@ -3,7 +3,7 @@ name = "fanops"
 version = "0.3.0"
 description = "MOH FLOW FAN OPS — intelligent clip + cross-post engine"
 requires-python = ">=3.12,<3.14"
-dependencies = ["pydantic>=2.7", "requests>=2.31", "python-dotenv>=1.0", "yt-dlp>=2024.0"]
+dependencies = ["pydantic>=2.7", "pydantic-settings>=2.0", "requests>=2.31", "python-dotenv>=1.0", "yt-dlp>=2024.0"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "pytest-mock>=3.12", "pytest-timeout>=2.3", "pytest-cov>=5.0", "ruff>=0.5", "pytest-recording>=0.13", "vcrpy>=6.0"]

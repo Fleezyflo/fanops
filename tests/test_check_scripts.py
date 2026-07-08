@@ -252,7 +252,7 @@ def test_check_scope_resolver_conventions():
     assert "tests/test_post_run.py" in r(["src/fanops/post/run.py"])
     assert "tests/test_smart_framing.py" in r(["src/fanops/framing.py"])
     assert "tests/test_ledger.py" in r(["src/fanops/ledger.py"])
-    assert r(["src/fanops/controlio.py"]) == ["tests/test_cutover.py"]
+    assert r(["src/fanops/controlio.py"]) == ["tests/test_controlio.py"]
 
 
 def test_check_scope_covers_all_src_modules():

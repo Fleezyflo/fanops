@@ -5,12 +5,11 @@ was wrong)."""
 from __future__ import annotations
 import json
 import logging
-import math
-import os
 import re
 from pathlib import Path
 from typing import Literal
 from dotenv import load_dotenv
+from fanops.settings import Settings
 
 _log = logging.getLogger("fanops.config")
 
@@ -91,6 +90,7 @@ class Config:
     def __init__(self, root: Path | str | None = None):
         self.root = Path(root) if root else Path.cwd()
         load_dotenv(self.root / ".env", override=True)   # .env is operator truth — beat stale shell env (Studio restart)
+        Settings()                                       # eager validate — bad operator numerics fail LOUD at construct
         self.base = self.root / "MohFlow-FanOps"
         for attr, name in _STAGE.items():
             setattr(self, attr, self.base / name)
@@ -111,6 +111,12 @@ class Config:
         self.timing_bias_path = self.control / "timing_bias.json"  # Leg 3 (timing): the reach-winning operator-local publish HOUR prior; absent -> no timing bias (byte-identical). apply_timing_bias writes it, surface_time's caller reads it (window-clamped)
         self.learn_doctor_path = self.control / "learn_doctor.json"   # F2 read-only learning field-shape verdict; M4 gates on it
         self.log_path = self.reports / "run.log"
+
+    @property
+    def _settings(self) -> Settings:
+        # MOL-292: typed env boundary — rebuilt on every read so go-live dual-writes (os.environ +
+        # .env) and test monkeypatches are visible without a new Config() or process restart.
+        return Settings()
 
     def render_path(self, batch_id, source_id, render_id: str, aspect) -> str:
         """Per-account Render file location. Hierarchical under clips/ by (batch, source) so every
@@ -157,8 +163,7 @@ class Config:
         # `claude` being on PATH, NOT this var. Kept (harmless) for any third-party/Bedrock setup that
         # exports the key, and for backward compat — but it is NOT required for the default subscription
         # path. If `ANTHROPIC_API_KEY` happens to be set, `claude` will use it; if not, it uses the login.
-        v = os.getenv("ANTHROPIC_API_KEY")
-        return v.strip() if v and v.strip() else None
+        return self._settings.ANTHROPIC_API_KEY
 
     @property
     def poster_backend(self) -> PosterBackend:
@@ -171,14 +176,7 @@ class Config:
         # An UNKNOWN/typo'd value must not present as live: get_poster falls back to DryRunPoster for
         # any unrecognized backend, so a typo would otherwise show a LIVE banner while posting NOTHING.
         # Validate against the known set + fall back to dryrun + warn (variant_ucb_c posture).
-        v = (os.getenv("FANOPS_POSTER") or "").strip()
-        if not v:
-            return "dryrun"
-        if v not in _VALID_BACKENDS:
-            _log.warning("ignoring unknown FANOPS_POSTER=%r (using dryrun); valid: %s",
-                         v, ", ".join(sorted(_VALID_BACKENDS)))
-            return "dryrun"
-        return v
+        return self._settings.poster_backend()
 
     def effective_publish_mode(self) -> str:
         """The per-channel publish-mode label (UI-LIE-FIX root). Single source of truth for every
@@ -234,7 +232,7 @@ class Config:
         # channel (that's per-channel — M3). Sourced from FANOPS_LIVE; when UNSET, derived from the legacy
         # FANOPS_POSTER (a recognized live backend -> live) so the running deployment keeps publishing with
         # NO .env edit. An unknown FANOPS_LIVE is never presented as live (the W4 false-banner guard).
-        v = (os.getenv("FANOPS_LIVE") or "").strip().lower()
+        v = (self._settings.FANOPS_LIVE or "").strip().lower()
         if not v:
             return self.poster_backend in _LIVE_BACKENDS          # back-compat: a live FANOPS_POSTER implies live
         if v in ("1", "true", "yes", "on"):
@@ -272,16 +270,14 @@ class Config:
         # Base URL of a self-hosted (or hosted) Postiz instance, e.g. https://postiz.example.com or
         # https://api.postiz.com. The free, self-hosted poster backend (FANOPS_POSTER=postiz) posts
         # to {postiz_url}/public/v1/... . Trailing slash trimmed by the poster.
-        v = os.getenv("POSTIZ_URL")
-        return v.strip() if v and v.strip() else None
+        return self._settings.POSTIZ_URL
 
     @property
     def postiz_api_key(self) -> str | None:
         # Postiz public API key (Settings > Developers > Public API), sent as the Authorization
         # header. is_live_backend is True for a postiz backend WITH this key (M2): postiz both
         # PUBLISHES and now feeds the learning loop via its post analytics (PostizMetricsClient).
-        v = os.getenv("POSTIZ_API_KEY")
-        return v.strip() if v and v.strip() else None
+        return self._settings.POSTIZ_API_KEY
 
     @property
     def media_public_base(self) -> str | None:
@@ -289,35 +285,31 @@ class Config:
         # and Instagram pull-from-URL require a host the backend can reach — localhost / Studio URLs are
         # SSRF-blocked. When set WITH R2_* creds, postiz_upload_media mirrors bytes to R2 first. Trailing
         # slash stripped.
-        v = os.getenv("FANOPS_MEDIA_PUBLIC_BASE")
-        return v.strip().rstrip("/") if v and v.strip() else None
+        v = self._settings.FANOPS_MEDIA_PUBLIC_BASE
+        return v.rstrip("/") if v else None
 
     @property
     def r2_account_id(self) -> str | None:
-        v = os.getenv("R2_ACCOUNT_ID")
-        return v.strip() if v and v.strip() else None
+        return self._settings.R2_ACCOUNT_ID
 
     @property
     def r2_access_key_id(self) -> str | None:
-        v = os.getenv("R2_ACCESS_KEY_ID")
-        return v.strip() if v and v.strip() else None
+        return self._settings.R2_ACCESS_KEY_ID
 
     @property
     def r2_secret_access_key(self) -> str | None:
-        v = os.getenv("R2_SECRET_ACCESS_KEY")
-        return v.strip() if v and v.strip() else None
+        return self._settings.R2_SECRET_ACCESS_KEY
 
     @property
     def r2_bucket(self) -> str | None:
-        v = os.getenv("R2_BUCKET")
-        return v.strip() if v and v.strip() else None
+        return self._settings.R2_BUCKET
 
     @property
     def zernio_url(self) -> str | None:
         # Base URL of the Zernio API. Zernio is HOSTED (not self-hosted like Postiz), so this defaults
         # to the public endpoint; ZERNIO_API_URL overrides it (parity with the docs' env var, e.g. a
         # regional host or a test double). The poster trims a trailing slash.
-        v = (os.getenv("ZERNIO_API_URL") or "").strip()
+        v = (self._settings.ZERNIO_API_URL or "").strip()
         return v or "https://zernio.com/api/v1"
 
     @property
@@ -326,8 +318,7 @@ class Config:
         # WRITE-ONLY — never logged/echoed (mirrors postiz_api_key). is_live_backend is True for a zernio
         # backend WITH this key. Distinct from the POSTIZ key — they coexist (per-account routing
         # can run IG via Postiz AND TikTok via Zernio at once).
-        v = os.getenv("ZERNIO_API_KEY")
-        return v.strip() if v and v.strip() else None
+        return self._settings.ZERNIO_API_KEY
 
     @property
     def meta_graph_token(self) -> str | None:
@@ -335,19 +326,17 @@ class Config:
         # never logged/echoed (mirrors postiz_api_key); meta_graph sends it as the access_token param.
         # Absent -> the Graph store build fails open to the frozen reach floor. Used ONLY by `hashtags
         # refresh`, never on the publish path.
-        v = os.getenv("META_GRAPH_TOKEN")
-        return v.strip() if v and v.strip() else None
+        return self._settings.META_GRAPH_TOKEN
 
     @property
     def meta_ig_user_id(self) -> str | None:
         # The IG Business account id that ig_hashtag_search requires as `user_id`. Absent -> no trends.
-        v = os.getenv("META_IG_USER_ID")
-        return v.strip() if v and v.strip() else None
+        return self._settings.META_IG_USER_ID
 
     @property
     def meta_graph_url(self) -> str:
         # Meta Graph base (overridable for tests/self-host). Default the current stable Graph version.
-        v = (os.getenv("META_GRAPH_URL") or "").strip()
+        v = (self._settings.META_GRAPH_URL or "").strip()
         return (v or "https://graph.facebook.com/v21.0").rstrip("/")
 
     @property
@@ -358,7 +347,7 @@ class Config:
         # app. Only the explicit OFF-words disable it (operator escape hatch).
         # NB: this gates the BACKGROUND refresh sampling only; the on-demand operator lookup (meta_graph.
         # tag_metrics) is gated by creds + budget, never this flag. Mirrors creative_variation's default-ON shape.
-        v = (os.getenv("FANOPS_HASHTAG_TRENDS") or "").strip().lower()
+        v = (self._settings.FANOPS_HASHTAG_TRENDS or "").strip().lower()
         return v not in {"0", "false", "no", "off"}     # DEFAULT ON; only explicit off-words disable it
 
     @property
@@ -367,7 +356,7 @@ class Config:
         # absent from its row -> the lift scalar is a partial objective). DEFAULT OFF (learning stays
         # conservative + the 3-window streak is already a proxy); only explicit on-words enable. Purely
         # gates variant_amplify; never recalibrates _W. Mirrors burn_subs.
-        v = (os.getenv("FANOPS_REQUIRE_FULL_OBJECTIVE") or "").strip().lower()
+        v = (self._settings.FANOPS_REQUIRE_FULL_OBJECTIVE or "").strip().lower()
         return v in {"1", "true", "yes", "on"}
 
     @property
@@ -418,13 +407,7 @@ class Config:
         # typo like 'llmm') must NOT slip through: get_responder only matches =='llm', so a typo silently
         # ran manual while the operator believed the AI was on. Validate + warn + fall back to manual,
         # mirroring poster_backend's guard above.
-        v = (os.getenv("FANOPS_RESPONDER") or "").strip().lower()
-        if not v:
-            return "manual"
-        if v not in {"llm", "manual"}:
-            _log.warning("ignoring unknown FANOPS_RESPONDER=%r (using manual); valid: llm, manual", v)
-            return "manual"
-        return v
+        return self._settings.responder_mode()
 
     def llm_model_for(self, kind: str) -> str:
         # V2 M1/F1: the creative brain stays PINNED (an unpinned `claude -p` drifts with the CLI default).
@@ -434,7 +417,7 @@ class Config:
         # author of the on-screen RETENTION hook, the watch-through driver) — stay on `opus`.
         # FANOPS_LLM_MODEL forces ONE model for ALL gates (operator escape hatch; set a FULL id
         # like "claude-opus-4-..." for bit-stable repro). Validate-or-default shape (mirrors clip_profile).
-        g = os.getenv("FANOPS_LLM_MODEL")
+        g = self._settings.FANOPS_LLM_MODEL
         if g and g.strip():
             return g.strip()
         return _GATE_MODEL_DEFAULTS.get(kind, "sonnet")
@@ -447,7 +430,7 @@ class Config:
         # operator running FanOps for a different artist sets FANOPS_ARTIST_NAME. NOTE: this is the
         # display name, DISTINCT from tagging.ARTIST_HANDLE (the @mohflow caption mention) — they
         # have different sources and are intentionally not unified.
-        v = os.getenv("FANOPS_ARTIST_NAME")
+        v = self._settings.FANOPS_ARTIST_NAME
         return v.strip() if v and v.strip() else "Moh Flow"
 
     @property
@@ -456,7 +439,7 @@ class Config:
         # "medium" 16-26s, "long" 28-45s. Legacy content-type bands stay valid (additive, NOT remapped):
         # "talk" 12-22s, "song" 18-35s. DEFAULT "talk" -> today's behavior unchanged (existing deployments
         # render byte-identically). An unknown value resolves to the talk band in band_for (validate-or-default).
-        v = os.getenv("FANOPS_CLIP_PROFILE")
+        v = self._settings.FANOPS_CLIP_PROFILE
         return v.strip() if v and v.strip() else "talk"
 
     def resolve_clip_profile(self, account=None) -> str:
@@ -492,7 +475,7 @@ class Config:
         # or no strong frame, the start is left exactly as the band/transcript-snap chose it (today's
         # behavior). Only the explicit off-words disable it; the decision is cached per-window so the
         # in-lock commit pass re-spawns no frame-probe ffmpeg (Phase D).
-        v = (os.getenv("FANOPS_VISUAL_START") or "").strip().lower()
+        v = (getattr(self._settings, "FANOPS_VISUAL_START") or "").strip().lower()
         return v not in ("0", "false", "no", "off")     # DEFAULT ON; unset/empty/other -> True
 
     @property
@@ -502,7 +485,7 @@ class Config:
         # the [framing] extra absent or no subject detected, subject_focus returns None and the render
         # crops centered exactly as today, so default-on is never worse than the old behavior. Only the
         # explicit off-words disable it. Mirrors visual_start (the weakest link closed by default).
-        v = (os.getenv("FANOPS_SMART_FRAMING") or "").strip().lower()
+        v = (getattr(self._settings, "FANOPS_SMART_FRAMING") or "").strip().lower()
         return v not in ("0", "false", "no", "off")     # DEFAULT ON; unset/empty/other -> True
 
     @property
@@ -510,7 +493,7 @@ class Config:
         # The legacy `whisper` CLI model — used ONLY when faster-whisper (the [asr] extra) is absent.
         # Default "turbo" (fast, good timestamps). Pin a smaller model (e.g. "tiny"/"base") for
         # offline / air-gapped / CI hosts where the larger checkpoints cannot be downloaded.
-        v = os.getenv("FANOPS_WHISPER_MODEL")
+        v = self._settings.FANOPS_WHISPER_MODEL
         return v.strip() if v and v.strip() else "turbo"
 
     @property
@@ -518,7 +501,7 @@ class Config:
         # The faster-whisper (CTranslate2) model. Default "medium" — fast enough to transcribe a long
         # (~26min) source within the whisper timeout on CPU, while still strong on music/rap EN+AR. Pin
         # FANOPS_ASR_MODEL="large-v3" for max accuracy on a fast host, or "small" on a slow one.
-        v = os.getenv("FANOPS_ASR_MODEL")
+        v = self._settings.FANOPS_ASR_MODEL
         return v.strip() if v and v.strip() else "medium"
 
     def asr_model_for(self, duration_seconds: float | None) -> str:
@@ -527,7 +510,7 @@ class Config:
         # — a short source affords large-v3 (accuracy is cheap on little audio), a long/unknown source
         # stays on medium (fast enough to land under transcribe._WHISPER_TIMEOUT). NOT a frugality cap:
         # short sources UPGRADE to the most accurate model; only long ones hold the fast default.
-        if os.getenv("FANOPS_ASR_MODEL", "").strip(): return self.asr_model
+        if (self._settings.FANOPS_ASR_MODEL or "").strip(): return self.asr_model
         return "large-v3" if (duration_seconds is not None and duration_seconds <= _ASR_SHORT_SOURCE_SECONDS) else "medium"
 
     def whisper_model_for(self, duration_seconds: float | None) -> str:
@@ -537,7 +520,7 @@ class Config:
         # (accuracy is cheap on little audio) and a long/unknown source holds the fast "turbo" default (lands
         # under transcribe._WHISPER_TIMEOUT). transcribe._resolve_model still remaps to a cached checkpoint
         # offline, so this only chooses the IDEAL model. NOT a frugality cap — short sources upgrade.
-        if os.getenv("FANOPS_WHISPER_MODEL", "").strip(): return self.whisper_model
+        if (self._settings.FANOPS_WHISPER_MODEL or "").strip(): return self.whisper_model
         return "large-v3" if (duration_seconds is not None and duration_seconds <= _ASR_SHORT_SOURCE_SECONDS) else "turbo"
 
     @property
@@ -545,7 +528,7 @@ class Config:
         # Default "en,ar" — a comma list PINS the candidate languages: the runner enables faster-whisper
         # per-segment detection (multilingual) so English directing lines AND Arabic verses in the SAME
         # source both transcribe. A SINGLE value (e.g. "ar") forces one language; "" = unconstrained auto.
-        v = os.getenv("FANOPS_ASR_LANGUAGE")
+        v = self._settings.FANOPS_ASR_LANGUAGE
         return v.strip() if v and v.strip() else "en,ar"
 
     @property
@@ -556,7 +539,7 @@ class Config:
         # real clips. DEFAULT ON; only the explicit off-words "0"/"false"/"no"/"off" disable it.
         # Safe to default ON: if demucs/the [asr] extra isn't installed, isolation FAILS OPEN to the
         # raw audio (today's behavior), so this never breaks a host without Demucs.
-        v = os.getenv("FANOPS_ISOLATE_VOCALS")
+        v = self._settings.FANOPS_ISOLATE_VOCALS
         return (v or "").strip().lower() not in {"0", "false", "no", "off"}
 
     @property
@@ -567,7 +550,7 @@ class Config:
         # RETENTION HOOK (m.hook) is a SEPARATE layer that burns by default regardless of this flag;
         # this only adds the transcript on top. Only the explicit on-words "1"/"true"/"yes"/"on"
         # enable it; unset/blank/anything else stays OFF. Mirrors creative_variation's opt-in shape.
-        v = (os.getenv("FANOPS_BURN_SUBS") or "").strip().lower()
+        v = (getattr(self._settings, "FANOPS_BURN_SUBS") or "").strip().lower()
         return v in {"1", "true", "yes", "on"}
 
     @property
@@ -577,7 +560,7 @@ class Config:
         # evidence-gated: the artist's content is predominantly vertical (routes to the non-cropping
         # scale path), so this ships dark until an operator sees the decapitation and enables it. Only
         # the explicit on-words enable it; off -> today's centered reframe, byte-identical. Mirrors burn_subs.
-        v = (os.getenv("FANOPS_AWARE_REFRAME") or "").strip().lower()
+        v = (getattr(self._settings, "FANOPS_AWARE_REFRAME") or "").strip().lower()
         return v in {"1", "true", "yes", "on"}
 
     @property
@@ -585,7 +568,7 @@ class Config:
         # Operator override for the .ass subtitle font. Default "Arial Unicode MS" — an
         # Arabic-capable face so RTL captions render; change it (FANOPS_SUBTITLE_FONT) if the
         # host lacks that font or the operator prefers another Unicode/Arabic typeface.
-        v = os.getenv("FANOPS_SUBTITLE_FONT")
+        v = self._settings.FANOPS_SUBTITLE_FONT
         return v.strip() if v and v.strip() else "Arial Unicode MS"
 
 
@@ -596,7 +579,7 @@ class Config:
         # DEFAULT ON (per-account selection is the system's purpose, mirrors creative_variation) — set
         # FANOPS_ACCOUNT_CASTING=0 to restore the legacy fan-to-all path. NB the wired LLM path is UNCAPPED by
         # design (the operator does not want output capped for cost); there is no per-account moment budget.
-        v = (os.getenv("FANOPS_ACCOUNT_CASTING") or "").strip().lower()
+        v = (getattr(self._settings, "FANOPS_ACCOUNT_CASTING") or "").strip().lower()
         return v not in ("0", "false", "no", "off")     # DEFAULT ON (per-account selection is the wanted path); explicit off-words disable
 
     @property
@@ -604,7 +587,7 @@ class Config:
         # M2 structural-hooks router: a read-only Moment classifier (runs BEFORE the render loop) that
         # records hook_strategy and RENDERS NOTHING. DEFAULT OFF (opt-in): observe-only, so the annotation
         # is the SOLE delta and feature-off render/post bytes are byte-identical. Only explicit on-words enable it.
-        v = (os.getenv("FANOPS_HOOK_ROUTER") or "").strip().lower()
+        v = (getattr(self._settings, "FANOPS_HOOK_ROUTER") or "").strip().lower()
         return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
 
     @property
@@ -613,7 +596,7 @@ class Config:
         # operator-approved plans into stitch_draft clips). Per-format gate, DEFAULT OFF (the PRD risk-row
         # "impact-cut family disableable"). The router (hook_router) must also be on for moments to be
         # reserved; with this off the produce path is a no-op (no plans, no stitch renders) -> non-regression.
-        v = (os.getenv("FANOPS_IMPACT_CUT") or "").strip().lower()
+        v = (getattr(self._settings, "FANOPS_IMPACT_CUT") or "").strip().lower()
         return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
 
     @property
@@ -623,7 +606,7 @@ class Config:
         # Per-format gate, DEFAULT OFF (PRD "intro-tease family disableable"). Needs the router on (to reserve
         # clean_awaiting_strategy:intro_tease moments) AND FANOPS_RESPONDER=llm (the matcher is an agent gate);
         # with this off there is no matcher gate and no intro_tease plans/renders -> non-regression.
-        v = (os.getenv("FANOPS_INTRO_TEASE") or "").strip().lower()
+        v = (getattr(self._settings, "FANOPS_INTRO_TEASE") or "").strip().lower()
         return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
 
     @property
@@ -634,7 +617,7 @@ class Config:
         # DEFAULT OFF (opt-in), INDEPENDENT of FANOPS_CREATIVE_VARIATION — same off-by-default,
         # fail-open posture as that toggle. Only the explicit on-words enable it; unset, empty, or
         # anything else stays OFF (today's behavior, no hint injected, loop stays open).
-        v = (os.getenv("FANOPS_VARIANT_LEARNING") or "").strip().lower()
+        v = (getattr(self._settings, "FANOPS_VARIANT_LEARNING") or "").strip().lower()
         return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
 
     @property
@@ -643,10 +626,7 @@ class Config:
         # before its measured lift is trusted enough to bias the next caption. DEFAULT 3 (the
         # early-noise guard — with 2 accounts, acting on 1-2 data points is the noise-amplification
         # trap). A non-int env falls back to the default rather than crashing an autonomous run.
-        try:
-            return int(os.getenv("FANOPS_VARIANT_MIN_POSTS", "3"))
-        except ValueError:
-            return 3
+        return self._settings.FANOPS_VARIANT_MIN_POSTS
 
     @property
     def variant_min_gap(self) -> float:
@@ -654,10 +634,7 @@ class Config:
         # runner-up's by at least this margin to emit a hint. DEFAULT 10.0 (same lift_score scale
         # as the HOLD-gate lift floor — a real margin, not noise). A non-float env falls back to
         # the default rather than crashing.
-        try:
-            return float(os.getenv("FANOPS_VARIANT_MIN_GAP", "10"))
-        except ValueError:
-            return 10.0
+        return self._settings.FANOPS_VARIANT_MIN_GAP
 
     @property
     def variant_amplify(self) -> bool:
@@ -670,7 +647,7 @@ class Config:
         # VALIDATION-FROZEN (Phase 2): this flag = operator INTENT; even ON, apply_variant_amplify stays
         # INERT until `learning_validated` opens — AUTO-stamped by the first real non-degraded live metric
         # (track._auto_validate_metrics_shape), or the optional early `fanops cutover metrics` probe.
-        v = (os.getenv("FANOPS_VARIANT_AMPLIFY") or "").strip().lower()
+        v = (getattr(self._settings, "FANOPS_VARIANT_AMPLIFY") or "").strip().lower()
         return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
 
     @property
@@ -678,20 +655,14 @@ class Config:
         # v3 trust-gate part 1 (stronger than v2's variant_min_posts=3): the winning hook must have
         # at least this many analyzed posts on the surface before its win is trusted enough to AMPLIFY
         # (a far more consequential act than v2's caption-bias). DEFAULT 8. Non-int env -> default.
-        try:
-            return int(os.getenv("FANOPS_VARIANT_AMPLIFY_MIN_POSTS", "8"))
-        except ValueError:
-            return 8
+        return self._settings.FANOPS_VARIANT_AMPLIFY_MIN_POSTS
 
     @property
     def variant_amplify_min_gap(self) -> float:
         # v3 trust-gate part 2 (stronger than v2's variant_min_gap=10): the winner's mean lift must
         # beat the runner-up's by at least this margin. DEFAULT 25.0 (same lift_score scale).
         # Non-float env -> default.
-        try:
-            return float(os.getenv("FANOPS_VARIANT_AMPLIFY_MIN_GAP", "25"))
-        except ValueError:
-            return 25.0
+        return self._settings.FANOPS_VARIANT_AMPLIFY_MIN_GAP
 
     @property
     def variant_amplify_min_streak(self) -> int:
@@ -699,10 +670,7 @@ class Config:
         # have led the gate across at least this many DISTINCT evidence windows (new analyzed-post
         # batches) before amplifying. >= 2 means "never act on a single window". DEFAULT 3.
         # Non-int env -> default.
-        try:
-            return int(os.getenv("FANOPS_VARIANT_AMPLIFY_MIN_STREAK", "3"))
-        except ValueError:
-            return 3
+        return self._settings.FANOPS_VARIANT_AMPLIFY_MIN_STREAK
 
     @property
     def variant_ucb(self) -> bool:
@@ -720,7 +688,7 @@ class Config:
         # actuator that consumes a winner to re-mine a source (variant_amplify.py:166), never the cheap,
         # reversible caption hint. (A degraded/unconfirmed lift can still bias a caption; that is an accepted,
         # low-stakes trade — biasing a caption is reversible, re-mining a source is not.)
-        v = (os.getenv("FANOPS_VARIANT_UCB") or "").strip().lower()
+        v = (getattr(self._settings, "FANOPS_VARIANT_UCB") or "").strip().lower()
         return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
 
     @property
@@ -730,11 +698,7 @@ class Config:
         # hooks; c == 0 => pure greedy (degenerates to v2-greedy's "highest mean wins"). A negative
         # c would INVERT exploration into anti-exploration (always pick the most-sampled) — guard it:
         # a non-float OR negative env falls back to the default rather than crashing an autonomous run.
-        try:
-            v = float(os.getenv("FANOPS_VARIANT_UCB_C", ""))
-        except ValueError:
-            return math.sqrt(2)
-        return v if v >= 0 else math.sqrt(2)
+        return self._settings.FANOPS_VARIANT_UCB_C
 
     @property
     def variant_transfer(self) -> bool:
@@ -747,7 +711,7 @@ class Config:
         # propagates noise across surfaces — stays inert until `learning_validated` opens (AUTO-stamped by
         # the first real non-degraded live metric via track._auto_validate_metrics_shape, or the optional
         # early `fanops cutover metrics` probe).
-        v = (os.getenv("FANOPS_VARIANT_TRANSFER") or "").strip().lower()
+        v = (getattr(self._settings, "FANOPS_VARIANT_TRANSFER") or "").strip().lower()
         return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
 
     @property
@@ -756,20 +720,14 @@ class Config:
         # is the v2-gated winner on at least this many DISTINCT other same-platform donor surfaces.
         # DEFAULT 2 — one surface's local win is not yet a platform-level signal. A non-int env
         # falls back to the default rather than crashing an autonomous run.
-        try:
-            return int(os.getenv("FANOPS_VARIANT_TRANSFER_MIN_DONORS", "2"))
-        except ValueError:
-            return 2
+        return self._settings.FANOPS_VARIANT_TRANSFER_MIN_DONORS
 
     @property
     def variant_transfer_max_hooks(self) -> int:
         # Cap on how many borrowed styles a single caption request may carry, so even a popular
         # style-cluster cannot flood one caption (anti-homogenization). DEFAULT 2. A non-int env
         # falls back to the default.
-        try:
-            return int(os.getenv("FANOPS_VARIANT_TRANSFER_MAX_HOOKS", "2"))
-        except ValueError:
-            return 2
+        return self._settings.FANOPS_VARIANT_TRANSFER_MAX_HOOKS
 
     @property
     def adjust_per_surface(self) -> bool:
@@ -778,7 +736,7 @@ class Config:
         # account's hits. The LOSER side stays GLOBAL regardless (D1) — per-surface logic never
         # re-scopes retirement, so a shared clip another surface won is never retired. DEFAULT OFF
         # (opt-in); unset/empty/other -> today's global ranking, byte-identical.
-        v = (os.getenv("FANOPS_ADJUST_PER_SURFACE") or "").strip().lower()
+        v = (getattr(self._settings, "FANOPS_ADJUST_PER_SURFACE") or "").strip().lower()
         return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
 
     @property
@@ -789,7 +747,7 @@ class Config:
         # never retires. This touches the amplify/cascade machinery (audit C1), so it is a KILL SWITCH:
         # DEFAULT OFF. VALIDATION-FROZEN (Phase 2): even ON, apply_p4_dim_bias stays INERT until
         # `fanops cutover metrics` confirms the live metrics shape (validation_gate.learning_validated).
-        v = (os.getenv("FANOPS_P4_DIM_BIAS") or "").strip().lower()
+        v = (getattr(self._settings, "FANOPS_P4_DIM_BIAS") or "").strip().lower()
         return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
 
     @property
@@ -799,7 +757,7 @@ class Config:
         # posting window). A schedule-slot bias, never a publish. KILL SWITCH: DEFAULT OFF. VALIDATION-
         # FROZEN (Phase 2): even ON, apply_timing_bias stays INERT until learning_validated. No hour
         # variance in the published set -> no winner -> no-op (a fixed schedule has nothing to learn).
-        v = (os.getenv("FANOPS_TIMING_BIAS") or "").strip().lower()
+        v = (getattr(self._settings, "FANOPS_TIMING_BIAS") or "").strip().lower()
         return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
 
     @property
@@ -814,7 +772,7 @@ class Config:
         # duration is unknown yields no derivable retention (_retention_fraction None, post/metrics.py
         # ~:444) — with this ON such an IG post would stop proving until a retention-bearing IG row lands.
         # That is why this is default-off and reversible, not a silent tightening of the live path.
-        v = (os.getenv("FANOPS_IG_RETENTION_PROOF") or "").strip().lower()
+        v = (getattr(self._settings, "FANOPS_IG_RETENTION_PROOF") or "").strip().lower()
         return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
 
     @property
@@ -823,7 +781,7 @@ class Config:
         # the cross-surface union of gated winning hook STYLES into moment_prompt, so the vision hook
         # AUTHOR (not just captions) leans toward what has worked. STYLE cue only ("do NOT copy
         # verbatim"). DEFAULT OFF, fail-open; unset/empty/other -> today's behavior, no block injected.
-        v = (os.getenv("FANOPS_MOMENT_HOOK_LEARNING") or "").strip().lower()
+        v = (getattr(self._settings, "FANOPS_MOMENT_HOOK_LEARNING") or "").strip().lower()
         return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
 
     @property
@@ -834,11 +792,7 @@ class Config:
         # just trusts the higher-reach ranking — set a positive margin to demand a real lead for your
         # reach scale). A non-float OR NEGATIVE env -> default (a negative gap would emit on no lead at
         # all — guarded exactly like variant_ucb_c).
-        try:
-            v = float(os.getenv("FANOPS_P4_MIN_REACH_GAP", ""))
-        except ValueError:
-            return 0.0
-        return v if v >= 0 else 0.0
+        return self._settings.FANOPS_P4_MIN_REACH_GAP
 
     @property
     def gc_keep_days(self) -> int:
@@ -846,22 +800,14 @@ class Config:
         # unchanged when unset). CLAMPED >= 1 (the cmd_gc keep_days<1 reject precedent): a 0/negative window
         # would sweep all reusable renders. Non-int env -> default. NB: a clip whose media_url is still None
         # (cross-account is its FIRST fan-out, Phase 4) needs its .mp4 at publish — set this conservatively.
-        try:
-            v = int(os.getenv("FANOPS_GC_KEEP_DAYS", "30"))
-        except ValueError:
-            return 30
-        return v if v >= 1 else 30
+        return self._settings.FANOPS_GC_KEEP_DAYS
 
     @property
     def upload_max_bytes(self) -> int:
         # The Studio upload body ceiling (ING-8). DEFAULT 2048 MB (2 GiB — a long raw clip fits; an abusive
         # body is refused with 413). Configurable via FANOPS_UPLOAD_MAX_MB for a trusted localhost that ingests
         # larger masters. CLAMPED >= 1 MB (a 0/negative cap would refuse every upload). Non-int env -> default.
-        try:
-            mb = int(os.getenv("FANOPS_UPLOAD_MAX_MB", "2048"))
-        except ValueError:
-            return 2048 * 1024 * 1024
-        return max(1, mb) * 1024 * 1024
+        return max(1, self._settings.FANOPS_UPLOAD_MAX_MB) * 1024 * 1024
 
     @property
     def operator_tz(self) -> str:
@@ -870,7 +816,7 @@ class Config:
         falls through to the server's silent astimezone() default (the M1 root: a server in PST
         rendered every time in PST without labelling it, so the operator's clock was wrong). The
         operator sets this on the Go Live tab. Set via FANOPS_OPERATOR_TZ. Pure read, no I/O."""
-        v = (os.getenv("FANOPS_OPERATOR_TZ") or "").strip()
+        v = (self._settings.FANOPS_OPERATOR_TZ or "").strip()
         return v if v else "UTC"
 
     @property
@@ -879,7 +825,7 @@ class Config:
         jittered band (PRD: 'leaning jittered 2-3h for a human feel'). DEFAULT OFF preserves the
         M4 30-min floor — byte-identical to today's behaviour. Mirrors concurrent_sources's
         explicit-on-words pattern. Set via FANOPS_REALISTIC_CADENCE."""
-        v = (os.getenv("FANOPS_REALISTIC_CADENCE") or "").strip().lower()
+        v = (getattr(self._settings, "FANOPS_REALISTIC_CADENCE") or "").strip().lower()
         return v in {"1", "true", "yes", "on"}
 
     def account_window(self, handle: str) -> "tuple[int, int] | None":
@@ -923,31 +869,19 @@ class Config:
         # immediately under a past base-time). A non-int OR negative env -> 0: unlike the other int
         # knobs, a negative lead would shift the anchor before `base` and corrupt the window, so it
         # is explicitly clamped (the variant_ucb_c precedent), not merely caught.
-        try:
-            v = int(os.getenv("FANOPS_PUBLISH_LEAD_MINUTES", "0"))
-        except ValueError:
-            return 0
-        return v if v >= 0 else 0
+        return self._settings.FANOPS_PUBLISH_LEAD_MINUTES
 
     @property
     def zernio_max_upload_bytes(self) -> int:
         # Zernio rejects large TikTok uploads with 413 — preflight BEFORE the two-step upload so the
         # operator gets a fast oversize bucket (Sprint 2). DEFAULT 4 MB (live-discovered Zernio 413 ceiling).
-        try:
-            mb = int(os.getenv("FANOPS_ZERNIO_MAX_UPLOAD_MB", "4"))
-        except ValueError:
-            mb = 4
-        return max(1, mb) * 1024 * 1024
+        return max(1, self._settings.FANOPS_ZERNIO_MAX_UPLOAD_MB) * 1024 * 1024
 
     @property
     def postiz_publish_per_min(self) -> int:
         # Postiz rate-limits bursts (429). Cap publishes per integration per minute (DEFAULT 4).
         # 0 disables the throttle (explicit opt-out).
-        try:
-            v = int(os.getenv("FANOPS_POSTIZ_PUBLISH_PER_MIN", "4"))
-        except ValueError:
-            return 4
-        return v if v >= 0 else 4
+        return self._settings.FANOPS_POSTIZ_PUBLISH_PER_MIN
 
     @property
     def concurrent_sources(self) -> bool:
@@ -959,7 +893,7 @@ class Config:
         # existing sequential path, no pool constructed. Only the explicit on-words enable it; unset,
         # empty, or anything else stays OFF. Mirrors burn_subs. (One writer rule guards correctness,
         # not the flag: workers are pure, the single main transaction is the only ledger writer.)
-        v = (os.getenv("FANOPS_CONCURRENT_SOURCES") or "").strip().lower()
+        v = (getattr(self._settings, "FANOPS_CONCURRENT_SOURCES") or "").strip().lower()
         return v in {"1", "true", "yes", "on"}
 
     @property
@@ -970,8 +904,4 @@ class Config:
         # >= 1: a pool of 0 would never run a worker and HANG, and a hang is a deadlock-guard violation
         # (the variant_ucb_c clamp precedent). A non-int env falls back to the default rather than
         # crashing an autonomous run.
-        try:
-            v = int(os.getenv("FANOPS_CONCURRENT_WORKERS", "4"))
-        except ValueError:
-            return 4
-        return v if v >= 1 else 1
+        return self._settings.FANOPS_CONCURRENT_WORKERS
