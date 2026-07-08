@@ -86,19 +86,21 @@ def test_claude_json_raises_toolchain_missing_when_claude_absent(mocker):
         claude_json("q", _SCHEMA)
 
 def test_claude_json_raises_on_unparseable_output(mocker):
+    from fanops.llm import LlmSchemaError
     class R: returncode = 0; stdout = "not json at all"; stderr = ""
     mocker.patch("fanops.llm.subprocess.run", return_value=R())
-    with pytest.raises(RuntimeError, match="could not parse"):
+    with pytest.raises(LlmSchemaError, match="could not parse"):
         claude_json("q", _SCHEMA)
 
 def test_claude_json_raises_on_non_object_json(mocker):
-    # Valid JSON but not an object (null/array/number/string) must become the clean
-    # "could not parse" RuntimeError, not a raw AttributeError from env.get(...).
+    # Valid JSON but not an object (null/array/number/string) must become the typed
+    # LlmSchemaError, not a raw AttributeError from env.get(...).
+    from fanops.llm import LlmSchemaError
     for stdout in ("null", "[1, 2]", "42", "\"hi\""):
         class R: returncode = 0; stderr = ""
         R.stdout = stdout
         mocker.patch("fanops.llm.subprocess.run", return_value=R())
-        with pytest.raises(RuntimeError, match="could not parse"):
+        with pytest.raises(LlmSchemaError, match="could not parse"):
             claude_json("q", _SCHEMA)
 
 def _rl_envelope():
@@ -389,7 +391,8 @@ def test_claude_json_meta_finalizer_success_avoids_schema_error(mocker):
     out, _, _ = claude_json_meta("judge", _SCHEMA, images=["/f/1.jpg"])
     assert out == {"x": 11}
 
-def test_claude_json_meta_no_finalizer_when_structured_output_present(mocker):
+def test_no_finalizer_when_structured_output_present(mocker):
+    # MOL-234: happy-path negative — finalizer must NOT fire when structured_output is already valid.
     from fanops.llm import claude_json_meta
     run = mocker.patch("fanops.llm.subprocess.run", return_value=type("R", (), {
         "returncode": 0, "stdout": json.dumps({"structured_output": {"x": 3}, "num_turns": 2}), "stderr": ""})())
@@ -424,3 +427,43 @@ def test_claude_json_meta_finalizer_still_raises_when_it_also_fails(mocker):
     with pytest.raises(LlmSchemaError):
         claude_json_meta("judge", _SCHEMA, images=["/f/1.jpg"])
     assert run.call_count == 2
+
+
+# --- MOL-232: finalizer turn is schema-generic (not picker-specific) ---
+
+_GENERIC_SCHEMA = {"type": "object", "properties": {"label": {"type": "string"}, "score": {"type": "number"}},
+                 "required": ["label", "score"]}
+
+def test_finalizer_turn_recovers_structured_output(mocker):
+    from fanops.llm import claude_json_meta
+    expected = {"label": "bright", "score": 0.92}
+    seq = iter([json.dumps({"structured_output": None, "result": "analysis prose only", "num_turns": 2}),
+                json.dumps({"structured_output": expected, "num_turns": 1})])
+    def fake(cmd, **kw):
+        return type("R", (), {"returncode": 0, "stdout": next(seq), "stderr": ""})()
+    run = mocker.patch("fanops.llm.subprocess.run", side_effect=fake)
+    out, _, _ = claude_json_meta("classify", _GENERIC_SCHEMA, images=["/f/x.jpg"])
+    assert out == expected and run.call_count == 2
+    final_cmd = run.call_args_list[1][0][0]
+    i = final_cmd.index("--allowedTools"); assert final_cmd[i + 1] == ""
+
+
+# --- MOL-247: _extract_json_object salvages fenced + balanced-brace prose ---
+
+def test_extract_json_object_from_prose():
+    expected = {"winner": "clip_a", "score": 0.85}
+    fenced = f'Here is my analysis:\n```json\n{json.dumps(expected)}\n```\nThanks.'
+    unfenced = f'The result is {json.dumps(expected)} as requested.'
+    assert _extract_json_object(fenced) == expected
+    assert _extract_json_object(unfenced) == expected
+
+
+# --- MOL-249: repair-empty -> typed LlmSchemaError (result-resolution path) ---
+
+def test_no_json_object_raises_llm_schema_error(mocker):
+    from fanops.llm import LlmSchemaError
+    envelope = {"structured_output": None, "result": "pure prose with no extractable object"}
+    class R: returncode = 0; stdout = json.dumps(envelope); stderr = ""
+    mocker.patch("fanops.llm.subprocess.run", return_value=R())
+    with pytest.raises(LlmSchemaError, match="was not JSON"):
+        claude_json("q", _SCHEMA)
