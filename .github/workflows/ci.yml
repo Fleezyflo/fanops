@@ -38,11 +38,15 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-          cache-dependency-path: pyproject.toml
-      - name: Install (dev + studio = flask, so the studio route tests run not skip)
+          cache-dependency-path: requirements/ci-unit.txt
+      - name: Lockfile drift guard (pyproject deps must not change without regen — MOL-195)
+        if: github.event_name == 'pull_request'
+        run: ./scripts/check-locks.sh "${{ github.event.pull_request.base.sha }}"
+      - name: Install from hashed lock (MOL-195 — reproducible + hash-verified)
         run: |
           python -m pip install --upgrade pip
-          pip install -e '.[dev,studio]'
+          pip install --require-hashes -r requirements/ci-unit.txt
+          pip install -e . --no-deps
       - name: Lint (ruff — pyflakes F + pycodestyle E, the house ruleset in pyproject)
         run: ruff check .          # was configured in pyproject but never enforced in CI (Phase 4b)
       - name: Unit tests
@@ -72,7 +76,7 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-          cache-dependency-path: pyproject.toml
+          cache-dependency-path: requirements/ci-e2e.txt
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -85,10 +89,11 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg espeak
-      - name: Install (dev + transcribe = openai-whisper + studio = flask + compose = moviepy + framing = opencv)
+      - name: Install from hashed lock (dev+transcribe+studio+compose+framing; MOL-195/196 — reproducible)
         run: |
           python -m pip install --upgrade pip
-          pip install -e '.[dev,transcribe,studio,compose,framing]'   # MOL-196: [framing] so the real OpenCV/YuNet path is exercised in CI
+          pip install --require-hashes -r requirements/ci-e2e.txt
+          pip install -e . --no-deps
       - name: Cache whisper 'tiny' checkpoint
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
