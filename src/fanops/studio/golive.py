@@ -645,7 +645,7 @@ def go_live(cfg: Config, confirmed: bool = False, *, now: "datetime | None" = No
     # Studio restart / daemon tick, so operators see LIVE=1 + POSTER=dryrun and think the flip
     # reverted. Per-channel backends are the publish truth; an explicit dryrun global is misleading.
     _poster_disk = (_dotenv_assignment(cfg.root / ".env", "FANOPS_POSTER") or "").strip().lower()
-    _poster_live = (os.getenv("FANOPS_POSTER") or "").strip().lower()
+    _poster_live = cfg.poster_backend_raw.lower()
     if _poster_disk == "dryrun" or _poster_live == "dryrun":
         if (err := _dual_unset(cfg, "FANOPS_POSTER")):
             return ActionResult(ok=False, error=err)

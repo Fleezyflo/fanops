@@ -5,6 +5,7 @@ was wrong)."""
 from __future__ import annotations
 import json
 import logging
+import os
 import re
 from pathlib import Path
 from typing import Literal
@@ -12,6 +13,21 @@ from dotenv import load_dotenv
 from fanops.settings import Settings
 
 _log = logging.getLogger("fanops.config")
+
+
+def certifi_ssl_env(base: dict | None = None, *, logger: logging.Logger | None = None) -> dict:
+    """Subprocess env overlay: point SSL_CERT_FILE/REQUESTS_CA_BUNDLE at certifi (setdefault only).
+    When `base` is None, mutates os.environ in place (_fwrun); otherwise mutates the provided dict (vocals)."""
+    env = base if base is not None else os.environ
+    try:
+        import certifi
+        env.setdefault("SSL_CERT_FILE", certifi.where())
+        env.setdefault("REQUESTS_CA_BUNDLE", certifi.where())
+    except ImportError:
+        if logger is not None:
+            logger.warning("certifi absent — demucs SSL cert fix skipped (fail-open)", exc_info=True)
+    return env
+
 
 def _sanitize_tuning(raw: dict) -> dict:
     """Drop only the INVALID entries from a tuning.json override, keeping the good ones (a single bad
@@ -905,3 +921,55 @@ class Config:
         # (the variant_ucb_c clamp precedent). A non-int env falls back to the default rather than
         # crashing an autonomous run.
         return self._settings.FANOPS_CONCURRENT_WORKERS
+
+    @property
+    def poster_backend_raw(self) -> str:
+        """The raw FANOPS_POSTER string for diagnostics (half-live hints, go-live scrape) — NOT the
+        validated poster_backend (unknown values fall back to dryrun there)."""
+        return (self._settings.FANOPS_POSTER or "").strip()
+
+    @property
+    def postiz_autostart(self) -> bool:
+        # Auto-start the local Postiz docker-compose stack before publish (postiz_lifecycle). DEFAULT ON;
+        # only explicit off-words disable (mirrors hashtag_trends).
+        v = (self._settings.FANOPS_POSTIZ_AUTOSTART or "").strip().lower()
+        return v not in {"0", "false", "no", "off"}
+
+    @property
+    def postiz_compose_dir(self) -> str | None:
+        # Where the Postiz docker-compose stack lives (health.ensure_up). Blank -> conventional path.
+        return self._settings.FANOPS_POSTIZ_COMPOSE_DIR
+
+    @property
+    def whisper_cache_root(self) -> Path:
+        # Whisper checkpoint cache root ($XDG_CACHE_HOME/whisper or ~/.cache/whisper).
+        base = self._settings.XDG_CACHE_HOME
+        root = Path(base).expanduser() if base and str(base).strip() else Path.home() / ".cache"
+        return root / "whisper"
+
+    def _per_handle_meta_token(self, handle: str) -> str | None:
+        """Per-handle META_GRAPH_TOKEN__<SLUG> read — the ONLY home for dynamic Meta token env keys."""
+        from fanops.meta_graph import per_account_token_env_key
+        key = per_account_token_env_key(handle)
+        if not key: return None
+        v = os.getenv(key)
+        return v.strip() if v and v.strip() else None
+
+    def meta_token_for(self, handle: str | None = None) -> str | None:
+        """Resolve the Graph access token for `handle` (per-handle .env key wins, else global). SECRET."""
+        tok = self.meta_graph_token
+        if handle:
+            per = self._per_handle_meta_token(handle)
+            if per: return per
+        return tok
+
+    def meta_token_set_for(self, handle: str) -> bool:
+        """Whether a per-handle Graph token is set (BOOL only — never exposes the secret)."""
+        return bool(self._per_handle_meta_token(handle))
+
+    def spawn_env(self, *, path: str | None = None) -> dict:
+        """Subprocess env for detached fanops children: inherits os.environ (child re-reads .env via
+        Config()) with an optional PATH override (daemon kick / install helpers)."""
+        env = dict(os.environ)
+        if path: env["PATH"] = path
+        return env
