@@ -44,6 +44,7 @@ def _gates_blocked_note(s) -> str | None:
 def cmd_status(cfg: Config) -> int:
     led = Ledger.load(cfg)
     from fanops.models import SourceState        # local read (mirrors cmd_reconcile's local import)
+    from fanops.doctor import setup_state, setup_next_action
     print(f"sources={len(led.sources)} moments={len(led.moments)} clips={len(led.clips)} "
           f"posts={len(led.posts)} "
           # V2 M1/F8: sources the model produced ZERO picks for — actionable (retry-source), never silent.
@@ -68,6 +69,7 @@ def cmd_status(cfg: Config) -> int:
           # WS2 (audit xc-3): one awaiting_<kind>= per GATE_KINDS (the single source) so a stuck gate
           # is visible on `fanops status`; the surface can never omit a gate kind (it derives from GATE_KINDS).
           + " ".join(f"awaiting_{k}={len(pending(cfg, kind=k))}" for k in GATE_KINDS))
+    print(f"setup={setup_state(cfg)} next={setup_next_action(cfg)}")
     return 0
 
 def cmd_recover_audit(cfg: Config) -> int:
