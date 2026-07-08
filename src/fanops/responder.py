@@ -134,7 +134,7 @@ class LlmResponder:
             log("responder", f"{kind}:{key}", "error", err=str(e)[:160])
         return False
 
-    def _mark_context_limit(self, cfg: Config, kind: str, key: str, reason: str) -> None:
+    def _mark_gate_degraded(self, cfg: Config, kind: str, key: str, reason: str) -> None:
         """AGENT-2: park the wedged gate's source-owner with a VISIBLE degraded_reason so the operator sees WHY
         it stalls (master principle: no silent degradation). Best-effort + a breadcrumb; the gate stays pending
         (operator can shrink the source / re-request) but is now diagnosable. The moment gates key on the source id directly;
@@ -152,11 +152,15 @@ class LlmResponder:
                 sid = mom.parent_id if mom is not None else None
             src = led.sources.get(sid) if sid else None
             if src is not None:
-                led.sources[sid] = src.model_copy(update={"degraded_reason": f"agent gate {kind} over context limit: {reason}"})
+                led.sources[sid] = src.model_copy(update={"degraded_reason": reason})
                 led.save()
         except Exception as e:              # best-effort: a load/save failure must not crash the responder pass
             with contextlib.suppress(Exception):
                 get_logger(cfg)("responder", f"{kind}:{key}", "mark_degraded_failed", err=str(e)[:120])
+
+    def _mark_context_limit(self, cfg: Config, kind: str, key: str, reason: str) -> None:
+        """Back-compat shim: wraps _mark_gate_degraded with the legacy context-limit prefix."""
+        self._mark_gate_degraded(cfg, kind, key, f"agent gate {kind} over context limit: {reason}")
 
     def answer_pending(self, cfg: Config) -> int:
         log = get_logger(cfg)
