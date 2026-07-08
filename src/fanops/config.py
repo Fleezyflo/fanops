@@ -15,7 +15,7 @@ from fanops.settings import Settings
 _log = logging.getLogger("fanops.config")
 
 
-def certifi_ssl_env(base: dict | None = None) -> dict:
+def certifi_ssl_env(base: dict | None = None, *, logger: logging.Logger | None = None) -> dict:
     """Subprocess env overlay: point SSL_CERT_FILE/REQUESTS_CA_BUNDLE at certifi (setdefault only).
     When `base` is None, mutates os.environ in place (_fwrun); otherwise mutates the provided dict (vocals)."""
     env = base if base is not None else os.environ
@@ -23,7 +23,9 @@ def certifi_ssl_env(base: dict | None = None) -> dict:
         import certifi
         env.setdefault("SSL_CERT_FILE", certifi.where())
         env.setdefault("REQUESTS_CA_BUNDLE", certifi.where())
-    except ImportError: pass
+    except ImportError:
+        if logger is not None:
+            logger.warning("certifi absent — demucs SSL cert fix skipped (fail-open)", exc_info=True)
     return env
 
 

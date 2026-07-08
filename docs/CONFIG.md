@@ -55,7 +55,6 @@ which writes both `.env` and `os.environ`), **51 `.env`/shell-ONLY** (no UI). `S
 ## Per-account differentiation
 | Var | Default | Effect | Set |
 |---|---|---|---|
-| `FANOPS_CREATIVE_VARIATION` | on | Per-account hooks/renders | S |
 | `FANOPS_ACCOUNT_CASTING` | on | Per-account moment casting | S |
 | `FANOPS_HOOK_ROUTER` | off | Observe-only hook_strategy classifier | .env |
 

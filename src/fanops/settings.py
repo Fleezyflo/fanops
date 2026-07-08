@@ -113,7 +113,6 @@ class Settings(BaseSettings):
     FANOPS_POSTIZ_PUBLISH_PER_MIN: int = 4
     FANOPS_CONCURRENT_SOURCES: str = ""
     FANOPS_CONCURRENT_WORKERS: int = 4
-    FANOPS_CREATIVE_VARIATION: str = ""
     FANOPS_POSTIZ_AUTOSTART: str = ""
     FANOPS_POSTIZ_COMPOSE_DIR: str | None = None
     XDG_CACHE_HOME: str | None = None
