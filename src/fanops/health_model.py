@@ -53,7 +53,6 @@ def _postiz_probe(cfg: Config, *, probe=None):
 def postiz_dep_health(cfg: Config, *, probe=None) -> DepHealth:
     """Map the unified Postiz probe to a DepHealth row (system_health / Studio strip)."""
     import logging
-    import requests
     _log = logging.getLogger("fanops.health")
     if not (cfg.postiz_url or "").strip():
         return DepHealth("postiz", False, "not configured")

@@ -10,8 +10,6 @@ import subprocess
 import time
 from pathlib import Path
 
-import requests
-
 from fanops.config import Config
 from fanops.health_model import DepHealth, dep_health_list, postiz_dep_health
 

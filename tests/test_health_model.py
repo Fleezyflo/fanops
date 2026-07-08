@@ -1,5 +1,4 @@
 """MOL-298: unified health model — one owner, thin views."""
-import json
 from fanops.config import Config
 from fanops.health_model import HealthReport, build_health_report, dep_health_list, postiz_dep_health
 from fanops import health
@@ -26,7 +25,6 @@ def test_system_health_matches_dep_health_list(tmp_path, monkeypatch):
 
 def test_postiz_health_uses_unified_probe(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    cfg = Config(root=tmp_path)
     seen = []
     def probe(c):
         seen.append(1)
