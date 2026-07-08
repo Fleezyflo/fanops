@@ -30,6 +30,25 @@ class HealthReport:
             out["field_shape"] = self.field_shape
         return out
 
+    def to_json_dict(self) -> dict:
+        """Machine-readable JSON payload (MOL-299): healthy flag + serializable deps."""
+        return {
+            "healthy": report_is_healthy(self),
+            "checks": self.checks,
+            "notes": self.notes,
+            "deps": [{"name": d.name, "ok": d.ok, "detail": d.detail} for d in self.deps],
+            "field_shape": self.field_shape,
+        }
+
+
+def report_is_healthy(report: HealthReport) -> bool:
+    """Exit-code truth: any failed check or down dep -> unhealthy."""
+    if any(not c.get("ok", True) for c in report.checks):
+        return False
+    if any(not d.ok for d in report.deps):
+        return False
+    return True
+
 
 def _docker_dep() -> DepHealth:
     import shutil, subprocess

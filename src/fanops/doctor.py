@@ -322,6 +322,7 @@ def _assemble_doctor_checks(cfg: Config, *, get=None, postiz_probe=None, zernio_
     return checks
 
 
+
 class SetupState:
     """MOL-302: derived setup position — never persisted, recomputed on every read."""
     NOT_CONFIGURED = "NOT_CONFIGURED"
