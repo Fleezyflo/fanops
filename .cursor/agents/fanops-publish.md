@@ -4,7 +4,7 @@ description: >-
   Publish-resilience lane (post/*, reconcile.py, config.py, studio/views_common.py). Spawned by
   fanops-orchestrator via Task. Works the MOL ticket the orchestrator assigns from Linear. Never touches
   generation-core hot files. Pushes + opens a PR; the orchestrator merges.
-model: inherit
+model: auto
 readonly: false
 is_background: true
 ---
