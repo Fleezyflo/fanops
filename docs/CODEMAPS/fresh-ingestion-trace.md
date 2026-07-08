@@ -1,6 +1,6 @@
 # Fresh-Ingestion End-to-End Trace — one video → posts across the 5 accounts
 
-> Code-verified against `origin/main` @ `6395ce3` on 2026-07-07. Method: read `pipeline.advance()`
+> Code-verified against `origin/main` @ `82173c6` on 2026-07-08. Method: read `pipeline.advance()`
 > + every stage fn, two parallel deep-trace agents (fan-out arithmetic + external-service map),
 > then re-verified the load-bearing claims (casting teardown, `affinity_admits`, R2 path) against
 > the live code. This is the operator's field guide for a fresh live test: drop a video, watch each
@@ -47,7 +47,7 @@ publish (out-of-lock) → read-only summary.
 | 12 | Verify-live | `fanops verify-live` → `confirm_post_live` (`meta_graph.py:264`) | (read-only) | `LIVE owner=<handle>` |
 | 13 | Metrics | `track.pull_metrics` (`track.py:218`) → Graph insights | `published→analyzed` + lift | reach/views/saves |
 
-**No-auto-publish invariant:** a Post is born `awaiting_approval` at ONE site (`crosspost.py:228`);
+**No-auto-publish invariant:** a Post is born `awaiting_approval` at ONE site (`crosspost.py:232`);
 publish iterates `queued` only; `Ledger.approve_post` is the SOLE promoter. Nothing publishes — even
 live, even with the daemon running — until you approve in Review.
 
@@ -70,12 +70,12 @@ All 5 accounts are single-platform → **exactly 5 surfaces**, all **9:16**:
 
 | Multiplier | Value | Where |
 |---|---|---|
-| moments per video | **M — uncapped, model-driven** (no `_target_pick_count`; validity + within-owner overlap dedup only) | `moments.py:4-5,301`, `validate_pick` `:159`, `_drop_overlaps` `:145` |
+| moments per video | **M — uncapped, model-driven** (no ingest quota; `_target_pick_count` in `prompts.py` is a prompt ceiling only, not enforced at ingest) | `moments.py:4-5,301`, `validate_pick` `:159`, `_drop_overlaps` `:145`, `prompts._target_pick_count` `:61` |
 | clips per moment (aspects) | **×1** — IG and TikTok both map to `Fmt.r9x16` | `pipeline.py:36` `_aspects_for`, `models.py:156-158` `PLATFORM_ASPECT` |
 | surfaces total | **5** | `accounts.py:268`; accounts.json |
 | posts per clip — casting ON (default) | **×1** — owner subset (single-owner moment → its owner surface) | `crosspost.py:166`, `casting.affinity_admits` `:22` |
 | posts per clip — uncast moment (`affinities==[]`) | **×5** — fan-to-all | `casting.py:21`; `crosspost.py:269` loop |
-| post state at birth | `awaiting_approval` | `crosspost.py:228` |
+| post state at birth | `awaiting_approval` | `crosspost.py:232` |
 
 **Worked example:**
 - **Typical (casting ON, every moment single-owner):** `1 video → M moments → M clips (×1 aspect) → M posts`
