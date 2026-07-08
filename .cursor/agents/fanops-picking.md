@@ -4,7 +4,7 @@ description: >-
   Picking-rebuild lane (clip/moment/casting generation core). Spawned by fanops-orchestrator via Task.
   Works the MOL ticket the orchestrator assigns from Linear. Never touches post/* or another lane's hot
   files. Pushes + opens a PR; the orchestrator merges.
-model: inherit
+model: auto
 readonly: false
 is_background: true
 ---
