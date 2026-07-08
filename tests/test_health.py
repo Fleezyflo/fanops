@@ -130,13 +130,13 @@ def test_golive_health_renders_dep_alert_for_degraded_postiz(tmp_path, monkeypat
 # ---------------------------------------------------------------- compose-dir resolution ----
 def test_compose_dir_env_override_existing(tmp_path, monkeypatch):
     d = tmp_path / "compose"; d.mkdir()
-    _cfg(tmp_path, monkeypatch, FANOPS_POSTIZ_COMPOSE_DIR=str(d))
-    assert health._postiz_compose_dir() == d
+    cfg = _cfg(tmp_path, monkeypatch, FANOPS_POSTIZ_COMPOSE_DIR=str(d))
+    assert health._postiz_compose_dir(cfg) == d
 
 
 def test_compose_dir_env_override_missing_returns_none(tmp_path, monkeypatch):
-    _cfg(tmp_path, monkeypatch, FANOPS_POSTIZ_COMPOSE_DIR=str(tmp_path / "nope"))
-    assert health._postiz_compose_dir() is None
+    cfg = _cfg(tmp_path, monkeypatch, FANOPS_POSTIZ_COMPOSE_DIR=str(tmp_path / "nope"))
+    assert health._postiz_compose_dir(cfg) is None
 
 
 # ---------------------------------------------------------------- ensure_up bring-up plan ----

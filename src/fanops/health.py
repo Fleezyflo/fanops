@@ -12,7 +12,6 @@ to sit dead while the Studio ran happily, so the operator only found out via a b
 All checks are cheap and bounded; nothing here publishes or mutates the ledger."""
 from __future__ import annotations
 import logging
-import os
 import shutil
 import subprocess
 import time
@@ -90,10 +89,10 @@ def system_health(cfg: Config) -> list[DepHealth]:
     return [_docker_health(), postiz_health(cfg), zernio_health(cfg)]
 
 
-def _postiz_compose_dir() -> Path | None:
+def _postiz_compose_dir(cfg: Config) -> Path | None:
     """Where the Postiz docker-compose stack lives, so the launch can bring it up. FANOPS_POSTIZ_COMPOSE_DIR
     overrides; otherwise the conventional self-host path. Returns None when neither exists (nothing to start)."""
-    v = (os.getenv("FANOPS_POSTIZ_COMPOSE_DIR") or "").strip()
+    v = (cfg.postiz_compose_dir or "").strip()
     candidate = Path(v).expanduser() if v else (Path.home() / "postiz-selfhost" / "postiz-docker-compose")
     return candidate if candidate.is_dir() else None
 
@@ -127,7 +126,7 @@ def ensure_up(cfg: Config) -> list[str]:
     log: list[str] = []
     if not _docker_health().ok:
         _start_docker(log)
-    compose_dir = _postiz_compose_dir()
+    compose_dir = _postiz_compose_dir(cfg)
     if compose_dir is not None and not postiz_health(cfg).ok:
         _start_postiz(compose_dir, log)
     for line in log:

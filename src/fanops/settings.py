@@ -104,10 +104,14 @@ class Settings(BaseSettings):
     FANOPS_POSTIZ_PUBLISH_PER_MIN: int = 4
     FANOPS_CONCURRENT_SOURCES: str = ""
     FANOPS_CONCURRENT_WORKERS: int = 4
+    FANOPS_POSTIZ_AUTOSTART: str = ""
+    FANOPS_POSTIZ_COMPOSE_DIR: str | None = None
+    XDG_CACHE_HOME: str | None = None
 
     @field_validator("ANTHROPIC_API_KEY", "POSTIZ_URL", "POSTIZ_API_KEY", "FANOPS_MEDIA_PUBLIC_BASE",
                      "R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET",
-                     "ZERNIO_API_KEY", "META_GRAPH_TOKEN", "META_IG_USER_ID", mode="before")
+                     "ZERNIO_API_KEY", "META_GRAPH_TOKEN", "META_IG_USER_ID", "FANOPS_POSTIZ_COMPOSE_DIR",
+                     "XDG_CACHE_HOME", mode="before")
     @classmethod
     def _opt_str(cls, v): return _strip_opt(v)
 
