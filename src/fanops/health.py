@@ -1,15 +1,7 @@
 """Live dependency health + best-effort bring-up (Issue 1: "nothing should be silently off").
 
-The system's runtime dependencies — the Docker daemon, the Postiz API, the Zernio API — used to be able
-to sit dead while the Studio ran happily, so the operator only found out via a buried downstream error
-(`could not list channels`). This module makes that state FIRST-CLASS and VISIBLE:
-
-- `system_health(cfg)` returns a live red/green verdict per dependency (surfaced on the Studio).
-- `ensure_up(cfg)` is the launch bring-up: if the Docker daemon is down it starts Docker Desktop; if the
-  Postiz stack is down and a compose dir is configured it `docker compose up -d`s it. Best-effort and
-  fail-soft — a bring-up that can't run never blocks the launch, it just reports.
-
-All checks are cheap and bounded; nothing here publishes or mutates the ledger."""
+MOL-298: runtime dependency verdicts are a THIN VIEW over health_model (one Postiz probe owner).
+`system_health(cfg)` -> health_model.dep_health_list; `ensure_up` unchanged bring-up behavior."""
 from __future__ import annotations
 import logging
 import os
@@ -17,89 +9,51 @@ import shutil
 import subprocess
 import time
 from pathlib import Path
-from typing import NamedTuple
-import requests
+
 from fanops.config import Config
+from fanops.health_model import DepHealth, dep_health_list, postiz_dep_health
 
 _log = logging.getLogger("fanops.health")
 
-_HTTP_TIMEOUT = 3            # s — a liveness ping, not a real call
-_DOCKER_INFO_TIMEOUT = 8    # s — `docker info` round-trip
-_DOCKER_WAIT_TRIES = 30     # poll the daemon after launching Docker Desktop (×_DOCKER_WAIT_STEP)
-_DOCKER_WAIT_STEP = 3       # s
-
-
-class DepHealth(NamedTuple):
-    """One dependency's live verdict. `ok` is the red/green; `detail` is a short human reason."""
-    name: str
-    ok: bool
-    detail: str
+_DOCKER_INFO_TIMEOUT = 8
+_DOCKER_WAIT_TRIES = 30
+_DOCKER_WAIT_STEP = 3
 
 
 def _docker_health() -> DepHealth:
+    """Docker daemon verdict (tests patch health.subprocess — kept here, not in health_model)."""
     if not shutil.which("docker"):
         return DepHealth("docker", False, "docker CLI not installed")
     try:
         r = subprocess.run(["docker", "info"], capture_output=True, timeout=_DOCKER_INFO_TIMEOUT)
         return DepHealth("docker", r.returncode == 0, "daemon up" if r.returncode == 0 else "daemon down")
-    except Exception as exc:                              # FileNotFound / Timeout / OSError -> down, never raise
+    except Exception as exc:
         return DepHealth("docker", False, f"{type(exc).__name__}")
 
 
-def _http_reachable(url: str | None, name: str) -> DepHealth:
-    url = (url or "").rstrip("/")
-    if not url:
-        return DepHealth(name, False, "not configured")
-    try:
-        requests.get(url, timeout=_HTTP_TIMEOUT)         # any HTTP answer (even 404) == the host is alive
-        return DepHealth(name, True, "reachable")
-    except requests.exceptions.RequestException:
-        return DepHealth(name, False, "unreachable")
+def system_health(cfg: Config) -> list[DepHealth]:
+    """Thin view: runtime dependency rows from the unified health model."""
+    return dep_health_list(cfg)
 
 
 def postiz_health(cfg: Config) -> DepHealth:
-    # MOL-61: the readiness row must agree with the strip-alert's deeper probe. `_http_reachable` only
-    # proves the HOST answers ANY HTTP (nginx 502'ing a crash-looped Node backend still reads "reachable"),
-    # so an operator consulting §4 while LIVE saw all-green while publishes were stalled. Route through the
-    # SAME postiz_health_probe the strip-alert uses (GET /integrations, past nginx) — one source of truth,
-    # no second heuristic — and map its typed verdict to three states: healthy -> ok; an HTTP answer that
-    # is NOT healthy (5xx/401/…) -> DEGRADED (not-ok, so MOL-48's err + dep-alert fire); a network/URL
-    # failure (no status) -> unreachable (the existing path). Fail-open: if the probe can't be reached,
-    # fall back to host-alive so a probe-import fault never makes the row worse than before.
-    if not (cfg.postiz_url or "").strip():
-        return DepHealth("postiz", False, "not configured")
-    try:
-        from fanops.post.postiz import postiz_health_probe
-        h = postiz_health_probe(cfg)                      # never raises; typed (healthy, status_code, hint)
-    except Exception as exc:                              # import/unexpected fault -> degrade gracefully to host-alive
-        _log.warning("postiz_health_probe unavailable, falling back to host-alive: %s", type(exc).__name__)
-        return _http_reachable(cfg.postiz_url, "postiz")
-    if h.healthy:
-        return DepHealth("postiz", True, "reachable")
-    if h.status_code is not None:                         # answered HTTP but the API is unhealthy -> DEGRADED
-        return DepHealth("postiz", False, f"answers HTTP but API unhealthy ({h.status_code}) — publishes stalled")
-    return DepHealth("postiz", False, "unreachable")     # no HTTP answer (refused/timeout/bad URL)
+    """Thin alias — same unified probe as doctor (health_model.postiz_dep_health)."""
+    return postiz_dep_health(cfg)
 
 
 def zernio_health(cfg: Config) -> DepHealth:
-    return _http_reachable(cfg.zernio_url, "zernio")
-
-
-def system_health(cfg: Config) -> list[DepHealth]:
-    """The live red/green for every runtime dependency, in launch order (Docker first — it hosts Postiz)."""
-    return [_docker_health(), postiz_health(cfg), zernio_health(cfg)]
+    from fanops.health_model import zernio_dep_health
+    return zernio_dep_health(cfg)
 
 
 def _postiz_compose_dir() -> Path | None:
-    """Where the Postiz docker-compose stack lives, so the launch can bring it up. FANOPS_POSTIZ_COMPOSE_DIR
-    overrides; otherwise the conventional self-host path. Returns None when neither exists (nothing to start)."""
+    """Where the Postiz docker-compose stack lives, so the launch can bring it up."""
     v = (os.getenv("FANOPS_POSTIZ_COMPOSE_DIR") or "").strip()
     candidate = Path(v).expanduser() if v else (Path.home() / "postiz-selfhost" / "postiz-docker-compose")
     return candidate if candidate.is_dir() else None
 
 
 def _start_docker(log: list[str]) -> None:
-    # macOS: launch Docker Desktop, then poll the daemon (bounded) so a slow boot doesn't hang the launch.
     if shutil.which("open"):
         subprocess.run(["open", "-a", "Docker"], capture_output=True)
         log.append("starting Docker Desktop…")
@@ -122,8 +76,7 @@ def _start_postiz(compose_dir: Path, log: list[str]) -> None:
 
 
 def ensure_up(cfg: Config) -> list[str]:
-    """Launch bring-up: start any down dependency the system knows how to start, best-effort. Returns a log
-    of what it did (also logged). Never raises — a launch must proceed even if a bring-up can't run."""
+    """Launch bring-up: start any down dependency the system knows how to start, best-effort."""
     log: list[str] = []
     if not _docker_health().ok:
         _start_docker(log)
