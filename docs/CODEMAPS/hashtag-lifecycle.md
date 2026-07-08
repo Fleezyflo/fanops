@@ -5,11 +5,12 @@ The end-to-end path that decides every posted hashtag. Per-persona, evidence-bac
 ## Entities
 
 - `Persona` ([personas.py](../../src/fanops/personas.py)) — first-class record in
-  `00_control/personas.json`: `id`, `name`, `voice`, `tag_lean`, **`hashtag_corpus`**, and the lever
-  fields. Atomic flock-serialized writers mirror `accounts.py`.
+  `00_control/personas.json`: `id`, `name`, `voice`, **`hashtag_corpus`** (the per-persona reach-vetted pool;
+  `tag_lean` retired into the corpus, M3), and the lever fields. Atomic flock-serialized writers mirror
+  `accounts.py`.
 - `Account.persona_id` ([accounts.py](../../src/fanops/accounts.py)) — links an account to a persona
   (one persona → many accounts). `_hydrate_from_personas` overrides the account's
-  `persona`/`tag_lean`/**`hashtag_corpus`** in memory at load (fail-open; byte-identical when unlinked).
+  `persona`/**`hashtag_corpus`** in memory at load (fail-open; byte-identical when unlinked).
 
 ## Where corpus tags come from
 

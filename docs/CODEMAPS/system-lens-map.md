@@ -1,9 +1,9 @@
-<!-- Generated: 2026-07-03 | Method: source read (large-chunk reads of ~40 src/fanops modules + studio routes + live control files), every claim carries a personally-verified file:line; no prior-conclusion inputs, navigation aids treated as maps not truth | Files read: 41 | Token estimate: ~7800 -->
+<!-- Generated: 2026-07-08 | Method: source read + deterministic extractors @ 924e8df | Files read: 41 | Token estimate: ~7800 -->
 # FanOps System Lens Map — three subsystem lenses + cross-cutting gates
 
-Every statement below carries a `file:line` I verified against source. Where source could not settle a
+Every statement below carries a `file:line` verified against source @ `924e8df` (2026-07-08). Where source could not settle a
 question it is marked **UNRESOLVED**. Findings I observed (not descriptions) are quarantined in the final
-`## Findings` section. Line numbers are as of the 2026-07-03 working tree.
+`## Findings` section.
 
 ---
 
@@ -11,10 +11,10 @@ question it is marked **UNRESOLVED**. Findings I observed (not descriptions) are
 
 ### 1.1 The processing chain, function by function
 
-Driver: `pipeline.advance(cfg, base_time)` (`pipeline.py:382`). One pass = ingest (short txn) → lock-free
+Driver: `pipeline.advance(cfg, base_time)` (`pipeline.py:380`). One pass = ingest (short txn) → lock-free
 produce → one main txn of state-flip stages → reconcile (out of lock) → publish (out of lock) → summary.
 The main-txn saves ONLY on clean exit; an uncaught raise rolls the whole pass back by design
-(`pipeline.py:408-416`).
+(`pipeline.py:406-414`).
 
 **Intake paths (enumerated).** Three `source_origin` channels, all funnelling through one catalogue spine:
 - **drop** — `ingest.ingest_drops(...)` default `origin="drop"` (`ingest.py:201`), scanning `cfg.inbox`
@@ -40,13 +40,13 @@ The main-txn saves ONLY on clean exit; an uncaught raise rolls the whole pass ba
 | 0b | Video-stream guard | `ingest.has_video_stream` (`ingest.py:138`) | ffprobe codec_type | audio-only drops archived, not catalogued (`ingest.py:233-235`) | `ffprobe` (same wrapper) | Fail-loud on absent binary (must NOT drop a real video as audio, `ingest.py:145-147`) |
 | 1 | Transcribe | `transcribe.transcribe_source` (`transcribe.py:155`) | `Source.source_path`, cached JSON | `Source.transcript`, `.language`, `meta.transcribed`, state→`transcribed` (`transcribe.py:254-256`); JSON under `04_agent_io/transcripts` | faster-whisper via `python -m fanops._fwrun` else `whisper` CLI (`transcribe.py:217-220`); `_WHISPER_TIMEOUT=2700.0` length-scaled ×1.5 (`transcribe.py:27-37`); optional Demucs vocal isolation (`vocals.isolate_vocals`, `transcribe.py:198-210`) | **Fail-soft, per-source**: absent binary / timeout / no-JSON / malformed-JSON all → `SourceState.error` with a typed reason, `transcribed` unset so it re-runs (`transcribe.py:224-253`); vocal isolation fails OPEN to raw audio |
 | 2 | Signals | `signals.detect_signals` (`signals.py:108`) | source path, sidecar | `Source.signal_peaks` (top-400 capped `signals.py:22-35`), `.duration`, state→`signalled`; sidecar `04_agent_io/signals/<sid>.json` | 2× ffmpeg (`silencedetect`, `scdet`) + optional `ebur128`/astats energy (`signals.py:79-86,134`); `_FFMPEG_TIMEOUT=600.0` (`signals.py:92`); absent → `ToolchainMissingError` | **Fail-loud on the two required passes** (typed error → per-source quarantine); the ENERGY pass is an ENHANCEMENT that fails SOFT to today's scoring (`signals.py:129-138`) |
-| 3 | Request moments (pick) | `moments.request_moments` (`moments.py:137`) | transcript (char-budget bounded `moments.py:117`), peaks, `cfg.clip_profile`, 6 survey frames | opens `moments` agent gate, state→`moments_requested` | `keyframes.extract_keyframes` (fail-open `[]`) | LLM gate; per-source quarantine in pipeline (`pipeline.py:88-89`) |
-| 3b | Ingest picks | `moments.ingest_moments` (`moments.py:161`) | agent response | `Moment` born `picked`, state→`picks_decided`; `[]` → non-terminal `moments_empty` (`moments.py:206-207`); all-invalid → `error` (`moments.py:197-198`) | none | Fail-visible: empty is LOUD but non-terminal, preserves prior moments; discards stale hook/casting gates (`moments.py:215-227`) |
+| 3 | Request moments (pick) | `moments.request_moments` (`moments.py:261`) | transcript (char-budget bounded `moments.py:194`), peaks, `cfg.clip_profile`, 6 survey frames | opens `moments` agent gate, state→`moments_requested` | `keyframes.extract_keyframes` (fail-open `[]`) | LLM gate; per-source quarantine in pipeline (`pipeline.py:114-115`) |
+| 3b | Ingest picks | `moments.ingest_moments` (`moments.py:301`) | agent response | `Moment` born `picked`, state→`picks_decided`; `[]` → non-terminal `moments_empty`; all-invalid → `error` | none | Fail-visible: empty is LOUD but non-terminal, preserves prior moments; discards stale `moment_hooks` gates only (`moments.py:365` — `moment_casting` removed P11) |
 | 3c | Hook author (pass 2) | `moments.request_moment_hooks`/`ingest_moment_hooks` (`moments.py:394,437`) | picked window + window frames + **owner-only** persona | per-pick `moment_hooks` gate; on ingest → `Moment.hook` (+ `hook_removed` when stripped), state `picked`→`decided`, source→`moments_decided` | `keyframes.extract_keyframes` over window (fail-open `[]`) | ATOMIC per source (waits for every pick); `is_weak_hook`+`brand_risk_flag` strip mechanical/off-brand hooks, PRESERVED for restore |
 | 4 | *(no separate stage — routing is pick-stamped)* | `casting.affinity_admits` (`casting.py:10`) gates crosspost mint + caption scope via `Moment.affinities` (stamped at pick in `ingest_moments` `:330-340`; operator override `cast_add`/`cast_remove`) | owner handle(s) on each moment | same `affinities` list is the sole gate input | none | `cfg.account_casting` DEFAULT ON (`config.py:593`); `=0` ignores persisted affinities and fans all |
 | 5 | Render | `clip.render_moment` → `render_aspects_for` (`clip.py:571,694`); pipeline `_stage_render_and_caption` (`pipeline.py:156`) | source, moment window, framing detect | `Clip` born `rendered` under `03_clips/<cid>.mp4`; state moment→`clipped`; render fingerprint sidecar (`clip.py:688-689`) | ffmpeg (`ffmpeg_clip_cmd`/`ffmpeg_segments_cmd`), `_FFMPEG_TIMEOUT=600.0` (`clip.py:24`); framing detect (YuNet, `[framing]` extra) fail-open | **Fail-safe per-moment**: ffmpeg absent/hung/rc≠0/0-byte → `ClipState.error`, moment left `decided` to retry (`clip.py:634-662`); smart framing fails OPEN to centered crop (`clip.py:533,550`) |
-| 6 | Captions | `caption.request_captions`/`ingest_captions` (`caption.py:200,283`); pipeline (`pipeline.py:172,231`) | clip, scoped surfaces, corpus, content tags | `Clip.meta_captions[surface]`, state→`captioned` (or `held`) (`caption.py:356`) | none (LLM gate) | HOLD on brand-risk/language-mismatch (`caption.py:349-353`); SEED-TAG FALLBACK on missing surface, NOT a hold (`caption.py:342-348`) |
-| 7 | Crosspost | `crosspost.crosspost_clips` → `_mint_surface_post` (`crosspost.py:299,168`); pipeline (`pipeline.py:243`) | captioned clips, surfaces, selections, batch target | `Post` born `awaiting_approval` (`crosspost.py:269-273`), clip state→`queued` | none | Wrapped so a raise doesn't cost the pass; a FATAL `AuthError` deliberately escapes (`pipeline.py:249-255`) |
+| 6 | Captions | `caption.request_captions`/`ingest_captions` (`caption.py:188,276`); pipeline (`pipeline.py:156,230`) | clip, scoped surfaces, corpus, content tags | `Clip.meta_captions[surface]`, state→`captioned` (or `held`) (`caption.py:349`) | none (LLM gate) | HOLD on brand-risk/language-mismatch (`caption.py:342-346`); SEED-TAG FALLBACK on missing surface, NOT a hold (`caption.py:335-341`) |
+| 7 | Crosspost | `crosspost.crosspost_clips` → `_mint_surface_post` (`crosspost.py:250,155`); pipeline (`pipeline.py:242`) | captioned clips, surfaces, `affinity_admits`, batch target | `Post` born `awaiting_approval` (`crosspost.py:229-232`), clip state→`queued` | none | Wrapped so a raise doesn't cost the pass; a FATAL `AuthError` deliberately escapes (`pipeline.py:249-255`) |
 | 8 | Reconcile | `reconcile.reconcile_due` (`reconcile.py:339`); pipeline `_reconcile_safe` (`pipeline.py:258`) | stranded posts, backend status | back-fills `public_url`, `publish_hour`/`publish_dow` (`reconcile.py:452-453`) | backend status GETs (out of lock) | Gated `cfg.is_live_backend`; `AuthError` halts, else logged (`pipeline.py:265-271`) |
 | 9 | Publish | `post.run.publish_due` → `_publish_one` (`run.py:337,213`); pipeline `_publish_safe` (`pipeline.py:274`) | queued+due posts | claim→`submitting`→`published`/`needs_reconcile`/`failed`; `published_at`+`publish_hour`/`dow` stamped (`run.py:266-270`); `06_published/<day>/<pid>.json` archive (`run.py:25`) | media upload + `poster.publish` (out of lock); Postiz throttle `postiz_publish_per_min` (`run.py:95`) | `AuthError` halts the run (`run.py:277-279`); other errors → per-post `failed` (re-queueable) except `needs_reconcile` (not downgraded, `run.py:280`) |
 | 10 | Summary/digest | `pipeline._build_summary` (`pipeline.py:339`) | post-publish reload | `write_digest` (read-only, out of lock) | none | Read-only |
@@ -184,7 +184,7 @@ creds (`META_GRAPH_TOKEN`, `META_IG_USER_ID`, `META_GRAPH_URL`, `ANTHROPIC_API_K
 ### 1.4 First quality/content judgment in the chain, and compute spent by then
 
 The FIRST stage that can REJECT or park footage for **content** reasons is the **moments (pick) LLM gate**,
-ingested by `moments.ingest_moments` (`moments.py:161`). The model returning `[]` ("nothing worth posting")
+ingested by `moments.ingest_moments` (`moments.py:301`). The model returning `[]` ("nothing worth posting")
 parks the source in `moments_empty` (`moments.py:206-207`); a wholly-invalid decision → `error`
 (`moments.py:197-198`). Everything upstream is content-BLIND: PII/legal name exclusion (`ingest.is_excluded`
 `ingest.py:25`) is a NAME filter not content judgment; the audio-only guard is structural; transcribe/signals
@@ -373,8 +373,8 @@ validation vocab, clause maps, and catalog cannot drift (`persona_levers.py:1-8`
 **Link-failure behavior:** FAIL-OPEN. A dangling `persona_id`, absent/corrupt personas.json, or any error
 leaves the account's inline values intact — byte-identical when unlinked (`accounts.py:250-255`). **Observable?**
 The failure itself is SILENT (no log/badge — the `except Exception: return` at `accounts.py:250-251` swallows).
-Downstream, `Accounts.validate` (`accounts.py:207-216`) surfaces a "no persona linked" or "cut spec matches
-global" problem string when `creative_variation` is on, and `advance` logs those as `differentiation_warn`
+Downstream, `Accounts.validate` (`accounts.py:256-265`) surfaces a "no persona linked" or "cut spec matches
+global" problem string when `cfg.account_casting` is ON, and `advance` logs those as `differentiation_warn`
 (`pipeline.py:385-387`). So a link that fails to resolve is not itself flagged, but its DOWNSTREAM effect
 (no differentiation) is a validate-time warning. `delete_persona` deliberately leaves accounts with a dangling
 id that falls open (`studio/personas.py:97-99`).
@@ -383,9 +383,9 @@ id that falls open (`studio/personas.py:97-99`).
 
 | Field | Lands at (payload/render key) | Full chain (file:line) |
 |-------|-------------------------------|------------------------|
-| `voice` | casting/hook/caption prompt per-account slot | `_base_voice` (`persona_directives.py:56`) → leads `casting_directive` (`:68`), `hook_directive` (`:82`), `caption_directive` (`:107`) → carried in casting `personas[].persona` (`casting.py:78`), hook `personas[].persona` (`moments.py:243`), caption `surfaces[].persona` (`caption.py:209,226`) |
-| `content_focus` | casting SELECTION language + DERIVED cut LENGTH | `_FOCUS_CLAUSE` → `casting_directive` "Clip for this account: ..." (`persona_directives.py:75-76`); `_FOCUS_PROFILE` → `derive_cut_spec` length tier (`:41`) → `resolved_cut_spec` → `acc.clip_profile` → `cfg.resolve_clip_profile(acct)` (`config.py:433`) → `crosspost.account_render_spec` — `resolve_clip_profile` call at `crosspost.py:86`, `wants_cut` decision `crosspost.py:86-91` → `render_account_cut` band (`clip.py:706,723`) — physically cuts the clip length |
-| `energy` | casting energy clause + DERIVED framing | `_ENERGY_CLAUSE` → `casting_directive` (`persona_directives.py:77-78`); `_ENERGY_FRAMING` → `derive_cut_spec` framing (`:42`) → `acc.framing` → `cfg.resolve_top_bias(acct)` (`config.py:443`) → `top_bias` in `render_account_cut`/`reframe_filter` (`clip.py:310-311`), and stamped on `Post.top_bias` at mint (`crosspost.py:294`) |
+| `voice` | moment-pick / hook / caption prompt per-account slot | `_base_voice` (`persona_directives.py:56`) → leads `casting_directive` (`:68`), `hook_directive` (`:82`), `caption_directive` (`:107`) → carried in pick lenses (`moments._pick_personas` `:220`), hook `personas[].persona` (`moments._hook_persona_entry` `:374-382`), caption `surfaces[].persona` (`caption.py:209,226`) |
+| `content_focus` | moment-pick SELECTION language + DERIVED cut LENGTH | `_FOCUS_CLAUSE` → `casting_directive` "Clip for this account: ..." (`persona_directives.py:75-76`); `_FOCUS_PROFILE` → `derive_cut_spec` length tier (`:41`) → `resolved_cut_spec` → `acc.clip_profile` → `cfg.resolve_clip_profile(acct)` (`config.py:433`) → `crosspost.render_spec` — `resolve_clip_profile` call at `crosspost.py:84`, `wants_cut` decision `crosspost.py:86-91` → `render_account_cut` band (`clip.py:706,723`) — physically cuts the clip length |
+| `energy` | moment-pick energy clause + DERIVED framing | `_ENERGY_CLAUSE` → `casting_directive` (`persona_directives.py:77-78`); `_ENERGY_FRAMING` → `derive_cut_spec` framing (`:42`) → `acc.framing` → `cfg.resolve_top_bias(acct)` (`config.py:443`) → `top_bias` in `render_account_cut`/`reframe_filter` (`clip.py:310-311`), and stamped on `Post.top_bias` at mint (`crosspost.py:294`) |
 | `hook_angle` | on-screen hook strategy | `_ANGLE_CLAUSE` → `hook_directive` (`persona_directives.py:88-89`) → `hook_author_slot` → owner-only hook gate (`moments._hook_personas_for_moment` `moments.py:384`) → `Moment.hook` → burned at render (`clip.render_account_cut`) → surfaced as `variant_hook` in Studio |
 | `hashtag_corpus` | caption hashtags (deterministic post-step) | hydrated `acc.hashtag_corpus` → `corpora[handle]` in caption request (`caption.py:213`) → surface `corpus` key (`caption.py:227`) → prompt "PREFER ... corpus" (`prompts.py:429-431`) AND `vet_hashtags(corpus=...)` float+floor+backfill (`caption.py:330`, `hashtags.py:159-205`) |
 | `intake.genre` | Graph research seeds only | `_seed_tags` (`fanops_hashtags.py:32`) + `discover_corpus` — never a live caption |
@@ -485,7 +485,7 @@ generation and schedule toward measured reach, but never past the operator appro
 
 1. **The first content gate sits after the full expensive per-source pipeline.** Whisper transcription (up to
    2700s+, optional Demucs), ffmpeg signal detection, and 6 keyframe extractions all run BEFORE the moments
-   LLM gate — the earliest step that can reject/park footage for content reasons (`moments.py:161`,
+   LLM gate — the earliest step that can reject/park footage for content reasons (`moments.py:261`,
    `pipeline.py:82-87`). A dead-footage source burns the entire transcribe+signals+keyframes compute before
    any "is this worth posting" judgment. Evidence: `pipeline._stage_source_to_moments` ordering.
 
@@ -499,8 +499,8 @@ generation and schedule toward measured reach, but never past the operator appro
 3. **A persona-link resolution failure is silent at the point of failure and only surfaces indirectly.**
    `_hydrate_from_personas` swallows every exception with `return` (`accounts.py:250-251`); a dangling
    `persona_id` leaves inline values with NO log/badge. The downstream "no differentiation" is only caught by
-   `Accounts.validate` → `differentiation_warn` and ONLY when `creative_variation` is on
-   (`accounts.py:207-216`, `pipeline.py:385-387`). Evidence: the two cited spans.
+   `Accounts.validate` → `differentiation_warn` when `cfg.account_casting` is ON
+   (`accounts.py:256-265`, `pipeline.py:383-385`). Evidence: the two cited spans.
 
 4. **`learning_validated` is a single global boolean (`cutover.json metrics_confirmed`) that gates all
    validation-frozen actuators at once, and auto-flips on the FIRST qualifying live metric.** One
