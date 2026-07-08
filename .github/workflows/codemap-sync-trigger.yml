@@ -1,0 +1,79 @@
+name: codemap-sync-trigger
+
+# WHEN codemap sync runs — repo-owned gate. Cursor automations have no path filters;
+# "PR merged" fired once per merge and caused 26 draft PRs in one wave.
+#
+# Flow: push main + src/** → preflight drift check (free) → webhook only if drift.
+# Setup: .cursor/automations/codemap-sync.md
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+  workflow_dispatch:
+
+concurrency:
+  group: codemap-sync-${{ github.repository }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    name: Drift preflight (no agent billing)
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    outputs:
+      drift: ${{ steps.check.outputs.drift }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+      - name: Run codemap drift check
+        id: check
+        run: |
+          set +e
+          python scripts/codemap_drift.py --json > drift.json
+          rc=$?
+          set -e
+          if [[ $rc -eq 0 ]]; then
+            echo "drift=false" >> "$GITHUB_OUTPUT"
+            echo "[codemap-sync] no drift — skipping webhook"
+          elif [[ $rc -eq 1 ]]; then
+            echo "drift=true" >> "$GITHUB_OUTPUT"
+            echo "[codemap-sync] drift detected:"
+            python -c "import json; [print('  -', r) for r in json.load(open('drift.json'))['reasons']]"
+          else
+            echo "[codemap-sync] drift check failed (rc=$rc)" >&2
+            exit $rc
+          fi
+
+  trigger:
+    name: POST Cursor codemap-sync webhook
+    needs: preflight
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (needs.preflight.result == 'success' && needs.preflight.outputs.drift == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Fire webhook (skip if secrets not wired)
+        env:
+          WEBHOOK_URL: ${{ secrets.CURSOR_CODEMAP_SYNC_WEBHOOK_URL }}
+          WEBHOOK_TOKEN: ${{ secrets.CURSOR_CODEMAP_SYNC_WEBHOOK_TOKEN }}
+          SHA: ${{ github.sha }}
+          REF: ${{ github.ref_name }}
+          DRIFT: ${{ needs.preflight.outputs.drift }}
+        run: |
+          if [[ -z "$WEBHOOK_URL" || -z "$WEBHOOK_TOKEN" ]]; then
+            echo "[codemap-sync-trigger] secrets not set — skip (wire per .cursor/automations/codemap-sync.md)"
+            exit 0
+          fi
+          curl -fsS -X POST "$WEBHOOK_URL" \
+            -H "Authorization: Bearer ${WEBHOOK_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{\"event\":\"codemap_sync\",\"repository\":\"${{ github.repository }}\",\"ref\":\"${REF}\",\"sha\":\"${SHA}\",\"drift_preflight\":\"${DRIFT}\"}"
+          echo "[codemap-sync-trigger] webhook POST ok @ ${SHA:0:7} drift=${DRIFT}"

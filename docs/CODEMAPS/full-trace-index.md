@@ -1,4 +1,4 @@
-<!-- Generated: 2026-07-07 | Method: deterministic AST extraction (.reports/ast_extract.py) + derived call/import graphs (.reports/build_graphs.py) + hand-verified semantic sync | Files scanned: 109/109 src/fanops/*.py | Token estimate: ~2400 -->
+<!-- Generated: 2026-07-07 | Method: deterministic AST extraction (scripts/codemap_extract/) + drift gate (scripts/codemap_drift.py) + hand-verified semantic sync | Files scanned: 109/109 src/fanops/*.py | Token estimate: ~2400 -->
 # FanOps Full-Codebase Trace Index
 
 Master index for a zero-omission, function-by-function trace of every module under `src/fanops/`.
@@ -18,7 +18,7 @@ this file is the raw coverage ledger and anomaly index.
 | `call_graph.json` | Name-based reverse call graph: 1,067 callables, each with `calls`/`called_by_in_repo` | `.reports/` |
 | `unreferenced_candidates.json` | 55 best-effort dead-code leads (excludes dunders/decorated/tests) — **leads, not verdicts**; see Dead-code below | `.reports/` |
 | `ruff_report.json` | Full-repo `ruff check` — **0 findings against src/** (2 historical findings were in the analysis scratch script itself, fixed) | `.reports/` |
-| `ast_extract.py` / `build_graphs.py` | The two extractor scripts themselves (stdlib-only, re-runnable) | `.reports/` |
+| `ast_extract.py` / `build_graphs.py` | The two extractor scripts themselves (stdlib-only, re-runnable) | `scripts/codemap_extract/` |
 
 No third-party call-graph tool was available in this environment (pyan3/pydeps/snakefood/pycg/jedi
 all absent, confirmed via `pip list`) — the extractor above was purpose-built. Its call graph is
@@ -179,9 +179,9 @@ index exactly (108/108 modules parsed with zero AST errors).
 ## How to regenerate
 
 ```bash
-cd "/Users/molhamhomsi/Moh Flow Fanops"
-python3 .reports/ast_extract.py src > .reports/structural_index.json
-python3 .reports/build_graphs.py
+python3 scripts/codemap_drift.py          # machine-checkable drift gate (exit 1 = needs sync)
+python3 scripts/codemap_extract/ast_extract.py src > .codemap-cache/structural_index.json
+python3 scripts/codemap_extract/build_graphs.py --index .codemap-cache/structural_index.json --out-dir .codemap-cache
 ruff check src/
 ```
 
