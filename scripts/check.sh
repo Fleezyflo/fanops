@@ -20,13 +20,11 @@ if [[ ! -x "$PY" ]]; then
   exit 1
 fi
 
-# Self-heal the ONE piece of infra that is otherwise on trust: the policy hooks are inert until
-# core.hooksPath points at .githooks, and a fresh clone/worktree does NOT set it. Rather than document
-# "remember to wire the hooks" (a markdown request an agent skips), wire it here — check.sh runs before
-# every commit, so the main-push guard is armed by the time you can push. Idempotent.
+# MOL-198: check.sh no longer MUTATES git config (a test gate silently changing `core.hooksPath` was a
+# footgun). It only WARNS when the policy hooks aren't wired; wiring is a one-time explicit step via
+# `./scripts/setup-hooks.sh` (see AGENTS.md worktree setup).
 if [[ "$(git config --local core.hooksPath || true)" != ".githooks" ]]; then
-  git config --local core.hooksPath .githooks
-  echo "[check] wired core.hooksPath -> .githooks (policy hooks were inert; now armed)"
+  echo "[check] WARNING: policy hooks not wired — run: ./scripts/setup-hooks.sh  (one-time, idempotent)" >&2
 fi
 
 # Diff base: the merge-base with origin/main (fall back to HEAD~1, then empty tree, so a fresh repo works).
