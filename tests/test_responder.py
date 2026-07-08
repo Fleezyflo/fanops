@@ -364,9 +364,9 @@ def test_gate_stamps_authoritative_rid_ignores_model_echo(tmp_path, monkeypatch)
     assert not any("rid_mismatch" in ev for ev in events)
 
 
-def test_validation_error_marks_source_degraded(tmp_path, monkeypatch):
-    # MOL-226: a present-but-invalid model response (ValidationError) must LABEL the source degraded,
-    # not leave it silently stalled — mirrors the context-limit labelling contract.
+def test_deterministic_schema_failure_marks_source_degraded_not_silent_pending(tmp_path, monkeypatch):
+    # MOL-238 T2.1: inverse of test_llm_responder_invalid_output_leaves_gate_pending_not_raise — one
+    # deterministic schema failure (ValidationError, below ceiling) stamps degraded_reason but is NOT terminal.
     from fanops.ledger import Ledger
     from fanops.models import Source, SourceState
     from fanops.agentstep import write_request, response_path
@@ -383,6 +383,233 @@ def test_validation_error_marks_source_degraded(tmp_path, monkeypatch):
     assert not response_path(cfg, "moments", "src_1").exists()   # gate stays pending
     src = Ledger.load(cfg).sources["src_1"]
     assert src.degraded_reason and "invalid" in src.degraded_reason.lower()   # LABELLED, not silent-pending
+    assert src.state != SourceState.error   # pre-terminal: surfaced-but-recoverable, not terminal
+
+
+def test_llm_schema_error_marks_source_degraded(tmp_path, monkeypatch):
+    # MOL-227: an LlmSchemaError in the gate path stamps degraded_reason; gate stays pending.
+    from fanops.ledger import Ledger
+    from fanops.models import Source, SourceState
+    from fanops.agentstep import write_request, response_path
+    from fanops.responder import LlmResponder
+    from fanops.llm import LlmSchemaError
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg); led.add_source(Source(id="src_1", source_path="/s.mp4", state=SourceState.signalled)); led.save()
+    write_request(cfg, kind="moments", key="src_1",
+                  payload={"source_id": "src_1", "duration": 10.0, "transcript": [], "signal_peaks": []})
+    def schema_fail(kind, payload): raise LlmSchemaError("claude -p returned non-JSON envelope")
+    n = LlmResponder(cfg, model=schema_fail).answer_pending(cfg)
+    assert n == 0
+    assert not response_path(cfg, "moments", "src_1").exists()
+    src = Ledger.load(cfg).sources["src_1"]
+    assert src.degraded_reason and "schema error" in src.degraded_reason.lower()
+
+
+def test_bare_exception_does_not_stamp_degraded(tmp_path, monkeypatch):
+    # MOL-227: a generic Exception caught by the bare except must NOT stamp degraded_reason.
+    from fanops.ledger import Ledger
+    from fanops.models import Source, SourceState
+    from fanops.agentstep import write_request, response_path
+    from fanops.responder import LlmResponder
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg); led.add_source(Source(id="src_1", source_path="/s.mp4", state=SourceState.signalled)); led.save()
+    write_request(cfg, kind="moments", key="src_1",
+                  payload={"source_id": "src_1", "duration": 10.0, "transcript": [], "signal_peaks": []})
+    def transient(kind, payload): raise RuntimeError("transient LLM 500")
+    n = LlmResponder(cfg, model=transient).answer_pending(cfg)
+    assert n == 0
+    assert not response_path(cfg, "moments", "src_1").exists()
+    src = Ledger.load(cfg).sources["src_1"]
+    assert not src.degraded_reason
+
+
+def test_successful_write_clears_attempts(tmp_path, monkeypatch):
+    # MOL-236: a successful write_response resets the per-gate attempt counter to zero.
+    from fanops.agentstep import write_request, bump_attempts, _attempts_path
+    from fanops.responder import LlmResponder
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    cfg = Config(root=tmp_path)
+    write_request(cfg, kind="moments", key="src_1",
+                  payload={"source_id": "src_1", "duration": 20.0,
+                           "transcript": [{"start": 14, "end": 18, "text": "x"}], "signal_peaks": []})
+    bump_attempts(cfg, "moments", "src_1"); bump_attempts(cfg, "moments", "src_1"); bump_attempts(cfg, "moments", "src_1")
+    def ok_model(kind, payload):
+        return {"source_id": payload["source_id"],
+                "picks": [{"start": 14.0, "end": 18.0, "reason": "punchline"}]}
+    n = LlmResponder(cfg, model=ok_model).answer_pending(cfg)
+    assert n == 1
+    assert not _attempts_path(cfg, "moments", "src_1").exists()
+    assert bump_attempts(cfg, "moments", "src_1") == 1   # subsequent failure starts from 1
+
+
+def _seed_source_and_moments_gate(cfg, key="src_1", state=None):
+    from fanops.ledger import Ledger
+    from fanops.models import Source, SourceState
+    from fanops.agentstep import write_request
+    state = state or SourceState.signalled
+    led = Ledger.load(cfg); led.add_source(Source(id=key, source_path="/s.mp4", state=state)); led.save()
+    write_request(cfg, kind="moments", key=key,
+                  payload={"source_id": key, "duration": 10.0, "transcript": [], "signal_peaks": []})
+
+
+def _bad_pick_model(kind, payload):
+    return {"picks": [{"start": 1.0, "end": 4.0}]}   # missing reason -> ValidationError
+
+def test_deterministic_gate_terminates_source_after_ceiling(tmp_path, monkeypatch):
+    # MOL-240 T2.2: after _GATE_DETERMINISTIC_MAX deterministic failures, source lands SourceState.error.
+    from fanops.ledger import Ledger
+    from fanops.models import SourceState
+    from fanops.agentstep import response_path, _attempts_path
+    from fanops.responder import LlmResponder, _GATE_DETERMINISTIC_MAX
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    cfg = Config(root=tmp_path)
+    _seed_source_and_moments_gate(cfg)
+    r = LlmResponder(cfg, model=_bad_pick_model)
+    for tick in range(1, _GATE_DETERMINISTIC_MAX):
+        assert r.answer_pending(cfg) == 0
+        assert not response_path(cfg, "moments", "src_1").exists()
+        src = Ledger.load(cfg).sources["src_1"]
+        assert src.state != SourceState.error
+        assert src.degraded_reason
+        if tick < _GATE_DETERMINISTIC_MAX - 1:
+            assert json.loads(_attempts_path(cfg, "moments", "src_1").read_text())["n"] == tick
+    assert r.answer_pending(cfg) == 0
+    src = Ledger.load(cfg).sources["src_1"]
+    assert src.state == SourceState.error
+    assert src.error_reason and "moments" in src.error_reason
+    assert not _attempts_path(cfg, "moments", "src_1").exists()
+    assert not response_path(cfg, "moments", "src_1").exists()
+
+
+def test_schema_error_ceiling_terminates_source(tmp_path, monkeypatch):
+    # MOL-235: LlmSchemaError escalates identically at the deterministic ceiling.
+    from fanops.ledger import Ledger
+    from fanops.models import SourceState
+    from fanops.agentstep import response_path
+    from fanops.responder import LlmResponder, _GATE_DETERMINISTIC_MAX
+    from fanops.llm import LlmSchemaError
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    cfg = Config(root=tmp_path)
+    _seed_source_and_moments_gate(cfg)
+    def schema_fail(kind, payload): raise LlmSchemaError("non-JSON envelope")
+    r = LlmResponder(cfg, model=schema_fail)
+    for _ in range(_GATE_DETERMINISTIC_MAX):
+        assert r.answer_pending(cfg) == 0
+        assert not response_path(cfg, "moments", "src_1").exists()
+    src = Ledger.load(cfg).sources["src_1"]
+    assert src.state == SourceState.error and src.error_reason and "moments" in src.error_reason
+
+
+def test_transient_failure_does_not_trip_ceiling(tmp_path, monkeypatch):
+    # MOL-242 T2.3: transient failures (> ceiling) never bump .attempts.json or hit SourceState.error.
+    from fanops.ledger import Ledger
+    from fanops.models import SourceState
+    from fanops.agentstep import response_path, _attempts_path
+    from fanops.responder import LlmResponder
+    from fanops.llm import LlmTimeoutError
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    cfg = Config(root=tmp_path)
+    _seed_source_and_moments_gate(cfg)
+    def always_timeout(kind, payload): raise LlmTimeoutError("timed out")
+    r = LlmResponder(cfg, model=always_timeout)
+    for _ in range(10):
+        assert r.answer_pending(cfg) == 0
+    assert not _attempts_path(cfg, "moments", "src_1").exists()
+    src = Ledger.load(cfg).sources["src_1"]
+    assert src.state == SourceState.signalled and not src.error_reason
+    assert not response_path(cfg, "moments", "src_1").exists()
+
+
+def test_reseed_resets_deterministic_attempts(tmp_path, monkeypatch):
+    # MOL-235: write_request re-seed clears the attempt counter — fresh N attempts for a new question.
+    from fanops.ledger import Ledger
+    from fanops.models import SourceState
+    from fanops.agentstep import write_request, _attempts_path
+    from fanops.responder import LlmResponder, _GATE_DETERMINISTIC_MAX
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    cfg = Config(root=tmp_path)
+    _seed_source_and_moments_gate(cfg)
+    r = LlmResponder(cfg, model=_bad_pick_model)
+    for _ in range(_GATE_DETERMINISTIC_MAX - 1):
+        r.answer_pending(cfg)
+    assert json.loads(_attempts_path(cfg, "moments", "src_1").read_text())["n"] == _GATE_DETERMINISTIC_MAX - 1
+    write_request(cfg, kind="moments", key="src_1",
+                  payload={"source_id": "src_1", "duration": 99.0, "transcript": [], "signal_peaks": []})
+    assert not _attempts_path(cfg, "moments", "src_1").exists()
+    r.answer_pending(cfg)
+    src = Ledger.load(cfg).sources["src_1"]
+    assert src.state != SourceState.error
+    assert json.loads(_attempts_path(cfg, "moments", "src_1").read_text())["n"] == 1
+
+
+def test_terminated_gate_source_is_resumable(tmp_path, monkeypatch):
+    # MOL-235: ceiling terminal stamp is recoverable via resume_source (MOL-121).
+    from fanops.ledger import Ledger
+    from fanops.models import SourceState
+    from fanops.responder import LlmResponder, _GATE_DETERMINISTIC_MAX
+    from fanops.pipeline import resume_source
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    cfg = Config(root=tmp_path)
+    _seed_source_and_moments_gate(cfg)
+    r = LlmResponder(cfg, model=_bad_pick_model)
+    for _ in range(_GATE_DETERMINISTIC_MAX):
+        r.answer_pending(cfg)
+    led = Ledger.load(cfg)
+    assert led.sources["src_1"].state == SourceState.error
+    assert resume_source(led, "src_1") is True
+    assert led.sources["src_1"].state == SourceState.catalogued
+    assert led.sources["src_1"].error_reason is None
+
+
+def test_ceiling_never_writes_response(tmp_path, monkeypatch):
+    # MOL-235: fail-closed — escalation never writes a *.response.json at any tick.
+    from fanops.agentstep import response_path
+    from fanops.responder import LlmResponder, _GATE_DETERMINISTIC_MAX
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    cfg = Config(root=tmp_path)
+    _seed_source_and_moments_gate(cfg)
+    r = LlmResponder(cfg, model=_bad_pick_model)
+    for _ in range(_GATE_DETERMINISTIC_MAX + 2):
+        r.answer_pending(cfg)
+        assert not response_path(cfg, "moments", "src_1").exists()
+
+
+def test_degraded_and_terminal_gate_surface_to_operator(tmp_path, monkeypatch, capsys):
+    # MOL-245 T2.4: degraded (pre-terminal) in digest subsection; ceiling-terminal in status + digest
+    # Failures + Studio Run recoverable list.
+    from fanops.cli import main
+    from fanops.digest import render_digest
+    from fanops.ledger import Ledger
+    from fanops.models import SourceState
+    from fanops.responder import LlmResponder, _GATE_DETERMINISTIC_MAX
+    from fanops.studio import views
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    monkeypatch.chdir(tmp_path)
+    cfg = Config(root=tmp_path)
+    _seed_source_and_moments_gate(cfg, key="gate_src")
+    r = LlmResponder(cfg, model=_bad_pick_model)
+    assert r.answer_pending(cfg) == 0
+    src = Ledger.load(cfg).sources["gate_src"]
+    assert src.degraded_reason and src.state != SourceState.error
+    md = render_digest(Ledger.load(cfg), cfg)
+    deg = md.split("## Degraded (pre-terminal)")[1].split("##")[0]
+    assert "gate_src" in deg and "schema invalid" in deg
+    for _ in range(_GATE_DETERMINISTIC_MAX - 1):
+        r.answer_pending(cfg)
+    src = Ledger.load(cfg).sources["gate_src"]
+    assert src.state == SourceState.error and src.error_reason
+    rc = main(["status"])
+    out = capsys.readouterr().out
+    assert rc == 0 and "sources_error=1" in out
+    md = render_digest(Ledger.load(cfg), cfg)
+    fail = md.split("## Failures")[1].split("##")[0]
+    assert "gate_src" in fail and "moments" in fail
+    if "## Degraded (pre-terminal)" in md:
+        assert "gate_src" not in md.split("## Degraded (pre-terminal)")[1].split("##")[0]
+    errored = views.pipeline_status(cfg)["errored"]
+    assert any(row["id"] == "gate_src" and "moments" in (row.get("error_reason") or "") for row in errored)
 
 
 def test_context_limit_marks_source_degraded_for_captions_gate(tmp_path):
