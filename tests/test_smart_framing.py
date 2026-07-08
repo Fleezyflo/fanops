@@ -684,3 +684,22 @@ def test_sidecar_loaders_reject_nondict_windows(tmp_path):
     # a genuinely-shaped sidecar still round-trips (the guard doesn't reject valid dicts)
     p.write_text(json.dumps({"v": _SIDECAR_V, "windows": {"0.0-6.0": {"focus": [0.5, 0.4]}}}))
     assert _load_cache(p) == {"0.0-6.0": {"focus": [0.5, 0.4]}}
+
+
+# ---------------------------------------------------------------- real OpenCV/YuNet smoke (MOL-196) ----
+@pytest.mark.integration
+def test_real_yunet_detection_path_executes(tmp_path):
+    """MOL-196: every other detection test stubs cv2. This one proves the REAL OpenCV/YuNet path runs when
+    the [framing] extra is actually installed (the e2e CI job) — the vendored model loads into a real
+    cv2.FaceDetectorYN and detection runs end-to-end on a real image. Skips locally when cv2 is absent
+    (in CI's e2e job [framing] IS installed, so FANOPS_REQUIRE_E2E turns any skip here into a failure)."""
+    cv2 = framing._cv2()
+    if cv2 is None:
+        pytest.skip("cv2 (opencv-python-headless / [framing] extra) not installed")
+    import numpy as np
+    det = framing._detector(cv2)
+    assert det is not None, "vendored YuNet model failed to load into real cv2.FaceDetectorYN"
+    img = tmp_path / "frame.png"
+    cv2.imwrite(str(img), np.zeros((320, 320, 3), dtype=np.uint8))     # real image write via real cv2
+    faces = framing._detect_faces(cv2, det, str(img))                  # real detection pass (blank frame -> [])
+    assert isinstance(faces, list)                                     # the real path executed without raising

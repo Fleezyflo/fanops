@@ -4,6 +4,7 @@
 ## Run it right
 
 - Fast UNIT suite (hermetic, no ffmpeg/whisper/network): `python -m pytest -q -m "not integration and not slow"`.
+- Coverage (LOCAL only — CI dropped it as report-only theater, MOL-199): `python -m pytest -q -m "not integration" --cov=src/fanops --cov-report=term-missing`.
 - Integration (`@pytest.mark.integration`): `python -m pytest -q -m integration -rs` — needs real ffmpeg/whisper/TTS;
   skips cleanly when tooling is absent locally. `FANOPS_REQUIRE_E2E=1` (CI) turns that skip into a FAILURE.
 - **Run under the venv** (`source .venv/bin/activate`) — bare `pytest` mis-reports the `mocker` fixture.
