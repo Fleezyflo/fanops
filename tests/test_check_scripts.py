@@ -71,6 +71,7 @@ def sandbox(tmp_path):
     scripts.mkdir(parents=True)
     shutil.copy2(CHECK, scripts / "check.sh")
     shutil.copy2(SCOPE, scripts / "check_scope.py")
+    shutil.copy2(REPO / "scripts" / "setup-hooks.sh", scripts / "setup-hooks.sh")
 
     _git(repo, "init", "-q")
     _git(repo, "config", "user.email", "t@t.t")
@@ -314,20 +315,16 @@ def test_orphan_src_allow_env_passes(sandbox):
     assert "WARNING" in r.stdout or "FANOPS_CHECK_ALLOW_NO_TESTS" in r.stdout
 
 
-def test_check_self_heals_hookspath(sandbox):
-    """check.sh arms the policy hooks: an unwired repo gets core.hooksPath=.githooks set for it.
-
-    This is the root fix for 'hooks are inert until someone remembers to wire them' — the main-push
-    guard would otherwise be off by default in every fresh clone/worktree.
-    """
+def test_check_warns_but_does_not_wire_hookspath(sandbox):
+    """MOL-198: check.sh no longer MUTATES git config. On an unwired repo it must WARN (pointing at
+    setup-hooks.sh) and leave core.hooksPath untouched — a test gate must not silently change git config."""
     repo = sandbox
-    # Baseline so BASE=HEAD~1 resolves; no .py change needed — the wiring runs before the diff logic.
+    # Baseline so BASE=HEAD~1 resolves; no .py change needed — the warning runs before the diff logic.
     (repo / "README.md").write_text("v1\n")
     _commit_all(repo, "baseline")
     (repo / "README.md").write_text("v2\n")
     _commit_all(repo, "docs")
 
-    # Precondition: the sandbox has NO hooksPath set.
     pre = _run(["git", "-C", str(repo), "config", "--local", "core.hooksPath"], cwd="/")
     assert pre.stdout.strip() == "", "sandbox should start unwired"
 
@@ -335,5 +332,20 @@ def test_check_self_heals_hookspath(sandbox):
     assert r.returncode == 0, f"{r.stdout}\n{r.stderr}"
 
     post = _run(["git", "-C", str(repo), "config", "--local", "core.hooksPath"], cwd="/")
-    assert post.stdout.strip() == ".githooks", "check.sh must wire the policy hooks"
-    assert "armed" in r.stdout, "check.sh should announce it armed the hooks"
+    assert post.stdout.strip() == "", "check.sh must NOT mutate core.hooksPath (MOL-198)"
+    assert "setup-hooks.sh" in (r.stdout + r.stderr), "check.sh should warn pointing at setup-hooks.sh"
+
+
+def test_setup_hooks_wires_hookspath_idempotently(sandbox):
+    """MOL-198: setup-hooks.sh is the explicit, idempotent wiring step check.sh no longer does."""
+    repo = sandbox
+    setup = str(repo / "scripts" / "setup-hooks.sh")
+
+    r1 = _run(["bash", setup], repo)
+    assert r1.returncode == 0, f"{r1.stdout}\n{r1.stderr}"
+    post = _run(["git", "-C", str(repo), "config", "--local", "core.hooksPath"], cwd="/")
+    assert post.stdout.strip() == ".githooks", "setup-hooks.sh must wire core.hooksPath"
+
+    r2 = _run(["bash", setup], repo)                       # idempotent: second run is a clean no-op
+    assert r2.returncode == 0
+    assert "already wired" in r2.stdout

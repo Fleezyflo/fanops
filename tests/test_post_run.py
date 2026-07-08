@@ -565,7 +565,7 @@ def test_publish_throttle_wait_spaces_postiz_calls(tmp_path, monkeypatch, mocker
         except StopIteration: return 115.5
     mocker.patch("fanops.post.run.time.monotonic", side_effect=_next_mono)
     sleeps = []
-    mocker.patch("fanops.post.run.time.sleep", side_effect=lambda s: sleeps.append(s))
+    mocker.patch("fanops.post.run._sleep", side_effect=lambda s: sleeps.append(s))   # capture the wait (no real sleep; conftest already no-ops it)
     _publish_throttle_wait(cfg, "postiz", "ig_1")
     _publish_throttle_wait(cfg, "postiz", "ig_1")
     assert len(sleeps) == 1 and sleeps[0] >= 14.0
