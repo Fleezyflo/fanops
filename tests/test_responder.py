@@ -612,7 +612,6 @@ def test_degraded_and_terminal_gate_surface_to_operator(tmp_path, monkeypatch, c
     assert any(row["id"] == "gate_src" and "moments" in (row.get("error_reason") or "") for row in errored)
 
 
-
 def test_context_limit_marks_source_degraded_for_captions_gate(tmp_path):
     # context-limit-no-source-mark: a captions gate that hits the LLM context limit must mark its SOURCE
     # degraded (the no-silent-degradation principle), same as the moment gates. Captions key on a CLIP id, so
