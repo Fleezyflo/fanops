@@ -1,0 +1,4 @@
+# Runtime orchestration state is per-run and must NOT be committed (verification records + ledger).
+# The directory itself is kept (state/.gitkeep) so the gate always has a stable path to write to.
+/state/*
+!/state/.gitkeep
