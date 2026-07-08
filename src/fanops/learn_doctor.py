@@ -38,6 +38,11 @@ def _default_fetch(led: Ledger, cfg: Config):
 
 
 def field_shape_report(led: Ledger, cfg: Config, *, window: str = "30d", list_posts=None) -> dict:
+    """Pure read: pull sampled posts' live analytics and judge the `reach` field shape."""
+    return _field_shape_report_core(led, cfg, window=window, list_posts=list_posts)
+
+
+def _field_shape_report_core(led: Ledger, cfg: Config, *, window: str = "30d", list_posts=None) -> dict:
     """Pure read: pull sampled posts' live analytics and judge the `reach` field shape. `list_posts`
     is injectable for tests; None -> the per-post PostizMetricsClient over the shipped-post ids."""
     fetch = list_posts or _default_fetch(led, cfg)

@@ -108,7 +108,6 @@ def test_system_health_lists_docker_postiz_zernio(tmp_path, monkeypatch):
     cfg = _cfg(tmp_path, monkeypatch, POSTIZ_URL="http://localhost:4007/api")
     monkeypatch.setattr(health.shutil, "which", lambda n: "/usr/bin/docker")
     monkeypatch.setattr(health.subprocess, "run", _Run({"docker info": 0}))
-    monkeypatch.setattr(health.requests, "get", lambda *a, **k: types.SimpleNamespace(status_code=200))
     _mock_probe(monkeypatch, status=200)                 # MOL-61: postiz row now rides the deeper probe
     assert [d.name for d in health.system_health(cfg)] == ["docker", "postiz", "zernio"]
 

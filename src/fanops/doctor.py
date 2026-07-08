@@ -98,23 +98,9 @@ def _meta_token_expiry_check(cfg: Config, *, get=None):
 
 
 def _postiz_reach_check(cfg: Config, *, probe=None):
-    """T10: the 'Postiz backend reachable (real probe, not nginx)' check dict, or None when the deployment has
-    no Postiz key (N/A — never a false alarm). Exercises postiz_health_probe (reused, not reinvented): its
-    docker health-check is nginx-only and lies during a crash-loop, so this is the honest read. FAIL CLOSED —
-    healthy=False (502/401/network) -> ok=False with the probe's own POSTIZ_OPS-pointing hint (never the key).
-    `probe` is injected for tests; None -> the real postiz_health_probe."""
-    if not cfg.backend_has_creds("postiz"):
-        return None                                          # no Postiz key -> the check is N/A
-    from fanops.post.postiz import postiz_health_probe
-    probe = probe or postiz_health_probe
-    try:
-        h = probe(cfg)
-        healthy = bool(getattr(h, "healthy", False)); hint = getattr(h, "hint", "") or ""
-    except Exception as e:                                    # a probe that raises -> fail CLOSED (unknown != healthy)
-        healthy = False; hint = f"Postiz probe error ({str(e)[:120]}); see docs/POSTIZ_OPS.md."
-    if not hint:
-        hint = "Postiz backend unreachable — its health-check is nginx-only and can lie; see docs/POSTIZ_OPS.md."
-    return _check("Postiz backend reachable (real /integrations probe, not the nginx health-check)", healthy, hint)
+    """Deprecated internal — use health_model.postiz_doctor_check (ONE probe). Kept as thin alias for tests."""
+    from fanops.health_model import postiz_doctor_check
+    return postiz_doctor_check(cfg, probe=probe)
 
 
 def _zernio_reach_check(cfg: Config, *, auth=None):
@@ -199,9 +185,29 @@ def _daemon_liveness_check(cfg: Config) -> dict:
         parts.append("could not read the ledger to assess past-due backlog (fail-closed)")
     return _check(lbl, False, "; ".join(parts))
 
-def doctor_report(cfg: Config, *, get=None, postiz_probe=None, zernio_auth=None) -> dict:
-    """Return {checks: [{label, ok, hint}], notes: [str]}. `checks` are pass/fail setup gates;
-    `notes` are informational (learning-validation state, review-queue depth)."""
+def _doctor_notes(cfg: Config) -> list[str]:
+    lv = learning_validated(cfg)
+    notes: list[str] = []
+    notes.append(f"poster backend: {cfg.poster_backend}"
+                 + (" (dryrun — writes payloads, posts nothing)" if not cfg.is_live else " (LIVE)"))
+    if lv:
+        notes.append("learning loop: validation-confirmed (lift fields reconciled by cutover) — amplify/bandit may be enabled")
+    else:
+        notes.append("learning loop: NOT validation-confirmed — variant-amplify stays inert even if enabled; "
+                     "run the Studio Validate learning step (Go-Live > 5 · Validate learning), or `fanops cutover`, to confirm lift fields")
+    try:
+        n = len(list(cfg.review.glob("*.jpg"))) if cfg.review.exists() else 0
+    except OSError as e:
+        logging.getLogger("fanops.doctor").debug("review glob failed: %s", e)
+        n = 0
+    if n:
+        notes.append(f"review queue: {n} candidate(s) in 00_review/ awaiting Finder approval — "
+                     "move keepers to 00_review/approved/ then `fanops intake`")
+    return notes
+
+
+def _assemble_doctor_checks(cfg: Config, *, get=None, postiz_probe=None, zernio_auth=None) -> list[dict]:
+    """Setup gate checks only (deps/field-shape composed by health_model.build_health_report)."""
     checks: list[dict] = []
     # 1. media toolchain (host-dependent — informational pass/fail, the operator installs what's red)
     for tool in ("ffmpeg", "ffprobe", "whisper"):
@@ -313,21 +319,10 @@ def doctor_report(cfg: Config, *, get=None, postiz_probe=None, zernio_auth=None)
     # heartbeat). The past-due gate mirrors the pump's own due-check (timeutil.is_due_or_past).
     dchk = _daemon_liveness_check(cfg)
     checks.append(dchk)
+    return checks
 
-    notes: list[str] = []
-    notes.append(f"poster backend: {cfg.poster_backend}"
-                 + (" (dryrun — writes payloads, posts nothing)" if not cfg.is_live else " (LIVE)"))
-    if lv:                                               # ECC fix #14: reuse the single read above
-        notes.append("learning loop: validation-confirmed (lift fields reconciled by cutover) — amplify/bandit may be enabled")
-    else:
-        notes.append("learning loop: NOT validation-confirmed — variant-amplify stays inert even if enabled; "
-                     "run the Studio Validate learning step (Go-Live > 5 · Validate learning), or `fanops cutover`, to confirm lift fields")
-    try:
-        n = len(list(cfg.review.glob("*.jpg"))) if cfg.review.exists() else 0
-    except OSError as e:                                 # a glob/stat hiccup (perms, stale mount) -> fail-soft to 0,
-        logging.getLogger("fanops.doctor").debug("review glob failed: %s", e)   # but leave a breadcrumb, not a silent 0
-        n = 0
-    if n:
-        notes.append(f"review queue: {n} candidate(s) in 00_review/ awaiting Finder approval — "
-                     "move keepers to 00_review/approved/ then `fanops intake`")
-    return {"checks": checks, "notes": notes}
+
+def doctor_report(cfg: Config, *, get=None, postiz_probe=None, zernio_auth=None) -> dict:
+    """Return {checks, notes, deps?, field_shape?} — thin view over health_model.build_health_report."""
+    from fanops.health_model import build_health_report
+    return build_health_report(cfg, get=get, postiz_probe=postiz_probe, zernio_auth=zernio_auth).as_dict()
