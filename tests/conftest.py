@@ -77,6 +77,16 @@ def pytest_runtest_makereport(item, call):
 
 
 @pytest.fixture(autouse=True)
+def _no_real_publish_sleep(monkeypatch):
+    """The publish throttle (post/run.py `_publish_throttle_wait`, ~60/postiz_publish_per_min s between posts)
+    and the publish retry-backoff call a REAL time.sleep. Any test that drives the live publish path without
+    stubbing it stalls the whole suite for many seconds (the 48%-stall footgun). Neutralize the WAIT globally
+    here — the throttle LOGIC still runs (per_min unchanged), only the wall-clock sleep is a no-op. A test
+    that wants to assert the wait duration re-patches run._sleep to capture it."""
+    monkeypatch.setattr("fanops.post.run._sleep", lambda *_a, **_k: None)
+
+
+@pytest.fixture(autouse=True)
 def _hermetic_publish_env():
     saved = {k: os.environ.get(k) for k in _LEAKY_ENV}
     for k in _LEAKY_ENV:
