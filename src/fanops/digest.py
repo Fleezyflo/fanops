@@ -5,7 +5,7 @@ import logging
 from collections import Counter
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.models import LIFT_SCORE, Platform, PostState
+from fanops.models import LIFT_SCORE, Platform, PostState, SourceState
 from fanops.agentstep import pending
 # Creative-variation v2: reuse the gated scorer so the digest's per-surface "learning ACTIVE / gathering
 # data" annotation and request_captions' caption-bias share ONE gate-logic home (they can never drift).
@@ -104,6 +104,13 @@ def _failures(led: Ledger) -> list[str]:
                                   ("clip", led.clips), ("stitch", led.stitch_plans))  # M3 structural-hooks
               for u in store.values() if u.state.value == "error"])         # M3: drop getattr
     return ["\n## Failures (need attention)\n" + "\n".join(fails) + "\n"] if fails else []
+
+
+def _degraded(led: Ledger) -> list[str]:
+    degraded = [f"- source `{s.id}`: {s.degraded_reason or '(no reason given)'}"
+                for s in led.sources.values()
+                if s.degraded_reason and s.state is not SourceState.error]
+    return ["\n## Degraded (pre-terminal)\n" + "\n".join(degraded) + "\n"] if degraded else []
 
 
 def _needs_reconcile(led: Ledger) -> list[str]:
@@ -275,6 +282,7 @@ def render_digest(led: Ledger, cfg: Config, accounts=None) -> str:
     out.append(f"\n**Posts** ({len(led.posts)}):\n" + _counts(led.posts.values()))
     out += _holds(led)
     out += _failures(led)
+    out += _degraded(led)
     out += _needs_reconcile(led)
     out += _unmeasured(led)
     out += _variant_lift(led, cfg, accounts)

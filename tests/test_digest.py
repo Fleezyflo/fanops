@@ -58,6 +58,20 @@ def test_counts_holds_failures(tmp_path):
     assert "Brand-risk holds" in md and "begging" in md
     assert "Failures" in md and "blotato 422" in md and "bad codec" in md
 
+def test_degraded_pre_terminal_sources(tmp_path):
+    # MOL-239: degraded_reason on a non-error source surfaces pre-terminal; error sources stay in Failures only.
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="s_deg", source_path="/x", state=SourceState.moments_requested,
+                          degraded_reason="context limit exceeded"))
+    led.add_source(Source(id="s_err", source_path="/y", state=SourceState.error,
+                          degraded_reason="probe_failed", error_reason="bad codec"))
+    md = render_digest(led, cfg)
+    deg = md.split("## Degraded (pre-terminal)")[1].split("##")[0]
+    fail = md.split("## Failures")[1].split("##")[0]
+    assert "s_deg" in deg and "context limit exceeded" in deg
+    assert "s_err" not in deg
+    assert "s_err" in fail and "bad codec" in fail
+
 def test_failures_include_stitch_plan_errors(tmp_path):
     # M3: a stitch_plan in error must surface in the digest's Failures section (operator visibility,
     # required from this milestone) — not only posts/sources/moments/clips.
