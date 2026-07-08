@@ -37,9 +37,12 @@ Environment variables (read at runtime from `.env`, see `src/fanops/config.py`):
 
 | Var | Values | Effect |
 |---|---|---|
-| `FANOPS_POSTER` | `dryrun` (default) \| `rest` \| `mcp` | Which publish backend. `dryrun` writes `file://` media URLs and never hits the network. |
+| `FANOPS_POSTER` | `dryrun` (default) \| `postiz` \| `zernio` | Legacy global publish backend hint. **Per-channel routing in `accounts.json` is the source of truth** — set backends in the Studio Go-Live tab. `dryrun` never hits the network. |
+| `FANOPS_LIVE` | `0` (default) \| `1` | Global live/dryrun switch. Set **only** via Studio Go-Live (`golive.go_live`). When unset/`0`, every publish path halts at the dryrun boundary even if a channel is routed live. |
+| `POSTIZ_URL` | URL | Base URL of your Postiz instance (required when any channel routes to `postiz`). |
+| `POSTIZ_API_KEY` | string | Postiz public API key (`x-api-key`). Required when any channel routes to `postiz`. |
+| `ZERNIO_API_KEY` | string | Zernio API key. Required when any channel routes to `zernio` (TikTok). |
 | `FANOPS_RESPONDER` | `manual` (default) \| `llm` | `manual` = a human/cron writes the response files; `llm` = the LLM responder answers gates via plain `claude -p` (the operator's existing Claude subscription/login — NO API key). With `llm`, `advance`/`run` **hard-fail (exit 2) unless `claude` is on PATH** — the cutover-safety preflight (see below); the operator must `claude login` once on the host. |
-| `BLOTATO_API_KEY` | string | Required for `rest`, `mcp`, and `track`. Absent ⇒ those refuse/skip cleanly. With `FANOPS_POSTER` in `{rest, mcp}`, `advance`/`run` also hard-fail (exit 2) when it is unset. |
 | `claude` (CLI, logged in) | — | Required for `FANOPS_RESPONDER=llm`. The responder shells plain `claude -p` (NOT `--bare`), so it uses the host's `claude login` session — **no `ANTHROPIC_API_KEY` needed**. `claude` absent with `llm` ⇒ `advance`/`run` exit 2 (the silent-zero-output guard). `--strict-mcp-config --allowedTools ""` keep it a clean no-tool/no-MCP generator. (`ANTHROPIC_API_KEY` is NOT required; if set, `claude` will use it, but the subscription login is the supported path.) |
 | `FANOPS_ARTIST_NAME` | string (optional) | Artist **display name** used as the YouTube title fallback when a post has no explicit title (audit h). Default `"Moh Flow"` (unchanged). Distinct from the `@mohflow` caption mention (`tagging.ARTIST_HANDLE`). |
 | `FANOPS_BURN_SUBS` | `1`/`true`/… (default **ON**) \| `0`/`false`/`no`/`off` | Burn the transcript-derived subtitles + top-third hook into each rendered clip. **DEFAULT ON** — an unset env burns subs, so the feature is live with no operator action; only the explicit off-words `0`/`false`/`no`/`off` (case-insensitive) disable it. **Fail-open**: if this ffmpeg lacks the text filter or the source has no transcript, the clip still renders (plain), logging one `subs_skipped` line. Requires a **text-capable ffmpeg (libass)** — see the note below. |
@@ -89,7 +92,8 @@ credentialless *nothing* — the #1 cutover trap:
   (the preflight hard-blocks the binary-absent case; a logged-out `claude` surfaces via the
   `run halted`/heartbeat path). This is the guaranteed-silent failure the heartbeat/dead-man's
   switch is designed to *detect after the fact*; the preflight catches it **up front** instead.
-- **`FANOPS_POSTER` in `{rest, mcp}` but `BLOTATO_API_KEY` unset** — publishing would 401.
+- **`FANOPS_POSTER=postiz` but `POSTIZ_URL` / `POSTIZ_API_KEY` unset** — publishing would fail auth.
+- **Any channel routed to `zernio` but `ZERNIO_API_KEY` unset** — TikTok publish would fail auth.
 
 The **default `dryrun` + `manual` config (no keys) trips neither and passes cleanly (exit 0)**,
 so the offline pipeline is unaffected. This is a *safety* feature: a misconfigured live cutover
@@ -186,8 +190,7 @@ nothing to drain and it will stop after one pass.
 `run` runs one `track`+`adjust` pass — `pull_metrics → classify_outcomes → amplify → retire`
 (`src/fanops/cli.py`) — so an unattended deployment makes more of what works without a
 separate `track`/`adjust` cron. It is **gated by the identical reconcile guard**
-(`cfg.poster_backend != "dryrun" and cfg.blotato_api_key`, byte-identical to the live portion
-of the reconcile guard at `pipeline.py`): in the default **dryrun** backend (or with no key) the
+(`cfg.is_live and cfg.live_route_exists`, matching the live reconcile guard at `pipeline.py`): in the default **dryrun** backend (or with no key) the
 pass is **never entered** — no metrics fetch, no amplify, no state change — so the offline
 pipeline behaves exactly as before. The pass runs in its **own** `Ledger.transaction` (lock-safe;
 it cannot race the next advance) and runs **once**, textually after the bounded respond/advance
@@ -229,8 +232,8 @@ naming the same unanswered gates. The heartbeat proves the cron is alive; the ze
 pending-gates list prove it is making no progress — so the operator knows to fix the **key**
 (grep `run.log` for repeated `responder … error … Not logged in`), not the scheduler.
 
-**Graceful degradation on a fatal auth error.** If a fatal Blotato auth error escapes
-the publish step (bad or missing `BLOTATO_API_KEY`, or a `401`), `run` does **not** crash
+**Graceful degradation on a fatal auth error.** If a fatal Postiz/Zernio auth error escapes
+the publish step (bad or missing API key, or a `401`), `run` does **not** crash
 with a traceback. It prints `run halted: <Error>: <message>` to **stderr** and exits with
 **code 1**. This is deliberate: a bad key would otherwise fail every post in turn, so the
 run **halts rather than burning the queue** — fix the key and re-run. (A *per-post*
@@ -254,7 +257,7 @@ holds the ledger `fcntl.flock` across the **entire load → mutate → save**, n
 Acquiring the lock *before* the load closes the lost-update window the old save()-only lock left
 open (two overlapping writers both loaded a stale snapshot, last save() won, the other's updates —
 a published post, a `submitting` flip — vanished silently, audit B4). **Slow I/O stays OUTSIDE the
-lock:** the up-to-30s Blotato calls in `track` (metrics fetch) and `reconcile` (per-post status
+lock:** the up-to-30s Postiz/Graph calls in `track` (metrics fetch) and `reconcile` (per-post status
 polls), and the `yt-dlp` download in `pull`, all run *before* the transaction; only the in-memory
 apply runs under the flock — so a slow network call never serializes behind the ledger lock
 (mirrors how `publish_due` uses the unlocked save mid-loop). So you can safely run `fanops adjust`
@@ -286,7 +289,7 @@ target id doesn't exist or is in the wrong state — never a traceback. Source:
 
 | Verb | When | What it does |
 |---|---|---|
-| `fanops resolve <post_id> <published\|failed> [--url U]` | a post is stuck in `needs_reconcile`/`submitting` and `fanops reconcile` can't auto-resolve it (Blotato never returns a terminal status, or the post has no real submission id) — the operator checks the platform by hand | forces the post's state to ground truth. `published` (optionally records the live URL via `--url`) or `failed` (safe to re-queue). The documented human-reconcile escape hatch (audit H1). |
+| `fanops resolve <post_id> <published\|failed> [--url U]` | a post is stuck in `needs_reconcile`/`submitting` and `fanops reconcile` can't auto-resolve it (the scheduler never returns a terminal status, or the post has no real submission id) — the operator checks the platform by hand | forces the post's state to ground truth. `published` (optionally records the live URL via `--url`) or `failed` (safe to re-queue). The documented human-reconcile escape hatch (audit H1). |
 | `fanops unhold <clip_id>` | a clip is parked `held` by the brand-risk gate and a human has reviewed/corrected the caption | clears `held`/`held_reason` and resets the clip to `captions_requested` so the next `advance` re-ingests the corrected captions. Replaces the old hand-edit of `ledger.json` (backlog (f), now done). |
 | `fanops retry-source <source_id>` | a source is quarantined in `error` (a transient transcribe/probe failure) | resets it to `catalogued`, clears `error_reason`, and sets `meta["transcribed"]=False` so the next `advance` does a real re-transcribe from the top. |
 | `fanops retry-metrics <post_id>` | a `published` post's metrics never landed in a `track` pass | a no-op state confirmation — the post stays `published` so the next `track` re-pulls its metrics. Exits **2** if the post isn't `published` (nothing to re-pull). |
@@ -335,7 +338,8 @@ same pass, because every staggered time is pushed after `T`.
 **`fanops track [--window 30d]`** pulls per-post metrics and moves published posts to
 `analyzed`:
 
-- Needs `BLOTATO_API_KEY`. If the key is absent it **skips cleanly** —
+- On a **live backend with creds**, pulls IG metrics via the Meta Graph and moves published posts to
+  `analyzed`. If no live route / Graph token, it **skips cleanly** —
   `track skipped: ...` — rather than erroring.
 - Matches metric rows to posts by `submission_id`; **failed posts are skipped** (they
   have no real lift and must never enter the winners pool).
@@ -343,7 +347,7 @@ same pass, because every staggered time is pushed after `T`.
   (likes are near-noise). The default weights live in `track._W`
   (`saves 4.0, shares 4.0, retention 3.0, reach 0.001, likes 0.05`). Re-weight either in code,
   or — without a code change — via `00_control/tuning.json` → `lift_weights` (audit b; see
-  *Optional override file* above), if Blotato exposes different fields or you want
+  *Optional override file* above), if the Graph exposes different fields or you want
   engagement-rate over raw reach.
 
 **`fanops adjust [--winner-pct 0.3] [--retire-pct 0.2] [--lift-floor 20.0]`** ranks the
@@ -453,33 +457,20 @@ forge instructions.
 
 ---
 
-## Wiring the MCP poster (F15)
+## Publish backends (Postiz / Zernio)
 
-To publish via the connected Blotato MCP tool, set `FANOPS_POSTER=mcp`. The runtime
-supplies the poster with a tool-caller:
+Live publishing uses **Postiz** (self-hosted, Instagram) and/or **Zernio** (hosted TikTok). The
+Blotato `rest`/`mcp` backends were removed — valid `FANOPS_POSTER` values are `dryrun | postiz | zernio`.
 
-```python
-BlotatoMcpPoster(cfg, tool_caller=...)
-```
+**Per-channel routing in `accounts.json` is the source of truth** (set in Studio Go-Live). The global
+`FANOPS_POSTER` env var is a legacy bridge only.
 
-`tool_caller(name, args) -> dict` must invoke the connected **`blotato_create_post`** MCP
-tool with the flat args the poster builds and return the tool's result dict. The id is matched
-as `postSubmissionId` | `submissionId` | `id` (recursing into a nested `data` dict) via D2's
-shared `_extract_submission_id`. An MCP 2xx with **no recognizable id is parked
-`needs_reconcile`** (never `failed` — failed would be re-queueable and risk a double-post to a
-real account); the D1 client token is preserved so the post stays pollable. An **auth failure**
-must reach the poster as a typed `BlotatoAuthError` (the production wiring raises it) — it
-propagates so `run.py` halts the queue by type (F52/H8); an untyped auth message is best-effort
-substring-matched as a fallback. With no `tool_caller` wired the poster raises rather than
-silently no-op.
+- **Postiz** — `POSTIZ_URL` + `POSTIZ_API_KEY`; each `(handle × platform)` maps to a Postiz
+  `integration_id`. See `docs/POSTIZ_SETUP.md` and `docs/RUNBOOK.md`.
+- **Zernio** — `ZERNIO_API_KEY`; TikTok channels route to the Zernio backend per account.
+- **IG metrics** — read from the Meta Graph (`GraphInsightsClient`), not from Postiz analytics alone.
 
-(The `rest` backend, `FANOPS_POSTER=rest`, needs no wiring beyond `BLOTATO_API_KEY`; it
-POSTs to `https://backend.blotato.com/v2/posts` and raises loudly on 401. Retry is
-**asymmetric on purpose** (Blotato has no idempotency key, and a publish timeout can
-duplicate a post): a `429` is retried with bounded backoff (rejected pre-processing, so the
-post was definitely not created), but a `5xx` or a network timeout *after the body was sent*
-is **ambiguous** — the post may be live — so it is parked in `needs_reconcile` and **not**
-re-POSTed. The digest surfaces such posts to verify via `GET /v2/posts/:id` before resubmit.)
+Setup walkthrough: `docs/GOLIVE.md` (choose a path) and `docs/RUNBOOK.md` (linear first run).
 
 ---
 
@@ -488,11 +479,10 @@ re-POSTed. The digest surfaces such posts to verify via `GET /v2/posts/:id` befo
 These cannot be automated and gate a live run:
 
 1. **Create the fan accounts** on the platforms (Instagram, TikTok).
-2. **Connect each account in Blotato and paste its numeric `account_id` into
-   `accounts.json`**, then flip that account's `status` to `active`. Until an account is
-   `active` with a numeric id, it is not a posting surface. (`accounts.json` ships seeded
-   with `@TBD-1` / `@TBD-2` placeholders in `status: planned` — fill these in, do not
-   recreate the file.)
+2. **Connect Postiz and/or Zernio in the Studio Go-Live tab** — add handles, map each channel to
+   its Postiz integration id (IG) or Zernio backend (TikTok), then go live when readiness checks pass.
+   See `docs/RUNBOOK.md` steps 1–8. Until an account is `active` with mapped integrations, it is not
+   a posting surface.
 3. **Review brand-risk HOLDs in the digest.** Clips that tripped the caption guardrails
    (begging / "official" / "link in bio", EN or AR) are held with a reason and never
    post until a human clears them.
@@ -505,36 +495,26 @@ These cannot be automated and gate a live run:
 
 The bridge from "code-complete" to "live." Everything below the dashed line in step 5 is
 already built and tested; steps 1–3 and the credential exports are the **only** work that
-cannot be automated (real accounts, a human's Blotato connection, and secrets). Run the steps
-**in order** from the repo root.
+cannot be automated (real accounts, Postiz/Zernio connections, and secrets). Run the steps
+**in order** from the repo root — the canonical script is **`docs/RUNBOOK.md`**.
 
 **1. Create the real fan accounts** *(human-only)* — make the actual Instagram / TikTok
    accounts you intend to post from. This is off-platform; FanOps never creates accounts.
 
-**2. Connect each account in Blotato** *(human-only)* — in the Blotato dashboard, link each
-   fan account so Blotato can post on its behalf. Each connected account gets a **numeric
-   `account_id`** in Blotato.
+**2. Stand up Postiz + connect in Studio** *(human-only)* — follow `docs/POSTIZ_SETUP.md`, then
+   Studio Go-Live → **Connect Postiz** (URL + API key). For TikTok, connect Zernio and paste
+   `ZERNIO_API_KEY`.
 
-**3. Paste each numeric `account_id` into `accounts.json` and set `status: active`.** The file
-   ships seeded with `@TBD-1` / `@TBD-2` placeholders in `status: planned` — **fill these in,
-   do not recreate the file.** An `active` account with an empty/zero `account_id` is caught by
-   `fanops`' pre-run `_check_accounts` (exit 2 with the problem) before anything reaches Blotato.
+**3. Add + map accounts in Studio** — Go-Live → add handles, map each channel to its Postiz
+   integration (Refresh from Postiz → Save). Per-platform integration ids live in `accounts.json`.
 
-```jsonc
-// MohFlow-FanOps/00_control/accounts.json — example
-{ "accounts": [
-  { "handle": "@your.real.ig", "platform": "instagram", "account_id": "123456", "status": "active" },
-  { "handle": "@your.real.tt", "platform": "tiktok",    "account_id": "789012", "status": "active" }
-] }
-```
-
-**4. Set `BLOTATO_API_KEY` in `.env` (sandbox first).** Copy `.env.example` → `.env` and put
-   the **sandbox** key in first to dry-run the live contract before touching real posting:
+**4. Set publish env in `.env`.** Copy `.env.example` → `.env` and fill Postiz/Zernio keys:
 
 ```bash
 cp .env.example .env
-echo 'BLOTATO_API_KEY=sk-sandbox-...'  >> .env   # sandbox key first; swap to the live key only after step 6 passes
-echo 'FANOPS_POSTER=mcp'               >> .env   # the live backend (default is dryrun — see below)
+# POSTIZ_URL=https://postiz.example.com
+# POSTIZ_API_KEY=...
+# FANOPS_POSTER=postiz   # legacy hint; per-channel backends are set in Go-Live
 ```
 
 **5. Ensure `claude` is logged in on the host** *(required for the autonomous LLM responder)* —
@@ -554,16 +534,15 @@ claude -p 'say ok' --output-format json   # smoke: confirms the logged-in sessio
    ──────────────────────────────────────────────────────────────────────────────
    *Everything below is already built — these are verification + scheduling steps.*
 
-**6. Run the `[GATED]` Blotato smoke test** (the live contract check, Phase D's Task D5) — it
-   confirms the `postSubmissionId` key, the `/media/uploads` shape, and the analytics
-   endpoint against your sandbox key. It is **creds-gated**, so it skips cleanly without a key:
+**6. Run `fanops doctor` and a dryrun pipeline pass** — confirm toolchain + accounts readiness
+   before going live in Studio (Go-Live → readiness checks). Postiz connectivity is tested when
+   you Save & test in the Go-Live tab.
 
 ```bash
-BLOTATO_API_KEY=sk-sandbox-... BLOTATO_SMOKE_ACCOUNT_ID=<a sandbox account_id> \
-  ./.venv/bin/python -m pytest tests/integration/test_blotato_smoke.py -v
+fanops doctor
+fanops run    # dryrun default — schedules payloads, posts nothing
 ```
-   Resolve any field-name surprises here (re-weight `track._W` if the metrics fields differ —
-   see *Integration checkpoints* below) **before** swapping the live key into `.env`.
+   Resolve any readiness failures **before** flipping live in Studio.
 
 **7. Schedule `fanops run` + a dead-man's-switch monitor.** Add a cron (or launchd
    `StartInterval`) entry that `cd`s into the repo (mandatory — `fanops` resolves its data dirs
@@ -591,35 +570,14 @@ manual surface when the monitor fires: `unhold` a reviewed clip, `resolve` an am
 
 ## Integration checkpoints — confirm BEFORE the first live run
 
-Most of these were **verified against the live Blotato MCP tool schemas (2026-06-02)** during
-Phase D (the MCP server connected mid-session; its tool schemas are authoritative API docs, though
-a data-returning call was auth-blocked — see "live verification" below). The one item still an
-unverified assumption is the **metrics fields**.
+Confirm these via `fanops doctor` and the Studio Go-Live readiness panel:
 
-- **Media upload contract** — VERIFIED 2026-06-02: `create_presigned_upload_url` returns
-  `presignedUrl` + `publicUrl`, then a binary `PUT` to the presigned URL (`src/fanops/post/media.py`).
-  A response missing those keys raises. (Live schema confirms both keys.)
-- **Submission-id response key** — VERIFIED 2026-06-02: the id field **is `postSubmissionId`**
-  (`blotato_create_post` returns it; `blotato_get_post_status` takes it). A 2xx **without** a
-  recognizable id is parked **`needs_reconcile`, NOT `failed`** (it may be live — failed would be
-  re-queued and risk a double-post); the posters accept `postSubmissionId` | `submissionId` | `id`
-  (incl. nested `data`) via `_extract_submission_id` (`blotato_rest.py`, `blotato_mcp.py`).
-- **Status enum + live-post URL key** — VERIFIED 2026-06-02: `in-progress → published | scheduled
-  | failed`; the live-post URL is **`publicUrl` on `get_post_status`** (the single-post lookup
-  `reconcile.py` uses) but **`postUrl` on `list_posts`** (a real API divergence). FanOps reads the
-  URL only from `get_post_status` (`reconcile.py:64`), so it reads the correct key; `track.py` reads
-  only `postSubmissionId` + `metrics` from `list_posts` rows, never a URL — no mismatch. (A future
-  feature that reads a URL from a `list_posts` row WOULD need `postUrl`.)
-- **Metrics endpoint / fields** — STILL A CHECKPOINT: `GET /v2/posts?window=...` returning rows
-  keyed by `postSubmissionId` with a `metrics` dict (`src/fanops/post/metrics.py`). Which engagement
-  fields are exposed is unconfirmed; if saves/shares/retention are **not** exposed, re-weight
-  `track._W` on the fields that are.
-- **MCP tool name / args** — VERIFIED 2026-06-02: the tool is `blotato_create_post` taking the flat
-  args from `build_blotato_mcp_args`. (Live schema confirms the name + flat `accountId`/`platform`/
-  `text`/`mediaUrls` shape.)
-- **Signal weighting target** — saves/shares/retention > likes is the optimization
-  target encoded in `track._W`. Re-weight there if Blotato's available fields differ or
-  the desired target changes.
+- **Postiz connectivity** — `POSTIZ_URL` + `POSTIZ_API_KEY` set; Save & test succeeds in Go-Live.
+- **Per-channel mapping** — every active channel has an integration id (Postiz) or zernio backend (TikTok).
+- **Meta Graph (IG insights)** — `META_GRAPH_TOKEN` / per-handle tokens for lift feedback.
+- **Metrics field shape** — IG reach/engagement keys match `track._W`; re-weight via `tuning.json` if needed.
+
+Historical Blotato MCP/rest integration notes were removed — those backends no longer exist in `src/`.
 
 ---
 
@@ -656,9 +614,9 @@ deferred from the original plan, and surfaced during the build.
   stamped at birth with a stable **client idempotency token** (`submission_id = f"fanops_{_hash('idemp',
   post.id)}"`), so a post parked after a pure network timeout is no longer id-less — it carries a
   `fanops_` token and IS polled. A real `postSubmissionId` from the response (2xx or an ambiguous-5xx
-  body) overwrites the token. But a `fanops_` token is not a real Blotato id, so polling it **404s**;
+  body) overwrites the token. A synthetic client token is not a real scheduler id, so polling it may **404**;
   `reconcile_posts` now **contains that per-post poll error** (mirrors `publish_due`): a
-  `BlotatoAuthError` propagates (halt — every poll will 401), any other poll error leaves THAT post
+  `PostizAuthError` propagates (halt — every poll will 401), any other poll error leaves THAT post
   **parked, never `failed`** (a poll error is not evidence the post failed — it may be live) and the
   loop continues so later posts still reconcile. The irreducible residue (a post with genuinely no
   `submission_id` at all) is skipped for **human** reconcile (the digest's "Needs reconcile" section).
@@ -672,10 +630,10 @@ deferred from the original plan, and surfaced during the build.
   `tuning.json` logs a warning and falls back to defaults rather than crashing the run. See the
   *Optional override file* block under *Environment variables* above.
 - **(c) REST backoff jitter — DONE (Phase D, D4).** The `429` backoff is now jittered:
-  `time.sleep(delay + random.uniform(0, delay)); delay *= 2` (`blotato_rest.py`), so retries no
+  `time.sleep(delay + random.uniform(0, delay)); delay *= 2` (`post/postiz.py`), so retries no
   longer fire in lockstep across surfaces. Still bounded by `_MAX_RETRIES` (exhaustion → `failed`,
   re-queueable since a 429 is rejected pre-processing). *(Network-error handling was already resolved: C1 catches
-  `requests.exceptions.RequestException` in `BlotatoRestPoster.publish` and parks the post in
+  `requests.exceptions.RequestException` in `PostizPoster.publish` and parks the post in
   `needs_reconcile` rather than letting it escape to `publish_due`. Network errors are **not**
   retried in-ladder on purpose — a timeout after the body was sent is ambiguous, so retrying
   could double-post.)*
@@ -708,9 +666,9 @@ deferred from the original plan, and surfaced during the build.
   unified.)
 - **(i) Lint + dedup — DONE (tail).** `ruff` is now a dev dependency and lint is enforced
   (`ruff check src/` is green). The duplicated `_parse` ISO-8601 helpers were consolidated into
-  a single `timeutil.parse_iso`, and the repeated Blotato `BASE_URL` was given one home — both
+  a single `timeutil.parse_iso`, and poster base URLs were consolidated — both
   formerly copy-pasted across `run.py`, `crosspost.py`, `tagging.py`, `media.py`,
-  `blotato_rest.py`, `metrics.py`.
+  `post/postiz.py`, `metrics.py`.
 - **(j) Per-account creative variation — v1 DONE (observe-only) + v2 DONE (caption-bias loop closed).**
   **v1** (`FANOPS_CREATIVE_VARIATION=1`): each active account gets a genuinely different caption +
   burned-in on-screen hook per clip (the caption agent returns a per-surface hook; crosspost burns it
