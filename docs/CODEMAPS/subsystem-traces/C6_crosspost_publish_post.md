@@ -8,23 +8,23 @@
 
 ## Files covered (all 17 read in full, cross-checked against structural_index.json — function/class/method lists match exactly)
 
-- `src/fanops/crosspost.py` (342 lines) — read
-- `src/fanops/pipeline.py` (446 lines) — read
+- `src/fanops/crosspost.py` (281 lines) — read
+- `src/fanops/pipeline.py` (442 lines) — read
 - `src/fanops/router.py` (69 lines) — read
-- `src/fanops/responder.py` (172 lines) — read
-- `src/fanops/signals.py` (154 lines) — read
-- `src/fanops/agentstep.py` (137 lines) — read
-- `src/fanops/autopilot.py` (102 lines) — read
-- `src/fanops/postiz_lifecycle.py` (70 lines) — read
-- `src/fanops/post/__init__.py` (42 lines) — read
-- `src/fanops/post/compress.py` (131 lines) — read
-- `src/fanops/post/dryrun.py` (42 lines) — read
-- `src/fanops/post/media.py` (62 lines) — read
-- `src/fanops/post/metrics.py` (460 lines) — read
-- `src/fanops/post/postiz.py` (328 lines) — read
-- `src/fanops/post/providers.py` (57 lines) — read
-- `src/fanops/post/run.py` (408 lines) — read
-- `src/fanops/post/zernio.py` (271 lines) — read
+- `src/fanops/responder.py` (225 lines) — read
+- `src/fanops/signals.py` (202 lines) — read
+- `src/fanops/agentstep.py` (152 lines) — read
+- `src/fanops/autopilot.py` (101 lines) — read
+- `src/fanops/postiz_lifecycle.py` (69 lines) — read
+- `src/fanops/post/__init__.py` (41 lines) — read
+- `src/fanops/post/compress.py` (130 lines) — read
+- `src/fanops/post/dryrun.py` (41 lines) — read
+- `src/fanops/post/media.py` (61 lines) — read
+- `src/fanops/post/metrics.py` (607 lines) — read
+- `src/fanops/post/postiz.py` (426 lines) — read
+- `src/fanops/post/providers.py` (56 lines) — read
+- `src/fanops/post/run.py` (484 lines) — read
+- `src/fanops/post/zernio.py` (274 lines) — read
 
 Plus ground truth: `src/fanops/models.py` `PostState` enum (lines 54-77), `src/fanops/ledger.py`
 `approve_post`/`reject_post`/`unapprove_post` (lines 503-527) and the state-protection sets
@@ -152,7 +152,7 @@ Module constants: `STRATEGY_KEYS` (8 reserved format names, only `impact_cut`/`i
 - `_default_claude_model(kind, payload, *, cfg=None, log=None) -> dict` — the production model function: builds the gate's JSON schema + prompt, calls `claude_json_meta`, pins `cfg.llm_model_for(kind)`, attaches `frames` for vision gates (`moments`, `moment_hooks` only — `moment_casting` removed P11), emits provenance log line, stamps `hook_frames_unread` on degraded `moment_hooks` responses. Called by `LlmResponder.__init__` (as the default `_model`).
 - `LlmResponder.__init__(self, cfg, model=None)` — binds `cfg` and either an injected test model or the cfg-bound `_default_claude_model`.
 - `LlmResponder._answer_one(self, cfg, kind, model_cls, key, log) -> bool` — **the per-gate answer body**: reads the pending request JSON, captures `rid_before` (TOCTOU guard, AUDIT A3), calls the model (retrying once on `LlmTimeoutError`), re-verifies `rid_after == rid_before` (drops a stale answer if the gate was re-seeded mid-call — never applies a wrong-payload answer), verifies the model's echoed `request_id` (logs `rid_mismatch` on divergence but proceeds, self-stamping the authoritative rid), validates via `model_cls(**out)`, and writes the response atomically. Catches `LlmContextLimitError` (marks a visible `degraded_reason`), `ValidationError` (logs `invalid`, stays pending), and any other `Exception` (logs `error`, stays pending) — **WEDGE RISK: the bare `except Exception` swallows every failure silently; a degraded or failed gate leaves the key pending indefinitely with no caller-visible signal, so callers cannot distinguish a slow gate from a broken one**. Thread-safe by construction (all state is per-key local). Called by `answer_pending`.
-- `LlmResponder._mark_context_limit(self, cfg, kind, key, reason) -> None` — best-effort: resolves the gate's owning source (directly for moment/moment_hooks/moment_casting keys, via clip→moment→source for captions keys) and stamps a visible `degraded_reason` on it. Loads+saves the ledger OUTSIDE the advance() flock (gates live outside the lock). Wrapped in its own outer try/except (a load/save failure must not crash the responder). Called by `_answer_one`.
+- `LlmResponder._mark_context_limit(self, cfg, kind, key, reason) -> None` — back-compat shim wrapping `_mark_gate_degraded` (`responder.py:197-199`). Resolves the owning source via `_gate_source_id` (`:51-58`: `moments`/`moment_hooks` keys are source ids; `captions` keys are clip ids → moment → source). Loads+saves the ledger OUTSIDE the advance() flock. Called by `_answer_one`.
 - `LlmResponder.answer_pending(self, cfg) -> int` — snapshots every pending `(kind, model_cls, key)` tuple serially (the glob-over-directory MUST be read serially, never inside a worker), then either runs sequentially (`cfg.concurrent_sources` OFF, default) or fans out over a `ThreadPoolExecutor(max_workers=cfg.concurrent_workers)` — each `(kind, key)` is a unique response path so concurrent writes never collide. Returns the count of fresh answers written. Called per call_graph by `cli.py`/`daemon.py` (outside this cluster).
 - `get_responder(cfg)` — factory: `LlmResponder(cfg)` if `cfg.responder_mode == "llm"`, else `ManualResponder(cfg)`. Called outside this cluster (`cli.py`, `daemon.py`).
 

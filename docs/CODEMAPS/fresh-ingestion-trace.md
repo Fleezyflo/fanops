@@ -104,7 +104,7 @@ affinities != []   -> admit iff account in affinities  (single-owner: exactly th
 ```
 `Moment.affinities` is stamped **single-owner at PICK time** (`moments.py:340`, owner =
 `(pick.personas or [None])[0]` `:330`), operator-overridable via Studio (P13). The SAME predicate
-gates caption scope (`pipeline._owner_caption_surfaces` `:153`) and post minting (`crosspost.py:166`),
+gates caption scope (`pipeline._owner_caption_surfaces` `:146`) and post minting (`crosspost.py:166`),
 so caption-scope and post-minting can never drift.
 
 **Persona→account note:** `affinities` stores the picking account's **handle**; `affinity_admits`
@@ -117,7 +117,7 @@ admits to exactly its one owner handle, not to both accounts sharing the persona
 ## 4. Per-account differentiation — the three forks
 
 1. **Own rendered cut** — `render_account_cut` (`clip.py:869`), called when `wants_cut = bool(hook)`
-   (`crosspost.py:127`). Cuts the source at the owner's `clip_profile` band + own framing, burns the
+   (`crosspost.py:126`). Cuts the source at the owner's `clip_profile` band + own framing, burns the
    owner's hook in one ffmpeg pass. Fails open to a shared-clip burn. The owner's spec was stamped onto
    the Moment at pick via `_stamp_owner_spec` (`moments.py:286`).
 2. **Own on-screen hook** — authored per-moment (= per-owner) in PASS 2. `request_moment_hooks` sends
