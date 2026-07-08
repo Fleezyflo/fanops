@@ -53,6 +53,11 @@ def stale_branches(refs, now_epoch: float, days: int = 30) -> list:
     return out
 
 
+def artifact_paths(paths) -> list:
+    """The subset of `paths` that look like leftover build/merge junk (pure; sorted, de-duped)."""
+    return sorted({p for p in paths if is_artifact(p)})
+
+
 # ---- thin I/O wrappers ------------------------------------------------------
 
 def _gh_open_prs(repo):
@@ -72,9 +77,21 @@ def _remote_branch_ages(repo_root):
     return refs
 
 
-def _tracked_artifacts(repo_root):
-    out = subprocess.run(["git", "ls-files"], capture_output=True, text=True, cwd=repo_root, timeout=30)
-    return [p for p in out.stdout.splitlines() if is_artifact(p)]
+def _git_lines(repo_root, *args):
+    out = subprocess.run(["git", *args], capture_output=True, text=True, cwd=repo_root, timeout=30)
+    return out.stdout.splitlines() if out.returncode == 0 else []
+
+
+def _all_artifacts(repo_root):
+    """Leftover junk among BOTH tracked files and untracked-not-ignored files."""
+    tracked = _git_lines(repo_root, "ls-files")
+    untracked = _git_lines(repo_root, "ls-files", "--others", "--exclude-standard")
+    return artifact_paths(tracked + untracked)
+
+
+def _unmerged(repo_root):
+    """Paths with unresolved merge conflicts in the working tree (`git ls-files -u`)."""
+    return sorted({ln.split("\t", 1)[-1] for ln in _git_lines(repo_root, "ls-files", "-u") if "\t" in ln})
 
 
 def sweep(repo, repo_root, days=30):
@@ -83,19 +100,18 @@ def sweep(repo, repo_root, days=30):
                   "state": classify_pr(p.get("mergeable"), p.get("mergeStateStatus")),
                   "draft": p.get("isDraft")} for p in prs]
     refs = _remote_branch_ages(repo_root)
-    stale = stale_branches(refs, time.time(), days)
-    artifacts = _tracked_artifacts(repo_root)
     return {
         "open_prs": pr_report,
         "conflicts": [p for p in pr_report if p["state"] == "conflict"],
         "behind": [p for p in pr_report if p["state"] == "behind"],
-        "stale_branches": stale,
-        "artifacts": artifacts,
+        "stale_branches": stale_branches(refs, time.time(), days),
+        "artifacts": _all_artifacts(repo_root),
+        "unresolved_conflicts": _unmerged(repo_root),
     }
 
 
 def _pristine(rep) -> bool:
-    return not (rep["conflicts"] or rep["stale_branches"] or rep["artifacts"])
+    return not (rep["conflicts"] or rep["stale_branches"] or rep["artifacts"] or rep["unresolved_conflicts"])
 
 
 def main(argv=None) -> int:
@@ -118,6 +134,8 @@ def main(argv=None) -> int:
         print(f"    #{p['number']} [{p['state']}]{' draft' if p['draft'] else ''}  {p['branch']}  — {p['title']}")
     print(f"  stale branches (>{args.stale_days}d): {len(rep['stale_branches'])}")
     for b in rep["stale_branches"]: print(f"    {b}")
+    print(f"  unresolved merge conflicts: {len(rep['unresolved_conflicts'])}")
+    for c in rep["unresolved_conflicts"]: print(f"    {c}")
     print(f"  leftover artifacts: {len(rep['artifacts'])}")
     for a in rep["artifacts"]: print(f"    {a}")
     print(f"  => repo pristine: {'YES' if _pristine(rep) else 'NO — drive the above to resolution via sub-agents'}")

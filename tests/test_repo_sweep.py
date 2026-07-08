@@ -31,6 +31,11 @@ def test_has_conflict_markers():
     assert rs.has_conflict_markers("clean file\nno markers\n") is False
 
 
+def test_artifact_paths_filters_and_dedupes():
+    paths = ["a.orig", "src/x.py", "a.orig", "b.rej", "README.md", ".DS_Store"]
+    assert rs.artifact_paths(paths) == [".DS_Store", "a.orig", "b.rej"]
+
+
 def test_stale_branches_excludes_main_and_recent():
     now = 1_000_000_000
     refs = [
