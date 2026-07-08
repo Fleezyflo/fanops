@@ -57,7 +57,7 @@ def kick_prepare(cfg: Config) -> bool:
                     alive = True                           # exists but not ours to signal (perms) -> treat as alive
                 if alive:
                     return False                           # prior kick still running -> debounce
-        env = {**os.environ, "PATH": _daemon_path()}       # responder resolved by the run itself, not forced here
+        env = cfg.spawn_env(path=_daemon_path())       # responder resolved by the run itself, not forced here
         proc = subprocess.Popen([_fanops_bin(), "run", "--base-time", iso_z(_now(None))],
                                 cwd=str(cfg.root), env=env, stdout=subprocess.DEVNULL,
                                 stderr=subprocess.DEVNULL, start_new_session=True)   # detached: survives the request, OS-reaped

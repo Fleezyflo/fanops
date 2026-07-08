@@ -17,6 +17,8 @@ import logging
 import os, subprocess
 from pathlib import Path
 
+from fanops.config import certifi_ssl_env
+
 logger = logging.getLogger(__name__)
 
 # Same flock-critical bound as the whisper run (clip.py / transcribe.py): demucs runs INSIDE the
@@ -28,16 +30,8 @@ _DEFAULT_MODEL = "htdemucs"     # demucs' default hybrid-transformer model; robu
 
 def _demucs_env() -> dict:
     """Subprocess env carrying the macOS SSL cert fix. demucs downloads its checkpoint over https on
-    first use; the framework Python frequently can't verify the cert. Point SSL_CERT_FILE and
-    REQUESTS_CA_BUNDLE at certifi's bundle (no-op if already set, or if certifi is somehow absent)."""
-    env = dict(os.environ)
-    try:
-        import certifi
-        env.setdefault("SSL_CERT_FILE", certifi.where())
-        env.setdefault("REQUESTS_CA_BUNDLE", certifi.where())
-    except ImportError:
-        logger.warning("certifi absent — demucs SSL cert fix skipped (fail-open)", exc_info=True)
-    return env
+    first use; the framework Python frequently can't verify the cert."""
+    return certifi_ssl_env(dict(os.environ), logger=logger)
 
 
 def demucs_cmd(audio_path: str, out_dir: str, *, model: str = _DEFAULT_MODEL) -> list[str]:

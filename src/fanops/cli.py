@@ -255,6 +255,12 @@ def cmd_health(cfg: Config, args=None) -> int:
             print(f"  - {n}")
     return 0 if report_is_healthy(rep) else 1
 
+def cmd_config(cfg: Config) -> int:
+    """MOL-294: introspect every Settings var (type, default, effective value, source, Studio-settable)."""
+    from fanops.config_introspect import format_config_report
+    print(format_config_report(cfg))
+    return 0
+
 
 def cmd_doctor(cfg: Config, args=None) -> int:
     # Read-only first-run health screen (Phase 3b). Prints PASS/FAIL per setup gate + notes; exits 1
@@ -601,6 +607,7 @@ def main(argv: list[str] | None = None) -> int:
     p_comp.add_argument("--intro", default=None, help="intro card text (default: artist name; pass '' to disable)")
     p_comp.add_argument("--outro", default=None, help="outro card text, e.g. an @handle (default: none)")
     p_doctor = sub.add_parser("doctor", help="read-only first-run health screen (toolchain/accounts/key/go-live readiness)")
+    sub.add_parser("config", help="introspect every env var (type, default, effective value, source, Studio-settable)")
     p_doctor.add_argument("--fix-routing", action="store_true",
                           help="(R2) READ-ONLY: list every accounts.json (handle, platform) routing-drift state with a proposed fix")
     p_doctor.add_argument("--json", action="store_true", help="machine-readable health JSON (exit 1 when unhealthy)")
@@ -838,6 +845,7 @@ def _dispatch(cfg: Config, args) -> int:
             return cmd_lever_docs(cfg)
         return 2
     if args.cmd == "health":   return cmd_health(cfg, args)
+    if args.cmd == "config":   return cmd_config(cfg)
     if args.cmd == "doctor":   return cmd_doctor(cfg, args)
     if args.cmd == "publish-queue": return cmd_publish_queue(cfg)
     if args.cmd == "daemon":   return cmd_daemon(cfg, args)
