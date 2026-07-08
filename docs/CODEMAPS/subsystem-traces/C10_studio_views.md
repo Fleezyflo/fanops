@@ -120,7 +120,7 @@ Note: `_result.html`, `_publish_outcome.html`, `error.html` are rendered from **
 - `_SPINE_ORDER` (module const) — the 4-tuple ordering of spine stages.
 - `build_spine(*, counts, has_accounts, here, inflight=0, blocked_gates=0, next_params=None)` — **PURE-READ** (pure function over already-computed counts, no I/O). Derives stage done/active/todo state + severity + the single next-CTA sentence. Called by `app.create_app`.
 - `golive_status(cfg)` — **PURE-READ**. Assembles the full Go-Live tab dataclass: `_publish_mode_label`, `golive_accounts`, `doctor.doctor_report` (wrapped in `try/except Exception`, logs `doctor_error`, degrades to an empty report), `validation_gate.learning_validated`, and every operator-flag boolean from `cfg`. Called by `app_routes_golive.register_golive_routes`.
-- `gate_rows(cfg)` — **PURE-READ**. Enumerates every pending agent gate (moments/moment_hooks/moment_casting/captions) via `agentstep.pending`/`request_path`, reading each request JSON; a torn/unreadable request file is silently `continue`d (fail-open, matches its own docstring — the corruption is already logged elsewhere by `latest_request_id`). Called by `app.create_app` (feeds `gates.html`).
+- `gate_rows(cfg)` — **PURE-READ**. Enumerates every pending agent gate (`moments`/`moment_hooks`/`captions` only — `moment_casting` removed P11) via `agentstep.pending`/`request_path`, reading each request JSON; a torn/unreadable request file is silently `continue`d (fail-open, matches its own docstring — the corruption is already logged elsewhere by `latest_request_id`). Called by `app.create_app` (feeds `gates.html`).
 
 ### `views_common.py` — shared read-model primitives (pagination, glossary, time math, Postiz-health cache)
 
@@ -151,7 +151,7 @@ Note: `_result.html`, `_publish_outcome.html`, `error.html` are rendered from **
 
 ### `views_results.py` — Schedule / Posted / Lift read-models
 
-- `ScheduleRow` (`@dataclass`) — the Schedule tab's per-post row: post_id/scheduled_time/account/platform/clip_id/state/imminent/editable/integration_id/lane/delivery/submission_id/backend/error_reason/suggested_time/batch_id/batch_title/caption/variant_hook/ready/ready_reason/why_suggested. Pure data holder.
+- `ScheduleRow` (`@dataclass`) — the Schedule tab's per-post row: post_id/scheduled_time/account/platform/clip_id/state/imminent/editable/integration_id/lane/delivery/submission_id/backend/error_reason/suggested_time/batch_id/batch_title/caption/`variant_hook` (view-model: owner `Moment.hook` via `_hook_for_post`)/ready/ready_reason/why_suggested. Pure data holder.
 - `LiftRow` (`@dataclass`) — the Lift tab's per-variant row: variant_hook/account/platform/lift_score/loop_state/amplify_state/lift_degraded/lift_missing/scheduled_time/metric breakdown/clip_id/sibling_count/rank/delta_vs_best. Pure data holder.
 - `LiftView` (`@dataclass`) — `{variant_rows, variant_empty_reason, amplify_present, amplify_rows, amplify_empty_reason}`. Pure data holder.
 - `_SHIPPABLE_RENDER` (module const) — the `RenderState` tuple a shippable artifact must be in.

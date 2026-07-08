@@ -325,13 +325,7 @@ via `golive.py`, line 158-164), `GET /golive/connect` / `GET /golive/accounts` /
   (default) or an injected `model`, re-runs `caption.brand_risk_flag` on the result (same guard as
   ingest — no bypass), then re-guards + writes inside a **fresh** short transaction (the model call
   can take ~180s outside any lock).
-- `reburn_hook(cfg, post_id, hook, *, now=None)` (lines 172-241) — **ffmpeg subprocess, no LLM**.
-  Gated on `cfg.creative_variation` (line 183-184). Computes the content-addressed render id via
-  `account_render_spec`, attempts an account-specific re-cut (`render_account_cut`) or falls back
-  to `overlay.burn_hook_only` — both run *outside* the lock; the `Render` entity is
-  added/pointed-at inside a short re-guarded transaction. `hook_burn_failed` is surfaced as
-  `ok=True, detail.hook_burned=False` (a warning, not a rollback, since this is an edit not an
-  approve).
+- `reburn_hook(cfg, post_id, hook, *, now=None)` (lines 176-220) — **P9 owner-moment re-burn**: updates `Moment.hook`, re-renders the shared clip via `render_moment` (ffmpeg only, no LLM). No `cfg.creative_variation` gate — differentiation is intrinsic when `account_casting` is ON. Rolls back on render error; surfaces `hook_burn_failed` as `ok=True, detail.hook_burned=False`.
 - `approve_candidate(cfg, eid)` (lines 244-260) — **filesystem move only, no ledger**. Validates
   `eid` has no `/`, `\`, or `..` before constructing a path under `cfg.review`, then
   `src.rename(dst)` into `approved/`.
@@ -414,12 +408,7 @@ via `golive.py`, line 158-164), `GET /golive/connect` / `GET /golive/accounts` /
 - `_warm_hooked_render(cfg, moment_id, aspect, hook)` (lines 198-217) — lock-free pre-render of a
   restored-hook clip via `render_moment` on a throwaway snapshot; returns `False` only on a genuine
   ffmpeg failure (never silently swallowed — logged).
-- `approve_with_hook(cfg, clip_id, *, now=None)` (lines 219-271) — **refuses outright when
-  `cfg.creative_variation` is ON** (line 228-230 — per-surface hooks own the burn then). Restores
-  `moment.hook`, re-renders (fingerprint-skip adopts the lock-free warm), **rolls back the whole
-  transaction** if the render errors or if `rc.hook_burn_failed` (a successful-but-textless render
-  would otherwise ship the post clean without the hook the operator explicitly asked for — the
-  docstring calls this out as CRITICAL). Then approves every `awaiting_approval` post of the clip.
+- `approve_with_hook(cfg, clip_id, *, now=None)` (lines 102-138) — restores `moment.hook` from `hook_removed`, lock-free warm via `_warm_hooked_render`, then re-renders inside the transaction (`render_moment`); **rolls back the whole transaction** on render error or `hook_burn_failed`. Approves every `awaiting_approval` post of the clip. (No `creative_variation` refuse — P9 owner-moment model.)
 - `_approve_matching(cfg, pred=None, *, pred_for=None, now=None, detail=None)` (lines 273-287) —
   the shared spine for every scoped bulk-approve (`approve_clip`/`approve_batch`/`approve_account`/
   `approve_moment`), delegating to `_approve_ids_with_render`.
@@ -599,14 +588,7 @@ via `golive.py`, line 158-164), `GET /golive/connect` / `GET /golive/accounts` /
 
 ### `preview_media.py` — WYSIWYG preview media resolution
 
-- `preview_media_path(cfg, led, post_id)` (lines 10-47) — **pure read + lock-free ffmpeg burn on
-  demand**. Resolution ladder: (1) `post.render_id` → existing `Render.path` if it exists on disk;
-  (2) if `post.variant_hook` and `cfg.creative_variation`, compute the deterministic render path
-  via `account_render_spec` and return it if already rendered, else **actually render it now**
-  via `render_account_file(..., caller="preview")` (a real ffmpeg call, not just a lookup) so the
-  Review WYSIWYG can show the burned hook before approval; (3) fall back to `media_urls[0]` (local
-  file only) or the base `clip.path`. All exception paths are swallowed with `except Exception:
-  pass` (lines 31-32, 36-38) — fail-open to the next rung of the ladder, never a crash.
+- `preview_media_path(cfg, led, post_id)` (lines 8-27) — **pure read, no on-demand ffmpeg** (P9). Resolution ladder: (1) `post.render_id` → existing `Render.path` if on disk; (2) `post.media_urls[0]` if a local `file://` or bare path exists; (3) base `clip.path`. Owner-moment hook is already burned at `render_moment` — preview serves the shared clip file.
 
 ## Cluster-specific analysis
 

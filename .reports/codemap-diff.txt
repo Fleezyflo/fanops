@@ -1,39 +1,31 @@
-Codemap update — 2026-06-21 (IG account-connection resolution)
+Codemap update — 2026-07-08 (post-main resync @ 6793923)
 ================================================================
-Prior scan: 2026-06-19 (feat/content-lifecycle, post-approval lifecycle).
+Prior scan: 2026-07-07 PR #396 + automation pass (P11 casting teardown).
 
-Trigger: connected perca.late + cisumwolfhom to Postiz; root-caused the day-long
-connect failure (wrong INSTAGRAM_APP_SECRET in the Postiz container env).
+Trigger: scheduled codemap re-sync after merge to main; hand-verified remaining drift against
+src/fanops/ @ 6793923.
+
+REGENERATED (.reports/ — gitignored artifacts, local-only)
+- ast_extract.py + build_graphs.py recreated (stdlib-only; were missing from tracked tree)
+- structural_index.json — 109 modules, 1141 functions, 179 methods
+- import_graph.json, call_graph.json — 1314 callables
+- unreferenced_candidates.json — 181 leads
 
 CODEMAPS UPDATED
-- docs/CODEMAPS/account-connection.md  (REWRITTEN, < 30% threshold → in place)
-    * Verified state: all THREE fan accounts now connected + mapped
-      (markmakmouly cmqeb1uuv0001o579bjcdj7my, perca.late cmqno51tb0001p68ez9tx5a6k,
-       cisumwolfhom cmqno5ops0003p68ea2k3kgzs).
-    * "BLOCKER (unresolved)" -> "RESOLVED connect failure": root cause = wrong
-      INSTAGRAM_APP_SECRET in container env; Meta's "redirect_uri identical" is its
-      generic bad-client-secret error; fix = correct secret in compose + docker compose up -d.
-    * App-id reference corrected to the IG app id 976142145032195 (OAuth client_id).
-    * Non-stock cookie/data[] patches reclassified NOT-required-for-connect (stock connected).
+- C1_data_model.md — Post.variant_hook/variant_key removed (P9); SelectionMethod enum gone;
+  v11 selection ledger APIs removed from live inventory; ledger doc shape drops selection maps
+- C4_moments_casting_personas.md — Accounts.active() stale casting.py caller refs
+- C6_crosspost_publish_post.md — _materialize_variant_media P9 no-op; PostizPoster._youtube_title
+  reads Moment.hook; _mark_context_limit drops moment_casting
+- C9_studio_backend.md — reburn_hook/approve_with_hook P9 model (no creative_variation gate);
+  preview_media.py pure-read ladder (no on-demand ffmpeg)
+- C10_studio_views.md — gate_rows omits moment_casting; variant_hook documented as view-model
+- architecture.md — affinity_admits routing (no casting stage); reburn_hook P9; SCHEMA_VERSION 11
+- data.md — SCHEMA_VERSION 11; selection maps historical-only; Post.variant_hook removed
+- full-trace-index.md — artifact counts + sync date
+- fresh-ingestion-trace.md — verified sha bump to 6793923
 
-CODEMAPS NOT CHANGED (verified still accurate)
-- docs/CODEMAPS/architecture.md   (no connection-state claims; FanOps structure unchanged)
-- docs/CODEMAPS/data.md           (data model + accounts.json schema unchanged)
-- docs/CODEMAPS/dependencies.md   (Postiz dependency unchanged; only a config VALUE was wrong)
-
-SCAN DELTA
-- Source changes this session: NONE (git status --porcelain src/ empty) -> structural
-  codemaps remain current; no regeneration needed.
-- Data changes: MohFlow-FanOps/00_control/accounts.json (perca.late + cisumwolfhom
-  integrations['instagram'] populated via accounts.write_integration).
-- New dependencies: none. New routes/services: none.
-
-COMPANION DOCS (rewritten same session, narrative)
-- docs/INSTAGRAM_CONNECT.md  (full guide: root cause, proof, fix, false-elimination warnings)
-- docs/POSTIZ_SETUP.md       (Instagram callout corrected)
-
-STALENESS NOTE
-- No doc > 90 days stale. The previous account-connection codemap + guide enshrined a WRONG
-  root cause (redirect/scopes/multi-hop) and an actively harmful false elimination
-  ("INSTAGRAM_APP_SECRET valid") — both corrected. Lesson: do not record an unproven
-  hypothesis as a ruled-out fact in a codemap.
+CODEMAPS NOT CHANGED (intentional)
+- lifecycle-full-picture.md — dated 2026-06-27 audit; superseded banner only (per policy)
+- hashtag-lifecycle.md, insights-culmination.md, persona-levers.md — already current post-P11
+- dependencies.md, anomalies.md — spot-checked, no live-model drift found

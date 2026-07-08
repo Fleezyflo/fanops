@@ -1,4 +1,4 @@
-<!-- Generated: 2026-07-07 | Method: deterministic AST extraction (.reports/ast_extract.py) + derived call/import graphs (.reports/build_graphs.py) + hand-verified semantic sync | Files scanned: 109/109 src/fanops/*.py | Token estimate: ~2400 -->
+<!-- Generated: 2026-07-08 | Method: deterministic AST extraction (.reports/ast_extract.py) + derived call/import graphs (.reports/build_graphs.py) + hand-verified semantic sync | Files scanned: 109/109 src/fanops/*.py | Token estimate: ~2400 -->
 # FanOps Full-Codebase Trace Index
 
 Master index for a zero-omission, function-by-function trace of every module under `src/fanops/`.
@@ -15,8 +15,8 @@ this file is the raw coverage ledger and anomaly index.
 |---|---|---|
 | `structural_index.json` | Every module's imports/functions/classes/methods/module-level calls/line numbers, AST-parsed | `.reports/` |
 | `import_graph.json` | Per-module `imports_from` / `imported_by`, resolved incl. relative imports | `.reports/` |
-| `call_graph.json` | Name-based reverse call graph: 1,067 callables, each with `calls`/`called_by_in_repo` | `.reports/` |
-| `unreferenced_candidates.json` | 55 best-effort dead-code leads (excludes dunders/decorated/tests) — **leads, not verdicts**; see Dead-code below | `.reports/` |
+| `call_graph.json` | Name-based reverse call graph: 1,314 callables, each with `calls`/`called_by_in_repo` | `.reports/` |
+| `unreferenced_candidates.json` | 181 best-effort dead-code leads (excludes dunders/decorated/tests) — **leads, not verdicts**; see Dead-code below | `.reports/` |
 | `ruff_report.json` | Full-repo `ruff check` — **0 findings against src/** (2 historical findings were in the analysis scratch script itself, fixed) | `.reports/` |
 | `ast_extract.py` / `build_graphs.py` | The two extractor scripts themselves (stdlib-only, re-runnable) | `.reports/` |
 
@@ -172,9 +172,9 @@ are low-traffic paths (wipe-safety check, preview rendering, one persona-store l
 | C9 | 17 | ~150 (largest single cluster by trace length, 892 lines) |
 | C10 | 5 | ~60 |
 
-Totals reconcile against the deterministic count: 889 top-level functions + 178 class methods
-(113 classes) = 1,067 callables in `call_graph.json`, matching the AST extractor's structural
-index exactly (108/108 modules parsed with zero AST errors).
+Totals reconcile against the deterministic count: 1,141 top-level functions + 179 class methods
+(113 classes) = 1,320 callables in the structural index; `call_graph.json` indexes 1,314 qualified
+names (methods + module functions). All 109 modules parsed with zero AST errors.
 
 ## How to regenerate
 
