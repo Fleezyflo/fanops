@@ -146,9 +146,9 @@ def claude_json_meta(prompt: str, schema: dict, *, timeout: float = 300.0,
         try:
             env = json.loads(r.stdout)
         except Exception as e:
-            raise RuntimeError(f"claude -p output could not parse as JSON envelope: {(r.stdout or '')[:300]}") from e
+            raise LlmSchemaError(f"claude -p output could not parse as JSON envelope: {(r.stdout or '')[:300]}") from e
         if not isinstance(env, dict):
-            raise RuntimeError(f"claude -p output could not parse as JSON envelope (not an object): {(r.stdout or '')[:300]}")
+            raise LlmSchemaError(f"claude -p output could not parse as JSON envelope (not an object): {(r.stdout or '')[:300]}")
         return env
 
     # HOOK-TRANSPORT: hand the frames + a read-them-first instruction, then VERIFY the model actually
@@ -181,8 +181,8 @@ def claude_json_meta(prompt: str, schema: dict, *, timeout: float = 300.0,
         try:
             return json.loads(result), resolved, frames_unread
         except Exception as e:
-            raise RuntimeError(f"claude -p `result` was not JSON: {result[:300]}") from e
-    raise RuntimeError(f"claude -p envelope had no structured_output or JSON result: {env}")
+            raise LlmSchemaError(f"claude -p `result` was not JSON: {result[:300]}") from e
+    raise LlmSchemaError(f"claude -p envelope had no structured_output or JSON result: {env}")
 
 def claude_json(prompt: str, schema: dict, *, timeout: float = 300.0,
                 images: list[str] | None = None, model: str | None = None) -> dict:
