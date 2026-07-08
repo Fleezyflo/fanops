@@ -82,6 +82,7 @@ tiktok-submission/
 .agents/
 .reports/
 .codemap-cache/
+.codemap-cache-test/
 skills-lock.json
 
 # 00_control runtime artifacts beyond the JSON/lock set above (same local-only stance:
