@@ -130,6 +130,7 @@ class LlmResponder:
             return False
         except ValidationError as e:        # present-but-invalid: log "invalid", gate stays pending
             log("responder", f"{kind}:{key}", "invalid", err=str(e)[:160])
+            self._mark_gate_degraded(cfg, kind, key, f"agent gate {kind} schema invalid: {str(e)[:160]}")
         except Exception as e:              # transient model/CLI failure (incl. ToolchainMissing): log, leave pending
             log("responder", f"{kind}:{key}", "error", err=str(e)[:160])
         return False
