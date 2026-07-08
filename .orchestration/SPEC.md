@@ -16,14 +16,22 @@ string / event payload, wired in `.cursor/hooks.json` (cloud-executed) and imple
 
 | Guardrail | Mechanism | Hardness |
 |---|---|---|
-| **Cannot land unverified work** | `beforeShellExecution` denies `gh pr merge` unless every Linear unit the PR carries has a passing sub-agent **verification record** (below). `failClosed:true`. | **HARD** (blocks the land command) |
+| **Cannot land unverified work** | `beforeShellExecution` denies `gh pr merge` **and the raw `gh api … pulls/<n>/merge`** unless every Linear unit the PR carries has a passing sub-agent **verification record** (below). `failClosed:true`. | **HARD** (blocks the land command) |
 | **Records which sub-agent did each unit** | `subagentStart`/`subagentStop` append to `state/ledger.jsonl` (type, task, status, modified files). | **HARD** (platform fires it) |
 | **No destructive git** | `beforeShellExecution` denies `reset --hard`, force-push / direct-push to `main`, `checkout -B … origin/main`. | **HARD** |
+| **Gate + state are tamper-proof from the shell** | `beforeShellExecution` denies any command that MUTATES a protected path — `.orchestration/state/`, `.cursor/hooks.json`, `.cursor/hooks/`, `.githooks/` — closing the "forge a verification record / `rm` the hook to disable enforcement" bypass (incl. `echo … > verified/X.json`). | **HARD** |
+| **No self-verification** | a verification record whose `verifier` equals its `executor` (or is the orchestrator) is rejected. | **HARD** |
 | **Orchestrator edits nothing** | (a) it delegates by contract (agent brief); (b) any file it did edit is **un-landable** — only a verified worker PR can merge; (c) OPTIONAL keystroke-level block: run the orchestrator `readonly:true` and land via the `fanops-lander` sub-agent (see below). | **OUTCOME-HARD** by default; keystroke-HARD with the readonly option |
 
 Why guardrail (a) is not a `preToolUse` `Write` deny: that would block **workers** too (the hook can't tell
 orchestrator from worker). The land-gate makes an orchestrator edit pointless (it can never reach `main`),
 which is the outcome that matters. For a keystroke-level block, use the readonly option below.
+
+**Residual (be honest):** the protected-path defenses above cover the SHELL. Cursor's `Write` *tool* has no
+caller identity, so a determined orchestrator could still write a protected file via the tool (not the
+shell). That write cannot be committed/pushed to `main` through the shell gate, and the tamper is visible
+in the diff — but if you want a hard keystroke-level guarantee, run the orchestrator `readonly: true`
+(below), which blocks the Write tool outright.
 
 ### Maximum-enforcement option (readonly orchestrator + lander)
 Set `readonly: true` on `fanops-orchestrator` → Cursor blocks all its file edits AND state-changing shell

@@ -4,7 +4,8 @@
     "beforeShellExecution": [
       {
         "command": "python3 .cursor/hooks/orchestration_gate.py before-shell",
-        "failClosed": true
+        "failClosed": true,
+        "timeout": 45
       }
     ],
     "subagentStart": [
