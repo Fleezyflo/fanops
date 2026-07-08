@@ -23,7 +23,7 @@
      it, with the state and opaque id demoted to muted context. #}
   {% macro asset_li(s) %}<li class="asset-row"><span class="asset-name">{{ s.name }}</span>
     <span class="muted asset-tech">{% if s.duration %}{{ '%.0f'|format(s.duration) }}s{% endif %}{% if s.width and s.height %} · {{ s.width }}×{{ s.height }}{% endif %} · {{ s.state }}</span>
-    {% if s.degraded_reason %}<span class="asset-degraded" title="corrupt/unreadable source — re-probed each pass; delete or replace it">⚠ degraded: {{ s.degraded_reason }}</span>{% endif %}
+    {% if s.degraded_reason %}<span class="asset-degraded" title="degraded or pending pipeline gate — re-tried each pass; see reason below">⚠ degraded: {{ s.degraded_reason }}</span>{% endif %}
     <span class="ro asset-id">{{ s.id }}</span></li>{% endmacro %}
 
   <h3>Native <span class="muted">({{ catalog.native|length }})</span></h3>
