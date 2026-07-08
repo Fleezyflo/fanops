@@ -1,0 +1,2483 @@
+{
+  "count": 354,
+  "candidates": [
+    {
+      "qualified_name": "fanops._fwrun.main",
+      "module": "fanops._fwrun",
+      "name": "main",
+      "line": 76,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.accounts.Accounts.resolve_account_id",
+      "module": "fanops.accounts",
+      "name": "resolve_account_id",
+      "line": 152,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.accounts.Accounts.resolve_backend",
+      "module": "fanops.accounts",
+      "name": "resolve_backend",
+      "line": 170,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.accounts.Accounts.surfaces",
+      "module": "fanops.accounts",
+      "name": "surfaces",
+      "line": 268,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.accounts.add_account",
+      "module": "fanops.accounts",
+      "name": "add_account",
+      "line": 438,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.accounts.ensure_channel",
+      "module": "fanops.accounts",
+      "name": "ensure_channel",
+      "line": 474,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.accounts.remove_account",
+      "module": "fanops.accounts",
+      "name": "remove_account",
+      "line": 605,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.accounts.set_backend",
+      "module": "fanops.accounts",
+      "name": "set_backend",
+      "line": 400,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.accounts.set_clip_profile",
+      "module": "fanops.accounts",
+      "name": "set_clip_profile",
+      "line": 536,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.accounts.set_ig_user_id",
+      "module": "fanops.accounts",
+      "name": "set_ig_user_id",
+      "line": 561,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.accounts.set_persona",
+      "module": "fanops.accounts",
+      "name": "set_persona",
+      "line": 585,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.accounts.set_status",
+      "module": "fanops.accounts",
+      "name": "set_status",
+      "line": 513,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.bands.Band.span",
+      "module": "fanops.bands",
+      "name": "span",
+      "line": 15,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.cli.main",
+      "module": "fanops.cli",
+      "name": "main",
+      "line": 551,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.compose.TemplateSpec.is_empty",
+      "module": "fanops.compose",
+      "name": "is_empty",
+      "line": 64,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.config.Config.account_casting",
+      "module": "fanops.config",
+      "name": "account_casting",
+      "line": 593,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.config.Config.account_window",
+      "module": "fanops.config",
+      "name": "account_window",
+      "line": 885,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.config.Config.adjust_per_surface",
+      "module": "fanops.config",
+      "name": "adjust_per_surface",
+      "line": 775,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.config.Config.anthropic_api_key",
+      "module": "fanops.config",
+      "name": "anthropic_api_key",
+      "line": 153,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.config.Config.artist_name",
+      "module": "fanops.config",
+      "name": "artist_name",
+      "line": 443,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.config.Config.asr_language",
+      "module": "fanops.config",
+      "name": "asr_language",
+      "line": 544,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.config.Config.asr_model",
+      "module": "fanops.config",
+      "name": "asr_model",
+      "line": 517,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.config.Config.asr_model_for",
+      "module": "fanops.config",
+      "name": "asr_model_for",
+      "line": 524,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.config.Config.auth_key_name_for",
+      "module": "fanops.config",
+      "name": "auth_key_name_for",
+      "line": 208,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.config.Config.aware_reframe",
+      "module": "fanops.config",
+      "name": "aware_reframe",
+      "line": 574,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.config.Config.backend_has_creds",
+      "module": "fanops.config",
+      "name": "backend_has_creds",
+      "line": 400,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.config.Config.burn_subs",
+      "module": "fanops.config",
+      "name": "burn_subs",
+      "line": 563,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.config.Config.clip_profile",
+      "module": "fanops.config",
+      "name": "clip_profile",
+      "line": 454,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.config.Config.concurrent_sources",
+      "module": "fanops.config",
+      "name": "concurrent_sources",
+      "line": 953,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.config.Config.concurrent_workers",
+      "module": "fanops.config",
+      "name": "concurrent_workers",
+      "line": 966,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.config.Config.effective_publish_mode",
+      "module": "fanops.config",
+      "name": "effective_publish_mode",
+      "line": 183,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.config.Config.gc_keep_days",
+      "module": "fanops.config",
+      "name": "gc_keep_days",
+      "line": 844,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.config.Config.hashtag_trends",
+      "module": "fanops.config",
+      "name": "hashtag_trends",
+      "line": 354,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.config.Config.hook_router",
+      "module": "fanops.config",
+      "name": "hook_router",
+      "line": 603,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.config.Config.ig_retention_proof",
+      "module": "fanops.config",
+      "name": "ig_retention_proof",
+      "line": 806,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.config.Config.impact_cut",
+      "module": "fanops.config",
+      "name": "impact_cut",
+      "line": 611,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.config.Config.intro_tease",
+      "module": "fanops.config",
+      "name": "intro_tease",
+      "line": 620,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.config.Config.is_live",
+      "module": "fanops.config",
+      "name": "is_live",
+      "line": 232,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.config.Config.is_live_backend",
+      "module": "fanops.config",
+      "name": "is_live_backend",
+      "line": 374,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.config.Config.live_route_exists",
+      "module": "fanops.config",
+      "name": "live_route_exists",
+      "line": 248,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.config.Config.llm_model_for",
+      "module": "fanops.config",
+      "name": "llm_model_for",
+      "line": 429,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.config.Config.media_public_base",
+      "module": "fanops.config",
+      "name": "media_public_base",
+      "line": 287,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.config.Config.meta_graph_token",
+      "module": "fanops.config",
+      "name": "meta_graph_token",
+      "line": 333,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.config.Config.meta_graph_url",
+      "module": "fanops.config",
+      "name": "meta_graph_url",
+      "line": 348,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.config.Config.meta_ig_user_id",
+      "module": "fanops.config",
+      "name": "meta_ig_user_id",
+      "line": 342,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.config.Config.moment_hook_learning",
+      "module": "fanops.config",
+      "name": "moment_hook_learning",
+      "line": 821,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.config.Config.operator_tz",
+      "module": "fanops.config",
+      "name": "operator_tz",
+      "line": 867,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.config.Config.p4_dim_bias",
+      "module": "fanops.config",
+      "name": "p4_dim_bias",
+      "line": 785,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.config.Config.p4_min_reach_gap",
+      "module": "fanops.config",
+      "name": "p4_min_reach_gap",
+      "line": 830,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.config.Config.poster_backend",
+      "module": "fanops.config",
+      "name": "poster_backend",
+      "line": 164,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.config.Config.postiz_api_key",
+      "module": "fanops.config",
+      "name": "postiz_api_key",
+      "line": 279,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.config.Config.postiz_publish_per_min",
+      "module": "fanops.config",
+      "name": "postiz_publish_per_min",
+      "line": 943,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.config.Config.postiz_url",
+      "module": "fanops.config",
+      "name": "postiz_url",
+      "line": 271,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.config.Config.publish_lead_minutes",
+      "module": "fanops.config",
+      "name": "publish_lead_minutes",
+      "line": 919,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.config.Config.r2_access_key_id",
+      "module": "fanops.config",
+      "name": "r2_access_key_id",
+      "line": 301,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.config.Config.r2_account_id",
+      "module": "fanops.config",
+      "name": "r2_account_id",
+      "line": 296,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.config.Config.r2_bucket",
+      "module": "fanops.config",
+      "name": "r2_bucket",
+      "line": 311,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.config.Config.r2_secret_access_key",
+      "module": "fanops.config",
+      "name": "r2_secret_access_key",
+      "line": 306,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.config.Config.realistic_cadence",
+      "module": "fanops.config",
+      "name": "realistic_cadence",
+      "line": 877,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.config.Config.render_path",
+      "module": "fanops.config",
+      "name": "render_path",
+      "line": 115,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.config.Config.require_full_objective",
+      "module": "fanops.config",
+      "name": "require_full_objective",
+      "line": 365,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.config.Config.resolve_clip_profile",
+      "module": "fanops.config",
+      "name": "resolve_clip_profile",
+      "line": 462,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.config.Config.resolve_top_bias",
+      "module": "fanops.config",
+      "name": "resolve_top_bias",
+      "line": 472,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.config.Config.responder_mode",
+      "module": "fanops.config",
+      "name": "responder_mode",
+      "line": 410,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.config.Config.smart_framing",
+      "module": "fanops.config",
+      "name": "smart_framing",
+      "line": 499,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.config.Config.subtitle_font",
+      "module": "fanops.config",
+      "name": "subtitle_font",
+      "line": 584,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.config.Config.timing_bias",
+      "module": "fanops.config",
+      "name": "timing_bias",
+      "line": 796,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.config.Config.tuning",
+      "module": "fanops.config",
+      "name": "tuning",
+      "line": 127,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.config.Config.upload_max_bytes",
+      "module": "fanops.config",
+      "name": "upload_max_bytes",
+      "line": 856,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.config.Config.variant_amplify",
+      "module": "fanops.config",
+      "name": "variant_amplify",
+      "line": 663,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.config.Config.variant_amplify_min_gap",
+      "module": "fanops.config",
+      "name": "variant_amplify_min_gap",
+      "line": 687,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.config.Config.variant_amplify_min_posts",
+      "module": "fanops.config",
+      "name": "variant_amplify_min_posts",
+      "line": 677,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.config.Config.variant_amplify_min_streak",
+      "module": "fanops.config",
+      "name": "variant_amplify_min_streak",
+      "line": 697,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.config.Config.variant_learning",
+      "module": "fanops.config",
+      "name": "variant_learning",
+      "line": 630,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.config.Config.variant_min_gap",
+      "module": "fanops.config",
+      "name": "variant_min_gap",
+      "line": 652,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.config.Config.variant_min_posts",
+      "module": "fanops.config",
+      "name": "variant_min_posts",
+      "line": 641,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.config.Config.variant_transfer",
+      "module": "fanops.config",
+      "name": "variant_transfer",
+      "line": 740,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.config.Config.variant_transfer_max_hooks",
+      "module": "fanops.config",
+      "name": "variant_transfer_max_hooks",
+      "line": 765,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.config.Config.variant_transfer_min_donors",
+      "module": "fanops.config",
+      "name": "variant_transfer_min_donors",
+      "line": 754,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.config.Config.variant_ucb",
+      "module": "fanops.config",
+      "name": "variant_ucb",
+      "line": 708,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.config.Config.variant_ucb_c",
+      "module": "fanops.config",
+      "name": "variant_ucb_c",
+      "line": 727,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.config.Config.visual_start",
+      "module": "fanops.config",
+      "name": "visual_start",
+      "line": 487,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.config.Config.whisper_model",
+      "module": "fanops.config",
+      "name": "whisper_model",
+      "line": 509,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.config.Config.whisper_model_for",
+      "module": "fanops.config",
+      "name": "whisper_model_for",
+      "line": 533,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.config.Config.zernio_api_key",
+      "module": "fanops.config",
+      "name": "zernio_api_key",
+      "line": 324,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.config.Config.zernio_max_upload_bytes",
+      "module": "fanops.config",
+      "name": "zernio_max_upload_bytes",
+      "line": 933,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.config.Config.zernio_url",
+      "module": "fanops.config",
+      "name": "zernio_url",
+      "line": 316,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.crosspost.render_moment_file",
+      "module": "fanops.crosspost",
+      "name": "render_moment_file",
+      "line": 113,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.discover.discover",
+      "module": "fanops.discover",
+      "name": "discover",
+      "line": 91,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.discover.intake",
+      "module": "fanops.discover",
+      "name": "intake",
+      "line": 117,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.ledger.Ledger.add_batch",
+      "module": "fanops.ledger",
+      "name": "add_batch",
+      "line": 677,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.ledger.Ledger.add_clip",
+      "module": "fanops.ledger",
+      "name": "add_clip",
+      "line": 487,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.ledger.Ledger.add_imported_media",
+      "module": "fanops.ledger",
+      "name": "add_imported_media",
+      "line": 491,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.ledger.Ledger.add_moment",
+      "module": "fanops.ledger",
+      "name": "add_moment",
+      "line": 486,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.ledger.Ledger.add_post",
+      "module": "fanops.ledger",
+      "name": "add_post",
+      "line": 488,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.ledger.Ledger.add_render",
+      "module": "fanops.ledger",
+      "name": "add_render",
+      "line": 489,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.ledger.Ledger.add_source",
+      "module": "fanops.ledger",
+      "name": "add_source",
+      "line": 485,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.ledger.Ledger.add_stitch_plan",
+      "module": "fanops.ledger",
+      "name": "add_stitch_plan",
+      "line": 665,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.ledger.Ledger.already_seen",
+      "module": "fanops.ledger",
+      "name": "already_seen",
+      "line": 531,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.ledger.Ledger.approve_post",
+      "module": "fanops.ledger",
+      "name": "approve_post",
+      "line": 504,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.ledger.Ledger.approve_stitch_plan",
+      "module": "fanops.ledger",
+      "name": "approve_stitch_plan",
+      "line": 667,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.ledger.Ledger.batches_for_account",
+      "module": "fanops.ledger",
+      "name": "batches_for_account",
+      "line": 681,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.ledger.Ledger.clips_in_state",
+      "module": "fanops.ledger",
+      "name": "clips_in_state",
+      "line": 535,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.ledger.Ledger.clips_of",
+      "module": "fanops.ledger",
+      "name": "clips_of",
+      "line": 541,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.ledger.Ledger.dismiss_stitch_plan",
+      "module": "fanops.ledger",
+      "name": "dismiss_stitch_plan",
+      "line": 671,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.ledger.Ledger.get_batch",
+      "module": "fanops.ledger",
+      "name": "get_batch",
+      "line": 679,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.ledger.Ledger.get_imported_media",
+      "module": "fanops.ledger",
+      "name": "get_imported_media",
+      "line": 492,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.ledger.Ledger.get_render",
+      "module": "fanops.ledger",
+      "name": "get_render",
+      "line": 490,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.ledger.Ledger.is_retired_clip",
+      "module": "fanops.ledger",
+      "name": "is_retired_clip",
+      "line": 625,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.ledger.Ledger.is_retired_moment",
+      "module": "fanops.ledger",
+      "name": "is_retired_moment",
+      "line": 628,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.ledger.Ledger.is_retired_source",
+      "module": "fanops.ledger",
+      "name": "is_retired_source",
+      "line": 641,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.ledger.Ledger.moments_of",
+      "module": "fanops.ledger",
+      "name": "moments_of",
+      "line": 539,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.ledger.Ledger.posts_in_state",
+      "module": "fanops.ledger",
+      "name": "posts_in_state",
+      "line": 537,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.ledger.Ledger.posts_of",
+      "module": "fanops.ledger",
+      "name": "posts_of",
+      "line": 543,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.ledger.Ledger.posts_of_account",
+      "module": "fanops.ledger",
+      "name": "posts_of_account",
+      "line": 547,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.ledger.Ledger.rebuild_catalog",
+      "module": "fanops.ledger",
+      "name": "rebuild_catalog",
+      "line": 645,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.ledger.Ledger.reconcile_moments",
+      "module": "fanops.ledger",
+      "name": "reconcile_moments",
+      "line": 555,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.ledger.Ledger.reject_post",
+      "module": "fanops.ledger",
+      "name": "reject_post",
+      "line": 521,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.ledger.Ledger.restore_snapshot",
+      "module": "fanops.ledger",
+      "name": "restore_snapshot",
+      "line": 472,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.ledger.Ledger.retire_clip",
+      "module": "fanops.ledger",
+      "name": "retire_clip",
+      "line": 622,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.ledger.Ledger.retire_source",
+      "module": "fanops.ledger",
+      "name": "retire_source",
+      "line": 633,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.ledger.Ledger.set_clip_state",
+      "module": "fanops.ledger",
+      "name": "set_clip_state",
+      "line": 500,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.ledger.Ledger.set_moment_state",
+      "module": "fanops.ledger",
+      "name": "set_moment_state",
+      "line": 499,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.ledger.Ledger.set_post_state",
+      "module": "fanops.ledger",
+      "name": "set_post_state",
+      "line": 501,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.ledger.Ledger.set_source_state",
+      "module": "fanops.ledger",
+      "name": "set_source_state",
+      "line": 498,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.ledger.Ledger.sources_in_state",
+      "module": "fanops.ledger",
+      "name": "sources_in_state",
+      "line": 533,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.ledger.Ledger.unapprove_post",
+      "module": "fanops.ledger",
+      "name": "unapprove_post",
+      "line": 525,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.llm.claude_json",
+      "module": "fanops.llm",
+      "name": "claude_json",
+      "line": 268,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.models.normalize_account_handle",
+      "module": "fanops.models",
+      "name": "normalize_account_handle",
+      "line": 445,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.models.realized_seconds",
+      "module": "fanops.models",
+      "name": "realized_seconds",
+      "line": 67,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.persona_levers.all_channels",
+      "module": "fanops.persona_levers",
+      "name": "all_channels",
+      "line": 114,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.persona_levers.archetype_selection_scope_map",
+      "module": "fanops.persona_levers",
+      "name": "archetype_selection_scope_map",
+      "line": 194,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.persona_levers.build_catalog",
+      "module": "fanops.persona_levers",
+      "name": "build_catalog",
+      "line": 199,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.persona_levers.channels_of",
+      "module": "fanops.persona_levers",
+      "name": "channels_of",
+      "line": 109,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.persona_levers.clause_map",
+      "module": "fanops.persona_levers",
+      "name": "clause_map",
+      "line": 141,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.persona_levers.editable_fields",
+      "module": "fanops.persona_levers",
+      "name": "editable_fields",
+      "line": 104,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.persona_levers.focus_profile_map",
+      "module": "fanops.persona_levers",
+      "name": "focus_profile_map",
+      "line": 148,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.persona_levers.framing_map",
+      "module": "fanops.persona_levers",
+      "name": "framing_map",
+      "line": 161,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.persona_levers.owner_of",
+      "module": "fanops.persona_levers",
+      "name": "owner_of",
+      "line": 119,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.persona_levers.vocab",
+      "module": "fanops.persona_levers",
+      "name": "vocab",
+      "line": 136,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.persona_store.add_corpus_tag",
+      "module": "fanops.persona_store",
+      "name": "add_corpus_tag",
+      "line": 173,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.persona_store.delete_persona",
+      "module": "fanops.persona_store",
+      "name": "delete_persona",
+      "line": 221,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.persona_store.migrate_from_accounts",
+      "module": "fanops.persona_store",
+      "name": "migrate_from_accounts",
+      "line": 256,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.persona_store.remove_corpus_tag",
+      "module": "fanops.persona_store",
+      "name": "remove_corpus_tag",
+      "line": 202,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.persona_store.update_persona",
+      "module": "fanops.persona_store",
+      "name": "update_persona",
+      "line": 143,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.personas.Personas.all",
+      "module": "fanops.personas",
+      "name": "all",
+      "line": 88,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.post.Poster.publish",
+      "module": "fanops.post",
+      "name": "publish",
+      "line": 11,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.post.dryrun.DryRunPoster.publish",
+      "module": "fanops.post.dryrun",
+      "name": "publish",
+      "line": 39,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.post.metrics.GraphInsightsClient.list_posts",
+      "module": "fanops.post.metrics",
+      "name": "list_posts",
+      "line": 578,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.post.metrics.PostizMetricsClient.list_posts",
+      "module": "fanops.post.metrics",
+      "name": "list_posts",
+      "line": 98,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.post.metrics.PostizStatusClient.get_status",
+      "module": "fanops.post.metrics",
+      "name": "get_status",
+      "line": 152,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.post.metrics.ZernioMetricsClient.list_posts",
+      "module": "fanops.post.metrics",
+      "name": "list_posts",
+      "line": 297,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.post.metrics.ZernioStatusClient.get_status",
+      "module": "fanops.post.metrics",
+      "name": "get_status",
+      "line": 511,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.post.metrics.zernio_permalink_from_analytics",
+      "module": "fanops.post.metrics",
+      "name": "zernio_permalink_from_analytics",
+      "line": 477,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.post.postiz.PostizPoster.publish",
+      "module": "fanops.post.postiz",
+      "name": "publish",
+      "line": 364,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.post.postiz.postiz_upload_media",
+      "module": "fanops.post.postiz",
+      "name": "postiz_upload_media",
+      "line": 224,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.post.providers.Provider.has_creds",
+      "module": "fanops.post.providers",
+      "name": "has_creds",
+      "line": 39,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.post.run.reset_publish_throttle",
+      "module": "fanops.post.run",
+      "name": "reset_publish_throttle",
+      "line": 131,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.post.zernio.ZernioPoster.publish",
+      "module": "fanops.post.zernio",
+      "name": "publish",
+      "line": 227,
+      "kind": "method"
+    },
+    {
+      "qualified_name": "fanops.post.zernio.zernio_upload_media",
+      "module": "fanops.post.zernio",
+      "name": "zernio_upload_media",
+      "line": 123,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.prompts.moment_hook_prompt",
+      "module": "fanops.prompts",
+      "name": "moment_hook_prompt",
+      "line": 247,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.prompts.moment_pick_prompt",
+      "module": "fanops.prompts",
+      "name": "moment_pick_prompt",
+      "line": 166,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.reconcile.cached",
+      "module": "fanops.reconcile",
+      "name": "cached",
+      "line": 507,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.actions.reschedule_account",
+      "module": "fanops.studio.actions",
+      "name": "reschedule_account",
+      "line": 684,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.actions.retry_transient_failures",
+      "module": "fanops.studio.actions",
+      "name": "retry_transient_failures",
+      "line": 915,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.actions_approve.approve_account",
+      "module": "fanops.studio.actions_approve",
+      "name": "approve_account",
+      "line": 156,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.actions_approve.approve_as_is",
+      "module": "fanops.studio.actions_approve",
+      "name": "approve_as_is",
+      "line": 183,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.actions_approve.approve_batch",
+      "module": "fanops.studio.actions_approve",
+      "name": "approve_batch",
+      "line": 147,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.actions_approve.approve_moment",
+      "module": "fanops.studio.actions_approve",
+      "name": "approve_moment",
+      "line": 177,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.actions_approve.approve_posts",
+      "module": "fanops.studio.actions_approve",
+      "name": "approve_posts",
+      "line": 64,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.actions_approve.approve_stitches",
+      "module": "fanops.studio.actions_approve",
+      "name": "approve_stitches",
+      "line": 189,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.actions_approve.approve_with_hook",
+      "module": "fanops.studio.actions_approve",
+      "name": "approve_with_hook",
+      "line": 102,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.actions_approve.dismiss_stitches",
+      "module": "fanops.studio.actions_approve",
+      "name": "dismiss_stitches",
+      "line": 198,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.actions_approve.reject_posts",
+      "module": "fanops.studio.actions_approve",
+      "name": "reject_posts",
+      "line": 71,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.actions_approve.release_stitches",
+      "module": "fanops.studio.actions_approve",
+      "name": "release_stitches",
+      "line": 207,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.actions_approve.unapprove_post",
+      "module": "fanops.studio.actions_approve",
+      "name": "unapprove_post",
+      "line": 80,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.actions_casting.cast_add",
+      "module": "fanops.studio.actions_casting",
+      "name": "cast_add",
+      "line": 13,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.actions_casting.cast_remove",
+      "module": "fanops.studio.actions_casting",
+      "name": "cast_remove",
+      "line": 32,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.actions_run.run_advance",
+      "module": "fanops.studio.actions_run",
+      "name": "run_advance",
+      "line": 237,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.actions_run.run_ingest_thirdparty",
+      "module": "fanops.studio.actions_run",
+      "name": "run_ingest_thirdparty",
+      "line": 215,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.actions_run.run_prepare",
+      "module": "fanops.studio.actions_run",
+      "name": "run_prepare",
+      "line": 275,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.actions_run.run_pull",
+      "module": "fanops.studio.actions_run",
+      "name": "run_pull",
+      "line": 110,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.actions_run.save_thirdparty_uploads",
+      "module": "fanops.studio.actions_run",
+      "name": "save_thirdparty_uploads",
+      "line": 206,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.actions_run.save_uploads_and_ingest",
+      "module": "fanops.studio.actions_run",
+      "name": "save_uploads_and_ingest",
+      "line": 185,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.actions_segments.clear_segments",
+      "module": "fanops.studio.actions_segments",
+      "name": "clear_segments",
+      "line": 27,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.actions_segments.set_segments",
+      "module": "fanops.studio.actions_segments",
+      "name": "set_segments",
+      "line": 9,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app.candidates",
+      "module": "fanops.studio.app",
+      "name": "candidates",
+      "line": 417,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app.clip_media",
+      "module": "fanops.studio.app",
+      "name": "clip_media",
+      "line": 501,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app.clip_thumb",
+      "module": "fanops.studio.app",
+      "name": "clip_thumb",
+      "line": 509,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app.do_answer_gate",
+      "module": "fanops.studio.app",
+      "name": "do_answer_gate",
+      "line": 474,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app.do_approve_candidate",
+      "module": "fanops.studio.app",
+      "name": "do_approve_candidate",
+      "line": 422,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app.do_approve_stitches",
+      "module": "fanops.studio.app",
+      "name": "do_approve_stitches",
+      "line": 404,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app.do_dismiss_stitches",
+      "module": "fanops.studio.app",
+      "name": "do_dismiss_stitches",
+      "line": 408,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app.do_home_pull_metrics",
+      "module": "fanops.studio.app",
+      "name": "do_home_pull_metrics",
+      "line": 359,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app.do_home_reconcile",
+      "module": "fanops.studio.app",
+      "name": "do_home_reconcile",
+      "line": 363,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app.do_home_retry_oversize",
+      "module": "fanops.studio.app",
+      "name": "do_home_retry_oversize",
+      "line": 371,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app.do_home_retry_rate_limit",
+      "module": "fanops.studio.app",
+      "name": "do_home_retry_rate_limit",
+      "line": 367,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app.do_mark_posted",
+      "module": "fanops.studio.app",
+      "name": "do_mark_posted",
+      "line": 449,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app.do_publish_now",
+      "module": "fanops.studio.app",
+      "name": "do_publish_now",
+      "line": 454,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app.do_release_stitches",
+      "module": "fanops.studio.app",
+      "name": "do_release_stitches",
+      "line": 412,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app.gates",
+      "module": "fanops.studio.app",
+      "name": "gates",
+      "line": 468,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app.home_daemon_health",
+      "module": "fanops.studio.app",
+      "name": "home_daemon_health",
+      "line": 375,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app.index",
+      "module": "fanops.studio.app",
+      "name": "index",
+      "line": 352,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app.media",
+      "module": "fanops.studio.app",
+      "name": "media",
+      "line": 486,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app.media_preview",
+      "module": "fanops.studio.app",
+      "name": "media_preview",
+      "line": 493,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app.publish_panel",
+      "module": "fanops.studio.app",
+      "name": "publish_panel",
+      "line": 435,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app.reconcile_strip_partial",
+      "module": "fanops.studio.app",
+      "name": "reconcile_strip_partial",
+      "line": 462,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app.review_thumb",
+      "module": "fanops.studio.app",
+      "name": "review_thumb",
+      "line": 426,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app.stitches",
+      "module": "fanops.studio.app",
+      "name": "stitches",
+      "line": 394,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_golive.do_golive_account_add",
+      "module": "fanops.studio.app_routes_golive",
+      "name": "do_golive_account_add",
+      "line": 30,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_golive.do_golive_account_backend",
+      "module": "fanops.studio.app_routes_golive",
+      "name": "do_golive_account_backend",
+      "line": 109,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_golive.do_golive_account_demote",
+      "module": "fanops.studio.app_routes_golive",
+      "name": "do_golive_account_demote",
+      "line": 132,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_golive.do_golive_account_meta_creds",
+      "module": "fanops.studio.app_routes_golive",
+      "name": "do_golive_account_meta_creds",
+      "line": 100,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_golive.do_golive_account_persona",
+      "module": "fanops.studio.app_routes_golive",
+      "name": "do_golive_account_persona",
+      "line": 117,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_golive.do_golive_account_promote",
+      "module": "fanops.studio.app_routes_golive",
+      "name": "do_golive_account_promote",
+      "line": 122,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_golive.do_golive_account_remove",
+      "module": "fanops.studio.app_routes_golive",
+      "name": "do_golive_account_remove",
+      "line": 127,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_golive.do_golive_adopt",
+      "module": "fanops.studio.app_routes_golive",
+      "name": "do_golive_adopt",
+      "line": 148,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_golive.do_golive_amplify",
+      "module": "fanops.studio.app_routes_golive",
+      "name": "do_golive_amplify",
+      "line": 80,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_golive.do_golive_casting",
+      "module": "fanops.studio.app_routes_golive",
+      "name": "do_golive_casting",
+      "line": 45,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_golive.do_golive_clip_profile",
+      "module": "fanops.studio.app_routes_golive",
+      "name": "do_golive_clip_profile",
+      "line": 52,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_golive.do_golive_config",
+      "module": "fanops.studio.app_routes_golive",
+      "name": "do_golive_config",
+      "line": 26,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_golive.do_golive_daemon_install",
+      "module": "fanops.studio.app_routes_golive",
+      "name": "do_golive_daemon_install",
+      "line": 63,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_golive.do_golive_daemon_uninstall",
+      "module": "fanops.studio.app_routes_golive",
+      "name": "do_golive_daemon_uninstall",
+      "line": 69,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_golive.do_golive_discover",
+      "module": "fanops.studio.app_routes_golive",
+      "name": "do_golive_discover",
+      "line": 141,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_golive.do_golive_dryrun",
+      "module": "fanops.studio.app_routes_golive",
+      "name": "do_golive_dryrun",
+      "line": 211,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_golive.do_golive_health",
+      "module": "fanops.studio.app_routes_golive",
+      "name": "do_golive_health",
+      "line": 159,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_golive.do_golive_hooks",
+      "module": "fanops.studio.app_routes_golive",
+      "name": "do_golive_hooks",
+      "line": 38,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_golive.do_golive_learning",
+      "module": "fanops.studio.app_routes_golive",
+      "name": "do_golive_learning",
+      "line": 74,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_golive.do_golive_live",
+      "module": "fanops.studio.app_routes_golive",
+      "name": "do_golive_live",
+      "line": 204,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_golive.do_golive_map",
+      "module": "fanops.studio.app_routes_golive",
+      "name": "do_golive_map",
+      "line": 182,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_golive.do_golive_refresh",
+      "module": "fanops.studio.app_routes_golive",
+      "name": "do_golive_refresh",
+      "line": 137,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_golive.do_golive_responder",
+      "module": "fanops.studio.app_routes_golive",
+      "name": "do_golive_responder",
+      "line": 57,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_golive.do_golive_transfer",
+      "module": "fanops.studio.app_routes_golive",
+      "name": "do_golive_transfer",
+      "line": 90,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_golive.do_golive_ucb",
+      "module": "fanops.studio.app_routes_golive",
+      "name": "do_golive_ucb",
+      "line": 85,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_golive.do_golive_validate",
+      "module": "fanops.studio.app_routes_golive",
+      "name": "do_golive_validate",
+      "line": 215,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_golive.do_golive_zernio_config",
+      "module": "fanops.studio.app_routes_golive",
+      "name": "do_golive_zernio_config",
+      "line": 95,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_golive.golive_accounts_page",
+      "module": "fanops.studio.app_routes_golive",
+      "name": "golive_accounts_page",
+      "line": 172,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_golive.golive_connect",
+      "module": "fanops.studio.app_routes_golive",
+      "name": "golive_connect",
+      "line": 167,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_golive.golive_live_page",
+      "module": "fanops.studio.app_routes_golive",
+      "name": "golive_live_page",
+      "line": 177,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_golive.golive_view",
+      "module": "fanops.studio.app_routes_golive",
+      "name": "golive_view",
+      "line": 14,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_live.do_wipe_confirm",
+      "module": "fanops.studio.app_routes_live",
+      "name": "do_wipe_confirm",
+      "line": 30,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_live.do_wipe_preview",
+      "module": "fanops.studio.app_routes_live",
+      "name": "do_wipe_preview",
+      "line": 24,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_live.live_library",
+      "module": "fanops.studio.app_routes_live",
+      "name": "live_library",
+      "line": 20,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_personas.do_personas_add",
+      "module": "fanops.studio.app_routes_personas",
+      "name": "do_personas_add",
+      "line": 42,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_personas.do_personas_compose",
+      "module": "fanops.studio.app_routes_personas",
+      "name": "do_personas_compose",
+      "line": 35,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_personas.do_personas_connect",
+      "module": "fanops.studio.app_routes_personas",
+      "name": "do_personas_connect",
+      "line": 80,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_personas.do_personas_corpus_add",
+      "module": "fanops.studio.app_routes_personas",
+      "name": "do_personas_corpus_add",
+      "line": 60,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_personas.do_personas_corpus_remove",
+      "module": "fanops.studio.app_routes_personas",
+      "name": "do_personas_corpus_remove",
+      "line": 64,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_personas.do_personas_delete",
+      "module": "fanops.studio.app_routes_personas",
+      "name": "do_personas_delete",
+      "line": 56,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_personas.do_personas_drawer",
+      "module": "fanops.studio.app_routes_personas",
+      "name": "do_personas_drawer",
+      "line": 25,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_personas.do_personas_edit",
+      "module": "fanops.studio.app_routes_personas",
+      "name": "do_personas_edit",
+      "line": 49,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_personas.do_personas_migrate",
+      "module": "fanops.studio.app_routes_personas",
+      "name": "do_personas_migrate",
+      "line": 85,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_personas.do_personas_recommend",
+      "module": "fanops.studio.app_routes_personas",
+      "name": "do_personas_recommend",
+      "line": 74,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_personas.do_personas_research",
+      "module": "fanops.studio.app_routes_personas",
+      "name": "do_personas_research",
+      "line": 68,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_personas.personas_view",
+      "module": "fanops.studio.app_routes_personas",
+      "name": "personas_view",
+      "line": 13,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_review.do_approve_account",
+      "module": "fanops.studio.app_routes_review",
+      "name": "do_approve_account",
+      "line": 153,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_review.do_approve_as_is",
+      "module": "fanops.studio.app_routes_review",
+      "name": "do_approve_as_is",
+      "line": 137,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_review.do_approve_batch",
+      "module": "fanops.studio.app_routes_review",
+      "name": "do_approve_batch",
+      "line": 143,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_review.do_approve_channel",
+      "module": "fanops.studio.app_routes_review",
+      "name": "do_approve_channel",
+      "line": 167,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_review.do_approve_clip",
+      "module": "fanops.studio.app_routes_review",
+      "name": "do_approve_clip",
+      "line": 147,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_review.do_approve_moment",
+      "module": "fanops.studio.app_routes_review",
+      "name": "do_approve_moment",
+      "line": 161,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_review.do_approve_posts",
+      "module": "fanops.studio.app_routes_review",
+      "name": "do_approve_posts",
+      "line": 115,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_review.do_approve_with_hook",
+      "module": "fanops.studio.app_routes_review",
+      "name": "do_approve_with_hook",
+      "line": 131,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_review.do_caption",
+      "module": "fanops.studio.app_routes_review",
+      "name": "do_caption",
+      "line": 260,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_review.do_cast_add",
+      "module": "fanops.studio.app_routes_review",
+      "name": "do_cast_add",
+      "line": 182,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_review.do_cast_remove",
+      "module": "fanops.studio.app_routes_review",
+      "name": "do_cast_remove",
+      "line": 193,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_review.do_clear",
+      "module": "fanops.studio.app_routes_review",
+      "name": "do_clear",
+      "line": 253,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_review.do_clear_segments",
+      "module": "fanops.studio.app_routes_review",
+      "name": "do_clear_segments",
+      "line": 220,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_review.do_reburn_hook",
+      "module": "fanops.studio.app_routes_review",
+      "name": "do_reburn_hook",
+      "line": 285,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_review.do_regenerate",
+      "module": "fanops.studio.app_routes_review",
+      "name": "do_regenerate",
+      "line": 265,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_review.do_reject_posts",
+      "module": "fanops.studio.app_routes_review",
+      "name": "do_reject_posts",
+      "line": 121,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_review.do_reschedule",
+      "module": "fanops.studio.app_routes_review",
+      "name": "do_reschedule",
+      "line": 240,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_review.do_reschedule_surface",
+      "module": "fanops.studio.app_routes_review",
+      "name": "do_reschedule_surface",
+      "line": 246,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_review.do_restore_persona_hook",
+      "module": "fanops.studio.app_routes_review",
+      "name": "do_restore_persona_hook",
+      "line": 280,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_review.do_set_segments",
+      "module": "fanops.studio.app_routes_review",
+      "name": "do_set_segments",
+      "line": 203,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_review.do_snooze",
+      "module": "fanops.studio.app_routes_review",
+      "name": "do_snooze",
+      "line": 300,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_review.do_unapprove_post",
+      "module": "fanops.studio.app_routes_review",
+      "name": "do_unapprove_post",
+      "line": 125,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_review.do_unhold",
+      "module": "fanops.studio.app_routes_review",
+      "name": "do_unhold",
+      "line": 305,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_review.review",
+      "module": "fanops.studio.app_routes_review",
+      "name": "review",
+      "line": 86,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_review.review_live",
+      "module": "fanops.studio.app_routes_review",
+      "name": "review_live",
+      "line": 95,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_review.review_panel_refresh",
+      "module": "fanops.studio.app_routes_review",
+      "name": "review_panel_refresh",
+      "line": 111,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_run.do_pull_metrics",
+      "module": "fanops.studio.app_routes_run",
+      "name": "do_pull_metrics",
+      "line": 76,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_run.do_run_advance",
+      "module": "fanops.studio.app_routes_run",
+      "name": "do_run_advance",
+      "line": 70,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_run.do_run_ingest",
+      "module": "fanops.studio.app_routes_run",
+      "name": "do_run_ingest",
+      "line": 40,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_run.do_run_prepare",
+      "module": "fanops.studio.app_routes_run",
+      "name": "do_run_prepare",
+      "line": 80,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_run.do_run_pull",
+      "module": "fanops.studio.app_routes_run",
+      "name": "do_run_pull",
+      "line": 46,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_run.do_run_resume",
+      "module": "fanops.studio.app_routes_run",
+      "name": "do_run_resume",
+      "line": 63,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_run.do_run_upload",
+      "module": "fanops.studio.app_routes_run",
+      "name": "do_run_upload",
+      "line": 50,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_run.do_thirdparty_upload",
+      "module": "fanops.studio.app_routes_run",
+      "name": "do_thirdparty_upload",
+      "line": 92,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_run.library",
+      "module": "fanops.studio.app_routes_run",
+      "name": "library",
+      "line": 87,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_run.run_panel",
+      "module": "fanops.studio.app_routes_run",
+      "name": "run_panel",
+      "line": 21,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_run.run_status",
+      "module": "fanops.studio.app_routes_run",
+      "name": "run_status",
+      "line": 28,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_schedule.do_crosspost_all",
+      "module": "fanops.studio.app_routes_schedule",
+      "name": "do_crosspost_all",
+      "line": 163,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_schedule.do_crosspost_to_account",
+      "module": "fanops.studio.app_routes_schedule",
+      "name": "do_crosspost_to_account",
+      "line": 157,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_schedule.do_recover_posts",
+      "module": "fanops.studio.app_routes_schedule",
+      "name": "do_recover_posts",
+      "line": 151,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_schedule.do_repost_post",
+      "module": "fanops.studio.app_routes_schedule",
+      "name": "do_repost_post",
+      "line": 140,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_schedule.do_reschedule_bucket",
+      "module": "fanops.studio.app_routes_schedule",
+      "name": "do_reschedule_bucket",
+      "line": 52,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_schedule.do_resolve_post",
+      "module": "fanops.studio.app_routes_schedule",
+      "name": "do_resolve_post",
+      "line": 145,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_schedule.do_schedule_accept_suggested",
+      "module": "fanops.studio.app_routes_schedule",
+      "name": "do_schedule_accept_suggested",
+      "line": 92,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_schedule.do_schedule_clear",
+      "module": "fanops.studio.app_routes_schedule",
+      "name": "do_schedule_clear",
+      "line": 68,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_schedule.do_schedule_move",
+      "module": "fanops.studio.app_routes_schedule",
+      "name": "do_schedule_move",
+      "line": 62,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_schedule.do_schedule_publish",
+      "module": "fanops.studio.app_routes_schedule",
+      "name": "do_schedule_publish",
+      "line": 74,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_schedule.do_schedule_publish_due",
+      "module": "fanops.studio.app_routes_schedule",
+      "name": "do_schedule_publish_due",
+      "line": 96,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_schedule.do_schedule_reconcile",
+      "module": "fanops.studio.app_routes_schedule",
+      "name": "do_schedule_reconcile",
+      "line": 82,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_schedule.do_schedule_shift",
+      "module": "fanops.studio.app_routes_schedule",
+      "name": "do_schedule_shift",
+      "line": 44,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_schedule.do_schedule_unapprove",
+      "module": "fanops.studio.app_routes_schedule",
+      "name": "do_schedule_unapprove",
+      "line": 57,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_schedule.lift",
+      "module": "fanops.studio.app_routes_schedule",
+      "name": "lift",
+      "line": 101,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_schedule.posted",
+      "module": "fanops.studio.app_routes_schedule",
+      "name": "posted",
+      "line": 136,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.app_routes_schedule.schedule",
+      "module": "fanops.studio.app_routes_schedule",
+      "name": "schedule",
+      "line": 40,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.golive.refresh_zernio_accounts",
+      "module": "fanops.studio.golive",
+      "name": "refresh_zernio_accounts",
+      "line": 151,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.personas.add_corpus_tag",
+      "module": "fanops.studio.personas",
+      "name": "add_corpus_tag",
+      "line": 112,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.personas.connect_account",
+      "module": "fanops.studio.personas",
+      "name": "connect_account",
+      "line": 144,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.personas.create_persona",
+      "module": "fanops.studio.personas",
+      "name": "create_persona",
+      "line": 61,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.personas.delete_persona",
+      "module": "fanops.studio.personas",
+      "name": "delete_persona",
+      "line": 97,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.personas.edit_persona",
+      "module": "fanops.studio.personas",
+      "name": "edit_persona",
+      "line": 77,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.personas.preview_compose",
+      "module": "fanops.studio.personas",
+      "name": "preview_compose",
+      "line": 23,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.personas.recommend_tag",
+      "module": "fanops.studio.personas",
+      "name": "recommend_tag",
+      "line": 165,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.personas.remove_corpus_tag",
+      "module": "fanops.studio.personas",
+      "name": "remove_corpus_tag",
+      "line": 129,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.personas.research_corpus",
+      "module": "fanops.studio.personas",
+      "name": "research_corpus",
+      "line": 185,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.personas.run_migration",
+      "module": "fanops.studio.personas",
+      "name": "run_migration",
+      "line": 205,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.views.metrics_stale_hint",
+      "module": "fanops.studio.views",
+      "name": "metrics_stale_hint",
+      "line": 586,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.views.run_next_step",
+      "module": "fanops.studio.views",
+      "name": "run_next_step",
+      "line": 191,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.views_common.accounts_in",
+      "module": "fanops.studio.views_common",
+      "name": "accounts_in",
+      "line": 75,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.views_common.paginate",
+      "module": "fanops.studio.views_common",
+      "name": "paginate",
+      "line": 42,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.views_common.term_def",
+      "module": "fanops.studio.views_common",
+      "name": "term_def",
+      "line": 69,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.views_live.live_library",
+      "module": "fanops.studio.views_live",
+      "name": "live_library",
+      "line": 34,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.views_live.live_library_scope",
+      "module": "fanops.studio.views_live",
+      "name": "live_library_scope",
+      "line": 49,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.views_results.account_median_deltas",
+      "module": "fanops.studio.views_results",
+      "name": "account_median_deltas",
+      "line": 632,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.views_results.bar_pct",
+      "module": "fanops.studio.views_results",
+      "name": "bar_pct",
+      "line": 667,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.views_results.group_posted_by_day",
+      "module": "fanops.studio.views_results",
+      "name": "group_posted_by_day",
+      "line": 676,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.views_results.group_schedule_by_account",
+      "module": "fanops.studio.views_results",
+      "name": "group_schedule_by_account",
+      "line": 379,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.views_results.inflight_watch",
+      "module": "fanops.studio.views_results",
+      "name": "inflight_watch",
+      "line": 352,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.views_results.lift_rows",
+      "module": "fanops.studio.views_results",
+      "name": "lift_rows",
+      "line": 721,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.views_results.lineage_stats",
+      "module": "fanops.studio.views_results",
+      "name": "lineage_stats",
+      "line": 599,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.views_results.metric_peaks",
+      "module": "fanops.studio.views_results",
+      "name": "metric_peaks",
+      "line": 655,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.views_results.posted_batch_rollup",
+      "module": "fanops.studio.views_results",
+      "name": "posted_batch_rollup",
+      "line": 586,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.views_results.posted_library",
+      "module": "fanops.studio.views_results",
+      "name": "posted_library",
+      "line": 541,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.views_results.schedule_cockpit",
+      "module": "fanops.studio.views_results",
+      "name": "schedule_cockpit",
+      "line": 329,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.views_results.schedule_lanes",
+      "module": "fanops.studio.views_results",
+      "name": "schedule_lanes",
+      "line": 276,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.views_review.account_lanes",
+      "module": "fanops.studio.views_review",
+      "name": "account_lanes",
+      "line": 455,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.views_review.account_pivot_rows",
+      "module": "fanops.studio.views_review",
+      "name": "account_pivot_rows",
+      "line": 653,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.views_review.group_review_by_account_surface",
+      "module": "fanops.studio.views_review",
+      "name": "group_review_by_account_surface",
+      "line": 674,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.views_review.group_review_by_batch",
+      "module": "fanops.studio.views_review",
+      "name": "group_review_by_batch",
+      "line": 695,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.views_review.provenance_chips",
+      "module": "fanops.studio.views_review",
+      "name": "provenance_chips",
+      "line": 169,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.views_review.review_awaiting_by_account",
+      "module": "fanops.studio.views_review",
+      "name": "review_awaiting_by_account",
+      "line": 617,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.views_review.review_counts",
+      "module": "fanops.studio.views_review",
+      "name": "review_counts",
+      "line": 591,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.views_review.review_matrix",
+      "module": "fanops.studio.views_review",
+      "name": "review_matrix",
+      "line": 372,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.views_review.review_progress",
+      "module": "fanops.studio.views_review",
+      "name": "review_progress",
+      "line": 629,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.views_review.source_choices",
+      "module": "fanops.studio.views_review",
+      "name": "source_choices",
+      "line": 344,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.views_review.source_universe",
+      "module": "fanops.studio.views_review",
+      "name": "source_universe",
+      "line": 640,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.studio.views_review.surface_for_post",
+      "module": "fanops.studio.views_review",
+      "name": "surface_for_post",
+      "line": 684,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.timeutil.to_local_display_hybrid",
+      "module": "fanops.timeutil",
+      "name": "to_local_display_hybrid",
+      "line": 122,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.timeutil.to_local_input",
+      "module": "fanops.timeutil",
+      "name": "to_local_input",
+      "line": 138,
+      "kind": "function"
+    },
+    {
+      "qualified_name": "fanops.transcribe.real_transcript_signal",
+      "module": "fanops.transcribe",
+      "name": "real_transcript_signal",
+      "line": 73,
+      "kind": "function"
+    }
+  ]
+}
