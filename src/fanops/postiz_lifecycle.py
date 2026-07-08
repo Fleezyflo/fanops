@@ -15,7 +15,6 @@ Safe by construction — ensure_up() does NOTHING unless ALL hold:
 Any failure is swallowed-then-returned (fail-open): a still-down Postiz then surfaces through
 the normal connection error in the poster, exactly as before this module existed.
 """
-import os
 import sys
 import shutil
 import subprocess
@@ -48,11 +47,11 @@ def _backend_is_postiz(cfg) -> bool:
 def _should_autostart(cfg) -> bool:
     if "pytest" in sys.modules:
         return False
-    if os.getenv("FANOPS_POSTIZ_AUTOSTART", "1") == "0":
+    if not cfg.postiz_autostart:
         return False
     if not _backend_is_postiz(cfg):
         return False
-    if not _is_local(os.getenv("POSTIZ_URL", "")):
+    if not _is_local(cfg.postiz_url or ""):
         return False
     return _SCRIPT.exists() and shutil.which("docker") is not None
 

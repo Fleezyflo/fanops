@@ -16,17 +16,11 @@ from __future__ import annotations
 import argparse, json, os, sys
 from pathlib import Path
 
+from fanops.config import certifi_ssl_env
+
 
 def _certifi_env() -> None:
-    """faster-whisper fetches the checkpoint from HF over https on first use; macOS framework Python
-    often can't verify the cert. Point SSL_CERT_FILE/REQUESTS_CA_BUNDLE at certifi (no-op if already
-    set or certifi absent). Mirrors vocals._demucs_env()."""
-    import os
-    try:
-        import certifi
-        os.environ.setdefault("SSL_CERT_FILE", certifi.where())
-        os.environ.setdefault("REQUESTS_CA_BUNDLE", certifi.where())
-    except ImportError: pass    # ECC fix #6: certifi optional — only its absence is expected; don't mask other faults
+    certifi_ssl_env()  # in-process SSL defaults for HF model fetch (mirrors vocals._demucs_env)
 
 
 def _load_model(model: str):

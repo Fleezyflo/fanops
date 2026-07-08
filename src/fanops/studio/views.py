@@ -2,7 +2,6 @@
 (lock-free) and assembles these dataclasses; templates render them. Mutations live in actions.py."""
 from __future__ import annotations
 import json
-import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -373,13 +372,11 @@ def golive_accounts(cfg: Config) -> list[GoLiveAccount]:
     effective per-platform id (integrations[platform] -> account_id fallback -> "" unmapped). Fail-open: a
     malformed accounts.json logs accounts_error and degrades to [] (the surface never 500s). NO secret."""
     try:
-        from fanops.meta_graph import per_account_token_env_key
-        import os as _os
         return [GoLiveAccount(
             handle=a.handle, persona=a.persona,
             persona_id=getattr(a, "persona_id", None),     # S8: the linked first-class Persona (badge), additive
             ig_user_id=(a.ig_user_id or ""),               # per-account Meta id (non-secret) — render current value
-            meta_token_set=bool((k := per_account_token_env_key(a.handle)) and _os.getenv(k)),  # BOOL only; token is SECRET
+            meta_token_set=cfg.meta_token_set_for(a.handle),  # BOOL only; token is SECRET
             channels=[GoLiveChannel(platform=p.value,
                                     integration_id=a.integrations.get(p.value) or a.account_id or "",
                                     backend=a.backends.get(p.value) or "")
@@ -451,7 +448,7 @@ def _half_live_state(cfg: Config) -> tuple[bool, str]:
     from fanops.log import get_logger
     try:
         if cfg.is_live and not cfg.live_route_exists:
-            raw = (os.getenv("FANOPS_POSTER") or "").strip() or "(unset)"
+            raw = cfg.poster_backend_raw or "(unset)"
             return True, (f"LIVE flag is set but nothing routes live — FANOPS_POSTER={raw} is ignored "
                             "(it's a legacy bridge, not the switch). Check .env / the Go-Live tab: route a "
                             "channel to a provider with creds, or flip back to dryrun.")

@@ -4,7 +4,6 @@ MOL-298: runtime dependency verdicts are a THIN VIEW over health_model (one Post
 `system_health(cfg)` -> health_model.dep_health_list; `ensure_up` unchanged bring-up behavior."""
 from __future__ import annotations
 import logging
-import os
 import shutil
 import subprocess
 import time
@@ -46,9 +45,10 @@ def zernio_health(cfg: Config) -> DepHealth:
     return zernio_dep_health(cfg)
 
 
-def _postiz_compose_dir() -> Path | None:
-    """Where the Postiz docker-compose stack lives, so the launch can bring it up."""
-    v = (os.getenv("FANOPS_POSTIZ_COMPOSE_DIR") or "").strip()
+def _postiz_compose_dir(cfg: Config) -> Path | None:
+    """Where the Postiz docker-compose stack lives, so the launch can bring it up. FANOPS_POSTIZ_COMPOSE_DIR
+    overrides; otherwise the conventional self-host path. Returns None when neither exists (nothing to start)."""
+    v = (cfg.postiz_compose_dir or "").strip()
     candidate = Path(v).expanduser() if v else (Path.home() / "postiz-selfhost" / "postiz-docker-compose")
     return candidate if candidate.is_dir() else None
 
@@ -80,7 +80,7 @@ def ensure_up(cfg: Config) -> list[str]:
     log: list[str] = []
     if not _docker_health().ok:
         _start_docker(log)
-    compose_dir = _postiz_compose_dir()
+    compose_dir = _postiz_compose_dir(cfg)
     if compose_dir is not None and not postiz_health(cfg).ok:
         _start_postiz(compose_dir, log)
     for line in log:
