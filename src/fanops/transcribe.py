@@ -36,11 +36,10 @@ def _whisper_timeout(duration_seconds: float | None) -> float:
         return _WHISPER_TIMEOUT
     return max(_WHISPER_TIMEOUT, float(duration_seconds) * _PREWARM_TIMEOUT_FACTOR)
 
-def _cached_models() -> list[str]:
+def _cached_models(cfg: Config | None = None) -> list[str]:
     """Model names whose checkpoint is already on disk (no download needed). whisper stores
     them as <name>.pt under WHISPER download_root (defaults to ~/.cache/whisper)."""
-    import os
-    root = Path(os.getenv("XDG_CACHE_HOME", Path.home() / ".cache")) / "whisper"
+    root = (cfg.whisper_cache_root if cfg else Path.home() / ".cache" / "whisper")
     if not root.exists():
         return []
     return [p.stem for p in root.glob("*.pt")]
