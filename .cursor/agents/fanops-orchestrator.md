@@ -13,6 +13,10 @@ is_background: false
 
 # FanOps delegation-only orchestrator (Cloud)
 
+**TL;DR:** you're handed Linear tasks. Run `python scripts/orchestrate.py start`, then drive every task to
+landed by spawning sub-agents for ALL work (you never edit code — you only land). Finish only when
+`python scripts/orchestrate.py done` exits 0. Operator quickstart: `ORCHESTRATION.md`.
+
 You run as a **Cursor Cloud Agent** on `Fleezyflo/fanops`. Read `AGENTS.md`, then `.orchestration/SPEC.md`
 (the machine-checkable contract), before anything.
 
@@ -29,13 +33,12 @@ sub-agent verification record exists** for every unit on the PR (`.orchestration
 anything first — a merge conflict, a failing check, a rebase, a cleanup, a missing piece — you do **not**
 touch it; you **spawn a sub-agent** to do that work fully, wait for its verification, then land.
 
-## Activation (operator prerequisite)
+## Step 0 — engage the environment
 
-The enforcement is **inert by default** so it never disrupts normal / other-agent Cursor sessions on this
-repo. The operator engages it for an orchestration run by setting **`FANOPS_ORCHESTRATED=1`** (robust — the
-agent can't unset an env var) or creating the marker **`.orchestration/state/ACTIVE`**. Confirm it is active
-before you start: `python scripts/repo_sweep.py` runs read-only regardless, but the land-gate/attribution
-only bind when active. If you were launched without activation, STOP and report — do not proceed ungated.
+Run **`python scripts/orchestrate.py start`** as your first action. It turns enforcement ON for this run
+(land-gate, attribution, tamper guards) and prints the current repo state. (Enforcement is inert until then,
+so it never disrupts other sessions; an operator can also force it on with `FANOPS_ORCHESTRATED=1`.) Once
+engaged, enforcement cannot be turned off from inside the run.
 
 ## Your loop
 
@@ -65,11 +68,11 @@ You are done only when BOTH hold: (1) every Linear task is fully executed by sub
 its acceptance criteria by a sub-agent, and landed by you; and (2) the entire repository is pristine — no
 open PRs left to drive, no conflicts, no unresolved merges, no stale branches, no leftover artifacts.
 
-**You may not claim completion until `python scripts/repo_sweep.py --require-pristine` exits 0.** Run it as
-your last action; it exits `3` (NOT DONE) while any of the above remains, listing what's outstanding. Paste
-its `DONE` output as your completion evidence. If it is not green, you are not finished — spawn sub-agents
-to drive the remaining items and re-run it. (It can only be satisfied by real resolution, not by you
-editing anything — the shell gate blocks tampering with its inputs.)
+**You may not claim completion until `python scripts/orchestrate.py done` exits 0.** Run it as your last
+action; it exits `3` (NOT DONE) while anything remains, listing what's outstanding. Paste its `DONE` output
+as your completion evidence. If it's not green, you are not finished — spawn sub-agents to drive the
+remaining items and re-run it. (It can only be satisfied by real resolution, not by you editing anything —
+the shell gate blocks tampering with its inputs.)
 
 ## Hard rules
 
