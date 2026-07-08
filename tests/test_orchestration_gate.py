@@ -122,9 +122,15 @@ def test_append_ledger_writes_jsonl(tmp_path):
 
 # ---- CLI dispatch (stdin JSON -> permission decision) -----------------------
 
-def _run_cli(event, payload, root):
-    import io
+def _run_cli(event, payload, root, active=True):
+    import io, os
     from contextlib import redirect_stdout
+    marker = Path(root) / ".orchestration" / "state" / "ACTIVE"
+    if active:
+        marker.parent.mkdir(parents=True, exist_ok=True); marker.write_text("")
+    elif marker.exists():
+        marker.unlink()
+    prev_env = os.environ.pop("FANOPS_ORCHESTRATED", None)   # deterministic: activation via marker only
     old_stdin, sys.stdin = sys.stdin, io.StringIO(json.dumps(payload))
     buf = io.StringIO()
     try:
@@ -132,6 +138,7 @@ def _run_cli(event, payload, root):
             code = og.main([event, "--root", str(root)])
     finally:
         sys.stdin = old_stdin
+        if prev_env is not None: os.environ["FANOPS_ORCHESTRATED"] = prev_env
     out = buf.getvalue().strip()
     return code, (json.loads(out) if out else {})
 
@@ -215,9 +222,12 @@ def test_prefer_units_uses_branch_then_title_then_body():
     assert og.prefer_units("cursor/feature", "no id", "nothing") == []
 
 
-def test_malformed_payload_denies_shell_but_allows_subagent_events(tmp_path):
+def test_malformed_payload_denies_shell_but_allows_subagent_events(tmp_path, monkeypatch):
     import io
     from contextlib import redirect_stdout
+    monkeypatch.delenv("FANOPS_ORCHESTRATED", raising=False)
+    (tmp_path / ".orchestration" / "state").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".orchestration" / "state" / "ACTIVE").write_text("")   # activate: security fail-closed applies
     def run_raw(event, raw):
         old, sys.stdin = sys.stdin, io.StringIO(raw)
         buf = io.StringIO()
@@ -229,3 +239,33 @@ def test_malformed_payload_denies_shell_but_allows_subagent_events(tmp_path):
         return json.loads(buf.getvalue().strip())
     assert run_raw("before-shell", "{bad json").get("permission") == "deny"      # security: fail closed
     assert run_raw("subagent-start", "{bad json").get("permission") == "allow"   # ledger: fail open
+
+
+# ==== ACTIVATION SCOPING (no collateral outside the orchestration environment) ================
+
+def test_is_active_via_env(tmp_path, monkeypatch):
+    monkeypatch.setenv("FANOPS_ORCHESTRATED", "1")
+    assert og.is_active(tmp_path) is True
+    monkeypatch.setenv("FANOPS_ORCHESTRATED", "off")
+    assert og.is_active(tmp_path) is False
+
+
+def test_is_active_via_marker(tmp_path, monkeypatch):
+    monkeypatch.delenv("FANOPS_ORCHESTRATED", raising=False)
+    assert og.is_active(tmp_path) is False
+    (tmp_path / ".orchestration" / "state").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".orchestration" / "state" / "ACTIVE").write_text("")
+    assert og.is_active(tmp_path) is True
+
+
+def test_gate_is_inert_when_inactive(tmp_path):
+    # destructive / forge / land all pass through when the orchestration env is NOT active — no collateral
+    _, d = _run_cli("before-shell", {"command": "git reset --hard origin/main"}, tmp_path, active=False)
+    assert d.get("permission") == "allow"
+    _, f = _run_cli("before-shell", {"command": "echo x > .orchestration/state/verified/MOL-1.json"}, tmp_path, active=False)
+    assert f.get("permission") == "allow"
+
+
+def test_subagent_start_no_ledger_when_inactive(tmp_path):
+    _run_cli("subagent-start", {"subagent_type": "explore", "task": "x"}, tmp_path, active=False)
+    assert not (Path(tmp_path) / ".orchestration" / "state" / "ledger.jsonl").exists()

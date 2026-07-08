@@ -42,6 +42,18 @@ def _root(arg_root=None) -> Path:
     return Path(arg_root or os.environ.get("CURSOR_PROJECT_DIR") or os.getcwd())
 
 
+def is_active(root=None) -> bool:
+    """Is the delegation-only orchestration ENVIRONMENT engaged for this run? The gate enforces ONLY when
+    active, so committing this hook to the repo does NOT change behavior for normal / other-agent Cursor
+    sessions (no collateral). Activation (set by the OPERATOR, not the orchestrator):
+      * env `FANOPS_ORCHESTRATED` in {1,true,yes,on}  — robust (the agent can't delete an env var), OR
+      * a marker file `.orchestration/state/ACTIVE`     — convenient (git-ignored, per-run).
+    While active, both are protected from tampering (the marker sits under the guarded state dir)."""
+    if str(os.environ.get("FANOPS_ORCHESTRATED", "")).strip().lower() in ("1", "true", "yes", "on"):
+        return True
+    return (_root(root) / ".orchestration" / "state" / "ACTIVE").exists()
+
+
 # ---- pure classification ----------------------------------------------------
 
 def classify_command(cmd: str) -> str:
@@ -168,6 +180,8 @@ def _emit(permission: str, agent_message: str = "", user_message: str = "") -> i
 # ---- event handlers ---------------------------------------------------------
 
 def handle_before_shell(data: dict, root) -> int:
+    if not is_active(root):
+        return _emit("allow")          # inert outside the orchestration environment — no collateral
     cmd = data.get("command", "")
     pp = protected_write_target(cmd)
     if pp:
@@ -193,6 +207,8 @@ def handle_before_shell(data: dict, root) -> int:
 
 
 def handle_subagent_start(data: dict, root) -> int:
+    if not is_active(root):
+        return _emit("allow")          # ledger only records during an orchestration run
     append_ledger(root, {"event": "subagent_start", "subagent_id": data.get("subagent_id"),
                          "subagent_type": data.get("subagent_type"), "task": data.get("task"),
                          "parent_conversation_id": data.get("parent_conversation_id"),
@@ -202,6 +218,8 @@ def handle_subagent_start(data: dict, root) -> int:
 
 
 def handle_subagent_stop(data: dict, root) -> int:
+    if not is_active(root):
+        return _emit("allow")
     append_ledger(root, {"event": "subagent_stop", "subagent_type": data.get("subagent_type"),
                          "task": data.get("task"), "status": data.get("status"),
                          "modified_files": data.get("modified_files"),
@@ -218,9 +236,10 @@ def main(argv=None) -> int:
         raw = sys.stdin.read()
         data = json.loads(raw) if raw.strip() else {}
     except Exception:
-        # Per-event fail posture: the SECURITY event (before-shell) fails CLOSED (deny) on a bad payload;
-        # the ledger events fail OPEN (allow) — a ledger hiccup must never block delegation.
-        if args.event == "before-shell":
+        # Per-event fail posture: the SECURITY event (before-shell) fails CLOSED (deny) on a bad payload —
+        # but ONLY when the orchestration environment is active, so a parse hiccup never blocks a normal /
+        # other-agent session. Ledger events always fail OPEN.
+        if args.event == "before-shell" and is_active(args.root):
             return _emit("deny", agent_message="orchestration gate: unreadable hook payload (failing closed)")
         return _emit("allow")
     if args.event == "before-shell": return handle_before_shell(data, args.root)
