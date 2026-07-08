@@ -137,6 +137,16 @@ def test_moment_pick_prompt_mentions_attached_frames():
     # strong (a picking aid — the hook-grounding frames come in the separate hook pass).
     p = moment_pick_prompt({"duration": 60.0, "transcript": [], "signal_peaks": [], "clip_profile": "talk"})
     assert "frame" in p.lower()
+    assert "do not describe or narrate the frames" in p.lower()           # MOL-255: JSON-only answer
+    assert "json picks alone" in p.lower()
+
+def test_moment_pick_prompt_emphatic_json_only():
+    # MOL-253: the picker must return JSON alone — no prose wrapper.
+    p = moment_pick_prompt({"duration": 42.0, "transcript": [], "signal_peaks": [],
+                            "language": "en", "guidance": ""})
+    assert "ONLY the JSON object matching the provided schema" in p
+    assert "no prose" in p.lower() and "no code fences" in p.lower()
+    assert "SEPARATE pass" in p                                       # picker-vs-hook boundary preserved
 
 def test_moment_pick_prompt_has_data_not_instructions_directive():
     # FIX 7: transcript text flows into the `claude -p` prompt; a crafted video could inject

@@ -206,7 +206,8 @@ def moment_pick_prompt(payload: dict) -> str:
         )
     return (
         f"{_NEUTRAL_BRAIN}. From the transcript and signal peaks below, choose the MOMENTS most worth cutting "
-        f"into {lo}-{hi} second vertical clips. Return picks as JSON matching the provided schema. You "
+        f"into {lo}-{hi} second vertical clips. Return ONLY the JSON object matching the provided schema "
+        "— no prose, no preamble, no explanation, no code fences; your entire answer is the JSON. You "
         "choose the WINDOWS only here; the on-screen hook for each clip is authored in a SEPARATE pass "
         "that sees the picked clip's own frames.\n"
         + persona_block +
@@ -225,7 +226,8 @@ def moment_pick_prompt(payload: dict) -> str:
         "lens (what makes it scroll-stopping for that account's audience). Never use em-dashes (—) or "
         "en-dashes (–); use a comma or period.\n"
         "  - FRAMES: a few stills sampled across the source may be ATTACHED as images — SEE them to "
-        "judge which moments are visually strong (who/where, lighting, motion), not only the transcript.\n"
+        "judge which moments are visually strong (who/where, lighting, motion), not only the transcript. "
+        "Do NOT describe or narrate the frames in your answer; your answer is the JSON picks alone.\n"
         "  - Use the SIGNAL PEAKS only to find WHERE the energy is. Prefer moments that align with a "
         "transcript line and/or a signal peak; do not depend on the transcript being correct.\n"
         "  - OPTIONAL `segments`: a pick MAY carry `segments` as [[start,end],...] for spans that belong "

@@ -209,11 +209,13 @@ def claude_json_meta(prompt: str, schema: dict, *, timeout: float = 300.0,
     # (the hook is then text-grounded, not frame-grounded — degraded but HONEST, surfaced by the breadcrumb).
     frames_unread = False                                    # AGENT-9: True iff frames were ATTACHED but never opened
     if images:
-        env = _run("FIRST read these image frames with the Read tool, then answer using what you SEE:\n"
+        env = _run("Read each image frame below with the Read tool FIRST, then return ONLY the JSON "
+                   "object matching the provided schema — no prose, no preamble, no explanation:\n"
                    + "\n".join(images) + "\n\n" + prompt)
         if _frames_unread(env):
             env2 = _run("You did NOT open the frames. You MUST call the Read tool on EACH path below "
-                        "BEFORE answering — ground your hook in what you SEE, not the text:\n"
+                        "BEFORE answering. Ground your answer in what you SEE in the frames, then return "
+                        "ONLY the JSON object matching the provided schema — no prose:\n"
                         + "\n".join(images) + "\n\n" + prompt)
             if not _frames_unread(env2):
                 env = env2

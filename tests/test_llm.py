@@ -40,6 +40,22 @@ def test_claude_json_with_images_allows_read_and_references_paths(mocker):
     # ECC fix #11: the prompt now rides STDIN (input=), not argv — assert against the kwarg
     prompt = run.call_args.kwargs["input"]
     assert "/tmp/a.jpg" in prompt and "/tmp/b.jpg" in prompt              # told which frames to read
+    assert "hook" not in prompt.lower()                                   # MOL-251: gate-neutral wrapper
+    assert "ONLY the JSON" in prompt and "no prose" in prompt.lower()
+
+def test_claude_json_vision_reask_wrapper_gate_neutral(mocker):
+    # MOL-251: the re-ask string is also gate-neutral — no hook-specific wording.
+    from fanops.llm import claude_json_meta
+    seq = iter([json.dumps({"structured_output": {"x": 1}, "num_turns": 1}),
+                json.dumps({"structured_output": {"x": 2}, "num_turns": 3})])
+    def fake(cmd, **kw):
+        return type("R", (), {"returncode": 0, "stdout": next(seq), "stderr": ""})()
+    run = mocker.patch("fanops.llm.subprocess.run", side_effect=fake)
+    claude_json_meta("pick", _SCHEMA, images=["/f/1.jpg"])
+    reask = run.call_args_list[1].kwargs["input"]
+    assert "hook" not in reask.lower()
+    assert "You did NOT open the frames" in reask
+    assert "ONLY the JSON" in reask and "no prose" in reask.lower()
 
 def test_claude_json_without_images_stays_pure_generator(mocker):
     # Regression: the default (text-only) path is byte-identical — no Read tool, no file access.
