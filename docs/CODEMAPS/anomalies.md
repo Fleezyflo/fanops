@@ -1,7 +1,7 @@
 <!-- Generated: 2026-07-03 | Source: 10 exhaustive Sonnet-agent subsystem traces (docs/CODEMAPS/subsystem-traces/C1-C10) cross-referenced against deterministic AST/call-graph analysis (.reports/) | Token estimate: ~1400 -->
 # FanOps Anomaly Ledger
 
-Every anomaly, dead-code lead, and silent-failure site found across the full 108-module trace
+Every anomaly, dead-code lead, and silent-failure site found across the full 109-module trace
 (see [full-trace-index.md](full-trace-index.md) for the trace methodology and coverage proof).
 Grouped by cluster, in file:line order. This is the flat, complete ledger — the index file
 summarizes and ranks; this file is exhaustive.
@@ -45,7 +45,7 @@ one wiring bug, one docs-staleness item.
 - `accounts.py:576` `set_ig_user_id` — **NOT dead (corrected on validation).** Called via `set_ig_user_id as _accounts_set_ig_user_id` at `studio/golive.py:381`.
 - `persona_levers.py:87` `is_exempt` — dead code, zero callers (confirmed by sweep).
 - `persona_levers.py:107` `channels` — dead code, zero callers; own docstring claim ("the M4 manifest reads it") is inaccurate — `manifest` actually calls `channels_of`.
-- `casting.py:40` `_record_fact` — `except Exception: pass`. Deliberate best-effort audit-trail write ("must never lose the casting"), documented.
+- ~~`casting.py:40` `_record_fact`~~ — **REMOVED P11** (module is now 22 lines; `affinity_admits` only).
 - `persona_directives.py:287` `persona_facts` — `except Exception: store = None`. **Silently swallows any hashtag-store load error with no logging** — the one unlogged handler in this cluster; every sibling fail-open path logs via `get_logger` first.
 - `persona_research.py:56` `discover_corpus` — `except Exception: cands = []`. Documented fail-open.
 - `accounts.py:250` `_hydrate_from_personas` — `except Exception: return`. Documented fail-open, leaves inline values untouched.
@@ -56,7 +56,7 @@ one wiring bug, one docs-staleness item.
 - `caption.py:45` `normalize_variation_axis` — dead code; dormant P2 creative-variation-axis machinery, a tracked follow-up.
 - `caption.py:51` `coherent_variation` — dead code; T2 coherence gate for the same dormant loop.
 - `llm.py:180` `claude_json` — flagged zero-caller by the call graph; **false positive**, actually called via `studio/actions.py:138-139` (`from fanops.llm import claude_json; model = claude_json`), a name-alias the graph missed.
-- `prompts.py:166,242,361` (`moment_pick_prompt`, `moment_hook_prompt`, `caption_prompt`) — all flagged zero-caller; false positives, invoked via `responder.py`'s `_PROMPT[kind](payload)` dict-dispatch. (`moment_casting_prompt` removed P11.)
+- `prompts.py:166,247,311` (`moment_pick_prompt`, `moment_hook_prompt`, `caption_prompt`) — all flagged zero-caller; false positives, invoked via `responder.py`'s `_PROMPT[kind](payload)` dict-dispatch. (`moment_casting_prompt` removed P11.)
 - `hashtags.py:179-193` `vet_hashtags` reserved-floor logic evaluates against `kept[:max_tags]` (the cap window) rather than the full `kept` list — deliberate per inline comment, but subtle enough that a naive re-implementation could silently break the floor guarantee. Design note, not a bug.
 - 9 `except Exception` sites across `caption.py`, `fanops_hashtags.py`, `llm.py` — all either log, return a documented fail-open sentinel, or re-raise a typed error. None silent.
 

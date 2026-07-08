@@ -1,39 +1,32 @@
-Codemap update — 2026-06-21 (IG account-connection resolution)
+Codemap update — 2026-07-08 (auto-sync to 9c4b3b8)
 ================================================================
-Prior scan: 2026-06-19 (feat/content-lifecycle, post-approval lifecycle).
+Trigger: PR #410 merged (MOL-237 `_json_candidates` + `_extract_json_object` in llm.py) +
+full CODEMAPS re-sync against origin/main post-P11 casting model.
 
-Trigger: connected perca.late + cisumwolfhom to Postiz; root-caused the day-long
-connect failure (wrong INSTAGRAM_APP_SECRET in the Postiz container env).
+DETERMINISTIC ARTIFACTS REGENERATED
+- .reports/ast_extract.py, build_graphs.py (restored from prior codemap commit; stdlib-only)
+- .reports/structural_index.json — 109 modules
+- .reports/import_graph.json, call_graph.json — 1,320 callables (was 1,067)
+- .reports/unreferenced_candidates.json — 355 leads (was 55)
 
-CODEMAPS UPDATED
-- docs/CODEMAPS/account-connection.md  (REWRITTEN, < 30% threshold → in place)
-    * Verified state: all THREE fan accounts now connected + mapped
-      (markmakmouly cmqeb1uuv0001o579bjcdj7my, perca.late cmqno51tb0001p68ez9tx5a6k,
-       cisumwolfhom cmqno5ops0003p68ea2k3kgzs).
-    * "BLOCKER (unresolved)" -> "RESOLVED connect failure": root cause = wrong
-      INSTAGRAM_APP_SECRET in container env; Meta's "redirect_uri identical" is its
-      generic bad-client-secret error; fix = correct secret in compose + docker compose up -d.
-    * App-id reference corrected to the IG app id 976142145032195 (OAuth client_id).
-    * Non-stock cookie/data[] patches reclassified NOT-required-for-connect (stock connected).
+CODEMAPS UPDATED (semantic hand-sync)
+- docs/CODEMAPS/full-trace-index.md — stats + date
+- docs/CODEMAPS/README.md — fresh-ingestion date
+- docs/CODEMAPS/anomalies.md — 109 modules; remove casting._record_fact (gone P11); prompt line refs
+- docs/CODEMAPS/fresh-ingestion-trace.md — sha/date; clarify _target_pick_count is prompt-only ceiling
+- docs/CODEMAPS/system-lens-map.md — persona downstream chains post-P11; account_casting not creative_variation
+- docs/CODEMAPS/subsystem-traces/C1_data_model.md — v11 ledger: drop AccountSelection APIs from live inventory
+- docs/CODEMAPS/subsystem-traces/C4_moments_casting_personas.md — Accounts.active/validate callers
+- docs/CODEMAPS/subsystem-traces/C5_caption_hooks_hashtags.md — llm.py MOL-237 helpers + LlmSchemaError; _data_fence kept
+- docs/CODEMAPS/subsystem-traces/C6_crosspost_publish_post.md — _mark_context_limit (no moment_casting)
+- docs/CODEMAPS/subsystem-traces/C9_studio_backend.md — reburn_hook/approve_with_hook/preview_media post-P11
+- docs/CODEMAPS/subsystem-traces/C10_studio_views.md — gate_rows kinds (no moment_casting)
 
-CODEMAPS NOT CHANGED (verified still accurate)
-- docs/CODEMAPS/architecture.md   (no connection-state claims; FanOps structure unchanged)
-- docs/CODEMAPS/data.md           (data model + accounts.json schema unchanged)
-- docs/CODEMAPS/dependencies.md   (Postiz dependency unchanged; only a config VALUE was wrong)
+CODEMAPS NOT REWRITTEN (dated audit snapshots — superseded banners retained)
+- docs/CODEMAPS/lifecycle-full-picture.md — 2026-06-27 audit; casting-stage body is historical
 
-SCAN DELTA
-- Source changes this session: NONE (git status --porcelain src/ empty) -> structural
-  codemaps remain current; no regeneration needed.
-- Data changes: MohFlow-FanOps/00_control/accounts.json (perca.late + cisumwolfhom
-  integrations['instagram'] populated via accounts.write_integration).
-- New dependencies: none. New routes/services: none.
-
-COMPANION DOCS (rewritten same session, narrative)
-- docs/INSTAGRAM_CONNECT.md  (full guide: root cause, proof, fix, false-elimination warnings)
-- docs/POSTIZ_SETUP.md       (Instagram callout corrected)
-
-STALENESS NOTE
-- No doc > 90 days stale. The previous account-connection codemap + guide enshrined a WRONG
-  root cause (redirect/scopes/multi-hop) and an actively harmful false elimination
-  ("INSTAGRAM_APP_SECRET valid") — both corrected. Lesson: do not record an unproven
-  hypothesis as a ruled-out fact in a codemap.
+DRIFT CORRECTED (high level)
+- P11 casting teardown: removed live references to account_selection_admits, casting_gate_pending,
+  casting._persona_donor_moments, cfg.creative_variation gates, moment_casting in gate_rows
+- MOL-237: documented _json_candidates, _extract_json_object, LlmSchemaError in C5
+- SCHEMA v11: C1 ledger inventory no longer lists live AccountSelection mutation APIs
