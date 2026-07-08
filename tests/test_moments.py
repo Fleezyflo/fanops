@@ -894,3 +894,24 @@ def test_bounded_transcript_no_corpus_byte_identical():
     baseline = _bounded_transcript(segs, peaks)
     assert _bounded_transcript(segs, peaks, corpus=None) == baseline
     assert _bounded_transcript(segs, peaks, corpus=[]) == baseline
+
+
+# --- MOL-230: vision finalizer recovers a well-formed MomentDecision on the pick gate ---
+def test_vision_finalizer_yields_valid_moment_decision(mocker):
+    """Prose-only vision turn -> schema-only finalizer -> valid MomentDecision (not None/degraded)."""
+    from fanops.responder import _default_claude_model
+    pick = {"start": 10.0, "end": 28.0, "reason": "the bar lands as the beat drops"}
+    decision = {"picks": [pick]}
+    prose = "I reviewed the attached frames. Strong energy mid-source but returning prose."
+    seq = iter([json.dumps({"structured_output": None, "result": prose, "num_turns": 2}),
+                json.dumps({"structured_output": decision, "num_turns": 1})])
+    def fake(cmd, **kw):
+        return type("R", (), {"returncode": 0, "stdout": next(seq), "stderr": ""})()
+    run = mocker.patch("fanops.llm.subprocess.run", side_effect=fake)
+    out = _default_claude_model("moments", {"source_id": "src_1", "duration": 60.0,
+                                            "frames": ["/f/a.jpg", "/f/b.jpg"],
+                                            "transcript": [{"start": 10, "end": 28, "text": "bar"}],
+                                            "signal_peaks": [], "language": "en", "guidance": ""})
+    dec = MomentDecision(**out)
+    assert len(dec.picks) == 1 and dec.picks[0].start == 10.0 and dec.picks[0].end == 28.0
+    assert run.call_count == 2
