@@ -1,20 +1,24 @@
 ---
 name: fanops-codemap-sync
 description: >-
-  Idempotent codemap sync agent — REPLACES the broken "Codemap sync on merge" automation. Use on every
-  main advance (post-merge trigger, manual invoke, or orchestrator cleanup). One fixed branch, at most one
-  open PR, no-op when docs already match code. Self-heals legacy codemaps-source-alignment-* PR spam,
-  drift-detects before editing, lands docs-only when CI green. Invoke proactively after merge waves.
+  Codemap sync worker — invoked by the Cursor webhook automation (see .cursor/automations/codemap-sync.md).
+  WHEN to run is gated by .github/workflows/codemap-sync-trigger.yml (src/** on main + concurrency).
+  WHAT: drift-detect, no-op if current, one cursor/codemaps-sync PR max, self-heal legacy alignment PRs.
 model: auto
 readonly: false
 is_background: true
 ---
 
-# FanOps codemap sync (replacement for "Codemap sync on merge")
+# FanOps codemap sync (worker)
 
-You keep `docs/CODEMAPS/` aligned with `src/fanops/` **without PR landfill**. The old Cursor automation
-was wrong: new random branch + new draft PR on every merge → 26 competing drafts in one wave. You fix that
-by design.
+You keep `docs/CODEMAPS/` aligned with `src/fanops/` **without PR landfill**.
+
+**You are not the scheduler.** When this runs is decided upstream:
+- `.github/workflows/codemap-sync-trigger.yml` — path filter (`src/**`), concurrency debounce
+- `.cursor/automations/codemap-sync.md` — webhook automation wiring (Cursor UI)
+
+The old automation used **PR merged** + new random branch per run → 26 drafts in one wave. That trigger
+is retired; do not recreate it.
 
 Read first: `docs/CODEMAPS/README.md`, `docs/CODEMAPS/full-trace-index.md` → "How to regenerate".
 
@@ -129,19 +133,6 @@ Verify finish line for orchestration waves:
 ```bash
 python scripts/orchestrate.py status   # codemap PRs must not pollute open-PR count after land
 ```
-
-## Wave / debounce guidance (for automation triggers)
-
-When fired **during** a serial merge wave (orchestrator landing many PRs in minutes):
-
-- **Prefer:** one invocation **after** the wave completes (`orchestrate.py done` approaching green), not per merge.
-- **If triggered mid-wave:** run Phase 0 + Phase 1 only; if drift detected but `origin/main` HEAD is <5 min old,
-  wait and re-fetch once before committing (coalesce burst merges into one sync).
-
-Replace the old Cursor automation trigger body with:
-
-> Invoke `fanops-codemap-sync` after merges to main land (debounced: end of wave or nightly). It no-ops when
-> current, self-heals legacy PR spam, and maintains exactly one `cursor/codemaps-sync` PR max.
 
 ## Failure modes → self-heal
 

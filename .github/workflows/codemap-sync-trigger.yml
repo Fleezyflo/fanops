@@ -1,0 +1,48 @@
+name: codemap-sync-trigger
+
+# WHEN codemap sync runs — repo-owned gate. Cursor automations have no path filters or
+# debounce; "PR merged" fires once per merge and caused 26 draft PRs in one wave.
+#
+# This workflow POSTs to the Cursor automation webhook ONLY when:
+#   • push lands on main (post-merge)
+#   • src/fanops/** changed (docs-only merges do not fire)
+#   • concurrency cancels in-flight runs (merge wave → one webhook at wave end)
+#
+# Setup: .cursor/automations/codemap-sync.md
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+  workflow_dispatch:
+
+concurrency:
+  group: codemap-sync-${{ github.repository }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  trigger:
+    name: POST Cursor codemap-sync webhook
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Fire webhook (skip if secrets not wired)
+        env:
+          WEBHOOK_URL: ${{ secrets.CURSOR_CODEMAP_SYNC_WEBHOOK_URL }}
+          WEBHOOK_TOKEN: ${{ secrets.CURSOR_CODEMAP_SYNC_WEBHOOK_TOKEN }}
+          SHA: ${{ github.sha }}
+          REF: ${{ github.ref_name }}
+        run: |
+          if [[ -z "$WEBHOOK_URL" || -z "$WEBHOOK_TOKEN" ]]; then
+            echo "[codemap-sync-trigger] secrets not set — skip (wire per .cursor/automations/codemap-sync.md)"
+            exit 0
+          fi
+          curl -fsS -X POST "$WEBHOOK_URL" \
+            -H "Authorization: Bearer ${WEBHOOK_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{\"event\":\"codemap_sync\",\"repository\":\"${{ github.repository }}\",\"ref\":\"${REF}\",\"sha\":\"${SHA}\"}"
+          echo "[codemap-sync-trigger] webhook POST ok @ ${SHA:0:7}"
