@@ -16,7 +16,7 @@
 5. `src/fanops/persona_levers.py` (217 lines) — read
 6. `src/fanops/persona_research.py` (60 lines) — read
 7. `src/fanops/persona_store.py` (228 lines) — read
-8. `src/fanops/accounts.py` (629 lines) — read
+8. `src/fanops/accounts.py` (620 lines) — read
 9. `src/fanops/batches.py` (56 lines) — read
 
 Cross-checked against `.reports/structural_index.json` and `.reports/call_graph.json`. Note: there are look-alike files elsewhere (`src/fanops/studio/actions_casting.py`, `src/fanops/studio/app_routes_personas.py`, `src/fanops/studio/personas.py`) which are Studio-layer callers, NOT part of this cluster — excluded per the exact file list given.
@@ -189,7 +189,7 @@ The lever engine (`persona_levers.py`) is the single upstream declaration. `pers
 - `Surface` (`NamedTuple`) — `(account, account_id, platform)`.
 - `Accounts.__init__(cfg)` — trivial.
 - `Accounts.load(cfg)` (classmethod) — reads `cfg.accounts_path`, parses JSON into `Account` list; raises `ControlFileError` (chained) on a corrupt file — deliberately distinct from a missing-file I/O error, which is allowed to raise raw ("a real problem, not 'invalid'"). **Always calls `_hydrate_from_personas(a, cfg)` before returning.** Called throughout the CLI/pipeline/studio.
-- `Accounts.active()` — pure filter on `AccountStatus.active`. Called by `live_ready_channels`, `surfaces`, `validate`, `casting._persona_donor_moments`/`_upgrade_stale_fan_all_defaults`/`casting_gate_failed_to_open`.
+- `Accounts.active()` — pure filter on `AccountStatus.active`. Called by `live_ready_channels`, `surfaces`, `validate`, `moments._pick_personas`, `crosspost.crosspost_clips`, Studio views.
 - `Accounts.resolve_account_id(handle, platform=None)` — pure lookup: prefers `integrations[platform]`, falls back to `account_id`; raises `KeyError` (loud, never returns `""`) if the handle is known but has no id for the platform, or if the handle is entirely unknown. Called by `post.run._resolve_publish_account_id`.
 - `Accounts.resolve_backend(handle, platform=None)` — pure lookup; returns `None` (never raises) when no override — the normal case. Called by `effective_provider`, Studio's `golive.go_live`.
 - `Accounts.effective_provider(handle, platform=None)` — pure: explicit per-channel `backends` override, else a platform-aware bridge to the legacy global `FANOPS_POSTER` (only if it's a LIVE backend that actually serves the platform). `None` if neither. Called by `live_ready_channels`, `post.compress.publish_backend_for_post`, `post.run._post_provider`, `reconcile._reconcilable_routing`, Studio views.

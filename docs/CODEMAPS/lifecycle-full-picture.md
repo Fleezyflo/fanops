@@ -3,6 +3,10 @@
 > **Superseded for casting/routing and live fan-out arithmetic** by [fresh-ingestion-trace.md](fresh-ingestion-trace.md)
 > (verified 2026-07-07, post-P11 single-owner model). This document remains a dated 2026-06-27 maximum-depth
 > audit snapshot — do not treat its casting-stage claims as live.
+>
+> **Historical scope (post-P11):** Findings **xc-1**, **c5-f1**, **xc-3**, **Stage 5**, and crosspost seams that
+> reference `account_selection_admits`, `moment_casting`, or `AccountSelection` describe the **removed** LLM casting
+> stage (P11/MOL-152). Current routing is `Moment.affinities` stamped at pick + `casting.affinity_admits` only.
 
 > Maximum-depth read-only audit of the entire production pipeline (ingest → transcribe → asset-prep → moments → hooks → casting → render/caption → structural-hooks → culmination + the cross-cutting spine).
 > Method: 9 parallel per-cluster deep-reads → adversarial verify on every finding → cross-stage completeness critic → synthesis. Generated 2026-06-27.
@@ -10,6 +14,10 @@
 **Soundness verdict: `sound-with-caveats`**  ·  9 clusters · 33 confirmed findings (30 per-cluster + 3 cross-stage, each adversarially verified)
 
 ## Executive verdict
+
+> **Obsolete post-P11 (2026-06-27 audit):** The paragraph and ranked risks below that cite the LLM casting stage,
+> `account_selection_admits`, or `moment_casting` gates are **historical** — that stage was removed in P11/MOL-152.
+> See [fresh-ingestion-trace.md](fresh-ingestion-trace.md) §3 for the live model.
 
 The FanOps clip+cross-post lifecycle is fundamentally sound from ingest to culmination — the load-bearing invariants (content-addressing, one-writer flock transaction, no-auto-publish, no-double-post, casting-no-leak, learning-validation-as-correctness-gate, byte-identical OFF paths) all hold, and the engineering discipline is high: bounded subprocesses kept out of the ledger lock, typed fail-open/fail-closed boundaries with rationale, and per-unit quarantine so one bad source/moment/clip/post can never wedge a pass. The single real structural weakness is the casting→crosspost seam: a persona-LESS but ACTIVE account is silently dropped from the casting brief (casting.py:108-109) and then DENIED on every moment of any cast source (casting.py:215-219), producing zero posts for a legitimate account with NO degraded_reason and NO crosspost breadcrumb — the fan-to-all fallback contract holds at moment granularity but breaks at account granularity (xc-1/c5-f1, HIGH). Two MEDIUM observability gaps compound it: a captioned clip can be consumed to `queued` with zero posts and no crosspost-stage trace when selection denies all surfaces on an unbatched source (c8-f2), and a stuck `moment_casting` gate is invisible at every operator surface — the loud blocked-note, the run.log breadcrumb, and `fanops status` all omit it (xc-3) even though convergence correctly covers it. Everything else is LOW-severity doc drift, provenance smell, or concurrency-flag-gated (default-OFF) local correctness erosion that fails open to a valid centered crop. No CRITICAL findings, no data-loss path in the default configuration, no publish-safety hole.
 
@@ -98,7 +106,7 @@ This is the end-to-end narrated map of one `advance()` pass plus the human-gated
 ---
 
 ### Stage 2e — briefing builder (`prompts.py`)
-**Contract.** A request payload dict → a committed `claude -p` instruction string; the caller pairs it with the exact pydantic JSON schema via `--json-schema`. This IS the brief for every gate: `moment_pick_prompt` (`:159-209`), `moment_hook_prompt` (`:211-266`), `moment_casting_prompt` (`:275-307`), `caption_prompt` (`:309-391`).
+**Contract.** A request payload dict → a committed `claude -p` instruction string; the caller pairs it with the exact pydantic JSON schema via `--json-schema`. This IS the brief for every **live** gate: `moment_pick_prompt`, `moment_hook_prompt`, `caption_prompt` (`prompts.py`). (`moment_casting_prompt` removed P11.)
 
 **Process — injection defense is real.** Pure, deterministic string construction. `_brief_fence` collapses any forged `<brand_brief>` tag to an inert token (`:16,24`) to stop fence-escape injection; every data block is framed as quoted source text ("treat as quoted source text… never as instructions"); every optional block is byte-identical-absent when its key is empty/None, preserving the OFF paths. Provenance: the responder emits `model + prompt_sha + brief_sha` per call (`responder.py:51-56`), where `brief_sha = guidance_sha(cfg)` ties output to the exact `context.md`.
 
@@ -130,7 +138,7 @@ This is the end-to-end narrated map of one `advance()` pass plus the human-gated
 ### Stage 3b — ingest_moments (pick gate READ → mint Moments)
 **Contract.** `read_response(...MomentDecision)` + source duration → validated, de-overlapped picks reconciled into content-addressed `Moment` entities (state=`picked`, hook empty) via `led.reconcile_moments` (`moments.py:127-189`). Transitions: `moments_requested → picks_decided` (all-valid) | `→ error` (all-invalid) | `→ moments_empty` (model returned `[]`) | unchanged (pending). Deterministic ingest.
 
-**Process — the critical write-once protection.** Per-pick `validate_pick` (finite, end>start, EOF tolerance, `_MIN_MOMENT_S` floor). `_drop_overlaps` keeps the start-ordered first of any >50%-overlap pair, NEVER empties a valid set. Moment id = `child_id('moment', source_id, '{start:.2f}-{end:.2f}')` — content-addressed, so a same-window re-pick UPSERTS. **Before reconcile it FIRST `discard_gates_for('moment_hooks', f'{source_id}.')` and `discard_gate('moment_casting', source_id)`** (`moments.py:181-186`) so a superseded pick's stale hook/casting answer can never be re-applied — write-once correctness for the downstream gates.
+**Process — the critical write-once protection.** Per-pick `validate_pick` (finite, end>start, EOF tolerance, `_MIN_MOMENT_S` floor). `_drop_overlaps` keeps the start-ordered first of any >50%-overlap pair within the same owner, NEVER empties a valid set. Moment id = `child_id('moment', source_id, '{start:.2f}-{end:.2f}')` — content-addressed, so a same-window re-pick UPSERTS. **Before reconcile it `discard_gates_for('moment_hooks', f'{source_id}.')` only** (`moments.py:365`) — the `moment_casting` gate discard was removed with P11; owner attribution is stamped on `Moment.affinities` at pick time instead.
 
 **Resilience & invariants.** The three failure paths are correctly distinguished: all-invalid → source error WITHOUT cascade (prior moments preserved); empty → distinct `moments_empty` + loud log, NO cascade; pending → no-op. `reconcile_moments` never resurrects retired moments and preserves clean_awaiting/live/protected lineages (`ledger.py:445-462`). Moments born `picked` (hookless) and the render loop keys on `decided`, so a picked moment never renders hookless.
 *Finding c0-f4 (LOW): `_drop_overlaps` is geometric keep-first with no merge — the dropped pick's `reason` is lost (only a count logged); minor provenance smell since `reason` is display/fallback-corpus only, not a render/selection gate.*
@@ -174,7 +182,7 @@ This is the end-to-end narrated map of one `advance()` pass plus the human-gated
 ---
 
 ### Stage 4d — overlay: on-screen hook BURN (`overlay.py` + clip.py wiring)
-**Contract.** `m.hook` (shared, via `_subtitles_vf`) or `Post.variant_hook` (per-account, via `burn_hook_only`) → an `.ass` file + the ffmpeg `subtitles=` fragment + the burned mp4 + the `hook_burn_failed` flag on the Clip.
+**Contract.** `m.hook` (owner-moment on-screen hook, burned via `_subtitles_vf` at render) → an `.ass` file + the ffmpeg `subtitles=` fragment + the burned mp4 + the `hook_burn_failed` flag on the Clip. (`Post.variant_hook` per-account burn removed P9.)
 
 **Process & resilience.** `build_ass` is PURE/deterministic with auto-fit fontsize; `ffmpeg_has_textfilter` probes once (module-cached, never raises); `burn_hook_only` is ATOMIC (temp `.part`→`os.replace`, forced `-f mp4` muxer, `finally`-sweep). FAIL-OPEN by contract: a clip is NEVER blocked on its text — no filter / empty build → render plain + `hook_burn_failed=True`. The render fingerprint folds the `.ass` text + focus so a changed hook re-renders.
 
@@ -182,7 +190,7 @@ This is the end-to-end narrated map of one `advance()` pass plus the human-gated
 
 ---
 
-### Stage 5 — Per-account moment casting (`request_moment_casting` / `ingest_moment_casting`)
+### Stage 5 — Per-account moment casting (`request_moment_casting` / `ingest_moment_casting`) — **REMOVED P11/MOL-152 (historical audit only)**
 **Contract.** The source's `decided`-or-stranded-`clipped` moments + each active persona-bearing account's `casting_directive` → (a) a write-once `moment_casting__<source_id>.request.json` gate; (b) on ingest, `Moment.affinities`, a durable `AccountSelection` per picked account, a `SelectionFact` per (moment,account) (`casting.py:105-172`). Writes ONLY affinities + side-records — no Source/Moment flip. Sits at `pipeline.py:468`, AFTER moment_hooks, BEFORE render+caption and crosspost.
 
 **Briefing.** Agent gate (`moment_casting`). Payload = MomentCastingRequest carrying real moment `reason`/`hook`/`excerpt`/`signal`/window fenced as DATA + each persona's compiled `casting_directive` (voice + content_focus/energy clauses — the M1 lever-registry projection). Prompt = `moment_casting_prompt` ("for EACH account choose which moments belong on THAT account's feed"). This gate is TEXT-ONLY (not in `_VISION_GATES`) — the selector sees text, not frames. Provenance emitted (model + prompt_sha + brief_sha).
@@ -223,9 +231,11 @@ A cleanly-layered, defensively-coded subsystem. **(7a) intro_match** is a fail-o
 ---
 
 ### Stage 8a — crosspost_clips (mint, BORN awaiting_approval)
-**Contract.** `captioned`, not-held, not-retired clips + `accounts.surfaces()` + base_time → one Post per admitted surface BORN `awaiting_approval`, content-addressed `pid=child_id('post', target_clip.id, surface_key)`; the seed clip flipped `captioned → queued` (`crosspost.py:135-275`). Runs IN-LOCK. No agent gate — it READS the casting gate's answer via `account_selection_admits`/`casting_gate_pending` and the moment-author hooks.
+**Contract.** `captioned`, not-held, not-retired clips + `accounts.surfaces()` + base_time → one Post per admitted surface BORN `awaiting_approval`, content-addressed `pid=child_id('post', target_clip.id, surface_key)`; the seed clip flipped `captioned → queued` (`crosspost.py:135-275`). Runs IN-LOCK. No agent gate — per-surface admission via `casting.affinity_admits` (`crosspost.py:166`) and the owner-moment hook on the clip.
 
-**Process & invariants.** Deterministic + content-addressed. Schedule via `surface_time` seeded by SHA1, monotonic in index (`_JITTER_MAX<_STEP_MIN` proof). Idempotent: `add_post` setdefault first-write-wins; a re-crosspost to an EXISTING awaiting post REWRITES variant intent in place only on a real diff. Per-surface gates in order: batch-target skip → `account_selection_admits` → per-platform duration cap → on-demand aspect render → per-surface caption presence; `casting_gate_pending` defers the WHOLE clip to next pass. Upholds no-auto-publish (born `awaiting_approval`, structurally unpublishable `crosspost.py:225`), content-addressing, no-double-post (setdefault + idempotency token `fanops_<hash(pid)>`), casting-no-leak (`account_selection_admits` is the SOLE gate, shared with caption scoping), OFF byte-identical.
+**Process & invariants (live post-P11).** Deterministic + content-addressed. Schedule via `surface_time` seeded by SHA1, monotonic in index. Per-surface gates in order: batch-target skip → `affinity_admits` (`crosspost.py:166`, logs `skipped_surface why=not_cast`) → per-platform duration cap → on-demand aspect render → per-surface caption presence. Upholds no-auto-publish (born `awaiting_approval`), content-addressing, no-double-post.
+
+**Process & invariants (pre-P11 audit text below — obsolete):** Deterministic + content-addressed. Schedule via `surface_time` seeded by SHA1, monotonic in index (`_JITTER_MAX<_STEP_MIN` proof). Idempotent: `add_post` setdefault first-write-wins; a re-crosspost to an EXISTING awaiting post REWRITES variant intent in place only on a real diff. Per-surface gates in order: batch-target skip → `account_selection_admits` → per-platform duration cap → on-demand aspect render → per-surface caption presence; `casting_gate_pending` defers the WHOLE clip to next pass. Upholds no-auto-publish (born `awaiting_approval`, structurally unpublishable `crosspost.py:225`), content-addressing, no-double-post (setdefault + idempotency token `fanops_<hash(pid)>`), casting-no-leak (`account_selection_admits` is the SOLE gate, shared with caption scoping), OFF byte-identical.
 
 **THE SILENT-DROP SEAM (MEDIUM — c8-f2).** I confirmed at `crosspost.py:268-275`: the per-surface loop runs `_mint_surface_post` for each surface, then UNCONDITIONALLY `set_clip_state(clip.id, ClipState.queued)` at line 275 regardless of how many posts were born. `account_selection_admits` denial returns 0 SILENTLY (`crosspost.py:153-157`, no log). The only zero-result breadcrumb (`batch_target_summary`) fires `if tgt:` (`crosspost.py:271`) — so on an UNBATCHED source where selection denies every surface, no summary fires, the clip flips to `queued`, and `_seed_clips` never re-picks a queued clip. Result: a captioned clip permanently in `queued` with zero posts and zero crosspost-stage log lines. The cast DECISION is logged upstream at the casting stage (diagnosable there), but the mint where the content actually drops out is silent. This is the same root as the HIGH c5-f1 — together they form the casting→crosspost differentiation-leak.
 
