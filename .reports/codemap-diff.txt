@@ -1,39 +1,22 @@
-Codemap update — 2026-06-21 (IG account-connection resolution)
+Codemap auto-sync — 2026-07-08 @ origin/main b344801
 ================================================================
-Prior scan: 2026-06-19 (feat/content-lifecycle, post-approval lifecycle).
+Trigger: MOL-235 merged (#414) + post-P11 casting model drift in codemaps.
 
-Trigger: connected perca.late + cisumwolfhom to Postiz; root-caused the day-long
-connect failure (wrong INSTAGRAM_APP_SECRET in the Postiz container env).
+REGENERATED (.reports/)
+- ast_extract.py / build_graphs.py restored from prior sync commit
+- structural_index.json: 109 modules
+- call_graph.json: 1,323 callables (1141 fn + 182 methods)
+- unreferenced_candidates.json: 354 leads
 
-CODEMAPS UPDATED
-- docs/CODEMAPS/account-connection.md  (REWRITTEN, < 30% threshold → in place)
-    * Verified state: all THREE fan accounts now connected + mapped
-      (markmakmouly cmqeb1uuv0001o579bjcdj7my, perca.late cmqno51tb0001p68ez9tx5a6k,
-       cisumwolfhom cmqno5ops0003p68ea2k3kgzs).
-    * "BLOCKER (unresolved)" -> "RESOLVED connect failure": root cause = wrong
-      INSTAGRAM_APP_SECRET in container env; Meta's "redirect_uri identical" is its
-      generic bad-client-secret error; fix = correct secret in compose + docker compose up -d.
-    * App-id reference corrected to the IG app id 976142145032195 (OAuth client_id).
-    * Non-stock cookie/data[] patches reclassified NOT-required-for-connect (stock connected).
+CODEMAPS CORRECTED (semantic)
+- P11 casting teardown: affinity_admits-only model across C4/C6/C9/C10/system-lens-map
+  (removed live claims for moment_casting gate, AccountSelection, account_selection_admits)
+- C6: MOL-235 responder gate ceiling (_on_deterministic_fail, _terminate_gate_source,
+  bump_attempts/clear_attempts); render_spec/render_moment_file P9 names; line counts
+- C1/data: SCHEMA v11 ledger shape; SelectionFact/AccountSelection historical only
+- fresh-ingestion-trace.md: ground-truth sha b344801
+- lifecycle-full-picture.md: historical-context banner for obsolete casting findings
+- anomalies.md: deterministic gate failure now surfaces + terminates (MOL-235)
 
-CODEMAPS NOT CHANGED (verified still accurate)
-- docs/CODEMAPS/architecture.md   (no connection-state claims; FanOps structure unchanged)
-- docs/CODEMAPS/data.md           (data model + accounts.json schema unchanged)
-- docs/CODEMAPS/dependencies.md   (Postiz dependency unchanged; only a config VALUE was wrong)
-
-SCAN DELTA
-- Source changes this session: NONE (git status --porcelain src/ empty) -> structural
-  codemaps remain current; no regeneration needed.
-- Data changes: MohFlow-FanOps/00_control/accounts.json (perca.late + cisumwolfhom
-  integrations['instagram'] populated via accounts.write_integration).
-- New dependencies: none. New routes/services: none.
-
-COMPANION DOCS (rewritten same session, narrative)
-- docs/INSTAGRAM_CONNECT.md  (full guide: root cause, proof, fix, false-elimination warnings)
-- docs/POSTIZ_SETUP.md       (Instagram callout corrected)
-
-STALENESS NOTE
-- No doc > 90 days stale. The previous account-connection codemap + guide enshrined a WRONG
-  root cause (redirect/scopes/multi-hop) and an actively harmful false elimination
-  ("INSTAGRAM_APP_SECRET valid") — both corrected. Lesson: do not record an unproven
-  hypothesis as a ruled-out fact in a codemap.
+UNCHANGED (verified still accurate)
+- insights-culmination.md, persona-levers.md, hashtag-lifecycle.md, dependencies.md

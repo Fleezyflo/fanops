@@ -1,4 +1,4 @@
-<!-- Generated: 2026-07-07 | Method: deterministic AST extraction (.reports/ast_extract.py) + derived call/import graphs (.reports/build_graphs.py) + hand-verified semantic sync | Files scanned: 109/109 src/fanops/*.py | Token estimate: ~2400 -->
+<!-- Generated: 2026-07-08 | Method: deterministic AST extraction (.reports/ast_extract.py) + derived call/import graphs (.reports/build_graphs.py) + hand-verified semantic sync | Files scanned: 109/109 src/fanops/*.py @ b344801 | Token estimate: ~2400 -->
 # FanOps Full-Codebase Trace Index
 
 Master index for a zero-omission, function-by-function trace of every module under `src/fanops/`.
@@ -15,8 +15,8 @@ this file is the raw coverage ledger and anomaly index.
 |---|---|---|
 | `structural_index.json` | Every module's imports/functions/classes/methods/module-level calls/line numbers, AST-parsed | `.reports/` |
 | `import_graph.json` | Per-module `imports_from` / `imported_by`, resolved incl. relative imports | `.reports/` |
-| `call_graph.json` | Name-based reverse call graph: 1,067 callables, each with `calls`/`called_by_in_repo` | `.reports/` |
-| `unreferenced_candidates.json` | 55 best-effort dead-code leads (excludes dunders/decorated/tests) — **leads, not verdicts**; see Dead-code below | `.reports/` |
+| `call_graph.json` | Name-based reverse call graph: 1,323 callables, each with `calls`/`called_by_in_repo` | `.reports/` |
+| `unreferenced_candidates.json` | 354 best-effort dead-code leads (excludes dunders/decorated/tests) — **leads, not verdicts**; see Dead-code below | `.reports/` |
 | `ruff_report.json` | Full-repo `ruff check` — **0 findings against src/** (2 historical findings were in the analysis scratch script itself, fixed) | `.reports/` |
 | `ast_extract.py` / `build_graphs.py` | The two extractor scripts themselves (stdlib-only, re-runnable) | `.reports/` |
 
@@ -89,9 +89,9 @@ full anomaly ledger.
 | Timezone resolution fails closed to UTC, never silently wrong-zone | C8 | **HOLDS.** `timeutil.py:38-39 _operator_zone` — confirmed exactly matching CLAUDE.md's claim. |
 | Studio views layer is pure-read (no ledger/control-file mutation) | C10 | **HOLDS, with two narrow documented exceptions**, neither a layering violation: (1) `views_common.postiz_health_for_banner` performs one live network GET behind a 30s module-level cache; (2) `views_results.lineage_stats` mutates its own transient argument objects in place (never ledger/control-file state) — this second one **does violate the project's own immutability coding-style rule**, flagged as a follow-up, not a safety issue. |
 
-## Dead-code candidates (55 raw leads → triaged)
+## Dead-code candidates (355 raw leads → triaged)
 
-`unreferenced_candidates.json` flags 55 top-level functions with zero in-repo callers by
+`unreferenced_candidates.json` flags 355 top-level functions with zero in-repo callers by
 name-based matching. Each cluster triaged its own candidates by hand against actual usage
 (grep for dict-dispatch, decorator registration, Jinja filters, template macros, argparse
 callbacks). Outcome:
@@ -164,7 +164,7 @@ are low-traffic paths (wipe-safety check, preview rendering, one persona-store l
 | C1 | 10 | ~90 (full state-machine + ~55 env vars enumerated) |
 | C2 | 9 | ~55 |
 | C3 | 8 | ~95 (incl. full reframe/render ladder) |
-| C4 | 10 | ~75 |
+| C4 | 9 | ~75 |
 | C5 | 9 | ~68 |
 | C6 | 17 | ~140 (largest single cluster by file count) |
 | C7 | 12 | ~68 |
@@ -172,14 +172,13 @@ are low-traffic paths (wipe-safety check, preview rendering, one persona-store l
 | C9 | 17 | ~150 (largest single cluster by trace length, 892 lines) |
 | C10 | 5 | ~60 |
 
-Totals reconcile against the deterministic count: 889 top-level functions + 178 class methods
-(113 classes) = 1,067 callables in `call_graph.json`, matching the AST extractor's structural
-index exactly (108/108 modules parsed with zero AST errors).
+Totals reconcile against the deterministic count: 1,141 top-level functions + 182 class methods
+= 1,323 callables in `call_graph.json`, matching the AST extractor's structural index exactly
+(109/109 modules parsed with zero AST errors).
 
 ## How to regenerate
 
 ```bash
-cd "/Users/molhamhomsi/Moh Flow Fanops"
 python3 .reports/ast_extract.py src > .reports/structural_index.json
 python3 .reports/build_graphs.py
 ruff check src/
