@@ -29,6 +29,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0          # MOL-193: full history so the PR-diff secret scan can resolve the base
+      - name: Secret scan (PR diff) — MOL-193
+        if: github.event_name == 'pull_request'
+        run: ./scripts/scan-secrets.sh diff-base "${{ github.event.pull_request.base.sha }}"
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.12"
@@ -40,10 +45,15 @@ jobs:
           pip install -e '.[dev,studio]'
       - name: Lint (ruff — pyflakes F + pycodestyle E, the house ruleset in pyproject)
         run: ruff check .          # was configured in pyproject but never enforced in CI (Phase 4b)
-      - name: Unit tests (with coverage report)
+      - name: Unit tests
         env:
           FANOPS_REQUIRE_STUDIO: "1"   # #13: flask is installed above, so this stays green — but it now FAILS if a future extras regression drops flask (no silent studio-test skip)
-        run: python -m pytest -q -m "not integration and not slow" --cov=src/fanops --cov-report=term-missing   # report-only, NOT a gate (no --cov-fail-under)
+        run: python -m pytest -q -m "not integration and not slow"   # MOL-199: coverage was report-only theater (no --cov-fail-under, no upload) — dropped to save CI time
+      - name: pip-audit (advisory — MOL-194 Phase A; not a merge gate until baseline triaged)
+        continue-on-error: true
+        run: |
+          python -m pip install pip-audit
+          pip-audit --desc
       - name: Verify FANOPS_REQUIRE_E2E skip→fail hook (must fail, not skip)
         env:
           FANOPS_REQUIRE_E2E: "1"
@@ -75,10 +85,10 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg espeak
-      - name: Install (dev + transcribe = openai-whisper + studio = flask + compose = moviepy)
+      - name: Install (dev + transcribe = openai-whisper + studio = flask + compose = moviepy + framing = opencv)
         run: |
           python -m pip install --upgrade pip
-          pip install -e '.[dev,transcribe,studio,compose]'
+          pip install -e '.[dev,transcribe,studio,compose,framing]'   # MOL-196: [framing] so the real OpenCV/YuNet path is exercised in CI
       - name: Cache whisper 'tiny' checkpoint
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -97,7 +107,7 @@ jobs:
           FANOPS_REQUIRE_E2E: "1"
           FANOPS_REQUIRE_STUDIO: "1"
           FANOPS_WHISPER_MODEL: "tiny"
-        run: python -m pytest -q -m "integration and not ci_hook_regression" -rs
+        run: python -m pytest -q -m "integration and not ci_hook_regression and not asr" -rs   # MOL-197: [asr] is nightly-only (torch too heavy for PR path)
       - name: Slow cross-face proofs (hermetic — no real toolchain required)
         env:
           FANOPS_REQUIRE_STUDIO: "1"
