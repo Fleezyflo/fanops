@@ -72,6 +72,8 @@ class GoLiveStatus:
     variant_transfer: bool = False     # FANOPS_VARIANT_TRANSFER — seed a cold account from proven donors
     setup_state: str = "NOT_CONFIGURED"   # MOL-302: derived setup position (never persisted)
     setup_next: str = ""               # next operator action for the current setup_state
+    half_live: bool = False            # D15/MOL-297: LIVE flag set but nothing routes live — warn, never solid-green LIVE
+    half_live_hint: str = ""           # operator-facing explanation (names the ignored FANOPS_POSTER value)
 
 
 @dataclass
@@ -443,6 +445,21 @@ def _post_live_today(p, now: datetime) -> bool:
         return False
 
 
+def _half_live_state(cfg: Config) -> tuple[bool, str]:
+    """D15: FANOPS_LIVE=1 but nothing routes live (typo'd FANOPS_POSTER, no live per-channel backend).
+    Shared by build_system_strip + golive_status so every LIVE surface reads the same truth. Fail-open."""
+    from fanops.log import get_logger
+    try:
+        if cfg.is_live and not cfg.live_route_exists:
+            raw = (os.getenv("FANOPS_POSTER") or "").strip() or "(unset)"
+            return True, (f"LIVE flag is set but nothing routes live — FANOPS_POSTER={raw} is ignored "
+                            "(it's a legacy bridge, not the switch). Check .env / the Go-Live tab: route a "
+                            "channel to a provider with creds, or flip back to dryrun.")
+    except Exception as exc:
+        get_logger(cfg)("half_live", "-", "half_live_error", err=str(exc)[:160])
+    return False, ""
+
+
 def build_system_strip(cfg: Config) -> dict:
     """Global system strip read-model: LIVE/DRYRUN mode + blocked gate count + failed-post alert. Health dots lazy-load via htmx."""
     from fanops.log import get_logger                     # a strip sub-read failure is RECORDED, never a silently-zeroed badge
@@ -476,21 +493,7 @@ def build_system_strip(cfg: Config) -> dict:
     except Exception as exc:
         get_logger(cfg)("system_strip", "-", "insights_blocked_error", err=str(exc)[:160])
         insights_blocked = False
-    # D15: HALF-LIVE — FANOPS_LIVE=1 (is_live) but NOTHING routes live (typo'd FANOPS_POSTER -> dryrun via
-    # W4, and no live per-channel backend). is_live shows LIVE while every publish halts in `queued`. Derive
-    # the distinct warning state HERE (the single mode-banner derivation point) so _system_strip renders the
-    # warning, never the plain LIVE banner. Fail-open: any read hiccup -> not half-live (never a false alarm).
-    half_live, half_live_hint = False, ""
-    try:
-        if cfg.is_live and not cfg.live_route_exists:
-            half_live = True
-            raw = (os.getenv("FANOPS_POSTER") or "").strip() or "(unset)"
-            half_live_hint = (f"LIVE flag is set but nothing routes live — FANOPS_POSTER={raw} is ignored "
-                              "(it's a legacy bridge, not the switch). Check .env / the Go-Live tab: route a "
-                              "channel to a provider with creds, or flip back to dryrun.")
-    except Exception as exc:
-        get_logger(cfg)("system_strip", "-", "half_live_error", err=str(exc)[:160])
-        half_live, half_live_hint = False, ""
+    half_live, half_live_hint = _half_live_state(cfg)
     # D13b: Postiz-down banner — the backend health probe (past the nginx-only container check) is unhealthy
     # AND at least one channel routes to postiz. Delegated to views_common (30s-cached) so a Studio render
     # doesn't slam Postiz every hit; fail-open to not-shown so a probe hiccup never blocks the page.
@@ -825,9 +828,11 @@ def golive_status(cfg: Config) -> GoLiveStatus:
         report = {"checks": [], "notes": ["readiness check unavailable"]}
     from fanops.validation_gate import learning_validated
     from fanops.doctor import setup_state, setup_next_action
+    half_live, half_live_hint = _half_live_state(cfg)
     return GoLiveStatus(
         mode=_publish_mode_label(cfg),               # provider-aware (M3); 'dryrun' when not live
         is_live=cfg.is_live,
+        half_live=half_live, half_live_hint=half_live_hint,
         postiz_url=cfg.postiz_url,                    # non-secret; shown so the operator can confirm config
         key_set=cfg.postiz_api_key is not None,       # BOOL only — the API key value is NEVER exposed
         zernio_key_set=cfg.zernio_api_key is not None,  # Zernio slice 4: BOOL only (connect-block state)
