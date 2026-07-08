@@ -69,6 +69,8 @@ class GoLiveStatus:
     variant_amplify: bool = False      # FANOPS_VARIANT_AMPLIFY — a sustained winner auto-amplifies its source
     variant_ucb: bool = False          # FANOPS_VARIANT_UCB — deterministic UCB1 explore/exploit rank
     variant_transfer: bool = False     # FANOPS_VARIANT_TRANSFER — seed a cold account from proven donors
+    setup_state: str = "NOT_CONFIGURED"   # MOL-302: derived setup position (never persisted)
+    setup_next: str = ""               # next operator action for the current setup_state
     half_live: bool = False            # D15/MOL-297: LIVE flag set but nothing routes live — warn, never solid-green LIVE
     half_live_hint: str = ""           # operator-facing explanation (names the ignored FANOPS_POSTER value)
 
@@ -822,6 +824,7 @@ def golive_status(cfg: Config) -> GoLiveStatus:
         get_logger(cfg)("golive", "-", "doctor_error", err=str(exc)[:160])
         report = {"checks": [], "notes": ["readiness check unavailable"]}
     from fanops.validation_gate import learning_validated
+    from fanops.doctor import setup_state, setup_next_action
     half_live, half_live_hint = _half_live_state(cfg)
     return GoLiveStatus(
         mode=_publish_mode_label(cfg),               # provider-aware (M3); 'dryrun' when not live
@@ -841,7 +844,8 @@ def golive_status(cfg: Config) -> GoLiveStatus:
         daemon=daemon_health(cfg),                     # launchd driver health for the Go-Live daemon control (None off-darwin)
         demoted=golive_demoted_accounts(cfg),          # Phase 3: promotable planned accounts
         variant_learning=cfg.variant_learning,         # Phase 6: A/B learning-loop intent flags (default OFF)
-        variant_amplify=cfg.variant_amplify, variant_ucb=cfg.variant_ucb, variant_transfer=cfg.variant_transfer)
+        variant_amplify=cfg.variant_amplify, variant_ucb=cfg.variant_ucb, variant_transfer=cfg.variant_transfer,
+        setup_state=setup_state(cfg), setup_next=setup_next_action(cfg))
 
 
 def gate_rows(cfg: Config) -> list[dict]:
