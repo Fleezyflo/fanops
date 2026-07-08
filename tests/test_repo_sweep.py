@@ -45,3 +45,30 @@ def test_stale_branches_excludes_main_and_recent():
     ]
     out = rs.stale_branches(refs, now, days=30)
     assert out == ["origin/cursor/old-thing"]
+
+
+def _clean_rep(**over):
+    rep = {"open_prs": [], "conflicts": [], "behind": [], "stale_branches": [],
+           "artifacts": [], "unresolved_conflicts": []}
+    rep.update(over)
+    return rep
+
+
+def test_is_done_true_only_when_landed_and_pristine():
+    assert rs.is_done(_clean_rep()) is True
+    assert rs.is_done(_clean_rep(open_prs=[{"number": 398}])) is False        # unlanded work
+    assert rs.is_done(_clean_rep(unresolved_conflicts=["a.py"])) is False     # unresolved merge
+    assert rs.is_done(_clean_rep(stale_branches=["origin/x"])) is False
+    assert rs.is_done(_clean_rep(artifacts=["a.orig"])) is False
+
+
+def test_outstanding_lists_reasons():
+    reasons = rs.outstanding(_clean_rep(open_prs=[{"number": 1}], artifacts=["a.orig"]))
+    assert any("open PR" in r for r in reasons)
+    assert any("artifact" in r for r in reasons)
+    assert rs.outstanding(_clean_rep()) == []
+
+
+def test_require_pristine_exit_codes():
+    assert rs._require_pristine_exit(_clean_rep()) == 0                       # done -> 0
+    assert rs._require_pristine_exit(_clean_rep(open_prs=[{"number": 1}])) == 3   # not done -> 3

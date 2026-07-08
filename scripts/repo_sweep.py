@@ -114,20 +114,42 @@ def _pristine(rep) -> bool:
     return not (rep["conflicts"] or rep["stale_branches"] or rep["artifacts"] or rep["unresolved_conflicts"])
 
 
+def is_done(rep) -> bool:
+    """The Definition-of-Done proxy the orchestrator cannot self-override: EVERY task landed (no open PRs
+    left to drive) AND the repo pristine (no conflicts / stale branches / unresolved merges / artifacts)."""
+    return _pristine(rep) and not rep["open_prs"]
+
+
+def outstanding(rep) -> list:
+    """Human-readable reasons the repo is not DONE (empty list == done)."""
+    out = []
+    if rep["open_prs"]: out.append(f"{len(rep['open_prs'])} open PR(s) not yet landed")
+    if rep["conflicts"]: out.append(f"{len(rep['conflicts'])} conflicting PR(s)")
+    if rep["unresolved_conflicts"]: out.append(f"{len(rep['unresolved_conflicts'])} unresolved merge conflict(s)")
+    if rep["stale_branches"]: out.append(f"{len(rep['stale_branches'])} stale branch(es)")
+    if rep["artifacts"]: out.append(f"{len(rep['artifacts'])} leftover artifact(s)")
+    return out
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="read-only full-repo mess report")
     ap.add_argument("--repo", default="Fleezyflo/fanops")
     ap.add_argument("--root", default=".")
     ap.add_argument("--stale-days", type=int, default=30)
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--require-pristine", action="store_true",
+                    help="DONE-gate: exit 0 only if every task is landed AND the repo is pristine; "
+                         "else exit 3. Fail-safe: if the sweep can't run, exit 3 (never falsely 'done').")
     args = ap.parse_args(argv)
     try:
         rep = sweep(args.repo, Path(args.root), args.stale_days)
     except Exception as exc:
         print(f"[repo-sweep] could not complete sweep ({type(exc).__name__}: {exc})", file=sys.stderr)
-        return 0
+        # a DONE-gate must never report success when it could not even measure the repo
+        return 3 if args.require_pristine else 0
     if args.json:
-        print(json.dumps(rep, indent=2)); return 0
+        print(json.dumps(rep, indent=2))
+        return _require_pristine_exit(rep) if args.require_pristine else 0
     print(f"[repo-sweep] {args.repo}")
     print(f"  open PRs: {len(rep['open_prs'])}  (conflict: {len(rep['conflicts'])}, behind: {len(rep['behind'])})")
     for p in rep["open_prs"]:
@@ -139,7 +161,17 @@ def main(argv=None) -> int:
     print(f"  leftover artifacts: {len(rep['artifacts'])}")
     for a in rep["artifacts"]: print(f"    {a}")
     print(f"  => repo pristine: {'YES' if _pristine(rep) else 'NO — drive the above to resolution via sub-agents'}")
-    return 0
+    return _require_pristine_exit(rep) if args.require_pristine else 0
+
+
+def _require_pristine_exit(rep) -> int:
+    """DONE-gate verdict: 0 when done, 3 otherwise (with the outstanding reasons)."""
+    if is_done(rep):
+        print("[repo-sweep] DONE — every task landed and the repo is pristine. Completion is permitted.")
+        return 0
+    print("[repo-sweep] NOT DONE — completion is NOT permitted; drive these to resolution via sub-agents: "
+          + "; ".join(outstanding(rep)), file=sys.stderr)
+    return 3
 
 
 if __name__ == "__main__":
