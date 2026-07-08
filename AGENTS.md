@@ -163,6 +163,17 @@ Post one line: `MOL-xxx merged, CI green, worktree removed`.
 Stop and ask if: a blocker isn't merged, a ticket's anchors no longer match the code,
 CI is red for a reason you can't fix quickly, or any guardrail would be violated.
 
+## Delegation-only orchestration (fanops-orchestrator)
+
+For running a wave of Linear tasks under a strict coordinator, the `fanops-orchestrator` agent
+(`.cursor/agents/fanops-orchestrator.md`) **delegates every unit of work to sub-agents** and personally
+runs ONLY the git land commands. The contract is machine-enforced by `.cursor/hooks.json` +
+`.cursor/hooks/orchestration_gate.py` (cloud-executed, `failClosed`): `gh pr merge` is refused unless a
+sub-agent **verification record** exists for the PR's unit(s), destructive git is denied, and every
+sub-agent start/stop is written to an attribution ledger. Full protocol + the enforced-vs-contract split:
+`.orchestration/SPEC.md`. Whole-repo scope (open PRs, conflicts, stale branches, artifacts) is surfaced
+read-only by `python scripts/repo_sweep.py`. Worker sub-agents follow `.agents/_worker-protocol.md`.
+
 ## Cursor Cloud specific instructions
 
 Deps are refreshed automatically on VM startup (venv + `pip install -e '.[dev,studio]'`, mirroring
