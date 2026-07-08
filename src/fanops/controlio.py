@@ -10,7 +10,13 @@ import json
 import os
 import tempfile
 from pathlib import Path
-from fanops.errors import ControlFileError
+from typing import TypeVar
+
+from pydantic import BaseModel, ValidationError
+
+from fanops.errors import ControlFileError, reason as _reason
+
+M = TypeVar("M", bound=BaseModel)
 
 
 def write_json_atomic(p: Path, raw: dict) -> None:
@@ -38,3 +44,18 @@ def load_raw_list(p: Path, key: str) -> tuple[dict, list]:
     if not isinstance(lst, list):
         raise ControlFileError(f"{p.name} invalid: expected a top-level '{key}' list")
     return raw, lst
+
+
+def load_validated(p: Path, model: type[M]) -> M:
+    """Read a JSON control file and validate it against `model`. Missing file -> ControlFileError.
+    Malformed JSON or schema violation -> ControlFileError naming the field (fail-LOUD, uniform policy)."""
+    if not p.exists():
+        raise ControlFileError(f"{p.name} missing: {p}")
+    try:
+        raw = json.loads(p.read_text())
+    except json.JSONDecodeError as e:
+        raise ControlFileError(f"{p.name} invalid: JSON parse error at line {e.lineno}: {e.msg}") from e
+    try:
+        return model.model_validate(raw)
+    except ValidationError as e:
+        raise ControlFileError(f"{p.name} invalid: {_reason(e)}") from e
