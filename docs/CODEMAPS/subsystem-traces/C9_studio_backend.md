@@ -236,7 +236,7 @@ via `golive.py`, line 158-164), `GET /golive/connect` / `GET /golive/accounts` /
   column — **guarded**: rejects (never silently widens) when `ch_account`/`ch_source` are missing
   (line 174-177), so a stale/hand-crafted POST can't sweep a sibling source.
 - `POST /cast/add/<moment_id>` / `POST /cast/remove/<moment_id>` (lines 181-200) →
-  `actions.cast_add`/`cast_remove` (operator override of LLM casting).
+  `actions.cast_add`/`cast_remove` (operator override of `Moment.affinities` — owner attribution, not an LLM stage).
 - `_render_surface_edit(post_id, result)` (lines 203-213) — shared re-render for the per-surface
   editor after a time/hook mutation.
 - `POST /reschedule/<post_id>` (lines 215-219) — legacy back-compat route, inline result only.
@@ -325,13 +325,11 @@ via `golive.py`, line 158-164), `GET /golive/connect` / `GET /golive/accounts` /
   (default) or an injected `model`, re-runs `caption.brand_risk_flag` on the result (same guard as
   ingest — no bypass), then re-guards + writes inside a **fresh** short transaction (the model call
   can take ~180s outside any lock).
-- `reburn_hook(cfg, post_id, hook, *, now=None)` (lines 172-241) — **ffmpeg subprocess, no LLM**.
-  Gated on `cfg.creative_variation` (line 183-184). Computes the content-addressed render id via
-  `account_render_spec`, attempts an account-specific re-cut (`render_account_cut`) or falls back
-  to `overlay.burn_hook_only` — both run *outside* the lock; the `Render` entity is
-  added/pointed-at inside a short re-guarded transaction. `hook_burn_failed` is surfaced as
-  `ok=True, detail.hook_burned=False` (a warning, not a rollback, since this is an edit not an
-  approve).
+- `reburn_hook(cfg, post_id, hook, *, now=None)` (lines 172-212) — **ffmpeg subprocess, no LLM**.
+  Updates the owner moment's `m.hook` and re-renders the shared clip via `clip.render_moment` (no
+  `cfg.creative_variation` gate — that flag is documentation-only in `config.py`). The hook burn
+  result is surfaced as `ok=True, detail.hook_burned=False` when ffmpeg fails (a warning, not a
+  rollback, since this is an edit not an approve).
 - `approve_candidate(cfg, eid)` (lines 244-260) — **filesystem move only, no ledger**. Validates
   `eid` has no `/`, `\`, or `..` before constructing a path under `cfg.review`, then
   `src.rename(dst)` into `approved/`.
@@ -414,12 +412,11 @@ via `golive.py`, line 158-164), `GET /golive/connect` / `GET /golive/accounts` /
 - `_warm_hooked_render(cfg, moment_id, aspect, hook)` (lines 198-217) — lock-free pre-render of a
   restored-hook clip via `render_moment` on a throwaway snapshot; returns `False` only on a genuine
   ffmpeg failure (never silently swallowed — logged).
-- `approve_with_hook(cfg, clip_id, *, now=None)` (lines 219-271) — **refuses outright when
-  `cfg.creative_variation` is ON** (line 228-230 — per-surface hooks own the burn then). Restores
-  `moment.hook`, re-renders (fingerprint-skip adopts the lock-free warm), **rolls back the whole
-  transaction** if the render errors or if `rc.hook_burn_failed` (a successful-but-textless render
-  would otherwise ship the post clean without the hook the operator explicitly asked for — the
-  docstring calls this out as CRITICAL). Then approves every `awaiting_approval` post of the clip.
+- `approve_with_hook(cfg, clip_id, *, now=None)` (lines 102-138) — restores `moment.hook` from
+  `hook_removed`, re-renders via `render_moment` (fingerprint-skip adopts the lock-free warm),
+  **rolls back the whole transaction** if the render errors or if `rc.hook_burn_failed`, then
+  approves every `awaiting_approval` post of the clip. No `cfg.creative_variation` gate (that env
+  var is documentation-only — differentiation is intrinsic when `account_casting` is ON).
 - `_approve_matching(cfg, pred=None, *, pred_for=None, now=None, detail=None)` (lines 273-287) —
   the shared spine for every scoped bulk-approve (`approve_clip`/`approve_batch`/`approve_account`/
   `approve_moment`), delegating to `_approve_ids_with_render`.
@@ -599,14 +596,10 @@ via `golive.py`, line 158-164), `GET /golive/connect` / `GET /golive/accounts` /
 
 ### `preview_media.py` — WYSIWYG preview media resolution
 
-- `preview_media_path(cfg, led, post_id)` (lines 10-47) — **pure read + lock-free ffmpeg burn on
-  demand**. Resolution ladder: (1) `post.render_id` → existing `Render.path` if it exists on disk;
-  (2) if `post.variant_hook` and `cfg.creative_variation`, compute the deterministic render path
-  via `account_render_spec` and return it if already rendered, else **actually render it now**
-  via `render_account_file(..., caller="preview")` (a real ffmpeg call, not just a lookup) so the
-  Review WYSIWYG can show the burned hook before approval; (3) fall back to `media_urls[0]` (local
-  file only) or the base `clip.path`. All exception paths are swallowed with `except Exception:
-  pass` (lines 31-32, 36-38) — fail-open to the next rung of the ladder, never a crash.
+- `preview_media_path(cfg, led, post_id)` (lines 8-27) — **pure read** (lock-free). Resolution ladder:
+  (1) `post.render_id` → existing `Render.path` if on disk; (2) `post.media_urls[0]` if a local
+  `file://` or bare path exists; (3) fall back to the owner clip's `clip.path`. No on-demand ffmpeg
+  burn — the owner hook is burned at `render_moment` in the pipeline. Called by Review preview routes.
 
 ## Cluster-specific analysis
 
@@ -851,16 +844,7 @@ merely advisory-and-possibly-stale — it is the same function family.
    with only a best-effort textual note as the trail. Not flagged as a defect, just noted as a
    design choice worth being aware of when debugging "why didn't my channel show up in Discover."
 
-3. **`preview_media.py:31-32, 36-38` — two bare `except Exception: pass` blocks in the WYSIWYG
-   preview path.** Both are documented as intentional fail-open steps in a resolution ladder (fall
-   through to the next rung — an existing render path, then `render_account_file`, then
-   `media_urls`, then the base clip), and the function as a whole cannot 500 by construction. Still,
-   this is the one place in the cluster where an exception is swallowed with zero logging at all
-   (contrast with `actions_run.kick_prepare`'s `get_logger(...)("kick_failed", ...)` on its
-   fail-open path, or `actions_approve._warm_renders`'s per-post logged failure). A silently-failing
-   `render_account_file` call here means the WYSIWYG preview could keep showing a stale/wrong file
-   with no trail to debug why the "live" render never appeared. Low severity (read-only preview
-   path, not a mutation), but it is the one genuinely silent exception swallow in the cluster.
+3. **`preview_media.py` — CORRECTED post-P9/P11:** pure read ladder only (`render_id` → local `media_urls` → `clip.path`); no on-demand `render_moment_file` burn. Prior doc claimed silent `render_account_file` failures in a preview burn path that was removed with per-post variant materialize.
 
 4. **`app.py:158-160`, `_account_arg` — a bare `except Exception: pass` around the
    `current_app.config.get("FANOPS_CFG")` handle-resolution call.** Fail-open to the raw

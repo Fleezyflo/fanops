@@ -1,7 +1,7 @@
 <!-- Generated: 2026-07-03 | Source: 10 exhaustive Sonnet-agent subsystem traces (docs/CODEMAPS/subsystem-traces/C1-C10) cross-referenced against deterministic AST/call-graph analysis (.reports/) | Token estimate: ~1400 -->
 # FanOps Anomaly Ledger
 
-Every anomaly, dead-code lead, and silent-failure site found across the full 108-module trace
+Every anomaly, dead-code lead, and silent-failure site found across the full 109-module trace
 (see [full-trace-index.md](full-trace-index.md) for the trace methodology and coverage proof).
 Grouped by cluster, in file:line order. This is the flat, complete ledger — the index file
 summarizes and ranks; this file is exhaustive.
@@ -49,7 +49,7 @@ re-requests every tick with no operator-visible terminal). That class is now nam
 - `accounts.py:576` `set_ig_user_id` — **NOT dead (corrected on validation).** Called via `set_ig_user_id as _accounts_set_ig_user_id` at `studio/golive.py:381`.
 - `persona_levers.py:87` `is_exempt` — dead code, zero callers (confirmed by sweep).
 - `persona_levers.py:107` `channels` — dead code, zero callers; own docstring claim ("the M4 manifest reads it") is inaccurate — `manifest` actually calls `channels_of`.
-- `casting.py:40` `_record_fact` — `except Exception: pass`. Deliberate best-effort audit-trail write ("must never lose the casting"), documented.
+- ~~`casting.py:40` `_record_fact`~~ — **REMOVED P11** (module is 22 lines; `affinity_admits` only).
 - `persona_directives.py:287` `persona_facts` — `except Exception: store = None`. **Silently swallows any hashtag-store load error with no logging** — the one unlogged handler in this cluster; every sibling fail-open path logs via `get_logger` first.
 - `persona_research.py:56` `discover_corpus` — `except Exception: cands = []`. Documented fail-open.
 - `accounts.py:250` `_hydrate_from_personas` — `except Exception: return`. Documented fail-open, leaves inline values untouched.
@@ -59,7 +59,7 @@ re-requests every tick with no operator-visible terminal). That class is now nam
 
 - `caption.py:45` `normalize_variation_axis` — dead code; dormant P2 creative-variation-axis machinery, a tracked follow-up.
 - `caption.py:51` `coherent_variation` — dead code; T2 coherence gate for the same dormant loop.
-- `llm.py:180` `claude_json` — flagged zero-caller by the call graph; **false positive**, actually called via `studio/actions.py:138-139` (`from fanops.llm import claude_json; model = claude_json`), a name-alias the graph missed.
+- `llm.py:239` `claude_json` — flagged zero-caller by the call graph; **false positive**, actually called via `studio/actions.py:138-139` (`from fanops.llm import claude_json; model = claude_json`), a name-alias the graph missed.
 - `prompts.py:166,242,361` (`moment_pick_prompt`, `moment_hook_prompt`, `caption_prompt`) — all flagged zero-caller; false positives, invoked via `responder.py`'s `_PROMPT[kind](payload)` dict-dispatch. (`moment_casting_prompt` removed P11.)
 - `hashtags.py:179-193` `vet_hashtags` reserved-floor logic evaluates against `kept[:max_tags]` (the cap window) rather than the full `kept` list — deliberate per inline comment, but subtle enough that a naive re-implementation could silently break the floor guarantee. Design note, not a bug.
 - 9 `except Exception` sites across `caption.py`, `fanops_hashtags.py`, `llm.py` — all either log, return a documented fail-open sentinel, or re-raise a typed error. None silent.
@@ -73,7 +73,7 @@ re-requests every tick with no operator-visible terminal). That class is now nam
 - `post/postiz.py:73-86` `_postiz_permalink` — **always returns `None` by design**. The `submitted → published` promotion in `_publish_one` can therefore never fire for a fresh Postiz publish inside `_publish_one` alone — it necessarily waits for `reconcile.py` to backfill the URL later. A real, intentional two-phase-commit-style dependency, flagged for visibility, not a bug.
 - `post/run.py:_publish_throttle_last` — a plain module-level dict, the one piece of true global mutable state in this cluster. In-process-only by design; would need revisiting if `fanops` ever ran as multiple concurrent processes.
 - No bare `except:` and no untraced `except Exception: pass` anywhere in the 17 files — every broad except logs, sets a typed reason, or is a documented best-effort decoration.
-- `responder.py:131,133` `_answer_one` — **SILENT INFINITE-PENDING GATE (new class, was mis-blessed).** The `ValidationError` and generic-`Exception` branches log and leave the gate pending — no `degraded_reason`, no source mark, no ceiling. A DETERMINISTIC gate failure (prose-not-JSON picker answer) is therefore re-requested forever, invisible in status/digest/Studio (the reducer stages' `_quarantine` terminal path does NOT reach the responder gate path). Distinct from an 'unlogged swallow' (this LOGS) — the taxonomy blind spot was conflating logged with surfaced. Parked `src_90d3c565022f` at `moments_requested`. Fixed by W1–W3; guarded by `test_responder.py` (W5b) + `test_llm.py` (W5a/W5c/W5d). See MOL-221 (parent) / MOL-254 (this entry).
+- `responder.py:142-160` `_answer_one` / `_on_deterministic_fail` — **FIXED (MOL-235/236/227).** Deterministic `ValidationError` and `LlmSchemaError` now stamp `degraded_reason` and burn a per-gate attempt ceiling (`_GATE_DETERMINISTIC_MAX=3`); the Nth failure promotes the owning source to `SourceState.error` via `_terminate_gate_source`. Transient failures still log and stay pending. Guarded by `test_responder.py` + `test_llm.py`. (Prior taxonomy entry: MOL-254.)
 
 ## C7 — Metrics, reconcile & learning
 
@@ -101,7 +101,7 @@ re-requests every tick with no operator-visible terminal). That class is now nam
 
 - `app_routes_live.py:29-34` `do_wipe_confirm` — **no server-side check that `do_wipe_preview` ran first**; "preview before confirm" is enforced only by the template hiding the confirm form, not by the server. Does not bypass the typed-word/snapshot/restorability code gates, but means "operator sees preview before confirming" is a UI convention, not a server-enforced invariant.
 - `golive.py:452-478` `discover_channels` — an unsupported platform is silently downgraded to a note rather than surfaced as an error. Documented fail-soft, produces a silently-smaller `channels` list with only a best-effort textual note as the trail.
-- `preview_media.py:31-32,36-38` — **two bare `except Exception: pass` blocks with zero logging** in the WYSIWYG preview resolution ladder — the one place in the cluster where an exception is swallowed with zero logging at all. Low severity (read-only), but a silently-failing `render_account_file` call here means Review could keep showing a stale/wrong preview with no trail to debug why.
+- `preview_media.py` — **CORRECTED post-P9:** no on-demand ffmpeg burn; pure read ladder (`render_id` → local `media_urls` → `clip.path`). Prior doc claimed silent `render_account_file` failures — that path was removed with per-post variant materialize (P9/P11).
 - `app.py:158-160` `_account_arg` — `except Exception: pass` around handle resolution. Intentional/low-risk, but same unlogged-swallow pattern as `preview_media.py` — this cluster logs its swallows in the mutation layer but not consistently in the read-helper layer.
 - `golive.py:652-657` — CLAUDE.md's claim that `FANOPS_POSTER=postiz` is set through the Go-Live path is stale relative to current code (`go_live` explicitly never writes `FANOPS_POSTER`, per its own comment "D12: go_live NEVER writes FANOPS_POSTER"). The real live-routing setter is `set_account_backend`. Documentation/reality drift, not a code defect — the underlying safety property still holds under the current per-channel design.
 - No TODO/FIXME found. No dead/unreachable functions found — every public function in this cluster has at least one route caller.

@@ -129,13 +129,13 @@ pipeline.advance()                                   [outside this cluster]
                                               MoviePy in-lock; un-prewarmed plan waits for next pass)
           stitch_render.approved_disabled_count -> logged so a disabled format's frozen plans are visible
 
-Separately, per-account creative-variation path (outside pipeline.advance, called from crosspost.py / Studio):
-   crosspost.render_account_file -> clip.render_account_cut(led, cfg, moment_id, aspect, profile, hook, out_path)
+Separately, the owner-moment render path (outside pipeline.advance, called from crosspost.py / Studio):
+   crosspost.render_moment_file -> clip.render_account_cut(led, cfg, moment_id, aspect, profile, hook, out_path)
                                        -> clip._resolve_framing (same content-adaptive crop)
                                        -> clip.render_reframed (same fail-open ladder)
                                      OR falls back to overlay.burn_hook_only(shared_clip, out, hook)
                                        [cheap 2nd-pass hook burn on the ALREADY-rendered shared clip]
-   studio.actions.reburn_hook -> same two functions, operator-triggered re-burn
+   studio.actions.reburn_hook -> clip.render_moment (owner-moment hook re-burn; no per-post variant)
 
 compose.compose_clip(base, out, TemplateSpec) -> cli.cmd_compose  [operator-run CLI verb, outside advance();
    MoviePy 2.x intro/outro cards + title + crossfade — NOT part of the autonomous pipeline]
@@ -198,7 +198,7 @@ compose.compose_clip(base, out, TemplateSpec) -> cli.cmd_compose  [operator-run 
 - `_probe_duration(path)` (clip.py:562) — probes a rendered output's duration via ffprobe (through `ingest.probe_dimensions`); `None` on any `ToolchainMissingError/OSError/ValueError`. Module-level so tests can patch without a real ffprobe. Called by `render_moment`, `compose._probe`.
 - `render_moment(led, cfg, moment_id, *, aspect=Fmt.r9x16, cut_window=None, clip_id=None, born_state=ClipState.rendered)` (clip.py:571) — **THE main clip-render entrypoint.** Computes the cut window (bare path: band→fit_window→snap_window→optional pick_visual_start; stitch path: caller's `cut_window` verbatim), resolves framing via `_resolve_framing`, builds subtitle overlay via `_subtitles_vf`, computes the render fingerprint, adopts an existing matching mp4 if the fingerprint matches (idempotent skip — no ffmpeg), else calls `render_reframed` and classifies the result into a `Clip` row (`rendered`/`stitch_draft` on success, `error` with a typed reason on any failure: missing toolchain, timeout, nonzero rc/empty output, or — for stitches — a duration mismatch). **Side effects**: mkdir, ffmpeg subprocess, `.ass`/`.render.json` sidecar writes, mutates `led.clips`, sets moment state. Called by `render_aspects_for`, `crosspost._clip_for_aspect`, `stitch_render._commit_impact`, `stitch_render._prewarm_impact`, `studio.actions_approve._warm_hooked_render`, `studio.actions_approve.approve_with_hook`.
 - `render_aspects_for(led, cfg, moment_id, *, aspects)` (clip.py:694) — renders one clip per requested aspect for a moment (skips retired moments); loops `render_moment` per aspect. **Side effects**: same as `render_moment`, N times. Called by `pipeline._stage_render_and_caption`, `produce._produce_one`.
-- `render_account_cut(led, cfg, moment_id, *, aspect, profile, hook, out_path, top_bias=False)` (clip.py:706) — the per-account creative-variation cut: re-cuts the SAME source at the account's own length band + burns its own hook, in one ffmpeg pass written atomically (`.part` + `os.replace`); mints NO `Clip` row and advances NO moment state (the shared bare clip owns the moment anchor). Fail-open (`except Exception: return False, None`) so the caller falls back to `overlay.burn_hook_only` on the shared clip. **Side effects**: ffmpeg subprocess, atomic file write, temp-file cleanup in `finally`. Called by `crosspost.render_account_file`, `studio.actions.reburn_hook`.
+- `render_account_cut(led, cfg, moment_id, *, aspect, profile, hook, out_path, top_bias=False)` (clip.py:706) — the owner-moment per-account cut: re-cuts the SAME source at the account's own length band + burns its own hook, in one ffmpeg pass written atomically (`.part` + `os.replace`); mints NO `Clip` row and advances NO moment state (the shared bare clip owns the moment anchor). Fail-open (`except Exception: return False, None`) so the caller falls back to `overlay.burn_hook_only` on the shared clip. **Side effects**: ffmpeg subprocess, atomic file write, temp-file cleanup in `finally`. Called by `crosspost.render_moment_file`.
 
 ### `framing.py` — subject-aware reframe detection (530 lines)
 
@@ -317,7 +317,7 @@ compose.compose_clip(base, out, TemplateSpec) -> cli.cmd_compose  [operator-run 
 - `write_ass(text, path)` (overlay.py:248) — writes the `.ass` text to `path` (UTF-8), creating parent dirs. **Side effect**: disk write. Called by `clip._subtitles_vf`, `clip.render_account_cut`, `burn_hook_only`.
 - `subtitles_vf(ass_path)` (overlay.py:256) — pure: the `subtitles=<escaped path>` ffmpeg `-vf` token, with backslash/quote/colon/comma escaping for filtergraph safety. Called by `clip._subtitles_vf`, `clip.render_account_cut`, `burn_hook_only`.
 - `ffmpeg_has_textfilter()` (overlay.py:279) — probes `ffmpeg -filters` ONCE, caches the boolean result; never raises (absent/hung/failed probe → `False`). **Shells ffmpeg** (once per process). Called by `clip._subtitles_vf`, `clip.render_account_cut`, `burn_hook_only`.
-- `burn_hook_only(base_clip_path, out_path, hook, *, width=1080, height=1920, font="Arial Unicode MS")` (overlay.py:299) — burns ONLY a hook onto an already-rendered base clip (the cheap per-account second pass); fail-open to a byte copy (`shutil.copyfile` + atomic `os.replace`) on no text filter/empty hook/ffmpeg failure; always atomic via `.part` + `os.replace`, sweeps `.ass`/`.part` temp artifacts in a `finally`. **Side effects**: ffmpeg subprocess or file copy, atomic publish, temp cleanup. Called by `crosspost.render_account_file`, `studio.actions.reburn_hook`.
+- `burn_hook_only(base_clip_path, out_path, hook, *, width=1080, height=1920, font="Arial Unicode MS")` (overlay.py:299) — burns ONLY a hook onto an already-rendered base clip (the cheap owner-moment second pass); fail-open to a byte copy (`shutil.copyfile` + atomic `os.replace`) on no text filter/empty hook/ffmpeg failure; always atomic via `.part` + `os.replace`, sweeps `.ass`/`.part` temp artifacts in a `finally`. **Side effects**: ffmpeg subprocess or file copy, atomic publish, temp cleanup. Called by `crosspost.render_moment_file`.
 
 ### `impact_cut.py` — deterministic impact-cut planner (87 lines)
 

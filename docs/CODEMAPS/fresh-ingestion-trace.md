@@ -1,6 +1,6 @@
 # Fresh-Ingestion End-to-End Trace — one video → posts across the 5 accounts
 
-> Code-verified against `origin/main` @ `6395ce3` on 2026-07-07. Method: read `pipeline.advance()`
+> Code-verified against `origin/main` @ `9b93ade` on 2026-07-08. Method: read `pipeline.advance()`
 > + every stage fn, two parallel deep-trace agents (fan-out arithmetic + external-service map),
 > then re-verified the load-bearing claims (casting teardown, `affinity_admits`, R2 path) against
 > the live code. This is the operator's field guide for a fresh live test: drop a video, watch each
@@ -150,10 +150,10 @@ runtime switch is `account_casting`, not a separate CV flag.
 
 | Service | Caller (file:line) | Stage | Gate / config | Success | Failure |
 |---|---|---|---|---|---|
-| **LLM — moments** (`claude -p`) | `responder.py:67`→`llm.py:103,117` | pick (vision) | `FANOPS_RESPONDER=llm`; **opus** (`config.py:84`); frames granted | `MomentDecision` JSON; provenance line in run.log | gate pending+quarantine; `frames_unread` breadcrumb |
+| **LLM — moments** (`claude -p`) | `responder.py:76`→`llm.py:135-237` (`_build_cmd`+`_run`) | pick (vision) | `FANOPS_RESPONDER=llm`; **opus** (`config.py:84`); frames granted | `MomentDecision` JSON; provenance line in run.log | gate pending+quarantine; `frames_unread` breadcrumb |
 | **LLM — moment_hooks** | same | hook (vision) | `=llm`; **opus** | `MomentHookDecision`; hook stamped | pending; `hook_frames_unread:True` |
 | **LLM — captions** | same | caption (text) | `=llm`; **sonnet** (NOT opus); no frames | `CaptionSet` (caption + ≤4 tags) | pending/quarantine |
-| LLM auth | `llm.py:9-21` | — | operator's existing `claude` login (NOT `ANTHROPIC_API_KEY`); `--strict-mcp-config --allowedTools ""` | structured_output JSON | `ToolchainMissingError`/`LlmRateLimitError`(429/503/529) typed |
+| LLM auth | `llm.py:9-21` | — | operator's existing `claude` login (NOT `ANTHROPIC_API_KEY`); `--strict-mcp-config --allowedTools ""` | structured_output JSON | `ToolchainMissingError`/`LlmRateLimitError`(429/503/529)/`LlmSchemaError` typed |
 | ~~casting LLM~~ | **REMOVED** (P11/MOL-152) | — | `affinity_admits` pure predicate | — | — |
 | **whisper/faster-whisper** | `transcribe.py:106/119`, run `:223` | transcribe | extra `[asr]` (faster-whisper) or `[transcribe]` (legacy); `FANOPS_ASR_MODEL`; timeout 2700s×scale | transcript JSON, `meta.transcribed=True` | `Source: error` + reason; distinguishes []-no-speech vs None-not-run |
 | **ffmpeg** signals | `signals.py:131,175` | signals | ffmpeg on PATH | detect sidecar, `signalled` | fail-open, may quarantine |

@@ -46,7 +46,7 @@ The main-txn saves ONLY on clean exit; an uncaught raise rolls the whole pass ba
 | 4 | *(no separate stage — routing is pick-stamped)* | `casting.affinity_admits` (`casting.py:10`) gates crosspost mint + caption scope via `Moment.affinities` (stamped at pick in `ingest_moments` `:330-340`; operator override `cast_add`/`cast_remove`) | owner handle(s) on each moment | same `affinities` list is the sole gate input | none | `cfg.account_casting` DEFAULT ON (`config.py:593`); `=0` ignores persisted affinities and fans all |
 | 5 | Render | `clip.render_moment` → `render_aspects_for` (`clip.py:571,694`); pipeline `_stage_render_and_caption` (`pipeline.py:156`) | source, moment window, framing detect | `Clip` born `rendered` under `03_clips/<cid>.mp4`; state moment→`clipped`; render fingerprint sidecar (`clip.py:688-689`) | ffmpeg (`ffmpeg_clip_cmd`/`ffmpeg_segments_cmd`), `_FFMPEG_TIMEOUT=600.0` (`clip.py:24`); framing detect (YuNet, `[framing]` extra) fail-open | **Fail-safe per-moment**: ffmpeg absent/hung/rc≠0/0-byte → `ClipState.error`, moment left `decided` to retry (`clip.py:634-662`); smart framing fails OPEN to centered crop (`clip.py:533,550`) |
 | 6 | Captions | `caption.request_captions`/`ingest_captions` (`caption.py:200,283`); pipeline (`pipeline.py:172,231`) | clip, scoped surfaces, corpus, content tags | `Clip.meta_captions[surface]`, state→`captioned` (or `held`) (`caption.py:356`) | none (LLM gate) | HOLD on brand-risk/language-mismatch (`caption.py:349-353`); SEED-TAG FALLBACK on missing surface, NOT a hold (`caption.py:342-348`) |
-| 7 | Crosspost | `crosspost.crosspost_clips` → `_mint_surface_post` (`crosspost.py:299,168`); pipeline (`pipeline.py:243`) | captioned clips, surfaces, selections, batch target | `Post` born `awaiting_approval` (`crosspost.py:269-273`), clip state→`queued` | none | Wrapped so a raise doesn't cost the pass; a FATAL `AuthError` deliberately escapes (`pipeline.py:249-255`) |
+| 7 | Crosspost | `crosspost.crosspost_clips` → `_mint_surface_post` (`crosspost.py:250,155`); pipeline (`pipeline.py:243`) | captioned clips, surfaces, affinities, batch target | `Post` born `awaiting_approval` (`crosspost.py:228-232`), clip state→`queued` | none | Wrapped so a raise doesn't cost the pass; a FATAL `AuthError` deliberately escapes (`pipeline.py:249-255`) |
 | 8 | Reconcile | `reconcile.reconcile_due` (`reconcile.py:339`); pipeline `_reconcile_safe` (`pipeline.py:258`) | stranded posts, backend status | back-fills `public_url`, `publish_hour`/`publish_dow` (`reconcile.py:452-453`) | backend status GETs (out of lock) | Gated `cfg.is_live_backend`; `AuthError` halts, else logged (`pipeline.py:265-271`) |
 | 9 | Publish | `post.run.publish_due` → `_publish_one` (`run.py:337,213`); pipeline `_publish_safe` (`pipeline.py:274`) | queued+due posts | claim→`submitting`→`published`/`needs_reconcile`/`failed`; `published_at`+`publish_hour`/`dow` stamped (`run.py:266-270`); `06_published/<day>/<pid>.json` archive (`run.py:25`) | media upload + `poster.publish` (out of lock); Postiz throttle `postiz_publish_per_min` (`run.py:95`) | `AuthError` halts the run (`run.py:277-279`); other errors → per-post `failed` (re-queueable) except `needs_reconcile` (not downgraded, `run.py:280`) |
 | 10 | Summary/digest | `pipeline._build_summary` (`pipeline.py:339`) | post-publish reload | `write_digest` (read-only, out of lock) | none | Read-only |
@@ -91,7 +91,7 @@ holds TWO variables). Table is complete (no sampling):
 | 24 | `FANOPS_AWARE_REFRAME` | config.py:551 | OFF | Global top-third crop bias |
 | 25 | `FANOPS_SUBTITLE_FONT` | config.py:559 | `Arial Unicode MS` | .ass subtitle font |
 | 26 | ~~`FANOPS_CREATIVE_VARIATION`~~ | — | — | **Documentation-only in `config.py`** (no `getenv`); Go-Live still dual-writes `.env` (`golive.py:225`) but per-account hook/render differentiation is intrinsic when `account_casting` is ON — see [fresh-ingestion-trace.md](fresh-ingestion-trace.md) §4 |
-| 27 | `FANOPS_ACCOUNT_CASTING` | config.py:581 | ON | Per-account moment casting |
+| 27 | `FANOPS_ACCOUNT_CASTING` | config.py:593-600 | ON | Affinity routing gate (`casting.affinity_admits`); `=0` ignores persisted `Moment.affinities` and admits all surfaces — not a separate LLM stage |
 | 28 | `FANOPS_HOOK_ROUTER` | config.py:589 | OFF | Observe-only hook_strategy classifier |
 | 29 | `FANOPS_IMPACT_CUT` | config.py:598 | OFF | Impact-cut stitch producer |
 | 30 | `FANOPS_INTRO_TEASE` | config.py:608 | OFF | Intro-tease stitch producer |
@@ -373,9 +373,9 @@ validation vocab, clause maps, and catalog cannot drift (`persona_levers.py:1-8`
 **Link-failure behavior:** FAIL-OPEN. A dangling `persona_id`, absent/corrupt personas.json, or any error
 leaves the account's inline values intact — byte-identical when unlinked (`accounts.py:250-255`). **Observable?**
 The failure itself is SILENT (no log/badge — the `except Exception: return` at `accounts.py:250-251` swallows).
-Downstream, `Accounts.validate` (`accounts.py:207-216`) surfaces a "no persona linked" or "cut spec matches
-global" problem string when `creative_variation` is on, and `advance` logs those as `differentiation_warn`
-(`pipeline.py:385-387`). So a link that fails to resolve is not itself flagged, but its DOWNSTREAM effect
+Downstream, `Accounts.validate` (`accounts.py:256-265`) surfaces a "no persona linked" or "cut spec matches
+global" problem string when `cfg.account_casting` is ON, and `advance` logs those as `differentiation_warn`
+(`pipeline.py:383-385`). So a link that fails to resolve is not itself flagged, but its DOWNSTREAM effect
 (no differentiation) is a validate-time warning. `delete_persona` deliberately leaves accounts with a dangling
 id that falls open (`studio/personas.py:97-99`).
 
@@ -383,9 +383,9 @@ id that falls open (`studio/personas.py:97-99`).
 
 | Field | Lands at (payload/render key) | Full chain (file:line) |
 |-------|-------------------------------|------------------------|
-| `voice` | casting/hook/caption prompt per-account slot | `_base_voice` (`persona_directives.py:56`) → leads `casting_directive` (`:68`), `hook_directive` (`:82`), `caption_directive` (`:107`) → carried in casting `personas[].persona` (`casting.py:78`), hook `personas[].persona` (`moments.py:243`), caption `surfaces[].persona` (`caption.py:209,226`) |
-| `content_focus` | casting SELECTION language + DERIVED cut LENGTH | `_FOCUS_CLAUSE` → `casting_directive` "Clip for this account: ..." (`persona_directives.py:75-76`); `_FOCUS_PROFILE` → `derive_cut_spec` length tier (`:41`) → `resolved_cut_spec` → `acc.clip_profile` → `cfg.resolve_clip_profile(acct)` (`config.py:433`) → `crosspost.account_render_spec` — `resolve_clip_profile` call at `crosspost.py:86`, `wants_cut` decision `crosspost.py:86-91` → `render_account_cut` band (`clip.py:706,723`) — physically cuts the clip length |
-| `energy` | casting energy clause + DERIVED framing | `_ENERGY_CLAUSE` → `casting_directive` (`persona_directives.py:77-78`); `_ENERGY_FRAMING` → `derive_cut_spec` framing (`:42`) → `acc.framing` → `cfg.resolve_top_bias(acct)` (`config.py:443`) → `top_bias` in `render_account_cut`/`reframe_filter` (`clip.py:310-311`), and stamped on `Post.top_bias` at mint (`crosspost.py:294`) |
+| `voice` | moment-pick / hook / caption prompt per-owner slot | `_base_voice` (`persona_directives.py:56`) → leads `casting_directive` (`:87`), `hook_directive` (`:101`), `caption_directive` (`:107`) → carried in pick lenses (`moments._pick_personas` `moments.py:220-248`), hook gate (`moments._hook_personas_for_moment` `:384`), caption `surfaces[].persona` (`caption.py:209,226`) |
+| `content_focus` | moment-pick SELECTION language + DERIVED cut LENGTH | `_FOCUS_CLAUSE` → `casting_directive` "Clip for this account: ..." (`persona_directives.py:75-76`); `_FOCUS_PROFILE` → `derive_cut_spec` length tier (`:41`) → `resolved_cut_spec` → `acc.clip_profile` → `cfg.resolve_clip_profile(acct)` (`config.py:433`) → `crosspost.render_spec` — `wants_cut` decision (`crosspost.py:84-94`) → `render_account_cut` band (`clip.py:706,723`) — physically cuts the clip length |
+| `energy` | moment-pick energy clause + DERIVED framing | `_ENERGY_CLAUSE` → `casting_directive` (`persona_directives.py:77-78`); `_ENERGY_FRAMING` → `derive_cut_spec` framing (`:42`) → `acc.framing` → `cfg.resolve_top_bias(acct)` (`config.py:443`) → `top_bias` in `render_account_cut`/`reframe_filter` (`clip.py:310-311`), and stamped on `Post.top_bias` at mint (`crosspost.py:294`) |
 | `hook_angle` | on-screen hook strategy | `_ANGLE_CLAUSE` → `hook_directive` (`persona_directives.py:88-89`) → `hook_author_slot` → owner-only hook gate (`moments._hook_personas_for_moment` `moments.py:384`) → `Moment.hook` → burned at render (`clip.render_account_cut`) → surfaced as `variant_hook` in Studio |
 | `hashtag_corpus` | caption hashtags (deterministic post-step) | hydrated `acc.hashtag_corpus` → `corpora[handle]` in caption request (`caption.py:213`) → surface `corpus` key (`caption.py:227`) → prompt "PREFER ... corpus" (`prompts.py:429-431`) AND `vet_hashtags(corpus=...)` float+floor+backfill (`caption.py:330`, `hashtags.py:159-205`) |
 | `intake.genre` | Graph research seeds only | `_seed_tags` (`fanops_hashtags.py:32`) + `discover_corpus` — never a live caption |
@@ -428,7 +428,7 @@ active; 5 linked by `persona_id`; 0 inline-only; 0 unlinked.** No tokens/keys re
 ### C.1 Post construction and initial state
 
 Posts are constructed in exactly one production path: `crosspost._mint_surface_post` → `led.add_post(Post(...))`
-(`crosspost.py:269`). **Every Post is BORN `PostState.awaiting_approval`** (`crosspost.py:273`, model default
+(`crosspost.py:228`). **Every Post is BORN `PostState.awaiting_approval`** (`crosspost.py:232`, model default
 `models.py:220`) with `submission_id="fanops_<hash>"` (client idempotency token, `crosspost.py:281`),
 `render_id=None`, `media_urls=[]`, and the P1/P3 attribution dims stamped (`first_frame_kind`, `cut_seconds`,
 `clip_profile=cfg.clip_profile`, `top_bias=cfg.resolve_top_bias(surf.account)`, `batch_id`,
@@ -499,8 +499,8 @@ generation and schedule toward measured reach, but never past the operator appro
 3. **A persona-link resolution failure is silent at the point of failure and only surfaces indirectly.**
    `_hydrate_from_personas` swallows every exception with `return` (`accounts.py:250-251`); a dangling
    `persona_id` leaves inline values with NO log/badge. The downstream "no differentiation" is only caught by
-   `Accounts.validate` → `differentiation_warn` and ONLY when `creative_variation` is on
-   (`accounts.py:207-216`, `pipeline.py:385-387`). Evidence: the two cited spans.
+   `Accounts.validate` → `differentiation_warn` when `cfg.account_casting` is ON
+   (`accounts.py:256-265`, `pipeline.py:383-385`). Evidence: the two cited spans.
 
 4. **`learning_validated` is a single global boolean (`cutover.json metrics_confirmed`) that gates all
    validation-frozen actuators at once, and auto-flips on the FIRST qualifying live metric.** One
