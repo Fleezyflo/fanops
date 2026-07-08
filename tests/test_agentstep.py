@@ -5,6 +5,7 @@ import fanops.agentstep as agentstep
 from fanops.config import Config
 from fanops.models import MomentDecision
 from fanops.agentstep import write_request, write_response, read_response, pending, response_path, latest_request_id
+from fanops.agentstep import _attempts_path, bump_attempts, clear_attempts
 
 def test_write_request_creates_file_with_id(tmp_path):
     cfg = Config(root=tmp_path)
@@ -125,3 +126,46 @@ def test_pending_logs_breadcrumb_on_corrupt_response(tmp_path):
     assert pending(cfg, kind="moments") == ["src_1"]           # still pending (unchanged)
     log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
     assert "src_1" in log and "corrupt_response_in_pending" in log
+
+# MOL-229 — gate attempts sidecar helpers
+def test_attempts_path_is_sidecar_of_request(tmp_path):
+    cfg = Config(root=tmp_path)
+    p = _attempts_path(cfg, "moments", "src_1")
+    req = response_path(cfg, "moments", "src_1")
+    assert p.parent == req.parent
+    assert p.name == "moments__src_1.attempts.json"
+
+def test_bump_attempts_monotonically_increasing(tmp_path):
+    cfg = Config(root=tmp_path)
+    assert bump_attempts(cfg, "moments", "src_1") == 1
+    assert bump_attempts(cfg, "moments", "src_1") == 2
+    assert bump_attempts(cfg, "moments", "src_1") == 3
+
+def test_clear_attempts_resets_to_zero(tmp_path):
+    cfg = Config(root=tmp_path)
+    bump_attempts(cfg, "moments", "src_1")
+    bump_attempts(cfg, "moments", "src_1")
+    clear_attempts(cfg, "moments", "src_1")
+    assert bump_attempts(cfg, "moments", "src_1") == 1   # starts from 1 again
+
+def test_clear_attempts_idempotent_on_missing(tmp_path):
+    cfg = Config(root=tmp_path)
+    clear_attempts(cfg, "moments", "src_1")   # must not raise when file absent
+    assert bump_attempts(cfg, "moments", "src_1") == 1
+
+def test_attempts_are_per_gate_independent(tmp_path):
+    cfg = Config(root=tmp_path)
+    bump_attempts(cfg, "moments", "src_1")
+    bump_attempts(cfg, "moments", "src_1")
+    bump_attempts(cfg, "hooks", "src_1")
+    assert bump_attempts(cfg, "moments", "src_1") == 3
+    assert bump_attempts(cfg, "hooks", "src_1") == 2
+
+def test_attempts_no_effect_on_request_response(tmp_path):
+    cfg = Config(root=tmp_path)
+    rid = write_request(cfg, kind="moments", key="src_1", payload={"source_id": "src_1"})
+    bump_attempts(cfg, "moments", "src_1")
+    bump_attempts(cfg, "moments", "src_1")
+    clear_attempts(cfg, "moments", "src_1")
+    assert latest_request_id(cfg, "moments", "src_1") == rid   # request untouched
+    assert pending(cfg, kind="moments") == ["src_1"]            # still pending
