@@ -1,6 +1,6 @@
 # C8: Ops, CLI & Daemon
 
-## Files covered (all 11 read in full, cross-checked against structural_index.json — function/method lists match exactly)
+## Files covered (all 12 read in full, cross-checked against structural_index.json — function/method lists match exactly)
 
 1. `src/fanops/cli.py` (957 lines) — read
 2. `src/fanops/daemon.py` (264 lines) — read
@@ -8,11 +8,12 @@
 4. `src/fanops/cutover.py` (91 lines) — read
 5. `src/fanops/cutover_postiz.py` (92 lines) — read
 6. `src/fanops/health.py` (115 lines) — read
-7. `src/fanops/digest.py` (307 lines) — read
-8. `src/fanops/audit.py` (60 lines) — read
-9. `src/fanops/timeutil.py` (152 lines) — read
-10. `src/fanops/_fwrun.py` (87 lines) — read
-11. `src/fanops/__init__.py` (1 line) — read
+7. `src/fanops/health_model.py` (179 lines) — read — **MOL-298: typed health owner; doctor/health/learn_doctor are views**
+8. `src/fanops/digest.py` (307 lines) — read
+9. `src/fanops/audit.py` (60 lines) — read
+10. `src/fanops/timeutil.py` (152 lines) — read
+11. `src/fanops/_fwrun.py` (87 lines) — read
+12. `src/fanops/__init__.py` (1 line) — read
 
 ## Pipeline/data-flow overview
 
@@ -190,7 +191,11 @@ Distinct from the above: `cutover.py` / `cutover_postiz.py` are a **manual, oper
 
 ### `health.py` — live dependency health + best-effort bring-up
 
-- `DepHealth` (`NamedTuple`) — `(name, ok, detail)`, one dependency's red/green verdict.
+> **MOL-298:** `DepHealth` and the Postiz probe helpers now live in `health_model.py`; this module keeps
+> docker bring-up (`_start_docker`, `ensure_up`) and re-exports `system_health` wiring that delegates
+> dependency rows to `health_model.dep_health_list`.
+
+- `DepHealth` (`NamedTuple`) — **moved to `health_model.py:9`**; kept as a lazy re-export here for backward compat.
 - `_docker_health()` — shells `docker info` (8s timeout); `False` if `docker` isn't on PATH or the call raises/times out (broad `except Exception`, deliberate — never let a health probe itself crash). Called by `_start_docker`, `ensure_up`, `system_health`.
 - `_http_reachable(url, name)` — pure-ish: a bare `requests.get(url, timeout=3)` — ANY HTTP response (even 404) counts as "reachable" (it's a liveness ping, not a real API call). `False`/`"not configured"` if `url` is empty. Called by `postiz_health`, `zernio_health`.
 - `postiz_health(cfg)` — `_http_reachable(cfg.postiz_url, "postiz")`. Called by `ensure_up`, `system_health`.
@@ -200,6 +205,16 @@ Distinct from the above: `cutover.py` / `cutover_postiz.py` are a **manual, oper
 - `_start_docker(log)` — shells `open -a Docker` (macOS-specific launch), then polls `_docker_health()` up to 30×3s; appends progress lines to the caller-supplied `log` list; never raises (falls through to "did not come up in time" or "no `open` to launch it"). **Side effect**: launches Docker Desktop as a subprocess. Called by `ensure_up`.
 - `_start_postiz(compose_dir, log)` — shells `docker compose --project-directory <dir> up -d` (180s timeout); catches any exception into a log line, never raises. **Side effect**: brings up the Postiz docker stack. Called by `ensure_up`.
 - `ensure_up(cfg)` — the launch bring-up orchestrator: starts Docker if down, starts Postiz compose if a compose dir is configured and Postiz is unreachable. Logs everything via the module logger too. Never raises. **Side effects**: subprocess launches (Docker, docker compose). Called by `cli._dispatch` (`studio` verb), `post.run.publish_due`, `post.run.publish_post`, `reconcile.reconcile_due`.
+
+### `health_model.py` — typed health owner (MOL-298)
+
+- `DepHealth` (`NamedTuple`) — `(name, ok, detail)`, one dependency's red/green verdict (`health_model.py:9-13`).
+- `HealthReport` (`dataclass`) — composes `checks`, `notes`, `deps`, optional `field_shape`; `as_dict()` for doctor consumers (`health_model.py:16-31`).
+- `build_health_report(cfg, ...)` — **THE health owner** — composes doctor checks, dependency rows, learning field-shape, bounded live confirm (`health_model.py:167-178`). Called by `doctor.doctor_report` (view layer).
+- `dep_health_list(cfg, ...)` — docker + Postiz + Zernio rows; Postiz uses the unified `postiz_health_probe` (`health_model.py:87-91`). Called by `health.system_health`.
+- `postiz_doctor_check(cfg, ...)` — doctor-shaped Postiz row from the same probe (`health_model.py:94-108`).
+- `heartbeat_stale(cfg, ...)` — shared daemon heartbeat staleness threshold (`health_model.py:117-127`).
+- `build_field_shape(cfg, ...)` — learning field-shape verdict; fail-open (`health_model.py:130-140`).
 
 ### `digest.py` — human-readable ledger digest renderer (read-only observability)
 
