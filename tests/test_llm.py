@@ -217,3 +217,98 @@ def test_claude_json_bare_dict_unaffected(mocker):
     mocker.patch("fanops.llm.subprocess.run", return_value=R())
     from fanops.llm import claude_json
     assert claude_json("p", {"type": "object"}, images=["/tmp/a.jpg"]) == {"x": 1}   # still a plain dict
+
+
+# --- MOL-237: _json_candidates + _extract_json_object pure helpers ---
+
+from fanops.llm import _json_candidates, _extract_json_object
+
+class TestJsonCandidates:
+    def test_fenced_block_is_first_candidate(self):
+        text = 'Here is the result:\n```json\n{"a": 1}\n```\nDone.'
+        cands = _json_candidates(text)
+        assert cands[0].strip() == '{"a": 1}'
+
+    def test_multiple_fenced_blocks_all_returned(self):
+        text = '```json\n{"x": 1}\n```\nand\n```json\n{"y": 2}\n```'
+        cands = _json_candidates(text)
+        assert len(cands) >= 2
+        assert any('"x": 1' in c for c in cands)
+        assert any('"y": 2' in c for c in cands)
+
+    def test_bare_brace_object_extracted(self):
+        text = 'The answer is {"score": 9, "label": "good"} end.'
+        cands = _json_candidates(text)
+        assert any('"score": 9' in c for c in cands)
+
+    def test_fenced_blocks_before_bare_braces(self):
+        # fenced-block candidates come BEFORE bare-brace candidates
+        text = '{"bare": true}\n```json\n{"fenced": true}\n```'
+        cands = _json_candidates(text)
+        fenced_idx = next(i for i, c in enumerate(cands) if '"fenced"' in c)
+        bare_idx = next(i for i, c in enumerate(cands) if '"bare"' in c)
+        assert fenced_idx < bare_idx
+
+    def test_empty_text_returns_empty(self):
+        assert _json_candidates("") == []
+        assert _json_candidates("no braces here") == []
+
+    def test_array_not_included(self):
+        # object-only: bare arrays at top level are NOT returned
+        cands = _json_candidates("[1, 2, 3]")
+        assert all("[" not in c or "{" in c for c in cands)
+
+    def test_nested_braces_balanced(self):
+        text = '{"outer": {"inner": 1}}'
+        cands = _json_candidates(text)
+        assert any('"inner": 1' in c for c in cands)
+
+    def test_fenced_block_without_lang_tag(self):
+        # Only ```json tagged fences activate fenced-block extraction;
+        # the braces are still reachable via the balanced-brace scan.
+        text = '```\n{"x": 1}\n```'
+        cands = _json_candidates(text)
+        assert any('"x": 1' in c for c in cands)
+
+
+class TestExtractJsonObject:
+    def test_extracts_clean_object(self):
+        assert _extract_json_object('{"k": "v"}') == {"k": "v"}
+
+    def test_extracts_object_from_prose(self):
+        text = 'Here is the output: {"score": 5, "tag": "good"} thanks.'
+        assert _extract_json_object(text) == {"score": 5, "tag": "good"}
+
+    def test_extracts_object_from_fenced_block(self):
+        text = 'Result:\n```json\n{"x": 42}\n```\n'
+        assert _extract_json_object(text) == {"x": 42}
+
+    def test_returns_none_for_array(self):
+        assert _extract_json_object("[1, 2, 3]") is None
+
+    def test_returns_none_for_scalar(self):
+        assert _extract_json_object("42") is None
+        assert _extract_json_object('"hello"') is None
+
+    def test_returns_none_for_invalid_json(self):
+        assert _extract_json_object("not json at all") is None
+
+    def test_returns_none_for_empty_string(self):
+        assert _extract_json_object("") is None
+
+    def test_prefers_fenced_over_bare(self):
+        # When both a fenced object and a bare object are present,
+        # the fenced one (listed first by _json_candidates) is returned.
+        text = '{"bare": 1}\n```json\n{"fenced": 2}\n```'
+        result = _extract_json_object(text)
+        assert result == {"fenced": 2}
+
+    def test_skips_invalid_falls_through_to_valid(self):
+        # If the first candidate is invalid JSON, fall through to a valid one.
+        text = '```json\nnot-valid\n```\n{"fallback": true}'
+        result = _extract_json_object(text)
+        assert result == {"fallback": True}
+
+    def test_nested_object(self):
+        text = '{"outer": {"inner": [1, 2]}}'
+        assert _extract_json_object(text) == {"outer": {"inner": [1, 2]}}
