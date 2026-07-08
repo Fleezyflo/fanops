@@ -3,7 +3,7 @@
 > **POST-REBUILD (P15 / MOL-156).** Single-owner per-persona picking is live. One `moments` gate attributes
 > picks per owner (`Moment.affinities` len==1). One `moment_hooks` gate authors `m.hook` for the owner only.
 > Captions + crosspost scope via `affinity_admits` (owner × platform). The LLM casting stage, durable
-> `AccountSelection`, `hooks_by_persona`, `scoped_caption_surfaces`, and `casting_bias` are **gone**. Operator
+> selection side-records, `hooks_by_persona`, `scoped_caption_surfaces`, and `casting_bias` are **gone**. Operator
 > `cast_add`/`cast_remove` writes `Moment.affinities` directly. Proofs: `tests/test_per_persona_e2e.py`,
 > `tests/test_archetype_differentiation.py`, `tests/test_no_ghosts.py`.
 
@@ -46,7 +46,7 @@ Account (hydrated, in memory only)
           (affinity_admits — same gate as crosspost)
 ```
 
-Legacy note: the pre-P11 LLM casting stage (`request_moment_casting`, durable `AccountSelection`,
+Legacy note: the pre-P11 LLM casting stage (durable selection tables,
 `hooks_by_persona`, `scoped_caption_surfaces`) is removed. `casting.py` now holds `affinity_admits` only.
 Operator `cast_add`/`cast_remove` (Studio) writes `Moment.affinities` directly.
 
@@ -58,7 +58,7 @@ Operator `cast_add`/`cast_remove` (Studio) writes `Moment.affinities` directly.
   (`selection_scope` + `content_focus` via `persona_directives`) in the payload. Sets `moments_requested`.
 - `ingest_moments` — validates picks, `_drop_overlaps` is **within-owner** (cross-owner overlap is allowed),
   stamps `pick.personas[0]` → `Moment.affinities` (single owner), content-addressed via `_owned_moment_id`.
-  No `AccountSelection`, no `moment_casting` gate discard.
+  No durable selection table, no `moment_casting` gate discard.
 - `request_moment_hooks` — ONE gate per `picked` moment; `_hook_personas_for_moment` sends **only the owner**
   account (P6). Persona-blind moments (`affinities==[]`) get an empty personas list → shared hook path.
 - `ingest_moment_hooks` — **atomic-per-source**: waits until every pick's hook gate has landed, then promotes
@@ -104,10 +104,9 @@ The lever engine (`persona_levers.py`) is the single upstream declaration. `pers
 
 ### `casting.py` — **REMOVED pre-P11 LLM casting (archived audit trail only; live = `affinity_admits` only)**
 
-> The symbols below (`request_moment_casting`, `ingest_moment_casting`, `account_selection_admits`,
-> `repair_casting_selections`, `casting_bias`, durable `AccountSelection`/`SelectionFact`) were **deleted in
-> P11/MOL-152**. `casting.py` is now 22 lines with one pure predicate. Operator `cast_add`/`cast_remove`
-> writes `Moment.affinities` directly. See [fresh-ingestion-trace.md](../fresh-ingestion-trace.md) §3.
+> **REMOVED P11/MOL-152.** The LLM casting gate, durable selection side-records, `casting_bias`, and
+> `account_selection_admits` were deleted. `casting.py` is now 22 lines with one pure predicate. Operator
+> `cast_add`/`cast_remove` writes `Moment.affinities` directly. See [fresh-ingestion-trace.md](../fresh-ingestion-trace.md) §3.
 
 *(Pre-P11 function inventory retained in git history; not repeated here.)*
 
@@ -189,12 +188,12 @@ The lever engine (`persona_levers.py`) is the single upstream declaration. `pers
 - `Surface` (`NamedTuple`) — `(account, account_id, platform)`.
 - `Accounts.__init__(cfg)` — trivial.
 - `Accounts.load(cfg)` (classmethod) — reads `cfg.accounts_path`, parses JSON into `Account` list; raises `ControlFileError` (chained) on a corrupt file — deliberately distinct from a missing-file I/O error, which is allowed to raise raw ("a real problem, not 'invalid'"). **Always calls `_hydrate_from_personas(a, cfg)` before returning.** Called throughout the CLI/pipeline/studio.
-- `Accounts.active()` — pure filter on `AccountStatus.active`. Called by `live_ready_channels`, `surfaces`, `validate`, `casting._persona_donor_moments`/`_upgrade_stale_fan_all_defaults`/`casting_gate_failed_to_open`.
+- `Accounts.active()` — pure filter on `AccountStatus.active`. Called by `live_ready_channels`, `surfaces`, `validate`, `crosspost.crosspost_clips`, `moments._pick_personas`.
 - `Accounts.resolve_account_id(handle, platform=None)` — pure lookup: prefers `integrations[platform]`, falls back to `account_id`; raises `KeyError` (loud, never returns `""`) if the handle is known but has no id for the platform, or if the handle is entirely unknown. Called by `post.run._resolve_publish_account_id`.
 - `Accounts.resolve_backend(handle, platform=None)` — pure lookup; returns `None` (never raises) when no override — the normal case. Called by `effective_provider`, Studio's `golive.go_live`.
 - `Accounts.effective_provider(handle, platform=None)` — pure: explicit per-channel `backends` override, else a platform-aware bridge to the legacy global `FANOPS_POSTER` (only if it's a LIVE backend that actually serves the platform). `None` if neither. Called by `live_ready_channels`, `post.compress.publish_backend_for_post`, `post.run._post_provider`, `reconcile._reconcilable_routing`, Studio views.
 - `Accounts.live_ready_channels()` — pure: active `(handle, platform, provider)` triples where the provider resolves AND has creds present (`cfg.backend_has_creds`). Called by `config.Config.effective_publish_mode`/`is_live_backend`/`live_route_exists`, `postiz_lifecycle._backend_is_postiz`, Studio's `golive.go_live`.
-- `Accounts.validate()` — pure: returns a list of config-problem strings — missing per-platform ids, the R2/D5/D15 drift state (one side of `integrations`/`backends` set without the other), duplicate handles, and (when `creative_variation` is on) missing persona links / cut specs that match the global (no differentiation). Called by `cli._check_accounts`, `doctor.doctor_report`, `pipeline.advance`, Studio's `actions_run.run_advance`/`run_prepare`, `golive.go_live`.
+- `Accounts.validate()` — pure: returns a list of config-problem strings — missing per-platform ids, the R2/D5/D15 drift state (one side of `integrations`/`backends` set without the other), duplicate handles, and (when `account_casting` is on) missing persona links / cut specs that match the global (no differentiation). Called by `cli._check_accounts`, `doctor.doctor_report`, `pipeline.advance`, Studio's `actions_run.run_advance`/`run_prepare`, `golive.go_live`.
 - `Accounts.surfaces()` — pure: every active `(handle, platform)` as a `Surface`, each resolving its own poster id. Called by `crosspost.crosspost_clips`, `pipeline._aspects_for`/`_stage_refresh_caption_requests`/`_stage_render_and_caption`, Studio's `actions.crosspost_to_account`.
 - `_persona_for_account(acc, reg)` — pure: resolves the `Persona` record for an account via `persona_id` first, else exact inline-voice match. Called by `_hydrate_from_personas`.
 - `_hydrate_from_personas(accts, cfg)` — **THE hydration entrypoint** (traced above in data-flow). Wrapped in `try/except Exception: return` (line 250, the second bare-`except Exception` in this cluster) — any error loading `Personas` (corrupt/absent file) leaves every account's inline values untouched, never crashes a load. Called only by `Accounts.load`.
@@ -230,7 +229,7 @@ The lever engine (`persona_levers.py`) is the single upstream declaration. `pers
 - **THE crosspost + caption-scope gate:** `affinity_admits(cfg, moment, account)` (`casting.py:10-22`) — casting OFF → admit all; `moment is None` → DENY; `affinities==[]` → fan-to-all; else admit iff `account in affinities`. No ledger read, no LLM stage.
 - **`cfg.account_casting`** (`config.py:593-600`, `FANOPS_ACCOUNT_CASTING`) — **DEFAULT ON** (`=0` restores legacy fan-to-all that ignores persisted affinities). This flag gates `affinity_admits`; it does NOT invoke a second LLM gate.
 - **Operator override (P13):** `cast_add`/`cast_remove` (`studio/actions_casting.py`) mutate `Moment.affinities` directly (may deliberately co-own).
-- **Removed (P11/MOL-152):** `request_moment_casting`, `ingest_moment_casting`, `_stage_casting`, durable `AccountSelection`/`SelectionFact`, `casting_bias`/`FANOPS_CASTING_BIAS`, `account_selection_admits`, `hooks_by_persona`.
+- **Removed (P11/MOL-152):** the LLM casting request/ingest pair, `_stage_casting`, durable selection side-records, `casting_bias`/`FANOPS_CASTING_BIAS`, `account_selection_admits`, `hooks_by_persona`.
 - **Historical:** `cast_moments` token-overlap heuristic deleted WS-M1/MOM-7 (predates P11).
 
 ## Anomalies found

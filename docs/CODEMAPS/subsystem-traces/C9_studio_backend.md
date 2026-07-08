@@ -236,7 +236,7 @@ via `golive.py`, line 158-164), `GET /golive/connect` / `GET /golive/accounts` /
   column — **guarded**: rejects (never silently widens) when `ch_account`/`ch_source` are missing
   (line 174-177), so a stale/hand-crafted POST can't sweep a sibling source.
 - `POST /cast/add/<moment_id>` / `POST /cast/remove/<moment_id>` (lines 181-200) →
-  `actions.cast_add`/`cast_remove` (operator override of LLM casting).
+  `actions.cast_add`/`cast_remove` (operator override of `Moment.affinities`).
 - `_render_surface_edit(post_id, result)` (lines 203-213) — shared re-render for the per-surface
   editor after a time/hook mutation.
 - `POST /reschedule/<post_id>` (lines 215-219) — legacy back-compat route, inline result only.

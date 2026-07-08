@@ -70,11 +70,11 @@ All 5 accounts are single-platform → **exactly 5 surfaces**, all **9:16**:
 
 | Multiplier | Value | Where |
 |---|---|---|
-| moments per video | **M — uncapped, model-driven** (no `_target_pick_count`; validity + within-owner overlap dedup only) | `moments.py:4-5,301`, `validate_pick` `:159`, `_drop_overlaps` `:145` |
+| moments per video | **M — model-driven** (prompt ceiling via `prompts._target_pick_count` only; ingest validates + within-owner overlap dedup) | `prompts.py:61-68,174`, `moments.py:301`, `validate_pick` `:159`, `_drop_overlaps` `:145` |
 | clips per moment (aspects) | **×1** — IG and TikTok both map to `Fmt.r9x16` | `pipeline.py:36` `_aspects_for`, `models.py:156-158` `PLATFORM_ASPECT` |
 | surfaces total | **5** | `accounts.py:268`; accounts.json |
 | posts per clip — casting ON (default) | **×1** — owner subset (single-owner moment → its owner surface) | `crosspost.py:166`, `casting.affinity_admits` `:22` |
-| posts per clip — uncast moment (`affinities==[]`) | **×5** — fan-to-all | `casting.py:21`; `crosspost.py:269` loop |
+| posts per clip — uncast moment (`affinities==[]`) | **×5** — fan-to-all | `casting.py:21`; `crosspost_clips` surface loop (`crosspost.py:253-271`) |
 | post state at birth | `awaiting_approval` | `crosspost.py:228` |
 
 **Worked example:**
@@ -91,9 +91,9 @@ multiplier is pinned at 1 because IG and TikTok share 9:16.
 
 ## 3. THE CASTING MODEL (this is the biggest correction vs the old codemaps)
 
-**The dedicated LLM casting stage is GONE** (P11 teardown / MOL-152). `request_moment_casting`,
-`ingest_moment_casting`, the durable `AccountSelection`, `SelectionFact`, and the `cast_moments`
-heuristic are all removed. `casting.py` header (`casting.py:1-6`) states this explicitly.
+**The dedicated LLM casting stage is GONE** (P11 teardown / MOL-152). The casting request/ingest pair,
+the durable selection side-records, and the `cast_moments` heuristic are all removed. `casting.py` header
+(`casting.py:1-6`) states this explicitly.
 
 The SOLE routing gate is now one pure predicate — `affinity_admits(cfg, moment, account)` (`casting.py:10`):
 ```

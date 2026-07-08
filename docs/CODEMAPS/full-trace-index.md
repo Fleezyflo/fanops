@@ -1,4 +1,4 @@
-<!-- Generated: 2026-07-07 | Method: deterministic AST extraction (scripts/codemap_extract/) + drift gate (scripts/codemap_drift.py) + hand-verified semantic sync | Files scanned: 109/109 src/fanops/*.py | Token estimate: ~2400 -->
+<!-- Generated: 2026-07-08 | Method: deterministic AST extraction (scripts/codemap_extract/) + drift gate (scripts/codemap_drift.py) + hand-verified semantic sync | Files scanned: 109/109 src/fanops/*.py | Token estimate: ~2400 -->
 # FanOps Full-Codebase Trace Index
 
 Master index for a zero-omission, function-by-function trace of every module under `src/fanops/`.
@@ -15,8 +15,8 @@ this file is the raw coverage ledger and anomaly index.
 |---|---|---|
 | `structural_index.json` | Every module's imports/functions/classes/methods/module-level calls/line numbers, AST-parsed | `.reports/` |
 | `import_graph.json` | Per-module `imports_from` / `imported_by`, resolved incl. relative imports | `.reports/` |
-| `call_graph.json` | Name-based reverse call graph: 1,067 callables, each with `calls`/`called_by_in_repo` | `.reports/` |
-| `unreferenced_candidates.json` | 55 best-effort dead-code leads (excludes dunders/decorated/tests) — **leads, not verdicts**; see Dead-code below | `.reports/` |
+| `call_graph.json` | Name-based reverse call graph: 1,326 callables, each with `calls`/`called_by_in_repo` | `.reports/` |
+| `unreferenced_candidates.json` | 354 best-effort dead-code leads (excludes dunders/decorated/tests) — **leads, not verdicts**; see Dead-code below | `.reports/` |
 | `ruff_report.json` | Full-repo `ruff check` — **0 findings against src/** (2 historical findings were in the analysis scratch script itself, fixed) | `.reports/` |
 | `ast_extract.py` / `build_graphs.py` | The two extractor scripts themselves (stdlib-only, re-runnable) | `scripts/codemap_extract/` |
 
@@ -78,7 +78,7 @@ full anomaly ledger.
 
 | Property audited | Cluster | Verdict |
 |---|---|---|
-| No-auto-publish gate (a Post can never reach a real network POST without an explicit operator approval) | C6 | **HOLDS.** Only `PostizPoster.publish`/`ZernioPoster.publish` ever touch the network, both called exclusively from `post/run.py:_publish_one`, gated on `post.state is PostState.queued`. The sole `Post(...)` construction site (`crosspost.py:269`) hardcodes `state=PostState.awaiting_approval`. `Ledger.approve_post` is the sole promoter to `queued` and is never called from within C6's 17 files. |
+| No-auto-publish gate (a Post can never reach a real network POST without an explicit operator approval) | C6 | **HOLDS.** Only `PostizPoster.publish`/`ZernioPoster.publish` ever touch the network, both called exclusively from `post/run.py:_publish_one`, gated on `post.state is PostState.queued`. The sole `Post(...)` construction site (`crosspost.py:228`) hardcodes `state=PostState.awaiting_approval`. `Ledger.approve_post` is the sole promoter to `queued` and is never called from within C6's 17 files. |
 | Approval lifecycle never bypasses the ledger | C9 | **HOLDS.** Every approve/reject/batch-approve path in `actions_approve.py` funnels through `led.approve_post`; no direct state mutation found. |
 | Dryrun→live boundary cannot be silently crossed | C6, C9 | **HOLDS**, via two independent gates: `_post_provider` returns `"dryrun"` unconditionally when `not cfg.is_live`; `get_poster()` separately refuses to construct a `DryRunPoster` when `cfg.is_live`. `FANOPS_LIVE=1` is settable only through `studio/golive.py:go_live`, itself behind accounts-validate → live-ready-channels → past-due-backlog-gate → explicit confirm. Postiz API key confirmed write-only (never rendered back to any template/response). |
 | Ledger wipe requires multi-step operator confirmation | C9 | **HOLDS with one caveat.** Four-gate order verified in code (typed word "REMOVE" → mandatory snapshot → snapshot-restorability check → `execute_wipe`'s own re-check), every terminal outcome logged. Caveat: `app_routes_live.py:29-34`'s `do_wipe_confirm` has no *server-side* check that `do_wipe_preview` ran first — "preview before confirm" is a UI convention, not a server-enforced invariant. The destructive-action gates themselves are unaffected. |
@@ -98,7 +98,7 @@ callbacks). Outcome:
 
 - **Confirmed false positives** (real callers the AST tool structurally cannot see — dispatch tables,
   default-parameter injection, Jinja-filter/argparse registration, and **aliased or lazy imports**):
-  - `prompts.py`'s 3 live prompt-builders (`moment_pick_prompt`/`moment_hook_prompt`/`caption_prompt`) via `responder.py:_PROMPT[kind]` dict-dispatch (C5). (`moment_casting_prompt` removed P11.)
+  - `prompts.py`'s 3 live prompt-builders (`moment_pick_prompt`/`moment_hook_prompt`/`caption_prompt`) via `responder.py:_PROMPT[kind]` dict-dispatch (C5). (Casting LLM prompt builders removed P11.)
   - `compose.py`'s `_moviepy_prepend_render`/`_moviepy_render`/`_probe` — default-parameter values (C3).
   - `timeutil.to_local_display`/`to_local_input` — Jinja filter registration (C8); `cli._http_url` — argparse `type=` callback (C8).
   - `llm.claude_json` — called via `studio/actions.py:138-139` (`from fanops.llm import claude_json`) (C5).
@@ -172,9 +172,9 @@ are low-traffic paths (wipe-safety check, preview rendering, one persona-store l
 | C9 | 17 | ~150 (largest single cluster by trace length, 892 lines) |
 | C10 | 5 | ~60 |
 
-Totals reconcile against the deterministic count: 889 top-level functions + 178 class methods
-(113 classes) = 1,067 callables in `call_graph.json`, matching the AST extractor's structural
-index exactly (108/108 modules parsed with zero AST errors).
+Totals reconcile against the deterministic count: 1,144 top-level functions + 182 class methods
+(113 classes) = 1,326 callables in `call_graph.json`, matching the AST extractor's structural
+index exactly (109/109 modules parsed with zero AST errors).
 
 ## How to regenerate
 
