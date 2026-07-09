@@ -1,14 +1,14 @@
-"""publish-out-of-lock: the live publish network must run OUTSIDE the ledger flock.
+"""publish-out-of-lock: the live publish network must run OUTSIDE the ledger write lock.
 
 Pre-fix, advance() wrapped the WHOLE pass (incl. publish_due) in one Ledger.transaction, so a live
 publish held the lock across every post's network round-trip — a concurrent Studio/daemon writer
 blocked up to the 30s lock timeout (LockBusyError). The lock-probe poster below proves the property:
-its publish() can itself acquire the ledger lock, which is only possible if the publish loop is NOT
+its publish() can itself acquire the ledger store lock, which is only possible if the publish loop is NOT
 holding it at network time. Post-fix, advance() commits its main txn FIRST, then publishes via the
 per-post claim->network->finalize discipline (network lock-free)."""
 import json
 from fanops.config import Config
-from fanops.ledger import Ledger, _file_lock
+from fanops.ledger import Ledger
 from fanops.models import Post, Clip, PostState, ClipState, Platform
 
 
@@ -46,8 +46,8 @@ def test_advance_publishes_with_network_outside_the_lock(tmp_path, monkeypatch, 
     class _LockProbePoster:
         def __init__(self, cfg): pass
         def publish(self, led_, post_id):
-            # if the publish loop holds the ledger lock, this acquire raises LockBusyError (timeout)
-            with _file_lock(cfg.lock_path, timeout=3):
+            # if the publish loop holds the ledger write lock, this acquire raises LockBusyError (timeout)
+            with Ledger.load(cfg)._store.lock(timeout=3):
                 acquired[post_id] = True
             led_.posts[post_id].state = PostState.submitted
             led_.posts[post_id].submission_id = f"probe_{post_id}"

@@ -64,8 +64,7 @@ def test_sqlite_first_load_auto_imports_from_json(tmp_path, monkeypatch):
     assert led._to_doc() == json_doc
 
 
-def test_default_backend_is_json_without_flag(tmp_path, monkeypatch):
+def test_default_backend_is_sqlite_without_flag(tmp_path, monkeypatch):
     monkeypatch.delenv("FANOPS_LEDGER_BACKEND", raising=False)
     led = Ledger.load(Config(root=tmp_path))
-    from fanops.ledger import JsonLedgerStore
-    assert isinstance(led._store, JsonLedgerStore)
+    assert isinstance(led._store, SqliteLedgerStore)

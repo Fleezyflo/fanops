@@ -16,7 +16,7 @@
 ## Hard rules
 
 - **The 60s global timeout (`pyproject.toml:77`, pytest-timeout) is a DEADLOCK GUARDRAIL** — it exists so a
-  concurrency regression that self-deadlocks on the ledger `flock` fails fast instead of hanging. A hanging test
+  concurrency regression that self-deadlocks on the ledger SQLite busy_timeout fails fast instead of hanging. A hanging test
   IS the bug. NEVER raise the timeout to make a test pass.
 
 ## The os.environ leak gotcha (bites new-flag/new-credential tests)

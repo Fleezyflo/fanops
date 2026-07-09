@@ -358,7 +358,7 @@ class JsonLedgerStore:
 
 
 def _resolve_store(cfg: Config) -> LedgerStore:
-    """Pick JsonLedgerStore or SqliteLedgerStore from FANOPS_LEDGER_BACKEND (default json). On first sqlite
+    """Pick JsonLedgerStore or SqliteLedgerStore from FANOPS_LEDGER_BACKEND (default sqlite). On first sqlite
     selection with no DB but a live ledger.json, auto-run the M1-C bridge import (idempotent)."""
     if cfg.ledger_backend == "json":
         return JsonLedgerStore(cfg)
