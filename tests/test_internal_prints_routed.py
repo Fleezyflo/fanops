@@ -18,7 +18,7 @@ _INTERNAL_MODULES = (
     "lever_docs.py",
     "ledger.py",
 )
-_CLI_PRINT_COUNT = 121  # MOL-471 retry-source not-recoverable stderr print
+_CLI_PRINT_COUNT = 125  # +run lease RunBusyError handler + status per-source lines + loop busy skip
 _SRC = Path(__file__).resolve().parents[1] / "src" / "fanops"
 
 
