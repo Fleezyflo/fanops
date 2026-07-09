@@ -15,6 +15,7 @@ is sent as auth by PostizMetricsClient and never logged/echoed here (mirror its 
 from __future__ import annotations
 from fanops.config import Config
 from fanops.controlio import write_json_atomic
+from fanops.log import get_logger
 from fanops.ledger import Ledger
 from fanops.models import PostState
 from fanops.track import _W
@@ -83,7 +84,8 @@ def cmd_learn_doctor(cfg: Config, *, list_posts=None) -> int:
     on every branch (a diagnostic never aborts a pipeline). On a non-postiz backend or missing key it
     prints guidance and returns without touching the network."""
     if cfg.poster_backend != "postiz" or not cfg.postiz_api_key:
-        print("learning doctor needs a postiz backend + key — set FANOPS_POSTER=postiz and POSTIZ_API_KEY.")
+        get_logger(cfg)("learn_doctor", "-", "missing_backend", level="warning",
+                        hint="set FANOPS_POSTER=postiz and POSTIZ_API_KEY")
         return 0
     import requests
     from fanops.errors import PostizAuthError
@@ -94,14 +96,15 @@ def cmd_learn_doctor(cfg: Config, *, list_posts=None) -> int:
     # RuntimeError on a 5xx/non-JSON body; requests/OSError on transport) — these are transient/diagnostic.
     # A genuine code bug (TypeError/KeyError/ImportError) is NOT caught here and surfaces as a traceback.
     except (PostizAuthError, RuntimeError, requests.RequestException, OSError) as e:  # key never echoed (class name only)
-        print(f"learning doctor: analytics fetch failed ({type(e).__name__}) — retry when Postiz analytics are reachable.")
+        get_logger(cfg)("learn_doctor", "-", "fetch_failed", level="warning", err=type(e).__name__,
+                        detail="retry when Postiz analytics are reachable")
         return 0
-    print(f"published posts sampled: {report['posts_sampled']}")
-    print(f"analytics labels seen:   {report['labels_seen'] or '(none)'}")
-    print(f"lift weight keys (_W):   {report['weight_keys']}")
-    print(f"unmapped on postiz:      {report['unmapped_weight_keys']} (a known design gap, not gated)")
-    print(f"VERDICT: {report['verdict']} — {report['detail']}")
+    log = get_logger(cfg)
+    log("learn_doctor", "-", "report", posts_sampled=report["posts_sampled"],
+        labels_seen=report["labels_seen"] or "(none)", weight_keys=report["weight_keys"],
+        unmapped_weight_keys=report["unmapped_weight_keys"], verdict=report["verdict"], detail=report["detail"])
     if report["verdict"] != "PASS":
-        print("=> learning lift/reach signal is not validated. Do NOT enable variant_* / reach-attribution paths yet.")
+        log("learn_doctor", "-", "not_validated", level="warning",
+            detail="Do NOT enable variant_* / reach-attribution paths yet")
     _persist_verdict(cfg, report)
     return 0

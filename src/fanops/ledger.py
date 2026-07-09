@@ -9,12 +9,13 @@ model cannot corrupt or lose updates. Legacy ledger.json is READ-ONLY break-glas
 a pre-flip JSON snapshot is the operator rollback artifact — fanops never writes ledger.json after M1-F).
 Provides reconcile (upsert+cascade) and retire."""
 from __future__ import annotations
-import fcntl, os, re, secrets, sys, time
+import fcntl, os, re, secrets, time
 from datetime import datetime, timezone
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 from fanops.config import Config
+from fanops.log import get_logger
 from fanops.errors import ControlFileError, LockBusyError, reason as _reason
 from fanops.models import (Source, Moment, Clip, Post, Render, validate_account_handle,
                            StitchPlan, StitchState, Batch, ImportedMedia,
@@ -620,7 +621,9 @@ class Ledger:
                     # (a permanent orphan). Fail-open + surface like cmd_gc: a bad unlink never aborts the cascade.
                     if c.path and os.path.exists(c.path):
                         try: os.remove(c.path)
-                        except OSError as exc: print(f"cascade: could not remove {c.path}: {exc}", file=sys.stderr)
+                        except OSError as exc:
+                            get_logger(self.cfg)("ledger", c.id, "cascade_unlink_failed", level="warning",
+                                                 path=c.path, err=str(exc)[:160])
                     self.clips.pop(c.id, None)
                 else:
                     survived = True

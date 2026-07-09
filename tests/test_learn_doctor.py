@@ -70,12 +70,14 @@ def test_reach_pass_with_retention_unmapped(tmp_path):
     assert rep["gating_key"] == "reach"
 
 
-def test_cmd_non_postiz_backend_exits_zero_with_guidance(tmp_path, capsys):
+def test_cmd_non_postiz_backend_exits_zero_with_guidance(tmp_path):
     # Default (dryrun) backend: no network, no crash, exit 0, clear guidance — never reaches the client.
+    import json
     cfg = Config(root=tmp_path)
     rc = cmd_learn_doctor(cfg)
     assert rc == 0
-    assert "postiz" in capsys.readouterr().out.lower()
+    recs = [json.loads(line) for line in cfg.log_path.read_text().splitlines()]
+    assert any(r["outcome"] == "missing_backend" and "postiz" in r.get("hint", "").lower() for r in recs)
 
 
 def test_cmd_persists_verdict_for_m4_to_gate(tmp_path, monkeypatch, capsys):
@@ -91,7 +93,7 @@ def test_cmd_persists_verdict_for_m4_to_gate(tmp_path, monkeypatch, capsys):
     assert persisted["verdict"] == "PASS"               # the persisted sidecar M4 gates on
 
 
-def test_cmd_never_logs_the_postiz_key(tmp_path, monkeypatch, capsys):
+def test_cmd_never_logs_the_postiz_key(tmp_path, monkeypatch):
     # Sentinel discipline (mirror PostizMetricsClient): the key value must never reach stdout.
     monkeypatch.setenv("FANOPS_POSTER", "postiz")
     monkeypatch.setenv("POSTIZ_API_KEY", "sk-SECRET-VALUE-zzz")
@@ -99,7 +101,8 @@ def test_cmd_never_logs_the_postiz_key(tmp_path, monkeypatch, capsys):
     led.save()
     rows = [{"postSubmissionId": "s_A", "metrics": {"reach": 1}, "_raw_labels": ["impressions"]}]
     cmd_learn_doctor(cfg, list_posts=lambda w: rows)
-    assert "sk-SECRET-VALUE-zzz" not in capsys.readouterr().out
+    blob = cfg.log_path.read_text()
+    assert "sk-SECRET-VALUE-zzz" not in blob
 
 
 def test_report_is_read_only_no_ledger_mutation(tmp_path):
@@ -124,16 +127,18 @@ def test_cmd_propagates_a_real_code_bug(tmp_path, monkeypatch):
         cmd_learn_doctor(cfg, list_posts=boom)
 
 
-def test_cmd_swallows_a_transport_failure(tmp_path, monkeypatch, capsys):
+def test_cmd_swallows_a_transport_failure(tmp_path, monkeypatch):
     # A documented transport failure (the Postiz client raises RuntimeError on a 5xx/non-JSON body, or
     # requests raises) is transient — swallow it, print retry guidance, exit 0 (never crash a pipeline).
+    import json
     monkeypatch.setenv("FANOPS_POSTER", "postiz")
     monkeypatch.setenv("POSTIZ_API_KEY", "sk-x")
     cfg, led = _led_with_shipped(tmp_path); led.save()
     def neterr(w): raise RuntimeError("postiz analytics 503: upstream down")
     rc = cmd_learn_doctor(cfg, list_posts=neterr)
     assert rc == 0
-    assert "fetch failed" in capsys.readouterr().out.lower()
+    recs = [json.loads(line) for line in cfg.log_path.read_text().splitlines()]
+    assert any(r["outcome"] == "fetch_failed" for r in recs)
 
 
 # ---- WS-R1 XC-3: learn_doctor.json written atomically (no torn sidecar re-freezes M4) -----------

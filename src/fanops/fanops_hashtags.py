@@ -13,8 +13,9 @@ one with a generic set (the abort is loud + distinct from a genuinely persona-le
 discover REPORTS fresh per-persona discoveries and NEVER writes the caption menu (curation stays operator-
 gated in the Studio)."""
 from __future__ import annotations
-import json, sys
+import json
 from fanops.config import Config
+from fanops.log import get_logger
 from fanops.hashtags import _norm, vetted_menu
 
 
@@ -109,12 +110,12 @@ def cmd_hashtags_refresh(cfg: Config) -> int:
     and exits 2 instead of KeyError-ing the abort result (which carries no measured/harvested/total)."""
     r = refresh_store(cfg)
     if not r.get("written"):                              # corrupt-personas abort: loud, non-zero, store untouched
-        print(f"hashtags store NOT refreshed — refresh aborted ({r.get('aborted', 'unknown')}): "
-              f"{r.get('reason', '')}\n  the curated 00_control/hashtags.json was left untouched; fix personas.json.",
-              file=sys.stderr)
+        get_logger(cfg)("hashtags", "-", "refresh_aborted", level="error",
+                        aborted=r.get("aborted", "unknown"), reason=r.get("reason", ""),
+                        detail="curated 00_control/hashtags.json left untouched; fix personas.json")
         return 2
-    print(f"hashtags store refreshed from live Graph reach: {r['measured']} measured + "
-          f"{r['harvested']} harvested -> {r['total']} tags (00_control/hashtags.json)")
+    get_logger(cfg)("hashtags", "-", "refreshed", measured=r["measured"], harvested=r["harvested"],
+                    total=r["total"], path=str(cfg.hashtags_path))
     return 0
 
 
@@ -128,18 +129,22 @@ def cmd_hashtags_discover(cfg: Config) -> int:
     try:
         personas = Personas.load(cfg).all()
     except Exception as exc:
-        print(f"hashtags discover SKIPPED: personas.json unreadable ({exc})"); return 0
+        get_logger(cfg)("hashtags", "-", "discover_skipped", level="warning", err=str(exc)[:160]); return 0
     if not personas:
-        print("hashtags discover: no personas — add one in the Studio Personas tab first."); return 0
+        get_logger(cfg)("hashtags", "-", "no_personas", level="warning",
+                        hint="add one in the Studio Personas tab first"); return 0
+    log = get_logger(cfg)
     for per in personas:
         try:
             props = discover_corpus(cfg, per.id)
         except Exception as exc:
-            print(f"  {per.id}: discovery error ({exc})"); continue
+            log("hashtags", per.id, "discovery_error", level="warning", err=str(exc)[:160]); continue
         if props:
             tags = ", ".join(p["tag"] + (f"({p['count']})" if p.get("count") else "") for p in props)
-            print(f"  {per.id}: {len(props)} fresh — {tags}")
+            log("hashtags", per.id, "fresh", count=len(props), tags=tags)
         else:
-            print(f"  {per.id}: no fresh tags (corpus covers the live winners, or no Meta creds)")
-    print("review + curate in the Studio Personas tab → Research corpus (nothing was written to the menu).")
+            log("hashtags", per.id, "no_fresh",
+                detail="corpus covers the live winners, or no Meta creds")
+    log("hashtags", "-", "discover_done",
+        hint="review + curate in Studio Personas → Research corpus (menu untouched)")
     return 0
