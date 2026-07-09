@@ -4,7 +4,7 @@ install/status/stop are tested with `subprocess.run` mocked — NO real launchct
 ~/Library/LaunchAgents write (HOME is repointed at tmp_path so every home-derived path is
 sandboxed). The heartbeat parse is pinned against the REAL run.log line shape (log.py)."""
 from __future__ import annotations
-import os, plistlib, shlex, subprocess
+import os, plistlib, subprocess
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -35,47 +35,7 @@ def _fake_launchctl(**spec):
     return run
 
 
-# ── Task 1: pure renderers + path helpers ───────────────────────────────────────────────────
-
-def test_render_plist_pins_working_dir_to_root_not_base(tmp_path):
-    # THE core gotcha: launchd's default cwd is /, and Config(root=cwd) re-derives base=root/MohFlow-FanOps.
-    # WorkingDirectory MUST be root; point it at base and you build .../MohFlow-FanOps/MohFlow-FanOps.
-    cfg = Config(root=tmp_path)
-    pl = plistlib.loads(daemon.render_plist(cfg, interval=600).encode())
-    assert pl["WorkingDirectory"] == str(tmp_path)                 # root, NOT cfg.base
-    assert pl["WorkingDirectory"] != str(cfg.base)
-
-
-def test_render_plist_sets_label_interval_runatload_and_program(tmp_path):
-    cfg = Config(root=tmp_path)
-    pl = plistlib.loads(daemon.render_plist(cfg, interval=600).encode())
-    assert pl["Label"] == daemon.LABEL == "com.fanops.run"
-    assert pl["StartInterval"] == 600
-    assert pl["RunAtLoad"] is True
-    assert pl["ProgramArguments"] == ["/bin/bash", str(daemon.wrapper_path(cfg))]
-    assert pl["StandardOutPath"] == str(cfg.reports / "daemon.out")
-    assert pl["StandardErrorPath"] == str(cfg.reports / "daemon.err")
-    # launchd sources NO shell profile — PATH+HOME must be baked into EnvironmentVariables.
-    assert "PATH" in pl["EnvironmentVariables"] and "HOME" in pl["EnvironmentVariables"]
-
-
-def test_render_wrapper_uses_venv_fanops_cd_root_now_base_time(tmp_path):
-    cfg = Config(root=tmp_path)
-    w = daemon.render_wrapper(cfg, interval=600)
-    assert w.startswith("#!/bin/bash")
-    assert daemon._fanops_bin() in w                              # the SAME venv that installed it
-    assert f"cd {shlex.quote(str(cfg.root))}" in w               # shell-quoted; not base, not /
-    assert '--base-time "$(date -u +%Y-%m-%dT%H:%M:%SZ)"' in w    # a FRESH now each fire, not a frozen past date
-    assert "FANOPS_RESPONDER" not in w                           # decoupled: .env/Config resolves the responder at fire time
-    assert "export PATH=" in w
-
-
-def test_path_helpers_live_in_expected_locations(tmp_path, monkeypatch):
-    monkeypatch.setenv("HOME", str(tmp_path))
-    cfg = Config(root=tmp_path)
-    assert daemon.plist_path() == tmp_path / "Library/LaunchAgents/com.fanops.run.plist"
-    assert daemon.wrapper_path(cfg) == cfg.control / "fanops-run.sh"
-
+# ── Task 1: pure renderers + path helpers (plist/wrapper specifics → test_daemon_plist.py) ───
 
 # ── parse_interval (pure; Task 5 helper, lives in daemon for testability) ────────────────────
 
@@ -292,28 +252,6 @@ def test_main_daemon_stop_reports_failure_when_still_loaded(tmp_path, monkeypatc
 
 # ── review hardening (python-review HIGH/MEDIUM) ─────────────────────────────────────────────
 
-def test_render_wrapper_shell_quotes_paths_with_metacharacters(tmp_path):
-    # A workspace path with a space/quote/$ must be shell-safe in the generated wrapper: an unquoted
-    # `cd "<path>"` would break out or let bash expand `$x`, silently running from the WRONG cwd and
-    # defeating the daemon's #1 invariant (correct working directory). shlex.quote each interpolated path.
-    weird = tmp_path / 'a b"c$d'
-    weird.mkdir()
-    cfg = Config(root=weird)
-    w = daemon.render_wrapper(cfg, interval=600)
-    assert f"cd {shlex.quote(str(weird))}" in w        # the cd target is shell-quoted
-    assert f'cd "{weird}"' not in w                     # NOT the naive double-quoted form
-
-
-def test_installed_interval_missing_key_or_corrupt_returns_none(tmp_path, monkeypatch):
-    # A plist missing StartInterval must NOT crash (the old int(None) raised TypeError, masked by a
-    # blanket catch); a corrupt plist must degrade to None (best-effort, like Config.tuning()).
-    monkeypatch.setenv("HOME", str(tmp_path))
-    cfg = Config(root=tmp_path)
-    pp = daemon.plist_path(); pp.parent.mkdir(parents=True, exist_ok=True)
-    pp.write_bytes(plistlib.dumps({"Label": daemon.LABEL}))      # no StartInterval key
-    assert daemon.installed_interval(cfg) is None
-    pp.write_bytes(b"not a plist at all")                        # corrupt
-    assert daemon.installed_interval(cfg) is None
 
 
 @pytest.mark.parametrize("raw", ["m", "h", "", "abc", "10x"])
@@ -384,20 +322,6 @@ def test_install_wrapper_write_is_atomic_replace_not_inplace(tmp_path, monkeypat
     assert daemon.wrapper_path(cfg).exists() and os.access(wp, os.X_OK)   # still 0755 after the atomic swap
 
 
-# ── MOL-81 criterion 2: overlap / single-flight prevention (no concurrent ticks) ──────────────
-
-def test_render_plist_prohibits_multiple_instances(tmp_path):
-    # MOL-81 instance 2: a slow LLM/network tick can still be running when launchd's StartInterval
-    # re-fires; launchd's default permits a SECOND overlapping fanops-run process, which then contends
-    # for the ledger flock and silently wastes a full respond-and-advance cycle. LSMultipleInstancesProhibited
-    # delegates de-duplication to launchd itself (the key that exists for exactly this) — the next fire is
-    # skipped while the prior instance is alive. ThrottleInterval only floors RESTART cadence, not overlap.
-    cfg = Config(root=tmp_path)
-    pl = plistlib.loads(daemon.render_plist(cfg, interval=600).encode())
-    assert pl.get("LSMultipleInstancesProhibited") is True
-    # crash-restart semantics (a different, already-correct concern) must be UNCHANGED by this fix
-    assert pl["RunAtLoad"] is True
-    assert pl["ThrottleInterval"] == daemon._MIN_INTERVAL
 
 
 def test_install_written_plist_prohibits_multiple_instances(tmp_path, monkeypatch):
