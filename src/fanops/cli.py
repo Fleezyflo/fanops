@@ -3,7 +3,7 @@ advance() lives in pipeline.py; track/adjust close the feedback loop (FIX F04); 
 the agent gates via the responder (FIX F02/F13); gc reclaims disk (FIX F83); run loops
 respond+advance until stable for unattended operation."""
 from __future__ import annotations
-import argparse, json, subprocess, sys
+import argparse, json, subprocess, sys, time
 from datetime import datetime, timezone
 import fanops
 from fanops.config import Config
@@ -670,6 +670,8 @@ def main(argv: list[str] | None = None) -> int:
     thresh_sub = p_thresh.add_subparsers(dest="thresh_cmd", required=True)
     thresh_sub.add_parser("docs", help="regenerate docs/LEVERS.md + docs/LEVER-THRESHOLDS.md")
     p_run = sub.add_parser("run"); p_run.add_argument("--base-time", default="2026-06-02T18:00:00Z")
+    p_run.add_argument("--loop", action="store_true", help="resident outer loop: re-run each --interval with a fresh base-time")
+    p_run.add_argument("--interval", default="10m", help="sleep between --loop iterations (e.g. 10m, 90s)")
     p_dae = sub.add_parser("daemon", help="run fanops unattended via launchd (survives logout, restarts on crash)")
     dae_sub = p_dae.add_subparsers(dest="dae_cmd", required=True)
     p_dins = dae_sub.add_parser("install", help="install + load the launchd agent (macOS)")
@@ -785,6 +787,106 @@ def _check_preflight(cfg: Config) -> int:
             print(f"  - {p}", file=sys.stderr)
         return 2
     return 0
+
+
+def _fresh_run_base_time() -> str:
+    """UTC now as --base-time (matches daemon render_wrapper's per-fire date)."""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _cmd_run_pass(cfg: Config, base_time: str) -> dict | None:
+    """One respond+advance converge-then-learn pass. None = halted (run-halted line already on stderr)."""
+    # unattended: respond to gates, advance, repeat until no progress.
+    # BOTH the responder and advance() are inside the guard: advance()'s deterministic
+    # stages are per-unit quarantined, but the responder (FIX H7 — the LLM model call or a
+    # response that fails validation can raise) and crosspost/publish run outside those
+    # guards, and publish_due RE-RAISES on fatal auth (bad key/401) by design. So a raise
+    # from either degrades cleanly here (log one line + stop) rather than crashing the
+    # unattended cron loop with a traceback.
+    s = None
+    for _ in range(10):
+        try:
+            get_responder(cfg).answer_pending(cfg)
+            s = advance(cfg, base_time=base_time)
+        except Exception as e:
+            print(f"run halted: {type(e).__name__}: {e}", file=sys.stderr)
+            return None
+        # Converge only when EVERY gate is clear. any() over all awaiting kinds (moments, captions)
+        # is robust to future gates too — a run that exits with any open has not produced its clips/posts.
+        if not any(s["awaiting"].values()):
+            break
+    # B2: if the loop ended with gates still awaiting, say so LOUDLY (a stuck responder used to
+    # exhaust the iterations and fall through silently). Exit stays 0 — a stuck gate is not a
+    # crash; the distinct stderr line + run.log event is what monitoring greps.
+    if (note := _gates_blocked_note(s)):
+        print(note, file=sys.stderr)
+        get_logger(cfg)("run", "-", "gates_blocked", **s["awaiting"])   # WS2: log EVERY gate kind, not just moments/captions
+    # E1: post-loop learning pass — close the feedback loop ONCE per `run` after respond+advance
+    # converges. Gated by the identical reconcile guard (pipeline.py:106): live backend + key
+    # only. In dryrun (default) the guard short-circuits and the pass is NEVER entered. Runs in
+    # its own lock-safe transaction (won't race the next advance); a pull/classify/amplify/retire
+    # hiccup is logged and swallowed so it can NEVER crash the unattended run (exit stays 0).
+    if cfg.is_live_backend:
+        try:
+            _learn_pass(cfg)
+        except AuthError as e:
+            # A bad/rotated key is actionable, not a transient 5xx — surface it VISIBLY on stderr +
+            # a distinct breadcrumb, but keep exit 0: the unattended run SKIPS the learn pass cleanly,
+            # mirroring cmd_track/cmd_reconcile (read paths skip; only the WRITE path publish_due halts).
+            print(f"learn skipped: auth failure ({type(e).__name__}) — check the API key", file=sys.stderr)
+            get_logger(cfg)("learn", "-", "auth_error", err=f"{type(e).__name__}: {str(e)[:120]}")
+        except Exception as e:
+            get_logger(cfg)("learn", "-", "error", err=f"{type(e).__name__}: {str(e)[:120]}")
+    # variant-amplify (v3): a SEPARATE, independently-gated learning pass — proven SUSTAINED
+    # variant winners auto-amplify their source. Gated by its OWN kill switch (cfg.variant_amplify,
+    # default OFF) AND the same live-backend+key guard as the learn block. Its OWN try/except so it
+    # can never affect the block above and a hiccup is swallowed (exit stays 0). apply_variant_amplify
+    # is amplify-only (never retires/deletes) and self-guards on the flag, so this is fail-SAFE.
+    if cfg.variant_amplify and cfg.is_live_backend:
+        try:
+            with Ledger.transaction(cfg) as led:
+                led = apply_variant_amplify(led, cfg)
+        except Exception as e:
+            get_logger(cfg)("variant_amplify", "-", "error", err=str(e)[:120])
+    # P4(b) cross-account reach dim-bias: SYMMETRIC with variant_amplify — a SEPARATE, independently
+    # gated learning pass so the unattended run applies a proven higher-reach creative dim, not only
+    # the manual `fanops p4-bias` verb. Gated by its OWN kill switch (cfg.p4_dim_bias, default OFF) AND
+    # the live-backend+key guard; apply_p4_dim_bias is amplify-only AND stays INERT until cutover
+    # validation (validation_gate.learning_validated), so wiring it in is fail-SAFE. Own try/except —
+    # a hiccup is swallowed (exit stays 0) and can't touch the blocks above.
+    if cfg.p4_dim_bias and cfg.is_live_backend:
+        try:
+            with Ledger.transaction(cfg) as led:
+                led = apply_p4_dim_bias(led, cfg)
+        except Exception as e:
+            get_logger(cfg)("p4_dim_bias", "-", "error", err=str(e)[:120])
+    # Leg 3 (timing): SYMMETRIC with p4_dim_bias — a SEPARATE, independently gated pass so the unattended
+    # run refreshes the reach-winning publish-HOUR prior (consumed by the next crosspost's surface_time).
+    # Own kill switch (cfg.timing_bias, default OFF) AND the live-backend guard; apply_timing_bias is
+    # bias-only (writes ONE prior file, never retires) AND validation-frozen, so wiring it in is fail-SAFE.
+    # Own try/except — a hiccup is swallowed (exit stays 0) and can't touch the blocks above.
+    if cfg.timing_bias and cfg.is_live_backend:
+        try:
+            with Ledger.transaction(cfg) as led:
+                led = apply_timing_bias(led, cfg)
+        except Exception as e:
+            get_logger(cfg)("timing_bias", "-", "error", err=str(e)[:120])
+    # WS2: constant Graph-reach hashtag store update — refresh at most once per cadence (12h), throttled by
+    # the store mtime so the 10-min publish cadence doesn't hammer the 30/7-day Graph budget. NOT gated on
+    # is_live_backend (a hashtag's worth is its live platform reach, independent of whether WE publish) —
+    # only on Meta creds, handled inside the helper. Its OWN try/except; refresh_store_if_due never raises,
+    # so the unattended run can never break on a hashtag refresh.
+    try:
+        from fanops.fanops_hashtags import refresh_store_if_due
+        r = refresh_store_if_due(cfg)
+        if r.get("aborted"):     # corrupt personas.json: refresh_store preserved the store — report the abort LOUDLY,
+                                 # never the false-success store_refreshed (a bad control file stripping strategy is not routine)
+            get_logger(cfg)("hashtags", "-", "store_refresh_aborted", aborted=r.get("aborted"), reason=r.get("reason", ""))
+        elif r.get("refreshed"):
+            get_logger(cfg)("hashtags", "-", "store_refreshed", measured=r.get("measured", 0), total=r.get("total", 0))
+    except Exception as e:
+        get_logger(cfg)("hashtags", "-", "refresh_error", err=f"{type(e).__name__}: {str(e)[:120]}")
+    return s
 
 
 def _heartbeat(cfg: Config, s: dict) -> None:
@@ -946,96 +1048,18 @@ def _dispatch(cfg: Config, args) -> int:
     if args.cmd == "run":
         if (rc := _check_accounts(cfg)):  return rc
         if (rc := _check_preflight(cfg)):  return rc
-        # unattended: respond to gates, advance, repeat until no progress.
-        # BOTH the responder and advance() are inside the guard: advance()'s deterministic
-        # stages are per-unit quarantined, but the responder (FIX H7 — the LLM model call or a
-        # response that fails validation can raise) and crosspost/publish run outside those
-        # guards, and publish_due RE-RAISES on fatal auth (bad key/401) by design. So a raise
-        # from either degrades cleanly here (log one line + stop) rather than crashing the
-        # unattended cron loop with a traceback.
-        s = None
-        for _ in range(10):
-            try:
-                get_responder(cfg).answer_pending(cfg)
-                s = advance(cfg, base_time=args.base_time)
-            except Exception as e:
-                print(f"run halted: {type(e).__name__}: {e}", file=sys.stderr)
-                return 1
-            # Converge only when EVERY gate is clear. any() over all awaiting kinds (moments, captions)
-            # is robust to future gates too — a run that exits with any open has not produced its clips/posts.
-            if not any(s["awaiting"].values()):
-                break
-        # B2: if the loop ended with gates still awaiting, say so LOUDLY (a stuck responder used to
-        # exhaust the iterations and fall through silently). Exit stays 0 — a stuck gate is not a
-        # crash; the distinct stderr line + run.log event is what monitoring greps.
-        if (note := _gates_blocked_note(s)):
-            print(note, file=sys.stderr)
-            get_logger(cfg)("run", "-", "gates_blocked", **s["awaiting"])   # WS2: log EVERY gate kind, not just moments/captions
-        # E1: post-loop learning pass — close the feedback loop ONCE per `run` after respond+advance
-        # converges. Gated by the identical reconcile guard (pipeline.py:106): live backend + key
-        # only. In dryrun (default) the guard short-circuits and the pass is NEVER entered. Runs in
-        # its own lock-safe transaction (won't race the next advance); a pull/classify/amplify/retire
-        # hiccup is logged and swallowed so it can NEVER crash the unattended run (exit stays 0).
-        if cfg.is_live_backend:
-            try:
-                _learn_pass(cfg)
-            except AuthError as e:
-                # A bad/rotated key is actionable, not a transient 5xx — surface it VISIBLY on stderr +
-                # a distinct breadcrumb, but keep exit 0: the unattended run SKIPS the learn pass cleanly,
-                # mirroring cmd_track/cmd_reconcile (read paths skip; only the WRITE path publish_due halts).
-                print(f"learn skipped: auth failure ({type(e).__name__}) — check the API key", file=sys.stderr)
-                get_logger(cfg)("learn", "-", "auth_error", err=f"{type(e).__name__}: {str(e)[:120]}")
-            except Exception as e:
-                get_logger(cfg)("learn", "-", "error", err=f"{type(e).__name__}: {str(e)[:120]}")
-        # variant-amplify (v3): a SEPARATE, independently-gated learning pass — proven SUSTAINED
-        # variant winners auto-amplify their source. Gated by its OWN kill switch (cfg.variant_amplify,
-        # default OFF) AND the same live-backend+key guard as the learn block. Its OWN try/except so it
-        # can never affect the block above and a hiccup is swallowed (exit stays 0). apply_variant_amplify
-        # is amplify-only (never retires/deletes) and self-guards on the flag, so this is fail-SAFE.
-        if cfg.variant_amplify and cfg.is_live_backend:
-            try:
-                with Ledger.transaction(cfg) as led:
-                    led = apply_variant_amplify(led, cfg)
-            except Exception as e:
-                get_logger(cfg)("variant_amplify", "-", "error", err=str(e)[:120])
-        # P4(b) cross-account reach dim-bias: SYMMETRIC with variant_amplify — a SEPARATE, independently
-        # gated learning pass so the unattended run applies a proven higher-reach creative dim, not only
-        # the manual `fanops p4-bias` verb. Gated by its OWN kill switch (cfg.p4_dim_bias, default OFF) AND
-        # the live-backend+key guard; apply_p4_dim_bias is amplify-only AND stays INERT until cutover
-        # validation (validation_gate.learning_validated), so wiring it in is fail-SAFE. Own try/except —
-        # a hiccup is swallowed (exit stays 0) and can't touch the blocks above.
-        if cfg.p4_dim_bias and cfg.is_live_backend:
-            try:
-                with Ledger.transaction(cfg) as led:
-                    led = apply_p4_dim_bias(led, cfg)
-            except Exception as e:
-                get_logger(cfg)("p4_dim_bias", "-", "error", err=str(e)[:120])
-        # Leg 3 (timing): SYMMETRIC with p4_dim_bias — a SEPARATE, independently gated pass so the unattended
-        # run refreshes the reach-winning publish-HOUR prior (consumed by the next crosspost's surface_time).
-        # Own kill switch (cfg.timing_bias, default OFF) AND the live-backend guard; apply_timing_bias is
-        # bias-only (writes ONE prior file, never retires) AND validation-frozen, so wiring it in is fail-SAFE.
-        # Own try/except — a hiccup is swallowed (exit stays 0) and can't touch the blocks above.
-        if cfg.timing_bias and cfg.is_live_backend:
-            try:
-                with Ledger.transaction(cfg) as led:
-                    led = apply_timing_bias(led, cfg)
-            except Exception as e:
-                get_logger(cfg)("timing_bias", "-", "error", err=str(e)[:120])
-        # WS2: constant Graph-reach hashtag store update — refresh at most once per cadence (12h), throttled by
-        # the store mtime so the 10-min publish cadence doesn't hammer the 30/7-day Graph budget. NOT gated on
-        # is_live_backend (a hashtag's worth is its live platform reach, independent of whether WE publish) —
-        # only on Meta creds, handled inside the helper. Its OWN try/except; refresh_store_if_due never raises,
-        # so the unattended run can never break on a hashtag refresh.
-        try:
-            from fanops.fanops_hashtags import refresh_store_if_due
-            r = refresh_store_if_due(cfg)
-            if r.get("aborted"):     # corrupt personas.json: refresh_store preserved the store — report the abort LOUDLY,
-                                     # never the false-success store_refreshed (a bad control file stripping strategy is not routine)
-                get_logger(cfg)("hashtags", "-", "store_refresh_aborted", aborted=r.get("aborted"), reason=r.get("reason", ""))
-            elif r.get("refreshed"):
-                get_logger(cfg)("hashtags", "-", "store_refreshed", measured=r.get("measured", 0), total=r.get("total", 0))
-        except Exception as e:
-            get_logger(cfg)("hashtags", "-", "refresh_error", err=f"{type(e).__name__}: {str(e)[:120]}")
+        if args.loop:
+            interval = daemon.parse_interval(args.interval)
+            while True:
+                base_time = _fresh_run_base_time()
+                try:
+                    if (s := _cmd_run_pass(cfg, base_time)) is not None:
+                        _heartbeat(cfg, s); print(s)
+                except Exception as e:
+                    print(f"run halted: {type(e).__name__}: {e}", file=sys.stderr)
+                time.sleep(interval)
+        if (s := _cmd_run_pass(cfg, args.base_time)) is None:
+            return 1
         # E2: emit one heartbeat for the WHOLE run from the final advance summary (so
         # published_in_run/last_published_age_hours reflect this run incl. the learning pass effect).
         _heartbeat(cfg, s); print(s); return 0
