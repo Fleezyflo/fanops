@@ -499,6 +499,10 @@ def create_app(cfg: Config) -> Flask:
                 "mismatched pick rows: start/end/reason field counts differ — reload the gate and retry"))
         return render_template("_result.html", result=actions.answer_gate(cfg, kind, key, data))
 
+    @app.post("/gates/dismiss/<kind>/<key>")
+    def do_dismiss_gate(kind, key):
+        return render_template("_result.html", result=actions.dismiss_gate_studio(cfg, kind, key))
+
     @app.get("/media/<post_id>")
     def media(post_id):
         path = _bounded(cfg, _media_path_for_post(Ledger.load(cfg), post_id))

@@ -5,10 +5,10 @@
 {% block body %}
   <h2>Processing decisions</h2>
   <p class="muted">Answer these so the pipeline can continue — each {{ term('moment') }} gate unblocks Make. — then run <strong>Prepare</strong> in Make.</p>
-  {% set moments = rows | selectattr('kind','equalto','moments') | list %}
-  {% set moment_hooks = rows | selectattr('kind','equalto','moment_hooks') | list %}
-  {% set captions = rows | selectattr('kind','equalto','captions') | list %}
-  {% set total = rows|length %}
+  {% set moments = rows | rejectattr('corrupt','defined') | selectattr('kind','equalto','moments') | list %}
+  {% set moment_hooks = rows | rejectattr('corrupt','defined') | selectattr('kind','equalto','moment_hooks') | list %}
+  {% set captions = rows | rejectattr('corrupt','defined') | selectattr('kind','equalto','captions') | list %}
+  {% set total = (moments|length) + (moment_hooks|length) + (captions|length) %}
   <div class="gates-progress meta" aria-live="polite"><strong>{{ total }}</strong> decision{{ 's' if total != 1 else '' }} waiting
     {% if moment_hooks %} · {{ moment_hooks|length }} hook{% endif %}
     {% if captions %} · {{ captions|length }} caption{% endif %}
@@ -92,5 +92,23 @@
   {% endif %}
 
   {% if not rows %}<div class="empty">Nothing waiting — <a href="{{ url_for('run_panel') }}">Make</a> will create decisions when clips need your input.</div>{% endif %}
+
+  {% set corrupt = rows | selectattr('corrupt','defined') | selectattr('corrupt') | list %}
+  {% if corrupt %}
+    <h3>Corrupt gate files ({{ corrupt | length }})</h3>
+    <p class="muted">These request files cannot be parsed. Dismiss to discard the gate file, or run Make — corrupt gates auto-quarantine their source to error.</p>
+    {% for g in corrupt %}
+      <div class="card gate-card gate-corrupt" id="gate-{{ g.key }}">
+        <strong>{{ g.kind }}: {{ g.key }}</strong>
+        <form hx-post="{{ url_for('do_dismiss_gate', kind=g.kind, key=g.key) }}"
+              hx-target="#result-{{ g.key }}" hx-swap="innerHTML"
+              hx-confirm="Dismiss this corrupt gate file? The source may need Resume afterward.">
+          <button type="submit" class="ghost">Dismiss gate</button>
+        </form>
+        <div id="result-{{ g.key }}"></div>
+      </div>
+    {% endfor %}
+  {% endif %}
+
   <script src="{{ url_for('static', filename='gates.js') }}" defer></script>
 {% endblock %}

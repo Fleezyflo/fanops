@@ -878,9 +878,13 @@ def gate_rows(cfg: Config) -> list[dict]:
     surface list for captions). Same enumeration `fanops respond` uses, surfaced for the browser.
     A torn/unreadable request file is skipped (fail-open) rather than 500-ing the tab."""
     from fanops.agentstep import pending, request_path
+    from fanops.pipeline_status import _gate_is_corrupt
     rows: list[dict] = []
     for kind in ("moments", "moment_hooks", "captions"):
         for key in pending(cfg, kind=kind):
+            if _gate_is_corrupt(cfg, kind, key):
+                rows.append({"kind": kind, "key": key, "corrupt": True})
+                continue
             try:
                 payload = json.loads(request_path(cfg, kind, key).read_text())
             except Exception:
