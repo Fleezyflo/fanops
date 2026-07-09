@@ -1,7 +1,6 @@
 # tests/test_studio_run.py — Studio as pipeline DRIVER: ingest/advance/pull from the browser through
 # the same lock-safe paths the CLI uses, so the operator never needs the terminal.
 import json
-import os
 from types import SimpleNamespace
 from fanops.config import Config
 from fanops.ledger import Ledger
@@ -501,22 +500,21 @@ def test_run_ingest_no_kick_when_nothing_added(tmp_path, mocker):
 def test_kick_prepare_spawns_detached_run_then_debounces(tmp_path, mocker):
     cfg = Config(root=tmp_path)
     popen = mocker.patch("fanops.studio.actions_run.subprocess.Popen")
-    popen.return_value.pid = os.getpid()                   # a REAL, alive pid -> the debounce is liveness-based
-    assert actions_run.kick_prepare(cfg) is True           # no recent kick -> spawn
+    held = mocker.patch("fanops.pipeline_run.run_held", side_effect=[False, True])
+    assert actions_run.kick_prepare(cfg) is True           # no driver -> spawn
     assert popen.call_count == 1 and popen.call_args[0][0][1] == "run"   # spawns `fanops run`
-    assert actions_run.kick_prepare(cfg) is False          # prior kick still ALIVE (this pid) -> debounced
-    assert popen.call_count == 1                           # ...no second spawn
+    assert actions_run.kick_prepare(cfg) is False          # run lease held -> no second spawn
+    assert popen.call_count == 1
+    assert held.call_count == 2
+
 
 def test_kick_prepare_respawns_when_prior_run_finished(tmp_path, mocker):
-    # kick-prepare-debounce-race (high): the debounce used a fixed 300s TTL stamped after spawn, so a run that
-    # FINISHED early still blocked the next ingest-kick for up to a daemon interval. Now the debounce is tied to
-    # the spawned process's LIVENESS — once the prior run's pid is dead, a fresh ingest kicks IMMEDIATELY.
+    # Debounce is tied to the run lease — once the prior driver releases, a fresh ingest kicks again.
     cfg = Config(root=tmp_path)
     popen = mocker.patch("fanops.studio.actions_run.subprocess.Popen")
-    popen.return_value.pid = 424242
-    mocker.patch("fanops.studio.actions_run.os.kill", side_effect=ProcessLookupError)   # prior run has FINISHED
+    mocker.patch("fanops.pipeline_run.run_held", side_effect=[False, False])
     assert actions_run.kick_prepare(cfg) is True           # first kick -> spawn
-    assert actions_run.kick_prepare(cfg) is True           # prior run dead -> respawn NOW (not blocked by the TTL)
+    assert actions_run.kick_prepare(cfg) is True           # lease free -> respawn
     assert popen.call_count == 2
 
 

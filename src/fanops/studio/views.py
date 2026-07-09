@@ -147,7 +147,9 @@ def pipeline_status(cfg: Config) -> dict:
     are waiting + the active poster backend. Lets the operator see, in one glance, whether the next
     move is 'ingest', 'run a pass', or 'answer a gate'."""
     from fanops.agentstep import pending
+    from fanops.pipeline_status import status_control_lines
     led = Ledger.load(cfg)
+    run_line, wait_line = status_control_lines(cfg, led)
     return {
         "sources": sum(1 for s in led.sources.values() if s.origin_kind == "native"),  # M1: chain count = native only
         "third_party": sum(1 for s in led.sources.values() if s.origin_kind == "third_party"),
@@ -158,6 +160,8 @@ def pipeline_status(cfg: Config) -> dict:
         "pending_moments": len(pending(cfg, kind="moments")),
         "pending_moment_hooks": len(pending(cfg, kind="moment_hooks")),
         "pending_captions": len(pending(cfg, kind="captions")),
+        "run_line": run_line,
+        "wait_line": wait_line,
         # R3-followup: the UI mode label MUST be the per-channel truth, not the legacy global. On a live
         # deployment with per-channel routing, cfg.poster_backend still reads 'dryrun' (the legacy
         # FANOPS_POSTER is the fallback bridge, not the per-channel source of truth) — surfacing it

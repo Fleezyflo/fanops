@@ -62,7 +62,8 @@ def _parse(ts):
 # sources (moments_decided, retired, …) — purge disk caches, discard gates, reconcile moments away.
 _RESUMABLE = (SourceState.error, SourceState.moments_empty)
 _FORCE_RESUMABLE = (SourceState.moments_decided, SourceState.retired, SourceState.picks_decided,
-                    SourceState.moments_requested, SourceState.signalled, SourceState.transcribed)
+                    SourceState.moments_requested, SourceState.signalled, SourceState.transcribed,
+                    SourceState.catalogued)
 def _force_reset_to_catalogued(led: Ledger, cfg: Config, source_id: str, s) -> None:
     from fanops.agentstep import discard_gates_for
     from fanops.transcribe import purge_source_artifacts

@@ -254,27 +254,27 @@ The `cd /path/to/repo` is **mandatory, not cosmetic**: `fanops` resolves its dat
 (ledger, lock, accounts) from the current working directory — there is no `FANOPS_ROOT`
 override — so invoking it from the wrong cwd silently reads/writes the wrong ledger.
 
-**Overlapping runs are safe.** Each `advance()` pass — and **every standalone write command**
-(`track`, `reconcile`, `adjust`, `ingest`, `pull`) — runs inside **one `Ledger.transaction`** that
-holds the ledger `fcntl.flock` across the **entire load → mutate → save**, not just the final write.
-Acquiring the lock *before* the load closes the lost-update window the old save()-only lock left
-open (two overlapping writers both loaded a stale snapshot, last save() won, the other's updates —
-a published post, a `submitting` flip — vanished silently, audit B4). **Slow I/O stays OUTSIDE the
-lock:** the up-to-30s Postiz/Graph calls in `track` (metrics fetch) and `reconcile` (per-post status
-polls), and the `yt-dlp` download in `pull`, all run *before* the transaction; only the in-memory
-apply runs under the flock — so a slow network call never serializes behind the ledger lock
-(mirrors how `publish_due` uses the unlocked save mid-loop). So you can safely run `fanops adjust`
-or `fanops track` while cron's `run` is mid-pass: the second writer waits briefly, then either
-proceeds or skips with a clean `LockBusyError` — never a clobber. The lock is an `fcntl.flock` (not a delete-able sentinel): if a run is killed
-mid-pass, the kernel releases it on process death, so the next invocation acquires it
-immediately — **no orphaned lock can wedge the loop** (audit H6). If a *previous* `run`
-genuinely overruns the interval and is still inside its pass when the next fires, the new
-process waits briefly, then exits 1 with a one-line `ledger lock busy …` message (a typed
-`LockBusyError`, no traceback) and the following tick retries — so a slow run never corrupts
-state, never loses an update, and never crash-dumps; it just skips a beat. (The slow
-`claude -p` responder call runs *outside* this lock — the agent-gate files are correlated by
-`request_id`, with a capture-and-recheck guard against a mid-call re-seed, audit A3 — so the
-autonomous brain is never serialized behind the ledger lock.)
+**Overlapping runs — three locks, three scopes.** FanOps uses three distinct `fcntl.flock` locks; they
+do NOT substitute for each other:
+
+| Lock | Path | Scope | What it serializes |
+|---|---|---|---|
+| **Run lease** | `00_control/.run.lock` | per-workspace | the **respond→write_request→advance** converge loop (one driver at a time). A second `fanops run`, Studio Prepare, or standalone `advance` gets a typed `RunBusyError` (`run busy (pid N)`) and does **nothing** — no gate is re-seeded mid-model-call. The daemon `--loop` acquires per iteration and skips a tick on busy. `kill -9` self-heals (kernel releases the flock). Probe liveness with a non-blocking acquire, **not** lockfile existence. |
+| **Ledger lock** | `00_control/ledger.lock` | per-workspace | **commit** — each `Ledger.transaction` holds the flock across load→mutate→save. Slow I/O (metrics fetch, reconcile polls, `yt-dlp`) stays OUTSIDE. Overlapping writers wait briefly, then `LockBusyError` — never a clobber. |
+| **Stage lock** | `04_agent_io/.locks/<stage>/<key>.lock` | per-(stage,source) | **slow producer subprocess** (transcribe/framing/keyframes) — so two whisper runs on the same audio never stack. |
+
+Each `advance()` pass runs inside a **run lease** when invoked as a top-level driver (`fanops run`,
+`fanops advance`, Studio Prepare/Advance). `advance()` called **inside** an already-leased driver does
+not re-acquire. Recovery verbs (`retry-source`, `resolve`, …) use only the **ledger lock** — a mid-run
+commit can still surface `LockBusyError`; retry the mutate, not the run.
+
+The slow `claude -p` responder call runs **outside** the ledger flock (by design) but **inside** the
+run lease when a driver holds it — the `request_id` TOCTOU guard in `responder.py` detects a mid-call
+re-seed but cannot repair it; the run lease is the cross-driver prevention it always lacked.
+
+**Recovery verbs and concurrent runs:** because they only mutate the local ledger under the flock,
+they are safe while no driver holds the run lease; if a `run` is mid-pass they wait briefly on the
+ledger lock, then `LockBusyError`-skip.
 
 On macOS a launchd `StartInterval` agent is the equivalent. Note that creating those
 scheduled jobs (CronCreate / system scheduled-tasks) is an environment concern, **not**
@@ -301,8 +301,8 @@ These are the manual counterpart to the automatic reconcile/quarantine machinery
 pipeline quarantines a bad unit (per-unit `error` state) and parks an ambiguous post
 (`needs_reconcile`) on its own, but a **human** decides when the underlying problem is
 fixed and the unit should re-enter the flow. Because they only mutate the local ledger
-under the flock, they are safe to run while cron's `run` is idle (and will wait briefly,
-then `LockBusyError`-skip, if a `run` is mid-pass — see *Overlapping runs are safe*).
+under the flock, they are safe while no driver holds the run lease; if a `run` is mid-pass they wait
+briefly on the ledger lock, then `LockBusyError`-skip (see *Overlapping runs — three locks* above).
 
 ---
 
