@@ -1,16 +1,26 @@
 # src/fanops/settings.py — MOL-292: typed env boundary (constructed per Config(), never import-cached)
 from __future__ import annotations
-import logging
 import math
 from typing import Literal
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-_log = logging.getLogger("fanops.config")
 _ON = frozenset({"1", "true", "yes", "on"})
+_OFF = frozenset({"0", "false", "no", "off"})
+_VALID_BOOL = _ON | _OFF
 _VALID_BACKENDS = frozenset({"dryrun", "postiz", "zernio"})
+_VALID_RESPONDERS = frozenset({"llm", "manual"})
 PosterBackend = Literal["dryrun", "postiz", "zernio"]
+_BOOL_ENV_FIELDS = (
+    "FANOPS_LIVE", "FANOPS_HASHTAG_TRENDS", "FANOPS_REQUIRE_FULL_OBJECTIVE", "FANOPS_SMART_FRAMING",
+    "FANOPS_VISUAL_START", "FANOPS_ISOLATE_VOCALS", "FANOPS_BURN_SUBS", "FANOPS_AWARE_REFRAME",
+    "FANOPS_ACCOUNT_CASTING", "FANOPS_HOOK_ROUTER", "FANOPS_IMPACT_CUT", "FANOPS_INTRO_TEASE",
+    "FANOPS_VARIANT_LEARNING", "FANOPS_VARIANT_AMPLIFY", "FANOPS_VARIANT_UCB", "FANOPS_VARIANT_TRANSFER",
+    "FANOPS_ADJUST_PER_SURFACE", "FANOPS_P4_DIM_BIAS", "FANOPS_TIMING_BIAS", "FANOPS_IG_RETENTION_PROOF",
+    "FANOPS_MOMENT_HOOK_LEARNING", "FANOPS_REALISTIC_CADENCE", "FANOPS_CONCURRENT_SOURCES",
+    "FANOPS_POSTIZ_AUTOSTART",
+)
 
 
 def _strip_opt(v: object) -> str | None:
@@ -24,6 +34,33 @@ def _env_on(v: object, *, default: bool) -> bool:
     s = str(v).strip().lower()
     if not s: return default
     return s in _ON
+
+
+def _validate_bool_word(v: object) -> str:
+    if v is None: return ""
+    s = str(v).strip()
+    if not s: return ""
+    if s.lower() not in _VALID_BOOL:
+        raise ValueError(f"unrecognized bool value {s!r}; valid: 1/0, true/false, yes/no, on/off")
+    return s
+
+
+def _validate_poster(v: object) -> str:
+    if v is None: return ""
+    s = str(v).strip()
+    if not s: return ""
+    if s not in _VALID_BACKENDS:
+        raise ValueError(f"unrecognized FANOPS_POSTER={s!r}; valid: {', '.join(sorted(_VALID_BACKENDS))}")
+    return s
+
+
+def _validate_responder(v: object) -> str:
+    if v is None: return ""
+    s = str(v).strip().lower()
+    if not s: return ""
+    if s not in _VALID_RESPONDERS:
+        raise ValueError(f"unrecognized FANOPS_RESPONDER={s!r}; valid: llm, manual")
+    return s
 
 
 def _parse_int(v: object, default: int) -> int:
@@ -208,22 +245,26 @@ class Settings(BaseSettings):
     @classmethod
     def _postiz_throttle(cls, v): return v if v >= 0 else 4
 
+    @field_validator("FANOPS_POSTER", mode="before")
+    @classmethod
+    def _poster(cls, v): return _validate_poster(v)
+
+    @field_validator("FANOPS_RESPONDER", mode="before")
+    @classmethod
+    def _responder(cls, v): return _validate_responder(v)
+
+    @field_validator(*_BOOL_ENV_FIELDS, mode="before")
+    @classmethod
+    def _bool_word(cls, v): return _validate_bool_word(v)
+
     def poster_backend(self) -> PosterBackend:
         v = (self.FANOPS_POSTER or "").strip()
         if not v: return "dryrun"
-        if v not in _VALID_BACKENDS:
-            _log.warning("ignoring unknown FANOPS_POSTER=%r (using dryrun); valid: %s",
-                         v, ", ".join(sorted(_VALID_BACKENDS)))
-            return "dryrun"
         return v  # type: ignore[return-value]
-
 
     def responder_mode(self) -> str:
         v = (self.FANOPS_RESPONDER or "").strip().lower()
         if not v: return "manual"
-        if v not in {"llm", "manual"}:
-            _log.warning("ignoring unknown FANOPS_RESPONDER=%r (using manual); valid: llm, manual", v)
-            return "manual"
         return v
 
     def opt_on(self, raw: str, *, default: bool) -> bool:

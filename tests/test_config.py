@@ -478,3 +478,47 @@ def test_settings_bad_numeric_names_field_in_validation_error(tmp_path, monkeypa
     with pytest.raises(ValidationError) as ei:
         _validate_settings()
     assert "FANOPS_CONCURRENT_WORKERS" in str(ei.value)
+
+
+def test_settings_poster_typo_raises_at_boundary(monkeypatch):
+    from pydantic import ValidationError
+    monkeypatch.setenv("FANOPS_POSTER", "postizz")
+    with pytest.raises(ValidationError) as ei:
+        _validate_settings()
+    assert "FANOPS_POSTER" in str(ei.value)
+
+
+def test_settings_poster_empty_ok_at_boundary(monkeypatch):
+    from fanops.settings import Settings
+    monkeypatch.delenv("FANOPS_POSTER", raising=False)
+    assert Settings().poster_backend() == "dryrun"
+
+
+def test_settings_responder_typo_raises_at_boundary(monkeypatch):
+    from pydantic import ValidationError
+    monkeypatch.setenv("FANOPS_RESPONDER", "llmm")
+    with pytest.raises(ValidationError) as ei:
+        _validate_settings()
+    assert "FANOPS_RESPONDER" in str(ei.value)
+
+
+def test_settings_bool_typo_raises_at_boundary(monkeypatch):
+    from pydantic import ValidationError
+    monkeypatch.setenv("FANOPS_BURN_SUBS", "maybee")
+    with pytest.raises(ValidationError) as ei:
+        _validate_settings()
+    assert "FANOPS_BURN_SUBS" in str(ei.value)
+
+
+def test_settings_bool_empty_and_off_words_ok_at_boundary(monkeypatch):
+    from fanops.settings import Settings
+    for k in _BOOL_KEYS_FOR_SETTINGS_TEST:
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("FANOPS_BURN_SUBS", "off")
+    monkeypatch.setenv("FANOPS_LIVE", "1")
+    Settings()  # must not raise
+
+
+_BOOL_KEYS_FOR_SETTINGS_TEST = (
+    "FANOPS_LIVE", "FANOPS_HASHTAG_TRENDS", "FANOPS_REQUIRE_FULL_OBJECTIVE", "FANOPS_BURN_SUBS",
+)
