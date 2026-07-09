@@ -207,15 +207,21 @@ def test_reconcile_logs_each_post(tmp_path):
 
 
 def _reconcile_log_line_for(cfg, pid):
-    # Return the single run.log line whose TAB-delimited unit_id field == pid, or "" if absent.
-    # Matching the id positionally (not substring) prevents one post's keyword leaking into another's
+    # Return the single run.log line whose unit_id == pid, or "" if absent.
+    # Matching the id field (not substring) prevents one post's keyword leaking into another's
     # assertion when several posts are reconciled in the same pass / same log file.
+    import json
     if not cfg.log_path.exists():
         return ""
     for raw in cfg.log_path.read_text().splitlines():
-        cols = raw.split("\t")            # get_logger writes "{ts}\t{stage}\t{unit_id}\t{outcome}"
-        if len(cols) >= 4 and cols[1] == "reconcile" and cols[2] == pid:
-            return raw
+        try:
+            rec = json.loads(raw)
+            if rec.get("stage") == "reconcile" and rec.get("unit_id") == pid:
+                return raw
+        except json.JSONDecodeError:
+            cols = raw.split("\t")        # legacy TAB layout
+            if len(cols) >= 4 and cols[1] == "reconcile" and cols[2] == pid:
+                return raw
     return ""
 
 

@@ -15,8 +15,11 @@ from fanops import daemon
 
 
 def _heartbeat_line(ts: str) -> str:
-    # EXACT shape get_logger writes for _heartbeat: <iso>\theartbeat\t-\tok\t<kv...> (log.py:14).
-    return f"{ts}\theartbeat\t-\tok\theartbeat={ts} fanops_version=0.3.0 published_in_run=0\n"
+    # EXACT shape get_logger writes for _heartbeat (JSON; daemon._heartbeat_age_s reads stage+ts).
+    import json
+    rec = {"ts": ts, "level": "info", "stage": "heartbeat", "unit_id": "-", "outcome": "ok",
+           "heartbeat": ts, "fanops_version": "0.3.0", "published_in_run": "0"}
+    return json.dumps(rec, separators=(",", ":")) + "\n"
 
 
 def _fake_launchctl(**spec):

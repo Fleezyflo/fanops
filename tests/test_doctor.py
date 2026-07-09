@@ -311,13 +311,16 @@ def _daemon_check(rep):
     return next((c for c in rep["checks"] if "daemon" in c["label"].lower() or "pump" in c["label"].lower()), None)
 
 def _write_heartbeat(cfg, *, age_seconds):
-    """Append a valid run.log heartbeat line whose leading ISO ts is `age_seconds` in the past (mirrors
-    log.py's TAB layout so daemon._heartbeat_age_s parses it)."""
+    """Append a valid run.log heartbeat JSON line whose ts is `age_seconds` in the past (mirrors
+    log.py so daemon._heartbeat_age_s parses it)."""
+    import json
     from datetime import datetime, timezone, timedelta
     ts = (datetime.now(timezone.utc) - timedelta(seconds=age_seconds)).isoformat()
     cfg.log_path.parent.mkdir(parents=True, exist_ok=True)
+    rec = {"ts": ts, "level": "info", "stage": "heartbeat", "unit_id": "-", "outcome": "ok",
+           "heartbeat": ts, "published_in_run": "0"}
     with open(cfg.log_path, "a", encoding="utf-8") as fh:
-        fh.write(f"{ts}\theartbeat\t-\tok\theartbeat={ts} published_in_run=0\n")
+        fh.write(json.dumps(rec, separators=(",", ":")) + "\n")
 
 def _seed_queued_post(cfg, *, when):
     """Add ONE queued post with scheduled_time=`when` (an ISO string) via the ledger."""

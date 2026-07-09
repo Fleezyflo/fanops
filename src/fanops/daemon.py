@@ -268,22 +268,30 @@ def tail_logs(cfg: Config, n: int = 40) -> str:
 
 def _heartbeat_age_s(cfg: Config) -> float | None:
     """Age in seconds of the last heartbeat line in run.log, or None if no log / no heartbeat / a
-    short or unparseable file. Depends ONLY on the line's leading ISO timestamp column (log.py:14),
-    never on the kv tail — so logger internals can change without breaking liveness."""
+    short or unparseable file. Reads JSON heartbeats (log.py) by stage+ts; legacy TAB lines still
+    parse via the leading ISO column."""
+    import json
     p = cfg.log_path
     if not p.exists():
         return None
     try:
-        last = None
+        last_ts = None
         for line in p.read_text().splitlines():
-            if "\theartbeat\t" in line:
-                last = line
+            if not line.strip():
+                continue
+            try:
+                rec = json.loads(line)
+                if rec.get("stage") == "heartbeat":
+                    last_ts = rec.get("ts")
+            except json.JSONDecodeError:
+                if "\theartbeat\t" in line:
+                    last_ts = line.split("\t", 1)[0]
     except OSError:
         return None
-    if last is None:
+    if last_ts is None:
         return None
     try:
-        ts = datetime.fromisoformat(last.split("\t", 1)[0])
+        ts = datetime.fromisoformat(last_ts)
     except ValueError:
         return None
     if ts.tzinfo is None:
