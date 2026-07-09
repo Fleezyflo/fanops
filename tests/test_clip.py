@@ -79,7 +79,7 @@ def test_render_fingerprint_includes_top_bias():
 def test_render_moment_applies_top_bias_when_enabled(tmp_path, mocker, monkeypatch):
     monkeypatch.setenv("FANOPS_AWARE_REFRAME", "1")
     monkeypatch.setenv("FANOPS_VISUAL_START", "0")          # isolate from the frame probe
-    monkeypatch.delenv("FANOPS_BURN_SUBS", raising=False)
+    monkeypatch.setenv("FANOPS_BURN_SUBS", "0")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
                           width=1080, height=1920, duration=120.0))
@@ -283,8 +283,8 @@ def _render_with_batch_subs(tmp_path, mocker, monkeypatch, *, global_on, batch_b
     burn_subs=batch_burn, while the GLOBAL cfg.burn_subs is global_on. Returns the -vf string +
     the cfg so callers assert whether the TRANSCRIPT was burned. Hookless so the only on-screen
     text in play is the transcript — isolating the per-batch override resolution."""
-    if global_on: monkeypatch.setenv("FANOPS_BURN_SUBS", "1")
-    else: monkeypatch.delenv("FANOPS_BURN_SUBS", raising=False)
+    if global_on: monkeypatch.delenv("FANOPS_BURN_SUBS", raising=False)   # conftest forces 0; delenv -> default ON
+    else: monkeypatch.setenv("FANOPS_BURN_SUBS", "0")
     monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_batch(Batch(id="b_1", name="b", burn_subs=batch_burn))
@@ -334,7 +334,8 @@ def test_render_burns_hook_even_without_transcript(tmp_path, mocker, monkeypatch
     # The RETENTION HOOK is the default on-screen text and does NOT need a transcript — a moment with
     # a hook burns it (subtitles= chained + .ass written) even when the source has no transcript and
     # burn_subs is OFF. (This is the whole point: the screen shows a hook, not the audio's words.)
-    monkeypatch.delenv("FANOPS_BURN_SUBS", raising=False)        # default OFF -> no transcript captions
+    # burn_subs OFF (conftest default for hermeticity) -> no transcript captions
+    monkeypatch.setenv("FANOPS_BURN_SUBS", "0")
     monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
@@ -364,7 +365,7 @@ def test_hook_burn_failed_true_when_textfilter_absent_with_hook(tmp_path, mocker
 
 def test_hook_burn_failed_false_for_clean_clip(tmp_path, mocker, monkeypatch):
     # No hook + subs off -> nothing to burn -> NOT a failure (a clean clip is intentional, not a drop).
-    monkeypatch.delenv("FANOPS_BURN_SUBS", raising=False)
+    monkeypatch.setenv("FANOPS_BURN_SUBS", "0")
     monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"), width=1920, height=1080))
@@ -389,7 +390,7 @@ def test_hook_burn_failed_true_when_ass_empty_despite_hook(tmp_path, mocker, mon
 
 def test_render_clean_when_no_hook_and_subs_off(tmp_path, mocker, monkeypatch):
     # No hook AND transcript captions not opted in -> a CLEAN clip: no "subtitles=" in -vf, no .ass.
-    monkeypatch.delenv("FANOPS_BURN_SUBS", raising=False)        # default OFF
+    monkeypatch.setenv("FANOPS_BURN_SUBS", "0")        # explicit OFF
     monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
@@ -410,7 +411,7 @@ def test_render_skips_ffmpeg_when_warm_artifact_matches(tmp_path, mocker, monkey
     # must adopt the existing file and SKIP ffmpeg when the intended-render fingerprint matches — this is
     # what keeps the multi-minute transcode out of the ledger lock. It still records the clip + advances
     # the moment, so the in-lock commit pass is fast.
-    monkeypatch.delenv("FANOPS_BURN_SUBS", raising=False)
+    monkeypatch.setenv("FANOPS_BURN_SUBS", "0")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
                           width=1920, height=1080, duration=120.0))
@@ -429,7 +430,7 @@ def test_render_reruns_when_hook_changes_fingerprint(tmp_path, mocker, monkeypat
     # The render fingerprint must capture the burned hook: if the hook changes, the warm artifact is
     # STALE and render_moment must RE-RENDER (never silently reuse the old clip — the stale-render class
     # of bug). A blind skip-if-exists would wrongly keep the old hook.
-    monkeypatch.delenv("FANOPS_BURN_SUBS", raising=False)
+    monkeypatch.setenv("FANOPS_BURN_SUBS", "0")
     monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
@@ -703,7 +704,7 @@ def test_pick_visual_start_adopts_versioned_sidecar(tmp_path, mocker):
 
 def test_render_moment_visual_start_moves_cut_and_stamps_provenance(tmp_path, mocker, monkeypatch):
     monkeypatch.delenv("FANOPS_VISUAL_START", raising=False)      # default ON
-    monkeypatch.delenv("FANOPS_BURN_SUBS", raising=False)
+    monkeypatch.setenv("FANOPS_BURN_SUBS", "0")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
                           width=1920, height=1080, duration=120.0))
@@ -724,7 +725,7 @@ def test_visual_start_provenance_honest_with_transcript(tmp_path, mocker, monkey
     # snap runs BEFORE visual, so first_frame_kind="visual" iff the visual pick is the ACTUAL rendered
     # start — snap can't silently pull it back while the dim still claims "visual" (the P4-poisoning bug).
     monkeypatch.delenv("FANOPS_VISUAL_START", raising=False)
-    monkeypatch.delenv("FANOPS_BURN_SUBS", raising=False)
+    monkeypatch.setenv("FANOPS_BURN_SUBS", "0")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     tr = [{"start": 9.3, "end": 12.0, "text": "a"}, {"start": 25.0, "end": 28.4, "text": "b"}]
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
@@ -743,7 +744,7 @@ def test_render_moment_visual_start_off_does_not_probe(tmp_path, mocker, monkeyp
     # FANOPS_VISUAL_START=0 -> no signalstats probe at all, start unchanged, first_frame_kind None.
     monkeypatch.setenv("FANOPS_VISUAL_START", "0")
     monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")   # isolate visual_start: smart framing is a SEPARATE keyframe prober (default ON, fires when the [framing] extra is present)
-    monkeypatch.delenv("FANOPS_BURN_SUBS", raising=False)
+    monkeypatch.setenv("FANOPS_BURN_SUBS", "0")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
                           width=1920, height=1080, duration=120.0))
@@ -766,7 +767,7 @@ def test_render_moment_visual_start_off_does_not_probe(tmp_path, mocker, monkeyp
 def test_render_logs_legibility_warning_for_overlong_hook(tmp_path, mocker, monkeypatch):
     # P1 T2: an overlong hook logs ONE legibility warning and the clip STILL renders (fail-open).
     monkeypatch.setenv("FANOPS_VISUAL_START", "0")               # isolate from the probe path
-    monkeypatch.delenv("FANOPS_BURN_SUBS", raising=False)
+    monkeypatch.setenv("FANOPS_BURN_SUBS", "0")
     monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
@@ -781,7 +782,7 @@ def test_render_logs_legibility_warning_for_overlong_hook(tmp_path, mocker, monk
 
 def test_render_silent_for_legible_hook(tmp_path, mocker, monkeypatch):
     monkeypatch.setenv("FANOPS_VISUAL_START", "0")
-    monkeypatch.delenv("FANOPS_BURN_SUBS", raising=False)
+    monkeypatch.setenv("FANOPS_BURN_SUBS", "0")
     monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
@@ -798,7 +799,7 @@ def test_render_reruns_when_visual_start_changes_fingerprint(tmp_path, mocker, m
     # P1 T4: the chosen visual start flows into cs -> _render_fingerprint, so a DIFFERENT pick must
     # bust the Phase D warm-skip and RE-RENDER (never silently reuse the clip cut at the old start).
     monkeypatch.delenv("FANOPS_VISUAL_START", raising=False)     # ON
-    monkeypatch.delenv("FANOPS_BURN_SUBS", raising=False)
+    monkeypatch.setenv("FANOPS_BURN_SUBS", "0")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
                           width=1920, height=1080, duration=120.0))
@@ -833,7 +834,7 @@ def _supercut_moment_led(tmp_path, *, segments, duration=120.0, transcript=None,
 def test_supercut_concats_absolute_spans_in_order(tmp_path, mocker, monkeypatch):
     monkeypatch.setenv("FANOPS_VISUAL_START", "0")
     monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
-    monkeypatch.delenv("FANOPS_BURN_SUBS", raising=False)
+    monkeypatch.setenv("FANOPS_BURN_SUBS", "0")
     spans = [(10.0, 15.0), (30.0, 33.0), (50.0, 52.0)]   # 5 + 3 + 2 = 10s assembled
     cfg, led = _supercut_moment_led(tmp_path, segments=spans)
     captured = {}
@@ -851,7 +852,7 @@ def test_supercut_concats_absolute_spans_in_order(tmp_path, mocker, monkeypatch)
 def test_supercut_is_postable_and_advances_moment(tmp_path, mocker, monkeypatch):
     monkeypatch.setenv("FANOPS_VISUAL_START", "0")
     monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
-    monkeypatch.delenv("FANOPS_BURN_SUBS", raising=False)
+    monkeypatch.setenv("FANOPS_BURN_SUBS", "0")
     cfg, led = _supercut_moment_led(tmp_path, segments=[(10.0, 15.0), (30.0, 35.0)])
     mocker.patch("fanops.clip.subprocess.run", side_effect=_fake_run_writing_clip({}))
     led, clip = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
@@ -861,7 +862,7 @@ def test_supercut_is_postable_and_advances_moment(tmp_path, mocker, monkeypatch)
 def test_supercut_cut_seconds_is_sum_of_spans(tmp_path, mocker, monkeypatch):
     monkeypatch.setenv("FANOPS_VISUAL_START", "0")
     monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
-    monkeypatch.delenv("FANOPS_BURN_SUBS", raising=False)
+    monkeypatch.setenv("FANOPS_BURN_SUBS", "0")
     spans = [(10.0, 15.0), (30.0, 33.5), (50.0, 51.5)]
     cfg, led = _supercut_moment_led(tmp_path, segments=spans)
     mocker.patch("fanops.clip.subprocess.run", side_effect=_fake_run_writing_clip({}))
@@ -871,7 +872,7 @@ def test_supercut_cut_seconds_is_sum_of_spans(tmp_path, mocker, monkeypatch):
 def test_supercut_first_frame_kind_none_ok(tmp_path, mocker, monkeypatch):
     monkeypatch.delenv("FANOPS_VISUAL_START", raising=False)   # visual_start ON by default
     monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
-    monkeypatch.delenv("FANOPS_BURN_SUBS", raising=False)
+    monkeypatch.setenv("FANOPS_BURN_SUBS", "0")
     cfg, led = _supercut_moment_led(tmp_path, segments=[(10.0, 22.0), (40.0, 50.0)])
     mocker.patch("fanops.clip.subprocess.run", side_effect=_fake_run_writing_clip({}))
     _, clip = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
@@ -901,7 +902,7 @@ def test_supercut_subtitles_rebased_to_assembled_timeline(tmp_path, mocker, monk
 def test_supercut_fail_open_to_envelope(tmp_path, mocker, monkeypatch):
     monkeypatch.setenv("FANOPS_VISUAL_START", "0")
     monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
-    monkeypatch.delenv("FANOPS_BURN_SUBS", raising=False)
+    monkeypatch.setenv("FANOPS_BURN_SUBS", "0")
     spans = [(10.0, 14.0), (30.0, 34.0)]
     cfg, led = _supercut_moment_led(tmp_path, segments=spans, duration=120.0)
     calls = []
@@ -941,7 +942,7 @@ def test_supercut_subtitle_fail_open_to_hook_only(tmp_path, mocker, monkeypatch)
 def test_single_window_render_byte_identical(tmp_path, mocker, monkeypatch):
     monkeypatch.setenv("FANOPS_VISUAL_START", "0")
     monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
-    monkeypatch.delenv("FANOPS_BURN_SUBS", raising=False)
+    monkeypatch.setenv("FANOPS_BURN_SUBS", "0")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
                           width=1920, height=1080, duration=120.0))
@@ -959,7 +960,7 @@ def test_native_default_render_has_no_template_overlay(tmp_path, mocker, monkeyp
     # P1 T5: the default render is the base REFRAMED clip — no burned template card, no compose layer
     # (the produced MoviePy layer stays opt-in via `fanops compose`). vf is exactly the reframe filter.
     monkeypatch.delenv("FANOPS_VISUAL_START", raising=False)     # ON (default)
-    monkeypatch.delenv("FANOPS_BURN_SUBS", raising=False)        # transcript captions OFF (default)
+    monkeypatch.setenv("FANOPS_BURN_SUBS", "0")        # transcript captions OFF (explicit)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
                           width=1920, height=1080, duration=120.0))
