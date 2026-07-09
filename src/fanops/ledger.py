@@ -390,7 +390,10 @@ class Ledger:
     def load(cls, cfg: Config, *, store: LedgerStore | None = None) -> "Ledger":
         store = store or JsonLedgerStore(cfg)
         led = cls(cfg, store=store)
-        raw = store.read_raw()
+        try:
+            raw = store.read_raw()
+        except Exception as e:
+            raise ControlFileError(f"{cfg.ledger_path.name} invalid: {_reason(e)}") from e
         if raw is not None:
             try:
                 on_disk = raw.get("schema_version", 0)     # absent key => pre-versioning ledger (v0)
