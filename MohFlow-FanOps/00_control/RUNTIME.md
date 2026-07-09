@@ -47,6 +47,9 @@ Environment variables (read at runtime from `.env`, see `src/fanops/config.py`):
 | `FANOPS_ARTIST_NAME` | string (optional) | Artist **display name** used as the YouTube title fallback when a post has no explicit title (audit h). Default `"Moh Flow"` (unchanged). Distinct from the `@mohflow` caption mention (`tagging.ARTIST_HANDLE`). |
 | `FANOPS_BURN_SUBS` | `1`/`true`/… (default **ON**) \| `0`/`false`/`no`/`off` | Burn the transcript-derived subtitles + top-third hook into each rendered clip. **DEFAULT ON** — an unset env burns subs, so the feature is live with no operator action; only the explicit off-words `0`/`false`/`no`/`off` (case-insensitive) disable it. **Fail-open**: if this ffmpeg lacks the text filter or the source has no transcript, the clip still renders (plain), logging one `subs_skipped` line. Requires a **text-capable ffmpeg (libass)** — see the note below. |
 | `FANOPS_SUBTITLE_FONT` | string (optional) | Font face for the `.ass` subtitles. Default `"Arial Unicode MS"` — an Arabic-capable face so RTL captions render. Override if the host lacks that font or you prefer another Unicode/Arabic typeface. |
+| `FANOPS_ASR_MODEL` | string (default **`medium`**) | faster-whisper model for the `[asr]` extra (`python -m fanops._fwrun`). An explicit pin wins verbatim; short sources may upgrade to `large-v3` on the legacy `whisper` CLI fallback only. See `docs/CONFIG.md`. |
+| `FANOPS_ASR_LANGUAGE` | string (default **`en,ar`**) | Whisper **candidate languages**. A **comma list** (e.g. `en,ar`) enables per-segment detection (`multilingual=True`) so English directing lines and Arabic verses in the **same** source both transcribe. A **single value** (e.g. `ar`) **forces** that language for the whole source — faster and often more coherent on Arabic-primary rap, but wrong if the track is genuinely bilingual. Unset/empty in code falls back to `en,ar`; see *ASR language pinning — code-switched rap* below before changing the default. |
+| `FANOPS_ISOLATE_VOCALS` | `1`/`true`/… (default **ON**) \| `0`/`false`/`no`/`off` | Strip the beat with Demucs **before** ASR (`vocals.isolate_vocals`). The biggest accuracy lever for music/rap. **Fail-open**: if Demucs/`[asr]` is absent, the raw audio is transcribed unchanged. |
 | `FANOPS_CREATIVE_VARIATION` | `1`/`true`/`yes`/`on`/unset (default **ON**) \| `0`/`false`/`no`/`off` | Per-account creative variation (M3d: now the system's default, per-account differentiation is its purpose). When ON, each active account gets a genuinely different caption + burned-in on-screen hook per clip (+ its own length/framing cut under M2): the caption agent returns a per-surface `hook`, and crosspost burns it onto a per-account cut via the overlay pass, stamping `Post.variant_key`/`variant_hook`. The digest's "Lift by variant" section attributes which creative wins (no auto-propagation). **DEFAULT ON** — set `FANOPS_CREATIVE_VARIATION=0` to pin the legacy fan-to-all single-clip path (the OFF code path is retained, §7 firewall). **Fail-open**: no hook / no libass text filter ⇒ today's shared-clip behavior. Requires a **text-capable ffmpeg (libass)** for the burn. |
 | `FANOPS_ACCOUNT_CASTING` | `1`/`true`/`yes`/`on`/unset (default **ON**) \| `0`/`false`/`no`/`off` | Account-First per-account MOMENT casting (Face 3). When ON, each active account is cast up to `FANOPS_CAST_PICK_BUDGET` of its best persona-fit moments (LLM-driven selection, bounded by the batch target); crosspost then fans a cast moment ONLY to its accounts (an uncast moment falls through to fan-to-all). **DEFAULT ON** — set `FANOPS_ACCOUNT_CASTING=0` to restore the legacy fan-to-all path. **Fail-open**: any casting error ⇒ the moment fans to all (today's behavior). |
 | `FANOPS_VARIANT_LEARNING` | `1`/`true`/`yes`/`on` (default **OFF**) \| unset/`0`/`false`/… | Creative variation **v2** — closes the A/B loop on the caption-bias side (backlog j follow-up). When ON, `request_captions` asks the gated scorer (`variant_learning.best_hooks`) for each surface's trustworthy winning hook and appends a `learned_hooks` style cue to the caption request (`caption_prompt` renders it as "lean toward this STYLE, do NOT copy verbatim"), so the next caption is biased toward what already won. INDEPENDENT of `FANOPS_CREATIVE_VARIATION`. **DEFAULT OFF** — opt-in. **Fail-open**: gate not met / any error / old ledger ⇒ no hint, today's behavior (a learning failure can never block a caption or hold a clip). **Reversible**: flip OFF and the very next request reverts (nothing persisted but this opt-in hint). Touches **none** of the amplify/`_delete_moment_cascade` path (C1) — auto-propagation into amplify is still out of scope. The digest's "Lift by variant" section shows each surface's loop state ("learning ACTIVE" vs "gathering data") via the same scorer. |
@@ -300,6 +303,60 @@ pipeline quarantines a bad unit (per-unit `error` state) and parks an ambiguous 
 fixed and the unit should re-enter the flow. Because they only mutate the local ledger
 under the flock, they are safe to run while cron's `run` is idle (and will wait briefly,
 then `LockBusyError`-skip, if a `run` is mid-pass — see *Overlapping runs are safe*).
+
+---
+
+## ASR language pinning — code-switched rap (MOL-475)
+
+**Problem.** The default `FANOPS_ASR_LANGUAGE=en,ar` turns on faster-whisper **per-segment**
+language detection (`multilingual=True` in `src/fanops/_fwrun.py`). On Arabic-primary rap with
+occasional English ad-libs, that can **flap** between AR and EN mid-verse — gibberish or wrong-script
+lines in the transcript, which then poisons moment selection and burned-in subs.
+
+**Phase 1 (least intervention — operator pin, no code default change).** For an Arabic-rap batch where
+the verses are Arabic-primary, set in the **runtime `.env`** (repo root, read at process start):
+
+```bash
+FANOPS_ASR_LANGUAGE=ar
+```
+
+A single value forces `language="ar"` with `multilingual=False` for the whole source — typically
+~3× faster decode and more coherent Arabic lyrics when English is sparse. **Do not change the code
+default** (`en,ar`) without A/B evidence; mixed EN directing + AR verses in one take still need the
+comma list.
+
+**Required A/B diagnostic (on a T0-reset source).** Run this once per problematic source (or a
+representative clip from the batch) before committing to the pin:
+
+1. **T0 reset** — purge stale transcript caches so the next transcribe is fresh (MOL-471):
+
+   ```bash
+   fanops retry-source <source_id> --from-stage catalogued --force
+   ```
+
+2. **Arm A — default multilingual** — ensure `FANOPS_ASR_LANGUAGE` is **unset** or explicitly
+   `en,ar` in `.env`. Run **`fanops advance`** (or `fanops run` until the source transcribes).
+   Open `04_agent_io/transcripts/<stem>.json` and **listen/read** the lyrics (operator ear is the
+   judge).
+
+3. **T0 reset again** — same `--force --from-stage catalogued` (step 1). Stale on-disk JSON would
+   otherwise short-circuit adoption.
+
+4. **Arm B — Arabic pin** — set `FANOPS_ASR_LANGUAGE=ar` in `.env` (restart any long-lived `fanops
+   studio` / daemon so the env reloads). **`fanops advance`** again on the same source.
+
+5. **Decide from evidence:**
+   - **`ar` coherent, `en,ar` flappy** → keep `FANOPS_ASR_LANGUAGE=ar` for this batch (Phase 1 pin).
+   - **Genuinely bilingual** (substantial English and Arabic both need correct text) → **do not force
+     `ar`**; file a follow-up for segment-aware language handling instead.
+   - **Ambiguous / unsure** → leave default `en,ar`, ship T0+T2, re-run A/B on another representative
+     clip before pinning.
+
+**Wiring (for operators tracing config).** `FANOPS_ASR_LANGUAGE` → `Config.asr_language`
+(`src/fanops/config.py`) → `fw_cmd(..., cfg.asr_language)` → `fanops._fwrun --language …`
+→ `_fwrun.transcribe_to_json` (comma list ⇒ `multilingual=True`; single value ⇒ forced language).
+Demucs vocal isolation (`FANOPS_ISOLATE_VOCALS`, default ON) should stay on for rap regardless of
+language pin.
 
 ---
 
