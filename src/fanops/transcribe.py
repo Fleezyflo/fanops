@@ -98,12 +98,15 @@ def real_transcript_signal(transcript: list[dict]) -> bool:
     words = re.findall(r"[^\W\d_]+", joined)             # alphabetic tokens (Unicode-aware: EN+AR)
     return len(words) >= 4
 
-def whisper_cmd(src: str, out_dir: str, model: str = "turbo") -> list[str]:
+def whisper_cmd(src: str, out_dir: str, model: str = "turbo", language: str = "") -> list[str]:
     # --word_timestamps True makes whisper emit per-segment word timings ([{word,start,end}]) so the
     # overlay can sync active captions word-by-word (without it the captions fall back to an even
     # split of each segment). Negligible extra cost.
-    return ["whisper", "--model", model, "--output_format", "json", "--word_timestamps", "True",
-            "--output_dir", out_dir, "--task", "transcribe", src]
+    cmd = ["whisper", "--model", model, "--output_format", "json", "--word_timestamps", "True",
+           "--output_dir", out_dir, "--task", "transcribe"]
+    langs = [x for x in (language or "").replace(",", " ").split() if x]
+    if len(langs) == 1: cmd += ["--language", langs[0]]
+    return cmd + [src]
 
 def _fw_available() -> bool:
     """True iff the faster-whisper engine (the [asr] extra) is importable. When False,
@@ -216,7 +219,7 @@ def _produce_transcript(led: Ledger, cfg: Config, source_id: str, src, out_dir: 
     if _fw_available():
         cmd = fw_cmd(audio, str(out_dir), model or cfg.asr_model_for(src.duration), cfg.asr_language)
     else:
-        cmd = whisper_cmd(audio, str(out_dir), _resolve_model(model or cfg.whisper_model_for(src.duration)))
+        cmd = whisper_cmd(audio, str(out_dir), _resolve_model(model or cfg.whisper_model_for(src.duration)), cfg.asr_language)
     timeout_s = _whisper_timeout(src.duration)
     try:
         r = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=timeout_s)
