@@ -100,7 +100,6 @@ which writes both `.env` and `os.environ`), **51 `.env`/shell-ONLY** (no UI). `S
 | `FANOPS_CONCURRENT_WORKERS` | 4 | Concurrency pool size (clamped ≥1) | .env |
 | `FANOPS_GC_KEEP_DAYS` | 30 | Manual-gc retention (clamped ≥1) | .env |
 | `FANOPS_UPLOAD_MAX_MB` | 2048 | Studio upload body ceiling (clamped ≥1) | .env |
-| `FANOPS_LEDGER_BACKEND` | `json` | Ledger persistence backend (`json` or `sqlite`; unknown→json+warn) | .env |
 
 **Coverage note:** every trust-gate numeric and every Phase-2 reach-loop bias kill switch is `.env`/shell-only —
 an operator-only (Studio-only) deployment cannot turn on the bias actuators or tune their thresholds without
