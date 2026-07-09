@@ -32,6 +32,7 @@ from fanops.accounts import (Accounts, write_integration, add_account as _accoun
                              set_backend as _accounts_set_backend, ensure_channel as _accounts_ensure_channel,
                              set_ig_user_id as _accounts_set_ig_user_id, load_accounts_safe)
 from fanops.log import get_logger
+from fanops import secret_provider
 from fanops.autopilot import set_env_var, unset_env_var
 from fanops.errors import CutoverError, PostizAuthError, ToolchainMissingError, ZernioAuthError
 from fanops.models import Platform
@@ -42,22 +43,33 @@ _PLATFORM_VALUES = frozenset(p.value for p in Platform)   # the platforms FanOps
 
 
 def _dual_write(cfg: Config, key: str, value: str) -> Optional[str]:
-    """Persist KEY=value to .env (durable) AND set os.environ[KEY] (this process) — the load-bearing
-    dual-write mirrored from autopilot. One without the other is a bug: .env-only doesn't take effect
-    until a restart; os.environ-only is lost on restart. Returns None on success, or an error string
-    if the DURABLE write failed (disk full / read-only / a newline-bearing value rejected by
-    set_env_var) — the caller surfaces it as a clean ActionResult so the Go-Live tab never 500s. On a
-    durable-write failure os.environ is left UNTOUCHED (never reflect a change that won't persist)."""
-    try:
-        set_env_var(cfg.root / ".env", key, value)
-    except (OSError, ValueError) as exc:
-        return f"could not write {key} to .env: {str(exc)[:140]}"
+    """Persist KEY=value durably AND set os.environ[KEY] (this process). Non-secret keys land in .env
+    (atomic set_env_var); the three operator secrets land in the OS keyring ONLY (MOL-360) — never
+    plaintext .env. Returns None on success, or an error string if the durable write failed — the
+    caller surfaces it as a clean ActionResult so the Go-Live tab never 500s. On failure os.environ
+    is left UNTOUCHED (never reflect a change that won't persist)."""
+    if secret_provider.is_secret_env_key(key):
+        try:
+            secret_provider.set_secret(key, value)
+        except (OSError, ValueError) as exc:
+            return str(exc)[:160]
+        try:
+            unset_env_var(cfg.root / ".env", key)          # scrub any legacy plaintext secret
+        except OSError as exc:
+            return f"could not scrub legacy {key} from .env: {str(exc)[:140]}"
+    else:
+        try:
+            set_env_var(cfg.root / ".env", key, value)
+        except (OSError, ValueError) as exc:
+            return f"could not write {key} to .env: {str(exc)[:140]}"
     os.environ[key] = value
     return None
 
 
 def _dual_unset(cfg: Config, key: str) -> Optional[str]:
-    """Remove KEY from .env (durable) AND os.environ (this process). Returns None on success."""
+    """Remove KEY durably AND from os.environ (this process). Secrets: keyring + legacy .env scrub."""
+    if secret_provider.is_secret_env_key(key):
+        secret_provider.delete_secret(key)
     try:
         unset_env_var(cfg.root / ".env", key)
     except OSError as exc:
@@ -383,7 +395,7 @@ def set_meta_creds(cfg: Config, handle: str, ig_user_id: str, token: str = "") -
         return ActionResult(ok=False, error=f"no such account: {handle}")
     except Exception as exc:
         return ActionResult(ok=False, error=f"could not set IG user id for {handle}: {str(exc)[:160]}")
-    if token:                                                    # write-only secret -> per-handle .env key + os.environ
+    if token:                                                    # write-only secret -> keyring + os.environ
         key = per_account_token_env_key(handle)
         if not key:
             return ActionResult(ok=False, error=f"{handle} has no env-safe name for a per-account token — use the global META_GRAPH_TOKEN")
