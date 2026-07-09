@@ -20,6 +20,8 @@ _OVERRIDES: dict[str, tuple[str, ...]] = {
     "src/fanops/framing.py": ("tests/test_smart_framing.py",),
     "src/fanops/ledger_sqlite.py": ("tests/test_ledger_sqlite_store.py",),
     "src/fanops/ledger_bridge.py": ("tests/test_ledger_json_to_sqlite_bridge.py",),
+    "src/fanops/ledger.py": ("tests/test_ledger.py", "tests/test_ledger_store_interface.py",
+                             "tests/test_ledger_backend_parity.py",),
     "src/fanops/persona_research.py": ("tests/test_corpus_research.py",),
     "src/fanops/persona_store.py": ("tests/test_persona_levers.py",),
     "src/fanops/produce.py": ("tests/test_publish_post.py",),

@@ -357,10 +357,23 @@ class JsonLedgerStore:
         os.replace(str(tmp), str(self.cfg.ledger_path))   # atomic swap-in of the restored image
 
 
+def _resolve_store(cfg: Config) -> LedgerStore:
+    """Pick JsonLedgerStore or SqliteLedgerStore from FANOPS_LEDGER_BACKEND (default json). On first sqlite
+    selection with no DB but a live ledger.json, auto-run the M1-C bridge import (idempotent)."""
+    if cfg.ledger_backend == "json":
+        return JsonLedgerStore(cfg)
+    from fanops.ledger_sqlite import SqliteLedgerStore
+    store = SqliteLedgerStore(cfg)
+    if not store.db_path.exists() and cfg.ledger_path.exists():
+        from fanops.ledger_bridge import import_json_to_sqlite
+        import_json_to_sqlite(cfg)
+    return store
+
+
 class Ledger:
     def __init__(self, cfg: Config, *, store: LedgerStore | None = None):
         self.cfg = cfg
-        self._store = store or JsonLedgerStore(cfg)
+        self._store = store or _resolve_store(cfg)
         self.sources: dict[str, Source] = {}
         self.moments: dict[str, Moment] = {}
         self.clips: dict[str, Clip] = {}
@@ -388,10 +401,12 @@ class Ledger:
 
     @classmethod
     def load(cls, cfg: Config, *, store: LedgerStore | None = None) -> "Ledger":
-        store = store or JsonLedgerStore(cfg)
+        store = store or _resolve_store(cfg)
         led = cls(cfg, store=store)
         try:
             raw = store.read_raw()
+        except ControlFileError:
+            raise
         except Exception as e:
             raise ControlFileError(f"{cfg.ledger_path.name} invalid: {_reason(e)}") from e
         if raw is not None:
@@ -444,7 +459,7 @@ class Ledger:
         on-disk ledger keeps the last committed snapshot. Callers wanting to persist progress despite
         a per-unit failure must catch+continue inside the block (mirroring advance()'s per-unit
         quarantine), exactly as they do today; an UNCAUGHT raise rolls back to the prior save."""
-        store = JsonLedgerStore(cfg)
+        store = _resolve_store(cfg)
         with store.lock(timeout=timeout):
             led = cls.load(cfg, store=store)
             yield led
@@ -500,10 +515,10 @@ class Ledger:
         under the ledger lock (a consistent whole-file image, no half-written mid-transaction state). A
         missing ledger.json first materializes an empty ledger so the snapshot is always a loadable file."""
         now = now or datetime.now(timezone.utc)
-        if not cfg.ledger_path.exists():
-            cls.load(cfg).save()                       # materialize an empty (but valid) ledger to snapshot
+        store = _resolve_store(cfg)
+        if store.read_raw() is None:
+            cls.load(cfg, store=store).save()                       # materialize an empty (but valid) ledger to snapshot
         dest = _snapshot_dest(cfg, now)                # MOL-75: structurally-unique dest (timestamp + token)
-        store = JsonLedgerStore(cfg)
         with store.lock():
             store.snapshot(dest)
         return dest
@@ -512,7 +527,7 @@ class Ledger:
     def restore_snapshot(cls, cfg: Config, snapshot_path: "Path | str") -> None:
         """Atomically restore ledger.json FROM a snapshot (tmp + os.replace, same as _save_unlocked). The
         wipe is thereby REVERSIBLE — a restore brings every removed row back byte-identically."""
-        store = JsonLedgerStore(cfg)
+        store = _resolve_store(cfg)
         with store.lock():
             store.restore(Path(snapshot_path))
 
