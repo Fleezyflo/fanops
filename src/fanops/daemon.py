@@ -61,53 +61,53 @@ def resolve_responder(cfg: Config) -> str:
     resolves at fire time, which the CLI/Studio then DISCLOSE."""
     return cfg.responder_mode
 
-def render_wrapper(cfg: Config, *, interval: int) -> str:
-    """The `#!/bin/bash` script launchd execs. One-shot: `exec fanops run` with a FRESH now as
-    --base-time each fire (the default base-time is a fixed past date — a daemon must advance it).
+def format_interval(secs: int) -> str:
+    """Seconds -> CLI `--interval` token (bare seconds; `parse_interval` round-trips)."""
+    return str(secs)
 
-    This operator-installed loop is THE autonomous publish+reconcile trigger (P2): each fire's
+def render_wrapper(cfg: Config, *, interval: int) -> str:
+    """The `#!/bin/bash` script launchd execs. Resident: `exec fanops run --loop --interval` — one
+    long-lived process whose inner loop advances with a fresh --base-time each iteration.
+
+    This operator-installed loop is THE autonomous publish+reconcile trigger (P2): each iteration's
     `fanops run` -> advance -> reconciles parked posts (Postiz or Zernio) AND publishes every `queued`
-    post whose operator-set scheduled_time is now due (publish_due's due-gate). No Python-side scheduler
-    exists or is added — a due post fires unattended ONLY if the operator ran `fanops daemon install`;
-    otherwise the supported paths are a manual `fanops run` / Studio Publish-now. dryrun publishes nothing.
+    post whose operator-set scheduled_time is now due (publish_due's due-gate). A due post fires
+    unattended ONLY if the operator ran `fanops daemon install`; otherwise the supported paths are a
+    manual `fanops run` / Studio Publish-now. dryrun publishes nothing.
 
     DECOUPLED from the AI switch: the wrapper bakes NO FANOPS_RESPONDER. The fire-time `fanops run`
     resolves the responder via `Config.responder_mode` (.env is loaded override=True at Config init), so
     the operator sets the AI on/off ONCE (in .env) and scheduling merely honors it — never welds them."""
-    # shlex.quote every interpolated path/value: a workspace path with a space/quote/$ would otherwise
-    # break out of the double-quotes (or let bash expand `$x`), silently running `fanops run` from the
-    # WRONG cwd and defeating the daemon's #1 invariant. The `$(date ...)` substitution is left literal
-    # ON PURPOSE — it must execute at fire time, not be quoted.
+    iv = format_interval(interval)
     return (
         "#!/bin/bash\n"
         "set -euo pipefail\n"
-        f"# launchd reruns this wrapper every {interval}s (StartInterval); each run is one-shot.\n"
+        f"# launchd KeepAlive holds one resident `fanops run --loop` (cadence {interval}s inside Python).\n"
         f"export PATH={shlex.quote(_daemon_path())}\n"
         f"cd {shlex.quote(str(cfg.root))}\n"
-        f'exec {shlex.quote(_fanops_bin())} run --base-time "$(date -u +%Y-%m-%dT%H:%M:%SZ)"\n'
+        f"exec {shlex.quote(_fanops_bin())} run --loop --interval {shlex.quote(iv)}\n"
     )
 
 def render_plist(cfg: Config, *, interval: int) -> str:
     """The LaunchAgent plist. WorkingDirectory=cfg.root (gotcha 1); EnvironmentVariables carries the
-    full PATH+HOME (gotcha 2). RunAtLoad fires once on load; StartInterval reruns every `interval`s;
-    ThrottleInterval floors restart cadence at 60s. plistlib produces valid, properly-escaped XML."""
+    full PATH+HOME+FANOPS_DAEMON_INTERVAL (gotcha 2). RunAtLoad starts once; KeepAlive restarts on crash
+    (SuccessfulExit:false — NOT on clean stop). ThrottleInterval floors restart cadence at 60s.
+
+    KeepAlive + LSMultipleInstancesProhibited: launchd never timer-re-fires — one resident loop only.
+    A hung-but-alive process is NOT respawned (it hasn't exited); M2-C readiness alarms on a stale
+    per-iteration heartbeat catch that case. plistlib produces valid, properly-escaped XML."""
     path = _daemon_path()
     pl = {
         "Label": LABEL,
         "ProgramArguments": ["/bin/bash", str(wrapper_path(cfg))],
-        "StartInterval": interval,
+        "KeepAlive": {"SuccessfulExit": False},
         "RunAtLoad": True,
         "WorkingDirectory": str(cfg.root),
         "StandardOutPath": str(cfg.reports / "daemon.out"),
         "StandardErrorPath": str(cfg.reports / "daemon.err"),
         "ThrottleInterval": _MIN_INTERVAL,
-        # MOL-81 instance 2: a slow LLM/network tick can still be executing when StartInterval re-fires;
-        # launchd's default (false) permits a SECOND overlapping `fanops run`, which then contends for the
-        # ledger flock and silently wastes a full respond-and-advance cycle. Delegate de-duplication to
-        # launchd itself — the next fire is SKIPPED while the prior instance is alive. This is overlap
-        # prevention only; ThrottleInterval/RunAtLoad (crash-restart cadence) are a separate, unchanged concern.
         "LSMultipleInstancesProhibited": True,
-        "EnvironmentVariables": {"PATH": path, "HOME": str(Path.home())},
+        "EnvironmentVariables": {"PATH": path, "HOME": str(Path.home()), "FANOPS_DAEMON_INTERVAL": str(interval)},
     }
     return plistlib.dumps(pl).decode()
 
@@ -146,19 +146,46 @@ def parse_interval(raw: str) -> int:
         raise ValueError(f"interval must be >= {_MIN_INTERVAL}s (launchd ThrottleInterval floor), got {raw!r}")
     return secs
 
+_WRAPPER_LOOP_RE = re.compile(r"run --loop --interval\s+(\S+)")
+
+def _interval_from_wrapper_text(text: str) -> int | None:
+    m = _WRAPPER_LOOP_RE.search(text)
+    if not m:
+        return None
+    try:
+        return parse_interval(m.group(1))
+    except ValueError:
+        return None
+
 def installed_interval(cfg: Config) -> int | None:
-    """Read StartInterval back from the on-disk plist so `status` judges staleness against the REAL
-    cadence, not a default. None if no plist / key absent / non-int / unreadable. Best-effort, broad
-    catch BY DESIGN: a corrupt plist (XML/expat errors are varied) must NEVER crash `daemon status` —
-    same posture as Config.tuning() for a malformed tuning.json. The isinstance guard avoids the
-    int(None)/int(<str>) trap when the key is missing or hand-edited to a non-integer."""
+    """Read the installed tick cadence so `status` judges staleness against the REAL interval, not a
+    default. Under KeepAlive there is no plist StartInterval — read the wrapper's `--interval` first,
+    then FANOPS_DAEMON_INTERVAL from the plist EnvironmentVariables (install writes both). Legacy
+    StartInterval plists still round-trip. None if unreadable / absent. Best-effort, broad catch BY
+    DESIGN: corrupt on-disk state must NEVER crash `daemon status`."""
+    wp = wrapper_path(cfg)
+    if wp.exists():
+        try:
+            if (iv := _interval_from_wrapper_text(wp.read_text())) is not None:
+                return iv
+        except Exception:
+            pass
     p = plist_path()
     if not p.exists():
         return None
     try:
-        val = plistlib.loads(p.read_bytes()).get("StartInterval")
+        pl = plistlib.loads(p.read_bytes())
     except Exception:
         return None
+    env = pl.get("EnvironmentVariables") or {}
+    if isinstance(env, dict):
+        raw = env.get("FANOPS_DAEMON_INTERVAL")
+        if raw is not None:
+            try:
+                return parse_interval(str(raw))
+            except ValueError:
+                pass
+    val = pl.get("StartInterval")                                          # legacy pre-M2-B installs
     return val if isinstance(val, int) else None
 
 

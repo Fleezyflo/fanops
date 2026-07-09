@@ -39,7 +39,7 @@ def test_render_wrapper_bakes_no_responder(tmp_path):
     assert "FANOPS_RESPONDER" not in w
     assert daemon._fanops_bin() in w
     assert f"cd {shlex.quote(str(cfg.root))}" in w
-    assert '--base-time "$(date -u +%Y-%m-%dT%H:%M:%SZ)"' in w
+    assert "run --loop --interval" in w
 
 
 def test_resolve_responder_reports_fire_time_mode(tmp_path, monkeypatch):
