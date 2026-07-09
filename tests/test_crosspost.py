@@ -561,6 +561,46 @@ def test_recrosspost_leaves_existing_awaiting_post(tmp_path, monkeypatch, mocker
     led.save(); _run()
     assert len(Ledger.load(cfg).posts) == 1 and pid in Ledger.load(cfg).posts
 
+def test_recrosspost_rebirths_rejected_and_failed_posts(tmp_path, monkeypatch, mocker):
+    # MOL-326: rejected/failed at content-addressed pid -> pop + fresh awaiting_approval rebirth.
+    from fanops.models import Post, PostState
+    from fanops.ids import child_id, surface_key
+    monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "0")
+    cfg = Config(root=tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path="/s.mp4", width=1080, height=1920))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7, reason="r",
+                          state=MomentState.clipped, hook="HOOK A", clip_profile="talk"))
+    cfg.clips.mkdir(parents=True, exist_ok=True)
+    base = cfg.clips / "c.mp4"; base.write_bytes(b"BASE")
+    clip = Clip(id="clip_1", parent_id="mom_1", path=str(base), aspect=Fmt.r9x16, state=ClipState.captioned)
+    clip.meta_captions = {"a/instagram": {"caption": "cap", "hashtags": ["#x"]}}
+    led.add_clip(clip); led.save()
+    mocker.patch("fanops.overlay.burn_hook_only")
+    pid = child_id("post", "clip_1", surface_key("a", "instagram"))
+    token = f"fanops_{_hash('idemp', pid)}"
+    for terminal in (PostState.rejected, PostState.failed):
+        led = Ledger.load(cfg)
+        led.set_clip_state("clip_1", ClipState.captioned)
+        old_at = "2020-01-01T00:00:00Z"
+        led.posts[pid] = Post(id=pid, parent_id="clip_1", account="a", account_id="1", platform=Platform.instagram,
+                               caption="old", state=terminal, created_at=old_at, submission_id=token)
+        led.save()
+        led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
+        led.save()
+        p = Ledger.load(cfg).posts[pid]
+        assert p.state is PostState.awaiting_approval
+        assert p.created_at != old_at and p.created_at.endswith("Z")
+        assert p.submission_id == token
+    led = Ledger.load(cfg)
+    queued_at = "2021-06-01T12:00:00Z"
+    led.posts[pid] = led.posts[pid].model_copy(update={"state": PostState.queued, "created_at": queued_at})
+    led.save()
+    crosspost_clips(Ledger.load(cfg), cfg, Accounts.load(cfg), base_time="2026-06-02T19:00:00Z")
+    p = Ledger.load(cfg).posts[pid]
+    assert len(Ledger.load(cfg).posts) == 1 and p.state is PostState.queued and p.created_at == queued_at
+
 def test_crosspost_mints_post_without_variant_fields(tmp_path, monkeypatch, mocker):
     monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "0")
     monkeypatch.chdir(tmp_path)
