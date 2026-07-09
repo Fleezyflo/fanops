@@ -294,7 +294,8 @@ class Config:
         # Postiz public API key (Settings > Developers > Public API), sent as the Authorization
         # header. is_live_backend is True for a postiz backend WITH this key (M2): postiz both
         # PUBLISHES and now feeds the learning loop via its post analytics (PostizMetricsClient).
-        return self._settings.POSTIZ_API_KEY
+        from fanops.secret_provider import resolve_secret
+        return resolve_secret("POSTIZ_API_KEY", self._settings.POSTIZ_API_KEY)
 
     @property
     def media_public_base(self) -> str | None:
@@ -335,7 +336,8 @@ class Config:
         # WRITE-ONLY — never logged/echoed (mirrors postiz_api_key). is_live_backend is True for a zernio
         # backend WITH this key. Distinct from the POSTIZ key — they coexist (per-account routing
         # can run IG via Postiz AND TikTok via Zernio at once).
-        return self._settings.ZERNIO_API_KEY
+        from fanops.secret_provider import resolve_secret
+        return resolve_secret("ZERNIO_API_KEY", self._settings.ZERNIO_API_KEY)
 
     @property
     def meta_graph_token(self) -> str | None:
@@ -343,7 +345,8 @@ class Config:
         # never logged/echoed (mirrors postiz_api_key); meta_graph sends it as the access_token param.
         # Absent -> the Graph store build fails open to the frozen reach floor. Used ONLY by `hashtags
         # refresh`, never on the publish path.
-        return self._settings.META_GRAPH_TOKEN
+        from fanops.secret_provider import resolve_secret
+        return resolve_secret("META_GRAPH_TOKEN", self._settings.META_GRAPH_TOKEN)
 
     @property
     def meta_ig_user_id(self) -> str | None:
@@ -951,10 +954,12 @@ class Config:
     def _per_handle_meta_token(self, handle: str) -> str | None:
         """Per-handle META_GRAPH_TOKEN__<SLUG> read — the ONLY home for dynamic Meta token env keys."""
         from fanops.meta_graph import per_account_token_env_key
+        from fanops.secret_provider import resolve_secret
         key = per_account_token_env_key(handle)
         if not key: return None
         v = os.getenv(key)
-        return v.strip() if v and v.strip() else None
+        env_val = v.strip() if v and v.strip() else None
+        return resolve_secret(key, env_val)
 
     def meta_token_for(self, handle: str | None = None) -> str | None:
         """Resolve the Graph access token for `handle` (per-handle .env key wins, else global). SECRET."""

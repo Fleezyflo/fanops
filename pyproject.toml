@@ -31,6 +31,10 @@ asr = ["demucs>=4.0", "faster-whisper>=1.0", "certifi"]
 # fanops.framing imports cv2 lazily and returns None when absent, so a no-[framing] install crops centered
 # exactly as before. headless wheel = no GUI/Qt deps (it only reads frames + detects boxes).
 framing = ["opencv-python-headless>=4.9"]
+# OS keychain reads for operator secrets (MOL-359). OPTIONAL + lazy + FAIL-OPEN — `pip install -e .` stays
+# keyring-free; only `.[keyring]` pulls it. fanops.secret_provider imports keyring lazily and degrades to
+# Settings/.env when absent or when no backend is available (headless CI/Linux).
+keyring = ["keyring>=25.0"]
 
 [project.scripts]
 fanops = "fanops.cli:main"
