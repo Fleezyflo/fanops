@@ -992,18 +992,19 @@ def recover_posts(cfg: Config, post_ids: list[str], *, action: str, reason: str 
     return ActionResult(ok=True, detail=detail)
 
 
-def resume_source_studio(cfg: Config, source_id: str) -> ActionResult:
+def resume_source_studio(cfg: Config, source_id: str, *, from_stage: str = "auto", force: bool = False) -> ActionResult:
     """MOL-123: the Studio Resume button for an errored / moments_empty source. Delegates to the SAME
     stage-aware helper the CLI verb uses (pipeline.resume_source, MOL-121) — no parallel implementation —
     so an errored source with a good transcript resumes at `transcribed` (re-enters at signals) instead of
-    a full re-transcribe. Rejects an unknown / non-recoverable source (resume_source returns False)."""
+    a full re-transcribe. MOL-471: `from_stage` + `force` thread through for the T0 reset recipe.
+    Rejects an unknown / non-recoverable source (resume_source returns False)."""
     from fanops.pipeline import resume_source
     with Ledger.transaction(cfg) as led:
         if source_id not in led.sources:
             return ActionResult(ok=False, error=f"no such source: {source_id}")
-        if not resume_source(led, source_id):
+        if not resume_source(led, source_id, from_stage=from_stage, force=force, cfg=cfg):
             return ActionResult(ok=False, error=f"source {source_id} is not recoverable (state={led.sources[source_id].state.value})")
-    write_audit(cfg, "resume_source", [source_id], reason="studio_resume")
+    write_audit(cfg, "resume_source", [source_id], reason="studio_resume", from_stage=from_stage, force=force)
     return ActionResult(ok=True, detail={"source_id": source_id})
 
 

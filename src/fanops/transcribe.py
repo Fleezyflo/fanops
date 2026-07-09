@@ -9,13 +9,15 @@ ENGINE: prefers faster-whisper (the [asr] extra, via the fanops._fwrun runner) a
 (int8 makes even large-v3 practical on CPU). FAILS OPEN to the legacy `whisper` CLI (turbo) when
 faster-whisper is absent (CI / air-gapped), so transcription always runs."""
 from __future__ import annotations
-import json, subprocess, sys
+import contextlib, json, subprocess, sys
 from pathlib import Path
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import SourceState
 from fanops.stage_lock import stage_lock
 from fanops.vocals import isolate_vocals
+
+_DEFAULT_DEMUCS_MODEL = "htdemucs"
 
 # Hard floor for the whisper subprocess timeout. The slow whisper run no longer holds the LEDGER flock
 # (M1: it runs inside the per-(stage,source) stage_lock instead, which serializes only the SAME source
@@ -130,6 +132,18 @@ def _segment(s: dict) -> dict:
     if isinstance(words, list) and words and all(isinstance(w, dict) and "word" in w for w in words):
         seg["words"] = [{"word": w["word"], "start": w.get("start"), "end": w.get("end")} for w in words]
     return seg
+
+def purge_source_artifacts(cfg: Config, source_id: str, source_path: str) -> None:
+    """MOL-471: delete on-disk transcribe/signals caches for a source so a force-retry cannot adopt stale
+    JSON. Idempotent — missing paths are fine. Demucs vocal stem dirs live under transcripts/vocals/."""
+    import shutil
+    stem = Path(source_path).stem
+    out_dir = cfg.agent_io / "transcripts"
+    for p in (out_dir / f"{stem}.json", out_dir / f"{stem}.mp3", cfg.agent_io / "signals" / f"{source_id}.json"):
+        with contextlib.suppress(FileNotFoundError): p.unlink()
+    demucs_stem = out_dir / "vocals" / _DEFAULT_DEMUCS_MODEL / stem
+    if demucs_stem.exists(): shutil.rmtree(demucs_stem, ignore_errors=True)
+
 
 def _adopt_cached_transcript(led: Ledger, source_id: str, cached: Path) -> bool:
     """Adopt the on-disk whisper JSON into the in-memory Source row. Returns True iff adoption

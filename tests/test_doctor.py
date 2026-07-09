@@ -335,6 +335,26 @@ def _seed_queued_post(cfg, *, when):
     led.save()
 
 
+# --- MOL-474: faster-whisper [asr] import probe (transcribe._fw_available) ---
+
+def _fw_check(rep):
+    return next((c for c in rep["checks"] if "faster-whisper" in c["label"].lower()), None)
+
+
+def test_doctor_fails_when_faster_whisper_unavailable(tmp_path, monkeypatch):
+    # Bare install (no [asr] extra) -> doctor surfaces the missing preferred ASR engine with the venv recipe.
+    monkeypatch.setattr("fanops.transcribe._fw_available", lambda: False)
+    c = _fw_check(doctor.doctor_report(Config(root=tmp_path)))
+    assert c is not None and c["ok"] is False and "[asr]" in c["hint"]
+
+
+def test_doctor_passes_when_faster_whisper_available(tmp_path, monkeypatch):
+    # [asr] installed -> the faster-whisper probe passes (engine selection matches transcribe_source).
+    monkeypatch.setattr("fanops.transcribe._fw_available", lambda: True)
+    c = _fw_check(doctor.doctor_report(Config(root=tmp_path)))
+    assert c is not None and c["ok"] is True
+
+
 def test_doctor_fails_on_dead_daemon_or_past_due_backlog(tmp_path, monkeypatch):
     from datetime import datetime, timezone, timedelta
     FUT = (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()
