@@ -24,6 +24,13 @@ def test_blocked_note_quiet_when_every_gate_clear():
     assert _gates_blocked_note(None) is None
 
 
+def test_status_includes_run_idle_and_wait(tmp_path, capsys):
+    cfg = Config(root=tmp_path)
+    cmd_status(cfg)
+    out = capsys.readouterr().out
+    assert "run=idle" in out
+
+
 def test_status_surfaces_awaiting_moment_hooks(tmp_path, capsys):
     cfg = Config(root=tmp_path)
     cmd_status(cfg)

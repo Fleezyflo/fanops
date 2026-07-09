@@ -172,6 +172,19 @@ def test_cli_refuses_moments_decided_without_force(tmp_path, monkeypatch, capsys
     assert "not recoverable" in capsys.readouterr().err
 
 
+def test_force_reset_catalogued_on_already_catalogued_is_idempotent(tmp_path):
+    cfg = Config(root=tmp_path)
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="s1", source_path="/s.mp4", state=SourceState.catalogued))
+    with Ledger.transaction(cfg) as led:
+        assert resume_source(led, "s1", from_stage="catalogued", force=True, cfg=cfg) is True
+    s1 = Ledger.load(cfg).sources["s1"]
+    assert s1.state is SourceState.catalogued
+    with Ledger.transaction(cfg) as led:
+        assert resume_source(led, "s1", from_stage="catalogued", force=True, cfg=cfg) is True
+    assert Ledger.load(cfg).sources["s1"].state is SourceState.catalogued
+
+
 def test_cli_force_from_catalogued_resets_moments_decided(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     cfg = Config(root=tmp_path)

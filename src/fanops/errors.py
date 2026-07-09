@@ -16,6 +16,13 @@ class LockBusyError(Exception):
     so this only ever means genuine contention — never an orphan needing manual `rm`."""
 
 
+class RunBusyError(Exception):
+    """The per-workspace run lease (respond→advance converge loop) is held by another LIVE fanops
+    driver. Operator-facing, one-line. Distinct from LockBusyError (ledger commit) and StageBusyError
+    (slow producer subprocess). Self-healing like the others: orphan lockfiles from kill -9 are inert
+    (kernel releases the flock on process death); only a LIVE holder blocks."""
+
+
 class StageBusyError(Exception):
     """A per-stage producer lock (transcribe / framing / keyframes) is held by another LIVE fanops
     process for the SAME (stage, source_id) and did not free within the timeout. Distinct from

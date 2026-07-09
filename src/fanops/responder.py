@@ -15,6 +15,7 @@ from pydantic import ValidationError
 from fanops.config import Config
 from fanops.models import MomentDecision, MomentHookDecision, CaptionSet, SourceState
 from fanops.agentstep import pending, request_path, write_response, latest_request_id, clear_attempts, bump_attempts
+from fanops.gate_keys import gate_source_id as _gate_source_id
 from fanops.llm import claude_json_meta, LlmTimeoutError, LlmContextLimitError, LlmSchemaError
 from fanops.prompts import moment_pick_prompt, moment_hook_prompt, caption_prompt
 from fanops.control import guidance_sha
@@ -47,15 +48,6 @@ _SCHEMA = {"moments": MomentDecision, "moment_hooks": MomentHookDecision, "capti
 _PROMPT = {"moments": moment_pick_prompt, "moment_hooks": moment_hook_prompt, "captions": caption_prompt}
 _VISION_GATES = ("moments", "moment_hooks")   # gates whose payload MAY carry top-level `frames` to attach
 _GATE_DETERMINISTIC_MAX = 3   # MOL-235: after N same-gate deterministic failures, escalate source to error
-
-def _gate_source_id(led, kind: str, key: str) -> str | None:
-    """Resolve the owning source id for a gate key — moments/moment_hooks key on source id directly;
-    captions keys on a clip id -> clip.parent=moment, moment.parent=source."""
-    if kind in ("moments", "moment_hooks"):
-        return key.split(".", 1)[0]
-    clip = led.clips.get(key)
-    mom = led.moments.get(clip.parent_id) if clip is not None else None
-    return mom.parent_id if mom is not None else None
 
 class ManualResponder:
     def __init__(self, cfg: Config): self.cfg = cfg

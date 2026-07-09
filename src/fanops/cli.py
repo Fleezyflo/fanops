@@ -7,7 +7,7 @@ import argparse, json, subprocess, sys, time
 from datetime import datetime, timezone
 import fanops
 from fanops.config import Config
-from fanops.errors import AuthError, ControlFileError, CutoverError, DownloadError, LockBusyError, ToolchainMissingError
+from fanops.errors import AuthError, ControlFileError, CutoverError, DownloadError, LockBusyError, RunBusyError, ToolchainMissingError
 from fanops.ledger import Ledger
 from fanops.accounts import Accounts
 from fanops.models import PostState
@@ -45,6 +45,8 @@ def cmd_status(cfg: Config) -> int:
     led = Ledger.load(cfg)
     from fanops.models import SourceState        # local read (mirrors cmd_reconcile's local import)
     from fanops.doctor import setup_state, setup_next_action
+    from fanops.pipeline_status import status_control_lines, visible_source_ids, source_wait_line
+    run_line, wait_line = status_control_lines(cfg, led)
     print(f"sources={len(led.sources)} moments={len(led.moments)} clips={len(led.clips)} "
           f"posts={len(led.posts)} "
           # V2 M1/F8: sources the model produced ZERO picks for — actionable (retry-source), never silent.
@@ -68,8 +70,14 @@ def cmd_status(cfg: Config) -> int:
           f"backend={cfg.effective_publish_mode()} "
           # WS2 (audit xc-3): one awaiting_<kind>= per GATE_KINDS (the single source) so a stuck gate
           # is visible on `fanops status`; the surface can never omit a gate kind (it derives from GATE_KINDS).
-          + " ".join(f"awaiting_{k}={len(pending(cfg, kind=k))}" for k in GATE_KINDS))
+          + " ".join(f"awaiting_{k}={len(pending(cfg, kind=k))}" for k in GATE_KINDS)
+          + f" {run_line}" + (f" {wait_line}" if wait_line else ""))
     print(f"setup={setup_state(cfg)} next={setup_next_action(cfg)}")
+    for sid in visible_source_ids(led, cfg):
+        s = led.sources[sid]
+        sw = source_wait_line(cfg, led, sid)
+        extra = f" {sw}" if sw else ""
+        print(f"  {sid} state={s.state.value}{extra}")
     return 0
 
 def cmd_recover_audit(cfg: Config) -> int:
@@ -702,6 +710,10 @@ def main(argv: list[str] | None = None) -> int:
         # reach here — the flock self-heals it (H6); this only ever means real contention.
         print(str(e), file=sys.stderr)
         return 1
+    except RunBusyError as e:
+        # Another LIVE fanops driver holds the workspace run lease (respond→advance loop).
+        print(str(e), file=sys.stderr)
+        return 1
     except AuthError as e:
         # Bad/missing poster key (Postiz or Zernio, or a 401) escaping a publish — operator-actionable.
         # str(e) carries the backend-specific message. One clean line + exit 2 (config-level, like
@@ -797,6 +809,7 @@ def _fresh_run_base_time() -> str:
 
 def _cmd_run_pass(cfg: Config, base_time: str) -> dict | None:
     """One respond+advance converge-then-learn pass. None = halted (run-halted line already on stderr)."""
+    from fanops.pipeline_run import run_lease
     # unattended: respond to gates, advance, repeat until no progress.
     # BOTH the responder and advance() are inside the guard: advance()'s deterministic
     # stages are per-unit quarantined, but the responder (FIX H7 — the LLM model call or a
@@ -805,17 +818,18 @@ def _cmd_run_pass(cfg: Config, base_time: str) -> dict | None:
     # from either degrades cleanly here (log one line + stop) rather than crashing the
     # unattended cron loop with a traceback.
     s = None
-    for _ in range(10):
-        try:
-            get_responder(cfg).answer_pending(cfg)
-            s = advance(cfg, base_time=base_time)
-        except Exception as e:
-            print(f"run halted: {type(e).__name__}: {e}", file=sys.stderr)
-            return None
-        # Converge only when EVERY gate is clear. any() over all awaiting kinds (moments, captions)
-        # is robust to future gates too — a run that exits with any open has not produced its clips/posts.
-        if not any(s["awaiting"].values()):
-            break
+    with run_lease(cfg):
+        for _ in range(10):
+            try:
+                get_responder(cfg).answer_pending(cfg)
+                s = advance(cfg, base_time=base_time)
+            except Exception as e:
+                print(f"run halted: {type(e).__name__}: {e}", file=sys.stderr)
+                return None
+            # Converge only when EVERY gate is clear. any() over all awaiting kinds (moments, captions)
+            # is robust to future gates too — a run that exits with any open has not produced its clips/posts.
+            if not any(s["awaiting"].values()):
+                break
     # B2: if the loop ended with gates still awaiting, say so LOUDLY (a stuck responder used to
     # exhaust the iterations and fall through silently). Exit stays 0 — a stuck gate is not a
     # crash; the distinct stderr line + run.log event is what monitoring greps.
@@ -941,7 +955,9 @@ def _dispatch(cfg: Config, args) -> int:
     if args.cmd == "advance":
         if (rc := _check_accounts(cfg)):  return rc
         if (rc := _check_preflight(cfg)):  return rc
-        s = advance(cfg, base_time=args.base_time)
+        from fanops.pipeline_run import run_lease
+        with run_lease(cfg):
+            s = advance(cfg, base_time=args.base_time)
         _heartbeat(cfg, s); print(s); return 0
     if args.cmd == "track":    return cmd_track(cfg, args.window)
     if args.cmd == "map-media": return cmd_map_media(cfg)
@@ -1058,11 +1074,16 @@ def _dispatch(cfg: Config, args) -> int:
                 try:
                     if (s := _cmd_run_pass(cfg, base_time)) is not None:
                         _heartbeat(cfg, s); print(s)
+                except RunBusyError as e:
+                    print(str(e), file=sys.stderr)   # skip this tick; next --interval retries
                 except Exception as e:
                     print(f"run halted: {type(e).__name__}: {e}", file=sys.stderr)
                 time.sleep(interval)
-        if (s := _cmd_run_pass(cfg, args.base_time)) is None:
-            return 1
+        try:
+            if (s := _cmd_run_pass(cfg, args.base_time)) is None:
+                return 1
+        except RunBusyError as e:
+            print(str(e), file=sys.stderr); return 1
         # E2: emit one heartbeat for the WHOLE run from the final advance summary (so
         # published_in_run/last_published_age_hours reflect this run incl. the learning pass effect).
         _heartbeat(cfg, s); print(s); return 0

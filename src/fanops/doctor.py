@@ -402,6 +402,14 @@ def setup_state(cfg: Config) -> str:
 
 def setup_next_action(cfg: Config) -> str:
     """Next operator action for the current setup_state — mirrors doctor Postiz-learning hints."""
+    from fanops.agentstep import pending
+    from fanops.models import SourceState
+    from fanops.ledger import Ledger
+    if any(pending(cfg, kind=k) for k in ("moments", "moment_hooks", "captions")):
+        return "agent gate stuck — run `fanops status` (wait= line) or answer in Studio Gates"
+    led = Ledger.load(cfg)
+    if len(led.sources_in_state(SourceState.error)) > 0:
+        return "source(s) in error — run `fanops status` then `fanops retry-source <id>`"
     state = setup_state(cfg)
     problems = _accounts_problems(cfg)
     if state == SetupState.NOT_CONFIGURED:

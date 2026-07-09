@@ -3,7 +3,7 @@
 of the post-production surfaces — depends only on actions_common (ActionResult/_now); never on a sibling action
 module, so the import graph stays acyclic."""
 from __future__ import annotations
-import os, subprocess, time, uuid
+import os, subprocess, uuid
 from pathlib import Path
 from typing import Optional, Sequence
 
@@ -21,47 +21,29 @@ from fanops.studio.actions_common import ActionResult, _now
 _VIDEO_EXT = {".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi"}   # the has_video_stream subset of MEDIA_EXT
 if not (_VIDEO_EXT <= MEDIA_EXT): raise ValueError("_VIDEO_EXT drifted out of ingest.MEDIA_EXT")  # import-time drift guard (not assert — survives -O)
 
-_KICK_TTL_S = 300   # WS-D1: debounce window for the ingest event-kick (< the daemon interval) so repeated ingests don't stack runs
+_KICK_TTL_S = 300   # legacy — replaced by run_lease probe; kept only as a comment anchor for WS-D1 history
 
 
 def kick_prepare(cfg: Config) -> bool:
     """WS-D1 Phase 3 — de-lazify: spawn a DETACHED `fanops run` so a fresh browser ingest starts processing
     IMMEDIATELY instead of waiting up to one daemon interval. BEST-EFFORT + FAIL-OPEN: every failure is
     swallowed (logged), so the kick is an optimization, never a precondition for ingest — the launchd daemon
-    remains the GUARANTEED driver. Debounced by a short-TTL lockfile so repeated ingests don't stack concurrent
-    runs; the ledger flock + content-addressed caches make any overlap merely wasteful, never corrupting.
-    Uses the daemon's own spawn helpers (the codebase-blessed `fanops run` invocation). Returns True iff it
-    spawned. DECOUPLED: the kick injects NO responder default — the spawned `fanops run` resolves it via
-    .env / Config.responder_mode (the single source of truth), the same path the daemon uses. No hidden
-    third default that silently spends LLM; an operator's explicit FANOPS_RESPONDER still rides os.environ."""
+    remains the GUARANTEED driver. Debounced by the run lease: if a driver already owns the workspace, the
+    kick is a no-op (the owner drives the next tick). Uses the daemon's own spawn helpers (the codebase-blessed
+    `fanops run` invocation). Returns True iff it spawned. DECOUPLED: the kick injects NO responder default —
+    the spawned `fanops run` resolves it via .env / Config.responder_mode (the single source of truth), the
+    same path the daemon uses. No hidden third default that silently spends LLM; an operator's explicit
+    FANOPS_RESPONDER still rides os.environ."""
     from fanops.daemon import _fanops_bin, _daemon_path
     from fanops.log import get_logger
-    lock = cfg.control / ".run-kick"
+    from fanops.pipeline_run import run_held
     try:
-        if lock.exists() and (time.time() - lock.stat().st_mtime) < _KICK_TTL_S:
-            # kick-prepare-debounce-race: the old fixed-TTL held the lock ~300s even after a run that finished
-            # in ~100s, blocking the next ingest for up to a daemon interval. Debounce ONLY while the spawned
-            # process is actually ALIVE; the TTL is now just the OUTER bound (pid recycling / a crash that never
-            # cleared the lock). The lock stores the prior run's PID (signal 0 probes liveness, sends nothing).
-            try:
-                prior_pid = int((lock.read_text() or "").strip() or 0)
-            except (OSError, ValueError):
-                prior_pid = 0
-            if prior_pid > 0:
-                alive = True
-                try:
-                    os.kill(prior_pid, 0)
-                except ProcessLookupError:
-                    alive = False                          # prior run FINISHED -> release the debounce, kick again NOW
-                except OSError:
-                    alive = True                           # exists but not ours to signal (perms) -> treat as alive
-                if alive:
-                    return False                           # prior kick still running -> debounce
+        if run_held(cfg):
+            return False                           # a driver already owns the workspace — no stacked run
         env = cfg.spawn_env(path=_daemon_path())       # responder resolved by the run itself, not forced here
-        proc = subprocess.Popen([_fanops_bin(), "run", "--base-time", iso_z(_now(None))],
+        subprocess.Popen([_fanops_bin(), "run", "--base-time", iso_z(_now(None))],
                                 cwd=str(cfg.root), env=env, stdout=subprocess.DEVNULL,
                                 stderr=subprocess.DEVNULL, start_new_session=True)   # detached: survives the request, OS-reaped
-        lock.parent.mkdir(parents=True, exist_ok=True); lock.write_text(str(proc.pid))   # stamp the PID so a FINISHED run releases the debounce early
         return True
     except Exception as exc:
         get_logger(cfg)("run", "-", "kick_failed", err=str(exc)[:160]); return False
@@ -256,7 +238,12 @@ def run_advance(cfg: Config, base_time: Optional[str] = None, *, confirmed: bool
         return ActionResult(ok=False, error="accounts.json: " + "; ".join(problems))
     bt = base_time or iso_z(_now(None))
     try:
-        summary = advance(cfg, base_time=bt)
+        from fanops.pipeline_run import run_lease
+        from fanops.errors import RunBusyError
+        with run_lease(cfg):
+            summary = advance(cfg, base_time=bt)
+    except RunBusyError:
+        return ActionResult(ok=False, error="pipeline busy — a run is driving")
     except AuthError as exc:
         # F52 parity: a bad/missing key fails EVERY post — advance's own transaction already rolled
         # back (it saves only on clean exit), but surface the FATAL severity, not a soft "failed".
@@ -296,18 +283,24 @@ def run_prepare(cfg: Config, base_time: Optional[str] = None, *, confirmed: bool
     responder = get_responder(cfg)
     summary = None
     done = False
-    for _ in range(10):                                # respond -> advance until stable (no gate left)
-        try:
-            responder.answer_pending(cfg)              # llm answers the gates; manual writes nothing
-            summary = advance(cfg, base_time=bt)
-        except AuthError as exc:
-            # UI-LIE-FIX: derive the auth-key name from the EXCEPTION CLASS — the structural truth.
-            key = Config.auth_key_name_from_error(exc)
-            return ActionResult(ok=False, error=f"FATAL auth failure — check {key}: {str(exc)[:160]}")
-        except Exception as exc:
-            return ActionResult(ok=False, error=f"prepare failed: {str(exc)[:160]}")
-        if summary["awaiting"]["moments"] == 0 and summary["awaiting"]["captions"] == 0:
-            done = True; break
+    try:
+        from fanops.pipeline_run import run_lease
+        from fanops.errors import RunBusyError
+        with run_lease(cfg):
+            for _ in range(10):                                # respond -> advance until stable (no gate left)
+                try:
+                    responder.answer_pending(cfg)              # llm answers the gates; manual writes nothing
+                    summary = advance(cfg, base_time=bt)
+                except AuthError as exc:
+                    # UI-LIE-FIX: derive the auth-key name from the EXCEPTION CLASS — the structural truth.
+                    key = Config.auth_key_name_from_error(exc)
+                    return ActionResult(ok=False, error=f"FATAL auth failure — check {key}: {str(exc)[:160]}")
+                except Exception as exc:
+                    return ActionResult(ok=False, error=f"prepare failed: {str(exc)[:160]}")
+                if summary["awaiting"]["moments"] == 0 and summary["awaiting"]["captions"] == 0:
+                    done = True; break
+    except RunBusyError:
+        return ActionResult(ok=False, error="pipeline busy — a run is driving")
     # In llm mode the responder is SUPPOSED to drain the gates; hitting the 10-pass cap with gates
     # still pending means it isn't converging (malformed answers / gates regenerating) — surface that
     # instead of a green "prepared" the operator would wrongly trust (ecc audit: code+python MEDIUM).
