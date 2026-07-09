@@ -33,6 +33,32 @@ def plist_path() -> Path:
 def wrapper_path(cfg: Config) -> Path:
     return cfg.control / "fanops-run.sh"             # inside the workspace (00_control), beside the ledger
 
+def exec_fail_marker_path(cfg: Config) -> Path:
+    """Machine-readable breadcrumb when the wrapper cannot exec fanops (pre-Python crash-loop)."""
+    return cfg.control / "daemon-exec-fail.json"
+
+def write_exec_fail_marker(cfg: Config, *, target: str, reason: str = "interpreter_not_executable") -> None:
+    """Persist exec failure for daemon.status / MOL-354 liveness (wrapper calls the shell equivalent)."""
+    import json
+    p = exec_fail_marker_path(cfg)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    payload = {"reason": reason, "target": target, "ts": datetime.now(timezone.utc).isoformat()}
+    tmp = p.with_suffix(".tmp")
+    tmp.write_text(json.dumps(payload, separators=(",", ":")) + "\n")
+    os.replace(tmp, p)
+
+def read_exec_fail_marker(cfg: Config) -> dict | None:
+    """Fail-open read of the wrapper's exec-failure marker; None when absent or corrupt."""
+    import json
+    p = exec_fail_marker_path(cfg)
+    if not p.exists():
+        return None
+    try:
+        data = json.loads(p.read_text())
+        return data if isinstance(data, dict) and data.get("target") else None
+    except Exception:
+        return {"reason": "interpreter_not_executable", "target": "(unreadable marker)"}
+
 def _fanops_bin() -> str:
     # The `fanops` next to the running interpreter — so the daemon uses the SAME venv that installed it,
     # never a different one earlier on PATH.
@@ -79,13 +105,25 @@ def render_wrapper(cfg: Config, *, interval: int) -> str:
     resolves the responder via `Config.responder_mode` (.env is loaded override=True at Config init), so
     the operator sets the AI on/off ONCE (in .env) and scheduling merely honors it — never welds them."""
     iv = format_interval(interval)
+    fb = _fanops_bin()
+    marker = exec_fail_marker_path(cfg)
     return (
         "#!/bin/bash\n"
         "set -euo pipefail\n"
         f"# launchd KeepAlive holds one resident `fanops run --loop` (cadence {interval}s inside Python).\n"
         f"export PATH={shlex.quote(_daemon_path())}\n"
         f"cd {shlex.quote(str(cfg.root))}\n"
-        f"exec {shlex.quote(_fanops_bin())} run --loop --interval {shlex.quote(iv)}\n"
+        f"FANOPS_BIN={shlex.quote(fb)}\n"
+        f"EXEC_FAIL_MARKER={shlex.quote(str(marker))}\n"
+        'if [ ! -x "$FANOPS_BIN" ]; then\n'
+        '  mkdir -p "$(dirname "$EXEC_FAIL_MARKER")"\n'
+        '  printf \'%s\\n\' "{\\"reason\\":\\"interpreter_not_executable\\",\\"target\\":\\"$FANOPS_BIN\\",'
+        '\\"ts\\":\\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\\"}" > "$EXEC_FAIL_MARKER"\n'
+        '  echo "fanops daemon: interpreter not executable: $FANOPS_BIN" >&2\n'
+        '  exit 127\n'
+        'fi\n'
+        'rm -f "$EXEC_FAIL_MARKER"\n'
+        f"exec {shlex.quote(fb)} run --loop --interval {shlex.quote(iv)}\n"
     )
 
 def render_plist(cfg: Config, *, interval: int) -> str:
@@ -232,6 +270,7 @@ def install(cfg: Config, *, interval: int, responder: str = "inherit") -> dict:
     wp, pp = wrapper_path(cfg), plist_path()
     pp.parent.mkdir(parents=True, exist_ok=True)
     write_wrapper_atomic(wp, render_wrapper(cfg, interval=interval))   # temp+os.replace: never a torn wrapper (MOL-81)
+    with contextlib.suppress(OSError): exec_fail_marker_path(cfg).unlink(missing_ok=True)
     pp.write_text(render_plist(cfg, interval=interval))
     uid = os.getuid()
     _launchctl("bootout", f"gui/{uid}/{LABEL}")          # idempotent reinstall; not-loaded -> rc!=0, ignored
@@ -314,8 +353,12 @@ def status(cfg: Config, *, interval: int = 600) -> dict:
     pid = _grep_int(r.stdout, "PID") if loaded else None
     last_exit = _grep_int(r.stdout, "LastExitStatus") if loaded else None
     age, stale, iv = heartbeat_stale(cfg, interval=installed_interval(cfg) or interval)
+    exec_fail = read_exec_fail_marker(cfg)
     if not loaded:
         verdict = _VERDICT_UNLOADED_ALARM if installed else "not installed"
+    elif exec_fail:
+        target = exec_fail.get("target", "fanops")
+        verdict = f"loaded but interpreter not executable: {target}"
     elif age is None:
         verdict = "loaded but no heartbeat yet"
     elif not stale:
@@ -323,7 +366,7 @@ def status(cfg: Config, *, interval: int = 600) -> dict:
     else:
         verdict = f"loaded but stale (last heartbeat {int(age)}s ago)"
     return {"installed": installed, "loaded": loaded, "pid": pid, "last_exit": last_exit,
-            "heartbeat_age_s": age, "verdict": verdict}
+            "heartbeat_age_s": age, "verdict": verdict, "exec_fail": exec_fail}
 
 def stop(cfg: Config, *, remove: bool = False) -> dict:
     """Unload the agent, then CONFIRM the real outcome (W10) instead of hardcoding success: the agent is

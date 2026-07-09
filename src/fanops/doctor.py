@@ -147,6 +147,9 @@ def _daemon_liveness_check(cfg: Config) -> dict:
         st = {"installed": False, "loaded": False, "verdict": "unknown", "heartbeat_age_s": None}
     if st.get("installed") and not st.get("loaded"):
         return _check(lbl, False, f"{st['verdict']} — reload with `fanops daemon install` then `fanops daemon status`")
+    if st.get("exec_fail"):
+        target = st["exec_fail"].get("target", "fanops")
+        return _check(lbl, False, f"daemon cannot exec fanops ({target}) — fix the venv/symlink, then `fanops daemon install`")
     try:
         age = st.get("heartbeat_age_s")
         if age is None:
