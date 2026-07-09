@@ -104,3 +104,12 @@ which writes both `.env` and `os.environ`), **51 `.env`/shell-ONLY** (no UI). `S
 **Coverage note:** every trust-gate numeric and every Phase-2 reach-loop bias kill switch is `.env`/shell-only —
 an operator-only (Studio-only) deployment cannot turn on the bias actuators or tune their thresholds without
 shell access. This is by design (system-lens-map Finding 2).
+
+## Secrets storage (M4 — keychain, not `.env`)
+
+Studio Go-Live now persists the three operator secrets (`POSTIZ_API_KEY`, `ZERNIO_API_KEY`, `META_GRAPH_TOKEN`
+and per-handle `META_GRAPH_TOKEN__<slug>`) in the **OS keychain only** — never plaintext `.env`. New writes
+scrub the key from `.env`, but **pre-existing plaintext copies are not auto-removed**: rotate or delete any
+stale `KEY=...` lines in `.env` by hand (or re-save via Go-Live, which unsets them). `fanops config` labels
+a keyring-backed secret `keychain` even when a stale `.env`/`os.environ` copy remains. Non-secret config still
+lives in `.env` (owner-only `0600` after every `set_env_var` write).

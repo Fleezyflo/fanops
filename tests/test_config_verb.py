@@ -1,6 +1,7 @@
 """MOL-294: fanops config introspection verb."""
 from fanops.config import Config
 from fanops.config_introspect import config_rows, format_config_report
+from tests.keyring_fake import install_mem_keyring
 
 
 def test_config_rows_from_settings_model_fields(tmp_path, monkeypatch):
@@ -39,3 +40,35 @@ def test_format_config_report_header(tmp_path, monkeypatch):
     lines = out.splitlines()
     assert lines[0] == "fanops config"
     assert "STUDIO" in lines[1]
+
+
+def test_config_row_shows_keychain_source_for_keyring_secret(tmp_path, monkeypatch):
+    install_mem_keyring(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    from fanops import secret_provider
+    secret_provider.set_secret("POSTIZ_API_KEY", "from-keyring")
+    cfg = Config(root=tmp_path)
+    row = next(r for r in config_rows(cfg) if r["name"] == "POSTIZ_API_KEY")
+    assert row["source"] == "keychain"
+
+
+def test_config_keychain_source_wins_over_stale_dotenv_plaintext(tmp_path, monkeypatch):
+    install_mem_keyring(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    from fanops import secret_provider
+    (tmp_path / ".env").write_text("POSTIZ_API_KEY=stale-plaintext\n")
+    secret_provider.set_secret("POSTIZ_API_KEY", "from-keyring")
+    cfg = Config(root=tmp_path)
+    row = next(r for r in config_rows(cfg) if r["name"] == "POSTIZ_API_KEY")
+    assert row["source"] == "keychain"
+
+
+def test_config_keychain_source_wins_over_stale_os_environ(tmp_path, monkeypatch):
+    install_mem_keyring(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("POSTIZ_API_KEY", "stale-shell")
+    from fanops import secret_provider
+    secret_provider.set_secret("POSTIZ_API_KEY", "from-keyring")
+    cfg = Config(root=tmp_path)
+    row = next(r for r in config_rows(cfg) if r["name"] == "POSTIZ_API_KEY")
+    assert row["source"] == "keychain"

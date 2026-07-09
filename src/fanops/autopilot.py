@@ -45,6 +45,8 @@ def set_env_var(env_path: Path, key: str, value: str) -> None:
         out.append(f"{key}={value}")
     tmp = env_path.with_name(env_path.name + ".tmp")
     tmp.write_text("\n".join(out) + "\n")
+    try: os.chmod(tmp, 0o600)                            # owner-only at rest (audit): .env may hold config + residual secrets
+    except OSError: pass
     os.replace(tmp, env_path)                            # atomic: never a half-written .env (mirrors the atomic accounts.json write)
 
 

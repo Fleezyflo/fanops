@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from fanops.config import Config
+from fanops.secret_provider import get_secret, is_secret_env_key
 from fanops.settings import Settings
 
 # Studio-settable via Go-Live tab (_dual_write) — mirrors docs/CONFIG.md §Set=S (static keys only).
@@ -37,6 +38,7 @@ def _dotenv_keys(path: Path) -> set[str]:
 
 
 def _source_layer(name: str, cfg: Config, *, dotenv_keys: set[str]) -> str:
+    if is_secret_env_key(name) and get_secret(name) is not None: return "keychain"
     if name in os.environ: return "os.environ"
     if name in dotenv_keys: return ".env"
     return "default"
