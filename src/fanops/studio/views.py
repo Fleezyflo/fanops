@@ -875,8 +875,8 @@ def golive_status(cfg: Config) -> GoLiveStatus:
 def gate_rows(cfg: Config) -> list[dict]:
     """Lock-free read-model for the Gates tab (Phase 3a): every PENDING moment/caption agent gate
     with the request context the operator needs to answer it (transcript/signals for moments, the
-    surface list for captions). Same enumeration `fanops respond` uses, surfaced for the browser.
-    A torn/unreadable request file is skipped (fail-open) rather than 500-ing the tab."""
+    surface list for captions). Corrupt request files surface as dismiss-only rows (corrupt=True).
+    Same enumeration `fanops respond` uses, surfaced for the browser."""
     from fanops.agentstep import pending, request_path
     from fanops.pipeline_status import _gate_is_corrupt
     rows: list[dict] = []

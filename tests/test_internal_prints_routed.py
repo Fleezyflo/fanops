@@ -18,7 +18,7 @@ _INTERNAL_MODULES = (
     "lever_docs.py",
     "ledger.py",
 )
-_CLI_PRINT_COUNT = 125  # +run lease RunBusyError handler + status per-source lines + loop busy skip
+_CLI_PRINT_COUNT = 130  # +retire-source + promote-source handlers
 _SRC = Path(__file__).resolve().parents[1] / "src" / "fanops"
 
 
