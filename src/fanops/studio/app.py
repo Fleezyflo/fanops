@@ -358,6 +358,13 @@ def create_app(cfg: Config) -> Flask:
         code = 200 if body["healthy"] else 503
         return jsonify(body), code
 
+    @app.get("/metrics")
+    def metrics():
+        """MOL-357: Prometheus text metrics from ledger + HealthReport. Fail-open — never 500."""
+        from flask import Response
+        from fanops.health_model import render_prometheus_metrics
+        return Response(render_prometheus_metrics(cfg), mimetype="text/plain; version=0.0.4; charset=utf-8")
+
     @app.get("/")
     def index():
         # Face 2: a real read-only status home (accounts + connection + headline counts + batch entry + per-
