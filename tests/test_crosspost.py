@@ -279,7 +279,7 @@ def test_crosspost_emits_batch_target_summary_count(tmp_path, mocker):
     led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
     log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
     assert log.count("batch_target_summary") == 1                       # exactly one summary per clip
-    assert "skipped=2" in log and "kept=2" in log                      # @b's 2 surfaces excluded, @a's 2 kept
+    assert '"skipped":"2"' in log and '"kept":"2"' in log              # @b's 2 surfaces excluded, @a's 2 kept
 
 def test_crosspost_unbatched_emits_no_summary(tmp_path, mocker):
     # An unbatched clip (tgt == []) emits NO batch_target_summary line (byte-identity gate).

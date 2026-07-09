@@ -336,7 +336,7 @@ def test_apply_failsafe_logs_the_error_detail(tmp_path, monkeypatch):
                         lambda *a, **k: (_ for _ in ()).throw(RuntimeError("AMPLIFY-BOOM-SENTINEL")))
     apply_variant_amplify(led, cfg)        # swallowed (must NOT raise) — but must record the reason
     log = cfg.log_path.read_text()
-    assert "AMPLIFY-BOOM-SENTINEL" in log and "err=" in log
+    assert "AMPLIFY-BOOM-SENTINEL" in log and '"err":"AMPLIFY-BOOM-SENTINEL"' in log
 
 
 # ---- MOL-85: per-candidate isolation in the amplify loop (mirror p4_dim_bias's per-item guard) ----
