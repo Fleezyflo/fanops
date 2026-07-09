@@ -65,7 +65,7 @@ def _field_type_name(field) -> str:
 
 def config_rows(cfg: Config) -> list[dict]:
     """One row per Settings field: name, type, default, effective, source, studio_settable."""
-    s = cfg._settings
+    s = Settings()
     dotenv_keys = _dotenv_keys(cfg.root / ".env")
     rows: list[dict] = []
     for name, field in Settings.model_fields.items():

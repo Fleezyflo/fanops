@@ -1,6 +1,7 @@
 """MOL-294: fanops config introspection verb."""
 from fanops.config import Config
 from fanops.config_introspect import config_rows, format_config_report
+from fanops.settings import Settings
 from tests.keyring_fake import install_mem_keyring
 
 
@@ -12,7 +13,7 @@ def test_config_rows_from_settings_model_fields(tmp_path, monkeypatch):
     names = {r["name"] for r in rows}
     assert "FANOPS_RESPONDER" in names
     assert "POSTIZ_API_KEY" in names
-    assert len(rows) == len(Config(root=tmp_path)._settings.__class__.model_fields)
+    assert len(rows) == len(Settings.model_fields)
 
 
 def test_config_row_shows_env_source_and_masks_secret(tmp_path, monkeypatch):
