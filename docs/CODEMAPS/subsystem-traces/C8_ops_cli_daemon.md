@@ -272,8 +272,8 @@ Distinct from the above: `cutover.py` / `cutover_postiz.py` are a **manual, oper
 
 ### Daemon install → tick cadence
 
-- `fanops daemon install --interval 10m` → `daemon.install()`: writes `fanops-run.sh` (the one-shot wrapper: `cd cfg.root && exec fanops run --base-time "$(date -u ...)"`) and the `com.fanops.run.plist` (`StartInterval=600`, `RunAtLoad=True`, `ThrottleInterval=60` floor), then `launchctl bootstrap`/`load -w`.
-- launchd itself is the scheduler: it fires the wrapper once at load (`RunAtLoad`) and then every `StartInterval` seconds thereafter, restarting after a crash per launchd's own semantics (this module does not implement its own scheduling loop in Python).
+- `fanops daemon install --interval 10m` → `daemon.install()`: writes `fanops-run.sh` (`exec fanops run --loop --interval …`) and `com.fanops.run.plist` with **`KeepAlive` + `SuccessfulExit: false`** (M2-B resident pump — no `StartInterval`), then `launchctl bootstrap`/`load -w`.
+- **M2-D poll-timer siblings** (`com.fanops.postiz-reaper`, `com.fanops.media-sync`) intentionally stay **`StartInterval` 300s** cron-style jobs — NOT KeepAlive residents. Rationale in `daemon.SIBLING_POLL_TIMERS_RATIONALE`: reaper stops idle local Postiz (pairs with on-demand `ensure_up`); media-sync batch-pre-mirrors to R2 (publish path mirrors inline). M2-C readiness alarms cover them: plist-on-disk + not-loaded = ALARM.
 - Minimum interval enforced by `parse_interval`: **60 seconds** (`_MIN_INTERVAL`), matching launchd's own `ThrottleInterval` floor — sub-minute cadences are rejected with a clean `ValueError`, not silently clamped.
 
 ### Cutover.json-only verification (explicit proof)

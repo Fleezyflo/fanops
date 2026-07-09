@@ -8,17 +8,14 @@ from fanops import daemon, doctor
 
 
 def _heartbeat_line(ts: str) -> str:
-    return f"{ts}\theartbeat\t-\tok\theartbeat={ts} fanops_version=0.3.0 published_in_run=0\n"
+    return f"{ts}\theartbeat\tok\n"
 
 
 def _fake_launchctl(**spec):
-    calls: list[list[str]] = []
     def run(cmd, *a, **k):
-        calls.append(list(cmd))
         verb = cmd[1] if len(cmd) > 1 else ""
         rc, out = spec.get(verb, (0, ""))
         return subprocess.CompletedProcess(cmd, rc, stdout=out, stderr="")
-    run.calls = calls
     return run
 
 
