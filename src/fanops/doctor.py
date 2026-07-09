@@ -224,6 +224,11 @@ def _assemble_doctor_checks(cfg: Config, *, get=None, postiz_probe=None, zernio_
     for tool in ("ffmpeg", "ffprobe", "whisper"):
         checks.append(_check(f"{tool} on PATH", shutil.which(tool) is not None,
                              f"install {tool} (brew install ffmpeg / pip install -e '.[transcribe]')"))
+    from fanops import transcribe
+    checks.append(_check("faster-whisper importable ([asr] extra)", transcribe._fw_available(),
+                         "python3.12 -m venv .venv && .venv/bin/pip install -e '.[asr]' — "
+                         "the preferred ASR engine (Demucs + CTranslate2); without it transcribe "
+                         "falls back to the legacy whisper CLI"))
     checks.append(_check("yt-dlp on PATH (only for `fanops pull <url>`)", shutil.which("yt-dlp") is not None,
                          "pip install yt-dlp"))
     # 2. autonomous responder needs the claude CLI ONLY when FANOPS_RESPONDER=llm (mirrors preflight)
