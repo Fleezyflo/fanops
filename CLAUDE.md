@@ -25,7 +25,7 @@ MOH FLOW FAN OPS: intelligent clip + cross-post engine. Pure-Python `src/` layou
 
 - NEVER mass-reformat: no `black`, no `ruff format`. The compact one-liner house style
   (E701/E702/E401/E501 ignored) is deliberate — rationale in pyproject.toml comments.
-- The global 60s pytest timeout is a deadlock guardrail (ledger flock). A hanging test
+- The global 60s pytest timeout is a deadlock guardrail (ledger SQLite busy_timeout). A hanging test
   is the bug; don't raise the timeout to make it pass.
 - The `fanops` CLI has live verbs that hit external services (Postiz publish, Meta Graph
   metrics). Don't run it speculatively; tests and read-only verbs only unless the operator asks.

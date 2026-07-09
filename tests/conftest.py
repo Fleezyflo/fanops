@@ -32,12 +32,16 @@ import pytest
 # =1 leaking into the session would silently flip every test onto the pooled path (and the worker
 # count along with it). Stripping them makes each test see the OFF default; the concurrent tests
 # set them explicitly via monkeypatch and get clean teardown.
+# FANOPS_LEDGER_BACKEND rides along (M1-E): production default is sqlite, but most unit tests assert
+# ledger.json on-disk semantics (schema migration, flock chmod, bridge import). Stripping it lets the
+# autouse _ledger_backend_for_test fixture pin json unless a test opts into the sqlite default.
 _LEAKY_ENV = ("FANOPS_POSTER", "BLOTATO_API_KEY", "POSTIZ_API_KEY", "POSTIZ_URL", "FANOPS_MEDIA_PUBLIC_BASE",
               "R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET", "FANOPS_HOOK_JUDGE",
               "FANOPS_RESPONDER",   # defaults to llm when `claude` is on PATH — must not leak across tests/CI
               "META_GRAPH_TOKEN", "META_IG_USER_ID", "FANOPS_HASHTAG_TRENDS", "META_GRAPH_URL",
               "FANOPS_GC_KEEP_DAYS",   # content-lifecycle Phase 3: a repo .env value must not leak into the gc-window tests
               "FANOPS_CONCURRENT_SOURCES", "FANOPS_CONCURRENT_WORKERS",
+              "FANOPS_LEDGER_BACKEND",
               # persona/learning behavior flags (default OFF): once the operator persists e.g.
               # FANOPS_CREATIVE_VARIATION=1 to the repo .env (the supported "system default"), it must not
               # leak into tests that assume the code default — same class as FANOPS_HOOK_JUDGE above.
@@ -108,6 +112,28 @@ def _hermetic_publish_env():
             os.environ.pop("FANOPS_ISOLATE_VOCALS", None)
         else:
             os.environ["FANOPS_ISOLATE_VOCALS"] = iso_saved
+
+
+# MOL-350: production default is sqlite; legacy tests assert ledger.json on-disk semantics. Pin json
+# unless the test/module opts into the sqlite default (lock/concurrency/default-backend proofs).
+_LEDGER_SQLITE_DEFAULT_MODULES = frozenset({
+    "test_ledger_lock",
+})
+
+
+@pytest.fixture(autouse=True)
+def _ledger_backend_for_test(monkeypatch, request):
+    if request.node.get_closest_marker("ledger_sqlite_default"):
+        monkeypatch.delenv("FANOPS_LEDGER_BACKEND", raising=False)
+        return
+    if request.module.__name__ in _LEDGER_SQLITE_DEFAULT_MODULES:
+        monkeypatch.delenv("FANOPS_LEDGER_BACKEND", raising=False)
+        return
+    if request.node.name in ("test_default_backend_is_sqlite_without_flag", "test_ledger_defaults_to_sqlite_store",
+                             "test_ledger_lock_busy_preserves_operationalerror_cause"):
+        monkeypatch.delenv("FANOPS_LEDGER_BACKEND", raising=False)
+        return
+    monkeypatch.setenv("FANOPS_LEDGER_BACKEND", "json")
 
 
 # ── VCR: source external API shapes from the REAL call, never a guess ──────────────────────────────

@@ -1,17 +1,18 @@
-# tests/test_ledger_store_interface.py — MOL-346: LedgerStore protocol + JsonLedgerStore default seam.
+# tests/test_ledger_store_interface.py — MOL-346: LedgerStore protocol + default backend seam.
 from contextlib import contextmanager
 from fanops.config import Config
 from fanops.ledger import Ledger, JsonLedgerStore, LedgerStore
+from fanops.ledger_sqlite import SqliteLedgerStore
 
 
 def test_json_ledger_store_satisfies_protocol(tmp_path):
     assert isinstance(JsonLedgerStore(Config(root=tmp_path)), LedgerStore)
 
 
-def test_ledger_defaults_to_json_store(tmp_path):
+def test_ledger_defaults_to_sqlite_store(tmp_path):
     cfg = Config(root=tmp_path)
     led = Ledger.load(cfg)
-    assert isinstance(led._store, JsonLedgerStore)
+    assert isinstance(led._store, SqliteLedgerStore)
 
 
 def test_json_store_round_trips_raw_doc(tmp_path):
@@ -45,10 +46,11 @@ def test_ledger_save_routes_through_store(tmp_path, monkeypatch):
 
 
 def test_transaction_exit_save_routes_through_store(tmp_path, monkeypatch):
+    monkeypatch.setenv("FANOPS_LEDGER_BACKEND", "sqlite")
     cfg = Config(root=tmp_path)
     hits = {"lock": 0, "write": 0}
-    real_lock = JsonLedgerStore.lock
-    real_write = JsonLedgerStore.write_raw
+    real_lock = SqliteLedgerStore.lock
+    real_write = SqliteLedgerStore.write_raw
     @contextmanager
     def spy_lock(self, timeout=None):
         hits["lock"] += 1
@@ -56,8 +58,8 @@ def test_transaction_exit_save_routes_through_store(tmp_path, monkeypatch):
     def spy_write(self, doc):
         hits["write"] += 1
         return real_write(self, doc)
-    monkeypatch.setattr(JsonLedgerStore, "lock", spy_lock)
-    monkeypatch.setattr(JsonLedgerStore, "write_raw", spy_write)
+    monkeypatch.setattr(SqliteLedgerStore, "lock", spy_lock)
+    monkeypatch.setattr(SqliteLedgerStore, "write_raw", spy_write)
     with Ledger.transaction(cfg) as led:
         from fanops.models import Source, SourceState
         led.add_source(Source(id="s1", source_path="/x.mp4", width=1, height=1, state=SourceState.catalogued))

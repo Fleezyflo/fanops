@@ -1,66 +1,89 @@
 # tests/test_ledger_lock.py
-"""H6 — the ledger lock must SELF-HEAL an orphaned lock (a process killed mid-write between
-acquire and release) instead of wedging every subsequent command for the full timeout and then
-raising. The fix is an flock-based lock: the kernel releases an flock when the holding process
-dies, so an orphaned lock file is inert. Genuine contention by a LIVE holder (overlapping cron)
-must still be excluded and must surface as a clean, typed error the CLI can catch."""
-import fcntl
-import json
-import os
+"""H6 / M1-E — ledger concurrency under the default SqliteLedgerStore backend.
+
+SQLite WAL + BEGIN IMMEDIATE: a killed mid-write txn rolls back (no orphan flock wedge);
+a second writer contends via SQLITE_BUSY bounded by busy_timeout → typed LockBusyError;
+readers never block a writer (see test_ledger_sqlite_store.py). FANOPS_LEDGER_BACKEND=json
+retains the flock-backed JsonLedgerStore — these tests exercise the sqlite default path."""
+import multiprocessing
+import sqlite3
+import threading
 import time
 
 import pytest
 
 from fanops.config import Config
 from fanops.errors import LockBusyError
-from fanops.ledger import Ledger, _file_lock
+from fanops.ledger import Ledger
+from fanops.ledger_sqlite import SqliteLedgerStore
+from fanops.models import Source
 
 
-def test_orphaned_lock_file_does_not_wedge_save(tmp_path):
-    # An orphaned ledger.lock left on disk by a kill -9'd writer (no live process holds it).
-    # With the OLD O_EXCL sentinel this wedged save() for the whole timeout then raised
-    # TimeoutError. With flock the leftover file is inert -> save() self-heals and succeeds.
+def _store(cfg) -> SqliteLedgerStore:
+    return SqliteLedgerStore(cfg)
+
+
+def test_uncommitted_txn_does_not_wedge_save(tmp_path):
+    # A writer killed mid-txn leaves no held lock — last COMMIT is intact and save() self-heals.
     cfg = Config(root=tmp_path)
+    store = _store(cfg)
     led = Ledger.load(cfg)
-    cfg.lock_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg.lock_path.write_text("")  # the orphaned sentinel — nobody holds an flock on it
-
+    with store.lock():
+        store.write_raw(led._to_doc())
+    conn = sqlite3.connect(store.db_path)
+    conn.execute("PRAGMA journal_mode=WAL")
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute("DELETE FROM ledger_rows")  # simulates partial write before kill -9
+        conn.close()  # implicit ROLLBACK — orphaned txn, not a held lock
+    except Exception:
+        conn.close()
     t0 = time.monotonic()
     led.save()  # must NOT raise and must NOT stall for the timeout
-    assert time.monotonic() - t0 < 5.0, "orphaned lock wedged save() instead of self-healing"
-    json.loads(cfg.ledger_path.read_text())  # ledger actually written
+    assert time.monotonic() - t0 < 5.0, "uncommitted txn wedged save() instead of self-healing"
+    assert store.read_raw() is not None
 
 
-def test_live_holder_excludes_second_acquirer_with_typed_error(tmp_path):
-    # A genuinely-held lock (a concurrent LIVE process holds the flock — the overlapping-cron
-    # case) must still be mutually exclusive: the second acquirer waits up to the timeout and
-    # then raises a TYPED LockBusyError (not a bare TimeoutError, not an uncaught traceback).
+def test_live_writer_excludes_second_acquirer_with_typed_error(tmp_path):
+    # A genuinely-held write txn (overlapping cron) must exclude a second writer: busy_timeout
+    # then raises a TYPED LockBusyError (not a bare OperationalError, not an uncaught traceback).
     cfg = Config(root=tmp_path)
-    cfg.lock_path.parent.mkdir(parents=True, exist_ok=True)
-    holder_fd = os.open(str(cfg.lock_path), os.O_CREAT | os.O_RDWR)
-    fcntl.flock(holder_fd, fcntl.LOCK_EX)  # live holder takes the lock
+    Ledger.load(cfg).save()
+    holder_store = _store(cfg)
+    waiter_store = _store(cfg)
+    inside = threading.Event()
+    release = threading.Event()
+
+    def holder():
+        with holder_store.lock(timeout=30):
+            inside.set()
+            release.wait(5)
+
+    t = threading.Thread(target=holder)
+    t.start()
     try:
+        assert inside.wait(5), "holder never acquired the write lock"
         t0 = time.monotonic()
         with pytest.raises(LockBusyError):
-            with _file_lock(cfg.lock_path, timeout=0.5):
+            with waiter_store.lock(timeout=0.5):
                 pass
-        assert time.monotonic() - t0 >= 0.5, "should have waited for the timeout before giving up"
+        assert time.monotonic() - t0 >= 0.5, "should have waited for busy_timeout before giving up"
     finally:
-        fcntl.flock(holder_fd, fcntl.LOCK_UN)
-        os.close(holder_fd)
+        release.set()
+        t.join(5)
 
 
-def test_lock_released_after_block_lets_next_acquirer_in(tmp_path):
-    # Once a live holder releases, the next acquirer proceeds — proves the lock is real
-    # mutual exclusion, not a permanent reject.
+def test_lock_released_after_commit_lets_next_acquirer_in(tmp_path):
+    # Once a live holder commits, the next writer proceeds — proves real mutual exclusion.
     cfg = Config(root=tmp_path)
-    cfg.lock_path.parent.mkdir(parents=True, exist_ok=True)
-    holder_fd = os.open(str(cfg.lock_path), os.O_CREAT | os.O_RDWR)
-    fcntl.flock(holder_fd, fcntl.LOCK_EX)
-    fcntl.flock(holder_fd, fcntl.LOCK_UN)  # released
-    os.close(holder_fd)
+    Ledger.load(cfg).save()
+    store = _store(cfg)
+    holder = sqlite3.connect(store.db_path, timeout=30.0)
+    holder.execute("BEGIN IMMEDIATE")
+    holder.commit()
+    holder.close()
     acquired = False
-    with _file_lock(cfg.lock_path, timeout=0.5):
+    with store.lock(timeout=0.5):
         acquired = True
     assert acquired
 
@@ -72,17 +95,26 @@ def test_cli_exits_cleanly_when_lock_busy(tmp_path, monkeypatch, capsys):
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("fanops.cli.Config", lambda: Config(root=tmp_path))
+    monkeypatch.setattr("fanops.ledger_sqlite._DEFAULT_LOCK_TIMEOUT", 0.3, raising=False)
     cfg = Config(root=tmp_path)
-    cfg.lock_path.parent.mkdir(parents=True, exist_ok=True)
-    # shorten the timeout so the test doesn't wait the full default
-    monkeypatch.setattr("fanops.ledger._DEFAULT_LOCK_TIMEOUT", 0.3, raising=False)
-    holder_fd = os.open(str(cfg.lock_path), os.O_CREAT | os.O_RDWR)
-    fcntl.flock(holder_fd, fcntl.LOCK_EX)
+    Ledger.load(cfg).save()
+    holder_store = _store(cfg)
+    inside = threading.Event()
+    release = threading.Event()
+
+    def holder():
+        with holder_store.lock(timeout=30):
+            inside.set()
+            release.wait(10)
+
+    t = threading.Thread(target=holder, daemon=True)
+    t.start()
     try:
+        assert inside.wait(5), "holder never acquired the write lock"
         rc = cli.main(["ingest"])  # ingest_drops -> led.save() -> contends with the live holder
     finally:
-        fcntl.flock(holder_fd, fcntl.LOCK_UN)
-        os.close(holder_fd)
+        release.set()
+        t.join(5)
     assert rc != 0
     err = capsys.readouterr().err
     assert "Traceback" not in err  # clean message, not a stack dump
@@ -91,9 +123,6 @@ def test_cli_exits_cleanly_when_lock_busy(tmp_path, monkeypatch, capsys):
 # ----------------------------------------------------------------------------
 # B1 (AUDIT B4): the lock must span the WHOLE load-mutate-save, not just save().
 # ----------------------------------------------------------------------------
-import multiprocessing
-
-from fanops.models import Source
 
 
 def _hold_transaction_then_write(root, started, release):
@@ -119,7 +148,6 @@ def test_transaction_holds_lock_across_the_whole_block(tmp_path):
     p.start()
     try:
         assert started.wait(5), "child never entered the transaction"
-        # second acquirer with a short timeout must FAIL while the first holds it
         raised = False
         try:
             with Ledger.transaction(cfg, timeout=0.5):
@@ -131,5 +159,4 @@ def test_transaction_holds_lock_across_the_whole_block(tmp_path):
         release.set()
         p.join(5)
         assert p.exitcode == 0
-    # after release, the first process's write is durable (committed on context exit)
     assert "held" in Ledger.load(cfg).sources

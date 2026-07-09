@@ -4,7 +4,7 @@ import json, os, shutil, sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 from fanops.config import Config
-from fanops.errors import ControlFileError, reason as _reason
+from fanops.errors import ControlFileError, LockBusyError, reason as _reason
 
 _DEFAULT_LOCK_TIMEOUT = 30.0
 # kv(map_name, row_id) — one table for all 10 top-level maps (_save_unlocked doc shape).
@@ -80,11 +80,19 @@ class SqliteLedgerStore:
     def lock(self, timeout: float | None = None):
         if self._conn is not None:
             raise RuntimeError("SqliteLedgerStore.lock() nested on same instance")
-        self._conn = self._open(timeout=timeout)
+        tout = timeout if timeout is not None else _DEFAULT_LOCK_TIMEOUT
+        self._conn = self._open(timeout=tout)
         try:
-            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                self._conn.execute("BEGIN IMMEDIATE")
+            except sqlite3.OperationalError as err:
+                raise LockBusyError(
+                    f"ledger lock busy > {tout}s (another fanops process is writing): {self.db_path}") from err
             yield
             self._conn.commit()
+        except LockBusyError:
+            self._conn.rollback()
+            raise
         except Exception:
             self._conn.rollback()
             raise

@@ -3,29 +3,23 @@
 re-opening the exact lost-update window B4 closed for advance() — a concurrent advance under its
 transaction could be clobbered last-writer-wins. These migrate them to Ledger.transaction, with the
 HARD constraint that network / subprocess I/O stays OUTSIDE the lock (mirroring publish_due's
-in_transaction split) so the up-to-30s Blotato calls never serialize behind the ledger flock."""
-import os
-import fcntl
-
-
+in_transaction split) so the up-to-30s Blotato calls never serialize behind the ledger write lock."""
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Post, Platform, PostState
+from fanops.errors import LockBusyError
 import fanops.cli as cli
 
 
-def _lock_is_free(cfg) -> bool:
-    """True iff the ledger flock can be acquired right now (i.e. NOT held). Used inside an injected
-    network closure to assert the lock is NOT held during the network call."""
-    fd = os.open(str(cfg.lock_path), os.O_CREAT | os.O_RDWR)
+def _ledger_lock_is_free(cfg) -> bool:
+    """True iff the ledger store write lock can be acquired right now (i.e. NOT held). Used inside an
+    injected network closure to assert the lock is NOT held during the network call."""
     try:
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        fcntl.flock(fd, fcntl.LOCK_UN)
+        with Ledger.load(cfg)._store.lock(timeout=0.01):
+            pass
         return True
-    except BlockingIOError:
+    except LockBusyError:
         return False
-    finally:
-        os.close(fd)
 
 
 # ---------------------------------------------------------------------------
@@ -83,7 +77,7 @@ def test_cmd_track_network_runs_outside_the_lock(tmp_path, monkeypatch, mocker):
     seen = {}
 
     def fetching(window):
-        seen["lock_free_during_fetch"] = _lock_is_free(cfg)   # must be True: lock not held
+        seen["lock_free_during_fetch"] = _ledger_lock_is_free(cfg)   # must be True: lock not held
         return []
 
     mocker.patch("fanops.cli._default_list_posts", return_value=fetching)
@@ -101,7 +95,7 @@ def test_learn_pass_fetch_runs_outside_the_lock(tmp_path, monkeypatch, mocker):
     seen = {}
 
     def fetching(window):
-        seen["lock_free_during_fetch"] = _lock_is_free(cfg)   # must be True: lock not held
+        seen["lock_free_during_fetch"] = _ledger_lock_is_free(cfg)   # must be True: lock not held
         return []
 
     mocker.patch("fanops.cli._default_list_posts", return_value=fetching)
@@ -121,7 +115,7 @@ def test_cmd_reconcile_poll_runs_outside_the_lock(tmp_path, monkeypatch, mocker)
     seen = {}
 
     def polling(sid):
-        seen["lock_free_during_poll"] = _lock_is_free(cfg)
+        seen["lock_free_during_poll"] = _ledger_lock_is_free(cfg)
         return {"status": "in-progress"}
 
     mocker.patch("fanops.reconcile._default_get_status", return_value=polling)

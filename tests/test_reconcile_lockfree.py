@@ -1,11 +1,11 @@
 """reconcile-out-of-lock (M1): a live reconcile pass must run its per-post status POLLS (network)
-OUTSIDE the ledger flock — only the apply belongs inside a tight transaction. Pre-fix, advance() ran
+OUTSIDE the ledger write lock — only the apply belongs inside a tight transaction. Pre-fix, advance() ran
 reconcile_posts INSIDE its main Ledger.transaction, so each GET held the lock across the network (the
 same contention class #89 removed from publish). The lock-probe poller below proves the property: its
-get_status can acquire the ledger lock, which is only possible if the poll loop is NOT holding it."""
+get_status can acquire the ledger store lock, which is only possible if the poll loop is NOT holding it."""
 import json
 from fanops.config import Config
-from fanops.ledger import Ledger, _file_lock
+from fanops.ledger import Ledger
 from fanops.models import Post, Clip, PostState, ClipState, Platform
 from fanops.pipeline import advance
 
@@ -32,7 +32,7 @@ def test_advance_reconciles_with_polls_outside_the_lock(tmp_path, monkeypatch, m
     acquired = {}
 
     def lock_probe_status(sid):
-        with _file_lock(cfg.lock_path, timeout=3):       # only succeeds if the poll loop holds no lock
+        with Ledger.load(cfg)._store.lock(timeout=3):       # only succeeds if the poll loop holds no lock
             acquired[sid] = True
         return {"status": "published", "publicUrl": "https://insta/p/abc"}
 

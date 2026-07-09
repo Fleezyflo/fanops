@@ -222,11 +222,11 @@ class Settings(BaseSettings):
 
     def ledger_backend(self) -> LedgerBackend:
         v = (self.FANOPS_LEDGER_BACKEND or "").strip().lower()
-        if not v: return "json"
+        if not v: return "sqlite"
         if v not in _VALID_LEDGER_BACKENDS:
-            _log.warning("ignoring unknown FANOPS_LEDGER_BACKEND=%r (using json); valid: %s",
+            _log.warning("ignoring unknown FANOPS_LEDGER_BACKEND=%r (using sqlite); valid: %s",
                          v, ", ".join(sorted(_VALID_LEDGER_BACKENDS)))
-            return "json"
+            return "sqlite"
         return v  # type: ignore[return-value]
 
     def responder_mode(self) -> str:
