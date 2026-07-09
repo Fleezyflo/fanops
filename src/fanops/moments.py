@@ -325,6 +325,12 @@ def ingest_moments(led: Ledger, cfg: Config, source_id: str) -> Ledger:
     deduped = _drop_overlaps(valid)                 # drop near-duplicate windows (keep first)
     if len(deduped) < len(valid):                   # don't silently suppress picks — surface the count
         get_logger(cfg)("source", source_id, "overlaps_dropped", count=len(valid) - len(deduped))
+    owner_n: dict[str, int] = {}
+    for pick in deduped:
+        o = _pick_owner(pick) or ""
+        owner_n[o] = owner_n.get(o, 0) + 1
+    if owner_n:
+        get_logger(cfg)("source", source_id, "owner_picks", **owner_n)
     for pick in deduped:
         token = _token(pick)
         owner = (pick.personas or [None])[0]          # P3: single-owner handle at ingest (None when blind)

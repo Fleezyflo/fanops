@@ -189,6 +189,20 @@ def test_ingest_overlapping_different_owners_both_minted(tmp_path):
     assert len(moms) == 2                                   # cross-owner overlap kept BOTH
     assert {tuple(m.affinities) for m in moms} == {("a",), ("b",)}
 
+def test_ingest_logs_owner_pick_counts(tmp_path, mocker):
+    # MOL-478 (T5): visibility breadcrumb — per-owner pick counts alongside overlaps_dropped/zero_moments.
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
+    _seed_owner_spec_accounts(cfg, [{"handle": "@a"}, {"handle": "@b"}])
+    led = request_moments(led, cfg, "src_1")
+    logfn = mocker.patch("fanops.moments.get_logger").return_value
+    picks = [MomentPick(start=10, end=28, reason="a1", personas=["a"]),
+             MomentPick(start=30, end=48, reason="a2", personas=["a"]),
+             MomentPick(start=12, end=30, reason="b1", personas=["b"])]
+    led = _ingest_picks(led, cfg, "src_1", picks)
+    owner_logs = [c for c in logfn.call_args_list if c.args[2:3] == ("owner_picks",)]
+    assert len(owner_logs) == 1
+    assert owner_logs[0].kwargs.get("a") == 2 and owner_logs[0].kwargs.get("b") == 1
+
 def test_ingest_owner_becomes_affinities_and_stamps_spec(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
     _seed_owner_spec_accounts(cfg, [{"handle": "@a", "clip_profile": "short", "framing": "top"}])
