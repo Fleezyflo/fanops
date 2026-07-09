@@ -4,7 +4,7 @@ import json, os
 from fanops.config import Config
 from fanops.errors import ControlFileError
 from fanops.ledger import (
-    Ledger, SCHEMA_VERSION, _NewerSchema, _canonicalize_ledger_account_refs, _migrate,
+    JsonLedgerStore, Ledger, SCHEMA_VERSION, _NewerSchema, _canonicalize_ledger_account_refs, _migrate,
 )
 from fanops.ledger_sqlite import SqliteLedgerStore, _MAP_NAMES
 from fanops.models import (
@@ -19,7 +19,7 @@ def _row_count(doc: dict) -> int:
 def _doc_from_migrated_raw(cfg: Config, raw: dict) -> dict:
     """Pydantic round-trip — same reconstruction Ledger.load performs after _migrate."""
     raw = _canonicalize_ledger_account_refs(raw)
-    led = Ledger(cfg)
+    led = Ledger(cfg, store=JsonLedgerStore(cfg))
     led.sources = {k: Source(**v) for k, v in raw.get("sources", {}).items()}
     led.moments = {k: Moment(**v) for k, v in raw.get("moments", {}).items()}
     led.clips = {k: Clip(**v) for k, v in raw.get("clips", {}).items()}

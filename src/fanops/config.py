@@ -10,7 +10,7 @@ import re
 from pathlib import Path
 from typing import Literal
 from dotenv import load_dotenv
-from fanops.settings import Settings
+from fanops.settings import LedgerBackend, Settings
 
 _log = logging.getLogger("fanops.config")
 
@@ -180,6 +180,10 @@ class Config:
         # exports the key, and for backward compat — but it is NOT required for the default subscription
         # path. If `ANTHROPIC_API_KEY` happens to be set, `claude` will use it; if not, it uses the login.
         return self._settings.ANTHROPIC_API_KEY
+
+    @property
+    def ledger_backend(self) -> LedgerBackend:
+        return self._settings.ledger_backend()
 
     @property
     def poster_backend(self) -> PosterBackend:
