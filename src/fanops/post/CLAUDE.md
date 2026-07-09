@@ -13,6 +13,27 @@ post or break the reconcile handshake.
 - A post is unpublishable unless `state is queued`, and only `Ledger.approve_post` promotes it there. No approval
   → no POST, even live. (Verdict HOLDS, C6.)
 
+## Publish handshake (`_publish_one`, `run.py:227`)
+
+`_publish_one` is the SOLE network-POST caller. Every publish entry point (`publish_due`, `publish_now`) funnels
+here in three phases:
+
+- **CLAIM (tight txn, `run.py:241-247`):** re-read the post under the ledger flock; publish ONLY if still
+  `queued` (double-post guard — a lost race or already-`submitting` post is a clean no-op). Flip
+  `queued→submitting` and persist **before** any network I/O (F11 crash-safety: a crash mid-network leaves the
+  post `submitting`, healed by reconcile/`fanops resolve`).
+- **NETWORK (lock-free, `run.py:248-321`):** on a throwaway loaded ledger, `_ensure_media` then
+  `poster.publish`. On `submitted`, gate the `submitted→published` promotion on `public_url` (`run.py:284-285`):
+  a real URL → `published`; **no URL** (the normal Postiz async-permalink case) → `needs_reconcile`
+  (`run.py:292`), **never** `failed`. A FATAL `AuthError` **re-raises** (`run.py:299-300`) to halt the run —
+  never burn the queue. Empty integration id on a live backend un-claims `submitting→queued` (`run.py:256-265`).
+- **FINALIZE (tight txn, `run.py:322+`):** merge only the network-determined post fields (+ clip/render media
+  cache) into a **freshly loaded** ledger — never persist the stale in-memory snapshot (B4 lost-update).
+
+**Postiz permalink trap:** `_postiz_permalink` (`postiz.py:73`) ALWAYS returns `None` by design, so a fresh
+Postiz publish CANNOT self-promote to `published` — it parks in `needs_reconcile` and `reconcile.py` back-fills
+the URL on the next pass. See also the traps section below.
+
 ## Two traps that look like bugs but are by design
 
 - **`_postiz_permalink` (`postiz.py:73`) ALWAYS returns `None`** — Postiz returns no URL at publish time. So
