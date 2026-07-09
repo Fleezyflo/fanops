@@ -327,6 +327,25 @@ def _assemble_doctor_checks(cfg: Config, *, get=None, postiz_probe=None, zernio_
     # heartbeat). The past-due gate mirrors the pump's own due-check (timeutil.is_due_or_past).
     dchk = _daemon_liveness_check(cfg)
     checks.append(dchk)
+    checks.extend(_sibling_launchd_checks())
+    return checks
+
+
+def _sibling_launchd_checks() -> list[dict]:
+    """M2-D: poll-timer siblings share M2-C's plist-on-disk + not-loaded alarm. N/A when not installed."""
+    from fanops import daemon
+    checks: list[dict] = []
+    for sib in daemon.sibling_agents_status():
+        if not sib.get("installed"):
+            continue
+        lbl = (f"launchd sibling {sib['short']} loaded "
+               f"(StartInterval {daemon.SIBLING_POLL_INTERVAL_S}s poll-timer)")
+        if sib.get("alarm"):
+            checks.append(_check(lbl, False,
+                                 f"{sib['verdict']} — reload ~/Library/LaunchAgents/{sib['label']}.plist "
+                                 f"then `launchctl bootstrap gui/$UID` that plist"))
+        else:
+            checks.append(_check(lbl, True, ""))
     return checks
 
 

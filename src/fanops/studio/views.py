@@ -722,8 +722,9 @@ def daemon_health(cfg: Config) -> Optional[dict]:
             pending_gates = pipeline.pending_gate_count(cfg)   # need-aware truth: claude runs ONLY to answer these
         except Exception:
             pending_gates = None                               # never let a torn agent_io dir 500 the banner
+        siblings = daemon.sibling_agents_status()
         return {**rep, "interval": interval, "responder": responder, "discloses_llm": responder == "llm",
-                "pending_gates": pending_gates}
+                "pending_gates": pending_gates, "siblings": siblings}
     except Exception:
         return None
 
