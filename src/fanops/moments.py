@@ -4,13 +4,13 @@ RECONCILES them into content-addressed Moment units (upsert + cascade-delete of 
 moments' lineage), so amplify actually changes the set instead of silently no-opping (the
 v1 bug). No tiers, no quotas — the agent returns as many valid picks as are worth posting."""
 from __future__ import annotations
-import math
+import json, math
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import (Moment, MomentRequest, MomentDecision, MomentPick, MomentState, SourceState,
                            MomentHookRequest, MomentHookDecision)
 from fanops.ids import child_id
-from fanops.agentstep import write_request, read_response, latest_request_id, discard_gates_for
+from fanops.agentstep import write_request, read_response, latest_request_id, discard_gates_for, bump_attempts, clear_attempts, request_path, response_path, _attempts_path
 from fanops.hookcheck import is_weak_hook
 from fanops.keyframes import extract_keyframes
 from fanops.bands import band_for
@@ -21,6 +21,23 @@ from fanops.moment_hook_learning import proven_hook_styles
 from fanops.personas import hook_author_slot
 from fanops.accounts import AccountStatus
 import os
+
+_HOOK_NULL_MAX = 3   # MOL-476: initial null + 2 retries -> terminal SourceState.error (not silent clean)
+
+def _discard_hook_gate_for_retry(cfg: Config, key: str) -> None:
+    """Unlink a moment_hooks gate for re-request but KEEP the null-retry attempts sidecar (MOL-476)."""
+    for p in (request_path(cfg, "moment_hooks", key), response_path(cfg, "moment_hooks", key)):
+        try: p.unlink()
+        except FileNotFoundError: pass
+
+def _saved_hook_null_attempts(cfg: Config, key: str) -> int:
+    p = _attempts_path(cfg, "moment_hooks", key)
+    if not p.exists(): return 0
+    try: return int(json.loads(p.read_text()).get("n", 0))
+    except Exception: return 0
+
+def _restore_hook_null_attempts(cfg: Config, key: str, n: int) -> None:
+    if n > 0: _attempts_path(cfg, "moment_hooks", key).write_text(json.dumps({"n": n}))
 
 # M1b PASS 1: how many SOURCE stills the PICK author gets — a whole-source survey (a picking aid: judge
 # which windows are visually strong). Bounded so the opus+vision call stays under the claude -p image
@@ -325,6 +342,12 @@ def ingest_moments(led: Ledger, cfg: Config, source_id: str) -> Ledger:
     deduped = _drop_overlaps(valid)                 # drop near-duplicate windows (keep first)
     if len(deduped) < len(valid):                   # don't silently suppress picks — surface the count
         get_logger(cfg)("source", source_id, "overlaps_dropped", count=len(valid) - len(deduped))
+    owner_n: dict[str, int] = {}
+    for pick in deduped:
+        o = _pick_owner(pick) or ""
+        owner_n[o] = owner_n.get(o, 0) + 1
+    if owner_n:
+        get_logger(cfg)("source", source_id, "owner_picks", **owner_n)
     for pick in deduped:
         token = _token(pick)
         owner = (pick.personas or [None])[0]          # P3: single-owner handle at ingest (None when blind)
@@ -431,7 +454,9 @@ def request_moment_hooks(led: Ledger, cfg: Config, source_id: str, accounts=None
         payload.pop("request_id", None)
         if styles:
             payload["learned_hooks"] = styles      # optional KEY (mirrors caption), not a model field
+        saved = _saved_hook_null_attempts(cfg, key)   # MOL-476: preserve null-retry counter across re-seed
         write_request(cfg, kind="moment_hooks", key=key, payload=payload)
+        _restore_hook_null_attempts(cfg, key, saved)
     return led
 
 def ingest_moment_hooks(led: Ledger, cfg: Config, source_id: str, accounts=None) -> Ledger:
@@ -441,8 +466,8 @@ def ingest_moment_hooks(led: Ledger, cfg: Config, source_id: str, accounts=None)
     ingest_moments. Doing it incrementally (a pick promotes the instant its own gate lands) made the
     cross-clip + opening-template dedup ORDER-DEPENDENT (an exact dup could ship twice, or a different
     pick get stripped, by pure response-arrival order). While any pick is still pending the source stays
-    `picks_decided` (VISIBLE in awaiting.moment_hooks — never a silent wedge). A gate that VALIDATES with
-    hook=null decides that pick CLEAN (the author's honest 'no hook beats slop')."""
+    `picks_decided` (VISIBLE in awaiting.moment_hooks — never a silent wedge). A null author hook triggers
+    bounded retry (discard_gate + re-request, cap _HOOK_NULL_MAX) then SourceState.error — never silent clean."""
     picked = sorted([m for m in led.moments.values()
                      if m.parent_id == source_id and m.state is MomentState.picked],
                     key=lambda m: (m.start, m.end))   # stable pick order -> deterministic dedup
@@ -456,6 +481,27 @@ def ingest_moment_hooks(led: Ledger, cfg: Config, source_id: str, accounts=None)
         if dec is None:
             return led                              # not all hooks in yet -> leave the source picks_decided
         decisions[m.id] = dec
+    # MOL-476: null author hook -> bounded retry (discard + re-request), not silent clean promotion.
+    null_terminal = False
+    for m in picked:
+        if (decisions[m.id].hook or "").strip():
+            continue
+        key = f"{source_id}.{m.content_token}"
+        n = bump_attempts(cfg, "moment_hooks", key)
+        if n >= _HOOK_NULL_MAX:
+            null_terminal = True
+            get_logger(cfg)("source", source_id, "hook_null_terminal", moment=m.id, attempt=n, warn=True)
+        else:
+            _discard_hook_gate_for_retry(cfg, key)
+            get_logger(cfg)("source", source_id, "hook_null_retry", moment=m.id, attempt=n)
+    if null_terminal:
+        src = led.sources[source_id]
+        led.sources[source_id] = src.model_copy(update={
+            "state": SourceState.error,
+            "error_reason": f"hook author returned null {_HOOK_NULL_MAX}x for {source_id}"[:200]})
+        return led
+    if any(not (decisions[m.id].hook or "").strip() for m in picked):
+        return led                              # retry pending — moment stays picked, source picks_decided
     # Cross-clip hook de-dup: seed `used` from OTHER sources' hooks (an EXACT repeat reads like a bot);
     # `cluster_used` (the opening-template scope) starts empty and accumulates within THIS atomic pass —
     # byte-identical to the old single-pass loop. Both grow as we accept hooks in pick order.
@@ -479,6 +525,7 @@ def ingest_moment_hooks(led: Ledger, cfg: Config, source_id: str, accounts=None)
             hook = None                             # ...the clip still ships CLEAN by default
         if hook:
             used.add(hook.lower()); cluster_used.add(hook.lower())
+            clear_attempts(cfg, "moment_hooks", f"{source_id}.{m.content_token}")   # MOL-476: success clears retry counter
         led.moments[m.id] = m.model_copy(update={"hook": hook, "hook_removed": hook_removed,
                                                  "hook_frames_unread": bool(getattr(dec, "hook_frames_unread", False)),  # AGENT-9
                                                  "state": MomentState.decided})

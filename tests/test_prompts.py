@@ -650,3 +650,35 @@ def test_hook_decision_content_selects_persona_biases():
     p = moment_hook_prompt(_hook_payload(personas=[{"handle": "@a", "persona": "x",
                                                     "mechanism_lean": "dare or challenge the viewer"}]))
     assert "persona bias" in p.lower() or "mechanism lean" in p.lower()
+
+# ---- MOL-478 (T5): pick prompt persona-count ceiling + within-owner overlap + supercut mandate ----
+def test_pick_prompt_ceiling_scales_with_persona_count():
+    from fanops.prompts import _target_pick_count
+    per = _target_pick_count(90.0)
+    personas = [{"handle": "@a", "directive": "x"}, {"handle": "@b", "directive": "y"}]
+    p = moment_pick_prompt({"duration": 90.0, "transcript": [], "signal_peaks": [],
+                            "language": "en", "guidance": "", "personas": personas})
+    assert str(per * 2) in p                       # total ceiling = per-account × N personas
+    assert "per account" in p.lower()
+
+def test_pick_prompt_overlap_scoped_within_owner():
+    p = moment_pick_prompt({"duration": 90.0, "transcript": [], "signal_peaks": [],
+                            "language": "en", "guidance": "",
+                            "personas": [{"handle": "@a", "directive": "x"},
+                                         {"handle": "@b", "directive": "y"}]}).lower()
+    assert "cross-owner" in p or "different accounts" in p
+    assert "within each account" in p or "within one account" in p
+    assert "must not overlap" not in p
+
+def test_pick_prompt_each_account_selects_a_set():
+    p = moment_pick_prompt({"duration": 60.0, "transcript": [], "signal_peaks": [], "language": "en",
+                            "guidance": "", "personas": [{"handle": "@a", "directive": "punchlines"},
+                                                         {"handle": "@b", "directive": "context"}]}).lower()
+    assert "set" in p and "each account" in p
+    assert "fits best" not in p                    # old winner-take-all partition wording is gone
+
+def test_pick_prompt_segments_mandate_supercut():
+    p = moment_pick_prompt({"duration": 60.0, "transcript": [], "signal_peaks": [],
+                            "language": "en", "guidance": ""}).lower()
+    assert "segments" in p and "supercut" in p
+    assert "optional `segments`" not in p          # active mandate, not a footnote
