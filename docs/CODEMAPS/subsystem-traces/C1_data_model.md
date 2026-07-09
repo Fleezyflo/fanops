@@ -82,7 +82,7 @@ Per-account shippable artifact, content-addressed child of Clip. `clip_id` → C
 - `hook_source: HookSource = none` (per_account|shared_fallback|none)
 - `cut_seconds: Optional[float]`
 
-### `SelectionFact` / `AccountSelection` — **REMOVED v11 (P12/MOL-154)**
+### `SelectionFact` / durable selection records — **REMOVED v11 (P12/MOL-154)**
 
 > Frozen models deleted from `models.py`. Legacy `account_selections` / `selection_facts` ledger maps are
 > dropped on load via `_migrate_v11_drop_selection_maps` (`ledger.py:179`). Crosspost routing now reads
@@ -130,7 +130,7 @@ Clip    1──* StitchPlan
 Batch   1──* Source, Post (denormalized batch_id)
 ImportedMedia — standalone, no lineage
 ```
-(Moment.affinities is the crosspost gate input — no separate AccountSelection table post-v11.)
+(Moment.affinities is the crosspost gate input — no separate durable selection table post-v11.)
 
 ## Per-file breakdown
 
@@ -349,7 +349,7 @@ error
 open (this codebase version only ever sets open) — closed/error exist, no writer found
 ```
 
-### AccountSelection.method sum-type — **REMOVED v11** (historical; was a validated discriminator on the deleted `AccountSelection` model)
+### Durable selection method sum-type — **REMOVED v11** (historical; was a validated discriminator on the deleted selection model)
 
 ## config.py: env vars and control-file fields (full enumeration)
 

@@ -54,7 +54,7 @@ caption.ingest_captions(led, cfg, clip_id)
    clip.meta_captions[surface] = _caption_entry(...); ClipState.captioned
 ```
 
-The SAME dispatch shape is used by `moments.py` (outside this cluster, in C4) for the `moments`/`moment_hooks` gates, whose prompt builders (`moment_pick_prompt`, `moment_hook_prompt`) also live in `prompts.py` — this is why `call_graph.json` shows `called_by_in_repo: []` for those functions and for `caption_prompt`: the AST-based call graph cannot trace `_PROMPT[kind](payload)` (a dict-value indirect call in `responder.py`) back to the literal function name. Confirmed real callers via grep: `responder.py:46-47` binds `_PROMPT = {"moments": moment_pick_prompt, "moment_hooks": moment_hook_prompt, "captions": caption_prompt}` and calls `_PROMPT[kind](payload)` at `responder.py:66`. (`moment_casting` gate + `moment_casting_prompt` removed P11/MOL-152.) This is **not dead code** — see Anomalies for how this is distinguished from genuine dead code in this cluster.
+The SAME dispatch shape is used by `moments.py` (outside this cluster, in C4) for the `moments`/`moment_hooks` gates, whose prompt builders (`moment_pick_prompt`, `moment_hook_prompt`) also live in `prompts.py` — this is why `call_graph.json` shows `called_by_in_repo: []` for those functions and for `caption_prompt`: the AST-based call graph cannot trace `_PROMPT[kind](payload)` (a dict-value indirect call in `responder.py`) back to the literal function name. Confirmed real callers via grep: `responder.py:46-47` binds `_PROMPT = {"moments": moment_pick_prompt, "moment_hooks": moment_hook_prompt, "captions": caption_prompt}` and calls `_PROMPT[kind](payload)` at `responder.py:66`. (The P11-removed `moment_casting` gate and its prompt-builder are gone.) This is **not dead code** — see Anomalies for how this is distinguished from genuine dead code in this cluster.
 
 `llm.claude_json` (the bare-dict wrapper) has zero repo callers per call graph EXCEPT `fanops.responder._default_claude_model` calls `claude_json_meta` (not `claude_json`) directly — `claude_json` itself is used by `studio/actions.py:139` (`model = claude_json`, for the Studio's manual "regenerate caption" action), confirmed by grep, outside this cluster.
 
@@ -197,7 +197,7 @@ Confirms the task's framing: `fanops_hashtags.py` is NOT part of the request/res
 - `moment_hook_prompt(payload: dict) -> str` — **M1b PASS 2 prompt builder**: frame-grounded on-screen hook for ONE owner-moment (owner persona from payload). Called via `responder._PROMPT["moment_hooks"]`.
 - `caption_prompt(payload: dict) -> str` — **the text-only caption/hashtag prompt builder**. Called via `responder._PROMPT["captions"]`, and by `studio.actions.regenerate_caption`.
 
-> **Removed P11:** `moment_casting_prompt`, `_casting_moment_line`, `_data_fence` (casting LLM gate deleted).
+> **Removed P11:** the casting prompt-builder, `_casting_moment_line`, `_data_fence` (casting LLM gate deleted).
 
 ### `llm.py` — the `claude -p` shell wrapper (the actual API-calling primitive)
 

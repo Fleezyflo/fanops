@@ -1,4 +1,4 @@
-<!-- Generated: 2026-07-03 | Source: 10 exhaustive Sonnet-agent subsystem traces (docs/CODEMAPS/subsystem-traces/C1-C10) cross-referenced against deterministic AST/call-graph analysis (.reports/) | Token estimate: ~1400 -->
+<!-- Generated: 2026-07-09 | Source: 10 exhaustive Sonnet-agent subsystem traces (docs/CODEMAPS/subsystem-traces/C1-C10) cross-referenced against deterministic AST/call-graph analysis (.reports/) | Token estimate: ~1400 -->
 # FanOps Anomaly Ledger
 
 Every anomaly, dead-code lead, and silent-failure site found across the full 108-module trace
@@ -60,7 +60,7 @@ re-requests every tick with no operator-visible terminal). That class is now nam
 - `caption.py:45` `normalize_variation_axis` — dead code; dormant P2 creative-variation-axis machinery, a tracked follow-up.
 - `caption.py:51` `coherent_variation` — dead code; T2 coherence gate for the same dormant loop.
 - `llm.py:180` `claude_json` — flagged zero-caller by the call graph; **false positive**, actually called via `studio/actions.py:138-139` (`from fanops.llm import claude_json; model = claude_json`), a name-alias the graph missed.
-- `prompts.py:166,242,361` (`moment_pick_prompt`, `moment_hook_prompt`, `caption_prompt`) — all flagged zero-caller; false positives, invoked via `responder.py`'s `_PROMPT[kind](payload)` dict-dispatch. (`moment_casting_prompt` removed P11.)
+- `prompts.py:166,242,361` (`moment_pick_prompt`, `moment_hook_prompt`, `caption_prompt`) — all flagged zero-caller; false positives, invoked via `responder.py`'s `_PROMPT[kind](payload)` dict-dispatch. (The P11-removed casting prompt-builder is not in `_PROMPT`.)
 - `hashtags.py:179-193` `vet_hashtags` reserved-floor logic evaluates against `kept[:max_tags]` (the cap window) rather than the full `kept` list — deliberate per inline comment, but subtle enough that a naive re-implementation could silently break the floor guarantee. Design note, not a bug.
 - 9 `except Exception` sites across `caption.py`, `fanops_hashtags.py`, `llm.py` — all either log, return a documented fail-open sentinel, or re-raise a typed error. None silent.
 
