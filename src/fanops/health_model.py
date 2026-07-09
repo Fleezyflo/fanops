@@ -41,6 +41,68 @@ class HealthReport:
         }
 
 
+_PROM_HELP = {
+    "fanops_posts": ("Posts by lifecycle state", "gauge"),
+    "fanops_awaiting_moments": ("Distinct clips awaiting operator approval", "gauge"),
+    "fanops_daemon_heartbeat_age_seconds": ("Seconds since last daemon heartbeat", "gauge"),
+    "fanops_daemon_heartbeat_stale": ("1 when daemon heartbeat exceeds stale threshold", "gauge"),
+    "fanops_dep_up": ("Runtime dependency up (1) or down (0)", "gauge"),
+    "fanops_metrics_degraded": ("1 when a metrics read degraded fail-open", "gauge"),
+}
+
+
+def _prom_gauge(name: str, value: int | float, labels: dict | None = None) -> str:
+    lbl = ""
+    if labels:
+        lbl = "{" + ",".join(f'{k}="{v}"' for k, v in labels.items()) + "}"
+    return f"{name}{lbl} {value}"
+
+
+def render_prometheus_metrics(cfg: Config) -> str:
+    """Prometheus text exposition from ledger state + HealthReport. Fail-open: never raises."""
+    import logging
+    from collections import Counter
+    from fanops.ledger import Ledger
+    from fanops.models import PostState
+    from fanops.studio.views_review import awaiting_moment_count
+    _log = logging.getLogger("fanops.health")
+    lines: list[str] = []
+    degraded = False
+    led = None
+    try:
+        led = Ledger.load(cfg)
+        st = Counter(p.state.value for p in led.posts.values())
+        for state in PostState:
+            lines.append(_prom_gauge("fanops_posts", st.get(state.value, 0), {"state": state.value}))
+        lines.append(_prom_gauge("fanops_awaiting_moments", awaiting_moment_count(led)))
+    except Exception as exc:
+        _log.warning("ledger read failed in /metrics (%s); degrading post gauges", exc)
+        degraded = True
+    try:
+        rep = build_health_report(cfg, led=led)
+        for d in rep.deps:
+            lines.append(_prom_gauge("fanops_dep_up", 1 if d.ok else 0, {"dep": d.name}))
+        age, stale, _iv = heartbeat_stale(cfg)
+        if age is not None:
+            lines.append(_prom_gauge("fanops_daemon_heartbeat_age_seconds", age))
+        lines.append(_prom_gauge("fanops_daemon_heartbeat_stale", 1 if stale else 0))
+    except Exception as exc:
+        _log.warning("health read failed in /metrics (%s); degrading health gauges", exc)
+        degraded = True
+    lines.append(_prom_gauge("fanops_metrics_degraded", 1 if degraded else 0))
+    out: list[str] = []
+    seen: set[str] = set()
+    for line in lines:
+        name = line.split("{", 1)[0].split(" ", 1)[0]
+        if name not in seen and name in _PROM_HELP:
+            help_txt, typ = _PROM_HELP[name]
+            out.append(f"# HELP {name} {help_txt}")
+            out.append(f"# TYPE {name} {typ}")
+            seen.add(name)
+        out.append(line)
+    return "\n".join(out) + "\n"
+
+
 def report_is_healthy(report: HealthReport) -> bool:
     """Exit-code truth: any failed check or down dep -> unhealthy."""
     if any(not c.get("ok", True) for c in report.checks):
