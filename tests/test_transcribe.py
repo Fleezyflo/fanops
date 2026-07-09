@@ -13,6 +13,13 @@ def test_whisper_cmd_shape():
     # word-level timestamps drive the active-caption sync — request them from whisper
     assert "--word_timestamps" in cmd and cmd[cmd.index("--word_timestamps") + 1] == "True"
 
+def test_whisper_cmd_language_passthrough():
+    # Single asr_language value -> legacy whisper --language; comma-list -> omit (multilingual auto-detect).
+    cmd = whisper_cmd("/s/x.mp4", "/out", model="turbo", language="ar")
+    assert "--language" in cmd and cmd[cmd.index("--language") + 1] == "ar"
+    cmd = whisper_cmd("/s/x.mp4", "/out", model="turbo", language="en,ar")
+    assert "--language" not in cmd
+
 def test_fw_cmd_shape():
     # The faster-whisper runner invocation: `python -m fanops._fwrun --model <m> --language <l>
     # --output_dir <out> <audio>`. Same --output_dir flag + audio-LAST shape as whisper_cmd, so the
