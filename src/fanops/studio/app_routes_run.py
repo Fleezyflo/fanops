@@ -99,6 +99,24 @@ def register_run_routes(app, cfg):
             res = actions.run_ingest_thirdparty(cfg)
         return render_template("_library_panel.html", catalog=views.asset_catalog(cfg), result=res, tab="library")
 
+    def _library_panel(result=None):
+        return render_template("_library_panel.html", catalog=views.asset_catalog(cfg), result=result, tab="library")
+
+    @app.post("/library/resume")
+    def do_library_resume():
+        res = actions.resume_source_studio(cfg, request.form.get("source_id", ""),
+                                           from_stage=request.form.get("from_stage") or "auto",
+                                           force=bool(request.form.get("force")))
+        return _library_panel(res)
+
+    @app.post("/library/retire")
+    def do_library_retire():
+        return _library_panel(actions.retire_source_studio(cfg, request.form.get("source_id", "")))
+
+    @app.post("/library/promote")
+    def do_library_promote():
+        return _library_panel(actions.promote_source_studio(cfg, request.form.get("source_id", "")))
+
     @app.errorhandler(RequestEntityTooLarge)
     def _too_large(_e):
         # An over-MAX_CONTENT_LENGTH upload: Werkzeug raised 413 before do_run_upload ran. Re-render the

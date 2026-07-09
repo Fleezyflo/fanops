@@ -1,13 +1,17 @@
 # src/fanops/pipeline_status.py
-"""Operator-facing pipeline control-plane status: run lease + stuck-gate wait lines."""
+"""Operator-facing pipeline control-plane status: run lease + stuck-gate wait lines + source backlog."""
 from __future__ import annotations
 import json
+from dataclasses import dataclass
 from fanops.config import Config
 from fanops.gate_keys import gate_source_id
 from fanops.agentstep import pending, request_path, latest_request_id, _attempts_path
 from fanops.pipeline import GATE_KINDS
 from fanops.pipeline_run import run_status_line
 from fanops.models import SourceState, ClipState
+
+_RECOVERABLE = (SourceState.error, SourceState.moments_empty)
+_INVENTORY_STATES = (SourceState.retired, SourceState.discovered)
 
 _GATE_DETERMINISTIC_MAX = 3   # mirrors responder._GATE_DETERMINISTIC_MAX
 _TERMINAL_CLIP = frozenset((ClipState.published, ClipState.analyzed, ClipState.retired, ClipState.error))
@@ -106,3 +110,74 @@ def source_wait_line(cfg: Config, led, source_id: str) -> str | None:
 def status_control_lines(cfg: Config, led) -> tuple[str, str | None]:
     """(run_status_line, top_wait_line) for fanops status / Studio pipeline_status."""
     return run_status_line(cfg), top_wait_line(cfg, led)
+
+
+@dataclass(frozen=True)
+class SourceBacklogRow:
+    id: str
+    state: str
+    bucket: str          # actionable | blocked_on_gates | recoverable | inventory
+    wait_line: str | None
+    block_reason: str | None
+
+
+@dataclass(frozen=True)
+class SourceBacklog:
+    actionable: int
+    blocked_on_gates: int
+    recoverable: int
+    inventory: int
+    rows: list[SourceBacklogRow]
+
+
+def _source_bucket(cfg: Config, led, source_id: str, s) -> str:
+    """Classify one native source into a backlog bucket (priority order)."""
+    if s.state in _INVENTORY_STATES:
+        return "inventory"
+    if s.state in _RECOVERABLE:
+        return "recoverable"
+    if s.state is SourceState.moments_decided:
+        if not (_source_has_pending_gate(cfg, led, source_id) or _source_has_non_terminal_clip(led, source_id)):
+            return "inventory"
+    if _source_has_pending_gate(cfg, led, source_id):
+        return "blocked_on_gates"
+    return "actionable"
+
+
+def source_backlog(led, cfg: Config) -> SourceBacklog:
+    """Canonical projection: asset inventory vs actionable backlog. Every consumer (Studio, CLI, doctor)
+    must derive source counts from here — never re-count raw ledger states."""
+    rows: list[SourceBacklogRow] = []
+    counts = {"actionable": 0, "blocked_on_gates": 0, "recoverable": 0, "inventory": 0}
+    for sid, s in sorted(led.sources.items()):
+        if s.origin_kind != "native":
+            continue
+        bucket = _source_bucket(cfg, led, sid, s)
+        counts[bucket] += 1
+        wl = source_wait_line(cfg, led, sid)
+        br = s.error_reason if s.state in _RECOVERABLE else None
+        if bucket == "blocked_on_gates" and wl and wl.startswith("wait=error:"):
+            br = wl.split("wait=error:", 1)[-1]
+        rows.append(SourceBacklogRow(id=sid, state=s.state.value, bucket=bucket, wait_line=wl, block_reason=br))
+    return SourceBacklog(actionable=counts["actionable"], blocked_on_gates=counts["blocked_on_gates"],
+                       recoverable=counts["recoverable"], inventory=counts["inventory"], rows=rows)
+
+
+def heal_corrupt_gates(led, cfg: Config) -> int:
+    """Auto-quarantine sources owning corrupt gate requests to error (fail-closed + auditable)."""
+    from fanops.log import get_logger
+    log = get_logger(cfg)
+    healed = 0
+    for kind in GATE_KINDS:
+        for key in pending(cfg, kind=kind):
+            if not _gate_is_corrupt(cfg, kind, key):
+                continue
+            sid = gate_source_id(led, kind, key)
+            if not sid or sid not in led.sources:
+                continue
+            s = led.sources[sid]
+            reason = f"corrupt gate request: {kind}/{key}"
+            led.sources[sid] = s.model_copy(update={"state": SourceState.error, "error_reason": reason})
+            log("pipeline", sid, "corrupt_gate_quarantine", kind=kind, key=key)
+            healed += 1
+    return healed

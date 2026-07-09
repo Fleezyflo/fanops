@@ -12,6 +12,12 @@
     </div>
   {% endif %}
 
+  {% if catalog.backlog %}
+  <p class="meta backlog-summary">{{ catalog.backlog.actionable }} in progress ·
+    {{ catalog.backlog.blocked_on_gates }} blocked · {{ catalog.backlog.recoverable }} need attention ·
+    {{ catalog.backlog.inventory }} in library</p>
+  {% endif %}
+
   <form hx-post="{{ url_for('do_thirdparty_upload') }}" hx-target="#library-panel" hx-swap="outerHTML"
         hx-encoding="multipart/form-data" class="upload-form">
     <input type="file" name="files" accept="video/*,image/*" multiple
@@ -22,9 +28,37 @@
   {# P6: each asset shows its human filename + just-enough technicals (duration, resolution) to recognize
      it, with the state and opaque id demoted to muted context. #}
   {% macro asset_li(s) %}<li class="asset-row"><span class="asset-name">{{ s.name }}</span>
-    <span class="muted asset-tech">{% if s.duration %}{{ '%.0f'|format(s.duration) }}s{% endif %}{% if s.width and s.height %} · {{ s.width }}×{{ s.height }}{% endif %} · {{ s.state }}</span>
+    <span class="muted asset-tech">{% if s.duration %}{{ '%.0f'|format(s.duration) }}s{% endif %}{% if s.width and s.height %} · {{ s.width }}×{{ s.height }}{% endif %} · {{ s.state }} · {{ s.bucket }}</span>
+    {% if s.block_reason %}<pre class="errored-reason">{{ s.block_reason }}</pre>{% endif %}
     {% if s.degraded_reason %}<span class="asset-degraded" title="degraded or pending pipeline gate — re-tried each pass; see reason below">⚠ degraded: {{ s.degraded_reason }}</span>{% endif %}
-    <span class="ro asset-id">{{ s.id }}</span></li>{% endmacro %}
+    <span class="ro asset-id">{{ s.id }}</span>
+    {% if s.origin_kind == 'native' %}
+    <span class="asset-actions">
+      {% if s.bucket == 'recoverable' %}
+      <form hx-post="{{ url_for('do_library_resume') }}" hx-target="#library-panel" hx-swap="outerHTML" class="stage-form-inline">
+        <input type="hidden" name="source_id" value="{{ s.id }}"><button type="submit">Resume</button>
+      </form>
+      <form hx-post="{{ url_for('do_library_resume') }}" hx-target="#library-panel" hx-swap="outerHTML" class="stage-form-inline"
+            hx-confirm="Reset {{ s.name }} to the start?">
+        <input type="hidden" name="source_id" value="{{ s.id }}">
+        <input type="hidden" name="from_stage" value="catalogued"><input type="hidden" name="force" value="1">
+        <button type="submit">Reset</button>
+      </form>
+      {% endif %}
+      {% if s.state == 'discovered' %}
+      <form hx-post="{{ url_for('do_library_promote') }}" hx-target="#library-panel" hx-swap="outerHTML" class="stage-form-inline">
+        <input type="hidden" name="source_id" value="{{ s.id }}"><button type="submit">Promote</button>
+      </form>
+      {% endif %}
+      {% if s.bucket != 'inventory' or s.state == 'discovered' %}
+      <form hx-post="{{ url_for('do_library_retire') }}" hx-target="#library-panel" hx-swap="outerHTML" class="stage-form-inline"
+            hx-confirm="Retire {{ s.name }}? Protected posts stay as retired lineage.">
+        <input type="hidden" name="source_id" value="{{ s.id }}"><button type="submit">Retire</button>
+      </form>
+      {% endif %}
+    </span>
+    {% endif %}
+    </li>{% endmacro %}
 
   <h3>Native <span class="muted">({{ catalog.native|length }})</span></h3>
   <ul class="asset-list">

@@ -147,11 +147,18 @@ def pipeline_status(cfg: Config) -> dict:
     are waiting + the active poster backend. Lets the operator see, in one glance, whether the next
     move is 'ingest', 'run a pass', or 'answer a gate'."""
     from fanops.agentstep import pending
-    from fanops.pipeline_status import status_control_lines
+    from fanops.pipeline_status import status_control_lines, source_backlog
     led = Ledger.load(cfg)
     run_line, wait_line = status_control_lines(cfg, led)
+    bl = source_backlog(led, cfg)
     return {
-        "sources": sum(1 for s in led.sources.values() if s.origin_kind == "native"),  # M1: chain count = native only
+        "sources": bl.actionable,   # in-progress pipeline work (NOT raw inventory — see source_backlog)
+        "sources_blocked": bl.blocked_on_gates,
+        "sources_recoverable": bl.recoverable,
+        "sources_inventory": bl.inventory,
+        "native_total": bl.actionable + bl.blocked_on_gates + bl.recoverable + bl.inventory,
+        "backlog_rows": [{"id": r.id, "state": r.state, "bucket": r.bucket, "wait_line": r.wait_line,
+                          "block_reason": r.block_reason} for r in bl.rows],
         "third_party": sum(1 for s in led.sources.values() if s.origin_kind == "third_party"),
         "clips": len(led.clips), "posts": len(led.posts),
         "awaiting": awaiting_moment_count(led),   # S3: ACTIONABLE — MOMENTS (== Home/Review worklist), not raw posts
@@ -205,7 +212,7 @@ def run_next_step(status: dict) -> dict:
     def _n(k):
         try: return int(s.get(k, 0) or 0)
         except (TypeError, ValueError): return 0
-    footage = _n("sources") + _n("third_party")
+    footage = _n("native_total") + _n("third_party")
     gates = _n("pending_moments") + _n("pending_moment_hooks") + _n("pending_captions")
     awaiting = _n("awaiting")               # ACTIONABLE clips awaiting review (moments) — the SAME unit Home/Review
                                             # show, so the Make banner agrees with them (was raw posts: "57" vs "17").
@@ -230,16 +237,25 @@ def asset_catalog(cfg: Config) -> dict:
     500 (the Studio invariant)."""
     try:                                             # whole body guarded: a torn row must not 500 either
         led = Ledger.load(cfg)
+        from fanops.pipeline_status import source_backlog
+        bl = source_backlog(led, cfg)
+        by_id = {r.id: r for r in bl.rows}
         rows = [{"id": s.id, "origin_kind": s.origin_kind, "state": s.state.value,
+                 "bucket": by_id[s.id].bucket if s.id in by_id else "inventory",
+                 "wait_line": by_id[s.id].wait_line if s.id in by_id else None,
+                 "block_reason": by_id[s.id].block_reason if s.id in by_id else None,
                  "name": Path(s.source_path).name if s.source_path else s.id,   # P6: human filename, not the opaque id
                  "duration": s.duration, "width": s.width, "height": s.height,
                  "degraded_reason": s.degraded_reason} for s in led.sources.values()]   # RF1: the VISIBLE-degradation channel (probe_failed) -> a Library marker, else a 0×0 source silently renders a mangled clip
         return {"native": [r for r in rows if r["origin_kind"] == "native"],
-                "third_party": [r for r in rows if r["origin_kind"] == "third_party"]}
+                "third_party": [r for r in rows if r["origin_kind"] == "third_party"],
+                "backlog": {"actionable": bl.actionable, "blocked_on_gates": bl.blocked_on_gates,
+                            "recoverable": bl.recoverable, "inventory": bl.inventory}}
     except Exception as exc:                          # invariant: the Library tab must never 500 — but
         from fanops.log import get_logger             # a read-fail is RECORDED, never silently shown as "empty"
         get_logger(cfg)("library", "-", "error", err=str(exc)[:160])
-        return {"native": [], "third_party": []}
+        return {"native": [], "third_party": [], "backlog": {"actionable": 0, "blocked_on_gates": 0,
+                                                            "recoverable": 0, "inventory": 0}}
 
 
 def pending_stitches(cfg: Config) -> list:
@@ -466,11 +482,12 @@ def build_system_strip(cfg: Config) -> dict:
     from fanops.log import get_logger                     # a strip sub-read failure is RECORDED, never a silently-zeroed badge
     try:
         ps = pipeline_status(cfg)
-        blocked = (ps.get("pending_moments", 0) + ps.get("pending_moment_hooks", 0)
-                   + ps.get("pending_captions", 0))
+        blocked = ps.get("sources_blocked", 0) or (ps.get("pending_moments", 0) + ps.get("pending_moment_hooks", 0)
+                                                   + ps.get("pending_captions", 0))
+        recoverable = ps.get("sources_recoverable", 0)
     except Exception as exc:
         get_logger(cfg)("system_strip", "-", "pipeline_status_error", err=str(exc)[:160])
-        blocked = 0
+        blocked = 0; recoverable = 0
     failed = 0
     try:
         failed = sum(1 for p in Ledger.load(cfg).posts.values() if p.state is PostState.failed)
@@ -480,12 +497,13 @@ def build_system_strip(cfg: Config) -> dict:
     # MOL-123: errored sources must be LOUD — a source parked in error/moments_empty means clip production
     # silently stalled (the 2026-07-05 TimeoutExpired sat invisible while the strip read "idle"). Same
     # fail-open-with-breadcrumb discipline as the failed-post scan; the count links to the Run tab's list.
-    errored = 0
-    try:
-        errored = sum(1 for s in Ledger.load(cfg).sources.values() if s.state in _RECOVERABLE_SOURCE_STATES)
-    except Exception as exc:
-        get_logger(cfg)("system_strip", "-", "errored_scan_error", err=str(exc)[:160])
-        errored = 0
+    errored = recoverable if recoverable else 0
+    if not errored:
+        try:
+            errored = sum(1 for s in Ledger.load(cfg).sources.values() if s.state in _RECOVERABLE_SOURCE_STATES)
+        except Exception as exc:
+            get_logger(cfg)("system_strip", "-", "errored_scan_error", err=str(exc)[:160])
+            errored = 0
     # Leg 2 (Insight): the one external gate — a persisted breadcrumb means Graph media-insights was refused
     # for lack of instagram_manage_insights, so IG performance is frozen at its last snapshot until granted.
     try:
@@ -504,8 +522,9 @@ def build_system_strip(cfg: Config) -> dict:
         get_logger(cfg)("system_strip", "-", "postiz_down_error", err=str(exc)[:160])
         postiz_down = {"show": False}
     return {"is_live": cfg.is_live, "mode": _publish_mode_label(cfg), "blocked_gates": blocked,
-            "failed": failed, "insights_blocked": insights_blocked, "errored_sources": errored,
-            "half_live": half_live, "half_live_hint": half_live_hint, "postiz_down": postiz_down}
+            "recoverable_sources": recoverable, "failed": failed, "insights_blocked": insights_blocked,
+            "errored_sources": errored, "half_live": half_live, "half_live_hint": half_live_hint,
+            "postiz_down": postiz_down}
 
 
 

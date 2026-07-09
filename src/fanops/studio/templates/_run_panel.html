@@ -13,7 +13,7 @@
      the next-step copy never disagree. #}
   {% set _next = run_next_step(status) %}
   <ol class="stage-rail" aria-label="Make pipeline stages">
-    <li class="stage-step {% if _next.key in ('add',) %}is-live{% endif %} {% if status.sources > 0 %}is-done{% endif %}">
+    <li class="stage-step {% if _next.key in ('add',) %}is-live{% endif %} {% if status.native_total > 0 %}is-done{% endif %}">
       <span class="stage-num">01</span><span class="stage-label">Add footage</span>
     </li>
     <li class="stage-step {% if _next.key in ('prepare','gate') %}is-live{% endif %}">
@@ -110,6 +110,14 @@
           <input type="hidden" name="source_id" value="{{ e.id }}">
           <button type="submit" data-busy-label="Resuming…">Resume</button>
         </form>
+        <form hx-post="{{ url_for('do_run_resume') }}" hx-target="#run-panel" hx-swap="outerHTML"
+              hx-disabled-elt="find button[type=submit]" hx-indicator="this" class="stage-form-inline stage-busy"
+              hx-confirm="Reset {{ e.name }} to the start? Keeps protected posts as retired lineage.">
+          <input type="hidden" name="source_id" value="{{ e.id }}">
+          <input type="hidden" name="from_stage" value="catalogued">
+          <input type="hidden" name="force" value="1">
+          <button type="submit" data-busy-label="Resetting…">Reset to start</button>
+        </form>
       </li>
       {% endfor %}
     </ul>
@@ -125,9 +133,12 @@
     </header>
 
     <div class="queue-meter">
-      <span><strong>{{ status.sources }}</strong> source{{ '' if status.sources == 1 else 's' }} queued</span>
-      <span><strong>{{ status.get('pending_moments', 0) + status.get('pending_moment_hooks', 0) + status.get('pending_captions', 0) }}</strong> awaiting decisions</span>
+      <span><strong>{{ status.sources }}</strong> in progress</span>
+      <span><strong>{{ status.get('sources_blocked', 0) }}</strong> blocked on decisions</span>
+      <span><strong>{{ status.get('sources_recoverable', 0) }}</strong> need attention</span>
+      <span><strong>{{ status.get('sources_inventory', 0) }}</strong> in library</span>
       <span><strong>{{ status.holds }}</strong> on hold</span>
+      {% if status.native_total %}<a href="{{ url_for('library') }}" class="muted">View all sources →</a>{% endif %}
     </div>
 
     {# hx-disabled-elt + hx-indicator are htmx-native: the button is disabled and the .stage-busy

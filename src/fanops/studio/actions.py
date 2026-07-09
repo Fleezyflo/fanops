@@ -1008,6 +1008,40 @@ def resume_source_studio(cfg: Config, source_id: str, *, from_stage: str = "auto
     return ActionResult(ok=True, detail={"source_id": source_id})
 
 
+def retire_source_studio(cfg: Config, source_id: str) -> ActionResult:
+    """Retire a source from the Studio (cascade-safe; file kept on disk)."""
+    with Ledger.transaction(cfg) as led:
+        if source_id not in led.sources:
+            return ActionResult(ok=False, error=f"no such source: {source_id}")
+        led.retire_source(source_id)
+    write_audit(cfg, "retire_source", [source_id], reason="studio_retire")
+    return ActionResult(ok=True, detail={"source_id": source_id})
+
+
+def promote_source_studio(cfg: Config, source_id: str) -> ActionResult:
+    """Promote a discovered orphan to catalogued (starts the normal pipeline)."""
+    from fanops.pipeline import promote_source
+    with Ledger.transaction(cfg) as led:
+        if source_id not in led.sources:
+            return ActionResult(ok=False, error=f"no such source: {source_id}")
+        if not promote_source(led, source_id):
+            return ActionResult(ok=False, error=f"source {source_id} is not promotable (state={led.sources[source_id].state.value})")
+    write_audit(cfg, "promote_source", [source_id], reason="studio_promote")
+    return ActionResult(ok=True, detail={"source_id": source_id})
+
+
+def dismiss_gate_studio(cfg: Config, kind: str, key: str) -> ActionResult:
+    """Discard a stuck gate request (operator-confirmed). Does NOT delete the source."""
+    from fanops.agentstep import discard_gates_for
+    from fanops.gate_keys import gate_source_id
+    if kind not in ("moments", "moment_hooks", "captions"):
+        return ActionResult(ok=False, error=f"unknown gate kind: {kind}")
+    n = discard_gates_for(cfg, kind, key)
+    sid = gate_source_id(Ledger.load(cfg), kind, key) or key
+    write_audit(cfg, "dismiss_gate", [sid], reason="studio_dismiss", kind=kind, key=key, discarded=n)
+    return ActionResult(ok=True, detail={"kind": kind, "key": key, "discarded": n})
+
+
 def release_held_clip(cfg: Config, clip_id: str) -> ActionResult:
     """Clear a brand-risk hold from the browser — the UI twin of `fanops unhold`. Reuses the canonical
     transition (cli.py unhold): held->captions_requested so the next advance re-runs the caption gate.

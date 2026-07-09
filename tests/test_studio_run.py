@@ -388,9 +388,12 @@ def test_run_advance_route(tmp_path):
 
 # ---- views.run_next_step (S3: the Make tab's one "do this next" affordance) ----
 def _st(**over):
-    base = dict(sources=0, third_party=0, clips=0, posts=0, awaiting=0, published=0, holds=0, pending_moments=0,
+    base = dict(sources=0, native_total=0, third_party=0, clips=0, posts=0, awaiting=0, published=0, holds=0, pending_moments=0,
                 pending_moment_hooks=0, pending_captions=0, backend="dryrun", accounts=[])
-    base.update(over); return base
+    base.update(over)
+    if "native_total" not in over:
+        base["native_total"] = base.get("sources", 0)
+    return base
 
 
 def test_run_next_step_add_when_no_footage():
