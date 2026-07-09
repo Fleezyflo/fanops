@@ -86,7 +86,7 @@ Distinct from the above: `cutover.py` / `cutover_postiz.py` are a **manual, oper
 | `p4-bias` | `cmd_p4_bias` | Apply cross-account reach dim-bias, inert unless flag on + learning validated | READ-ONLY (local only) |
 | `resolve <post_id> <status>` | `cmd_resolve` | Manually force a post's terminal state (operator escape hatch for ambiguous backend state) | READ-ONLY (local ledger mutation only — records the operator's manual observation of a REAL external event, does not itself call out) |
 | `unhold <clip_id>` | inline in `_dispatch` | Clear a brand-risk hold, re-enter the caption gate | READ-ONLY (local only) |
-| `retry-source <source_id>` | inline in `_dispatch` | Reset a source to `catalogued` to force re-transcribe | READ-ONLY (local only; triggers local whisper re-run on next `advance`, not itself an external call) |
+| `retry-source <source_id> [--from-stage auto\|catalogued\|transcribed] [--force]` | inline in `_dispatch` | Stage-aware source recovery (MOL-121); `--force --from-stage catalogued` purges caches + rewinds terminal sources (MOL-471) | READ-ONLY (local only; triggers local whisper re-run on next `advance`, not itself an external call) |
 | `retry-metrics <post_id>` | inline in `_dispatch` | No-op marker verb — a `published` post is already re-pollable by `track` | READ-ONLY |
 | `discover <folder>` | inline (`discover.discover`) | Scan a folder, write thumbnails + manifest into `00_review/` | READ-ONLY (local ffmpeg thumbnail extraction only) |
 | `intake` | inline (`discover.intake`) | Copy operator-approved `00_review/approved/*` originals into `01_inbox/` | READ-ONLY (local file copy) |
