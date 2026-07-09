@@ -28,7 +28,7 @@ def _cv_off(monkeypatch):
     monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "0")
     monkeypatch.setenv("FANOPS_VISUAL_START", "0")            # isolate from the frame probe
     monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")           # blind centered crop, single-pass path
-    monkeypatch.delenv("FANOPS_BURN_SUBS", raising=False)
+    monkeypatch.setenv("FANOPS_BURN_SUBS", "0")
 
 
 def _seed(cfg):

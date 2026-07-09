@@ -583,14 +583,13 @@ class Config:
 
     @property
     def burn_subs(self) -> bool:
-        # Opt-in toggle for burning the TRANSCRIPT as captions (clip._subtitles_vf). DEFAULT OFF:
-        # captioning what the audio already says is redundant AND only as good as the unreliable
-        # auto-transcription — fine for talking-head content, wrong for music. The on-screen
-        # RETENTION HOOK (m.hook) is a SEPARATE layer that burns by default regardless of this flag;
-        # this only adds the transcript on top. Only the explicit on-words "1"/"true"/"yes"/"on"
-        # enable it; unset/blank/anything else stays OFF. Mirrors creative_variation's opt-in shape.
-        v = (os.getenv("FANOPS_BURN_SUBS") or "").strip().lower()
-        return v in {"1", "true", "yes", "on"}
+        # Toggle for burning the TRANSCRIPT as captions (clip._subtitles_vf). DEFAULT ON: transcript
+        # subs ship live with no operator action; music batches opt out per-batch (Batch.burn_subs=False).
+        # The on-screen RETENTION HOOK (m.hook) is a SEPARATE layer that burns regardless of this flag;
+        # this only adds the transcript on top. Only the explicit off-words "0"/"false"/"no"/"off"
+        # disable it; unset/blank/anything else stays ON. Mirrors isolate_vocals' default-on shape.
+        v = os.getenv("FANOPS_BURN_SUBS")
+        return (v or "").strip().lower() not in {"0", "false", "no", "off"}
 
     @property
     def aware_reframe(self) -> bool:
