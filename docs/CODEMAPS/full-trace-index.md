@@ -66,7 +66,7 @@ C10 Studio views ──pure read projections of C1 (Ledger.load, no writes)─�
 ```
 
 C1 (`models.py`/`ledger.py`) is the hub every other cluster reads and writes through — the single
-JSON ledger, flock-guarded, atomic-replace. No cluster talks to another cluster's state directly;
+SQLite/WAL ledger, BEGIN IMMEDIATE-guarded, transactional replace. No cluster talks to another cluster's state directly;
 all cross-cluster communication is mediated by ledger unit state transitions (see
 [data.md](data.md) for the full Source→Moment→Clip→Post lifecycle).
 

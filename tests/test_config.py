@@ -79,7 +79,8 @@ def test_dirs(tmp_path):
     c = Config(root=tmp_path)
     assert c.inbox == tmp_path / "MohFlow-FanOps" / "01_inbox"
     assert c.agent_io == tmp_path / "MohFlow-FanOps" / "04_agent_io"
-    assert c.ledger_path == tmp_path / "MohFlow-FanOps" / "00_control" / "ledger.json"
+    assert c.ledger_path == tmp_path / "MohFlow-FanOps" / "00_control" / "ledger.sqlite"
+    assert c.legacy_ledger_json_path == tmp_path / "MohFlow-FanOps" / "00_control" / "ledger.json"
     assert c.reports == tmp_path / "MohFlow-FanOps" / "07_reports"
 
 def test_poster_default_dryrun(monkeypatch, tmp_path):

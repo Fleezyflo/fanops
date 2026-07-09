@@ -1,6 +1,6 @@
-# src/fanops/ledger_sqlite.py — MOL-347: SQLite/WAL LedgerStore backend (standalone, not wired).
+# src/fanops/ledger_sqlite.py — MOL-347: SQLite/WAL LedgerStore backend (sole production backend).
 from __future__ import annotations
-import json, os, shutil, sqlite3
+import json, os, sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 from fanops.config import Config
@@ -18,7 +18,7 @@ class SqliteLedgerStore:
     """SQLite/WAL persistence implementing LedgerStore (MOL-347). Schema: ledger_meta + ledger_rows kv."""
     def __init__(self, cfg: Config):
         self.cfg = cfg
-        self.db_path = cfg.ledger_path.with_suffix(".sqlite")
+        self.db_path = cfg.ledger_path
         self._conn: sqlite3.Connection | None = None
 
     def _open(self, *, timeout: float | None = None) -> sqlite3.Connection:
@@ -74,7 +74,12 @@ class SqliteLedgerStore:
             if own: conn.rollback()
             raise
         finally:
-            if own: conn.close()
+            if own:
+                try: conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                except sqlite3.OperationalError: pass
+                conn.close()
+        try: os.chmod(self.db_path, 0o600)
+        except OSError: pass
 
     @contextmanager
     def lock(self, timeout: float | None = None):
@@ -90,6 +95,8 @@ class SqliteLedgerStore:
                     f"ledger lock busy > {tout}s (another fanops process is writing): {self.db_path}") from err
             yield
             self._conn.commit()
+            try: self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            except sqlite3.OperationalError: pass
         except LockBusyError:
             self._conn.rollback()
             raise
@@ -121,16 +128,24 @@ class SqliteLedgerStore:
     def restore(self, src: Path) -> None:
         if not src.exists():
             raise ControlFileError(_reason("ledger snapshot not found", str(src)))
-        if self._conn is not None:
+        relock = self._conn is not None
+        if relock:
             self._conn.commit()
             self._conn.close()
-            tmp = self.db_path.with_suffix(".sqlite.tmp")
-            shutil.copy2(str(src), str(tmp))
-            os.replace(str(tmp), str(self.db_path))
-            self._conn = self._open()
-            self._conn.execute("BEGIN IMMEDIATE")
-            return
+            self._conn = None
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.db_path.with_suffix(".sqlite.tmp")
-        shutil.copy2(str(src), str(tmp))
+        if tmp.exists(): tmp.unlink()
+        src_conn = sqlite3.connect(str(src))
+        dst_conn = sqlite3.connect(str(tmp))
+        try:
+            src_conn.backup(dst_conn)
+        finally:
+            src_conn.close()
+            dst_conn.close()
+        try: os.chmod(tmp, 0o600)
+        except OSError: pass
         os.replace(str(tmp), str(self.db_path))
+        if relock:
+            self._conn = self._open()
+            self._conn.execute("BEGIN IMMEDIATE")

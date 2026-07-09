@@ -182,9 +182,16 @@ def snapshot_is_restorable(snapshot_path: "Path | str") -> bool:
         src = Path(snapshot_path)
         if not src.exists():
             return False
-        doc = json.loads(src.read_text())
-        # the ledger doc is a dict carrying the id->unit maps; a valid image has at least the posts map key.
-        return isinstance(doc, dict) and "posts" in doc
+        if src.suffix == ".json":
+            doc = json.loads(src.read_text())
+            return isinstance(doc, dict) and "posts" in doc
+        import sqlite3
+        conn = sqlite3.connect(f"file:{src}?mode=ro", uri=True)
+        try:
+            row = conn.execute("SELECT value FROM ledger_meta WHERE key='schema_version'").fetchone()
+            return row is not None
+        finally:
+            conn.close()
     except Exception:
         logger.warning("snapshot restorability check failed (fail-open, treated as unrestorable)", exc_info=True)
         return False

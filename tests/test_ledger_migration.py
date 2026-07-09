@@ -11,8 +11,10 @@ from fanops.timeutil import parse_iso
 
 
 def _write(cfg, raw):
-    cfg.ledger_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg.ledger_path.write_text(json.dumps(raw))
+    cfg.legacy_ledger_json_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.legacy_ledger_json_path.write_text(json.dumps(raw))
+    if cfg.ledger_path.exists():
+        cfg.ledger_path.unlink()
 
 
 def test_schema_version_is_eleven():
@@ -57,7 +59,7 @@ def test_migration_v2_to_v3_round_trip(tmp_path):
     # Save re-stamps schema_version to current; reload is a no-op (created_at unchanged = idempotent).
     with Ledger.transaction(cfg):
         pass
-    assert json.loads(cfg.ledger_path.read_text())["schema_version"] == SCHEMA_VERSION
+    assert Ledger.load(cfg)._to_doc()["schema_version"] == SCHEMA_VERSION
     led2 = Ledger.load(cfg)
     assert led2.posts["p_sched"].created_at == led.posts["p_sched"].created_at
     assert led2.sources["src_aaaaaaaaaaaa"].created_at == led.sources["src_aaaaaaaaaaaa"].created_at
@@ -85,7 +87,7 @@ def test_migration_v0_to_v5_full_chain(tmp_path):
     assert led.posts["p1"].metrics_series == []                    # no metrics -> no legacy row
     with Ledger.transaction(cfg):
         pass
-    assert json.loads(cfg.ledger_path.read_text())["schema_version"] == SCHEMA_VERSION
+    assert Ledger.load(cfg)._to_doc()["schema_version"] == SCHEMA_VERSION
 
 
 def test_migration_v0_source_missing_source_path_no_crash(tmp_path):
@@ -234,4 +236,4 @@ def test_migration_v4_to_v5_injects_empty_batches(tmp_path):
     assert led.renders == {}                                        # v5->v6 step injects the empty renders map
     with Ledger.transaction(cfg):
         pass
-    assert json.loads(cfg.ledger_path.read_text())["schema_version"] == SCHEMA_VERSION
+    assert Ledger.load(cfg)._to_doc()["schema_version"] == SCHEMA_VERSION

@@ -1,6 +1,6 @@
 # tests/test_ledger_wipe.py — ledger-rebuild M4 (MOL-32/33): the fall-away of unbacked rows.
 # MACHINERY ONLY — never executed against live 00_control here (tmp-path fixtures only). Two pieces:
-#   MOL-32: a mandatory pre-wipe ledger.json SNAPSHOT that is VERIFIED restorable (write -> corrupt ->
+#   MOL-32: a mandatory pre-wipe ledger.sqlite SNAPSHOT that is VERIFIED restorable (write -> corrupt ->
 #           restore -> byte-identical), and the wipe REFUSES to run without it.
 #   MOL-33: the transitive-complement SELECTOR + per-entity disposition. Keep-guard keys on POST STATE
 #           (analyzed/has-history), NEVER live-match. Remove ONLY rows whose entire descendant closure
@@ -113,14 +113,12 @@ def test_preview_counts_match_plan(tmp_path):
 def test_snapshot_written_and_restorable(tmp_path):
     cfg = Config(root=tmp_path)
     _live_shaped(cfg)
-    original = cfg.ledger_path.read_bytes()
-    snap = Ledger.snapshot(cfg)                             # writes a timestamped copy under 00_control
+    original_doc = Ledger.load(cfg)._to_doc()
+    snap = Ledger.snapshot(cfg)
     assert snap.exists()
-    # corrupt the live ledger, then restore -> byte-identical to pre-corruption
-    cfg.ledger_path.write_text('{"schema_version": 11, "posts": {}}')
+    cfg.ledger_path.write_bytes(b"CORRUPT")
     Ledger.restore_snapshot(cfg, snap)
-    assert cfg.ledger_path.read_bytes() == original
-    Ledger.load(cfg)                                       # the restored ledger loads cleanly
+    assert Ledger.load(cfg)._to_doc() == original_doc
 
 
 def test_snapshot_verify_restorable_catches_bad_snapshot(tmp_path):
@@ -128,8 +126,10 @@ def test_snapshot_verify_restorable_catches_bad_snapshot(tmp_path):
     _live_shaped(cfg)
     # a snapshot that doesn't load must be detected as NOT verified-restorable
     assert ledger_wipe.snapshot_is_restorable(cfg.ledger_path) is True
-    bad = tmp_path / "bad.json"; bad.write_text("{ not json")
+    bad = tmp_path / "bad.sqlite"; bad.write_bytes(b"not a db")
     assert ledger_wipe.snapshot_is_restorable(bad) is False
+    legacy = tmp_path / "legacy.json"; legacy.write_text('{"schema_version": 11, "posts": {}}')
+    assert ledger_wipe.snapshot_is_restorable(legacy) is True
 
 
 # ---- MOL-75: same-second snapshots must not clobber the pre-wipe rollback point ----
@@ -151,8 +151,8 @@ def test_two_same_second_snapshots_yield_two_distinct_surviving_files(tmp_path):
 
     assert snap1 != snap2                                        # structurally-unique dest paths
     assert snap1.exists() and snap2.exists()                    # neither clobbered
-    assert snap1.read_bytes() == first_image                    # the pristine first image is intact
-    assert snap2.read_bytes() != first_image                    # the second captured the mutated state
+    assert snap1.read_bytes() == first_image
+    assert snap2.read_bytes() != first_image
     # both remain valid rollback points (the wipe gate still accepts them)
     assert ledger_wipe.snapshot_is_restorable(snap1) is True
     assert ledger_wipe.snapshot_is_restorable(snap2) is True
@@ -168,7 +168,7 @@ def test_snapshot_refuses_to_overwrite_an_existing_path(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path)
     _live_shaped(cfg)
     # force both snapshots onto ONE fixed destination path to exercise the existence check directly
-    fixed_dest = cfg.control / "ledger.snapshot.COLLIDE.json"
+    fixed_dest = cfg.control / "ledger.snapshot.COLLIDE.sqlite"
     monkeypatch.setattr(ledger_mod, "_snapshot_dest", lambda cfg, now: fixed_dest)
     first = Ledger.snapshot(cfg)
     assert first == fixed_dest and first.exists()

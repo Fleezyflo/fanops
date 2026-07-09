@@ -15,7 +15,7 @@
 | `src/fanops/log.py` | 30 | Yes |
 | `src/fanops/stage_lock.py` | 73 | Yes |
 
-Total: 2,877 lines, 10/10 files, zero omissions. Cross-checked against `.reports/structural_index.json` and `.reports/call_graph.json`. The `fcntl.flock`-based locking claim was independently spot-verified against source (`grep -n "flock" ledger.py stage_lock.py`) — confirmed accurate.
+Total: 2,877 lines, 10/10 files, zero omissions. Cross-checked against `.reports/structural_index.json` and `.reports/call_graph.json`. The SQLite WAL + BEGIN IMMEDIATE locking claim was independently spot-verified against source (`ledger_sqlite.py`).
 
 ## Data model (entities/fields/relationships)
 
@@ -153,7 +153,7 @@ Defines every persisted unit (Source→Moment→Clip→Post + Render/StitchPlan/
 Callers (from call_graph.json / grep): every pipeline module (`ledger.py`, `crosspost.py`, `casting.py`, `moments.py`, `clip.py`, `caption.py`, `intro_match.py`, `stitch_render.py`) plus the entire Studio surface imports these models directly. This is the most widely-imported module in the repo.
 
 ### `ledger.py` — purpose
-Single source of truth persistence layer: one JSON document holding id→unit maps, atomic file-lock-protected writes, and the schema-migration chain. Owns all mutation primitives (typed state setters, cascade-delete, reconcile-upsert).
+Single source of truth persistence layer: SQLite/WAL database (ledger.sqlite) holding id→unit maps, BEGIN IMMEDIATE-protected writes, and the schema-migration chain. Owns all mutation primitives (typed state setters, cascade-delete, reconcile-upsert).
 
 **Migration/versioning:**
 - `_migrate_v3_created_at(raw) -> dict` (ledger.py:25-55) — v2→v3 pure-dict transform, backfills `created_at` on Source/Post rows. Never raises.
@@ -165,8 +165,9 @@ Single source of truth persistence layer: one JSON document holding id→unit ma
 - `SCHEMA_VERSION = 11` (ledger.py) — v11 drops retired selection maps (P12/MOL-154).
 - `_SID_RE` (ledger.py:196) — regex `^src_[0-9a-f]{12}$`.
 
-**Locking:**
-- `_file_lock(lock_path, timeout=None)` (ledger.py:224-256) — `@contextmanager`; `fcntl.flock(fd, LOCK_EX|LOCK_NB)` in a poll loop, bounded by `timeout` (default `_DEFAULT_LOCK_TIMEOUT=30.0`). Raises typed `LockBusyError` on timeout. Kernel releases lock on process death (self-healing).
+**Locking (SqliteLedgerStore — M1-F):**
+- `SqliteLedgerStore.lock()` — `BEGIN IMMEDIATE` with busy_timeout poll (default 30s), `LockBusyError` on timeout.
+- `LedgerStore` protocol (`ledger.py`) — `read_raw` / `write_raw` / `lock` / `snapshot` / `restore`; sole impl is `SqliteLedgerStore`.
 
 **Errors:**
 - `_NewerSchema(ControlFileError)` (ledger.py:199-206) — raised when on-disk schema is newer than this binary.
@@ -175,11 +176,11 @@ Single source of truth persistence layer: one JSON document holding id→unit ma
 **`Ledger` class:**
 - `__init__(cfg)` (ledger.py:276-307) — initializes empty dict maps.
 - `Ledger.load(cfg) -> Ledger` (classmethod, ledger.py:309-350) — reads, checks schema_version, migrates, dedupes, constructs models. Wraps any exception as `ControlFileError`. Called by 60+ sites.
-- `Ledger.transaction(cfg, timeout=None)` (classmethod contextmanager, ledger.py:352-370) — holds `_file_lock` across load-mutate-save. Called by ~40 sites.
-- `_save_unlocked()` (ledger.py:372-405) — writes whole ledger dict to `.json.tmp`, chmod 0o600 best-effort, `os.replace` atomic.
-- `save()` (ledger.py:407-414) — standalone save, acquires lock itself.
-- `Ledger.snapshot(cfg, now=None) -> Path` (classmethod, ledger.py:421-434) — timestamped byte-copy under lock.
-- `Ledger.restore_snapshot(cfg, snapshot_path)` (classmethod, ledger.py:436-447) — atomic restore under lock.
+- `Ledger.transaction(cfg, timeout=None)` (classmethod contextmanager) — holds `SqliteLedgerStore.lock()` across load-mutate-save. Called by ~40 sites.
+- `_save_unlocked()` — `write_raw` full doc replace inside the held txn.
+- `save()` — standalone save, acquires lock itself.
+- `Ledger.snapshot(cfg, now=None) -> Path` — timestamped SQLite `.backup()` under lock.
+- `Ledger.restore_snapshot(cfg, snapshot_path)` — atomic restore via store `.backup()` + `os.replace`.
 - Idempotent adds (ledger.py:450-459): `add_source`, `add_moment`, `add_clip`, `add_post`, `add_render`, `get_render`, `add_selection_fact`, `get_selection_fact`, `add_imported_media`, `get_imported_media`.
 - `add_account_selection(s)` (ledger.py:460-468) — normalizes handle, dedups @-aliases, overwrites canonical slot.
 - `account_selection_for`, `selections_of_source`, `drop_account_selection` (ledger.py:469-474) — query/delete helpers.
@@ -270,16 +271,16 @@ Per-stage producer lock (mutex) keyed by `(stage, source_id)`.
 
 ## Cross-cutting: locking/atomicity/persistence contract
 
-**File format:** one JSON document at `00_control/ledger.json` with `{"schema_version": int, "sources": {}, "moments": {}, "clips": {}, "posts": {}, "tag_log": {}, "variant_streaks": {}, "stitch_plans": {}, "batches": {}, "renders": {}, "selection_facts": {}, "account_selections": {}, "imported_media": {}}`.
+**File format:** SQLite database at `00_control/ledger.sqlite` (legacy `ledger.json` is break-glass import-only) with `{"schema_version": int, "sources": {}, "moments": {}, "clips": {}, "posts": {}, "tag_log": {}, "variant_streaks": {}, "stitch_plans": {}, "batches": {}, "renders": {}, "selection_facts": {}, "account_selections": {}, "imported_media": {}}`.
 
-**Locking strategy — confirmed `fcntl.flock`-based, exactly per CLAUDE.md:**
-- `ledger._file_lock` (ledger.py:224-256): `fcntl.flock(fd, LOCK_EX|LOCK_NB)` poll loop, 30s default timeout, `LockBusyError` on timeout. Kernel releases lock on process death — self-healing, unlike an `O_EXCL` sentinel file.
+**Locking strategy — SQLite WAL + BEGIN IMMEDIATE (M1-F):**
+- `SqliteLedgerStore.lock`: `BEGIN IMMEDIATE` with busy_timeout poll, 30s default timeout, `LockBusyError` on timeout. Kernel releases lock on process death — self-healing, unlike an `O_EXCL` sentinel file.
 - `stage_lock.stage_lock` mirrors this exactly with `StageBusyError` and 7200s default timeout.
 
-**Atomicity guarantee:** every write follows temp-file + `os.replace`:
-- `Ledger._save_unlocked` — `.json.tmp` + chmod 0600 best-effort + `os.replace`.
-- `Ledger.snapshot`/`restore_snapshot` — `shutil.copy2` under lock / tmp+replace.
-- `controlio.write_json_atomic` — `tempfile.mkstemp` with a UNIQUE temp name (multi-writer safe, unlike ledger's fixed `.tmp` suffix which relies on single-writer-under-flock).
+**Atomicity guarantee:** every write is a full replace inside `BEGIN IMMEDIATE`:
+- `SqliteLedgerStore.write_raw` — DELETE+INSERT ledger_meta/ledger_rows, WAL checkpoint on commit.
+- `Ledger.snapshot`/`restore_snapshot` — SQLite `.backup()` API under lock / tmp+`os.replace`.
+- `controlio.write_json_atomic` — `tempfile.mkstemp` with a UNIQUE temp name (multi-writer safe for JSON control files).
 
 **Load/save contract:**
 1. `Ledger.load(cfg)` — no lock held (only `transaction()` holds across load+mutate+save).

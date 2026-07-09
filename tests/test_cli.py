@@ -59,11 +59,11 @@ def test_corrupt_ledger_exits_cleanly_no_traceback(tmp_path, monkeypatch, capsys
     from fanops.config import Config
     cfg = Config(root=tmp_path)
     cfg.ledger_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg.ledger_path.write_text('{"sources": {,}}')          # not valid JSON
-    rc = main(["status"])                                    # status loads the ledger first
-    assert rc == 2                                           # clean nonzero (not a crash, not 0)
+    cfg.ledger_path.write_bytes(b'{"sources": {,}}')
+    rc = main(["status"])
+    assert rc == 2
     err = capsys.readouterr().err
-    assert "ledger.json invalid:" in err and "Traceback" not in err
+    assert "ledger.sqlite invalid:" in err and "Traceback" not in err
 
 def test_corrupt_accounts_exits_cleanly_no_traceback(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)

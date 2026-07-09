@@ -1,12 +1,12 @@
 <!-- Generated: 2026-06-19 | Files scanned: models.py, ledger.py, config.py, accounts.py, ingest.py, router.py, stitch_render.py, impact_cut.py, intro_match.py, compose.py, cutover.py, post/run.py, studio/views.py | Token estimate: ~1080 | incl. content-lifecycle + Account-First (SCHEMA_VERSION=8, born-awaiting_approval, day-bucket archive, batches/renders/selection_facts maps) -->
 # FanOps Data
 
-No database. ONE JSON ledger + operator-editable control files, all under the data tree.
+No database server. ONE SQLite/WAL ledger (`ledger.sqlite`) + operator-editable control files, all under the data tree. Legacy `ledger.json` is break-glass import-only (pre-flip JSON snapshot is the operator rollback artifact).
 
 ## Data tree (config.py — `<root>/MohFlow-FanOps/`)
 
 ```
-00_control/   ledger.json ledger.lock accounts.json accounts.lock personas.json personas.lock context.md tuning.json ledger_digest.md cutover.json
+00_control/   ledger.sqlite ledger.json(break-glass) accounts.json accounts.lock personas.json personas.lock context.md tuning.json ledger_digest.md cutover.json
 00_review/    manifest.json intaken.json *.jpg + approved/   (discover/intake staging)
 01_inbox/     dropped/pulled media awaiting ingest (native — the pipeline cuts these)
 01_thirdparty_inbox/   M1: PEER of 01_inbox (outside the native rglob) — handed-in third-party assets (video/photo), catalogued as origin_kind=third_party, INERT to clip-production
@@ -21,10 +21,10 @@ No database. ONE JSON ledger + operator-editable control files, all under the da
 
 ## Ledger (ledger.py — single state store)
 
-- Concurrency: `fcntl.flock` on ledger.lock (self-heals orphans), 30s bounded wait -> typed
-  LockBusyError. `Ledger.transaction()` holds the lock across load→mutate→save.
-- Writes: tmp file + `os.replace` (atomic). Reads in Studio are lock-free (atomic replace
-  guarantees a complete file). Malformed JSON -> typed ControlFileError (clean exit 2).
+- Concurrency: SQLite WAL + BEGIN IMMEDIATE on ledger.sqlite (30s busy_timeout -> typed LockBusyError).
+  `Ledger.transaction()` holds the write txn across load→mutate→save.
+- Writes: full replace of ledger_meta/ledger_rows inside the txn; snapshot/restore via SQLite `.backup()`.
+  Reads in Studio are lock-free (WAL readers see a consistent snapshot). Malformed DB -> typed ControlFileError (clean exit 2).
 - Doc shape: 4 unit maps keyed by content-addressed id + `variant_streaks` + `tag_log` + `stitch_plans`
   (M3 structural-hooks) + `batches` (Account-First: named, account-targeted ingest groups) + `renders`
   (per-account Render foundation: the per-account shippable artifacts) + `selection_facts` (M4: durable

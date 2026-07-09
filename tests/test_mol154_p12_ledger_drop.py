@@ -8,8 +8,10 @@ from fanops.models import Post, Platform, PostState
 
 
 def _write(cfg, raw):
-    cfg.ledger_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg.ledger_path.write_text(json.dumps(raw))
+    cfg.legacy_ledger_json_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.legacy_ledger_json_path.write_text(json.dumps(raw))
+    if cfg.ledger_path.exists():
+        cfg.ledger_path.unlink()
 
 
 def test_schema_version_is_11():
@@ -37,7 +39,7 @@ def test_migration_v10_to_v11_drops_selections(tmp_path):
     assert "p1" in led.posts
     with Ledger.transaction(cfg):
         pass
-    saved = json.loads(cfg.ledger_path.read_text())
+    saved = Ledger.load(cfg)._to_doc()
     assert saved["schema_version"] == 11
     assert "selection_facts" not in saved and "account_selections" not in saved
 
@@ -56,7 +58,7 @@ def test_v8_ledger_upgrades_through_v11(tmp_path):
     assert not hasattr(led, "account_selections")
     with Ledger.transaction(cfg):
         pass
-    saved = json.loads(cfg.ledger_path.read_text())
+    saved = Ledger.load(cfg)._to_doc()
     assert saved["schema_version"] == 11
     assert "account_selections" not in saved and "selection_facts" not in saved
 

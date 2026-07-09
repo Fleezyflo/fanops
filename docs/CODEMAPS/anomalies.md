@@ -21,7 +21,7 @@ re-requests every tick with no operator-visible terminal). That class is now nam
 - `log.py:15` `get_logger` — `except OSError: pass` around best-effort file-creation/chmod. Intentional fail-open, inconsequential.
 - `ledger.py:404` `_save_unlocked` — `except OSError: pass` around `os.chmod(tmp, 0o600)`. Intentional; atomic replace unaffected.
 - `ledger_wipe.py:188` `snapshot_is_restorable` — `except Exception: return False`. Broad but correct fail-closed for a destructive-wipe gate; **swallows the error reason with no logging** — diagnosability gap, not a correctness bug.
-- `ledger.py:2` — stale module docstring ("one JSON doc, four id->unit maps") — schema now has 10+ maps. Documentation drift only.
+- `ledger.py:2` — stale module docstring ("SQLite WAL ledger") — schema now has 10+ maps. Documentation drift only.
 - `models.py:42-52` — `RenderState` enum members `queued`/`published`/`analyzed`/`retired` — self-documented reservation, no writer, dead-by-design.
 - `models.py:484-485` — `BatchState.closed`/`BatchState.error` — same reservation pattern, no writer found.
 
