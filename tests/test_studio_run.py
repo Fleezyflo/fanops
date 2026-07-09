@@ -1,7 +1,6 @@
 # tests/test_studio_run.py — Studio as pipeline DRIVER: ingest/advance/pull from the browser through
 # the same lock-safe paths the CLI uses, so the operator never needs the terminal.
 import json
-import os
 from types import SimpleNamespace
 from fanops.config import Config
 from fanops.ledger import Ledger

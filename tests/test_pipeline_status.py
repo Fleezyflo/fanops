@@ -1,6 +1,5 @@
 # tests/test_pipeline_status.py
 """Pipeline control-plane status: run=, wait=, and source visibility for stuck gates."""
-import json
 
 from fanops.config import Config
 from fanops.ledger import Ledger
