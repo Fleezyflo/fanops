@@ -31,7 +31,7 @@ def _ingest_picks(led, cfg, source_id, picks):
 def _decide_hooks(led, cfg, source_id, hooks=None, accounts=None):
     """PASS 2 for every `picked` moment of the source: open the per-pick hook gates, answer each from
     `hooks` (token -> hook str, or token -> (hook, hooks_by_persona)), then ingest -> `decided`. A token
-    absent from `hooks` is answered with hook=null (a clean clip)."""
+    absent from `hooks` is answered with hook=null (MOL-476: triggers bounded retry, not clean)."""
     hooks = hooks or {}
     led = request_moment_hooks(led, cfg, source_id, accounts=accounts)
     for m in [m for m in led.moments.values()
@@ -577,16 +577,15 @@ def test_decide_hooks_promotes_picked_to_decided_with_window_hook(tmp_path):
     assert m.state is MomentState.decided and m.hook == "wait for the beat switch"
     assert led.sources["src_1"].state is SourceState.moments_decided
 
-def test_decide_hooks_null_hook_decides_clean(tmp_path):
-    # The author legitimately returns hook=null (no honest hook -> better CLEAN than slop): the pick still
-    # PROMOTES to decided (renderable, just clean), never wedged forever in `picked`.
+def test_decide_hooks_null_hook_retries_not_clean(tmp_path):
+    # MOL-476: null author hook -> bounded retry (discard gate), not silent clean promotion.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
     led = request_moments(led, cfg, "src_1")
     led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=18.5, reason="punchline")])
     led = _decide_hooks(led, cfg, "src_1", {"14.00-18.50": None})
     m = led.moments_of("src_1")[0]
-    assert m.state is MomentState.decided and m.hook is None
-    assert led.sources["src_1"].state is SourceState.moments_decided
+    assert m.state is MomentState.picked and m.hook is None
+    assert led.sources["src_1"].state is SourceState.picks_decided
 
 def test_ingest_moment_hooks_pending_gate_keeps_moment_picked(tmp_path):
     # No response yet -> the moment STAYS picked (re-checked next pass, VISIBLE in the awaiting count) and
@@ -606,16 +605,17 @@ def test_decide_hooks_sanitizes_em_dash_in_hook(tmp_path):
     led = _decide_hooks(led, cfg, "src_1", {"14.00-18.50": "the switch — you feel it"})
     assert "—" not in (led.moments_of("src_1")[0].hook or "")
 
-def test_decide_hooks_without_hook_shows_no_onscreen_text(tmp_path):
-    # A pick whose gate isn't answered with a hook ends CLEAN — never the transcript first-clause (burning
-    # the unreliable auto-transcript is the exact slop the operator rejected).
+def test_decide_hooks_without_hook_retries_not_transcript_fallback(tmp_path):
+    # MOL-476: a null author hook retries — never silently promotes clean and never burns the transcript.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
     led = request_moments(led, cfg, "src_1")
     led = _ingest_picks(led, cfg, "src_1",
                         [MomentPick(start=14.0, end=18.5, reason="punchline",
                                     transcript_excerpt="This changed everything for me.")])
-    led = _decide_hooks(led, cfg, "src_1")            # no hook supplied -> null
-    assert led.moments_of("src_1")[0].hook is None    # clean clip — NOT the transcript first-clause
+    led = _decide_hooks(led, cfg, "src_1")            # no hook supplied -> null -> retry
+    m = led.moments_of("src_1")[0]
+    assert m.state is MomentState.picked and m.hook is None
+    assert led.sources["src_1"].state is SourceState.picks_decided
 
 def test_decide_hooks_rejects_mechanical_dup_hook_to_clean_clip(tmp_path):
     # The deterministic MECHANICAL floor (is_weak_hook) applies through the HOOK pass now: a window hook
