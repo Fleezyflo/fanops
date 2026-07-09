@@ -18,7 +18,7 @@ _INTERNAL_MODULES = (
     "lever_docs.py",
     "ledger.py",
 )
-_CLI_PRINT_COUNT = 120  # MOL-352 --loop added 2 user-facing prints; cli untouched by MOL-358
+_CLI_PRINT_COUNT = 121  # MOL-471 retry-source not-recoverable stderr print
 _SRC = Path(__file__).resolve().parents[1] / "src" / "fanops"
 
 

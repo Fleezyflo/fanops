@@ -58,13 +58,36 @@ def _parse(ts):
 # list) resumes at `transcribed` (re-enters at signals, transcript + flag preserved); anything else
 # (None, [], or an explicit from_stage='catalogued') is the legacy full retry. Refuses a healthy source
 # (only error / moments_empty are recoverable) so an in-flight source is never silently rewound.
+# MOL-471: `--force --from-stage catalogued` is the explicit operator gate for a T0 reset on terminal
+# sources (moments_decided, retired, …) — purge disk caches, discard gates, reconcile moments away.
 _RESUMABLE = (SourceState.error, SourceState.moments_empty)
-def resume_source(led: Ledger, source_id: str, *, from_stage: str = "auto") -> bool:
+_FORCE_RESUMABLE = (SourceState.moments_decided, SourceState.retired, SourceState.picks_decided,
+                    SourceState.moments_requested, SourceState.signalled, SourceState.transcribed)
+def _force_reset_to_catalogued(led: Ledger, cfg: Config, source_id: str, s) -> None:
+    from fanops.agentstep import discard_gates_for
+    from fanops.transcribe import purge_source_artifacts
+    purge_source_artifacts(cfg, source_id, s.source_path)
+    discard_gates_for(cfg, "moments", source_id)
+    discard_gates_for(cfg, "moment_hooks", f"{source_id}.")
+    led.reconcile_moments(source_id, {})
+    s.transcript = None; s.language = None
+    s.meta["transcribed"] = False; s.meta.pop("vocals_isolated", None)
+    s.state = SourceState.catalogued; s.error_reason = None
+def resume_source(led: Ledger, source_id: str, *, from_stage: str = "auto", force: bool = False,
+                  cfg: Config | None = None) -> bool:
     """Transition an errored/empty source back into the pipeline. Returns True iff a transition was
     applied. Caller owns the ledger transaction. `from_stage`: 'auto' (default) preserves a good
-    transcript; 'catalogued' forces a full re-transcribe; 'transcribed' forces resume-at-signals."""
+    transcript; 'catalogued' forces a full re-transcribe; 'transcribed' forces resume-at-signals.
+    `force` + `from_stage='catalogued'` is the T0 reset recipe (purge caches, discard gates, rewind)."""
     s = led.sources.get(source_id)
-    if s is None or s.state not in _RESUMABLE:
+    if s is None:
+        return False
+    if force and from_stage == "catalogued":
+        if cfg is None or s.state not in _FORCE_RESUMABLE + _RESUMABLE:
+            return False
+        _force_reset_to_catalogued(led, cfg, source_id, s)
+        return True
+    if s.state not in _RESUMABLE:
         return False
     has_transcript = bool(s.transcript)                     # None or [] -> nothing to preserve
     resume_at_signals = from_stage == "transcribed" or (from_stage == "auto" and has_transcript)

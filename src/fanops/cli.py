@@ -615,6 +615,7 @@ def main(argv: list[str] | None = None) -> int:
     p_unh = sub.add_parser("unhold"); p_unh.add_argument("clip_id")
     p_rs = sub.add_parser("retry-source"); p_rs.add_argument("source_id")
     p_rs.add_argument("--from-stage", choices=["auto", "catalogued", "transcribed"], default="auto")   # MOL-121: AUTO preserves a good transcript
+    p_rs.add_argument("--force", action="store_true", help="MOL-471: purge caches + rewind terminal sources to catalogued (requires --from-stage catalogued)")
     p_rm = sub.add_parser("retry-metrics"); p_rm.add_argument("post_id")
     p_disc = sub.add_parser("discover"); p_disc.add_argument("folder")
     sub.add_parser("intake")
@@ -1000,7 +1001,9 @@ def _dispatch(cfg: Config, args) -> int:
         with Ledger.transaction(cfg) as led:
             if args.source_id not in led.sources:
                 print(f"no such source: {args.source_id}", file=sys.stderr); return 2
-            resume_source(led, args.source_id, from_stage=args.from_stage)   # MOL-121: AUTO keeps a good transcript
+            if not resume_source(led, args.source_id, from_stage=args.from_stage, force=args.force, cfg=cfg):
+                st = led.sources[args.source_id].state.value
+                print(f"retry-source {args.source_id}: not recoverable (state={st}; use --force --from-stage catalogued for terminal sources)", file=sys.stderr); return 2
         print(f"retry-source {args.source_id}"); return 0
     if args.cmd == "retry-metrics":
         from fanops.models import PostState
