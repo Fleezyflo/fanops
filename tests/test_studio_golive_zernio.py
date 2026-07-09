@@ -10,6 +10,7 @@ pytest.importorskip("flask")
 from fanops.config import Config
 from fanops.errors import ZernioAuthError
 from fanops.studio import golive, views
+from tests.keyring_fake import install_mem_keyring
 
 _KEYS = ("ZERNIO_API_KEY", "FANOPS_POSTER")
 _BASELINE = {k: os.environ.get(k) for k in _KEYS}
@@ -19,6 +20,10 @@ def _restore_env():
     yield
     for k, v in _BASELINE.items():
         os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
+
+@pytest.fixture(autouse=True)
+def _mem_keyring(monkeypatch):
+    install_mem_keyring(monkeypatch)
 
 def _clean(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
@@ -41,7 +46,7 @@ def test_set_zernio_config_dual_writes_and_tests(tmp_path, monkeypatch):
     monkeypatch.setattr(golive.zernio, "zernio_check_auth", lambda c: True)
     res = golive.set_zernio_config(cfg, "sk_SECRETKEY")
     assert res.ok is True
-    assert "ZERNIO_API_KEY=sk_SECRETKEY" in (tmp_path / ".env").read_text()   # durable
+    assert not (tmp_path / ".env").exists() or "ZERNIO_API_KEY" not in (tmp_path / ".env").read_text()
     assert os.environ["ZERNIO_API_KEY"] == "sk_SECRETKEY"                      # in-process
     assert "sk_SECRETKEY" not in json.dumps(res.detail)                        # key NEVER echoed
 

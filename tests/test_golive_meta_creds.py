@@ -10,6 +10,7 @@ import pytest
 from fanops.config import Config
 from fanops.studio import golive
 from fanops import meta_graph
+from tests.keyring_fake import install_mem_keyring
 
 _ENV_KEYS = ("META_IG_USER_ID", "META_GRAPH_TOKEN", "META_GRAPH_TOKEN__STAN", "META_GRAPH_TOKEN__MARKMAKMOULY")
 _ENV_BASELINE = {k: os.environ.get(k) for k in _ENV_KEYS}
@@ -20,6 +21,9 @@ def _restore_env():
     for k, v in _ENV_BASELINE.items():
         os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
 
+@pytest.fixture(autouse=True)
+def _mem_keyring(monkeypatch):
+    install_mem_keyring(monkeypatch)
 
 def _clean(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
@@ -40,10 +44,10 @@ def test_set_meta_creds_writes_ig_id_to_accounts_and_token_write_only(tmp_path, 
     # the ig id (non-secret) landed in accounts.json
     raw = json.loads(cfg.accounts_path.read_text())
     assert raw["accounts"][0]["ig_user_id"] == "ig-stan-99"
-    # the token (SECRET) is dual-written to a PER-HANDLE .env key + os.environ, never accounts.json
-    env = (tmp_path / ".env").read_text()
-    assert "pa-tok" in env                     # durable
-    assert "META_GRAPH_TOKEN__STAN=pa-tok" in env
+    # the token (SECRET) is keyring + os.environ, never accounts.json or plaintext .env
+    env = (tmp_path / ".env").read_text() if (tmp_path / ".env").exists() else ""
+    assert "META_GRAPH_TOKEN__STAN" not in env
+    assert "pa-tok" not in env
     assert os.environ["META_GRAPH_TOKEN__STAN"] == "pa-tok"   # in-process (no restart)
     assert "pa-tok" not in json.dumps(raw)     # NEVER in accounts.json (secrets live in .env)
     # WRITE-ONLY: the token must NEVER appear in the result

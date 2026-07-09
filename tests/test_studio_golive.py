@@ -11,6 +11,7 @@ import pytest
 from fanops.config import Config
 from fanops.errors import PostizAuthError
 from fanops.studio import golive
+from tests.keyring_fake import install_mem_keyring
 
 # os.environ baseline captured at import (before any test mutates it) so the autouse fixture below can
 # undo golive's DIRECT os.environ writes. monkeypatch.delenv of an ALREADY-ABSENT key registers NO
@@ -27,6 +28,9 @@ def _restore_golive_env():
     for k, v in _ENV_BASELINE.items():
         os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
 
+@pytest.fixture(autouse=True)
+def _mem_keyring(monkeypatch):
+    install_mem_keyring(monkeypatch)
 
 def _clean(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
@@ -45,8 +49,8 @@ def test_set_postiz_config_dual_writes_and_tests_auth(tmp_path, monkeypatch):
     monkeypatch.setattr(golive.postiz, "postiz_check_auth", lambda c: True)
     res = golive.set_postiz_config(cfg, "https://postiz.example.com", "SECRETKEY")
     assert res.ok is True
-    env = (tmp_path / ".env").read_text()                # durable
-    assert "POSTIZ_URL=https://postiz.example.com" in env and "POSTIZ_API_KEY=SECRETKEY" in env
+    env = (tmp_path / ".env").read_text()                # durable (URL only — secret is keyring)
+    assert "POSTIZ_URL=https://postiz.example.com" in env and "POSTIZ_API_KEY" not in env
     assert os.environ["POSTIZ_URL"] == "https://postiz.example.com"     # in-process (no restart needed)
     assert os.environ["POSTIZ_API_KEY"] == "SECRETKEY"
     assert "SECRETKEY" not in repr(res)                  # the key must NEVER appear in a result
