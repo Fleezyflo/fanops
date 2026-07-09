@@ -123,7 +123,7 @@ def test_vet_hashtags_store_aware_and_byte_identical_without_store():
 # --- `hashtags discover` REPORTS fresh per-persona tags, NEVER writes the caption menu. Auto-absorbing
 # unvetted discoveries into the menu was DROPPED (an engagement floor admits spam + bypasses the operator
 # curation gate). Curation stays operator-gated in the Studio: discover -> operator ACCEPTS into a corpus.
-def test_cmd_hashtags_discover_reports_and_writes_nothing(tmp_path, monkeypatch, capsys):
+def test_cmd_hashtags_discover_reports_and_writes_nothing(tmp_path, monkeypatch):
     from fanops.fanops_hashtags import cmd_hashtags_discover
     from fanops import personas as P
     cfg = Config(root=tmp_path)
@@ -131,15 +131,18 @@ def test_cmd_hashtags_discover_reports_and_writes_nothing(tmp_path, monkeypatch,
     monkeypatch.setattr("fanops.personas.discover_corpus",
                         lambda c, pid, **k: [{"tag": "#detroitrap", "count": 9}])
     rc = cmd_hashtags_discover(cfg)
-    out = capsys.readouterr().out
-    assert rc == 0 and "#detroitrap" in out and "curator" in out
+    blob = cfg.log_path.read_text()
+    assert rc == 0 and "#detroitrap" in blob and "curator" in blob
     assert not cfg.hashtags_path.exists()                   # discovery NEVER writes the caption menu
 
 
-def test_cmd_hashtags_discover_no_personas(tmp_path, capsys):
+def test_cmd_hashtags_discover_no_personas(tmp_path):
+    import json
     from fanops.fanops_hashtags import cmd_hashtags_discover
-    rc = cmd_hashtags_discover(Config(root=tmp_path))
-    assert rc == 0 and "no personas" in capsys.readouterr().out.lower()
+    cfg = Config(root=tmp_path)
+    rc = cmd_hashtags_discover(cfg)
+    recs = [json.loads(line) for line in cfg.log_path.read_text().splitlines()]
+    assert rc == 0 and any(r["outcome"] == "no_personas" for r in recs)
 
 
 # --- WS2: the run loop refreshes the Graph-reach store on a throttle (constant update), fail-open.
@@ -235,15 +238,17 @@ def test_refresh_store_if_due_corrupt_personas_reports_reason_never_raises(tmp_p
     assert "personas.json invalid:" in r["reason"]
     assert cfg.hashtags_path.read_text() == curated         # curated store preserved
 
-def test_cmd_hashtags_refresh_corrupt_personas_exits_2_and_no_keyerror(tmp_path, monkeypatch, capsys):
+def test_cmd_hashtags_refresh_corrupt_personas_exits_2_and_no_keyerror(tmp_path, monkeypatch):
     # MOL-13 caller contract: `fanops hashtags refresh` used to index r['measured']/['harvested']/['total']
-    # unconditionally and always exit 0. On a corrupt-abort it must NOT KeyError on the abort shape — it prints
-    # the reason loudly and exits 2. The healthy verb still prints its summary and exits 0.
+    # unconditionally and always exit 0. On a corrupt-abort it must NOT KeyError on the abort shape — it logs
+    # the reason loudly and exits 2. The healthy verb still logs its summary and exits 0.
+    import json
     from fanops.fanops_hashtags import cmd_hashtags_refresh
     monkeypatch.setenv("META_GRAPH_TOKEN", "tok"); monkeypatch.setenv("META_IG_USER_ID", "ig")
     cfg = Config(root=tmp_path)
     _write_corrupt_personas(cfg)
     rc = cmd_hashtags_refresh(cfg)
-    err = capsys.readouterr().err                          # the loud abort goes to stderr (CLI-error convention)
+    recs = [json.loads(line) for line in cfg.log_path.read_text().splitlines()]
     assert rc == 2                                          # loud non-zero exit, no KeyError
-    assert "personas.json invalid:" in err and "aborted" in err.lower()
+    aborted = next(r for r in recs if r["outcome"] == "refresh_aborted")
+    assert "personas.json invalid:" in aborted.get("reason", "")

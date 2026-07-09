@@ -227,9 +227,8 @@ def test_delete_moment_cascade_and_protected_states_byte_identical():
     h = hashlib.sha256(src.encode()).hexdigest()
     # if this fails, _delete_moment_cascade was edited — the M4 wipe MUST be a separate verb, never a
     # change to the routine cascade. Re-verify the change is intended, then update this pin.
-    # Repinned MOL-77 (R-037): the intended edit adds a fail-open os.remove of the dropped clip's .mp4 so it
-    # can't leak past gc — the _PROTECTED_POST_STATES survival logic below is unchanged.
-    assert h == "ca8fd847bc7302f6bbd80a98ee0ee2de81a88d37829fb65b836b1e023735ff3e", f"cascade source changed; new sha256={h}"
+    # Repinned MOL-358: cascade unlink warning routes through get_logger (fail-open posture unchanged).
+    assert h == "473fc9c7a87d326d43137b93763055769e3b7fde0fbfeaff3da8a12be5acd044", f"cascade source changed; new sha256={h}"
     assert Ledger._PROTECTED_POST_STATES == (
         PostState.published, PostState.analyzed, PostState.submitted, PostState.submitting,
         PostState.needs_reconcile, PostState.awaiting_approval, PostState.queued, PostState.retired)

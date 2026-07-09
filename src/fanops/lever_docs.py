@@ -182,6 +182,7 @@ def write_docs(cfg: Config, root: Path | None = None) -> tuple[Path, Path]:
 
 
 def cmd_lever_docs(cfg: Config) -> int:
+    from fanops.log import get_logger
     lp, tp = write_docs(cfg)
-    print(f"wrote {lp}\n       {tp}")
+    get_logger(cfg)("lever_docs", "-", "wrote", levers=str(lp), thresholds=str(tp))
     return 0

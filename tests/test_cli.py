@@ -17,10 +17,12 @@ def test_main_status(tmp_path, monkeypatch):
 
 def test_main_learn_doctor_dispatches_read_only(tmp_path, monkeypatch, capsys):
     # `fanops learn doctor` wires to the read-only field-shape verdict; on a default (dryrun) backend
-    # it prints guidance and exits 0 without touching the network.
+    # it logs guidance and exits 0 without touching the network (MOL-358: structured log, not stdout).
+    from fanops.config import Config
     monkeypatch.chdir(tmp_path)
     assert main(["learn", "doctor"]) == 0
-    assert "postiz" in capsys.readouterr().out.lower()
+    log = Config(root=tmp_path).log_path.read_text().lower()
+    assert "postiz" in log
 
 def test_advance_exits_cleanly_when_ffprobe_absent(tmp_path, monkeypatch, capsys):
     # ffprobe missing at ingest (ingest_drops runs OUTSIDE the pipeline quarantine) must NOT crash
@@ -767,10 +769,12 @@ def test_run_learn_block_logs_auth_error_with_type_name(tmp_path, monkeypatch, m
 
 def test_main_hashtags_refresh_writes_from_graph_failopen(tmp_path, monkeypatch, capsys):
     # `fanops hashtags refresh` rebuilds the store from LIVE Graph reach — no ledger, no doctor gate. Without
-    # Meta creds it FAILS OPEN to the frozen reach floor (still writes), and exits 0 cleanly.
+    # Meta creds it FAILS OPEN to the frozen reach floor (still writes), and exits 0 cleanly (MOL-358: log not stdout).
+    from fanops.config import Config
     monkeypatch.delenv("META_GRAPH_TOKEN", raising=False); monkeypatch.delenv("META_IG_USER_ID", raising=False)
     monkeypatch.chdir(tmp_path)
     assert main(["hashtags", "refresh"]) == 0
-    out = capsys.readouterr().out.lower()
-    assert "refreshed from live graph reach" in out and "0 measured" in out   # fail-open: frozen floor stands
+    log = Config(root=tmp_path).log_path.read_text().lower()
+    compact = log.replace(" ", "")
+    assert '"outcome":"refreshed"' in compact and '"measured":"0"' in compact
     assert (tmp_path / "MohFlow-FanOps" / "00_control" / "hashtags.json").exists()
