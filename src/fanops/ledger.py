@@ -7,10 +7,11 @@ inventory in sync with _save_unlocked's `doc` (the serialization truth) whenever
 Writes are ATOMIC (temp file + os.replace) under a file lock so the 're-run advance()'
 model cannot corrupt or lose updates. Provides reconcile (upsert+cascade) and retire."""
 from __future__ import annotations
-import fcntl, json, os, re, secrets, sys, time
+import fcntl, json, os, re, secrets, shutil, sys, time
 from datetime import datetime, timezone
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Protocol, runtime_checkable
 from fanops.config import Config
 from fanops.errors import ControlFileError, LockBusyError, reason as _reason
 from fanops.models import (Source, Moment, Clip, Post, Render, validate_account_handle,
@@ -316,9 +317,50 @@ def _snapshot_dest(cfg: Config, now: datetime) -> Path:
     return cfg.control / f"ledger.snapshot.{stamp}.{token}.json"
 
 
+@runtime_checkable
+class LedgerStore(Protocol):
+    """Persistence primitives behind the Ledger facade (MOL-346)."""
+    def read_raw(self) -> dict | None: ...
+    def write_raw(self, doc: dict) -> None: ...
+    @contextmanager
+    def lock(self, timeout: float | None = None): ...
+    def snapshot(self, dest: Path) -> None: ...
+    def restore(self, src: Path) -> None: ...
+
+
+class JsonLedgerStore:
+    """Default on-disk JSON backend — flock + temp+os.replace, verbatim from pre-M1-A."""
+    def __init__(self, cfg: Config): self.cfg = cfg
+    def read_raw(self) -> dict | None:
+        p = self.cfg.ledger_path
+        if not p.exists(): return None
+        return json.loads(p.read_text())
+    def write_raw(self, doc: dict) -> None:
+        self.cfg.ledger_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self.cfg.ledger_path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(doc, indent=2, default=str))
+        try: os.chmod(tmp, 0o600)            # owner-only at rest (audit)
+        except OSError: pass                 # best-effort — a non-POSIX FS must never break persistence
+        os.replace(str(tmp), str(self.cfg.ledger_path))   # atomic on POSIX (the 0600 mode rides the replace)
+    @contextmanager
+    def lock(self, timeout: float | None = None):
+        with _file_lock(self.cfg.lock_path, timeout=timeout): yield
+    def snapshot(self, dest: Path) -> None:
+        if dest.exists():                      # never silently overwrite a pristine pre-wipe image
+            raise ControlFileError(f"ledger snapshot already exists: {dest}")
+        shutil.copy2(str(self.cfg.ledger_path), str(dest))   # byte-identical image under the lock
+    def restore(self, src: Path) -> None:
+        if not src.exists():
+            raise ControlFileError(_reason("ledger snapshot not found", str(src)))
+        tmp = self.cfg.ledger_path.with_suffix(".json.tmp")
+        shutil.copy2(str(src), str(tmp))
+        os.replace(str(tmp), str(self.cfg.ledger_path))   # atomic swap-in of the restored image
+
+
 class Ledger:
-    def __init__(self, cfg: Config):
+    def __init__(self, cfg: Config, *, store: LedgerStore | None = None):
         self.cfg = cfg
+        self._store = store or JsonLedgerStore(cfg)
         self.sources: dict[str, Source] = {}
         self.moments: dict[str, Moment] = {}
         self.clips: dict[str, Clip] = {}
@@ -345,13 +387,12 @@ class Ledger:
                                               # old ledgers load with {} (pre-v10) — the OFF/baseline shape is byte-identical.
 
     @classmethod
-    def load(cls, cfg: Config) -> "Ledger":
-        led = cls(cfg)
-        p = cfg.ledger_path
-        if p.exists():
-            text = p.read_text()                       # an I/O error here is a real problem, not "invalid"
+    def load(cls, cfg: Config, *, store: LedgerStore | None = None) -> "Ledger":
+        store = store or JsonLedgerStore(cfg)
+        led = cls(cfg, store=store)
+        raw = store.read_raw()
+        if raw is not None:
             try:
-                raw = json.loads(text)
                 on_disk = raw.get("schema_version", 0)     # absent key => pre-versioning ledger (v0)
                 if on_disk > SCHEMA_VERSION:
                     # A ledger written by a NEWER fanops. Loading then saving would silently DROP its
@@ -382,7 +423,7 @@ class Ledger:
             except Exception as e:
                 # Malformed JSON or schema-violating field (hand-edit typo). Surface a clear
                 # one-line reason instead of a raw JSONDecodeError/ValidationError traceback.
-                raise ControlFileError(f"{p.name} invalid: {_reason(e)}") from e
+                raise ControlFileError(f"{cfg.ledger_path.name} invalid: {_reason(e)}") from e
         return led
 
     @classmethod
@@ -400,10 +441,26 @@ class Ledger:
         on-disk ledger keeps the last committed snapshot. Callers wanting to persist progress despite
         a per-unit failure must catch+continue inside the block (mirroring advance()'s per-unit
         quarantine), exactly as they do today; an UNCAUGHT raise rolls back to the prior save."""
-        with _file_lock(cfg.lock_path, timeout=timeout):
-            led = cls.load(cfg)
+        store = JsonLedgerStore(cfg)
+        with store.lock(timeout=timeout):
+            led = cls.load(cfg, store=store)
             yield led
             led._save_unlocked()
+
+    def _to_doc(self) -> dict:
+        return {
+            "schema_version": SCHEMA_VERSION,          # stamp the on-disk shape (Phase 4a)
+            "sources": {k: v.model_dump() for k, v in self.sources.items()},
+            "moments": {k: v.model_dump() for k, v in self.moments.items()},
+            "clips": {k: v.model_dump() for k, v in self.clips.items()},
+            "posts": {k: v.model_dump() for k, v in self.posts.items()},
+            "tag_log": self.tag_log,
+            "variant_streaks": self.variant_streaks,
+            "stitch_plans": {k: v.model_dump() for k, v in self.stitch_plans.items()},
+            "batches": {k: v.model_dump() for k, v in self.batches.items()},
+            "renders": {k: v.model_dump() for k, v in self.renders.items()},
+            "imported_media": {k: v.model_dump() for k, v in self.imported_media.items()},
+        }
 
     def _save_unlocked(self) -> None:
         """The write half of save(), WITHOUT re-acquiring the lock (the caller — transaction() —
@@ -418,25 +475,7 @@ class Ledger:
         append-only/partial-write scheme would trade that correctness away. The working-set size is
         bounded instead by `fanops gc --keep-days` (cfg.gc_keep_days), which prunes aged records — so
         the file stays small in practice. Revisit only if a real, measured ledger ever outgrows GC."""
-        doc = {
-            "schema_version": SCHEMA_VERSION,          # stamp the on-disk shape (Phase 4a)
-            "sources": {k: v.model_dump() for k, v in self.sources.items()},
-            "moments": {k: v.model_dump() for k, v in self.moments.items()},
-            "clips": {k: v.model_dump() for k, v in self.clips.items()},
-            "posts": {k: v.model_dump() for k, v in self.posts.items()},
-            "tag_log": self.tag_log,
-            "variant_streaks": self.variant_streaks,
-            "stitch_plans": {k: v.model_dump() for k, v in self.stitch_plans.items()},
-            "batches": {k: v.model_dump() for k, v in self.batches.items()},
-            "renders": {k: v.model_dump() for k, v in self.renders.items()},
-            "imported_media": {k: v.model_dump() for k, v in self.imported_media.items()},
-        }
-        self.cfg.ledger_path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.cfg.ledger_path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(doc, indent=2, default=str))
-        try: os.chmod(tmp, 0o600)            # owner-only at rest (audit): the ledger carries captions/URLs/submission ids
-        except OSError: pass                 # best-effort — a non-POSIX FS must never break persistence
-        os.replace(str(tmp), str(self.cfg.ledger_path))   # atomic on POSIX (the 0600 mode rides the replace)
+        self._store.write_raw(self._to_doc())
 
     def save(self) -> None:
         """Standalone save for callers OUTSIDE a transaction (e.g. cmd_ingest, cmd_gc). Acquires
@@ -444,7 +483,7 @@ class Ledger:
         Ledger.transaction() must NOT call this (it would self-deadlock/LockBusyError) — it gets the
         single exit-save instead. (publish now runs its network OUTSIDE the lock via per-post
         claim->network->finalize transactions, so it no longer needs a mid-loop unlocked save.)"""
-        with _file_lock(self.cfg.lock_path):
+        with self._store.lock():
             self._save_unlocked()
 
     # ---- ledger-rebuild M4 (MOL-32): pre-wipe snapshot + rollback ---------------------------------
@@ -457,29 +496,22 @@ class Ledger:
         """Write a timestamped byte-copy of the live ledger.json to 00_control and RETURN its path. Taken
         under the ledger lock (a consistent whole-file image, no half-written mid-transaction state). A
         missing ledger.json first materializes an empty ledger so the snapshot is always a loadable file."""
-        import shutil
         now = now or datetime.now(timezone.utc)
         if not cfg.ledger_path.exists():
             cls.load(cfg).save()                       # materialize an empty (but valid) ledger to snapshot
         dest = _snapshot_dest(cfg, now)                # MOL-75: structurally-unique dest (timestamp + token)
-        with _file_lock(cfg.lock_path):
-            if dest.exists():                          # never silently overwrite a pristine pre-wipe image
-                raise ControlFileError(f"ledger snapshot already exists: {dest}")
-            shutil.copy2(str(cfg.ledger_path), str(dest))   # byte-identical image under the lock
+        store = JsonLedgerStore(cfg)
+        with store.lock():
+            store.snapshot(dest)
         return dest
 
     @classmethod
     def restore_snapshot(cls, cfg: Config, snapshot_path: "Path | str") -> None:
         """Atomically restore ledger.json FROM a snapshot (tmp + os.replace, same as _save_unlocked). The
         wipe is thereby REVERSIBLE — a restore brings every removed row back byte-identically."""
-        import shutil
-        src = Path(snapshot_path)
-        if not src.exists():
-            raise ControlFileError(_reason("ledger snapshot not found", str(src)))
-        with _file_lock(cfg.lock_path):
-            tmp = cfg.ledger_path.with_suffix(".json.tmp")
-            shutil.copy2(str(src), str(tmp))
-            os.replace(str(tmp), str(cfg.ledger_path))   # atomic swap-in of the restored image
+        store = JsonLedgerStore(cfg)
+        with store.lock():
+            store.restore(Path(snapshot_path))
 
     # ---- idempotent adds (by id) ----
     def add_source(self, s: Source) -> None: self.sources.setdefault(s.id, s)
