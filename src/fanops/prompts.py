@@ -102,8 +102,8 @@ def _hook_spec(max_words: int = 6, directive=None) -> str:
         f"    BANNED (universal floor): ANY THIRD-PERSON narration of the artist; LYRIC PARAPHRASE; "
         f"GENERIC filler; hooking on the EDITING or camera; BAIT the clip never pays off; fabricated "
         f"ROUND numbers or authority stats.\n"
-        f"    OUTPUT: <={max_words} words; no em-dashes, en-dashes, or smart quotes. A clip with no "
-        f"honest hook is better CLEAN (hook = null) than slop.\n")
+        f"    OUTPUT: <={max_words} words; no em-dashes, en-dashes, or smart quotes. You MUST author a "
+        f"non-null hook — hook is REQUIRED, never null.\n")
     persona = ""
     if directive is not None:
         demos = getattr(directive, "demos", None) or []
@@ -291,8 +291,8 @@ def moment_hook_prompt(payload: dict) -> str:
         f"WHY IT WAS PICKED (source to transform, NOT to echo): {_inline(payload.get('reason', ''))}\n"
         "HARD RULES:\n"
         "  - `hook` is the ON-SCREEN TEXT shown in the clip's first ~2 seconds. It is NOT a caption of the "
-        "audio and NOT a quote of the transcript — its only job is keeping the VIEWER watching. A clip with "
-        "no honest hook ships CLEAN (return hook = null) — better clean than slop.\n"
+        "audio and NOT a quote of the transcript — its only job is keeping the VIEWER watching. You MUST "
+        "author a non-null hook — never return hook = null.\n"
         + ("  - FRAMES: stills from THIS clip's window are attached as images — SEE them and write the "
            "hook true to what is actually ON SCREEN, not only the transcript.\n" if has_frames else
            "  - NO FRAMES are attached for this clip; write the hook from the transcript excerpt and signal "
