@@ -5,6 +5,12 @@
 <p class="meta daemon-ok">Hands-off processing running{% if daemon.heartbeat_age_s is not none %} · last tick {{ daemon.heartbeat_age_s|int }}s ago{% endif %}
   {%- if daemon.responder == 'llm' %} · <span class="ok">AI on</span>{% if daemon.pending_gates is not none %} · {{ daemon.pending_gates }} gate{{ '' if daemon.pending_gates == 1 else 's' }} pending{% if daemon.pending_gates == 0 %} (idle — no <code>claude</code>){% else %} (<code>claude</code> runs only to answer these){% endif %}{% endif %}
   {%- else %} · AI off (no <code>claude</code>){% endif %} — <a href="{{ url_for('run_panel') }}">Make tab</a></p>
+{% elif daemon.installed and not daemon.loaded %}
+{# READINESS ALARM — plist on disk but launchctl unloaded (the 24h-silent-death case). Loud, not opt-in. #}
+<div class="banner warn" data-daemon-warn="{{ daemon.verdict }}" role="alert">
+  Hands-off processing {{ daemon.verdict }}.
+  Reload with <code>fanops daemon install</code> or check <code>fanops daemon status</code>.
+</div>
 {% elif not daemon.loaded %}
 {# OFF — optional, opt-in. Never alarmist; disclose the recurring-LLM cost when hands-off would run llm. #}
 <p class="meta daemon-off">Hands-off processing is <strong>off</strong> (optional). Turn it on to auto-ingest, advance &amp; reconcile every {{ ((daemon.interval or 600) // 60) }} min — run <code>fanops daemon install</code>.{% if daemon.discloses_llm %} Heads-up: each tick runs the AI responder (invokes <code>claude</code>); add <code>--responder manual</code> for no-LLM scheduling.{% endif %}</p>
@@ -14,5 +20,15 @@
   Hands-off processing installed but not running ({{ daemon.verdict }}).
   <a href="{{ url_for('run_panel') }}">Open Make</a> or check <code>fanops daemon status</code>.
 </div>
+{% endif %}
+{% if daemon.siblings %}
+{% for sib in daemon.siblings %}
+{% if sib.installed and not sib.loaded %}
+<div class="banner warn" data-daemon-warn="{{ sib.verdict }}" role="alert">
+  {{ sib.short }} agent {{ sib.verdict }} (StartInterval {{ sib.poll_interval_s }}s poll-timer — stays cron-style by design).
+  Reload <code>~/Library/LaunchAgents/{{ sib.label }}.plist</code> or check <code>launchctl list {{ sib.label }}</code>.
+</div>
+{% endif %}
+{% endfor %}
 {% endif %}
 {% endif %}

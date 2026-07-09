@@ -241,24 +241,89 @@ def install(cfg: Config, *, interval: int, responder: str = "inherit") -> dict:
     return {"plist": str(pp), "wrapper": str(wp), "interval": interval, "loaded": r.returncode == 0,
             "responder": resolved, "discloses_llm": resolved == "llm"}
 
+_VERDICT_UNLOADED_ALARM = "installed but NOT loaded — should be running"
+
+# ── M2-D: host-level poll-timer siblings (explicitly NOT KeepAlive residents) ────────────────
+# Decision (MOL-355): com.fanops.postiz-reaper + com.fanops.media-sync stay StartInterval 300s
+# poll-timers — NOT the KeepAlive+--loop model used by com.fanops.run (M2-B). Each sibling is a
+# short cron-style job: launchd fires it, it runs one bounded unit of work, exits cleanly, sleeps
+# until the next StartInterval. KeepAlive would be wrong for both:
+#   • postiz-reaper — probes whether local Postiz is idle and STOPS the Docker stack to reclaim RAM;
+#     pairs with postiz_lifecycle.ensure_up (on-demand bring-up at publish). A resident process would
+#     fight that on-demand/idle-stop cycle or respawn a successful one-shot endlessly.
+#   • media-sync — batch-scans and mirrors uploads to R2 (~5 min). Publish-time mirror in postiz.py
+#     is the correctness path; this job is a convenience pre-mirror. Fire-and-exit cron semantics,
+#     not a long-lived sync daemon.
+# Silent death is still caught: M2-C readiness alarms treat plist-on-disk + launchctl-not-loaded as
+# ALARM for every installed agent in the fleet (main pump + siblings).
+SIBLING_POLL_INTERVAL_S = 300
+SIBLING_POLL_TIMERS_RATIONALE = (
+    "postiz-reaper and media-sync remain StartInterval poll-timers (300s): each is a short "
+    "cron-style job (run → exit → sleep until next fire), not a KeepAlive resident. "
+    "Reaper stops idle local Postiz (RAM); media-sync pre-mirrors to R2 (publish path mirrors inline). "
+    "M2-C readiness alarms still flag plist-on-disk + not-loaded for every installed sibling."
+)
+SIBLING_POLL_AGENTS: tuple[dict[str, str], ...] = (
+    {"label": "com.fanops.postiz-reaper", "short": "Postiz reaper"},
+    {"label": "com.fanops.media-sync", "short": "media-sync"},
+)
+
+def sibling_plist_path(label: str) -> Path:
+    return Path.home() / "Library/LaunchAgents" / f"{label}.plist"
+
+def sibling_agent_status(label: str, *, short: str = "") -> dict:
+    """Readiness for one host-level poll-timer sibling. plist-on-disk + not-loaded = ALARM."""
+    installed = sibling_plist_path(label).exists()
+    try:
+        r = _launchctl("list", label)
+        loaded = r.returncode == 0
+        pid = _grep_int(r.stdout, "PID") if loaded else None
+    except Exception:
+        loaded, pid = False, None
+    if not installed:
+        verdict = "not installed"
+    elif not loaded:
+        verdict = _VERDICT_UNLOADED_ALARM
+    else:
+        verdict = "loaded"
+    return {"label": label, "short": short or label, "installed": installed, "loaded": loaded, "pid": pid,
+            "verdict": verdict, "poll_interval_s": SIBLING_POLL_INTERVAL_S, "alarm": installed and not loaded}
+
+def sibling_agents_status() -> list[dict]:
+    """All known poll-timer siblings — doctor + Studio readiness surfaces (fail-open off-darwin)."""
+    if sys.platform != "darwin":
+        return []
+    out: list[dict] = []
+    for spec in SIBLING_POLL_AGENTS:
+        try:
+            out.append(sibling_agent_status(spec["label"], short=spec["short"]))
+        except Exception:
+            out.append({"label": spec["label"], "short": spec["short"], "installed": False, "loaded": False,
+                        "verdict": "unknown", "poll_interval_s": SIBLING_POLL_INTERVAL_S, "alarm": False})
+    return out
+
+
 def status(cfg: Config, *, interval: int = 600) -> dict:
-    """Read-only liveness: is the agent loaded (launchctl list) AND actually firing (heartbeat fresh)?
-    `interval` is the installed cadence — alive iff the last heartbeat is younger than 3 intervals."""
+    """Read-only liveness + readiness: plist-on-disk + not-loaded is an ALARM (should be running);
+    loaded + heartbeat-fresh is alive; loaded + heartbeat-stale is stale. `interval` is the installed
+    cadence — alive iff the last heartbeat is younger than 3 intervals."""
     from fanops.health_model import heartbeat_stale
+    installed = plist_path().exists()
     r = _launchctl("list", LABEL)
     loaded = r.returncode == 0
     pid = _grep_int(r.stdout, "PID") if loaded else None
     last_exit = _grep_int(r.stdout, "LastExitStatus") if loaded else None
     age, stale, iv = heartbeat_stale(cfg, interval=installed_interval(cfg) or interval)
     if not loaded:
-        verdict = "not installed"
+        verdict = _VERDICT_UNLOADED_ALARM if installed else "not installed"
     elif age is None:
         verdict = "loaded but no heartbeat yet"
     elif not stale:
         verdict = "alive"
     else:
         verdict = f"loaded but stale (last heartbeat {int(age)}s ago)"
-    return {"loaded": loaded, "pid": pid, "last_exit": last_exit, "heartbeat_age_s": age, "verdict": verdict}
+    return {"installed": installed, "loaded": loaded, "pid": pid, "last_exit": last_exit,
+            "heartbeat_age_s": age, "verdict": verdict}
 
 def stop(cfg: Config, *, remove: bool = False) -> dict:
     """Unload the agent, then CONFIRM the real outcome (W10) instead of hardcoding success: the agent is

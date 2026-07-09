@@ -140,11 +140,19 @@ def _daemon_liveness_check(cfg: Config) -> dict:
     from datetime import datetime, timezone
     from fanops import daemon
     interval = daemon.installed_interval(cfg) or _DAEMON_DEFAULT_INTERVAL_S
+    lbl = "publish daemon alive + queue draining (heartbeat + past-due backlog)"
     try:
-        age = daemon._heartbeat_age_s(cfg)
+        st = daemon.status(cfg, interval=interval)
+    except Exception:
+        st = {"installed": False, "loaded": False, "verdict": "unknown", "heartbeat_age_s": None}
+    if st.get("installed") and not st.get("loaded"):
+        return _check(lbl, False, f"{st['verdict']} — reload with `fanops daemon install` then `fanops daemon status`")
+    try:
+        age = st.get("heartbeat_age_s")
+        if age is None:
+            age = daemon._heartbeat_age_s(cfg)
     except Exception:
         age = None                                        # a read hiccup -> treat as no signal (fail-closed)
-    lbl = "publish daemon alive + queue draining (heartbeat + past-due backlog)"
     # (b) past-due backlog — fail-open ledger read
     now = datetime.now(timezone.utc)
     backlog_n = 0; oldest_h = 0.0; backlog_unknown = False
