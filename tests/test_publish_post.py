@@ -97,6 +97,22 @@ def test_empty_integration_id_is_skipped_not_posted(tmp_path, monkeypatch):
     assert out["no_integration_id"] == 1 and out["published"] == 0
     assert Ledger.load(cfg).posts["p1"].state is PostState.queued              # stays queued, re-driveable
 
+def test_publish_one_empty_integration_unclaims_submitting(tmp_path, monkeypatch):
+    # MOL-318: inner _publish_one branch un-claims submitting->queued when integration id empty.
+    import fanops.post.run as run
+    from fanops.post.run import _publish_one
+    monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_API_KEY", "k"); monkeypatch.setenv("POSTIZ_URL", "https://x")
+    monkeypatch.setattr("fanops.postiz_lifecycle.ensure_up", lambda cfg: None)
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _queued(led, cfg, pid="p1", cid="c1", when="2000-01-01T00:00:00Z")
+    with Ledger.transaction(cfg) as lg: lg.posts["p1"].account_id = ""
+    monkeypatch.setattr(run, "get_poster",
+                        lambda cfg, backend=None: (_ for _ in ()).throw(AssertionError("must not POST")))
+    monkeypatch.setattr(run, "_ensure_media", lambda *a, **kw: None, raising=False)
+    assert _publish_one(cfg, "p1", backend="postiz") is None
+    assert Ledger.load(cfg).posts["p1"].state is PostState.queued
+    assert "no_integration_id" in cfg.log_path.read_text()
+
 def test_timeless_queued_post_does_not_auto_publish(tmp_path, monkeypatch):
     # CULM-4: a queued post with NO scheduled_time must NOT auto-publish via publish_due (defense-in-depth
     # on no-auto-publish). It parks (stays queued); publish_post (manual) is unaffected.
