@@ -9,7 +9,7 @@ model cannot corrupt or lose updates. Legacy ledger.json is READ-ONLY break-glas
 a pre-flip JSON snapshot is the operator rollback artifact — fanops never writes ledger.json after M1-F).
 Provides reconcile (upsert+cascade) and retire."""
 from __future__ import annotations
-import fcntl, os, re, secrets, time
+import contextlib, fcntl, os, re, secrets, shutil, time
 from datetime import datetime, timezone
 from contextlib import contextmanager
 from pathlib import Path
@@ -320,6 +320,47 @@ def _snapshot_dest(cfg: Config, now: datetime) -> Path:
     return cfg.control / f"ledger.snapshot.{stamp}.{token}.sqlite"
 
 
+def _snapshot_sidecar_path(sqlite_dest: Path, kind: str) -> Path:
+    """Sibling path for a control-file sidecar: ledger.snapshot.T.sqlite -> ledger.snapshot.T.accounts.json."""
+    name = sqlite_dest.name
+    if not name.endswith(".sqlite"):
+        return sqlite_dest.parent / f"{name}.{kind}.json"
+    return sqlite_dest.with_name(name[:-7] + f".{kind}.json")
+
+
+def _snapshot_copy_control_files(cfg: Config, sqlite_dest: Path) -> None:
+    """Fail-open: copy present routing-truth control files into the snapshot bundle."""
+    for kind, src in (("accounts", cfg.accounts_path), ("personas", cfg.personas_path)):
+        if not src.exists():
+            continue
+        dest = _snapshot_sidecar_path(sqlite_dest, kind)
+        tmp = dest.with_suffix(dest.suffix + ".tmp")
+        try:
+            shutil.copy2(src, tmp)
+            os.replace(tmp, dest)
+        except OSError:
+            with contextlib.suppress(OSError):
+                tmp.unlink(missing_ok=True)
+            raise
+
+
+def _snapshot_restore_control_files(cfg: Config, sqlite_src: Path) -> None:
+    """Fail-open: restore control-file sidecars when present; absent sidecars are not an error."""
+    for kind, dst in (("accounts", cfg.accounts_path), ("personas", cfg.personas_path)):
+        sidecar = _snapshot_sidecar_path(sqlite_src, kind)
+        if not sidecar.exists():
+            continue
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        tmp = dst.with_suffix(dst.suffix + ".tmp")
+        try:
+            shutil.copy2(sidecar, tmp)
+            os.replace(tmp, dst)
+        except OSError:
+            with contextlib.suppress(OSError):
+                tmp.unlink(missing_ok=True)
+            raise
+
+
 @runtime_checkable
 class LedgerStore(Protocol):
     """Persistence primitives behind the Ledger facade (MOL-346)."""
@@ -487,13 +528,17 @@ class Ledger:
         dest = _snapshot_dest(cfg, now)                # MOL-75: structurally-unique dest (timestamp + token)
         with store.lock():
             store.snapshot(dest)
+        _snapshot_copy_control_files(cfg, dest)
         return dest
 
     @classmethod
     def restore_snapshot(cls, cfg: Config, snapshot_path: "Path | str") -> None:
-        """Atomically restore ledger.sqlite FROM a snapshot (SQLite backup API + os.replace)."""
+        """Atomically restore ledger.sqlite FROM a snapshot (SQLite backup API + os.replace).
+        Also restores accounts.json / personas.json sidecars when present in the bundle."""
         store = _resolve_store(cfg)
-        store.restore(Path(snapshot_path))   # standalone — must work even when live db is corrupt
+        src = Path(snapshot_path)
+        store.restore(src)   # standalone — must work even when live db is corrupt
+        _snapshot_restore_control_files(cfg, src)
 
     # ---- idempotent adds (by id) ----
     def add_source(self, s: Source) -> None: self.sources.setdefault(s.id, s)
