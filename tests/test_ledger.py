@@ -37,7 +37,7 @@ def test_save_is_atomic_no_partial(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="s", source_path="/x"))
     led.save()
-    json.loads(cfg.ledger_path.read_text())   # must not raise
+    assert Ledger.load(cfg).sources  # round-trip loadable
 
 def test_add_idempotent(tmp_path):
     led = Ledger.load(Config(root=tmp_path))
@@ -186,8 +186,8 @@ def test_variant_streaks_roundtrips_and_defaults_empty(tmp_path):
 def test_old_ledger_without_variant_streaks_loads(tmp_path):
     # An older ledger.json that predates v3 has no "variant_streaks" key -> must load as {} (no crash).
     cfg = Config(root=tmp_path)
-    cfg.ledger_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg.ledger_path.write_text(json.dumps({"sources": {}, "moments": {}, "clips": {}, "posts": {}}))
+    cfg.legacy_ledger_json_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.legacy_ledger_json_path.write_text(json.dumps({"sources": {}, "moments": {}, "clips": {}, "posts": {}}))
     led = Ledger.load(cfg)
     assert led.variant_streaks == {}
 

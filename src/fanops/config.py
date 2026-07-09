@@ -10,7 +10,7 @@ import re
 from pathlib import Path
 from typing import Literal
 from dotenv import load_dotenv
-from fanops.settings import LedgerBackend, Settings
+from fanops.settings import Settings
 
 _log = logging.getLogger("fanops.config")
 
@@ -110,8 +110,9 @@ class Config:
         self.base = self.root / "MohFlow-FanOps"
         for attr, name in _STAGE.items():
             setattr(self, attr, self.base / name)
-        self.ledger_path = self.control / "ledger.json"
-        self.lock_path = self.control / "ledger.lock"
+        self.ledger_path = self.control / "ledger.sqlite"
+        self.legacy_ledger_json_path = self.control / "ledger.json"   # M1-F break-glass: bridge import only
+        self.lock_path = self.control / "ledger.lock"                 # vestigial; accounts/personas use flock
         self.digest_path = self.control / "ledger_digest.md"
         self.accounts_path = self.control / "accounts.json"
         self.accounts_lock_path = self.control / "accounts.lock"   # serializes the accounts.json read-modify-write mutators
@@ -153,7 +154,7 @@ class Config:
              "lift_weights": {"saves": 4.0, ...}}
         Absent file or a missing key -> the in-code DEFAULT is used (caption._OFFBRAND_EN/_AR,
         track._W), so existing behavior is unchanged and no new REQUIRED file is introduced.
-        Unlike a control file (accounts.json / ledger.json -> ControlFileError), this file is
+        Unlike a control file (accounts.json / ledger.sqlite -> ControlFileError), this file is
         OPTIONAL: a corrupt/unreadable tuning.json must NEVER crash an autonomous run — we log a
         warning and fall back to {} (i.e. all defaults). Not cached: each call re-reads, so an
         operator edit takes effect on the next stage without a process restart (the file is tiny
@@ -180,10 +181,6 @@ class Config:
         # exports the key, and for backward compat — but it is NOT required for the default subscription
         # path. If `ANTHROPIC_API_KEY` happens to be set, `claude` will use it; if not, it uses the login.
         return self._settings.ANTHROPIC_API_KEY
-
-    @property
-    def ledger_backend(self) -> LedgerBackend:
-        return self._settings.ledger_backend()
 
     @property
     def poster_backend(self) -> PosterBackend:

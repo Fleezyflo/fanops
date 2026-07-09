@@ -30,12 +30,12 @@ def test_corrupt_accounts_degrades_not_500(tmp_path):
 
 def test_corrupt_ledger_degrades_not_500(tmp_path):
     cfg = Config(root=tmp_path); _seed_control(cfg)
-    cfg.ledger_path.write_text("{ broken")
+    cfg.ledger_path.write_bytes(b"{ broken")
     c = _client(cfg)
     r = c.get("/review")
     assert r.status_code == 200, f"/review -> {r.status_code} (want 200, never a 500)"
     assert b"Control file unreadable" in r.data
-    assert b"ledger.json" in r.data
+    assert b"ledger.sqlite" in r.data
 
 
 def test_healthy_control_files_still_render(tmp_path):

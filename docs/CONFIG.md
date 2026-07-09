@@ -3,14 +3,13 @@
 
 A projection of [CODEMAPS/system-lens-map.md](CODEMAPS/system-lens-map.md) §1.2–1.3 (the authoritative table,
 each row with a verified `config.py` read-line). Read that for the read-site line numbers; read THIS for the
-operator/dev overview. **64 distinct env vars** — **13 Studio-settable** (Go-Live tab via `golive._dual_write`,
+operator/dev overview. **63 distinct env vars** — **13 Studio-settable** (Go-Live tab via `golive._dual_write`,
 which writes both `.env` and `os.environ`), **51 `.env`/shell-ONLY** (no UI). `Set` column: **S** = Studio-settable,
 `.env` = shell-only. Defaults are the CODE defaults.
 
 ## Publish / live (the dryrun↔live boundary + credentials)
 | Var | Default | Effect | Set |
 |---|---|---|---|
-| `FANOPS_LEDGER_BACKEND` | `sqlite` | Ledger persistence backend (`json` or `sqlite`; unknown→sqlite+warn) | .env |
 | `FANOPS_LIVE` | derived | THE dryrun↔live switch (set only through `go_live`, confirm-gated) | S |
 | `FANOPS_POSTER` | `dryrun` | Legacy global poster backend; unknown→dryrun+warn. Studio can UNSET (clear) only | .env |
 | `POSTIZ_URL` | None | Postiz instance base URL | S |

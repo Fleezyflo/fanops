@@ -10,8 +10,10 @@ from fanops.ledger import Ledger, SCHEMA_VERSION
 
 
 def _write(cfg, raw):
-    cfg.ledger_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg.ledger_path.write_text(json.dumps(raw))
+    cfg.legacy_ledger_json_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.legacy_ledger_json_path.write_text(json.dumps(raw))
+    if cfg.ledger_path.exists():
+        cfg.ledger_path.unlink()
 
 
 def test_schema_version_at_least_six():
@@ -59,7 +61,7 @@ def test_render_round_trips_through_save_load(tmp_path):
     with Ledger.transaction(cfg) as led:
         led.add_render(Render(id="render_x", clip_id="clip_1", account="a", surface_key="a|instagram",
                               hook_text="H", path="/clips/x.mp4", batch_id="b1", source_id="s1"))
-    on_disk = json.loads(cfg.ledger_path.read_text())
+    on_disk = Ledger.load(cfg)._to_doc()
     assert on_disk["schema_version"] == SCHEMA_VERSION and "renders" in on_disk
     led2 = Ledger.load(cfg)
     r = led2.get_render("render_x")
@@ -80,7 +82,7 @@ def test_migration_v5_to_v6_injects_renders_and_keeps_rows(tmp_path):
     assert set(led.posts) == {"p1"} and led.posts["p1"].render_id is None   # row survives, render_id defaults
     with Ledger.transaction(cfg):                            # save re-stamps the current schema version
         pass
-    assert json.loads(cfg.ledger_path.read_text())["schema_version"] == SCHEMA_VERSION
+    assert Ledger.load(cfg)._to_doc()["schema_version"] == SCHEMA_VERSION
     # idempotent reload
     led2 = Ledger.load(cfg)
     assert led2.renders == {} and set(led2.posts) == {"p1"}

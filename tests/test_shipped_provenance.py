@@ -40,8 +40,8 @@ def test_pre_p3_ledger_migrates_clean(tmp_path):
                                     "surface_key": "a/instagram", "path": "/p.mp4"}},
            "selection_facts": {}, "batches": {}, "stitch_plans": {}}
     cfg.control.mkdir(parents=True, exist_ok=True)
-    cfg.ledger_path.write_text(json.dumps(raw))
+    cfg.legacy_ledger_json_path.parent.mkdir(parents=True, exist_ok=True); cfg.ledger_path.unlink(missing_ok=True); cfg.legacy_ledger_json_path.write_text(json.dumps(raw))
     led = Ledger.load(cfg)
     assert led.renders["render_x"].hook_source is HookSource.none
     led.save()
-    assert json.loads(cfg.ledger_path.read_text())["schema_version"] == SCHEMA_VERSION
+    assert Ledger.load(cfg)._to_doc()["schema_version"] == SCHEMA_VERSION

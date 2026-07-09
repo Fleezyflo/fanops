@@ -10,9 +10,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 _log = logging.getLogger("fanops.config")
 _ON = frozenset({"1", "true", "yes", "on"})
 _VALID_BACKENDS = frozenset({"dryrun", "postiz", "zernio"})
-_VALID_LEDGER_BACKENDS = frozenset({"json", "sqlite"})
 PosterBackend = Literal["dryrun", "postiz", "zernio"]
-LedgerBackend = Literal["json", "sqlite"]
 
 
 def _strip_opt(v: object) -> str | None:
@@ -57,7 +55,6 @@ class Settings(BaseSettings):
     ANTHROPIC_API_KEY: str | None = None
     FANOPS_POSTER: str = ""
     FANOPS_LIVE: str = ""
-    FANOPS_LEDGER_BACKEND: str = ""
     POSTIZ_URL: str | None = None
     POSTIZ_API_KEY: str | None = None
     FANOPS_MEDIA_PUBLIC_BASE: str | None = None
@@ -220,14 +217,6 @@ class Settings(BaseSettings):
             return "dryrun"
         return v  # type: ignore[return-value]
 
-    def ledger_backend(self) -> LedgerBackend:
-        v = (self.FANOPS_LEDGER_BACKEND or "").strip().lower()
-        if not v: return "sqlite"
-        if v not in _VALID_LEDGER_BACKENDS:
-            _log.warning("ignoring unknown FANOPS_LEDGER_BACKEND=%r (using sqlite); valid: %s",
-                         v, ", ".join(sorted(_VALID_LEDGER_BACKENDS)))
-            return "sqlite"
-        return v  # type: ignore[return-value]
 
     def responder_mode(self) -> str:
         v = (self.FANOPS_RESPONDER or "").strip().lower()

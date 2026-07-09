@@ -24,7 +24,7 @@ def test_old_ledger_with_hooks_by_persona_loads(tmp_path):
         "clips": {}, "posts": {}, "renders": {}, "selection_facts": {}, "batches": {}, "stitch_plans": {},
     }
     cfg.control.mkdir(parents=True, exist_ok=True)
-    cfg.ledger_path.write_text(json.dumps(raw))
+    cfg.legacy_ledger_json_path.parent.mkdir(parents=True, exist_ok=True); cfg.ledger_path.unlink(missing_ok=True); cfg.legacy_ledger_json_path.write_text(json.dumps(raw))
     assert Ledger.load(cfg).moments["m1"].hook == "the kept hook"
 
 
@@ -39,7 +39,7 @@ def test_crosspost_uses_m_hook(tmp_path, monkeypatch):
     cfg.control.mkdir(parents=True, exist_ok=True)
     cfg.clips.mkdir(parents=True, exist_ok=True)
     base = cfg.clips / "c1.mp4"; base.write_bytes(b"X")
-    cfg.ledger_path.write_text(json.dumps({
+    cfg.legacy_ledger_json_path.parent.mkdir(parents=True, exist_ok=True); cfg.ledger_path.unlink(missing_ok=True); cfg.legacy_ledger_json_path.write_text(json.dumps({
         "schema_version": 8,
         "sources": {"s1": {"id": "s1", "source_path": "/s.mp4", "state": "catalogued", "width": 1080, "height": 1920}},
         "moments": {"m1": {"id": "m1", "parent_id": "s1", "content_token": "0-5", "start": 0, "end": 5,

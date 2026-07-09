@@ -2,7 +2,7 @@
 # FanOps Architecture
 
 Single-operator local CLI (`fanops`) that turns long-form source video into scheduled
-cross-posted clips. Pure-Python src layout (`src/fanops/`), one JSON ledger as the only
+cross-posted clips. Pure-Python src layout (`src/fanops/`), SQLite ledger as the only
 state store, external heavy lifting via subprocesses (ffmpeg/whisper/yt-dlp), publishing via
 Postiz (self-hosted) or Zernio (TikTok), IG metrics via the Meta Graph. Autonomous learning features are default-OFF, fail-safe.
 Optional Flask-based Studio web cockpit (imported lazily; core install Flask-free).
@@ -29,7 +29,7 @@ Account-First Studio (all default-safe; an unbatched / casting-OFF run is render
 
 - Per-unit error quarantine: any stage failure parks THAT unit in `error` + reason; never wedges the pass.
 - Crash-safe publish: `submitting` persisted BEFORE the network call; ambiguous results -> `needs_reconcile`, never blind re-POST (reconcile.py polls).
-- Slow ops that must NOT hold the flock run outside transactions: yt-dlp download (`pull`), `claude -p` (responder.py), and (Phase D) the heavy subprocess stages — whisper, ffmpeg signals, ffmpeg render — which `pipeline._prewarm` runs lock-free into deterministic on-disk artifacts (transcript JSON, signals sidecar, `cid.render.json` fingerprint + mp4) BEFORE the main commit transaction re-runs them and SKIPS the warm subprocess. A multi-minute render no longer starves a concurrent Studio write / second pass.
+- Slow ops that must NOT hold the ledger lock run outside transactions: yt-dlp download (`pull`), `claude -p` (responder.py), and (Phase D) the heavy subprocess stages — whisper, ffmpeg signals, ffmpeg render — which `pipeline._prewarm` runs lock-free into deterministic on-disk artifacts (transcript JSON, signals sidecar, `cid.render.json` fingerprint + mp4) BEFORE the main commit transaction re-runs them and SKIPS the warm subprocess. A multi-minute render no longer starves a concurrent Studio write / second pass.
 - Asset memory (M1): the source loop SKIPS `origin_kind == "third_party"` sources (guarded in BOTH `_prewarm` and the in-lock advance), so handed-in footage is catalogued + remembered but never transcribed/clipped/posted. Third-party intake lands in a PEER `01_thirdparty_inbox` (outside the native `cfg.inbox.rglob`, so a native pass can't reach + mislabel it).
 - Structural hooks (M2–M6, default OFF): AFTER the critic + BEFORE the render loop, `router.route_moments` annotates each clean Moment's `hook_strategy` (renders nothing; an existing `clean_awaiting_strategy:*` reservation is never re-routed away — forward-only). AFTER the render loop, `pipeline._enabled_strategies(cfg)` gates the producer/render block per format. **intro-tease (M6, `FANOPS_INTRO_TEASE` + `FANOPS_RESPONDER=llm`)** first opens an LLM-vision matcher gate (`intro_match.request_intro_match`/`ingest_intro_match`, an agentstep request/response gate; fail-open — no answer → no plan) that writes ranked pairings to `Moment.intro_matches`. `stitch_render.mine_suggestions` then runs BOTH producers (`_impact_cut_candidates` + `_intro_tease_candidates`) through one ranked/top-N-capped/deduped pass, re-routing each drained moment to `stitch:<key>`. APPROVED plans render LOCK-FREE (`_prewarm`→`prewarm_approved_stitches`, dispatched by strategy: impact_cut→ffmpeg cut-window, intro_tease→MoviePy compose-PREPEND) then commit in-lock (`render_approved_stitches`) — a COMMON supersede precheck (stale base fingerprint→auto-dismiss, live base post→block) then per-strategy adopt (impact_cut renders in-lock as fallback; intro_tease ONLY adopts a prewarmed composite via the compose fingerprint, never MoviePy under the flock — an un-prewarmed plan waits, with a retry-cap parking flaky pairs). A successful commit sets the plan `in_use` + retires the queued base post. A disabled format's approved plans freeze with a kill-switch warning. A SECOND operator gate releases the reviewed `stitch_draft`→`captioned`. The bare clip always ships regardless (fail-open).
 
@@ -50,7 +50,7 @@ Account-First Studio (all default-safe; an unbatched / casting-OFF run is render
 | Publishing | post/run.py (_submit_one, publish_due, publish_post — the Publish-now engine; `_archive_published` day-bucketed 06_published record, fail-open) |
 | Content lifecycle | born-awaiting_approval gate (crosspost + Ledger.approve_post/reject_post/unapprove); `_PROTECTED_POST_STATES` wipe-guard (ledger reconcile cascade); created_at/published_at stamps (models); day-bucketed Review + Posted (studio/views.{review_buckets day-sort, posted_library, group_posted_by_day}); cross-account onboard (studio/actions.{crosspost_to_account, crosspost_all_to_account}, repost_post); `gc` retention (cli + config.gc_keep_days, sweeps 05_scheduled); v2→v3 created_at migration (ledger._migrate_v3_created_at) |
 | Learn (default OFF) | track.py (writes LIFT_SCORE), adjust.py (classify/amplify/retire), variant_learning.py (best_hooks/ucb_rank), variant_amplify.py, variant_transfer.py, p4_dim_bias.py (P4(b) cross-account reach dim-bias, autonomous via cli.run) |
-| State/infra | ledger.py (flock+atomic JSON), models.py (pydantic units + LIFT_SCORE), accounts.py (+ atomic write_account_id), ids.py (SHA1 content-addressing), timeutil.py (single parse site), log.py (TAB-column run.log), errors.py, digest.py (+public gate_state), validation_gate.py |
+| State/infra | ledger.py (sqlite WAL+txn), models.py (pydantic units + LIFT_SCORE), accounts.py (+ atomic write_account_id), ids.py (SHA1 content-addressing), timeutil.py (single parse site), log.py (TAB-column run.log), errors.py, digest.py (+public gate_state), validation_gate.py |
 | Autonomous ops | autopilot.py (one-cmd: enable llm responder + launchd daemon), daemon.py (launchd supervisor around `run`), doctor.py (readiness pre-flight checks), cutover.py + cutover_postiz.py (Postiz throwaway-probe learning prover) — both OPTIONAL early shortcuts: learning auto-unfreezes on the first real non-degraded live metric (track._auto_validate_metrics_shape; a row is degraded if a high-weight key is absent or present-but-null), so the cutover probe is no longer required |
 | Studio (optional [studio]) | studio/app.py (Flask factory, lazily imported), studio/views.py (read models), studio/actions.py (one transaction per mutation), studio/golive.py (Postiz connect/config surface) |
 
@@ -66,7 +66,7 @@ payloads older than FANOPS_GC_KEEP_DAYS [default 30]; refuses keep_days<1; never
 **Autonomous ops:** `autopilot` (enable llm responder + install daemon) · `daemon {install,status,stop}`
 (launchd supervisor) · `doctor` (readiness pre-flight) · `cutover {auth,post,metrics,lift}` (Postiz verify).
 
-**Publishing:** `compose` (optional [compose] extra; MoviePy produced-clip render outside the flock).
+**Publishing:** `compose` (optional [compose] extra; MoviePy produced-clip render outside the ledger lock).
 
 **Studio:** `studio` (Flask on 127.0.0.1:8787, debug=False; optional [studio] extra).
 

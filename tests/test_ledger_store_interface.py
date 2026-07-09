@@ -1,12 +1,12 @@
-# tests/test_ledger_store_interface.py — MOL-346: LedgerStore protocol + default backend seam.
+# tests/test_ledger_store_interface.py — MOL-346/M1-F: LedgerStore protocol + sqlite-only seam.
 from contextlib import contextmanager
 from fanops.config import Config
-from fanops.ledger import Ledger, JsonLedgerStore, LedgerStore
+from fanops.ledger import Ledger, LedgerStore
 from fanops.ledger_sqlite import SqliteLedgerStore
 
 
-def test_json_ledger_store_satisfies_protocol(tmp_path):
-    assert isinstance(JsonLedgerStore(Config(root=tmp_path)), LedgerStore)
+def test_sqlite_ledger_store_satisfies_protocol(tmp_path):
+    assert isinstance(SqliteLedgerStore(Config(root=tmp_path)), LedgerStore)
 
 
 def test_ledger_defaults_to_sqlite_store(tmp_path):
@@ -15,9 +15,9 @@ def test_ledger_defaults_to_sqlite_store(tmp_path):
     assert isinstance(led._store, SqliteLedgerStore)
 
 
-def test_json_store_round_trips_raw_doc(tmp_path):
+def test_sqlite_store_round_trips_raw_doc(tmp_path):
     cfg = Config(root=tmp_path)
-    store = JsonLedgerStore(cfg)
+    store = SqliteLedgerStore(cfg)
     doc = {"schema_version": 11, "sources": {}, "moments": {}, "clips": {}, "posts": {},
            "tag_log": {}, "variant_streaks": {}, "stitch_plans": {}, "batches": {},
            "renders": {}, "imported_media": {}}
@@ -46,7 +46,6 @@ def test_ledger_save_routes_through_store(tmp_path, monkeypatch):
 
 
 def test_transaction_exit_save_routes_through_store(tmp_path, monkeypatch):
-    monkeypatch.setenv("FANOPS_LEDGER_BACKEND", "sqlite")
     cfg = Config(root=tmp_path)
     hits = {"lock": 0, "write": 0}
     real_lock = SqliteLedgerStore.lock

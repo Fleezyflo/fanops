@@ -1,13 +1,15 @@
 # src/fanops/ledger.py
-"""Single source of truth: one JSON doc of top-level maps (SCHEMA_VERSION-stamped), git-versioned.
+"""Single source of truth: SQLite/WAL ledger at 00_control/ledger.sqlite (SCHEMA_VERSION-stamped), git-versioned.
 Persists 8 id->unit (model) maps — sources, moments, clips, posts, stitch_plans, batches, renders,
 imported_media — plus 2 non-unit scalar/plain-dict maps: tag_log
 ("account|clip_id" -> ISO tag time) and variant_streaks ("account|platform" -> streak dict). Keep this
-inventory in sync with _save_unlocked's `doc` (the serialization truth) whenever a map is added/removed.
-Writes are ATOMIC (temp file + os.replace) under a file lock so the 're-run advance()'
-model cannot corrupt or lose updates. Provides reconcile (upsert+cascade) and retire."""
+inventory in sync with _to_doc() / _save_unlocked (the serialization truth) whenever a map is added/removed.
+Writes are ATOMIC (BEGIN IMMEDIATE txn + full replace of ledger_meta/ledger_rows) so the 're-run advance()'
+model cannot corrupt or lose updates. Legacy ledger.json is READ-ONLY break-glass (M1-C bridge import only;
+a pre-flip JSON snapshot is the operator rollback artifact — fanops never writes ledger.json after M1-F).
+Provides reconcile (upsert+cascade) and retire."""
 from __future__ import annotations
-import fcntl, json, os, re, secrets, shutil, sys, time
+import fcntl, os, re, secrets, sys, time
 from datetime import datetime, timezone
 from contextlib import contextmanager
 from pathlib import Path
@@ -236,7 +238,7 @@ class _NewerSchema(ControlFileError):
     cli.main exits 2 cleanly, but raised as its own type inside load() so the generic 'invalid'
     rewrap doesn't reword it — the operator must see 'upgrade fanops', not 'invalid: ...'."""
     def __init__(self, on_disk: int):
-        super().__init__(f"ledger.json is schema v{on_disk} but this fanops understands only "
+        super().__init__(f"ledger.sqlite is schema v{on_disk} but this fanops understands only "
                          f"v{SCHEMA_VERSION} — upgrade fanops (refusing to load a newer ledger and "
                          f"silently drop its fields on save)")
 
@@ -250,7 +252,7 @@ def _migrate(raw: dict, from_version: int) -> dict:
         step = _MIGRATIONS.get(v + 1)
         if step is None:
             raise ControlFileError(
-                f"ledger.json schema v{from_version}: no migration path to v{v + 1} — upgrade fanops")
+                f"ledger schema v{from_version}: no migration path to v{v + 1} — upgrade fanops")
         raw = step(raw)
         v += 1
     return raw
@@ -314,7 +316,7 @@ def _snapshot_dest(cfg: Config, now: datetime) -> Path:
     that could silently clobber the sole pre-wipe rollback point is eliminated by construction."""
     stamp = now.strftime("%Y%m%dT%H%M%SZ")
     token = secrets.token_hex(4)                    # 8 hex chars: unique per call, keeps the name short
-    return cfg.control / f"ledger.snapshot.{stamp}.{token}.json"
+    return cfg.control / f"ledger.snapshot.{stamp}.{token}.sqlite"
 
 
 @runtime_checkable
@@ -328,46 +330,22 @@ class LedgerStore(Protocol):
     def restore(self, src: Path) -> None: ...
 
 
-class JsonLedgerStore:
-    """Default on-disk JSON backend — flock + temp+os.replace, verbatim from pre-M1-A."""
-    def __init__(self, cfg: Config): self.cfg = cfg
-    def read_raw(self) -> dict | None:
-        p = self.cfg.ledger_path
-        if not p.exists(): return None
-        return json.loads(p.read_text())
-    def write_raw(self, doc: dict) -> None:
-        self.cfg.ledger_path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.cfg.ledger_path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(doc, indent=2, default=str))
-        try: os.chmod(tmp, 0o600)            # owner-only at rest (audit)
-        except OSError: pass                 # best-effort — a non-POSIX FS must never break persistence
-        os.replace(str(tmp), str(self.cfg.ledger_path))   # atomic on POSIX (the 0600 mode rides the replace)
-    @contextmanager
-    def lock(self, timeout: float | None = None):
-        with _file_lock(self.cfg.lock_path, timeout=timeout): yield
-    def snapshot(self, dest: Path) -> None:
-        if dest.exists():                      # never silently overwrite a pristine pre-wipe image
-            raise ControlFileError(f"ledger snapshot already exists: {dest}")
-        shutil.copy2(str(self.cfg.ledger_path), str(dest))   # byte-identical image under the lock
-    def restore(self, src: Path) -> None:
-        if not src.exists():
-            raise ControlFileError(_reason("ledger snapshot not found", str(src)))
-        tmp = self.cfg.ledger_path.with_suffix(".json.tmp")
-        shutil.copy2(str(src), str(tmp))
-        os.replace(str(tmp), str(self.cfg.ledger_path))   # atomic swap-in of the restored image
-
-
 def _resolve_store(cfg: Config) -> LedgerStore:
-    """Pick JsonLedgerStore or SqliteLedgerStore from FANOPS_LEDGER_BACKEND (default sqlite). On first sqlite
-    selection with no DB but a live ledger.json, auto-run the M1-C bridge import (idempotent)."""
-    if cfg.ledger_backend == "json":
-        return JsonLedgerStore(cfg)
+    """SqliteLedgerStore only (M1-F). On first open with no DB but a legacy ledger.json, auto-run the M1-C
+    bridge import (idempotent). Production never writes ledger.json — a pre-flip JSON file/snapshot is
+    break-glass only."""
     from fanops.ledger_sqlite import SqliteLedgerStore
     store = SqliteLedgerStore(cfg)
-    if not store.db_path.exists() and cfg.ledger_path.exists():
+    if not store.db_path.exists() and cfg.legacy_ledger_json_path.exists():
         from fanops.ledger_bridge import import_json_to_sqlite
-        import_json_to_sqlite(cfg)
+        try:
+            import_json_to_sqlite(cfg)
+        except ControlFileError:
+            raise
+        except Exception as e:
+            raise ControlFileError(f"{cfg.ledger_path.name} invalid: {_reason(e)}") from e
     return store
+
 
 
 class Ledger:
@@ -455,7 +433,7 @@ class Ledger:
         typed LockBusyError (bounded by timeout), never a silent overwrite.
 
         The save runs only on a CLEAN exit: if the with-block raises, the lock is still released
-        (the _file_lock contextmanager's finally), but we do NOT save partial in-memory state — the
+        (the store lock contextmanager's finally), but we do NOT save partial in-memory state — the
         on-disk ledger keeps the last committed snapshot. Callers wanting to persist progress despite
         a per-unit failure must catch+continue inside the block (mirroring advance()'s per-unit
         quarantine), exactly as they do today; an UNCAUGHT raise rolls back to the prior save."""
@@ -481,18 +459,7 @@ class Ledger:
         }
 
     def _save_unlocked(self) -> None:
-        """The write half of save(), WITHOUT re-acquiring the lock (the caller — transaction() —
-        already holds it; flock is per-fd, so a nested acquire on a NEW fd from the same process
-        would block against our own held lock and, under the LOCK_NB+timeout loop, raise
-        LockBusyError after the timeout — a self-inflicted failure). Atomic write preserved
-        (tmp + os.replace).
-
-        PERF (audit, accepted tradeoff — do NOT 'fix' to incremental writes): this dumps the WHOLE
-        ledger every transaction (O(all-time records)). That is DELIBERATE — the atomic whole-file
-        tmp+replace under a single flock is exactly what closes the B4 lost-update window; an
-        append-only/partial-write scheme would trade that correctness away. The working-set size is
-        bounded instead by `fanops gc --keep-days` (cfg.gc_keep_days), which prunes aged records — so
-        the file stays small in practice. Revisit only if a real, measured ledger ever outgrows GC."""
+        """The write half of save(), WITHOUT re-acquiring the lock (BEGIN IMMEDIATE txn held by transaction())."""
         self._store.write_raw(self._to_doc())
 
     def save(self) -> None:
@@ -505,15 +472,13 @@ class Ledger:
             self._save_unlocked()
 
     # ---- ledger-rebuild M4 (MOL-32): pre-wipe snapshot + rollback ---------------------------------
-    # A snapshot is a BYTE copy of ledger.json (which is already a complete atomic whole-file dump), named
-    # with a UTC timestamp under 00_control so it sits alongside the pre-R1 backups (the dryrun R1 decision:
-    # any snapshot in 00_control stays LOADABLE — construction semantics unchanged). It is the mandatory,
-    # verified-restorable rollback point BEFORE the M4 wipe removes anything (PRD risk table).
+    # A snapshot is a SQLite .backup() of ledger.sqlite, named with a UTC timestamp under 00_control
+    # (any snapshot in 00_control stays LOADABLE). Legacy pre-flip ledger.json is break-glass only.
     @classmethod
     def snapshot(cls, cfg: Config, *, now: "datetime | None" = None) -> Path:
-        """Write a timestamped byte-copy of the live ledger.json to 00_control and RETURN its path. Taken
-        under the ledger lock (a consistent whole-file image, no half-written mid-transaction state). A
-        missing ledger.json first materializes an empty ledger so the snapshot is always a loadable file."""
+        """Write a timestamped SQLite backup of the live ledger to 00_control and RETURN its path. Taken
+        under the ledger lock. A missing ledger.sqlite first materializes an empty ledger so the snapshot
+        is always loadable."""
         now = now or datetime.now(timezone.utc)
         store = _resolve_store(cfg)
         if store.read_raw() is None:
@@ -525,11 +490,9 @@ class Ledger:
 
     @classmethod
     def restore_snapshot(cls, cfg: Config, snapshot_path: "Path | str") -> None:
-        """Atomically restore ledger.json FROM a snapshot (tmp + os.replace, same as _save_unlocked). The
-        wipe is thereby REVERSIBLE — a restore brings every removed row back byte-identically."""
+        """Atomically restore ledger.sqlite FROM a snapshot (SQLite backup API + os.replace)."""
         store = _resolve_store(cfg)
-        with store.lock():
-            store.restore(Path(snapshot_path))
+        store.restore(Path(snapshot_path))   # standalone — must work even when live db is corrupt
 
     # ---- idempotent adds (by id) ----
     def add_source(self, s: Source) -> None: self.sources.setdefault(s.id, s)

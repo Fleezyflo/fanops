@@ -10,8 +10,10 @@ from fanops.models import ImportedMedia, Source, SourceState
 
 
 def _write(cfg, raw):
-    cfg.ledger_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg.ledger_path.write_text(json.dumps(raw))
+    cfg.legacy_ledger_json_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.legacy_ledger_json_path.write_text(json.dumps(raw))
+    if cfg.ledger_path.exists():
+        cfg.ledger_path.unlink()
 
 
 def test_schema_version_is_eleven():
@@ -66,7 +68,7 @@ def test_imported_media_round_trips(tmp_path):
             product_type="FEED",
             metrics={"reach": 1234, "likes": 56},
             metrics_series=[{"offset": "P1D", "captured_at": "2026-06-01T00:00:00Z", "reach": 1234}]))
-    assert json.loads(cfg.ledger_path.read_text())["schema_version"] == SCHEMA_VERSION
+    assert Ledger.load(cfg)._to_doc()["schema_version"] == SCHEMA_VERSION
     led2 = Ledger.load(cfg)
     assert "17900000000000002" in led2.imported_media               # SURVIVED the round-trip
     got = led2.imported_media["17900000000000002"]
@@ -95,9 +97,9 @@ def test_v9_migration_preserves_all_other_maps(tmp_path):
     cfg = Config(root=tmp_path)
     with Ledger.transaction(cfg) as led:
         led.add_source(Source(id="s1", source_path="x.mp4", state=SourceState.catalogued))
-    raw = json.loads(cfg.ledger_path.read_text())
+    raw = Ledger.load(cfg)._to_doc()
     raw["schema_version"] = 9; raw.pop("imported_media", None)      # simulate a v9 ledger
-    cfg.ledger_path.write_text(json.dumps(raw))
+    cfg.legacy_ledger_json_path.parent.mkdir(parents=True, exist_ok=True); cfg.ledger_path.unlink(missing_ok=True); cfg.legacy_ledger_json_path.write_text(json.dumps(raw))
     led = Ledger.load(cfg)
     assert led.imported_media == {} and "s1" in led.sources
     assert led.renders == {}

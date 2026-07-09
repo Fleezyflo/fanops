@@ -12,7 +12,7 @@ you need the full detail. Route yourself with the "read when…" column instead 
 | [anomalies.md](anomalies.md) | You need the FLAT ledger of every anomaly/dead-code lead/silent swallow, per cluster in file:line order — incl. the 5 "dead" flags corrected to live (aliased/lazy imports) and the one real wiring bug. |
 | [system-lens-map.md](system-lens-map.md) | You need the EXHAUSTIVE 64-env-var table (13 Studio-settable / 51 shell-only), the ingestion chain stage-by-stage, the full hashtag-vet algorithm, or persona-field→downstream-consumer chains. Every claim carries a verified file:line. |
 | [architecture.md](architecture.md) | You want narrative system architecture — the stage DAG, the two agent gates, crash-safety model. |
-| [data.md](data.md) | You need the data model: the single JSON ledger, the Source→Moment→Clip→Post lifecycle, control-file schemas. |
+| [data.md](data.md) | You need the data model: the SQLite ledger, the Source→Moment→Clip→Post lifecycle, control-file schemas. |
 | [dependencies.md](dependencies.md) | You need the external-binary + Python-package dependency surface (ffmpeg/whisper/yt-dlp, subprocess timeouts). |
 | [lifecycle-full-picture.md](lifecycle-full-picture.md) | You want the maximum-depth end-to-end pipeline audit (ingest→publish→learn), the deepest single narrative. |
 | [hashtag-lifecycle.md](hashtag-lifecycle.md) | You are touching hashtags: persona corpus → vet → post → live Graph reach → surfaced. |
