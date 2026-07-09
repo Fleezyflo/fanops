@@ -192,18 +192,20 @@ def test_effective_publish_mode_logs_on_accounts_error(monkeypatch, tmp_path, ca
     assert mode == "live"                                       # fail-open label preserved
     assert any("account" in r.getMessage().lower() for r in caplog.records)
 
-def test_burn_subs_defaults_off_and_respects_env(monkeypatch, tmp_path):
-    # DEFAULT OFF (opt-in): burn_subs only adds the TRANSCRIPT captions on top of the retention hook;
-    # captioning the audio is redundant + transcription-dependent, so it ships only when asked.
+def test_burn_subs_defaults_on_and_respects_env(monkeypatch, tmp_path):
+    # DEFAULT ON: transcript captions ship live; music batches opt out per-batch. Only off-words disable.
+    # (conftest forces it OFF for hermeticity, so delenv to read the true default.)
     monkeypatch.delenv("FANOPS_BURN_SUBS", raising=False)
-    assert Config(root=tmp_path).burn_subs is False           # default OFF (unset)
+    assert Config(root=tmp_path).burn_subs is True            # default ON (unset)
     monkeypatch.setenv("FANOPS_BURN_SUBS", "")
-    assert Config(root=tmp_path).burn_subs is False           # blank stays OFF
+    assert Config(root=tmp_path).burn_subs is True            # blank stays ON
     monkeypatch.setenv("FANOPS_BURN_SUBS", "maybe")
-    assert Config(root=tmp_path).burn_subs is False           # anything not an on-word stays OFF
+    assert Config(root=tmp_path).burn_subs is True            # anything not an off-word stays ON
+    monkeypatch.setenv("FANOPS_BURN_SUBS", "0")
+    assert Config(root=tmp_path).burn_subs is False
+    monkeypatch.setenv("FANOPS_BURN_SUBS", "off")
+    assert Config(root=tmp_path).burn_subs is False
     monkeypatch.setenv("FANOPS_BURN_SUBS", "1")
-    assert Config(root=tmp_path).burn_subs is True
-    monkeypatch.setenv("FANOPS_BURN_SUBS", "on")
     assert Config(root=tmp_path).burn_subs is True
 
 def test_isolate_vocals_defaults_on_and_respects_env(monkeypatch, tmp_path):
