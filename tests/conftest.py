@@ -44,7 +44,10 @@ _LEAKY_ENV = ("FANOPS_POSTER", "BLOTATO_API_KEY", "POSTIZ_API_KEY", "POSTIZ_URL"
               "FANOPS_CREATIVE_VARIATION", "FANOPS_VARIANT_LEARNING", "FANOPS_P4_DIM_BIAS",
               # Account-First Studio casting (Face 3): a repo .env value must not leak into tests that assume
               # the code default (same class as FANOPS_CREATIVE_VARIATION above).
-              "FANOPS_ACCOUNT_CASTING")
+              "FANOPS_ACCOUNT_CASTING",
+              # burn_subs DEFAULTS ON (transcript captions); a repo .env =0 must not leak into tests
+              # that assume the code default — same class as FANOPS_HOOK_JUDGE above.
+              "FANOPS_BURN_SUBS")
 
 
 def pytest_configure(config):
@@ -96,6 +99,11 @@ def _hermetic_publish_env():
     # that exercise the isolation wiring opt back in explicitly (and monkeypatch isolate_vocals).
     iso_saved = os.environ.get("FANOPS_ISOLATE_VOCALS")
     os.environ["FANOPS_ISOLATE_VOCALS"] = "0"
+    # Force transcript-caption burn OFF for the unit suite: burn_subs DEFAULTS ON, but most clip tests
+    # isolate reframe/fingerprint/hook wiring and must not write .ass files. Tests that exercise subs
+    # opt back in explicitly (monkeypatch delenv/setenv burn_subs).
+    burn_saved = os.environ.get("FANOPS_BURN_SUBS")
+    os.environ["FANOPS_BURN_SUBS"] = "0"
     try:
         yield
     finally:
@@ -108,6 +116,10 @@ def _hermetic_publish_env():
             os.environ.pop("FANOPS_ISOLATE_VOCALS", None)
         else:
             os.environ["FANOPS_ISOLATE_VOCALS"] = iso_saved
+        if burn_saved is None:
+            os.environ.pop("FANOPS_BURN_SUBS", None)
+        else:
+            os.environ["FANOPS_BURN_SUBS"] = burn_saved
 
 
 # ── VCR: source external API shapes from the REAL call, never a guess ──────────────────────────────
