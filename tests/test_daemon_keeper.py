@@ -63,6 +63,30 @@ def test_ensure_bootstraps_when_pump_absent(tmp_path, monkeypatch):
     assert ["launchctl", "bootstrap", f"gui/{uid}", str(daemon.plist_path())] in fake.calls
 
 
+def test_ensure_rewrites_stale_wrapper_when_loaded(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(daemon.sys, "platform", "darwin")
+    uid = os.getuid()
+    main_print = f"gui/{uid}/{daemon.LABEL}"
+    fake = _fake_launchctl(**{main_print: (0, "")})
+    monkeypatch.setattr(daemon.subprocess, "run", fake)
+    cfg = Config(root=tmp_path)
+    cfg.control.mkdir(parents=True, exist_ok=True)
+    iv = 600
+    wp = daemon.wrapper_path(cfg)
+    wp.parent.mkdir(parents=True, exist_ok=True)
+    daemon.plist_path().parent.mkdir(parents=True, exist_ok=True)
+    daemon.plist_path().write_text(daemon.render_plist(cfg, interval=iv))
+    wp.write_text("#!/bin/bash\n# stale legacy one-shot\nexec fanops run --interval 600\n")
+    before = wp.read_text()
+    res = daemon.ensure(cfg)
+    after = wp.read_text()
+    assert after == daemon.render_wrapper(cfg, interval=iv)
+    assert after != before
+    assert res["loaded"] is True
+    assert res["action"] == "rewrite_wrapper"
+
+
 def test_install_installs_keeper_plist_and_loads(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setattr(daemon.sys, "platform", "darwin")

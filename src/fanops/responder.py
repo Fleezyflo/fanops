@@ -16,7 +16,8 @@ from fanops.config import Config
 from fanops.models import MomentDecision, MomentHookDecision, CaptionSet, SourceState
 from fanops.agentstep import pending, request_path, write_response, latest_request_id, clear_attempts, bump_attempts
 from fanops.gate_keys import gate_source_id as _gate_source_id
-from fanops.llm import claude_json_meta, LlmTimeoutError, LlmContextLimitError, LlmSchemaError
+from fanops.errors import ToolchainMissingError
+from fanops.llm import claude_json_meta, LlmTimeoutError, LlmContextLimitError, LlmSchemaError, LlmToolchainError
 from fanops.prompts import moment_pick_prompt, moment_hook_prompt, caption_prompt
 from fanops.control import guidance_sha
 from fanops.log import get_logger
@@ -137,7 +138,10 @@ class LlmResponder:
         except LlmSchemaError as e:         # MOL-227: unparseable LLM envelope -> labelled degrade, not transient
             log("responder", f"{kind}:{key}", "schema_error", err=str(e)[:160])
             self._on_deterministic_fail(cfg, kind, key, f"agent gate {kind} schema error: {str(e)[:160]}", log)
-        except Exception as e:              # transient model/CLI failure (incl. ToolchainMissing): log, leave pending
+        except (LlmToolchainError, ToolchainMissingError) as e:
+            log("responder", f"{kind}:{key}", "toolchain_error", err=str(e)[:160])
+            self._on_deterministic_fail(cfg, kind, key, f"agent gate {kind} toolchain error: {str(e)[:160]}", log)
+        except Exception as e:              # transient model/CLI failure: log, leave pending
             log("responder", f"{kind}:{key}", "error", err=str(e)[:160])
         return False
 
@@ -152,8 +156,25 @@ class LlmResponder:
             clear_attempts(cfg, kind, key)
 
     def _terminate_gate_source(self, cfg: Config, kind: str, key: str, reason: str) -> None:
-        """MOL-235 ceiling: stamp the owning source SourceState.error + error_reason (mirrors moments.py:347-348).
-        Load+save OUTSIDE the flock; lazy Ledger import. Fail-closed: never writes a response."""
+        """MOL-235 ceiling: moments gate -> SourceState.error (fail-closed). Enrichment gates
+        (moment_hooks, captions) synthesize a clean fail-open response so ingest can proceed."""
+        log = get_logger(cfg)
+        if kind == "moment_hooks":
+            rid = latest_request_id(cfg, kind, key)
+            if rid is None:
+                return
+            obj = screen_model_text(MomentHookDecision(hook=None, request_id=rid))
+            write_response(cfg, kind, key, obj.model_dump_json(indent=2))
+            log("responder", f"{kind}:{key}", "gate_failopen_clean")
+            return
+        if kind == "captions":
+            rid = latest_request_id(cfg, kind, key)
+            if rid is None:
+                return
+            obj = screen_model_text(CaptionSet(items=[], request_id=rid))
+            write_response(cfg, kind, key, obj.model_dump_json(indent=2))
+            log("responder", f"{kind}:{key}", "gate_failopen_clean")
+            return
         from fanops.ledger import Ledger
         try:
             led = Ledger.load(cfg)
@@ -166,7 +187,7 @@ class LlmResponder:
                 led.save()
         except Exception as e:
             with contextlib.suppress(Exception):
-                get_logger(cfg)("responder", f"{kind}:{key}", "terminate_failed", err=str(e)[:120])
+                log("responder", f"{kind}:{key}", "terminate_failed", err=str(e)[:120])
 
     def _mark_gate_degraded(self, cfg: Config, kind: str, key: str, reason: str) -> None:
         """AGENT-2: park the wedged gate's source-owner with a VISIBLE degraded_reason so the operator sees WHY

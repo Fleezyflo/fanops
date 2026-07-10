@@ -298,13 +298,29 @@ def install(cfg: Config, *, interval: int, responder: str = "inherit") -> dict:
             "responder": resolved, "discloses_llm": resolved == "llm", **keeper}
 
 def ensure(cfg: Config) -> dict:
-    """Keeper hook: re-assert main pump load when launchctl print says it is absent."""
+    """Keeper hook: re-assert main pump load when launchctl print says it is absent; also rewrite a
+    stale on-disk wrapper/plist when the installed cadence no longer matches render_wrapper."""
     _require_darwin()
+    action = "none"
     if _confirm_loaded(LABEL):
-        return {"label": LABEL, "loaded": True, "action": "none"}
-    pp = plist_path()
-    loaded = _load_plist(pp, LABEL) if pp.exists() else False
-    return {"label": LABEL, "loaded": loaded, "action": "bootstrap" if pp.exists() else "none"}
+        loaded = True
+    else:
+        pp = plist_path()
+        loaded = _load_plist(pp, LABEL) if pp.exists() else False
+        action = "bootstrap" if pp.exists() else "none"
+    iv = installed_interval(cfg)
+    if iv is not None:
+        wp = wrapper_path(cfg)
+        expected = render_wrapper(cfg, interval=iv)
+        if not wp.exists() or wp.read_text() != expected:
+            cfg.reports.mkdir(parents=True, exist_ok=True)
+            write_wrapper_atomic(wp, expected)
+            pp = plist_path()
+            pp.parent.mkdir(parents=True, exist_ok=True)
+            pp.write_text(render_plist(cfg, interval=iv))
+            if action == "none":
+                action = "rewrite_wrapper"
+    return {"label": LABEL, "loaded": loaded, "action": action}
 
 _VERDICT_UNLOADED_ALARM = "installed but NOT loaded — should be running"
 
