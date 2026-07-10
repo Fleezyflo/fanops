@@ -544,6 +544,10 @@ def cmd_daemon(cfg: Config, args) -> int:
         if act == "logs":
             print(daemon.tail_logs(cfg, args.n))
             return 0
+        if act == "ensure":
+            res = daemon.ensure(cfg)
+            print(f"daemon ensure -> {res['label']} loaded={res['loaded']} action={res['action']}")
+            return 0
         return 2
     except (RuntimeError, ToolchainMissingError, ValueError) as e:
         # non-darwin (RuntimeError), launchctl absent (ToolchainMissingError), bad --interval (ValueError)
@@ -694,6 +698,7 @@ def main(argv: list[str] | None = None) -> int:
     # resolves the ambient responder. 'llm'/'manual' persist an explicit choice to .env (durable).
     p_dins.add_argument("--responder", default="inherit", choices=["inherit", "llm", "manual"])
     dae_sub.add_parser("status", help="is the agent loaded + actually firing (heartbeat)?")
+    dae_sub.add_parser("ensure", help="re-assert main daemon load if absent (keeper hook)")
     p_dstop = dae_sub.add_parser("stop", help="unload the launchd agent"); p_dstop.add_argument("--remove", action="store_true")
     p_dlog = dae_sub.add_parser("logs", help="tail the run log"); p_dlog.add_argument("-n", type=int, default=40)
     p_auto = sub.add_parser("autopilot", help="one command -> autonomous: enable llm responder (durably) + install the daemon")

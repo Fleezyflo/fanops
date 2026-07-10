@@ -29,7 +29,14 @@ def _fake_launchctl(**spec):
     def run(cmd, *a, **k):
         calls.append(list(cmd))
         verb = cmd[1] if len(cmd) > 1 else ""
-        rc, out = spec.get(verb, (0, ""))
+        if verb == "print" and len(cmd) > 2:
+            key = cmd[2]                                          # gui/{uid}/{label}
+            if key in spec:
+                rc, out = spec[key]
+            else:
+                rc, out = spec.get("print", (0, ""))
+        else:
+            rc, out = spec.get(verb, (0, ""))
         return subprocess.CompletedProcess(cmd, rc, stdout=out, stderr="")
     run.calls = calls
     return run
@@ -72,17 +79,83 @@ def test_install_writes_files_and_bootstraps(tmp_path, monkeypatch):
     assert res["loaded"] is True
 
 
-def test_install_falls_back_to_load_when_bootstrap_fails(tmp_path, monkeypatch):
+def test_install_falls_back_to_load_when_bootstrap_never_confirms(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setattr(daemon.sys, "platform", "darwin")
-    fake = _fake_launchctl(bootout=(1, ""), bootstrap=(1, ""), load=(0, ""))
-    monkeypatch.setattr(daemon.subprocess, "run", fake)
+    monkeypatch.setattr(daemon.time, "sleep", lambda _s: None)
+    uid = os.getuid()
+    main_print = f"gui/{uid}/{daemon.LABEL}"
+    main_print_n = [0]
+    def run(cmd, *a, **k):
+        verb = cmd[1] if len(cmd) > 1 else ""
+        if verb == "print" and len(cmd) > 2 and cmd[2] == main_print:
+            main_print_n[0] += 1
+            rc = 0 if main_print_n[0] >= 4 else 1          # fail 3 bootstrap confirms; succeed after load -w
+        else:
+            rc = 0
+        return subprocess.CompletedProcess(cmd, rc, stdout="", stderr="")
+    run.calls = []
+    def tracked(cmd, *a, **k):
+        run.calls.append(list(cmd)); return run(cmd, *a, **k)
+    tracked.calls = run.calls
+    monkeypatch.setattr(daemon.subprocess, "run", tracked)
     cfg = Config(root=tmp_path)
 
     res = daemon.install(cfg, interval=600, responder="llm")
 
-    assert ["launchctl", "load", "-w", str(daemon.plist_path())] in fake.calls
+    assert ["launchctl", "load", "-w", str(daemon.plist_path())] in tracked.calls
     assert res["loaded"] is True
+
+
+def test_install_loaded_false_when_print_fails_despite_bootstrap_rc0(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(daemon.sys, "platform", "darwin")
+    monkeypatch.setattr(daemon.time, "sleep", lambda _s: None)
+    uid = os.getuid()
+    fail = f"gui/{uid}/{daemon.LABEL}"
+    fake = _fake_launchctl(bootout=(1, ""), bootstrap=(0, ""), load=(0, ""), print=(1, ""), **{fail: (1, "")})
+    monkeypatch.setattr(daemon.subprocess, "run", fake)
+    cfg = Config(root=tmp_path)
+
+    res = daemon.install(cfg, interval=600, responder="inherit")
+
+    assert res["loaded"] is False
+
+
+def test_install_retries_bootstrap_until_print_succeeds(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(daemon.sys, "platform", "darwin")
+    sleeps: list[float] = []
+    monkeypatch.setattr(daemon.time, "sleep", lambda s: sleeps.append(s))
+    uid = os.getuid()
+    main_print = f"gui/{uid}/{daemon.LABEL}"
+    main_tries = [0]
+    def run(cmd, *a, **k):
+        verb = cmd[1] if len(cmd) > 1 else ""
+        if verb == "print":
+            key = cmd[2] if len(cmd) > 2 else ""
+            if key == main_print:
+                main_tries[0] += 1
+                rc = 0 if main_tries[0] >= 3 else 1
+            else:
+                rc = 0
+            return subprocess.CompletedProcess(cmd, rc, stdout="", stderr="")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+    run.calls = []
+    orig = run
+    def tracked(cmd, *a, **k):
+        run.calls.append(list(cmd)); return orig(cmd, *a, **k)
+    tracked.calls = run.calls
+    monkeypatch.setattr(daemon.subprocess, "run", tracked)
+    cfg = Config(root=tmp_path)
+
+    res = daemon.install(cfg, interval=600, responder="inherit")
+
+    assert res["loaded"] is True
+    assert main_tries[0] == 3
+    assert sleeps == [2.0, 2.0]
+    bootstraps = [c for c in tracked.calls if c[1:3] == ["bootstrap", f"gui/{uid}"]]
+    assert len(bootstraps) >= 3
 
 
 def test_install_raises_on_non_darwin(tmp_path, monkeypatch):

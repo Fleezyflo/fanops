@@ -18,11 +18,18 @@ def _fake_launchctl(**spec):
     return run
 
 
+def _poll_interval(label: str) -> int:
+    for s in daemon.SIBLING_POLL_AGENTS:
+        if s["label"] == label:
+            return int(s.get("poll_interval_s", daemon.SIBLING_POLL_INTERVAL_S))
+    return daemon.SIBLING_POLL_INTERVAL_S
+
+
 def _write_sibling_plist(tmp_path, monkeypatch, label: str):
     monkeypatch.setenv("HOME", str(tmp_path))
     pp = daemon.sibling_plist_path(label)
     pp.parent.mkdir(parents=True, exist_ok=True)
-    pp.write_bytes(plistlib.dumps({"Label": label, "StartInterval": daemon.SIBLING_POLL_INTERVAL_S}))
+    pp.write_bytes(plistlib.dumps({"Label": label, "StartInterval": _poll_interval(label)}))
 
 
 @pytest.mark.parametrize("label,short", [(s["label"], s["short"]) for s in daemon.SIBLING_POLL_AGENTS])
@@ -36,7 +43,7 @@ def test_sibling_status_alarm_when_plist_on_disk_but_not_loaded(tmp_path, monkey
     assert rep["loaded"] is False
     assert rep["alarm"] is True
     assert rep["verdict"] == daemon._VERDICT_UNLOADED_ALARM
-    assert rep["poll_interval_s"] == 300
+    assert rep["poll_interval_s"] == _poll_interval(label)
 
 
 @pytest.mark.parametrize("label,short", [(s["label"], s["short"]) for s in daemon.SIBLING_POLL_AGENTS])
@@ -68,13 +75,14 @@ def test_sibling_status_loaded_when_plist_and_launchctl_ok(tmp_path, monkeypatch
 def test_sibling_agents_status_covers_fleet(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setattr(daemon.sys, "platform", "darwin")
-    labels = {s["label"] for s in daemon.SIBLING_POLL_AGENTS}
+    expected = {s["label"]: _poll_interval(s["label"]) for s in daemon.SIBLING_POLL_AGENTS}
     monkeypatch.setattr(daemon.subprocess, "run", _fake_launchctl())
 
     reps = daemon.sibling_agents_status()
 
-    assert {r["label"] for r in reps} == labels
-    assert all(r["poll_interval_s"] == 300 for r in reps)
+    assert {r["label"] for r in reps} == set(expected)
+    for r in reps:
+        assert r["poll_interval_s"] == expected[r["label"]]
 
 
 def test_poll_timer_rationale_documents_why_not_keepalive():

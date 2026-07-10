@@ -14,13 +14,15 @@ rather than silently no-op'ing; a systemd --user sibling is the natural follow-u
 guard marks the seam). Every `launchctl` call mirrors ingest._run_ffprobe (timeout + typed
 ToolchainMissingError on absence). Backend stays dryrun by default — this never publishes."""
 from __future__ import annotations
-import contextlib, os, plistlib, re, shlex, shutil, subprocess, sys, tempfile
+import contextlib, os, plistlib, re, shlex, shutil, subprocess, sys, tempfile, time
 from datetime import datetime, timezone
 from pathlib import Path
 from fanops.config import Config
 from fanops.errors import ToolchainMissingError
 
 LABEL = "com.fanops.run"
+KEEPER_LABEL = "com.fanops.keeper"
+KEEPER_POLL_INTERVAL_S = 120
 _LAUNCHCTL_TIMEOUT = 30.0
 _MIN_INTERVAL = 60                                    # launchd ThrottleInterval floor — sub-minute is meaningless
 
@@ -246,6 +248,21 @@ def _require_darwin() -> None:
     if sys.platform != "darwin":
         raise RuntimeError("fanops daemon is macOS-only (launchd); no systemd --user port yet")
 
+def _confirm_loaded(label: str) -> bool:
+    return _launchctl("print", f"gui/{os.getuid()}/{label}").returncode == 0
+
+def _load_plist(plist: Path, label: str) -> bool:
+    """Idempotent load with proof: bootout, bootstrap (retry until print confirms), load -w fallback."""
+    uid = os.getuid()
+    _launchctl("bootout", f"gui/{uid}/{label}")          # idempotent; rc ignored
+    for _ in range(3):
+        _launchctl("bootstrap", f"gui/{uid}", str(plist))
+        if _confirm_loaded(label):
+            return True
+        time.sleep(2)
+    _launchctl("load", "-w", str(plist))
+    return _confirm_loaded(label)
+
 
 # ── side-effecting verbs ─────────────────────────────────────────────────────────────────────
 
@@ -272,13 +289,19 @@ def install(cfg: Config, *, interval: int, responder: str = "inherit") -> dict:
     write_wrapper_atomic(wp, render_wrapper(cfg, interval=interval))   # temp+os.replace: never a torn wrapper (MOL-81)
     with contextlib.suppress(OSError): exec_fail_marker_path(cfg).unlink(missing_ok=True)
     pp.write_text(render_plist(cfg, interval=interval))
-    uid = os.getuid()
-    _launchctl("bootout", f"gui/{uid}/{LABEL}")          # idempotent reinstall; not-loaded -> rc!=0, ignored
-    r = _launchctl("bootstrap", f"gui/{uid}", str(pp))   # modern (macOS 11+)
-    if r.returncode != 0:
-        r = _launchctl("load", "-w", str(pp))            # fallback for older / edge-case macOS
-    return {"plist": str(pp), "wrapper": str(wp), "interval": interval, "loaded": r.returncode == 0,
-            "responder": resolved, "discloses_llm": resolved == "llm"}
+    loaded = _load_plist(pp, LABEL)
+    keeper = _install_keeper(cfg)
+    return {"plist": str(pp), "wrapper": str(wp), "interval": interval, "loaded": loaded,
+            "responder": resolved, "discloses_llm": resolved == "llm", **keeper}
+
+def ensure(cfg: Config) -> dict:
+    """Keeper hook: re-assert main pump load when launchctl print says it is absent."""
+    _require_darwin()
+    if _confirm_loaded(LABEL):
+        return {"label": LABEL, "loaded": True, "action": "none"}
+    pp = plist_path()
+    loaded = _load_plist(pp, LABEL) if pp.exists() else False
+    return {"label": LABEL, "loaded": loaded, "action": "bootstrap" if pp.exists() else "none"}
 
 _VERDICT_UNLOADED_ALARM = "installed but NOT loaded — should be running"
 
@@ -302,16 +325,46 @@ SIBLING_POLL_TIMERS_RATIONALE = (
     "Reaper stops idle local Postiz (RAM); media-sync pre-mirrors to R2 (publish path mirrors inline). "
     "M2-C readiness alarms still flag plist-on-disk + not-loaded for every installed sibling."
 )
-SIBLING_POLL_AGENTS: tuple[dict[str, str], ...] = (
+SIBLING_POLL_AGENTS: tuple[dict[str, str | int], ...] = (
     {"label": "com.fanops.postiz-reaper", "short": "Postiz reaper"},
     {"label": "com.fanops.media-sync", "short": "media-sync"},
+    {"label": KEEPER_LABEL, "short": "daemon keeper", "poll_interval_s": KEEPER_POLL_INTERVAL_S},
 )
 
 def sibling_plist_path(label: str) -> Path:
     return Path.home() / "Library/LaunchAgents" / f"{label}.plist"
 
-def sibling_agent_status(label: str, *, short: str = "") -> dict:
+def keeper_plist_path() -> Path:
+    return sibling_plist_path(KEEPER_LABEL)
+
+def render_keeper_plist(cfg: Config) -> str:
+    """StartInterval poll-timer: fire-and-exit `fanops daemon ensure` every 120s to re-assert main pump."""
+    fb, path = _fanops_bin(), _daemon_path()
+    pl = {
+        "Label": KEEPER_LABEL,
+        "ProgramArguments": [fb, "daemon", "ensure"],
+        "StartInterval": KEEPER_POLL_INTERVAL_S,
+        "RunAtLoad": True,
+        "WorkingDirectory": str(cfg.root),
+        "StandardOutPath": str(cfg.reports / "daemon-keeper.out"),
+        "StandardErrorPath": str(cfg.reports / "daemon-keeper.err"),
+        "EnvironmentVariables": {"PATH": path, "HOME": str(Path.home())},
+    }
+    return plistlib.dumps(pl).decode()
+
+def _install_keeper(cfg: Config) -> dict:
+    kp = keeper_plist_path()
+    kp.parent.mkdir(parents=True, exist_ok=True)
+    kp.write_text(render_keeper_plist(cfg))
+    return {"keeper_loaded": _load_plist(kp, KEEPER_LABEL), "keeper_plist": str(kp)}
+
+def sibling_agent_status(label: str, *, short: str = "", poll_interval_s: int | None = None) -> dict:
     """Readiness for one host-level poll-timer sibling. plist-on-disk + not-loaded = ALARM."""
+    if poll_interval_s is None:
+        for spec in SIBLING_POLL_AGENTS:
+            if spec["label"] == label:
+                poll_interval_s = int(spec.get("poll_interval_s", SIBLING_POLL_INTERVAL_S))
+                break
     installed = sibling_plist_path(label).exists()
     try:
         r = _launchctl("list", label)
@@ -325,8 +378,9 @@ def sibling_agent_status(label: str, *, short: str = "") -> dict:
         verdict = _VERDICT_UNLOADED_ALARM
     else:
         verdict = "loaded"
+    iv = poll_interval_s if poll_interval_s is not None else SIBLING_POLL_INTERVAL_S
     return {"label": label, "short": short or label, "installed": installed, "loaded": loaded, "pid": pid,
-            "verdict": verdict, "poll_interval_s": SIBLING_POLL_INTERVAL_S, "alarm": installed and not loaded}
+            "verdict": verdict, "poll_interval_s": iv, "alarm": installed and not loaded}
 
 def sibling_agents_status() -> list[dict]:
     """All known poll-timer siblings — doctor + Studio readiness surfaces (fail-open off-darwin)."""
@@ -334,11 +388,12 @@ def sibling_agents_status() -> list[dict]:
         return []
     out: list[dict] = []
     for spec in SIBLING_POLL_AGENTS:
+        iv = spec.get("poll_interval_s", SIBLING_POLL_INTERVAL_S)
         try:
-            out.append(sibling_agent_status(spec["label"], short=spec["short"]))
+            out.append(sibling_agent_status(spec["label"], short=str(spec["short"]), poll_interval_s=int(iv)))
         except Exception:
             out.append({"label": spec["label"], "short": spec["short"], "installed": False, "loaded": False,
-                        "verdict": "unknown", "poll_interval_s": SIBLING_POLL_INTERVAL_S, "alarm": False})
+                        "verdict": "unknown", "poll_interval_s": int(iv), "alarm": False})
     return out
 
 
