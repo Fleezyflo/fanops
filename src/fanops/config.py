@@ -69,7 +69,6 @@ _STAGE = {
 # The recognized poster backends. An unknown/typo'd FANOPS_POSTER resolves to dryrun (W4) — see
 # poster_backend. dryrun = posts nothing; postiz = free self-hosted (IG/YouTube); zernio = hosted TikTok.
 PosterBackend = Literal["dryrun", "postiz", "zernio"]
-_VALID_BACKENDS = frozenset({"dryrun", "postiz", "zernio"})
 # Live (real-posting) backends: a per-account backend override pointing at one of these is a real
 # "go live for this account" and must be creds-gated + confirmed, like the global go_live (dryrun isn't).
 _LIVE_BACKENDS = frozenset({"postiz", "zernio"})
