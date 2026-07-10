@@ -4,7 +4,7 @@ from pathlib import Path
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.pipeline import advance
-from fanops.agentstep import request_path, response_path, latest_request_id
+from fanops.agentstep import request_path, response_path, latest_request_id, gate_keys_for
 from fanops.models import MomentDecision, MomentHookDecision, CaptionSet, PostState
 from fanops.transcribe import _cached_models, _resolve_model, real_transcript_signal
 
@@ -79,7 +79,9 @@ def test_real_transcript_drives_moment_and_real_clip_renders(tmp_path, monkeypat
     s = advance(cfg, base_time="2026-06-02T18:00:00Z")
     assert s["awaiting"]["moments"] == 1
     src_id = next(iter(Ledger.load(cfg).sources))
-    req = json.loads(request_path(cfg, "moments", src_id).read_text())
+    dotted = gate_keys_for(cfg, "moments", f"{src_id}.")
+    pick_key = dotted[0] if dotted else src_id
+    req = json.loads(request_path(cfg, "moments", pick_key).read_text())
     # THE KEY ASSERTION v1 could not make: REAL whisper ran on REAL audio and produced a REAL,
     # substantive transcript (not a fake/empty/stub one). We assert that CONTRACT — structure +
     # substance — via real_transcript_signal, NOT a single literal token. The old check
@@ -94,8 +96,8 @@ def test_real_transcript_drives_moment_and_real_clip_renders(tmp_path, monkeypat
     assert "anymore" in joined, f"expected the spoken tail in the transcript, got: {req['transcript']}"
 
     # answer the PICK gate (pass 1) with a written MomentDecision
-    rid = latest_request_id(cfg, "moments", src_id)
-    response_path(cfg, "moments", src_id).write_text(MomentDecision(
+    rid = latest_request_id(cfg, "moments", pick_key)
+    response_path(cfg, "moments", pick_key).write_text(MomentDecision(
         source_id=src_id, request_id=rid,
         picks=[{"start": 0.0, "end": 4.0, "reason": "the line", "transcript_excerpt": "they slept on me"}]
     ).model_dump_json())

@@ -10,7 +10,7 @@ from fanops.ledger import Ledger
 from fanops.models import (Moment, MomentRequest, MomentDecision, MomentPick, MomentState, SourceState,
                            MomentHookRequest, MomentHookDecision)
 from fanops.ids import child_id
-from fanops.agentstep import write_request, read_response, latest_request_id, discard_gates_for, clear_attempts
+from fanops.agentstep import write_request, read_response, latest_request_id, discard_gates_for, clear_attempts, gate_keys_for
 from fanops.hookcheck import is_weak_hook
 from fanops.keyframes import extract_keyframes
 from fanops.bands import band_for
@@ -217,38 +217,63 @@ def _bounded_transcript(transcript: list, peaks: list, *, corpus=None) -> tuple:
     kept = [s for i, s in enumerate(segs) if i in keep_idx]         # restore chronological order
     return kept, len(segs) - len(kept)
 
+def _persona_entry(cfg: Config, a) -> dict:
+    """Per-account pick spec — full fields even when casting directive is falsy (directive-less accounts
+    still get their own owned moments under per-account isolation)."""
+    from fanops.persona_directives import casting_directive, resolved_cut_spec
+    from fanops.persona_levers import derive_intensity_from_focus
+    d = casting_directive(a)
+    prof = cfg.resolve_clip_profile(a)
+    band = band_for(prof)
+    pin_fr = (getattr(a, "framing", None) or "").strip().lower()
+    _, derived_fr = resolved_cut_spec(a)
+    framing = pin_fr or derived_fr or ("top" if cfg.resolve_top_bias(a) else "center")
+    content_focus = list(getattr(a, "content_focus", None) or [])
+    intensity = derive_intensity_from_focus(content_focus)
+    return {"handle": a.handle,
+            "directive": (d.select_rule or d.register) if d else "",
+            "selection_scope": (d.scope_lens if d else ""),
+            "band": f"{band.lo:g}-{band.hi:g}s",
+            "framing": framing,
+            "content_focus": content_focus,
+            "intensity": intensity or "",
+            "hook_angle": (getattr(a, "hook_angle", None) or ""),
+            "corpus": list(getattr(a, "hashtag_corpus", None) or [])}
+
 def _pick_personas(cfg: Config, accounts) -> list[dict]:
     """P4a: ONE assembly point for the per-active-persona FULL spec the pick + downstream gates read.
     Returns handle+directive+selection_scope+band+framing+hook_angle+corpus. Empty when casting OFF or no
     truthy casting directive (byte-identical persona-blind pick). Fail-open: a bad account row is skipped."""
     if accounts is None or not cfg.account_casting:
         return []
-    from fanops.persona_directives import casting_directive, resolved_cut_spec
-    from fanops.persona_levers import derive_intensity_from_focus
     out: list[dict] = []
     for a in accounts.active():
         try:
-            d = casting_directive(a)
-            if not d: continue
-            prof = cfg.resolve_clip_profile(a)
-            band = band_for(prof)
-            pin_fr = (getattr(a, "framing", None) or "").strip().lower()
-            _, derived_fr = resolved_cut_spec(a)
-            framing = pin_fr or derived_fr or ("top" if cfg.resolve_top_bias(a) else "center")
-            content_focus = list(getattr(a, "content_focus", None) or [])
-            intensity = derive_intensity_from_focus(content_focus)
-            out.append({"handle": a.handle,
-                        "directive": d.select_rule or d.register,
-                        "selection_scope": d.scope_lens,
-                        "band": f"{band.lo:g}-{band.hi:g}s",
-                        "framing": framing,
-                        "content_focus": content_focus,
-                        "intensity": intensity or "",
-                        "hook_angle": (getattr(a, "hook_angle", None) or ""),
-                        "corpus": list(getattr(a, "hashtag_corpus", None) or [])})
+            entry = _persona_entry(cfg, a)
+            if not entry.get("directive"): continue
+            out.append(entry)
         except Exception:
             continue
     return out
+
+def _targeted_active_accounts(led: Ledger, cfg: Config, source_id: str, accounts):
+    """Batch target_accounts ∩ active accounts when casting ON; None -> legacy bare gate (casting OFF /
+    accounts None / no actives). Directive is NOT a filter — directive-less actives still get a gate."""
+    if accounts is None or not cfg.account_casting:
+        return None
+    actives = list(accounts.active())
+    if not actives:
+        return None
+    src = led.sources.get(source_id)
+    tgt: list[str] = []
+    if src and getattr(src, "batch_id", None):
+        b = led.get_batch(src.batch_id)
+        if b is not None:
+            tgt = list(b.target_accounts or [])
+    if not tgt:
+        return actives
+    want = set(tgt)
+    return [a for a in actives if a.handle in want]
 
 def _persona_peaks(peaks: list[dict], personas: list[dict]) -> list[dict]:
     """P4b: attach each persona's intensity-filtered peak view (ONE gate, per-persona lens)."""
@@ -258,28 +283,62 @@ def _persona_peaks(peaks: list[dict], personas: list[dict]) -> list[dict]:
         pe["signal_peaks"] = filter_peaks_by_intensity(peaks, pe.get("intensity") or None)
     return personas
 
-def request_moments(led: Ledger, cfg: Config, source_id: str, accounts=None) -> Ledger:
-    """M1b PASS 1 — request the WINDOWS. P4a: the picker SEES per-persona lenses via _pick_personas so each
-    pick is attributed to its owner inside ONE source gate. The on-screen hook still rides moment_hooks."""
+def request_moments(led: Ledger, cfg: Config, source_id: str, accounts=None, *, guidance=None) -> Ledger:
+    """M1b PASS 1 — request the WINDOWS. Per-account isolation: casting ON fans one gate per targeted
+    active account (`{source_id}.{handle}`); casting OFF keeps the legacy bare source gate."""
     src = led.sources[source_id]
-    transcript, dropped = _bounded_transcript(src.transcript or [], src.signal_peaks or [])   # AGENT-2: bound the payload
-    if dropped:
-        get_logger(cfg)("source", source_id, "transcript_truncated", dropped=dropped, total=len(src.transcript or []))
-    personas = _persona_peaks(src.signal_peaks or [], _pick_personas(cfg, accounts))
-    payload = MomentRequest(source_id=source_id, request_id="",   # filled by write_request
-                            duration=src.duration or 0.0,
-                            transcript=transcript,
-                            transcript_total=len(src.transcript or []),   # for the prompt's M-of-N truncation marker
-                            signal_peaks=src.signal_peaks or [],
-                            language=src.language,
-                            guidance=load_guidance(cfg),
-                            clip_profile=cfg.clip_profile,
-                            personas=personas,
-                            frames=_source_frames(cfg, src)).model_dump()   # band + the picker's eyes
-    payload.pop("request_id", None)
-    if not payload.get("personas"):
-        payload.pop("personas", None)   # empty -> drop key so persona-blind path is byte-identical
-    write_request(cfg, kind="moments", key=source_id, payload=payload)
+    frames = _source_frames(cfg, src)
+    peaks = src.signal_peaks or []
+    g = load_guidance(cfg) if guidance is None else guidance
+    targets = _targeted_active_accounts(led, cfg, source_id, accounts)
+    if targets is None:
+        transcript, dropped = _bounded_transcript(src.transcript or [], peaks)
+        if dropped:
+            get_logger(cfg)("source", source_id, "transcript_truncated", dropped=dropped, total=len(src.transcript or []))
+        personas = _persona_peaks(peaks, _pick_personas(cfg, accounts))
+        payload = MomentRequest(source_id=source_id, request_id="",
+                                duration=src.duration or 0.0,
+                                transcript=transcript,
+                                transcript_total=len(src.transcript or []),
+                                signal_peaks=peaks,
+                                language=src.language,
+                                guidance=g,
+                                clip_profile=cfg.clip_profile,
+                                personas=personas,
+                                frames=frames).model_dump()
+        payload.pop("request_id", None)
+        if not payload.get("personas"):
+            payload.pop("personas", None)
+        discard_gates_for(cfg, "moments", source_id)
+        write_request(cfg, kind="moments", key=source_id, payload=payload)
+        led.set_source_state(source_id, SourceState.moments_requested)
+        return led
+    if not targets:
+        get_logger(cfg)("source", source_id, "moments_target_empty", warn=True)
+        led.set_source_state(source_id, SourceState.moments_empty)
+        return led
+    discard_gates_for(cfg, "moments", source_id)
+    from fanops.signals import filter_peaks_by_intensity
+    for a in targets:
+        entry = _persona_entry(cfg, a)
+        persona_peaks = filter_peaks_by_intensity(peaks, entry.get("intensity") or None)
+        transcript, dropped = _bounded_transcript(src.transcript or [], persona_peaks, corpus=entry.get("corpus"))
+        if dropped:
+            get_logger(cfg)("source", source_id, "transcript_truncated", dropped=dropped,
+                            total=len(src.transcript or []), handle=a.handle)
+        pe = {**entry, "signal_peaks": persona_peaks}
+        payload = MomentRequest(source_id=source_id, request_id="",
+                                duration=src.duration or 0.0,
+                                transcript=transcript,
+                                transcript_total=len(src.transcript or []),
+                                signal_peaks=persona_peaks,
+                                language=src.language,
+                                guidance=g,
+                                clip_profile=cfg.clip_profile,
+                                personas=[pe],
+                                frames=frames).model_dump()
+        payload.pop("request_id", None)
+        write_request(cfg, kind="moments", key=f"{source_id}.{a.handle}", payload=payload)
     led.set_source_state(source_id, SourceState.moments_requested)
     return led
 
@@ -298,33 +357,14 @@ def _stamp_owner_spec(cfg: Config, owner: str | None, by_handle: dict) -> tuple[
         fr = "top" if cfg.resolve_top_bias(acct) else "center"
     return prof, fr
 
-def ingest_moments(led: Ledger, cfg: Config, source_id: str) -> Ledger:
-    """M1b PASS 1 ingest — validate + reconcile the picks into `picked` moments (window chosen, hook NOT
-    yet authored). The source lands `picks_decided`; request_moment_hooks then opens a per-pick hook gate,
-    and ingest_moment_hooks authors the hook + promotes picked -> decided. Render keys on `decided`, so a
-    picked moment never renders hookless."""
-    dec = read_response(cfg, "moments", source_id, MomentDecision)
-    if dec is None:
-        return led                                  # still pending / stale ignored
-    src = led.sources[source_id]
-    rejected = 0
-    reasons: list[str] = []
-    valid: list[MomentPick] = []
+def _reconcile_valid_picks(led: Ledger, cfg: Config, source_id: str, deduped: list[MomentPick]) -> Ledger:
+    """Upsert deduped valid picks + hook-gate sweep + picks_decided. Caller handles empty/error."""
     try:
         from fanops.accounts import Accounts
         by_handle = {a.handle: a for a in Accounts.load(cfg).accounts}
     except Exception:
         by_handle = {}
-    for pick in dec.picks:
-        bad = validate_pick(pick, duration=src.duration or 0.0)
-        if bad:
-            rejected += 1; reasons.append(bad)
-            continue
-        valid.append(pick)
     keep: dict[str, Moment] = {}
-    deduped = _drop_overlaps(valid)                 # drop near-duplicate windows (keep first)
-    if len(deduped) < len(valid):                   # don't silently suppress picks — surface the count
-        get_logger(cfg)("source", source_id, "overlaps_dropped", count=len(valid) - len(deduped))
     owner_n: dict[str, int] = {}
     for pick in deduped:
         o = _pick_owner(pick) or ""
@@ -333,48 +373,95 @@ def ingest_moments(led: Ledger, cfg: Config, source_id: str) -> Ledger:
         get_logger(cfg)("source", source_id, "owner_picks", **owner_n)
     for pick in deduped:
         token = _token(pick)
-        owner = (pick.personas or [None])[0]          # P3: single-owner handle at ingest (None when blind)
+        owner = (pick.personas or [None])[0]
         mid = _owned_moment_id(source_id, owner, token)
         clip_prof, framing = _stamp_owner_spec(cfg, owner, by_handle)
-        # Born `picked` with NO hook — the hook is authored in pass 2 (ingest_moment_hooks), seeing this
-        # window's frames. hook/hook_removed stay at their empty defaults until then.
         keep[mid] = Moment(id=mid, parent_id=source_id, state=MomentState.picked,
                            content_token=token, start=pick.start, end=pick.end,
                            reason=pick.reason,
                            transcript_excerpt=pick.transcript_excerpt,
                            signal_score=pick.signal_score,
-                           affinities=list(pick.personas),   # P1: owner stamped at birth; [] when persona-blind
+                           affinities=list(pick.personas),
                            clip_profile=clip_prof, framing=framing,
-                           segments=list(pick.segments))     # S2: supercut spans ride the moment
-    if not keep:
+                           segments=list(pick.segments))
+    discard_gates_for(cfg, "moment_hooks", f"{source_id}.")
+    led.reconcile_moments(source_id, keep)
+    led.set_source_state(source_id, SourceState.picks_decided)
+    return led
+
+def _ingest_moments_dotted(led: Ledger, cfg: Config, source_id: str, keys: list[str]) -> Ledger:
+    """Atomic union over per-account pick gates — owner from key, personas pinned to owner."""
+    src = led.sources[source_id]
+    all_picks: list[MomentPick] = []
+    any_contrib = False
+    any_invalid = False
+    all_empty = True
+    for key in keys:
+        dec = read_response(cfg, "moments", key, MomentDecision)
+        if dec is None:
+            return led
+        owner = key.split(".", 1)[1]
+        gate_valid: list[MomentPick] = []
+        for pick in dec.picks:
+            stamped = pick.model_copy(update={"personas": [owner]})
+            bad = validate_pick(stamped, duration=src.duration or 0.0)
+            if bad:
+                continue
+            gate_valid.append(stamped)
+        if gate_valid:
+            any_contrib = True
+            all_empty = False
+            all_picks.extend(gate_valid)
+        elif dec.picks:
+            any_invalid = True
+            all_empty = False
+        else:
+            pass   # gate returned [] — counts toward all_empty
+    if any_contrib:
+        deduped = _drop_overlaps(all_picks)
+        if len(deduped) < len(all_picks):
+            get_logger(cfg)("source", source_id, "overlaps_dropped", count=len(all_picks) - len(deduped))
+        return _reconcile_valid_picks(led, cfg, source_id, deduped)
+    if any_invalid:
+        src.state = SourceState.error
+        src.error_reason = "all per-account moment picks invalid"
+        return led
+    if all_empty:
+        get_logger(cfg)("source", source_id, "zero_moments", warn=True)
+        led.set_source_state(source_id, SourceState.moments_empty)
+    return led
+
+def ingest_moments(led: Ledger, cfg: Config, source_id: str) -> Ledger:
+    """M1b PASS 1 ingest — validate + reconcile picks into `picked` moments. Per-account gates aggregate
+    atomically when `{source_id}.*` keys exist; else the legacy bare source gate (casting OFF)."""
+    dotted = gate_keys_for(cfg, "moments", f"{source_id}.")
+    if dotted:
+        return _ingest_moments_dotted(led, cfg, source_id, dotted)
+    dec = read_response(cfg, "moments", source_id, MomentDecision)
+    if dec is None:
+        return led
+    src = led.sources[source_id]
+    rejected = 0
+    reasons: list[str] = []
+    valid: list[MomentPick] = []
+    for pick in dec.picks:
+        bad = validate_pick(pick, duration=src.duration or 0.0)
+        if bad:
+            rejected += 1; reasons.append(bad)
+            continue
+        valid.append(pick)
+    deduped = _drop_overlaps(valid)
+    if len(deduped) < len(valid):
+        get_logger(cfg)("source", source_id, "overlaps_dropped", count=len(valid) - len(deduped))
+    if not deduped:
         if dec.picks:
-            # a wholly-INVALID new decision quarantines the source but does NOT reconcile — prior
-            # valid moments/lineage are preserved. name WHY (distinct reasons) for the operator.
             src.state = SourceState.error
             src.error_reason = f"all {rejected} moment picks invalid: {'; '.join(sorted(set(reasons)))[:200]}"
         else:
-            # the model returned [] (nothing worth posting): VISIBLE but NON-terminal. Log loudly so
-            # 'most content wasn't generated' is never silent, but DON'T reconcile (that would
-            # cascade-delete a prior good moment set) and DON'T error (the prompt blesses empty as
-            # valid). V2 M1/F8: land the DISTINCT moments_empty state, not a look-alike moments_decided
-            # — so `fanops status` can surface it and `retry-source` can re-request (no consumer gates
-            # clipping on source state; the preserved prior moment renders off MomentState.decided).
             get_logger(cfg)("source", source_id, "zero_moments", warn=True)
             led.set_source_state(source_id, SourceState.moments_empty)
         return led
-    # CRITICAL (review): a NEW pick decision SUPERSEDES the prior per-pick hook gates. Moment ids are
-    # content-addressed on the token, so a same-window re-pick (amplify) UPSERTS in place and resets to
-    # `picked`; without clearing the prior moment_hooks gate files, request_moment_hooks' write-once guard
-    # would skip re-authoring and ingest_moment_hooks would re-apply the STALE hook (authored against the
-    # OLD reason/window/frames). Discard them BEFORE reconcile so every reconciled pick re-authors fresh.
-    # (Only on the reconcile path — the empty/error paths preserve prior moments AND their valid hooks.)
-    discard_gates_for(cfg, "moment_hooks", f"{source_id}.")
-    # P11 (MOL-152): the moment_casting gate + durable AccountSelection are gone. A re-pick's fresh single-owner
-    # affinities are stamped by reconcile_moments below (owner attribution rides on the pick), so there is no
-    # stale per-account selection to discard here anymore.
-    led.reconcile_moments(source_id, keep)          # upsert + cascade-delete dropped lineages
-    led.set_source_state(source_id, SourceState.picks_decided)   # M1b: picks reconciled; hook gates next
-    return led
+    return _reconcile_valid_picks(led, cfg, source_id, deduped)
 
 
 def _hook_persona_entry(a):

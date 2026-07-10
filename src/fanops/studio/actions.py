@@ -443,7 +443,7 @@ def answer_gate(cfg: Config, kind: str, key: str, data: dict) -> ActionResult:
         return ActionResult(ok=False, error=f"no pending {kind} gate for {key!r}")
     full = {"request_id": rid, **data}
     if kind == "moments":
-        full["source_id"] = key                    # MomentDecision echoes the source it decides
+        full["source_id"] = key.split(".", 1)[0]   # bare or per-account key -> source id
     try:
         validated = model(**full)
     except ValidationError as exc:

@@ -79,8 +79,11 @@ def test_advance_stops_at_gate_then_continues(tmp_path, monkeypatch, mocker):
     assert s["sources"] == 1 and s["awaiting"]["moments"] == 1 and s["posts"] == 0
 
     src_id = next(iter(Ledger.load(cfg).sources))
-    rid = latest_request_id(cfg, "moments", src_id)
-    response_path(cfg, "moments", src_id).write_text(MomentDecision(
+    from fanops.agentstep import gate_keys_for
+    dotted = gate_keys_for(cfg, "moments", f"{src_id}.")
+    pick_key = dotted[0] if dotted else src_id
+    rid = latest_request_id(cfg, "moments", pick_key)
+    response_path(cfg, "moments", pick_key).write_text(MomentDecision(
         source_id=src_id, request_id=rid,
         picks=[MomentPick(start=14.0, end=18.0, reason="punchline",
                           transcript_excerpt="they slept on me")]).model_dump_json())
