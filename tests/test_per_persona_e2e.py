@@ -1,5 +1,5 @@
 # tests/test_per_persona_e2e.py — P15 capstone: single-owner per-persona E2E + closed-loop metric proof.
-# N personas → one source gate → owner-attributed picks → one hook/clip/caption per owner-moment →
+# N personas → per-account pick gates → owner-attributed picks → one hook/clip/caption per owner-moment →
 # crosspost mints ONLY on owner surfaces. Slow UNIT; deterministic (injected time, faked ffmpeg, stub backends).
 import subprocess
 import pytest
@@ -38,10 +38,23 @@ def _fake_ffmpeg(mocker):
     mocker.patch("fanops.clip.subprocess.run", side_effect=fake_run)
 
 
-def _ingest_picks(led, cfg, source_id, picks):
-    rid = latest_request_id(cfg, "moments", source_id)
-    dec = screen_model_text(MomentDecision(source_id=source_id, request_id=rid, picks=picks))
-    response_path(cfg, "moments", source_id).write_text(dec.model_dump_json())
+def _ingest_picks(led, cfg, source_id, picks_by_owner):
+    """Per-account pick ingest — `picks_by_owner` maps handle -> picks list; unanswered gates get []."""
+    from fanops.agentstep import gate_keys_for
+    keys = gate_keys_for(cfg, "moments", f"{source_id}.")
+    if not keys:
+        key = source_id
+        picks = next(iter(picks_by_owner.values()))
+        rid = latest_request_id(cfg, "moments", key)
+        dec = screen_model_text(MomentDecision(source_id=source_id, request_id=rid, picks=picks))
+        response_path(cfg, "moments", key).write_text(dec.model_dump_json())
+        return ingest_moments(led, cfg, source_id)
+    for key in keys:
+        handle = key.split(".", 1)[1]
+        picks = picks_by_owner.get(handle, [])
+        rid = latest_request_id(cfg, "moments", key)
+        dec = screen_model_text(MomentDecision(source_id=source_id, request_id=rid, picks=picks))
+        response_path(cfg, "moments", key).write_text(dec.model_dump_json())
     return ingest_moments(led, cfg, source_id)
 
 
@@ -74,11 +87,12 @@ def test_per_persona_single_owner_e2e_through_crosspost(tmp_path, mocker, monkey
                                         {"t": 24.0, "kind": "scene_cut", "score": 0.8}],
                           meta={"transcribed": True}))
 
-    # PASS 1: one source gate, N owner-attributed picks
+    # PASS 1: per-account gates, owner-attributed picks
     led = request_moments(led, cfg, "src_1", accounts=accts)
-    picks = [MomentPick(start=0, end=8, reason="credible window", personas=["trust"]),
-             MomentPick(start=20, end=28, reason="rivalry window", personas=["drama"])]
-    led = _ingest_picks(led, cfg, "src_1", picks)
+    led = _ingest_picks(led, cfg, "src_1", {
+        "trust": [MomentPick(start=0, end=8, reason="credible window", personas=["trust"])],
+        "drama": [MomentPick(start=20, end=28, reason="rivalry window", personas=["drama"])],
+    })
     moms = led.moments_of("src_1")
     assert len(moms) == 2
     for m in moms:

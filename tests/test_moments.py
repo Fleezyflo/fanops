@@ -7,7 +7,8 @@ from fanops.agentstep import response_path, request_path, latest_request_id, pen
 from fanops.models import PERSONA_PICK_SPEC_KEYS
 from fanops.moments import (request_moments, ingest_moments, request_moment_hooks,
                             ingest_moment_hooks, validate_pick, _drop_overlaps, _owned_moment_id,
-                            _pick_personas)
+                            _pick_personas, _persona_entry)
+from fanops.agentstep import gate_keys_for
 from fanops.adjust import amplify
 from fanops.ids import child_id
 
@@ -20,12 +21,23 @@ from fanops.ids import child_id
 def _mp(s, e, reason="r"):
     return MomentPick(start=s, end=e, reason=reason)
 
-def _ingest_picks(led, cfg, source_id, picks):
+def _ingest_picks(led, cfg, source_id, picks, *, handle=None):
     """PASS 1: write a MomentDecision response + ingest -> `picked` moments / `picks_decided`."""
     from fanops.responder import screen_model_text
-    rid = latest_request_id(cfg, "moments", source_id)
+    key = f"{source_id}.{handle}" if handle else source_id
+    rid = latest_request_id(cfg, "moments", key)
     dec = screen_model_text(MomentDecision(source_id=source_id, request_id=rid, picks=picks))
-    response_path(cfg, "moments", source_id).write_text(dec.model_dump_json())
+    response_path(cfg, "moments", key).write_text(dec.model_dump_json())
+    return ingest_moments(led, cfg, source_id)
+
+def _ingest_picks_all_accounts(led, cfg, source_id, picks_by_handle: dict):
+    """Write per-account pick responses then ingest (casting-ON dotted path)."""
+    from fanops.responder import screen_model_text
+    for handle, picks in picks_by_handle.items():
+        key = f"{source_id}.{handle}"
+        rid = latest_request_id(cfg, "moments", key)
+        dec = screen_model_text(MomentDecision(source_id=source_id, request_id=rid, picks=picks))
+        response_path(cfg, "moments", key).write_text(dec.model_dump_json())
     return ingest_moments(led, cfg, source_id)
 
 def _decide_hooks(led, cfg, source_id, hooks=None, accounts=None):
@@ -321,40 +333,40 @@ def test_pick_request_carries_resolved_persona_spec(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
     accts = _seed_pick_persona_accounts(cfg, "a")
     led = request_moments(led, cfg, "src_1", accounts=accts)
-    payload = json.loads(request_path(cfg, "moments", "src_1").read_text())
+    payload = json.loads(request_path(cfg, "moments", "src_1.a").read_text())
     assert len(payload["personas"]) == 1
     assert PERSONA_PICK_SPEC_KEYS <= set(payload["personas"][0])
     assert "signal_peaks" in payload["personas"][0]
 
-def test_request_writes_one_source_gate(tmp_path):
-    # P4 (MOL-145): N personas ride ONE source-keyed gate — no per-handle fork, no '#' in the key.
+def test_request_writes_one_gate_per_account(tmp_path):
+    # Per-account isolation: N targeted accounts -> N gates keyed `{source_id}.{handle}`.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
     accts = _seed_multi_pick_persona_accounts(cfg, ["a", "b"])
     led = request_moments(led, cfg, "src_1", accounts=accts)
-    gate_dir = request_path(cfg, "moments", "src_1").parent
-    moment_gates = [p.name for p in gate_dir.glob("moments__*.request.json")]
-    assert moment_gates == ["moments__src_1.request.json"]
-    assert "#" not in moment_gates[0]
-    payload = json.loads(request_path(cfg, "moments", "src_1").read_text())
-    assert len(payload["personas"]) == 2
-    assert {p["handle"] for p in payload["personas"]} == {"a", "b"}
+    gate_dir = request_path(cfg, "moments", "src_1.a").parent
+    moment_gates = sorted(p.name for p in gate_dir.glob("moments__*.request.json"))
+    assert moment_gates == ["moments__src_1.a.request.json", "moments__src_1.b.request.json"]
+    assert not request_path(cfg, "moments", "src_1").exists()
+    for h in ("a", "b"):
+        payload = json.loads(request_path(cfg, "moments", f"src_1.{h}").read_text())
+        assert len(payload["personas"]) == 1
+        assert payload["personas"][0]["handle"] == h
 
 def test_request_packs_full_persona_spec_list(tmp_path):
-    # P4: each persona entry carries the full P4a resolved spec (handle through corpus).
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
     accts = _seed_multi_pick_persona_accounts(cfg, ["x", "y"])
     led = request_moments(led, cfg, "src_1", accounts=accts)
-    payload = json.loads(request_path(cfg, "moments", "src_1").read_text())
-    for spec in payload["personas"]:
+    for h in ("x", "y"):
+        payload = json.loads(request_path(cfg, "moments", f"src_1.{h}").read_text())
+        spec = payload["personas"][0]
         assert PERSONA_PICK_SPEC_KEYS <= set(spec)
         assert "signal_peaks" in spec
-        assert spec["handle"] in ("x", "y")
+        assert spec["handle"] == h
         assert spec["directive"] and spec["band"] and spec["framing"]
         assert spec["selection_scope"] and spec["hook_angle"] == "curiosity"
         assert isinstance(spec["corpus"], list)
 
 def test_request_reuses_frames_once(tmp_path, mocker):
-    # P4: whole-source frames are extracted ONCE per request (persona-blind visual survey).
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
     (cfg.sources / "src_1.mp4").parent.mkdir(parents=True, exist_ok=True)
     (cfg.sources / "src_1.mp4").write_bytes(b"\x00")
@@ -362,8 +374,9 @@ def test_request_reuses_frames_once(tmp_path, mocker):
     accts = _seed_multi_pick_persona_accounts(cfg, ["a", "b"])
     led = request_moments(led, cfg, "src_1", accounts=accts)
     assert spy.call_count == 1
-    payload = json.loads(request_path(cfg, "moments", "src_1").read_text())
-    assert payload["frames"] == ["/k/a.jpg"]
+    for h in ("a", "b"):
+        payload = json.loads(request_path(cfg, "moments", f"src_1.{h}").read_text())
+        assert payload["frames"] == ["/k/a.jpg"]
 
 def test_request_zero_personas_drops_key(tmp_path, monkeypatch):
     # P4: empty personas -> drop the key; persona-blind path byte-identical to no-accounts call.
@@ -909,6 +922,114 @@ def test_bounded_transcript_no_corpus_byte_identical():
     baseline = _bounded_transcript(segs, peaks)
     assert _bounded_transcript(segs, peaks, corpus=None) == baseline
     assert _bounded_transcript(segs, peaks, corpus=[]) == baseline
+
+
+# --- MOL-480: per-account LLM isolation ---
+def test_ingest_owner_from_dotted_key(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
+    accts = _seed_multi_pick_persona_accounts(cfg, ["a", "b"])
+    led = request_moments(led, cfg, "src_1", accounts=accts)
+    led = _ingest_picks_all_accounts(led, cfg, "src_1",
+                                      {"a": [_mp(0, 8, "a window")], "b": [_mp(20, 28, "b window")]})
+    moms = led.moments_of("src_1")
+    assert len(moms) == 2
+    owners = {m.affinities[0] for m in moms}
+    assert owners == {"a", "b"}
+
+def test_ingest_aggregation_contrib_union(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
+    accts = _seed_multi_pick_persona_accounts(cfg, ["a", "b"])
+    led = request_moments(led, cfg, "src_1", accounts=accts)
+    led = _ingest_picks_all_accounts(led, cfg, "src_1", {"a": [_mp(0, 8)], "b": []})
+    assert led.sources["src_1"].state is SourceState.picks_decided
+    assert len(led.moments_of("src_1")) == 1
+
+def test_ingest_aggregation_all_empty(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
+    accts = _seed_multi_pick_persona_accounts(cfg, ["a", "b"])
+    led = request_moments(led, cfg, "src_1", accounts=accts)
+    led = _ingest_picks_all_accounts(led, cfg, "src_1", {"a": [], "b": []})
+    assert led.sources["src_1"].state is SourceState.moments_empty
+
+def test_ingest_aggregation_no_contrib_any_invalid(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
+    accts = _seed_multi_pick_persona_accounts(cfg, ["a", "b"])
+    led = request_moments(led, cfg, "src_1", accounts=accts)
+    led = _ingest_picks_all_accounts(led, cfg, "src_1",
+                                      {"a": [_mp(0, 0, "")], "b": [_mp(5, 3, "bad")]})
+    assert led.sources["src_1"].state is SourceState.error
+
+def test_batch_target_subset_gates_only_checked_accounts(tmp_path):
+    from fanops.models import Batch
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_batch(Batch(id="bat_1", name="Launch", target_accounts=["a"]))
+    src = Source(id="src_1", source_path="/s.mp4", state=SourceState.signalled, duration=60.0,
+                 transcript=[{"start": 0, "end": 8, "text": "x"}], signal_peaks=[],
+                 batch_id="bat_1", meta={"transcribed": True})
+    led.add_source(src); led.save()
+    accts = _seed_multi_pick_persona_accounts(cfg, ["a", "b"])
+    led = request_moments(led, cfg, "src_1", accounts=accts)
+    assert gate_keys_for(cfg, "moments", "src_1.") == ["src_1.a"]
+    assert not request_path(cfg, "moments", "src_1.b").exists()
+
+def test_targeted_intersect_active_empty_moments_empty(tmp_path):
+    from fanops.models import Batch
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_batch(Batch(id="bat_1", name="Ghost", target_accounts=["ghost"]))
+    src = Source(id="src_1", source_path="/s.mp4", state=SourceState.signalled, duration=60.0,
+                 transcript=[], signal_peaks=[], batch_id="bat_1", meta={"transcribed": True})
+    led.add_source(src); led.save()
+    accts = _seed_multi_pick_persona_accounts(cfg, ["a"])
+    led = request_moments(led, cfg, "src_1", accounts=accts)
+    assert led.sources["src_1"].state is SourceState.moments_empty
+    assert not list(request_path(cfg, "moments", "src_1.a").parent.glob("moments__src_1.*.request.json"))
+
+def test_identical_persona_two_gates(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
+    accts = _seed_multi_pick_persona_accounts(cfg, ["a1", "a2"])
+    led = request_moments(led, cfg, "src_1", accounts=accts)
+    keys = gate_keys_for(cfg, "moments", "src_1.")
+    assert keys == ["src_1.a1", "src_1.a2"]
+    rids = {latest_request_id(cfg, "moments", k) for k in keys}
+    assert len(rids) == 2
+
+def test_upgrade_bare_gate_ingest_still_works(tmp_path, monkeypatch):
+    monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "0")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
+    led = request_moments(led, cfg, "src_1")
+    led = _ingest_picks(led, cfg, "src_1", [_mp(0, 8)])
+    assert led.sources["src_1"].state is SourceState.picks_decided
+
+def test_rerequest_sweeps_stale_gates(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
+    accts = _seed_multi_pick_persona_accounts(cfg, ["a", "b"])
+    led = request_moments(led, cfg, "src_1", accounts=accts)
+    response_path(cfg, "moments", "src_1.a").write_text('{"stale": true}')
+    led = request_moments(led, cfg, "src_1", accounts=accts)
+    assert not response_path(cfg, "moments", "src_1.a").exists()
+    assert request_path(cfg, "moments", "src_1.a").exists()
+    assert request_path(cfg, "moments", "src_1.b").exists()
+
+def test_persona_entry_includes_directive_less(tmp_path):
+    from fanops.accounts import Accounts
+    cfg = Config(root=tmp_path)
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": [{
+        "handle": "plain", "account_id": "1", "platforms": ["instagram"], "status": "active",
+        "persona": ""}]}))
+    accts = Accounts.load(cfg)
+    entry = _persona_entry(cfg, accts.accounts[0])
+    assert entry["handle"] == "plain" and entry["directive"] == ""
+    assert _pick_personas(cfg, accts) == []
+
+def test_hook_gate_still_owner_only_pin(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
+    accts = _seed_pick_persona_accounts(cfg, "a")
+    led = request_moments(led, cfg, "src_1", accounts=accts)
+    led = _ingest_picks(led, cfg, "src_1", [_mp(0, 8)], handle="a")
+    led = request_moment_hooks(led, cfg, "src_1", accounts=accts)
+    keys = gate_keys_for(cfg, "moment_hooks", "src_1.")
+    assert keys and all("." in k for k in keys)
 
 
 # --- MOL-230: vision finalizer recovers a well-formed MomentDecision on the pick gate ---

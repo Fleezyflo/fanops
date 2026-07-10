@@ -106,14 +106,20 @@ def discard_gate(cfg: Config, kind: str, key: str) -> None:
             pass
     clear_attempts(cfg, kind, key)
 
+def gate_keys_for(cfg: Config, kind: str, key_prefix: str) -> list[str]:
+    """Sorted gate keys from the same glob as discard_gates_for — e.g. every per-account
+    `moments__{source_id}.{handle}` request on disk."""
+    return [req.name[len(kind) + 2:-len(".request.json")]
+            for req in sorted(_dir(cfg).glob(f"{kind}__{key_prefix}*.request.json"))]
+
 def discard_gates_for(cfg: Config, kind: str, key_prefix: str) -> int:
     """Discard every gate of `kind` whose key starts with `key_prefix` — e.g. all of a source's per-pick
     `moment_hooks__{source_id}.{token}` gates when its pick decision is superseded. The trailing '.' in a
     `{source_id}.` prefix is a literal in the glob, so `source_1.` never matches `source_12.*`. Returns
     the count cleared."""
     n = 0
-    for req in sorted(_dir(cfg).glob(f"{kind}__{key_prefix}*.request.json")):
-        discard_gate(cfg, kind, req.name[len(kind) + 2:-len(".request.json")])
+    for key in gate_keys_for(cfg, kind, key_prefix):
+        discard_gate(cfg, kind, key)
         n += 1
     return n
 

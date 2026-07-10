@@ -7,8 +7,9 @@ can't grow one source endlessly. RETIRE = ledger.retire_clip, which clip/crosspo
 from __future__ import annotations
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.models import LIFT_SCORE, MomentRequest, PostState, SourceState, MomentState
-from fanops.agentstep import write_request
+from fanops.models import LIFT_SCORE, MomentState, PostState
+from fanops.moments import request_moments
+from fanops.accounts import Accounts
 
 # E1 per-source amplification budget — the single source of truth for the cap, shared by amplify()'s
 # default AND variant_amplify.amplify_candidates' pre-check (so the two can never drift apart).
@@ -72,14 +73,9 @@ def amplify(led: Ledger, cfg: Config, winner_post_ids: list[str], *,
                     f"vein in this source — do not repeat the same timestamps.")
         if extra_guidance:
             guidance += f" {extra_guidance}"
-        payload = MomentRequest(source_id=src.id, request_id="", duration=src.duration or 0.0,
-                                transcript=src.transcript or [], signal_peaks=src.signal_peaks or [],
-                                language=src.language, guidance=guidance,
-                                clip_profile=cfg.clip_profile).model_dump()
-        payload.pop("request_id", None)
-        write_request(cfg, kind="moments", key=src.id, payload=payload)   # invalidates stale resp
-        src.meta["amplify_count"] = used + 1              # E1: count only successful amplifies
-        led.set_source_state(src.id, SourceState.moments_requested)
+        accts = Accounts.load(cfg)
+        led = request_moments(led, cfg, src.id, accounts=accts, guidance=guidance)
+        src.meta["amplify_count"] = used + 1
     return led
 
 def retire(led: Ledger, loser_post_ids: list[str]) -> Ledger:
