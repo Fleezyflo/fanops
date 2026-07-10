@@ -63,7 +63,11 @@ def _validate_poster(v: object) -> str:
 
 def _validate_responder(v: object) -> str:
     if v is None: return ""
-    return str(v).strip().lower()
+    s = str(v).strip().lower()
+    if not s: return ""
+    if s not in _VALID_RESPONDERS:
+        raise ValueError(f"unrecognized FANOPS_RESPONDER={s!r}; valid: llm, manual")
+    return s
 
 
 def _strict_validate_poster(v: object) -> str:
