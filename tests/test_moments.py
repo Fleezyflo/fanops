@@ -338,7 +338,7 @@ def test_pick_request_carries_resolved_persona_spec(tmp_path):
     assert PERSONA_PICK_SPEC_KEYS <= set(payload["personas"][0])
     assert "signal_peaks" in payload["personas"][0]
 
-def test_request_writes_one_gate_per_account(tmp_path):
+def test_request_writes_one_gate_per_targeted_account(tmp_path):
     # Per-account isolation: N targeted accounts -> N gates keyed `{source_id}.{handle}`.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
     accts = _seed_multi_pick_persona_accounts(cfg, ["a", "b"])
@@ -402,8 +402,9 @@ def test_request_adds_no_skip_state(tmp_path):
     forbidden = ("moments_wait_cycles", "moments_skipped_handles", "skip_state")
     assert not any(k in (src.meta or {}) for k in forbidden)
 
-def test_amplify_gate_still_read(tmp_path):
-    # P4: amplify keeps writing the source-keyed moments gate (no #handle fork) — path intact.
+def test_amplify_gate_still_read(tmp_path, monkeypatch):
+    # Casting OFF / no accounts: amplify keeps the legacy bare source-keyed moments gate.
+    monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "0")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path="/s.mp4", state=SourceState.moments_decided,
                           duration=30.0, transcript=[{"start": 14, "end": 18, "text": "they slept on me"}],
@@ -420,6 +421,28 @@ def test_amplify_gate_still_read(tmp_path):
     payload = json.loads(request_path(cfg, "moments", "src_1").read_text())
     assert payload["source_id"] == "src_1" and "AMPLIFY" in payload["guidance"]
     assert latest_request_id(cfg, "moments", "src_1") is not None
+
+def test_amplify_rewrites_per_account_gates(tmp_path, monkeypatch):
+    monkeypatch.delenv("FANOPS_ACCOUNT_CASTING", raising=False)   # casting ON (default)
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _seed_multi_pick_persona_accounts(cfg, ["a", "b"])
+    led.add_source(Source(id="src_1", source_path="/s.mp4", state=SourceState.moments_decided,
+                          duration=30.0, transcript=[{"start": 14, "end": 18, "text": "they slept on me"}],
+                          signal_peaks=[], meta={"transcribed": True}))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="14-21", start=14, end=21,
+                          reason="punchline", state=MomentState.clipped))
+    led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", state=ClipState.analyzed))
+    led.add_post(Post(id="p1", parent_id="clip_1", account="a", account_id="1",
+                      platform=Platform.instagram, caption="x", state=PostState.analyzed,
+                      metrics={"lift_score": 400}, public_url="dryrun://1"))
+    led = amplify(led, cfg, ["p1"])
+    keys = gate_keys_for(cfg, "moments", "src_1.")
+    assert keys == ["src_1.a", "src_1.b"]
+    assert not request_path(cfg, "moments", "src_1").exists()
+    for h in ("a", "b"):
+        payload = json.loads(request_path(cfg, "moments", f"src_1.{h}").read_text())
+        assert "AMPLIFY" in payload["guidance"]
+        assert len(payload["personas"]) == 1 and payload["personas"][0]["handle"] == h
 
 def test_request_moments_writes_pick_request_with_transcript_signals_language(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
@@ -1030,6 +1053,82 @@ def test_hook_gate_still_owner_only_pin(tmp_path):
     led = request_moment_hooks(led, cfg, "src_1", accounts=accts)
     keys = gate_keys_for(cfg, "moment_hooks", "src_1.")
     assert keys and all("." in k for k in keys)
+
+def test_ingest_unions_all_account_gates(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
+    accts = _seed_multi_pick_persona_accounts(cfg, ["a", "b"])
+    led = request_moments(led, cfg, "src_1", accounts=accts)
+    led = _ingest_picks_all_accounts(led, cfg, "src_1",
+                                      {"a": [_mp(0, 8, "a win")], "b": [_mp(20, 28, "b win")]})
+    assert led.sources["src_1"].state is SourceState.picks_decided
+    assert len(led.moments_of("src_1")) == 2
+
+def test_ingest_dotted_partial_answer_defers_atomic(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
+    accts = _seed_multi_pick_persona_accounts(cfg, ["a", "b"])
+    led = request_moments(led, cfg, "src_1", accounts=accts)
+    led = _ingest_picks(led, cfg, "src_1", [_mp(0, 8)], handle="a")   # only a answered
+    assert led.sources["src_1"].state is SourceState.moments_requested
+    assert len(led.moments_of("src_1")) == 0
+
+def test_ingest_owner_mismatch_logged(tmp_path, mocker):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
+    accts = _seed_multi_pick_persona_accounts(cfg, ["a"])
+    led = request_moments(led, cfg, "src_1", accounts=accts)
+    logfn = mocker.patch("fanops.moments.get_logger").return_value
+    led = _ingest_picks(led, cfg, "src_1",
+                        [MomentPick(start=0, end=8, reason="x", personas=["b"])], handle="a")
+    mism = [c for c in logfn.call_args_list
+            if c.args[:3] == ("moments", "src_1.a", "owner_mismatch")]
+    assert len(mism) == 1
+    assert led.moments_of("src_1")[0].affinities == ["a"]
+
+def test_ingest_per_gate_outcome_logged(tmp_path, mocker):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
+    accts = _seed_multi_pick_persona_accounts(cfg, ["a", "b"])
+    led = request_moments(led, cfg, "src_1", accounts=accts)
+    logfn = mocker.patch("fanops.moments.get_logger").return_value
+    led = _ingest_picks_all_accounts(led, cfg, "src_1", {"a": [_mp(0, 8)], "b": []})
+    outcomes = {(c.args[1], c.args[2]) for c in logfn.call_args_list if c.args and c.args[0] == "moments"}
+    assert ("src_1.a", "contrib") in outcomes
+    assert ("src_1.b", "empty") in outcomes
+
+def test_ingest_aggregation_invalid_contrib_reconciles(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
+    accts = _seed_multi_pick_persona_accounts(cfg, ["a", "b"])
+    led = request_moments(led, cfg, "src_1", accounts=accts)
+    led = _ingest_picks_all_accounts(led, cfg, "src_1",
+                                      {"a": [_mp(0, 8, "good")], "b": [_mp(5, 3, "bad")]})
+    assert led.sources["src_1"].state is SourceState.picks_decided
+    assert len(led.moments_of("src_1")) == 1
+    assert led.moments_of("src_1")[0].affinities == ["a"]
+
+def test_deactivate_between_request_and_ingest_unions_snapshot(tmp_path):
+    from fanops.accounts import set_status
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
+    accts = _seed_multi_pick_persona_accounts(cfg, ["a", "b"])
+    led = request_moments(led, cfg, "src_1", accounts=accts)
+    assert gate_keys_for(cfg, "moments", "src_1.") == ["src_1.a", "src_1.b"]
+    set_status(cfg, "b", "retired")   # deactivate b after request; on-disk gates are the snapshot
+    led = _ingest_picks_all_accounts(led, cfg, "src_1",
+                                      {"a": [_mp(0, 8)], "b": [_mp(20, 28)]})
+    assert led.sources["src_1"].state is SourceState.picks_decided
+    assert len(led.moments_of("src_1")) == 2
+    assert {m.affinities[0] for m in led.moments_of("src_1")} == {"a", "b"}
+
+def test_targeted_intersect_active_empty_warns(tmp_path, mocker):
+    from fanops.models import Batch
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    logfn = mocker.patch("fanops.moments.get_logger").return_value
+    led.add_batch(Batch(id="bat_1", name="Ghost", target_accounts=["ghost"]))
+    src = Source(id="src_1", source_path="/s.mp4", state=SourceState.signalled, duration=60.0,
+                 transcript=[], signal_peaks=[], batch_id="bat_1", meta={"transcribed": True})
+    led.add_source(src); led.save()
+    accts = _seed_multi_pick_persona_accounts(cfg, ["a"])
+    led = request_moments(led, cfg, "src_1", accounts=accts)
+    warns = [c for c in logfn.call_args_list if c.args[2:3] == ("no_targeted_active_accounts",)]
+    assert len(warns) == 1
+    assert led.sources["src_1"].state is SourceState.moments_empty
 
 
 # --- MOL-230: vision finalizer recovers a well-formed MomentDecision on the pick gate ---
