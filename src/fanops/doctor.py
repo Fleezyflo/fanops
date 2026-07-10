@@ -360,7 +360,22 @@ def _assemble_doctor_checks(cfg: Config, *, get=None, postiz_probe=None, zernio_
     dchk = _daemon_liveness_check(cfg)
     checks.append(dchk)
     checks.extend(_sibling_launchd_checks())
+    schk = _studio_resident_check()
+    if schk is not None:
+        checks.append(schk)
     return checks
+
+
+def _studio_resident_check() -> dict | None:
+    """KeepAlive Studio resident: plist-on-disk + not-loaded alarm. Omitted when never installed."""
+    from fanops import daemon
+    st = daemon.studio_agent_status()
+    if not st.get("installed"):
+        return None
+    lbl = "launchd Studio resident loaded (KeepAlive, localhost cockpit)"
+    if st.get("alarm"):
+        return _check(lbl, False, f"{st['verdict']} — reload with `fanops studio --install`")
+    return _check(lbl, True, "")
 
 
 def _sibling_launchd_checks() -> list[dict]:

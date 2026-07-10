@@ -664,6 +664,9 @@ def main(argv: list[str] | None = None) -> int:
     p_studio = sub.add_parser("studio", help="local content-cockpit web UI (Review/Schedule/Lift)")
     p_studio.add_argument("--host", default="127.0.0.1")   # localhost only; no auth in v1
     p_studio.add_argument("--port", type=int, default=8787)
+    st_grp = p_studio.add_mutually_exclusive_group()
+    st_grp.add_argument("--install", action="store_true", help="install + load as launchd KeepAlive resident (macOS)")
+    st_grp.add_argument("--uninstall", action="store_true", help="unload the launchd Studio agent and remove its plist")
     p_cut = sub.add_parser("cutover", help="live-cutover validation harness — prove the pipeline against a REAL Postiz backend")
     cut_sub = p_cut.add_subparsers(dest="cutover_action", required=True)
     cut_sub.add_parser("auth", help="step 1: prove POSTIZ_API_KEY authenticates (read-only)")
@@ -1075,6 +1078,21 @@ def _dispatch(cfg: Config, args) -> int:
         # LAZY import (spec §10): Flask is an optional extra; importing create_app here — never at
         # module top — keeps `import fanops.cli` (hence every other verb) working on a core,
         # no-[studio] install. Mirrors the discover/intake lazy-import idiom (cli.py:325,334).
+        if args.install:
+            res = daemon.install_studio(cfg, host=args.host, port=args.port)
+            print(f"Studio service installed -> {res['studio_plist']}")
+            print(f"Always-on at http://{args.host}:{args.port} (launchd KeepAlive; runs at login)")
+            return 0 if res.get("studio_loaded") else 1
+        if args.uninstall:
+            res = daemon.stop_studio(cfg, remove=True)
+            print(f"Studio service stopped -> {res['plist']}" + (" (plist removed)" if res.get("removed") else ""))
+            return 0 if res.get("stopped") else 1
+        if sys.platform == "darwin":
+            st = daemon.studio_agent_status()
+            if st.get("loaded"):
+                print(f"Studio already running as launchd service at http://{args.host}:{args.port}")
+                print("  open that URL, or `fanops studio --uninstall` to stop the resident and run foreground")
+                return 0
         from fanops.studio.app import create_app
         from fanops.health import ensure_up, system_health
         # Launch the WHOLE system, not just the UI: bring up any down dependency the system knows how to
