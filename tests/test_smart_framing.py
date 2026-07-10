@@ -703,3 +703,105 @@ def test_real_yunet_detection_path_executes(tmp_path):
     cv2.imwrite(str(img), np.zeros((320, 320, 3), dtype=np.uint8))     # real image write via real cv2
     faces = framing._detect_faces(cv2, det, str(img))                  # real detection pass (blank frame -> [])
     assert isinstance(faces, list)                                     # the real path executed without raising
+
+
+# ---------------------------------------------------------------- phantom face fix (mol-framing-phantom-faces) ----
+
+def test_detect_v_bumped():
+    # cache version must be >=2 so stale 4-element (no-score) sidecars are invalidated on upgrade.
+    assert framing._DETECT_V >= 2
+
+def test_detect_faces_includes_score(monkeypatch, tmp_path):
+    # _detect_faces now returns 5-tuples (cx,cy,fh,ey,score) — score is the YuNet confidence at f[14].
+    # YuNet row: [x,y,w,h, rEyeX,rEyeY, lEyeX,lEyeY, noseX,noseY, rMX,rMY, lMX,lMY, score]
+    _face_row = [10.0, 10.0, 80.0, 60.0,    # x,y,w,h
+                 40.0, 20.0, 60.0, 20.0,     # rEye, lEye
+                 50.0, 30.0,                  # nose
+                 40.0, 50.0, 60.0, 50.0,     # rMouth, lMouth
+                 0.92]                        # score at index 14
+    class _FakeImg:                           # stub image — shape[0,1] give h,w; no numpy required
+        shape = (100, 160, 3)
+    class _FakeDet:
+        def setInputSize(self, sz): pass
+        def detect(self, img): return 1, [_face_row]   # list-of-lists, not numpy — _detect_faces iterates it fine
+    class _CV2:
+        def imread(self, p): return _FakeImg()
+    faces = framing._detect_faces(_CV2(), _FakeDet(), str(tmp_path / "f.png"))
+    assert len(faces) == 1
+    face = faces[0]
+    assert len(face) == 5, f"expected 5-tuple (cx,cy,fh,ey,score), got {face}"
+    assert face[4] > 0.0, "score must be >0 for a high-confidence face"
+
+def test_pick_dominant_face_prefers_high_score():
+    # score-first: a smaller but higher-confidence face beats a larger lower-confidence face.
+    real   = [0.3, 0.5, 0.22, 0.45, 0.88]   # real speaker — high score, normal size
+    decoy  = [0.8, 0.5, 0.35, 0.40, 0.63]   # wall-art phantom — higher area but lower score
+    assert framing._pick_dominant_face([real, decoy]) == real
+    assert framing._pick_dominant_face([decoy, real]) == real   # order-invariant
+
+def test_pick_dominant_face_area_tiebreak():
+    # equal score -> larger area (fh) wins.
+    small = [0.3, 0.5, 0.10, 0.45, 0.85]
+    large = [0.7, 0.5, 0.28, 0.40, 0.85]
+    assert framing._pick_dominant_face([small, large]) == large
+    assert framing._pick_dominant_face([large, small]) == large
+
+def test_pick_dominant_face_empty_is_none():
+    assert framing._pick_dominant_face([]) is None
+
+def test_pick_dominant_face_legacy_4tuple_area_only():
+    # 4-element faces (no score field) must still work — falls back to area comparison.
+    small = [0.3, 0.5, 0.10, 0.45]
+    large = [0.7, 0.5, 0.28, 0.40]
+    assert framing._pick_dominant_face([small, large]) == large
+
+def test_face_count_phantom_decoy_is_single():
+    # ONE real speaker (high score, normal fh) + ONE phantom wall-art decoy (low score, tiny fh)
+    # must yield count=1 so classify_window returns CT_SINGLE, not CT_MULTI.
+    real_face  = [0.30, 0.50, 0.25, 0.45, 0.87]   # real speaker
+    phantom    = [0.75, 0.48, 0.06, 0.43, 0.64]   # wall-art/poster face — score AND area tiny relative to real
+    st = _stats([[real_face, phantom]] * 4)
+    assert framing._face_count(st) == 1, "phantom decoy must not inflate face count to MULTI"
+
+def test_face_count_real_two_shot_is_multi():
+    # two comparable faces (real 2-shot interview) must still give count=2 → CT_MULTI preserved.
+    left  = [0.22, 0.50, 0.24, 0.45, 0.86]
+    right = [0.80, 0.45, 0.21, 0.42, 0.83]
+    st = _stats([[left, right]] * 4)
+    assert framing._face_count(st) == 2, "real 2-shot must remain MULTI (no regression)"
+
+def test_classify_phantom_decoy_routes_to_single(tmp_path, monkeypatch):
+    # end-to-end: phantom wall-art face next to a real speaker must NOT trigger multi-speaker switching.
+    src = _talk_src(transcript=[{"start": 10.0, "end": 13.5, "text": "here is my take on this"}])
+    real_face = [0.30, 0.50, 0.25, 0.45, 0.87]
+    phantom   = [0.75, 0.48, 0.06, 0.43, 0.64]
+    st = _stats([[real_face, phantom]] * 4)
+    ct = framing.classify_window(None, src, start=10.0, end=14.0, stats=st)
+    assert ct == framing.CT_SINGLE, f"phantom decoy must route to SINGLE, got {ct!r}"
+
+def test_subject_focus_picks_real_speaker_over_phantom(tmp_path, monkeypatch):
+    # off-center real speaker (score=0.87) must win over phantom decoy (score=0.64) as subject focus.
+    cfg = Config(root=tmp_path)
+    src = Source(id="s1", source_path="x.mp4", width=1920, height=1080, duration=60.0)
+    real_face = [0.30, 0.50, 0.25, 0.45, 0.87]   # real speaker at x=0.30
+    phantom   = [0.75, 0.48, 0.06, 0.43, 0.64]   # phantom near right edge
+    stats = {"fps": 4.0, "frames": [[real_face, phantom]] * 4}
+    monkeypatch.setattr(framing, "detect_window", lambda *a, **k: stats)
+    fx, fy, fh, ey = framing.subject_focus(cfg, src, start=10.0, end=14.0)
+    assert abs(fx - 0.30) < 0.01, f"real speaker at x=0.30 must win; got fx={fx}"
+
+def test_detect_window_stores_score_in_sidecar(tmp_path, monkeypatch):
+    # the detect sidecar must store 5-element faces so _pick_dominant_face can use the score on cache hit.
+    cfg = Config(root=tmp_path)
+    src = Source(id="s1", source_path="x.mp4", width=1920, height=1080, duration=60.0)
+    monkeypatch.setattr(framing, "_cv2", lambda: object())
+    monkeypatch.setattr(framing, "_detector", lambda cv2: object())
+    monkeypatch.setattr("fanops.keyframes.extract_frames_grid", lambda *a, **k: ["g0"])
+    monkeypatch.setattr(framing, "_detect_faces", lambda cv2, det, fp: [(0.5, 0.5, 0.2, 0.45, 0.88)])
+    st = framing.detect_window(cfg, src, start=10.0, end=14.0)
+    assert st is not None
+    assert len(st["frames"][0][0]) == 5, "detect sidecar must persist 5-element faces (including score)"
+    sidecar = cfg.agent_io / "framing" / "s1.detect.json"
+    cached = json.loads(sidecar.read_text())
+    assert cached["v"] == framing._DETECT_V
+    assert len(cached["windows"]["10.0-14.0"]["frames"][0][0]) == 5

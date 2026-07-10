@@ -61,15 +61,16 @@ def _load_cache(path: Path) -> dict:
 # ---- Single detection pass (T2): ONE grid of frames per (source,window), every face's normalized box +
 # eye-line, persisted so classify_window / subject_focus / speaker_track / motion_saliency all read the SAME
 # stats — not four ffmpeg passes. The grid sidecar is versioned independently of the focus/track sidecar. ----
-_DETECT_V = 1               # bump to invalidate cached grid stats when the detection SHAPE changes
+_DETECT_V = 2               # bump to invalidate cached grid stats when the detection SHAPE changes
 _DETECT_FPS = 4.0           # grid sampling rate: 4 frames/s is fine for ~1s active-speaker decisions, cheap in one pass
 
-def _detect_faces(cv2, det, img_path: str) -> list[tuple[float, float, float, float]]:
-    """Every face in one frame as (cx, cy, fh, ey) normalized to [0,1]: center x/y, face-box HEIGHT
-    (drives zoom-to-consistent-size), and EYE-LINE y (drives eyeline composition). YuNet rows are
+def _detect_faces(cv2, det, img_path: str) -> list[tuple[float, float, float, float, float]]:
+    """Every face in one frame as (cx, cy, fh, ey, score) normalized to [0,1]: center x/y, face-box
+    HEIGHT (drives zoom-to-consistent-size), EYE-LINE y (drives eyeline composition), and YuNet
+    CONFIDENCE SCORE (used by _pick_dominant_face to filter phantom wall-art detections). YuNet rows are
     [x,y,w,h, rEye(4,5), lEye(6,7), nose(8,9), rMouth(10,11), lMouth(12,13), score]. Fail-open: an
     unreadable frame / missing landmark -> [] or ey=cy, never raises."""
-    out: list[tuple[float, float, float, float]] = []
+    out: list[tuple[float, float, float, float, float]] = []
     try:
         img = cv2.imread(img_path)
         if img is None: return out
@@ -84,7 +85,9 @@ def _detect_faces(cv2, det, img_path: str) -> list[tuple[float, float, float, fl
             fh = min(1.0, max(0.0, float(f[3]) / h))
             try: ey = min(1.0, max(0.0, ((float(f[5]) + float(f[7])) / 2) / h))   # eye-line from rEye/lEye y
             except (IndexError, ValueError, TypeError): ey = cy                    # no landmark -> face center
-            out.append((round(cx, 4), round(cy, 4), round(fh, 4), round(ey, 4)))
+            try: sc = round(min(1.0, max(0.0, float(f[14]))), 4)                  # YuNet score at index 14
+            except (IndexError, ValueError, TypeError): sc = 0.0                  # missing score -> 0 (fail-open)
+            out.append((round(cx, 4), round(cy, 4), round(fh, 4), round(ey, 4), sc))
     except Exception:
         return out                                            # a single bad frame never sinks the window
     return out
@@ -198,15 +201,29 @@ def _window_has_speech(src, start: float, end: float) -> bool:
             continue                                          # a malformed segment never sinks the check
     return words >= _SPEECH_MIN_WORDS
 
+_PHANTOM_QUALITY_RATIO = 0.3  # min (score×fh) of a secondary face relative to the dominant to count as real
+
+def _pick_dominant_face(faces: list) -> list | None:
+    """The single most-prominent face from a list: YuNet confidence score desc, face-height (area proxy)
+    desc as tie-break. Face entries are [cx,cy,fh,ey] (legacy) or [cx,cy,fh,ey,score] (current).
+    Returns None for an empty list. Never raises."""
+    if not faces: return None
+    return max(faces, key=lambda f: (f[4] if len(f) > 4 else 0.0, f[2]))
+
 def _face_count(stats: dict | None) -> int:
-    """The MODAL number of faces per sampled frame (the steady people-count), 0 when stats absent/empty.
-    A liberal estimate: speaker_track still refuses unless two STABLE L/R positions actually exist, so an
-    over-count only OFFERS the switching path, never forces it."""
+    """The MODAL number of REAL faces per sampled frame (the steady people-count), 0 when stats absent/empty.
+    Phantom detections — wall art / posters whose score×fh falls below _PHANTOM_QUALITY_RATIO of the dominant
+    face — are excluded so a decoy beside one real speaker doesn't force MULTI mode."""
     frames = (stats or {}).get("frames") or []
-    if not frames:
-        return 0
-    counts = sorted(len(fr) for fr in frames)
-    return counts[len(counts) // 2]                           # median per-frame face count
+    if not frames: return 0
+    def _real_n(fr):
+        if not fr: return 0
+        dom = _pick_dominant_face(fr)
+        dom_q = (dom[4] if len(dom) > 4 else 1.0) * dom[2]
+        if dom_q <= 0: return len(fr)                         # no quality info (legacy, no score) -> count all (fail-open)
+        return sum(1 for f in fr if (f[4] if len(f) > 4 else 1.0) * f[2] >= dom_q * _PHANTOM_QUALITY_RATIO)
+    counts = sorted(_real_n(fr) for fr in frames)
+    return counts[len(counts) // 2]                           # median per-frame real-face count
 
 def classify_window(cfg, src, *, start: float, end: float, stats: dict | None) -> str:
     """Pure routing over the cached detect stats + transcript: one of the five CT_* strings. No ffmpeg,
@@ -275,7 +292,7 @@ def _track_observe(cv2, det, frames: list[str]) -> list[dict]:
                     bysd["L" if cx < _ASD_SIDE_SPLIT else "R"].append(f)
                 for side in ("L", "R"):
                     if not bysd[side]: continue
-                    f = max(bysd[side], key=lambda x: float(x[2]) * float(x[3]))   # dominant face on this side
+                    f = max(bysd[side], key=lambda x: (float(x[14]) if len(x) > 14 else 0.0, float(x[2]) * float(x[3])))  # score desc, area tie-break
                     cx = min(1.0, max(0.0, (float(f[0]) + float(f[2]) / 2) / w))
                     cy = min(1.0, max(0.0, (float(f[1]) + float(f[3]) / 2) / h))
                     fh = min(1.0, max(0.0, float(f[3]) / h))
@@ -433,12 +450,13 @@ def _compute_track(cv2, det, cfg, src, start: float, end: float):
     return [tuple(s) for s in snapped]
 
 def _median_face(stats: dict | None):
-    """The DOMINANT (largest face-height) face per frame, reduced to the median (fx,fy,fh,ey) over the
-    window plus detection confidence = fraction of frames with a face. None when no frames/faces."""
+    """The DOMINANT face per frame (score desc, fh tie-break via _pick_dominant_face), reduced to the
+    median (fx,fy,fh,ey) over the window plus detection confidence = fraction of frames with a face.
+    None when no frames/faces."""
     frames = (stats or {}).get("frames") or []
     if not frames:
         return None
-    picks = [max(fr, key=lambda x: x[2]) for fr in frames if fr]   # largest-fh face per occupied frame
+    picks = [_pick_dominant_face(fr) for fr in frames if fr]   # dominant face per occupied frame
     if not picks:
         return None
     conf = len(picks) / len(frames)
