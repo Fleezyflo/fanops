@@ -60,6 +60,14 @@ printf '        %s\n' "${CHANGED[@]}"
 echo "[check] ruff (scoped)"
 "$PY" -m ruff check "${CHANGED[@]}"
 
+# 1a) MOL-292: config env structural invariants (grep gates — fail closed; skip in minimal sandboxes).
+if [[ -f src/fanops/config.py ]]; then
+  echo "[check] config structural gates (MOL-292)"
+  ! rg 'os\.getenv' src/fanops/config.py
+  ! rg 'return Settings\(\)' src/fanops/
+  rg 'Settings\.runtime_load|Settings\.strict_validate' src/fanops/ -q
+fi
+
 # 1b) Fail closed on changed src modules with no scoped test mapping (false-confidence hole).
 mapfile -t ORPHANS < <("$PY" "$ROOT/scripts/check_scope.py" --orphans "${CHANGED[@]}")
 if [[ ${#ORPHANS[@]} -gt 0 ]]; then
