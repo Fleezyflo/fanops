@@ -13,25 +13,7 @@
 # (and get their own clean teardown). The suite no longer depends on what FANOPS_POSTER happens to be
 # in the repo .env.
 import os
-import weakref
 import pytest
-from fanops.config import Config
-
-# MOL-292: Config holds a frozen env snapshot at __init__; tests that monkeypatch.setenv after building
-# cfg must refresh it (production dual-write calls cfg.refresh_env()). Track live Config instances and
-# re-parse on every monkeypatch env mutation so the suite stays hermetic without per-test boilerplate.
-_CONFIG_INSTANCES: weakref.WeakSet[Config] = weakref.WeakSet()
-_orig_config_init = Config.__init__
-
-def _config_init_register(self, root=None):
-    _orig_config_init(self, root)
-    _CONFIG_INSTANCES.add(self)
-
-Config.__init__ = _config_init_register  # type: ignore[method-assign]
-
-def _refresh_all_config_env():
-    for cfg in list(_CONFIG_INSTANCES):
-        cfg.refresh_env()
 
 # Vars the repo .env can leak that change publish/auth behavior — neutralized per test so a live .env
 # never poisons a unit test. (POSTIZ_URL/POSTIZ_API_KEY ride along so a leaked URL can't 'configure'
@@ -98,21 +80,6 @@ def pytest_runtest_makereport(item, call):
 
 
 @pytest.fixture(autouse=True)
-def _config_refresh_on_monkeypatch_env(monkeypatch):
-    """Re-parse frozen env snapshots when a test mutates os.environ via monkeypatch after Config()."""
-    _orig_setenv = monkeypatch.setenv
-    _orig_delenv = monkeypatch.delenv
-    def setenv(name, value, prepend=False):
-        _orig_setenv(name, value, prepend=prepend)
-        _refresh_all_config_env()
-    def delenv(name, raising=True):
-        _orig_delenv(name, raising=raising)
-        _refresh_all_config_env()
-    monkeypatch.setenv = setenv
-    monkeypatch.delenv = delenv
-
-
-@pytest.fixture(autouse=True)
 def _no_real_publish_sleep(monkeypatch):
     """The publish throttle (post/run.py `_publish_throttle_wait`, ~60/postiz_publish_per_min s between posts)
     and the publish retry-backoff call a REAL time.sleep. Any test that drives the live publish path without
@@ -137,7 +104,6 @@ def _hermetic_publish_env():
     # opt back in explicitly (monkeypatch delenv/setenv burn_subs).
     burn_saved = os.environ.get("FANOPS_BURN_SUBS")
     os.environ["FANOPS_BURN_SUBS"] = "0"
-    _refresh_all_config_env()
     try:
         yield
     finally:
@@ -154,7 +120,6 @@ def _hermetic_publish_env():
             os.environ.pop("FANOPS_BURN_SUBS", None)
         else:
             os.environ["FANOPS_BURN_SUBS"] = burn_saved
-        _refresh_all_config_env()
 
 
 # ── VCR: source external API shapes from the REAL call, never a guess ──────────────────────────────

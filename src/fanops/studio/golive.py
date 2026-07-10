@@ -63,7 +63,6 @@ def _dual_write(cfg: Config, key: str, value: str) -> Optional[str]:
         except (OSError, ValueError) as exc:
             return f"could not write {key} to .env: {str(exc)[:140]}"
     os.environ[key] = value
-    cfg.refresh_env()
     return None
 
 
@@ -76,7 +75,6 @@ def _dual_unset(cfg: Config, key: str) -> Optional[str]:
     except OSError as exc:
         return f"could not unset {key} from .env: {str(exc)[:140]}"
     os.environ.pop(key, None)
-    cfg.refresh_env()
     return None
 
 

@@ -6,7 +6,7 @@ requires-python = ">=3.12,<3.14"
 dependencies = ["pydantic>=2.7", "pydantic-settings>=2.0", "requests>=2.31", "python-dotenv>=1.0", "yt-dlp>=2024.0"]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "pytest-mock>=3.12", "pytest-timeout>=2.3", "pytest-cov>=5.0", "ruff>=0.5", "pytest-recording>=0.13", "vcrpy>=6.0"]
+dev = ["pytest>=8.0", "pytest-mock>=3.12", "pytest-timeout>=2.3", "pytest-cov>=5.0", "pytest-xdist>=3.5", "ruff>=0.5", "pytest-recording>=0.13", "vcrpy>=6.0"]
 # Local transcription. Installed into the venv in Task 2. (whisper CLI lands on PATH.)
 transcribe = ["openai-whisper>=20231117"]
 # Local web cockpit (spec §10). Flask is OPTIONAL: `pip install -e .` (core CLI) stays Flask-free;
