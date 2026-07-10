@@ -443,13 +443,13 @@ def test_post_golive_live_route_success_flips_and_shows_live(tmp_path, monkeypat
 
 # ---- M3: validate_learning — run the Postiz cutover from the browser, operator-gated, never auto-fires ----
 def _live_postiz(monkeypatch, tmp_path):
-    monkeypatch.chdir(tmp_path)
-    for k in _ENV_KEYS:
-        monkeypatch.delenv(k, raising=False)
-    monkeypatch.setenv("FANOPS_LIVE", "1")
-    monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_URL", "https://postiz.example.com")
-    monkeypatch.setenv("POSTIZ_API_KEY", "SECRETKEY")
-    return Config(root=tmp_path)
+    cfg = _clean(monkeypatch, tmp_path)
+    assert golive._dual_write(cfg, "FANOPS_LIVE", "1") is None
+    assert golive._dual_write(cfg, "FANOPS_POSTER", "postiz") is None
+    assert golive._dual_write(cfg, "POSTIZ_URL", "https://postiz.example.com") is None
+    assert golive._dual_write(cfg, "POSTIZ_API_KEY", "SECRETKEY") is None
+    assert cfg.is_live is True
+    return cfg
 
 def _one_integration(monkeypatch):
     from fanops.post.postiz import PostizIntegration
