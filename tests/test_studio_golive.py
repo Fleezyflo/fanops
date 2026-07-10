@@ -808,7 +808,7 @@ def test_install_and_uninstall_daemon_action_darwin(tmp_path, monkeypatch):
     monkeypatch.setattr(daemon.sys, "platform", "darwin")
     def _fake(cmd, *a, **k):
         verb = cmd[1] if len(cmd) > 1 else ""
-        rc = 0 if verb in ("bootstrap", "bootout") else 1          # list rc!=0 after bootout => stopped
+        rc = 0 if verb in ("bootstrap", "bootout", "print") else 1  # print confirms load; list rc!=0 after bootout => stopped
         return _sp.CompletedProcess(cmd, rc, stdout="", stderr="")
     monkeypatch.setattr(daemon.subprocess, "run", _fake)
     ri = golive.install_daemon(cfg, "10m")
