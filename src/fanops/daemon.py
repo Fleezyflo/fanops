@@ -22,6 +22,9 @@ from fanops.errors import ToolchainMissingError
 
 LABEL = "com.fanops.run"
 KEEPER_LABEL = "com.fanops.keeper"
+STUDIO_LABEL = "com.fanops.studio"
+STUDIO_DEFAULT_HOST = "127.0.0.1"
+STUDIO_DEFAULT_PORT = 8787
 KEEPER_POLL_INTERVAL_S = 120
 _LAUNCHCTL_TIMEOUT = 30.0
 _MIN_INTERVAL = 60                                    # launchd ThrottleInterval floor — sub-minute is meaningless
@@ -440,6 +443,72 @@ def stop(cfg: Config, *, remove: bool = False) -> dict:
         for f in (plist_path(), wrapper_path(cfg)):
             try: f.unlink()
             except OSError: pass
+        out["removed"] = True
+    return out
+
+def studio_plist_path() -> Path:
+    return sibling_plist_path(STUDIO_LABEL)
+
+def render_studio_plist(cfg: Config, *, host: str = STUDIO_DEFAULT_HOST, port: int = STUDIO_DEFAULT_PORT) -> str:
+    """KeepAlive resident for the localhost Studio cockpit — direct `fanops studio` exec (keeper-style, no bash wrapper)."""
+    fb, path = _fanops_bin(), _daemon_path()
+    pl = {
+        "Label": STUDIO_LABEL,
+        "ProgramArguments": [fb, "studio", "--host", host, "--port", str(port)],
+        "KeepAlive": {"SuccessfulExit": False},
+        "RunAtLoad": True,
+        "WorkingDirectory": str(cfg.root),
+        "StandardOutPath": str(cfg.reports / "studio.out"),
+        "StandardErrorPath": str(cfg.reports / "studio.err"),
+        "ThrottleInterval": _MIN_INTERVAL,
+        "LSMultipleInstancesProhibited": True,
+        "EnvironmentVariables": {"PATH": path, "HOME": str(Path.home())},
+    }
+    return plistlib.dumps(pl).decode()
+
+def studio_agent_status() -> dict:
+    """Readiness for the Studio KeepAlive resident. plist-on-disk + not-loaded = ALARM (fail-open off-darwin)."""
+    if sys.platform != "darwin":
+        return {"label": STUDIO_LABEL, "short": "Studio", "installed": False, "loaded": False,
+                "pid": None, "verdict": "not installed", "alarm": False}
+    installed = studio_plist_path().exists()
+    try:
+        r = _launchctl("list", STUDIO_LABEL)
+        loaded = r.returncode == 0
+        pid = _grep_int(r.stdout, "PID") if loaded else None
+    except Exception:
+        loaded, pid = False, None
+    if not installed:
+        verdict = "not installed"
+    elif not loaded:
+        verdict = _VERDICT_UNLOADED_ALARM
+    else:
+        verdict = "loaded"
+    return {"label": STUDIO_LABEL, "short": "Studio", "installed": installed, "loaded": loaded, "pid": pid,
+            "verdict": verdict, "alarm": installed and not loaded}
+
+def install_studio(cfg: Config, *, host: str = STUDIO_DEFAULT_HOST, port: int = STUDIO_DEFAULT_PORT) -> dict:
+    """Write the Studio KeepAlive plist and load via launchctl. Idempotent: bootout any prior copy first."""
+    _require_darwin()
+    cfg.reports.mkdir(parents=True, exist_ok=True)
+    pp = studio_plist_path()
+    pp.parent.mkdir(parents=True, exist_ok=True)
+    pp.write_text(render_studio_plist(cfg, host=host, port=port))
+    loaded = _load_plist(pp, STUDIO_LABEL)
+    return {"studio_loaded": loaded, "studio_plist": str(pp), "host": host, "port": port}
+
+def stop_studio(cfg: Config, *, remove: bool = False) -> dict:
+    """Unload the Studio agent; confirm via launchctl list. remove=True deletes the plist."""
+    _require_darwin()
+    uid = os.getuid()
+    r = _launchctl("bootout", f"gui/{uid}/{STUDIO_LABEL}")
+    if r.returncode != 0:
+        _launchctl("unload", "-w", str(studio_plist_path()))
+    stopped = _launchctl("list", STUDIO_LABEL).returncode != 0
+    out = {"label": STUDIO_LABEL, "plist": str(studio_plist_path()), "stopped": stopped}
+    if remove:
+        try: studio_plist_path().unlink()
+        except OSError: pass
         out["removed"] = True
     return out
 
