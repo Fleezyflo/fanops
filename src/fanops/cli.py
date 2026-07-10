@@ -1078,7 +1078,6 @@ def _dispatch(cfg: Config, args) -> int:
         # LAZY import (spec §10): Flask is an optional extra; importing create_app here — never at
         # module top — keeps `import fanops.cli` (hence every other verb) working on a core,
         # no-[studio] install. Mirrors the discover/intake lazy-import idiom (cli.py:325,334).
-        from fanops import daemon
         if args.install:
             res = daemon.install_studio(cfg, host=args.host, port=args.port)
             print(f"Studio service installed -> {res['studio_plist']}")
