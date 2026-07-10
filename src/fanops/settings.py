@@ -357,14 +357,19 @@ def _is_resolved_secret_key(key: str) -> bool:
     return key in ("POSTIZ_API_KEY", "ZERNIO_API_KEY", "META_GRAPH_TOKEN") or key.startswith("META_GRAPH_TOKEN__")
 
 
+_BASE_SECRET_KEYS = frozenset({"POSTIZ_API_KEY", "ZERNIO_API_KEY", "META_GRAPH_TOKEN"})
+
+
 def _enriched_env(raw: dict[str, str]) -> dict[str, str]:
     from fanops.secret_provider import resolve_secret
     out = {k: v for k, v in raw.items()}
-    for key in list(out.keys()):
+    to_resolve = {k for k in out if _is_resolved_secret_key(k)} | _BASE_SECRET_KEYS
+    for key in to_resolve:
         if not _is_resolved_secret_key(key): continue
         v = out.get(key)
         env_val = v.strip() if isinstance(v, str) and v.strip() else None
-        resolved = resolve_secret(key, env_val)
+        quiet = env_val is None and key not in raw
+        resolved = resolve_secret(key, env_val, quiet=quiet)
         if resolved is not None:
             out[key] = resolved
     return out

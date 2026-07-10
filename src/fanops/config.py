@@ -128,6 +128,10 @@ class Config:
         self.learn_doctor_path = self.control / "learn_doctor.json"   # F2 read-only learning field-shape verdict; M4 gates on it
         self.log_path = self.reports / "run.log"
 
+    def refresh_env(self) -> None:
+        """Re-parse env after dual-write or external os.environ mutation in this process."""
+        object.__setattr__(self, "_env", load_env_snapshot(self.root))
+
     def render_path(self, batch_id, source_id, render_id: str, aspect) -> str:
         """Per-account Render file location. Hierarchical under clips/ by (batch, source) so every
         ingest BATCH has its own space and the renders are auditable on disk by lineage (the operator's

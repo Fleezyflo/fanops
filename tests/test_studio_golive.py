@@ -443,10 +443,13 @@ def test_post_golive_live_route_success_flips_and_shows_live(tmp_path, monkeypat
 
 # ---- M3: validate_learning — run the Postiz cutover from the browser, operator-gated, never auto-fires ----
 def _live_postiz(monkeypatch, tmp_path):
-    cfg = _clean(monkeypatch, tmp_path)
+    monkeypatch.chdir(tmp_path)
+    for k in _ENV_KEYS:
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("FANOPS_LIVE", "1")
     monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_URL", "https://postiz.example.com")
     monkeypatch.setenv("POSTIZ_API_KEY", "SECRETKEY")
-    return cfg
+    return Config(root=tmp_path)
 
 def _one_integration(monkeypatch):
     from fanops.post.postiz import PostizIntegration
@@ -776,7 +779,8 @@ def test_golive_off_renders_both_toggle_controls(tmp_path, monkeypatch):
     # BOTH toggle forms must still render their "Turn on" control (the change is additive, not a removal).
     cfg = _clean(monkeypatch, tmp_path)
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
-    monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "0"); monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "0")
+    assert golive.set_per_account_hooks(cfg, False).ok is True
+    assert golive.set_account_casting(cfg, False).ok is True
     html = _client(cfg).get("/golive").get_data(as_text=True)
     assert "Turn on (per-account hooks)" in html and "Turn on (per-account casting)" in html
 
