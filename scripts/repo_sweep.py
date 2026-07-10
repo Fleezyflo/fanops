@@ -114,16 +114,23 @@ def _pristine(rep) -> bool:
     return not (rep["conflicts"] or rep["stale_branches"] or rep["artifacts"] or rep["unresolved_conflicts"])
 
 
+def _landable_open_prs(open_prs) -> list:
+    """Open PRs the orchestrator must drive to land. Drafts are WIP — reported but not blocking."""
+    return [p for p in (open_prs or []) if not p.get("draft")]
+
+
 def is_done(rep) -> bool:
-    """The Definition-of-Done proxy the orchestrator cannot self-override: EVERY task landed (no open PRs
-    left to drive) AND the repo pristine (no conflicts / stale branches / unresolved merges / artifacts)."""
-    return _pristine(rep) and not rep["open_prs"]
+    """The Definition-of-Done proxy the orchestrator cannot self-override: EVERY task landed (no
+    ready-for-review open PRs left to drive) AND the repo pristine (no conflicts / stale branches /
+    unresolved merges / artifacts). Draft PRs are informational only."""
+    return _pristine(rep) and not _landable_open_prs(rep["open_prs"])
 
 
 def outstanding(rep) -> list:
     """Human-readable reasons the repo is not DONE (empty list == done)."""
     out = []
-    if rep["open_prs"]: out.append(f"{len(rep['open_prs'])} open PR(s) not yet landed")
+    landable = _landable_open_prs(rep["open_prs"])
+    if landable: out.append(f"{len(landable)} open PR(s) not yet landed")
     if rep["conflicts"]: out.append(f"{len(rep['conflicts'])} conflicting PR(s)")
     if rep["unresolved_conflicts"]: out.append(f"{len(rep['unresolved_conflicts'])} unresolved merge conflict(s)")
     if rep["stale_branches"]: out.append(f"{len(rep['stale_branches'])} stale branch(es)")
@@ -151,9 +158,13 @@ def main(argv=None) -> int:
         print(json.dumps(rep, indent=2))
         return _require_pristine_exit(rep) if args.require_pristine else 0
     print(f"[repo-sweep] {args.repo}")
-    print(f"  open PRs: {len(rep['open_prs'])}  (conflict: {len(rep['conflicts'])}, behind: {len(rep['behind'])})")
+    landable = _landable_open_prs(rep["open_prs"])
+    drafts = [p for p in rep["open_prs"] if p.get("draft")]
+    print(f"  open PRs: {len(landable)} landable, {len(drafts)} draft"
+          f"  (conflict: {len(rep['conflicts'])}, behind: {len(rep['behind'])})")
     for p in rep["open_prs"]:
-        print(f"    #{p['number']} [{p['state']}]{' draft' if p['draft'] else ''}  {p['branch']}  — {p['title']}")
+        tag = ' draft (not blocking done)' if p.get("draft") else ''
+        print(f"    #{p['number']} [{p['state']}]{tag}  {p['branch']}  — {p['title']}")
     print(f"  stale branches (>{args.stale_days}d): {len(rep['stale_branches'])}")
     for b in rep["stale_branches"]: print(f"    {b}")
     print(f"  unresolved merge conflicts: {len(rep['unresolved_conflicts'])}")
