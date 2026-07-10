@@ -63,7 +63,7 @@ def test_ingest_moment_hooks_persists_m_hook_only(tmp_path):
     m = led.moments_of("src_1")[0]
     assert m.state is MomentState.decided and m.hook == "the part you'll replay"
 
-# ---- MOL-476: hook author-always + bounded null retry -----------------------------------------------
+# ---- null hook clean promotion (MOL-476 retry machinery removed) ------------------------------------
 def test_moment_hook_prompt_forbids_null_license():
     p = {"start": 10.0, "end": 28.0, "reason": "r", "transcript_excerpt": "", "language": "en",
          "guidance": "", "frames": [], "signal_peaks": [],
@@ -72,7 +72,9 @@ def test_moment_hook_prompt_forbids_null_license():
     assert "ships CLEAN (return hook = null)" not in out
     assert "better CLEAN (hook = null)" not in out
 
-def test_null_hook_discards_gate_and_stays_picked(tmp_path):
+def test_null_hook_promotes_clean_to_decided(tmp_path):
+    # Test 4: null author hook promotes CLEAN to decided (hook=None). MOL-476 retry is gone — a null
+    # hook is no longer a retry signal; ingest_moment_hooks promotes it cleanly same pass.
     cfg = Config(root=tmp_path); led = _seed_src(cfg)
     led = _pick(led, cfg, owner="markmakmouly")
     led = request_moment_hooks(led, cfg, "src_1")
@@ -81,22 +83,17 @@ def test_null_hook_discards_gate_and_stays_picked(tmp_path):
     response_path(cfg, "moment_hooks", "src_1.10.00-28.00").write_text(dec.model_dump_json())
     led = ingest_moment_hooks(led, cfg, "src_1")
     m = led.moments_of("src_1")[0]
-    assert m.state is MomentState.picked
-    assert led.sources["src_1"].state is SourceState.picks_decided
-    assert latest_request_id(cfg, "moment_hooks", "src_1.10.00-28.00") is None   # gate discarded for retry
-    led = request_moment_hooks(led, cfg, "src_1")                                # fresh gate re-opens
-    assert latest_request_id(cfg, "moment_hooks", "src_1.10.00-28.00") is not None
+    assert m.state is MomentState.decided and m.hook is None
+    assert led.sources["src_1"].state is SourceState.moments_decided
 
-def test_null_hook_terminal_error_after_max_retries(tmp_path):
-    from fanops.moments import _HOOK_NULL_MAX
+def test_null_hook_never_errors_source(tmp_path):
+    # Regression: a null hook must NEVER drive the source to SourceState.error (the MOL-476 path is gone).
     cfg = Config(root=tmp_path); led = _seed_src(cfg)
     led = _pick(led, cfg, owner="markmakmouly")
-    for _ in range(_HOOK_NULL_MAX):
-        led = request_moment_hooks(led, cfg, "src_1")
-        rid = latest_request_id(cfg, "moment_hooks", "src_1.10.00-28.00")
-        dec = screen_model_text(MomentHookDecision(request_id=rid, hook=None))
-        response_path(cfg, "moment_hooks", "src_1.10.00-28.00").write_text(dec.model_dump_json())
-        led = ingest_moment_hooks(led, cfg, "src_1")
-    assert led.sources["src_1"].state is SourceState.error
-    assert "null" in (led.sources["src_1"].error_reason or "").lower()
-    assert led.moments_of("src_1")[0].state is MomentState.picked
+    led = request_moment_hooks(led, cfg, "src_1")
+    rid = latest_request_id(cfg, "moment_hooks", "src_1.10.00-28.00")
+    dec = screen_model_text(MomentHookDecision(request_id=rid, hook=None))
+    response_path(cfg, "moment_hooks", "src_1.10.00-28.00").write_text(dec.model_dump_json())
+    led = ingest_moment_hooks(led, cfg, "src_1")
+    assert led.sources["src_1"].state is SourceState.moments_decided
+    assert led.sources["src_1"].state is not SourceState.error

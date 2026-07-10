@@ -97,11 +97,20 @@ class LlmSchemaError(RuntimeError):
     instead of letting it fall through as a generic RuntimeError. Subclass of RuntimeError so
     every existing `raises(RuntimeError)` assertion (e.g. test_llm.py) stays green."""
 
+class LlmToolchainError(RuntimeError):
+    """`claude -p` exited nonzero with a CLI/toolchain usage error (unknown option, usage banner, etc.).
+    Typed so the responder treats a broken/outdated claude install as deterministic — enrichment gates
+    fail-open at the ceiling, the moments gate still terminates the source."""
+
 _CONTEXT_LIMIT_MARKERS = ("prompt is too long", "context length", "exceeds the maximum", "too many tokens",
                           "maximum context")
+_TOOLCHAIN_MARKERS = ("unknown option", "unrecognized option", "unknown argument", "unknown command", "usage:")
 def _is_context_limit(text: str) -> bool:
     t = (text or "").lower()
     return any(m in t for m in _CONTEXT_LIMIT_MARKERS)
+def _is_toolchain_error(text: str) -> bool:
+    t = (text or "").lower()
+    return any(m in t for m in _TOOLCHAIN_MARKERS)
 
 # HTTP statuses claude -p surfaces (in the stdout envelope's api_error_status) when the request is
 # rejected pre-processing and is therefore SAFE to retry. A 429 is the common one (usage spike).
@@ -194,6 +203,8 @@ def claude_json_meta(prompt: str, schema: dict, *, timeout: float = 300.0,
             body = (r.stderr or r.stdout or "")[:300]
             if _is_context_limit(body):                       # AGENT-2: a too-big payload -> typed, not generic
                 raise LlmContextLimitError(f"claude -p context limit (rc={r.returncode}): {body}")
+            if _is_toolchain_error(body):
+                raise LlmToolchainError(f"claude -p toolchain error (rc={r.returncode}): {body}")
             raise RuntimeError(f"claude -p failed (rc={r.returncode}): {body}")
         try:
             env = json.loads(r.stdout)

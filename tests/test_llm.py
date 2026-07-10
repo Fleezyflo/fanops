@@ -79,6 +79,52 @@ def test_claude_json_raises_on_nonzero_exit(mocker):
     with pytest.raises(RuntimeError, match="claude -p failed"):
         claude_json("q", _SCHEMA)
 
+# --- toolchain error: unknown option / unrecognized option / usage: in body -> LlmToolchainError ---
+
+def test_toolchain_error_on_unknown_option_stderr(mocker):
+    from fanops.llm import LlmToolchainError
+    class R: returncode = 1; stdout = ""; stderr = "error: unknown option '--json-schema'"
+    mocker.patch("fanops.llm.subprocess.run", return_value=R())
+    with pytest.raises(LlmToolchainError):
+        claude_json("q", _SCHEMA)
+
+def test_toolchain_error_on_unrecognized_option_stdout(mocker):
+    from fanops.llm import LlmToolchainError
+    class R: returncode = 1; stdout = "unrecognized option '--json-schema'"; stderr = ""
+    mocker.patch("fanops.llm.subprocess.run", return_value=R())
+    with pytest.raises(LlmToolchainError):
+        claude_json("q", _SCHEMA)
+
+def test_toolchain_error_on_usage_output(mocker):
+    from fanops.llm import LlmToolchainError
+    class R: returncode = 1; stdout = "Usage: claude [options] [command]\n..."; stderr = ""
+    mocker.patch("fanops.llm.subprocess.run", return_value=R())
+    with pytest.raises(LlmToolchainError):
+        claude_json("q", _SCHEMA)
+
+def test_toolchain_error_on_unknown_command(mocker):
+    from fanops.llm import LlmToolchainError
+    class R: returncode = 1; stdout = ""; stderr = "unknown command: foo"
+    mocker.patch("fanops.llm.subprocess.run", return_value=R())
+    with pytest.raises(LlmToolchainError):
+        claude_json("q", _SCHEMA)
+
+def test_toolchain_error_is_runtime_error_subclass(mocker):
+    # LlmToolchainError subclasses RuntimeError so existing `raises(RuntimeError)` tests stay green
+    class R: returncode = 1; stdout = ""; stderr = "unknown argument --json-schema"
+    mocker.patch("fanops.llm.subprocess.run", return_value=R())
+    with pytest.raises(RuntimeError):
+        claude_json("q", _SCHEMA)
+
+def test_api_error_still_raises_generic_runtime_not_toolchain(mocker):
+    # An API-level error (e.g. auth failure) must NOT be misclassified as LlmToolchainError
+    from fanops.llm import LlmToolchainError
+    class R: returncode = 1; stdout = ""; stderr = "API connection failed: 500 Internal Server Error"
+    mocker.patch("fanops.llm.subprocess.run", return_value=R())
+    with pytest.raises(RuntimeError) as exc_info:
+        claude_json("q", _SCHEMA)
+    assert not isinstance(exc_info.value, LlmToolchainError)
+
 def test_claude_json_raises_toolchain_missing_when_claude_absent(mocker):
     def absent(cmd, **kw): raise FileNotFoundError(2, "No such file or directory", cmd[0])
     mocker.patch("fanops.llm.subprocess.run", side_effect=absent)

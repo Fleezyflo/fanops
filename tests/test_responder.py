@@ -629,3 +629,143 @@ def test_context_limit_marks_source_degraded_for_captions_gate(tmp_path):
     LlmResponder(cfg)._mark_context_limit(cfg, "captions", "clip_1", "payload too big")
     src = Ledger.load(cfg).sources["src_1"]
     assert src.degraded_reason and "captions" in src.degraded_reason and "context limit" in src.degraded_reason
+
+
+# --- toolchain error gate behaviour (LlmToolchainError as deterministic, fail-open for enrichment gates) ---
+
+def _seed_picked_moment_for_responder(cfg, source_id="src_1", token="10.00-28.00"):
+    from fanops.ledger import Ledger
+    from fanops.models import Source, SourceState, Moment, MomentState
+    from fanops.agentstep import write_request
+    from fanops.ids import child_id
+    led = Ledger.load(cfg)
+    led.add_source(Source(id=source_id, source_path="/s.mp4", state=SourceState.picks_decided))
+    mid = child_id("moment", source_id, token)
+    led.add_moment(Moment(id=mid, parent_id=source_id, content_token=token,
+                          start=10.0, end=28.0, reason="r", state=MomentState.picked))
+    led.save()
+    key = f"{source_id}.{token}"
+    write_request(cfg, kind="moment_hooks", key=key, payload={
+        "source_id": source_id, "moment_id": mid, "token": token,
+        "start": 10.0, "end": 28.0, "reason": "r",
+        "transcript_excerpt": "", "frames": [], "signal_peaks": [], "language": "en"})
+    return led, mid, key
+
+
+def _seed_captions_gate_for_responder(cfg):
+    from fanops.ledger import Ledger
+    from fanops.models import Source, Moment, MomentState, Clip, ClipState
+    from fanops.agentstep import write_request
+    led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path="/s.mp4", language="en"))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7, reason="r",
+                          state=MomentState.clipped))
+    led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", state=ClipState.captions_requested))
+    led.save()
+    write_request(cfg, kind="captions", key="clip_1", payload={
+        "clip_id": "clip_1", "transcript_excerpt": "", "language": "en", "guidance": "",
+        "surfaces": [{"surface": "a/instagram", "platform": "instagram"}]})
+    return led
+
+
+def test_toolchain_error_ceiling_terminates_moments_source(tmp_path, monkeypatch):
+    # Test 3: moments gate ceiling with LlmToolchainError -> SourceState.error (unchanged behavior)
+    from fanops.ledger import Ledger
+    from fanops.models import Source, SourceState
+    from fanops.agentstep import write_request
+    from fanops.responder import LlmResponder, _GATE_DETERMINISTIC_MAX
+    from fanops.llm import LlmToolchainError
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg); led.add_source(Source(id="src_1", source_path="/s.mp4", state=SourceState.signalled)); led.save()
+    write_request(cfg, kind="moments", key="src_1",
+                  payload={"source_id": "src_1", "duration": 10.0, "transcript": [], "signal_peaks": []})
+    def toolchain_fail(kind, payload): raise LlmToolchainError("unknown option --json-schema")
+    r = LlmResponder(cfg, model=toolchain_fail)
+    for _ in range(_GATE_DETERMINISTIC_MAX):
+        assert r.answer_pending(cfg) == 0
+    src = Ledger.load(cfg).sources["src_1"]
+    assert src.state is SourceState.error and src.error_reason and "moments" in src.error_reason
+
+
+def test_toolchain_error_ceiling_moment_hooks_writes_clean_response(tmp_path, monkeypatch):
+    # Test 1 (part a): after _GATE_DETERMINISTIC_MAX toolchain failures on moment_hooks, gate has clean
+    # response (hook=None) — NOT SourceState.error. Enrichment gates fail open, not terminal.
+    from fanops.responder import LlmResponder, _GATE_DETERMINISTIC_MAX
+    from fanops.llm import LlmToolchainError
+    from fanops.agentstep import response_path
+    from fanops.models import SourceState
+    from fanops.ledger import Ledger
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    cfg = Config(root=tmp_path)
+    led, mid, key = _seed_picked_moment_for_responder(cfg)
+    def toolchain_fail(kind, payload): raise LlmToolchainError("unknown option --json-schema")
+    r = LlmResponder(cfg, model=toolchain_fail)
+    for _ in range(_GATE_DETERMINISTIC_MAX):
+        assert r.answer_pending(cfg) == 0
+    # Source must NOT be error
+    assert Ledger.load(cfg).sources["src_1"].state is not SourceState.error
+    # Gate has a clean fail-open response
+    rp = response_path(cfg, "moment_hooks", key)
+    assert rp.exists()
+    data = json.loads(rp.read_text())
+    assert data.get("hook") is None
+
+
+def test_toolchain_error_moment_hooks_ceiling_ingests_decided(tmp_path, monkeypatch):
+    # Test 1 (part b): after ceiling, ingest_moment_hooks promotes moment to decided (hook=None)
+    from fanops.responder import LlmResponder, _GATE_DETERMINISTIC_MAX
+    from fanops.llm import LlmToolchainError
+    from fanops.models import MomentState, SourceState
+    from fanops.moments import ingest_moment_hooks
+    from fanops.ledger import Ledger
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    cfg = Config(root=tmp_path)
+    led, mid, key = _seed_picked_moment_for_responder(cfg)
+    def toolchain_fail(kind, payload): raise LlmToolchainError("unknown option --json-schema")
+    r = LlmResponder(cfg, model=toolchain_fail)
+    for _ in range(_GATE_DETERMINISTIC_MAX):
+        r.answer_pending(cfg)
+    led = Ledger.load(cfg)
+    led = ingest_moment_hooks(led, cfg, "src_1")
+    m = led.moments[mid]
+    assert m.state is MomentState.decided and m.hook is None
+    assert led.sources["src_1"].state is SourceState.moments_decided
+    assert led.sources["src_1"].state is not SourceState.error
+
+
+def test_toolchain_error_ceiling_captions_writes_empty_response(tmp_path, monkeypatch):
+    # Test 2 (part a): captions gate ceiling with toolchain error writes clean items=[] response
+    from fanops.responder import LlmResponder, _GATE_DETERMINISTIC_MAX
+    from fanops.llm import LlmToolchainError
+    from fanops.agentstep import response_path
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    cfg = Config(root=tmp_path)
+    _seed_captions_gate_for_responder(cfg)
+    def toolchain_fail(kind, payload): raise LlmToolchainError("unknown option --json-schema")
+    r = LlmResponder(cfg, model=toolchain_fail)
+    for _ in range(_GATE_DETERMINISTIC_MAX):
+        assert r.answer_pending(cfg) == 0
+    rp = response_path(cfg, "captions", "clip_1")
+    assert rp.exists()
+    data = json.loads(rp.read_text())
+    assert data.get("items") == []
+
+
+def test_toolchain_error_captions_ceiling_ingests_captioned(tmp_path, monkeypatch):
+    # Test 2 (part b): captions fail-open (items=[]) -> ingest_captions seed-tag fallback -> captioned
+    from fanops.responder import LlmResponder, _GATE_DETERMINISTIC_MAX
+    from fanops.llm import LlmToolchainError
+    from fanops.models import ClipState
+    from fanops.caption import ingest_captions
+    from fanops.ledger import Ledger
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    cfg = Config(root=tmp_path)
+    _seed_captions_gate_for_responder(cfg)
+    def toolchain_fail(kind, payload): raise LlmToolchainError("unknown option --json-schema")
+    r = LlmResponder(cfg, model=toolchain_fail)
+    for _ in range(_GATE_DETERMINISTIC_MAX):
+        r.answer_pending(cfg)
+    led = Ledger.load(cfg)
+    led = ingest_captions(led, cfg, "clip_1")
+    assert led.clips["clip_1"].state is ClipState.captioned
