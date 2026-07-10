@@ -425,7 +425,7 @@ def test_amplify_gate_still_read(tmp_path, monkeypatch):
 def test_amplify_rewrites_per_account_gates(tmp_path, monkeypatch):
     monkeypatch.delenv("FANOPS_ACCOUNT_CASTING", raising=False)   # casting ON (default)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    accts = _seed_multi_pick_persona_accounts(cfg, ["a", "b"])
+    _seed_multi_pick_persona_accounts(cfg, ["a", "b"])
     led.add_source(Source(id="src_1", source_path="/s.mp4", state=SourceState.moments_decided,
                           duration=30.0, transcript=[{"start": 14, "end": 18, "text": "they slept on me"}],
                           signal_peaks=[], meta={"transcribed": True}))
