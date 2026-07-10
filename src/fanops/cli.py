@@ -45,10 +45,13 @@ def cmd_status(cfg: Config) -> int:
     led = Ledger.load(cfg)
     from fanops.models import SourceState        # local read (mirrors cmd_reconcile's local import)
     from fanops.doctor import setup_state, setup_next_action
-    from fanops.pipeline_status import status_control_lines, visible_source_ids, source_wait_line
+    from fanops.pipeline_status import status_control_lines, visible_source_ids, source_wait_line, source_backlog
     run_line, wait_line = status_control_lines(cfg, led)
+    bl = source_backlog(led, cfg)
     print(f"sources={len(led.sources)} moments={len(led.moments)} clips={len(led.clips)} "
           f"posts={len(led.posts)} "
+          f"backlog_actionable={bl.actionable} backlog_blocked={bl.blocked_on_gates} "
+          f"backlog_recoverable={bl.recoverable} backlog_inventory={bl.inventory} "
           # V2 M1/F8: sources the model produced ZERO picks for — actionable (retry-source), never silent.
           f"moments_empty={len(led.sources_in_state(SourceState.moments_empty))} "
           # Audit: a source parked SourceState.error (e.g. a TRANSIENT whisper model-download/network failure)
@@ -624,6 +627,8 @@ def main(argv: list[str] | None = None) -> int:
     p_rs = sub.add_parser("retry-source"); p_rs.add_argument("source_id")
     p_rs.add_argument("--from-stage", choices=["auto", "catalogued", "transcribed"], default="auto")   # MOL-121: AUTO preserves a good transcript
     p_rs.add_argument("--force", action="store_true", help="MOL-471: purge caches + rewind terminal sources to catalogued (requires --from-stage catalogued)")
+    p_ret = sub.add_parser("retire-source"); p_ret.add_argument("source_id")
+    p_prom = sub.add_parser("promote-source"); p_prom.add_argument("source_id")
     p_rm = sub.add_parser("retry-metrics"); p_rm.add_argument("post_id")
     p_disc = sub.add_parser("discover"); p_disc.add_argument("folder")
     sub.add_parser("intake")
@@ -1021,6 +1026,21 @@ def _dispatch(cfg: Config, args) -> int:
                 st = led.sources[args.source_id].state.value
                 print(f"retry-source {args.source_id}: not recoverable (state={st}; use --force --from-stage catalogued for terminal sources)", file=sys.stderr); return 2
         print(f"retry-source {args.source_id}"); return 0
+    if args.cmd == "retire-source":
+        with Ledger.transaction(cfg) as led:
+            if args.source_id not in led.sources:
+                print(f"no such source: {args.source_id}", file=sys.stderr); return 2
+            led.retire_source(args.source_id)
+        print(f"retire-source {args.source_id}"); return 0
+    if args.cmd == "promote-source":
+        from fanops.pipeline import promote_source
+        with Ledger.transaction(cfg) as led:
+            if args.source_id not in led.sources:
+                print(f"no such source: {args.source_id}", file=sys.stderr); return 2
+            if not promote_source(led, args.source_id):
+                st = led.sources[args.source_id].state.value
+                print(f"promote-source {args.source_id}: not promotable (state={st}; only discovered)", file=sys.stderr); return 2
+        print(f"promote-source {args.source_id}"); return 0
     if args.cmd == "retry-metrics":
         from fanops.models import PostState
         with Ledger.transaction(cfg) as led:

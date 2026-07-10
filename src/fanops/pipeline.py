@@ -100,6 +100,14 @@ def resume_source(led: Ledger, source_id: str, *, from_stage: str = "auto", forc
     s.error_reason = None
     return True
 
+def promote_source(led: Ledger, source_id: str) -> bool:
+    """Promote a discovered orphan to catalogued (starts the normal pipeline). Returns True iff applied."""
+    s = led.sources.get(source_id)
+    if s is None or s.state is not SourceState.discovered:
+        return False
+    led.sources[source_id] = s.model_copy(update={"state": SourceState.catalogued})
+    return True
+
 # M3 — _prewarm + _prewarm_sequential + _prewarm_concurrent + _produce_source + the
 # in-pipeline SourceResult dataclass are deleted. Their replacement is fanops.produce.run_all,
 # imported at the top — one entry point, one module owning lock-free side-effect-only artifact
@@ -437,6 +445,9 @@ def advance(cfg: Config, *, base_time: str) -> RunSummary:
     # fingerprint-SKIP on the warm artifacts and recover the work instead of redoing it (pinned by
     # test_advance_rollback_recovers_warm_artifacts).
     with Ledger.transaction(cfg) as led:
+        # Self-healing: corrupt gate requests quarantine their owning source to error (recoverable).
+        from fanops.pipeline_status import heal_corrupt_gates
+        heal_corrupt_gates(led, cfg)
         # B5/E2: snapshot the already-published post ids at transaction ENTRY so the summary's
         # published_in_run is a THIS-RUN delta — a post already published when the pass opened is in
         # `before` and is NOT counted (set difference against the exit state). Ingest already ran (above)

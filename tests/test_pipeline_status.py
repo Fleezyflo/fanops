@@ -5,7 +5,7 @@ from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Clip, ClipState, Moment, MomentState, Source, SourceState
 from fanops.agentstep import write_request
-from fanops.pipeline_status import top_wait_line, visible_source_ids, source_wait_line
+from fanops.pipeline_status import top_wait_line, visible_source_ids, source_wait_line, source_backlog
 from fanops.cli import cmd_status
 
 
@@ -50,9 +50,58 @@ def test_corrupt_request_surfaces_wait_error(tmp_path):
     assert line == "wait=error:captions:clip_1"
 
 
+def test_corrupt_gate_quarantines_source_on_heal(tmp_path):
+    cfg = Config(root=tmp_path)
+    _moments_decided_with_caption_gate(cfg)
+    req = cfg.agent_io / "requests" / "captions__clip_1.request.json"
+    req.write_text("{not json")
+    with Ledger.transaction(cfg) as led:
+        from fanops.pipeline_status import heal_corrupt_gates
+        assert heal_corrupt_gates(led, cfg) == 1
+    s = Ledger.load(cfg).sources["src_1"]
+    assert s.state is SourceState.error and "corrupt gate" in (s.error_reason or "")
+    bl = source_backlog(Ledger.load(cfg), cfg)
+    assert bl.recoverable == 1
+
+
 def test_moments_decided_without_gate_or_clip_hidden(tmp_path):
     cfg = Config(root=tmp_path)
     with Ledger.transaction(cfg) as led:
         led.add_source(Source(id="src_done", source_path="/x.mp4", state=SourceState.moments_decided))
     led = Ledger.load(cfg)
     assert "src_done" not in visible_source_ids(led, cfg)
+
+
+def test_source_backlog_moments_decided_is_inventory(tmp_path):
+    cfg = Config(root=tmp_path)
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="src_done", source_path="/x.mp4", state=SourceState.moments_decided))
+    bl = source_backlog(Ledger.load(cfg), cfg)
+    assert bl.actionable == 0 and bl.inventory == 1
+    assert bl.rows[0].bucket == "inventory"
+
+
+def test_source_backlog_retired_and_discovered_are_inventory(tmp_path):
+    cfg = Config(root=tmp_path)
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="src_r", source_path="/r.mp4", state=SourceState.retired))
+        led.add_source(Source(id="src_d", source_path="/d.mp4", state=SourceState.discovered))
+    bl = source_backlog(Ledger.load(cfg), cfg)
+    assert bl.inventory == 2 and bl.actionable == 0
+
+
+def test_source_backlog_moments_requested_with_gate_is_blocked(tmp_path):
+    cfg = Config(root=tmp_path)
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="src_1", source_path="/x.mp4", state=SourceState.moments_requested))
+    write_request(cfg, kind="moments", key="src_1", payload={"source_id": "src_1"})
+    bl = source_backlog(Ledger.load(cfg), cfg)
+    assert bl.blocked_on_gates == 1 and bl.actionable == 0
+
+
+def test_source_backlog_error_is_recoverable(tmp_path):
+    cfg = Config(root=tmp_path)
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="src_e", source_path="/e.mp4", state=SourceState.error, error_reason="boom"))
+    bl = source_backlog(Ledger.load(cfg), cfg)
+    assert bl.recoverable == 1 and bl.rows[0].bucket == "recoverable"

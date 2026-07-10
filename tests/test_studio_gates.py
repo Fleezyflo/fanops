@@ -37,14 +37,16 @@ def test_gate_rows_lists_pending_captions_with_surfaces(tmp_path):
     c = [r for r in views.gate_rows(cfg) if r["kind"] == "captions"][0]
     assert c["key"] == "c1" and c["surfaces"][0]["surface"] == "a|instagram"
 
-def test_gate_rows_skips_torn_request_file(tmp_path):
-    # A torn/unreadable request file must be SKIPPED (as the docstring promises) — never rendered as an
-    # empty, unanswerable gate form whose blank submission could write a bad gate answer (ecc audit).
+def test_gate_rows_surfaces_corrupt_request_as_dismissible(tmp_path):
+    # Corrupt request files are surfaced as dismiss-only rows (corrupt=True) — never as an empty,
+    # unanswerable gate form whose blank submission could write a bad gate answer (ecc audit).
     from fanops.agentstep import request_path
     cfg = Config(root=tmp_path); _moments_req(cfg)              # one valid pending moments gate
     request_path(cfg, "moments", "s1").write_text("{ not json")  # corrupt it on disk
     rows = views.gate_rows(cfg)
-    assert all(r.get("key") != "s1" for r in rows)             # the torn gate is skipped, not shown empty
+    hit = [r for r in rows if r.get("key") == "s1"]
+    assert len(hit) == 1 and hit[0].get("corrupt") is True
+    assert "transcript" not in hit[0]                            # no empty answer form payload
 
 def test_gate_rows_empty_when_nothing_pending(tmp_path):
     assert views.gate_rows(Config(root=tmp_path)) == []
