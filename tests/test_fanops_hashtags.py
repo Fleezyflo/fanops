@@ -238,6 +238,25 @@ def test_refresh_store_if_due_corrupt_personas_reports_reason_never_raises(tmp_p
     assert "personas.json invalid:" in r["reason"]
     assert cfg.hashtags_path.read_text() == curated         # curated store preserved
 
+def test_refresh_store_writes_reach_map_with_per_tag_live_scores(tmp_path, monkeypatch):
+    # mol-hashtag-reach-graph-2c21: refresh_store persists {"reach": {tag: score}} where `score` is the
+    # LIVE Meta Graph engagement (sum of top_media like+comment counts via trend_score).  The "reach" key
+    # is what load_store_reach + the Studio Personas tab consume.  Operator invariant (2026-06-27): a tag's
+    # worth is its LIVE platform reach — never a post's outcome.
+    monkeypatch.setenv("META_GRAPH_TOKEN", "tok"); monkeypatch.setenv("META_IG_USER_ID", "ig")
+    cfg = Config(root=tmp_path)
+    from fanops import personas as P
+    P.add_persona(cfg, name="Curator", id="curator"); P.add_corpus_tag(cfg, "curator", "#seed")
+    get = _graph_router({"#beta": 900, "#alpha": 100}, cooccur="#alpha #beta")
+    out = refresh_store(cfg, get=get)
+    blob = json.loads(cfg.hashtags_path.read_text())
+    assert out["written"] is True
+    assert "reach" in blob                                  # reach key present in written file
+    assert blob["reach"].get("#beta") == 900                # LIVE Graph engagement (mocked like_count 900)
+    assert blob["reach"].get("#alpha") == 100               # LIVE Graph engagement (mocked like_count 100)
+    assert out["measured"] == len(blob["reach"])            # summary count matches the persisted map
+
+
 def test_cmd_hashtags_refresh_corrupt_personas_exits_2_and_no_keyerror(tmp_path, monkeypatch):
     # MOL-13 caller contract: `fanops hashtags refresh` used to index r['measured']/['harvested']/['total']
     # unconditionally and always exit 0. On a corrupt-abort it must NOT KeyError on the abort shape — it logs
