@@ -143,8 +143,8 @@ def _hook_decision(has_frames: bool = True, directive=None) -> str:
         "pull them in); fails if you force a loud dare onto a quiet clip.\n"
         "        B) HIGH-ENERGY / a hard drop or punchline -> Result-First or Peer-Challenge (establish "
         "the destination by ~3s so the energy has a reason); fails if the payoff lands after the scroll.\n"
-        "        C) DENSE ARABIC verse non-Arabic scrollers can't parse -> Curiosity/Tension as a "
-        "high-contrast ENGLISH hook that frames the feeling; fails if it literal-translates the bars.\n"
+        "        C) DENSE ARABIC verse non-Arabic scrollers can't parse -> Curiosity/Tension "
+        "that frames the feeling in the source language; fails if it literal-translates the bars.\n"
         "      These name the MECHANISM to fit THIS clip, not words to reuse — generate FRESH wording "
         + ("from these frames and this transient; never paste an example line.\n" if has_frames else
            "from this transient and the transcript; never paste an example line.\n"))
@@ -344,25 +344,14 @@ def caption_prompt(payload: dict) -> str:
         f"{json.dumps(transferred, ensure_ascii=False)}\n"
         if transferred else ""
     )
-    # The tag-pick rule. WITHOUT content_tags it is byte-identical to the menu-only rule. WITH per-clip
-    # content_tags it widens the allowed set to {menu UNION clip-specific tags} and tells the model to
-    # prefer the clip's own tags when they fit — the model SELECTS (never invents outside both lists);
-    # vet_hashtags still enforces membership + the <=4 cap downstream.
     genres = [s.get("genre") for s in surfaces if s.get("genre")]
     seen_menu: set[str] = set(); menu: list[str] = []
     for g in dict.fromkeys(genres or [None]):             # None -> rap default floor; union when mixed niches
         for t in vetted_menu(genre=g):
             if t not in seen_menu: seen_menu.add(t); menu.append(t)
     menu_json = json.dumps(menu, ensure_ascii=False)
-    content_tags = payload.get("content_tags")
-    pick_base = ("Pick up to 4 tags by REACH × how well each fits THIS clip — choose ONLY from the menu "
-                 "UNION each surface's `corpus`")
-    if content_tags:
-        pick_rule = (f"{pick_base} UNION the clip-specific tags below; do NOT invent outside those lists: "
-                     f"{menu_json}. CLIP-SPECIFIC tags (derived from THIS clip — prefer when they fit): "
-                     f"{json.dumps(content_tags, ensure_ascii=False)}. ")
-    else:
-        pick_rule = f"{pick_base}; do NOT invent tags outside the menu or a surface corpus: {menu_json}. "
+    pick_rule = ("Pick up to 4 tags by REACH × how well each fits THIS clip — choose ONLY from the menu "
+                 f"UNION each surface's `corpus`; do NOT invent tags outside the menu or a surface corpus: {menu_json}. ")
     return (
         "You write captions for FAN ACCOUNTS that repost and celebrate an artist. "
         "You are a FAN hyping the artist to other fans — NEVER the artist, never an official account. "

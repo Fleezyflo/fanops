@@ -27,7 +27,7 @@ from fanops.variant_learning import ucb_rank
 # so request_captions' fail-open path is unit-patchable (tests monkeypatch fanops.caption.transferred_hooks).
 from fanops.variant_transfer import transferred_hooks
 from fanops.personas import caption_directive
-from fanops.hashtags import vet_hashtags_traced, content_tag_candidates, load_store
+from fanops.hashtags import vet_hashtags_traced, load_store
 from fanops.log import get_logger
 from fanops.control import load_guidance
 
@@ -200,17 +200,11 @@ def request_captions(led: Ledger, cfg: Config, clip_id: str,
     # (-> vet_hashtags floats it ahead of the frozen rank) AND the prompt shows it. Empty corpus -> no key.
     corpora = {a.handle: list(getattr(a, "hashtag_corpus", []) or []) for a in accounts.accounts} if accounts is not None else {}
     genres = _genres_for_accounts(accounts, cfg)
-    # Per-clip CONTENT signal: deterministic candidate tags derived from THIS clip's transcript. Rides the
-    # payload at the clip level (same for every surface of the clip) so it survives to ingest (-> vet_hashtags
-    # content= joins the membership + reserves a slot) AND the prompt shows it. Empty (blank/instrumental/
-    # Arabic transcript) -> no key -> byte-identical to before this feature.
-    content_tags = content_tag_candidates(moment.transcript_excerpt)
     payload = {
         "clip_id": clip_id,
         "transcript_excerpt": moment.transcript_excerpt,
         "language": src.language if src else None,
         "guidance": load_guidance(cfg),
-        **({"content_tags": content_tags} if content_tags else {}),
         "surfaces": [{"surface": _surface_str(acct, plat), "platform": plat.value,
                       **({"persona": pv} if (pv := personas.get(acct)) else {}),
                       **({"corpus": cv} if (cv := corpora.get(acct)) else {}),
@@ -227,21 +221,19 @@ def request_captions(led: Ledger, cfg: Config, clip_id: str,
     led.set_clip_state(clip_id, ClipState.captions_requested)
     return led
 
-def _request_surfaces(cfg: Config, clip_id: str) -> tuple[set, dict, dict, dict, list]:
+def _request_surfaces(cfg: Config, clip_id: str) -> tuple[set, dict, dict, dict]:
     """The crosspost request is the source of truth for completeness: which surfaces were ASKED for, the
     per-surface curated corpus (B1 — the per-account hashtag differentiator) each carried (None/absent when
     unset) so vet_hashtags can float it, the per-surface REQUESTED platform (AGENT-6 — the vetting truth, not a
-    re-parse of the model's echoed string), the per-surface persona intake.genre niche seed, plus the CLIP-level
-    content_tags (the per-clip content signal, same for every surface). Returns (requested, surface_corpus,
-    surface_platform, surface_genre, content_tags). Pure read."""
+    re-parse of the model's echoed string), and the per-surface persona intake.genre niche seed.
+    Returns (requested, surface_corpus, surface_platform, surface_genre). Pure read."""
     req = json.loads(request_path(cfg, "captions", clip_id).read_text())
     surfaces = req.get("surfaces", [])
     requested = {s["surface"] for s in surfaces}
     surface_corpus = {s["surface"]: s.get("corpus") for s in surfaces}
     surface_platform = {s["surface"]: s.get("platform") for s in surfaces}   # AGENT-6: the REQUESTED platform (truth)
     surface_genre = {s["surface"]: s.get("genre") for s in surfaces}
-    content_tags = req.get("content_tags") or []
-    return requested, surface_corpus, surface_platform, surface_genre, content_tags
+    return requested, surface_corpus, surface_platform, surface_genre
 
 def _platform_for_surface(surface: str, surface_platform: dict) -> Platform:
     """AGENT-6 / MOL-168: the platform we ASKED to caption (from the request record), not a re-parse of
@@ -281,7 +273,7 @@ def ingest_captions(led: Ledger, cfg: Config, clip_id: str) -> Ledger:
     # the clip's source language is the contract the caption must match (AUDIT H5).
     src = led.sources.get(led.moments[clip.parent_id].parent_id)
     # what surfaces did we ask for, and their per-surface curated corpus? (the request is the truth)
-    requested, surface_corpus, surface_platform, surface_genre, content_tags = _request_surfaces(cfg, clip_id)
+    requested, surface_corpus, surface_platform, surface_genre = _request_surfaces(cfg, clip_id)
     # AUDIT H6: a caption targeting a surface we never requested (e.g. a typo'd key) is held with
     # a SPECIFIC reason NAMING the bad surface(s) — diagnosed before the generic missing-caption
     # logic so a typo'd-but-present caption is not mislabelled "missing".
@@ -321,7 +313,7 @@ def ingest_captions(led: Ledger, cfg: Config, clip_id: str) -> Ledger:
         tags, sources = vet_hashtags_traced(item.hashtags or _tags_in(item.caption), plat,
                             src.language if src else None, store=load_store(cfg),   # M4: live store when present
                             corpus=surface_corpus.get(item.surface),                # B1: per-persona curated pool leads (the hashtag differentiator)
-                            content=content_tags, genre=surface_genre.get(item.surface), cfg=cfg)  # niche floor from persona intake.genre
+                            genre=surface_genre.get(item.surface), cfg=cfg)         # niche floor from persona intake.genre
         clip.meta_captions[item.surface] = _caption_entry(tags, [str(h) for h in (item.hashtags or [])], tag_sources=sources)
     answered = {item.surface for item in cs.items}
     missing = requested - answered
@@ -336,7 +328,7 @@ def ingest_captions(led: Ledger, cfg: Config, clip_id: str) -> Ledger:
         plat = _platform_for_surface(surface, surface_platform)   # AGENT-6: vet under the REQUESTED platform
         tags, sources = vet_hashtags_traced(None, plat, src.language if src else None, store=load_store(cfg),
                             corpus=surface_corpus.get(surface),   # B1: the curated corpus leads the seed (the hashtag differentiator)
-                            content=content_tags, genre=surface_genre.get(surface), cfg=cfg)  # niche floor from persona intake.genre
+                            genre=surface_genre.get(surface), cfg=cfg)  # niche floor from persona intake.genre
         clip.meta_captions[surface] = _caption_entry(tags, [], fallback=True, tag_sources=sources)
         get_logger(cfg)("captions", clip_id, "caption_fallback_seed", surface=surface)
     if held_reason:
