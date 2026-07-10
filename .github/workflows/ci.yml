@@ -52,7 +52,7 @@ jobs:
       - name: Unit tests
         env:
           FANOPS_REQUIRE_STUDIO: "1"   # #13: flask is installed above, so this stays green — but it now FAILS if a future extras regression drops flask (no silent studio-test skip)
-        run: python -m pytest -q -m "not integration and not slow"   # MOL-199: coverage was report-only theater (no --cov-fail-under, no upload) — dropped to save CI time
+        run: python -m pytest -q -n auto -m "not integration and not slow"   # MOL-199: coverage was report-only theater (no --cov-fail-under, no upload) — dropped to save CI time
       - name: pip-audit (advisory — MOL-194 Phase A; not a merge gate until baseline triaged)
         continue-on-error: true
         run: |

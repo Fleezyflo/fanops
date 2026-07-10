@@ -466,7 +466,7 @@ def test_concurrent_workers_bad_int_raises_at_settings_validate(tmp_path, monkey
 
 
 def test_config_live_reread_after_env_mutation(tmp_path, monkeypatch):
-    # Go-live dual-write is visible on the next Config() (single env parse per instance — MOL-292).
+    # Go-live dual-write is visible on the next Config() (live os.getenv per property read).
     monkeypatch.delenv("FANOPS_LIVE", raising=False)
     assert Config(root=tmp_path).is_live is False
     monkeypatch.setenv("FANOPS_LIVE", "1")
