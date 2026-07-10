@@ -163,6 +163,14 @@ def test_picker_prompt_and_vision_wrapper_json_only():
         chunk = src.split(marker, 1)[1].split("\\n", 1)[0]
         assert "hook" not in chunk.lower()                              # A8.1 gate-neutral wrappers
 
+def test_moment_pick_prompt_single_lens_brief():
+    p = moment_pick_prompt({"duration": 60.0, "transcript": [], "signal_peaks": [], "language": "en",
+                            "guidance": "", "personas": [{"handle": "trust", "directive": "pick bars",
+                            "selection_scope": "credibility_first", "band": "12-22s"}]})
+    assert "YOUR SELECTION LENS" in p
+    assert "picking for @trust" in p
+    assert "select_rule=" in p or "credibility" in p
+
 def test_moment_pick_prompt_has_data_not_instructions_directive():
     # FIX 7: transcript text flows into the `claude -p` prompt; a crafted video could inject
     # instructions. Belt-and-suspenders role separation: the prompt must tell the model the

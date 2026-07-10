@@ -314,7 +314,7 @@ def request_moments(led: Ledger, cfg: Config, source_id: str, accounts=None, *, 
         led.set_source_state(source_id, SourceState.moments_requested)
         return led
     if not targets:
-        get_logger(cfg)("source", source_id, "moments_target_empty", warn=True)
+        get_logger(cfg)("source", source_id, "no_targeted_active_accounts", warn=True)
         led.set_source_state(source_id, SourceState.moments_empty)
         return led
     discard_gates_for(cfg, "moments", source_id)
@@ -396,13 +396,18 @@ def _ingest_moments_dotted(led: Ledger, cfg: Config, source_id: str, keys: list[
     any_contrib = False
     any_invalid = False
     all_empty = True
+    log = get_logger(cfg)
+    prefix = f"{source_id}."
     for key in keys:
         dec = read_response(cfg, "moments", key, MomentDecision)
         if dec is None:
             return led
-        owner = key.split(".", 1)[1]
+        owner = key.removeprefix(prefix)
         gate_valid: list[MomentPick] = []
         for pick in dec.picks:
+            echoed = _pick_owner(pick)
+            if echoed and echoed != owner:
+                log("moments", f"{source_id}.{owner}", "owner_mismatch", warn=True, echoed=echoed)
             stamped = pick.model_copy(update={"personas": [owner]})
             bad = validate_pick(stamped, duration=src.duration or 0.0)
             if bad:
@@ -412,11 +417,13 @@ def _ingest_moments_dotted(led: Ledger, cfg: Config, source_id: str, keys: list[
             any_contrib = True
             all_empty = False
             all_picks.extend(gate_valid)
+            log("moments", f"{source_id}.{owner}", "contrib", n=len(gate_valid))
         elif dec.picks:
             any_invalid = True
             all_empty = False
+            log("moments", f"{source_id}.{owner}", "invalid")
         else:
-            pass   # gate returned [] — counts toward all_empty
+            log("moments", f"{source_id}.{owner}", "empty")
     if any_contrib:
         deduped = _drop_overlaps(all_picks)
         if len(deduped) < len(all_picks):
