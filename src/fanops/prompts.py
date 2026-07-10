@@ -143,8 +143,8 @@ def _hook_decision(has_frames: bool = True, directive=None) -> str:
         "pull them in); fails if you force a loud dare onto a quiet clip.\n"
         "        B) HIGH-ENERGY / a hard drop or punchline -> Result-First or Peer-Challenge (establish "
         "the destination by ~3s so the energy has a reason); fails if the payoff lands after the scroll.\n"
-        "        C) DENSE ARABIC verse non-Arabic scrollers can't parse -> Curiosity/Tension as a "
-        "high-contrast ENGLISH hook that frames the feeling; fails if it literal-translates the bars.\n"
+        "        C) DENSE ARABIC verse non-Arabic scrollers can't parse -> Curiosity/Tension "
+        "that frames the feeling in the source language; fails if it literal-translates the bars.\n"
         "      These name the MECHANISM to fit THIS clip, not words to reuse — generate FRESH wording "
         + ("from these frames and this transient; never paste an example line.\n" if has_frames else
            "from this transient and the transcript; never paste an example line.\n"))
