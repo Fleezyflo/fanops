@@ -9,7 +9,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Optional, NamedTuple
 from pydantic import BaseModel, Field
-from fanops.config import Config, _VALID_BACKENDS, _LIVE_BACKENDS, _BACKEND_PLATFORMS, FRAMING_NAMES
+from fanops.config import Config, _LIVE_BACKENDS, _BACKEND_PLATFORMS, FRAMING_NAMES
+from fanops.settings import _VALID_BACKENDS
 from fanops.errors import ControlFileError, reason as _reason
 from fanops.models import Platform, validate_account_handle
 from fanops.bands import PROFILE_NAMES                # the valid per-account clip_profile names (M2 length tier)
