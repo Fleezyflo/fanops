@@ -7,7 +7,7 @@ from fanops.config import Config
 
 def _validate_settings():
     from fanops.settings import Settings
-    Settings()
+    Settings.strict_validate()
 
 def _tuning_cfg(tmp_path, obj):
     cfg = Config(root=tmp_path)
@@ -466,12 +466,11 @@ def test_concurrent_workers_bad_int_raises_at_settings_validate(tmp_path, monkey
 
 
 def test_config_live_reread_after_env_mutation(tmp_path, monkeypatch):
-    # Go-live dual-write must be visible on the next property read without a new Config() or restart.
+    # Go-live dual-write is visible on the next Config() (single env parse per instance — MOL-292).
     monkeypatch.delenv("FANOPS_LIVE", raising=False)
-    c = Config(root=tmp_path)
-    assert c.is_live is False
+    assert Config(root=tmp_path).is_live is False
     monkeypatch.setenv("FANOPS_LIVE", "1")
-    assert c.is_live is True
+    assert Config(root=tmp_path).is_live is True
 
 
 def test_settings_bad_numeric_names_field_in_validation_error(tmp_path, monkeypatch):

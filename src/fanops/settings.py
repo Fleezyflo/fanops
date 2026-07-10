@@ -1,10 +1,16 @@
 # src/fanops/settings.py — MOL-292: typed env boundary (constructed per Config(), never import-cached)
 from __future__ import annotations
+import logging
 import math
+import os
+from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, field_validator
+from dotenv import load_dotenv
+from pydantic import Field, ValidationError, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_log = logging.getLogger("fanops.settings")
 
 _ON = frozenset({"1", "true", "yes", "on"})
 _OFF = frozenset({"0", "false", "no", "off"})
@@ -20,6 +26,11 @@ _BOOL_ENV_FIELDS = (
     "FANOPS_ADJUST_PER_SURFACE", "FANOPS_P4_DIM_BIAS", "FANOPS_TIMING_BIAS", "FANOPS_IG_RETENTION_PROOF",
     "FANOPS_MOMENT_HOOK_LEARNING", "FANOPS_REALISTIC_CADENCE", "FANOPS_CONCURRENT_SOURCES",
     "FANOPS_POSTIZ_AUTOSTART",
+)
+_STRIP_STR_FIELDS = (
+    "FANOPS_POSTER", "FANOPS_LIVE", "FANOPS_RESPONDER", "FANOPS_LLM_MODEL", "FANOPS_ARTIST_NAME",
+    "FANOPS_CLIP_PROFILE", "FANOPS_WHISPER_MODEL", "FANOPS_ASR_MODEL", "FANOPS_ASR_LANGUAGE",
+    "FANOPS_SUBTITLE_FONT", "ZERNIO_API_URL", "META_GRAPH_URL", "FANOPS_OPERATOR_TZ",
 )
 
 
@@ -47,11 +58,7 @@ def _validate_bool_word(v: object) -> str:
 
 def _validate_poster(v: object) -> str:
     if v is None: return ""
-    s = str(v).strip()
-    if not s: return ""
-    if s not in _VALID_BACKENDS:
-        raise ValueError(f"unrecognized FANOPS_POSTER={s!r}; valid: {', '.join(sorted(_VALID_BACKENDS))}")
-    return s
+    return str(v).strip()
 
 
 def _validate_responder(v: object) -> str:
@@ -60,6 +67,33 @@ def _validate_responder(v: object) -> str:
     if not s: return ""
     if s not in _VALID_RESPONDERS:
         raise ValueError(f"unrecognized FANOPS_RESPONDER={s!r}; valid: llm, manual")
+    return s
+
+
+def _strict_validate_poster(v: object) -> str:
+    if v is None: return ""
+    s = str(v).strip()
+    if not s: return ""
+    if s not in _VALID_BACKENDS:
+        raise ValueError(f"unrecognized FANOPS_POSTER={s!r}; valid: {', '.join(sorted(_VALID_BACKENDS))}")
+    return s
+
+
+def _strict_validate_responder(v: object) -> str:
+    if v is None: return ""
+    s = str(v).strip().lower()
+    if not s: return ""
+    if s not in _VALID_RESPONDERS:
+        raise ValueError(f"unrecognized FANOPS_RESPONDER={s!r}; valid: llm, manual")
+    return s
+
+
+def _strict_validate_bool_word(v: object) -> str:
+    if v is None: return ""
+    s = str(v).strip()
+    if not s: return ""
+    if s.lower() not in _VALID_BOOL:
+        raise ValueError(f"unrecognized bool value {s!r}; valid: 1/0, true/false, yes/no, on/off")
     return s
 
 
@@ -245,6 +279,13 @@ class Settings(BaseSettings):
     @classmethod
     def _postiz_throttle(cls, v): return v if v >= 0 else 4
 
+    @field_validator(*_STRIP_STR_FIELDS, mode="before")
+    @classmethod
+    def _strip_str(cls, v):
+        if v is None: return ""
+        s = str(v).strip()
+        return s
+
     @field_validator("FANOPS_POSTER", mode="before")
     @classmethod
     def _poster(cls, v): return _validate_poster(v)
@@ -260,12 +301,88 @@ class Settings(BaseSettings):
     def poster_backend(self) -> PosterBackend:
         v = (self.FANOPS_POSTER or "").strip()
         if not v: return "dryrun"
+        if v not in _VALID_BACKENDS:
+            _log.warning("ignoring unknown FANOPS_POSTER=%r (using dryrun); valid: %s",
+                         v, ", ".join(sorted(_VALID_BACKENDS)))
+            return "dryrun"
         return v  # type: ignore[return-value]
 
     def responder_mode(self) -> str:
         v = (self.FANOPS_RESPONDER or "").strip().lower()
         if not v: return "manual"
+        if v not in _VALID_RESPONDERS:
+            _log.warning("ignoring unknown FANOPS_RESPONDER=%r (using manual); valid: llm, manual", v)
+            return "manual"
         return v
 
     def opt_on(self, raw: str, *, default: bool) -> bool:
         return _env_on(raw, default=default)
+
+    @classmethod
+    def runtime_load(cls, root: Path) -> tuple[Settings, dict[str, str | None]]:
+        load_dotenv(root / ".env", override=True)
+        enriched = _enriched_env(dict(os.environ))
+        secrets = {k: enriched.get(k) for k in enriched if _is_resolved_secret_key(k)}
+        try:
+            return cls.model_validate(enriched), secrets
+        except ValidationError as exc:
+            return _coerce_from_errors(enriched, exc), secrets
+
+    @classmethod
+    def strict_validate(cls, env: dict[str, str] | None = None) -> Settings:
+        raw = dict(env if env is not None else os.environ)
+        enriched = _enriched_env(raw)
+        data = dict(enriched)
+        if (v := data.get("FANOPS_POSTER")):
+            data["FANOPS_POSTER"] = _strict_field("FANOPS_POSTER", _strict_validate_poster, v)
+        if (v := data.get("FANOPS_RESPONDER")):
+            data["FANOPS_RESPONDER"] = _strict_field("FANOPS_RESPONDER", _strict_validate_responder, v)
+        for name in _BOOL_ENV_FIELDS:
+            if (v := data.get(name)):
+                data[name] = _strict_field(name, _strict_validate_bool_word, v)
+        return cls.model_validate(data)
+
+
+def _strict_field(name: str, fn, v: object) -> str:
+    try:
+        return fn(v)
+    except ValueError as exc:
+        raise ValidationError.from_exception_data(
+            "Settings",
+            [{"type": "value_error", "loc": (name,), "input": v, "ctx": {"error": exc}}],
+        ) from exc
+
+
+def _is_resolved_secret_key(key: str) -> bool:
+    return key in ("POSTIZ_API_KEY", "ZERNIO_API_KEY", "META_GRAPH_TOKEN") or key.startswith("META_GRAPH_TOKEN__")
+
+
+def _enriched_env(raw: dict[str, str]) -> dict[str, str]:
+    from fanops.secret_provider import resolve_secret
+    out = {k: v for k, v in raw.items()}
+    for key in list(out.keys()):
+        if not _is_resolved_secret_key(key): continue
+        v = out.get(key)
+        env_val = v.strip() if isinstance(v, str) and v.strip() else None
+        resolved = resolve_secret(key, env_val)
+        if resolved is not None:
+            out[key] = resolved
+    return out
+
+
+def _coerce_from_errors(data: dict[str, str], exc: ValidationError) -> Settings:
+    fixed = dict(data)
+    seen: set[str] = set()
+    for err in exc.errors():
+        loc = err.get("loc", ())
+        if not loc: continue
+        field = str(loc[0])
+        if field in seen or field not in Settings.model_fields: continue
+        seen.add(field)
+        default = Settings.model_fields[field].get_default(call_default_factory=True)
+        _log.warning("env %s: %s (using default %r)", field, err.get("msg"), default)
+        fixed[field] = default
+    try:
+        return Settings.model_validate(fixed)
+    except ValidationError as exc2:
+        return _coerce_from_errors(fixed, exc2)
