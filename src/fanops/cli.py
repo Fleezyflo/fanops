@@ -933,6 +933,20 @@ def _heartbeat(cfg: Config, s: dict) -> None:
     get_logger(cfg)("heartbeat", "-", "ok", **hb)
 
 
+def _studio_port_busy(host: str, port: int) -> bool:
+    # Liveness probe for the studio launch guard: something must be ACCEPTING on the port. Never test
+    # launchd registration here — the KeepAlive resident's own child is always "loaded", so a plist
+    # check self-trips: every service start printed "already running" and exited 0, and
+    # KeepAlive={SuccessfulExit:false} never restarted it (2026-07-10 bricked-resident incident).
+    # A refused/failed connect is the probe's expected negative, not an error to log.
+    import socket
+    try:
+        with socket.create_connection((host or "127.0.0.1", port), timeout=1.0):
+            return True
+    except OSError:
+        return False
+
+
 def _dispatch(cfg: Config, args) -> int:
     if args.cmd == "status":   return cmd_status(cfg)
     if args.cmd == "recover":
@@ -1087,12 +1101,12 @@ def _dispatch(cfg: Config, args) -> int:
             res = daemon.stop_studio(cfg, remove=True)
             print(f"Studio service stopped -> {res['plist']}" + (" (plist removed)" if res.get("removed") else ""))
             return 0 if res.get("stopped") else 1
-        if sys.platform == "darwin":
-            st = daemon.studio_agent_status()
-            if st.get("loaded"):
-                print(f"Studio already running as launchd service at http://{args.host}:{args.port}")
-                print("  open that URL, or `fanops studio --uninstall` to stop the resident and run foreground")
-                return 0
+        if sys.platform == "darwin" and _studio_port_busy(args.host, args.port):
+            # Liveness, not launchd registration — a plist-loaded check self-trips from inside the
+            # KeepAlive resident's own child (it IS the loaded service) and bricks it (see _studio_port_busy).
+            print(f"Studio already serving at http://{args.host}:{args.port}")
+            print("  open that URL, or stop that instance first to run a new one here")
+            return 0
         from fanops.studio.app import create_app
         from fanops.health import ensure_up, system_health
         # Launch the WHOLE system, not just the UI: bring up any down dependency the system knows how to
