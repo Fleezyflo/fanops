@@ -13,7 +13,25 @@
 # (and get their own clean teardown). The suite no longer depends on what FANOPS_POSTER happens to be
 # in the repo .env.
 import os
+import weakref
 import pytest
+from fanops.config import Config
+
+# MOL-292: Config holds a frozen env snapshot at __init__; tests that monkeypatch.setenv after building
+# cfg must refresh it (production dual-write calls cfg.refresh_env()). Track live Config instances and
+# re-parse on every monkeypatch env mutation so the suite stays hermetic without per-test boilerplate.
+_CONFIG_INSTANCES: weakref.WeakSet[Config] = weakref.WeakSet()
+_orig_config_init = Config.__init__
+
+def _config_init_register(self, root=None):
+    _orig_config_init(self, root)
+    _CONFIG_INSTANCES.add(self)
+
+Config.__init__ = _config_init_register  # type: ignore[method-assign]
+
+def _refresh_all_config_env():
+    for cfg in list(_CONFIG_INSTANCES):
+        cfg.refresh_env()
 
 # Vars the repo .env can leak that change publish/auth behavior — neutralized per test so a live .env
 # never poisons a unit test. (POSTIZ_URL/POSTIZ_API_KEY ride along so a leaked URL can't 'configure'
@@ -32,7 +50,7 @@ import pytest
 # =1 leaking into the session would silently flip every test onto the pooled path (and the worker
 # count along with it). Stripping them makes each test see the OFF default; the concurrent tests
 # set them explicitly via monkeypatch and get clean teardown.
-_LEAKY_ENV = ("FANOPS_POSTER", "BLOTATO_API_KEY", "POSTIZ_API_KEY", "POSTIZ_URL", "FANOPS_MEDIA_PUBLIC_BASE",
+_LEAKY_ENV = ("FANOPS_LIVE", "FANOPS_POSTER", "BLOTATO_API_KEY", "POSTIZ_API_KEY", "POSTIZ_URL", "FANOPS_MEDIA_PUBLIC_BASE",
               "R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET", "FANOPS_HOOK_JUDGE",
               "FANOPS_RESPONDER",   # defaults to llm when `claude` is on PATH — must not leak across tests/CI
               "META_GRAPH_TOKEN", "META_IG_USER_ID", "FANOPS_HASHTAG_TRENDS", "META_GRAPH_URL",
@@ -41,7 +59,7 @@ _LEAKY_ENV = ("FANOPS_POSTER", "BLOTATO_API_KEY", "POSTIZ_API_KEY", "POSTIZ_URL"
               # persona/learning behavior flags (default OFF): once the operator persists e.g.
               # FANOPS_CREATIVE_VARIATION=1 to the repo .env (the supported "system default"), it must not
               # leak into tests that assume the code default — same class as FANOPS_HOOK_JUDGE above.
-              "FANOPS_CREATIVE_VARIATION", "FANOPS_VARIANT_LEARNING", "FANOPS_P4_DIM_BIAS",
+              "FANOPS_CREATIVE_VARIATION", "FANOPS_VARIANT_LEARNING", "FANOPS_VARIANT_AMPLIFY", "FANOPS_P4_DIM_BIAS",
               # Account-First Studio casting (Face 3): a repo .env value must not leak into tests that assume
               # the code default (same class as FANOPS_CREATIVE_VARIATION above).
               "FANOPS_ACCOUNT_CASTING",
@@ -80,6 +98,21 @@ def pytest_runtest_makereport(item, call):
 
 
 @pytest.fixture(autouse=True)
+def _config_refresh_on_monkeypatch_env(monkeypatch):
+    """Re-parse frozen env snapshots when a test mutates os.environ via monkeypatch after Config()."""
+    _orig_setenv = monkeypatch.setenv
+    _orig_delenv = monkeypatch.delenv
+    def setenv(name, value, prepend=False):
+        _orig_setenv(name, value, prepend=prepend)
+        _refresh_all_config_env()
+    def delenv(name, raising=True):
+        _orig_delenv(name, raising=raising)
+        _refresh_all_config_env()
+    monkeypatch.setenv = setenv
+    monkeypatch.delenv = delenv
+
+
+@pytest.fixture(autouse=True)
 def _no_real_publish_sleep(monkeypatch):
     """The publish throttle (post/run.py `_publish_throttle_wait`, ~60/postiz_publish_per_min s between posts)
     and the publish retry-backoff call a REAL time.sleep. Any test that drives the live publish path without
@@ -104,6 +137,7 @@ def _hermetic_publish_env():
     # opt back in explicitly (monkeypatch delenv/setenv burn_subs).
     burn_saved = os.environ.get("FANOPS_BURN_SUBS")
     os.environ["FANOPS_BURN_SUBS"] = "0"
+    _refresh_all_config_env()
     try:
         yield
     finally:
@@ -120,6 +154,7 @@ def _hermetic_publish_env():
             os.environ.pop("FANOPS_BURN_SUBS", None)
         else:
             os.environ["FANOPS_BURN_SUBS"] = burn_saved
+        _refresh_all_config_env()
 
 
 # ── VCR: source external API shapes from the REAL call, never a guess ──────────────────────────────

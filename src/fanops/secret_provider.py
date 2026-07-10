@@ -34,12 +34,13 @@ def _keyring_delete_password(service: str, username: str) -> None:
         pass  # absent entry is fine
 
 
-def get_secret(env_key: str) -> str | None:
+def get_secret(env_key: str, *, quiet: bool = False) -> str | None:
     """Return the trimmed keyring value for `env_key`, or None when absent/unavailable."""
     try:
         raw = _keyring_get_password(_SERVICE, env_key)
     except Exception as exc:
-        _log.warning("keyring read unavailable for %s (fail-open to env): %s", env_key, exc)
+        if not quiet:
+            _log.warning("keyring read unavailable for %s (fail-open to env): %s", env_key, exc)
         return None
     if raw is None:
         return None
@@ -47,9 +48,9 @@ def get_secret(env_key: str) -> str | None:
     return s or None
 
 
-def resolve_secret(env_key: str, fallback: str | None) -> str | None:
+def resolve_secret(env_key: str, fallback: str | None, *, quiet: bool = False) -> str | None:
     """Keyring wins when set; else return `fallback` unchanged (Settings / os.environ)."""
-    kr = get_secret(env_key)
+    kr = get_secret(env_key, quiet=quiet)
     return kr if kr is not None else fallback
 
 

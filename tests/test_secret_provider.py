@@ -54,12 +54,12 @@ def test_get_secret_backend_error_fail_open(monkeypatch, caplog):
 
 
 def test_resolve_secret_keyring_wins(monkeypatch):
-    monkeypatch.setattr(secret_provider, "get_secret", lambda k: "kr" if k == "POSTIZ_API_KEY" else None)
+    monkeypatch.setattr(secret_provider, "get_secret", lambda k, quiet=False: "kr" if k == "POSTIZ_API_KEY" else None)
     assert secret_provider.resolve_secret("POSTIZ_API_KEY", "env") == "kr"
 
 
 def test_resolve_secret_falls_back_unchanged(monkeypatch):
-    monkeypatch.setattr(secret_provider, "get_secret", lambda k: None)
+    monkeypatch.setattr(secret_provider, "get_secret", lambda k, quiet=False: None)
     assert secret_provider.resolve_secret("POSTIZ_API_KEY", "env-val") == "env-val"
     assert secret_provider.resolve_secret("POSTIZ_API_KEY", None) is None
 
@@ -71,7 +71,7 @@ def test_resolve_secret_falls_back_unchanged(monkeypatch):
 ])
 def test_config_secret_property_keyring_wins(monkeypatch, tmp_path, prop, env_key, env_val):
     monkeypatch.setenv(env_key, env_val)
-    monkeypatch.setattr(secret_provider, "get_secret", lambda k: f"kr-{k}" if k == env_key else None)
+    monkeypatch.setattr(secret_provider, "get_secret", lambda k, quiet=False: f"kr-{k}" if k == env_key else None)
     cfg = Config(root=tmp_path)
     assert getattr(cfg, prop) == f"kr-{env_key}"
 
@@ -83,7 +83,7 @@ def test_config_secret_property_keyring_wins(monkeypatch, tmp_path, prop, env_ke
 ])
 def test_config_secret_property_env_fallback(monkeypatch, tmp_path, prop, env_key, env_val):
     monkeypatch.setenv(env_key, env_val)
-    monkeypatch.setattr(secret_provider, "get_secret", lambda k: None)
+    monkeypatch.setattr(secret_provider, "get_secret", lambda k, quiet=False: None)
     cfg = Config(root=tmp_path)
     assert getattr(cfg, prop) == env_val
 
@@ -94,7 +94,7 @@ def test_meta_token_for_per_handle_keyring_wins(monkeypatch, tmp_path):
     monkeypatch.setenv("META_GRAPH_TOKEN", "global-env")
     monkeypatch.setenv(env_key, "per-env")
     monkeypatch.setattr(secret_provider, "get_secret",
-                        lambda k: "per-kr" if k == env_key else ("global-kr" if k == "META_GRAPH_TOKEN" else None))
+                        lambda k, quiet=False: "per-kr" if k == env_key else ("global-kr" if k == "META_GRAPH_TOKEN" else None))
     cfg = Config(root=tmp_path)
     assert cfg.meta_token_for(handle) == "per-kr"
 
@@ -102,7 +102,7 @@ def test_meta_token_for_per_handle_keyring_wins(monkeypatch, tmp_path):
 def test_meta_token_for_global_keyring_when_no_per_handle(monkeypatch, tmp_path):
     monkeypatch.delenv("META_GRAPH_TOKEN", raising=False)
     monkeypatch.setattr(secret_provider, "get_secret",
-                        lambda k: "global-kr" if k == "META_GRAPH_TOKEN" else None)
+                        lambda k, quiet=False: "global-kr" if k == "META_GRAPH_TOKEN" else None)
     cfg = Config(root=tmp_path)
     assert cfg.meta_token_for("@someone") == "global-kr"
     assert cfg.meta_token_for(None) == "global-kr"
