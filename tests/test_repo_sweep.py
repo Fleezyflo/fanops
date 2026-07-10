@@ -57,9 +57,16 @@ def _clean_rep(**over):
 def test_is_done_true_only_when_landed_and_pristine():
     assert rs.is_done(_clean_rep()) is True
     assert rs.is_done(_clean_rep(open_prs=[{"number": 398}])) is False        # unlanded work
+    assert rs.is_done(_clean_rep(open_prs=[{"number": 398, "draft": True}])) is True  # drafts don't block
     assert rs.is_done(_clean_rep(unresolved_conflicts=["a.py"])) is False     # unresolved merge
     assert rs.is_done(_clean_rep(stale_branches=["origin/x"])) is False
     assert rs.is_done(_clean_rep(artifacts=["a.orig"])) is False
+
+
+def test_landable_open_prs_excludes_drafts():
+    prs = [{"number": 1, "draft": False}, {"number": 2, "draft": True}, {"number": 3}]
+    assert len(rs._landable_open_prs(prs)) == 2
+    assert rs._landable_open_prs([]) == []
 
 
 def test_outstanding_lists_reasons():
@@ -67,6 +74,7 @@ def test_outstanding_lists_reasons():
     assert any("open PR" in r for r in reasons)
     assert any("artifact" in r for r in reasons)
     assert rs.outstanding(_clean_rep()) == []
+    assert rs.outstanding(_clean_rep(open_prs=[{"number": 1, "draft": True}])) == []  # drafts only
 
 
 def test_require_pristine_exit_codes():
