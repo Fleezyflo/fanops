@@ -1,6 +1,7 @@
 # tests/test_doctor.py — Phase 3b: `fanops doctor` read-only first-run health screen. Asserts only
 # on env-controlled checks (key/claude/notes), never host-dependent toolchain presence.
 import json
+import logging
 from fanops.config import Config
 from fanops import doctor
 
@@ -23,6 +24,36 @@ def _postiz_cfg(tmp_path, *, mapped=True, validated=True):
 
 def _learning_check(rep):
     return next((c for c in rep["checks"] if "learning" in c["label"].lower() and "postiz" in c["label"].lower()), None)
+
+
+def _env_check(rep):
+    return next((c for c in rep["checks"] if "strict Settings" in c["label"]), None)
+
+
+def test_doctor_fails_on_bad_fanops_poster_typo(tmp_path, monkeypatch):
+    # strict doctor path must FAIL LOUD on a typo'd FANOPS_POSTER — runtime Config still dryruns (W4).
+    monkeypatch.setenv("FANOPS_POSTER", "positz")        # typo of "postiz"
+    rep = doctor.doctor_report(Config(root=tmp_path))
+    ec = _env_check(rep)
+    assert ec is not None and ec["ok"] is False
+    assert "FANOPS_POSTER" in ec["hint"]
+
+
+def test_doctor_passes_valid_env(tmp_path, monkeypatch):
+    monkeypatch.delenv("FANOPS_POSTER", raising=False)
+    rep = doctor.doctor_report(Config(root=tmp_path))
+    ec = _env_check(rep)
+    assert ec is not None and ec["ok"] is True
+
+
+def test_runtime_config_failopen_on_poster_typo_while_doctor_fails(tmp_path, monkeypatch, caplog):
+    monkeypatch.setenv("FANOPS_POSTER", "positz")
+    with caplog.at_level(logging.WARNING):
+        c = Config(root=tmp_path)
+    assert c.poster_backend == "dryrun"
+    assert any("FANOPS_POSTER" in r.getMessage() for r in caplog.records)
+    rep = doctor.doctor_report(c)
+    assert _env_check(rep)["ok"] is False
 
 
 def test_doctor_flags_missing_brand_brief(tmp_path):

@@ -16,6 +16,29 @@ def _check(label: str, ok: bool, hint: str = "") -> dict:
     return {"label": label, "ok": bool(ok), "hint": "" if ok else hint}
 
 
+def _env_settings_check(cfg: Config) -> dict:
+    """Strict Settings boundary — FAIL LOUD on enum/bool typos the runtime path would fail-open on."""
+    from dotenv import load_dotenv
+    from pydantic import ValidationError
+    from fanops.settings import Settings
+    load_dotenv(cfg.root / ".env", override=True)
+    lbl = ".env / FANOPS_* vars valid (strict Settings)"
+    try:
+        Settings.strict_validate()
+        return _check(lbl, True, "")
+    except ValidationError as exc:
+        parts: list[str] = []
+        for err in exc.errors():
+            loc = ".".join(str(x) for x in err.get("loc", ()))
+            msg = err.get("msg", "invalid")
+            parts.append(f"{loc}: {msg}" if loc else str(msg))
+        hint = "; ".join(parts[:6])
+        if len(parts) > 6:
+            hint += f" (+{len(parts) - 6} more)"
+        hint += " — fix the typo'd value in .env or your shell env"
+        return _check(lbl, False, hint)
+
+
 def _ig_user_id_check(cfg: Config) -> tuple[bool, str]:
     """T3: (ok, hint) for 'every active IG account resolves to its OWN ig_user_id'. Loads accounts FAIL-CLOSED
     (a torn accounts.json -> ok=False, never a silent pass). BORROWERS = active IG-carrying accounts with no
@@ -220,6 +243,7 @@ def _doctor_notes(cfg: Config) -> list[str]:
 def _assemble_doctor_checks(cfg: Config, *, get=None, postiz_probe=None, zernio_auth=None) -> list[dict]:
     """Setup gate checks only (deps/field-shape composed by health_model.build_health_report)."""
     checks: list[dict] = []
+    checks.append(_env_settings_check(cfg))
     # 1. media toolchain (host-dependent — informational pass/fail, the operator installs what's red)
     for tool in ("ffmpeg", "ffprobe", "whisper"):
         checks.append(_check(f"{tool} on PATH", shutil.which(tool) is not None,
