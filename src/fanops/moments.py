@@ -440,6 +440,15 @@ def request_moment_hooks(led: Ledger, cfg: Config, source_id: str, accounts=None
         write_request(cfg, kind="moment_hooks", key=key, payload=payload)
     return led
 
+def _hook_lang_base(text: str) -> str | None:
+    """Detect base language of a short hook string via Unicode script analysis (mirrors caption._lang_base).
+    Arabic-script majority (>40% of alphabetic chars in U+0600-U+06FF) → 'ar'; Latin-only → 'en';
+    None for indeterminate (no alpha chars at all). Reliable ONLY for the Arabic vs. Latin split."""
+    alpha = sum(1 for c in text if c.isalpha())
+    if not alpha: return None
+    ar = sum(1 for c in text if '\u0600' <= c <= '\u06ff')
+    return 'ar' if ar / alpha > 0.4 else 'en'
+
 def ingest_moment_hooks(led: Ledger, cfg: Config, source_id: str, accounts=None) -> Ledger:
     """M1b PASS 2 ingest — apply the window-grounded hooks to a source's `picked` moments and promote them
     to `decided`. ATOMIC PER SOURCE (review fix): we wait until EVERY pick's gate has a valid answer, then
@@ -465,7 +474,8 @@ def ingest_moment_hooks(led: Ledger, cfg: Config, source_id: str, accounts=None)
     # Cross-clip hook de-dup: seed `used` from OTHER sources' hooks (an EXACT repeat reads like a bot);
     # `cluster_used` (the opening-template scope) starts empty and accumulates within THIS atomic pass —
     # byte-identical to the old single-pass loop. Both grow as we accept hooks in pick order.
-    from fanops.caption import brand_risk_flag    # function-local: the ONE off-brand guardrail captions use (no module cycle)
+    from fanops.caption import _lang_base, brand_risk_flag    # function-local: avoids module cycle; _lang_base for lang gate
+    src_lang = _lang_base((led.sources[source_id].language if source_id in led.sources else None))
     used = {(m.hook or "").strip().lower() for m in led.moments.values()
             if m.hook and m.parent_id != source_id}
     cluster_used: set[str] = set()
@@ -483,6 +493,11 @@ def ingest_moment_hooks(led: Ledger, cfg: Config, source_id: str, accounts=None)
                      or brand_risk_flag(hook, cfg)):   # HIGH (audit): the burned hook gets the SAME brand-risk screen captions get
             hook_removed = hook
             hook = None                             # ...the clip still ships CLEAN by default
+        if hook and src_lang:                       # language gate: hook script must match source language (fail-open when src_lang unknown)
+            hook_lang = _hook_lang_base(hook)
+            if hook_lang is not None and hook_lang != src_lang:
+                hook_removed = hook
+                hook = None                         # wrong language → ships CLEAN; Review can restore
         if hook:
             used.add(hook.lower()); cluster_used.add(hook.lower())
             clear_attempts(cfg, "moment_hooks", f"{source_id}.{m.content_token}")

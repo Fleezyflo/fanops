@@ -561,7 +561,7 @@ def _accts(cfg, rows):
 def test_ingest_captions_no_accounts_is_byte_identical(tmp_path):
     # no accounts -> no lean/corpus; content is a CLIP-level signal so it still applies (the clip's own
     # transcript drives its tags regardless of accounts). The expected line carries that same content.
-    from fanops.hashtags import vet_hashtags, content_tag_candidates
+    from fanops.hashtags import vet_hashtags
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)
     led = request_captions(led, cfg, "clip_1", [("a", Platform.instagram)])   # no accounts -> no lean
     payload = json.loads(request_path(cfg, "captions", "clip_1").read_text())
@@ -572,8 +572,7 @@ def test_ingest_captions_no_accounts_is_byte_identical(tmp_path):
         CaptionItem(surface="a/instagram", caption="c", hashtags=tags)]).model_dump_json())
     led = ingest_captions(led, cfg, "clip_1")
     mc = led.clips["clip_1"].meta_captions["a/instagram"]["hashtags"]
-    content = content_tag_candidates("they slept on me")      # the _clip helper's transcript
-    assert mc == vet_hashtags(tags, Platform.instagram, "en", content=content)  # no lean; content still rides
+    assert mc == vet_hashtags(tags, Platform.instagram, "en")  # no lean, no content (corpus-only pipeline)
 
 
 # ---- MOL-168 / AGENT-6: caption platform is REQUEST-record-authoritative; no tail-parse or instagram-coerce ----
