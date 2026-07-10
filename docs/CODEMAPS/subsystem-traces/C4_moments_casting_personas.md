@@ -3,7 +3,7 @@
 > **POST-REBUILD (P15 / MOL-156).** Single-owner per-persona picking is live. One `moments` gate attributes
 > picks per owner (`Moment.affinities` len==1). One `moment_hooks` gate authors `m.hook` for the owner only.
 > Captions + crosspost scope via `affinity_admits` (owner × platform). The LLM casting stage, durable
-> `AccountSelection`, `hooks_by_persona`, `scoped_caption_surfaces`, and `casting_bias` are **gone**. Operator
+> Legacy durable selection records, `hooks_by_persona`, `scoped_caption_surfaces`, and `casting_bias` are **gone**. Operator
 > `cast_add`/`cast_remove` writes `Moment.affinities` directly. Proofs: `tests/test_per_persona_e2e.py`,
 > `tests/test_archetype_differentiation.py`, `tests/test_no_ghosts.py`.
 
@@ -46,7 +46,7 @@ Account (hydrated, in memory only)
           (affinity_admits — same gate as crosspost)
 ```
 
-Legacy note: the pre-P11 LLM casting stage (`request_moment_casting`, durable `AccountSelection`,
+Legacy note: the pre-P11 LLM casting stage (casting gate request/ingest, durable selection table,
 `hooks_by_persona`, `scoped_caption_surfaces`) is removed. `casting.py` now holds `affinity_admits` only.
 Operator `cast_add`/`cast_remove` (Studio) writes `Moment.affinities` directly.
 
@@ -58,7 +58,7 @@ Operator `cast_add`/`cast_remove` (Studio) writes `Moment.affinities` directly.
   (`selection_scope` + `content_focus` via `persona_directives`) in the payload. Sets `moments_requested`.
 - `ingest_moments` — validates picks, `_drop_overlaps` is **within-owner** (cross-owner overlap is allowed),
   stamps `pick.personas[0]` → `Moment.affinities` (single owner), content-addressed via `_owned_moment_id`.
-  No `AccountSelection`, no `moment_casting` gate discard.
+  No legacy selection table, no `moment_casting` gate discard.
 - `request_moment_hooks` — ONE gate per `picked` moment; `_hook_personas_for_moment` sends **only the owner**
   account (P6). Persona-blind moments (`affinities==[]`) get an empty personas list → shared hook path.
 - `ingest_moment_hooks` — **atomic-per-source**: waits until every pick's hook gate has landed, then promotes
@@ -98,14 +98,14 @@ The lever engine (`persona_levers.py`) is the single upstream declaration. `pers
 - `_is_num(v)` — pure try/except float-coercion probe. Called by `_bounded_transcript`.
 - `_bounded_transcript(transcript, peaks)` — bounds a transcript to a 60,000-char budget by keeping segments nearest a signal peak (deterministic tie-break on index), preserving chronological order in output; returns `(kept_segments, dropped_count)`. Pure. Called by `request_moments`.
 - `request_moments(led, cfg, source_id, accounts=None)` — **writes a gate request** (`write_request(kind="moments", ...)`) carrying transcript, duration, signal peaks, language, guidance, clip_profile, and PASS-1 frames. Sets `SourceState.moments_requested`. `accounts` param unused (signature stability only — personas belong to the hook pass). Mutates `led` in place and returns it. Called by `pipeline._stage_source_to_moments`.
-- `ingest_moments(led, cfg, source_id)` — **reads a gate response**, validates + within-owner dedups picks, stamps `pick.personas[0]` → `Moment.affinities`, and reconciles into `picked` moments. On all-invalid picks → `SourceState.error`; on `[]` → non-terminal `moments_empty` (no reconcile). On reconcile: discards stale `moment_hooks` gates only (`discard_gates_for`); **no** `moment_casting` gate or `AccountSelection` discard (removed P11/MOL-152). Then `led.reconcile_moments` + `picks_decided`. Called by `pipeline._stage_ingest_moments`.
+- `ingest_moments(led, cfg, source_id)` — **reads a gate response**, validates + within-owner dedups picks, stamps `pick.personas[0]` → `Moment.affinities`, and reconciles into `picked` moments. On all-invalid picks → `SourceState.error`; on `[]` → non-terminal `moments_empty` (no reconcile). On reconcile: discards stale `moment_hooks` gates only (`discard_gates_for`); **no** `moment_casting` gate or legacy selection discard (removed P11/MOL-152). Then `led.reconcile_moments` + `picks_decided`. Called by `pipeline._stage_ingest_moments`.
 - `request_moment_hooks(led, cfg, source_id, accounts=None)` — **writes one gate request per `picked` moment** (write-once). `_hook_personas_for_moment` sends **only the owner** account (P6). Window frames + fit window + signal peaks. Called by `pipeline._stage_moment_hooks`.
 - `ingest_moment_hooks(led, cfg, source_id, accounts=None)` — **atomic-per-source**: waits for every pick's hook gate, then promotes all to `decided`. Writes `m.hook` only (no `hooks_by_persona` — removed P11). Weak/off-brand hooks nulled with `hook_removed` preserved. Called by `pipeline._stage_moment_hooks`.
 
 ### `casting.py` — **REMOVED pre-P11 LLM casting (archived audit trail only; live = `affinity_admits` only)**
 
-> The symbols below (`request_moment_casting`, `ingest_moment_casting`, `account_selection_admits`,
-> `repair_casting_selections`, `casting_bias`, durable `AccountSelection`/`SelectionFact`) were **deleted in
+> The symbols below (casting gate request/ingest, `account_selection_admits`,
+> `repair_casting_selections`, `casting_bias`, durable per-account selection/`SelectionFact`) were **deleted in
 > P11/MOL-152**. `casting.py` is now 22 lines with one pure predicate. Operator `cast_add`/`cast_remove`
 > writes `Moment.affinities` directly. See [fresh-ingestion-trace.md](../fresh-ingestion-trace.md) §3.
 
@@ -230,7 +230,7 @@ The lever engine (`persona_levers.py`) is the single upstream declaration. `pers
 - **THE crosspost + caption-scope gate:** `affinity_admits(cfg, moment, account)` (`casting.py:10-22`) — casting OFF → admit all; `moment is None` → DENY; `affinities==[]` → fan-to-all; else admit iff `account in affinities`. No ledger read, no LLM stage.
 - **`cfg.account_casting`** (`config.py:593-600`, `FANOPS_ACCOUNT_CASTING`) — **DEFAULT ON** (`=0` restores legacy fan-to-all that ignores persisted affinities). This flag gates `affinity_admits`; it does NOT invoke a second LLM gate.
 - **Operator override (P13):** `cast_add`/`cast_remove` (`studio/actions_casting.py`) mutate `Moment.affinities` directly (may deliberately co-own).
-- **Removed (P11/MOL-152):** `request_moment_casting`, `ingest_moment_casting`, `_stage_casting`, durable `AccountSelection`/`SelectionFact`, `casting_bias`/`FANOPS_CASTING_BIAS`, `account_selection_admits`, `hooks_by_persona`.
+- **Removed (P11/MOL-152):** casting gate request/ingest, `_stage_casting`, durable per-account selection/`SelectionFact`, `casting_bias`/`FANOPS_CASTING_BIAS`, `account_selection_admits`, `hooks_by_persona`.
 - **Historical:** `cast_moments` token-overlap heuristic deleted WS-M1/MOM-7 (predates P11).
 
 ## Anomalies found

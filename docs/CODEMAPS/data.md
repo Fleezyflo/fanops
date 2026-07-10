@@ -1,4 +1,4 @@
-<!-- Generated: 2026-06-19 | Files scanned: models.py, ledger.py, config.py, accounts.py, ingest.py, router.py, stitch_render.py, impact_cut.py, intro_match.py, compose.py, cutover.py, post/run.py, studio/views.py | Token estimate: ~1080 | incl. content-lifecycle + Account-First (SCHEMA_VERSION=8, born-awaiting_approval, day-bucket archive, batches/renders/selection_facts maps) -->
+<!-- Generated: 2026-07-10 | Files scanned: models.py, ledger.py, config.py, accounts.py, ingest.py, router.py, stitch_render.py, impact_cut.py, intro_match.py, compose.py, cutover.py, post/run.py, studio/views.py | Token estimate: ~1080 | incl. content-lifecycle + Account-First (SCHEMA_VERSION=11, born-awaiting_approval, day-bucket archive, batches/renders maps) -->
 # FanOps Data
 
 No database server. ONE SQLite/WAL ledger (`ledger.sqlite`) + operator-editable control files, all under the data tree. Legacy `ledger.json` is break-glass import-only (pre-flip JSON snapshot is the operator rollback artifact).
@@ -29,7 +29,7 @@ No database server. ONE SQLite/WAL ledger (`ledger.sqlite`) + operator-editable 
   (M3 structural-hooks) + `batches` (Account-First: named, account-targeted ingest groups) + `renders`
   (per-account Render foundation: the per-account shippable artifacts) + `selection_facts` (M4: durable
   per-(moment, account) selection audit). Versioned:
-  `SCHEMA_VERSION=8` + `_MIGRATIONS` hop-chain (ledger.py; v1→v2 injects the empty `stitch_plans` map;
+  `SCHEMA_VERSION=11` + `_MIGRATIONS` hop-chain (ledger.py; v1→v2 injects the empty `stitch_plans` map;
   v2→v3 `_migrate_v3_created_at` backfills `created_at` — Source from file mtime, Post from a tz-aware
   `scheduled_time` else the migration stamp; v3→v4 `_migrate_v4_metrics_series` back-fills ONE 'legacy'-tagged
   metrics_series row per post that already carries metrics; v4→v5 the additive `{**raw, "batches": raw.get(
