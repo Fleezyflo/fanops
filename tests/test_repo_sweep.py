@@ -48,10 +48,22 @@ def test_stale_branches_excludes_main_and_recent():
 
 
 def _clean_rep(**over):
-    rep = {"open_prs": [], "conflicts": [], "behind": [], "stale_branches": [],
+    rep = {"open_prs": [], "orphan_prs": [], "conflicts": [], "behind": [], "stale_branches": [],
            "artifacts": [], "unresolved_conflicts": []}
     rep.update(over)
     return rep
+
+
+def test_origin_head_branches_and_orphan_split(tmp_path, monkeypatch):
+    monkeypatch.setattr(rs, "_remote_branch_ages", lambda _r: [("origin/main", 0), ("origin/cursor/live", 0)])
+    assert rs._origin_head_branches(tmp_path) == {"main", "cursor/live"}
+    prs = [{"headRefName": "cursor/live"}, {"headRefName": "cursor/gone"}]
+    active, orphans = rs._split_active_orphan_prs(prs, {"cursor/live"})
+    assert len(active) == 1 and len(orphans) == 1
+
+
+def test_is_done_ignores_orphan_prs():
+    assert rs.is_done(_clean_rep(orphan_prs=[{"number": 99, "draft": False}])) is True
 
 
 def test_is_done_true_only_when_landed_and_pristine():

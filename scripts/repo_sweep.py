@@ -89,6 +89,22 @@ def _all_artifacts(repo_root):
     return artifact_paths(tracked + untracked)
 
 
+def _origin_head_branches(repo_root) -> set:
+    """Head branch short names present on origin (from local remote-tracking refs)."""
+    heads = set()
+    for name, _ in _remote_branch_ages(repo_root):
+        if name.startswith("origin/"): heads.add(name[len("origin/"):])
+    return heads
+
+
+def _split_active_orphan_prs(prs, remote_heads) -> tuple:
+    """PRs whose head branch is gone from origin are orphans — not actionable."""
+    active, orphans = [], []
+    for p in (prs or []):
+        (orphans if p.get("headRefName") not in remote_heads else active).append(p)
+    return active, orphans
+
+
 def _unmerged(repo_root):
     """Paths with unresolved merge conflicts in the working tree (`git ls-files -u`)."""
     return sorted({ln.split("\t", 1)[-1] for ln in _git_lines(repo_root, "ls-files", "-u") if "\t" in ln})
@@ -96,12 +112,17 @@ def _unmerged(repo_root):
 
 def sweep(repo, repo_root, days=30):
     prs = _gh_open_prs(repo)
+    remote_heads = _origin_head_branches(repo_root)
+    active_prs, orphan_prs = _split_active_orphan_prs(prs, remote_heads)
     pr_report = [{"number": p["number"], "title": p["title"], "branch": p["headRefName"],
                   "state": classify_pr(p.get("mergeable"), p.get("mergeStateStatus")),
-                  "draft": p.get("isDraft")} for p in prs]
+                  "draft": p.get("isDraft")} for p in active_prs]
+    orphan_report = [{"number": p["number"], "title": p["title"], "branch": p["headRefName"],
+                    "draft": p.get("isDraft")} for p in orphan_prs]
     refs = _remote_branch_ages(repo_root)
     return {
         "open_prs": pr_report,
+        "orphan_prs": orphan_report,
         "conflicts": [p for p in pr_report if p["state"] == "conflict"],
         "behind": [p for p in pr_report if p["state"] == "behind"],
         "stale_branches": stale_branches(refs, time.time(), days),
@@ -165,6 +186,11 @@ def main(argv=None) -> int:
     for p in rep["open_prs"]:
         tag = ' draft (not blocking done)' if p.get("draft") else ''
         print(f"    #{p['number']} [{p['state']}]{tag}  {p['branch']}  — {p['title']}")
+    orphans = rep.get("orphan_prs") or []
+    if orphans:
+        print(f"  orphan PRs (head branch deleted — close in GitHub UI): {len(orphans)}")
+        for p in orphans:
+            print(f"    #{p['number']}{' draft' if p.get('draft') else ''}  {p['branch']}  — {p['title']}")
     print(f"  stale branches (>{args.stale_days}d): {len(rep['stale_branches'])}")
     for b in rep["stale_branches"]: print(f"    {b}")
     print(f"  unresolved merge conflicts: {len(rep['unresolved_conflicts'])}")
