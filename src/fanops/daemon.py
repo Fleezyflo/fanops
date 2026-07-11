@@ -213,7 +213,7 @@ def install(cfg: Config, *, interval: int, responder: str = "inherit") -> dict:
     if pp.exists():
         try:
             existing = plistlib.loads(pp.read_bytes())
-        except Exception:
+        except (OSError, UnicodeDecodeError, plistlib.InvalidFileException, ValueError):
             existing = {}
         wd = existing.get("WorkingDirectory")
         if wd and Path(wd).resolve() != cfg.root.resolve():
