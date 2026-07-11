@@ -10,7 +10,7 @@ key, or service.
 > The honest constant across all paths: **you must onboard each fan account on each platform
 > yourself** (create it, connect it via the platform's OAuth). That "platform tax" is unavoidable on
 > any publisher — paid or free. And coordinated multi-account posting is detectable by the platforms
-> regardless of how you publish (see `00_control/RISK.md`). No tooling removes either fact.
+> regardless of how you publish (see `docs/runbooks/RISK.md`). No tooling removes either fact.
 
 ---
 
