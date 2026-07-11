@@ -427,14 +427,16 @@ active; 5 linked by `persona_id`; 0 inline-only; 0 unlinked.** No tokens/keys re
 
 ### C.1 Post construction and initial state
 
-Posts are constructed in exactly one production path: `crosspost._mint_surface_post` → `led.add_post(Post(...))`
-(`crosspost.py:269`). **Every Post is BORN `PostState.awaiting_approval`** (`crosspost.py:273`, model default
-`models.py:220`) with `submission_id="fanops_<hash>"` (client idempotency token, `crosspost.py:281`),
-`render_id=None`, `media_urls=[]`, and the P1/P3 attribution dims stamped (`first_frame_kind`, `cut_seconds`,
-`clip_profile=cfg.clip_profile`, `top_bias=cfg.resolve_top_bias(surf.account)`, `batch_id`,
-`variation_axis`, `crosspost.py:284-295`). `repost_post` mints a fresh `awaiting_approval` repost
-(CLAUDE.md). A `Post` model_validator refuses `published`/`analyzed`/`retired` without a non-empty
-`public_url` (R1 terminal-URL invariant, `models.py:279-299`).
+Posts are constructed at three mint sites, all birthing `PostState.awaiting_approval`:
+(1) pipeline crosspost: `crosspost._mint_surface_post` → `led.add_post(Post(...))` (`crosspost.py:228`);
+(2) Studio repost: `studio.actions.repost_post` (`actions.py:491`);
+(3) Studio cross-account reuse: `studio.actions.crosspost_to_account` (`actions.py:570`; bulk
+`crosspost_all_to_account` loops here). **Every birth is `awaiting_approval`** (model default
+`models.py:220`) with `submission_id="fanops_<hash>"` (client idempotency token), `render_id=None`,
+`media_urls=[]`, and P1/P3 attribution dims stamped on the pipeline path (`first_frame_kind`, `cut_seconds`,
+`clip_profile`, `top_bias`, `batch_id`, `variation_axis`, `crosspost.py:228-246`). A `Post` model_validator
+refuses `published`/`analyzed`/`retired` without a non-empty `public_url` (R1 terminal-URL invariant,
+`models.py:279-299`).
 
 ### C.2 Promotion toward publishing; the operator gate
 
