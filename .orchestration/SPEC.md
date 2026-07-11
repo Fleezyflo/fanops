@@ -7,7 +7,7 @@ This directory is the machine-checkable contract behind the `fanops-orchestrator
 **coordinates**; it never does the work. Every unit of work — investigation/scoping, implementation,
 validation, verification against acceptance criteria, fixing, and any cleanup/conflict-resolution/rebase
 needed to land — is executed **fully by a sub-agent**. The orchestrator's only hands-on action is running
-the git commands that land finished work (commit / push / merge).
+the land command (`gh pr merge`); it never commits or pushes — workers push their own branches.
 
 ## Enforcement (what is mechanical vs. what is contract)
 
@@ -50,8 +50,9 @@ the lander instead of typing git itself. Default ships non-readonly so the orche
 
 ## Unit lifecycle
 
-1. **Scope** (sub-agent): read the Linear task, extract its acceptance criteria, decompose into units, list
-   the files/resources each unit touches (for conflict analysis).
+1. **Scope** (sub-agent, conditional): only for a ticket that is ambiguous, spans lanes, or lacks file
+   anchors — read it, extract its acceptance criteria, decompose into units, list the files/resources each
+   unit touches. Tickets that arrive atomic + anchored (most) are routed directly, no scope spawn.
 2. **Implement / validate / fix** (sub-agents, parallel where non-conflicting): execute each unit fully to
    the task's definition of done; push a feature branch; open a PR tagged with the unit id (`MOL-xxx`).
 3. **Verify** (a DIFFERENT sub-agent): check the work against the acceptance criteria and write the
@@ -71,7 +72,7 @@ sub-agent**, never the orchestrator. Schema:
   "verifier": "subagent:<type>:<subagent_id>",
   "passed": true,
   "acceptance_criteria_checked": true,
-  "evidence": "what was run + result (tests, CI, manual checks)",
+  "evidence": "CI run cited + per-criterion result (+ any CI-uncovered checks run)",
   "verified_at": "2026-07-08T00:00:00Z"
 }
 ```
