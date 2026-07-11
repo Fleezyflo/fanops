@@ -2,6 +2,7 @@
 {% from "_state_badge.html" import state_badge %}
 <div id="posted-body" aria-live="polite">
   {% include "_account_filter.html" %}
+  {% with sources=source_chips, chip_route='posted', active=active %}{% include "_source_filter.html" %}{% endwith %}
   {% include "_publish_outcome.html" %}
   <nav class="delivery-tabs" aria-label="Delivery filter">
     {% for d, label in [('all','All'),('live','Live'),('inflight','In flight'),('dryrun','Dryrun local'),('failed','Failed')] %}

@@ -2,6 +2,8 @@
 {% from "_state_badge.html" import state_badge %}
 <div id="schedule-body" aria-live="polite"{% if lanes.inflight|length %} hx-get="{{ url_for('schedule', account=active, batch=active_batch|default(none), offset=page.offset if page else none) }}" hx-trigger="every 30s" hx-select="#schedule-body" hx-swap="outerHTML"{% endif %}>
   {% include "_account_filter.html" %}
+  {% with sources=source_chips, chip_route='schedule', active=active %}{% include "_source_filter.html" %}{% endwith %}
+  {% if active_source|default(none) %}<p class="meta muted source-scope-banner">Source filter active — bulk re-spread still affects the full approved bucket, not only this source.</p>{% endif %}
   {% include "_publish_outcome.html" %}
   {% if auto_ship %}<p class="schedule-auto meta">Daemon ships on schedule — times below are when posts go live.</p>{% endif %}
   {% if not cfg.is_live %}<p class="schedule-guard warn">Publishing is off — <a href="{{ url_for('golive_connect') }}">Go Live</a> to ship approved posts.</p>{% endif %}

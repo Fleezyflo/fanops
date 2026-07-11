@@ -27,8 +27,11 @@
 
   {# P6: each asset shows its human filename + just-enough technicals (duration, resolution) to recognize
      it, with the state and opaque id demoted to muted context. #}
-  {% macro asset_li(s) %}<li class="asset-row"><span class="asset-name">{{ s.name }}</span>
+  {% macro asset_li(s) %}<li class="asset-row"><span class="asset-name"><a href="{{ url_for('library_source', source_id=s.id) }}">{{ s.name }}</a></span>
     <span class="muted asset-tech">{% if s.duration %}{{ '%.0f'|format(s.duration) }}s{% endif %}{% if s.width and s.height %} · {{ s.width }}×{{ s.height }}{% endif %} · {{ s.state }} · {{ s.bucket }}</span>
+    {% if s.wait_line %}<span class="warn asset-wait">{{ s.wait_line }}</span>{% endif %}
+    {% if s.artifacts %}<span class="muted asset-artifacts">{{ s.artifacts }}</span>{% endif %}
+    {% if s.stage_strip %}{% with strip=s.stage_strip %}{% include "_stage_strip.html" %}{% endwith %}{% endif %}
     {% if s.block_reason %}<pre class="errored-reason">{{ s.block_reason }}</pre>{% endif %}
     {% if s.degraded_reason %}<span class="asset-degraded" title="degraded or pending pipeline gate — re-tried each pass; see reason below">⚠ degraded: {{ s.degraded_reason }}</span>{% endif %}
     <span class="ro asset-id">{{ s.id }}</span>
