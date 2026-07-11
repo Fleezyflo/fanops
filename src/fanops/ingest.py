@@ -37,6 +37,9 @@ class IngestCounts:
     deduped: int = 0        # archived because already known (a re-drop)
     excluded: int = 0       # PII/legal name-filtered
     skipped: int = 0        # audio-only / copy-failed / unverifiable
+    retired_dedup: list = None   # source ids whose sha256 matched a RETIRED row (re-upload dead-end)
+    def __post_init__(self):
+        if self.retired_dedup is None: self.retired_dedup = []
 
 def _archive_dir(inbox: Path) -> Path:
     return inbox / _ARCHIVE_NAME
@@ -155,7 +158,7 @@ def has_video_stream(path: Path) -> bool:
 
 def _catalogue_file(led: Ledger, cfg: Config, f: Path, *, origin: str, now_iso: str,
                     origin_kind: Literal["native", "third_party"] = "native",
-                    batch_id: str | None = None) -> bool:
+                    batch_id: str | None = None, counts: IngestCounts | None = None) -> bool:
     """Catalogue ONE file as a Source (content-addressed, deduped, probed) — the single spine shared by
     the native drop/url scan and the third-party intake; the caller sets origin_kind. Same bytes already
     seen under a DIFFERENT origin_kind = a conflict: keep the first (origin_kind is WRITE-ONCE), surface
@@ -167,6 +170,10 @@ def _catalogue_file(led: Ledger, cfg: Config, f: Path, *, origin: str, now_iso: 
     digest = sha256_of(f)
     if led.already_seen(sha256=digest):
         prior = next((s for s in led.sources.values() if s.sha256 == digest), None)
+        if prior is not None and prior.state is SourceState.retired:   # re-upload matched a retired source — surface, never resurrect
+            get_logger(cfg)("ingest", prior.id, "retired_dedup")
+            if counts is not None and prior.id not in counts.retired_dedup:
+                counts.retired_dedup.append(prior.id)
         if prior is not None and prior.origin_kind != origin_kind:   # dedup-suppressed an upload — make it visible
             get_logger(cfg)("ingest", prior.id, "origin_conflict", want=origin_kind, have=prior.origin_kind)
         if prior is not None and batch_id and prior.batch_id != batch_id:   # re-drop under a different batch
@@ -251,7 +258,7 @@ def ingest_drops(led: Ledger, cfg: Config, *, origin: str = "drop",
             _auto_batch_id = resolve_or_mint_drop_batch(led).id
         effective_batch_id = batch_id or _auto_batch_id
         disposed = _catalogue_file(led, cfg, f, origin=file_origin, now_iso=now_iso,
-                                   origin_kind=origin_kind, batch_id=effective_batch_id)
+                                   origin_kind=origin_kind, batch_id=effective_batch_id, counts=counts)
         if not disposed:                                              # copy failed → leave in inbox for a next-pass retry
             counts.skipped += 1; continue
         if len(led.sources) > n_before: counts.added += 1             # newly minted

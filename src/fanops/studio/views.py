@@ -240,11 +240,14 @@ def asset_catalog(cfg: Config) -> dict:
         from fanops.pipeline_status import source_backlog
         bl = source_backlog(led, cfg)
         by_id = {r.id: r for r in bl.rows}
+        from fanops.models import SourceState
         rows = [{"id": s.id, "origin_kind": s.origin_kind, "state": s.state.value,
                  "bucket": by_id[s.id].bucket if s.id in by_id else "inventory",
                  "wait_line": by_id[s.id].wait_line if s.id in by_id else None,
                  "block_reason": by_id[s.id].block_reason if s.id in by_id else None,
                  "artifacts": by_id[s.id].artifacts if s.id in by_id else None,
+                 "retire_preview": (led.preview_retire_cascade(s.id) if s.origin_kind == "native"
+                                    and s.state is not SourceState.retired else None),
                  "name": Path(s.source_path).name if s.source_path else s.id,   # P6: human filename, not the opaque id
                  "duration": s.duration, "width": s.width, "height": s.height,
                  "degraded_reason": s.degraded_reason} for s in led.sources.values()]   # RF1: the VISIBLE-degradation channel (probe_failed) -> a Library marker, else a 0×0 source silently renders a mangled clip
