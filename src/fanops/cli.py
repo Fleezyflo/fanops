@@ -737,6 +737,8 @@ def main(argv: list[str] | None = None) -> int:
                         help="total wipe mode — remove shipped history too (requires both total confirm flags)")
     p_wipe.add_argument("--i-understand-this-erases-shipped-history", dest="i_understand_this_erases_shipped_history", action="store_true",
                         help="confirm total wipe — must be paired with --include-shipped-history")
+    p_prb = sub.add_parser("paths-rebase", help="(R1) rebase stale absolute media paths after FANOPS_ROOT move")
+    p_prb.add_argument("--apply", action="store_true", help="snapshot + rewrite ledger/manifests (default: dry-run counts only)")
     p_learn = sub.add_parser("learn", help="learning-loop diagnostics (read-only)")
     learn_sub = p_learn.add_subparsers(dest="learn_cmd", required=True)
     learn_sub.add_parser("doctor", help="read-only: does live Postiz analytics carry the reach signal lift_score needs?")
@@ -1071,6 +1073,9 @@ def _dispatch(cfg: Config, args) -> int:
     if args.cmd == "p4-bias": return cmd_p4_bias(cfg)
     if args.cmd == "cutover":  return cmd_cutover(cfg, args)
     if args.cmd == "wipe":     return cmd_wipe(cfg, args)
+    if args.cmd == "paths-rebase":
+        from fanops.paths_rebase import cmd_paths_rebase
+        return cmd_paths_rebase(cfg, args)
     if args.cmd == "learn":
         if args.learn_cmd == "doctor":
             from fanops.learn_doctor import cmd_learn_doctor   # lazy: keeps requests/postiz off the core path

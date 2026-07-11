@@ -8,6 +8,32 @@ from pathlib import Path
 from fanops.config import Config
 from fanops.ledger import Ledger
 
+def resolve_media_path(cfg: Config, stored: str | None, kind: str) -> Path | None:
+    """Resolve a ledger-stored media path after FANOPS_ROOT move. kind ∈ clip|render|source."""
+    if not stored:
+        return None
+    base = cfg.base.resolve()
+    p = Path(stored)
+    if p.exists():
+        return p.resolve()
+    name = p.name
+    if not name:
+        return None
+    if kind == "render":
+        direct = cfg.clips / name
+        if direct.exists():
+            r = direct.resolve()
+            return r if r.is_relative_to(base) else None
+        hits = [h for h in cfg.clips.rglob(name) if h.is_file() and h.resolve().is_relative_to(base)]
+        return min(hits, key=lambda h: len(h.relative_to(cfg.clips).parts)).resolve() if hits else None
+    for root in (cfg.clips, cfg.sources):
+        cand = root / name
+        if cand.exists():
+            r = cand.resolve()
+            if r.is_relative_to(base):
+                return r
+    return None
+
 def dryrun_media_url(path: Path) -> str:
     return f"file://{Path(path).resolve()}"
 
@@ -49,7 +75,8 @@ def ensure_render_media(led: Ledger, cfg: Config, render_id: str, local_path: st
         return r.media_url
     from fanops.post import get_media_uploader          # lazy: avoid the post/__init__ <-> media import cycle
     aid = kw.get("account_id")
-    url = get_media_uploader(cfg, backend)(cfg, Path(local_path), **_uploader_kwargs(backend, aid))
+    path = resolve_media_path(cfg, local_path, "render") or Path(local_path)
+    url = get_media_uploader(cfg, backend)(cfg, path, **_uploader_kwargs(backend, aid))
     if r is not None: r.media_url = url                 # persisted in run.py's finalize txn (mirrors clip_media)
     return url
 
@@ -63,6 +90,7 @@ def ensure_clip_media(led: Ledger, cfg: Config, clip_id: str, backend: str | Non
     # Lazy import avoids a post/__init__ <-> media import cycle.
     from fanops.post import get_media_uploader
     kw = _uploader_kwargs(b, account_id)
-    url = get_media_uploader(cfg, b)(cfg, Path(clip.path), **kw)
+    path = resolve_media_path(cfg, clip.path, "clip") or Path(clip.path)
+    url = get_media_uploader(cfg, b)(cfg, path, **kw)
     clip.media_url = url
     return url

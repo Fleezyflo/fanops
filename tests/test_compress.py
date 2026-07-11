@@ -30,7 +30,7 @@ def test_media_path_for_post_prefers_render(tmp_path):
                           hook_text="h", path=str(thin), state=RenderState.rendered))
     led.add_post(Post(id="p", parent_id="c", account="a", account_id="1", platform=Platform.tiktok,
                       caption="x", render_id="r1", media_urls=[f"file://{fat}"]))
-    assert media_path_for_post(led, led.posts["p"]) == thin
+    assert media_path_for_post(cfg, led, led.posts["p"]) == thin
 
 
 def test_apply_shrink_persists_media_urls_when_mocked(tmp_path, monkeypatch, mocker):

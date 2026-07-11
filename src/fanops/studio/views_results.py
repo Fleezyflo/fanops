@@ -126,7 +126,7 @@ def publish_readiness(led: Ledger, post, cfg: Config | None = None) -> tuple[boo
             backend = publish_backend_for_post(cfg, post)
             cap = upload_cap_bytes(cfg, post, backend)
             if cap is not None:
-                mp = media_path_for_post(led, post)
+                mp = media_path_for_post(cfg, led, post)
                 if mp is not None:
                     try:
                         sz = mp.stat().st_size
