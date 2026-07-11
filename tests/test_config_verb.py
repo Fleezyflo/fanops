@@ -64,6 +64,18 @@ def test_config_keychain_source_wins_over_stale_dotenv_plaintext(tmp_path, monke
     assert row["source"] == "keychain"
 
 
+def test_config_validation_error_returns_1(tmp_path, monkeypatch, capsys):
+    """B11: invalid env renders error rows and cmd_config exits 1 without traceback."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("FANOPS_VARIANT_MIN_POSTS", "x")
+    from fanops.cli import cmd_config
+    rc = cmd_config(Config(root=tmp_path))
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "FANOPS_VARIANT_MIN_POSTS" in out
+    assert "invalid" in out.lower() or "int" in out.lower()
+
+
 def test_config_keychain_source_wins_over_stale_os_environ(tmp_path, monkeypatch):
     install_mem_keyring(monkeypatch)
     monkeypatch.chdir(tmp_path)

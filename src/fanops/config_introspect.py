@@ -4,9 +4,11 @@ import os
 from pathlib import Path
 from typing import Any
 
+from pydantic import ValidationError
+
 from fanops.config import Config
 from fanops.secret_provider import get_secret, is_secret_env_key
-from fanops.settings import Settings
+from fanops.settings import Settings, _enriched_env
 
 # Studio-settable via Go-Live tab (_dual_write) — mirrors docs/CONFIG.md §Set=S (static keys only).
 _STUDIO_SETTABLE = frozenset({
@@ -63,9 +65,23 @@ def _field_type_name(field) -> str:
     return getattr(ann, "__name__", str(ann))
 
 
+def _validation_error_rows(exc: ValidationError) -> list[dict]:
+    rows: list[dict] = []
+    for err in exc.errors():
+        loc = err.get("loc", ())
+        name = str(loc[0]) if loc else "?"
+        rows.append({"name": name, "type": "error", "default": "", "effective": err.get("msg", ""),
+                     "source": "validation", "studio": False, "validation_error": True})
+    return rows
+
+
 def config_rows(cfg: Config) -> list[dict]:
     """One row per Settings field: name, type, default, effective, source, studio_settable."""
-    s = Settings()
+    enriched = _enriched_env(dict(os.environ))
+    try:
+        s = Settings.model_validate(enriched)
+    except ValidationError as exc:
+        return _validation_error_rows(exc)
     dotenv_keys = _dotenv_keys(cfg.root / ".env")
     rows: list[dict] = []
     for name, field in Settings.model_fields.items():
@@ -80,6 +96,10 @@ def config_rows(cfg: Config) -> list[dict]:
             "studio": name in _STUDIO_SETTABLE,
         })
     return rows
+
+
+def config_has_validation_errors(cfg: Config) -> bool:
+    return any(r.get("validation_error") for r in config_rows(cfg))
 
 
 def format_config_report(cfg: Config) -> str:

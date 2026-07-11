@@ -133,6 +133,8 @@ def _postiz_probe(cfg: Config, *, probe=None):
 
 def postiz_dep_health(cfg: Config, *, probe=None) -> DepHealth:
     """Map the unified Postiz probe to a DepHealth row (system_health / Studio strip)."""
+    if not cfg.backend_has_creds("postiz"):
+        return DepHealth("postiz", True, "skipped (not configured)")
     import logging
     _log = logging.getLogger("fanops.health")
     if not (cfg.postiz_url or "").strip():
@@ -162,13 +164,19 @@ def _http_reachable(url: str | None, name: str) -> DepHealth:
 
 
 def zernio_dep_health(cfg: Config) -> DepHealth:
+    if not cfg.backend_has_creds("zernio"):
+        return DepHealth("zernio", True, "skipped (not configured)")
     return _http_reachable(cfg.zernio_url, "zernio")
 
 
 def dep_health_list(cfg: Config, *, postiz_probe=None) -> list[DepHealth]:
     """Runtime dependency rows — docker via health._docker_health when available (test patch compat)."""
     from fanops import health as health_mod
-    docker = health_mod._docker_health() if hasattr(health_mod, "_docker_health") else _docker_dep()
+    from fanops.health import _postiz_compose_dir
+    if _postiz_compose_dir(cfg) is not None:
+        docker = health_mod._docker_health() if hasattr(health_mod, "_docker_health") else _docker_dep()
+    else:
+        docker = DepHealth("docker", True, "skipped (not configured)")
     return [docker, postiz_dep_health(cfg, probe=postiz_probe), zernio_dep_health(cfg)]
 
 
@@ -210,7 +218,7 @@ def heartbeat_stale(cfg: Config, *, interval: int | None = None) -> tuple[float 
 
 def build_field_shape(cfg: Config, *, led=None, list_posts=None) -> dict | None:
     """Learning field-shape verdict — None when not applicable (no postiz key). Fail-open on fetch errors."""
-    if cfg.poster_backend != "postiz" or not cfg.postiz_api_key:
+    if not cfg.backend_has_creds("postiz"):
         return None
     from fanops.ledger import Ledger
     from fanops.learn_doctor import _field_shape_report_core

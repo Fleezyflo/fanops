@@ -33,6 +33,25 @@ def test_auth_non_postiz_fails_closed(tmp_path, monkeypatch):
     with pytest.raises(CutoverError, match="postiz backend only"):
         cutover.cutover_auth(Config(root=tmp_path))
 
+
+def test_auth_per_channel_postiz_without_global_poster(tmp_path, monkeypatch, mocker):
+    """B11: per-channel Postiz routing + POSTIZ_API_KEY succeeds without FANOPS_POSTER."""
+    monkeypatch.delenv("FANOPS_POSTER", raising=False)
+    monkeypatch.setenv("POSTIZ_URL", "https://postiz.example.com")
+    monkeypatch.setenv("POSTIZ_API_KEY", "pk")
+    cfg = Config(root=tmp_path)
+    mocker.patch("fanops.post.postiz.postiz_check_auth", return_value=True)
+    out = cutover.cutover_auth(cfg)
+    assert out["ok"] is True and out["backend"] == "postiz"
+
+
+def test_auth_fails_without_postiz_creds_even_with_global_poster(tmp_path, monkeypatch):
+    monkeypatch.setenv("FANOPS_POSTER", "postiz")
+    monkeypatch.setenv("POSTIZ_URL", "https://x")
+    monkeypatch.delenv("POSTIZ_API_KEY", raising=False)
+    with pytest.raises(CutoverError, match="postiz backend only"):
+        cutover.cutover_auth(Config(root=tmp_path))
+
 def test_post_non_postiz_fails_closed(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_POSTER", "dryrun")
     with pytest.raises(CutoverError, match="postiz backend only"):
@@ -84,7 +103,7 @@ def test_postiz_auth_ok(tmp_path, monkeypatch, mocker):
 def test_postiz_auth_requires_key(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_URL", "https://x")
     monkeypatch.delenv("POSTIZ_API_KEY", raising=False)
-    with pytest.raises(CutoverError, match="POSTIZ_API_KEY"):
+    with pytest.raises(CutoverError, match="postiz backend only"):
         cutover.cutover_auth(Config(root=tmp_path))
 
 def test_postiz_auth_401_propagates(tmp_path, monkeypatch, mocker):

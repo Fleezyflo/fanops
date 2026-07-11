@@ -33,6 +33,7 @@ def test_postiz_health_uses_unified_probe(tmp_path, monkeypatch):
         seen.append(1)
         return type("H", (), {"healthy": True, "status_code": 200, "hint": ""})()
     monkeypatch.setenv("POSTIZ_URL", "http://localhost:4007/api")
+    monkeypatch.setenv("POSTIZ_API_KEY", "k")
     cfg2 = Config(root=tmp_path)
     h = postiz_dep_health(cfg2, probe=probe)
     assert seen and h.ok is True

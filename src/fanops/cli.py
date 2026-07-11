@@ -293,9 +293,9 @@ def cmd_health(cfg: Config, args=None) -> int:
 
 def cmd_config(cfg: Config) -> int:
     """MOL-294: introspect every Settings var (type, default, effective value, source, Studio-settable)."""
-    from fanops.config_introspect import format_config_report
+    from fanops.config_introspect import config_has_validation_errors, format_config_report
     print(format_config_report(cfg))
-    return 0
+    return 1 if config_has_validation_errors(cfg) else 0
 
 
 def cmd_doctor(cfg: Config, args=None) -> int:
@@ -311,17 +311,18 @@ def cmd_doctor(cfg: Config, args=None) -> int:
         print(json.dumps(rep.to_json_dict(), indent=2))
         return 0 if report_is_healthy(rep) else 1
     print("fanops doctor")
-    failed = 0
     for c in rep.checks:
         mark = "PASS" if c["ok"] else "FAIL"
         line = f"  [{mark}] {c['label']}"
         if not c["ok"]:
-            failed += 1
             line += f"  -> {c['hint']}"
         print(line)
+    for d in rep.deps:
+        mark = "ok" if d.ok else "DOWN"
+        print(f"  [{mark}] {d.name}: {d.detail}")
     for n in rep.notes:
         print(f"  - {n}")
-    return 1 if failed else 0
+    return 0 if report_is_healthy(rep) else 1
 
 
 def _cmd_doctor_fix_routing(cfg: Config) -> int:
@@ -349,8 +350,8 @@ def _cmd_doctor_fix_routing(cfg: Config) -> int:
                             else "postiz OR zernio (operator picks)")
                 integ_id = a.integrations.get(p.value)
                 print(f"  DRIFT: {a.handle}/{p.value}: integrations={integ_id!r}, backends=<UNSET>")
-                print(f"     fix: fanops set-channel-routing --handle {a.handle} --platform {p.value} "
-                      f"--backend {proposal} --integration-id {integ_id}")
+                print(f"     fix: Studio Go-Live tab → map {a.handle}/{p.value} to backend {proposal} "
+                      f"(integration id {integ_id})")
                 print("     reason: legacy FANOPS_POSTER bridge would silently route to dryrun on a live config")
             else:
                 bk = a.backends.get(p.value)
@@ -860,12 +861,17 @@ def _check_preflight(cfg: Config) -> int:
             "FANOPS_RESPONDER=llm but `claude` is not on PATH — the autonomous responder shells "
             "`claude -p` using your existing Claude subscription. Install Claude Code and run "
             "`claude login` on this host (no API key needed).")
-    if cfg.poster_backend == "postiz" and (cfg.postiz_url is None or cfg.postiz_api_key is None):
+    _raw_poster = (cfg.poster_backend_raw or "").strip().lower()
+    if _raw_poster == "postiz" and (cfg.postiz_url is None or cfg.postiz_api_key is None):
         miss = " and ".join(n for n, v in (("POSTIZ_URL", cfg.postiz_url),
                                            ("POSTIZ_API_KEY", cfg.postiz_api_key)) if v is None)
         problems.append(
-            f"FANOPS_POSTER=postiz but {miss} not set — the Postiz backend needs both (your instance "
-            "URL + its public API key). Publishing would fail.")
+            f"Global poster set to postiz but {miss} not set — connect Postiz in Studio Go-Live "
+            "(POSTIZ_URL + POSTIZ_API_KEY). Publishing would fail.")
+    if _raw_poster == "zernio" and cfg.zernio_api_key is None:
+        problems.append(
+            "Global poster set to zernio but ZERNIO_API_KEY not set — connect Zernio in Studio Go-Live. "
+            "Publishing would fail.")
     if problems:
         print("preflight: refusing to run — this config would silently produce no output:",
               file=sys.stderr)
@@ -1196,7 +1202,11 @@ def _dispatch(cfg: Config, args) -> int:
         if (rc := _check_accounts(cfg)):  return rc
         if (rc := _check_preflight(cfg)):  return rc
         if args.loop:
-            interval = daemon.parse_interval(args.interval)
+            try:
+                interval = daemon.parse_interval(args.interval)
+            except (RuntimeError, ValueError, OSError) as e:
+                print(f"run: {e}", file=sys.stderr)
+                return 2
             while True:
                 load_dotenv(cfg.root / ".env", override=True)   # operator disk truth each tick (B01 C1)
                 cfg = Config(cfg.root)                          # side-effect-free; re-read after dotenv

@@ -121,7 +121,7 @@ def test_doctor_postiz_learning_not_ready_key_unset(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.delenv("POSTIZ_API_KEY", raising=False)
     rep = doctor.doctor_report(_postiz_cfg(tmp_path))
     c = _learning_check(rep)
-    assert c is not None and c["ok"] is False and "Connect Postiz" in c["hint"]
+    assert c is None  # B11: no Postiz creds -> learning checks omitted (not a vacuous pass)
 
 def test_doctor_postiz_learning_not_ready_channel_unmapped(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_API_KEY", _KEY)

@@ -100,8 +100,9 @@ def test_postiz_health_unreachable_on_refused(tmp_path, monkeypatch):
 
 
 def test_postiz_health_not_configured(tmp_path, monkeypatch):
-    cfg = _cfg(tmp_path, monkeypatch)                    # no POSTIZ_URL
-    assert health.postiz_health(cfg).ok is False and health.postiz_health(cfg).detail == "not configured"
+    cfg = _cfg(tmp_path, monkeypatch)                    # no POSTIZ_URL / key
+    h = health.postiz_health(cfg)
+    assert h.ok is True and h.detail == "skipped (not configured)"
 
 
 def test_system_health_lists_docker_postiz_zernio(tmp_path, monkeypatch):

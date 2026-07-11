@@ -279,11 +279,11 @@ def _assemble_doctor_checks(cfg: Config, *, get=None, postiz_probe=None, zernio_
     # block below (it was read twice per doctor_report — two cutover.json reads on every call).
     lv = learning_validated(cfg)
     # 4. poster + key consistency (human step 3) — mirrors cli._check_preflight
-    if cfg.poster_backend == "postiz":
-        checks.append(_check("POSTIZ_URL + POSTIZ_API_KEY set (FANOPS_POSTER=postiz)",
+    if cfg.backend_has_creds("postiz"):
+        checks.append(_check("POSTIZ_URL + POSTIZ_API_KEY set (Postiz routed)",
                              cfg.postiz_url is not None and cfg.postiz_api_key is not None,
                              "set POSTIZ_URL (your self-hosted instance) + POSTIZ_API_KEY (Postiz "
-                             "Settings > Developers > Public API) — the free, self-hosted publisher"))
+                             "Settings > Developers > Public API) — connect in Studio Go-Live"))
         # Postiz-learning readiness (booleans only, never the key): the loop only acts once the key is set,
         # every active channel is mapped, AND cutover confirmed the lift fields. Hint names the FIRST gap.
         ready = cfg.postiz_api_key is not None and not problems and lv   # lv hoisted above (ECC fix #14)
