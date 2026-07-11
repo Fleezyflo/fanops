@@ -69,10 +69,10 @@ def test_install_writes_files_and_bootstraps(tmp_path, monkeypatch):
 
     res = daemon.install(cfg, interval=600, responder="llm")
 
-    assert daemon.wrapper_path(cfg).exists() and os.access(daemon.wrapper_path(cfg), os.X_OK)
     assert daemon.plist_path().exists()
     pl = plistlib.loads(daemon.plist_path().read_bytes())
     assert pl["WorkingDirectory"] == str(tmp_path)                # the gotcha, on the file actually written
+    assert pl["ProgramArguments"][0] == daemon._fanops_bin()
     assert daemon.installed_interval(cfg) == 600                  # status reads cadence back from the written plist
     uid = os.getuid()
     assert ["launchctl", "bootstrap", f"gui/{uid}", str(daemon.plist_path())] in fake.calls
@@ -292,7 +292,7 @@ def test_main_daemon_install_rejects_sub_minute_interval(tmp_path, monkeypatch, 
     from fanops.cli import main
     assert main(["daemon", "install", "--interval", "30s"]) == 2
     assert "interval" in capsys.readouterr().err
-    assert not daemon.wrapper_path(Config(root=tmp_path)).exists()                  # nothing written on rejection
+    assert not daemon.plist_path().exists()                  # nothing written on rejection
 
 
 def test_main_daemon_logs_returns_0(tmp_path, monkeypatch, capsys):
@@ -332,69 +332,6 @@ def test_parse_interval_rejects_malformed(raw):
     # Pure-suffix / non-numeric inputs raise ValueError (-> cmd_daemon catches -> exit 2, never a trace).
     with pytest.raises(ValueError):
         daemon.parse_interval(raw)
-
-
-# ── MOL-81 criterion 1: atomic wrapper write (torn-write hardening) ───────────────────────────
-
-def test_install_leaves_no_torn_wrapper_when_write_interrupted(tmp_path, monkeypatch):
-    # MOL-81 instance 1: launchd's plist names fanops-run.sh as its ProgramArguments target; bash reads
-    # a script via buffered reads AS it executes, so a non-atomic overwrite that crashes mid-write can be
-    # read torn by an in-flight tick. The write MUST be temp-file + os.replace (mirroring
-    # controlio.write_json_atomic / autopilot.set_env_var), so a crash mid-write leaves the ORIGINAL
-    # intact wrapper at the real path — never a partial one. Pre-seed a valid wrapper, then make the temp
-    # write blow up partway; assert the real path is byte-identical to the good original (never torn).
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setattr(daemon.sys, "platform", "darwin")
-    monkeypatch.setattr(daemon.subprocess, "run", _fake_launchctl(bootout=(1, ""), bootstrap=(0, "")))
-    cfg = Config(root=tmp_path)
-    cfg.control.mkdir(parents=True, exist_ok=True)
-    wp = daemon.wrapper_path(cfg)
-    good = "#!/bin/bash\n# prior good wrapper\nexec true\n"
-    wp.write_text(good)                                          # a valid wrapper already in place
-
-    # Simulate a crash at the atomic swap-in: the new content is fully written to a same-dir temp, then
-    # os.replace dies before it lands. With an in-place write_text this class of failure torns the real
-    # path; with temp+os.replace the ORIGINAL wrapper at wp is untouched (that is the whole point).
-    real_replace = os.replace
-    def boom_replace(src, dst, *a, **k):
-        if str(dst) == str(wp):
-            raise OSError("crash mid-write (os.replace interrupted)")
-        return real_replace(src, dst, *a, **k)
-    monkeypatch.setattr(daemon.os, "replace", boom_replace)
-
-    with pytest.raises(OSError):
-        daemon.install(cfg, interval=600, responder="inherit")
-
-    assert wp.read_text() == good                               # ORIGINAL intact — never a torn/partial wrapper
-    # no leaked temp files left behind in the wrapper dir (best-effort cleanup unlinked the temp)
-    leaked = [p.name for p in wp.parent.iterdir() if p.name != wp.name and p.name.startswith(wp.name)]
-    assert leaked == []
-
-
-def test_install_wrapper_write_is_atomic_replace_not_inplace(tmp_path, monkeypatch):
-    # Pin the MECHANISM: the wrapper reaches its final path via os.replace of a same-dir temp (atomic),
-    # not a direct write_text into place. Record the os.replace call whose destination is the wrapper.
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setattr(daemon.sys, "platform", "darwin")
-    monkeypatch.setattr(daemon.subprocess, "run", _fake_launchctl(bootout=(1, ""), bootstrap=(0, "")))
-    cfg = Config(root=tmp_path)
-    wp = daemon.wrapper_path(cfg)
-
-    replaces: list[tuple[str, str]] = []
-    real_replace = os.replace
-    def rec_replace(src, dst, *a, **k):
-        replaces.append((str(src), str(dst))); return real_replace(src, dst, *a, **k)
-    monkeypatch.setattr(daemon.os, "replace", rec_replace)
-
-    daemon.install(cfg, interval=600, responder="inherit")
-
-    wrapper_replaces = [(s, d) for s, d in replaces if d == str(wp)]
-    assert wrapper_replaces, "wrapper must be os.replace'd into place (atomic), not written in-place"
-    src, _ = wrapper_replaces[0]
-    assert os.path.dirname(src) == os.path.dirname(str(wp))      # same-dir temp -> os.replace stays atomic
-    assert daemon.wrapper_path(cfg).exists() and os.access(wp, os.X_OK)   # still 0755 after the atomic swap
-
-
 
 
 def test_install_written_plist_prohibits_multiple_instances(tmp_path, monkeypatch):

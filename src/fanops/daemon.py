@@ -6,15 +6,15 @@ Two non-negotiable launchd gotchas drive the design:
   1. launchd's default cwd is `/`; combined with `Config(root=Path.cwd())` it would build a fresh
      empty MohFlow-FanOps/ workspace at `/`. WorkingDirectory in the plist is therefore cfg.ROOT.
   2. launchd jobs get a bare PATH (/usr/bin:/bin:...) and source NO shell profile — ffmpeg/whisper/
-     claude/the venv `fanops` are all off it. The wrapper + plist bake in a full PATH derived at
-     install time (`shutil.which` parents) so the background run finds its binaries.
+     claude/the venv `fanops` are all off it. The plist bakes in a full PATH derived at install time
+     (`shutil.which` parents) so the background run finds its binaries.
 
 macOS-only by intent (operator is on darwin). install/stop raise a clean RuntimeError off-darwin
 rather than silently no-op'ing; a systemd --user sibling is the natural follow-up (the platform
 guard marks the seam). Every `launchctl` call mirrors ingest._run_ffprobe (timeout + typed
 ToolchainMissingError on absence). Backend stays dryrun by default — this never publishes."""
 from __future__ import annotations
-import contextlib, os, plistlib, re, shlex, shutil, subprocess, sys, tempfile, time
+import contextlib, os, plistlib, re, shutil, subprocess, sys, time
 from datetime import datetime, timezone
 from pathlib import Path
 from fanops.config import Config
@@ -35,42 +35,13 @@ _MIN_INTERVAL = 60                                    # launchd ThrottleInterval
 def plist_path() -> Path:
     return Path.home() / "Library/LaunchAgents" / f"{LABEL}.plist"
 
-def wrapper_path(cfg: Config) -> Path:
-    return cfg.control / "fanops-run.sh"             # inside the workspace (00_control), beside the ledger
-
-def exec_fail_marker_path(cfg: Config) -> Path:
-    """Machine-readable breadcrumb when the wrapper cannot exec fanops (pre-Python crash-loop)."""
-    return cfg.control / "daemon-exec-fail.json"
-
-def write_exec_fail_marker(cfg: Config, *, target: str, reason: str = "interpreter_not_executable") -> None:
-    """Persist exec failure for daemon.status / MOL-354 liveness (wrapper calls the shell equivalent)."""
-    import json
-    p = exec_fail_marker_path(cfg)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    payload = {"reason": reason, "target": target, "ts": datetime.now(timezone.utc).isoformat()}
-    tmp = p.with_suffix(".tmp")
-    tmp.write_text(json.dumps(payload, separators=(",", ":")) + "\n")
-    os.replace(tmp, p)
-
-def read_exec_fail_marker(cfg: Config) -> dict | None:
-    """Fail-open read of the wrapper's exec-failure marker; None when absent or corrupt."""
-    import json
-    p = exec_fail_marker_path(cfg)
-    if not p.exists():
-        return None
-    try:
-        data = json.loads(p.read_text())
-        return data if isinstance(data, dict) and data.get("target") else None
-    except Exception:
-        return {"reason": "interpreter_not_executable", "target": "(unreadable marker)"}
-
 def _fanops_bin() -> str:
     # The `fanops` next to the running interpreter — so the daemon uses the SAME venv that installed it,
     # never a different one earlier on PATH.
     return str(Path(sys.executable).parent / "fanops")
 
 def _daemon_path() -> str:
-    """Full PATH to bake into the wrapper + plist (launchd gives a bare one). Order: venv bin, the node
+    """Full PATH to bake into the plist (launchd gives a bare one). Order: venv bin, the node
     bin holding `claude` (derived now), homebrew (ffmpeg/whisper), then the system defaults. De-duped,
     absolute — nothing depends on a sourced shell profile at fire time."""
     parts = [str(Path(sys.executable).parent)]
@@ -87,7 +58,7 @@ def _daemon_path() -> str:
 def resolve_responder(cfg: Config) -> str:
     """The responder a hands-off `fanops run` fire WILL use — `Config.responder_mode` is the SINGLE
     source of truth (.env `FANOPS_RESPONDER`, else 'llm' when `claude` is on PATH, else 'manual'). The
-    daemon wrapper is responder-AGNOSTIC: SCHEDULING (the launchd agent) and the AI SWITCH (.env) are
+    daemon plist is responder-AGNOSTIC: SCHEDULING (the launchd agent) and the AI SWITCH (.env) are
     decoupled, so installing the driver never silently turns the LLM on — this just reports what the run
     resolves at fire time, which the CLI/Studio then DISCLOSE."""
     return cfg.responder_mode
@@ -96,40 +67,28 @@ def format_interval(secs: int) -> str:
     """Seconds -> CLI `--interval` token (bare seconds; `parse_interval` round-trips)."""
     return str(secs)
 
-def render_wrapper(cfg: Config, *, interval: int) -> str:
-    """The `#!/bin/bash` script launchd execs. Resident: `exec fanops run --loop --interval` — one
-    long-lived process whose inner loop advances with a fresh --base-time each iteration.
+def _installed_program(cfg: Config) -> str | None:
+    """Read ProgramArguments[0] from the on-disk main plist (fail-open)."""
+    p = plist_path()
+    if not p.exists():
+        return None
+    try:
+        pl = plistlib.loads(p.read_bytes())
+        args = pl.get("ProgramArguments") or []
+        if isinstance(args, list) and args and isinstance(args[0], str):
+            return args[0]
+    except Exception:
+        pass
+    return None
 
-    This operator-installed loop is THE autonomous publish+reconcile trigger (P2): each iteration's
-    `fanops run` -> advance -> reconciles parked posts (Postiz or Zernio) AND publishes every `queued`
-    post whose operator-set scheduled_time is now due (publish_due's due-gate). A due post fires
-    unattended ONLY if the operator ran `fanops daemon install`; otherwise the supported paths are a
-    manual `fanops run` / Studio Publish-now. dryrun publishes nothing.
+def _plist_spec(cfg: Config, interval: int) -> dict:
+    return plistlib.loads(render_plist(cfg, interval=interval).encode())
 
-    DECOUPLED from the AI switch: the wrapper bakes NO FANOPS_RESPONDER. The fire-time `fanops run`
-    resolves the responder via `Config.responder_mode` (.env is loaded override=True at Config init), so
-    the operator sets the AI on/off ONCE (in .env) and scheduling merely honors it — never welds them."""
-    iv = format_interval(interval)
-    fb = _fanops_bin()
-    marker = exec_fail_marker_path(cfg)
-    return (
-        "#!/bin/bash\n"
-        "set -euo pipefail\n"
-        f"# launchd KeepAlive holds one resident `fanops run --loop` (cadence {interval}s inside Python).\n"
-        f"export PATH={shlex.quote(_daemon_path())}\n"
-        f"cd {shlex.quote(str(cfg.root))}\n"
-        f"FANOPS_BIN={shlex.quote(fb)}\n"
-        f"EXEC_FAIL_MARKER={shlex.quote(str(marker))}\n"
-        'if [ ! -x "$FANOPS_BIN" ]; then\n'
-        '  mkdir -p "$(dirname "$EXEC_FAIL_MARKER")"\n'
-        '  printf \'%s\\n\' "{\\"reason\\":\\"interpreter_not_executable\\",\\"target\\":\\"$FANOPS_BIN\\",'
-        '\\"ts\\":\\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\\"}" > "$EXEC_FAIL_MARKER"\n'
-        '  echo "fanops daemon: interpreter not executable: $FANOPS_BIN" >&2\n'
-        '  exit 127\n'
-        'fi\n'
-        'rm -f "$EXEC_FAIL_MARKER"\n'
-        f"exec {shlex.quote(fb)} run --loop --interval {shlex.quote(iv)}\n"
-    )
+def _cleanup_legacy_artifacts(cfg: Config) -> None:
+    """Best-effort removal of pre-direct-exec wrapper + exec-fail marker (keeper migration path)."""
+    with contextlib.suppress(OSError):
+        (cfg.control / "fanops-run.sh").unlink(missing_ok=True)
+        (cfg.control / "daemon-exec-fail.json").unlink(missing_ok=True)
 
 def render_plist(cfg: Config, *, interval: int) -> str:
     """The LaunchAgent plist. WorkingDirectory=cfg.root (gotcha 1); EnvironmentVariables carries the
@@ -139,10 +98,10 @@ def render_plist(cfg: Config, *, interval: int) -> str:
     KeepAlive + LSMultipleInstancesProhibited: launchd never timer-re-fires — one resident loop only.
     A hung-but-alive process is NOT respawned (it hasn't exited); M2-C readiness alarms on a stale
     per-iteration heartbeat catch that case. plistlib produces valid, properly-escaped XML."""
-    path = _daemon_path()
+    fb, path = _fanops_bin(), _daemon_path()
     pl = {
         "Label": LABEL,
-        "ProgramArguments": ["/bin/bash", str(wrapper_path(cfg))],
+        "ProgramArguments": [fb, "run", "--loop", "--interval", format_interval(interval)],
         "KeepAlive": {"SuccessfulExit": False},
         "RunAtLoad": True,
         "WorkingDirectory": str(cfg.root),
@@ -153,26 +112,6 @@ def render_plist(cfg: Config, *, interval: int) -> str:
         "EnvironmentVariables": {"PATH": path, "HOME": str(Path.home()), "FANOPS_DAEMON_INTERVAL": str(interval)},
     }
     return plistlib.dumps(pl).decode()
-
-def write_wrapper_atomic(wp: Path, text: str) -> None:
-    """MOL-81 instance 1: persist the wrapper via a UNIQUE same-dir temp + chmod + os.replace, mirroring
-    controlio.write_json_atomic / autopilot.set_env_var exactly. launchd's plist names this exact path as
-    its ProgramArguments target, and bash reads a script via buffered reads AS it executes — so a direct,
-    non-atomic overwrite that crashes mid-write can be read torn by an in-flight tick. os.replace makes the
-    swap-in atomic: a crash mid-write leaves the ORIGINAL wrapper intact, never a partial one. chmod 0755 is
-    applied to the temp BEFORE the replace so the file is executable the instant it appears at the real path.
-    On any failure the temp is best-effort unlinked and the ORIGINAL error re-raised (the suppress guards only
-    the cleanup unlink, never the real write error) — so no half-written temp leaks into the workspace."""
-    wp.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=str(wp.parent), prefix=wp.name + ".", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w") as fh: fh.write(text)
-        os.chmod(tmp, 0o755)                             # executable before it appears at the real path
-        os.replace(tmp, wp)                              # atomic: never a half-written wrapper
-    except BaseException:
-        with contextlib.suppress(OSError): os.unlink(tmp)   # best-effort cleanup; re-raise the real error
-        raise
-
 
 def parse_interval(raw: str) -> int:
     """'10m'->600, '90s'->90, '2h'->7200, bare '600'->600. Rejects < 60s with a clean ValueError
@@ -189,30 +128,12 @@ def parse_interval(raw: str) -> int:
         raise ValueError(f"interval must be >= {_MIN_INTERVAL}s (launchd ThrottleInterval floor), got {raw!r}")
     return secs
 
-_WRAPPER_LOOP_RE = re.compile(r"run --loop --interval\s+(\S+)")
-
-def _interval_from_wrapper_text(text: str) -> int | None:
-    m = _WRAPPER_LOOP_RE.search(text)
-    if not m:
-        return None
-    try:
-        return parse_interval(m.group(1))
-    except ValueError:
-        return None
-
 def installed_interval(cfg: Config) -> int | None:
     """Read the installed tick cadence so `status` judges staleness against the REAL interval, not a
-    default. Under KeepAlive there is no plist StartInterval — read the wrapper's `--interval` first,
-    then FANOPS_DAEMON_INTERVAL from the plist EnvironmentVariables (install writes both). Legacy
-    StartInterval plists still round-trip. None if unreadable / absent. Best-effort, broad catch BY
-    DESIGN: corrupt on-disk state must NEVER crash `daemon status`."""
-    wp = wrapper_path(cfg)
-    if wp.exists():
-        try:
-            if (iv := _interval_from_wrapper_text(wp.read_text())) is not None:
-                return iv
-        except Exception:
-            pass
+    default. Under KeepAlive there is no plist StartInterval — read FANOPS_DAEMON_INTERVAL from the
+    plist EnvironmentVariables (install writes it). Legacy StartInterval plists still round-trip. None
+    if unreadable / absent. Best-effort, broad catch BY DESIGN: corrupt on-disk state must NEVER crash
+    `daemon status`."""
     p = plist_path()
     if not p.exists():
         return None
@@ -270,7 +191,7 @@ def _load_plist(plist: Path, label: str) -> bool:
 # ── side-effecting verbs ─────────────────────────────────────────────────────────────────────
 
 def install(cfg: Config, *, interval: int, responder: str = "inherit") -> dict:
-    """Write the wrapper (chmod 0755) + plist, then load via launchctl. Idempotent: bootout any
+    """Write the plist (direct `fanops run --loop` exec) and load via launchctl. Idempotent: bootout any
     prior copy first (ignore its rc), then bootstrap; fall back to `load -w` on older macOS.
 
     `responder` is the AI-switch CHOICE, decoupled from this scheduling install:
@@ -287,19 +208,18 @@ def install(cfg: Config, *, interval: int, responder: str = "inherit") -> dict:
         resolved = responder
     else:
         resolved = resolve_responder(cfg)                 # 'inherit' -> what the run resolves ambiently, persist nothing
-    wp, pp = wrapper_path(cfg), plist_path()
+    pp = plist_path()
     pp.parent.mkdir(parents=True, exist_ok=True)
-    write_wrapper_atomic(wp, render_wrapper(cfg, interval=interval))   # temp+os.replace: never a torn wrapper (MOL-81)
-    with contextlib.suppress(OSError): exec_fail_marker_path(cfg).unlink(missing_ok=True)
+    _cleanup_legacy_artifacts(cfg)
     pp.write_text(render_plist(cfg, interval=interval))
     loaded = _load_plist(pp, LABEL)
     keeper = _install_keeper(cfg)
-    return {"plist": str(pp), "wrapper": str(wp), "interval": interval, "loaded": loaded,
+    return {"plist": str(pp), "interval": interval, "loaded": loaded,
             "responder": resolved, "discloses_llm": resolved == "llm", **keeper}
 
 def ensure(cfg: Config) -> dict:
     """Keeper hook: re-assert main pump load when launchctl print says it is absent; also rewrite a
-    stale on-disk wrapper/plist when the installed cadence no longer matches render_wrapper."""
+    stale on-disk plist when it no longer matches render_plist (direct-exec ProgramArguments + env)."""
     _require_darwin()
     action = "none"
     if _confirm_loaded(LABEL):
@@ -310,16 +230,18 @@ def ensure(cfg: Config) -> dict:
         action = "bootstrap" if pp.exists() else "none"
     iv = installed_interval(cfg)
     if iv is not None:
-        wp = wrapper_path(cfg)
-        expected = render_wrapper(cfg, interval=iv)
-        if not wp.exists() or wp.read_text() != expected:
+        pp = plist_path()
+        expected = _plist_spec(cfg, iv)
+        actual = plistlib.loads(pp.read_bytes()) if pp.exists() else {}
+        if actual != expected:
             cfg.reports.mkdir(parents=True, exist_ok=True)
-            write_wrapper_atomic(wp, expected)
-            pp = plist_path()
             pp.parent.mkdir(parents=True, exist_ok=True)
             pp.write_text(render_plist(cfg, interval=iv))
+            if loaded:
+                _load_plist(pp, LABEL)
+            _cleanup_legacy_artifacts(cfg)
             if action == "none":
-                action = "rewrite_wrapper"
+                action = "rewrite_plist"
     return {"label": LABEL, "loaded": loaded, "action": action}
 
 _VERDICT_UNLOADED_ALARM = "installed but NOT loaded — should be running"
@@ -427,12 +349,14 @@ def status(cfg: Config, *, interval: int = 600) -> dict:
     pid = _grep_int(r.stdout, "PID") if loaded else None
     last_exit = _grep_int(r.stdout, "LastExitStatus") if loaded else None
     age, stale, iv = heartbeat_stale(cfg, interval=installed_interval(cfg) or interval)
-    exec_fail = read_exec_fail_marker(cfg)
+    exec_fail = None
+    target = _installed_program(cfg)
+    if loaded and target and not os.access(target, os.X_OK):
+        exec_fail = {"reason": "interpreter_not_executable", "target": target}
     if not loaded:
         verdict = _VERDICT_UNLOADED_ALARM if installed else "not installed"
     elif exec_fail:
-        target = exec_fail.get("target", "fanops")
-        verdict = f"loaded but interpreter not executable: {target}"
+        verdict = f"loaded but interpreter not executable: {exec_fail['target']}"
     elif age is None:
         verdict = "loaded but no heartbeat yet"
     elif not stale:
@@ -447,18 +371,17 @@ def stop(cfg: Config, *, remove: bool = False) -> dict:
     stopped iff `launchctl list` no longer finds it (rc!=0). Idempotent — booting out an already-stopped
     label returns rc!=0, but the list confirm still reports stopped because the label isn't loaded ('already
     stopped' is not an error). The honest part: if an unload genuinely FAILED and the agent is STILL loaded,
-    stopped is now False rather than a false True. Leaves the plist/wrapper on disk unless remove=True."""
+    stopped is now False rather than a false True. Leaves the plist on disk unless remove=True."""
     _require_darwin()
     uid = os.getuid()
     r = _launchctl("bootout", f"gui/{uid}/{LABEL}")
     if r.returncode != 0:
         _launchctl("unload", "-w", str(plist_path()))    # fallback for older macOS (already-stopped is fine)
     stopped = _launchctl("list", LABEL).returncode != 0  # source of truth: not loaded -> stopped
-    out = {"label": LABEL, "plist": str(plist_path()), "wrapper": str(wrapper_path(cfg)), "stopped": stopped}
+    out = {"label": LABEL, "plist": str(plist_path()), "stopped": stopped}
     if remove:
-        for f in (plist_path(), wrapper_path(cfg)):
-            try: f.unlink()
-            except OSError: pass
+        with contextlib.suppress(OSError): plist_path().unlink(missing_ok=True)
+        _cleanup_legacy_artifacts(cfg)
         out["removed"] = True
     return out
 
