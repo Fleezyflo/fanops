@@ -47,9 +47,11 @@ publish (out-of-lock) → read-only summary.
 | 12 | Verify-live | `fanops verify-live` → `confirm_post_live` (`meta_graph.py:264`) | (read-only) | `LIVE owner=<handle>` |
 | 13 | Metrics | `track.pull_metrics` (`track.py:218`) → Graph insights | `published→analyzed` + lift | reach/views/saves |
 
-**No-auto-publish invariant:** a Post is born `awaiting_approval` at ONE site (`crosspost.py:228`);
-publish iterates `queued` only; `Ledger.approve_post` is the SOLE promoter. Nothing publishes — even
-live, even with the daemon running — until you approve in Review.
+**No-auto-publish invariant:** every Post is born `awaiting_approval` at one of three mint sites —
+pipeline `crosspost._mint_surface_post` (`crosspost.py:228`), Studio `repost_post` (`actions.py:491`),
+Studio `crosspost_to_account` (`actions.py:570`; bulk `crosspost_all_to_account` loops here). Publish
+iterates `queued` only; `Ledger.approve_post` is the SOLE promoter. Nothing publishes — even live, even
+with the daemon running — until you approve in Review.
 
 ---
 

@@ -24,7 +24,7 @@ from fanops.clip import render_aspects_for
 from fanops.caption import request_captions, ingest_captions, caption_request_stale
 from fanops.crosspost import crosspost_clips
 from fanops.post.run import publish_due
-from fanops.reconcile import reconcile_due
+from fanops.reconcile import reconcile_due, _GIVEUP_PREFIX
 from fanops.digest import write_digest
 from fanops.log import get_logger
 from fanops.agentstep import pending
@@ -371,6 +371,19 @@ class AwaitingCounts(TypedDict):
     captions: int
 
 
+# MOL-444: explicit opt-out for PostState members omitted from RunSummary post-state tallies. Empty =
+# count all 11 — every lifecycle state is visible in the advance() heartbeat (retired/rejected included;
+# they are low-volume but actionable and not noise at operator scale).
+_DIGEST_EXCLUDED_STATES: frozenset[PostState] = frozenset()
+# RunSummary keys that are NOT per-PostState counts (entity totals, deltas, derived splits, gates).
+_RUNSUMMARY_NON_STATE_KEYS = frozenset({
+    "sources", "moments", "clips", "posts",
+    "published_in_run", "last_published_age_hours",
+    "holds", "hook_burn_failed", "frames_unread", "errors", "awaiting",
+    "gave_up",   # MOL-440: subset of needs_reconcile — disjoint from the needs_reconcile tally
+})
+
+
 class RunSummary(TypedDict):
     """advance()'s return: the post-run heartbeat/summary. A TypedDict (NOT a dataclass) on purpose — the
     value is `print()`ed as a dict for operators, flows to the Studio as an ActionResult.detail payload, and
@@ -380,11 +393,20 @@ class RunSummary(TypedDict):
     moments: int
     clips: int
     posts: int
+    awaiting_approval: int
+    queued: int
+    submitting: int
+    submitted: int
     published: int
+    analyzed: int
     failed: int
+    error: int
+    rejected: int
+    needs_reconcile: int
+    gave_up: int
+    retired: int
     published_in_run: int
     last_published_age_hours: Optional[float]
-    needs_reconcile: int
     holds: int
     hook_burn_failed: int
     frames_unread: int
@@ -404,18 +426,28 @@ def _build_summary(cfg: Config, before: set) -> RunSummary:
     newest = max((_parse(p.scheduled_time) for p in after if p.scheduled_time), default=None)
     last_published_age_hours = (None if newest is None
                                 else round((datetime.now(timezone.utc) - newest).total_seconds() / 3600, 2))
+    nr_posts = led.posts_in_state(PostState.needs_reconcile)
+    gave_up = sum(1 for p in nr_posts if p.error_reason and p.error_reason.startswith(_GIVEUP_PREFIX))
     summary: RunSummary = {
         "sources": len(led.sources), "moments": len(led.moments),
         "clips": len(led.clips), "posts": len(led.posts),
-        "published": len(led.posts_in_state(PostState.published)),
+        # MOL-443: per-PostState tallies — all 11 members unless listed in _DIGEST_EXCLUDED_STATES.
+        "awaiting_approval": len(led.posts_in_state(PostState.awaiting_approval)),
+        "queued": len(led.posts_in_state(PostState.queued)),
+        "submitting": len(led.posts_in_state(PostState.submitting)),
+        "submitted": len(led.posts_in_state(PostState.submitted)),
+        "published": len(after),
+        "analyzed": len(led.posts_in_state(PostState.analyzed)),
         "failed": len(led.posts_in_state(PostState.failed)),
+        "error": len(led.posts_in_state(PostState.error)),
+        "rejected": len(led.posts_in_state(PostState.rejected)),
+        # MOL-440: gave_up is a labeled terminal subset of needs_reconcile — tallies are DISJOINT.
+        "needs_reconcile": len(nr_posts) - gave_up,
+        "gave_up": gave_up,
+        "retired": len(led.posts_in_state(PostState.retired)),
         # B5/E2: this-run published delta + newest published age, for the heartbeat monitor.
         "published_in_run": published_in_run,
         "last_published_age_hours": last_published_age_hours,
-        # needs_reconcile (AUDIT C1): ambiguous publish failures parked for human reconcile —
-        # may be live on the platform, must NOT be blindly re-queued. Surfaced here so the
-        # unattended operator sees it in `fanops run`/`advance` output, not only the digest.
-        "needs_reconcile": len(led.posts_in_state(PostState.needs_reconcile)),
         "holds": sum(1 for c in led.clips.values() if c.held),
         # V2 M1/F9: clips that rendered but silently lost their on-screen hook (couldn't burn) —
         # surfaced here so the unattended operator sees the drop, not only in run.log.

@@ -3,10 +3,15 @@
 
 ## Never break these (each has a test that goes red if you do)
 
-- **No-auto-publish.** A `Post` is born `PostState.awaiting_approval` at ONE site: `crosspost._mint_surface_post`
-  (`crosspost.py:273`). Do NOT add a second `Post(...)` construction site and do NOT set a post's state to
-  `queued` anywhere except `Ledger.approve_post` (`ledger.py:503`, promotes at `:519`). Publish paths iterate
-  `queued` only, so this is what makes an unapproved post structurally unpublishable even live.
+- **No-auto-publish.** Every `Post` is born `PostState.awaiting_approval` at one of THREE mint sites — all enter
+  the approval gate, none auto-publish:
+  (1) pipeline crosspost: `crosspost._mint_surface_post` (`crosspost.py:228`);
+  (2) Studio repost: `studio.actions.repost_post` (`actions.py:491`);
+  (3) Studio cross-account reuse: `studio.actions.crosspost_to_account` (`actions.py:570`; bulk
+  `crosspost_all_to_account` loops here, does NOT mint itself). Do NOT add a fourth `Post(...)` construction
+  site and do NOT set a post's state to `queued` anywhere except `Ledger.approve_post` (`ledger.py:503`, promotes
+  at `:519`). Publish paths iterate `queued` only, so this is what makes an unapproved post structurally
+  unpublishable even live.
 - **Cascade protection.** `ledger._delete_moment_cascade` (`ledger.py:614`) must keep gating deletes on
   `_PROTECTED_POST_STATES` (`ledger.py:612` = live-states + awaiting_approval + queued + retired). Re-ingest /
   reconcile must never drop an in-review or approved post. Don't add a delete path that skips this constant.
