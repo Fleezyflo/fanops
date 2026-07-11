@@ -424,6 +424,33 @@ def cmd_cutover(cfg: Config, args) -> int:
     if act == "lift":    print(json.dumps(cutover.cutover_lift(cfg, args.submission_id), indent=2)); return 0
     return 2
 
+def cmd_wipe(cfg: Config, args) -> int:
+    # ledger-rebuild M4 (MOL-223): read-only preview by default; snapshot-gated execute via sentence-flags
+    # (mirrors cutover's confirm pattern). Routes through ledger_wipe directly — NOT actions_wipe (Studio
+    # semantics stay scoped: keep_history=True only). Lazy-import keeps the hot CLI path light.
+    from fanops import ledger_wipe
+    include_shipped = args.include_shipped_history
+    scoped_confirm = args.i_understand_this_clears_unshipped_content
+    total_confirm = args.i_understand_this_erases_shipped_history
+    if include_shipped or total_confirm:
+        if not (include_shipped and total_confirm):
+            print("total wipe requires --include-shipped-history AND --i-understand-this-erases-shipped-history",
+                  file=sys.stderr); return 2
+        keep_history = False; execute = True
+    elif scoped_confirm:
+        keep_history = True; execute = True
+    else:
+        keep_history = True; execute = False
+    led = Ledger.load(cfg)
+    if not execute:
+        print(json.dumps(ledger_wipe.wipe_preview(led, keep_history=keep_history), indent=2)); return 0
+    try:
+        snap = Ledger.snapshot(cfg)
+        result = ledger_wipe.execute_wipe(cfg, confirmed=True, snapshot_path=snap, keep_history=keep_history)
+        print(json.dumps(result, indent=2)); return 0
+    except (ledger_wipe.WipeNotConfirmed, ledger_wipe.SnapshotRequired) as e:
+        print(str(e), file=sys.stderr); return 2
+
 def cmd_compose(cfg: Config, args) -> int:
     # Produced-clip compositing (operator verb; runs OUTSIDE any ledger lock — a long MoviePy render
     # must never sit inside advance()'s flock). Composes ONE rendered clip into <clip>_composed.mp4:
@@ -677,6 +704,13 @@ def main(argv: list[str] | None = None) -> int:
     p_cmet.add_argument("submission_id")
     p_clift = cut_sub.add_parser("lift", help="step 4: compute one real lift_score from the captured row")
     p_clift.add_argument("submission_id")
+    p_wipe = sub.add_parser("wipe", help="preview or execute the ledger fall-away (unbacked cache removal; snapshot-gated)")
+    p_wipe.add_argument("--i-understand-this-clears-unshipped-content", dest="i_understand_this_clears_unshipped_content", action="store_true",
+                        help="execute scoped wipe (keeps shipped history; requires pre-wipe snapshot)")
+    p_wipe.add_argument("--include-shipped-history", dest="include_shipped_history", action="store_true",
+                        help="total wipe mode — remove shipped history too (requires both total confirm flags)")
+    p_wipe.add_argument("--i-understand-this-erases-shipped-history", dest="i_understand_this_erases_shipped_history", action="store_true",
+                        help="confirm total wipe — must be paired with --include-shipped-history")
     p_learn = sub.add_parser("learn", help="learning-loop diagnostics (read-only)")
     learn_sub = p_learn.add_subparsers(dest="learn_cmd", required=True)
     learn_sub.add_parser("doctor", help="read-only: does live Postiz analytics carry the reach signal lift_score needs?")
@@ -994,6 +1028,7 @@ def _dispatch(cfg: Config, args) -> int:
     if args.cmd == "amplify-variants": return cmd_amplify_variants(cfg)
     if args.cmd == "p4-bias": return cmd_p4_bias(cfg)
     if args.cmd == "cutover":  return cmd_cutover(cfg, args)
+    if args.cmd == "wipe":     return cmd_wipe(cfg, args)
     if args.cmd == "learn":
         if args.learn_cmd == "doctor":
             from fanops.learn_doctor import cmd_learn_doctor   # lazy: keeps requests/postiz off the core path

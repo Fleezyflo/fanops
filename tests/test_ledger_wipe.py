@@ -219,6 +219,26 @@ def test_execute_wipe_restore_recovers_everything(tmp_path):
     assert "p_drop" in led.posts and "m_drop" in led.moments   # the wipe is reversible
 
 
+def test_keep_history_false_empties_all_entities(tmp_path):
+    led = _live_shaped(Config(root=tmp_path))
+    plan = ledger_wipe.compute_wipe_set(led, keep_history=False)
+    assert plan.kept_post_ids == set()
+    assert "p_keep" in plan.post_ids and "p_drop" in plan.post_ids
+    assert plan.moment_ids == {"m_keep", "m_drop"}
+    assert plan.clip_ids == {"c_keep", "c_drop"}
+    assert plan.source_ids == {"s1"}
+
+
+def test_restore_snapshot_round_trips_total_wipe(tmp_path):
+    cfg = Config(root=tmp_path); _live_shaped(cfg)
+    original_doc = Ledger.load(cfg)._to_doc()
+    snap = Ledger.snapshot(cfg)
+    ledger_wipe.execute_wipe(cfg, confirmed=True, snapshot_path=snap, keep_history=False)
+    assert Ledger.load(cfg).posts == {}
+    Ledger.restore_snapshot(cfg, snap)
+    assert Ledger.load(cfg)._to_doc() == original_doc
+
+
 # ---- the routine cascade guard must stay BYTE-IDENTICAL (MOL-33 acceptance) ----
 def test_delete_moment_cascade_and_protected_states_byte_identical():
     import inspect, hashlib

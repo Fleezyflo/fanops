@@ -67,16 +67,18 @@ class WipePlan:
     kept_post_ids: set = field(default_factory=set)     # the backed posts (reported; NEVER removed)
 
 
-def _is_kept_post(post) -> bool:
+def _is_kept_post(post, *, keep_history=True) -> bool:
     """A post carries HISTORY -> kept. Keys on POST STATE/metrics, NEVER on a live-match (credential-scope
     invariant): `analyzed` OR any non-empty metrics dict. An awaiting_approval/queued/rejected never-shipped
     row with no metrics is NOT kept (it is the unbacked cache that falls away)."""
+    if not keep_history:
+        return False
     if post.state is PostState.analyzed:
         return True
     return bool(post.metrics)                            # a post that ever recorded metrics has real history
 
 
-def compute_wipe_set(led: Ledger) -> WipePlan:
+def compute_wipe_set(led: Ledger, *, keep_history=True) -> WipePlan:
     """Derive the transitive-complement wipe set. Pure over the ledger (no I/O, no mutation). The keep-set
     is computed FIRST (kept posts + their ancestor chain + their renders); everything reachable-but-unkept
     falls into the plan. A source/clip/moment survives iff ANY kept post lives in its descendant closure."""
@@ -86,7 +88,7 @@ def compute_wipe_set(led: Ledger) -> WipePlan:
     kept_moments: set = set()
     kept_sources: set = set()
     for p in led.posts.values():
-        if _is_kept_post(p):
+        if _is_kept_post(p, keep_history=keep_history):
             plan.kept_post_ids.add(p.id)
             kept_clips.add(p.parent_id)
             c = led.clips.get(p.parent_id)
@@ -146,16 +148,16 @@ def compute_wipe_set(led: Ledger) -> WipePlan:
     return plan
 
 
-def wipe_preview(led: Ledger) -> dict:
+def wipe_preview(led: Ledger, *, keep_history=True) -> dict:
     """A READ-ONLY preview (the would-remove id-set + per-entity counts + kept-post count) for the Studio
     surface BEFORE the typed confirm. Pure — computes the plan, never writes."""
-    plan = compute_wipe_set(led)
+    plan = compute_wipe_set(led, keep_history=keep_history)
     counts = {"posts": len(plan.post_ids), "moments": len(plan.moment_ids), "clips": len(plan.clip_ids),
               "sources": len(plan.source_ids), "renders": len(plan.render_ids),
               "stitch_plans": len(plan.stitch_plan_ids), "batches": len(plan.batch_ids),
               "tag_log": len(plan.tag_log_keys), "variant_streaks": len(plan.variant_streak_keys)}
     detail = {"counts": counts, "post_ids": sorted(plan.post_ids), "kept_posts": len(plan.kept_post_ids),
-              "total": sum(counts.values())}
+              "total": sum(counts.values()), "keep_history": keep_history}
     detail["token"] = preview_token(detail)
     return detail
 
@@ -169,7 +171,8 @@ def preview_token(preview_detail: dict) -> str:
     import hashlib, json
     payload = json.dumps({"post_ids": preview_detail.get("post_ids", []),
                           "counts": preview_detail.get("counts", {}),
-                          "total": preview_detail.get("total", 0)}, sort_keys=True)
+                          "total": preview_detail.get("total", 0),
+                          "keep_history": preview_detail.get("keep_history", True)}, sort_keys=True)
     return hashlib.sha256(payload.encode()).hexdigest()[:32]
 
 
@@ -197,7 +200,7 @@ def snapshot_is_restorable(snapshot_path: "Path | str") -> bool:
         return False
 
 
-def execute_wipe(cfg: Config, *, confirmed: bool, snapshot_path: "Optional[Path | str]") -> dict:
+def execute_wipe(cfg: Config, *, confirmed: bool, snapshot_path: "Optional[Path | str]", keep_history=True) -> dict:
     """Run the fall-away. GATED, in code:
       - WipeNotConfirmed unless `confirmed` (the explicit operator confirm — mirrors the Go-Live gate).
       - SnapshotRequired unless `snapshot_path` is a VERIFIED-restorable snapshot (MOL-32: cannot run
@@ -211,7 +214,7 @@ def execute_wipe(cfg: Config, *, confirmed: bool, snapshot_path: "Optional[Path 
         raise SnapshotRequired("a verified-restorable pre-wipe snapshot is mandatory before the wipe runs")
     removed = {}
     with Ledger.transaction(cfg) as led:
-        plan = compute_wipe_set(led)
+        plan = compute_wipe_set(led, keep_history=keep_history)
         for pid in plan.post_ids: led.posts.pop(pid, None)
         for cid in plan.clip_ids: led.clips.pop(cid, None)
         for mid in plan.moment_ids: led.moments.pop(mid, None)
