@@ -142,7 +142,13 @@ def caption_events(seg: dict, clip_start: float, clip_end: float, *, max_words: 
       • absent (the common case on already-transcribed footage): split the segment's text into
         <=max_words groups and distribute them EVENLY across the segment's (clip-clamped) window.
     A segment that does not overlap the clip, or yields no visible text, returns []."""
-    seg_start = float(seg["start"]); seg_end = float(seg["end"])
+    raw_s, raw_e = seg.get("start"), seg.get("end")
+    if raw_s is None or raw_e is None:
+        return []
+    try:
+        seg_start = float(raw_s); seg_end = float(raw_e)
+    except (TypeError, ValueError):
+        return []
     if seg_end <= clip_start or seg_start >= clip_end:
         return []
     out: list[tuple[float, float, str]] = []
@@ -220,9 +226,9 @@ def build_supercut_ass(transcript, *, spans: list[tuple[float, float]], hook: st
     events: list[str] = []
     if hook and hook.strip():
         hook_end = min(2.5, assembled_len)
-        fade = f"{{\fad({_HOOK_FADE_MS},{_HOOK_FADE_MS})}}"
+        fade = f"{{\\fad({_HOOK_FADE_MS},{_HOOK_FADE_MS})}}"
         events.append(f"Dialogue: 0,{_fmt_ts(0.0)},{_fmt_ts(hook_end)},HOOK,,0,0,0,,{fade}{_escape_text(hook)}")
-    cap_fade = f"{{\fad({_CAP_FADE_IN_MS},{_CAP_FADE_OUT_MS})}}"
+    cap_fade = f"{{\\fad({_CAP_FADE_IN_MS},{_CAP_FADE_OUT_MS})}}"
     offset = 0.0
     for span_start, span_end in spans:
         s, e = float(span_start), float(span_end)

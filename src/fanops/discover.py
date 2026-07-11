@@ -130,7 +130,8 @@ def intake(cfg: Config) -> dict:
             continue                              # stale/unknown/symlinked entry — report, don't copy a link target out of bounds (ECC fix #9)
         dest = cfg.inbox / src.name
         if not dest.exists():
-            shutil.copy2(src, dest)
+            part = dest.with_name(dest.name + ".part")
+            shutil.copy2(src, part); os.replace(part, dest)
         done.add(eid); intaken += 1
     write_json_atomic(donep, sorted(done))
     return {"approved": approved, "intaken": intaken, "missing": missing}

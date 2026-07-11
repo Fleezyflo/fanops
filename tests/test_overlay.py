@@ -373,3 +373,10 @@ def test_build_ass_burns_a_smaller_font_for_a_long_hook():
     f_long = _hook_style_fields(build_ass([], hook=long_h, clip_start=0.0, clip_end=6.0))
     f_short = _hook_style_fields(build_ass([], hook="wait for it", clip_start=0.0, clip_end=6.0))
     assert int(f_long[2]) < int(f_short[2])    # the long hook's burned Fontsize is smaller (field 2)
+
+def test_build_supercut_ass_fad_tag_has_no_form_feed_byte():
+    # L01: {\\fad(...)} must not embed a literal form-feed (0x0C) from an unescaped \\f in the f-string.
+    from fanops.overlay import build_supercut_ass
+    ass = build_supercut_ass([{"start": 0.0, "end": 2.0, "text": "hi"}], spans=[(0.0, 5.0)], hook="WATCH")
+    assert b"\x0c" not in ass.encode("utf-8")
+    assert "\\fad(" in ass

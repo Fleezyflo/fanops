@@ -35,6 +35,23 @@ def _graph_router(reach_by_tag, *, cooccur=""):
     return get
 
 
+def test_refresh_store_atomic_write_preserves_prior_on_crash(tmp_path, monkeypatch):
+    # L08: a crash mid-write must leave the PRIOR valid hashtags.json intact (write_json_atomic).
+    from fanops import controlio
+    monkeypatch.delenv("META_GRAPH_TOKEN", raising=False); monkeypatch.delenv("META_IG_USER_ID", raising=False)
+    cfg = Config(root=tmp_path)
+    refresh_store(cfg)                                      # establish a valid store
+    good = cfg.hashtags_path.read_text()
+    real_replace = controlio.os.replace
+    def boom(src, dst):
+        raise OSError("simulated crash during replace")
+    monkeypatch.setattr(controlio.os, "replace", boom)
+    with pytest.raises(OSError):
+        refresh_store(cfg)
+    monkeypatch.setattr(controlio.os, "replace", real_replace)
+    assert cfg.hashtags_path.read_text() == good
+
+
 def test_refresh_store_takes_no_ledger_and_no_doctor_gate(tmp_path, monkeypatch):
     # The own-reach model is gone: refresh_store's signature carries NO `led`, and it writes WITHOUT any
     # learn-doctor verdict on disk (the store does not depend on a published post).

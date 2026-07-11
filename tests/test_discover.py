@@ -172,6 +172,31 @@ def test_discover_corrupt_manifest_raises_typed_control_error(tmp_path):
     with pytest.raises(ControlFileError, match="manifest.json"):
         discover.discover(cfg, [roots])
 
+def test_intake_copy_stages_via_part_then_atomic_replace(tmp_path, mocker):
+    # M24: intake must stage inbox copies via a .part suffix + os.replace (parity with ingest.py) so a
+    # crash mid-copy never leaves a torn partial in 01_inbox/.
+    from fanops.config import Config
+    from fanops.ingest import sha256_of
+    src_dir = tmp_path / "bank"; src_dir.mkdir()
+    f = src_dir / "keep.mp4"; _put(f, b"KEEP")
+    cfg = Config(root=tmp_path)
+    mocker.patch("fanops.discover.probe_dimensions", return_value=(0, 0, 0.0))
+    mocker.patch("fanops.discover.make_thumbnail", side_effect=lambda p, o, **k: (o.write_bytes(b"J") or True))
+    discover.discover(cfg, [src_dir])
+    eid = sha256_of(f)[:16]
+    (cfg.review / "approved").mkdir(parents=True, exist_ok=True)
+    (cfg.review / f"{eid}.jpg").rename(cfg.review / "approved" / f"{eid}.jpg")
+    import os
+    seen = {}
+    def copy2(src, dst):
+        seen["dst"] = dst; Path(dst).write_bytes(Path(src).read_bytes())
+    mocker.patch("fanops.discover.shutil.copy2", side_effect=copy2)
+    replace = mocker.patch("fanops.discover.os.replace", wraps=os.replace)
+    discover.intake(cfg)
+    assert str(seen["dst"]).endswith(".part")
+    assert any(str(c.args[0]).endswith(".part") for c in replace.call_args_list)
+    assert (cfg.inbox / "keep.mp4").exists()
+
 def test_intake_corrupt_intaken_raises_typed_control_error(tmp_path):
     import pytest
     from fanops.config import Config

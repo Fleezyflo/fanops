@@ -58,12 +58,11 @@ def publish_buckets(ts: str, cfg) -> "tuple[int, int] | tuple[None, None]":
     (never raises; a bad stamp simply leaves the dim unranked, exactly like an old None row)."""
     if not ts:
         return (None, None)
-    try:
-        dt = parse_iso(ts)
-    except (ValueError, AttributeError):
+    dt = _aware_utc(ts)
+    if dt is None:
         return (None, None)
     zone = _operator_zone(cfg)
-    loc = dt.astimezone(zone) if zone is not None else dt.astimezone()
+    loc = dt.astimezone(zone) if zone is not None else dt
     return (loc.hour, loc.weekday())
 
 

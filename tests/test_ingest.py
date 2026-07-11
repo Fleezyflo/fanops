@@ -399,3 +399,11 @@ def test_clean_probe_sets_no_degraded_reason(tmp_path, mocker):
     mocker.patch("fanops.ingest.probe_dimensions", return_value=(1920, 1080, 12.0))
     led, _ = ingest_drops(Ledger.load(cfg), cfg)
     assert next(iter(led.sources.values())).degraded_reason is None
+
+def test_native_ingest_skips_still_photos(tmp_path, mocker):
+    # L06: native inbox stills (jpg/png/heic) must NOT be catalogued — skip + archive.
+    cfg = Config(root=tmp_path); _put(cfg.inbox / "snap.jpg", b"JPG")
+    mocker.patch("fanops.ingest.has_video_stream", return_value=True)
+    led, counts = ingest_drops(Ledger.load(cfg), cfg, origin_kind="native")
+    assert len(led.sources) == 0 and counts.skipped == 1
+    assert not (cfg.inbox / "snap.jpg").exists()

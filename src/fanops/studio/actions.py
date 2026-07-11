@@ -116,6 +116,7 @@ def regenerate_caption(cfg: Config, post_id: str, guidance: str = "", *,
     Does NOT publish — safe on any backend, so no confirm gate."""
     from fanops.prompts import caption_prompt
     from fanops.caption import brand_risk_flag
+    from fanops.hashtags import load_store
     now = _now(now)
     led = Ledger.load(cfg)                              # lock-free read: reject early, build context
     p, err = _guard_editable_post(led, post_id, now)
@@ -130,10 +131,12 @@ def regenerate_caption(cfg: Config, post_id: str, guidance: str = "", *,
     if (guidance or "").strip():                        # operator hint is highest priority for this re-roll
         full_guidance = (base + "\n\nOPERATOR INSTRUCTION FOR THIS REGENERATION (highest priority): "
                          + guidance.strip())
+    store = load_store(cfg)
     payload = {"clip_id": p.parent_id, "language": src.language if src else None,
                "transcript_excerpt": moment.transcript_excerpt if moment else "",
                "guidance": full_guidance,
-               "surfaces": [{"surface": surface, "platform": p.platform.value}]}
+               "surfaces": [{"surface": surface, "platform": p.platform.value}],
+               **({"hashtag_store": store} if store is not None else {})}
     if model is None:
         # NO haphazard claude (ROOT): Regenerate calls the LLM, so it obeys the SAME single switch as every
         # other gate — refuse unless the operator EXPLICITLY enabled the AI responder. Never spawn `claude`

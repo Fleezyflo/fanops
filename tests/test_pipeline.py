@@ -767,6 +767,23 @@ def test_run_summary_carries_frames_unread_count(tmp_path):
     assert s["frames_unread"] == 1
 
 
+def test_build_summary_malformed_and_naive_times_do_not_raise(tmp_path):
+    # L14: garbage + naive scheduled_time values must not crash the heartbeat age computation.
+    from fanops.models import Post, PostState, Platform
+    from fanops.pipeline import _build_summary
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_post(Post(id="p1", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
+                      caption="x", state=PostState.published, public_url="https://example.com/a",
+                      scheduled_time="not-a-time"))
+    led.add_post(Post(id="p2", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
+                      caption="y", state=PostState.published, public_url="https://example.com/b",
+                      scheduled_time="2020-01-01T00:00:00"))
+    led.save()
+    s = _build_summary(cfg, before=set())
+    assert s["published"] == 2
+    assert s["last_published_age_hours"] is not None
+
+
 # MOL-444: drift guard — every PostState must be counted in RunSummary or explicitly excluded.
 def test_run_summary_every_poststate_accounted(tmp_path):
     from fanops.models import PostState

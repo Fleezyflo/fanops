@@ -343,7 +343,7 @@ def ffmpeg_clip_cmd(src: str, dst: str, start: float, end: float, aspect: str,
     vf = reframe_filter(aspect, src_w, src_h, top_bias=top_bias, focus=focus, track=track, content_type=content_type)
     if extra_vf:
         vf = f"{vf},{extra_vf}"
-    return ["ffmpeg", "-y", "-ss", str(start), "-i", src, "-to", str(end - start),
+    return ["ffmpeg", "-y", "-ss", f"{start:.3f}", "-i", src, "-to", f"{end - start:.3f}",
             "-vf", vf,
             "-c:v", "libx264", "-c:a", "aac", "-movflags", "+faststart", dst]
 

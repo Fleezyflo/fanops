@@ -45,7 +45,7 @@ def test_cut_grows_short_window_to_long_band(tmp_path, mocker, monkeypatch):
     out = str(cfg.clips / "r_long.9x16.mp4")
     ok, secs = render_account_cut(led, cfg, "mom_1", aspect=Fmt.r9x16, profile="long", hook="H", out_path=out)
     assert ok is True and Path(out).exists() and secs == 28.0   # P3: returns the realized window seconds
-    assert _to_of(captured["cmd"]) == "28.0"            # LONG floor 28 grows the 4s window (output-relative -to)
+    assert _to_of(captured["cmd"]) == "28.000"          # LONG floor 28 grows the 4s window (output-relative -to)
 
 def test_cut_grows_short_window_to_short_band(tmp_path, mocker, monkeypatch):
     monkeypatch.setenv("FANOPS_VISUAL_START", "0")
@@ -55,7 +55,7 @@ def test_cut_grows_short_window_to_short_band(tmp_path, mocker, monkeypatch):
     mocker.patch("fanops.clip.subprocess.run", side_effect=_capturing_run(captured))
     out = str(cfg.clips / "r_short.9x16.mp4")
     render_account_cut(led, cfg, "mom_1", aspect=Fmt.r9x16, profile="short", hook="H", out_path=out)
-    assert _to_of(captured["cmd"]) == "8.0"             # SHORT floor 8
+    assert _to_of(captured["cmd"]) == "8.000"           # SHORT floor 8
 
 def test_cut_burns_the_hook(tmp_path, mocker, monkeypatch):
     monkeypatch.setenv("FANOPS_VISUAL_START", "0")

@@ -19,6 +19,7 @@ from fanops.errors import ToolchainMissingError, DownloadError
 
 MEDIA_EXT = {".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi",
              ".jpg", ".jpeg", ".png", ".heic", ".mp3", ".wav", ".m4a"}
+_STILL_EXT = {".jpg", ".jpeg", ".png", ".heic"}
 _PII = re.compile(r"passport|\bid\b|\bvisa\b|licen[cs]e|agreement|contract|invoice|"
                   r"\bnda\b|tax|bank|ssn|emirates.?id|national.?id", re.IGNORECASE)
 
@@ -252,6 +253,9 @@ def stage_inbox_candidates(cfg: Config, *, origin: str = "drop",
             continue
         if is_excluded(f.name):
             counts.excluded += 1; get_logger(cfg)("ingest", f.name, "pii_excluded")
+            archive_paths.append(f); continue
+        if origin_kind == "native" and f.suffix.lower() in _STILL_EXT:
+            counts.skipped += 1; get_logger(cfg)("ingest", f.name, "skipped", why="native_still")
             archive_paths.append(f); continue
         if not has_video_stream(f):
             counts.skipped += 1; get_logger(cfg)("ingest", f.name, "skipped", why="no_video_stream")

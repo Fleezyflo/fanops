@@ -200,6 +200,7 @@ def request_captions(led: Ledger, cfg: Config, clip_id: str,
     # (-> vet_hashtags floats it ahead of the frozen rank) AND the prompt shows it. Empty corpus -> no key.
     corpora = {a.handle: list(getattr(a, "hashtag_corpus", []) or []) for a in accounts.accounts} if accounts is not None else {}
     genres = _genres_for_accounts(accounts, cfg)
+    store = load_store(cfg)
     payload = {
         "clip_id": clip_id,
         "transcript_excerpt": moment.transcript_excerpt,
@@ -216,6 +217,7 @@ def request_captions(led: Ledger, cfg: Config, clip_id: str,
         # transfer (v2 follow-up): a borrowed cross-surface STYLE for a COLD recipient — separate
         # key so own-signal reads as primary; absent unless the flag is on AND a donor qualifies.
         **({"learned_hooks_transferred": transferred} if transferred else {}),
+        **({"hashtag_store": store} if store is not None else {}),
     }
     write_request(cfg, kind="captions", key=clip_id, payload=payload)
     led.set_clip_state(clip_id, ClipState.captions_requested)

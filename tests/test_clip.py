@@ -20,11 +20,18 @@ def _vf_of(cmd: list[str]) -> str:
     """Return the value passed to the (last) -vf flag in an ffmpeg cmd list."""
     return cmd[cmd.index("-vf") + 1]
 
+def test_ffmpeg_clip_cmd_submicrosecond_window_avoids_scientific_notation():
+    # L02: ffmpeg -ss/-to args must stay decimal (never scientific notation) for sub-microsecond windows.
+    cmd = ffmpeg_clip_cmd("/s/x.mp4", "/o/c.mp4", 0.0000001, 0.0000002, "9:16", src_w=1920, src_h=1080)
+    joined = " ".join(cmd)
+    assert "e-" not in joined.lower() and "e+" not in joined.lower()
+    assert "0.000" in joined
+
 def test_clip_cmd_seek_is_output_relative_and_reframes():
     cmd = ffmpeg_clip_cmd("/s/x.mp4", "/o/c.mp4", 1.5, 8.0, "9:16", src_w=1920, src_h=1080)
     # -ss BEFORE -i (fast seek), -to AFTER -i (output-relative, version-stable)
     assert cmd.index("-ss") < cmd.index("-i") < cmd.index("-to")
-    assert "1.5" in cmd and "6.5" in cmd          # -to is output-relative DURATION (end-start), not absolute end
+    assert "1.500" in cmd and "6.500" in cmd          # -to is output-relative DURATION (end-start), not absolute end
     assert "8.0" not in cmd                        # FIX F39: absolute end must NOT be emitted (caused version-fragile cuts)
     assert any("crop" in p or "scale" in p for p in cmd)
     assert cmd[-1] == "/o/c.mp4"
@@ -245,6 +252,31 @@ def test_render_burns_subtitles_when_enabled(tmp_path, mocker, monkeypatch):
     ass_files = list(cfg.clips.glob("*.ass"))
     assert ass_files, "expected a written .ass subtitle file"
     assert ass_files[0].read_text(encoding="utf-8").startswith("[Script Info]")
+
+
+def test_render_null_transcript_start_skips_sub_captions(tmp_path, mocker, monkeypatch):
+    # L03: a transcript segment with null start/end must fail-open — clip renders, caption events skipped.
+    monkeypatch.setenv("FANOPS_BURN_SUBS", "1")
+    monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
+                          width=1920, height=1080,
+                          transcript=[{"start": None, "end": 3.0, "text": "bad segment"},
+                                      {"start": 3.0, "end": 6.0, "text": "good line"}]))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7",
+                          start=0, end=7, reason="r", state=MomentState.decided, hook="hook"))
+    captured = {}
+    def fake_run(cmd, **kw):
+        captured["cmd"] = cmd
+        if not str(cmd[-1]).startswith("-"):
+            out = Path(cmd[-1]); out.parent.mkdir(parents=True, exist_ok=True); out.write_bytes(b"CLIP")
+        class R: returncode = 0; stderr = ""; stdout = ""
+        return R()
+    mocker.patch("fanops.clip.subprocess.run", side_effect=fake_run)
+    led, clip = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
+    assert clip.state is ClipState.rendered
+    ass = next(cfg.clips.glob("*.ass")).read_text(encoding="utf-8")
+    assert "good line" in ass and "bad segment" not in ass
 
 
 def test_render_failopen_when_no_textfilter(tmp_path, mocker, monkeypatch):
