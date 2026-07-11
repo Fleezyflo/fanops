@@ -18,6 +18,35 @@ permissions:
   contents: read
 
 jobs:
+  dependency-audit:
+    name: dependency audit (pip-audit)
+    timeout-minutes: 15
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements/ci-unit.txt
+      - name: Install from hashed lock (MOL-195 — same as ci.yml unit)
+        run: |
+          python -m pip install --upgrade pip
+          pip install --require-hashes -r requirements/ci-unit.txt
+          pip install -e . --no-deps
+      - name: pip-audit (advisory — MOL-194 Phase A; not a merge gate until baseline triaged)
+        continue-on-error: true
+        run: |
+          python -m pip install pip-audit
+          pip-audit --desc | tee pip-audit-report.txt
+      - name: Upload pip-audit report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nightly-pip-audit-report
+          path: pip-audit-report.txt
+          if-no-files-found: ignore
+
   asr-smoke:
     name: "[asr] toolchain smoke (nightly)"
     timeout-minutes: 45
