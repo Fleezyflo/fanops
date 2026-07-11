@@ -120,6 +120,14 @@ def register_schedule_routes(app, cfg):
         rows_full = views.posted_library(led, cfg, delivery=delivery if delivery else None)
         rows = views.posted_library(led, cfg, account=account, batch=batch, source=source,
                                     delivery=delivery if delivery else None, failure_kind=failure)
+        if not delivery or delivery == "all":
+            ledger_ids = {r.post_id for r in rows_full}
+            archive_rows = views.posted_archive_rows(cfg, ledger_ids=ledger_ids)
+            rows_full = list(rows_full) + archive_rows
+            rows = list(rows) + [r for r in archive_rows
+                                 if (account is None or r.account == account)
+                                 and (batch is None or r.batch_id == batch)
+                                 and (source is None or views.clip_source_of(led, r.clip_id) == source)]
         failure_rollup = views.failure_rollup(led) if (delivery == "failed") else None
         rollup = views.posted_batch_rollup(rows) if batch else None     # Face 5: full scoped (pre-slice) per-batch summary
         rows = views.lineage_stats(rows)                  # S6: rank repost/crosspost siblings within the filtered set (returns NEW rows)

@@ -3,6 +3,7 @@ suggested-time rationale), the all-time Posted library (PostedRow + lineage stat
 and the cross-account Lift/learning view (LiftRow/LiftView). Pure (no HTTP/Flask). Depends on views_common for
 the shared time/batch helpers; never on a sibling surface module (review/cockpit) — the import graph stays acyclic."""
 from __future__ import annotations
+import json
 import logging
 import statistics
 from dataclasses import dataclass, replace
@@ -422,6 +423,7 @@ class PostedRow:
     error_reason: Optional[str] = None      # inflight/failed: last reconcile error (truncated in UI)
     raw_state: Optional[str] = None         # ledger PostState.value for detail rows
     failure_kind: Optional[str] = None      # failed rows: rate_limit | oversize | bad_payload | poll_error | unknown
+    is_archived: bool = False               # R2: row from 06_published/ supplement (read-only, no repost/crosspost)
 
 
 _FAILURE_KINDS = ("rate_limit", "oversize", "bad_payload", "poll_error", "transient", "unknown")
@@ -586,6 +588,36 @@ def posted_library(led: Ledger, cfg: Config, *, account: Optional[str] = None, b
                       posted_via=classify_post_delivery(p), submission_id=p.submission_id,
                       error_reason=(p.error_reason or "")[:120] or None, raw_state=p.state.value,
                       failure_kind=classify_failure(p) if p.state in (PostState.failed, PostState.error) else None) for p in posts]
+
+
+def posted_archive_rows(cfg: Config, *, ledger_ids: set[str] | None = None) -> list[PostedRow]:
+    """Read-only supplement: day-bucketed 06_published/*.json records not already in the ledger. FAIL-OPEN."""
+    skip = ledger_ids or set()
+    out: list[PostedRow] = []
+    root = cfg.published
+    try:
+        if not root.is_dir(): return []
+        paths = sorted(root.glob("*/*.json"))
+    except Exception as exc:
+        from fanops.log import get_logger
+        get_logger(cfg)("posted_archive", "-", "glob_error", err=str(exc)[:160])
+        return []
+    for ap in paths:
+        try:
+            rec = json.loads(ap.read_text(encoding="utf-8"))
+        except Exception as exc:
+            from fanops.log import get_logger
+            get_logger(cfg)("posted_archive", "-", "parse_error", path=str(ap)[-80:], err=str(exc)[:120])
+            continue
+        pid = rec.get("post_id") or ap.stem
+        if pid in skip: continue
+        url = rec.get("public_url")
+        out.append(PostedRow(post_id=pid, clip_id=rec.get("clip_id") or "", account=rec.get("account") or "",
+                             platform=rec.get("platform") or "", caption=rec.get("caption") or "",
+                             public_url=url, scheduled_time=rec.get("scheduled_time"),
+                             lift_score=None, published_at=rec.get("published_at"),
+                             posted_via=_classify_channel(url), is_archived=True))
+    return out
 
 
 def posted_batch_rollup(rows) -> Optional[dict]:

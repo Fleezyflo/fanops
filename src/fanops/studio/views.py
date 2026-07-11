@@ -20,7 +20,7 @@ from fanops.timeutil import parse_iso
 from fanops.studio import views_common   # module alias for build_system_strip's health/banner delegates (D13b)
 from fanops.studio.views_common import (IMMINENT_THRESHOLD_MINUTES, GRID_PAGE_SIZE, paginate, TERM_DEFS, term_def, accounts_in, _imminent, suggest_time, lineage_maps, clip_source_of, source_universe_for_clips)  # noqa: F401
 from fanops.studio.views_review import (SurfacePost, ReviewCard, ProvChip, provenance_chips, _surface, source_choices, _empty_cell_reason, review_matrix, account_lanes, _STATE_TO_BUCKET, review_buckets, review_counts, review_progress, source_universe, account_pivot_rows, group_review_by_account_surface, surface_for_post, group_review_by_batch, awaiting_moment_count, review_awaiting_by_account)  # noqa: F401
-from fanops.studio.views_results import (ScheduleRow, ScheduleLanes, LiftRow, publish_readiness, explain_suggested_time, schedule_rows, schedule_lanes, due_publish_plan, DuePublishPlan, schedule_cockpit, ScheduleCockpit, inflight_watch, InflightWatchRow, group_schedule_by_account, PostedRow, posted_library, posted_batch_rollup, lineage_stats, account_median_deltas, metric_peaks, bar_pct, group_posted_by_day, lift_rows, classify_post_delivery, failure_rollup, operator_error, failure_label)  # noqa: F401
+from fanops.studio.views_results import (ScheduleRow, ScheduleLanes, LiftRow, publish_readiness, explain_suggested_time, schedule_rows, schedule_lanes, due_publish_plan, DuePublishPlan, schedule_cockpit, ScheduleCockpit, inflight_watch, InflightWatchRow, group_schedule_by_account, PostedRow, posted_library, posted_archive_rows, posted_batch_rollup, lineage_stats, account_median_deltas, metric_peaks, bar_pct, group_posted_by_day, lift_rows, classify_post_delivery, failure_rollup, operator_error, failure_label)  # noqa: F401
 from fanops.studio.views_live import (LiveMediaRow, live_library, live_library_scope)  # noqa: F401  # MOL-27: the "viewed there, not authored here" Live library read-model (imported_media only, disjoint from Posted)
 from fanops.studio.views_library import (STAGES, library_catalog, source_pipeline_map)  # noqa: F401
 
@@ -93,7 +93,9 @@ class HomeBatch:                       # Face 2 fu: one batch row for the Home e
     state: str
     created_at: Optional[str]
     posts_born: int
-    is_zero_result: bool               # bool(targets) and posts_born == 0 — a mis-targeted batch that birthed nothing
+    sources_in_batch: int = 0
+    is_emptied: bool = False             # 0 sources AND 0 posts — post-reset shell, not a silent-fail run
+    is_zero_result: bool = False         # sources > 0 AND 0 posts — a run that birthed nothing
 
 
 def review_candidates(cfg: Config) -> list[dict]:
@@ -758,10 +760,13 @@ def home_batches(cfg: Config) -> list[HomeBatch]:
         led = Ledger.load(cfg)
         out = []
         for b in getattr(led, "batches", {}).values():
+            sources = sum(1 for s in led.sources.values() if getattr(s, "batch_id", None) == b.id)
             born = sum(1 for p in led.posts.values() if p.batch_id == b.id)
+            is_emptied = sources == 0 and born == 0
+            is_zero_result = sources > 0 and born == 0
             out.append(HomeBatch(id=b.id, name=b.name, targets=list(b.target_accounts), state=b.state.value,
-                                 created_at=b.created_at, posts_born=born,
-                                 is_zero_result=bool(b.target_accounts) and born == 0))   # [] ALL-sentinel is NEVER zero-result
+                                 created_at=b.created_at, posts_born=born, sources_in_batch=sources,
+                                 is_emptied=is_emptied, is_zero_result=is_zero_result))
         out.sort(key=lambda h: (h.created_at or "", h.id), reverse=True)
         return out
     except Exception as exc:

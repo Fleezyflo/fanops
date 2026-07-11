@@ -110,6 +110,6 @@
     {% endif %}
   </section>
   {% if batches %}<details class="home-batches"{% if batches|length <= 5 %} open{% endif %}><summary>Batches{{ term('batch') }} ({{ batches|length }})</summary>{# MOL-45: full plural word first, then the ⓘ mark — the term macro renders only the mark, so a leading term() left "es (N)" #}<ul>
-  {% for b in batches %}<li><a href="{{ url_for('review', batch=b.id) }}">{{ b.name }}</a> · {{ b.posts_born }} posts{% if b.is_zero_result %} <span class="badge warn zero-result-badge" data-warn="zero-result">⚠ 0</span>{% endif %}</li>{% endfor %}
+  {% for b in batches %}<li><a href="{{ url_for('review', batch=b.id) }}">{{ b.name }}</a> · {{ b.posts_born }} posts{% if b.is_emptied %} <a class="badge muted emptied-badge" href="{{ url_for('posted') }}">emptied</a>{% elif b.is_zero_result %} <span class="badge warn zero-result-badge" data-warn="zero-result">⚠ 0</span>{% endif %}</li>{% endfor %}
   </ul></details>{% endif %}
 {% endblock %}

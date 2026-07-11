@@ -148,7 +148,8 @@ def test_home_batch_deep_link_and_zero_result(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg, tmp_path)
     from fanops.batches import create_batch
     led = Ledger.load(cfg)
-    create_batch(led, name="Ghost", target_accounts=["ghost"], now_iso="2026-06-22T00:00:00.000001Z"); led.save()
+    ghost = create_batch(led, name="Ghost", target_accounts=["ghost"], now_iso="2026-06-22T00:00:00.000001Z")
+    led.add_source(Source(id="s_ghost", source_path="/v.mp4", batch_id=ghost.id)); led.save()
     html = _client(cfg).get("/").data.decode()
     assert "/review?batch=" in html and 'data-warn="zero-result"' in html   # deep-link + the silent-fail badge
 
