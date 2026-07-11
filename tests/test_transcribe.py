@@ -87,7 +87,7 @@ def test_transcribe_selects_fw_model_by_source_duration(tmp_path, mocker, monkey
         return R()
     mocker.patch("fanops.transcribe.subprocess.run", side_effect=fake_run)
     transcribe_source(led, cfg, "short"); transcribe_source(led, cfg, "long")
-    assert models == ["large-v3", "medium"]
+    assert models == ["large-v3", "small"]
 
 def test_transcribe_passes_asr_language_to_fw_runner(tmp_path, mocker, monkeypatch):
     # FANOPS_ASR_LANGUAGE -> cfg.asr_language -> fw_cmd --language, threaded through transcribe_source

@@ -230,14 +230,27 @@ def test_asr_model_defaults_medium_and_respects_env(monkeypatch, tmp_path):
     assert Config(root=tmp_path).asr_model == "large-v3"
 
 def test_asr_model_for_scales_with_source_duration(monkeypatch, tmp_path):
-    # UNAWARE-CONFIG FIX: with no operator pin the ASR model scales with SOURCE LENGTH — a short source
-    # affords the most accurate model (large-v3, cheap on little audio); a long (or unknown) source stays
-    # on the faster default (medium) so a long transcription lands under transcribe._WHISPER_TIMEOUT.
+    # MOL-481: timeout-aware selection — short sources upgrade to large-v3 when RTF fits; long sources
+    # step down past medium when duration*RTF would blow the whisper timeout budget on CPU.
     monkeypatch.delenv("FANOPS_ASR_MODEL", raising=False)
     cfg = Config(root=tmp_path)
     assert cfg.asr_model_for(60) == "large-v3"        # 1-min source -> accuracy is free
-    assert cfg.asr_model_for(3600) == "medium"        # 1-hour source -> stay fast/safe
-    assert cfg.asr_model_for(None) == "medium"        # unknown duration -> the safe long default
+    assert cfg.asr_model_for(3600) == "small"         # 1-hour source -> medium too slow on CPU
+    assert cfg.asr_model_for(None) == "small"         # unknown duration -> conservative fit
+
+def test_asr_model_for_no_medium_inversion_on_long_cpu(monkeypatch, tmp_path):
+    # Incident regression: medium @ RTF~1.6 cannot finish a 30min source within the 1.5x timeout.
+    monkeypatch.delenv("FANOPS_ASR_MODEL", raising=False)
+    cfg = Config(root=tmp_path)
+    for dur in (1801, 2000, 2700):
+        assert cfg.asr_model_for(float(dur)) != "medium"
+
+def test_asr_model_for_downgrades_on_timeout_attempts(monkeypatch, tmp_path):
+    monkeypatch.delenv("FANOPS_ASR_MODEL", raising=False)
+    cfg = Config(root=tmp_path)
+    base = cfg.asr_model_for(3600.0)
+    assert cfg.asr_model_for(3600.0, timeout_attempts=1) != base
+    assert cfg.asr_model_for(3600.0, timeout_attempts=2) == "base"
 
 def test_asr_model_for_honors_operator_pin_over_duration(monkeypatch, tmp_path):
     # An explicit FANOPS_ASR_MODEL is the operator's call and wins verbatim, regardless of duration.

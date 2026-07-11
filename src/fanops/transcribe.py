@@ -13,6 +13,7 @@ import contextlib, json, subprocess, sys
 from pathlib import Path
 from fanops.config import Config
 from fanops.ledger import Ledger
+from fanops.log import get_logger
 from fanops.models import SourceState
 from fanops.stage_lock import stage_lock
 from fanops.vocals import isolate_vocals
@@ -238,16 +239,16 @@ def _produce_transcript(led: Ledger, cfg: Config, source_id: str, src, out_dir: 
             # lose vocal isolation only in this rare failure case — fail-open to the raw mix).
             try: Path(voc).replace(target); audio = str(target)
             except OSError: audio = src.source_path
-    # Engine: prefer faster-whisper at a DURATION-AWARE model (cfg.asr_model_for(src.duration): a short
-    # source -> large-v3 for accuracy, a long/unknown source -> medium to land under _WHISPER_TIMEOUT; an
-    # explicit FANOPS_ASR_MODEL pin overrides). Fail open to the legacy `whisper` CLI when the [asr] extra is
-    # absent — and that fallback is ALSO duration-aware now (cfg.whisper_model_for, audit c0-f2): the CI /
-    # air-gapped path no longer transcribes a 10s clip and a 40min source at the identical fixed model.
-    # Both write JSON named by the INPUT stem (engine-agnostic parse).
+    # Engine: prefer faster-whisper at a DURATION-AWARE model (cfg.asr_model_for with timeout_attempts
+    # for retry downgrade after prior kills). Fail open to the legacy `whisper` CLI when the [asr] extra is
+    # absent — and that fallback is ALSO duration-aware (cfg.whisper_model_for, audit c0-f2).
+    attempts = int(src.meta.get("whisper_timeout_attempts", 0))
     if _fw_available():
-        cmd = fw_cmd(audio, str(out_dir), model or cfg.asr_model_for(src.duration), cfg.asr_language)
+        used_model = model or cfg.asr_model_for(src.duration, timeout_attempts=attempts)
+        cmd = fw_cmd(audio, str(out_dir), used_model, cfg.asr_language)
     else:
-        cmd = whisper_cmd(audio, str(out_dir), _resolve_model(model or cfg.whisper_model_for(src.duration)), cfg.asr_language)
+        used_model = model or cfg.whisper_model_for(src.duration, timeout_attempts=attempts)
+        cmd = whisper_cmd(audio, str(out_dir), _resolve_model(used_model), cfg.asr_language)
     timeout_s = _whisper_timeout(src.duration)
     try:
         r = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=timeout_s)
@@ -263,8 +264,13 @@ def _produce_transcript(led: Ledger, cfg: Config, source_id: str, src, out_dir: 
         # whisper HUNG (corrupt audio, model wedged) and was killed at the timeout. Same graceful
         # shape as the branches above/below; `transcribed` stays unset so a recovered source
         # re-runs on the next pass. The stage_lock in the caller releases on this return.
+        kills = attempts + 1
+        src.meta["whisper_timeout_attempts"] = kills
+        get_logger(cfg)("transcribe", source_id, "timeout_killed", model=used_model, timeout_s=timeout_s,
+                        duration=src.duration or "")
         src.state = SourceState.error
-        src.error_reason = f"whisper timed out after {timeout_s:.0f}s"
+        suffix = " (attempt 3/3)" if kills >= 3 else ""
+        src.error_reason = f"whisper timed out after {timeout_s:.0f}s{suffix}"
         return led
     js = out_dir / f"{Path(audio).stem}.json"        # whisper names its json by the INPUT stem
     if not js.exists():
