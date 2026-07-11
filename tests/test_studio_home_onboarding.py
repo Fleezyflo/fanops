@@ -68,10 +68,20 @@ def test_zero_result_batch_flagged_prominently(tmp_path):
     from fanops.batches import create_batch
     cfg = Config(root=tmp_path); _accounts(cfg, [_active()])
     led = Ledger.load(cfg)
-    create_batch(led, name="Ghost", target_accounts=["ghost"], now_iso="2026-06-22T00:00:00.000001Z"); led.save()
+    ghost = create_batch(led, name="Ghost", target_accounts=["ghost"], now_iso="2026-06-22T00:00:00.000001Z")
+    led.add_source(Source(id="s_ghost", source_path="/v.mp4", batch_id=ghost.id)); led.save()
     html = _client(cfg).get("/").data.decode()
     assert 'data-warn="zero-result-summary"' in html          # the list-level prominent warning
     assert 'data-warn="zero-result"' in html                  # AND the per-row badge stays
+
+
+def test_emptied_batch_no_zero_result_summary(tmp_path):
+    from fanops.batches import create_batch
+    cfg = Config(root=tmp_path); _accounts(cfg, [_active()])
+    led = Ledger.load(cfg)
+    create_batch(led, name="Shell", target_accounts=["ghost"], now_iso="2026-06-22T00:00:00.000001Z"); led.save()
+    html = _client(cfg).get("/").data.decode()
+    assert 'data-warn="zero-result-summary"' not in html    # emptied shell is not a zero-result alarm
 
 
 def test_no_zero_result_summary_when_all_batches_match(tmp_path):

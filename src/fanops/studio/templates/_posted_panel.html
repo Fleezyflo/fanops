@@ -33,7 +33,7 @@
       <div class="posted-accent" aria-hidden="true"></div>
       {% if active_delivery == 'failed' %}<label class="posted-check"><input type="checkbox" name="ids" value="{{ r.post_id }}"></label>{% endif %}
       <div class="posted-main">
-        <div class="posted-head">{{ (r.published_at or r.scheduled_time) | localdt or '—' }} · <strong>{{ r.account }}</strong> {{ r.platform }} {{ state_badge(r.posted_via, testid='posted-channel-chip') }}{% if r.batch_id %} <a class="muted batch-chip" href="{{ url_for('posted', batch=r.batch_id, account=active) }}">{{ r.batch_id }}</a>{% endif %}{% if r.failure_kind %} <span class="chip fail-kind">{{ r.failure_kind | failure_label }}</span>{% endif %}</div>
+        <div class="posted-head">{{ (r.published_at or r.scheduled_time) | localdt or '—' }} · <strong>{{ r.account }}</strong> {{ r.platform }} {{ state_badge(r.posted_via, testid='posted-channel-chip') }}{% if r.is_archived %} <span class="chip muted">Archived</span>{% endif %}{% if r.batch_id %} <a class="muted batch-chip" href="{{ url_for('posted', batch=r.batch_id, account=active) }}">{{ r.batch_id }}</a>{% endif %}{% if r.failure_kind %} <span class="chip fail-kind">{{ r.failure_kind | failure_label }}</span>{% endif %}</div>
         <p class="clamp-1">{% if r.variant_hook %}✦ {{ r.variant_hook }} · {% endif %}{{ r.caption or '—' }}</p>
         <div class="posted-primary">
           {% if r.posted_via == 'failed' %}<span class="err">{{ (r.error_reason or 'failed') | operator_error(kind=r.failure_kind) }}</span>
@@ -47,7 +47,7 @@
           <span>Saves {{ metric(r.saves, peaks.saves) }} · Shares {{ metric(r.shares, peaks.shares) }} · Ret {{ metric(r.retention, peaks.retention) }} · Reach {{ metric(r.reach, peaks.reach) }} {{ lineage(r) }}</span>
         </details>
         {% endif %}
-        {% if r.posted_via in ('live', 'dryrun') %}
+        {% if r.posted_via in ('live', 'dryrun') and not r.is_archived %}
         <form class="inline" hx-post="{{ url_for('do_repost_post', post_id=r.post_id, account=active, batch=active_batch|default(none)) }}" hx-target="#posted-body" hx-swap="outerHTML"><button type="submit" class="ghost">Post again</button></form>{# MOL-51: infrequent utility → tertiary ghost (class-only, form/hx unchanged) #}
         <form class="inline posted-crosspost-one" hx-post="{{ url_for('do_crosspost_to_account', clip_id=r.clip_id, account=active, batch=active_batch|default(none)) }}" hx-target="#posted-body" hx-swap="outerHTML">
           <input name="target_account" placeholder="target @handle" size="14">

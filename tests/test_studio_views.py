@@ -757,10 +757,22 @@ def test_home_batches_flags_zero_result(tmp_path):
     cfg = Config(root=tmp_path)
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
     led = Ledger.load(cfg)
-    create_batch(led, name="Ghost", target_accounts=["ghost"], now_iso="2026-06-22T00:00:00.000001Z")   # non-empty target, 0 posts
+    ghost = create_batch(led, name="Ghost", target_accounts=["ghost"], now_iso="2026-06-22T00:00:00.000001Z")
+    led.add_source(Source(id="s_ghost", source_path="/v.mp4", batch_id=ghost.id))   # sources > 0, 0 posts -> true zero-result
     create_batch(led, name="All", target_accounts=[], now_iso="2026-06-22T00:00:00.000002Z"); led.save()  # [] ALL-sentinel
     by_name = {h.name: h for h in home_batches(cfg)}
-    assert by_name["Ghost"].is_zero_result is True and by_name["All"].is_zero_result is False
+    assert by_name["Ghost"].is_zero_result is True and by_name["Ghost"].is_emptied is False
+    assert by_name["Ghost"].sources_in_batch == 1
+    assert by_name["All"].is_zero_result is False
+
+def test_home_batches_flags_emptied_shell(tmp_path):
+    cfg = Config(root=tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    led = Ledger.load(cfg)
+    create_batch(led, name="Shell", target_accounts=["ghost"], now_iso="2026-06-22T00:00:00.000001Z")   # batch only, 0 sources
+    led.save()
+    hb = home_batches(cfg)[0]
+    assert hb.is_emptied is True and hb.is_zero_result is False and hb.sources_in_batch == 0
 
 def test_home_batches_fail_open(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path)
