@@ -153,7 +153,7 @@ def test_publish_uploads_media_once_and_advances(tmp_path, monkeypatch, mocker):
     _queued(led, cfg, pid="p1", cid="clip_1", when="2020-01-01T00:00:00Z")
     _queued(led, cfg, pid="p2", cid="clip_1", when="2020-01-01T00:00:00Z")  # same clip, 2 posts (no media_urls -> ensure runs)
     mocker.patch("fanops.post.get_media_uploader",
-                 return_value=lambda cfg_, path, **kw: "https://cdn.postiz.test/clip_1.mp4")
+                 return_value=lambda cfg_, path, **kw: "img1|https://cdn.postiz.test/clip_1.mp4")
     _stub_ok_poster(mocker, cfg)
     # spy ensure_clip_media to prove it runs once per post (the cache-survival property)
     import fanops.post.run as run
@@ -161,7 +161,7 @@ def test_publish_uploads_media_once_and_advances(tmp_path, monkeypatch, mocker):
     publish_due(cfg, now="2026-06-02T18:00:00Z")
     led = Ledger.load(cfg)
     assert led.posts["p1"].state is PostState.published and led.posts["p2"].state is PostState.published
-    assert led.posts["p1"].media_urls[0] == "https://cdn.postiz.test/clip_1.mp4"
+    assert led.posts["p1"].media_urls[0] == "img1|https://cdn.postiz.test/clip_1.mp4"
     assert spy.call_count == 2 and led.clips["clip_1"].media_url
     assert led.posts["p1"].media_urls == led.posts["p2"].media_urls
 
@@ -179,7 +179,7 @@ def test_publish_uploads_clip_media_once_across_posts_live(tmp_path, monkeypatch
     _queued(led, cfg, pid="p2", cid="shared", when="2020-01-01T00:00:00Z")  # same clip, 2nd post
     uploads = []
     def fake_upload(cfg_, path, **kw):
-        uploads.append(str(path)); return "https://cdn.postiz.test/shared.mp4"
+        uploads.append(str(path)); return "img1|https://cdn.postiz.test/shared.mp4"
     mocker.patch("fanops.post.get_media_uploader", return_value=fake_upload)
     import fanops.post.run as run
     class _OkPoster:
@@ -192,7 +192,7 @@ def test_publish_uploads_clip_media_once_across_posts_live(tmp_path, monkeypatch
     led = Ledger.load(cfg)
     assert len(uploads) == 1                                   # the clip uploaded ONCE, not once-per-post
     assert led.posts["p1"].state is PostState.published and led.posts["p2"].state is PostState.published
-    assert led.posts["p1"].media_urls == led.posts["p2"].media_urls == ["https://cdn.postiz.test/shared.mp4"]
+    assert led.posts["p1"].media_urls == led.posts["p2"].media_urls == ["img1|https://cdn.postiz.test/shared.mp4"]
 
 def test_publish_idempotent_skips_already_submitted(tmp_path, monkeypatch, mocker):
     _live(monkeypatch)                                  # live backend so the 1st pass actually publishes
@@ -446,9 +446,7 @@ def test_publish_due_no_deadlock_self_manages_its_lock(tmp_path, monkeypatch, mo
 
 
 def test_publish_due_malformed_scheduled_time_is_per_post_failure_not_escape(tmp_path, monkeypatch):
-    # AUDIT M2 / review finding: a malformed/timezone-naive scheduled_time on disk (hand-edit,
-    # corruption, older schema) must be a per-post FAILURE (mark THIS post failed, keep going), never
-    # an uncaught escape. publish_due must NOT raise here.
+    # M07: parseable naive past is due (canonical UTC); only truly unparseable times fail the post.
     monkeypatch.delenv("FANOPS_POSTER", raising=False)
     cfg = Config(root=tmp_path)
     led = Ledger.load(cfg)
@@ -456,12 +454,12 @@ def test_publish_due_malformed_scheduled_time_is_per_post_failure_not_escape(tmp
     led.add_clip(Clip(id="c1", parent_id="m1", path=str(f), state=ClipState.captioned))
     led.add_post(Post(id="bad", parent_id="c1", account="a", account_id="1",
                       platform=Platform.instagram, caption="x", state=PostState.queued,
-                      scheduled_time="2026-06-01 09:00", public_url="dryrun://bad"))   # naive: no 'T', no tz -> _parse trips
+                      scheduled_time="2026-06-01 09:00", public_url="dryrun://bad"))   # naive but parseable -> due when past
     led.save()
     publish_due(cfg, now="2026-06-02T00:00:00Z")            # must NOT raise
     led = Ledger.load(cfg)
-    assert led.posts["bad"].state is PostState.failed
-    assert "schedule" in (led.posts["bad"].error_reason or "").lower()
+    assert led.posts["bad"].state is not PostState.failed
+    assert led.posts["bad"].state is PostState.queued   # dryrun: not distributed, stays queued
 
 
 def test_publish_due_garbage_scheduled_time_does_not_escape(tmp_path, monkeypatch):
@@ -497,7 +495,7 @@ def test_publish_uploads_variant_file_media_on_live_backend(tmp_path, monkeypatc
     led.save()
     uploaded = []
     def fake_upload(cfg_, path, **kw):
-        uploaded.append(str(path)); return "https://cdn.postiz.test/v.mp4"
+        uploaded.append(str(path)); return "img1|https://cdn.postiz.test/v.mp4"
     # run.py routes the variant file:// upload through get_media_uploader(cfg, backend)(cfg, path);
     # patch that resolver (bound into run.py's namespace) to a fake uploader.
     mocker.patch("fanops.post.run.get_media_uploader", return_value=fake_upload)
@@ -511,8 +509,8 @@ def test_publish_uploads_variant_file_media_on_live_backend(tmp_path, monkeypatc
     publish_due(cfg, now="2026-06-02T18:00:00Z")
     led = Ledger.load(cfg)
     assert uploaded == [str(vfile)]                                    # the VARIANT file, not the parent clip
-    assert sent["media_urls"] == ["https://cdn.postiz.test/v.mp4"]     # the poster sees https, never file://
-    assert led.posts["pv"].media_urls == ["https://cdn.postiz.test/v.mp4"]  # persisted -> a retry never re-uploads
+    assert sent["media_urls"] == ["img1|https://cdn.postiz.test/v.mp4"]     # the poster sees postiz composite, never file://
+    assert led.posts["pv"].media_urls == ["img1|https://cdn.postiz.test/v.mp4"]  # persisted -> a retry never re-uploads
     assert led.posts["pv"].state is PostState.published
 
 

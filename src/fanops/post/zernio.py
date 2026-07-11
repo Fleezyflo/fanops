@@ -234,8 +234,8 @@ class ZernioPoster:
             try:
                 resp = requests.post(f"{self.base}/posts", headers=self.headers, json=payload, timeout=30)
             except requests.exceptions.RequestException as exc:
-                # Pre-send connection blips are safe to retry; ambiguous post-send drops park immediately.
-                if isinstance(exc, (requests.exceptions.ConnectionError, requests.exceptions.ConnectTimeout)) and attempt < _MAX_RETRIES - 1:
+                # Pre-send ConnectTimeout blips are safe to retry; ConnectionError may mean the body landed — park immediately (H01).
+                if isinstance(exc, requests.exceptions.ConnectTimeout) and attempt < _MAX_RETRIES - 1:
                     time.sleep(delay + random.uniform(0, delay)); delay *= 2; continue
                 # Body may have landed on Zernio (the response, not the request, was lost) — ambiguous,
                 # park for reconcile, never re-POST into a possible second live post (no idempotency key).

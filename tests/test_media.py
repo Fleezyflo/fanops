@@ -17,12 +17,12 @@ def test_ensure_clip_media_uploads_once(tmp_path, monkeypatch, mocker):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     f = cfg.clips / "clip_1.mp4"; f.parent.mkdir(parents=True, exist_ok=True); f.write_bytes(b"V")
     led.add_clip(Clip(id="clip_1", parent_id="m", path=str(f), state=ClipState.queued))
-    up = mocker.patch("fanops.post.get_media_uploader", return_value=lambda c, p, **_kw: "https://cdn/clip_1.mp4")
+    up = mocker.patch("fanops.post.get_media_uploader", return_value=lambda c, p, **_kw: "img1|https://cdn/clip_1.mp4")
     u1 = ensure_clip_media(led, cfg, "clip_1")
     u2 = ensure_clip_media(led, cfg, "clip_1")
-    assert u1 == u2 == "https://cdn/clip_1.mp4"
+    assert u1 == u2 == "img1|https://cdn/clip_1.mp4"
     assert up.call_count == 1                          # uploader resolved once, then the URL is cached on the clip
-    assert led.clips["clip_1"].media_url == "https://cdn/clip_1.mp4"
+    assert led.clips["clip_1"].media_url == "img1|https://cdn/clip_1.mp4"
 
 def test_ensure_clip_media_dryrun_branch_returns_file_url(tmp_path, monkeypatch):
     # The dryrun branch of ensure_clip_media (poster_backend==dryrun) returns a file:// url and caches it.

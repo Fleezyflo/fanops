@@ -46,7 +46,7 @@ _STUCK_AFTER = timedelta(hours=6)   # H4: a still-parked post older than this pa
 # publish_due never re-drives a non-`queued` post). Escalate it to needs_reconcile so the digest's reconcile
 # column owns it instead of a perpetual in-flight-submit. 6h covers any real slow submit; 24h is unambiguous.
 _SUBMITTING_ESCALATE_AFTER = timedelta(hours=24)
-# Sprint 4: submitting with no submission_id cannot be polled — heal to queued after grace.
+# Sprint 4: submitting with no submission_id cannot be polled — park needs_reconcile after grace (H02).
 _SUBMITTING_HEAL_AFTER = timedelta(minutes=15)
 # XC-2: a needs_reconcile post still only-poll-erroring this long past its schedule on a never-real token can
 # never auto-resolve (a fanops_ token 404s forever). Stamp an explicit GIVE-UP terminal marker (verify by hand)
@@ -447,10 +447,11 @@ def _default_get_status(cfg: Config, led: Optional[Ledger] = None) -> GetStatus:
 
 
 def heal_stranded_submitting(cfg: Config, *, now: Optional[datetime] = None) -> int:
-    """Crash-stranded `submitting` posts with no submission_id -> `queued` after a grace window.
+    """Crash-stranded `submitting` posts with no submission_id -> `needs_reconcile` after a grace window.
     Nothing was pollable; publish_due never re-drives submitting. Returns count healed."""
     now = now or datetime.now(timezone.utc)
     healed = 0
+    reason = ("healed: submitting->needs_reconcile (no submission_id — ambiguous live; reconcile by hand)")
     with Ledger.transaction(cfg) as led:
         for p in list(led.posts.values()):
             if p.state is not PostState.submitting:
@@ -460,9 +461,10 @@ def heal_stranded_submitting(cfg: Config, *, now: Optional[datetime] = None) -> 
             age = _parked_age(p, now)
             if age is None or age < _SUBMITTING_HEAL_AFTER:
                 continue
-            led.posts[p.id] = p.model_copy(update={"state": PostState.queued, "error_reason": None})
+            led.posts[p.id] = p.model_copy(update={"state": PostState.needs_reconcile,
+                                                    "error_reason": reason})
             healed += 1
-            get_logger(cfg)("reconcile", p.id, "healed: submitting->queued", reason="no_submission_id")
+            get_logger(cfg)("reconcile", p.id, "healed: submitting->needs_reconcile", reason="no_submission_id")
     return healed
 
 

@@ -92,6 +92,23 @@ def _aware_utc(ts) -> "datetime | None":
     return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
 
 
+def schedule_utc(ts) -> "datetime | None":
+    """Parse a post's scheduled_time into aware UTC, or None on absent/garbage. Naive values are canonical UTC."""
+    return _aware_utc(ts)
+
+
+def is_scheduled_due(post, cutoff: datetime) -> bool:
+    """Pure schedule gate: True when post.scheduled_time parses and is <= cutoff. No ledger writes."""
+    if not (getattr(post, "scheduled_time", None) or "").strip():
+        return False
+    dt = schedule_utc(post.scheduled_time)
+    if dt is None:
+        return False
+    if cutoff.tzinfo is None:
+        cutoff = cutoff.replace(tzinfo=timezone.utc)
+    return dt <= cutoff
+
+
 def to_local_display(ts, *, cfg=None) -> str:
     """A stored UTC ISO time -> a friendly LOCAL string 'YYYY-MM-DD HH:MM TZ' in the operator's
     configured tz (cfg.operator_tz, IANA name). cfg=None falls back to the system tz for back-compat

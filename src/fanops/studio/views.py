@@ -441,14 +441,8 @@ def _publish_mode_label(cfg: Config) -> str:
 
 
 def _post_is_due(p, now: datetime) -> bool:
-    if p.state is not PostState.queued:
-        return False
-    if not p.scheduled_time:
-        return True
-    try:
-        return parse_iso(p.scheduled_time) <= now
-    except Exception:
-        return False
+    from fanops.timeutil import is_scheduled_due
+    return p.state is PostState.queued and is_scheduled_due(p, now)
 
 
 def _post_live_today(p, now: datetime) -> bool:
