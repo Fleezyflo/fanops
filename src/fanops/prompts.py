@@ -363,9 +363,10 @@ def caption_prompt(payload: dict) -> str:
         if transferred else ""
     )
     genres = [s.get("genre") for s in surfaces if s.get("genre")]
+    store = payload.get("hashtag_store")
     seen_menu: set[str] = set(); menu: list[str] = []
     for g in dict.fromkeys(genres or [None]):             # None -> rap default floor; union when mixed niches
-        for t in vetted_menu(genre=g):
+        for t in vetted_menu(store=store, genre=g):
             if t not in seen_menu: seen_menu.add(t); menu.append(t)
     menu_json = json.dumps(menu, ensure_ascii=False)
     pick_rule = ("Pick up to 4 tags by REACH × how well each fits THIS clip — choose ONLY from the menu "

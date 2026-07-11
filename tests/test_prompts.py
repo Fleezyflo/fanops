@@ -2,6 +2,14 @@
 from fanops.prompts import moment_pick_prompt, moment_hook_prompt, caption_prompt
 from fanops.models import MomentDecision, MomentHookDecision, CaptionSet
 
+def test_caption_prompt_includes_store_only_tag_in_menu():
+    # L09: when request_captions carries a live hashtag_store, caption_prompt must surface store-only tags.
+    store = ["#storeonlywinner", "#second"]
+    out = caption_prompt({"clip_id": "c1", "language": "en", "guidance": "", "transcript_excerpt": "x",
+                          "hashtag_store": store,
+                          "surfaces": [{"surface": "a/instagram", "platform": "instagram"}]})
+    assert "#storeonlywinner" in out
+
 def test_prompt_does_not_ask_for_request_id():
     # MOL-167: the model must never be asked to echo request_id/source_id — the gate stamps both.
     pick = moment_pick_prompt({"duration": 42.0, "transcript": [], "signal_peaks": [],
