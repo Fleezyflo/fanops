@@ -10,7 +10,8 @@ from fanops.ledger import Ledger
 from fanops.models import (Source, Moment, Clip, MomentPick, MomentState, ClipState, PostState,
                            SourceState, Fmt)
 from tests.test_persona_fixtures import ensure_archetype_personas
-from fanops.moments import (request_moments, ingest_moments, request_moment_hooks, ingest_moment_hooks)
+from fanops.moments import (request_moments, ingest_moments, request_moment_hooks, ingest_moment_hooks,
+                            _hook_gate_key)
 from fanops.crosspost import crosspost_clips
 from fanops.studio.actions import approve_posts
 from fanops.agentstep import response_path, latest_request_id
@@ -61,7 +62,7 @@ def _ingest_picks(led, cfg, source_id, picks_by_owner):
 def _decide_hooks(led, cfg, source_id, hooks, accounts):
     led = request_moment_hooks(led, cfg, source_id, accounts=accounts)
     for m in [m for m in led.moments.values() if m.parent_id == source_id and m.state is MomentState.picked]:
-        key = f"{source_id}.{m.content_token}"
+        key = _hook_gate_key(source_id, m)
         rid = latest_request_id(cfg, "moment_hooks", key)
         dec = screen_model_text(MomentHookDecision(request_id=rid, hook=hooks.get(m.content_token)))
         response_path(cfg, "moment_hooks", key).write_text(dec.model_dump_json())

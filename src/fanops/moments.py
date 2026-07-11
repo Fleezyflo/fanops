@@ -10,7 +10,7 @@ from fanops.ledger import Ledger
 from fanops.models import (Moment, MomentRequest, MomentDecision, MomentPick, MomentState, SourceState,
                            MomentHookRequest, MomentHookDecision)
 from fanops.ids import child_id
-from fanops.agentstep import write_request, read_response, latest_request_id, discard_gates_for, clear_attempts, gate_keys_for
+from fanops.agentstep import write_request, read_response, latest_request_id, discard_gates_for, discard_gate, clear_attempts, gate_keys_for
 from fanops.hookcheck import is_weak_hook
 from fanops.keyframes import extract_keyframes
 from fanops.bands import band_for
@@ -98,6 +98,10 @@ def _owned_moment_id(source_id: str, owner: str | None, token: str) -> str:
     if owner is None:
         return child_id("moment", source_id, token)
     return child_id("moment", source_id, f"{owner}\x1f{token}")
+
+def _hook_gate_key(source_id: str, m: Moment) -> str:
+    owner = (m.affinities or [None])[0]
+    return f"{source_id}.{owner}.{m.content_token}" if owner else f"{source_id}.{m.content_token}"
 
 def _peak_in_window(p, cs: float, ce: float) -> bool:
     """True iff a signal peak's timecode falls in [cs,ce]. Fail-open PER PEAK: a malformed peak (not a
@@ -505,14 +509,17 @@ def request_moment_hooks(led: Ledger, cfg: Config, source_id: str, accounts=None
     # P4(c): cross-surface union of gated winning hook STYLES (the SAME signal caption uses). [] when the
     # flag is off / accounts is None / on any scorer error (fail-open).
     styles = proven_hook_styles(led, cfg, accounts)
-    band = band_for(cfg.clip_profile)
     guidance = load_guidance(cfg)
     for m in list(led.moments.values()):
         if m.parent_id != source_id or m.state is not MomentState.picked:
             continue
-        key = f"{source_id}.{m.content_token}"
+        key = _hook_gate_key(source_id, m)
         if latest_request_id(cfg, "moment_hooks", key) is not None:
             continue                                # write-ONCE: never re-stamp an existing (pending/answered) gate
+        owner = (m.affinities or [None])[0]
+        if owner:
+            discard_gate(cfg, "moment_hooks", f"{source_id}.{m.content_token}")
+        band = band_for(m.clip_profile or cfg.clip_profile)
         cs, ce = fit_window(m.start, m.end, src.duration or 0.0, lo=band.lo, hi=band.hi)   # the cut the renderer makes
         env_peaks = [p for p in (src.signal_peaks or []) if _peak_in_window(p, cs, ce)]
         if m.segments:
@@ -562,7 +569,7 @@ def ingest_moment_hooks(led: Ledger, cfg: Config, source_id: str, accounts=None)
     # partial promotion, so the dedup below always sees the WHOLE source at once (order-independent).
     decisions: dict[str, MomentHookDecision] = {}
     for m in picked:
-        dec = read_response(cfg, "moment_hooks", f"{source_id}.{m.content_token}", MomentHookDecision)
+        dec = read_response(cfg, "moment_hooks", _hook_gate_key(source_id, m), MomentHookDecision)
         if dec is None:
             return led                              # not all hooks in yet -> leave the source picks_decided
         decisions[m.id] = dec
@@ -595,7 +602,7 @@ def ingest_moment_hooks(led: Ledger, cfg: Config, source_id: str, accounts=None)
                 hook = None                         # wrong language → ships CLEAN; Review can restore
         if hook:
             used.add(hook.lower()); cluster_used.add(hook.lower())
-            clear_attempts(cfg, "moment_hooks", f"{source_id}.{m.content_token}")
+            clear_attempts(cfg, "moment_hooks", _hook_gate_key(source_id, m))
         led.moments[m.id] = m.model_copy(update={"hook": hook, "hook_removed": hook_removed,
                                                  "hook_frames_unread": bool(getattr(dec, "hook_frames_unread", False)),  # AGENT-9
                                                  "state": MomentState.decided})
