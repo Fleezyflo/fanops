@@ -108,16 +108,23 @@ def test_post_analyzed_without_url_raises():
         _make_post(PostState.analyzed, public_url=None)
 
 
-def test_post_retired_without_url_raises():
-    """RED: retired is the lifecycle's archival terminal — same invariant applies."""
-    with pytest.raises(ValidationError):
-        _make_post(PostState.retired, public_url=None)
+def test_post_retired_without_url_constructs_ok(tmp_path):
+    """RED: retired is a lifecycle archival terminal — it may legitimately lack a permalink (a queued
+    base post superseded by a stitch never shipped). Only published/analyzed require a URL."""
+    p = _make_post(PostState.retired, public_url=None)
+    assert p.state is PostState.retired
+    assert p.public_url is None
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    led.add_post(p)
+    led.save()
+    assert Ledger.load(cfg).posts[p.id].state is PostState.retired
 
 
 def test_post_queued_without_url_constructs_ok():
     """RED (firewall): non-terminal states MUST stay constructible without a URL. The invariant
-    is SCOPED to published/analyzed/retired — queued/submitting/submitted/awaiting_approval are
-    pre-permalink states by design (a queued post can't have a permalink yet)."""
+    is SCOPED to published/analyzed — queued/submitting/submitted/awaiting_approval/retired are
+    pre-permalink or archival states by design."""
     p = _make_post(PostState.queued, public_url=None)
     assert p.state is PostState.queued
     assert p.public_url is None

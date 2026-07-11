@@ -360,7 +360,7 @@ class Post(BaseModel):
 
     @model_validator(mode="after")
     def _enforce_published_url_invariant(self) -> "Post":
-        # R1: PostState.published / analyzed / retired is a TERMINAL SUCCESS state. Its meaning is "the
+        # R1: PostState.published / analyzed is a TERMINAL SUCCESS state. Its meaning is "the
         # operator has a permalink they can verify" — not just "the backend acknowledged". Bind that meaning
         # at the type level so no door (DryRunPoster.publish, _publish_one, actions.mark_published,
         # cli.cmd_resolve, a stray Post(...) constructor) can produce the ghost row Post(state=published,
@@ -368,13 +368,13 @@ class Post(BaseModel):
         # operator say "I can't see them" — they SHIPPED to dryrun and the Posted tub had nothing to render.
         # A terminal-positive row therefore requires a REAL permalink (dryrun-boundary M3: a dryrun post
         # never reaches a terminal state — it halts `queued` at the publish_due boundary — so there is no
-        # 'dryrun://' escape any more). failed/error/etc are NEGATIVE terminals and may legitimately lack a
-        # URL (a pre-network error has nothing to point at), so they're NOT gated here.
+        # 'dryrun://' escape any more). failed/error/retired/etc are NEGATIVE or archival terminals and may
+        # legitimately lack a URL, so they're NOT gated here.
         if self.state in _POST_TERMINAL_REQUIRES_URL:
             if not (self.public_url or "").strip():
                 raise ValueError(
                     f"Post(id={self.id!r}, state={self.state.value}) requires a non-empty public_url — "
-                    f"'published'/'analyzed'/'retired' mean the operator has a real permalink. A backend "
+                    f"'published'/'analyzed' mean the operator has a real permalink. A backend "
                     f"that can't return one MUST park in needs_reconcile until the reconciler back-fills it "
                     f"(R1 invariant)."
                 )
@@ -383,7 +383,7 @@ class Post(BaseModel):
 
 # R1: the terminal-positive set — states that imply "publish landed; here's a permalink".
 # Defined at module scope so the @model_validator above can reference it cleanly.
-_POST_TERMINAL_REQUIRES_URL = frozenset({PostState.published, PostState.analyzed, PostState.retired})
+_POST_TERMINAL_REQUIRES_URL = frozenset({PostState.published, PostState.analyzed})
 
 
 def is_real_submission_id(sid: Optional[str]) -> bool:
