@@ -8,7 +8,9 @@ import re
 import sys
 from pathlib import Path
 
-_PASSED_RE = re.compile(r"(\d+) passed(?:, \d+ (?:skipped|failed|error))* in ([\d.]+)s")
+_PASSED_RE = re.compile(
+    r"(\d+) passed(?:, \d+ (?:skipped|failed|error|deselected|warnings?))* in ([\d.]+)s(?: \([\d:]+\))?"
+)
 _SKIPPED_RE = re.compile(r"(\d+) skipped in ([\d.]+)s")
 
 _STEP_LABELS = {"unit": "unit pytest", "e2e_integration": "e2e integration", "e2e_slow": "e2e slow"}
