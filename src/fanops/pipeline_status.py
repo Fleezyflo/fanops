@@ -119,6 +119,7 @@ class SourceBacklogRow:
     bucket: str          # actionable | blocked_on_gates | recoverable | inventory
     wait_line: str | None
     block_reason: str | None
+    artifacts: str | None = None
 
 
 @dataclass(frozen=True)
@@ -147,6 +148,7 @@ def _source_bucket(cfg: Config, led, source_id: str, s) -> str:
 def source_backlog(led, cfg: Config) -> SourceBacklog:
     """Canonical projection: asset inventory vs actionable backlog. Every consumer (Studio, CLI, doctor)
     must derive source counts from here — never re-count raw ledger states."""
+    from fanops.artifacts import artifact_summary
     rows: list[SourceBacklogRow] = []
     counts = {"actionable": 0, "blocked_on_gates": 0, "recoverable": 0, "inventory": 0}
     for sid, s in sorted(led.sources.items()):
@@ -158,7 +160,9 @@ def source_backlog(led, cfg: Config) -> SourceBacklog:
         br = s.error_reason if s.state in _RECOVERABLE else None
         if bucket == "blocked_on_gates" and wl and wl.startswith("wait=error:"):
             br = wl.split("wait=error:", 1)[-1]
-        rows.append(SourceBacklogRow(id=sid, state=s.state.value, bucket=bucket, wait_line=wl, block_reason=br))
+        art = artifact_summary(cfg, sid) if bucket == "recoverable" else None
+        rows.append(SourceBacklogRow(id=sid, state=s.state.value, bucket=bucket, wait_line=wl,
+                                     block_reason=br, artifacts=art))
     return SourceBacklog(actionable=counts["actionable"], blocked_on_gates=counts["blocked_on_gates"],
                        recoverable=counts["recoverable"], inventory=counts["inventory"], rows=rows)
 

@@ -287,6 +287,58 @@ def test_advance_rollback_recovers_warm_artifacts(tmp_path, monkeypatch, mocker)
     assert len(asr_calls) == after_p1, "whisper re-ran — the warm artifact was not recovered after rollback"
 
 
+def test_advance_auto_resumes_error_source_with_warm_transcript(tmp_path, monkeypatch, mocker):
+    # Source quarantined after whisper timeout with transcript JSON on disk: next advance() adopts
+    # transcribed/signalled without a second ASR invocation.
+    monkeypatch.delenv("FANOPS_POSTER", raising=False)
+    cfg = Config(root=tmp_path)
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": [
+        {"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}]}))
+    vid = cfg.inbox / "vid.mp4"
+    _put(vid, b"V")
+    asr_calls = []
+    def fake(cmd, **kw):
+        joined = " ".join(cmd)
+        if _is_asr(cmd):
+            asr_calls.append(tuple(cmd))
+            outdir = Path(cmd[cmd.index("--output_dir") + 1]); outdir.mkdir(parents=True, exist_ok=True)
+            (outdir / f"{Path(cmd[-1]).stem}.json").write_text(json.dumps(
+                {"language": "en", "segments": [{"start": 14.0, "end": 18.0, "text": "they slept on me"}]}))
+            class R: returncode=0; stderr=""; stdout=""
+            return R()
+        if cmd[0] == "ffprobe":
+            class R:
+                returncode=0; stderr=""
+                stdout = "video" if "codec_type" in joined else "1920\n1080\n20.0\n"
+            return R()
+        if cmd[0] == "ffmpeg" and "null" in cmd:
+            class R: returncode=0; stdout=""; stderr="silence_end: 16.0 | silence_duration: 1.0"
+            return R()
+        if not str(cmd[-1]).startswith("-"):
+            out = Path(cmd[-1]); out.parent.mkdir(parents=True, exist_ok=True); out.write_bytes(b"X")
+        class R: returncode=0; stderr=""; stdout=""
+        return R()
+    for mod in ("transcribe", "signals", "clip", "ingest"):
+        mocker.patch(f"fanops.{mod}.subprocess.run", side_effect=fake)
+    advance(cfg, base_time="2026-06-02T18:00:00Z")
+    after_first = len(asr_calls)
+    assert after_first >= 1
+    src = next(iter(Ledger.load(cfg).sources.values()))
+    with Ledger.transaction(cfg) as led:
+        s = led.sources[src.id]
+        led.sources[src.id] = s.model_copy(update={"state": SourceState.error,
+                                                    "error_reason": "TimeoutExpired: whisper timed out after 600s",
+                                                    "transcript": None, "meta": {"transcribed": False}})
+    transcript = cfg.agent_io / "transcripts" / f"{Path(src.source_path).stem}.json"
+    assert transcript.exists()
+    advance(cfg, base_time="2026-06-02T18:00:00Z")
+    assert len(asr_calls) == after_first, "whisper re-ran on auto-resume — warm transcript not adopted"
+    s2 = Ledger.load(cfg).sources[src.id]
+    assert s2.state is not SourceState.error
+    assert s2.state.value in ("transcribed", "signalled", "moments_requested")
+
+
 def test_advance_persists_progress_when_crosspost_raises(tmp_path, monkeypatch, mocker):
     # AUDIT M2 (hardened, NOT merely subsumed by B1): a raise from the volatile crosspost stage
     # must NOT discard the pass's earlier in-memory progress. Before this guard, a crosspost raise

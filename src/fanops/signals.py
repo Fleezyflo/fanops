@@ -197,6 +197,11 @@ def detect_signals(led: Ledger, cfg: Config, source_id: str, *, in_lock: bool = 
     try:
         sidecar.parent.mkdir(parents=True, exist_ok=True)
         sidecar.write_text(json.dumps({"v": _SIDECAR_V, "peaks": peaks, "duration": src.duration}, default=str))
+        try:
+            from fanops.artifacts import stamp_stage
+            rel = str(sidecar.relative_to(cfg.agent_io))
+            stamp_stage(cfg, source_id, "signals", artifact=rel, schema=_SIDECAR_V, sha256=src.sha256)
+        except (OSError, ValueError): pass
     except OSError:
         pass
     return led

@@ -67,7 +67,9 @@ _FORCE_RESUMABLE = (SourceState.moments_decided, SourceState.retired, SourceStat
 def _force_reset_to_catalogued(led: Ledger, cfg: Config, source_id: str, s) -> None:
     from fanops.agentstep import discard_gates_for
     from fanops.transcribe import purge_source_artifacts
-    purge_source_artifacts(cfg, source_id, s.source_path)
+    clip_ids = [c.id for c in led.clips.values()
+                if (mom := led.moments.get(c.parent_id)) and mom.parent_id == source_id]
+    purge_source_artifacts(cfg, source_id, s.source_path, clip_ids=clip_ids)
     discard_gates_for(cfg, "moments", source_id)
     discard_gates_for(cfg, "moment_hooks", f"{source_id}.")
     led.reconcile_moments(source_id, {})
@@ -99,6 +101,28 @@ def resume_source(led: Ledger, source_id: str, *, from_stage: str = "auto", forc
         s.meta["transcribed"] = False
     s.error_reason = None
     return True
+
+def reconcile_source_progress(led: Ledger, cfg: Config, log) -> Ledger:
+    """At advance txn entry: adopt warm artifacts + auto-resume transient error/moments_empty sources."""
+    from fanops.artifacts import adopt_warm_artifacts, infer_resume_stage, is_transient_error
+    for sid, s in list(led.sources.items()):
+        if s.origin_kind == "third_party":
+            continue
+        was_resumable = s.state in _RESUMABLE
+        err_reason = s.error_reason
+        led = adopt_warm_artifacts(led, cfg, sid)
+        if not was_resumable:
+            continue
+        s = led.sources[sid]
+        if s.state is SourceState.error and not is_transient_error(err_reason):
+            continue
+        stage = infer_resume_stage(cfg, led, sid)
+        if stage:
+            led.sources[sid] = s.model_copy(update={"state": SourceState(stage), "error_reason": None})
+            log("pipeline", sid, "auto_resume", resume_at=stage)
+        elif resume_source(led, sid):
+            log("pipeline", sid, "auto_resume", resume_at=led.sources[sid].state.value)
+    return led
 
 def promote_source(led: Ledger, source_id: str) -> bool:
     """Promote a discovered orphan to catalogued (starts the normal pipeline). Returns True iff applied."""
@@ -448,6 +472,7 @@ def advance(cfg: Config, *, base_time: str) -> RunSummary:
         # Self-healing: corrupt gate requests quarantine their owning source to error (recoverable).
         from fanops.pipeline_status import heal_corrupt_gates
         heal_corrupt_gates(led, cfg)
+        led = reconcile_source_progress(led, cfg, log)
         # B5/E2: snapshot the already-published post ids at transaction ENTRY so the summary's
         # published_in_run is a THIS-RUN delta — a post already published when the pass opened is in
         # `before` and is NOT counted (set difference against the exit state). Ingest already ran (above)

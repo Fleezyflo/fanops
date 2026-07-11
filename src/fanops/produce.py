@@ -28,6 +28,7 @@ from fanops.transcribe import transcribe_source
 from fanops.signals import detect_signals
 from fanops.clip import render_aspects_for
 from fanops.stitch_render import prewarm_approved_stitches
+from fanops.artifacts import infer_resume_stage
 
 
 @dataclass(frozen=True)
@@ -45,6 +46,30 @@ def _enabled_strategies(cfg: Config) -> set[str]:
     here so produce stays self-contained (a cycle into pipeline.py would land via the import
     side-effect of bringing transcribe/signals/clip back in)."""
     return {k for k, on in (("impact_cut", cfg.impact_cut), ("intro_tease", cfg.intro_tease)) if on}
+
+
+def _prewarm_hook_keyframes(cfg: Config, led: Ledger, source_id: str, *, log) -> None:
+    """Out-of-lock: warm hook-window keyframes for picks_decided sources before moment_hooks."""
+    from fanops.moments import _window_frames
+    s = led.sources.get(source_id)
+    if s is None or s.state is not SourceState.picks_decided:
+        return
+    for m in list(led.moments.values()):
+        if m.parent_id != source_id or m.state is not MomentState.picked:
+            continue
+        try:
+            segs = list(m.segments) if m.segments else None
+            _window_frames(cfg, s, m.start, m.end, segments=segs)
+        except Exception as e:
+            log("produce", source_id, "warn", err=str(e)[:120])
+
+
+def _warm_transcribe(s, resume_at: str | None) -> bool:
+    return s.state is SourceState.catalogued or resume_at in ("transcribed", "signalled")
+
+
+def _warm_signals(s, resume_at: str | None) -> bool:
+    return s.state is SourceState.transcribed or resume_at in ("transcribed", "signalled")
 
 
 def _produce_one(cfg: Config, source_id: str, aspects: set[Fmt], *, log) -> SourceResult:
@@ -72,10 +97,15 @@ def _produce_one(cfg: Config, source_id: str, aspects: set[Fmt], *, log) -> Sour
     s = led.sources.get(source_id)
     if s is None or s.origin_kind == "third_party":
         return SourceResult(source_id, None)             # gone / inert — nothing to produce
+    resume_at: str | None = None
+    if s.state in (SourceState.error, SourceState.moments_empty):
+        resume_at = infer_resume_stage(cfg, led, source_id)
+        if resume_at:
+            log("produce", source_id, "warm_resume", resume_at=resume_at)
     try:
-        if s.state is SourceState.catalogued:
+        if _warm_transcribe(s, resume_at):
             led = transcribe_source(led, cfg, source_id)
-        if led.sources[source_id].state is SourceState.transcribed:
+        if _warm_signals(led.sources[source_id], resume_at):
             led = detect_signals(led, cfg, source_id)
     except Exception as e:
         log("produce", source_id, "warn", err=str(e)[:120])
@@ -88,6 +118,10 @@ def _produce_one(cfg: Config, source_id: str, aspects: set[Fmt], *, log) -> Sour
                 led, _ = render_aspects_for(led, cfg, m.id, aspects=aspects)
             except Exception as e:
                 log("produce", m.id, "warn", err=str(e)[:120])
+    try:
+        _prewarm_hook_keyframes(cfg, led, source_id, log=log)
+    except Exception as e:
+        log("produce", source_id, "warn", err=str(e)[:120])
     return SourceResult(source_id, err)
 
 
