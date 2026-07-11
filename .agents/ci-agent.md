@@ -3,9 +3,9 @@
 Read `AGENTS.md` then `.agents/_shared-guardrails.md` first (how you work). This file is WHAT you own.
 You are the **CI / infra / tooling** lane.
 
-There is no dedicated `fanops-ci` subagent yet, so the orchestrator spawns this lane as a
-**generalPurpose** background `Task` pointed at this brief. Everything in `.agents/_shared-guardrails.md`
-still applies (worktree, TDD where code is involved, push-after-green, orchestrator lands the merge).
+The orchestrator spawns this lane — like every lane — as a **generalPurpose** background task pointed at
+this brief. Everything in `.agents/_shared-guardrails.md` still applies (worktree, TDD where code is
+involved, push-after-green, orchestrator lands the merge).
 
 ## Scope — the files you own
 

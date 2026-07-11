@@ -9,7 +9,7 @@ scoped to "orchestrator only" without also blocking workers. So enforcement live
 gate CAN judge deterministically from the command string / event payload, caller-agnostic:
 
   before-shell (beforeShellExecution):
-    * LAND-to-main (`gh pr merge …`) is DENIED unless every Linear unit the PR carries has a sub-agent
+    * LAND-to-main (`gh pr merge …`) is DENIED unless every unit the PR carries has a sub-agent
       VERIFICATION RECORD (guardrail: the orchestrator cannot land work a sub-agent has not verified).
     * destructive git (`reset --hard`, force-push/direct-push to main, re-cut `checkout -B … origin/main`)
       is DENIED (repo safety, mirrors .githooks/pre-push).
@@ -28,6 +28,10 @@ import argparse, json, os, re, subprocess, sys
 from pathlib import Path
 
 _MOL_RE = re.compile(r"(?i)\bmol-(\d+)\b")
+_SLUG = r"[a-z0-9][a-z0-9-]*"
+_UNIT_TAG_RE = re.compile(rf"(?i)\bunit:\s*({_SLUG})")
+_BRANCH_SLUG_RE = re.compile(rf"^(?:feat|fix)/({_SLUG})", re.I)
+_TITLE_PAREN_RE = re.compile(rf"\(({_SLUG})\)\s*$")
 
 # Paths whose modification would forge a verification record or DISABLE the enforcement itself.
 # Writing to any of these via shell is refused for everyone (workers edit src, never the machinery/state).
@@ -106,11 +110,21 @@ def prefer_units(branch: str, title: str = "", body: str = "") -> list:
 
 
 def unit_ids_from_text(text: str) -> list:
-    """Canonical Linear ids (e.g. MOL-190) found in a branch/PR title/body, de-duped in order."""
+    """Canonical unit ids (e.g. MOL-190 or pipeline-artifact-resume) in branch/PR title/body, de-duped."""
+    text = text or ""
     out, seen = [], set()
-    for m in _MOL_RE.finditer(text or ""):
+    for m in _MOL_RE.finditer(text):
         u = f"MOL-{m.group(1)}"
         if u not in seen: seen.add(u); out.append(u)
+    if out: return out
+    def _add(slug: str):
+        slug = slug.lower()
+        if slug and slug not in seen: seen.add(slug); out.append(slug)
+    for m in _UNIT_TAG_RE.finditer(text): _add(m.group(1))
+    m = _BRANCH_SLUG_RE.match(text.strip())
+    if m: _add(m.group(1))
+    m = _TITLE_PAREN_RE.search(text.strip())
+    if m: _add(m.group(1))
     return out
 
 
@@ -136,9 +150,9 @@ def is_unit_verified(unit_id: str, root) -> tuple:
 def land_decision(unit_ids: list, root) -> tuple:
     """Allow a land only when at least one unit is identified AND every identified unit is verified."""
     if not unit_ids:
-        return False, ("land refused: no Linear unit id found on the PR/branch — cannot confirm a "
-                       "sub-agent verified this work. Tag the unit (MOL-xxx) and have a verifier sub-agent "
-                       "write its record.")
+        return False, ("land refused: no unit id found on the PR/branch — cannot confirm a "
+                       "sub-agent verified this work. Tag the unit (MOL-xxx or Unit: <slug>) and have a "
+                       "verifier sub-agent write its record.")
     for u in unit_ids:
         ok, reason = is_unit_verified(u, root)
         if not ok:
@@ -158,7 +172,7 @@ def append_ledger(root, entry: dict) -> None:
 # ---- I/O wrapper (gh lookup for a PR's units) -------------------------------
 
 def _pr_units(pr_number: str) -> list:
-    """Units a PR carries = MOL ids in its head branch + title + body (best-effort via gh)."""
+    """Units a PR carries = unit ids in its head branch + title + body (best-effort via gh)."""
     try:
         out = subprocess.run(["gh", "pr", "view", pr_number, "--json", "headRefName,title,body"],
                              capture_output=True, text=True, timeout=30)

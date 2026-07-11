@@ -34,9 +34,9 @@ logical change each; commit only files you staged.
 Land authority is centralized to avoid two lanes merging at once (a drift race). Your finish line is:
 `./scripts/check.sh` green → push → open the PR to `main` → wait for CI green → **report to the
 orchestrator: `MOL-xxx CI green, ready to land`**. The orchestrator merges PRs one at a time in
-dependency order and, after each merge, tells the remaining lanes to re-sync. Do **not** run
-`gh pr merge` yourself — `.github/CODEOWNERS` routes merge review to the owner precisely so a lane can't
-self-merge (binding once branch protection requires code-owner review).
+dependency order; when `origin/main` moves under you after a land, re-sync per **Drift** below. Do
+**not** run `gh pr merge` yourself — during a wave the orchestration land-gate refuses any merge of an
+unverified unit, and the serial landing order only exists if exactly one actor (the orchestrator) merges.
 
 ## Stay in your lane — mechanically enforced
 

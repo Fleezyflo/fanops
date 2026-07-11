@@ -42,8 +42,9 @@ python scripts/orchestrate.py done     # the finish line — exits 0 only when e
 ## Notes
 - Enforcement is **off by default** and only turns on for a wave (via `orchestrate.py start`, or by setting
   `FANOPS_ORCHESTRATED=1`), so it never interferes with normal Cursor work or other agents on this repo.
-- If the orchestrator's GitHub token can't merge, the final merge click is yours — everything is still
-  verified and recorded first.
+- Landing is the orchestrator's job, end to end — you never merge. If a merge fails with 403, the
+  agent's GitHub token lacks merge rights on this repo: grant the Cursor GitHub App write/merge access
+  and re-run the wave.
 - Deeper detail (the exact enforcement contract): [`.orchestration/SPEC.md`](.orchestration/SPEC.md).
 
 ## One lander at a time
