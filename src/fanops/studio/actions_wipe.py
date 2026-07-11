@@ -54,6 +54,8 @@ def confirm_wipe(cfg: Config, *, typed: str, token: str = "") -> ActionResult:
     if (token or "").strip() != expected:
         log("ledger_wipe", "-", "wipe_refused_stale_preview")
         return ActionResult(ok=False, error="the preview is stale (the ledger changed) — refresh the preview and try again. Nothing was removed.")
+    led = Ledger.load(cfg)
+    ceiling = ledger_wipe.compute_wipe_set(led, keep_history=True)
     # snapshot FIRST (mandatory, verified restorable) — the wipe cannot proceed without it.
     try:
         snap = Ledger.snapshot(cfg)
@@ -64,7 +66,7 @@ def confirm_wipe(cfg: Config, *, typed: str, token: str = "") -> ActionResult:
         log("ledger_wipe", "-", "wipe_refused_snapshot_unverified")
         return ActionResult(ok=False, error="the pre-wipe snapshot did not verify restorable — refused.")
     try:
-        result = ledger_wipe.execute_wipe(cfg, confirmed=True, snapshot_path=snap)
+        result = ledger_wipe.execute_wipe(cfg, confirmed=True, snapshot_path=snap, plan_ceiling=ceiling)
     except Exception as exc:
         log("ledger_wipe", "-", "wipe_failed", err=str(exc)[:160])
         return ActionResult(ok=False, error=f"wipe failed (snapshot preserved at {snap}): {str(exc)[:160]}")

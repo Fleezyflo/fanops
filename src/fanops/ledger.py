@@ -547,7 +547,8 @@ class Ledger:
         Also restores accounts.json / personas.json sidecars when present in the bundle."""
         store = _resolve_store(cfg)
         src = Path(snapshot_path)
-        store.restore(src)   # standalone — must work even when live db is corrupt
+        with _file_lock(cfg.lock_path):
+            store.restore(src)   # standalone — must work even when live db is corrupt
         _snapshot_restore_control_files(cfg, src)
 
     # ---- idempotent adds (by id) ----

@@ -25,7 +25,7 @@ class SqliteLedgerStore:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(self.db_path, timeout=timeout if timeout is not None else _DEFAULT_LOCK_TIMEOUT)
         conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute("PRAGMA synchronous=FULL")
         conn.executescript(
             "CREATE TABLE IF NOT EXISTS ledger_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);"
             "CREATE TABLE IF NOT EXISTS ledger_rows (map_name TEXT NOT NULL, row_id TEXT NOT NULL,"
@@ -145,6 +145,9 @@ class SqliteLedgerStore:
             dst_conn.close()
         try: os.chmod(tmp, 0o600)
         except OSError: pass
+        for suffix in ("-wal", "-shm"):
+            sidecar = self.db_path.with_name(self.db_path.name + suffix)
+            if sidecar.exists(): sidecar.unlink()
         os.replace(str(tmp), str(self.db_path))
         if relock:
             self._conn = self._open()

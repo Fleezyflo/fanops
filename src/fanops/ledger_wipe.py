@@ -176,18 +176,53 @@ def preview_token(preview_detail: dict) -> str:
     return hashlib.sha256(payload.encode()).hexdigest()[:32]
 
 
+def _cap_plan(computed: WipePlan, ceiling: WipePlan) -> WipePlan:
+    """Intersect a freshly-computed wipe plan with a preview-time ceiling (M17). kept_post_ids is NOT capped."""
+    return WipePlan(
+        post_ids=computed.post_ids & ceiling.post_ids,
+        moment_ids=computed.moment_ids & ceiling.moment_ids,
+        clip_ids=computed.clip_ids & ceiling.clip_ids,
+        source_ids=computed.source_ids & ceiling.source_ids,
+        render_ids=computed.render_ids & ceiling.render_ids,
+        stitch_plan_ids=computed.stitch_plan_ids & ceiling.stitch_plan_ids,
+        batch_ids=computed.batch_ids & ceiling.batch_ids,
+        tag_log_keys=computed.tag_log_keys & ceiling.tag_log_keys,
+        variant_streak_keys=computed.variant_streak_keys & ceiling.variant_streak_keys,
+        kept_post_ids=computed.kept_post_ids,
+    )
+
+
+def _guard_clip_closure(led: Ledger, plan: WipePlan) -> None:
+    """Drop clip_ids (and dependent rows) when a surviving post on that clip is not in plan.post_ids."""
+    safe = {cid for cid in plan.clip_ids if all(
+        p.id in plan.post_ids for p in led.posts.values() if p.parent_id == cid)}
+    if safe == plan.clip_ids: return
+    plan.clip_ids = safe
+    plan.render_ids = {r.id for r in led.renders.values() if r.clip_id in plan.clip_ids}
+    plan.stitch_plan_ids = {st.id for st in led.stitch_plans.values() if st.clip_id in plan.clip_ids}
+    plan.tag_log_keys = {k for k in plan.tag_log_keys if (k.split("|", 1)[-1] if "|" in k else "") in plan.clip_ids}
+
+
+def _wipe_file_manifest(led: Ledger, plan: WipePlan) -> list[str]:
+    """Unique non-empty clip/render paths slated for removal (L19 manifest input)."""
+    paths: set[str] = set()
+    for cid in plan.clip_ids:
+        c = led.clips.get(cid)
+        if c and c.path: paths.add(c.path)
+    for rid in plan.render_ids:
+        r = led.renders.get(rid)
+        if r and r.path: paths.add(r.path)
+    return sorted(paths)
+
+
 def snapshot_is_restorable(snapshot_path: "Path | str") -> bool:
-    """Verify a snapshot file is a LOADABLE ledger image (MOL-32 'verified restorable'): it parses as the
-    on-disk ledger doc. A corrupt / non-JSON / non-ledger file returns False (the wipe must not proceed on
-    an unrestorable snapshot). Read-only, never raises."""
-    import json
+    """Verify a snapshot file is a LOADABLE SQLite ledger image (MOL-32 'verified restorable'): it parses as
+    the on-disk ledger doc. A corrupt / non-SQLite / legacy-JSON file returns False (the wipe must not proceed
+    on an unrestorable snapshot). Read-only, never raises."""
     try:
         src = Path(snapshot_path)
-        if not src.exists():
+        if not src.exists() or src.suffix == ".json":
             return False
-        if src.suffix == ".json":
-            doc = json.loads(src.read_text())
-            return isinstance(doc, dict) and "posts" in doc
         import sqlite3
         conn = sqlite3.connect(f"file:{src}?mode=ro", uri=True)
         try:
@@ -200,14 +235,15 @@ def snapshot_is_restorable(snapshot_path: "Path | str") -> bool:
         return False
 
 
-def execute_wipe(cfg: Config, *, confirmed: bool, snapshot_path: "Optional[Path | str]", keep_history=True) -> dict:
+def execute_wipe(cfg: Config, *, confirmed: bool, snapshot_path: "Optional[Path | str]", keep_history=True,
+                 plan_ceiling: WipePlan | None = None) -> dict:
     """Run the fall-away. GATED, in code:
       - WipeNotConfirmed unless `confirmed` (the explicit operator confirm — mirrors the Go-Live gate).
       - SnapshotRequired unless `snapshot_path` is a VERIFIED-restorable snapshot (MOL-32: cannot run
         without the snapshot succeeding first). The Studio surface takes the snapshot, verifies it, then
         passes it here — so a skip is impossible.
-    Removes EXACTLY compute_wipe_set(led) in a single transaction; returns the removed-count summary.
-    Reversible: Ledger.restore_snapshot(cfg, snapshot_path) brings every removed row back."""
+    Removes EXACTLY the capped compute_wipe_set(led) in a single transaction; returns the removed-count summary.
+    Reversible: Ledger.restore_snapshot(cfg, snapshot_path) brings back only rows present in the snapshot."""
     if not confirmed:
         raise WipeNotConfirmed("the wipe requires an explicit operator confirm")
     if not snapshot_path or not snapshot_is_restorable(snapshot_path):
@@ -215,6 +251,15 @@ def execute_wipe(cfg: Config, *, confirmed: bool, snapshot_path: "Optional[Path 
     removed = {}
     with Ledger.transaction(cfg) as led:
         plan = compute_wipe_set(led, keep_history=keep_history)
+        if plan_ceiling is not None:
+            plan = _cap_plan(plan, plan_ceiling)
+            _guard_clip_closure(led, plan)
+        manifest_paths = _wipe_file_manifest(led, plan)
+        manifest = Path(str(snapshot_path) + ".files.txt")
+        try:
+            manifest.write_text("\n".join(manifest_paths) + ("\n" if manifest_paths else ""))
+        except Exception:
+            logger.warning("wipe file manifest write failed (fail-open, wipe proceeds)", exc_info=True)
         for pid in plan.post_ids: led.posts.pop(pid, None)
         for cid in plan.clip_ids: led.clips.pop(cid, None)
         for mid in plan.moment_ids: led.moments.pop(mid, None)
@@ -228,4 +273,4 @@ def execute_wipe(cfg: Config, *, confirmed: bool, snapshot_path: "Optional[Path 
                    "sources": len(plan.source_ids), "renders": len(plan.render_ids),
                    "stitch_plans": len(plan.stitch_plan_ids), "batches": len(plan.batch_ids),
                    "tag_log": len(plan.tag_log_keys), "variant_streaks": len(plan.variant_streak_keys)}
-    return {"removed": removed, "snapshot": str(snapshot_path)}
+    return {"removed": removed, "snapshot": str(snapshot_path), "manifest": str(manifest)}
