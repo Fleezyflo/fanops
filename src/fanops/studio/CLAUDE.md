@@ -2,7 +2,8 @@
 # src/fanops/studio — Flask cockpit rules
 
 Localhost single-operator UI (`fanops studio`, `127.0.0.1:8787`, no auth by design — don't add CSRF/rate-limit
-tickets; declined as out-of-scope for localhost).
+tickets; declined as out-of-scope for localhost). Template edits hot-reload on refresh; Python (`app.py`, routes,
+actions, views) changes still require a Studio restart.
 
 ## Layer discipline (preserve it on every edit)
 
