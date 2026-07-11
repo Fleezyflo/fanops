@@ -47,6 +47,18 @@ bringing up nodes...
     assert m.parse_pytest_summary(out) == (64, 0.57)
 
 
+def test_parse_passed_with_warning_and_paren_time():
+    m = _import()
+    out = "4226 passed, 1 warning in 83.07s (0:01:23)\n"
+    assert m.parse_pytest_summary(out) == (4226, 83.07)
+
+
+def test_parse_passed_with_deselected():
+    m = _import()
+    out = "17 passed, 4234 deselected in 35.91s\n"
+    assert m.parse_pytest_summary(out) == (17, 35.91)
+
+
 def test_step_fields_unit():
     m = _import()
     assert m.step_fields("unit", 3944, 115.23, xdist=True) == {"unit_pytest_s": 115.23, "test_count": 3944, "xdist": True}
