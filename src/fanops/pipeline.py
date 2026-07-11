@@ -29,7 +29,7 @@ from fanops.digest import write_digest
 from fanops.log import get_logger
 from fanops.agentstep import pending
 from fanops.responder import _SCHEMA as _RESPONDER_SCHEMA   # the answerable-gate registry; GATE_KINDS derives from it
-from fanops.timeutil import parse_iso
+from fanops.timeutil import _aware_utc
 from fanops import produce
 
 def _aspects_for(accts: Accounts) -> set[Fmt]:
@@ -42,13 +42,8 @@ def _enabled_strategies(cfg: Config) -> set[str]:
     return {k for k, on in (("impact_cut", cfg.impact_cut), ("intro_tease", cfg.intro_tease)) if on}
 
 def _parse(ts):
-    # Parse an ISO-8601 scheduled_time (may carry a 'Z') into an aware datetime, or None if
-    # absent/unparseable — never raises, so the heartbeat age computation can't crash a pass.
-    # Defensive None/except wrapper around the shared strict parse_iso (audit (i)).
-    try:
-        return parse_iso(ts) if ts else None
-    except Exception:
-        return None
+    # Parse an ISO-8601 scheduled_time into aware UTC, or None if absent/unparseable — never raises.
+    return _aware_utc(ts)
 
 # MOL-121: stage-aware recovery. `retry-source` used to blanket-reset an errored source to `catalogued`
 # + force a re-transcribe — throwing away a proven transcript to redo a stage that never failed (the
@@ -422,7 +417,7 @@ def _build_summary(cfg: Config, before: set) -> RunSummary:
     led = Ledger.load(cfg)                               # post-publish snapshot, READ-ONLY (no save/lock)
     after = led.posts_in_state(PostState.published)
     published_in_run = len([p for p in after if p.id not in before])
-    newest = max((_parse(p.scheduled_time) for p in after if p.scheduled_time), default=None)
+    newest = max((dt for dt in (_parse(p.scheduled_time) for p in after if p.scheduled_time) if dt is not None), default=None)
     last_published_age_hours = (None if newest is None
                                 else round((datetime.now(timezone.utc) - newest).total_seconds() / 3600, 2))
     nr_posts = led.posts_in_state(PostState.needs_reconcile)
