@@ -758,3 +758,41 @@ def test_run_summary_carries_frames_unread_count(tmp_path):
     led.save()
     s = _build_summary(cfg, before=set())
     assert s["frames_unread"] == 1
+
+
+# MOL-444: drift guard — every PostState must be counted in RunSummary or explicitly excluded.
+def test_run_summary_every_poststate_accounted(tmp_path):
+    from fanops.models import PostState
+    from fanops.pipeline import (_build_summary, _DIGEST_EXCLUDED_STATES, _RUNSUMMARY_NON_STATE_KEYS)
+    summary = _build_summary(Config(root=tmp_path), before=set())
+    state_keys = {k for k in summary if k not in _RUNSUMMARY_NON_STATE_KEYS}
+    for state in PostState:
+        if state in _DIGEST_EXCLUDED_STATES:
+            assert state.value not in state_keys, f"{state.value} excluded but present in RunSummary"
+        else:
+            assert state.value in state_keys, (
+                f"PostState.{state.name} ({state.value}) missing from RunSummary — "
+                f"add a count or list it in _DIGEST_EXCLUDED_STATES")
+    expected = {st.value for st in PostState if st not in _DIGEST_EXCLUDED_STATES}
+    assert state_keys == expected, f"unexpected post-state keys: {state_keys - expected} / {expected - state_keys}"
+
+
+# MOL-440: gave_up posts (needs_reconcile + GAVE UP: prefix) are split out of needs_reconcile.
+def test_run_summary_gave_up_disjoint_from_needs_reconcile(tmp_path):
+    from fanops.models import Post, PostState, Platform
+    from fanops.pipeline import _build_summary
+    from fanops.reconcile import _GIVEUP_PREFIX
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_post(Post(id="nr1", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
+                      caption="x", state=PostState.needs_reconcile, error_reason="timeout after send"))
+    led.add_post(Post(id="gu1", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
+                      caption="x", state=PostState.needs_reconcile,
+                      error_reason=f"{_GIVEUP_PREFIX} unresolved 72h past schedule on a fake token"))
+    led.add_post(Post(id="gu2", parent_id="c", account="a", account_id="1", platform=Platform.tiktok,
+                      caption="y", state=PostState.needs_reconcile,
+                      error_reason=f"{_GIVEUP_PREFIX} operator parked"))
+    led.save()
+    s = _build_summary(cfg, before=set())
+    assert s["gave_up"] == 2
+    assert s["needs_reconcile"] == 1
+    assert s["gave_up"] + s["needs_reconcile"] == 3
