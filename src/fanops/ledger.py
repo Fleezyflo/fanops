@@ -15,6 +15,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 from fanops.config import Config
+from fanops.log import get_logger
 from fanops.errors import ControlFileError, LockBusyError, reason as _reason
 from fanops.models import (Source, Moment, Clip, Post, Render, validate_account_handle,
                            StitchPlan, StitchState, Batch, ImportedMedia,
@@ -515,9 +516,11 @@ class Ledger:
 
     def _drain_deferred_unlinks(self) -> None:
         for path in self._deferred_unlinks:
-            with contextlib.suppress(OSError):
-                if path and os.path.exists(path):
-                    os.remove(path)
+            if path and os.path.exists(path):
+                try: os.remove(path)
+                except OSError as exc:
+                    get_logger(self.cfg)("ledger", "-", "cascade_unlink_failed", level="warning",
+                                         path=path, err=str(exc)[:160])
         self._deferred_unlinks.clear()
 
     # ---- ledger-rebuild M4 (MOL-32): pre-wipe snapshot + rollback ---------------------------------
