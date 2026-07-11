@@ -54,6 +54,27 @@ def test_classify_empty_population(tmp_path):
     r = classify_outcomes(led)
     assert r == {"winners": [], "losers": []}
 
+def test_classify_spares_lift_degraded_bottom_post(tmp_path):
+    led = Ledger.load(Config(root=tmp_path))
+    for pid, lift, degraded in [("hi", 300, False), ("mid", 100, False), ("lo", 0.0, True)]:
+        metrics = {"lift_score": lift}
+        if degraded:
+            metrics["lift_degraded"] = True
+        led.add_post(Post(id=pid, parent_id="c", account="a", account_id="1",
+                          platform=Platform.instagram, caption="x",
+                          state=PostState.analyzed, metrics=metrics, public_url="dryrun://c"))
+    r = classify_outcomes(led, winner_pct=0.34, retire_pct=0.34, lift_floor=20.0)
+    assert r["losers"] == []                        # degraded bottom post spared from autonomous retire()
+
+def test_classify_retires_non_degraded_bottom_post(tmp_path):
+    led = Ledger.load(Config(root=tmp_path))
+    for pid, lift in [("hi", 300), ("mid", 100), ("lo", 0.0)]:
+        led.add_post(Post(id=pid, parent_id="c", account="a", account_id="1",
+                          platform=Platform.instagram, caption="x",
+                          state=PostState.analyzed, metrics={"lift_score": lift}, public_url="dryrun://c"))
+    r = classify_outcomes(led, winner_pct=0.34, retire_pct=0.34, lift_floor=20.0)
+    assert "lo" in r["losers"]                        # same fixture without lift_degraded -> bottom retires
+
 @pytest.mark.integration
 def test_amplify_then_ingest_then_render_produces_new_clip(tmp_path):
     # FIX F60: prove the learning loop's forward half end to end.

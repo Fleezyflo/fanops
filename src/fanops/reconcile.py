@@ -187,7 +187,10 @@ def _ig_rest_verdict(cfg: Config, post, media_id, credentialed_handles, confirm,
         except Exception:
             probe["transport_failed"] = True                 # record the transport error, then let it propagate
             raise                                            # into _graph_get, which fail-softs it to None
-    cand = post.model_copy(update={"media_id": media_id})    # the resolve INPUT is the just-captured releaseId
+    probe_id = (media_id or post.media_id or "").strip() if isinstance(media_id or post.media_id, str) else (media_id or post.media_id)
+    if not probe_id:
+        return _GATE_FAILOPEN
+    cand = post.model_copy(update={"media_id": probe_id})    # the resolve INPUT is the just-captured releaseId
     try:
         res = confirm(cfg, cand, get=_probed_get)
     except Exception:
