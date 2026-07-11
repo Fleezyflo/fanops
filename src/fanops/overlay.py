@@ -220,9 +220,9 @@ def build_supercut_ass(transcript, *, spans: list[tuple[float, float]], hook: st
     events: list[str] = []
     if hook and hook.strip():
         hook_end = min(2.5, assembled_len)
-        fade = f"{{\fad({_HOOK_FADE_MS},{_HOOK_FADE_MS})}}"
+        fade = f"{{\\fad({_HOOK_FADE_MS},{_HOOK_FADE_MS})}}"
         events.append(f"Dialogue: 0,{_fmt_ts(0.0)},{_fmt_ts(hook_end)},HOOK,,0,0,0,,{fade}{_escape_text(hook)}")
-    cap_fade = f"{{\fad({_CAP_FADE_IN_MS},{_CAP_FADE_OUT_MS})}}"
+    cap_fade = f"{{\\fad({_CAP_FADE_IN_MS},{_CAP_FADE_OUT_MS})}}"
     offset = 0.0
     for span_start, span_end in spans:
         s, e = float(span_start), float(span_end)
