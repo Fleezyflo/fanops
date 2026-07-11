@@ -679,6 +679,32 @@ class Ledger:
         else:
             self.moments.pop(moment_id, None)
 
+    def preview_retire_cascade(self, source_id: str) -> dict:
+        """Read-only tally of what retire_source will destroy vs suppress — powers an honest Studio confirm."""
+        from fanops.router import CLEAN_AWAITING
+        delete_moments = delete_clips = retire_moments = 0
+        for mid in {m.id for m in self.moments_of(source_id)}:
+            mom = self.moments.get(mid)
+            if mom is not None and (mom.hook_strategy or "").startswith(CLEAN_AWAITING):
+                continue
+            survived = False; clips_deleted = 0
+            for c in self.clips_of(mid):
+                clip_live = c.state in self._LIVE_CLIP_STATES
+                for p in self.posts_of(c.id):
+                    if clip_live or p.state in self._PROTECTED_POST_STATES:
+                        survived = True
+                if clip_live:
+                    survived = True
+                elif not any(p.state in self._PROTECTED_POST_STATES for p in self.posts_of(c.id)):
+                    clips_deleted += 1
+                else:
+                    survived = True
+            if survived:
+                retire_moments += 1
+            else:
+                delete_moments += 1; delete_clips += clips_deleted
+        return {"delete_moments": delete_moments, "delete_clips": delete_clips, "retire_moments": retire_moments}
+
     # ---- retire (FIX F55 — now observable) ----
     def retire_clip(self, clip_id: str) -> None:
         if clip_id in self.clips:
