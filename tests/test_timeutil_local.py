@@ -25,6 +25,13 @@ def pinned_tz():
         time.tzset()
 
 
+def test_publish_buckets_naive_timestamp_treated_as_utc():
+    # L13: a stored naive ISO time is canonical UTC (_aware_utc) before operator-local bucketing.
+    from fanops.timeutil import publish_buckets
+    class _Cfg: operator_tz = "Etc/GMT-2"   # UTC+2, no DST
+    hour, _ = publish_buckets("2026-06-08T14:00:00", _Cfg())   # 14:00 UTC -> 16:00 local
+    assert hour == 16
+
 def test_display_renders_local_clock(pinned_tz):
     z = "2026-06-08T14:00:00Z"                                  # 14:00 UTC -> 16:00 in UTC+2
     expect = datetime(2026, 6, 8, 14, tzinfo=timezone.utc).astimezone(pinned_tz)
