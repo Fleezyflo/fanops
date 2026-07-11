@@ -1,3 +1,5 @@
+> Frozen 2026-07-11 — invariants map, not auto-synced. When prose and code disagree, the code is right.
+
 # C7: Metrics, Reconcile & Learning
 
 ## Files covered

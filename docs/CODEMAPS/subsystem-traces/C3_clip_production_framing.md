@@ -1,3 +1,5 @@
+> Frozen 2026-07-11 — invariants map, not auto-synced. When prose and code disagree, the code is right.
+
 # C3: Clip Production & Framing
 
 ## Files covered (all 8 read in full)

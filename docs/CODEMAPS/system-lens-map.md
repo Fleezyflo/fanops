@@ -1,3 +1,5 @@
+> Frozen 2026-07-11 — invariants map, not auto-synced. When prose and code disagree, the code is right.
+
 <!-- Generated: 2026-07-03 | Method: source read (large-chunk reads of ~40 src/fanops modules + studio routes + live control files), every claim carries a personally-verified file:line; no prior-conclusion inputs, navigation aids treated as maps not truth | Files read: 41 | Token estimate: ~7800 -->
 # FanOps System Lens Map — three subsystem lenses + cross-cutting gates
 
@@ -90,7 +92,7 @@ holds TWO variables). Table is complete (no sampling):
 | 23 | `FANOPS_BURN_SUBS` | config.py:541 | OFF | Burn transcript captions (hook is separate) |
 | 24 | `FANOPS_AWARE_REFRAME` | config.py:551 | OFF | Global top-third crop bias |
 | 25 | `FANOPS_SUBTITLE_FONT` | config.py:559 | `Arial Unicode MS` | .ass subtitle font |
-| 26 | ~~`FANOPS_CREATIVE_VARIATION`~~ | — | — | **Documentation-only in `config.py`** (no `getenv`); Go-Live still dual-writes `.env` (`golive.py:225`) but per-account hook/render differentiation is intrinsic when `account_casting` is ON — see [fresh-ingestion-trace.md](fresh-ingestion-trace.md) §4 |
+| 26 | ~~`FANOPS_CREATIVE_VARIATION`~~ | — | — | **Documentation-only in `config.py`** (no `getenv`); Go-Live still dual-writes `.env` (`golive.py:225`) but per-account hook/render differentiation is intrinsic when `account_casting` is ON — see [archive/fresh-ingestion-trace.md](archive/fresh-ingestion-trace.md) §4 |
 | 27 | `FANOPS_ACCOUNT_CASTING` | config.py:581 | ON | Per-account moment casting |
 | 28 | `FANOPS_HOOK_ROUTER` | config.py:589 | OFF | Observe-only hook_strategy classifier |
 | 29 | `FANOPS_IMPACT_CUT` | config.py:598 | OFF | Impact-cut stitch producer |
@@ -157,7 +159,7 @@ The ONLY Studio setter of environment variables is the Go-Live tab via `golive._
   `FANOPS_RESPONDER` (250), `FANOPS_CLIP_PROFILE` (292),
   `FANOPS_VARIANT_LEARNING` (306), `FANOPS_VARIANT_AMPLIFY` (315), `FANOPS_VARIANT_UCB` (322),
   `FANOPS_VARIANT_TRANSFER` (333). (`FANOPS_CREATIVE_VARIATION` is dual-written by Go-Live but has no
-  `config.py` reader — documentation-only runtime switch; see fresh-ingestion-trace §4.)
+  `config.py` reader — documentation-only runtime switch; see archive/fresh-ingestion-trace §4.)
 - Non-FANOPS creds (3 static): `POSTIZ_URL` (91), `POSTIZ_API_KEY` (96), `ZERNIO_API_KEY` (136).
 - Dynamic (1): the per-handle `META_GRAPH_TOKEN__<SLUG>` slot (golive.py:390) — counted as one settable
   variable, consistent with the one-slot counting decision in §1.2. `META_IG_USER_ID` is set per-account

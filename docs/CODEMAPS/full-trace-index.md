@@ -1,4 +1,6 @@
-<!-- Generated: 2026-07-07 | Method: deterministic AST extraction (scripts/codemap_extract/) + drift gate (scripts/codemap_drift.py) + hand-verified semantic sync | Files scanned: 109/109 src/fanops/*.py | Token estimate: ~2400 -->
+> Frozen 2026-07-11 — invariants map, not auto-synced. When prose and code disagree, the code is right.
+
+<!-- Generated: 2026-07-07 | Method: deterministic AST extraction (scripts/codemap_extract/) + hand-verified semantic sync | Files scanned: 109/109 src/fanops/*.py | Token estimate: ~2400 -->
 # FanOps Full-Codebase Trace Index
 
 Master index for a zero-omission, function-by-function trace of every module under `src/fanops/`.
@@ -6,7 +8,7 @@ Built in two layers: **deterministic** (AST-parsed structural index → import g
 reverse call graph → ruff lint, all stdlib-only, in `.reports/`) plus **semantic** (10 Sonnet-agent
 traces, one per subsystem cluster, each documenting every function's behavior/side-effects/callers
 with file:line citations, in `docs/CODEMAPS/subsystem-traces/`). This file is the map between them — for
-narrative product/architecture context see [architecture.md](architecture.md) and [data.md](data.md);
+narrative product/architecture context see [archive/architecture.md](archive/architecture.md) and [archive/data.md](archive/data.md);
 this file is the raw coverage ledger and anomaly index.
 
 ## Method & deterministic artifacts
@@ -68,7 +70,7 @@ C10 Studio views ──pure read projections of C1 (Ledger.load, no writes)─�
 C1 (`models.py`/`ledger.py`) is the hub every other cluster reads and writes through — the single
 SQLite/WAL ledger, BEGIN IMMEDIATE-guarded, transactional replace. No cluster talks to another cluster's state directly;
 all cross-cluster communication is mediated by ledger unit state transitions (see
-[data.md](data.md) for the full Source→Moment→Clip→Post lifecycle).
+[archive/data.md](archive/data.md) for the full Source→Moment→Clip→Post lifecycle).
 
 ## Consolidated safety-critical verdicts
 
@@ -179,7 +181,6 @@ index exactly (108/108 modules parsed with zero AST errors).
 ## How to regenerate
 
 ```bash
-python3 scripts/codemap_drift.py          # machine-checkable drift gate (exit 1 = needs sync)
 python3 scripts/codemap_extract/ast_extract.py src > .codemap-cache/structural_index.json
 python3 scripts/codemap_extract/build_graphs.py --index .codemap-cache/structural_index.json --out-dir .codemap-cache
 ruff check src/

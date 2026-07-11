@@ -45,3 +45,7 @@ python scripts/orchestrate.py done     # the finish line — exits 0 only when e
 - If the orchestrator's GitHub token can't merge, the final merge click is yours — everything is still
   verified and recorded first.
 - Deeper detail (the exact enforcement contract): [`.orchestration/SPEC.md`](.orchestration/SPEC.md).
+
+## One lander at a time
+Run **one** orchestrator landing session at a time. Before (re)landing anything, `git fetch` and
+`gh pr view` the target PR — parallel orchestrators have caused double-merges.

@@ -1,3 +1,5 @@
+> Frozen 2026-07-11 — invariants map, not auto-synced. When prose and code disagree, the code is right.
+
 # C9: Studio Backend (Flask App Layer)
 
 ## Files covered (all 17 read in full)

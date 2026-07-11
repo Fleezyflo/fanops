@@ -1,3 +1,5 @@
+> Frozen 2026-07-11 — invariants map, not auto-synced. When prose and code disagree, the code is right.
+
 # C2: Ingest & Source Acquisition
 
 ## Files covered (all 9 read in full, cross-checked against structural_index.json — function/method lists match exactly)

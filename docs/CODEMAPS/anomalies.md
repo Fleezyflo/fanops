@@ -1,3 +1,5 @@
+> Frozen 2026-07-11 — invariants map, not auto-synced. When prose and code disagree, the code is right.
+
 <!-- Generated: 2026-07-03 | Source: 10 exhaustive Sonnet-agent subsystem traces (docs/CODEMAPS/subsystem-traces/C1-C10) cross-referenced against deterministic AST/call-graph analysis (.reports/) | Token estimate: ~1400 -->
 # FanOps Anomaly Ledger
 
