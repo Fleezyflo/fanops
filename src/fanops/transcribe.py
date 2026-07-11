@@ -135,19 +135,22 @@ def _segment(s: dict) -> dict:
     return seg
 
 def purge_source_artifacts(cfg: Config, source_id: str, source_path: str, *,
-                           clip_ids: list[str] | None = None) -> None:
+                           clip_ids: list[str] | None = None, preserve_vocals: bool = False) -> None:
     """MOL-471: delete on-disk transcribe/signals caches for a source so a force-retry cannot adopt stale
     JSON. Idempotent — missing paths are fine. Demucs vocal stem dirs live under transcripts/vocals/.
-    Also clears framing, keyframes, manifests, and optional clip render fingerprints."""
+    Also clears framing, keyframes, manifests, and optional clip render fingerprints.
+    MOL-482: when preserve_vocals=True, keep the demucs stem mp3 + htdemucs dir (whisper-only retry)."""
     import shutil
     stem = Path(source_path).stem
     out_dir = cfg.agent_io / "transcripts"
-    for p in (out_dir / f"{stem}.json", out_dir / f"{stem}.mp3", cfg.agent_io / "signals" / f"{source_id}.json",
+    for p in (out_dir / f"{stem}.json", cfg.agent_io / "signals" / f"{source_id}.json",
               cfg.agent_io / "manifests" / f"{source_id}.json",
               cfg.agent_io / "framing" / f"{source_id}.detect.json"):
         with contextlib.suppress(FileNotFoundError): p.unlink()
-    demucs_stem = out_dir / "vocals" / _DEFAULT_DEMUCS_MODEL / stem
-    if demucs_stem.exists(): shutil.rmtree(demucs_stem, ignore_errors=True)
+    if not preserve_vocals:
+        with contextlib.suppress(FileNotFoundError): (out_dir / f"{stem}.mp3").unlink()
+        demucs_stem = out_dir / "vocals" / _DEFAULT_DEMUCS_MODEL / stem
+        if demucs_stem.exists(): shutil.rmtree(demucs_stem, ignore_errors=True)
     kf = cfg.agent_io / "keyframes" / source_id
     if kf.exists(): shutil.rmtree(kf, ignore_errors=True)
     for cid in clip_ids or ():
@@ -227,18 +230,25 @@ def _produce_transcript(led: Ledger, cfg: Config, source_id: str, src, out_dir: 
     # output under the SOURCE stem so the per-source .json lookup below stays unique + unchanged.
     audio = src.source_path
     if cfg.isolate_vocals:
-        voc = isolate_vocals(src.source_path, str(out_dir / "vocals"))
-        if voc != src.source_path:
-            src.meta["vocals_isolated"] = True            # a demucs vocal stem exists -> framing.classify_window
-                                                          # reads non-speech windows as MUSIC (wider lock), not silence
-            target = out_dir / f"{Path(src.source_path).stem}.mp3"
-            # ECC fix #3: on a move failure (e.g. cross-device) fall back to the SOURCE path, NOT the
-            # vocals path. The vocals stem ("vocals") made whisper write vocals.json, which the
-            # per-source cache lookup ({source_stem}.json) never finds -> re-transcribe every run +
-            # clobbered shared vocals.json. Source-stem fallback keeps the cache deterministic (we
-            # lose vocal isolation only in this rare failure case — fail-open to the raw mix).
-            try: Path(voc).replace(target); audio = str(target)
-            except OSError: audio = src.source_path
+        stem_mp3 = out_dir / f"{Path(src.source_path).stem}.mp3"
+        if stem_mp3.exists() and src.sha256:
+            from fanops.artifacts import _load_manifest
+            m = _load_manifest(cfg, source_id)
+            if not m.get("sha256") or m["sha256"] == src.sha256:
+                audio = str(stem_mp3); src.meta["vocals_isolated"] = True
+        if audio == src.source_path:
+            voc = isolate_vocals(src.source_path, str(out_dir / "vocals"))
+            if voc != src.source_path:
+                src.meta["vocals_isolated"] = True            # a demucs vocal stem exists -> framing.classify_window
+                                                              # reads non-speech windows as MUSIC (wider lock), not silence
+                target = out_dir / f"{Path(src.source_path).stem}.mp3"
+                # ECC fix #3: on a move failure (e.g. cross-device) fall back to the SOURCE path, NOT the
+                # vocals path. The vocals stem ("vocals") made whisper write vocals.json, which the
+                # per-source cache lookup ({source_stem}.json) never finds -> re-transcribe every run +
+                # clobbered shared vocals.json. Source-stem fallback keeps the cache deterministic (we
+                # lose vocal isolation only in this rare failure case — fail-open to the raw mix).
+                try: Path(voc).replace(target); audio = str(target)
+                except OSError: audio = src.source_path
     # Engine: prefer faster-whisper at a DURATION-AWARE model (cfg.asr_model_for with timeout_attempts
     # for retry downgrade after prior kills). Fail open to the legacy `whisper` CLI when the [asr] extra is
     # absent — and that fallback is ALSO duration-aware (cfg.whisper_model_for, audit c0-f2).
