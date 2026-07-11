@@ -80,6 +80,26 @@ def test_reschedule_imminent_rejected(tmp_path):
     res = reschedule_post(cfg, "p_edit", _z(NOW + timedelta(hours=8)), now=NOW)
     assert res.ok is False and "imminent" in res.error.lower()
 
+def test_reschedule_rejects_past_time(tmp_path):
+    cfg = Config(root=tmp_path); _seed(cfg)
+    orig = Ledger.load(cfg).posts["p_edit"].scheduled_time
+    res = reschedule_post(cfg, "p_edit", _z(NOW - timedelta(hours=1)), now=NOW)
+    assert res.ok is False and "strictly in the future" in (res.error or "")
+    assert Ledger.load(cfg).posts["p_edit"].scheduled_time == orig
+
+def test_reschedule_rejects_now_time(tmp_path):
+    cfg = Config(root=tmp_path); _seed(cfg)
+    orig = Ledger.load(cfg).posts["p_edit"].scheduled_time
+    res = reschedule_post(cfg, "p_edit", _z(NOW), now=NOW)
+    assert res.ok is False and "strictly in the future" in (res.error or "")
+    assert Ledger.load(cfg).posts["p_edit"].scheduled_time == orig
+
+def test_reschedule_accepts_future_time(tmp_path):
+    cfg = Config(root=tmp_path); _seed(cfg)
+    res = reschedule_post(cfg, "p_edit", _z(NOW + timedelta(hours=8)), now=NOW)
+    assert res.ok is True
+    assert Ledger.load(cfg).posts["p_edit"].scheduled_time == _z(NOW + timedelta(hours=8))
+
 # ---- P1: clear_time (atomic unapprove-then-clear for queued) ----
 def _seed_awaiting(cfg):
     led = Ledger.load(cfg)

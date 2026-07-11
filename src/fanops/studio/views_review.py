@@ -56,7 +56,7 @@ class SurfacePost:
     hook_preburn: bool = False             # variant_hook set but not yet burned (preview is the base clip)
     persona_hook_removed: Optional[str] = None  # Moment.hook_removed — guard killed the moment hook
     variant_hook: Optional[str] = None     # persona-differentiation: the per-account on-screen hook burned into
-                                           # this surface's media (crosspost burn_hook_only). None when creative_variation is OFF.
+                                           # this surface's media (crosspost burn_hook_only).
     # M3a — "review at scale": surface the per-account differentiation so the operator SEES it on the card.
     length_label: Optional[str] = None     # the clip LENGTH band as seconds, e.g. "28–45s", from Post.clip_profile
                                            # (M2b/M2c stamp). None when no profile (legacy/absent).
@@ -166,13 +166,12 @@ class ProvChip:                            # S2: one "value ← cause" chip (val
     tone: str = ""
 
 
-def provenance_chips(surface, *, creative_variation: bool = False) -> list[ProvChip]:
+def provenance_chips(surface) -> list[ProvChip]:
     """Pure projection: turn an already-built surface into ordered 'value ← cause' chips. Reads every field via
     getattr, so any surface works — but the CAUSE phrases come only from SurfacePost's length_cause/framing_cause/
     cast_cause; a surface lacking them (the MatrixCell, or any cause-less shape) yields BARE chips (value, no
     attribution), and an undifferentiated surface mints NO chips at all (the OFF-firewall / legacy shape). No
-    ledger read; NEVER raises (a torn/odd surface degrades to whatever it could derive). Consumed by S4/S7/S8;
-    `creative_variation` gates the shared-cut WARN (a shared cut under OFF is expected, not a fallback)."""
+    ledger read; NEVER raises (a torn/odd surface degrades to whatever it could derive). Consumed by S4/S7/S8."""
     chips: list[ProvChip] = []
     try:
         if getattr(surface, "length_label", None):
@@ -181,8 +180,6 @@ def provenance_chips(surface, *, creative_variation: bool = False) -> list[ProvC
             chips.append(ProvChip(surface.framing, getattr(surface, "framing_cause", None), ""))
         if getattr(surface, "is_account_cut", False):
             chips.append(ProvChip("cut", f"{surface.account}'s own cut", "ok"))
-        elif creative_variation:
-            chips.append(ProvChip("shared-cut", "no per-account cut — fell back to shared", "warn"))
         if getattr(surface, "hook_source", None) == "shared_fallback":
             chips.append(ProvChip("shared-hook", "no per-account hook — fell back to shared", "warn"))
         if getattr(surface, "cast_cause", None):

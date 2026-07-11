@@ -239,20 +239,7 @@
         {% endif %}
       </div>
       <details class="golive-sub content-diff">
-        <summary class="sub-summary"><strong>Content &amp; differentiation</strong> <span class="muted">— on-screen hooks · casting · clip length</span></summary>
-      <div class="account-hooks">
-        <p class="muted">Per-account on-screen hooks: each account burns its OWN persona-flavored hook in the
-          clip's first seconds. Default ON — turn OFF to make every account show the same shared hook.</p>
-        <form hx-post="{{ url_for('do_golive_hooks') }}" hx-target="#golive-panel" hx-swap="outerHTML">
-          {% if status.creative_variation %}
-            <span class="ok">● ON — accounts get distinct on-screen hooks</span>
-            <button type="submit" name="on" value="">Turn off (shared hook)</button>
-          {% else %}
-            <span class="muted">○ off — all accounts show the shared hook</span>
-            <button type="submit" name="on" value="1">Turn on (per-account hooks)</button>
-          {% endif %}
-        </form>
-      </div>
+        <summary class="sub-summary"><strong>Content &amp; differentiation</strong> <span class="muted">— casting · clip length</span></summary>
       <div class="account-hooks routing-casting">
         <p class="muted"><strong>Routing / casting</strong> — how moments are distributed across accounts, plus clip length.
           Default: casting ON (each account gets its own selected moments).</p>

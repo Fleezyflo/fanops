@@ -31,8 +31,6 @@
   <nav class="state-chips" aria-label="Filter by state">{% for sv, sl in states %}<a class="button{{ ' active' if active_state|default(none) == (sv or none) else '' }}"{% if active_state|default(none) == (sv or none) %} aria-current="page"{% endif %} href="{{ url_for('review', view=active_view|default(none), account=active, batch=active_batch|default(none), source=active_source|default(none), state=(sv or none), compact=compact_param) }}">{{ sl }}</a>{% endfor %}</nav>
   {# Phase 2: when casting is ON, explain WHY accounts carry distinct/fewer posts (config lives in Go Live). #}
   {% if cast_state and cast_state.casting %}<p class="meta cast-state">Casting{{ term('cast') }} ON — {{ cast_state.budget }} moments per account · clip {{ cast_state.profile }}</p>{% endif %}
-  {# S9: when creative_variation is ON each account ships its own variant — define the term where that's true. #}
-  {% if creative_variation %}<p class="meta variant-state">Per-account variants{{ term('variant') }} on — each account burns its own hook/cut/caption.</p>{% endif %}
   {% if active_batch|default(none) %}<div class="meta batch-scope">Showing one batch{{ term('batch') }} — <a href="{{ url_for('review', view=active_view|default(none), account=active, source=active_source|default(none), state=active_state|default(none), compact=compact_param) }}">show all batches</a></div>{% endif %}
   {# M3c/Phase 4: flip between full / compact / ultra-compact. A GET link (mirrors the account/batch filter
      pattern); the compact param rides the action/pagination URLs so it persists. #}

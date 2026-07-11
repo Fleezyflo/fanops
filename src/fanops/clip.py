@@ -546,7 +546,7 @@ def _subtitles_vf(led: Ledger, cfg: Config, moment_id: str, cid: str, aspect: Fm
     FAIL-OPEN by contract: a clip is NEVER blocked on its text. Two independent layers:
       • the RETENTION HOOK (m.hook) — the default on-screen text, a curiosity-gap line that drives
         watch-through (NOT a transcript). Burned whenever the moment has a hook. SUPPRESSED here when
-        creative_variation is on: the per-account burn_hook_only pass burns a per-surface hook, and
+        a per-account burn_hook_only pass burns a per-surface hook, and
         burning the moment hook too would STACK two hooks on one clip.
       • the TRANSCRIPT captions — gated by burn_subs (default ON). Showing what the audio says is
         redundant (the viewer hears it) and only as good as the auto-transcription; useful for

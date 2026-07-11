@@ -61,17 +61,24 @@ def test_spine_next_links_focus_review(tmp_path):
     assert "focus=1" in html and "view=account" in html
 
 
+def _fake_render_reset(led, cfg, moment_id, *, aspect=Fmt.r9x16, **kw):
+    c = led.clips["c0"]
+    new = c.model_copy(update={"state": ClipState.rendered, "meta_captions": {}, "hook_burn_failed": False})
+    led.clips[c.id] = new
+    return led, new
+
+
 def test_restore_persona_hook_reburns(tmp_path, mocker):
     cfg = Config(root=tmp_path); _accounts(cfg); _seed_awaiting(cfg, hook=None)
     led = Ledger.load(cfg)
     led.moments["m1"] = led.moments["m1"].model_copy(update={"hook_removed": "STRIPPED"})
     led.save()
-    rendered = Clip(id="c0", parent_id="m1", path=str(cfg.clips / "c0.mp4"), aspect=Fmt.r9x16, state=ClipState.rendered)
-    mocker.patch("fanops.clip.render_moment", return_value=(Ledger.load(cfg), rendered))
+    mocker.patch("fanops.clip.render_moment", side_effect=_fake_render_reset)
     res = actions.restore_persona_hook(cfg, "p0")
     assert res.ok
     led2 = Ledger.load(cfg)
     assert led2.moments["m1"].hook == "STRIPPED" and led2.moments["m1"].hook_removed is None
+    assert led2.clips["c0"].state is ClipState.queued   # queued state PRESERVED across re-render
 
 def test_retry_rate_limit_staggers_schedule(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg); _seed_awaiting(cfg, hook=None)

@@ -412,8 +412,8 @@ class Ledger:
         self.batches: dict[str, Batch] = {}   # Account-First Studio: named, account-targeted ingest groups
                                               # (5th id->unit map; additive). Empty until a named ingest mints one.
         self.renders: dict[str, Render] = {}  # per-account Render foundation: the per-account shippable artifacts
-                                              # (6th id->unit map; additive). Empty until crosspost mints one under
-                                              # creative_variation. Content-addressed by (clip_id, hook_text).
+                                              # (6th id->unit map; additive). Empty until crosspost mints one.
+                                              # Content-addressed by (clip_id, hook_text).
         self.imported_media: dict[str, ImportedMedia] = {}   # ledger-rebuild: live IG posts PROBED from the platform
                                               # with NO clip lineage (9th id->unit map; additive). Keyed by the Graph
                                               # media_id (the natural key). Empty until the projection imports one (M2);

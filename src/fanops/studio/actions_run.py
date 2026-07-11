@@ -150,19 +150,19 @@ def save_uploads(cfg: Config, files: Sequence[FileStorage], *, probe: bool = Tru
         tmp = inbox / f"{name}.uploadpart"                            # same-dir temp → os.replace is atomic; suffix ∉ MEDIA_EXT so a leaked temp is never ingested
         try:
             f.save(str(tmp))                                          # FileStorage.save streams in chunks (no full-buffer)
+            if probe:
+                from fanops.ingest import has_video_stream                # local import so a test's mocker.patch is seen
+                try:
+                    if not has_video_stream(tmp):
+                        tmp.unlink(missing_ok=True); skipped.append((raw, "no video stream")); continue
+                except ToolchainMissingError:
+                    tmp.unlink(missing_ok=True)                         # ING-9: an unverifiable upload would later ABORT the whole native ingest pass
+                    skipped.append((raw, "cannot verify video — install ffmpeg")); continue   # reject, don't keep-then-abort
             os.replace(tmp, dest)                                     # atomic swap-in; a crash mid-stream leaves only the .uploadpart temp
         except OSError as exc:
             try: tmp.unlink()                                         # best-effort cleanup of the partial temp
             except OSError: pass
             skipped.append((raw, exc.strerror or "write failed")); continue   # strerror omits the fs path (no path disclosure in the reason)
-        if probe:
-            from fanops.ingest import has_video_stream                # local import so a test's mocker.patch is seen
-            try:
-                if not has_video_stream(dest):
-                    dest.unlink(missing_ok=True); skipped.append((raw, "no video stream")); continue
-            except ToolchainMissingError:
-                dest.unlink(missing_ok=True)                         # ING-9: an unverifiable upload would later ABORT the whole native ingest pass
-                skipped.append((raw, "cannot verify video — install ffmpeg")); continue   # reject, don't keep-then-abort
         saved.append(name)
     if not saved:                                                     # every file was rejected → a real failure, not a green "0 saved"
         return ActionResult(ok=False, error=f"nothing saved — {len(skipped)} file(s) rejected (wrong type, unsafe name, or unreadable)", detail={"saved": saved, "skipped": skipped})
