@@ -80,7 +80,8 @@ def _is_fake_token(post) -> bool:
 def _is_giveup(post) -> bool:
     """True iff this post already carries the gave-up terminal marker. A give-up post is a LABELED terminal
     (we stopped auto-reconciling it); the poll loop skips it so it never re-polls a dead token or re-stamps an
-    identical line (XC-6). The operator clears it via `fanops resolve <id> published|failed --url` by hand."""
+    identical line (XC-6). Gave-up recovery is deliberately two-step (MOL-441 deferred one-click re-drive):
+    `fanops resolve <id> failed` to clear the marker, then Studio `recover_posts` retry (failed→queued)."""
     return bool(post.error_reason) and post.error_reason.startswith(_GIVEUP_PREFIX)
 
 
