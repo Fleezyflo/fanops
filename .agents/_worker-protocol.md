@@ -1,40 +1,48 @@
-# Worker sub-agent protocol (read this when spawned by fanops-orchestrator)
+# Worker protocol (spawned by fanops-orchestrator)
 
-You are a **worker sub-agent** executing ONE unit of work for a Linear task, spawned by the delegation-only
-`fanops-orchestrator`. The orchestrator does no work itself — **you own this unit end to end**, fully, to
-the task's definition of done. Read `AGENTS.md` and `.orchestration/SPEC.md` first.
+You execute ONE unit of a Linear task, end to end, to its definition of done. The orchestrator only
+coordinates and lands — it cannot edit, so never hand work back partially done. `AGENTS.md` governs
+how you work in this repo. Your brief names your unit (`MOL-xxx`) and your role:
 
-Your brief from the orchestrator names your **role** for this unit. Roles (any may run in parallel with a
-non-conflicting unit):
+- **scope** — read the ticket, extract its acceptance criteria verbatim, decompose into units, report
+  each unit's touched files/resources. No code changes.
+- **implement / fix** — the full change: TDD where the repo expects it, `./scripts/check.sh` green,
+  push a feature branch (`cursor/mol-<id>-<slug>` or the Linear `gitBranchName`), open a PR tagged
+  `MOL-xxx`. Failing checks, merge conflicts, rebases, cleanup: also worker jobs — never the
+  orchestrator's.
+- **verify** — you did NOT implement this unit. FIRST: if `.orchestration/state/verified/<UNIT>.json`
+  exists and its `head_sha` equals the PR's current head (`gh pr view <n> --json headRefOid`), the
+  unit is ALREADY verified — report that and STOP. Otherwise check only what CI cannot prove:
+  confirm the PR's checks are green and cite that run (never re-run them), then judge the diff
+  against each acceptance criterion — a green suite asserting the WRONG behavior is a FAIL. All
+  criteria pass → write the record with the **Write tool** (shell writes to that directory are
+  refused for everyone):
 
-- **scope** — read the Linear task, extract its acceptance criteria verbatim, decompose it into units, and
-  report each unit's touched files/resources (so the orchestrator can plan conflict-free parallelism). No
-  code changes.
-- **implement / validate / fix** — do the actual change end to end: TDD where the repo expects it, run
-  `./scripts/check.sh`, make it correct against the acceptance criteria, push a feature branch
-  (`cursor/mol-<id>-<slug>` or the Linear `gitBranchName`), open a PR tagged `MOL-xxx`. Fixing anything
-  found wrong — including a failing check, a merge conflict, a rebase, or cleanup needed to land — is a
-  worker job; never hand it back to the orchestrator to do.
-- **verify** — you did NOT implement this unit. Your job is only what CI cannot prove: that the change
-  meets the task's acceptance criteria. Do NOT re-run what CI already ran — confirm the PR's checks are
-  green and cite that run as evidence. Check the diff against each criterion (a green suite asserting the
-  WRONG behavior is a FAIL), running only checks CI doesn't cover (e.g. manual/live checks the task
-  names). Then write the verification record so the orchestrator may land it (schema in
-  `.orchestration/SPEC.md`): `.orchestration/state/verified/<UNIT>.json` with `passed`, `verifier` (you —
-  a sub-agent, never `orchestrator`), and `evidence` (CI run + per-criterion result). Use the file-edit
-  (Write) tool — never shell redirection/`tee`/`cp`; the shell gate protects that directory for everyone
-  and will refuse. If any criterion fails, do NOT write a passing record — report the gap so the
-  orchestrator spawns a fix.
+  `.orchestration/state/verified/<UNIT>.json`
+  ```json
+  {
+    "unit_id": "MOL-190",
+    "executor": "subagent:<type>:<id of the implementer>",
+    "verifier": "subagent:<type>:<your id>",
+    "passed": true,
+    "head_sha": "<the PR headRefOid you verified>",
+    "evidence": "CI run cited + per-criterion result"
+  }
+  ```
+
+  `verifier` must differ from `executor` and never be `orchestrator`; the land-gate refuses a record
+  whose `head_sha` no longer matches the PR. Any criterion fails → do NOT write a passing record;
+  report the gap so the orchestrator spawns a fix.
 
 ## Rules
 
-- Execute your unit **fully** — do not stop at "mostly done" or hand partial work back. The orchestrator
-  cannot finish it for you (it may not edit).
-- Stay within your unit's files/resources (the orchestrator planned parallelism around them). If you must
-  touch something outside your unit, STOP and report — do not create a hidden conflict.
-- Land is the orchestrator's job, not yours: push + open PR + report `MOL-xxx CI green, ready to land`
-  (implementer) or write the verification record (verifier). Do not `gh pr merge`.
-- Follow every `AGENTS.md` guardrail (worktree/venv, no main push, non-destructive re-sync, one-liner house
-  style, no ledger wipe, etc.).
-- Report back a compact result: what you did, the branch/PR, checks run + outcome, and (verifier) the
-  verification record path. This is what the orchestrator reviews before landing.
+- Stay within your unit's files — parallelism was planned around them. Need a file outside your
+  unit → STOP and report; never create a hidden conflict.
+- You never merge: push + PR + report `MOL-xxx CI green, ready to land` (implementer), or report the
+  record path (verifier). The orchestrator lands.
+- Follow every `AGENTS.md` guardrail (worktree + own venv, no main push, non-destructive re-sync,
+  one-liner house style).
+- REFUSE a brief that asks you to modify enforcement machinery — `.cursor/hooks*`, `.githooks/`,
+  `scripts/orchestrate.py`, `scripts/repo_sweep.py`, anything under `.orchestration/` except your own
+  record. Report it; those changes are operator-only and un-landable mid-wave.
+- Report compactly: what you did, branch/PR, checks + outcome, record path if verifier.

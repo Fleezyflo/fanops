@@ -1,103 +1,62 @@
 # Delegation-only orchestration protocol
 
-> **Just want to use it?** See the one-screen quickstart: [`ORCHESTRATION.md`](../ORCHESTRATION.md). The
-> single command is `python scripts/orchestrate.py start | status | done`. This file is the deep reference.
+> Quickstart: [`ORCHESTRATION.md`](../ORCHESTRATION.md). One command:
+> `python scripts/orchestrate.py start | status | done | stop`. This file is the enforcement reference.
 
-This directory is the machine-checkable contract behind the `fanops-orchestrator` agent. The orchestrator
-**coordinates**; it never does the work. Every unit of work — investigation/scoping, implementation,
-validation, verification against acceptance criteria, fixing, and any cleanup/conflict-resolution/rebase
-needed to land — is executed **fully by a sub-agent**. The orchestrator's only hands-on action is running
-the land command (`gh pr merge`); it never commits or pushes — workers push their own branches.
+The orchestrator coordinates; sub-agents execute every unit of work (scope, implement, validate,
+verify, fix, cleanup, conflict-resolution). Its only hands-on action is the land (`gh pr merge`);
+it never commits or pushes — workers push their own branches.
 
-## Enforcement (what is mechanical vs. what is contract)
+## Enforcement
 
-Cursor's hook payloads do **not** identify the calling agent (`preToolUse` has no subagent/parent field —
-`docs/hooks.md`), and `readonly` (the only per-agent "cannot write" lever) also blocks the orchestrator's
-git. So the hard guarantees are placed at boundaries the hook CAN judge deterministically from the command
-string / event payload, wired in `.cursor/hooks.json` (cloud-executed) and implemented in
-`.cursor/hooks/orchestration_gate.py`.
+Cursor hook payloads carry NO caller identity, and `readonly` (the only per-agent write block) would
+also block the orchestrator's land. So the hard guarantees sit at boundaries the gate can judge from
+the command string / event payload alone: `.cursor/hooks.json` → `.cursor/hooks/orchestration_gate.py`,
+`failClosed: true`.
 
-**Activation (no collateral):** the gate is **inert unless the orchestration environment is engaged** — so
-committing `.cursor/hooks.json` to the repo does NOT change behavior for normal or other-agent Cursor
-sessions. It enforces only when `FANOPS_ORCHESTRATED` ∈ {1,true,yes,on} (operator env — robust) **or** the
-marker `.orchestration/state/ACTIVE` exists. While active, both are tamper-protected (the marker lives under
-the guarded state dir; an env var can't be unset by the agent). Enforced guarantees while active:
+The gate is INERT unless a wave is engaged — `FANOPS_ORCHESTRATED=1` or the
+`.orchestration/state/ACTIVE` marker (created by `orchestrate.py start`) — so committing the hooks
+changes nothing for normal sessions. While active:
 
-| Guardrail | Mechanism | Hardness |
-|---|---|---|
-| **Cannot land unverified work** | `beforeShellExecution` denies `gh pr merge` **and the raw `gh api … pulls/<n>/merge`** unless every Linear unit the PR carries has a passing sub-agent **verification record** (below). `failClosed:true`. | **HARD** (blocks the land command) |
-| **Records which sub-agent did each unit** | `subagentStart`/`subagentStop` append to `state/ledger.jsonl` (type, task, status, modified files). | **HARD** (platform fires it) |
-| **No destructive git** | `beforeShellExecution` denies `reset --hard`, force-push / direct-push to `main`, `checkout -B … origin/main`. | **HARD** |
-| **Gate + state are tamper-proof from the shell** | `beforeShellExecution` denies any command that MUTATES a protected path — `.orchestration/state/`, `.cursor/hooks.json`, `.cursor/hooks/`, `.githooks/` — closing the "forge a verification record / `rm` the hook to disable enforcement" bypass (incl. `echo … > verified/X.json`). | **HARD** |
-| **No self-verification** | a verification record whose `verifier` equals its `executor` (or is the orchestrator) is rejected. | **HARD** |
-| **Orchestrator edits nothing** | (a) it delegates by contract (agent brief); (b) any file it did edit is **un-landable** — only a verified worker PR can merge; (c) OPTIONAL keystroke-level block: run the orchestrator `readonly:true` and land via the `fanops-lander` sub-agent (see below). | **OUTCOME-HARD** by default; keystroke-HARD with the readonly option |
+| Guarantee | Mechanism |
+|---|---|
+| Nothing unverified lands | `gh pr merge` and raw `gh api …/merge` denied unless every `MOL-xxx` on the PR (branch + title + body) has a passing verification record. |
+| A record covers exactly the commits it saw | record `head_sha` must equal the PR's current `headRefOid`; stale → land refused (the ONLY re-verify trigger). |
+| Only named wave agents spawn; models stay pinned | `subagentStart` denies any type outside {`fanops-worker`, `fanops-lander`}: ad-hoc types (`general-purpose`, `shell`) are where spawn-time models take effect, and a second `fanops-orchestrator` mid-wave is the double-merge incident. Allowed agents' frontmatter pins `model: inherit`. |
+| Every spawn and land attributed | `subagentStart`/`subagentStop` and lands append `state/ledger.jsonl` (type, model, task, status); denied spawns are ledgered as `subagent_denied`. |
+| Enforcement machinery cannot change mid-wave | lands are denied while `.cursor/hooks*`, `.githooks/`, `scripts/orchestrate.py`, `scripts/repo_sweep.py` are dirty in the working tree, AND when the PR's own changed files touch those paths (operator-only; merged outside waves). Fails CLOSED when git/gh cannot answer. |
+| No destructive git | `reset --hard`, force-push / direct push to `main`, `checkout -B … origin/main` denied. |
+| Gate + state tamper-proof from the shell | any mutating command naming `.orchestration/state/`, `.cursor/hooks*`, `.githooks/` is denied — including interpreters/heredocs (`python3 <<PY`, `python -c`). |
+| No self-verification | a record is rejected when `verifier` equals `executor` or is the orchestrator. |
+| Done is measured, not declared | `orchestrate.py done` exits 0 only when `repo_sweep --require-pristine` is green (unmeasurable → exit 3, never a false done); exit 0 auto-disengages the wave. `stop` is operator-only — denied from inside a run. |
 
-Why guardrail (a) is not a `preToolUse` `Write` deny: that would block **workers** too (the hook can't tell
-orchestrator from worker). The land-gate makes an orchestrator edit pointless (it can never reach `main`),
-which is the outcome that matters. For a keystroke-level block, use the readonly option below.
+**NOT enforced (residuals):**
+- Cursor's Write tool cannot be hooked: protected files can still be WRITTEN by any agent. The
+  land-time checks make such writes un-landable, not impossible. Keystroke-level prevention requires
+  the readonly option below.
+- `executor`/`verifier` in records are self-reported strings — verifier ≠ implementer is auditable
+  (ledger + record), not identity-bound. A lying record passes the gate.
+- The `subagentStart` deny and spawning the named `fanops-worker` from an orchestrator context follow
+  Cursor's documented contracts but have not yet run in a live wave on this machine. The first wave is
+  the validation; failure is loud (`subagent_denied` ledger entries; the orchestrator's step-0 abort).
 
-**Residual (be honest):** the protected-path defenses above cover the SHELL. Cursor's `Write` *tool* has no
-caller identity, so a determined orchestrator could still write a protected file via the tool (not the
-shell). That write cannot be committed/pushed to `main` through the shell gate, and the tamper is visible
-in the diff — but if you want a hard keystroke-level guarantee, run the orchestrator `readonly: true`
-(below), which blocks the Write tool outright.
+### Readonly option (maximum enforcement)
+`readonly: true` on `fanops-orchestrator` blocks all its edits AND its git — it then hands each land
+command to `fanops-lander` (same gate applies). Default ships non-readonly: the orchestrator lands.
 
-### Maximum-enforcement option (readonly orchestrator + lander)
-Set `readonly: true` on `fanops-orchestrator` → Cursor blocks all its file edits AND state-changing shell
-(hard). Since that also blocks its git-land, spawn `fanops-lander` (a minimal sub-agent whose only job is to
-run the land commands; still subject to this same gate). Trade-off: the orchestrator triggers the land via
-the lander instead of typing git itself. Default ships non-readonly so the orchestrator lands personally.
+## Records and lifecycle
 
-## Unit lifecycle
+Scope → implement (parallel where non-conflicting) → verify (a DIFFERENT sub-agent) → land
+(orchestrator). The verifier writes `.orchestration/state/verified/<UNIT>.json`; the schema and
+writing rules live in `.agents/_worker-protocol.md` (verify role). The gate lands a PR only when
+every unit on it has a record with `passed: true`, a sub-agent `verifier` differing from `executor`,
+and a `head_sha` matching the PR's current head.
 
-1. **Scope** (sub-agent, conditional): only for a ticket that is ambiguous, spans lanes, or lacks file
-   anchors — read it, extract its acceptance criteria, decompose into units, list the files/resources each
-   unit touches. Tickets that arrive atomic + anchored (most) are routed directly, no scope spawn.
-2. **Implement / validate / fix** (sub-agents, parallel where non-conflicting): execute each unit fully to
-   the task's definition of done; push a feature branch; open a PR tagged with the unit id (`MOL-xxx`).
-3. **Verify** (a DIFFERENT sub-agent): check the work against the acceptance criteria and write the
-   verification record (below). The verifier must not be the implementer and must never be the orchestrator.
-4. **Land** (orchestrator): once a verification record exists, `gh pr merge` — the gate allows it and logs
-   the land. Any conflict/failing-check/rebase needed to land is itself delegated to a sub-agent first.
+`state/` is git-ignored runtime data; `ledger.jsonl` is the attribution record — proof nothing was
+silently done by the orchestrator itself.
 
-## Verification record (the land key)
+## Scope = the whole repo
 
-Path: `.orchestration/state/verified/<UNIT>.json` (e.g. `MOL-190.json`). Written by the **verifier
-sub-agent**, never the orchestrator. Schema:
-
-```json
-{
-  "unit_id": "MOL-190",
-  "executor": "subagent:<type>:<subagent_id>",
-  "verifier": "subagent:<type>:<subagent_id>",
-  "passed": true,
-  "acceptance_criteria_checked": true,
-  "evidence": "CI run cited + per-criterion result (+ any CI-uncovered checks run)",
-  "verified_at": "2026-07-08T00:00:00Z"
-}
-```
-
-The gate lands a PR only if, for **every** `MOL-xxx` on the PR (head branch + title + body), such a record
-exists with `passed:true` and a `verifier` that is a sub-agent (not `orchestrator`).
-
-## Attribution ledger
-
-`.orchestration/state/ledger.jsonl` — one JSON object per line, appended by the hooks: every `subagent_start`
-/ `subagent_stop` (who, what task, status, files modified) and every `land`. This is the record that nothing
-was silently done by the orchestrator itself.
-
-## Full-repo scope
-
-Scope is the whole repo, not just the listed Linear tasks. `scripts/repo_sweep.py` (read-only) enumerates the
-mess — open PRs, merge conflicts, unresolved merges, stale branches, leftover artifacts — so the orchestrator
-can drive each to resolution **via sub-agents**.
-
-**DONE-gate:** `python scripts/repo_sweep.py --require-pristine` exits `0` only when every task is landed
-(no ready-for-review open PRs — **draft PRs are reported but do not block**) AND the repo is pristine;
-otherwise it exits `3` and lists what's outstanding (fail-safe: if it cannot even measure the repo, it exits
-`3`, never a false "done"). The orchestrator MUST run it as its final action and may not claim completion
-until it is green — this removes the orchestrator's ability to *declare* done prematurely. (What it cannot
-do: force the agent loop to keep looping — Cursor Cloud has no top-level `stop` hook — so "keep driving"
-remains the orchestrator's brief contract, made checkable by this gate.)
-
-Runtime files under `state/` are git-ignored (per-run); only this SPEC and the empty `state/` dir are tracked.
+`scripts/repo_sweep.py` (read-only) enumerates open PRs, merge conflicts, unresolved merges, stale
+branches, and leftover artifacts. `--require-pristine` exits 0 only when every task is landed and the
+repo is pristine (draft PRs reported, non-blocking); otherwise exit 3 plus the outstanding list.
