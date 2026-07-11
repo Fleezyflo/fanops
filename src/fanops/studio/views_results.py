@@ -609,7 +609,7 @@ def lineage_stats(rows) -> list:
     ranking — tied bests both read rank 1). A falsy clip_id is skipped (no join key -> passed through). An
     unmeasured sibling (lift None) still counts toward sibling_count but keeps rank/delta None (can't rank
     what wasn't measured). Pure over the already-built list — NO ledger read, reads ONLY clip_id+lift (so it
-    is FANOPS_CREATIVE_VARIATION-independent: a shared clip across accounts is a real lineage in either mode).
+    is per-account hook rendering-independent: a shared clip across accounts is a real lineage in either mode).
     Fail-open: any error returns the input rows unchanged (additive fields stay at their None defaults).
     Ranks within whatever filtered set is passed in. Same order and length as the input."""
     try:

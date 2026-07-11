@@ -58,6 +58,8 @@ def reschedule_post(cfg: Config, post_id: str, new_time: str, *, now: Optional[d
         z = _normalize_z(new_time)                 # OUTSIDE the lock: reject bad input early
     except (ValueError, TypeError) as exc:
         return ActionResult(ok=False, error=f"bad time {new_time!r}: {str(exc)[:120]}")
+    if parse_iso(z) <= now:
+        return ActionResult(ok=False, error="scheduled time must be strictly in the future")
     with Ledger.transaction(cfg) as led:
         p, err = _guard_editable_post(led, post_id, now)
         if err:
@@ -206,7 +208,10 @@ def reburn_hook(cfg: Config, post_id: str, hook: str, *, now: Optional[datetime]
             if m2 is not None:
                 led2.moments[mom_id] = m2.model_copy(update={"hook": hook, "hook_removed": None})
             c2 = led2.clips.get(rc.id)
-            led2.clips[rc.id] = rc.model_copy(update={"meta_captions": c2.meta_captions}) if c2 else rc
+            orig = c2
+            led2.clips[rc.id] = rc.model_copy(
+                update={"state": orig.state, "meta_captions": _inherit_captions(orig.meta_captions)}
+            ) if orig else rc
     except Exception as exc:
         return ActionResult(ok=False, error=f"re-burn failed: {str(exc)[:160]}")
     return ActionResult(ok=True, detail={"post_id": post_id, "hook": hook, "hook_burned": hook_burned})
@@ -732,6 +737,8 @@ def resolve_post(cfg: Config, post_id: str, status: str, *, url: Optional[str] =
         st = PostState(status)
     except ValueError:
         st = PostState.published if status == "published" else PostState.failed
+    if st not in (PostState.published, PostState.failed):
+        return ActionResult(ok=False, error=f"resolve only supports published or failed, not {st.value!r}")
     if st in _POST_TERMINAL_REQUIRES_URL and not (url or "").strip():
         return ActionResult(ok=False, error="Paste the live permalink to mark this post published.")
     try:

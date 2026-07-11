@@ -47,15 +47,28 @@ def test_reburn_serves_rerendered_clip_path(tmp_path, mocker):
     assert _media_path_for_post(Ledger.load(cfg), "p_edit") == str(out)
 
 
+def _fake_render_reset(led, cfg, moment_id, *, aspect=Fmt.r9x16, **kw):
+    # mimic render_moment's SUCCESS: fresh clip record (state reset, captions wiped) so the action's restore is exercised
+    c = led.clips["clip_1"]
+    new = c.model_copy(update={"state": ClipState.rendered, "meta_captions": {}, "hook_burn_failed": False})
+    led.clips[c.id] = new
+    return led, new
+
+
 def test_reburn_does_not_touch_meta_captions(tmp_path, mocker):
     seeded = {"a/instagram": {"caption": "c", "hashtags": ["#x"]}}
     cfg = Config(root=tmp_path); _seed(cfg, meta=seeded)
-    rendered = Clip(id="clip_1", parent_id="mom_1", path=str(cfg.clips / "clip_1.mp4"),
-                    aspect=Fmt.r9x16, state=ClipState.rendered)
-    mocker.patch("fanops.clip.render_moment", return_value=(Ledger.load(cfg), rendered))
+    mocker.patch("fanops.clip.render_moment", side_effect=_fake_render_reset)
     reburn_hook(cfg, "p_edit", "NEW HOOK")
     mc = Ledger.load(cfg).clips["clip_1"].meta_captions
     assert mc == seeded and "hook" not in mc.get("a/instagram", {})
+
+
+def test_reburn_preserves_clip_state(tmp_path, mocker):
+    cfg = Config(root=tmp_path); _seed(cfg, meta={"a/instagram": {"caption": "c"}})
+    mocker.patch("fanops.clip.render_moment", side_effect=_fake_render_reset)
+    reburn_hook(cfg, "p_edit", "NEW HOOK")
+    assert Ledger.load(cfg).clips["clip_1"].state is ClipState.captioned   # captioned state PRESERVED across re-render
 
 
 def test_reburn_hook_burn_failed_warns_not_rollback(tmp_path, mocker):

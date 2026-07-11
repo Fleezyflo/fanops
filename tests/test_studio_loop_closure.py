@@ -45,6 +45,25 @@ def test_resolve_post_mark_published_requires_url(tmp_path):
     res = actions.resolve_post(cfg, "p1", "published", url="https://www.instagram.com/p/abc/")
     assert res.ok and Ledger.load(cfg).posts["p1"].state is PostState.published
 
+def _seed_queued(cfg, pid="p1", state=PostState.queued):
+    cdir = cfg.clips; cdir.mkdir(parents=True, exist_ok=True)
+    (cdir / "c0.mp4").write_bytes(b"V")
+    led = Ledger.load(cfg)
+    led.add_source(Source(id="s1", source_path="/v.mp4", language="en"))
+    led.add_moment(Moment(id="m1", parent_id="s1", content_token="0-7", start=0, end=7, reason="r", state=MomentState.clipped))
+    led.add_clip(Clip(id="c0", parent_id="m1", path=str(cdir / "c0.mp4"), aspect=Fmt.r9x16, state=ClipState.queued))
+    led.add_post(Post(id=pid, parent_id="c0", account="a", account_id="ig1", platform=Platform.instagram,
+                      caption="c", state=state, scheduled_time="2099-01-01T00:00:00Z", public_url="dryrun://p1"))
+    led.save()
+
+def test_resolve_post_rejects_non_terminal_states(tmp_path):
+    cfg = Config(root=tmp_path); _accounts(cfg)
+    for st in (PostState.queued, PostState.awaiting_approval, PostState.submitting):
+        _seed_queued(cfg, pid="p1", state=PostState.queued)
+        res = actions.resolve_post(cfg, "p1", st.value)
+        assert res.ok is False and "resolve only supports" in (res.error or "")
+        assert Ledger.load(cfg).posts["p1"].state is PostState.queued
+
 def test_posted_inflight_resolve_forms(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg); _seed_inflight(cfg)
     html = _client(cfg).get("/posted?delivery=inflight").data.decode()

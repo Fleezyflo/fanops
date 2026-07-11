@@ -591,15 +591,7 @@ def test_golive_panel_renders_remove_and_demote_controls(tmp_path, monkeypatch):
     assert r.status_code == 200 and b"/golive/account/remove" in r.data and b"/golive/account/demote" in r.data
 
 
-# ---- persona differentiation: per-account on-screen-hooks toggle ----
-def test_set_per_account_hooks_dual_writes_both_directions(tmp_path, monkeypatch):
-    import os
-    cfg = _clean(monkeypatch, tmp_path)
-    assert golive.set_per_account_hooks(cfg, True).ok is True
-    assert "FANOPS_CREATIVE_VARIATION=1" in (tmp_path / ".env").read_text()   # durable
-    assert os.environ.get("FANOPS_CREATIVE_VARIATION") == "1"
-    assert golive.set_per_account_hooks(cfg, False).ok is True
-    assert os.environ.get("FANOPS_CREATIVE_VARIATION") == "0"
+# ---- persona differentiation: per-account casting toggle ----
 
 def test_set_account_casting_dual_writes_both_directions(tmp_path, monkeypatch):
     # C2: the Go-Live casting toggle dual-writes FANOPS_ACCOUNT_CASTING (.env + os.environ), mirroring hooks.
@@ -710,20 +702,10 @@ def test_post_golive_casting_route_swaps_panel(tmp_path, monkeypatch):
     r = _client(cfg).post("/golive/casting", data={"on": "1"})
     assert r.status_code == 200 and cfg.account_casting is True               # route dual-wrote + re-rendered
 
-def test_golive_status_carries_hooks_state(tmp_path, monkeypatch):
-    from fanops.studio import views
-    cfg = _clean(monkeypatch, tmp_path)
-    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
-    monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "1")
-    st = views.golive_status(cfg)
-    assert st.creative_variation is False   # P9: owner-moment hook — legacy env toggle is inert in status
-
-def test_post_golive_hooks_route_turns_on(tmp_path, monkeypatch):
-    import os
+def test_post_golive_hooks_route_returns_404(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path)
     r = _client(cfg).post("/golive/hooks", data={"on": "1"})
-    assert r.status_code == 200 and os.environ.get("FANOPS_CREATIVE_VARIATION") == "1"
-
+    assert r.status_code == 404
 
 # ---- S8: make toggle EFFECTS legible (engine-sourced, not hardcoded) + account→persona link badge ----
 def test_golive_clip_length_bands_come_from_the_engine_not_literals(tmp_path, monkeypatch):
@@ -774,15 +756,13 @@ def test_golive_accounts_read_model_carries_persona_id(tmp_path, monkeypatch):
     accts = views.golive_status(cfg).accounts
     assert accts[0].persona_id == "curator"              # additive default-None field populated from Account.persona_id
 
-def test_golive_off_renders_both_toggle_controls(tmp_path, monkeypatch):
-    # OFF-firewall sanity: CV + casting default ON, so to see the OFF affordance we set them explicitly to 0;
-    # BOTH toggle forms must still render their "Turn on" control (the change is additive, not a removal).
+def test_golive_off_renders_casting_toggle_control(tmp_path, monkeypatch):
+    # OFF-firewall sanity: casting defaults ON, so set it explicitly to 0 to see the OFF affordance.
     cfg = _clean(monkeypatch, tmp_path)
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
-    assert golive.set_per_account_hooks(cfg, False).ok is True
     assert golive.set_account_casting(cfg, False).ok is True
     html = _client(cfg).get("/golive").get_data(as_text=True)
-    assert "Turn on (per-account hooks)" in html and "Turn on (per-account casting)" in html
+    assert "Turn on (per-account casting)" in html
 
 
 # ---- Hands-off processing (Slice 2): the explicit AI switch + daemon control, entirely in Studio ----

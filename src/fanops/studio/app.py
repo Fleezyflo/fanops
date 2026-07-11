@@ -283,8 +283,6 @@ def create_app(cfg: Config) -> Flask:
         # M3c: inject `compact` GLOBALLY so the Review templates + their shared includes (_card.html,
         # _account_filter.html) all see it without per-render plumbing, and url_for(..., compact=(1 if compact
         # else none)) drops the param everywhere it's off -> byte-identical on every non-compact / non-Review surface.
-        # M3d: inject creative_variation GLOBALLY so Review can hide the moment-hook RESTORE choice while ON
-        # (per-surface hooks own the burn then, and approve_with_hook refuses) — the choice is an OFF-mode flow.
         # Phase 4: inject the Review-scoped filters/modes GLOBALLY (like compact) so _review_body.html + its
         # includes (_card.html, _account_pivot.html, _account_filter.html) all see them without per-render
         # plumbing, and url_for(..., source=active_source|default(none), ...) drops each one where it's off ->
@@ -296,7 +294,6 @@ def create_app(cfg: Config) -> Flask:
         return {"nav_account": _account_arg(), "review_nav": views.review_nav_params(cfg, _account_arg()), "compact": _compact_arg(),
                 "active_source": _source_arg(), "active_state": _state_arg(),
                 "active_view": _view_arg(), "ultra": _ultra_arg(),
-                "creative_variation": False,
                 "cast_state": {"casting": cfg.account_casting, "profile": cfg.clip_profile},
                 "cfg": cfg}
 

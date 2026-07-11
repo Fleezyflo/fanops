@@ -59,7 +59,6 @@ class GoLiveStatus:
     notes: list[str]
     zernio_key_set: bool = False       # Zernio slice 4: BOOL only — ZERNIO_API_KEY present (connect-block state)
     learning_validated: bool = False   # M3: cutover.json metrics_confirmed — the loop is unfrozen on this backend
-    creative_variation: bool = False   # per-account on-screen hooks ON (FANOPS_CREATIVE_VARIATION) — persona diff
     account_casting: bool = False      # per-account moment casting ON (FANOPS_ACCOUNT_CASTING) — distinct moment sets per account
     clip_profile: str = "talk"         # clip-length band (FANOPS_CLIP_PROFILE): talk 12-22s / song 18-35s
     responder_mode: str = "manual"     # THE AI switch (FANOPS_RESPONDER): 'llm' = pipeline answers gates via claude, 'manual' = human/pending
@@ -859,7 +858,6 @@ def golive_status(cfg: Config) -> GoLiveStatus:
         checks=report["checks"],
         notes=report["notes"],
         learning_validated=learning_validated(cfg),    # M3: shows whether the loop is unfrozen (cutover done)
-        creative_variation=False,
         account_casting=cfg.account_casting,           # per-account moment casting toggle state (persona diff)
         clip_profile=cfg.clip_profile,                 # clip-length band (talk/song)
         responder_mode=cfg.responder_mode,             # THE AI switch state (llm/manual) — surfaced for the toggle

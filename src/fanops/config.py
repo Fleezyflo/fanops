@@ -416,7 +416,7 @@ class Config:
         # the refresh falls open to the frozen reach floor, so default-ON is safe on a deployment with no Meta
         # app. Only the explicit OFF-words disable it (operator escape hatch).
         # NB: this gates the BACKGROUND refresh sampling only; the on-demand operator lookup (meta_graph.
-        # tag_metrics) is gated by creds + budget, never this flag. Mirrors creative_variation's default-ON shape.
+        # tag_metrics) is gated by creds + budget, never this flag. Mirrors account_casting's default-ON shape.
         v = (os.getenv("FANOPS_HASHTAG_TRENDS") or "").strip().lower()
         return v not in {"0", "false", "no", "off"}     # DEFAULT ON; only explicit off-words disable it
 
@@ -651,7 +651,7 @@ class Config:
     def account_casting(self) -> bool:
         # Account-First Studio: per-account MOMENT casting (Face 3). ON -> each active account is cast its OWN
         # LLM-selected moments (RF1 AccountSelection); crosspost then fans a cast moment ONLY to its accounts.
-        # DEFAULT ON (per-account selection is the system's purpose, mirrors creative_variation) — set
+        # DEFAULT ON (per-account selection is the system's purpose) — set
         # FANOPS_ACCOUNT_CASTING=0 to restore the legacy fan-to-all path. NB the wired LLM path is UNCAPPED by
         # design (the operator does not want output capped for cost); there is no per-account moment budget.
         v = (os.getenv("FANOPS_ACCOUNT_CASTING") or "").strip().lower()
@@ -689,7 +689,7 @@ class Config:
         # Creative variation v2 (closing the learning loop): with this ON, request_captions biases
         # the next caption toward the per-account hook variant that has earned a TRUSTWORTHY win
         # (>= variant_min_posts analyzed posts AND beating the runner-up by >= variant_min_gap).
-        # DEFAULT OFF (opt-in), INDEPENDENT of FANOPS_CREATIVE_VARIATION — same off-by-default,
+        # DEFAULT OFF (opt-in), INDEPENDENT of per-account hook rendering — same off-by-default,
         # fail-open posture as that toggle. Only the explicit on-words enable it; unset, empty, or
         # anything else stays OFF (today's behavior, no hint injected, loop stays open).
         v = (os.getenv("FANOPS_VARIANT_LEARNING") or "").strip().lower()
@@ -799,7 +799,7 @@ class Config:
         # Cross-account / cross-surface learning transfer (the v2 follow-up): with this ON,
         # request_captions may bias a COLD recipient surface (one with no trustworthy winner of its
         # own yet) toward a hook STYLE proven on OTHER same-platform surfaces. INDEPENDENT of both
-        # FANOPS_CREATIVE_VARIATION and FANOPS_VARIANT_LEARNING. DEFAULT OFF (opt-in), fail-open:
+        # variant_learning and per-account hook rendering. DEFAULT OFF (opt-in), fail-open:
         # unset/empty/other -> today's behavior, no transferred prior injected.
         # VALIDATION-FROZEN (Phase 2): transferring a "proven" style measured on an unconfirmed lift
         # propagates noise across surfaces — stays inert until `learning_validated` opens (AUTO-stamped by

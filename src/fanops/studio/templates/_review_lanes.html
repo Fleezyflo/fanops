@@ -46,7 +46,7 @@
           {# RF6 #1: per-account spec chips (length/framing/cut/cast), reused from the cards via provenance_chips
              (a Jinja global). Scoped to awaiting surfaces (mirrors _card.html's bucket guard) so a non-default
              ?state=approved lane never emits a spurious shared-cut WARN on a read-only post. #}
-          {% set spec_chips = provenance_chips(row.post, creative_variation=(creative_variation and row.post.state == 'awaiting_approval')) %}
+          {% set spec_chips = provenance_chips(row.post) %}
           {% if spec_chips %}<span class="lane-spec meta" aria-label="{{ row.post.account }} clip spec">{{ cause_chips(spec_chips) }}</span>{% endif %}
         {% endif %}
       </li>

@@ -23,9 +23,9 @@
     <input id="guidance-{{ s.post_id }}" type="text" name="guidance" placeholder="e.g. punchier · mention the beat drop · less hype">
     <button type="submit" class="primary">Regenerate caption</button>
   </form>
-  {# Face 4: the editable on-screen HOOK (per-account, burned into the video). Shown ONLY when this surface
-     HAS a variant hook (creative_variation ON). "Re-burn text" re-burns the literal typed text via ffmpeg
-     (no LLM) onto the same /media path; a fail-open burn (no libass) warns but still saves the text. #}
+  {# Face 4: the editable on-screen HOOK (owner-moment, burned into the video). "Re-burn text" re-burns the
+     literal typed text via ffmpeg (no LLM) onto the same /media path; a fail-open burn (no libass) warns
+     but still saves the text. #}
   {% if s.variant_hook is not none %}
   {% if reburn_note is defined and reburn_note and not reburn_note.hook_burned %}
     <div class="result err">Hook saved, but ffmpeg couldn't burn it on screen (no libass / nothing burnable) — this surface ships CLEAN. Install libass to burn the text.</div>

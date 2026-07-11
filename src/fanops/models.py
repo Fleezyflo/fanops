@@ -412,7 +412,7 @@ class Render(BaseModel):
     # is a read-only mirror), the upload cache (`media_url`, FIX-F44 parity), its lifecycle (`state`), and its
     # lineage (`batch_id`/`source_id`, for batch-scoped filing + the durable archive). CONTENT-ADDRESSED by
     # (clip, hook, band, framing): two surfaces with the SAME spec compute the same id -> ONE render, ONE file
-    # (the anti-explosion dedup). Exists ONLY under creative_variation; a hookless surface has Post.render_id None
+    # (the anti-explosion dedup). A hookless surface has Post.render_id None
     # and serves the shared Clip.path. Captions are NOT here — they stay surface-keyed on the shared Clip
     # (the caption pipeline is intentionally untouched).
     id: str                                     # child_id("render", clip_id, hook[\x1fband:lo-hi][\x1fframe:x]) — see crosspost.account_render_spec

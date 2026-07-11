@@ -119,6 +119,15 @@ def test_save_uploads_skips_audio_only_when_probing(tmp_path, mocker):
     assert res.detail["skipped"] and not res.detail["saved"]
     assert not (cfg.inbox / "audio.mp4").exists()           # removed after the probe rejected it
 
+def test_save_uploads_probes_uploadpart_before_promote(tmp_path, mocker):
+    spy = mocker.patch("fanops.ingest.has_video_stream", return_value=True)
+    cfg = Config(root=tmp_path)
+    res = actions.save_uploads(cfg, [_Up("clip.mp4")], probe=True)
+    assert res.ok and res.detail["saved"] == ["clip.mp4"]
+    spy.assert_called_once()
+    assert str(spy.call_args[0][0]).endswith(".uploadpart")
+    assert (cfg.inbox / "clip.mp4").exists()
+
 # NB ffprobe-absent-during-probe is covered by test_save_uploads_rejects_unverifiable_when_ffprobe_absent
 # (ING-9): an unverifiable upload is REJECTED, not kept — keeping it would later abort the native ingest pass.
 

@@ -48,11 +48,9 @@ def test_cut_chip_is_ok_tone():
     assert c.tone == "ok" and "own cut" in c.cause
 
 
-def test_shared_cut_warn_only_when_variation_on():
-    on = views.provenance_chips(_sp(is_account_cut=False), creative_variation=True)
-    assert any(x.value == "shared-cut" and x.tone == "warn" for x in on)
-    off = views.provenance_chips(_sp(is_account_cut=False), creative_variation=False)
-    assert not any(x.value == "shared-cut" for x in off)                # OFF: a shared cut is expected, not a warning
+def test_shared_cut_warn_never_emitted():
+    chips = views.provenance_chips(_sp(is_account_cut=False))
+    assert not any(x.value == "shared-cut" for x in chips)                # shared-cut warn removed with per-account hooks toggle
 
 
 def test_shared_hook_chip_is_warn():

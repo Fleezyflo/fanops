@@ -4,8 +4,7 @@
    approve/reject. The operator watches the master, reads what each account would post, then approves — the
    per-account hook is burned on approval (slice 2). Compact mode is the dense, video-less scan/bulk-approve
    list (UNCHANGED — the master player + the per-account columns are a Full-view concern). A post-less
-   prepared/held card shows the master + its state, no columns. Safe by default: creative_variation OFF ->
-   no variant_hook line, the master is the shared clip, the data shape is byte-identical. #}
+   prepared/held card shows the master + its state, no columns. #}
 {% from "_prov.html" import cause_chips %}
 <div class="card clip-card{{ ' compact' if compact else '' }}" id="card-{{ card.clip_id }}">
   {# the MASTER/source clip on the left — the operator watches THIS, not a per-account burn (which doesn't exist
@@ -31,10 +30,8 @@
     <div class="meta clip-lineage"><span class="ro">from</span> {{ card.source_name }} <span class="ro">·</span> {{ card.moment_window }}s</div>
     {% if card.transcript_excerpt %}<details class="clip-transcript"><summary>Transcript</summary><p class="meta">{{ card.transcript_excerpt }}</p></details>{% endif %}
 
-    {# M3d: the shared-moment hook-removed badge + restore choice are an OFF-mode flow. When creative_variation
-       is ON (default), per-surface hooks own the burn (the clip is NOT running clean), so the badge would
-       mislead and approve_with_hook refuses — hide it. #}
-    {% if card.hook_removed and not creative_variation %}
+    {# M3d: the shared-moment hook-removed badge + restore choice for clips whose hook was auto-stripped. #}
+    {% if card.hook_removed %}
       <div class="meta hook-removed" title="the model wrote this hook but it was auto-removed (duplicate or shared-opening template); this clip is running CLEAN. Restore it from the surface below.">
         <span aria-hidden="true">✎</span> hook removed — <span class="hook-removed-text">{{ card.hook_removed }}</span>
       </div>
@@ -67,7 +64,7 @@
         {# S4: the per-account differentiation at a glance, now WITH its cause — rendered by the shared S2 _prov
            cause_chip macro (ONE renderer, no parallel hand-rolled chips). provenance_chips projects the surface
            into ordered "value ← why" chips. [] for an undifferentiated surface (the OFF firewall) -> absent. #}
-        {% set spec_chips = provenance_chips(s, creative_variation=(creative_variation and card.bucket == 'editable')) %}
+        {% set spec_chips = provenance_chips(s) %}
         {% if spec_chips %}
           <div class="meta surface-spec" aria-label="{{ s.account }} clip spec">{{ cause_chips(spec_chips) }}</div>
         {% endif %}
@@ -88,9 +85,8 @@
     </div>
     {% endif %}
 
-    {# M3d: the removed-hook restore choice is OFF-mode only (approve_with_hook refuses when creative_variation
-       is ON, where per-surface hooks own the burn). Gate on `not creative_variation`. #}
-    {% set hook_choice = card.bucket == 'editable' and card.hook_removed and card.surfaces and not creative_variation %}
+    {# M3d: the removed-hook restore choice when a shared-moment hook was auto-stripped. #}
+    {% set hook_choice = card.bucket == 'editable' and card.hook_removed and card.surfaces %}
     {% if hook_choice %}
       {# removed-hook choice (slice 2): one click to ship WITH the restored hook burned in, or clean as-is. #}
       <div class="hook-choice meta">

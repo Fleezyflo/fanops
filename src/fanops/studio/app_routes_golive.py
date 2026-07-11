@@ -34,13 +34,6 @@ def register_golive_routes(app, cfg):
                                                 request.form.getlist("platform"),
                                                 request.form.get("persona", "")))
 
-    @app.post("/golive/hooks")
-    def do_golive_hooks():
-        # Toggle per-account on-screen hooks (FANOPS_CREATIVE_VARIATION). Explicit "1"==on (NOT bool(str) —
-        # bool("0") is True; the off button sends value=""/anything-not-1). Works in dryrun or live (changes
-        # per-account render, not whether posts publish).
-        return _golive_panel(golive.set_per_account_hooks(cfg, request.form.get("on") == "1"))
-
     @app.post("/golive/casting")
     def do_golive_casting():
         # Toggle per-account moment casting (FANOPS_ACCOUNT_CASTING). Same shape as do_golive_hooks: explicit
