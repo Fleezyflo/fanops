@@ -175,6 +175,20 @@ def test_cli_subagent_start_allowlist_and_ledger(tmp_path):
     assert any(e["event"] == "subagent_start" and e.get("subagent_model") == "auto" for e in entries)
 
 
+def test_orchestrator_spawn_denied_even_without_a_wave(tmp_path):
+    # `/fanops-orchestrator` in a chat = spawn-as-subagent; a nested orchestrator cannot delegate, so
+    # this is refused unconditionally and the caller is redirected to take over top-level.
+    _, out = _run_cli("subagent-start", {"subagent_type": "fanops-orchestrator", "task": "wave"},
+                      tmp_path, active=False)
+    assert out.get("permission") == "deny"
+    assert "become the orchestrator" in out.get("agent_message", "")
+    # stateless when not engaged: the deny writes no ledger
+    assert not (Path(tmp_path) / ".orchestration" / "state" / "ledger.jsonl").exists()
+    # other spawn types remain untouched outside a wave
+    _, out = _run_cli("subagent-start", {"subagent_type": "explore", "task": "x"}, tmp_path, active=False)
+    assert out.get("permission") == "allow"
+
+
 def test_is_unit_verified_head_sha_pinning(tmp_path):
     # no head_sha in the record -> refused; matching -> verified; stale -> refused as STALE
     _write_record(tmp_path, "MOL-190", head_sha="")

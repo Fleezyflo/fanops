@@ -310,8 +310,6 @@ def handle_before_shell(data: dict, root) -> int:
 
 
 def handle_subagent_start(data: dict, root) -> int:
-    if not is_active(root):
-        return _emit("allow")          # inert outside an orchestration run — no collateral
     stype = str(data.get("subagent_type") or "")
     entry = {"event": "subagent_start", "subagent_id": data.get("subagent_id"),
              "subagent_type": stype, "subagent_model": data.get("subagent_model"),
@@ -319,15 +317,29 @@ def handle_subagent_start(data: dict, root) -> int:
              "parent_conversation_id": data.get("parent_conversation_id"),
              "is_parallel_worker": data.get("is_parallel_worker"),
              "git_branch": data.get("git_branch")}
+    if stype == "fanops-orchestrator":
+        # UNCONDITIONAL — wave or not. A nested orchestrator cannot spawn workers, so this spawn always
+        # dead-ends; `/fanops-orchestrator <plan>` in a chat is exactly this spawn. The deny redirects
+        # the CALLER to take over top-level, converting the broken launch into the supported hand-off.
+        msg_active = (
+            "REFUSED (orchestration gate): a wave is already ACTIVE — one orchestrator at a time "
+            "(parallel orchestrators caused double-merges), and the orchestrator never runs as a "
+            "subagent. If the previous wave is over, run `python scripts/orchestrate.py stop` from a "
+            "human terminal, then relaunch top-level (ORCHESTRATION.md §1).")
+        msg_takeover = (
+            "REFUSED (orchestration gate): `fanops-orchestrator` never runs as a subagent — nested, it "
+            "cannot spawn workers, so the wave dead-ends. Do NOT retry this spawn and do NOT do the work "
+            "yourself. Instead YOU become the orchestrator in THIS conversation: read "
+            "`.cursor/agents/fanops-orchestrator.md` and follow it for the user's request, starting with "
+            "`python scripts/orchestrate.py start`.")
+        if is_active(root):
+            append_ledger(root, {**entry, "event": "subagent_denied"})
+            return _emit("deny", user_message=msg_active, agent_message=msg_active)
+        return _emit("deny", user_message=msg_takeover, agent_message=msg_takeover)
+    if not is_active(root):
+        return _emit("allow")          # inert outside an orchestration run — no collateral
     if stype not in _WAVE_AGENTS:
         append_ledger(root, {**entry, "event": "subagent_denied"})
-        if stype == "fanops-orchestrator":
-            return _emit("deny", user_message=(
-                "REFUSED (orchestration gate): a wave is already ACTIVE — one orchestrator at a time "
-                "(parallel orchestrators caused double-merges), and the orchestrator must NEVER run as a "
-                "subagent (a nested orchestrator cannot delegate — launch it TOP-LEVEL per "
-                "ORCHESTRATION.md §1). If the previous wave is over, run "
-                "`python scripts/orchestrate.py stop` from your own terminal, then relaunch top-level."))
         return _emit("deny", user_message=(
             f"REFUSED (orchestration gate): spawn type {stype!r} is not allowed during a wave. Spawn the "
             "named `fanops-worker` agent (is_background: true, brief = unit + role + protocol file) — its "

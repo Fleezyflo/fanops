@@ -10,9 +10,11 @@ lands the verified results itself. You don't manage it after launch.
 - **Hand-off:** tell any TOP-LEVEL agent: *"Act as the FanOps orchestrator — read
   `.cursor/agents/fanops-orchestrator.md` and follow it."*
 
-Never have an agent SPAWN the orchestrator as a subagent — nested, it cannot spawn workers, and the
-gate refuses a second orchestrator mid-wave. The model you pick is the whole wave's model (every
-sub-agent is pinned `model: inherit`). Then tell it what to do, e.g.:
+Typing `/fanops-orchestrator <plan>` into a chat spawns the orchestrator as a SUBAGENT — nested, it
+cannot spawn workers. The gate now refuses that spawn unconditionally and redirects the chat's own
+agent to take over as the orchestrator, so the launch self-corrects instead of dead-ending. The model
+you pick for the conversation is the whole wave's model (every sub-agent is pinned `model: inherit`).
+Then tell it what to do, e.g.:
 
 > "Take the ready Linear tickets for team *Molham homsi* and drive them all to landed. Leave the repo pristine."
 
