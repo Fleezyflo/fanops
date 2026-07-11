@@ -171,6 +171,12 @@ def detect_window(cfg, src, *, start: float, end: float) -> dict | None:
             tmpf = path.with_suffix(path.suffix + ".tmp")
             tmpf.write_text(json.dumps({"v": _DETECT_V, "windows": cache}))
             os.replace(str(tmpf), str(path))
+            try:
+                from fanops.artifacts import stamp_stage
+                rel = str(path.relative_to(cfg.agent_io))
+                stamp_stage(cfg, source_id, "framing", artifact=rel, schema=_DETECT_V,
+                            sha256=getattr(src, "sha256", None))
+            except (OSError, ValueError): pass
         except OSError:
             return stats                                      # cache write failure just re-probes next time
         return stats

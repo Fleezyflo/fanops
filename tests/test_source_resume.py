@@ -195,6 +195,57 @@ def test_cli_force_from_catalogued_resets_moments_decided(tmp_path, monkeypatch)
     assert s.state is SourceState.catalogued and s.transcript is None and s.meta.get("transcribed") is False
 
 
+def test_force_reset_purges_manifest_framing_keyframes(tmp_path):
+    cfg = Config(root=tmp_path)
+    _moments_decided(cfg, path=str(tmp_path / "clip.mp4"))
+    (cfg.agent_io / "manifests").mkdir(parents=True)
+    (cfg.agent_io / "manifests" / "s1.json").write_text("{}")
+    (cfg.agent_io / "framing").mkdir(parents=True)
+    (cfg.agent_io / "framing" / "s1.detect.json").write_text("{}")
+    (cfg.agent_io / "keyframes" / "s1").mkdir(parents=True)
+    _seed_transcribe_cache(cfg)
+    with Ledger.transaction(cfg) as led:
+        assert resume_source(led, "s1", from_stage="catalogued", force=True, cfg=cfg) is True
+    assert not (cfg.agent_io / "manifests" / "s1.json").exists()
+    assert not (cfg.agent_io / "framing" / "s1.detect.json").exists()
+    assert not (cfg.agent_io / "keyframes" / "s1").exists()
+
+
+def test_auto_resume_from_error_with_warm_transcript(tmp_path):
+    cfg = Config(root=tmp_path)
+    path = str(tmp_path / "vid.mp4")
+    Path(path).write_bytes(b"V")
+    (cfg.agent_io / "transcripts").mkdir(parents=True)
+    (cfg.agent_io / "transcripts" / "vid.json").write_text(json.dumps(
+        {"language": "en", "segments": [{"start": 0, "end": 1, "text": "warm"}]}))
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="s1", source_path=path, state=SourceState.error,
+                              error_reason="TimeoutExpired: whisper hung", transcript=None,
+                              meta={"transcribed": False}))
+    from fanops.pipeline import reconcile_source_progress
+    from fanops.log import get_logger
+    with Ledger.transaction(cfg) as led:
+        reconcile_source_progress(led, cfg, get_logger(cfg))
+    s = Ledger.load(cfg).sources["s1"]
+    assert s.state is SourceState.transcribed and s.transcript and s.error_reason is None
+
+
+def test_toolchain_missing_error_not_auto_resumed(tmp_path):
+    cfg = Config(root=tmp_path)
+    path = str(tmp_path / "vid.mp4")
+    (cfg.agent_io / "transcripts").mkdir(parents=True)
+    (cfg.agent_io / "transcripts" / "vid.json").write_text(json.dumps(
+        {"language": "en", "segments": [{"start": 0, "end": 1, "text": "warm"}]}))
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="s1", source_path=path, state=SourceState.error,
+                              error_reason="toolchain missing: whisper (FileNotFoundError)"))
+    from fanops.pipeline import reconcile_source_progress
+    from fanops.log import get_logger
+    with Ledger.transaction(cfg) as led:
+        reconcile_source_progress(led, cfg, get_logger(cfg))
+    assert Ledger.load(cfg).sources["s1"].state is SourceState.error
+
+
 def test_studio_force_reset_threads_from_stage_and_force(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     cfg = Config(root=tmp_path)

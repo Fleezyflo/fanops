@@ -105,3 +105,15 @@ def test_source_backlog_error_is_recoverable(tmp_path):
         led.add_source(Source(id="src_e", source_path="/e.mp4", state=SourceState.error, error_reason="boom"))
     bl = source_backlog(Ledger.load(cfg), cfg)
     assert bl.recoverable == 1 and bl.rows[0].bucket == "recoverable"
+
+
+def test_source_backlog_shows_artifact_summary(tmp_path):
+    cfg = Config(root=tmp_path)
+    from fanops.artifacts import stamp_stage
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="src_e", source_path="/e.mp4", state=SourceState.error, error_reason="boom"))
+    stamp_stage(cfg, "src_e", "transcribe", artifact="transcripts/e.json", schema=1)
+    stamp_stage(cfg, "src_e", "signals", artifact="signals/src_e.json", schema=3)
+    bl = source_backlog(Ledger.load(cfg), cfg)
+    row = next(r for r in bl.rows if r.id == "src_e")
+    assert row.artifacts == "transcribe+signals"

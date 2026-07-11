@@ -118,8 +118,15 @@ def extract_frames_grid(video_path: str, start: float, end: float, *, fps: float
             cached = _existing_cached_frames(cache_dir)
             if cached:
                 return cached
-            return _run_grid_extract(video_path, start, end, fps=fps, out_dir=cache_dir,
-                                     width=width, timeout=timeout)
+            written = _run_grid_extract(video_path, start, end, fps=fps, out_dir=cache_dir,
+                                        width=width, timeout=timeout)
+            if written:
+                try:
+                    from fanops.artifacts import stamp_stage
+                    rel = str(cache_dir.relative_to(cfg.agent_io))
+                    stamp_stage(cfg, source_id, "keyframes", artifact=rel, schema=1)
+                except (OSError, ValueError): pass
+            return written
 
     # Legacy path — no cache, no lock; byte-identical to pre-M2 for callers without a source_id.
     return _run_grid_extract(video_path, start, end, fps=fps, out_dir=Path(out_dir), width=width,

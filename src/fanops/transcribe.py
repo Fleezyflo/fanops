@@ -133,16 +133,25 @@ def _segment(s: dict) -> dict:
         seg["words"] = [{"word": w["word"], "start": w.get("start"), "end": w.get("end")} for w in words]
     return seg
 
-def purge_source_artifacts(cfg: Config, source_id: str, source_path: str) -> None:
+def purge_source_artifacts(cfg: Config, source_id: str, source_path: str, *,
+                           clip_ids: list[str] | None = None) -> None:
     """MOL-471: delete on-disk transcribe/signals caches for a source so a force-retry cannot adopt stale
-    JSON. Idempotent — missing paths are fine. Demucs vocal stem dirs live under transcripts/vocals/."""
+    JSON. Idempotent — missing paths are fine. Demucs vocal stem dirs live under transcripts/vocals/.
+    Also clears framing, keyframes, manifests, and optional clip render fingerprints."""
     import shutil
     stem = Path(source_path).stem
     out_dir = cfg.agent_io / "transcripts"
-    for p in (out_dir / f"{stem}.json", out_dir / f"{stem}.mp3", cfg.agent_io / "signals" / f"{source_id}.json"):
+    for p in (out_dir / f"{stem}.json", out_dir / f"{stem}.mp3", cfg.agent_io / "signals" / f"{source_id}.json",
+              cfg.agent_io / "manifests" / f"{source_id}.json",
+              cfg.agent_io / "framing" / f"{source_id}.detect.json"):
         with contextlib.suppress(FileNotFoundError): p.unlink()
     demucs_stem = out_dir / "vocals" / _DEFAULT_DEMUCS_MODEL / stem
     if demucs_stem.exists(): shutil.rmtree(demucs_stem, ignore_errors=True)
+    kf = cfg.agent_io / "keyframes" / source_id
+    if kf.exists(): shutil.rmtree(kf, ignore_errors=True)
+    for cid in clip_ids or ():
+        with contextlib.suppress(FileNotFoundError):
+            (cfg.clips / f"{cid}.render.json").unlink()
 
 
 def _adopt_cached_transcript(led: Ledger, source_id: str, cached: Path) -> bool:
@@ -180,6 +189,11 @@ def transcribe_source(led: Ledger, cfg: Config, source_id: str, *, model: str | 
     # moves vocals to "{source_stem}.mp3"), so the lookup is stable.
     cached = out_dir / f"{Path(src.source_path).stem}.json"
     if cached.exists() and _adopt_cached_transcript(led, source_id, cached):
+        try:
+            from fanops.artifacts import stamp_stage
+            rel = str(cached.relative_to(cfg.agent_io))
+            stamp_stage(cfg, source_id, "transcribe", artifact=rel, schema=1, sha256=src.sha256)
+        except (OSError, ValueError): pass
         return led
     out_dir.mkdir(parents=True, exist_ok=True)
     # M1 produce critical section: per-(stage,source) lock — only ONE producer for this source at a
@@ -270,4 +284,9 @@ def _produce_transcript(led: Ledger, cfg: Config, source_id: str, src, out_dir: 
     src.language = data.get("language")
     src.meta["transcribed"] = True
     led.set_source_state(source_id, SourceState.transcribed)
+    try:
+        from fanops.artifacts import stamp_stage
+        rel = str(js.relative_to(cfg.agent_io))
+        stamp_stage(cfg, source_id, "transcribe", artifact=rel, schema=1, sha256=src.sha256)
+    except (OSError, ValueError): pass
     return led
