@@ -15,12 +15,16 @@ non-conflicting unit):
   (`cursor/mol-<id>-<slug>` or the Linear `gitBranchName`), open a PR tagged `MOL-xxx`. Fixing anything
   found wrong — including a failing check, a merge conflict, a rebase, or cleanup needed to land — is a
   worker job; never hand it back to the orchestrator to do.
-- **verify** — you did NOT implement this unit. Independently check the work against the task's acceptance
-  criteria (run the tests/CI/manual checks named in the task), then write the verification record so the
-  orchestrator is permitted to land it (schema in `.orchestration/SPEC.md`):
-  `.orchestration/state/verified/<UNIT>.json` with `passed`, `verifier` (you — a sub-agent, never
-  `orchestrator`), and `evidence`. If it fails the criteria, do NOT write a passing record — report the gap
-  so the orchestrator spawns a fix.
+- **verify** — you did NOT implement this unit. Your job is only what CI cannot prove: that the change
+  meets the task's acceptance criteria. Do NOT re-run what CI already ran — confirm the PR's checks are
+  green and cite that run as evidence. Check the diff against each criterion (a green suite asserting the
+  WRONG behavior is a FAIL), running only checks CI doesn't cover (e.g. manual/live checks the task
+  names). Then write the verification record so the orchestrator may land it (schema in
+  `.orchestration/SPEC.md`): `.orchestration/state/verified/<UNIT>.json` with `passed`, `verifier` (you —
+  a sub-agent, never `orchestrator`), and `evidence` (CI run + per-criterion result). Use the file-edit
+  (Write) tool — never shell redirection/`tee`/`cp`; the shell gate protects that directory for everyone
+  and will refuse. If any criterion fails, do NOT write a passing record — report the gap so the
+  orchestrator spawns a fix.
 
 ## Rules
 
