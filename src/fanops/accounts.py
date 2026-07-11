@@ -133,8 +133,7 @@ class Accounts:
             # leaks an AttributeError. Per-row leniency (below) only applies inside a valid envelope.
             if not isinstance(raw, dict):
                 raise ControlFileError(f"{p.name} invalid: top-level must be an object with an 'accounts' list, got {type(raw).__name__}")
-            if _canonicalize_accounts_raw(raw):
-                write_json_atomic(p, raw)                    # MOL-164: one-time legacy handle upgrade on read
+            _canonicalize_accounts_raw(raw)          # M20: in-memory only; mutators write disk canonical handles
             # MOL-79: per-ROW leniency. Build each Account under its own guard so ONE bad row (a
             # null, a trailing-comma artifact, a dict missing a required field) is skipped + recorded
             # while every other account still loads — the whole pipeline/Studio no longer goes down

@@ -104,6 +104,30 @@ def test_learn_pass_fetch_runs_outside_the_lock(tmp_path, monkeypatch, mocker):
         "the learn-pass metrics fetch held the ledger lock — network must be OUTSIDE the transaction"
 
 
+def test_cmd_map_media_uses_a_transaction(tmp_path, monkeypatch, mocker):
+    monkeypatch.chdir(tmp_path)
+    Ledger.load(Config(root=tmp_path)).save()
+    mocker.patch("fanops.meta_graph.enumerate_scoped_media", return_value=[])
+    spy = mocker.spy(Ledger, "transaction")
+    assert main_ok(["map-media"])
+    assert spy.call_count >= 1, "cmd_map_media must persist under Ledger.transaction, not a lock-free load+save"
+
+
+def test_cmd_map_media_network_runs_outside_the_lock(tmp_path, monkeypatch, mocker):
+    monkeypatch.chdir(tmp_path)
+    cfg = Config(root=tmp_path); Ledger.load(cfg).save()
+    seen = []
+
+    def scoped(cfg_, handles, *, get=None):
+        seen.append(_ledger_lock_is_free(cfg))
+        return []
+
+    mocker.patch("fanops.meta_graph.enumerate_scoped_media", side_effect=scoped)
+    assert main_ok(["map-media"])
+    assert seen and seen[0] is True, \
+        "the media enumeration held the ledger lock — network must be OUTSIDE the transaction"
+
+
 def test_cmd_reconcile_poll_runs_outside_the_lock(tmp_path, monkeypatch, mocker):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("FANOPS_POSTER", "zernio")

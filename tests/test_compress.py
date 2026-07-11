@@ -51,6 +51,47 @@ def test_apply_shrink_persists_media_urls_when_mocked(tmp_path, monkeypatch, moc
     assert post.media_urls == [f"file://{shrunk.resolve()}"]
 
 
+def test_noop_shrink_persist_leaves_https_urls(tmp_path):
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    src = tmp_path / "a.mp4"
+    src.write_bytes(b"1")
+    led.add_render(Render(id="r1", clip_id="c", account="a", surface_key="a/tiktok",
+                          hook_text="h", path=str(src), state=RenderState.rendered))
+    led.add_post(Post(id="p", parent_id="c", account="a", account_id="1", platform=Platform.tiktok,
+                      caption="x", render_id="r1", media_urls=[f"file://{src}"]))
+    led.save()
+    with Ledger.transaction(cfg) as led:
+        p = led.posts["p"]
+        led.posts["p"] = p.model_copy(update={"media_urls": ["https://media.zernio.com/v.mp4"]})
+    snap = Ledger.load(cfg)
+    snap.posts["p"] = snap.posts["p"].model_copy(update={"media_urls": [f"file://{src}"]})
+    persist_post_shrink(cfg, snap, "p")
+    led2 = Ledger.load(cfg)
+    assert led2.posts["p"].media_urls == ["https://media.zernio.com/v.mp4"]
+
+
+def test_real_shrink_persist_writes_shrunk_render_and_file_urls(tmp_path):
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    src = tmp_path / "a.mp4"
+    shrunk = tmp_path / "b.mp4"
+    src.write_bytes(b"1")
+    shrunk.write_bytes(b"2")
+    led.add_render(Render(id="r1", clip_id="c", account="a", surface_key="a/tiktok",
+                          hook_text="h", path=str(src), state=RenderState.rendered))
+    led.add_post(Post(id="p", parent_id="c", account="a", account_id="1", platform=Platform.tiktok,
+                      caption="x", render_id="r1", media_urls=[f"file://{src}"]))
+    led.save()
+    snap = Ledger.load(cfg)
+    snap.renders["r1"] = snap.renders["r1"].model_copy(update={"path": str(shrunk)})
+    snap.posts["p"].media_urls = [f"file://{shrunk}"]
+    persist_post_shrink(cfg, snap, "p")
+    led2 = Ledger.load(cfg)
+    assert led2.renders["r1"].path == str(shrunk)
+    assert led2.posts["p"].media_urls == [f"file://{shrunk}"]
+
+
 def test_persist_post_shrink_writes_ledger(tmp_path):
     cfg = Config(root=tmp_path)
     led = Ledger.load(cfg)

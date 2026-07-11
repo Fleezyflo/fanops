@@ -239,6 +239,43 @@ def test_restore_snapshot_round_trips_total_wipe(tmp_path):
     assert Ledger.load(cfg)._to_doc() == original_doc
 
 
+# ---- M22: cascade file unlinks defer until commit (abort rolls back rows AND files) ----
+def test_cascade_abort_preserves_rows_and_files(tmp_path):
+    cfg = Config(root=tmp_path)
+    clip_path = tmp_path / "cascade.mp4"
+    clip_path.write_bytes(b"video")
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="s1", source_path="/v.mp4"))
+        led.add_moment(Moment(id="m1", parent_id="s1", content_token="X", start=0, end=1, reason="x"))
+        led.add_clip(Clip(id="c1", parent_id="m1", path=str(clip_path), state=ClipState.queued))
+        led.add_post(Post(id="p1", parent_id="c1", account="a", account_id="1", platform=Platform.instagram,
+                          caption="x", state=PostState.failed, public_url="dryrun://p1"))
+    with pytest.raises(RuntimeError, match="abort"):
+        with Ledger.transaction(cfg) as led:
+            led._delete_moment_cascade("m1")
+            raise RuntimeError("abort")
+    again = Ledger.load(cfg)
+    assert "m1" in again.moments and "c1" in again.clips and "p1" in again.posts
+    assert clip_path.exists()
+
+
+def test_cascade_commit_removes_rows_and_files(tmp_path):
+    cfg = Config(root=tmp_path)
+    clip_path = tmp_path / "cascade.mp4"
+    clip_path.write_bytes(b"video")
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="s1", source_path="/v.mp4"))
+        led.add_moment(Moment(id="m1", parent_id="s1", content_token="X", start=0, end=1, reason="x"))
+        led.add_clip(Clip(id="c1", parent_id="m1", path=str(clip_path), state=ClipState.queued))
+        led.add_post(Post(id="p1", parent_id="c1", account="a", account_id="1", platform=Platform.instagram,
+                          caption="x", state=PostState.failed, public_url="dryrun://p1"))
+    with Ledger.transaction(cfg) as led:
+        led._delete_moment_cascade("m1")
+    again = Ledger.load(cfg)
+    assert "m1" not in again.moments and "c1" not in again.clips and "p1" not in again.posts
+    assert not clip_path.exists()
+
+
 # ---- the routine cascade guard must stay BYTE-IDENTICAL (MOL-33 acceptance) ----
 def test_delete_moment_cascade_and_protected_states_byte_identical():
     import inspect, hashlib
@@ -248,7 +285,7 @@ def test_delete_moment_cascade_and_protected_states_byte_identical():
     # if this fails, _delete_moment_cascade was edited — the M4 wipe MUST be a separate verb, never a
     # change to the routine cascade. Re-verify the change is intended, then update this pin.
     # Repinned MOL-358: cascade unlink warning routes through get_logger (fail-open posture unchanged).
-    assert h == "473fc9c7a87d326d43137b93763055769e3b7fde0fbfeaff3da8a12be5acd044", f"cascade source changed; new sha256={h}"
+    assert h == "f49651e809e50e423576e7f09d9a93f287b9945869bb47da1da8b1109191bedd", f"cascade source changed; new sha256={h}"
     assert Ledger._PROTECTED_POST_STATES == (
         PostState.published, PostState.analyzed, PostState.submitted, PostState.submitting,
         PostState.needs_reconcile, PostState.awaiting_approval, PostState.queued, PostState.retired)

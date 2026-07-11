@@ -418,6 +418,7 @@ class Ledger:
                                               # with NO clip lineage (9th id->unit map; additive). Keyed by the Graph
                                               # media_id (the natural key). Empty until the projection imports one (M2);
                                               # old ledgers load with {} (pre-v10) — the OFF/baseline shape is byte-identical.
+        self._deferred_unlinks: list[str] = []             # M22: cascade clip paths unlinked only after commit
 
     @classmethod
     def load(cls, cfg: Config, *, store: LedgerStore | None = None) -> "Ledger":
@@ -484,6 +485,7 @@ class Ledger:
             led = cls.load(cfg, store=store)
             yield led
             led._save_unlocked()
+            led._drain_deferred_unlinks()
 
     def _to_doc(self) -> dict:
         return {
@@ -505,13 +507,21 @@ class Ledger:
         self._store.write_raw(self._to_doc())
 
     def save(self) -> None:
-        """Standalone save for callers OUTSIDE a transaction (e.g. cmd_ingest, cmd_gc). Acquires
-        the lock, then delegates the write to _save_unlocked. A caller already inside
-        Ledger.transaction() must NOT call this (it would self-deadlock/LockBusyError) — it gets the
-        single exit-save instead. (publish now runs its network OUTSIDE the lock via per-post
-        claim->network->finalize transactions, so it no longer needs a mid-loop unlocked save.)"""
+        """Test-only standalone save; production code uses `Ledger.transaction()`. Acquires the lock,
+        then delegates the write to _save_unlocked. A caller already inside Ledger.transaction() must
+        NOT call this (it would self-deadlock/LockBusyError) — it gets the single exit-save instead."""
         with self._store.lock():
             self._save_unlocked()
+            self._drain_deferred_unlinks()
+
+    def _drain_deferred_unlinks(self) -> None:
+        for path in self._deferred_unlinks:
+            if path and os.path.exists(path):
+                try: os.remove(path)
+                except OSError as exc:
+                    get_logger(self.cfg)("ledger", "-", "cascade_unlink_failed", level="warning",
+                                         path=path, err=str(exc)[:160])
+        self._deferred_unlinks.clear()
 
     # ---- ledger-rebuild M4 (MOL-32): pre-wipe snapshot + rollback ---------------------------------
     # A snapshot is a SQLite .backup() of ledger.sqlite, named with a UTC timestamp under 00_control
@@ -665,10 +675,7 @@ class Ledger:
                     # clips still in retired/analyzed state, so a row-less file is unreachable by gc forever
                     # (a permanent orphan). Fail-open + surface like cmd_gc: a bad unlink never aborts the cascade.
                     if c.path and os.path.exists(c.path):
-                        try: os.remove(c.path)
-                        except OSError as exc:
-                            get_logger(self.cfg)("ledger", c.id, "cascade_unlink_failed", level="warning",
-                                                 path=c.path, err=str(exc)[:160])
+                        self._deferred_unlinks.append(c.path)
                     self.clips.pop(c.id, None)
                 else:
                     survived = True

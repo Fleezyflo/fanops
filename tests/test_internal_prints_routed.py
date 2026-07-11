@@ -92,5 +92,6 @@ def test_ledger_cascade_unlink_failure_logs(tmp_path, monkeypatch):
                       public_url="dryrun://p"))
     monkeypatch.setattr("os.remove", lambda p: (_ for _ in ()).throw(OSError("perm denied")))
     led.reconcile_moments("s", {})
+    led.save()                                                  # M22: unlink + logging happen at post-commit drain
     recs = _log_records(cfg)
     assert any(r["stage"] == "ledger" and r["outcome"] == "cascade_unlink_failed" for r in recs)

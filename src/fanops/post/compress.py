@@ -121,10 +121,10 @@ def persist_post_shrink(cfg, snapshot_led, post_id: str) -> None:
         p = led.posts.get(post_id)
         if p is None:
             return
-        if post.media_urls:
-            p.media_urls = list(post.media_urls)
         if post.render_id:
             rs = snapshot_led.renders.get(post.render_id)
             r = led.renders.get(post.render_id)
             if rs and r and rs.path and rs.path != r.path:
                 led.renders[post.render_id] = r.model_copy(update={"path": rs.path})
+                if post.media_urls:
+                    p.media_urls = list(post.media_urls)

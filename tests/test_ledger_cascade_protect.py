@@ -59,6 +59,7 @@ def test_cascade_unlinks_dropped_clip_file(tmp_path):
     f = tmp_path / "orphan.mp4"; f.write_bytes(b"x")
     led.clips["c"] = led.clips["c"].model_copy(update={"path": str(f)})
     led.reconcile_moments("s", {})                              # empty keep -> drops m -> cascade pops clip c
+    led.save()                                                  # M22: unlinks drain on commit, not during cascade
     assert "c" not in led.clips, "the rejected-post clip is still dropped from the ledger"
     assert not f.exists(), "the dropped clip's on-disk file must be unlinked, not left as a gc-unreachable orphan"
 
