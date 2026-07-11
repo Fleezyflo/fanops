@@ -81,6 +81,7 @@ def run_ingest(cfg: Config, *, batch_name: str = "", target_accounts=(), burn_su
     detail = {"sources": n, "added": added}
     if counts is not None and counts.excluded: detail["excluded"] = counts.excluded   # ING-5: PII drops visible on native path too
     if counts is not None and counts.skipped: detail["skipped"] = counts.skipped       # copy-failed/unverifiable files left in inbox — VISIBLE, not a silent "Done" while the inbox jams
+    if counts is not None and counts.retired_dedup: detail["retired_dedup"] = counts.retired_dedup
     if batch is not None:
         detail.update(batch=batch.name, batch_id=batch.id)
         if batch.error_reason: detail["warnings"] = [batch.error_reason]   # zero-target advisory -> Studio Run panel

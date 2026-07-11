@@ -36,6 +36,18 @@
       {% if result.ok %}Done{% if result.detail %} — {% if result.detail.saved is defined %}{{ result.detail.saved|length }} added, {{ result.detail.skipped|length }} skipped{% else %}{{ result.detail }}{% endif %}{% endif %}{% if result.detail and result.detail.batch %} · batch '{{ result.detail.batch }}'{% endif %}
       {% else %}{{ result.error }}{% endif %}
     </div>
+    {% if result.ok and result.detail and result.detail.retired_dedup %}
+    <div class="result warn retired-dedup">
+      {% for sid in result.detail.retired_dedup %}
+      <p>Matched retired source <code>{{ sid }}</code> — nothing new was catalogued. Use <strong>Reset to the start</strong> in the Library (or below) to re-run from scratch.</p>
+      <form hx-post="{{ url_for('do_run_resume') }}" hx-target="#run-panel" hx-swap="outerHTML" class="stage-form-inline">
+        <input type="hidden" name="source_id" value="{{ sid }}">
+        <input type="hidden" name="from_stage" value="catalogued"><input type="hidden" name="force" value="1">
+        <button type="submit">Reset {{ sid }} to the start</button>
+      </form>
+      {% endfor %}
+    </div>
+    {% endif %}
   {% endif %}
 
   {# ── ① ADD FOOTAGE ─────────────────────────────────────────────────────────────────────────────── #}
