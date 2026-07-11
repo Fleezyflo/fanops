@@ -15,6 +15,7 @@ from __future__ import annotations
 import json, logging, os, shutil, subprocess
 from pathlib import Path
 from fanops.config import Config
+from fanops.controlio import write_json_atomic
 from fanops.errors import ControlFileError, ToolchainMissingError
 from fanops.ledger import Ledger
 from fanops.ingest import scan_local, probe_dimensions, sha256_of
@@ -29,19 +30,6 @@ def _load_json(path: Path, default):
         return json.loads(path.read_text())
     except (json.JSONDecodeError, OSError) as e:
         raise ControlFileError(f"{path.name} invalid: {type(e).__name__}: {str(e)[:120]}") from e
-
-def _write_json_atomic(path: Path, obj) -> None:
-    """tmp + os.replace, mirroring Ledger._save_unlocked: a crash mid-write must never leave a
-    truncated manifest/intaken file — the next run would die on it, or a partial intaken set
-    would silently re-intake (duplicate sources). Plain write_text violated the module's own
-    'idempotent, never a crash' docstring claim (stage-6 audit). os.replace is atomic only when src
-    and dst share a filesystem (audit c2-f3); the tmp is `path.with_suffix(... + '.tmp')`, i.e. the
-    SAME directory as the target, so the same-fs precondition holds by construction — never move it to
-    a /tmp scratch dir or the swap silently stops being atomic."""
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    assert tmp.parent == path.parent          # same-fs precondition for an atomic os.replace (audit c2-f3)
-    tmp.write_text(json.dumps(obj, indent=2))
-    os.replace(tmp, path)
 
 def candidate_meta(path: Path) -> dict:
     """Cheap metadata for one candidate: bytes + mtime always (from os.stat); width/height/duration
@@ -111,7 +99,7 @@ def discover(cfg: Config, roots: list[Path]) -> dict:
         make_thumbnail(p, thumb)                 # fail-open: entry still listed if no thumb
         manifest[eid] = {"source_path": str(p), "sha256": digest, **meta}
         new += 1
-    _write_json_atomic(mpath, manifest)
+    write_json_atomic(mpath, manifest)
     return {"found": found, "new": new, "skipped": skipped}
 
 def intake(cfg: Config) -> dict:
@@ -144,5 +132,5 @@ def intake(cfg: Config) -> dict:
         if not dest.exists():
             shutil.copy2(src, dest)
         done.add(eid); intaken += 1
-    _write_json_atomic(donep, sorted(done))
+    write_json_atomic(donep, sorted(done))
     return {"approved": approved, "intaken": intaken, "missing": missing}

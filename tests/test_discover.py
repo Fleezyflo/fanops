@@ -1,34 +1,11 @@
 import json
 import subprocess
-import pytest
 from pathlib import Path
 import fanops.discover as discover
 
 def _put(p, b=b"V"):
     p.parent.mkdir(parents=True, exist_ok=True); p.write_bytes(b)
 
-
-def test_write_json_atomic_preserves_original_on_replace_failure(tmp_path, mocker):
-    # audit c0-f4: a crash during the atomic swap must leave the prior file intact — never a torn manifest the
-    # next run dies on, nor a partial intaken-set that silently re-intakes. tmp + os.replace guarantees this.
-    target = tmp_path / "manifest.json"
-    target.write_text(json.dumps({"good": 1}))
-    mocker.patch("fanops.discover.os.replace", side_effect=OSError("disk full"))
-    with pytest.raises(OSError):
-        discover._write_json_atomic(target, {"new": 2})
-    assert json.loads(target.read_text()) == {"good": 1}      # original preserved, never half-written
-
-
-def test_write_json_atomic_tmp_is_same_dir_as_target(tmp_path, mocker):
-    # audit c2-f3: os.replace is atomic only same-fs; the tmp must live in the target's own directory so the
-    # same-fs precondition holds (the in-code assert enforces it; this pins it against a refactor to /tmp).
-    target = tmp_path / "sub" / "manifest.json"
-    target.parent.mkdir(parents=True)
-    seen = {}
-    real = discover.os.replace
-    mocker.patch("fanops.discover.os.replace", side_effect=lambda s, d: (seen.__setitem__("src", Path(s)), real(s, d))[1])
-    discover._write_json_atomic(target, {"x": 1})
-    assert seen["src"].parent == target.parent
 
 def test_candidate_meta_uses_cheap_probe_only(tmp_path, mocker):
     f = tmp_path / "a.mp4"; _put(f, b"VIDEO")
