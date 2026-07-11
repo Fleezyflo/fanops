@@ -44,6 +44,12 @@ def _client(cfg):
     app.config.update(TESTING=True)
     return app.test_client()
 
+def test_templates_auto_reload_enabled(tmp_path):
+    from fanops.studio.app import create_app
+    app = create_app(Config(root=tmp_path))
+    assert app.config["TEMPLATES_AUTO_RELOAD"] is True
+    assert app.jinja_env.auto_reload is True
+
 def test_tabs_return_200(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg, tmp_path)
     c = _client(cfg)

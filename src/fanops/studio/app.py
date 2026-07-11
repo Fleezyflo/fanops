@@ -236,6 +236,7 @@ def _card_chips(cards, active):
 
 def create_app(cfg: Config) -> Flask:
     app = Flask(__name__, template_folder=str(_HERE / "templates"), static_folder=str(_HERE / "static"))
+    app.config["TEMPLATES_AUTO_RELOAD"] = True
     app.config["FANOPS_CFG"] = cfg
     app.config["MAX_CONTENT_LENGTH"] = cfg.upload_max_bytes    # ING-8: configurable upload ceiling (FANOPS_UPLOAD_MAX_MB); Werkzeug 413s an oversize body before the view runs
     # Stored times are canonical UTC; render them in the operator's local tz. `localdt` -> friendly display,
