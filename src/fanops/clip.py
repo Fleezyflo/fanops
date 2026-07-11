@@ -709,46 +709,48 @@ def render_moment(led: Ledger, cfg: Config, moment_id: str, *,
         sc_cut_seconds = round(sum(float(e) - float(s) for s, e in spans), 3)
         span_entries, span_ct = _supercut_span_entries(cfg, src, spans)
         env_cs, env_ce = float(m.start), float(m.end)
-        extra_vf, hook_burn_failed = _subtitles_vf(led, cfg, moment_id, cid, aspect,
-                                                   clip_start=env_cs, clip_end=env_ce, supercut_spans=spans)
-        ass_path = cfg.clips / f"{cid}.ass"
-        ass_text = ass_path.read_text(encoding="utf-8") if (extra_vf and ass_path.exists()) else ""
-        fp = _render_fingerprint(src.source_path, env_cs, env_ce, aspect.value, src.width or 0, src.height or 0,
-                                 ass_text, supercut_segments=spans, supercut_span_entries=span_entries)
-        fp_path = cfg.clips / f"{cid}.render.json"
-        if dst.exists() and dst.stat().st_size > 0 and _fingerprint_matches(fp_path, fp):
-            clip = Clip(id=cid, parent_id=moment_id, state=born_state, path=str(dst), aspect=aspect,
-                        first_frame_kind=None, cut_seconds=sc_cut_seconds, hook_burn_failed=hook_burn_failed)
-            led.clips[cid] = clip
-            led.set_moment_state(moment_id, MomentState.clipped)
-            return led, clip
-        sc_ok = False
-        try:
-            r = render_supercut_reframed(src.source_path, str(dst), spans, aspect.value,
-                                         src_w=src.width or 0, src_h=src.height or 0,
-                                         span_entries=span_entries, content_type=span_ct, extra_vf=extra_vf,
-                                         timeout=_FFMPEG_TIMEOUT)
-            sc_ok = r.returncode == 0 and dst.exists() and dst.stat().st_size > 0
-        except (FileNotFoundError, OSError, subprocess.TimeoutExpired) as exc:
-            get_logger(cfg)("clip", cid, "supercut_fail_open",
-                            reason=f"{type(exc).__name__}: supercut render failed — falling back to envelope")
-            r = None
-        if sc_ok:
-            clip = Clip(id=cid, parent_id=moment_id, state=born_state, path=str(dst), aspect=aspect,
-                        first_frame_kind=None, cut_seconds=sc_cut_seconds, hook_burn_failed=hook_burn_failed)
-            led.clips[cid] = clip
-            led.set_moment_state(moment_id, MomentState.clipped)
+        from fanops.stage_lock import stage_lock
+        with stage_lock(cfg, stage="render", key=cid):
+            extra_vf, hook_burn_failed = _subtitles_vf(led, cfg, moment_id, cid, aspect,
+                                                       clip_start=env_cs, clip_end=env_ce, supercut_spans=spans)
+            ass_path = cfg.clips / f"{cid}.ass"
+            ass_text = ass_path.read_text(encoding="utf-8") if (extra_vf and ass_path.exists()) else ""
+            fp = _render_fingerprint(src.source_path, env_cs, env_ce, aspect.value, src.width or 0, src.height or 0,
+                                     ass_text, supercut_segments=spans, supercut_span_entries=span_entries)
+            fp_path = cfg.clips / f"{cid}.render.json"
+            if dst.exists() and dst.stat().st_size > 0 and _fingerprint_matches(fp_path, fp):
+                clip = Clip(id=cid, parent_id=moment_id, state=born_state, path=str(dst), aspect=aspect,
+                            first_frame_kind=None, cut_seconds=sc_cut_seconds, hook_burn_failed=hook_burn_failed)
+                led.clips[cid] = clip
+                led.set_moment_state(moment_id, MomentState.clipped)
+                return led, clip
+            sc_ok = False
             try:
-                fp_path.write_text(json.dumps({"fp": fp}))
+                r = render_supercut_reframed(src.source_path, str(dst), spans, aspect.value,
+                                             src_w=src.width or 0, src_h=src.height or 0,
+                                             span_entries=span_entries, content_type=span_ct, extra_vf=extra_vf,
+                                             timeout=_FFMPEG_TIMEOUT)
+                sc_ok = r.returncode == 0 and dst.exists() and dst.stat().st_size > 0
+            except (FileNotFoundError, OSError, subprocess.TimeoutExpired) as exc:
+                get_logger(cfg)("clip", cid, "supercut_fail_open",
+                                reason=f"{type(exc).__name__}: supercut render failed — falling back to envelope")
+                r = None
+            if sc_ok:
+                clip = Clip(id=cid, parent_id=moment_id, state=born_state, path=str(dst), aspect=aspect,
+                            first_frame_kind=None, cut_seconds=sc_cut_seconds, hook_burn_failed=hook_burn_failed)
+                led.clips[cid] = clip
+                led.set_moment_state(moment_id, MomentState.clipped)
                 try:
-                    from fanops.artifacts import stamp_stage
-                    stamp_stage(cfg, src.id, "clip", artifact=f"clips/{cid}.render.json", schema=1, sha256=src.sha256)
-                except (OSError, ValueError): pass
-            except OSError: pass
-            return led, clip
-        rc = getattr(r, "returncode", "?") if r is not None else "?"
-        get_logger(cfg)("clip", cid, "supercut_fail_open",
-                        reason=f"supercut rc={rc} — falling back to envelope cut")
+                    fp_path.write_text(json.dumps({"fp": fp}))
+                    try:
+                        from fanops.artifacts import stamp_stage
+                        stamp_stage(cfg, src.id, "clip", artifact=f"clips/{cid}.render.json", schema=1, sha256=src.sha256)
+                    except (OSError, ValueError): pass
+                except OSError: pass
+                return led, clip
+            rc = getattr(r, "returncode", "?") if r is not None else "?"
+            get_logger(cfg)("clip", cid, "supercut_fail_open",
+                            reason=f"supercut rc={rc} — falling back to envelope cut")
         # FAIL-OPEN: today's single-window path over the envelope (fit_window/snap/visual_start below).
         spans = None
     if not is_stitch and not spans:
@@ -775,93 +777,95 @@ def render_moment(led: Ledger, cfg: Config, moment_id: str, *,
     # the zoom (music wider). All fail-open -> centered. Resolved here (window final) + cached so the in-lock
     # commit re-probes nothing, and it feeds BOTH the fingerprint and the render (no stale-crop reuse).
     focus, track, content_type = _resolve_framing(cfg, src, cs, ce)
-    extra_vf, hook_burn_failed = _subtitles_vf(led, cfg, moment_id, cid, aspect, clip_start=cs, clip_end=ce)
-    # Phase D idempotent skip: if cid.mp4 already exists AND its fingerprint matches this exact intended
-    # render (a pre-warm pass produced it), adopt it and SKIP ffmpeg — record the clip + advance the
-    # moment. A changed hook/window yields a different fingerprint -> re-render (no stale clip reuse).
-    ass_path = cfg.clips / f"{cid}.ass"
-    ass_text = ass_path.read_text(encoding="utf-8") if (extra_vf and ass_path.exists()) else ""
-    fp = _render_fingerprint(src.source_path, cs, ce, aspect.value, src.width or 0, src.height or 0,
-                             ass_text, top_bias=_moment_top_bias(m, cfg), focus=focus, track=track, content_type=content_type)
-    fp_path = cfg.clips / f"{cid}.render.json"
-    if dst.exists() and dst.stat().st_size > 0 and _fingerprint_matches(fp_path, fp):
-        # An fp-match means a prior render of THIS exact window already passed (the fp is stamped only
-        # after a successful render + a passing duration check for stitches), so adopt it without re-probing.
+    from fanops.stage_lock import stage_lock
+    with stage_lock(cfg, stage="render", key=cid):
+        extra_vf, hook_burn_failed = _subtitles_vf(led, cfg, moment_id, cid, aspect, clip_start=cs, clip_end=ce)
+        # Phase D idempotent skip: if cid.mp4 already exists AND its fingerprint matches this exact intended
+        # render (a pre-warm pass produced it), adopt it and SKIP ffmpeg — record the clip + advance the
+        # moment. A changed hook/window yields a different fingerprint -> re-render (no stale clip reuse).
+        ass_path = cfg.clips / f"{cid}.ass"
+        ass_text = ass_path.read_text(encoding="utf-8") if (extra_vf and ass_path.exists()) else ""
+        fp = _render_fingerprint(src.source_path, cs, ce, aspect.value, src.width or 0, src.height or 0,
+                                 ass_text, top_bias=_moment_top_bias(m, cfg), focus=focus, track=track, content_type=content_type)
+        fp_path = cfg.clips / f"{cid}.render.json"
+        if dst.exists() and dst.stat().st_size > 0 and _fingerprint_matches(fp_path, fp):
+            # An fp-match means a prior render of THIS exact window already passed (the fp is stamped only
+            # after a successful render + a passing duration check for stitches), so adopt it without re-probing.
+            clip = Clip(id=cid, parent_id=moment_id, state=born_state, path=str(dst), aspect=aspect,
+                        first_frame_kind=first_frame_kind, cut_seconds=cut_seconds,
+                        hook_burn_failed=hook_burn_failed)
+            led.clips[cid] = clip
+            if not is_stitch:                                     # a stitch never advances the moment (the bare clip owns it)
+                led.set_moment_state(moment_id, MomentState.clipped)
+            return led, clip
+        try:
+            r = render_reframed(src.source_path, str(dst), cs, ce, aspect.value,
+                                src_w=src.width or 0, src_h=src.height or 0, extra_vf=extra_vf,
+                                top_bias=_moment_top_bias(m, cfg), focus=focus, track=track,
+                                content_type=content_type, timeout=_FFMPEG_TIMEOUT)
+        except (FileNotFoundError, OSError) as e:
+            # ffmpeg ABSENT from PATH (or otherwise unspawnable): subprocess.run raises BEFORE the
+            # process starts, so check=False (which only suppresses a nonzero RETURNCODE) does not
+            # cover it. Treat it exactly like the nonzero-rc branch — record ClipState.error and
+            # leave the moment at `decided` so a re-run retries when ffmpeg returns. Otherwise the
+            # raise escapes to the pipeline's per-moment quarantine, parking the moment in the
+            # TERMINAL MomentState.error (never re-rendered) — a transient PATH glitch would wedge
+            # it permanently, contradicting this module's fail-safe philosophy.
+            clip = Clip(id=cid, parent_id=moment_id, state=ClipState.error, path=str(dst),
+                        aspect=aspect, error_reason=f"toolchain missing: ffmpeg ({type(e).__name__})")
+            led.clips[cid] = clip
+            return led, clip
+        except subprocess.TimeoutExpired:
+            # ffmpeg HUNG (corrupt input, stuck filesystem) and was killed at the bound. Same
+            # fail-safe shape as the branches above/below: ClipState.error, moment stays `decided`
+            # so a re-run retries — an unbounded hang here held the ledger flock forever.
+            clip = Clip(id=cid, parent_id=moment_id, state=ClipState.error, path=str(dst),
+                        aspect=aspect, error_reason=f"ffmpeg timed out after {_FFMPEG_TIMEOUT:.0f}s")
+            led.clips[cid] = clip
+            return led, clip
+        if r.returncode != 0 or not dst.exists() or dst.stat().st_size == 0:
+            # ffmpeg RAN and failed OR produced a 0-byte output (truncated mux at rc=0): record the clip as
+            # errored (a dangling/empty path would otherwise masquerade as 'rendered' and blow up later in
+            # crosspost/media-upload). The st_size>0 guard mirrors the segment-concat (:447) + warm-skip (:619)
+            # checks. Leave the moment un-clipped so a re-run retries. Mirrors transcribe.py's pattern.
+            clip = Clip(id=cid, parent_id=moment_id, state=ClipState.error, path=str(dst),
+                        aspect=aspect, error_reason=f"ffmpeg rc={r.returncode} out={dst.stat().st_size if dst.exists() else 'missing'}B: {(r.stderr or '')[:180]}")
+            led.clips[cid] = clip
+            return led, clip
+        if is_stitch:
+            # Output validity is DURATION-checked, not size-checked (PRD): a short/empty container that
+            # passes "size > 0" must fail. expected = cut_end - cut_start; a render outside DURATION_TOLERANCE
+            # is errored (bare clip already shipped upstream — fail-open + fail-visible), no skip-stamp so a
+            # re-render retries. The moment is left alone (the bare clip owns its state).
+            from fanops.impact_cut import DURATION_TOLERANCE
+            expected = round(ce - cs, 3)
+            actual = _probe_duration(str(dst))
+            if actual is None or abs(actual - expected) > DURATION_TOLERANCE:
+                clip = Clip(id=cid, parent_id=moment_id, state=ClipState.error, path=str(dst), aspect=aspect,
+                            error_reason=f"duration {actual} vs {expected}")
+                led.clips[cid] = clip
+                return led, clip
         clip = Clip(id=cid, parent_id=moment_id, state=born_state, path=str(dst), aspect=aspect,
                     first_frame_kind=first_frame_kind, cut_seconds=cut_seconds,
                     hook_burn_failed=hook_burn_failed)
+        # Overwrite any prior clip at this content-addressed id (e.g. a previous error-state
+        # render) so a re-render self-heals; setdefault would pin the stale clip. id is unique
+        # per (moment, aspect), so the latest successful render is authoritative.
         led.clips[cid] = clip
-        if not is_stitch:                                     # a stitch never advances the moment (the bare clip owns it)
+        if not is_stitch:                                         # a stitch never advances the moment (the bare clip owns it)
             led.set_moment_state(moment_id, MomentState.clipped)
-        return led, clip
-    try:
-        r = render_reframed(src.source_path, str(dst), cs, ce, aspect.value,
-                            src_w=src.width or 0, src_h=src.height or 0, extra_vf=extra_vf,
-                            top_bias=_moment_top_bias(m, cfg), focus=focus, track=track,
-                            content_type=content_type, timeout=_FFMPEG_TIMEOUT)
-    except (FileNotFoundError, OSError) as e:
-        # ffmpeg ABSENT from PATH (or otherwise unspawnable): subprocess.run raises BEFORE the
-        # process starts, so check=False (which only suppresses a nonzero RETURNCODE) does not
-        # cover it. Treat it exactly like the nonzero-rc branch — record ClipState.error and
-        # leave the moment at `decided` so a re-run retries when ffmpeg returns. Otherwise the
-        # raise escapes to the pipeline's per-moment quarantine, parking the moment in the
-        # TERMINAL MomentState.error (never re-rendered) — a transient PATH glitch would wedge
-        # it permanently, contradicting this module's fail-safe philosophy.
-        clip = Clip(id=cid, parent_id=moment_id, state=ClipState.error, path=str(dst),
-                    aspect=aspect, error_reason=f"toolchain missing: ffmpeg ({type(e).__name__})")
-        led.clips[cid] = clip
-        return led, clip
-    except subprocess.TimeoutExpired:
-        # ffmpeg HUNG (corrupt input, stuck filesystem) and was killed at the bound. Same
-        # fail-safe shape as the branches above/below: ClipState.error, moment stays `decided`
-        # so a re-run retries — an unbounded hang here held the ledger flock forever.
-        clip = Clip(id=cid, parent_id=moment_id, state=ClipState.error, path=str(dst),
-                    aspect=aspect, error_reason=f"ffmpeg timed out after {_FFMPEG_TIMEOUT:.0f}s")
-        led.clips[cid] = clip
-        return led, clip
-    if r.returncode != 0 or not dst.exists() or dst.stat().st_size == 0:
-        # ffmpeg RAN and failed OR produced a 0-byte output (truncated mux at rc=0): record the clip as
-        # errored (a dangling/empty path would otherwise masquerade as 'rendered' and blow up later in
-        # crosspost/media-upload). The st_size>0 guard mirrors the segment-concat (:447) + warm-skip (:619)
-        # checks. Leave the moment un-clipped so a re-run retries. Mirrors transcribe.py's pattern.
-        clip = Clip(id=cid, parent_id=moment_id, state=ClipState.error, path=str(dst),
-                    aspect=aspect, error_reason=f"ffmpeg rc={r.returncode} out={dst.stat().st_size if dst.exists() else 'missing'}B: {(r.stderr or '')[:180]}")
-        led.clips[cid] = clip
-        return led, clip
-    if is_stitch:
-        # Output validity is DURATION-checked, not size-checked (PRD): a short/empty container that
-        # passes "size > 0" must fail. expected = cut_end - cut_start; a render outside DURATION_TOLERANCE
-        # is errored (bare clip already shipped upstream — fail-open + fail-visible), no skip-stamp so a
-        # re-render retries. The moment is left alone (the bare clip owns its state).
-        from fanops.impact_cut import DURATION_TOLERANCE
-        expected = round(ce - cs, 3)
-        actual = _probe_duration(str(dst))
-        if actual is None or abs(actual - expected) > DURATION_TOLERANCE:
-            clip = Clip(id=cid, parent_id=moment_id, state=ClipState.error, path=str(dst), aspect=aspect,
-                        error_reason=f"duration {actual} vs {expected}")
-            led.clips[cid] = clip
-            return led, clip
-    clip = Clip(id=cid, parent_id=moment_id, state=born_state, path=str(dst), aspect=aspect,
-                first_frame_kind=first_frame_kind, cut_seconds=cut_seconds,
-                hook_burn_failed=hook_burn_failed)
-    # Overwrite any prior clip at this content-addressed id (e.g. a previous error-state
-    # render) so a re-render self-heals; setdefault would pin the stale clip. id is unique
-    # per (moment, aspect), so the latest successful render is authoritative.
-    led.clips[cid] = clip
-    if not is_stitch:                                         # a stitch never advances the moment (the bare clip owns it)
-        led.set_moment_state(moment_id, MomentState.clipped)
-    # Stamp the render fingerprint (Phase D) so a later pass — or the in-lock commit after a lock-free
-    # pre-warm — can skip re-rendering an identical clip. Best-effort: a write failure just costs a
-    # re-render, never a crash. Written ONLY on success, so a failed render never leaves a skip stamp.
-    try:
-        fp_path.write_text(json.dumps({"fp": fp}))
+        # Stamp the render fingerprint (Phase D) so a later pass — or the in-lock commit after a lock-free
+        # pre-warm — can skip re-rendering an identical clip. Best-effort: a write failure just costs a
+        # re-render, never a crash. Written ONLY on success, so a failed render never leaves a skip stamp.
         try:
-            from fanops.artifacts import stamp_stage
-            stamp_stage(cfg, src.id, "clip", artifact=f"clips/{cid}.render.json", schema=1, sha256=src.sha256)
-        except (OSError, ValueError): pass
-    except OSError:
-        pass
-    return led, clip
+            fp_path.write_text(json.dumps({"fp": fp}))
+            try:
+                from fanops.artifacts import stamp_stage
+                stamp_stage(cfg, src.id, "clip", artifact=f"clips/{cid}.render.json", schema=1, sha256=src.sha256)
+            except (OSError, ValueError): pass
+        except OSError:
+            pass
+        return led, clip
 
 def render_aspects_for(led: Ledger, cfg: Config, moment_id: str, *,
                        aspects: set[Fmt]) -> tuple[Ledger, list[Clip]]:
@@ -893,6 +897,7 @@ def render_account_cut(led: Ledger, cfg: Config, moment_id: str, *, aspect: Fmt,
         src = led.sources[m.parent_id]
         tw, th = _TARGETS[aspect.value]
         extra_vf = None
+        r = None
         if m.segments:
             spans = list(m.segments)
             realized = sum(float(e) - float(s) for s, e in spans)
@@ -904,13 +909,11 @@ def render_account_cut(led: Ledger, cfg: Config, moment_id: str, *, aspect: Fmt,
                     ass_path = str(Path(out_path).with_suffix(".ass"))
                     overlay.write_ass(ass_text, ass_path)
                     extra_vf = overlay.subtitles_vf(ass_path)
-            try:
-                r = render_supercut_reframed(src.source_path, tmp, spans, aspect.value,
-                                             src_w=src.width or 0, src_h=src.height or 0,
-                                             span_entries=span_entries, content_type=span_ct, extra_vf=extra_vf,
-                                             timeout=_FFMPEG_TIMEOUT)
-            except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
-                return False, None
+            def _run_render():
+                return render_supercut_reframed(src.source_path, tmp, spans, aspect.value,
+                                                src_w=src.width or 0, src_h=src.height or 0,
+                                                span_entries=span_entries, content_type=span_ct, extra_vf=extra_vf,
+                                                timeout=_FFMPEG_TIMEOUT)
         else:
             band = band_for(profile)
             cs, ce = fit_window(m.start, m.end, src.duration or 0.0, lo=band.lo, hi=band.hi)   # the account's band
@@ -928,17 +931,21 @@ def render_account_cut(led: Ledger, cfg: Config, moment_id: str, *, aspect: Fmt,
                     ass_path = str(Path(out_path).with_suffix(".ass"))
                     overlay.write_ass(ass_text, ass_path)
                     extra_vf = overlay.subtitles_vf(ass_path)
+            def _run_render():
+                return render_reframed(src.source_path, tmp, cs, ce, aspect.value,
+                                       src_w=src.width or 0, src_h=src.height or 0, extra_vf=extra_vf,
+                                       top_bias=top_bias, focus=focus, track=track,
+                                       content_type=content_type, timeout=_FFMPEG_TIMEOUT)
+        from fanops.stage_lock import stage_lock
+        with stage_lock(cfg, stage="render", key=Path(out_path).stem):
             try:
-                r = render_reframed(src.source_path, tmp, cs, ce, aspect.value,
-                                    src_w=src.width or 0, src_h=src.height or 0, extra_vf=extra_vf,
-                                    top_bias=top_bias, focus=focus, track=track,
-                                    content_type=content_type, timeout=_FFMPEG_TIMEOUT)
+                r = _run_render()
             except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
-                return False, None                                # ffmpeg absent/hung -> fail-open to the shared burn
-        if r.returncode != 0 or not Path(tmp).exists():
-            return False, None                                # ffmpeg failed -> fail-open (tmp swept in finally)
-        Path(out_path).parent.mkdir(parents=True, exist_ok=True)
-        os.replace(tmp, out_path)                             # atomic publish — never a half-written per-account file
+                return False, None
+            if r.returncode != 0 or not Path(tmp).exists():
+                return False, None                                # ffmpeg failed -> fail-open (tmp swept in finally)
+            Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+            os.replace(tmp, out_path)                             # atomic publish — never a half-written per-account file
         return True, realized
     except Exception:
         return False, None                                    # fail-open by contract: a clip is never blocked on its variant
