@@ -46,6 +46,8 @@
   default AND logs first. When adding one, log first. New degradable fail-open code uses `errors.fail_open`; silent
   `except Exception` handlers fail CI via `tests/test_swallow_ratchet.py`. MOL-67 site tests remain behavioral
   guards for already-fixed read helpers. The genuinely-swallowed sites are inventoried in `anomalies.md`.
+- **Atomic control-file writes** route through `controlio.write_json_atomic` / `write_text_atomic` /
+  `write_bytes_atomic` (mkstemp same-dir + os.replace); ffmpeg/mpeg temps keep their own `.part` suffix (MOL-78).
 
 ## Where to look (open only what the task needs)
 

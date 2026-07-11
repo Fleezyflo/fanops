@@ -19,12 +19,14 @@ from fanops.errors import ControlFileError, reason as _reason
 M = TypeVar("M", bound=BaseModel)
 
 
-def write_json_atomic(p: Path, raw: dict) -> None:
-    """Persist the raw dict via temp file + os.replace, so a crash mid-write never leaves a torn file. A
-    UNIQUE temp (mkstemp, same dir so os.replace stays atomic) — a fixed <name>.tmp lets two concurrent
-    writers clobber each other's temp (one's os.replace then FileNotFoundErrors). On any failure the temp
-    is best-effort unlinked and the ORIGINAL error re-raised (the suppress only guards the cleanup unlink,
-    never the real write error). Indented for the operator who still hand-edits."""
+def write_json_atomic(p: Path, raw: object) -> None:
+    """Persist any JSON-serializable value via temp file + os.replace, so a crash mid-write never leaves a
+    torn file. A UNIQUE temp (mkstemp, same dir so os.replace stays atomic) — a fixed <name>.tmp lets two
+    concurrent writers clobber each other's temp (one's os.replace then FileNotFoundErrors). On any failure
+    the temp is best-effort unlinked and the ORIGINAL error re-raised (the suppress only guards the cleanup
+    unlink, never the real write error). Indented for the operator who still hand-edits. NB ffmpeg/mpeg
+    atomic writes (clip.render_reframed) use their own muxer-inferable .part suffix discipline (MOL-78) —
+    these helpers are the JSON/text/bytes control-file boundary."""
     p.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=str(p.parent), prefix=p.name + ".", suffix=".tmp")
     try:
@@ -32,6 +34,37 @@ def write_json_atomic(p: Path, raw: dict) -> None:
         os.replace(tmp, p)                               # atomic: never a half-written file
     except BaseException:
         with contextlib.suppress(OSError): os.unlink(tmp)   # best-effort cleanup; re-raise the real error
+        raise
+
+
+def write_text_atomic(p: Path, text: str, *, mode: int | None = None) -> None:
+    """Persist text via mkstemp + os.replace in the target's directory (same-fs atomic swap). On failure the
+    temp is best-effort unlinked and the original error re-raised. Optional `mode` is applied to the temp
+    before replace. NB ffmpeg/mpeg atomic writes use their own .part suffix discipline (MOL-78) — not here."""
+    p.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=str(p.parent), prefix=p.name + ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as fh: fh.write(text)
+        if mode is not None: os.chmod(tmp, mode)
+        os.replace(tmp, p)
+    except BaseException:
+        with contextlib.suppress(OSError): os.unlink(tmp)
+        raise
+
+
+def write_bytes_atomic(p: Path, data: bytes, *, mode: int | None = None) -> None:
+    """Persist bytes via mkstemp + os.replace in the target's directory (same-fs atomic swap). On failure the
+    temp is best-effort unlinked and the original error re-raised. Optional `mode` is applied to the temp
+    before replace. NB ffmpeg/mpeg atomic writes use their own .part suffix discipline (MOL-78) — not here."""
+    p.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=str(p.parent), prefix=p.name + ".", suffix=".tmp")
+    try:
+        os.write(fd, data); os.close(fd); fd = -1
+        if mode is not None: os.chmod(tmp, mode)
+        os.replace(tmp, p)
+    except BaseException:
+        if fd >= 0: os.close(fd)
+        with contextlib.suppress(OSError): os.unlink(tmp)
         raise
 
 

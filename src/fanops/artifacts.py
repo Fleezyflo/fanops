@@ -6,10 +6,11 @@ completed and where their artifacts live. It is ADVISORY — existing sidecar ad
 transcribe/signals/framing/clip remain authoritative; the manifest answers "what stages
 completed for source X?" and powers auto-resume heuristics."""
 from __future__ import annotations
-import json, os
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 from fanops.config import Config
+from fanops.controlio import write_json_atomic
 from fanops.ledger import Ledger
 from fanops.models import SourceState
 
@@ -21,14 +22,6 @@ _RESUME_AT = {"transcribe": "transcribed", "signals": "signalled", "framing": "s
 
 def manifest_path(cfg: Config, source_id: str) -> Path:
     return cfg.agent_io / "manifests" / f"{source_id}.json"
-
-
-def _write_json_atomic(path: Path, obj) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    assert tmp.parent == path.parent
-    tmp.write_text(json.dumps(obj, indent=2, default=str))
-    os.replace(tmp, path)
 
 
 def _load_manifest(cfg: Config, source_id: str) -> dict:
@@ -56,7 +49,7 @@ def stamp_stage(cfg: Config, source_id: str, stage: str, *, artifact: str, schem
     d["v"] = _MANIFEST_V
     d.setdefault("stages", {})[stage] = {"at": datetime.now(timezone.utc).isoformat(),
                                          "artifact": artifact, "schema": schema}
-    _write_json_atomic(manifest_path(cfg, source_id), d)
+    write_json_atomic(manifest_path(cfg, source_id), d)
 
 
 def _transcript_cache(cfg: Config, source_path: str) -> Path:
