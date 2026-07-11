@@ -52,7 +52,7 @@
       {% endif %}
       {% if s.bucket != 'inventory' or s.state == 'discovered' %}
       <form hx-post="{{ url_for('do_library_retire') }}" hx-target="#library-panel" hx-swap="outerHTML" class="stage-form-inline"
-            hx-confirm="Retire {{ s.name }}? Protected posts stay as retired lineage.">
+            hx-confirm="Retire {{ s.name }}?{% if s.retire_preview and (s.retire_preview.delete_moments or s.retire_preview.delete_clips) %} Deletes {{ s.retire_preview.delete_moments }} unshipped moment(s) and {{ s.retire_preview.delete_clips }} clip(s).{% endif %}{% if s.retire_preview and s.retire_preview.retire_moments %} Suppresses {{ s.retire_preview.retire_moments }} moment(s) with protected/live posts (kept as retired lineage).{% endif %}{% if s.retire_preview and not s.retire_preview.delete_moments and not s.retire_preview.delete_clips and not s.retire_preview.retire_moments %} No moments/clips attached.{% endif %} Protected posts (awaiting, queued, live) are never deleted.">
         <input type="hidden" name="source_id" value="{{ s.id }}"><button type="submit">Retire</button>
       </form>
       {% endif %}
