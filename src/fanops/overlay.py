@@ -142,7 +142,13 @@ def caption_events(seg: dict, clip_start: float, clip_end: float, *, max_words: 
       • absent (the common case on already-transcribed footage): split the segment's text into
         <=max_words groups and distribute them EVENLY across the segment's (clip-clamped) window.
     A segment that does not overlap the clip, or yields no visible text, returns []."""
-    seg_start = float(seg["start"]); seg_end = float(seg["end"])
+    raw_s, raw_e = seg.get("start"), seg.get("end")
+    if raw_s is None or raw_e is None:
+        return []
+    try:
+        seg_start = float(raw_s); seg_end = float(raw_e)
+    except (TypeError, ValueError):
+        return []
     if seg_end <= clip_start or seg_start >= clip_end:
         return []
     out: list[tuple[float, float, str]] = []
