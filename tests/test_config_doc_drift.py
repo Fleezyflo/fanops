@@ -6,7 +6,7 @@ from fanops.settings import Settings
 
 _CONFIG = Path(__file__).resolve().parents[1] / "docs" / "CONFIG.md"
 # Infrastructure vars documented for operators but set via certifi setdefault, not Settings-owned.
-_DOC_EXEMPT = frozenset({"SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "META_GRAPH_TOKEN__<SLUG>"})
+_DOC_EXEMPT = frozenset({"SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "META_GRAPH_TOKEN__<SLUG>", "FANOPS_ROOT"})
 # Dynamic per-handle keys are documented as a pattern, not a Settings field.
 _SETTINGS_EXEMPT = frozenset()
 

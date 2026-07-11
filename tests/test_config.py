@@ -1,6 +1,7 @@
 # tests/test_config.py
 import json
 import logging
+import os
 import pytest
 from fanops.config import Config
 
@@ -536,3 +537,36 @@ def test_settings_bool_empty_and_off_words_ok_at_boundary(monkeypatch):
 _BOOL_KEYS_FOR_SETTINGS_TEST = (
     "FANOPS_LIVE", "FANOPS_HASHTAG_TRENDS", "FANOPS_REQUIRE_FULL_OBJECTIVE", "FANOPS_BURN_SUBS",
 )
+
+
+def test_config_init_does_not_load_dotenv(tmp_path, monkeypatch):
+    sentinel = "BRIEF02_CONFIG_SENTINEL"
+    monkeypatch.delenv(sentinel, raising=False)
+    (tmp_path / ".env").write_text(f"{sentinel}=from_dotenv\n")
+    Config(root=tmp_path)
+    assert os.environ.get(sentinel) is None
+
+
+def test_config_fanops_root_from_process_env(tmp_path, monkeypatch):
+    monkeypatch.delenv("FANOPS_ROOT", raising=False)
+    monkeypatch.setenv("FANOPS_ROOT", str(tmp_path))
+    assert Config().root == tmp_path.resolve()
+
+
+def test_config_fanops_root_expanduser(monkeypatch, tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    target = home / "fanops-root"
+    target.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("FANOPS_ROOT", "~/fanops-root")
+    assert Config().root == target.resolve()
+
+
+def test_config_explicit_root_beats_fanops_root(tmp_path, monkeypatch):
+    other = tmp_path / "other"
+    other.mkdir()
+    explicit = tmp_path / "explicit"
+    explicit.mkdir()
+    monkeypatch.setenv("FANOPS_ROOT", str(other))
+    assert Config(root=explicit).root == explicit

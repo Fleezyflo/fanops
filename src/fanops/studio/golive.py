@@ -8,8 +8,9 @@ operator-facing surface over them.
 
 THREE load-bearing invariants:
   1. DUAL-WRITE — every config change writes BOTH the .env (durable across restarts) AND os.environ
-     (so THIS running Studio reflects it immediately; Config.load_dotenv ran once at startup, but the
-     properties read os.getenv live). Writing only .env would silently not take effect until a restart.
+     (so THIS running Studio reflects it immediately; load_dotenv runs once at process startup via
+     cli.main, but the properties read os.getenv live). Writing only .env would silently not take
+     effect until a restart.
   2. go_live is the ONLY setter of FANOPS_LIVE=1 (the global live/dryrun switch — NOT a backend pick;
      the publish provider is per-channel, M3), gated on ≥1 active channel having a provider whose creds
      are present + an explicit confirm — so a stray POST can never flip the system live. go_dryrun (the
@@ -653,8 +654,8 @@ def go_live(cfg: Config, confirmed: bool = False, *, now: "datetime | None" = No
     # It must NOT force FANOPS_RESPONDER=llm (that silently spawned `claude` on every tick after a go-live).
     # The AI responder is enabled EXPLICITLY and separately (Go-Live → AI Responder / set_ai_responder).
     # M3c: scrape stale FANOPS_POSTER=dryrun — .env.example seeds it; pre-M3b go_dryrun wrote it;
-    # M3b go_live never updated it. Config.load_dotenv(override=True) reloads the line on every
-    # Studio restart / daemon tick, so operators see LIVE=1 + POSTER=dryrun and think the flip
+    # M3b go_live never updated it. load_dotenv(override=True) at process startup (cli.main) reloads
+    # the line on every Studio restart, so operators see LIVE=1 + POSTER=dryrun and think the flip
     # reverted. Per-channel backends are the publish truth; an explicit dryrun global is misleading.
     _poster_disk = (_dotenv_assignment(cfg.root / ".env", "FANOPS_POSTER") or "").strip().lower()
     _poster_live = cfg.poster_backend_raw.lower()

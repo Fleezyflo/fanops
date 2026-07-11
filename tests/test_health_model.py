@@ -6,6 +6,9 @@ from fanops import health
 
 def test_health_report_composes_checks_deps_and_field_shape(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("POSTIZ_URL", "http://localhost:4007/api")
+    monkeypatch.setenv("POSTIZ_API_KEY", "k")
+    monkeypatch.setenv("FANOPS_POSTER", "postiz")
     (tmp_path / ".env").write_text("POSTIZ_URL=http://localhost:4007/api\nPOSTIZ_API_KEY=k\nFANOPS_POSTER=postiz\n")
     cfg = Config(root=tmp_path)
     rep = build_health_report(cfg, postiz_probe=lambda c: type("H", (), {"healthy": True, "status_code": 200, "hint": ""})())

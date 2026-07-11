@@ -1,5 +1,5 @@
 """go_live must persist FANOPS_LIVE across reloads and must not leave a stale FANOPS_POSTER=dryrun
-line that load_dotenv(override=True) re-injects on every Config() / daemon tick (config.py:96).
+line that load_dotenv(override=True) re-injects on process startup (cli.main).
 
 Regression: M3b go_live writes FANOPS_LIVE=1 only; .env.example seeds FANOPS_POSTER=dryrun; the
 pre-M3b go_dryrun wrote FANOPS_POSTER=dryrun. Operators see LIVE=1 + POSTER=dryrun and think the

@@ -7,6 +7,13 @@ operator/dev overview. **63 distinct env vars** — **13 Studio-settable** (Go-L
 which writes both `.env` and `os.environ`), **51 `.env`/shell-ONLY** (no UI). `Set` column: **S** = Studio-settable,
 `.env` = shell-only. Defaults are the CODE defaults.
 
+## Bootstrap (process environment only)
+| Var | Default | Effect | Set |
+|---|---|---|---|
+| `FANOPS_ROOT` | cwd | MohFlow-FanOps tree root; locates `.env`. **Shell/export only — never a `.env` key** (circular). | shell |
+
+Hand-editing `.env` while a long-lived process runs requires restart; Studio go-live/autopilot dual-writes (`os.environ` + `.env`) remain live without restart.
+
 ## Publish / live (the dryrun↔live boundary + credentials)
 | Var | Default | Effect | Set |
 |---|---|---|---|
