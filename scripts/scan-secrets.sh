@@ -11,15 +11,16 @@ set -euo pipefail
 # patterns). There is deliberately NO skip/bypass env var — CI must never honor a local `ECC_SKIP_*`.
 
 mode="${1:-}"
+files=()
 case "$mode" in
   staged)
-    mapfile -t files < <(git diff --cached --name-only --diff-filter=ACMR || true)
+    while IFS= read -r line; do files+=("$line"); done < <(git diff --cached --name-only --diff-filter=ACMR || true)
     diff_added() { git diff --cached -U0 -- "$1" | awk '/^\+\+\+ /{next} /^\+/{print substr($0,2)}'; }
     ;;
   diff-base)
     base="${2:-}"
     [[ -n "$base" ]] || { echo "usage: scan-secrets.sh diff-base <ref>" >&2; exit 2; }
-    mapfile -t files < <(git diff --name-only --diff-filter=ACMR "${base}...HEAD" || true)
+    while IFS= read -r line; do files+=("$line"); done < <(git diff --name-only --diff-filter=ACMR "${base}...HEAD" || true)
     diff_added() { git diff -U0 "${base}...HEAD" -- "$1" | awk '/^\+\+\+ /{next} /^\+/{print substr($0,2)}'; }
     ;;
   *)
