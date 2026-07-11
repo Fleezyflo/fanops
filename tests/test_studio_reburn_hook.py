@@ -44,7 +44,7 @@ def test_reburn_serves_rerendered_clip_path(tmp_path, mocker):
     rendered = Clip(id="clip_1", parent_id="mom_1", path=str(out), aspect=Fmt.r16x9, state=ClipState.rendered)
     mocker.patch("fanops.clip.render_moment", return_value=(Ledger.load(cfg), rendered))
     assert reburn_hook(cfg, "p_edit", "YT HOOK").ok is True
-    assert _media_path_for_post(Ledger.load(cfg), "p_edit") == str(out)
+    assert _media_path_for_post(cfg, Ledger.load(cfg), "p_edit") == str(out)
 
 
 def _fake_render_reset(led, cfg, moment_id, *, aspect=Fmt.r9x16, **kw):

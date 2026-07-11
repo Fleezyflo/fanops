@@ -38,27 +38,30 @@ def maybe_shrink_for_cap(cfg: Config, path: Path, cap: int, *, label: str = "upl
     return path
 
 
-def media_path_for_post(led, post) -> Path | None:
+def media_path_for_post(cfg: Config, led, post) -> Path | None:
     """Resolve the on-disk media file a post would upload (render > file media_urls > clip)."""
+    from fanops.post.media import resolve_media_path
     if post.render_id:
         r = led.renders.get(post.render_id)
         if r and r.path:
-            p = Path(r.path)
-            if p.exists():
+            p = resolve_media_path(cfg, r.path, "render")
+            if p:
                 return p
     for u in (post.media_urls or []):
         if u.startswith("file://"):
-            p = Path(u[7:])
+            stored = u[7:]
         elif u.startswith("http"):
             continue
         else:
-            p = Path(u)
-        if p.exists():
+            stored = u
+        kind = "render" if post.render_id else "clip"
+        p = resolve_media_path(cfg, stored, kind)
+        if p:
             return p
     clip = led.clips.get(post.parent_id) if post.parent_id else None
     if clip and clip.path:
-        p = Path(clip.path)
-        if p.exists():
+        p = resolve_media_path(cfg, clip.path, "clip")
+        if p:
             return p
     return None
 
@@ -86,7 +89,7 @@ def apply_shrink_to_post(cfg, led, post, *, backend: str | None = None) -> bool:
     cap = upload_cap_bytes(cfg, post, backend)
     if cap is None:
         return True
-    path = media_path_for_post(led, post)
+    path = media_path_for_post(cfg, led, post)
     if path is None:
         return False
     try:

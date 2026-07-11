@@ -346,7 +346,7 @@ def preflight_publish_media(cfg: Config, post, led=None) -> str | None:
         return None
     if apply_shrink_to_post(cfg, led, post, backend=backend):
         return None
-    path = media_path_for_post(led, post)
+    path = media_path_for_post(cfg, led, post)
     size = path.stat().st_size if path else 0
     return f"oversize: {size} bytes > {cap} — re-render shorter"
 
