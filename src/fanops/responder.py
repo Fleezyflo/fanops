@@ -68,7 +68,8 @@ def _default_claude_model(kind: str, payload: dict, *, cfg: Config | None = None
     images = (payload.get("frames") or None) if kind in _VISION_GATES else None   # M1b: pick pass SEES source stills; hook pass SEES the picked WINDOW's stills
     prompt = _PROMPT[kind](payload)
     out, answered, frames_unread = claude_json_meta(prompt, schema, images=images,
-                                     model=(cfg.llm_model_for(kind) if cfg else None))
+                                     model=(cfg.llm_model_for(kind) if cfg else None),
+                                     read_root=(str(cfg.agent_io / "keyframes") if images and cfg else None))
     if cfg is not None:
         emit = log or get_logger(cfg)
         uid = str(payload.get("source_id") or payload.get("clip_id") or kind)

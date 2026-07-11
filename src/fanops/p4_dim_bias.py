@@ -42,8 +42,9 @@ def dim_bias_candidates(led, cfg) -> list[dict]:
             continue                                         # need a runner-up to be comparative
         ranked = sorted(agg.items(), key=lambda kv: (-kv[1]["reach_mean"], kv[0]))   # reach desc, value asc
         leader_value, leader_row = ranked[0]
-        if leader_row["reach_mean"] - ranked[1][1]["reach_mean"] < cfg.p4_min_reach_gap:
-            continue                                         # not a clear lead
+        diff = leader_row["reach_mean"] - ranked[1][1]["reach_mean"]
+        if diff <= 0 or diff < cfg.p4_min_reach_gap:
+            continue                                         # not a clear lead (exact tie excluded)
         reps = sorted(p.id for p in led.posts.values()
                       if p.state is PostState.analyzed and str(getattr(p, dim, None)) == leader_value)
         if not reps:

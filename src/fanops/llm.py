@@ -142,7 +142,8 @@ def _frames_unread(env: dict) -> bool:
 
 
 def claude_json_meta(prompt: str, schema: dict, *, timeout: float = 300.0,
-                     images: list[str] | None = None, model: str | None = None) -> tuple[dict, str | None, bool]:
+                     images: list[str] | None = None, model: str | None = None,
+                     read_root: str | None = None) -> tuple[dict, str | None, bool]:
     """Call `claude -p` with a JSON schema; return (schema-valid object, model-that-answered,
     frames_unread). frames_unread is True ONLY when frames were ATTACHED but the model answered
     without ever opening them (num_turns<=1 after a re-ask) — a degraded, text-grounded hook the
@@ -160,7 +161,7 @@ def claude_json_meta(prompt: str, schema: dict, *, timeout: float = 300.0,
     `model` (V2 M1/F1): pin `claude -p --model` so the creative brain is REPRODUCIBLE — an unpinned
     call drifts with whatever the CLI defaults to. The returned model prefers the envelope's reported
     `model` (the true audit trail) and FALLS BACK to the pinned value when the envelope omits it."""
-    allowed = "Read" if images else ""
+    allowed = (f"Read(//{read_root}/**)" if read_root else "Read") if images else ""
     # ECC fix #11: pass the prompt on STDIN (the documented `… | claude -p` headless form, default
     # --input-format text), NOT as an argv positional. argv was world-visible via `ps`/`/proc/<pid>/
     # cmdline` (transcript + brand guidance leaked to any local process) and a very large transcript
@@ -279,8 +280,10 @@ def claude_json_meta(prompt: str, schema: dict, *, timeout: float = 300.0,
     raise LlmSchemaError(f"claude -p envelope had no structured_output or JSON result: {env}")
 
 def claude_json(prompt: str, schema: dict, *, timeout: float = 300.0,
-                images: list[str] | None = None, model: str | None = None) -> dict:
+                images: list[str] | None = None, model: str | None = None,
+                read_root: str | None = None) -> dict:
     """Bare-dict contract preserved for every caller that doesn't need provenance — including
     studio/actions.py, which binds `model = claude_json` and calls it expecting a dict (audit C2:
     a tuple-return there would TypeError). The model-aware path is claude_json_meta."""
-    return claude_json_meta(prompt, schema, timeout=timeout, images=images, model=model)[0]
+    return claude_json_meta(prompt, schema, timeout=timeout, images=images, model=model,
+                            read_root=read_root)[0]

@@ -135,6 +135,23 @@ def test_timing_frozen_no_winner(tmp_path):
     assert timing_bias_winner(led, cfg) is None
 
 
+def test_timing_exact_reach_tie_no_winner(tmp_path, monkeypatch):
+    monkeypatch.setenv("FANOPS_P4_MIN_REACH_GAP", "0")
+    from fanops.timing_bias import timing_bias_winner
+    cfg = Config(root=tmp_path); led = _timing_led(cfg, hot_reach=1000.0, cold_reach=1000.0)
+    _validate(cfg)
+    assert timing_bias_winner(led, cfg) is None
+
+
+def test_timing_reach_gap_exactly_at_threshold_emits_winner(tmp_path, monkeypatch):
+    monkeypatch.setenv("FANOPS_P4_MIN_REACH_GAP", "10000")
+    from fanops.timing_bias import timing_bias_winner
+    cfg = Config(root=tmp_path); led = _timing_led(cfg, hot_reach=10000.0, cold_reach=0.0)
+    _validate(cfg)
+    win = timing_bias_winner(led, cfg)
+    assert win is not None and win["publish_hour"] == 18
+
+
 def test_timing_apply_is_noop_when_kill_switch_off(tmp_path):
     # Default OFF: apply_timing_bias leaves the ledger byte-identical.
     from fanops.timing_bias import apply_timing_bias

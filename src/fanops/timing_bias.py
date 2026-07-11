@@ -40,8 +40,9 @@ def timing_bias_winner(led, cfg) -> "dict | None":
         return None                                      # need a runner-up to be comparative (no variance -> no-op)
     ranked = sorted(agg.items(), key=lambda kv: (-kv[1]["reach_mean"], kv[0]))   # reach desc, hour asc
     leader_hour, leader_row = ranked[0]
-    if leader_row["reach_mean"] - ranked[1][1]["reach_mean"] < cfg.p4_min_reach_gap:
-        return None                                      # not a clear lead
+    diff = leader_row["reach_mean"] - ranked[1][1]["reach_mean"]
+    if diff <= 0 or diff < cfg.p4_min_reach_gap:
+        return None                                      # not a clear lead (exact tie excluded)
     try:
         return {"publish_hour": int(leader_hour), "reach_mean": leader_row["reach_mean"]}
     except (ValueError, TypeError):

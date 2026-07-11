@@ -652,6 +652,13 @@ def test_surface_time_lead_preserves_monotonicity():
              for i in range(12)]
     assert times == sorted(times) and len(set(times)) == len(times)
 
+def test_surface_time_hour_hint_monotonic_in_index():
+    # hour_hint can pin multiple indices into the same hour; index monotonicity must still hold.
+    base = datetime(2026, 6, 2, 18, 0, tzinfo=timezone.utc)
+    times = [surface_time(base, "a", "instagram", "2026-06-02", index=i, clip_id="c1", hour_hint=18)
+             for i in range(4)]
+    assert times == sorted(times) and len(set(times)) == len(times)
+
 def test_crosspost_clips_applies_publish_lead_minutes(tmp_path, mocker, monkeypatch):
     # End-to-end: crosspost_clips must read cfg.publish_lead_minutes and pass it through, so a
     # post's scheduled_time is shifted by exactly the lead vs the no-lead run.

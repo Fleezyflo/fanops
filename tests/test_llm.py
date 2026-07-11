@@ -43,6 +43,14 @@ def test_claude_json_with_images_allows_read_and_references_paths(mocker):
     assert "hook" not in prompt.lower()                                   # MOL-251: gate-neutral wrapper
     assert "ONLY the JSON" in prompt and "no prose" in prompt.lower()
 
+def test_claude_json_with_read_root_scopes_allowed_tools(mocker):
+    envelope = {"structured_output": {"x": 5}, "result": "", "session_id": "s"}
+    class R: returncode = 0; stdout = json.dumps(envelope); stderr = ""
+    run = mocker.patch("fanops.llm.subprocess.run", return_value=R())
+    claude_json("judge these", _SCHEMA, images=["/tmp/a.jpg"], read_root="/tmp")
+    cmd = run.call_args[0][0]
+    i = cmd.index("--allowedTools"); assert cmd[i + 1] == "Read(///tmp/**)"
+
 def test_claude_json_vision_reask_wrapper_gate_neutral(mocker):
     # MOL-251: the re-ask string is also gate-neutral — no hook-specific wording.
     from fanops.llm import claude_json_meta
