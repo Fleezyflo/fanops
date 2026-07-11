@@ -2,7 +2,7 @@
    and a loud WARN reserved for the ONE genuine fault (installed but not firing). #}
 {% if daemon %}
 {% if daemon.verdict == "alive" %}
-<p class="meta daemon-ok">Hands-off processing running{% if daemon.heartbeat_age_s is not none %} · last tick {{ daemon.heartbeat_age_s|int }}s ago{% endif %}
+<p class="meta daemon-ok">Hands-off processing running{% if daemon.heartbeat_age_s is not none %} · last tick {{ daemon.heartbeat_age_s|int }}s ago{% endif %}{% if daemon.run_line %} · {{ daemon.run_line }}{% endif %}
   {%- if daemon.responder == 'llm' %} · <span class="ok">AI on</span>{% if daemon.pending_gates is not none %} · {{ daemon.pending_gates }} gate{{ '' if daemon.pending_gates == 1 else 's' }} pending{% if daemon.pending_gates == 0 %} (idle — no <code>claude</code>){% else %} (<code>claude</code> runs only to answer these){% endif %}{% endif %}
   {%- else %} · AI off (no <code>claude</code>){% endif %} — <a href="{{ url_for('run_panel') }}">Make tab</a></p>
 {% elif daemon.installed and not daemon.loaded %}

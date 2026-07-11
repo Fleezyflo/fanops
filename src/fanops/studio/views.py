@@ -151,17 +151,28 @@ def pipeline_status(cfg: Config) -> dict:
     move is 'ingest', 'run a pass', or 'answer a gate'."""
     from fanops.agentstep import pending
     from fanops.pipeline_status import status_control_lines, source_backlog
+    from fanops.pipeline_run import run_stage_snapshot
     led = Ledger.load(cfg)
     run_line, wait_line = status_control_lines(cfg, led)
     bl = source_backlog(led, cfg)
+    snap = run_stage_snapshot(cfg)
+    run_chip = f"{snap['stage']}:{snap['unit']}" if snap else None
+    backlog_rows = []
+    for r in bl.rows:
+        row = {"id": r.id, "state": r.state, "bucket": r.bucket, "wait_line": r.wait_line,
+               "block_reason": r.block_reason, "artifacts": r.artifacts}
+        if snap and snap.get("unit") == r.id:
+            row["active_stage"] = snap["stage"]
+            row["stage_age"] = snap["stage_age"]
+        backlog_rows.append(row)
     return {
         "sources": bl.actionable,   # in-progress pipeline work (NOT raw inventory — see source_backlog)
         "sources_blocked": bl.blocked_on_gates,
         "sources_recoverable": bl.recoverable,
         "sources_inventory": bl.inventory,
         "native_total": bl.actionable + bl.blocked_on_gates + bl.recoverable + bl.inventory,
-        "backlog_rows": [{"id": r.id, "state": r.state, "bucket": r.bucket, "wait_line": r.wait_line,
-                          "block_reason": r.block_reason, "artifacts": r.artifacts} for r in bl.rows],
+        "backlog_rows": backlog_rows,
+        "run_chip": run_chip,
         "third_party": sum(1 for s in led.sources.values() if s.origin_kind == "third_party"),
         "clips": len(led.clips), "posts": len(led.posts),
         "awaiting": awaiting_moment_count(led),   # S3: ACTIONABLE — MOMENTS (== Home/Review worklist), not raw posts
@@ -745,8 +756,13 @@ def daemon_health(cfg: Config) -> Optional[dict]:
         except Exception:
             pending_gates = None                               # never let a torn agent_io dir 500 the banner
         siblings = daemon.sibling_agents_status()
-        return {**rep, "interval": interval, "responder": responder, "discloses_llm": responder == "llm",
-                "pending_gates": pending_gates, "siblings": siblings}
+        from fanops.pipeline_run import run_status_line
+        out = {**rep, "interval": interval, "responder": responder, "discloses_llm": responder == "llm",
+               "pending_gates": pending_gates, "siblings": siblings}
+        run_line = run_status_line(cfg)
+        if run_line != "run=idle":
+            out["run_line"] = run_line
+        return out
     except Exception:
         return None
 

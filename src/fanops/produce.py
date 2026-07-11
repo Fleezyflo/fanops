@@ -88,6 +88,8 @@ def _produce_one(cfg: Config, source_id: str, aspects: set[Fmt], *, log) -> Sour
     NEVER raises (mirrors `_prewarm`'s per-unit fail-open contract): a per-unit error is logged
     and stamped on the returned SourceResult; the next pass's reducer fingerprint-skips warm
     artifacts and re-tries the missing pieces."""
+    from fanops.pipeline_run import note_stage
+    note_stage(cfg, "produce", source_id)
     err: str | None = None
     try:
         led = Ledger.load(cfg)

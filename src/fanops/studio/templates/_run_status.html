@@ -3,6 +3,7 @@
   <span>Clips ready<strong>{{ status.clips }}</strong></span>
   <span>Published<strong>{{ status.published }}</strong></span>
   <span>Mode<strong>{{ status.backend }}</strong></span>
+  {% if status.get('run_chip') %}<span>Stage<strong class="ok">{{ status.run_chip }}</strong></span>{% endif %}
   {% if status.get('run_line') %}<span>{{ status.run_line }}</span>{% endif %}
   {% if status.get('wait_line') %}<span class="warn">{{ status.wait_line }}</span>{% endif %}
   {% if status.get('pending_moments', 0) + status.get('pending_moment_hooks', 0) + status.get('pending_captions', 0) %}<span class="warn">Gates<strong>{{ status.get('pending_moments', 0) + status.get('pending_moment_hooks', 0) + status.get('pending_captions', 0) }}</strong> <a href="{{ url_for('gates') }}">answer</a></span>{% endif %}
