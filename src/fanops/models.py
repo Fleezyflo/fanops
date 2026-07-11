@@ -604,8 +604,9 @@ class MomentDecision(BaseModel):
 
 # M1b pass-2: ONE per-pick frame-seeing hook gate. The request carries the PICKED WINDOW + frames
 # extracted over that window (clip.fit_window), so the author writes a hook grounded in the exact
-# footage the clip opens on — the operator's #1 ask. Gate key = moment_hooks__{source_id}.{token},
-# so N picks -> N independent gates; correlation is by the gate KEY (filename), not a body field.
+# footage the clip opens on — the operator's #1 ask. Gate key = moment_hooks__{source_id}.{owner}.{token}
+# (owner omitted when persona-blind), so N picks -> N independent gates; correlation is by the gate KEY
+# (filename), not a body field.
 class MomentHookRequest(BaseModel):
     source_id: str
     moment_id: str

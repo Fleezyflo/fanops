@@ -106,7 +106,8 @@ def test_real_transcript_drives_moment_and_real_clip_renders(tmp_path, monkeypat
     # ffmpeg extracts the window stills) — NO clip renders yet (render keys on `decided`).
     s = advance(cfg, base_time="2026-06-02T18:00:00Z")
     assert s["clips"] == 0 and s["awaiting"]["moment_hooks"] >= 1
-    hook_key = f"{src_id}.0.00-4.00"
+    hook_keys = gate_keys_for(cfg, "moment_hooks", f"{src_id}.")
+    hook_key = hook_keys[0]
     hrid = latest_request_id(cfg, "moment_hooks", hook_key)
     response_path(cfg, "moment_hooks", hook_key).write_text(
         MomentHookDecision(request_id=hrid, hook="wait for the line").model_dump_json())

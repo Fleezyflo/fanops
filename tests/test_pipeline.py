@@ -93,7 +93,8 @@ def test_advance_stops_at_gate_then_continues(tmp_path, monkeypatch, mocker):
     s = advance(cfg, base_time="2026-06-02T18:00:00Z")
     assert s["awaiting"]["moment_hooks"] == 1 and s["clips"] == 0
 
-    hook_key = f"{src_id}.14.00-18.00"
+    hook_keys = gate_keys_for(cfg, "moment_hooks", f"{src_id}.")
+    hook_key = hook_keys[0]
     hrid = latest_request_id(cfg, "moment_hooks", hook_key)
     response_path(cfg, "moment_hooks", hook_key).write_text(
         MomentHookDecision(request_id=hrid, hook="wait for the beat switch").model_dump_json())

@@ -7,7 +7,7 @@ from fanops.agentstep import response_path, request_path, latest_request_id, pen
 from fanops.models import PERSONA_PICK_SPEC_KEYS
 from fanops.moments import (request_moments, ingest_moments, request_moment_hooks,
                             ingest_moment_hooks, validate_pick, _drop_overlaps, _owned_moment_id,
-                            _pick_personas, _persona_entry)
+                            _hook_gate_key, _pick_personas, _persona_entry)
 from fanops.agentstep import gate_keys_for
 from fanops.adjust import amplify
 from fanops.ids import child_id
@@ -50,7 +50,7 @@ def _decide_hooks(led, cfg, source_id, hooks=None, accounts=None):
               if m.parent_id == source_id and m.state is MomentState.picked]:
         spec = hooks.get(m.content_token)
         hook = spec[0] if isinstance(spec, tuple) else spec
-        key = f"{source_id}.{m.content_token}"
+        key = _hook_gate_key(source_id, m)
         rid = latest_request_id(cfg, "moment_hooks", key)
         from fanops.responder import screen_model_text
         dec = screen_model_text(MomentHookDecision(request_id=rid, hook=hook))
@@ -247,7 +247,7 @@ def test_hook_request_sends_only_owner(tmp_path):
     led = _ingest_picks(led, cfg, "src_1",
                         [MomentPick(start=10, end=28, reason="a window", personas=["a"])])
     led = request_moment_hooks(led, cfg, "src_1", accounts=accts)
-    req = json.loads(request_path(cfg, "moment_hooks", "src_1.10.00-28.00").read_text())
+    req = json.loads(request_path(cfg, "moment_hooks", "src_1.a.10.00-28.00").read_text())
     assert len(req["personas"]) == 1
     assert req["personas"][0]["handle"] == "a"
     assert "b" not in {p["handle"] for p in req["personas"]}
@@ -274,6 +274,76 @@ def test_persona_blind_hook_falls_back_shared(tmp_path):
     led = _decide_hooks(led, cfg, "src_1", {"10.00-28.00": "wait for the switch"}, accounts=accts)
     m = led.moments_of("src_1")[0]
     assert m.hook == "wait for the switch"
+
+# ---- B07: owner-true hook gate keys + per-moment band -----------------------------------------------
+def test_hook_gate_key_collision_two_owners_same_window(tmp_path):
+    """H12: two owners at the same timecode get distinct gate keys — no hook cross-talk or dup strip."""
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
+    accts = _seed_owner_spec_accounts(cfg, [{"handle": "@a"}, {"handle": "@b"}])
+    led = request_moments(led, cfg, "src_1")
+    pick = MomentPick(start=10, end=28, reason="shared window")
+    led = _ingest_picks(led, cfg, "src_1",
+                        [pick.model_copy(update={"personas": ["a"]}),
+                         pick.model_copy(update={"personas": ["b"]})])
+    led = request_moment_hooks(led, cfg, "src_1", accounts=accts)
+    keys = gate_keys_for(cfg, "moment_hooks", "src_1.")
+    assert len(keys) == 2
+    assert "src_1.a.10.00-28.00" in keys and "src_1.b.10.00-28.00" in keys
+    for k in keys:
+        req = json.loads(request_path(cfg, "moment_hooks", k).read_text())
+        assert len(req["personas"]) == 1
+    for m in [m for m in led.moments.values() if m.parent_id == "src_1" and m.state is MomentState.picked]:
+        owner = m.affinities[0]
+        key = _hook_gate_key("src_1", m)
+        rid = latest_request_id(cfg, "moment_hooks", key)
+        hook = f"hook for {owner}"
+        from fanops.responder import screen_model_text
+        dec = screen_model_text(MomentHookDecision(request_id=rid, hook=hook))
+        response_path(cfg, "moment_hooks", key).write_text(dec.model_dump_json())
+    led = ingest_moment_hooks(led, cfg, "src_1", accounts=accts)
+    hooks = {m.affinities[0]: m.hook for m in led.moments_of("src_1")}
+    assert hooks == {"a": "hook for a", "b": "hook for b"}
+    assert all(m.hook_removed is None for m in led.moments_of("src_1"))
+
+def test_hook_gate_legacy_sweep_discards_persona_blind_key(tmp_path):
+    """H12: owner-scoped request sweeps stale persona-blind gate before opening owner key."""
+    from fanops.agentstep import write_request
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
+    accts = _seed_owner_spec_accounts(cfg, [{"handle": "@a"}])
+    led = request_moments(led, cfg, "src_1")
+    led = _ingest_picks(led, cfg, "src_1",
+                        [MomentPick(start=10, end=28, reason="a window", personas=["a"])])
+    token = "10.00-28.00"
+    legacy_key = f"src_1.{token}"
+    m = led.moments_of("src_1")[0]
+    write_request(cfg, kind="moment_hooks", key=legacy_key, payload={
+        "source_id": "src_1", "moment_id": m.id, "token": token,
+        "start": 10.0, "end": 28.0, "reason": "r", "frames": [], "signal_peaks": [], "language": "en"})
+    assert request_path(cfg, "moment_hooks", legacy_key).exists()
+    led = request_moment_hooks(led, cfg, "src_1", accounts=accts)
+    owner_key = f"src_1.a.{token}"
+    assert not request_path(cfg, "moment_hooks", legacy_key).exists()
+    assert request_path(cfg, "moment_hooks", owner_key).exists()
+
+def test_request_moment_hooks_uses_owner_clip_profile_band(tmp_path, mocker):
+    """M14: fit_window band follows m.clip_profile, not global cfg.clip_profile."""
+    from fanops.bands import band_for
+    from fanops.clip import fit_window
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
+    (cfg.sources / "src_1.mp4").parent.mkdir(parents=True, exist_ok=True)
+    (cfg.sources / "src_1.mp4").write_bytes(b"\x00")
+    accts = _seed_owner_spec_accounts(cfg, [{"handle": "@a", "clip_profile": "song"}])
+    spy = mocker.patch("fanops.moments.extract_keyframes", return_value=["/k/w0.jpg"])
+    led = request_moments(led, cfg, "src_1")
+    led = _ingest_picks(led, cfg, "src_1",
+                        [MomentPick(start=14.0, end=18.0, reason="verse lands", personas=["a"])])
+    m = led.moments_of("src_1")[0]
+    assert m.clip_profile == "song"
+    led = request_moment_hooks(led, cfg, "src_1", accounts=accts)
+    song = band_for("song")
+    cs, ce = fit_window(m.start, m.end, 60.0, lo=song.lo, hi=song.hi)
+    call = spy.call_args
+    assert call.args[1] == cs and call.args[2] == ce
 
 def test_ingest_no_skip_state_fields(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)

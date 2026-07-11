@@ -49,16 +49,16 @@ def test_request_moment_hooks_sends_owner_only(tmp_path):
     cfg = Config(root=tmp_path); led = _seed_src(cfg)
     led = _pick(led, cfg, owner="markmakmouly")
     led = request_moment_hooks(led, cfg, "src_1", accounts=_accts(cfg, [("markmakmouly", "craft"), ("other", "x")]))
-    req = json.loads(request_path(cfg, "moment_hooks", "src_1.10.00-28.00").read_text())
+    req = json.loads(request_path(cfg, "moment_hooks", "src_1.markmakmouly.10.00-28.00").read_text())
     assert len(req["personas"]) == 1 and req["personas"][0]["handle"] == "markmakmouly"
 
 def test_ingest_moment_hooks_persists_m_hook_only(tmp_path):
     cfg = Config(root=tmp_path); led = _seed_src(cfg)
     led = _pick(led, cfg, owner="markmakmouly")
     led = request_moment_hooks(led, cfg, "src_1")
-    rid = latest_request_id(cfg, "moment_hooks", "src_1.10.00-28.00")
+    rid = latest_request_id(cfg, "moment_hooks", "src_1.markmakmouly.10.00-28.00")
     dec = screen_model_text(MomentHookDecision(request_id=rid, hook="the part you'll replay"))
-    response_path(cfg, "moment_hooks", "src_1.10.00-28.00").write_text(dec.model_dump_json())
+    response_path(cfg, "moment_hooks", "src_1.markmakmouly.10.00-28.00").write_text(dec.model_dump_json())
     led = ingest_moment_hooks(led, cfg, "src_1")
     m = led.moments_of("src_1")[0]
     assert m.state is MomentState.decided and m.hook == "the part you'll replay"
@@ -78,9 +78,9 @@ def test_null_hook_promotes_clean_to_decided(tmp_path):
     cfg = Config(root=tmp_path); led = _seed_src(cfg)
     led = _pick(led, cfg, owner="markmakmouly")
     led = request_moment_hooks(led, cfg, "src_1")
-    rid = latest_request_id(cfg, "moment_hooks", "src_1.10.00-28.00")
+    rid = latest_request_id(cfg, "moment_hooks", "src_1.markmakmouly.10.00-28.00")
     dec = screen_model_text(MomentHookDecision(request_id=rid, hook=None))
-    response_path(cfg, "moment_hooks", "src_1.10.00-28.00").write_text(dec.model_dump_json())
+    response_path(cfg, "moment_hooks", "src_1.markmakmouly.10.00-28.00").write_text(dec.model_dump_json())
     led = ingest_moment_hooks(led, cfg, "src_1")
     m = led.moments_of("src_1")[0]
     assert m.state is MomentState.decided and m.hook is None
@@ -91,9 +91,9 @@ def test_null_hook_never_errors_source(tmp_path):
     cfg = Config(root=tmp_path); led = _seed_src(cfg)
     led = _pick(led, cfg, owner="markmakmouly")
     led = request_moment_hooks(led, cfg, "src_1")
-    rid = latest_request_id(cfg, "moment_hooks", "src_1.10.00-28.00")
+    rid = latest_request_id(cfg, "moment_hooks", "src_1.markmakmouly.10.00-28.00")
     dec = screen_model_text(MomentHookDecision(request_id=rid, hook=None))
-    response_path(cfg, "moment_hooks", "src_1.10.00-28.00").write_text(dec.model_dump_json())
+    response_path(cfg, "moment_hooks", "src_1.markmakmouly.10.00-28.00").write_text(dec.model_dump_json())
     led = ingest_moment_hooks(led, cfg, "src_1")
     assert led.sources["src_1"].state is SourceState.moments_decided
     assert led.sources["src_1"].state is not SourceState.error
