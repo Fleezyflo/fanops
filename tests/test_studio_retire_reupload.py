@@ -1,6 +1,4 @@
 # tests/test_studio_retire_reupload.py — Studio retire confirm honesty + retired-sha dedup feedback (2026-07-10 incident)
-import json
-from pathlib import Path
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Clip, ClipState, Moment, Source, SourceState
