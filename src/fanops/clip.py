@@ -738,7 +738,10 @@ def render_moment(led: Ledger, cfg: Config, moment_id: str, *,
                         first_frame_kind=None, cut_seconds=sc_cut_seconds, hook_burn_failed=hook_burn_failed)
             led.clips[cid] = clip
             led.set_moment_state(moment_id, MomentState.clipped)
-            try: fp_path.write_text(json.dumps({"fp": fp}))
+            try:
+                fp_path.write_text(json.dumps({"fp": fp}))
+                from fanops.artifacts import stamp_stage
+                stamp_stage(cfg, src.id, "render", fp_path, 1)
             except OSError: pass
             return led, clip
         rc = getattr(r, "returncode", "?") if r is not None else "?"
@@ -850,6 +853,10 @@ def render_moment(led: Ledger, cfg: Config, moment_id: str, *,
     # re-render, never a crash. Written ONLY on success, so a failed render never leaves a skip stamp.
     try:
         fp_path.write_text(json.dumps({"fp": fp}))
+        from fanops.artifacts import stamp_stage
+        src = led.sources.get(led.moments[moment_id].parent_id)
+        if src is not None:
+            stamp_stage(cfg, src.id, "render", fp_path, 1)
     except OSError:
         pass
     return led, clip

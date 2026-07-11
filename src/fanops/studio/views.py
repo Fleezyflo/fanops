@@ -158,7 +158,7 @@ def pipeline_status(cfg: Config) -> dict:
         "sources_inventory": bl.inventory,
         "native_total": bl.actionable + bl.blocked_on_gates + bl.recoverable + bl.inventory,
         "backlog_rows": [{"id": r.id, "state": r.state, "bucket": r.bucket, "wait_line": r.wait_line,
-                          "block_reason": r.block_reason} for r in bl.rows],
+                          "block_reason": r.block_reason, "artifacts": r.artifacts} for r in bl.rows],
         "third_party": sum(1 for s in led.sources.values() if s.origin_kind == "third_party"),
         "clips": len(led.clips), "posts": len(led.posts),
         "awaiting": awaiting_moment_count(led),   # S3: ACTIONABLE — MOMENTS (== Home/Review worklist), not raw posts

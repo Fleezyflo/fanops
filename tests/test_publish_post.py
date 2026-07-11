@@ -218,6 +218,32 @@ def test_run_all_ledger_load_failure_logs_error_not_warn(tmp_path, monkeypatch):
     load_rows = [r for r in seen if r[0] == "produce" and r[1] == "-"]
     assert load_rows and all(r[2] == "error" for r in load_rows)                # run_all's load-failure row is `error`
 
+def test_produce_warm_resume_errored_source(tmp_path, monkeypatch, mocker):
+    import json
+    from fanops.produce import _produce_one
+    from fanops.models import Fmt, Source, SourceState
+    from fanops.ledger import Ledger
+    cfg = Config(root=tmp_path)
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="src_e", source_path="/v.mp4", state=SourceState.error,
+                              error_reason="TimeoutExpired: ffmpeg", meta={"transcribed": False}))
+    (cfg.agent_io / "transcripts").mkdir(parents=True, exist_ok=True)
+    (cfg.agent_io / "transcripts" / "v.json").write_text(json.dumps(
+        {"segments": [{"start": 0, "end": 1, "text": "warm"}], "language": "en"}))
+    asr_calls = []
+    def fake(cmd, **kw):
+        if "whisper" in str(cmd[0]) or "_fwrun" in str(cmd):
+            asr_calls.append(cmd)
+        class R: returncode=0; stderr=""; stdout=""
+        return R()
+    mocker.patch("fanops.transcribe.subprocess.run", side_effect=fake)
+    seen: list[tuple] = []
+    def spy(stage, unit, outcome, **f): seen.append((stage, unit, outcome, f))
+    _produce_one(cfg, "src_e", {Fmt.r9x16}, log=spy)
+    warm = [r for r in seen if r[0] == "produce" and r[1] == "src_e" and r[2] == "warm_resume"]
+    assert warm and warm[0][3].get("resume_stage") == "transcribed"
+    assert len(asr_calls) == 0
+
 def test_publish_backend_fallback_logs_when_it_fires(tmp_path, monkeypatch):
     # #10 (M2): publish_backend_for_post falls back to `cfg.poster_backend or "dryrun"` when Accounts
     # resolution raises. The SAFE value is unchanged; the only gap was no breadcrumb. Prove the fallback

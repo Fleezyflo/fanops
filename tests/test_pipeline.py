@@ -287,6 +287,54 @@ def test_advance_rollback_recovers_warm_artifacts(tmp_path, monkeypatch, mocker)
     assert len(asr_calls) == after_p1, "whisper re-ran — the warm artifact was not recovered after rollback"
 
 
+def test_advance_auto_resumes_error_source_with_warm_transcript(tmp_path, monkeypatch, mocker):
+    # Artifact resume: an errored source with a warm transcript on disk is auto-reconciled at transcribed
+    # and the next advance adopts it without a second whisper run.
+    monkeypatch.delenv("FANOPS_POSTER", raising=False)
+    cfg = Config(root=tmp_path)
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": [
+        {"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}]}))
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="src_err", source_path=str(cfg.sources / "vid.mp4"),
+                              state=SourceState.error, error_reason="TimeoutExpired: signals hung",
+                              transcript=None, meta={"transcribed": False}, duration=20.0, width=1920, height=1080))
+    (cfg.agent_io / "transcripts").mkdir(parents=True, exist_ok=True)
+    (cfg.agent_io / "transcripts" / "vid.json").write_text(json.dumps(
+        {"language": "en", "segments": [{"start": 1.0, "end": 3.0, "text": "they slept on me"}]}))
+    asr_calls = []
+    def fake(cmd, **kw):
+        joined = " ".join(cmd)
+        if _is_asr(cmd):
+            asr_calls.append(tuple(cmd))
+            outdir = Path(cmd[cmd.index("--output_dir") + 1]); outdir.mkdir(parents=True, exist_ok=True)
+            (outdir / f"{Path(cmd[-1]).stem}.json").write_text(json.dumps(
+                {"language": "en", "segments": [{"start": 1.0, "end": 3.0, "text": "should not run"}]}))
+            class R: returncode=0; stderr=""; stdout=""
+            return R()
+        if cmd[0] == "ffprobe":
+            class R:
+                returncode=0; stderr=""
+                stdout = "video" if "codec_type" in joined else "1920\n1080\n20.0\n"
+            return R()
+        if cmd[0] == "ffmpeg" and "null" in cmd:
+            class R: returncode=0; stdout=""; stderr="silence_end: 2.0 | silence_duration: 1.0"
+            return R()
+        if not str(cmd[-1]).startswith("-"):
+            out = Path(cmd[-1]); out.parent.mkdir(parents=True, exist_ok=True); out.write_bytes(b"X")
+        class R: returncode=0; stderr=""; stdout=""
+        return R()
+    for mod in ("transcribe", "signals", "clip", "ingest"):
+        mocker.patch(f"fanops.{mod}.subprocess.run", side_effect=fake)
+    mocker.patch("fanops.pipeline._stage_structural_hooks", side_effect=lambda *a, **k: a[0])
+    mocker.patch("fanops.pipeline.crosspost_clips", side_effect=lambda *a, **k: a[0])
+    advance(cfg, base_time="2026-06-02T18:00:00Z")
+    s = Ledger.load(cfg).sources["src_err"]
+    assert s.state is not SourceState.error
+    assert s.state is not SourceState.catalogued
+    assert len(asr_calls) == 0, "whisper ran on an errored source with warm transcript on disk"
+
+
 def test_advance_persists_progress_when_crosspost_raises(tmp_path, monkeypatch, mocker):
     # AUDIT M2 (hardened, NOT merely subsumed by B1): a raise from the volatile crosspost stage
     # must NOT discard the pass's earlier in-memory progress. Before this guard, a crosspost raise

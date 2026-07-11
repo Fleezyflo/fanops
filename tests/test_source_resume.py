@@ -139,12 +139,20 @@ def test_force_reset_purges_on_disk_caches(tmp_path):
     cfg = Config(root=tmp_path)
     _moments_decided(cfg)
     cache = _seed_transcribe_cache(cfg)
+    (cfg.agent_io / "framing").mkdir(parents=True, exist_ok=True)
+    (cfg.agent_io / "framing" / "s1.detect.json").write_text("{}")
+    (cfg.agent_io / "keyframes" / "s1").mkdir(parents=True, exist_ok=True)
+    (cfg.agent_io / "manifests").mkdir(parents=True, exist_ok=True)
+    (cfg.agent_io / "manifests" / "s1.json").write_text("{}")
     before = cache.stat().st_mtime
     time.sleep(0.02)
     with Ledger.transaction(cfg) as led:
         assert resume_source(led, "s1", from_stage="catalogued", force=True, cfg=cfg) is True
     assert not cache.exists()
     assert not (cfg.agent_io / "signals" / "s1.json").exists()
+    assert not (cfg.agent_io / "framing" / "s1.detect.json").exists()
+    assert not (cfg.agent_io / "keyframes" / "s1").exists()
+    assert not (cfg.agent_io / "manifests" / "s1.json").exists()
     assert not (cfg.agent_io / "transcripts" / "vocals" / "htdemucs" / "clip" / "vocals.mp3").exists()
     cache.write_text("{}")                                      # simulate a fresh transcribe landing later
     assert cache.stat().st_mtime > before
@@ -204,3 +212,40 @@ def test_studio_force_reset_threads_from_stage_and_force(tmp_path, monkeypatch):
     assert res.ok
     s = Ledger.load(cfg).sources["src_1"]
     assert s.state is SourceState.catalogued and s.transcript is None
+
+
+# ── Pipeline Artifact Resume: auto-reconcile errored sources with warm disk artifacts ──
+
+def test_reconcile_auto_resumes_transient_error_with_warm_transcript(tmp_path):
+    from fanops.pipeline import reconcile_source_progress
+    cfg = Config(root=tmp_path)
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="s1", source_path="/clip.mp4", state=SourceState.error,
+                              error_reason="TimeoutExpired: ffmpeg hung",
+                              transcript=None, meta={"transcribed": False}))
+    (cfg.agent_io / "transcripts").mkdir(parents=True, exist_ok=True)
+    (cfg.agent_io / "transcripts" / "clip.json").write_text(json.dumps(
+        {"segments": [{"start": 0, "end": 1, "text": "warm"}], "language": "en"}))
+    with Ledger.transaction(cfg) as led:
+        led = reconcile_source_progress(led, cfg)
+    s = Ledger.load(cfg).sources["s1"]
+    assert s.state is SourceState.transcribed
+    assert s.error_reason is None
+    assert s.transcript == [{"start": 0, "end": 1, "text": "warm"}]
+
+
+def test_reconcile_skips_toolchain_error(tmp_path):
+    from fanops.pipeline import reconcile_source_progress
+    cfg = Config(root=tmp_path)
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="s1", source_path="/clip.mp4", state=SourceState.error,
+                              error_reason="toolchain missing: whisper (FileNotFoundError)",
+                              transcript=None, meta={"transcribed": False}))
+    (cfg.agent_io / "transcripts").mkdir(parents=True, exist_ok=True)
+    (cfg.agent_io / "transcripts" / "clip.json").write_text(json.dumps(
+        {"segments": [{"start": 0, "end": 1, "text": "warm"}], "language": "en"}))
+    with Ledger.transaction(cfg) as led:
+        led = reconcile_source_progress(led, cfg)
+    s = Ledger.load(cfg).sources["s1"]
+    assert s.state is SourceState.error
+

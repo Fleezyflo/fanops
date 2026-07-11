@@ -270,4 +270,6 @@ def _produce_transcript(led: Ledger, cfg: Config, source_id: str, src, out_dir: 
     src.language = data.get("language")
     src.meta["transcribed"] = True
     led.set_source_state(source_id, SourceState.transcribed)
+    from fanops.artifacts import stamp_stage
+    stamp_stage(cfg, source_id, "transcribe", cfg.agent_io / "transcripts" / f"{Path(audio).stem}.json", 1)
     return led

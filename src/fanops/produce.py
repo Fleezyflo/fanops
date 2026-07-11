@@ -28,6 +28,7 @@ from fanops.transcribe import transcribe_source
 from fanops.signals import detect_signals
 from fanops.clip import render_aspects_for
 from fanops.stitch_render import prewarm_approved_stitches
+from fanops.artifacts import infer_resume_stage, adopt_warm_artifacts
 
 
 @dataclass(frozen=True)
@@ -72,11 +73,34 @@ def _produce_one(cfg: Config, source_id: str, aspects: set[Fmt], *, log) -> Sour
     s = led.sources.get(source_id)
     if s is None or s.origin_kind == "third_party":
         return SourceResult(source_id, None)             # gone / inert — nothing to produce
+    resume_at = None
+    if s.state in (SourceState.error, SourceState.moments_empty):
+        resume_at = infer_resume_stage(cfg, source_id, s)
     try:
-        if s.state is SourceState.catalogued:
-            led = transcribe_source(led, cfg, source_id)
-        if led.sources[source_id].state is SourceState.transcribed:
-            led = detect_signals(led, cfg, source_id)
+        if resume_at:
+            log("produce", source_id, "warm_resume", resume_stage=resume_at.value)
+            led = adopt_warm_artifacts(led, cfg, source_id)
+            if resume_at in (SourceState.transcribed, SourceState.signalled):
+                if not led.sources[source_id].meta.get("transcribed"):
+                    led = transcribe_source(led, cfg, source_id)
+            if resume_at is SourceState.signalled and led.sources[source_id].state is SourceState.transcribed:
+                led = detect_signals(led, cfg, source_id)
+        else:
+            if s.state is SourceState.catalogued:
+                led = transcribe_source(led, cfg, source_id)
+            if led.sources[source_id].state is SourceState.transcribed:
+                led = detect_signals(led, cfg, source_id)
+        if s.state is SourceState.picks_decided:
+            from fanops.moments import _window_frames
+            from fanops.clip import fit_window
+            src = led.sources[source_id]
+            for m in list(led.moments.values()):
+                if m.parent_id != source_id or m.state is not MomentState.picked: continue
+                try:
+                    cs, ce = fit_window(m.start, m.end, src.duration or 0.0)
+                    _window_frames(cfg, src, cs, ce, segments=m.segments or None)
+                except Exception as e:
+                    log("produce", source_id, "warn", err=str(e)[:120])
     except Exception as e:
         log("produce", source_id, "warn", err=str(e)[:120])
         err = f"{type(e).__name__}: {e}"
