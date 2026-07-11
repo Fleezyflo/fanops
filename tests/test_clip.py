@@ -20,11 +20,18 @@ def _vf_of(cmd: list[str]) -> str:
     """Return the value passed to the (last) -vf flag in an ffmpeg cmd list."""
     return cmd[cmd.index("-vf") + 1]
 
+def test_ffmpeg_clip_cmd_submicrosecond_window_avoids_scientific_notation():
+    # L02: ffmpeg -ss/-to args must stay decimal (never scientific notation) for sub-microsecond windows.
+    cmd = ffmpeg_clip_cmd("/s/x.mp4", "/o/c.mp4", 0.0000001, 0.0000002, "9:16", src_w=1920, src_h=1080)
+    joined = " ".join(cmd)
+    assert "e-" not in joined.lower() and "e+" not in joined.lower()
+    assert "0.000" in joined
+
 def test_clip_cmd_seek_is_output_relative_and_reframes():
     cmd = ffmpeg_clip_cmd("/s/x.mp4", "/o/c.mp4", 1.5, 8.0, "9:16", src_w=1920, src_h=1080)
     # -ss BEFORE -i (fast seek), -to AFTER -i (output-relative, version-stable)
     assert cmd.index("-ss") < cmd.index("-i") < cmd.index("-to")
-    assert "1.5" in cmd and "6.5" in cmd          # -to is output-relative DURATION (end-start), not absolute end
+    assert "1.500" in cmd and "6.500" in cmd          # -to is output-relative DURATION (end-start), not absolute end
     assert "8.0" not in cmd                        # FIX F39: absolute end must NOT be emitted (caused version-fragile cuts)
     assert any("crop" in p or "scale" in p for p in cmd)
     assert cmd[-1] == "/o/c.mp4"
