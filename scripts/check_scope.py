@@ -15,6 +15,7 @@ _OVERRIDES: dict[str, tuple[str, ...]] = {
     "src/fanops/audit.py": ("tests/test_audit_trail.py",),
     "src/fanops/controlio.py": ("tests/test_controlio.py",),
     "src/fanops/config_introspect.py": ("tests/test_config_verb.py",),
+    "src/fanops/cli.py": ("tests/test_cli_wipe.py",),
     "src/fanops/cutover_postiz.py": ("tests/test_cutover.py",),
     "src/fanops/errors.py": ("tests/test_cli.py",),
     "src/fanops/framing.py": ("tests/test_smart_framing.py",),
@@ -91,8 +92,13 @@ def resolve_tests(changed: list[str]) -> list[str]:
         if not f.startswith("src/fanops/") or not f.endswith(".py"):
             continue
         hits = _convention_candidates(f)
+        extra = [h for h in _OVERRIDES.get(f, ()) if _exists(h)]
         if not hits:
-            hits = [h for h in _OVERRIDES.get(f, ()) if _exists(h)]
+            hits = extra
+        else:
+            for h in extra:
+                if h not in hits:
+                    hits.append(h)
         for t in hits:
             want[t] = None
     return sorted(want)
