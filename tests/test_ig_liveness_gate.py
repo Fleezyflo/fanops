@@ -151,3 +151,43 @@ def test_credentialed_never_rests_on_postiz_self_report_alone(tmp_path, monkeypa
                           confirm=lambda *a, **k: {"confirmed": False, "owner": None})
     assert led.posts["p1"].state is not PostState.published   # Postiz self-report alone did NOT rest it
     assert led.posts["p1"].state is PostState.needs_reconcile
+
+
+# ── (f) missing releaseId on credentialed account -> fail-open (no probe id -> retry next tick) ─────────
+
+def test_credentialed_missing_release_id_fail_open(tmp_path, monkeypatch):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _write_accounts(cfg, [{"handle": "@markmakmouly", "account_id": "1", "platforms": ["instagram"],
+                           "status": "active", "ig_user_id": "ig-mark-99"}])
+    _ig_post(led)
+    called = {"n": 0}
+    def confirm(cfg_, post, *, get=None):
+        called["n"] += 1
+        return {"confirmed": False, "owner": None}
+    def _poll_no_rid(sid):
+        return {"postSubmissionId": sid, "status": "published", "publicUrl": _URL}   # no releaseId
+    led = reconcile_posts(led, cfg, get_status=_poll_no_rid, confirm=confirm)
+    assert led.posts["p1"].state is PostState.needs_reconcile   # fail-open: left re-pollable
+    assert called["n"] == 0                                       # confirm never called without a probe id
+    assert "unverified" not in (led.posts["p1"].error_reason or "").lower()
+
+
+def test_credentialed_missing_release_id_then_resolves_two_pass(tmp_path, monkeypatch):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _write_accounts(cfg, [{"handle": "@markmakmouly", "account_id": "1", "platforms": ["instagram"],
+                           "status": "active", "ig_user_id": "ig-mark-99"}])
+    _ig_post(led)
+    pass_n = {"n": 0}
+    def poll(sid):
+        pass_n["n"] += 1
+        if pass_n["n"] == 1:
+            return {"postSubmissionId": sid, "status": "published", "publicUrl": _URL}
+        return {"postSubmissionId": sid, "status": "published", "publicUrl": _URL, "releaseId": _RID}
+    def confirm(cfg_, post, *, get=None):
+        assert post.media_id == _RID
+        return {"confirmed": True, "owner": "markmakmouly"}
+    led = reconcile_posts(led, cfg, get_status=poll, confirm=confirm)
+    assert led.posts["p1"].state is PostState.needs_reconcile   # first pass: no releaseId -> fail-open
+    led = reconcile_posts(led, cfg, get_status=poll, confirm=confirm)
+    assert led.posts["p1"].state is PostState.published
+    assert led.posts["p1"].media_id == _RID

@@ -48,7 +48,8 @@ def classify_outcomes(led: Ledger, *, winner_pct: float = 0.3, retire_pct: float
     bottom = ranked[n - lose_n:] if lose_n > 0 else []
     win_set = set(winners)
     losers = [p.id for p in bottom
-              if p.id not in win_set and p.metrics.get(LIFT_SCORE, 0.0) < lift_floor]
+              if p.id not in win_set and p.metrics.get(LIFT_SCORE, 0.0) < lift_floor
+              and not p.metrics.get("lift_degraded")]
     return {"winners": winners, "losers": losers}
 
 def amplify(led: Ledger, cfg: Config, winner_post_ids: list[str], *,
