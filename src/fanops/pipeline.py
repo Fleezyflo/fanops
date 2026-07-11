@@ -69,7 +69,9 @@ def _force_reset_to_catalogued(led: Ledger, cfg: Config, source_id: str, s) -> N
     from fanops.transcribe import purge_source_artifacts
     clip_ids = [c.id for c in led.clips.values()
                 if (mom := led.moments.get(c.parent_id)) and mom.parent_id == source_id]
-    purge_source_artifacts(cfg, source_id, s.source_path, clip_ids=clip_ids)
+    reason = (s.error_reason or "").lower()
+    preserve_vocals = "whisper timed out" in reason or "whisper produced no json" in reason
+    purge_source_artifacts(cfg, source_id, s.source_path, clip_ids=clip_ids, preserve_vocals=preserve_vocals)
     discard_gates_for(cfg, "moments", source_id)
     discard_gates_for(cfg, "moment_hooks", f"{source_id}.")
     led.reconcile_moments(source_id, {})
