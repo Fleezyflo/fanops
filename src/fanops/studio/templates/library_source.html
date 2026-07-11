@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}Source {{ detail.name }}{% endblock %}
+{% block body %}
+  <h2>Pipeline map</h2>
+  <div id="library-source-live" hx-get="{{ url_for('library_source_live', source_id=detail.source_id) }}"
+       hx-trigger="every 15s" hx-swap="outerHTML">
+    {% include "_library_source_panel.html" %}
+  </div>
+{% endblock %}

@@ -1,0 +1,10 @@
+{# Compact 11-stage pipeline strip — list + detail. status: done|active|pending|blocked|inert|todo #}
+<ol class="stage-strip" aria-label="Pipeline stages">
+  {% for cell in strip %}
+  <li class="stage-cell stage-{{ cell.status }}" title="{{ cell.label }}: {{ cell.status }}">
+    <span class="stage-label">{{ cell.label }}</span>
+    {% if cell.gate_url %}<a class="stage-gate" href="{{ cell.gate_url }}">gate</a>{% endif %}
+    {% if cell.at %}<span class="stage-at muted">{{ cell.at }}</span>{% endif %}
+  </li>
+  {% endfor %}
+</ol>

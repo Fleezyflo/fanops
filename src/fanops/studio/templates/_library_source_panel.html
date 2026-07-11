@@ -1,0 +1,27 @@
+{# Per-source pipeline detail body (poll target + full page). #}
+<div class="library-source-panel">
+  <p class="meta"><a href="{{ url_for('library') }}">← Library</a> · <strong>{{ detail.name }}</strong>
+    <span class="muted">{{ detail.state }} · {{ detail.origin_kind }}</span></p>
+  {% with strip=detail.stage_strip %}{% include "_stage_strip.html" %}{% endwith %}
+  <dl class="source-stats meta">
+    <dt>Moments</dt><dd>{{ detail.stats.moments }}</dd>
+    <dt>Clips</dt><dd>{{ detail.stats.clips }}</dd>
+    <dt>Posts</dt><dd>{{ detail.stats.posts }}</dd>
+    <dt>Published</dt><dd>{{ detail.stats.published }}</dd>
+  </dl>
+  {% if detail.media_url %}
+  <p><video controls preload="metadata" src="{{ detail.media_url }}" class="source-player"></video></p>
+  {% endif %}
+  {% if detail.keyframes %}
+  <div class="keyframe-grid">{% for kf in detail.keyframes %}
+    <img src="{{ kf.url }}" alt="{{ kf.name }}" loading="lazy" class="keyframe-thumb">
+  {% endfor %}</div>
+  {% endif %}
+  <h3>Transcript <span class="muted">({{ detail.transcript.source }}, {{ detail.transcript.total }} segs{% if detail.transcript.word_count %}, {{ detail.transcript.word_count }} words this page{% endif %})</span></h3>
+  <ul class="transcript-segs">{% for seg in detail.transcript.segments %}
+    <li><span class="muted">{{ '%.1f'|format(seg.start or 0) }}–{{ '%.1f'|format(seg.end or 0) }}s</span> {{ seg.text }}</li>
+  {% endfor %}{% if not detail.transcript.segments %}<li class="empty">no transcript</li>{% endif %}</ul>
+  {% if detail.transcript.next_offset is not none %}
+  <p><a class="button ghost" href="{{ url_for('library_source', source_id=detail.source_id, offset=detail.transcript.next_offset) }}">More transcript</a></p>
+  {% endif %}
+</div>

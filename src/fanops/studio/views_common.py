@@ -12,6 +12,7 @@ import re as _re
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Optional
 
 from fanops.config import Config
@@ -350,3 +351,39 @@ def is_transient_failure_reason(error_reason: str | None) -> bool:
         if 400 <= code < 500:
             return False
     return False
+
+
+def lineage_maps(led: Ledger) -> tuple[dict, dict, dict]:
+    """One-pass moment/clip/post bucket maps for O(1) lineage lookups (Review/Library pattern)."""
+    moms: dict = {}
+    for m in led.moments.values():
+        moms.setdefault(m.parent_id, []).append(m)
+    clips_bm: dict = {}
+    for c in led.clips.values():
+        clips_bm.setdefault(c.parent_id, []).append(c)
+    posts_bc: dict = {}
+    for p in led.posts.values():
+        posts_bc.setdefault(p.parent_id, []).append(p)
+    return moms, clips_bm, posts_bc
+
+
+def clip_source_of(led: Ledger, clip_id: str) -> Optional[str]:
+    """Resolve clip -> moment -> source id for Schedule/Posted source= filter."""
+    clip = led.clips.get(clip_id)
+    if clip is None:
+        return None
+    mom = led.moments.get(clip.parent_id)
+    return mom.parent_id if mom is not None else None
+
+
+def source_universe_for_clips(led: Ledger, rows) -> list[tuple[str, str]]:
+    """Distinct (source_id, basename) pairs from row clip_ids — Schedule/Posted chip universe."""
+    seen: dict[str, str] = {}
+    for r in rows:
+        cid = getattr(r, "clip_id", None)
+        sid = clip_source_of(led, cid) if cid else None
+        if not sid or sid in seen:
+            continue
+        src = led.sources.get(sid)
+        seen[sid] = Path(src.source_path).name if src and src.source_path else sid
+    return sorted(seen.items(), key=lambda kv: kv[1].lower())

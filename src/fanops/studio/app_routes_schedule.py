@@ -11,15 +11,16 @@ from fanops.ledger import Ledger
 from fanops.models import LIFT_SCORE, PostState
 from fanops.variant_learning import _hook_for_post
 from fanops.studio import actions, views
-from fanops.studio.app import _account_arg, _batch_arg, _delivery_arg, _failure_arg, _offset_arg, _row_chips, _time_arg, _with_active
+from fanops.studio.app import _account_arg, _batch_arg, _delivery_arg, _failure_arg, _offset_arg, _row_chips, _source_arg, _time_arg, _with_active
 
 
 def register_schedule_routes(app, cfg):
     def _schedule_panel(result=None, *, full=False):
         led = Ledger.load(cfg); now = datetime.now(timezone.utc); account = _account_arg(); batch = _batch_arg()
+        source = _source_arg()
         rows_full = views.schedule_rows(led, cfg, now=now)                            # universe for chips (account-only)
-        rows = (views.schedule_rows(led, cfg, now=now, account=account, batch=batch)
-                if (account or batch) else rows_full)
+        rows = (views.schedule_rows(led, cfg, now=now, account=account, batch=batch, source=source)
+                if (account or batch or source) else rows_full)
         approved_total = sum(1 for r in rows if r.editable)              # Face 5: full scoped count (pre-slice, page-safe banner)
         page = views.paginate(rows, _offset_arg())
         lanes = views.schedule_lanes(page.items)
@@ -28,8 +29,9 @@ def register_schedule_routes(app, cfg):
         cockpit = views.schedule_cockpit(led, cfg, account, now=now) if account else None
         inflight_watch = views.inflight_watch(led, cfg, account=account, now=now)
         tmpl = "schedule.html" if full else "_schedule_panel.html"
+        src_chips = views.source_universe_for_clips(led, rows_full)
         return render_template(tmpl, rows=page.items, lanes=lanes, schedule_groups=schedule_groups, groups=None, page=page, approved_total=approved_total,
-                               active_batch=batch, due_plan=due_plan, cockpit=cockpit, inflight_watch=inflight_watch, auto_ship=views.schedule_auto_ship(cfg), result=result, tab="schedule",
+                               active_batch=batch, active_source=source, source_chips=src_chips, due_plan=due_plan, cockpit=cockpit, inflight_watch=inflight_watch, auto_ship=views.schedule_auto_ship(cfg), result=result, tab="schedule",
                                # R3-followup UI-LIE-FIX: the per-channel truth, NOT the legacy global. On a
                                # live deployment with per-channel routing cfg.poster_backend reads 'dryrun'
                                # (the bridge fallback), printing 'dryrun' on a system that's actually live.
@@ -113,10 +115,10 @@ def register_schedule_routes(app, cfg):
         return render_template("lift.html", view=view, peaks=peaks, tab="lift", **chips)
 
     def _posted_panel(result=None, *, full=False):
-        led = Ledger.load(cfg); account = _account_arg(); batch = _batch_arg()
+        led = Ledger.load(cfg); account = _account_arg(); batch = _batch_arg(); source = _source_arg()
         delivery = _delivery_arg(); failure = _failure_arg()
         rows_full = views.posted_library(led, cfg, delivery=delivery if delivery else None)
-        rows = views.posted_library(led, cfg, account=account, batch=batch,
+        rows = views.posted_library(led, cfg, account=account, batch=batch, source=source,
                                     delivery=delivery if delivery else None, failure_kind=failure)
         failure_rollup = views.failure_rollup(led) if (delivery == "failed") else None
         rollup = views.posted_batch_rollup(rows) if batch else None     # Face 5: full scoped (pre-slice) per-batch summary
@@ -128,7 +130,9 @@ def register_schedule_routes(app, cfg):
                                                           # across pages — a saves=10 row reads the same width on any page
         accounts = Accounts.load(cfg).active()            # content-lifecycle Phase 4: cross-account picker options
         return render_template("posted.html" if full else "_posted_panel.html", rows=page.items, groups=groups,
-                               page=page, rollup=rollup, peaks=peaks, active_batch=batch, accounts=accounts,
+                               page=page, rollup=rollup, peaks=peaks, active_batch=batch, active_source=source,
+                               source_chips=views.source_universe_for_clips(led, rows_full),
+                               accounts=accounts,
                                result=result, tab="posted", active_delivery=delivery, active_failure=failure,
                                failure_rollup=failure_rollup, **_row_chips(rows_full, "posted", account))
 

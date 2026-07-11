@@ -16,7 +16,7 @@ from fanops.ledger import Ledger
 from fanops.models import LIFT_SCORE, PostState, RenderState
 from fanops.timeutil import parse_iso
 from fanops.variant_learning import _hook_for_post
-from fanops.studio.views_common import RECENT_WINDOW_HOURS, _batch_title, _imminent, suggest_time
+from fanops.studio.views_common import RECENT_WINDOW_HOURS, _batch_title, _imminent, suggest_time, clip_source_of
 
 logger = logging.getLogger(__name__)
 
@@ -150,7 +150,8 @@ def explain_suggested_time(cfg: Config, row) -> str:
 
 
 def schedule_rows(led: Ledger, cfg: Config, *, now: datetime,
-                  account: Optional[str] = None, batch: Optional[str] = None) -> list[ScheduleRow]:
+                  account: Optional[str] = None, batch: Optional[str] = None,
+                  source: Optional[str] = None) -> list[ScheduleRow]:
     """Approved-bucket rows in three lanes (due / upcoming / in-flight) plus optional recent shipped.
     In-flight (needs_reconcile, submitting, submitted) is NOW visible — the operator no longer has to
     open Posted or the CLI to see reconciling posts. P5: optional account/batch filters after sort."""
@@ -213,6 +214,8 @@ def schedule_rows(led: Ledger, cfg: Config, *, now: datetime,
         rows = [r for r in rows if r.account == account]
     if batch is not None:
         rows = [r for r in rows if r.batch_id == batch]
+    if source is not None:
+        rows = [r for r in rows if clip_source_of(led, r.clip_id) == source]
     return rows
 
 
@@ -539,7 +542,8 @@ def _classify_channel(public_url: Optional[str]) -> str:
 
 
 def posted_library(led: Ledger, cfg: Config, *, account: Optional[str] = None, batch: Optional[str] = None,
-                   delivery: Optional[str] = None, failure_kind: Optional[str] = None) -> list[PostedRow]:
+                   delivery: Optional[str] = None, failure_kind: Optional[str] = None,
+                   source: Optional[str] = None) -> list[PostedRow]:
     """The Posted library: shipped + in-flight + failed rows, filterable by delivery class (live /
     inflight / dryrun / failed). Default (delivery=None) shows terminal shipped rows only — inflight and
     failed are opt-in via the tab filters. Lock-free read."""
@@ -564,6 +568,8 @@ def posted_library(led: Ledger, cfg: Config, *, account: Optional[str] = None, b
         posts = [p for p in posts if p.batch_id == batch]
     if failure_kind:
         posts = [p for p in posts if classify_failure(p) == failure_kind]
+    if source is not None:
+        posts = [p for p in posts if clip_source_of(led, p.parent_id) == source]
     def _key(p):
         if not p.scheduled_time: return (0, "")
         try:

@@ -526,6 +526,34 @@ def create_app(cfg: Config) -> Flask:
             abort(404)
         return send_file(path)
 
+    @app.get("/source-media/<source_id>")
+    def source_media(source_id):
+        import re
+        if "/" in source_id or "\\" in source_id or ".." in source_id or not re.fullmatch(r"[\w.-]+", source_id):
+            abort(404)
+        src = Ledger.load(cfg).sources.get(source_id)
+        path = _bounded(cfg, src.source_path if src else None)
+        if not path or not os.path.exists(path):
+            abort(404)
+        return send_file(path)
+
+    @app.get("/keyframe/<source_id>/<name>")
+    @app.get("/keyframe/<source_id>/<whash>/<name>")
+    def keyframe(source_id, name, whash=None):
+        import re
+        if "/" in source_id or "\\" in source_id or ".." in source_id or not re.fullmatch(r"[\w.-]+", source_id):
+            abort(404)
+        if not re.fullmatch(r"(grid|kf)_[\w-]+\.jpg", name):
+            abort(404)
+        if whash is not None and not re.fullmatch(r"[0-9a-f]{64}", whash):
+            abort(404)
+        base = cfg.agent_io / "keyframes" / source_id
+        candidate = base / whash / name if whash else base / name
+        path = _bounded(cfg, candidate)
+        if not path or not path.exists():
+            abort(404)
+        return send_file(path, mimetype="image/jpeg")
+
     @app.get("/clip-thumb/<clip_id>")
     def clip_thumb(clip_id):
         # A cached JPEG first-frame for a clip, so the grid's <video preload="none"> shows a real

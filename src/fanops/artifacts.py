@@ -63,6 +63,27 @@ def _transcript_cache(cfg: Config, source_path: str) -> Path:
     return cfg.agent_io / "transcripts" / f"{Path(source_path).stem}.json"
 
 
+def transcript_sidecar_path(cfg: Config, source_path: str) -> Path:
+    """Public read alias for the transcript JSON sidecar (_transcript_cache)."""
+    return _transcript_cache(cfg, source_path)
+
+
+def manifest_stage_times(cfg: Config, source_id: str) -> dict[str, str]:
+    """Fail-open {stage: at_iso} from the advisory manifest — timestamps only, never status authority."""
+    try:
+        stages = _load_manifest(cfg, source_id).get("stages") or {}
+        return {k: v["at"] for k, v in stages.items() if isinstance(v, dict) and v.get("at")}
+    except Exception:
+        return {}
+
+
+def disk_stage_flags(cfg: Config, source_id: str, source_path: str) -> dict[str, bool]:
+    """On-disk artifact presence for transcribe/signals/framing/keyframes (authoritative over manifest)."""
+    done = set(_disk_stages(cfg, source_id, source_path))
+    return {"transcribe": "transcribe" in done, "signals": "signals" in done,
+            "framing": "framing" in done, "keyframes": "keyframes" in done}
+
+
 def _signals_sidecar(cfg: Config, source_id: str) -> Path:
     return cfg.agent_io / "signals" / f"{source_id}.json"
 

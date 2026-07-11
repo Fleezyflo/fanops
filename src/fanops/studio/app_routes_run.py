@@ -88,7 +88,25 @@ def register_run_routes(app, cfg):
     @app.get("/library")
     def library():
         # M1 asset memory: every Source the system remembers, split native vs third-party.
-        return render_template("library.html", catalog=views.asset_catalog(cfg), tab="library")
+        return render_template("library.html", catalog=views.library_catalog(cfg), tab="library")
+
+    @app.get("/library/<source_id>")
+    def library_source(source_id):
+        from flask import abort
+        from fanops.studio.app import _offset_arg
+        detail = views.source_pipeline_map(cfg, source_id, offset=_offset_arg())
+        if detail is None:
+            abort(404)
+        return render_template("library_source.html", detail=detail, tab="library")
+
+    @app.get("/library/<source_id>/live")
+    def library_source_live(source_id):
+        from flask import abort
+        from fanops.studio.app import _offset_arg
+        detail = views.source_pipeline_map(cfg, source_id, offset=_offset_arg())
+        if detail is None:
+            abort(404)
+        return render_template("_library_source_live.html", detail=detail, tab="library")
 
     @app.post("/library/upload")
     def do_thirdparty_upload():
@@ -97,10 +115,10 @@ def register_run_routes(app, cfg):
         res = actions.save_thirdparty_uploads(cfg, request.files.getlist("files"))
         if res.ok:
             res = actions.run_ingest_thirdparty(cfg)
-        return render_template("_library_panel.html", catalog=views.asset_catalog(cfg), result=res, tab="library")
+        return render_template("_library_panel.html", catalog=views.library_catalog(cfg), result=res, tab="library")
 
     def _library_panel(result=None):
-        return render_template("_library_panel.html", catalog=views.asset_catalog(cfg), result=result, tab="library")
+        return render_template("_library_panel.html", catalog=views.library_catalog(cfg), result=result, tab="library")
 
     @app.post("/library/resume")
     def do_library_resume():

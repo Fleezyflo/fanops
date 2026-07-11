@@ -1,0 +1,5 @@
+{# Live partial for /library/<source_id>/live — 15s self-poll (mirrors _run_status.html). #}
+<div id="library-source-live" class="library-source-live" hx-get="{{ url_for('library_source_live', source_id=detail.source_id) }}"
+     hx-trigger="every 15s" hx-swap="outerHTML">
+  {% include "_library_source_panel.html" %}
+</div>
