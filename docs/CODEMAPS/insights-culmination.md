@@ -1,3 +1,5 @@
+> Frozen 2026-07-11 — invariants map, not auto-synced. When prose and code disagree, the code is right.
+
 # Codemap — insights culmination (stamp → aggregate → actuator, per varied dimension)
 
 The closed loop that lets **analyzed reach bias the creative dimensions it doesn't yet reach**. Every clip

@@ -1,3 +1,5 @@
+> Frozen 2026-07-11 — invariants map, not auto-synced. When prose and code disagree, the code is right.
+
 # Codemap — hashtag lifecycle (persona corpus → vet → post → reach → surfaced)
 
 The end-to-end path that decides every posted hashtag. Per-persona, evidence-backed, closed-loop.

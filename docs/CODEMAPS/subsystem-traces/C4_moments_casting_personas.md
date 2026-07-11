@@ -1,3 +1,5 @@
+> Frozen 2026-07-11 — invariants map, not auto-synced. When prose and code disagree, the code is right.
+
 # C4: Moments, Casting & Personas
 
 > **POST-REBUILD (P15 / MOL-156).** Single-owner per-persona picking is live. One `moments` gate attributes
@@ -107,7 +109,7 @@ The lever engine (`persona_levers.py`) is the single upstream declaration. `pers
 > The symbols below (`request_moment_casting`, `ingest_moment_casting`, `account_selection_admits`,
 > `repair_casting_selections`, `casting_bias`, durable `AccountSelection`/`SelectionFact`) were **deleted in
 > P11/MOL-152**. `casting.py` is now 22 lines with one pure predicate. Operator `cast_add`/`cast_remove`
-> writes `Moment.affinities` directly. See [fresh-ingestion-trace.md](../fresh-ingestion-trace.md) §3.
+> writes `Moment.affinities` directly. See [fresh-ingestion-trace.md](../archive/fresh-ingestion-trace.md) §3.
 
 *(Pre-P11 function inventory retained in git history; not repeated here.)*
 

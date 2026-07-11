@@ -1,3 +1,5 @@
+> Frozen 2026-07-11 — invariants map, not auto-synced. When prose and code disagree, the code is right.
+
 # C5: Caption, Hooks & Hashtags
 
 ## Files covered (all 9 read in full)

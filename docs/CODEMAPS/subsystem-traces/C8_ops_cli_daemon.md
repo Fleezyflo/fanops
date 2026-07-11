@@ -1,3 +1,5 @@
+> Frozen 2026-07-11 — invariants map, not auto-synced. When prose and code disagree, the code is right.
+
 # C8: Ops, CLI & Daemon
 
 ## Files covered (all 11 read in full, cross-checked against structural_index.json — function/method lists match exactly)

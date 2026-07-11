@@ -1,3 +1,5 @@
+> Frozen 2026-07-11 — invariants map, not auto-synced. When prose and code disagree, the code is right.
+
 # C6: Crosspost, Publish & Post
 
 > **POST-REBUILD (P15 / MOL-156).** Crosspost mints posts only on owner-admitted surfaces

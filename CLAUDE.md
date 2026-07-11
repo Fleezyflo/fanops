@@ -30,6 +30,7 @@ MOH FLOW FAN OPS: intelligent clip + cross-post engine. Pure-Python `src/` layou
 - The `fanops` CLI has live verbs that hit external services (Postiz publish, Meta Graph
   metrics). Don't run it speculatively; tests and read-only verbs only unless the operator asks.
 - `.claude/workflows/*.js` are tracked, load-bearing build workflows — never delete.
+- One orchestrator landing session at a time — `git fetch` + `gh pr view` the target before merge (parallel orchestrators caused double-merges).
 
 ## Where to look (task-conditional — nested CLAUDE.md files load automatically when you edit under their dir)
 

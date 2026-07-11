@@ -1,3 +1,5 @@
+> Frozen 2026-07-11 — invariants map, not auto-synced. When prose and code disagree, the code is right.
+
 <!-- Generated: 2026-06-21 | Files scanned: config.py, accounts.py, post/postiz.py, meta_graph.py, crosspost.py, post/run.py | Token estimate: ~950 | Full guide: docs/INSTAGRAM_CONNECT.md -->
 # FanOps Account Connection
 
