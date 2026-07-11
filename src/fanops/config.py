@@ -101,6 +101,38 @@ _GATE_MODEL_DEFAULTS = {"moments": "opus", "moment_hooks": "opus", "captions": "
 # audio the most accurate model is cheap; at/above it (or unknown) the faster medium keeps a long
 # source's transcription bounded under transcribe._WHISPER_TIMEOUT. ~5min = a short clip, not a full set.
 _ASR_SHORT_SOURCE_SECONDS = 300.0
+# Expected CPU realtime factors (incident data, MOL-481) — used to reject models that cannot finish
+# within the whisper subprocess timeout budget before the kill fires.
+_ASR_MODEL_RTF = {"large-v3": 2.5, "medium": 1.6, "small": 1.0, "base": 0.5}
+_WHISPER_MODEL_RTF = {"large-v3": 2.5, "turbo": 0.8, "small": 0.6, "base": 0.4, "tiny": 0.2}
+_ASR_MODEL_CHAIN = ("large-v3", "medium", "small", "base")
+_WHISPER_MODEL_CHAIN = ("large-v3", "turbo", "small", "base", "tiny")
+# Mirror transcribe._WHISPER_TIMEOUT / _PREWARM_TIMEOUT_FACTOR — config cannot import transcribe.
+_ASR_WHISPER_TIMEOUT = 2700.0
+_ASR_PREWARM_TIMEOUT_FACTOR = 1.5
+_ASR_TIMEOUT_MARGIN = 60.0   # safety headroom before the subprocess kill
+
+def _asr_timeout_budget(duration_seconds: float | None) -> float:
+    if not duration_seconds:
+        return _ASR_WHISPER_TIMEOUT
+    return max(_ASR_WHISPER_TIMEOUT, float(duration_seconds) * _ASR_PREWARM_TIMEOUT_FACTOR)
+
+def _asr_effective_duration(duration_seconds: float | None) -> float:
+    return float(duration_seconds) if duration_seconds else _ASR_WHISPER_TIMEOUT / _ASR_PREWARM_TIMEOUT_FACTOR
+
+def _pick_timeout_aware_model(duration_seconds: float | None, *, chain: tuple[str, ...], rtf: dict[str, float],
+                              preferred: str, timeout_attempts: int = 0) -> str:
+    dur = _asr_effective_duration(duration_seconds)
+    budget = _asr_timeout_budget(duration_seconds) - _ASR_TIMEOUT_MARGIN
+    try: start = chain.index(preferred)
+    except ValueError: start = 0
+    picked = chain[-1]
+    for model in chain[start:]:
+        if dur * rtf.get(model, 99.0) < budget:
+            picked = model; break
+    try: idx = chain.index(picked)
+    except ValueError: idx = len(chain) - 1
+    return chain[min(idx + max(0, timeout_attempts), len(chain) - 1)]
 
 class Config:
     def __init__(self, root: Path | str | None = None):
@@ -543,24 +575,24 @@ class Config:
         v = os.getenv("FANOPS_ASR_MODEL")
         return v.strip() if v and v.strip() else "medium"
 
-    def asr_model_for(self, duration_seconds: float | None) -> str:
-        # Duration-aware ASR selection (the unaware-config fix): an explicit FANOPS_ASR_MODEL pin is the
-        # operator's call and wins verbatim (-> asr_model); otherwise the model scales with SOURCE length
-        # — a short source affords large-v3 (accuracy is cheap on little audio), a long/unknown source
-        # stays on medium (fast enough to land under transcribe._WHISPER_TIMEOUT). NOT a frugality cap:
-        # short sources UPGRADE to the most accurate model; only long ones hold the fast default.
+    def asr_model_for(self, duration_seconds: float | None, *, timeout_attempts: int = 0) -> str:
+        # Duration-aware ASR selection (MOL-481): an explicit FANOPS_ASR_MODEL pin is the operator's call
+        # and wins verbatim; otherwise pick the best model whose expected CPU RTF fits inside the whisper
+        # subprocess timeout budget, stepping down large-v3->medium->small->base. timeout_attempts steps
+        # down further after prior timeout kills (auto-resume doom-loop mitigation).
         if os.getenv("FANOPS_ASR_MODEL", "").strip(): return self.asr_model
-        return "large-v3" if (duration_seconds is not None and duration_seconds <= _ASR_SHORT_SOURCE_SECONDS) else "medium"
+        preferred = "large-v3" if (duration_seconds is not None and duration_seconds <= _ASR_SHORT_SOURCE_SECONDS) else "medium"
+        return _pick_timeout_aware_model(duration_seconds, chain=_ASR_MODEL_CHAIN, rtf=_ASR_MODEL_RTF,
+                                       preferred=preferred, timeout_attempts=timeout_attempts)
 
-    def whisper_model_for(self, duration_seconds: float | None) -> str:
+    def whisper_model_for(self, duration_seconds: float | None, *, timeout_attempts: int = 0) -> str:
         # Duration-aware selection for the LEGACY `whisper` CLI fallback (audit c0-f2) — the analog of
         # asr_model_for for the [asr]-extra-absent path (CI / air-gapped). An explicit FANOPS_WHISPER_MODEL
-        # pin is the operator's call and wins verbatim; otherwise a short source UPGRADES to large-v3
-        # (accuracy is cheap on little audio) and a long/unknown source holds the fast "turbo" default (lands
-        # under transcribe._WHISPER_TIMEOUT). transcribe._resolve_model still remaps to a cached checkpoint
-        # offline, so this only chooses the IDEAL model. NOT a frugality cap — short sources upgrade.
+        # pin is the operator's call and wins verbatim; otherwise timeout-aware like asr_model_for.
         if os.getenv("FANOPS_WHISPER_MODEL", "").strip(): return self.whisper_model
-        return "large-v3" if (duration_seconds is not None and duration_seconds <= _ASR_SHORT_SOURCE_SECONDS) else "turbo"
+        preferred = "large-v3" if (duration_seconds is not None and duration_seconds <= _ASR_SHORT_SOURCE_SECONDS) else "turbo"
+        return _pick_timeout_aware_model(duration_seconds, chain=_WHISPER_MODEL_CHAIN, rtf=_WHISPER_MODEL_RTF,
+                                       preferred=preferred, timeout_attempts=timeout_attempts)
 
     @property
     def asr_language(self) -> str:
