@@ -47,20 +47,6 @@ def _canon_account_str(h) -> str:
     return str(h or "").strip().lstrip("@").lower()
 
 
-def _canon_affinity_list(handles) -> list[str]:
-    """Canonical account-handle list for Moment.affinities (strip '@', lowercase)."""
-    if not handles: return []
-    out = []
-    for h in handles:
-        s = str(h or "").strip().lstrip("@").lower()
-        if s: out.append(s)
-    return sorted(set(out))
-
-
-def _canon_account_str(h) -> str:
-    return str(h or "").strip().lstrip("@").lower()
-
-
 def _segments_dump(segs: list[tuple[float, float]]) -> list[list[float]]:
     return [[s, e] for s, e in segs]
 

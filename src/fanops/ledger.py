@@ -507,9 +507,10 @@ class Ledger:
         self._store.write_raw(self._to_doc())
 
     def save(self) -> None:
-        """Test-only standalone save; production code uses `Ledger.transaction()`. Acquires the lock,
-        then delegates the write to _save_unlocked. A caller already inside Ledger.transaction() must
-        NOT call this (it would self-deadlock/LockBusyError) — it gets the single exit-save instead."""
+        """Standalone save (map-media, responder, snapshot, tests); production hot paths use
+        `Ledger.transaction()`. Acquires the lock, then delegates the write to _save_unlocked. A caller
+        already inside Ledger.transaction() must NOT call this (it would self-deadlock/LockBusyError) —
+        it gets the single exit-save instead."""
         with self._store.lock():
             self._save_unlocked()
             self._drain_deferred_unlinks()

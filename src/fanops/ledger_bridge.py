@@ -57,7 +57,7 @@ def _expected_doc_from_json(cfg: Config) -> dict:
         raw = json.loads(p.read_text())
     except json.JSONDecodeError as e:
         from fanops.errors import reason as _reason
-        raise ControlFileError(f"{cfg.ledger_path.name} invalid: {_reason(e)}") from e
+        raise ControlFileError(f"{cfg.legacy_ledger_json_path.name} invalid: {_reason(e)}") from e
     on_disk = raw.get("schema_version", 0)
     if on_disk > SCHEMA_VERSION:
         raise _NewerSchema(on_disk)

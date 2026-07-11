@@ -74,6 +74,19 @@ def test_p4_min_reach_gap_rejects_negative(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_P4_MIN_REACH_GAP", "-5")
     assert Config(root=tmp_path).p4_min_reach_gap == 0.0      # negative -> default (no anti-lead emission)
 
+def test_exact_reach_tie_no_candidate(tmp_path, monkeypatch):
+    monkeypatch.setenv("FANOPS_P4_MIN_REACH_GAP", "0")
+    cfg = Config(root=tmp_path); led = _gated_led(cfg, visual_reach=1000.0, transcript_reach=1000.0)
+    _validate(cfg)
+    assert dim_bias_candidates(led, cfg) == []
+
+def test_reach_gap_exactly_at_threshold_emits_winner(tmp_path, monkeypatch):
+    monkeypatch.setenv("FANOPS_P4_MIN_REACH_GAP", "10000")
+    cfg = Config(root=tmp_path); led = _gated_led(cfg, visual_reach=10000.0, transcript_reach=0.0)
+    _validate(cfg)
+    cands = dim_bias_candidates(led, cfg)
+    assert len(cands) == 1 and cands[0]["winning_value"] == "visual"
+
 
 # ---- B3: apply_p4_dim_bias — amplify-only, never retires ----
 def test_apply_amplifies_winning_dim_source_no_retire(tmp_path, monkeypatch):

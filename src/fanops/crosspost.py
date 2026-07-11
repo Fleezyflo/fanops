@@ -61,6 +61,12 @@ def surface_time(base: datetime, account: str, platform: str, date_str: str, ind
         zone = tz or timezone.utc
         loc = t.astimezone(zone).replace(hour=hour_hint)
         t = loc.astimezone(timezone.utc)
+    if index > 0:
+        prev_slot_str = surface_time(base, account, platform, date_str, index=index - 1, clip_id=clip_id,
+                                     lead_minutes=lead_minutes, hour_hint=hour_hint, tz=tz)
+        prev_slot = _parse(prev_slot_str)
+        while t <= prev_slot:
+            t += timedelta(minutes=_STEP_MIN)
     return iso_z(t)
 
 # Clip states whose file is a usable render target. A denylist (everything-but-retired)
