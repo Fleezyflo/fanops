@@ -348,7 +348,7 @@ def _write_heartbeat(cfg, *, age_seconds):
     from datetime import datetime, timezone, timedelta
     ts = (datetime.now(timezone.utc) - timedelta(seconds=age_seconds)).isoformat()
     cfg.log_path.parent.mkdir(parents=True, exist_ok=True)
-    rec = {"ts": ts, "level": "info", "stage": "heartbeat", "unit_id": "-", "outcome": "ok",
+    rec = {"ts": ts, "level": "info", "stage": "heartbeat", "unit_id": "-", "outcome": "ok", "origin": "loop",
            "heartbeat": ts, "published_in_run": "0"}
     with open(cfg.log_path, "a", encoding="utf-8") as fh:
         fh.write(json.dumps(rec, separators=(",", ":")) + "\n")

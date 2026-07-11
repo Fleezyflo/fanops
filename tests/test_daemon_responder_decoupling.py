@@ -2,8 +2,8 @@
 are DECOUPLED, and every enable surface DISCLOSES that hands-off + llm means recurring `claude` runs.
 
 Three structural changes pinned here:
-  1. render_plist is responder-AGNOSTIC — it bakes NO FANOPS_RESPONDER; the fire-time `fanops run`
-     resolves it via .env / Config.responder_mode (the single source of truth, loaded with override=True).
+  1. render_plist is responder-AGNOSTIC — it bakes NO FANOPS_RESPONDER; the resident `run --loop`
+     reloads .env each tick via load_dotenv(override=True) + Config(cfg.root).
   2. `daemon install --responder` defaults to `inherit` (resolve ambient, write nothing); an EXPLICIT
      llm/manual is PERSISTED to .env (durable). The CLI DISCLOSES the recurring-LLM cost when it resolves
      to llm, and points at `--responder manual` for no-LLM scheduling.

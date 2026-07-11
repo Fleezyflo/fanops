@@ -654,8 +654,9 @@ def go_live(cfg: Config, confirmed: bool = False, *, now: "datetime | None" = No
     # It must NOT force FANOPS_RESPONDER=llm (that silently spawned `claude` on every tick after a go-live).
     # The AI responder is enabled EXPLICITLY and separately (Go-Live → AI Responder / set_ai_responder).
     # M3c: scrape stale FANOPS_POSTER=dryrun — .env.example seeds it; pre-M3b go_dryrun wrote it;
-    # M3b go_live never updated it. load_dotenv(override=True) at process startup (cli.main) reloads
-    # the line on every Studio restart, so operators see LIVE=1 + POSTER=dryrun and think the flip
+    # M3b go_live never updated it. Studio dual-writes os.environ immediately; the resident daemon
+    # loop reloads .env each tick (load_dotenv override=True). One-shot CLI/Studio restarts also
+    # reload at process entry (cli.main). Operators saw LIVE=1 + POSTER=dryrun and thought the flip
     # reverted. Per-channel backends are the publish truth; an explicit dryrun global is misleading.
     _poster_disk = (_dotenv_assignment(cfg.root / ".env", "FANOPS_POSTER") or "").strip().lower()
     _poster_live = cfg.poster_backend_raw.lower()

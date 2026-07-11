@@ -953,12 +953,13 @@ def _cmd_run_pass(cfg: Config, base_time: str) -> dict | None:
     return s
 
 
-def _heartbeat(cfg: Config, s: dict) -> None:
+def _heartbeat(cfg: Config, s: dict, *, origin: str | None = None) -> None:
     """B5/E2: emit a heartbeat line every run/advance so an external monitor diffing consecutive
     lines can tell 'alive-but-idle' (ts advances, published_in_run may be 0) from 'cron is dead'
     (ts frozen / no new line). The ts comes from a LIVE clock so it changes every invocation —
     that mutation is the load-bearing signal, not cosmetic. Printed to stdout AND appended to
-    cfg.log_path via get_logger (which mkdirs reports/) so cron+mail/PagerDuty can alert."""
+    cfg.log_path via get_logger (which mkdirs reports/) so cron+mail/PagerDuty can alert.
+    `origin='loop'` marks resident --loop ticks; daemon.status ignores heartbeats without it."""
     hb = {
         "heartbeat": datetime.now(timezone.utc).isoformat(),
         "fanops_version": fanops.__version__,
@@ -966,7 +967,10 @@ def _heartbeat(cfg: Config, s: dict) -> None:
         "last_published_age_hours": s.get("last_published_age_hours"),
     }
     print(json.dumps(hb))
-    get_logger(cfg)("heartbeat", "-", "ok", **hb)
+    fields = dict(hb)
+    if origin:
+        fields["origin"] = origin
+    get_logger(cfg)("heartbeat", "-", "ok", **fields)
 
 
 def _studio_port_busy(host: str, port: int) -> bool:
@@ -1164,10 +1168,12 @@ def _dispatch(cfg: Config, args) -> int:
         if args.loop:
             interval = daemon.parse_interval(args.interval)
             while True:
+                load_dotenv(cfg.root / ".env", override=True)   # operator disk truth each tick (B01 C1)
+                cfg = Config(cfg.root)                          # side-effect-free; re-read after dotenv
                 base_time = _fresh_run_base_time()
                 try:
                     if (s := _cmd_run_pass(cfg, base_time)) is not None:
-                        _heartbeat(cfg, s); print(s)
+                        _heartbeat(cfg, s, origin="loop"); print(s)
                 except RunBusyError as e:
                     print(str(e), file=sys.stderr)   # skip this tick; next --interval retries
                 except Exception as e:

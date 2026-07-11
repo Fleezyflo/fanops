@@ -4,7 +4,7 @@ install/status/stop are tested with `subprocess.run` mocked — NO real launchct
 ~/Library/LaunchAgents write (HOME is repointed at tmp_path so every home-derived path is
 sandboxed). The heartbeat parse is pinned against the REAL run.log line shape (log.py)."""
 from __future__ import annotations
-import os, plistlib, subprocess
+import json, os, plistlib, subprocess
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -15,9 +15,9 @@ from fanops import daemon
 
 
 def _heartbeat_line(ts: str) -> str:
-    # EXACT shape get_logger writes for _heartbeat (JSON; daemon._heartbeat_age_s reads stage+ts).
+    # EXACT shape get_logger writes for _heartbeat (JSON; daemon._heartbeat_age_s reads stage+ts+origin=loop).
     import json
-    rec = {"ts": ts, "level": "info", "stage": "heartbeat", "unit_id": "-", "outcome": "ok",
+    rec = {"ts": ts, "level": "info", "stage": "heartbeat", "unit_id": "-", "outcome": "ok", "origin": "loop",
            "heartbeat": ts, "fanops_version": "0.3.0", "published_in_run": "0"}
     return json.dumps(rec, separators=(",", ":")) + "\n"
 
@@ -224,6 +224,85 @@ def test_status_no_heartbeat_handles_empty_log(tmp_path, monkeypatch):
 
 
 # ── Task 4: stop + tail_logs ─────────────────────────────────────────────────────────────────
+
+def test_stop_boots_out_keeper_before_main(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(daemon.sys, "platform", "darwin")
+    fake = _fake_launchctl(bootout=(0, ""), list=(1, ""))
+    monkeypatch.setattr(daemon.subprocess, "run", fake)
+    cfg = Config(root=tmp_path)
+    uid = os.getuid()
+    daemon.stop(cfg)
+    bootouts = [c for c in fake.calls if len(c) > 1 and c[1] == "bootout"]
+    keeper_idx = next(i for i, c in enumerate(bootouts) if c[-1] == f"gui/{uid}/{daemon.KEEPER_LABEL}")
+    main_idx = next(i for i, c in enumerate(bootouts) if c[-1] == f"gui/{uid}/{daemon.LABEL}")
+    assert keeper_idx < main_idx
+
+
+def test_stop_reports_keeper_stopped(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(daemon.sys, "platform", "darwin")
+    lists = {daemon.KEEPER_LABEL: (1, ""), daemon.LABEL: (1, "")}
+    def run(cmd, *a, **k):
+        fake.calls.append(list(cmd))
+        verb = cmd[1] if len(cmd) > 1 else ""
+        if verb == "list" and len(cmd) > 2:
+            label = cmd[2]
+            rc, out = lists.get(label, (1, ""))
+        else:
+            rc, out = (0, "")
+        return subprocess.CompletedProcess(cmd, rc, stdout=out, stderr="")
+    fake = run
+    fake.calls = []
+    monkeypatch.setattr(daemon.subprocess, "run", fake)
+    cfg = Config(root=tmp_path)
+    res = daemon.stop(cfg)
+    assert res["keeper_stopped"] is True
+
+
+def test_stop_remove_unlinks_keeper_plist(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(daemon.sys, "platform", "darwin")
+    monkeypatch.setattr(daemon.subprocess, "run", _fake_launchctl(bootout=(0, ""), list=(1, "")))
+    cfg = Config(root=tmp_path)
+    kp = daemon.keeper_plist_path()
+    kp.parent.mkdir(parents=True, exist_ok=True)
+    kp.write_text("<plist/>")
+    pp = daemon.plist_path()
+    pp.parent.mkdir(parents=True, exist_ok=True)
+    pp.write_text("<plist/>")
+    daemon.stop(cfg, remove=True)
+    assert not kp.exists()
+    assert not pp.exists()
+
+
+def test_install_refuses_cross_checkout_working_directory(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(daemon.sys, "platform", "darwin")
+    other = tmp_path / "other-root"
+    other.mkdir()
+    pp = daemon.plist_path()
+    pp.parent.mkdir(parents=True, exist_ok=True)
+    pp.write_bytes(plistlib.dumps({"Label": daemon.LABEL, "WorkingDirectory": str(other)}))
+    monkeypatch.setattr(daemon.subprocess, "run", _fake_launchctl(bootout=(0, ""), bootstrap=(0, "")))
+    cfg = Config(root=tmp_path)
+    with pytest.raises(ValueError, match="WorkingDirectory"):
+        daemon.install(cfg, interval=600)
+
+
+def test_status_ignores_manual_heartbeat_without_loop_origin(tmp_path, monkeypatch):
+    cfg = Config(root=tmp_path)
+    cfg.reports.mkdir(parents=True, exist_ok=True)
+    now = datetime.now(timezone.utc).isoformat()
+    manual = json.dumps({"ts": now, "level": "info", "stage": "heartbeat", "unit_id": "-", "outcome": "ok",
+                         "heartbeat": now, "fanops_version": "0.3.0", "published_in_run": "0"})
+    loop = json.dumps({"ts": now, "level": "info", "stage": "heartbeat", "unit_id": "-", "outcome": "ok",
+                       "origin": "loop", "heartbeat": now, "fanops_version": "0.3.0", "published_in_run": "0"})
+    cfg.log_path.write_text(manual + "\n" + loop + "\n")
+    monkeypatch.setattr(daemon.subprocess, "run", _fake_launchctl(list=(0, '\t"PID" = 1;\n')))
+    rep = daemon.status(cfg, interval=600)
+    assert rep["verdict"] == "alive"
+
 
 def test_stop_boots_out_label(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
