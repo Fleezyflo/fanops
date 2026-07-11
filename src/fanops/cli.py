@@ -168,15 +168,31 @@ def cmd_map_media(cfg: Config) -> int:
     # Fail-open (no creds -> resolves nobody, exit 0); never fabricates an id.
     from fanops.reconcile import resolve_media_ids, project_imported_media
     from fanops.track import pull_imported_insights
-    led = Ledger.load(cfg)
-    resolve_media_ids(led, cfg)                 # forward: enrich authored posts matched to a live media
-    project_imported_media(led, cfg)            # inverse (ledger-rebuild M2): mirror live-only media as ImportedMedia
-    pull_imported_insights(led, cfg)            # ledger-rebuild M3: fill each imported row's metrics by media_id
-    led.save()
-    mapped = sum(1 for p in led.posts.values() if p.media_id)
-    ig = sum(1 for p in led.posts.values()
-             if p.platform.value == "instagram" and p.state.value in ("published", "analyzed"))
-    print(f"media mapped; ig_live={ig} with_media_id={mapped} imported_live_only={len(led.imported_media)}")
+    led0 = Ledger.load(cfg)
+    recorded: list = []
+    def recording_get(url, **kw):
+        import requests
+        r = requests.get(url, **kw)
+        recorded.append(r)
+        return r
+    idx = [0]
+    def replay_get(url, **kw):
+        r = recorded[idx[0]] if idx[0] < len(recorded) else None
+        idx[0] += 1
+        return r
+    resolve_media_ids(led0, cfg, get=recording_get)
+    project_imported_media(led0, cfg, get=recording_get)
+    pull_imported_insights(led0, cfg, get=recording_get)
+    with Ledger.transaction(cfg) as led:
+        idx[0] = 0
+        resolve_media_ids(led, cfg, get=replay_get)
+        project_imported_media(led, cfg, get=replay_get)
+        pull_imported_insights(led, cfg, get=replay_get)
+        mapped = sum(1 for p in led.posts.values() if p.media_id)
+        ig = sum(1 for p in led.posts.values()
+                 if p.platform.value == "instagram" and p.state.value in ("published", "analyzed"))
+        imported = len(led.imported_media)
+    print(f"media mapped; ig_live={ig} with_media_id={mapped} imported_live_only={imported}")
     return 0
 
 def cmd_verify_live(cfg: Config) -> int:

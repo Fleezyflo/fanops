@@ -38,6 +38,19 @@ def test_downstream_normalize_calls_removed():
     assert total <= 2, f"expected definition + at most one safety-net caller, got {total}"
 
 
+def test_load_canonicalizes_in_memory_without_writing_disk(tmp_path):
+    cfg = Config(root=tmp_path)
+    _seed(cfg, [{"handle": "@Legacy", "account_id": "1", "platforms": ["instagram"], "status": "active",
+                 "integrations": {}}])
+    original_bytes = cfg.accounts_path.read_bytes()
+    accts = Accounts.load(cfg)
+    assert accts.accounts[0].handle == "legacy"
+    assert cfg.accounts_path.read_bytes() == original_bytes
+    write_integration(cfg, "@Legacy", "instagram", "ig_legacy")
+    raw = json.loads(cfg.accounts_path.read_text())
+    assert raw["accounts"][0]["handle"] == "legacy"
+
+
 def test_legacy_handle_migrates(tmp_path):
     cfg = Config(root=tmp_path)
     _seed(cfg, [{"handle": "@legacy", "account_id": "", "platforms": ["instagram"], "status": "active",

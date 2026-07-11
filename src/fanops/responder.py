@@ -177,14 +177,13 @@ class LlmResponder:
             return
         from fanops.ledger import Ledger
         try:
-            led = Ledger.load(cfg)
-            sid = _gate_source_id(led, kind, key)
-            src = led.sources.get(sid) if sid else None
-            if src is not None and src.state != SourceState.error:
-                led.sources[sid] = src.model_copy(update={
-                    "state": SourceState.error,
-                    "error_reason": f"agent gate {kind} failed {_GATE_DETERMINISTIC_MAX}x (deterministic): {reason}"[:200]})
-                led.save()
+            with Ledger.transaction(cfg) as led:
+                sid = _gate_source_id(led, kind, key)
+                src = led.sources.get(sid) if sid else None
+                if src is not None and src.state != SourceState.error:
+                    led.sources[sid] = src.model_copy(update={
+                        "state": SourceState.error,
+                        "error_reason": f"agent gate {kind} failed {_GATE_DETERMINISTIC_MAX}x (deterministic): {reason}"[:200]})
         except Exception as e:
             with contextlib.suppress(Exception):
                 log("responder", f"{kind}:{key}", "terminate_failed", err=str(e)[:120])
@@ -192,17 +191,14 @@ class LlmResponder:
     def _mark_gate_degraded(self, cfg: Config, kind: str, key: str, reason: str) -> None:
         """AGENT-2: park the wedged gate's source-owner with a VISIBLE degraded_reason so the operator sees WHY
         it stalls (master principle: no silent degradation). Best-effort + a breadcrumb; the gate stays pending
-        (operator can shrink the source / re-request) but is now diagnosable.
-        Loads + saves the ledger OUTSIDE the advance() flock (gates live outside the lock), so a fresh load+save
-        is safe. Ledger imported lazily to avoid a module cycle (ledger imports widely)."""
+        (operator can shrink the source / re-request) but is now diagnosable."""
         from fanops.ledger import Ledger
         try:
-            led = Ledger.load(cfg)
-            sid = _gate_source_id(led, kind, key)
-            src = led.sources.get(sid) if sid else None
-            if src is not None:
-                led.sources[sid] = src.model_copy(update={"degraded_reason": reason})
-                led.save()
+            with Ledger.transaction(cfg) as led:
+                sid = _gate_source_id(led, kind, key)
+                src = led.sources.get(sid) if sid else None
+                if src is not None:
+                    led.sources[sid] = src.model_copy(update={"degraded_reason": reason})
         except Exception as e:              # best-effort: a load/save failure must not crash the responder pass
             with contextlib.suppress(Exception):
                 get_logger(cfg)("responder", f"{kind}:{key}", "mark_degraded_failed", err=str(e)[:120])
