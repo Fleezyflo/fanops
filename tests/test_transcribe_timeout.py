@@ -3,10 +3,10 @@
 # -> frozen at `catalogued` forever. The fix is to scale the budget to the source length so a long source
 # actually finishes.
 #
-# M1 collapse: the OLD dual-mode contract (in-lock tight cap vs out-of-lock length-scaled cap) is GONE.
-# transcribe_source no longer runs inside the ledger flock — it runs inside the per-(stage,source)
-# stage_lock (src/fanops/stage_lock.py), which serializes ONLY the same source against itself. So the
-# "tight cap to protect the flock" reason no longer applies; one mode, length-scaled with a floor.
+# M1 collapse + H10: transcribe_source may run INSIDE the ledger flock (pipeline reducer) with
+# in_lock=True — adopt-or-defer on cold cache; whisper never shells under the flock. Out-of-lock
+# callers (produce.run_all) use the default in_lock=False and run the full whisper subprocess under
+# the per-(stage,source) stage_lock instead.
 import subprocess
 from pathlib import Path
 from fanops.config import Config

@@ -12,6 +12,19 @@
 # in the repo .env.
 import os
 import pytest
+from fanops.errors import LockBusyError
+from fanops.ledger import Ledger
+
+
+def ledger_lock_is_free(cfg) -> bool:
+    """True iff the ledger store write lock can be acquired right now (i.e. NOT held). Used inside an
+    injected network/subprocess closure to assert the lock is NOT held during slow work."""
+    try:
+        with Ledger.load(cfg)._store.lock(timeout=0.01):
+            pass
+        return True
+    except LockBusyError:
+        return False
 
 # Vars the repo .env can leak that change publish/auth behavior — neutralized per test so a live .env
 # never poisons a unit test. (POSTIZ_URL/POSTIZ_API_KEY ride along so a leaked URL can't 'configure'

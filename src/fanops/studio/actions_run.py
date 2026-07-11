@@ -54,18 +54,19 @@ def run_ingest(cfg: Config, *, batch_name: str = "", target_accounts=(), burn_su
     cmd_ingest path). When batch_name is non-blank, mint a named, account-targeted Batch in the SAME
     transaction and catalogue the inbox under its id (blank name => today's ungrouped ingest, byte-
     identical). A toolchain-absent / control-file error is surfaced as a clean ActionResult, never a 500."""
-    from fanops.ingest import ingest_drops
+    from fanops.ingest import stage_inbox_candidates, ingest_staged, _archive_staged
     from fanops.digest import write_digest
     from fanops.batches import create_batch
     from fanops.accounts import Accounts
     from fanops.models import batch_id as _batch_id
     n = added = 0; batch = None; counts = None
     try:
+        staged = stage_inbox_candidates(cfg)
         with Ledger.transaction(cfg) as led:
             bid = None; now_iso = iso_z(_now(None))
             if batch_name.strip():
                 bid = _batch_id(batch_name.strip(), now_iso)   # ING-3: deterministic id, computed BEFORE catalogue (write-once on the Source)
-            led, counts = ingest_drops(led, cfg, batch_id=bid)
+            led, counts = ingest_staged(led, cfg, staged, batch_id=bid)
             added = counts.added
             if bid is not None and added >= 1:                 # ING-3: mint the Batch RECORD only when ≥1 source actually attached
                 # Account-First (T1/T4): feed the active-handle set so a batch targeting a dead/typo'd
@@ -74,6 +75,7 @@ def run_ingest(cfg: Config, *, batch_name: str = "", target_accounts=(), burn_su
                 batch = create_batch(led, name=batch_name, target_accounts=list(target_accounts),
                                      now_iso=now_iso, active_handles=active, burn_subs=burn_subs)   # same (name, now_iso) -> same id == bid stamped above
             n = len(led.sources)
+        _archive_staged(cfg, staged)
         write_digest(Ledger.load(cfg), cfg)
     except Exception as exc:
         return ActionResult(ok=False, error=f"ingest failed: {str(exc)[:160]}")
@@ -93,18 +95,20 @@ def run_ingest(cfg: Config, *, batch_name: str = "", target_accounts=(), burn_su
 def run_pull(cfg: Config, url: str) -> ActionResult:
     """Drive `fanops pull <url>`: yt-dlp the URL (network, NO lock) then ingest under a transaction.
     Rejects a non-http(s) URL up front (mirrors the CLI's _http_url validator)."""
-    from fanops.ingest import download_url, ingest_drops, _pull_stage
+    from fanops.ingest import download_url, _pull_stage, stage_inbox_candidates, ingest_staged, _archive_staged
     from fanops.digest import write_digest
     if not (url or "").strip().startswith(("http://", "https://")):
         return ActionResult(ok=False, error=f"url must be http(s):// — got {url!r}")
     n = added = 0
     try:
         produced = download_url(cfg, url.strip())
+        staged = stage_inbox_candidates(cfg, origin="url", inbox=_pull_stage(cfg), origin_paths=produced)
         with Ledger.transaction(cfg) as led:
             # per-file origin (audit c0-f1 / ING-6): the pull catalogues ONLY its isolated .pull stage, so a
             # manual drop sitting in the inbox is never re-scanned or mislabeled — same as the CLI's cmd_pull.
-            led, counts = ingest_drops(led, cfg, origin="url", inbox=_pull_stage(cfg), origin_paths=produced)
+            led, counts = ingest_staged(led, cfg, staged)
             n = len(led.sources); added = counts.added
+        _archive_staged(cfg, staged)
         write_digest(Ledger.load(cfg), cfg)
     except Exception as exc:
         return ActionResult(ok=False, error=f"pull failed: {str(exc)[:160]}")
@@ -199,18 +203,20 @@ def run_ingest_thirdparty(cfg: Config) -> ActionResult:
     """Catalogue the third-party staging dir as third_party Sources (inert to clip-production). Mirrors
     run_ingest (one transaction + write_digest, never a 500). Surfaces the PII-excluded COUNT so a
     deliberately-uploaded file the ingest name-filter drops is visible to the operator, not silently lost."""
-    from fanops.ingest import ingest_drops, is_excluded, MEDIA_EXT
+    from fanops.ingest import stage_inbox_candidates, ingest_staged, _archive_staged, is_excluded, MEDIA_EXT
     from fanops.digest import write_digest
     staged = ([f for f in cfg.thirdparty_inbox.rglob("*") if f.is_file() and f.suffix.lower() in MEDIA_EXT]
               if cfg.thirdparty_inbox.exists() else [])
     excluded = sum(1 for f in staged if is_excluded(f.name))      # deliberate uploads the name-filter drops
     n = added = 0
     try:
+        staged = stage_inbox_candidates(cfg, origin="upload", origin_kind="third_party", inbox=cfg.thirdparty_inbox)
         with Ledger.transaction(cfg) as led:
             before = sum(1 for s in led.sources.values() if s.origin_kind == "third_party")
-            led, _ = ingest_drops(led, cfg, origin="upload", origin_kind="third_party", inbox=cfg.thirdparty_inbox)
+            led, _ = ingest_staged(led, cfg, staged)
             n = sum(1 for s in led.sources.values() if s.origin_kind == "third_party")
             added = n - before                                    # THIS call's delta (sha256 dedup → 0 on a repeat)
+        _archive_staged(cfg, staged)
         write_digest(Ledger.load(cfg), cfg)
     except Exception as exc:
         return ActionResult(ok=False, error=f"third-party ingest failed: {str(exc)[:160]}")

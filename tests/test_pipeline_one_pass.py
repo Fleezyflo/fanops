@@ -117,7 +117,7 @@ def test_main_reduce_txn_is_short(tmp_path, monkeypatch, mocker):
     in-lock transcribe_source call is a microsecond cache hit by construction; a future
     regression that re-introduced a slow in-lock subprocess would balloon this past the bound.
 
-    Setup: one catalogued source + a pre-warmed transcript JSON on disk. Mock ingest_drops so we
+    Setup: one catalogued source + a pre-warmed transcript JSON on disk. Mock ingest_staged so we
     don't shell ffprobe; mock subprocess.run so a stray subprocess (a bug) would be visible. The
     in-lock `_stage_source_to_moments`'s transcribe call adopts the cache and flips state without
     ever entering subprocess.run."""
@@ -154,9 +154,11 @@ def test_main_reduce_txn_is_short(tmp_path, monkeypatch, mocker):
     mocker.patch("fanops.signals.subprocess.run", side_effect=noop)
     mocker.patch("fanops.clip.subprocess.run", side_effect=noop)
     mocker.patch("fanops.ingest.subprocess.run", side_effect=noop)
-    # ingest_drops is a no-op (the source is already catalogued).
-    mocker.patch("fanops.pipeline.ingest_drops",
-                 side_effect=lambda led, cfg, **kw: (led, None))
+    from fanops.ingest import IngestCounts, StagedInbox
+    # M05 ingest split: stage is lock-free; mint is a no-op (source already catalogued).
+    mocker.patch("fanops.pipeline.stage_inbox_candidates", return_value=StagedInbox(cfg.inbox, [], [], IngestCounts()))
+    mocker.patch("fanops.pipeline.ingest_staged", side_effect=lambda led, cfg, staged, **kw: (led, IngestCounts()))
+    mocker.patch("fanops.pipeline._archive_staged")
 
     # Spy the ledger transaction so we can isolate the time spent INSIDE its critical section.
     import fanops.ledger as ledger_mod

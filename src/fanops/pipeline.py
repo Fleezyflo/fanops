@@ -10,7 +10,7 @@ from fanops.errors import AuthError
 from fanops.ledger import Ledger
 from fanops.models import (SourceState, MomentState, ClipState, PostState, Fmt, PLATFORM_ASPECT)
 from fanops.accounts import Accounts
-from fanops.ingest import ingest_drops
+from fanops.ingest import stage_inbox_candidates, ingest_staged, _archive_staged
 from fanops.transcribe import transcribe_source
 from fanops.signals import detect_signals
 from fanops.moments import request_moments, ingest_moments, request_moment_hooks, ingest_moment_hooks
@@ -138,11 +138,10 @@ def promote_source(led: Ledger, source_id: str) -> bool:
 # in-pipeline SourceResult dataclass are deleted. Their replacement is fanops.produce.run_all,
 # imported at the top — one entry point, one module owning lock-free side-effect-only artifact
 # warming. The reducer (_stage_source_to_moments etc., below) keeps its existing shape: it
-# re-runs the slow stages in-lock and they short-circuit on the now-warm artifacts (M1 +
-# transcript JSON, M2 + detect sidecar + keyframes cache, render fingerprint). The reducer's
-# in-lock subprocess CALLS still appear, but every one is a microsecond cache-hit by
-# construction — the bad path (a subprocess actually spawning inside the flock) was already
-# closed by M1+M2's stage_lock + on-disk artifact contract.
+# re-runs the slow stages in-lock and they ADOPT-OR-DEFER on the now-warm artifacts (M1 +
+# transcript JSON via in_lock=True, M2 + detect sidecar via in_lock=True, render fingerprint).
+# A cold cache DEFERS (one tick of latency) rather than shelling whisper/ffmpeg under the flock;
+# the lock-free producer pass warms it, the next reduce adopts.
 
 def _quarantine(coll, eid, error_state, stage, exc, log) -> None:
     """The per-unit failure stamp shared by the source/moment/clip stage loops (FIX F03): flip the entity
@@ -164,7 +163,7 @@ def _stage_source_to_moments(led: Ledger, cfg: Config, accts: Accounts, log) -> 
         if s.origin_kind == "third_party": continue   # M1: third-party assets are INERT to clip-production
         try:
             if s.state is SourceState.catalogued:
-                led = transcribe_source(led, cfg, s.id)
+                led = transcribe_source(led, cfg, s.id, in_lock=True)   # H10: adopt-or-defer; never shell whisper under the flock
             if led.sources[s.id].state is SourceState.transcribed:
                 led = detect_signals(led, cfg, s.id, in_lock=True)   # MOL-122: adopt-or-defer; never shell slow ffmpeg under the flock
             if led.sources[s.id].state is SourceState.signalled:
@@ -476,10 +475,12 @@ def advance(cfg: Config, *, base_time: str) -> RunSummary:
     aspects = _aspects_for(accts)
 
     # Phase D: ingest in a SHORT transaction FIRST so a brand-new drop is catalogued and VISIBLE to the
-    # lock-free pre-warm below — otherwise its transcribe would run inside the main lock. ingest_drops is
-    # idempotent (content-addressed dedup), so this never double-catalogues.
+    # lock-free pre-warm below — otherwise its transcribe would run inside the main lock. M05: hash+copy+probe
+    # run lock-free (stage_inbox_candidates); only the Source mint runs in-lock; archive AFTER commit.
+    staged = stage_inbox_candidates(cfg)
     with Ledger.transaction(cfg) as led:
-        led, _ = ingest_drops(led, cfg)
+        led, _ = ingest_staged(led, cfg, staged)
+    _archive_staged(cfg, staged)
     # M3: lock-free producer pass — warms transcript JSON, signals sidecar, render mp4 +
     # fingerprint, stitch mp4 for every catalogued/decided unit. The reduce transaction below
     # re-runs the slow stages and they short-circuit on the warm artifacts (M1 + M2 caches).

@@ -353,12 +353,15 @@ def test_advance_persists_progress_when_crosspost_raises(tmp_path, monkeypatch, 
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.accounts_path.write_text(json.dumps({"accounts": [
         {"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}]}))
-    # ingest_drops injects a catalogued source into the pass's ledger (no toolchain shelled)
-    def fake_ingest(led, cfg, **kw):
+    # ingest_staged injects a catalogued source into the pass's ledger (no toolchain shelled)
+    from fanops.ingest import IngestCounts, StagedInbox
+    def fake_ingest(led, cfg, staged, **kw):
         led.add_source(Source(id="src_prog", source_path=str(cfg.sources / "src_prog.mp4"),
                               state=SourceState.error))   # terminal state: no further stage touches it
-        return led, None                                # ING-1: ingest_drops now returns (led, IngestCounts)
-    mocker.patch("fanops.pipeline.ingest_drops", side_effect=fake_ingest)
+        return led, IngestCounts()
+    mocker.patch("fanops.pipeline.stage_inbox_candidates", return_value=StagedInbox(cfg.inbox, [], [], IngestCounts()))
+    mocker.patch("fanops.pipeline.ingest_staged", side_effect=fake_ingest)
+    mocker.patch("fanops.pipeline._archive_staged")
     # make crosspost blow up mid-pass
     mocker.patch("fanops.pipeline.crosspost_clips", side_effect=RuntimeError("crosspost boom"))
     advance(cfg, base_time="2026-06-02T18:00:00Z")   # must NOT raise
@@ -377,11 +380,14 @@ def test_advance_persists_progress_when_publish_raises_nonauth(tmp_path, monkeyp
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.accounts_path.write_text(json.dumps({"accounts": [
         {"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}]}))
-    def fake_ingest(led, cfg, **kw):
+    from fanops.ingest import IngestCounts, StagedInbox
+    def fake_ingest(led, cfg, staged, **kw):
         led.add_source(Source(id="src_prog", source_path=str(cfg.sources / "src_prog.mp4"),
                               state=SourceState.error))   # terminal: no further stage touches it
-        return led, None                                # ING-1: ingest_drops now returns (led, IngestCounts)
-    mocker.patch("fanops.pipeline.ingest_drops", side_effect=fake_ingest)
+        return led, IngestCounts()
+    mocker.patch("fanops.pipeline.stage_inbox_candidates", return_value=StagedInbox(cfg.inbox, [], [], IngestCounts()))
+    mocker.patch("fanops.pipeline.ingest_staged", side_effect=fake_ingest)
+    mocker.patch("fanops.pipeline._archive_staged")
     mocker.patch("fanops.pipeline.publish_due", side_effect=RuntimeError("publish boom"))
     advance(cfg, base_time="2026-06-02T18:00:00Z")   # must NOT raise
     saved = Ledger.load(cfg)
