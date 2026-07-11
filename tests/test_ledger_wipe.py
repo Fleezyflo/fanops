@@ -129,7 +129,14 @@ def test_snapshot_verify_restorable_catches_bad_snapshot(tmp_path):
     bad = tmp_path / "bad.sqlite"; bad.write_bytes(b"not a db")
     assert ledger_wipe.snapshot_is_restorable(bad) is False
     legacy = tmp_path / "legacy.json"; legacy.write_text('{"schema_version": 11, "posts": {}}')
-    assert ledger_wipe.snapshot_is_restorable(legacy) is True
+    assert ledger_wipe.snapshot_is_restorable(legacy) is False
+
+
+def test_execute_wipe_refuses_json_snapshot(tmp_path):
+    cfg = Config(root=tmp_path); _live_shaped(cfg)
+    legacy = tmp_path / "legacy.json"; legacy.write_text('{"schema_version": 11, "posts": {}}')
+    with pytest.raises(ledger_wipe.SnapshotRequired):
+        ledger_wipe.execute_wipe(cfg, confirmed=True, snapshot_path=legacy)
 
 
 # ---- MOL-75: same-second snapshots must not clobber the pre-wipe rollback point ----
@@ -237,6 +244,36 @@ def test_restore_snapshot_round_trips_total_wipe(tmp_path):
     assert Ledger.load(cfg).posts == {}
     Ledger.restore_snapshot(cfg, snap)
     assert Ledger.load(cfg)._to_doc() == original_doc
+
+
+def test_execute_wipe_plan_ceiling_preserves_post_previewed_set(tmp_path):
+    """Preview ceiling (M17): a post added after preview survives; previewed ids still removed; restore round-trips."""
+    cfg = Config(root=tmp_path); led = _live_shaped(cfg)
+    ceiling = ledger_wipe.compute_wipe_set(led)
+    snap = Ledger.snapshot(cfg)
+    with Ledger.transaction(cfg) as led2:
+        led2.add_post(Post(id="p_new", parent_id="c_drop", account="a", account_id="ig1",
+                           platform=Platform.instagram, caption="injected", state=PostState.awaiting_approval,
+                           public_url="dryrun://p_new"))
+    result = ledger_wipe.execute_wipe(cfg, confirmed=True, snapshot_path=snap, plan_ceiling=ceiling)
+    after = Ledger.load(cfg)
+    assert "p_new" in after.posts                              # injected after preview survives
+    assert "p_drop" not in after.posts and "m_drop" not in after.moments
+    assert result["removed"]["posts"] == 1
+    Ledger.restore_snapshot(cfg, snap)
+    restored = Ledger.load(cfg)
+    assert "p_drop" in restored.posts and "p_new" not in restored.posts
+
+
+def test_execute_wipe_writes_file_manifest(tmp_path):
+    cfg = Config(root=tmp_path); _live_shaped(cfg)
+    snap = Ledger.snapshot(cfg)
+    result = ledger_wipe.execute_wipe(cfg, confirmed=True, snapshot_path=snap)
+    manifest = __import__("pathlib").Path(result["manifest"])
+    assert manifest.exists()
+    lines = [ln for ln in manifest.read_text().splitlines() if ln]
+    assert "/c_drop.mp4" in lines and "/r_drop.mp4" in lines
+    assert "/c_keep.mp4" not in lines and "/r_keep.mp4" not in lines
 
 
 # ---- M22: cascade file unlinks defer until commit (abort rolls back rows AND files) ----

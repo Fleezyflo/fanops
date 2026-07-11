@@ -71,6 +71,16 @@ def test_pragma_journal_mode_is_wal(tmp_path):
         conn.close()
 
 
+def test_pragma_synchronous_is_full(tmp_path):
+    cfg = Config(root=tmp_path)
+    store = SqliteLedgerStore(cfg)
+    conn = store._open()
+    try:
+        assert conn.execute("PRAGMA synchronous").fetchone()[0] == 2  # FULL
+    finally:
+        conn.close()
+
+
 def test_concurrent_reader_sees_committed_while_writer_holds_txn(tmp_path):
     cfg = Config(root=tmp_path)
     store = SqliteLedgerStore(cfg)
@@ -129,3 +139,48 @@ def test_snapshot_restore_round_trip(tmp_path):
     with store2.lock():
         store2.restore(snap)
     assert store2.read_raw() == doc
+
+
+def test_restore_clears_wal_sidecars(tmp_path):
+    cfg = Config(root=tmp_path)
+    store = SqliteLedgerStore(cfg)
+    doc = _populated_ledger(cfg)._to_doc()
+    snap = cfg.control / "ledger.snapshot.wal.sqlite"
+    with store.lock():
+        store.write_raw(doc)
+        store.snapshot(snap)
+    wal = store.db_path.with_name(store.db_path.name + "-wal")
+    shm = store.db_path.with_name(store.db_path.name + "-shm")
+    wal.write_bytes(b"\x00" * 512)                             # simulate stale sidecars on target path
+    shm.write_bytes(b"\x00" * 32)
+    store.restore(snap)
+    assert not wal.exists() and not shm.exists()
+    assert store.read_raw() == doc
+
+
+def test_restore_snapshot_serializes_with_transaction(tmp_path):
+    """Concurrent restore + transaction: fresh read matches snapshot (no orphan commit visible)."""
+    import time
+    cfg = Config(root=tmp_path)
+    store = SqliteLedgerStore(cfg)
+    doc = _populated_ledger(cfg)._to_doc()
+    snap = cfg.control / "ledger.snapshot.race.sqlite"
+    with store.lock():
+        store.write_raw(doc)
+        store.snapshot(snap)
+    txn_inside = threading.Event()
+    txn_release = threading.Event()
+    def writer():
+        with Ledger.transaction(cfg, timeout=0.5) as led:
+                txn_inside.set()
+                txn_release.wait(5)
+                led.add_source(Source(id="srcX", source_path="/race.mp4", state=SourceState.catalogued))
+    tw = threading.Thread(target=writer)
+    tw.start()
+    assert txn_inside.wait(5)
+    tr = threading.Thread(target=lambda: Ledger.restore_snapshot(cfg, snap))
+    tr.start()
+    time.sleep(0.1)                                            # restorer blocked on flock held by writer
+    txn_release.set()                                          # writer commits, releases flock; restore proceeds
+    tr.join(5); tw.join(5)
+    assert store.read_raw() == doc                               # restore wins; no orphan srcX
