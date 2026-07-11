@@ -77,7 +77,9 @@ def test_cmd_non_postiz_backend_exits_zero_with_guidance(tmp_path):
     rc = cmd_learn_doctor(cfg)
     assert rc == 0
     recs = [json.loads(line) for line in cfg.log_path.read_text().splitlines()]
-    assert any(r["outcome"] == "missing_backend" and "postiz" in r.get("hint", "").lower() for r in recs)
+    hints = [r.get("hint", "") for r in recs if r["outcome"] == "missing_backend"]
+    assert hints and "postiz" in hints[0].lower()
+    assert "FANOPS_POSTER" not in hints[0]
 
 
 def test_cmd_persists_verdict_for_m4_to_gate(tmp_path, monkeypatch, capsys):

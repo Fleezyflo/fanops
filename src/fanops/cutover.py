@@ -54,9 +54,9 @@ def reconcile_fields(metrics: dict) -> dict:
 def cutover_auth(cfg: Config, *, get=None) -> dict:
     """Step 1: prove the key authenticates (read-only, no write). Postiz dispatches to cutover_postiz;
     any non-postiz backend fails closed (no other backend)."""
-    if cfg.poster_backend == "postiz":
+    if cfg.backend_has_creds("postiz"):
         from fanops import cutover_postiz; return cutover_postiz.postiz_auth(cfg)
-    raise CutoverError(f"cutover supports the postiz backend only (got {cfg.poster_backend!r}).")
+    raise CutoverError("cutover supports the postiz backend only (no Postiz API key configured).")
 
 
 def cutover_post(cfg: Config, account_id: str, *, confirmed: bool, post=None) -> dict:
@@ -64,9 +64,9 @@ def cutover_post(cfg: Config, account_id: str, *, confirmed: bool, post=None) ->
     operator passed the explicit confirm flag. Records the submission_id to cutover.json (NOT the
     ledger). Postiz dispatches to cutover_postiz (account_id carries the operator-selected integration
     id); any non-postiz backend fails closed (no other backend supported)."""
-    if cfg.poster_backend == "postiz":
+    if cfg.backend_has_creds("postiz"):
         from fanops import cutover_postiz; return cutover_postiz.postiz_post(cfg, account_id, confirmed=confirmed, post=post)
-    raise CutoverError(f"cutover supports the postiz backend only (got {cfg.poster_backend!r}).")
+    raise CutoverError("cutover supports the postiz backend only (no Postiz API key configured).")
 
 
 def cutover_metrics(cfg: Config, submission_id: str, *, list_posts=None) -> dict:
@@ -75,9 +75,9 @@ def cutover_metrics(cfg: Config, submission_id: str, *, list_posts=None) -> dict
     (the flag Phase 2's validation gate keys off — the learning stack stays frozen until this runs).
     Postiz dispatches to cutover_postiz (M2's per-post client + raw-label reconcile); any non-postiz
     backend fails closed (no other backend supported)."""
-    if cfg.poster_backend == "postiz":
+    if cfg.backend_has_creds("postiz"):
         from fanops import cutover_postiz; return cutover_postiz.postiz_metrics(cfg, submission_id, list_posts=list_posts)
-    raise CutoverError(f"cutover supports the postiz backend only (got {cfg.poster_backend!r}).")
+    raise CutoverError("cutover supports the postiz backend only (no Postiz API key configured).")
 
 
 def cutover_lift(cfg: Config, submission_id: str) -> dict:

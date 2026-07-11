@@ -83,9 +83,9 @@ def cmd_learn_doctor(cfg: Config, *, list_posts=None) -> int:
     """`fanops learn doctor` — print the field-shape verdict and persist it for M4. Read-only; exits 0
     on every branch (a diagnostic never aborts a pipeline). On a non-postiz backend or missing key it
     prints guidance and returns without touching the network."""
-    if cfg.poster_backend != "postiz" or not cfg.postiz_api_key:
+    if not cfg.backend_has_creds("postiz"):
         get_logger(cfg)("learn_doctor", "-", "missing_backend", level="warning",
-                        hint="set FANOPS_POSTER=postiz and POSTIZ_API_KEY")
+                        hint="connect Postiz in Studio Go-Live (POSTIZ_API_KEY) and route a channel to postiz")
         return 0
     import requests
     from fanops.errors import PostizAuthError

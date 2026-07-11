@@ -148,6 +148,14 @@ def test_loop_reloads_env_from_disk_each_iteration(tmp_path, monkeypatch, mocker
     assert is_live_seen == [True, False]                   # iteration 2 sees dryrun from disk
 
 
+def test_loop_rejects_sub_minute_interval(tmp_path, monkeypatch, capsys):
+    """B11: bad --interval exits 2 like cmd_daemon, never a traceback."""
+    _setup_accounts(tmp_path, monkeypatch)
+    from fanops.cli import main
+    assert main(["run", "--loop", "--interval", "5x"]) == 2
+    assert "interval" in capsys.readouterr().err.lower()
+
+
 def test_oneshot_without_loop_unchanged(tmp_path, monkeypatch, mocker, capsys):
     _setup_accounts(tmp_path, monkeypatch)
     import fanops.cli as cli
