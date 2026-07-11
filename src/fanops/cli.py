@@ -547,7 +547,7 @@ def cmd_daemon(cfg: Config, args) -> int:
             interval = daemon.parse_interval(args.interval)
             res = daemon.install(cfg, interval=interval, responder=args.responder)
             print(f"daemon installed -> {res['plist']}")
-            print(f"  wrapper {res['wrapper']}  |  interval {interval}s  |  loaded {res['loaded']}  |  responder {res['responder']}")
+            print(f"  fanops {daemon._fanops_bin()}  |  interval {interval}s  |  loaded {res['loaded']}  |  responder {res['responder']}")
             if res["discloses_llm"]:                      # DISCLOSE the recurring-LLM cost — never silently turn the AI on
                 print(f"  ⚠ hands-off runs the AI responder — invokes `claude` ~every {interval}s. Use `--responder manual` for no-LLM scheduling.")
             print("  next: fanops daemon status   |   stop: fanops daemon stop")
@@ -562,7 +562,7 @@ def cmd_daemon(cfg: Config, args) -> int:
             return 0
         if act == "stop":
             res = daemon.stop(cfg, remove=args.remove)
-            removed = "  + plist/wrapper removed" if res.get("removed") else ""
+            removed = "  + plist removed (+ legacy wrapper cleaned)" if res.get("removed") else ""
             if not res["stopped"]:                       # W10: reflect a real failure, don't claim success
                 print(f"daemon may still be loaded (label {res['label']}) — run `fanops daemon status`" + removed,
                       file=sys.stderr)
@@ -852,7 +852,7 @@ def _check_preflight(cfg: Config) -> int:
 
 
 def _fresh_run_base_time() -> str:
-    """UTC now as --base-time (matches daemon render_wrapper's per-fire date)."""
+    """UTC now as --base-time (matches a per-iteration resident loop advance)."""
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 

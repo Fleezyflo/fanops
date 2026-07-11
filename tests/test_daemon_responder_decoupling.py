@@ -2,7 +2,7 @@
 are DECOUPLED, and every enable surface DISCLOSES that hands-off + llm means recurring `claude` runs.
 
 Three structural changes pinned here:
-  1. render_wrapper is responder-AGNOSTIC — it bakes NO FANOPS_RESPONDER; the fire-time `fanops run`
+  1. render_plist is responder-AGNOSTIC — it bakes NO FANOPS_RESPONDER; the fire-time `fanops run`
      resolves it via .env / Config.responder_mode (the single source of truth, loaded with override=True).
   2. `daemon install --responder` defaults to `inherit` (resolve ambient, write nothing); an EXPLICIT
      llm/manual is PERSISTED to .env (durable). The CLI DISCLOSES the recurring-LLM cost when it resolves
@@ -10,7 +10,7 @@ Three structural changes pinned here:
   3. The Studio ingest-kick no longer hardcodes llm — it inherits the same resolved responder, so there
      is no hidden third default that silently spends LLM."""
 from __future__ import annotations
-import shlex, subprocess
+import plistlib, subprocess
 
 import pytest
 
@@ -29,17 +29,15 @@ def _fake_launchctl(**spec):
     return run
 
 
-# ── 1. render_wrapper is responder-agnostic (decoupling) ─────────────────────────────────────
+# ── 1. render_plist is responder-agnostic (decoupling) ───────────────────────────────────────
 
-def test_render_wrapper_bakes_no_responder(tmp_path):
-    # The wrapper must NOT export FANOPS_RESPONDER — scheduling is decoupled from the AI switch. The
-    # responder resolves at fire time from .env (Config loads it override=True), the single source of truth.
+def test_render_plist_bakes_no_responder(tmp_path):
     cfg = Config(root=tmp_path)
-    w = daemon.render_wrapper(cfg, interval=600)
-    assert "FANOPS_RESPONDER" not in w
-    assert daemon._fanops_bin() in w
-    assert f"cd {shlex.quote(str(cfg.root))}" in w
-    assert "run --loop --interval" in w
+    pl = plistlib.loads(daemon.render_plist(cfg, interval=600).encode())
+    env = pl.get("EnvironmentVariables") or {}
+    assert "FANOPS_RESPONDER" not in env
+    assert pl["ProgramArguments"][0] == daemon._fanops_bin()
+    assert pl["ProgramArguments"][1:] == ["run", "--loop", "--interval", "600"]
 
 
 def test_resolve_responder_reports_fire_time_mode(tmp_path, monkeypatch):
@@ -63,7 +61,8 @@ def test_install_explicit_manual_persists_to_env_and_flags_no_llm(tmp_path, monk
 
     assert res["responder"] == "manual" and res["discloses_llm"] is False
     assert "FANOPS_RESPONDER=manual" in (tmp_path / ".env").read_text()    # durable, the real switch
-    assert "FANOPS_RESPONDER" not in daemon.wrapper_path(cfg).read_text()  # still NOT baked in the wrapper
+    pl = plistlib.loads(daemon.plist_path().read_bytes())
+    assert "FANOPS_RESPONDER" not in (pl.get("EnvironmentVariables") or {})
 
 
 def test_install_inherit_writes_no_responder_to_env(tmp_path, monkeypatch):

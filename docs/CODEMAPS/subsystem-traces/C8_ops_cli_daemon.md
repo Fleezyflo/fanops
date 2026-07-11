@@ -58,10 +58,10 @@
              │ → _heartbeat(cfg, s)  → stdout + run.log                  │
              └──────────────────────────────────────────────────────────┘
                                         │
-                     daemon.py (launchd wrapper around `fanops run`)
-                  install → wrapper.sh + plist → launchctl bootstrap
-                  StartInterval fires wrapper.sh every N seconds
-                  wrapper.sh: cd cfg.root && exec fanops run --base-time "$(date -u ...)"
+                     daemon.py (launchd direct-exec around `fanops run --loop`)
+                  install → plist (ProgramArguments = fanops run --loop) → launchctl bootstrap
+                  KeepAlive holds one resident loop; cadence from --interval inside Python
+                  WorkingDirectory=cfg.root + baked PATH compensate for launchd defaults
                   (one-shot per fire; launchd itself is the loop/scheduler)
 ```
 
@@ -107,9 +107,9 @@ Distinct from the above: `cutover.py` / `cutover_postiz.py` are a **manual, oper
 | `hashtags refresh` | inline (`fanops_hashtags.cmd_hashtags_refresh`) | Rebuild hashtag store from live Meta Graph reach (harvest→measure→rank) | **LIVE** (Meta Graph reads; fail-open without creds) |
 | `hashtags discover` | inline (`fanops_hashtags.cmd_hashtags_discover`) | Report fresh per-persona hashtags from live category top_media | **LIVE** (Meta Graph reads; read-only, never writes the menu) |
 | `run` | inline in `_dispatch` | The unattended loop: respond+advance to convergence, then learning passes, then heartbeat | **LIVE** — this is THE verb that autonomously publishes due posts (via `advance`→`publish_due`), calls the LLM responder if configured, and runs all gated learning-bias passes on a live backend |
-| `daemon install [--interval] [--responder]` | `cmd_daemon` → `daemon.install` | Write + load a macOS launchd LaunchAgent that fires `fanops run` on a cadence | **LIVE** side effect (installs an OS-level recurring job that will itself execute LIVE `run` cycles unattended); the install call itself is local (writes plist/wrapper, calls `launchctl`) |
+| `daemon install [--interval] [--responder]` | `cmd_daemon` → `daemon.install` | Write + load a macOS launchd LaunchAgent that fires `fanops run` on a cadence | **LIVE** side effect (installs an OS-level recurring job that will itself execute LIVE `run` cycles unattended); the install call itself is local (writes plist, calls `launchctl`) |
 | `daemon status` | `cmd_daemon` → `daemon.status` | Report whether the agent is loaded and its last heartbeat age | READ-ONLY |
-| `daemon stop [--remove]` | `cmd_daemon` → `daemon.stop` | Unload the launchd agent (and optionally delete plist/wrapper) | READ-ONLY / local-only OS action (no external network) |
+| `daemon stop [--remove]` | `cmd_daemon` → `daemon.stop` | Unload the launchd agent (and optionally delete plist + legacy artifacts) | READ-ONLY / local-only OS action (no external network) |
 | `daemon logs [-n]` | `cmd_daemon` → `daemon.tail_logs` | Tail `run.log` | READ-ONLY |
 | `autopilot [--interval] [--no-daemon]` | `cmd_autopilot` → `autopilot.autopilot` | One command: enable LLM responder durably + install the daemon | **LIVE** side effect (persists `.env` FANOPS_RESPONDER=llm, installs the recurring daemon — each subsequent fire is a live unattended `run`) — publishing itself stays dryrun by default until the operator separately goes live |
 | `gc [--keep-days]` | `cmd_gc` | Delete old retired/analyzed clip/render files + old scheduled payloads | READ-ONLY (local disk cleanup only; refuses `--keep-days < 1`) |
@@ -150,21 +150,23 @@ Distinct from the above: `cutover.py` / `cutover_postiz.py` are a **manual, oper
 
 ### `daemon.py` — macOS launchd packaging of `fanops run`
 
-- `plist_path()` — pure: `~/Library/LaunchAgents/com.fanops.run.plist`. Called by `install`, `installed_interval`, `stop`.
-- `wrapper_path(cfg)` — pure: `cfg.control / "fanops-run.sh"` (inside the workspace, beside the ledger). Called by `install`, `render_plist`, `stop`.
-- `_fanops_bin()` — pure: the `fanops` binary next to the running interpreter (same venv). Called by `render_wrapper`, `studio.actions_run.kick_prepare`.
-- `_daemon_path()` — pure: builds the full `PATH` string to bake into the wrapper+plist (venv bin, `claude`'s parent dir if found, homebrew, system dirs), de-duped and absolute — compensates for launchd's bare PATH. Called by `render_plist`, `render_wrapper`, `studio.actions_run.kick_prepare`.
+- `plist_path()` — pure: `~/Library/LaunchAgents/com.fanops.run.plist`. Called by `install`, `installed_interval`, `stop`, `_installed_program`.
+- `_fanops_bin()` — pure: the `fanops` binary next to the running interpreter (same venv). Called by `render_plist`, `render_keeper_plist`, `render_studio_plist`, `studio.actions_run.kick_prepare`.
+- `_daemon_path()` — pure: builds the full `PATH` string to bake into the plist (venv bin, `claude`'s parent dir if found, homebrew, system dirs), de-duped and absolute — compensates for launchd's bare PATH. Called by `render_plist`, `render_keeper_plist`, `render_studio_plist`, `studio.actions_run.kick_prepare`.
+- `_installed_program(cfg)` — pure: reads `ProgramArguments[0]` from the on-disk main plist (fail-open). Called by `status`.
+- `_plist_spec(cfg, interval)` — pure: parses `render_plist` output to a dict for semantic drift compare. Called by `ensure`.
+- `_cleanup_legacy_artifacts(cfg)` — best-effort unlink of pre-direct-exec `fanops-run.sh` + `daemon-exec-fail.json`. Called by `install`, `ensure`, `stop(remove=True)`.
 - `resolve_responder(cfg)` — pure: returns `cfg.responder_mode` (single source of truth for what a hands-off fire will use). Called by `install`, `studio.views.daemon_health`.
-- `render_wrapper(cfg, *, interval)` — pure string builder: the bash script launchd execs — `cd cfg.root && exec fanops run --base-time "$(date -u ...)"`, with every interpolated path `shlex.quote`d (space/quote/`$` safety) except the deliberately-unquoted `$(date ...)` substitution. Called by `install`.
-- `render_plist(cfg, *, interval)` — pure: builds the plist dict (`Label`, `ProgramArguments`, `StartInterval`, `RunAtLoad=True`, `WorkingDirectory=cfg.root`, stdout/stderr paths, `ThrottleInterval=60`, `EnvironmentVariables={PATH, HOME}`), serializes via `plistlib.dumps`. Called by `install`.
+- `render_plist(cfg, *, interval)` — pure: builds the plist dict (`Label`, direct-exec `ProgramArguments` = `[fanops, run, --loop, --interval, N]`, `KeepAlive`, `RunAtLoad=True`, `WorkingDirectory=cfg.root`, stdout/stderr paths, `ThrottleInterval=60`, `EnvironmentVariables={PATH, HOME, FANOPS_DAEMON_INTERVAL}`), serializes via `plistlib.dumps`. Called by `install`, `ensure`.
 - `parse_interval(raw)` — pure: parses `'10m'`/`'90s'`/`'2h'`/bare-seconds into an int; raises `ValueError` on malformed input or an interval `< 60s` (the launchd `ThrottleInterval` floor). Called by `cli.cmd_autopilot`, `cli.cmd_daemon`, `studio.golive.install_daemon`.
-- `installed_interval(cfg)` — reads `StartInterval` back from the on-disk plist; returns `None` on missing file/corrupt plist/non-int value (broad `except Exception` by design — a corrupt plist must never crash `daemon status`). Called by `cli.cmd_daemon`, `studio.views.daemon_health`.
-- `_launchctl(*args)` — shells `launchctl` with a 30s timeout; absent binary → `ToolchainMissingError`; timeout → a synthetic `returncode=124` result (never raises on hang). Called by `install`, `status`, `stop`.
+- `installed_interval(cfg)` — reads `FANOPS_DAEMON_INTERVAL` from plist env (legacy `StartInterval` fallback); returns `None` on missing file/corrupt plist (broad `except Exception` by design — a corrupt plist must never crash `daemon status`). Called by `cli.cmd_daemon`, `studio.views.daemon_health`.
+- `_launchctl(*args)` — shells `launchctl` with a 30s timeout; absent binary → `ToolchainMissingError`; timeout → a synthetic `returncode=124` result (never raises on hang). Called by `install`, `status`, `stop`, `ensure`.
 - `_grep_int(text, key)` — pure regex extraction of an integer field (`PID`, `LastExitStatus`) from `launchctl list`'s plist-style dump text. Called by `status`.
-- `_require_darwin()` — pure guard: raises `RuntimeError` if `sys.platform != "darwin"`. Called by `install`, `stop`.
-- `install(cfg, *, interval, responder="inherit")` — **the daemon-install verb**: mkdirs `reports`/`control`, resolves the responder choice (`'inherit'` touches nothing; `'llm'`/`'manual'` persist to `.env` via `autopilot.set_env_var`, lazy-imported to avoid a cycle), writes+chmods the wrapper script (0o755), writes the plist, then `launchctl bootout` (idempotent reinstall, ignore rc) → `bootstrap` → falls back to `load -w` on older macOS. Returns `{plist, wrapper, interval, loaded, responder, discloses_llm}`. **Side effects**: mkdir, file writes+chmod, `launchctl` subprocess calls, `.env` write (llm/manual only). Called by `cli.cmd_daemon`, `autopilot.autopilot`, `studio.golive.install_daemon`.
-- `status(cfg, *, interval=600)` — READ-ONLY: `launchctl list` for loaded/pid/last_exit, plus heartbeat age via `_heartbeat_age_s`; computes a verdict string (`not installed` / `loaded but no heartbeat yet` / `alive` / `loaded but stale`) — alive iff heartbeat age `< 3*interval`. Called by `cli.cmd_daemon`, `studio.views.daemon_health`.
-- `stop(cfg, *, remove=False)` — `launchctl bootout` (fallback `unload -w` on failure), then CONFIRMS via a fresh `launchctl list` (source of truth for `stopped`, not a hardcoded True). Optionally deletes the plist/wrapper files (`remove=True`). **Side effects**: `launchctl` calls, optional file deletion. Called by `cli.cmd_daemon`, `studio.golive.uninstall_daemon`.
+- `_require_darwin()` — pure guard: raises `RuntimeError` if `sys.platform != "darwin"`. Called by `install`, `stop`, `ensure`.
+- `install(cfg, *, interval, responder="inherit")` — **the daemon-install verb**: mkdirs `reports`/`control`, resolves the responder choice (`'inherit'` touches nothing; `'llm'`/`'manual'` persist to `.env` via `autopilot.set_env_var`, lazy-imported to avoid a cycle), writes the plist (direct exec), cleans legacy wrapper artifacts, then `launchctl bootout` (idempotent reinstall, ignore rc) → `bootstrap` → falls back to `load -w` on older macOS. Returns `{plist, interval, loaded, responder, discloses_llm, keeper_*}`. **Side effects**: mkdir, file writes, `launchctl` subprocess calls, `.env` write (llm/manual only). Called by `cli.cmd_daemon`, `autopilot.autopilot`, `studio.golive.install_daemon`.
+- `ensure(cfg)` — keeper hook: re-bootstrap when unloaded; semantic plist compare → rewrite + `_load_plist` + legacy cleanup when drift detected. Called by keeper poll-timer and `cli.cmd_daemon ensure`.
+- `status(cfg, *, interval=600)` — READ-ONLY: `launchctl list` for loaded/pid/last_exit, probes plist `ProgramArguments[0]` with `os.access` for interpreter exec-fail alarm, plus heartbeat age via `heartbeat_stale`; computes a verdict string. Called by `cli.cmd_daemon`, `studio.views.daemon_health`, `doctor`.
+- `stop(cfg, *, remove=False)` — `launchctl bootout` (fallback `unload -w` on failure), then CONFIRMS via a fresh `launchctl list` (source of truth for `stopped`, not a hardcoded True). Optionally deletes the plist + legacy artifacts (`remove=True`). **Side effects**: `launchctl` calls, optional file deletion. Called by `cli.cmd_daemon`, `studio.golive.uninstall_daemon`.
 - `tail_logs(cfg, n=40)` — READ-ONLY: reads the last `n` lines of `cfg.log_path` via a bounded `collections.deque` (never loads the whole file). Returns `"no logs yet"` if absent. Called by `cli.cmd_daemon`.
 - `_heartbeat_age_s(cfg)` — READ-ONLY: scans `run.log` for the most recent `\theartbeat\t` line, parses its leading ISO timestamp, returns age in seconds (or `None` on no log/no heartbeat/unparseable). Called by `status`.
 
@@ -274,7 +276,7 @@ Distinct from the above: `cutover.py` / `cutover_postiz.py` are a **manual, oper
 
 ### Daemon install → tick cadence
 
-- `fanops daemon install --interval 10m` → `daemon.install()`: writes `fanops-run.sh` (`exec fanops run --loop --interval …`) and `com.fanops.run.plist` with **`KeepAlive` + `SuccessfulExit: false`** (M2-B resident pump — no `StartInterval`), then `launchctl bootstrap`/`load -w`.
+- `fanops daemon install --interval 10m` → `daemon.install()`: writes `com.fanops.run.plist` with direct-exec `ProgramArguments` (`fanops run --loop --interval …`) and **`KeepAlive` + `SuccessfulExit: false`** (M2-B resident pump — no `StartInterval`), then `launchctl bootstrap`/`load -w`.
 - **M2-D poll-timer siblings** (`com.fanops.postiz-reaper`, `com.fanops.media-sync`) intentionally stay **`StartInterval` 300s** cron-style jobs — NOT KeepAlive residents. Rationale in `daemon.SIBLING_POLL_TIMERS_RATIONALE`: reaper stops idle local Postiz (pairs with on-demand `ensure_up`); media-sync batch-pre-mirrors to R2 (publish path mirrors inline). M2-C readiness alarms cover them: plist-on-disk + not-loaded = ALARM.
 - Minimum interval enforced by `parse_interval`: **60 seconds** (`_MIN_INTERVAL`), matching launchd's own `ThrottleInterval` floor — sub-minute cadences are rejected with a clean `ValueError`, not silently clamped.
 
