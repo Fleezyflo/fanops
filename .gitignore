@@ -6,27 +6,8 @@
 *-credentials.json
 .mcp-credentials/
 
-# media bank + agent IO + logs — large/private/regenerated, never committed
-MohFlow-FanOps/01_inbox/*
-MohFlow-FanOps/02_sources/*
-MohFlow-FanOps/03_clips/*
-MohFlow-FanOps/04_agent_io/*
-MohFlow-FanOps/05_scheduled/*
-MohFlow-FanOps/06_published/*
-MohFlow-FanOps/07_reports/*
-!MohFlow-FanOps/*/.gitkeep
-
-# 00_control: regenerated runtime state holds PII (account_ids, transcripts, private
-# filenames) — never commit. The tracked control files (accounts.json, RISK.md,
-# RUNTIME.md, context.md, .gitkeep) are deliberately versioned and stay tracked.
-MohFlow-FanOps/00_control/ledger.json
-MohFlow-FanOps/00_control/ledger.lock
-MohFlow-FanOps/00_control/ledger_digest.md
-MohFlow-FanOps/00_control/run.log
-# ledger snapshots/backups the operator writes around live runs (same PII as ledger.json) — never commit
-MohFlow-FanOps/00_control/ledger.json.bak*
-MohFlow-FanOps/00_control/ledger.json.pre*
-MohFlow-FanOps/00_control/hashtag_budget.json
+# live data lives at FANOPS_ROOT; backstop if a stale process recreates a ghost tree in-repo
+MohFlow-FanOps/
 
 # python / venv
 __pycache__/
@@ -68,10 +49,6 @@ coverage.json
 
 # Google OAuth client secret downloads (never commit)
 client_secret_*.json
-MohFlow-FanOps/00_control/accounts.json
-MohFlow-FanOps/00_control/personas.json
-MohFlow-FanOps/00_control/*.json
-MohFlow-FanOps/00_control/*.lock
 
 # runtime/working artifacts kept on disk, never tracked
 *.docx
@@ -84,11 +61,3 @@ tiktok-submission/
 .codemap-cache/
 .codemap-cache-test/
 skills-lock.json
-
-# 00_control runtime artifacts beyond the JSON/lock set above (same local-only stance:
-# machine-specific launchd wrapper, live-ledger-derived registers, kick/log/backup files)
-MohFlow-FanOps/00_control/.run-kick
-MohFlow-FanOps/00_control/*.preframing-bak
-MohFlow-FanOps/00_control/*.log
-MohFlow-FanOps/00_control/fanops-run.sh
-MohFlow-FanOps/00_control/pipeline_*.md

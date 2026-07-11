@@ -189,11 +189,7 @@ Non-obvious caveats found during setup:
   polls a non-existent daemon 30×3s before serving. The port answers nothing (curl `HTTP 000`) until
   then — this is expected, not a hang; just wait it out. Output is also block-buffered when not a TTY,
   so run with `PYTHONUNBUFFERED=1` if you want live startup logs.
-- **Do manual/UI testing against a THROWAWAY workspace root, never the live one.** `Config` uses
-  `<cwd>/MohFlow-FanOps` as its data root; the repo's `MohFlow-FanOps/` is live-adjacent and UI actions
-  (add account, ingest) write real files like `00_control/accounts.json`. `cd` into a temp dir that has
-  its own `MohFlow-FanOps/00_control/context.md` and run `fanops studio` from there (backend stays
-  `dryrun` — nothing publishes). Per the root guardrails, never run live publish/metrics verbs.
+- **Do manual/UI testing against a THROWAWAY workspace root, never the live one.** Set `FANOPS_ROOT` to a temp directory (live default: `~/FanOps`) — `Config` resolves `$FANOPS_ROOT/MohFlow-FanOps/` for all data paths. The repo may still contain a ghost `MohFlow-FanOps/` tree on disk (gitignored); never run Studio or ingest against it. Create a scratch root with its own `MohFlow-FanOps/00_control/context.md` and export `FANOPS_ROOT` there (backend stays `dryrun` — nothing publishes). Per the root guardrails, never run live publish/metrics verbs.
 
 ## CI dependency locks (MOL-195)
 

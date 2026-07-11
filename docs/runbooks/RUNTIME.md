@@ -247,12 +247,14 @@ retryable, and the run continues.)
 `run` externally. Example crontab entry (every 30 minutes):
 
 ```cron
-*/30 * * * * cd /path/to/repo && ./.venv/bin/fanops run >> run.out 2>&1
+*/30 * * * * export FANOPS_ROOT=$HOME/FanOps && cd "$FANOPS_ROOT" && /path/to/.venv/bin/fanops run >> run.out 2>&1
 ```
 
-The `cd /path/to/repo` is **mandatory, not cosmetic**: `fanops` resolves its data dirs
-(ledger, lock, accounts) from the current working directory — there is no `FANOPS_ROOT`
-override — so invoking it from the wrong cwd silently reads/writes the wrong ledger.
+The `cd /path/to/workspace` is **mandatory when `FANOPS_ROOT` is unset**: without it, `Config()` falls
+back to cwd and silently reads/writes the wrong ledger. **Canonical root:** export `FANOPS_ROOT` to the
+directory that *contains* `MohFlow-FanOps/` (live default: `~/FanOps`). Launchd plists bake
+`WorkingDirectory=$FANOPS_ROOT`; cron/SSH shells must export the same var (or `cd` there) before any
+`fanops` verb.
 
 **Overlapping runs — three locks, three scopes.** FanOps uses three distinct `fcntl.flock` locks; they
 do NOT substitute for each other:
@@ -604,14 +606,14 @@ fanops run    # dryrun default — schedules payloads, posts nothing
 ```
    Resolve any readiness failures **before** flipping live in Studio.
 
-**7. Schedule `fanops run` + a dead-man's-switch monitor.** Add a cron (or launchd
-   `StartInterval`) entry that `cd`s into the repo (mandatory — `fanops` resolves its data dirs
-   from cwd, there is no `FANOPS_ROOT`) and runs `fanops run` on your interval. `run` responds
+**7. Schedule `fanops run` + a dead-man's-switch monitor.** Prefer `fanops daemon install` (launchd;
+   `WorkingDirectory=$FANOPS_ROOT`) over raw cron. For cron, export `FANOPS_ROOT` (or `cd` to the
+   workspace root that contains `MohFlow-FanOps/`) before `fanops run`. `run` responds
    to gates, advances the pipeline, and — on a live backend with a key — closes the learning
    loop (`track`+`adjust`) once per pass:
 
 ```cron
-*/30 * * * * cd /path/to/repo && ./.venv/bin/fanops run >> run.out 2>&1
+*/30 * * * * export FANOPS_ROOT=$HOME/FanOps && cd "$FANOPS_ROOT" && /path/to/.venv/bin/fanops run >> run.out 2>&1
 ```
    (No `ANTHROPIC_API_KEY` in the cron line — the responder uses the host's `claude login` session.
    The cron job runs as your user and inherits `~/.claude`, so the one-time `claude login` from
@@ -779,3 +781,135 @@ deferred from the original plan, and surfaced during the build.
   This is ORTHOGONAL to the amplify v3 above: amplify acts on a surface's OWN sustained winner via the
   C1 path; transfer is a cold-start caption-bias prior from OTHER surfaces. **Still out of scope:**
   cross-PLATFORM transfer, bandit/decay scheduling.
+
+---
+
+## Brief 04 Phase B — move live data out of the repo (operator runbook)
+
+Phase A (this repo PR) untracks `MohFlow-FanOps/` from git and relocates operator docs to
+`docs/runbooks/`. **Phase B is a physical move on the operator Mac** — run it only after Phase A
+merges and you have pulled the result. Do **not** move disk before the PR lands.
+
+### Merge ordering (non-negotiable)
+
+1. Merge the Brief 04 Phase A PR to `main`.
+2. `git pull` on the operator machine (confirms `.gitignore` backstop + untracked tree).
+3. Only then execute the steps below.
+
+### 1. Preflight gate (Brief 02/03 must be on `main`)
+
+```bash
+python -c "from fanops.config import Config; c=Config(); assert c.base.name=='MohFlow-FanOps', c.base"
+fanops daemon install --help   # Brief 03 direct-exec daemon CLI present
+fanops doctor                  # read-only; fix anything flagged
+```
+
+Confirm `FANOPS_ROOT` resolves as expected when set:
+
+```bash
+export FANOPS_ROOT=$HOME/FanOps   # or your chosen workspace root
+python -c "from fanops.config import Config; print(Config().base)"
+```
+
+### 2. Capture cadence before bootout
+
+Record the installed daemon intervals and loaded state **before** stopping anything:
+
+```bash
+fanops daemon status
+launchctl print "gui/$(id -u)/com.fanops.run" 2>/dev/null | rg -i 'interval|throttle|program'
+launchctl print "gui/$(id -u)/com.fanops.keeper" 2>/dev/null | rg ThrottleInterval || true
+```
+
+Note the main pump interval (`fanops daemon status` prints it) — you will pass the same value to
+`fanops daemon install --interval …` after the move.
+
+### 3. Stop all five launchd labels + process checks
+
+Boot out every FanOps LaunchAgent (main pump, keeper, studio, and the two poll-timer siblings):
+
+```bash
+UID=$(id -u)
+for lbl in com.fanops.run com.fanops.keeper com.fanops.studio com.fanops.postiz-reaper com.fanops.media-sync; do
+  launchctl bootout "gui/$UID/$lbl" 2>/dev/null || true
+done
+pgrep -fl 'fanops (run|studio|daemon)' || echo "no fanops processes"
+```
+
+Confirm nothing is still loaded:
+
+```bash
+launchctl list | rg 'com\.fanops\.' || echo "fleet unloaded"
+```
+
+### 4. Full-tree backup + sqlite counts
+
+```bash
+STAMP=$(date +%Y%m%d-%H%M%S)
+cp -a MohFlow-FanOps "$HOME/FanOps-preflight-backup-$STAMP"
+sqlite3 MohFlow-FanOps/00_control/ledger.sqlite "select 'sources', count(*) from sources union all select 'posts', count(*) from posts;"
+```
+
+Keep the backup until post-move verification passes.
+
+### 5. Move to `~/FanOps`
+
+From the directory that currently contains `MohFlow-FanOps/` (today: the git repo root):
+
+```bash
+mkdir -p "$HOME/FanOps"
+mv MohFlow-FanOps "$HOME/FanOps/"
+ls "$HOME/FanOps/MohFlow-FanOps/00_control/ledger.sqlite"
+```
+
+The repo checkout should no longer contain a live `MohFlow-FanOps/` tree (only a gitignored ghost if
+something recreates it).
+
+### 6. Shell env — `FANOPS_ROOT` in login profiles
+
+Add to **`~/.zshenv`** (zsh) and **`~/.bash_profile`** or **`~/.profile`** (bash):
+
+```bash
+export FANOPS_ROOT="$HOME/FanOps"
+```
+
+Open a **new** terminal and confirm: `echo $FANOPS_ROOT` → `/Users/you/FanOps`.
+
+### 7. Reinstall daemon + studio; hand-patch sibling plists
+
+From the repo venv, with `FANOPS_ROOT` exported:
+
+```bash
+export FANOPS_ROOT=$HOME/FanOps
+cd /path/to/fanops/repo
+source .venv/bin/activate
+fanops daemon install --interval <captured-interval>    # com.fanops.run + com.fanops.keeper
+fanops studio --install                               # com.fanops.studio KeepAlive resident
+```
+
+**Sibling poll-timers** (`com.fanops.postiz-reaper`, `com.fanops.media-sync`) are host-level plists
+outside this repo — if you installed them manually, hand-patch each plist's `WorkingDirectory` to
+`$FANOPS_ROOT` (same as the main daemon) and `launchctl bootstrap` reload. Skip if you never installed
+them.
+
+### 8. Verify with `FANOPS_ROOT` set
+
+```bash
+export FANOPS_ROOT=$HOME/FanOps
+fanops status
+fanops daemon status
+fanops doctor
+```
+
+Confirm heartbeat advances after one `fanops run` cycle and Studio opens on `127.0.0.1:8787`.
+
+### 9. Rollback
+
+If anything looks wrong, stop the fleet (step 3), restore from the preflight backup:
+
+```bash
+rm -rf "$HOME/FanOps/MohFlow-FanOps"
+cp -a "$HOME/FanOps-preflight-backup-$STAMP/MohFlow-FanOps" .
+```
+
+Then reinstall daemons against the restored tree before debugging further.
