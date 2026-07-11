@@ -25,6 +25,16 @@ def test_set_env_var_creates_owner_only_env(tmp_path):
     assert os.stat(env).st_mode & 0o077 == 0
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX file mode bits")
+def test_unset_env_var_floors_mode_to_owner_only(tmp_path):
+    env = tmp_path / ".env"
+    env.write_text("FANOPS_LIVE=1\nPOSTIZ_URL=https://p.example.com\n")
+    os.chmod(env, 0o644)
+    autopilot.unset_env_var(env, "FANOPS_LIVE")
+    assert "FANOPS_LIVE" not in env.read_text()
+    assert os.stat(env).st_mode & 0o077 == 0
+
+
 def test_set_env_var_chmod_failure_still_persists(tmp_path, monkeypatch):
     """Best-effort chmod must not break persistence on a non-POSIX FS (ledger posture)."""
     env = tmp_path / ".env"

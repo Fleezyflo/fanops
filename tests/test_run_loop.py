@@ -119,6 +119,35 @@ def test_loop_stays_resident_across_idle_passes(tmp_path, monkeypatch, mocker):
     assert cli.advance.call_count >= 2
 
 
+def test_loop_reloads_env_from_disk_each_iteration(tmp_path, monkeypatch, mocker):
+    """B01 C1: resident loop must pick up .env disk writes without process restart."""
+    _setup_accounts(tmp_path, monkeypatch)
+    env = tmp_path / ".env"
+    env.write_text("FANOPS_LIVE=1\nFANOPS_RESPONDER=manual\n")
+    monkeypatch.setenv("FANOPS_LIVE", "1")                 # stale process env — disk flip must override
+    import fanops.cli as cli
+    config_calls: list = []
+    real_config = cli.Config
+    def tracking_config(*a, **k):
+        c = real_config(*a, **k)
+        config_calls.append(c)
+        return c
+    mocker.patch.object(cli, "Config", side_effect=tracking_config)
+    is_live_seen: list[bool] = []
+    def track_live(cfg, *, base_time):
+        is_live_seen.append(cfg.is_live)
+        if len(is_live_seen) == 1:
+            env.write_text("FANOPS_LIVE=0\nFANOPS_RESPONDER=manual\n")   # disk-only flip
+        return _idle_summary()
+    _stub_run(mocker, cli, advance_side_effect=track_live)
+    n = 2
+    _stop_loop_after(mocker, n)
+    with pytest.raises(KeyboardInterrupt):
+        main(["run", "--loop", "--interval", "60s"])
+    assert len(config_calls) >= n + 1                      # startup + one Config per loop tick
+    assert is_live_seen == [True, False]                   # iteration 2 sees dryrun from disk
+
+
 def test_oneshot_without_loop_unchanged(tmp_path, monkeypatch, mocker, capsys):
     _setup_accounts(tmp_path, monkeypatch)
     import fanops.cli as cli

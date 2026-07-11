@@ -204,14 +204,24 @@ def install(cfg: Config, *, interval: int, responder: str = "inherit") -> dict:
     cfg.control.mkdir(parents=True, exist_ok=True)
     if responder in ("llm", "manual"):
         from fanops.autopilot import set_env_var          # lazy: avoids a daemon<->autopilot import cycle at load
-        set_env_var(cfg.root / ".env", "FANOPS_RESPONDER", responder)   # durable; Config loads it override=True at fire time
+        set_env_var(cfg.root / ".env", "FANOPS_RESPONDER", responder)   # durable; loop reloads .env each tick
         resolved = responder
     else:
         resolved = resolve_responder(cfg)                 # 'inherit' -> what the run resolves ambiently, persist nothing
     pp = plist_path()
     pp.parent.mkdir(parents=True, exist_ok=True)
+    if pp.exists():
+        try:
+            existing = plistlib.loads(pp.read_bytes())
+        except (OSError, UnicodeDecodeError, plistlib.InvalidFileException, ValueError):
+            existing = {}
+        wd = existing.get("WorkingDirectory")
+        if wd and Path(wd).resolve() != cfg.root.resolve():
+            raise ValueError(f"existing daemon plist WorkingDirectory {wd!r} != {cfg.root!r} — "
+                             f"refusing cross-checkout overwrite (stop --remove first)")
     _cleanup_legacy_artifacts(cfg)
-    pp.write_text(render_plist(cfg, interval=interval))
+    from fanops.controlio import write_text_atomic
+    write_text_atomic(pp, render_plist(cfg, interval=interval))
     loaded = _load_plist(pp, LABEL)
     keeper = _install_keeper(cfg)
     return {"plist": str(pp), "interval": interval, "loaded": loaded,
@@ -236,7 +246,8 @@ def ensure(cfg: Config) -> dict:
         if actual != expected:
             cfg.reports.mkdir(parents=True, exist_ok=True)
             pp.parent.mkdir(parents=True, exist_ok=True)
-            pp.write_text(render_plist(cfg, interval=iv))
+            from fanops.controlio import write_text_atomic
+            write_text_atomic(pp, render_plist(cfg, interval=iv))
             if loaded:
                 _load_plist(pp, LABEL)
             _cleanup_legacy_artifacts(cfg)
@@ -296,7 +307,8 @@ def render_keeper_plist(cfg: Config) -> str:
 def _install_keeper(cfg: Config) -> dict:
     kp = keeper_plist_path()
     kp.parent.mkdir(parents=True, exist_ok=True)
-    kp.write_text(render_keeper_plist(cfg))
+    from fanops.controlio import write_text_atomic
+    write_text_atomic(kp, render_keeper_plist(cfg))
     return {"keeper_loaded": _load_plist(kp, KEEPER_LABEL), "keeper_plist": str(kp)}
 
 def sibling_agent_status(label: str, *, short: str = "", poll_interval_s: int | None = None) -> dict:
@@ -371,16 +383,22 @@ def stop(cfg: Config, *, remove: bool = False) -> dict:
     stopped iff `launchctl list` no longer finds it (rc!=0). Idempotent — booting out an already-stopped
     label returns rc!=0, but the list confirm still reports stopped because the label isn't loaded ('already
     stopped' is not an error). The honest part: if an unload genuinely FAILED and the agent is STILL loaded,
-    stopped is now False rather than a false True. Leaves the plist on disk unless remove=True."""
+    stopped is now False rather than a false True. Boots out the keeper FIRST so it cannot re-bootstrap the
+    main pump within KEEPER_POLL_INTERVAL_S. Leaves plists on disk unless remove=True."""
     _require_darwin()
     uid = os.getuid()
+    kr = _launchctl("bootout", f"gui/{uid}/{KEEPER_LABEL}")
+    if kr.returncode != 0:
+        _launchctl("unload", "-w", str(keeper_plist_path()))
+    keeper_stopped = _launchctl("list", KEEPER_LABEL).returncode != 0
     r = _launchctl("bootout", f"gui/{uid}/{LABEL}")
     if r.returncode != 0:
         _launchctl("unload", "-w", str(plist_path()))    # fallback for older macOS (already-stopped is fine)
     stopped = _launchctl("list", LABEL).returncode != 0  # source of truth: not loaded -> stopped
-    out = {"label": LABEL, "plist": str(plist_path()), "stopped": stopped}
+    out = {"label": LABEL, "plist": str(plist_path()), "stopped": stopped, "keeper_stopped": keeper_stopped}
     if remove:
         with contextlib.suppress(OSError): plist_path().unlink(missing_ok=True)
+        with contextlib.suppress(OSError): keeper_plist_path().unlink(missing_ok=True)
         _cleanup_legacy_artifacts(cfg)
         out["removed"] = True
     return out
@@ -479,7 +497,7 @@ def _heartbeat_age_s(cfg: Config) -> float | None:
                 continue
             try:
                 rec = json.loads(line)
-                if rec.get("stage") == "heartbeat":
+                if rec.get("stage") == "heartbeat" and rec.get("origin") == "loop":
                     last_ts = rec.get("ts")
             except json.JSONDecodeError:
                 if "\theartbeat\t" in line:

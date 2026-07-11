@@ -62,6 +62,6 @@ def test_logger_sets_0600_perms(tmp_path):
 def test_heartbeat_contract_for_daemon_age(tmp_path):
     cfg = Config(root=tmp_path)
     ts = datetime.now(timezone.utc).isoformat()
-    get_logger(cfg)("heartbeat", "-", "ok", heartbeat=ts, published_in_run=0)
+    get_logger(cfg)("heartbeat", "-", "ok", origin="loop", heartbeat=ts, published_in_run=0)
     age = daemon._heartbeat_age_s(cfg)
     assert age is not None and age < 5

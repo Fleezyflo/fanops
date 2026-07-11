@@ -67,6 +67,8 @@ def unset_env_var(env_path: Path, key: str) -> None:
         out.append(ln)
     tmp = env_path.with_name(env_path.name + ".tmp")
     tmp.write_text("\n".join(out) + ("\n" if out else ""))
+    try: os.chmod(tmp, 0o600)                            # owner-only at rest (audit): mirror set_env_var
+    except OSError: pass
     os.replace(tmp, env_path)
 
 

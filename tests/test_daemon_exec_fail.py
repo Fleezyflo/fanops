@@ -58,7 +58,7 @@ def test_status_alive_unchanged_when_plist_binary_executable(tmp_path, monkeypat
         "EnvironmentVariables": {"FANOPS_DAEMON_INTERVAL": "600"},
     }))
     now = datetime.now(timezone.utc).isoformat()
-    rec = {"ts": now, "level": "info", "stage": "heartbeat", "unit_id": "-", "outcome": "ok",
+    rec = {"ts": now, "level": "info", "stage": "heartbeat", "unit_id": "-", "outcome": "ok", "origin": "loop",
            "heartbeat": now, "fanops_version": "0.3.0", "published_in_run": "0"}
     cfg.log_path.write_text(_json.dumps(rec, separators=(",", ":")) + "\n")
     monkeypatch.setattr(daemon.subprocess, "run", _fake_launchctl(list=(0, '\t"PID" = 1;\n')))
