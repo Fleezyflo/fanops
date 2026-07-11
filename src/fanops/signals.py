@@ -156,6 +156,8 @@ def detect_signals(led: Ledger, cfg: Config, source_id: str, *, in_lock: bool = 
                 raise KeyError("stale sidecar version")
             src.signal_peaks = d["peaks"]
             src.duration = d.get("duration") or src.duration
+            from fanops.agentstep import clear_attempts
+            clear_attempts(cfg, "signals_defer", source_id)
             led.set_source_state(source_id, SourceState.signalled)
             return led
         except (OSError, json.JSONDecodeError, KeyError, TypeError):
@@ -170,6 +172,14 @@ def detect_signals(led: Ledger, cfg: Config, source_id: str, *, in_lock: bool = 
     if in_lock:
         if shutil.which("ffmpeg") is None:
             raise ToolchainMissingError("ffmpeg not found on PATH — install ffmpeg to detect signals (in-lock probe)")
+        from fanops.agentstep import bump_attempts
+        from fanops.responder import _GATE_DETERMINISTIC_MAX
+        n = bump_attempts(cfg, "signals_defer", source_id)
+        if n >= _GATE_DETERMINISTIC_MAX:
+            led.sources[source_id] = src.model_copy(update={
+                "state": SourceState.error,
+                "error_reason": f"signals producer failed (deterministic ceiling {_GATE_DETERMINISTIC_MAX}/{_GATE_DETERMINISTIC_MAX})"})
+            return led
         get_logger(cfg)("signals", source_id, "defer", reason="cold sidecar in-lock; deferring slow ffmpeg to producer")
         return led
     sil = _run_ffmpeg(_silence_cmd(src.source_path))

@@ -1007,6 +1007,30 @@ def test_targeted_intersect_active_empty_moments_empty(tmp_path):
     assert led.sources["src_1"].state is SourceState.moments_empty
     assert not list(request_path(cfg, "moments", "src_1.a").parent.glob("moments__src_1.*.request.json"))
 
+
+def test_moments_empty_discards_stale_gates_before_flip(tmp_path):
+    # L07: stale moments gates must be discarded BEFORE moments_empty flip (no pending-gate loop).
+    from fanops.models import Batch
+    from fanops.agentstep import write_request, gate_keys_for, pending
+    from fanops.pipeline import reconcile_source_progress
+    from fanops.log import get_logger
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_batch(Batch(id="bat_1", name="Ghost", target_accounts=["ghost"]))
+    src = Source(id="src_1", source_path="/s.mp4", state=SourceState.signalled, duration=60.0,
+                 transcript=[], signal_peaks=[], batch_id="bat_1", meta={"transcribed": True})
+    led.add_source(src); led.save()
+    accts = _seed_multi_pick_persona_accounts(cfg, ["a"])
+    write_request(cfg, kind="moments", key="src_1.stale", payload={"source_id": "src_1", "duration": 1.0,
+                  "transcript": [], "signal_peaks": []})
+    assert gate_keys_for(cfg, "moments", "src_1")
+    led = request_moments(led, cfg, "src_1", accounts=accts)
+    assert led.sources["src_1"].state is SourceState.moments_empty
+    assert gate_keys_for(cfg, "moments", "src_1") == []
+    assert pending(cfg, kind="moments") == []
+    with Ledger.transaction(cfg) as led2:
+        reconcile_source_progress(led2, cfg, get_logger(cfg))
+    assert pending(cfg, kind="moments") == []
+
 def test_identical_persona_two_gates(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
     accts = _seed_multi_pick_persona_accounts(cfg, ["a1", "a2"])
