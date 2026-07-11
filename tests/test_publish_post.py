@@ -161,7 +161,7 @@ def test_variant_render_uploaded_once_across_two_publishes(tmp_path, monkeypatch
     led.save()
     calls = {"n": 0}
     def up(cfg, backend=None):
-        def _u(c, pth, **kw): calls["n"] += 1; return "https://cdn/v.mp4"
+        def _u(c, pth, **kw): calls["n"] += 1; return "img1|https://cdn/v.mp4"
         return _u
     monkeypatch.setattr("fanops.post.get_media_uploader", up)        # ensure_render_media (media.py) path
     monkeypatch.setattr("fanops.post.run.get_media_uploader", up)    # the legacy run.py direct-upload path
@@ -169,7 +169,7 @@ def test_variant_render_uploaded_once_across_two_publishes(tmp_path, monkeypatch
         def publish(self, led, pid): led.posts[pid].state = PostState.submitted; return led
     monkeypatch.setattr("fanops.post.run.get_poster", lambda cfg, backend=None: FakePoster())
     assert publish_post(cfg, "p1") == "published"
-    assert Ledger.load(cfg).renders[rid].media_url == "https://cdn/v.mp4"   # cached on the Render
+    assert Ledger.load(cfg).renders[rid].media_url == "img1|https://cdn/v.mp4"   # cached on the Render
     with Ledger.transaction(cfg) as lg:
         lg.posts["p1"].state = PostState.queued; lg.posts["p1"].media_urls = [f"file://{vf}"]   # simulate a re-approval re-stamp
     publish_post(cfg, "p1")
