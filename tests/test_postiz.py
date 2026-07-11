@@ -236,12 +236,22 @@ def test_preflight_passes_postiz_with_creds(tmp_path, monkeypatch):
     from fanops.cli import _check_preflight
     assert _check_preflight(_cfg(tmp_path, monkeypatch)) == 0
 
-def test_doctor_flags_postiz_creds(tmp_path, monkeypatch):
+def test_preflight_blocks_zernio_without_creds(tmp_path, monkeypatch):
+    from fanops.cli import _check_preflight
+    monkeypatch.setenv("FANOPS_POSTER", "zernio")
+    monkeypatch.delenv("ZERNIO_API_KEY", raising=False)
+    assert _check_preflight(Config(root=tmp_path)) == 2
+
+def test_doctor_skips_postiz_check_without_creds(tmp_path, monkeypatch):
+    # B11: FANOPS_POSTER=postiz without POSTIZ_API_KEY omits POSTIZ doctor checks (backend_has_creds gate).
+    # Preflight still blocks a run — the trap is at run time, not in doctor.
     from fanops import doctor
+    from fanops.cli import _check_preflight
     monkeypatch.setenv("FANOPS_POSTER", "postiz")
     monkeypatch.delenv("POSTIZ_URL", raising=False); monkeypatch.delenv("POSTIZ_API_KEY", raising=False)
     rep = doctor.doctor_report(Config(root=tmp_path))
-    assert any("POSTIZ" in c["label"] and not c["ok"] for c in rep["checks"])
+    assert not any("POSTIZ" in c["label"] for c in rep["checks"])
+    assert _check_preflight(Config(root=tmp_path)) == 2
 
 
 # ---- integrations list (Go-Live tab: map an account to a Postiz integration without hand-editing
