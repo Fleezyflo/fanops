@@ -7,6 +7,7 @@ import argparse, json, subprocess, sys, time
 from datetime import datetime, timezone
 import fanops
 from fanops.config import Config
+from dotenv import load_dotenv
 from fanops.errors import AuthError, ControlFileError, CutoverError, DownloadError, LockBusyError, RunBusyError, ToolchainMissingError
 from fanops.ledger import Ledger
 from fanops.accounts import Accounts
@@ -742,6 +743,7 @@ def main(argv: list[str] | None = None) -> int:
     p_auto.add_argument("--interval", default="10m"); p_auto.add_argument("--no-daemon", action="store_true")
     args = parser.parse_args(argv if argv is not None else sys.argv[1:])
     cfg = Config()
+    load_dotenv(cfg.root / ".env", override=True)   # .env is operator truth — beat stale shell env (Studio restart)
 
     try:
         return _dispatch(cfg, args)

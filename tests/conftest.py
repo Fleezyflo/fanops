@@ -1,12 +1,10 @@
 # tests/conftest.py — hermetic env baseline for the unit suite.
 #
-# Config.__init__ calls load_dotenv(self.root / ".env"); a Config() built with the default cwd root
-# (as several tests do) loads the OPERATOR's live repo .env into os.environ — currently
-# FANOPS_POSTER=postiz + POSTIZ_URL/POSTIZ_API_KEY. load_dotenv does NOT override an already-set var
-# but DOES set new ones, so once any test triggers that load the leaked vars PERSIST for the rest of
-# the process and silently flip later tests "live" (the cutover/publish auth tests that assume dryrun
-# / an unset key then DON'T RAISE). That is an order-dependent failure that depends on the .env state
-# on disk — exactly the isolation bug this fixture closes.
+# Before Brief 02, Config.__init__ called load_dotenv(self.root / ".env"); a Config() built with
+# the default cwd root (as several tests do) loaded the OPERATOR's live repo .env into os.environ.
+# After Brief 02, Config() is side-effect-free; load_dotenv runs once in cli.main() at process entry.
+# Tests that invoke cli.main() may still hit that path — the leak class is the same: repo .env vars
+# persisting in os.environ and silently flipping later tests. This fixture closes that isolation bug.
 #
 # Strategy: strip the publish-mode/credential vars at the START of every test and restore the real
 # process environment AFTER. Tests that want a live backend still set it explicitly via monkeypatch
@@ -32,7 +30,7 @@ import pytest
 # =1 leaking into the session would silently flip every test onto the pooled path (and the worker
 # count along with it). Stripping them makes each test see the OFF default; the concurrent tests
 # set them explicitly via monkeypatch and get clean teardown.
-_LEAKY_ENV = ("FANOPS_LIVE", "FANOPS_POSTER", "BLOTATO_API_KEY", "POSTIZ_API_KEY", "POSTIZ_URL", "FANOPS_MEDIA_PUBLIC_BASE",
+_LEAKY_ENV = ("FANOPS_ROOT", "FANOPS_LIVE", "FANOPS_POSTER", "BLOTATO_API_KEY", "POSTIZ_API_KEY", "POSTIZ_URL", "FANOPS_MEDIA_PUBLIC_BASE",
               "R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET", "FANOPS_HOOK_JUDGE",
               "FANOPS_RESPONDER",   # defaults to llm when `claude` is on PATH — must not leak across tests/CI
               "META_GRAPH_TOKEN", "META_IG_USER_ID", "FANOPS_HASHTAG_TRENDS", "META_GRAPH_URL",

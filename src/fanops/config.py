@@ -1,5 +1,6 @@
 # src/fanops/config.py
-"""Filesystem layout + env. Never stores a secret in code; reads .env at runtime.
+"""Filesystem layout + env. Never stores a secret in code; properties read `os.environ`;
+`.env` is loaded once at process entry (`cli.main`), not in Config.__init__.
 Trims ONLY surrounding whitespace from the key (FIX F80: the v1 'keep trailing =' advice
 was wrong)."""
 from __future__ import annotations
@@ -10,7 +11,6 @@ import os
 import re
 from pathlib import Path
 from typing import Literal
-from dotenv import load_dotenv
 
 _log = logging.getLogger("fanops.config")
 
@@ -136,8 +136,13 @@ def _pick_timeout_aware_model(duration_seconds: float | None, *, chain: tuple[st
 
 class Config:
     def __init__(self, root: Path | str | None = None):
-        self.root = Path(root) if root else Path.cwd()
-        load_dotenv(self.root / ".env", override=True)   # .env is operator truth — beat stale shell env (Studio restart)
+        env_root = os.environ.get("FANOPS_ROOT")
+        if root:
+            self.root = Path(root)
+        elif env_root:
+            self.root = Path(env_root).expanduser().resolve()
+        else:
+            self.root = Path.cwd()
         self.base = self.root / "MohFlow-FanOps"
         for attr, name in _STAGE.items():
             setattr(self, attr, self.base / name)
