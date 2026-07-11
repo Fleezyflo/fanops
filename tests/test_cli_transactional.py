@@ -7,19 +7,8 @@ in_transaction split) so the up-to-30s Blotato calls never serialize behind the 
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Post, Platform, PostState
-from fanops.errors import LockBusyError
 import fanops.cli as cli
-
-
-def _ledger_lock_is_free(cfg) -> bool:
-    """True iff the ledger store write lock can be acquired right now (i.e. NOT held). Used inside an
-    injected network closure to assert the lock is NOT held during the network call."""
-    try:
-        with Ledger.load(cfg)._store.lock(timeout=0.01):
-            pass
-        return True
-    except LockBusyError:
-        return False
+from tests.conftest import ledger_lock_is_free as _ledger_lock_is_free
 
 
 # ---------------------------------------------------------------------------

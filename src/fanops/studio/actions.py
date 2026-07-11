@@ -757,6 +757,7 @@ def pull_metrics_studio(cfg: Config, *, window: str = "30d") -> ActionResult:
     if not cfg.is_live:
         return ActionResult(ok=False, error="Publishing is off — turn on Go Live before pulling metrics.")
     from fanops.track import pull_metrics, _default_list_posts
+    from fanops.reconcile import resolve_media_ids, prefetch_media_scope
     from fanops.digest import write_digest
     try:
         led0 = Ledger.load(cfg)
@@ -770,10 +771,13 @@ def pull_metrics_studio(cfg: Config, *, window: str = "30d") -> ActionResult:
         return ActionResult(ok=False, error=str(exc)[:160])
     except Exception as exc:
         return ActionResult(ok=False, error=f"metrics pull failed: {str(exc)[:160]}")
+    scoped = prefetch_media_scope(led0, cfg)
+    def _resolve(ledg, conf):
+        return resolve_media_ids(ledg, conf, scoped=scoped)
     try:
         with Ledger.transaction(cfg) as led:
             before = {pid: len(p.metrics_series) for pid, p in led.posts.items()}
-            led = pull_metrics(led, cfg, list_posts=lambda _w: rows, window=window)
+            led = pull_metrics(led, cfg, list_posts=lambda _w: rows, window=window, resolve_media=_resolve)
             analyzed = len(led.posts_in_state(PostState.analyzed))
             added = deg = 0
             for pid, p in led.posts.items():

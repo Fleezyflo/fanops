@@ -13,7 +13,7 @@ from fanops.ledger import Ledger
 from fanops.accounts import Accounts
 from fanops.models import PostState
 from fanops.pipeline import advance, GATE_KINDS
-from fanops.ingest import ingest_drops, download_url
+from fanops.ingest import download_url
 from fanops.digest import write_digest
 from fanops.agentstep import pending
 from fanops.responder import get_responder
@@ -109,15 +109,19 @@ def cmd_track(cfg: Config, window: str) -> int:
     # TikTok-via-Zernio in ONE pass); a no-override deployment is byte-identical to the old id-list path.
     pollable_posts = [p for p in led0.posts.values()
                       if p.submission_id and p.state in (PostState.published, PostState.analyzed)]
+    from fanops.reconcile import resolve_media_ids, prefetch_media_scope
+    scoped = prefetch_media_scope(led0, cfg)
     try:
         rows = list(_default_list_posts(cfg, posts=pollable_posts)(window))   # network, NO lock held
     except (RuntimeError, AuthError) as e:               # postiz no-key raises PostizAuthError, not RuntimeError -> skip cleanly (mirror cmd_reconcile)
         print(f"track skipped: {e}"); return 0
+    def _resolve(ledg, conf):
+        return resolve_media_ids(ledg, conf, scoped=scoped)
     with Ledger.transaction(cfg) as led:
         # apply the pre-fetched rows: pull_metrics matches them to still-pollable posts in THIS
         # (re-loaded) ledger, so a post that changed between fetch and apply is simply not matched.
         before = {pid: len(p.metrics_series) for pid, p in led.posts.items()}   # P3: series rows BEFORE
-        led = pull_metrics(led, cfg, list_posts=lambda _w: rows, window=window)
+        led = pull_metrics(led, cfg, list_posts=lambda _w: rows, window=window, resolve_media=_resolve)
         analyzed = len(led.posts_in_state(PostState.analyzed))
         added = deg = 0                                                          # P3: this-pass tally
         for pid, p in led.posts.items():
@@ -139,9 +143,13 @@ def _learn_pass(cfg: Config, *, window: str = "30d") -> None:
     led0 = Ledger.load(cfg)
     pollable_posts = [p for p in led0.posts.values()   # P3: published OR analyzed (re-pollable)
                       if p.submission_id and p.state in (PostState.published, PostState.analyzed)]
+    from fanops.reconcile import resolve_media_ids, prefetch_media_scope
+    scoped = prefetch_media_scope(led0, cfg)
     rows = list(_default_list_posts(cfg, posts=pollable_posts)(window))   # network, NO lock held (per-post backend routing)
+    def _resolve(ledg, conf):
+        return resolve_media_ids(ledg, conf, scoped=scoped)
     with Ledger.transaction(cfg) as led:
-        led = pull_metrics(led, cfg, list_posts=lambda _w: rows, window=window)
+        led = pull_metrics(led, cfg, list_posts=lambda _w: rows, window=window, resolve_media=_resolve)
         r = classify_outcomes(led, per_surface=cfg.adjust_per_surface)   # P4(a): per-surface WINNERS when on
         led = amplify(led, cfg, r["winners"])
         led = retire(led, r["losers"])
@@ -1009,26 +1017,29 @@ def _dispatch(cfg: Config, args) -> int:
         if args.recover_cmd == "audit": return cmd_recover_audit(cfg)
         return 2
     if args.cmd == "ingest":
-        # Phase-B-followup: catalogue under a transaction (B4). ffprobe runs inside the lock here,
-        # but it is LOCAL + fast (tens of ms/file) — unlike the network commands, there is no slow
-        # call to keep out, and the dedup (already_seen) needs the loaded ledger, so one transaction
-        # is the right unit.
+        # Phase-B-followup: catalogue under a transaction (B4). M05: sha256+copy+ffprobe run lock-free
+        # (stage_inbox_candidates); only Source mint runs in-lock; archive AFTER commit.
+        from fanops.ingest import stage_inbox_candidates, ingest_staged, _archive_staged
+        staged = stage_inbox_candidates(cfg)
         with Ledger.transaction(cfg) as led:
-            led, counts = ingest_drops(led, cfg)
+            led, counts = ingest_staged(led, cfg, staged)
             total = len(led.sources)
+        _archive_staged(cfg, staged)
         write_digest(Ledger.load(cfg), cfg)
         print(f"ingested -> {counts.added} new ({total} total; {counts.deduped} dup, "
               f"{counts.excluded} excluded, {counts.skipped} skipped)"); return 0   # ING-2: this-pass delta, not cumulative
     if args.cmd == "pull":
         # Phase-B-followup: the yt-dlp DOWNLOAD (network, slow) runs OUTSIDE the lock; only the
         # ingest of what landed runs inside the transaction.
-        from fanops.ingest import _pull_stage
+        from fanops.ingest import _pull_stage, stage_inbox_candidates, ingest_staged, _archive_staged
         produced = download_url(cfg, args.url)       # network, NO lock held; returns the files it produced (in .pull stage)
+        staged = stage_inbox_candidates(cfg, origin="url", inbox=_pull_stage(cfg), origin_paths=produced)
         with Ledger.transaction(cfg) as led:
             # per-file origin (audit c0-f1 / ING-6): the pull catalogues ONLY its isolated .pull stage, so a
             # manual drop sitting in the inbox is never re-scanned or mislabeled by this pull.
-            led, counts = ingest_drops(led, cfg, origin="url", inbox=_pull_stage(cfg), origin_paths=produced)
+            led, counts = ingest_staged(led, cfg, staged)
             total = len(led.sources)
+        _archive_staged(cfg, staged)
         write_digest(Ledger.load(cfg), cfg)
         print(f"pulled -> {counts.added} new ({total} total)"); return 0
     if args.cmd == "respond":

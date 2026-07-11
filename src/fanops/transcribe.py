@@ -9,11 +9,12 @@ ENGINE: prefers faster-whisper (the [asr] extra, via the fanops._fwrun runner) a
 (int8 makes even large-v3 practical on CPU). FAILS OPEN to the legacy `whisper` CLI (turbo) when
 faster-whisper is absent (CI / air-gapped), so transcription always runs."""
 from __future__ import annotations
-import contextlib, json, subprocess, sys
+import contextlib, json, shutil, subprocess, sys
 from pathlib import Path
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.log import get_logger
+from fanops.errors import ToolchainMissingError
 from fanops.models import SourceState
 from fanops.stage_lock import stage_lock
 from fanops.vocals import isolate_vocals
@@ -181,7 +182,13 @@ def _adopt_cached_transcript(led: Ledger, source_id: str, cached: Path) -> bool:
         return False
 
 
-def transcribe_source(led: Ledger, cfg: Config, source_id: str, *, model: str | None = None) -> Ledger:
+def _transcribe_toolchain_present() -> bool:
+    """Cheap PATH probe: faster-whisper ([asr] extra) OR legacy whisper CLI."""
+    return _fw_available() or shutil.which("whisper") is not None
+
+
+def transcribe_source(led: Ledger, cfg: Config, source_id: str, *, model: str | None = None,
+                      in_lock: bool = False) -> Ledger:
     src = led.sources[source_id]
     if src.meta.get("transcribed") is True:           # idempotent only when it actually ran
         return led
@@ -198,6 +205,16 @@ def transcribe_source(led: Ledger, cfg: Config, source_id: str, *, model: str | 
             rel = str(cached.relative_to(cfg.agent_io))
             stamp_stage(cfg, source_id, "transcribe", artifact=rel, schema=1, sha256=src.sha256)
         except (OSError, ValueError): pass
+        return led
+    # MOL-122 / H10: the reducer calls this INSIDE the ledger flock only to ADOPT the producer's warm
+    # JSON. On a cold cache (producer failed or hasn't run), running whisper here would hold the flock
+    # for up to the duration-scaled timeout — DEFER to the lock-free producer pass. A genuinely-absent
+    # toolchain fails in microseconds and must still quarantine — probe PATH cheaply first.
+    if in_lock:
+        if not _transcribe_toolchain_present():
+            raise ToolchainMissingError(
+                "whisper/faster-whisper not found — install [asr] or whisper CLI to transcribe (in-lock probe)")
+        get_logger(cfg)("transcribe", source_id, "defer", reason="cold cache in-lock; deferring whisper to producer")
         return led
     out_dir.mkdir(parents=True, exist_ok=True)
     # M1 produce critical section: per-(stage,source) lock — only ONE producer for this source at a

@@ -244,7 +244,7 @@ def _pick_media(cands: list[dict], post) -> Optional[dict]:
             return float("inf")
     return min(cands, key=_dist)
 
-def resolve_media_ids(led: Ledger, cfg: Config, *, get=None) -> Ledger:
+def resolve_media_ids(led: Ledger, cfg: Config, *, get=None, scoped: list[tuple] | None = None) -> Ledger:
     """Stamp each published/analyzed IG post's Graph `media_id` AND real `product_type` by matching its
     permalink against the live /{ig_user}/media list. Runs INSIDE the automatic pull path (pull_metrics) so
     the unattended daemon resolves new posts itself — the sole-source insights read keys on media_id AND
@@ -253,7 +253,10 @@ def resolve_media_ids(led: Ledger, cfg: Config, *, get=None) -> Ledger:
     resolves nobody, never crashes). A media_id-bearing row whose product_type is still None (an older row
     stamped before product_type was carried — the live post_4eb7c0802e79 shape) is RE-TARGETED and the real
     type is back-stamped, so the insights request is no longer empty and never false-blocks. An unmatched
-    post is breadcrumbed, NEVER given a fabricated id."""
+    post is breadcrumbed, NEVER given a fabricated id.
+
+    When `scoped` is prefetched (lock-free enumerate_scoped_media at the caller), skip the in-lock network
+    enumeration — the apply path is a pure ledger match."""
     from fanops.models import Platform
     from fanops import meta_graph
     log = get_logger(cfg)
@@ -263,14 +266,15 @@ def resolve_media_ids(led: Ledger, cfg: Config, *, get=None) -> Ledger:
                and _norm_permalink(p.public_url) is not None]
     if not targets:
         return led                                               # nothing to resolve -> no network call
-    # Per-account creds (the per-handle-creds gap): enumerate EACH credentialed IG handle's media with its
-    # OWN creds and combine into one permalink index — an IG permalink belongs to exactly one account, so a
-    # post matches whichever handle's media holds it (no longer capped at the single global handle). Restrict
-    # the fan-out to handles that actually have a target post; if none are per-account-credentialed, fall
-    # back to the single global enumeration ([None]) — byte-identical to before.
-    target_handles = {p.account for p in targets}
-    handles = [h for h in meta_graph.credentialed_ig_handles(cfg) if h in target_handles] or [None]
-    scoped = meta_graph.enumerate_scoped_media(cfg, handles, get=get)
+    if scoped is None:
+        # Per-account creds (the per-handle-creds gap): enumerate EACH credentialed IG handle's media with its
+        # OWN creds and combine into one permalink index — an IG permalink belongs to exactly one account, so a
+        # post matches whichever handle's media holds it (no longer capped at the single global handle). Restrict
+        # the fan-out to handles that actually have a target post; if none are per-account-credentialed, fall
+        # back to the single global enumeration ([None]) — byte-identical to before.
+        target_handles = {p.account for p in targets}
+        handles = [h for h in meta_graph.credentialed_ig_handles(cfg) if h in target_handles] or [None]
+        scoped = meta_graph.enumerate_scoped_media(cfg, handles, get=get)
     if not scoped:
         return led                                               # couldn't enumerate (no creds / transport) ->
         #                                                          stay re-resolvable, DON'T false-breadcrumb "unmatched"
@@ -303,6 +307,62 @@ def resolve_media_ids(led: Ledger, cfg: Config, *, get=None) -> Ledger:
                 led.posts[p.id] = p.model_copy(update={"error_reason": _IG_MEDIA_ENRICH_UNRESOLVED})
                 log("reconcile", p.id, "media_id_unmatched: enrichment-only, rests on Postiz liveness")
     return led
+
+
+def prefetch_media_scope(led: Ledger, cfg: Config, *, get=None) -> list[tuple] | None:
+    """Lock-free half of resolve_media_ids: enumerate live IG media for posts needing enrichment.
+    Returns None when there are no targets (no network needed); else the scoped media list."""
+    from fanops.models import Platform
+    from fanops import meta_graph
+    targets = [p for p in led.posts.values()
+               if p.platform is Platform.instagram and (p.media_id is None or p.product_type is None)
+               and p.state in (PostState.published, PostState.analyzed)
+               and _norm_permalink(p.public_url) is not None]
+    if not targets:
+        return None
+    target_handles = {p.account for p in targets}
+    handles = [h for h in meta_graph.credentialed_ig_handles(cfg) if h in target_handles] or [None]
+    return meta_graph.enumerate_scoped_media(cfg, handles, get=get)
+
+
+def _capture_publish_fields(info: dict, post) -> tuple[str | None, str | None, str | None, str | None]:
+    """Shared published-row capture: (captured_url, reported_username, new_sub, release_id)."""
+    real = next((info[k] for k in ("postSubmissionId", "id", "submissionId")
+                 if is_real_submission_id(info.get(k))), None)
+    new_sub = real or (post.submission_id if is_real_submission_id(post.submission_id) else None)
+    captured_url = safe_public_url(info.get("publicUrl")) or post.public_url
+    reported_username = info.get("tiktokUsername")
+    _rid = info.get("releaseId")
+    _rid = _rid.strip() if isinstance(_rid, str) and _rid.strip() else None
+    return captured_url, reported_username, new_sub, _rid
+
+
+def _enrich_poll_liveness(cfg: Config, post, info: dict, *, cred_ig, confirm, graph_get) -> None:
+    """M04: pre-compute liveness verdicts during the lock-free poll (network allowed). Mutates `info`
+    with a `liveness` dict the apply path reads without further network I/O. Enrichment order mirrors
+    apply: TikTok analytics fallback BEFORE oEmbed/IG confirm."""
+    from fanops.models import Platform as _Plat
+    captured_url, reported_username, new_sub, _rid = _capture_publish_fields(info, post)
+    if not (captured_url or "").strip() and post.platform is _Plat.tiktok:
+        try:
+            from fanops.post.metrics import zernio_analytics_url_and_username
+            _u, _un = zernio_analytics_url_and_username(cfg, post.submission_id, post.account_id)
+            captured_url = _u or captured_url
+            reported_username = reported_username or _un
+        except Exception as exc:
+            get_logger(cfg)("reconcile", post.id, "tiktok_analytics_fallback_error", err=str(exc)[:120])
+    liv: dict = {"captured_url": captured_url, "reported_username": reported_username,
+                 "new_sub": new_sub, "release_id": _rid}
+    if not (captured_url or "").strip():
+        liv["published_no_url"] = True
+        info["liveness"] = liv
+        return
+    liv["published_no_url"] = False
+    if post.platform is _Plat.tiktok:
+        liv["tiktok_ok"] = _tiktok_url_confirmed(cfg, post, captured_url, new_sub, reported_username)
+    elif post.platform is _Plat.instagram:
+        liv["ig_verdict"] = _ig_rest_verdict(cfg, post, _rid, cred_ig, confirm, graph_get)
+    info["liveness"] = liv
 
 
 # ---- ledger-rebuild M2 (Instagram is the source of truth): the INVERSE projection -----------------
@@ -499,10 +559,17 @@ def reconcile_due(cfg: Config) -> dict[str, int]:
     poll = _default_get_status(cfg, snapshot)            # only built when work exists; never dryrun (fails closed)
     from fanops.postiz_lifecycle import ensure_up        # reconcilable>0: bring the local Postiz stack up to poll
     ensure_up(cfg)
+    from fanops.meta_graph import credentialed_ig_handles, confirm_post_live
+    _cred_ig = credentialed_ig_handles(cfg)
     results: dict[str, object] = {}                      # sid -> info dict OR captured Exception
+    polled_as: dict[str, str] = {}                       # post_id -> submission_id at poll time (stale guard)
     for p in reconcilable:
         try:
-            results[p.submission_id] = poll(p.submission_id) or {}   # network, NO lock held
+            info = poll(p.submission_id) or {}           # network, NO lock held
+            if (info.get("status") or "").lower() == "published":
+                _enrich_poll_liveness(cfg, p, info, cred_ig=_cred_ig, confirm=confirm_post_live, graph_get=None)
+            results[p.submission_id] = info
+            polled_as[p.id] = p.submission_id
         except AuthError:
             raise                                        # bad key (Postiz OR Zernio): every poll fails -> halt
         except Exception as exc:
@@ -512,14 +579,15 @@ def reconcile_due(cfg: Config) -> dict[str, int]:
         if isinstance(r, Exception): raise r             # reconcile_posts' per-post except parks it + logs
         return r
     with Ledger.transaction(cfg) as led:
-        led = reconcile_posts(led, cfg, get_status=cached)
+        led = reconcile_posts(led, cfg, get_status=cached, polled_as=polled_as)
         return {"needs_reconcile": len(led.posts_in_state(PostState.needs_reconcile)),
                 "published": len(led.posts_in_state(PostState.published)),
                 "healed_submitting": healed}
 
 
 def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus] = None,
-                    confirm=None, graph_get=None, now: Optional[datetime] = None) -> Ledger:
+                    confirm=None, graph_get=None, now: Optional[datetime] = None,
+                    polled_as: dict[str, str] | None = None) -> Ledger:
     poll = get_status or _default_get_status(cfg, led)
     now = now or datetime.now(timezone.utc)               # clock injected by tests; real callers default to UTC now
     log = get_logger(cfg)
@@ -536,6 +604,9 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
         if not post.submission_id:
             log("reconcile", post.id, "skipped: no submission_id")
             continue                       # no id -> cannot poll (API needs it) -> human reconcile
+        if polled_as is not None and polled_as.get(post.id) != post.submission_id:
+            log("reconcile", post.id, "skipped: stale poll (submission_id changed)")
+            continue                       # M04: post mutated between poll and apply — skip cached row
         # Per-post resilience (mirrors publish_due, run.py:70-76): one post's poll error must NOT
         # abort the whole pass. AUDIT H1 made this load-bearing — D1 stamps EVERY post with a CLIENT
         # idempotency token (submission_id = "fanops_..."), so a post parked after a pure network
@@ -561,85 +632,80 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
             continue
         status = (info.get("status") or "").lower()
         if status == "published":
-            # CULM-3: capture the REAL backend id the poll surfaced (Postiz / Zernio postSubmissionId),
-            # preferring it over the birth fanops_ token; never overwrite an already-real id with None.
-            real = next((info[k] for k in ("postSubmissionId", "id", "submissionId")
-                         if is_real_submission_id(info.get(k))), None)
-            new_sub = real or (post.submission_id if is_real_submission_id(post.submission_id) else None)
-            # R1: a 'published' reconcile that captures NO valid URL (M2 safe_public_url rejected
-            # the malformed one) AND the post had no prior URL is the SAME ghost-row class as
-            # _publish_one's submitted-no-url case. Park in needs_reconcile so the next poll can
-            # back-fill a real https permalink — never promote to published with public_url=None
-            # (the Pydantic R1 invariant would refuse the save below; fail-closed BEFORE construction).
-            captured_url = safe_public_url(info.get("publicUrl")) or post.public_url
-            # The Zernio-reported tiktok username for THIS post (its real published-to username, e.g. wahed_bared)
-            # rides out of the status body via get_status; the TikTok REST-gate verifies the live oEmbed author
-            # against IT, not against post.account (the internal handle — the shipped false-reject bug).
-            reported_username = info.get("tiktokUsername")
-            # T8 CONDITIONAL capture fallback: Zernio's status endpoint often reports published-with-no-url
-            # ({'status':'published','publicUrl':None}). When a TikTok post has NO url yet, the Zernio
-            # /analytics?postId= body may still carry BOTH the permalink AND the reported username the status
-            # endpoint lacked — read them from ONE fetch and back-fill. Best-effort + FAIL-SOFT (None on any
-            # error) so it never crashes the pass; the REST-gate below still oEmbed-verifies against the username.
-            if not (captured_url or "").strip():
-                from fanops.models import Platform as _Plat
-                if post.platform is _Plat.tiktok:
-                    try:
-                        from fanops.post.metrics import zernio_analytics_url_and_username
-                        _u, _un = zernio_analytics_url_and_username(cfg, post.submission_id, post.account_id)
-                        captured_url = _u or captured_url
-                        reported_username = reported_username or _un
-                    except Exception as exc:
-                        log("reconcile", post.id, "tiktok_analytics_fallback_error", err=str(exc)[:120])
-            if not (captured_url or "").strip():
-                led.posts[post.id] = post.model_copy(update={
-                    "state": PostState.needs_reconcile,
-                    "error_reason": ("publish_missing_url_at_reconcile: backend reports published but no valid "
-                                     "https url captured (M2 safe_public_url rejected it); re-polling next pass"),
-                })
-                log("reconcile", post.id, "published_no_url_parked")
-                continue
-            # REST-gate: a post may only REST in published/analyzed if its LIVENESS is CONFIRMED; else it
-            # QUARANTINES to needs_reconcile (visible, labeled) rather than resting on an unconfirmed URL.
-            #   IG      -> MOL-117 CONDITIONAL, platform-confirmed gate (_ig_rest_verdict):
-            #                • account WITHOUT its own ig_user_id (uncredentialed) -> UNCHANGED Postiz-rest
-            #                  (status==published + a real releaseURL, set ONLY on a published Postiz row). A
-            #                  borrowed/global credential can't enumerate this object without false-negativing
-            #                  it (the #317 6-stuck-posts regression), so liveness stands on the releaseURL.
-            #                • account WITH its own ig_user_id (credentialed) -> FAIL-CLOSED identity gate:
-            #                  ask the Meta Graph (confirm_post_live over the captured releaseId, scoped to the
-            #                  handle's creds) and rest ONLY when it resolves AND its owner username == the
-            #                  intended handle. A DEFINITIVE non-confirmation/owner-mismatch -> park (never
-            #                  rest on Postiz's word). A TRANSPORT hiccup during confirm -> FAIL-OPEN, retry.
-            #   TikTok  -> a live-verified public_url (T8 oEmbed author==reported username) atop a real
-            #              submission_id — UNCHANGED (Zernio has no releaseURL-shaped liveness, so it keeps the
-            #              oEmbed identity gate). FAIL CLOSED. (Already routes verify_tiktok_permalink, the same
-            #              primitive MOL-113's confirm_post_live wraps — left as-is, not re-plumbed.)
-            # Non-IG/non-TikTok surfaces keep resting on the R1-validated URL (no identity notion).
             from fanops.models import Platform
-            _reason = None
-            # The IG object id captured THIS pass (Postiz row releaseId) — the credentialed-gate resolve INPUT
-            # AND the MOL-112 media_id stamp. Computed BEFORE the gate so the confirm can consume it.
-            _rid = info.get("releaseId")
-            _rid = _rid.strip() if isinstance(_rid, str) and _rid.strip() else None
-            if post.platform is Platform.tiktok:
-                # reported_username (resolved above from the status body, or the /analytics fallback body) is the
-                # authority the oEmbed author must match — NOT post.account (the internal handle, the shipped bug).
-                # Absent (fail-closed input) -> the gate rejects and the post stays parked.
-                if not _tiktok_url_confirmed(cfg, post, captured_url, new_sub, reported_username):
-                    _reason = _UNVERIFIED_TIKTOK           # no live-verified url / no reported username / no real id -> parked
-            elif post.platform is Platform.instagram:
-                _verdict = _ig_rest_verdict(cfg, post, _rid, _cred_ig, confirm, graph_get)
-                if _verdict == _GATE_PARK:
-                    _reason = _UNVERIFIED_IG               # credentialed account, DEFINITIVE identity failure -> park
-                elif _verdict == _GATE_FAILOPEN:
-                    log("reconcile", post.id, "ig_confirm_transport_failopen")  # network hiccup -> retry next tick
-                    continue                               # leave state untouched (still needs_reconcile), never stranded
-            if _reason is not None:
-                led.posts[post.id] = post.model_copy(update={
-                    "state": PostState.needs_reconcile, "error_reason": _reason})
-                log("reconcile", post.id, "unverified_identity_parked")
-                continue
+            liv = info.get("liveness")
+            if liv is not None:
+                # M04: apply reads cached liveness only — no network under the flock.
+                if liv.get("published_no_url"):
+                    led.posts[post.id] = post.model_copy(update={
+                        "state": PostState.needs_reconcile,
+                        "error_reason": ("publish_missing_url_at_reconcile: backend reports published but no valid "
+                                         "https url captured (M2 safe_public_url rejected it); re-polling next pass"),
+                    })
+                    log("reconcile", post.id, "published_no_url_parked")
+                    continue
+                captured_url = liv["captured_url"]
+                new_sub = liv.get("new_sub")
+                _rid = liv.get("release_id")
+                _reason = None
+                if post.platform is Platform.tiktok:
+                    if not liv.get("tiktok_ok"):
+                        _reason = _UNVERIFIED_TIKTOK
+                elif post.platform is Platform.instagram:
+                    _verdict = liv.get("ig_verdict")
+                    if _verdict == _GATE_PARK:
+                        _reason = _UNVERIFIED_IG
+                    elif _verdict == _GATE_FAILOPEN:
+                        log("reconcile", post.id, "ig_confirm_transport_failopen")
+                        continue
+                if _reason is not None:
+                    led.posts[post.id] = post.model_copy(update={
+                        "state": PostState.needs_reconcile, "error_reason": _reason})
+                    log("reconcile", post.id, "unverified_identity_parked")
+                    continue
+            else:
+                # Inline liveness (no poll cache — direct reconcile_posts callers / tests).
+                real = next((info[k] for k in ("postSubmissionId", "id", "submissionId")
+                             if is_real_submission_id(info.get(k))), None)
+                new_sub = real or (post.submission_id if is_real_submission_id(post.submission_id) else None)
+                captured_url = safe_public_url(info.get("publicUrl")) or post.public_url
+                reported_username = info.get("tiktokUsername")
+                if not (captured_url or "").strip():
+                    from fanops.models import Platform as _Plat
+                    if post.platform is _Plat.tiktok:
+                        try:
+                            from fanops.post.metrics import zernio_analytics_url_and_username
+                            _u, _un = zernio_analytics_url_and_username(cfg, post.submission_id, post.account_id)
+                            captured_url = _u or captured_url
+                            reported_username = reported_username or _un
+                        except Exception as exc:
+                            log("reconcile", post.id, "tiktok_analytics_fallback_error", err=str(exc)[:120])
+                if not (captured_url or "").strip():
+                    led.posts[post.id] = post.model_copy(update={
+                        "state": PostState.needs_reconcile,
+                        "error_reason": ("publish_missing_url_at_reconcile: backend reports published but no valid "
+                                         "https url captured (M2 safe_public_url rejected it); re-polling next pass"),
+                    })
+                    log("reconcile", post.id, "published_no_url_parked")
+                    continue
+                _reason = None
+                _rid = info.get("releaseId")
+                _rid = _rid.strip() if isinstance(_rid, str) and _rid.strip() else None
+                if post.platform is Platform.tiktok:
+                    if not _tiktok_url_confirmed(cfg, post, captured_url, new_sub, reported_username):
+                        _reason = _UNVERIFIED_TIKTOK
+                elif post.platform is Platform.instagram:
+                    _verdict = _ig_rest_verdict(cfg, post, _rid, _cred_ig, confirm, graph_get)
+                    if _verdict == _GATE_PARK:
+                        _reason = _UNVERIFIED_IG
+                    elif _verdict == _GATE_FAILOPEN:
+                        log("reconcile", post.id, "ig_confirm_transport_failopen")
+                        continue
+                if _reason is not None:
+                    led.posts[post.id] = post.model_copy(update={
+                        "state": PostState.needs_reconcile, "error_reason": _reason})
+                    log("reconcile", post.id, "unverified_identity_parked")
+                    continue
             upd = {"state": PostState.published,
                    "public_url": captured_url,
                    "error_reason": None}                  # a transient poll-error reason must not survive a successful publish

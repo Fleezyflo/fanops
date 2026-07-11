@@ -41,6 +41,31 @@ class IngestCounts:
     def __post_init__(self):
         if self.retired_dedup is None: self.retired_dedup = []
 
+@dataclass
+class StagedCandidate:
+    """Lock-free ingest staging: hash + copy + probe done; mint under the flock is cheap."""
+    inbox_path: Path
+    digest: str
+    sid: str
+    dest: Path
+    width: int
+    height: int
+    duration: float | None
+    degraded_reason: str | None
+    origin: str
+    origin_kind: Literal["native", "third_party"]
+    batch_id: str | None
+    bytes: int
+    dedup_only: bool = False   # True when bytes already known — archive inbox, no new Source row
+
+@dataclass
+class StagedInbox:
+    """Output of stage_inbox_candidates: candidates to mint + inbox files to archive after commit."""
+    inbox: Path
+    candidates: list[StagedCandidate]
+    archive_paths: list[Path]   # excluded/skipped/dedup/disposed — archived ONLY after txn commit
+    counts: IngestCounts
+
 def _archive_dir(inbox: Path) -> Path:
     return inbox / _ARCHIVE_NAME
 
@@ -156,49 +181,134 @@ def has_video_stream(path: Path) -> bool:
     # "video" codec_type appears among the comma/space-separated fields; empty stdout -> still False.
     return "video" in r.stdout.replace(",", " ").split()
 
-def _catalogue_file(led: Ledger, cfg: Config, f: Path, *, origin: str, now_iso: str,
-                    origin_kind: Literal["native", "third_party"] = "native",
-                    batch_id: str | None = None, counts: IngestCounts | None = None) -> bool:
-    """Catalogue ONE file as a Source (content-addressed, deduped, probed) — the single spine shared by
-    the native drop/url scan and the third-party intake; the caller sets origin_kind. Same bytes already
-    seen under a DIFFERENT origin_kind = a conflict: keep the first (origin_kind is WRITE-ONCE), surface
-    it via a visible log line, never silently flip native<->third_party. batch_id is likewise WRITE-ONCE
-    (the prior batch wins); a re-drop under a different batch is logged, never silently re-stamped.
-
-    Returns True if the file was DISPOSED (catalogued OR dedup-matched) and may be archived; False if a
-    fallible step (copy ENOSPC) left it un-catalogued, so the caller leaves it in the inbox for a retry."""
+def _stage_candidate(cfg: Config, f: Path, *, origin: str, origin_kind: Literal["native", "third_party"],
+                     batch_id: str | None) -> StagedCandidate | None:
+    """Lock-free half of catalogue: sha256 + atomic copy to sources/ + ffprobe. Returns None on copy failure."""
     digest = sha256_of(f)
-    if led.already_seen(sha256=digest):
-        prior = next((s for s in led.sources.values() if s.sha256 == digest), None)
-        if prior is not None and prior.state is SourceState.retired:   # re-upload matched a retired source — surface, never resurrect
+    sid = make_id("src", digest)
+    dest = cfg.sources / f"{sid}{f.suffix.lower()}"
+    if not dest.exists():
+        tmp = dest.with_name(dest.name + ".tmp")
+        try:
+            shutil.copy2(f, tmp); os.replace(tmp, dest)
+        except OSError as e:
+            if tmp.exists():
+                try: tmp.unlink()
+                except OSError as ue: get_logger(cfg)("ingest", f.name, "tmp_cleanup_failed", why=str(ue)[:120])
+            get_logger(cfg)("ingest", f.name, "copy_failed", why=str(e)[:120]); return None
+    w, h, dur = probe_dimensions(dest)
+    degraded = "probe_failed" if (w == 0 or h == 0) else None
+    return StagedCandidate(inbox_path=f, digest=digest, sid=sid, dest=dest, width=w, height=h,
+                           duration=dur or None, degraded_reason=degraded, origin=origin,
+                           origin_kind=origin_kind, batch_id=batch_id, bytes=f.stat().st_size)
+
+
+def _mint_candidate(led: Ledger, cfg: Config, c: StagedCandidate, *, now_iso: str,
+                    counts: IngestCounts | None = None) -> bool:
+    """In-lock half of catalogue: dedup check + Source row mint. Returns True if disposed (archive-safe)."""
+    if c.dedup_only or led.already_seen(sha256=c.digest):
+        prior = next((s for s in led.sources.values() if s.sha256 == c.digest), None)
+        if prior is not None and prior.state is SourceState.retired:
             get_logger(cfg)("ingest", prior.id, "retired_dedup")
             if counts is not None and prior.id not in counts.retired_dedup:
                 counts.retired_dedup.append(prior.id)
-        if prior is not None and prior.origin_kind != origin_kind:   # dedup-suppressed an upload — make it visible
-            get_logger(cfg)("ingest", prior.id, "origin_conflict", want=origin_kind, have=prior.origin_kind)
-        if prior is not None and batch_id and prior.batch_id != batch_id:   # re-drop under a different batch
-            get_logger(cfg)("ingest", prior.id, "batch_conflict", want=batch_id, have=prior.batch_id)
-        if prior is not None and prior.source_origin != origin:      # same bytes re-encountered from a DIFFERENT origin (drop vs url vs scan) — write-once keeps the first; surface the alternate so provenance isn't silently dropped
-            get_logger(cfg)("ingest", prior.id, "origin_path_conflict", want=origin, have=prior.source_origin)
-        return True                                                  # already known → safe to archive the inbox copy
-    sid = make_id("src", digest)                  # identity = content, not path
-    dest = cfg.sources / f"{sid}{f.suffix.lower()}"
-    if not dest.exists():
-        tmp = dest.with_name(dest.name + ".tmp")                    # sibling temp in the SAME dir (same-fs os.replace -> atomic, mirrors _archive_inbox_file)
-        try:
-            shutil.copy2(f, tmp); os.replace(tmp, dest)             # copy to temp then publish atomically: dest.exists() ⇒ COMPLETE, never a truncated partial (MOL-74)
-        except OSError as e:                                         # ENOSPC / perms / interrupted copy: a PER-FILE skip, NOT a pass rollback
-            if tmp.exists():
-                try: tmp.unlink()                                   # discard this pass's partial so it never accumulates in sources/
-                except OSError as ue: get_logger(cfg)("ingest", f.name, "tmp_cleanup_failed", why=str(ue)[:120])
-            get_logger(cfg)("ingest", f.name, "copy_failed", why=str(e)[:120]); return False
-    w, h, dur = probe_dimensions(dest)
-    degraded = "probe_failed" if (w == 0 or h == 0) else None        # ING-7: a 0×0 probe is degraded, re-probed next pass
-    led.add_source(Source(id=sid, state=SourceState.catalogued, source_path=str(dest),
-                          source_origin=origin, origin_kind=origin_kind, sha256=digest, width=w, height=h,
-                          duration=dur or None, created_at=now_iso, degraded_reason=degraded,  # ingest-day anchor (aware)
-                          batch_id=batch_id, meta={"bytes": f.stat().st_size}))   # AUDIT: no original_name (PII)
+        if prior is not None and prior.origin_kind != c.origin_kind:
+            get_logger(cfg)("ingest", prior.id, "origin_conflict", want=c.origin_kind, have=prior.origin_kind)
+        if prior is not None and c.batch_id and prior.batch_id != c.batch_id:
+            get_logger(cfg)("ingest", prior.id, "batch_conflict", want=c.batch_id, have=prior.batch_id)
+        if prior is not None and prior.source_origin != c.origin:
+            get_logger(cfg)("ingest", prior.id, "origin_path_conflict", want=c.origin, have=prior.source_origin)
+        return True
+    led.add_source(Source(id=c.sid, state=SourceState.catalogued, source_path=str(c.dest),
+                          source_origin=c.origin, origin_kind=c.origin_kind, sha256=c.digest,
+                          width=c.width, height=c.height, duration=c.duration, created_at=now_iso,
+                          degraded_reason=c.degraded_reason, batch_id=c.batch_id,
+                          meta={"bytes": c.bytes}))
     return True
+
+
+def _archive_staged(cfg: Config, staged: StagedInbox) -> None:
+    """ING-1 + M05: move disposed inbox files to .ingested/ ONLY after a successful txn commit."""
+    for f in staged.archive_paths:
+        _archive_inbox_file(staged.inbox, f, cfg)
+
+
+def stage_inbox_candidates(cfg: Config, *, origin: str = "drop",
+                           origin_kind: Literal["native", "third_party"] = "native",
+                           inbox: Path | None = None, batch_id: str | None = None,
+                           origin_paths: set[Path] | None = None) -> StagedInbox:
+    """Lock-free ingest staging: scan inbox, hash+copy+probe each candidate — NO ledger flock held."""
+    cfg.sources.mkdir(parents=True, exist_ok=True)
+    box = (inbox or cfg.inbox); box.mkdir(parents=True, exist_ok=True)
+    _sweep_partials(box, cfg)
+    counts = IngestCounts()
+    archive = _archive_dir(box).resolve()
+    candidates: list[StagedCandidate] = []
+    archive_paths: list[Path] = []
+    for f in sorted(box.rglob("*")):
+        if f.is_symlink() or not f.is_file() or f.name == ".gitkeep" or f.suffix.lower() not in MEDIA_EXT:
+            continue
+        if archive in f.resolve().parents:
+            continue
+        if is_excluded(f.name):
+            counts.excluded += 1; get_logger(cfg)("ingest", f.name, "pii_excluded")
+            archive_paths.append(f); continue
+        if not has_video_stream(f):
+            counts.skipped += 1; get_logger(cfg)("ingest", f.name, "skipped", why="no_video_stream")
+            archive_paths.append(f); continue
+        file_origin = origin if (origin_paths is None or f.resolve() in origin_paths) else "drop"
+        digest = sha256_of(f)
+        sid = make_id("src", digest)
+        snap = Ledger.load(cfg)
+        if snap.already_seen(sha256=digest):
+            candidates.append(StagedCandidate(inbox_path=f, digest=digest, sid=sid,
+                                              dest=cfg.sources / f"{sid}{f.suffix.lower()}",
+                                              width=0, height=0, duration=None, degraded_reason=None,
+                                              origin=file_origin, origin_kind=origin_kind,
+                                              batch_id=batch_id, bytes=f.stat().st_size, dedup_only=True))
+            archive_paths.append(f)
+            continue
+        c = _stage_candidate(cfg, f, origin=file_origin, origin_kind=origin_kind, batch_id=batch_id)
+        if c is None:
+            counts.skipped += 1; continue
+        candidates.append(c)
+        archive_paths.append(f)
+    return StagedInbox(inbox=box, candidates=candidates, archive_paths=archive_paths, counts=counts)
+
+
+def ingest_staged(led: Ledger, cfg: Config, staged: StagedInbox, *, batch_id: str | None = None) -> tuple[Ledger, IngestCounts]:
+    """In-lock half of ingest: mint pre-staged candidates (hash/copy/probe already done lock-free)."""
+    _reprobe_degraded(led, cfg)
+    now_iso = iso_z(datetime.now(timezone.utc))
+    counts = staged.counts
+    _auto_batch_id: str | None = None
+    for c in staged.candidates:
+        eff = c.batch_id or batch_id
+        if eff is None and not c.dedup_only:
+            if _auto_batch_id is None:
+                from fanops.batches import resolve_or_mint_drop_batch
+                _auto_batch_id = resolve_or_mint_drop_batch(led).id
+            eff = _auto_batch_id
+        mint_c = c if eff == c.batch_id else StagedCandidate(
+            inbox_path=c.inbox_path, digest=c.digest, sid=c.sid, dest=c.dest, width=c.width, height=c.height,
+            duration=c.duration, degraded_reason=c.degraded_reason, origin=c.origin, origin_kind=c.origin_kind,
+            batch_id=eff, bytes=c.bytes, dedup_only=c.dedup_only)
+        n_before = len(led.sources)
+        _mint_candidate(led, cfg, mint_c, now_iso=now_iso, counts=counts)
+        if mint_c.dedup_only or len(led.sources) <= n_before:
+            counts.deduped += 1
+        else:
+            counts.added += 1
+    return led, counts
+
+
+def _catalogue_file(led: Ledger, cfg: Config, f: Path, *, origin: str, now_iso: str,
+                    origin_kind: Literal["native", "third_party"] = "native",
+                    batch_id: str | None = None, counts: IngestCounts | None = None) -> bool:
+    """Legacy single-call catalogue (stage+mint). Prefer stage_inbox_candidates + ingest_staged for flock safety."""
+    c = _stage_candidate(cfg, f, origin=origin, origin_kind=origin_kind, batch_id=batch_id)
+    if c is None: return False
+    return _mint_candidate(led, cfg, c, now_iso=now_iso, counts=counts)
 
 def _inbox_media(inbox: Path) -> set[Path]:
     """Resolved paths of the media files currently in `inbox` — the snapshot domain for per-file origin
@@ -212,58 +322,17 @@ def _inbox_media(inbox: Path) -> set[Path]:
 def ingest_drops(led: Ledger, cfg: Config, *, origin: str = "drop",
                  origin_kind: Literal["native", "third_party"] = "native",
                  inbox: Path | None = None, batch_id: str | None = None,
-                 origin_paths: set[Path] | None = None) -> tuple[Ledger, IngestCounts]:
-    """Catalogue every NEW media drop in `inbox` (default cfg.inbox), then ARCHIVE each disposed file out of
-    the scan domain (ING-1 root): steady-state the inbox empties, so a later pass re-hashes nothing already
-    handled. Returns (led, IngestCounts) — the this-pass delta the caller reports (ING-2), never the cumulative
-    library size. Fail-soft per file; the OFF/legacy contract is preserved (no batch ⇒ batch_id=None, clean
-    probe ⇒ no degraded_reason)."""
-    cfg.sources.mkdir(parents=True, exist_ok=True)
-    box = (inbox or cfg.inbox); box.mkdir(parents=True, exist_ok=True)   # inbox= lets third-party scan its own staging dir
-    _sweep_partials(box, cfg)                                            # ING-10: clear leaked *.uploadpart/*.part first
-    _reprobe_degraded(led, cfg)                                          # ING-7: retry sources frozen at 0×0 on a bad probe
-    now_iso = iso_z(datetime.now(timezone.utc))                         # ING-11: ONE clock read per pass, threaded below
-    counts = IngestCounts()
-    # Root contract: every catalogued Source MUST carry a real batch_id, so every downstream Post does
-    # too (no more Studio Review "Ungrouped" group). Auto-resolve a day-stable drop-batch on the lazy
-    # path — minted on the FIRST file we actually catalogue this pass (mint-on-demand: an empty inbox
-    # leaves the ledger untouched). The caller-supplied batch_id (Studio "Add video" named batch) wins.
-    _auto_batch_id: str | None = None
-    archive = _archive_dir(box).resolve()                              # NEVER re-scan the archive (it lives under the inbox)
-    for f in sorted(box.rglob("*")):
-        # ECC fix #9: skip symlinks BEFORE any probe/copy. f.is_file() follows links, and the copy2
-        # below would dereference a symlink and ingest a file from OUTSIDE the inbox (a zip-extracted
-        # or hand-placed link escaping the data boundary). Content-addressing can't undo that.
-        if f.is_symlink() or not f.is_file() or f.name == ".gitkeep" or f.suffix.lower() not in MEDIA_EXT:
-            continue
-        if archive in f.resolve().parents:                            # skip already-archived drops (ING-1: bound the scan)
-            continue
-        if is_excluded(f.name):
-            counts.excluded += 1; get_logger(cfg)("ingest", f.name, "pii_excluded")   # ING-5: visible, not silent
-            _archive_inbox_file(box, f, cfg); continue                # archive so it doesn't re-trigger the cost
-        if not has_video_stream(f):
-            counts.skipped += 1; get_logger(cfg)("ingest", f.name, "skipped", why="no_video_stream")
-            _archive_inbox_file(box, f, cfg); continue                # audio-only: not a clip source (FIX); archive it too
-        # source_origin is correlated PER-FILE to the actual download (audit c0-f1): when origin_paths is
-        # given (a url pull names the files yt-dlp just produced), ONLY those carry the pull `origin`; any
-        # pre-existing inbox file (a manual drop awaiting `ingest`, or a prior pull's leftover) keeps the
-        # "drop" default instead of being pass-wide mislabeled as this pull's origin. origin_paths=None
-        # (a plain `ingest` / third-party scan) is byte-identical: every file gets the pass `origin`.
-        file_origin = origin if (origin_paths is None or f.resolve() in origin_paths) else "drop"
-        n_before = len(led.sources)
-        # Lazy resolve: only mint the drop-batch on the FIRST file we'll actually try to catalogue this
-        # pass (empty inbox => no batch litter; idempotent on the day, so a later pass reuses it).
-        if batch_id is None and _auto_batch_id is None:
-            from fanops.batches import resolve_or_mint_drop_batch
-            _auto_batch_id = resolve_or_mint_drop_batch(led).id
-        effective_batch_id = batch_id or _auto_batch_id
-        disposed = _catalogue_file(led, cfg, f, origin=file_origin, now_iso=now_iso,
-                                   origin_kind=origin_kind, batch_id=effective_batch_id, counts=counts)
-        if not disposed:                                              # copy failed → leave in inbox for a next-pass retry
-            counts.skipped += 1; continue
-        if len(led.sources) > n_before: counts.added += 1             # newly minted
-        else: counts.deduped += 1                                     # dedup-matched a known source
-        _archive_inbox_file(box, f, cfg)                              # ING-1: out of the scan domain
+                 origin_paths: set[Path] | None = None,
+                 staged: StagedInbox | None = None) -> tuple[Ledger, IngestCounts]:
+    """Mint staged inbox candidates. When `staged` is omitted (tests/convenience), stages lock-free,
+    mints, and archives in one call. Production hot paths pass pre-staged rows and archive after commit."""
+    owned = staged is None
+    if owned:
+        staged = stage_inbox_candidates(cfg, origin=origin, origin_kind=origin_kind, inbox=inbox,
+                                        batch_id=batch_id, origin_paths=origin_paths)
+    led, counts = ingest_staged(led, cfg, staged, batch_id=batch_id)
+    if owned:
+        _archive_staged(cfg, staged)
     return led, counts
 
 def download_url(cfg: Config, url: str) -> set[Path]:
