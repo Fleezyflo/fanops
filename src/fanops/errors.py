@@ -1,7 +1,10 @@
 # src/fanops/errors.py
 """Typed errors the CLI can catch to print one clean line instead of a traceback."""
 from __future__ import annotations
+import contextlib
+import logging
 
+_log = logging.getLogger(__name__)
 
 class ControlFileError(Exception):
     """A control file under 00_control/ (ledger.json, accounts.json) is unreadable —
@@ -117,3 +120,16 @@ def reason(exc: Exception) -> str:
         loc = ".".join(str(x) for x in head.get("loc", ())) or "?"
         return f"{len(errs)} validation error(s): {loc} — {head.get('msg', exc)}"
     return str(exc)
+
+
+@contextlib.contextmanager
+def fail_open(site: str, log=None):
+    """Degradable fail-open: log every failure, never swallow KeyboardInterrupt/SystemExit."""
+    if log is None:
+        log = _log.warning
+    try:
+        yield
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except Exception as exc:
+        log("%s fail-open: %s: %s", site, type(exc).__name__, str(exc)[:200], exc_info=True)

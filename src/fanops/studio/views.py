@@ -9,6 +9,7 @@ from typing import Optional
 
 from fanops.config import Config
 from fanops.accounts import Accounts
+from fanops.errors import fail_open
 from fanops.ledger import Ledger
 from fanops.models import ClipState, PostState, StitchState, SourceState
 from fanops.timeutil import parse_iso
@@ -544,12 +545,10 @@ def resolve_account_handle(raw: str, cfg: Config) -> str:
         bare = validate_account_handle(raw)
     except ValueError:
         bare = raw.lstrip("@").lower()
-    try:
+    with fail_open("studio.views.resolve_account_handle"):
         for a in Accounts.load(cfg).active():
             if a.handle == bare:
                 return a.handle
-    except Exception:
-        pass
     return raw  # unknown handle — preserve operator input for empty-state copy
 
 
