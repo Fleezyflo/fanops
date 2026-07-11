@@ -13,10 +13,10 @@ one with a generic set (the abort is loud + distinct from a genuinely persona-le
 discover REPORTS fresh per-persona discoveries and NEVER writes the caption menu (curation stays operator-
 gated in the Studio)."""
 from __future__ import annotations
-import json
 from fanops.config import Config
 from fanops.log import get_logger
 from fanops.hashtags import _norm, vetted_menu
+from fanops.controlio import write_json_atomic
 
 
 def _seed_tags(cfg: Config) -> list[str]:
@@ -55,7 +55,7 @@ def refresh_store(cfg: Config, *, get=None, now=None) -> dict:
     seed = vetted_menu()                                  # frozen reach-ranked cold-start floor (never empty)
     if not cfg.hashtag_trends:                            # operator escape hatch: Graph sampling OFF -> frozen floor only
         cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
-        cfg.hashtags_path.write_text(json.dumps({"tags": list(seed), "reach": {}}, indent=2))
+        write_json_atomic(cfg.hashtags_path, {"tags": list(seed), "reach": {}})
         return {"written": True, "measured": 0, "harvested": 0, "total": len(seed)}
     try:
         seeds = _seed_tags(cfg)                           # absent/empty -> [] (rebuild from floor); corrupt -> raises
@@ -75,7 +75,7 @@ def refresh_store(cfg: Config, *, get=None, now=None) -> dict:
         if t not in seen: seen.add(t); merged.append(t)
     cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
     reach = {t: round(measured[t]) for t in measured}     # the per-tag LIVE Graph reach, persisted for the Studio surface
-    cfg.hashtags_path.write_text(json.dumps({"tags": merged, "reach": reach}, indent=2))
+    write_json_atomic(cfg.hashtags_path, {"tags": merged, "reach": reach})
     return {"written": True, "measured": len(measured), "harvested": len(harvested), "total": len(merged)}
 
 
