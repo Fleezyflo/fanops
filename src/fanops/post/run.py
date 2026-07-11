@@ -224,7 +224,23 @@ def _ensure_media(led: Ledger, cfg: Config, post: Post, backend: str, *, account
         post.media_urls = new
 
 
-def _publish_one(cfg: Config, post_id: str, backend: str, *, account_id: str | None = None) -> str | None:
+def _missing_integration_id(backend: str, account_id: str | None, post: Post) -> bool:
+    """CULM-1: a live backend with no integration id would ship integration:{id:\"\"} — never POST."""
+    return backend != "dryrun" and not ((account_id or post.account_id or "").strip())
+
+
+def _unclaim_no_integration(cfg: Config, post_id: str, post: Post, *, unclaim: bool) -> None:
+    """Log no_integration_id and optionally un-claim submitting->queued (inner path after claim)."""
+    if unclaim:
+        with Ledger.transaction(cfg) as led2:
+            p2 = led2.posts.get(post_id)
+            if p2 is not None and p2.state is PostState.submitting:
+                p2.state = PostState.queued
+    get_logger(cfg)("publish", post_id, "no_integration_id", account=post.account, platform=post.platform.value)
+
+
+def _publish_one(cfg: Config, post_id: str, backend: str, *, account_id: str | None = None,
+                 _tally: dict | None = None) -> str | None:
     """Publish ONE post via claim -> network -> finalize, with the network OUTSIDE the ledger flock.
 
     CLAIM (tight txn): re-read under lock; publish ONLY if still 'queued' (the double-post guard — a
@@ -237,6 +253,13 @@ def _publish_one(cfg: Config, post_id: str, backend: str, *, account_id: str | N
     FINALIZE (tight txn): merge ONLY the network-determined post fields + the clip media cache into a
       FRESHLY loaded ledger — never persist the stale full snapshot (B4 lost-update). Returns the
       final post-state value (or None if not claimable)."""
+    # Pre-claim guard (CULM-1): same gate as publish_due — never claim a post we can't address.
+    pre = Ledger.load(cfg).posts.get(post_id)
+    if pre is not None and pre.state is PostState.queued and _missing_integration_id(backend, account_id, pre):
+        _unclaim_no_integration(cfg, post_id, pre, unclaim=False)
+        if _tally is not None:
+            _tally["no_integration_id"] = _tally.get("no_integration_id", 0) + 1
+        return None
     # ---- CLAIM ----
     with Ledger.transaction(cfg) as led:
         post = led.posts.get(post_id)
@@ -253,15 +276,11 @@ def _publish_one(cfg: Config, post_id: str, backend: str, *, account_id: str | N
     if account_id and account_id != post.account_id:   # #1: a Go-Live integration REMAP since crosspost
         get_logger(cfg)("publish", post_id, "account_id_refreshed", was=post.account_id, new=account_id)
         post.account_id = account_id                    # send the CURRENT integration id, not the frozen one
-    if backend != "dryrun" and not (post.account_id or "").strip():
-        # CULM-1: a live POST with an empty integration id ships integration:{id:""} (postiz.py) — a silent
-        # dead post. Never construct it. Un-claim to queued (it never went to the network) + breadcrumb; a
-        # later Go-Live map fixes the channel. Not needs_reconcile (nothing was sent), not failed (recoverable).
-        with Ledger.transaction(cfg) as led2:
-            p2 = led2.posts.get(post_id)
-            if p2 is not None and p2.state is PostState.submitting:
-                p2.state = PostState.queued
-        get_logger(cfg)("publish", post_id, "no_integration_id", account=post.account, platform=post.platform.value)
+    if _missing_integration_id(backend, None, post):
+        # CULM-1: defensive post-claim — id cleared under us or publish_post skipped the pre-claim tally.
+        _unclaim_no_integration(cfg, post_id, post, unclaim=True)
+        if _tally is not None:
+            _tally["no_integration_id"] = _tally.get("no_integration_id", 0) + 1
         return None
     if is_real_submission_id(post.submission_id):   # MOL-115 idempotency: never double-POST
         get_logger(cfg)("publish", post_id, "skip_resubmit_existing_id", sub=post.submission_id)
@@ -446,12 +465,10 @@ def publish_due(cfg: Config, *, now: str | None = None, account: str | None = No
                 account=post.account, platform=post.platform.value)   # staying `queued` — never claimed, never a
             continue                                   # phantom-published row. A live-flip re-derives this each pass.
         acct_id = _resolve_publish_account_id(accounts, post, cfg=cfg)   # #10: cfg breadcrumbs a frozen-id fallback
-        if provider != "dryrun" and not ((acct_id or post.account_id or "").strip()):
-            no_integration_id += 1                     # CULM-1: never claim a post we can't address; stays queued
-            log("publish", post.id, "no_integration_id", account=post.account, platform=post.platform.value)
-            continue
-        if _publish_one(cfg, post.id, provider, account_id=acct_id) == PostState.published.value:
+        tally: dict = {}
+        if _publish_one(cfg, post.id, provider, account_id=acct_id, _tally=tally) == PostState.published.value:
             published += 1
+        no_integration_id += tally.get("no_integration_id", 0)
     return {"due": len(due), "published": published, "no_provider": no_provider,
             "no_integration_id": no_integration_id, "not_distributed": not_distributed}
 

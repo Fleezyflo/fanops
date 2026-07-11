@@ -113,6 +113,27 @@ def test_publish_one_empty_integration_unclaims_submitting(tmp_path, monkeypatch
     assert Ledger.load(cfg).posts["p1"].state is PostState.queued
     assert "no_integration_id" in cfg.log_path.read_text()
 
+def test_publish_one_empty_integration_counted_in_publish_due_summary(tmp_path, monkeypatch):
+    # MOL-439: inner _publish_one un-claim is COUNTED in publish_due's returned summary (not just logged).
+    import fanops.post.run as run
+    real_missing = run._missing_integration_id
+    calls = {"n": 0}
+    def _defer_pre_claim(backend, account_id, post):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return False                                     # pre-claim: let claim proceed (inner path under test)
+        return real_missing(backend, account_id, post)
+    monkeypatch.setattr(run, "_missing_integration_id", _defer_pre_claim)
+    monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_API_KEY", "k"); monkeypatch.setenv("POSTIZ_URL", "https://x")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _queued(led, cfg, pid="p1", cid="c1", when="2000-01-01T00:00:00Z")
+    with Ledger.transaction(cfg) as lg: lg.posts["p1"].account_id = ""
+    monkeypatch.setattr(run, "get_poster",
+                        lambda cfg, backend=None: (_ for _ in ()).throw(AssertionError("must not POST")))
+    out = publish_due(cfg, now="2000-01-02T00:00:00Z")
+    assert out["no_integration_id"] == 1 and out["published"] == 0
+    assert Ledger.load(cfg).posts["p1"].state is PostState.queued
+
 def test_timeless_queued_post_does_not_auto_publish(tmp_path, monkeypatch):
     # CULM-4: a queued post with NO scheduled_time must NOT auto-publish via publish_due (defense-in-depth
     # on no-auto-publish). It parks (stays queued); publish_post (manual) is unaffected.
