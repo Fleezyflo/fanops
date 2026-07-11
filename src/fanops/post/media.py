@@ -20,9 +20,16 @@ def _media_cache_hit(url: str, backend: str) -> bool:
     if url.startswith("file://"):
         return False
     if backend == "zernio":
-        return url.startswith("http") and "|" not in url
+        if "|" in url:
+            return False
+        low = url.lower()
+        if not low.startswith("https://"):
+            return False
+        if "localhost" in low or "127.0.0.1" in low:
+            return False
+        return True
     if backend == "postiz":
-        return "|" in url or url.startswith("http")
+        return "|" in url
     return url.startswith("http")
 
 def _uploader_kwargs(backend: str, account_id: str | None) -> dict:

@@ -14,7 +14,7 @@ from fanops.config import Config
 from fanops.accounts import Accounts
 from fanops.ledger import Ledger
 from fanops.models import LIFT_SCORE, PostState, RenderState
-from fanops.timeutil import parse_iso
+from fanops.timeutil import parse_iso, is_scheduled_due, schedule_utc
 from fanops.variant_learning import _hook_for_post
 from fanops.studio.views_common import RECENT_WINDOW_HOURS, _batch_title, _imminent, suggest_time, clip_source_of
 
@@ -51,6 +51,7 @@ class ScheduleRow:
     ready: Optional[bool] = None           # True = the shippable artifact exists + coheres; False = a reason below
     ready_reason: Optional[str] = None     # WHY (e.g. "ready — its own cut" | "hook drift …" | "render not finished")
     why_suggested: Optional[str] = None    # one plain sentence explaining the suggested time (account/platform/lead)
+    bad_schedule: bool = False            # read-only: scheduled_time present but unparseable (M07 chip)
 
 
 @dataclass
@@ -191,7 +192,8 @@ def schedule_rows(led: Ledger, cfg: Config, *, now: datetime,
             backend=backend, error_reason=(p.error_reason or "")[:120] or None,
             suggested_time=suggest_time(cfg, p, now=now) if editable else None,
             batch_id=p.batch_id, batch_title=_batch_title(led, p.batch_id),
-            caption=p.caption, variant_hook=_hook_for_post(led, p) or None)
+            caption=p.caption, variant_hook=_hook_for_post(led, p) or None,
+            bad_schedule=bool((p.scheduled_time or "").strip()) and schedule_utc(p.scheduled_time) is None)
         if editable:
             row.ready, row.ready_reason = publish_readiness(led, p, cfg)
             row.why_suggested = explain_suggested_time(cfg, row)
@@ -226,12 +228,9 @@ def _schedule_lane(p, now: datetime) -> str:
     if p.state in (PostState.published, PostState.analyzed):
         return "recent"
     if p.state is PostState.queued:
-        if not p.scheduled_time:
+        if is_scheduled_due(p, now):
             return "due"
-        try:
-            return "due" if parse_iso(p.scheduled_time) <= now else "upcoming"
-        except (ValueError, TypeError):
-            return "due"
+        return "upcoming"
     return "upcoming"
 
 
@@ -247,7 +246,7 @@ def due_publish_plan(cfg: Config, *, handle: Optional[str] = None, batch: Option
                      now: Optional[datetime] = None) -> DuePublishPlan:
     """How many queued posts are due NOW in scope, and a Postiz throttle ETA (Sprint 6 guard)."""
     import math
-    from fanops.post.run import _due_or_fail, _post_provider
+    from fanops.post.run import _post_provider
     now = now or datetime.now(timezone.utc)
     led = Ledger.load(cfg)
     accounts = Accounts.load(cfg)
@@ -259,7 +258,7 @@ def due_publish_plan(cfg: Config, *, handle: Optional[str] = None, batch: Option
             continue
         if batch and p.batch_id != batch:
             continue
-        if not _due_or_fail(cfg, p, now):
+        if not is_scheduled_due(p, now):
             continue
         due += 1
         if _post_provider(cfg, accounts, p) == "postiz":

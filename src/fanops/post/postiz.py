@@ -123,13 +123,16 @@ def _r2_configured(cfg: Config) -> bool:
                 and cfg.r2_secret_access_key and cfg.r2_account_id)
 
 
-def _r2_put_object(cfg: Config, *, key: str, body: bytes, content_type: str) -> None:
-    """S3-compatible PUT to Cloudflare R2 (no boto3 — requests + SigV4 only)."""
+def _r2_put_object(cfg: Config, *, key: str, body, content_type: str, payload_hash: str | None = None) -> None:
+    """S3-compatible PUT to Cloudflare R2 (no boto3 — requests + SigV4 only). body may be bytes or a readable."""
     host = f"{cfg.r2_account_id}.r2.cloudflarestorage.com"
     region, service = "auto", "s3"
     t = datetime.now(timezone.utc)
     amz_date, date_stamp = t.strftime("%Y%m%dT%H%M%SZ"), t.strftime("%Y%m%d")
-    payload_hash = hashlib.sha256(body).hexdigest()
+    if payload_hash is None:
+        payload_hash = hashlib.sha256(body if isinstance(body, (bytes, bytearray)) else body.read()).hexdigest()
+        if hasattr(body, "seek"):
+            body.seek(0)
     enc_key = quote(key, safe="/")
     canonical_uri = f"/{cfg.r2_bucket}/{enc_key}"
     canonical_headers = (f"content-type:{content_type}\nhost:{host}\n"
@@ -157,11 +160,18 @@ def _mirror_media_to_r2(cfg: Config, path: Path) -> str:
     """Upload local media to R2 and return its public HTTPS URL under FANOPS_MEDIA_PUBLIC_BASE."""
     if not _r2_configured(cfg):
         raise RuntimeError("R2 mirroring not configured — set FANOPS_MEDIA_PUBLIC_BASE and R2_*")
-    body = path.read_bytes()
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        while True:
+            chunk = fh.read(65536)
+            if not chunk: break
+            h.update(chunk)
+    digest = h.hexdigest()
     suffix = path.suffix if path.suffix else ".mp4"
-    key = f"fanops/{hashlib.sha256(body).hexdigest()[:32]}{suffix}"
+    key = f"fanops/{digest[:32]}{suffix}"
     ctype = "video/mp4" if suffix.lower() == ".mp4" else "application/octet-stream"
-    _r2_put_object(cfg, key=key, body=body, content_type=ctype)
+    with open(path, "rb") as fh:
+        _r2_put_object(cfg, key=key, body=fh, content_type=ctype, payload_hash=digest)
     return f"{cfg.media_public_base}/{key}"
 
 
@@ -381,7 +391,7 @@ class PostizPoster:
             try:
                 resp = requests.post(f"{self.base}{_PUBLIC}/posts", headers=self.headers, json=payload, timeout=30)
             except requests.exceptions.RequestException as exc:
-                if isinstance(exc, (requests.exceptions.ConnectionError, requests.exceptions.ConnectTimeout)) and attempt < _MAX_RETRIES - 1:
+                if isinstance(exc, requests.exceptions.ConnectTimeout) and attempt < _MAX_RETRIES - 1:
                     time.sleep(delay + random.uniform(0, delay)); delay *= 2; continue
                 # Body may have landed on Postiz (the response, not the request, was lost) — ambiguous,
                 # park for reconcile, never re-POST into a possible second live post.

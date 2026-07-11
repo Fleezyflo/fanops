@@ -83,8 +83,8 @@ def test_idempotency_skips_resubmit_when_submission_id_exists(tmp_path, monkeypa
 
 
 def test_zernio_connection_error_retries_before_needs_reconcile(tmp_path, monkeypatch, mocker):
-    # Poster-level: ConnectionError on POST /posts retries, then parks needs_reconcile (not failed).
-    from fanops.post.zernio import ZernioPoster, _PUBLISH_TRANSIENT_MAX
+    # Poster-level: ConnectionError on POST /posts does NOT retry (H01) — parks needs_reconcile in one attempt.
+    from fanops.post.zernio import ZernioPoster
     monkeypatch.setenv("FANOPS_POSTER", "zernio"); monkeypatch.setenv("ZERNIO_API_KEY", "sk_test")
     cfg = Config(root=tmp_path)
     _queued(cfg)
@@ -100,7 +100,7 @@ def test_zernio_connection_error_retries_before_needs_reconcile(tmp_path, monkey
     mocker.patch("fanops.post.zernio.time.sleep", return_value=None)
     ZernioPoster(cfg).publish(led, "p1")
     assert led.posts["p1"].state is PostState.needs_reconcile
-    assert calls["n"] == _PUBLISH_TRANSIENT_MAX
+    assert calls["n"] == 1
 
 
 def test_zernio_401_fails_not_retried(tmp_path, monkeypatch, mocker):

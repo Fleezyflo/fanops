@@ -19,7 +19,7 @@ from fanops.ledger import Ledger
 from fanops.models import Post, PostState, is_real_submission_id
 from fanops.post import get_poster, get_media_uploader
 from fanops.post.media import ensure_clip_media, _uploader_kwargs
-from fanops.timeutil import parse_iso as _parse, iso_z, publish_buckets as _publish_buckets
+from fanops.timeutil import parse_iso as _parse, iso_z, publish_buckets as _publish_buckets, is_scheduled_due, schedule_utc
 from fanops.log import get_logger
 
 def _now(now: str | None) -> datetime:
@@ -240,7 +240,7 @@ def _unclaim_no_integration(cfg: Config, post_id: str, post: Post, *, unclaim: b
 
 
 def _publish_one(cfg: Config, post_id: str, backend: str, *, account_id: str | None = None,
-                 _tally: dict | None = None) -> str | None:
+                 _tally: dict | None = None, due_cutoff: datetime | None = None) -> str | None:
     """Publish ONE post via claim -> network -> finalize, with the network OUTSIDE the ledger flock.
 
     CLAIM (tight txn): re-read under lock; publish ONLY if still 'queued' (the double-post guard — a
@@ -265,6 +265,8 @@ def _publish_one(cfg: Config, post_id: str, backend: str, *, account_id: str | N
         post = led.posts.get(post_id)
         if post is None or post.state is not PostState.queued:
             return None                                # lost the race / not eligible — no-op (F11)
+        if due_cutoff is not None and not is_scheduled_due(post, due_cutoff):   # M08: re-check dueness under lock
+            return None
         if is_real_submission_id(post.submission_id):  # XC-7: re-publishing a post that already has a real id MAY
             get_logger(cfg)("publish", post_id, "republish_with_real_id", sub=post.submission_id)   # double-post (repost-freely OK, log it)
         post.state = PostState.submitting              # crash-safe intent, persisted on txn exit (F11/B4)
@@ -372,23 +374,22 @@ def _publish_one(cfg: Config, post_id: str, backend: str, *, account_id: str | N
 
 
 def _due_or_fail(cfg: Config, post: Post, cutoff: datetime) -> bool:
-    """Schedule gate (FIX F12): True if the post is due now. A malformed/naive scheduled_time (hand-edit,
-    corruption) is a per-post FAILURE — marked failed in a short txn (FIX F54), returns False."""
+    """Schedule gate (FIX F12): True if the post is due now. Unparseable scheduled_time is a per-post FAILURE
+    (mark failed in a short txn, FIX F54). Naive parseable times are canonical UTC (M07)."""
     if not post.scheduled_time:
         # CULM-4: a queued post with NO scheduled_time is NOT due — it parks (breadcrumb, stays queued), so a
         # timeless queued post can no longer auto-publish (no-auto-publish defense-in-depth; clear_time
         # un-approves first, but enforce it in code not by convention). publish_post (manual) is unaffected.
         get_logger(cfg)("publish", post.id, "timeless_queued_parked", account=post.account, platform=post.platform.value)
         return False
-    try:
-        return _parse(post.scheduled_time) <= cutoff
-    except (ValueError, TypeError) as exc:
+    if schedule_utc(post.scheduled_time) is None:
         with Ledger.transaction(cfg) as led:
             p = led.posts.get(post.id)
             if p is not None and p.state is PostState.queued:
                 p.state = PostState.failed
-                p.error_reason = f"bad schedule time {post.scheduled_time!r}: {str(exc)[:120]}"
+                p.error_reason = f"bad schedule time {post.scheduled_time!r}: unparseable"
         return False
+    return is_scheduled_due(post, cutoff)
 
 
 def _requeue_transient_failed_for_daemon(cfg: Config) -> int:
@@ -466,7 +467,7 @@ def publish_due(cfg: Config, *, now: str | None = None, account: str | None = No
             continue                                   # phantom-published row. A live-flip re-derives this each pass.
         acct_id = _resolve_publish_account_id(accounts, post, cfg=cfg)   # #10: cfg breadcrumbs a frozen-id fallback
         tally: dict = {}
-        if _publish_one(cfg, post.id, provider, account_id=acct_id, _tally=tally) == PostState.published.value:
+        if _publish_one(cfg, post.id, provider, account_id=acct_id, _tally=tally, due_cutoff=cutoff) == PostState.published.value:
             published += 1
         no_integration_id += tally.get("no_integration_id", 0)
     return {"due": len(due), "published": published, "no_provider": no_provider,

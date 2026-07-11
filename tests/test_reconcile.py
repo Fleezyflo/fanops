@@ -509,7 +509,7 @@ def test_heal_stranded_submitting_no_sid_back_to_queued(tmp_path):
                       caption="x", state=PostState.submitting, scheduled_time=old, submission_id=None))
     led.save()
     assert heal_stranded_submitting(cfg) == 1
-    assert Ledger.load(cfg).posts["stuck"].state is PostState.queued
+    assert Ledger.load(cfg).posts["stuck"].state is PostState.needs_reconcile
 
 
 def test_heal_submitting_with_real_sid_unchanged(tmp_path):
