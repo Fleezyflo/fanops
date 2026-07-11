@@ -21,6 +21,7 @@ concurrency:
 
 permissions:
   contents: read
+  actions: read   # MOL-452: download partial timing artifacts on main
 
 jobs:
   unit:
@@ -50,9 +51,26 @@ jobs:
       - name: Lint (ruff — pyflakes F + pycodestyle E, the house ruleset in pyproject)
         run: ruff check .          # was configured in pyproject but never enforced in CI (Phase 4b)
       - name: Unit tests
+        id: unit-tests
         env:
           FANOPS_REQUIRE_STUDIO: "1"   # #13: flask is installed above, so this stays green — but it now FAILS if a future extras regression drops flask (no silent studio-test skip)
-        run: python -m pytest -q -n auto -m "not integration and not slow"   # MOL-199: coverage was report-only theater (no --cov-fail-under, no upload) — dropped to save CI time
+        run: |
+          set -o pipefail
+          python -m pytest -q -n auto -m "not integration and not slow" \
+            --durations=25 --durations-min=1.0 2>&1 | tee pytest-unit.log   # MOL-452: advisory slow-test report
+      - name: CI duration report (unit)
+        if: always() && steps.unit-tests.outcome != 'cancelled'
+        continue-on-error: true
+        run: |
+          python scripts/ci_timing_report.py --step unit --log pytest-unit.log \
+            --sha "${{ github.sha }}" --xdist --json-out ci-timing.partial.json
+      - name: Upload ci-timing partial (main only)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ci-timing-part-unit
+          path: ci-timing.partial.json
+          if-no-files-found: ignore
       - name: pip-audit (advisory — MOL-194 Phase A; not a merge gate until baseline triaged)
         continue-on-error: true
         run: |
@@ -108,12 +126,61 @@ jobs:
         run: |
           for b in ffmpeg ffprobe whisper espeak; do command -v "$b" || { echo "MISSING: $b"; exit 1; }; done
       - name: Integration suite — E2E MUST run (FANOPS_REQUIRE_E2E=1 fails on skip)
+        id: e2e-integration
         env:
           FANOPS_REQUIRE_E2E: "1"
           FANOPS_REQUIRE_STUDIO: "1"
           FANOPS_WHISPER_MODEL: "tiny"
-        run: python -m pytest -q -m "integration and not ci_hook_regression and not asr" -rs   # MOL-197: [asr] is nightly-only (torch too heavy for PR path)
+        run: |
+          set -o pipefail
+          python -m pytest -q -m "integration and not ci_hook_regression and not asr" -rs \
+            --durations=25 --durations-min=1.0 2>&1 | tee pytest-e2e-integration.log   # MOL-452
+      - name: CI duration report (e2e integration)
+        if: always() && steps.e2e-integration.outcome != 'cancelled'
+        continue-on-error: true
+        run: |
+          python scripts/ci_timing_report.py --step e2e_integration --log pytest-e2e-integration.log \
+            --sha "${{ github.sha }}" --json-out ci-timing.partial.json
       - name: Slow cross-face proofs (hermetic — no real toolchain required)
+        id: e2e-slow
         env:
           FANOPS_REQUIRE_STUDIO: "1"
-        run: python -m pytest -q -m slow
+        run: |
+          set -o pipefail
+          python -m pytest -q -m slow --durations=25 --durations-min=1.0 2>&1 | tee pytest-e2e-slow.log   # MOL-452
+      - name: CI duration report (e2e slow)
+        if: always() && steps.e2e-slow.outcome != 'cancelled'
+        continue-on-error: true
+        run: |
+          python scripts/ci_timing_report.py --step e2e_slow --log pytest-e2e-slow.log \
+            --sha "${{ github.sha }}" --json-out ci-timing.partial.json --merge-in
+      - name: Upload ci-timing partial (main only)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ci-timing-part-e2e
+          path: ci-timing.partial.json
+          if-no-files-found: ignore
+
+  ci-timing:
+    name: ci-timing artifact (main only)
+    if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.unit.result != 'cancelled' && needs.e2e.result != 'cancelled'
+    needs: [unit, e2e]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          pattern: ci-timing-part-*
+          path: timing-parts
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+      - name: Merge ci-timing.json
+        run: |
+          python scripts/ci_timing_report.py --merge timing-parts \
+            --sha "${{ github.sha }}" --json-out ci-timing.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ci-timing
+          path: ci-timing.json
