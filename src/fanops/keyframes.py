@@ -35,7 +35,7 @@ def extract_keyframes(video_path: str, start: float, end: float, *, count: int =
     written: list[str] = []
     try:
         for i, t in enumerate(times):
-            dst = out / f"kf_{int(round(start * 100))}_{i}.jpg"
+            dst = out / f"kf_{int(round(start * 100))}_{int(round(end * 100))}_{i}.jpg"
             r = subprocess.run(["ffmpeg", "-y", "-ss", f"{t:.3f}", "-i", video_path, "-frames:v", "1",
                                 "-vf", f"scale={width}:-1", str(dst)],
                                check=False, capture_output=True, text=True, timeout=timeout)
@@ -67,10 +67,14 @@ def _cache_dir_for(cfg: Config, *, source_id: str, window_hash: str) -> Path:
 def _existing_cached_frames(cache_dir: Path) -> list[str]:
     """Return SORTED jpg paths already on disk in `cache_dir` (the cache-hit short-circuit). An
     empty list means there's no cached extract yet (or a partial one that was wiped); the caller
-    runs ffmpeg."""
+    runs ffmpeg. M10: a `.complete` marker AND a non-empty grid glob are BOTH required — a partial
+    extract (ffmpeg died mid-run) must never cache-hit."""
     if not cache_dir.exists():
         return []
-    return [str(p) for p in sorted(cache_dir.glob("grid_*.jpg"))]
+    if not (cache_dir / ".complete").exists():
+        return []
+    frames = [str(p) for p in sorted(cache_dir.glob("grid_*.jpg"))]
+    return frames if frames else []
 
 
 def extract_frames_grid(video_path: str, start: float, end: float, *, fps: float,
@@ -133,6 +137,15 @@ def extract_frames_grid(video_path: str, start: float, end: float, *, fps: float
                              timeout=timeout)
 
 
+def _wipe_partial_grid(out_dir: Path, stamp: int) -> None:
+    """Best-effort unlink of grid_{stamp}_*.jpg from a failed extract attempt (M10)."""
+    for fp in out_dir.glob(f"grid_{stamp}_*.jpg"):
+        try:
+            fp.unlink()
+        except OSError:
+            pass
+
+
 def _run_grid_extract(video_path: str, start: float, end: float, *, fps: float, out_dir: Path,
                       width: int, timeout: float) -> list[str]:
     """Run the one bounded ffmpeg grid pass + return the sorted jpgs. Shared between the cached
@@ -145,7 +158,15 @@ def _run_grid_extract(video_path: str, start: float, end: float, *, fps: float, 
                             "-t", f"{end - start:.3f}", "-vf", f"fps={fps},scale={width}:-2", str(pattern)],
                            check=False, capture_output=True, text=True, timeout=timeout)
     except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+        _wipe_partial_grid(out_dir, stamp)
         return []                                        # ffmpeg unusable -> degrade
     if r.returncode != 0:
+        _wipe_partial_grid(out_dir, stamp)
         return []                                        # encode failed -> degrade (no partial grid)
-    return [str(p) for p in sorted(out_dir.glob(f"grid_{stamp}_*.jpg"))]
+    written = [str(p) for p in sorted(out_dir.glob(f"grid_{stamp}_*.jpg"))]
+    if written:
+        try:
+            (out_dir / ".complete").write_text("1")
+        except OSError:
+            pass
+    return written

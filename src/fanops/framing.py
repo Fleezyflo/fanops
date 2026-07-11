@@ -8,7 +8,7 @@ like fanops.compose / vocals: absent cv2, no detection, a timeout, or any error 
 crops centered (today's behavior). Detection is DETERMINISTIC per (source, window) so the result is cached
 to a per-source sidecar, mirroring signals.detect_signals — the in-lock commit re-probes nothing."""
 from __future__ import annotations
-import contextlib, json, os
+import json, os
 from pathlib import Path
 from statistics import median
 
@@ -155,12 +155,6 @@ def detect_window(cfg, src, *, start: float, end: float) -> dict | None:
                          "frames": [[list(t) for t in _detect_faces(cv2, det, fp)] for fp in frames]}
         except Exception:
             stats = None                                      # fail-open by contract
-        finally:
-            for fp in frames:
-                with contextlib.suppress(OSError):
-                    os.unlink(fp)
-            with contextlib.suppress(OSError):
-                os.rmdir(tmp)
         if stats is None:
             return None
         cache[key] = stats
@@ -419,6 +413,8 @@ def speaker_track(cfg, src, *, start: float, end: float, src_w: int, src_h: int)
             result = _compute_track(cv2, det, cfg, src, start, end)
     except Exception:
         result = None                                         # fail-open by contract -> static focus
+    if result is None:
+        return None                                           # M12: transient None is not cached (detect_window parity)
     cache[key] = result
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -440,14 +436,7 @@ def _compute_track(cv2, det, cfg, src, start: float, end: float):
     frames = keyframes.extract_frames_grid(getattr(src, "source_path", ""), start, end,
                                            fps=_ASD_FPS, out_dir=tmp, width=_KF_WIDTH,
                                            source_id=source_id, cfg=cfg)
-    try:
-        track = _assemble_track(_track_observe(cv2, det, frames), _ASD_FPS)
-    finally:
-        for f in frames:
-            with contextlib.suppress(OSError):
-                os.unlink(f)
-        with contextlib.suppress(OSError):
-            os.rmdir(tmp)
+    track = _assemble_track(_track_observe(cv2, det, frames), _ASD_FPS)
     if not track:
         return None
     dur = end - start
@@ -538,16 +527,12 @@ def motion_saliency(cfg, src, *, start: float, end: float):
         result = _saliency_centroid(cv2, frames) if frames else None
     except Exception:
         result = None
-    finally:
-        for f in frames:
-            with contextlib.suppress(OSError):
-                os.unlink(f)
-        with contextlib.suppress(OSError):
-            os.rmdir(tmp)
-    cache[key] = list(result) if result else None
+    if result is None:
+        return None                                           # M12: transient None is not cached (detect_window parity)
+    cache[key] = list(result)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps({"v": _SIDECAR_V, "windows": cache}))
     except OSError:
         return result                                         # cache write failure just re-probes next time
-    return result
+    return tuple(result)
