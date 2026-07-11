@@ -43,8 +43,9 @@
   `ingest.py` uses `shutil.copy2` while `render_account_cut` does temp+`os.replace` (MOL-74/78). (Studio-side
   sibling gaps — `edit_caption` vs `regenerate_caption` — are in `studio/CLAUDE.md`.)
 - **Fail-open with a logged breadcrumb is the house norm** — a subprocess/parse failure degrades to a safe
-  default AND logs first. When adding one, log first. The read-helper layer has unlogged swallows that break this
-  discipline (MOL-67); don't add more. The genuinely-swallowed sites are inventoried in `anomalies.md`.
+  default AND logs first. When adding one, log first. New degradable fail-open code uses `errors.fail_open`; silent
+  `except Exception` handlers fail CI via `tests/test_swallow_ratchet.py`. MOL-67 site tests remain behavioral
+  guards for already-fixed read helpers. The genuinely-swallowed sites are inventoried in `anomalies.md`.
 
 ## Where to look (open only what the task needs)
 

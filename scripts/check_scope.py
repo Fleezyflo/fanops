@@ -17,7 +17,7 @@ _OVERRIDES: dict[str, tuple[str, ...]] = {
     "src/fanops/config_introspect.py": ("tests/test_config_verb.py",),
     "src/fanops/cli.py": ("tests/test_cli_wipe.py",),
     "src/fanops/cutover_postiz.py": ("tests/test_cutover.py",),
-    "src/fanops/errors.py": ("tests/test_cli.py",),
+    "src/fanops/errors.py": ("tests/test_cli.py", "tests/test_swallow_ratchet.py"),
     "src/fanops/framing.py": ("tests/test_smart_framing.py",),
     "src/fanops/gate_keys.py": ("tests/test_pipeline_status.py",),
     "src/fanops/ledger_sqlite.py": ("tests/test_ledger_sqlite_store.py",),
