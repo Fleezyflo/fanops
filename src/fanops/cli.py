@@ -1043,7 +1043,10 @@ def _dispatch(cfg: Config, args) -> int:
         write_digest(Ledger.load(cfg), cfg)
         print(f"pulled -> {counts.added} new ({total} total)"); return 0
     if args.cmd == "respond":
-        n = get_responder(cfg).answer_pending(cfg); print(f"responder answered {n} request(s)"); return 0
+        from fanops.pipeline_run import run_lease
+        with run_lease(cfg):
+            n = get_responder(cfg).answer_pending(cfg)
+        print(f"responder answered {n} request(s)"); return 0
     if args.cmd == "digest":
         write_digest(Ledger.load(cfg), cfg); print(f"wrote {cfg.digest_path}"); return 0
     if args.cmd == "advance":

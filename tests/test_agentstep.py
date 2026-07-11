@@ -53,6 +53,20 @@ def test_corrupt_response_is_logged_not_silent(tmp_path):
     assert read_response(cfg, "moments", "src_1", MomentDecision) is None     # fail-closed (unchanged)
     log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
     assert "src_1" in log and "corrupt" in log.lower()
+    assert response_path(cfg, "moments", "src_1").exists()   # corrupt JSON kept on disk (unchanged)
+
+def test_schema_invalid_response_is_logged_and_unlinked(tmp_path):
+    # H08: present-but-schema-invalid response.json must log a breadcrumb AND unlink the file so
+    # the gate is visibly pending (not silently re-read forever). Corrupt JSON keeps the file.
+    cfg = Config(root=tmp_path)
+    rid = write_request(cfg, kind="moments", key="src_1", payload={"source_id": "src_1"})
+    response_path(cfg, "moments", "src_1").write_text(json.dumps(
+        {"source_id": "src_1", "request_id": rid, "picks": [{"start": 1.0, "end": 2.0}]}))  # missing reason
+    assert read_response(cfg, "moments", "src_1", MomentDecision) is None
+    assert not response_path(cfg, "moments", "src_1").exists()
+    log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
+    assert "src_1" in log and "invalid" in log.lower()
+    assert pending(cfg, kind="moments") == ["src_1"]
 
 def test_matching_response_validates(tmp_path):
     cfg = Config(root=tmp_path)

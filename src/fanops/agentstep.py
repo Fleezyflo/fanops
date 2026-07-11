@@ -92,7 +92,9 @@ def read_response(cfg: Config, kind: str, key: str, model: Type[T]) -> T | None:
         return None                                   # stale — ignore
     try:
         return model(**data)
-    except ValidationError:
+    except ValidationError as e:
+        get_logger(cfg)("agent_io", key, "invalid_response", kind=kind, err=str(e)[:120])
+        with contextlib.suppress(FileNotFoundError): rp.unlink()
         return None
 
 def discard_gate(cfg: Config, kind: str, key: str) -> None:

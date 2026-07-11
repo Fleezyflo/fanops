@@ -315,6 +315,7 @@ def request_moments(led: Ledger, cfg: Config, source_id: str, accounts=None, *, 
         return led
     if not targets:
         get_logger(cfg)("source", source_id, "no_targeted_active_accounts", warn=True)
+        discard_gates_for(cfg, "moments", source_id)   # L07: drop stale gates before terminal flip
         led.set_source_state(source_id, SourceState.moments_empty)
         return led
     discard_gates_for(cfg, "moments", source_id)

@@ -316,6 +316,61 @@ def test_detect_signals_producer_path_still_runs_ffmpeg(tmp_path, mocker):
     assert led.sources["src_1"].state is SourceState.signalled
 
 
+# ---- H09: signals_defer attempt budget — cold sidecar in-lock defers with ceiling ----
+def test_signals_defer_bumps_attempts_and_ceiling_errors(tmp_path, mocker):
+    import json
+    from fanops.agentstep import _attempts_path
+    from fanops.responder import _GATE_DETERMINISTIC_MAX
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
+                          state=SourceState.transcribed, duration=60.0, meta={"transcribed": True}))
+    mocker.patch("fanops.signals.shutil.which", return_value="/usr/bin/ffmpeg")
+    mocker.patch("fanops.signals.subprocess.run")
+    for tick in range(1, _GATE_DETERMINISTIC_MAX):
+        led = detect_signals(led, cfg, "src_1", in_lock=True)
+        assert led.sources["src_1"].state is SourceState.transcribed
+        assert json.loads(_attempts_path(cfg, "signals_defer", "src_1").read_text())["n"] == tick
+    led = detect_signals(led, cfg, "src_1", in_lock=True)
+    assert led.sources["src_1"].state is SourceState.error
+    assert "deterministic ceiling" in (led.sources["src_1"].error_reason or "")
+
+
+def test_signals_adopt_clears_defer_attempts(tmp_path, mocker):
+    import json
+    from fanops.agentstep import bump_attempts, _attempts_path
+    from fanops.signals import _SIDECAR_V
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
+                          state=SourceState.transcribed, meta={"transcribed": True}))
+    bump_attempts(cfg, "signals_defer", "src_1"); bump_attempts(cfg, "signals_defer", "src_1")
+    sc = cfg.agent_io / "signals"; sc.mkdir(parents=True, exist_ok=True)
+    (sc / "src_1.json").write_text(json.dumps(
+        {"v": _SIDECAR_V, "peaks": [{"t": 4.0, "kind": "speech_resume", "score": 0.5}], "duration": 12.0}))
+    mocker.patch("fanops.signals.subprocess.run")
+    led = detect_signals(led, cfg, "src_1", in_lock=True)
+    assert led.sources["src_1"].state is SourceState.signalled
+    assert not _attempts_path(cfg, "signals_defer", "src_1").exists()
+
+
+def test_signals_defer_ceiling_blocks_auto_resume(tmp_path, mocker):
+    from fanops.responder import _GATE_DETERMINISTIC_MAX
+    from fanops.pipeline import reconcile_source_progress
+    from fanops.log import get_logger
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
+                          state=SourceState.transcribed, duration=60.0, meta={"transcribed": True}))
+    led.save()
+    mocker.patch("fanops.signals.shutil.which", return_value="/usr/bin/ffmpeg")
+    mocker.patch("fanops.signals.subprocess.run")
+    for _ in range(_GATE_DETERMINISTIC_MAX):
+        led = detect_signals(led, cfg, "src_1", in_lock=True)
+        led.save()
+    assert led.sources["src_1"].state is SourceState.error
+    with Ledger.transaction(cfg) as led2:
+        reconcile_source_progress(led2, cfg, get_logger(cfg))
+    assert Ledger.load(cfg).sources["src_1"].state is SourceState.error
+
+
 # ---- MOL-158 (P4b): content_focus INTENSITY filters the peak set — NET-NEW, no energy lever ----
 def _score(p):
     return float(p.get("energy") or p.get("score") or 0.0)

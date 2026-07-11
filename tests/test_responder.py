@@ -502,24 +502,48 @@ def test_schema_error_ceiling_terminates_source(tmp_path, monkeypatch):
     assert src.state == SourceState.error and src.error_reason and "moments" in src.error_reason
 
 
-def test_transient_failure_does_not_trip_ceiling(tmp_path, monkeypatch):
-    # MOL-242 T2.3: transient failures (> ceiling) never bump .attempts.json or hit SourceState.error.
+def test_double_timeout_escalates_to_ceiling(tmp_path, monkeypatch):
+    # H11: two consecutive timeouts in one pass hit deterministic ceiling + error + gate discard.
     from fanops.ledger import Ledger
     from fanops.models import SourceState
-    from fanops.agentstep import response_path, _attempts_path
+    from fanops.agentstep import pending, request_path, _attempts_path
+    from fanops.responder import LlmResponder, _GATE_DETERMINISTIC_MAX
+    from fanops.llm import LlmTimeoutError
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    cfg = Config(root=tmp_path)
+    _seed_source_and_moments_gate(cfg)
+    calls = {"n": 0}
+    def always_timeout(kind, payload):
+        calls["n"] += 1; raise LlmTimeoutError("timed out")
+    r = LlmResponder(cfg, model=always_timeout)
+    for _ in range(_GATE_DETERMINISTIC_MAX):
+        assert r.answer_pending(cfg) == 0
+    src = Ledger.load(cfg).sources["src_1"]
+    assert src.state == SourceState.error
+    assert src.error_reason and "deterministic ceiling" in src.error_reason
+    assert pending(cfg, kind="moments") == []
+    assert not request_path(cfg, "moments", "src_1").exists()
+    assert calls["n"] == _GATE_DETERMINISTIC_MAX * 2   # two model calls per pass
+    assert not _attempts_path(cfg, "moments", "src_1").exists()
+
+
+def test_single_timeout_then_success_unchanged(tmp_path, monkeypatch):
+    # H11: first timeout retries once; second call succeeds (retry-once semantics preserved).
+    from fanops.agentstep import response_path
     from fanops.responder import LlmResponder
     from fanops.llm import LlmTimeoutError
     monkeypatch.setenv("FANOPS_RESPONDER", "llm")
     cfg = Config(root=tmp_path)
     _seed_source_and_moments_gate(cfg)
-    def always_timeout(kind, payload): raise LlmTimeoutError("timed out")
-    r = LlmResponder(cfg, model=always_timeout)
-    for _ in range(10):
-        assert r.answer_pending(cfg) == 0
-    assert not _attempts_path(cfg, "moments", "src_1").exists()
-    src = Ledger.load(cfg).sources["src_1"]
-    assert src.state == SourceState.signalled and not src.error_reason
-    assert not response_path(cfg, "moments", "src_1").exists()
+    calls = {"n": 0}
+    def flaky(kind, payload):
+        calls["n"] += 1
+        if calls["n"] == 1: raise LlmTimeoutError("timed out")
+        return {"source_id": payload["source_id"],
+                "picks": [{"start": 1.0, "end": 4.0, "reason": "ok"}]}
+    n = LlmResponder(cfg, model=flaky).answer_pending(cfg)
+    assert n == 1 and calls["n"] == 2
+    assert response_path(cfg, "moments", "src_1").exists()
 
 
 def test_reseed_resets_deterministic_attempts(tmp_path, monkeypatch):
@@ -750,6 +774,123 @@ def test_toolchain_error_ceiling_captions_writes_empty_response(tmp_path, monkey
     assert rp.exists()
     data = json.loads(rp.read_text())
     assert data.get("items") == []
+
+
+def test_ceiling_discards_gate_pending_empty(tmp_path, monkeypatch):
+    # H07: after moments ceiling + successful terminate, pending() is empty (gate files gone).
+    from fanops.agentstep import pending, request_path
+    from fanops.responder import LlmResponder, _GATE_DETERMINISTIC_MAX
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    cfg = Config(root=tmp_path)
+    _seed_source_and_moments_gate(cfg)
+    r = LlmResponder(cfg, model=_bad_pick_model)
+    for _ in range(_GATE_DETERMINISTIC_MAX):
+        r.answer_pending(cfg)
+    assert pending(cfg, kind="moments") == []
+    assert not request_path(cfg, "moments", "src_1").exists()
+
+
+def test_pass4_zero_llm_calls_after_ceiling(tmp_path, monkeypatch):
+    # H07: pass 4+ after ceiling must not invoke the model (gate discarded, source terminal).
+    from fanops.responder import LlmResponder, _GATE_DETERMINISTIC_MAX
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    cfg = Config(root=tmp_path)
+    _seed_source_and_moments_gate(cfg)
+    calls = {"n": 0}
+    def counting_bad(kind, payload):
+        calls["n"] += 1; return _bad_pick_model(kind, payload)
+    r = LlmResponder(cfg, model=counting_bad)
+    for _ in range(_GATE_DETERMINISTIC_MAX):
+        r.answer_pending(cfg)
+    n_before = calls["n"]
+    assert r.answer_pending(cfg) == 0
+    assert calls["n"] == n_before   # zero new LLM calls on pass 4
+
+
+def test_terminate_write_failure_keeps_gate_pending(tmp_path, monkeypatch, mocker):
+    # H07: if ledger save fails on terminate, gate stays pending (no discard).
+    from fanops.agentstep import pending, request_path
+    from fanops.responder import LlmResponder, _GATE_DETERMINISTIC_MAX
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    cfg = Config(root=tmp_path)
+    _seed_source_and_moments_gate(cfg)
+    mocker.patch("fanops.ledger.Ledger.transaction", side_effect=RuntimeError("ledger save failed"))
+    r = LlmResponder(cfg, model=_bad_pick_model)
+    for _ in range(_GATE_DETERMINISTIC_MAX):
+        r.answer_pending(cfg)
+    assert pending(cfg, kind="moments") == ["src_1"]
+    assert request_path(cfg, "moments", "src_1").exists()
+
+
+def test_ceiling_discard_blocks_auto_resume(tmp_path, monkeypatch):
+    # H07: deterministic ceiling error_reason blocks reconcile_source_progress auto-resume.
+    from fanops.ledger import Ledger
+    from fanops.models import SourceState
+    from fanops.responder import LlmResponder, _GATE_DETERMINISTIC_MAX
+    from fanops.pipeline import reconcile_source_progress
+    from fanops.log import get_logger
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    cfg = Config(root=tmp_path)
+    _seed_source_and_moments_gate(cfg)
+    r = LlmResponder(cfg, model=_bad_pick_model)
+    for _ in range(_GATE_DETERMINISTIC_MAX):
+        r.answer_pending(cfg)
+    assert Ledger.load(cfg).sources["src_1"].state is SourceState.error
+    with Ledger.transaction(cfg) as led:
+        reconcile_source_progress(led, cfg, get_logger(cfg))
+    assert Ledger.load(cfg).sources["src_1"].state is SourceState.error
+
+
+def test_pre_call_rid_from_payload_not_latest_request_id(tmp_path, monkeypatch):
+    # M23: rid_before must come from the same json.loads as payload — not a separate latest_request_id()
+    # call that could observe a reseed between two reads (TOCTOU between payload/rid reads).
+    import fanops.responder as resp_mod
+    from fanops.agentstep import write_request, read_response, latest_request_id
+    from fanops.responder import LlmResponder
+    from fanops.models import MomentDecision
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    cfg = Config(root=tmp_path)
+    write_request(cfg, kind="moments", key="s1",
+                  payload={"source_id": "s1", "duration": 10.0, "transcript": [], "signal_peaks": [],
+                           "language": "en", "guidance": ""})
+    r1 = latest_request_id(cfg, "moments", "s1")
+    real_latest = resp_mod.latest_request_id
+    def poisoned(c, kind, key):
+        write_request(c, kind="moments", key="s1",
+                      payload={"source_id": "s1", "duration": 99.0, "transcript": [], "signal_peaks": [],
+                               "language": "en", "guidance": "RESEEDED"})
+        return real_latest(c, kind, key)
+    monkeypatch.setattr(resp_mod, "latest_request_id", poisoned)
+    n = LlmResponder(cfg, model=lambda k, p: {"picks": [{"start": 1.0, "end": 4.0, "reason": "from-P1"}]}).answer_pending(cfg)
+    assert latest_request_id(cfg, "moments", "s1") != r1
+    assert read_response(cfg, "moments", "s1", MomentDecision) is None
+    assert n == 0
+
+
+def test_permanent_gate_failure_zero_llm_on_subsequent_run(tmp_path, monkeypatch, mocker):
+    # E2E B05: permanent gate failure -> error, pending()==[], zero LLM on subsequent full run pass.
+    from fanops.agentstep import pending
+    from fanops.responder import LlmResponder, _GATE_DETERMINISTIC_MAX
+    from fanops.models import SourceState
+    from fanops.ledger import Ledger
+    from fanops.cli import _cmd_run_pass
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    monkeypatch.chdir(tmp_path)
+    cfg = Config(root=tmp_path)
+    _seed_source_and_moments_gate(cfg)
+    calls = {"n": 0}
+    def counting_bad(kind, payload):
+        calls["n"] += 1; return _bad_pick_model(kind, payload)
+    mocker.patch("fanops.cli.get_responder", return_value=LlmResponder(cfg, model=counting_bad))
+    mocker.patch("fanops.cli.advance", return_value={"awaiting": {"moments": 1, "captions": 0, "moment_hooks": 0}})
+    r = LlmResponder(cfg, model=counting_bad)
+    for _ in range(_GATE_DETERMINISTIC_MAX):
+        r.answer_pending(cfg)
+    assert Ledger.load(cfg).sources["src_1"].state is SourceState.error
+    assert pending(cfg, kind="moments") == []
+    n_before = calls["n"]
+    _cmd_run_pass(cfg, "2026-06-02T18:00:00Z")
+    assert calls["n"] == n_before
 
 
 def test_toolchain_error_captions_ceiling_ingests_captioned(tmp_path, monkeypatch):

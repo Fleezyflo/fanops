@@ -14,7 +14,7 @@ from typing import Callable, Optional
 from pydantic import ValidationError
 from fanops.config import Config
 from fanops.models import MomentDecision, MomentHookDecision, CaptionSet, SourceState
-from fanops.agentstep import pending, request_path, write_response, latest_request_id, clear_attempts, bump_attempts
+from fanops.agentstep import pending, request_path, write_response, latest_request_id, clear_attempts, bump_attempts, discard_gate
 from fanops.gate_keys import gate_source_id as _gate_source_id
 from fanops.errors import ToolchainMissingError
 from fanops.llm import claude_json_meta, LlmTimeoutError, LlmContextLimitError, LlmSchemaError, LlmToolchainError
@@ -97,24 +97,18 @@ class LlmResponder:
         # (rid_before/rid_after, the unique response_path), so it is already thread-safe: the pooled
         # fan-out runs N of these concurrently without shared mutable state or a lock.
         try:                                    # decision (b): quarantine per request
-            payload = json.loads(request_path(cfg, kind, key).read_text())
-            # AUDIT A3 (answer-stale TOCTOU): capture the rid the payload was read under
-            # BEFORE the slow model call. The agent-gate files live OUTSIDE the ledger flock,
-            # so an overlapping `fanops run` can re-seed THIS gate (new request_id + new
-            # payload, via write_request) WHILE the model call is running. If we read the rid
-            # AFTER the call (the old behavior), we would stamp this OLD-payload answer with
-            # the NEW rid -> read_response's freshness check would PASS and apply a
-            # wrong-payload answer as fresh. So we re-verify AFTER the call that the rid is
-            # still latest and drop the answer on mismatch (gate stays pending for the new
-            # request). We do NOT hold a lock across the model call: that would serialize the
-            # up-to-180s claude -p behind every other gate. (Mirrors the FIX-F21 request_id
-            # correlation that already guards the read side.)
-            rid_before = latest_request_id(cfg, kind, key)
+            data = json.loads(request_path(cfg, kind, key).read_text())
+            rid_before = data["request_id"]     # M23: same atomic read as payload — no TOCTOU between reads
+            payload = data
             try:
                 out = self._model(kind, payload)
-            except LlmTimeoutError:         # transient: a caption gate timed out (stranded 2 clips before)
+            except LlmTimeoutError:         # transient: retry once; second timeout -> deterministic ceiling
                 log("responder", f"{kind}:{key}", "timeout_retry", err="model timed out; retrying once")
-                out = self._model(kind, payload)   # second timeout -> falls to the except below -> visible, pending
+                try:
+                    out = self._model(kind, payload)
+                except LlmTimeoutError as e:
+                    self._on_deterministic_fail(cfg, kind, key, f"timeout x2 in pass: {e}", log)
+                    return False
             rid_after = latest_request_id(cfg, kind, key)
             if rid_after is None or rid_after != rid_before:
                 log("responder", f"{kind}:{key}", "stale",
@@ -176,6 +170,7 @@ class LlmResponder:
             log("responder", f"{kind}:{key}", "gate_failopen_clean")
             return
         from fanops.ledger import Ledger
+        saved = False
         try:
             with Ledger.transaction(cfg) as led:
                 sid = _gate_source_id(led, kind, key)
@@ -183,10 +178,13 @@ class LlmResponder:
                 if src is not None and src.state != SourceState.error:
                     led.sources[sid] = src.model_copy(update={
                         "state": SourceState.error,
-                        "error_reason": f"agent gate {kind} failed {_GATE_DETERMINISTIC_MAX}x (deterministic): {reason}"[:200]})
+                        "error_reason": f"agent gate {kind} failed (deterministic ceiling {_GATE_DETERMINISTIC_MAX}/{_GATE_DETERMINISTIC_MAX}): {reason}"[:200]})
+                    saved = True
         except Exception as e:
             with contextlib.suppress(Exception):
                 log("responder", f"{kind}:{key}", "terminate_failed", err=str(e)[:120])
+        if saved:
+            discard_gate(cfg, kind, key)      # H07: terminal moments gate must not linger pending
 
     def _mark_gate_degraded(self, cfg: Config, kind: str, key: str, reason: str) -> None:
         """AGENT-2: park the wedged gate's source-owner with a VISIBLE degraded_reason so the operator sees WHY
