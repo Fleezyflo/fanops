@@ -328,7 +328,9 @@ awaiting_approval (BORN here — RF1 no-auto-publish invariant)
 queued
     → submitting → submitted → published → analyzed (requires public_url per R1 validator)
     → awaiting_approval (Ledger.unapprove_post)
-    → failed (re-queueable)
+    → failed (re-queueable: Studio `recover_posts` retry, or daemon `_requeue_transient_failed_for_daemon`
+       in `post/run.py:375` before each `publish_due` — transient failures only, cap `_DAEMON_TRANSIENT_MAX=3`
+       at `run.py:68`; gave-up posts need `fanops resolve <id> failed` then Studio recover)
     → needs_reconcile (ambiguous 5xx/timeout — never blindly re-POSTed)
     → retired (superseded by an approved M4 stitch — publish_due only iterates queued)
 error

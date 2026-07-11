@@ -241,6 +241,13 @@ A cleanly-layered, defensively-coded subsystem. **(7a) intro_match** is a fail-o
 ### Stage 8c — publish_due / _publish_one (publish OUT-of-lock)
 **Contract.** `queued` posts with `scheduled_time <= now` → published (`06_published/<day>/<id>.json` archive) or `failed`/`needs_reconcile`. State: `queued → submitting (persisted) → published|failed|needs_reconcile`. Runs AFTER the main txn commits (`pipeline.py:474`).
 
+**Pre-publish daemon requeue (MOL-125).** Before scanning the due queue, `publish_due` calls
+`_requeue_transient_failed_for_daemon` (`run.py:375`, cap `_DAEMON_TRANSIENT_MAX=3` at `run.py:68`): transient
+`failed` posts with no real `submission_id` flip `failed→queued` automatically (stamped
+`transient_daemon_retry=n/3|`). Operator path is separate: Studio **Failed** tab → `recover_posts` retry
+(`actions.py:945`). Gave-up posts (`reconcile._is_giveup`) are excluded from both — two-step:
+`fanops resolve <id> failed` then Studio recover (MOL-441 deferred one-click re-drive).
+
 **Process — three-phase claim→network→finalize.** CLAIM (tight txn): publish ONLY if still `queued`, flip `queued → submitting` + persist BEFORE any network (`run.py:131-135`). NETWORK (no lock): ensure media upload + `poster.publish` on a throwaway ledger. FINALIZE (tight txn): merge ONLY `_NET_POST_FIELDS` into a FRESH ledger (the B4 lost-update guard, `run.py:73-75,164-171`). Only `queued` is considered; a stranded `submitting` post is NOT re-driven (reconcile's job).
 
 **Resilience & invariants.** Fail-CLOSED on `AuthError` (halt the queue, H8); a `needs_reconcile` park is NEVER downgraded to `failed` (the double-post guard C1). Upholds crash-safe no-double-post (`submitting` persisted before network; claim re-reads `queued`), one-writer (only net fields merged into a fresh ledger), and dryrun-can-never-be-bypassed-by-a-per-channel-provider (the global `is_live` governs all).

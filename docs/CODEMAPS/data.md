@@ -56,8 +56,10 @@ Clip:   rendered -> captions_requested -> captioned -> queued -> published -> an
 Post:   awaiting_approval (BORN here at crosspost — the human approval gate; publish_due/publish_now iterate
         ONLY `queued`, so NOTHING ships until an operator approves) -> queued (approved + scheduled) ->
         submitting -> submitted -> published -> analyzed
-        | rejected (operator discard of an awaiting_approval post — terminal) | failed (definitely-not-posted,
-        re-queueable) | needs_reconcile (MAY be live — poll, never blind re-POST)
+        | rejected (operator discard of an awaiting_approval post — terminal) | failed (definitely-not-posted;
+        re-queueable via Studio `recover_posts` retry OR daemon auto-requeue — `post/run.py`
+        `_requeue_transient_failed_for_daemon` at `:375`, called from `publish_due` at `:420`, transient-only,
+        bounded `_DAEMON_TRANSIENT_MAX=3` at `:68`) | needs_reconcile (MAY be live — poll, never blind re-POST)
         | retired (M4 stitch supersede / cross-account base) | error
 StitchPlan (M3 structural-hooks): suggested -> approved -> in_use | dismissed | error
         (suggested=an impact-cut/intro-tease idea; approved gates the lock-free render; in_use=rendered into a
