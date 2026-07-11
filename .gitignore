@@ -56,7 +56,7 @@ docs/superpowers/
 tiktok-submission/
 
 # session/tooling scratch at repo root — machine-local, never committed
-.agents/
+.agents/skills/
 .reports/
 .codemap-cache/
 .codemap-cache-test/

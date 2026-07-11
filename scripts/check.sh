@@ -47,7 +47,9 @@ changed_py() {
   } | sort -u
 }
 
-mapfile -t CHANGED < <(changed_py)
+# macOS ships bash 3.2 (no mapfile) — read loops keep this gate runnable everywhere.
+CHANGED=()
+while IFS= read -r _f; do CHANGED+=("$_f"); done < <(changed_py)
 if [[ ${#CHANGED[@]} -eq 0 ]]; then
   echo "[check] no changed .py vs $BASE — nothing to lint or test. (CI still runs the full suite on PR.)"
   exit 0
@@ -61,7 +63,8 @@ echo "[check] ruff (scoped)"
 "$PY" -m ruff check "${CHANGED[@]}"
 
 # 1b) Fail closed on changed src modules with no scoped test mapping (false-confidence hole).
-mapfile -t ORPHANS < <("$PY" "$ROOT/scripts/check_scope.py" --orphans "${CHANGED[@]}")
+ORPHANS=()
+while IFS= read -r _f; do ORPHANS+=("$_f"); done < <("$PY" "$ROOT/scripts/check_scope.py" --orphans "${CHANGED[@]}")
 if [[ ${#ORPHANS[@]} -gt 0 ]]; then
   if [[ "${FANOPS_CHECK_ALLOW_NO_TESTS:-}" == "1" ]]; then
     echo "[check] WARNING: changed src with no scoped test (FANOPS_CHECK_ALLOW_NO_TESTS=1):"
@@ -75,7 +78,8 @@ fi
 
 # 2) Scoped pytest — changed test files + convention/override map (scripts/check_scope.py handles
 # studio/, post/, and alternate test names like test_studio_actions.py).
-mapfile -t TESTS < <("$PY" "$ROOT/scripts/check_scope.py" "${CHANGED[@]}")
+TESTS=()
+while IFS= read -r _f; do TESTS+=("$_f"); done < <("$PY" "$ROOT/scripts/check_scope.py" "${CHANGED[@]}")
 
 if [[ ${#TESTS[@]} -eq 0 ]]; then
   echo "[check] no matching test files for the changed modules — ruff passed; skipping pytest."

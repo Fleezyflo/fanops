@@ -52,9 +52,9 @@ def test_unit_ids_from_text():
 # ---- verification records (the land-gate substrate) -------------------------
 
 def _write_record(root, unit_id, **over):
-    rec = {"unit_id": unit_id, "executor": "subagent:generalPurpose:exec1",
-           "verifier": "subagent:generalPurpose:ver1", "passed": True,
-           "acceptance_criteria_checked": True, "verified_at": "2026-07-08T00:00:00Z"}
+    rec = {"unit_id": unit_id, "executor": "subagent:worker:exec1",
+           "verifier": "subagent:worker:ver1", "passed": True, "head_sha": "abc123",
+           "evidence": "CI run cited"}
     rec.update(over)
     d = Path(root) / ".orchestration" / "state" / "verified"
     d.mkdir(parents=True, exist_ok=True)
@@ -158,13 +158,62 @@ def test_cli_before_shell_allows_feature_commit(tmp_path):
     assert out.get("permission") == "allow"
 
 
-def test_cli_subagent_start_records_ledger(tmp_path):
-    code, out = _run_cli("subagent-start", {"subagent_type": "explore", "task": "scope MOL-190",
-                                            "subagent_id": "sa1", "parent_conversation_id": "conv1"}, tmp_path)
-    p = Path(tmp_path) / ".orchestration" / "state" / "ledger.jsonl"
-    assert p.exists() and "scope MOL-190" in p.read_text()
-    # a spawn is always allowed (delegation is the point)
-    assert out.get("permission", "allow") == "allow"
+def test_cli_subagent_start_allowlist_and_ledger(tmp_path):
+    # only the named wave agents spawn; everything else is denied and ledgered as subagent_denied
+    _, out = _run_cli("subagent-start", {"subagent_type": "explore", "task": "scope MOL-190"}, tmp_path)
+    assert out.get("permission") == "deny"
+    _, out = _run_cli("subagent-start", {"subagent_type": "fanops-orchestrator", "task": "x"}, tmp_path)
+    assert out.get("permission") == "deny" and "one orchestrator" in out.get("user_message", "")
+    _, out = _run_cli("subagent-start", {"subagent_type": "fanops-worker", "task": "impl MOL-190",
+                                         "subagent_model": "auto"}, tmp_path)
+    assert out.get("permission") == "allow"
+    _, out = _run_cli("subagent-start", {"subagent_type": "fanops-lander", "task": "land"}, tmp_path)
+    assert out.get("permission") == "allow"
+    entries = [json.loads(ln) for ln in
+               (Path(tmp_path) / ".orchestration" / "state" / "ledger.jsonl").read_text().splitlines()]
+    assert sum(e["event"] == "subagent_denied" for e in entries) == 2
+    assert any(e["event"] == "subagent_start" and e.get("subagent_model") == "auto" for e in entries)
+
+
+def test_is_unit_verified_head_sha_pinning(tmp_path):
+    # no head_sha in the record -> refused; matching -> verified; stale -> refused as STALE
+    _write_record(tmp_path, "MOL-190", head_sha="")
+    ok, reason = og.is_unit_verified("MOL-190", tmp_path, "abc123")
+    assert ok is False and "head_sha" in reason
+    _write_record(tmp_path, "MOL-190")
+    ok, _ = og.is_unit_verified("MOL-190", tmp_path, "abc123")
+    assert ok is True
+    ok, reason = og.is_unit_verified("MOL-190", tmp_path, "def456")
+    assert ok is False and "STALE" in reason
+
+
+def test_cli_before_shell_denies_operator_only_stop(tmp_path):
+    _, out = _run_cli("before-shell", {"command": "python scripts/orchestrate.py stop"}, tmp_path)
+    assert out.get("permission") == "deny"
+    _, out = _run_cli("before-shell", {"command": "python scripts/orchestrate.py status"}, tmp_path)
+    assert out.get("permission") == "allow"
+
+
+def test_cli_before_shell_denies_interpreter_writes_to_protected_paths(tmp_path):
+    _, out = _run_cli("before-shell",
+                      {"command": "python3 -c \"open('.cursor/hooks/orchestration_gate.py','w')\""}, tmp_path)
+    assert out.get("permission") == "deny"
+    _, out = _run_cli("before-shell",
+                      {"command": "python3 <<'PY'\nopen('.orchestration/state/verified/X.json','w')\nPY"}, tmp_path)
+    assert out.get("permission") == "deny"
+
+
+def test_cli_land_fails_closed_when_enforcement_unverifiable(tmp_path):
+    # tmp_path is not a git repo: enforcement_dirty() cannot answer -> every land refused
+    _write_record(tmp_path, "MOL-190")
+    _, out = _run_cli("before-shell", {"command": "gh pr merge 12 --merge"}, tmp_path)
+    assert out.get("permission") == "deny" and "enforcement machinery" in out.get("agent_message", "")
+
+
+def test_enforcement_hits_filters_paths():
+    hits = og.enforcement_hits(["src/fanops/models.py", "scripts/orchestrate.py",
+                                ".cursor/hooks/orchestration_gate.py", "docs/x.md"])
+    assert hits == ["scripts/orchestrate.py", ".cursor/hooks/orchestration_gate.py"]
 
 
 # ==== FORTIFICATION ==========================================================

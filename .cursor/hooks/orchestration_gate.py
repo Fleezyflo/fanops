@@ -10,13 +10,18 @@ gate CAN judge deterministically from the command string / event payload, caller
 
   before-shell (beforeShellExecution):
     * LAND-to-main (`gh pr merge …`) is DENIED unless every unit the PR carries has a sub-agent
-      VERIFICATION RECORD (guardrail: the orchestrator cannot land work a sub-agent has not verified).
+      VERIFICATION RECORD whose `head_sha` matches the PR's CURRENT head (guardrail: nothing lands
+      unverified, and nothing lands on commits the verifier never saw — stale record → re-verify).
     * destructive git (`reset --hard`, force-push/direct-push to main, re-cut `checkout -B … origin/main`)
       is DENIED (repo safety, mirrors .githooks/pre-push).
     * everything else (worker commits/pushes to feature branches, reads) is allowed — workers must work.
-  subagent-start / subagent-stop (subagentStart/subagentStop):
-    * append an ATTRIBUTION LEDGER entry (guardrail: record which sub-agent did each unit); always allow
-      the spawn (delegation is the point).
+  subagent-start (subagentStart):
+    * DENY any spawn whose subagent_type is not in _WAVE_AGENTS (guardrail: every wave spawn is a named
+      agent whose frontmatter PINS `model: inherit` — ad-hoc types (general-purpose/shell/…) are where a
+      spawn-time model takes effect, and a second `fanops-orchestrator` mid-wave is the double-merge
+      incident). Allowed spawns are ledgered WITH their subagent_model for audit.
+  subagent-stop (subagentStop):
+    * append an ATTRIBUTION LEDGER entry (record which sub-agent did each unit; cannot deny).
 
 Fail posture: security decisions are emitted explicitly; on an unexpected internal error the script
 exits non-zero so `failClosed: true` in hooks.json turns it into a BLOCK (never silently allow a land).
@@ -37,9 +42,38 @@ _TITLE_PAREN_RE = re.compile(rf"\(({_SLUG})\)\s*$")
 # Writing to any of these via shell is refused for everyone (workers edit src, never the machinery/state).
 _PROTECTED_PATHS = (".orchestration/state/", ".cursor/hooks.json", ".cursor/hooks/", ".githooks/")
 _MUTATING = re.compile(
-    r"(>>?|\btee\b|\bsed\s+-i|\bperl\s+-i|\bawk\b[^|]*>|"
+    r"(>>?|<<|\btee\b|\bsed\s+-i|\bperl\s+-i|\bawk\b[^|]*>|"
     r"\b(cp|mv|rm|ln|dd|truncate|install|chmod|chown|touch|mkdir|rmdir)\b|"
-    r"\bgit\s+(rm|checkout|restore|clean|mv)\b)")
+    r"\bpython3?\b|\bgit\s+(rm|checkout|restore|clean|mv)\b)")
+    # `<<` + `python3?`: a verifier was observed writing a protected verification record via a
+    # `python3 <<'PY' … open(...,'w')` heredoc — interpreters and heredocs count as mutators, so any
+    # command that names a protected path AND invokes one is refused (reads use the Read tool instead).
+
+# Enforcement machinery that must NEVER be dirty in the working tree during a wave — changes arrive via
+# reviewed PRs (committed), not live edits. The Write tool can't be hooked, so the LAND is where a live
+# edit is caught: a wave observed an orchestrator commissioning a Write-tool edit of this very gate to
+# get a refused PR through.
+_ENFORCEMENT_PATHS = (".cursor/hooks.json", ".cursor/hooks", ".githooks",
+                      "scripts/orchestrate.py", "scripts/repo_sweep.py")
+
+
+def enforcement_dirty(root) -> list:
+    """Enforcement files modified/untracked in the WORKING TREE (tamper signal). Returns the dirty
+    status lines, or a '(unverifiable…)' sentinel when git cannot answer — the land fails CLOSED."""
+    try:
+        out = subprocess.run(["git", "-C", str(_root(root)), "status", "--porcelain", "--"]
+                             + list(_ENFORCEMENT_PATHS),
+                             capture_output=True, text=True, timeout=15)
+        if out.returncode != 0: return ["(unverifiable: git status failed)"]
+        return [ln.strip() for ln in out.stdout.splitlines() if ln.strip()]
+    except Exception:
+        return ["(unverifiable: git unavailable)"]
+
+# The ONLY subagent types an active wave may spawn. Both are named agents whose .cursor/agents/*.md
+# frontmatter pins `model: inherit`, so a spawn-time model override is inert by construction. Everything
+# else is refused: ad-hoc types (general-purpose, shell, …) take a spawn-time model, and a second
+# `fanops-orchestrator` during a wave is the parallel-orchestrator double-merge failure.
+_WAVE_AGENTS = {"fanops-worker", "fanops-lander"}
 
 
 def _root(arg_root=None) -> Path:
@@ -128,9 +162,10 @@ def unit_ids_from_text(text: str) -> list:
     return out
 
 
-def is_unit_verified(unit_id: str, root) -> tuple:
+def is_unit_verified(unit_id: str, root, head_sha: str = "") -> tuple:
     """A unit is verified iff .orchestration/state/verified/<UNIT>.json exists, is valid, passed==true,
-    and names a NON-orchestrator verifier sub-agent. Returns (ok, reason)."""
+    names a NON-orchestrator verifier sub-agent, and its head_sha matches the PR's CURRENT head (a
+    record for commits the verifier never saw is STALE). Returns (ok, reason)."""
     p = _root(root) / ".orchestration" / "state" / "verified" / f"{unit_id}.json"
     if not p.exists(): return False, f"no verification record for {unit_id}"
     try:
@@ -144,17 +179,26 @@ def is_unit_verified(unit_id: str, root) -> tuple:
         return False, f"{unit_id} verifier must be a sub-agent, not the orchestrator (got {verifier!r})"
     if executor and verifier == executor:
         return False, f"{unit_id} verifier must DIFFER from the executor (no self-verification: {verifier!r})"
+    rec_head = str(rec.get("head_sha") or "").strip()
+    if not rec_head:
+        return False, (f"{unit_id} record has no head_sha — the verifier must pin the PR head commit it "
+                       "verified (gh pr view <n> --json headRefOid)")
+    if head_sha and rec_head != head_sha:
+        return False, (f"{unit_id} verification is STALE: verified head {rec_head[:12]} but the PR is now "
+                       f"at {head_sha[:12]} — new commits need ONE re-verify (this is the only re-verify "
+                       "trigger; never re-verify an unchanged PR)")
     return True, "verified"
 
 
-def land_decision(unit_ids: list, root) -> tuple:
-    """Allow a land only when at least one unit is identified AND every identified unit is verified."""
+def land_decision(unit_ids: list, root, head_sha: str = "") -> tuple:
+    """Allow a land only when at least one unit is identified AND every identified unit is verified
+    against the PR's current head."""
     if not unit_ids:
         return False, ("land refused: no unit id found on the PR/branch — cannot confirm a "
                        "sub-agent verified this work. Tag the unit (MOL-xxx or Unit: <slug>) and have a "
                        "verifier sub-agent write its record.")
     for u in unit_ids:
-        ok, reason = is_unit_verified(u, root)
+        ok, reason = is_unit_verified(u, root, head_sha)
         if not ok:
             return False, f"land refused: {reason}. A verifier sub-agent must record verification first."
     return True, "all units verified"
@@ -171,16 +215,41 @@ def append_ledger(root, entry: dict) -> None:
 
 # ---- I/O wrapper (gh lookup for a PR's units) -------------------------------
 
-def _pr_units(pr_number: str) -> list:
-    """Units a PR carries = unit ids in its head branch + title + body (best-effort via gh)."""
+def enforcement_hits(paths) -> list:
+    """Subset of `paths` that fall under the enforcement machinery (pure; testable)."""
+    out = []
+    for p in paths:
+        p = (p or "").strip()
+        if not p: continue
+        if (p == ".cursor/hooks.json" or p.startswith(".cursor/hooks/") or p.startswith(".githooks/")
+                or p in ("scripts/orchestrate.py", "scripts/repo_sweep.py")):
+            out.append(p)
+    return out
+
+
+def _pr_enforcement_files(pr_number: str) -> list:
+    """Enforcement files a PR modifies (best-effort via gh; unverifiable → blocking sentinel)."""
     try:
-        out = subprocess.run(["gh", "pr", "view", pr_number, "--json", "headRefName,title,body"],
-                             capture_output=True, text=True, timeout=30)
-        if out.returncode != 0: return []
-        d = json.loads(out.stdout)
-        return prefer_units(d.get("headRefName", ""), d.get("title", ""), d.get("body", ""))
+        out = subprocess.run(["gh", "pr", "view", pr_number, "--json", "files",
+                              "-q", ".files[].path"], capture_output=True, text=True, timeout=30)
+        if out.returncode != 0: return ["(unverifiable: gh files lookup failed)"]
+        return enforcement_hits(out.stdout.splitlines())
     except Exception:
-        return []
+        return ["(unverifiable: gh unavailable)"]
+
+
+def _pr_units(pr_number: str) -> tuple:
+    """(units, head_sha) for a PR: unit ids in its head branch + title + body, and the CURRENT head
+    commit (headRefOid) for verification-staleness checks (best-effort via gh)."""
+    try:
+        out = subprocess.run(["gh", "pr", "view", pr_number, "--json", "headRefName,title,body,headRefOid"],
+                             capture_output=True, text=True, timeout=30)
+        if out.returncode != 0: return [], ""
+        d = json.loads(out.stdout)
+        units = prefer_units(d.get("headRefName", ""), d.get("title", ""), d.get("body", ""))
+        return units, str(d.get("headRefOid") or "")
+    except Exception:
+        return [], ""
 
 
 def _emit(permission: str, agent_message: str = "", user_message: str = "") -> int:
@@ -197,37 +266,74 @@ def handle_before_shell(data: dict, root) -> int:
     if not is_active(root):
         return _emit("allow")          # inert outside the orchestration environment — no collateral
     cmd = data.get("command", "")
+    if re.search(r"orchestrate\.py\s+stop\b", cmd):
+        return _emit("deny", agent_message=(
+            "REFUSED (orchestration gate): `orchestrate.py stop` is OPERATOR-ONLY (human terminal). "
+            "Enforcement cannot be turned off from inside the run — finish the wave; `done` disengages "
+            "itself when it exits 0."))
     pp = protected_write_target(cmd)
     if pp:
         return _emit("deny", agent_message=(
             f"REFUSED (orchestration gate): this command would modify a PROTECTED path ({pp}). The "
             "verification state and the enforcement machinery (.cursor/hooks*, .githooks) may not be "
             "written from the shell — that would forge a verification record or disable the gate. A "
-            "verifier SUB-AGENT records verification via the Write tool per .orchestration/SPEC.md."))
+            "verifier SUB-AGENT records verification via the Write tool per .agents/_worker-protocol.md."))
     kind = classify_command(cmd)
     if kind == "destructive":
         return _emit("deny", agent_message=(
             "REFUSED (orchestration gate): destructive/forbidden git command. Never reset --hard, "
             "force-push, push directly to main, or re-cut a branch. Land via `gh pr merge` on a verified PR."))
     if kind == "land":
+        dirty = enforcement_dirty(root)
+        if dirty:
+            return _emit("deny", agent_message=(
+                "REFUSED (orchestration gate): enforcement machinery is MODIFIED in the working tree ("
+                + "; ".join(dirty[:5]) + ") — the gate, hooks, and DONE-gate scripts may never be edited "
+                "during a wave, by any tool. Report this to the operator; enforcement changes land via a "
+                "reviewed PR before a wave, never mid-wave."))
         pr = parse_pr_merge(cmd)
-        units = _pr_units(pr) if pr else []
-        allow, reason = land_decision(units, root)
+        if pr:
+            touched = _pr_enforcement_files(pr)
+            if touched:
+                return _emit("deny", agent_message=(
+                    "REFUSED (orchestration gate): this PR modifies enforcement machinery ("
+                    + ", ".join(touched[:5]) + "). Enforcement changes are OPERATOR-ONLY and merge "
+                    "outside a wave — report to the operator; do not attempt another route."))
+        units, head_sha = _pr_units(pr) if pr else ([], "")
+        allow, reason = land_decision(units, root, head_sha)
         if not allow:
             return _emit("deny", agent_message=f"REFUSED (orchestration gate): {reason}")
-        append_ledger(root, {"event": "land", "pr": pr, "units": units, "command": cmd})
+        append_ledger(root, {"event": "land", "pr": pr, "units": units, "head_sha": head_sha,
+                             "command": cmd})
         return _emit("allow", agent_message=f"land allowed: {', '.join(units)} verified by sub-agent(s).")
     return _emit("allow")
 
 
 def handle_subagent_start(data: dict, root) -> int:
     if not is_active(root):
-        return _emit("allow")          # ledger only records during an orchestration run
-    append_ledger(root, {"event": "subagent_start", "subagent_id": data.get("subagent_id"),
-                         "subagent_type": data.get("subagent_type"), "task": data.get("task"),
-                         "parent_conversation_id": data.get("parent_conversation_id"),
-                         "is_parallel_worker": data.get("is_parallel_worker"),
-                         "git_branch": data.get("git_branch")})
+        return _emit("allow")          # inert outside an orchestration run — no collateral
+    stype = str(data.get("subagent_type") or "")
+    entry = {"event": "subagent_start", "subagent_id": data.get("subagent_id"),
+             "subagent_type": stype, "subagent_model": data.get("subagent_model"),
+             "task": data.get("task"),
+             "parent_conversation_id": data.get("parent_conversation_id"),
+             "is_parallel_worker": data.get("is_parallel_worker"),
+             "git_branch": data.get("git_branch")}
+    if stype not in _WAVE_AGENTS:
+        append_ledger(root, {**entry, "event": "subagent_denied"})
+        if stype == "fanops-orchestrator":
+            return _emit("deny", user_message=(
+                "REFUSED (orchestration gate): a wave is already ACTIVE — one orchestrator at a time "
+                "(parallel orchestrators caused double-merges), and the orchestrator must NEVER run as a "
+                "subagent (a nested orchestrator cannot delegate — launch it TOP-LEVEL per "
+                "ORCHESTRATION.md §1). If the previous wave is over, run "
+                "`python scripts/orchestrate.py stop` from your own terminal, then relaunch top-level."))
+        return _emit("deny", user_message=(
+            f"REFUSED (orchestration gate): spawn type {stype!r} is not allowed during a wave. Spawn the "
+            "named `fanops-worker` agent (is_background: true, brief = unit + role + protocol file) — its "
+            "model is pinned in .cursor/agents/fanops-worker.md; never spawn general-purpose/shell types "
+            "and never set a model."))
+    append_ledger(root, entry)
     return _emit("allow")
 
 
