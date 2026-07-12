@@ -194,6 +194,7 @@ def pipeline_status(cfg: Config) -> dict:
         # publishes live, which is the correct behavior (a live publish_now needs a confirm).
         "backend": _publish_mode_label(cfg),
         "accounts": [a.handle for a in Accounts.load(cfg).active()],   # Account-First: Run-form batch-target options
+        "upload_max_bytes": cfg.upload_max_bytes,   # S02: chunked-upload JS intercept threshold (legacy single-shot uses the same cap)
         "errored": errored_sources(led),   # MOL-123: recoverable sources (error / moments_empty) for the Run-tab list
     }
 

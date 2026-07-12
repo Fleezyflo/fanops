@@ -60,11 +60,16 @@
 
     <form hx-post="{{ url_for('do_run_upload') }}" hx-target="#run-panel" hx-swap="outerHTML"
           hx-encoding="multipart/form-data" hx-disabled-elt="find button[type=submit]"
-          hx-indicator="this" class="stage-form stage-busy">
+          hx-indicator="this" class="stage-form stage-busy" id="run-upload-form"
+          data-upload-max-bytes="{{ status.upload_max_bytes }}">
       <label class="field">
         <span class="field-label">Files</span>
         <input type="file" name="files" accept="video/*" multiple aria-label="Choose video files to add" title="Choose video files to add">
       </label>
+      <div id="upload-progress" class="upload-progress" hidden aria-live="polite">
+        <progress id="upload-progress-bar" max="100" value="0"></progress>
+        <span id="upload-progress-label" class="muted"></span>
+      </div>
 
       <label class="field">
         <span class="field-label">Batch name <span class="muted">(optional)</span></span>
@@ -222,3 +227,4 @@
     </div>
   </details>
 </div>
+<script src="{{ url_for('static', filename='upload.js') }}" defer></script>

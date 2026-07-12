@@ -106,7 +106,7 @@ Hand-editing `.env` while a long-lived process runs requires restart; Studio go-
 | `FANOPS_CONCURRENT_SOURCES` | off | Parallel per-source pipeline | .env |
 | `FANOPS_CONCURRENT_WORKERS` | 4 | Concurrency pool size (clamped ≥1) | .env |
 | `FANOPS_GC_KEEP_DAYS` | 30 | Manual-gc retention (clamped ≥1) | .env |
-| `FANOPS_UPLOAD_MAX_MB` | 2048 | Studio upload body ceiling (clamped ≥1) | .env |
+| `FANOPS_UPLOAD_MAX_MB` | 2048 | Studio upload body ceiling per request — legacy single-shot POST and each chunked PUT (clamped ≥1) | .env |
 
 **Coverage note:** every trust-gate numeric and every Phase-2 reach-loop bias kill switch is `.env`/shell-only —
 an operator-only (Studio-only) deployment cannot turn on the bias actuators or tune their thresholds without

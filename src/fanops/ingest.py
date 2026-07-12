@@ -89,11 +89,13 @@ def _archive_inbox_file(inbox: Path, f: Path, cfg: Config) -> None:
         get_logger(cfg)("ingest", f.name, "archive_failed", why=str(e)[:120])   # left in inbox; re-tried next pass
 
 def _sweep_partials(inbox: Path, cfg: Config) -> None:
-    """Delete leaked *.uploadpart / *.part temps (a crashed Studio upload / killed yt-dlp) BEFORE the scan
-    (ING-10). They are not in MEDIA_EXT so they were never ingested, but they accumulate; clear them each pass.
-    A temp that won't unlink (perms/race) is a labeled breadcrumb, never a swallowed error or a pass abort."""
+    """Delete leaked *.uploadpart / *.part / *.uploadmeta.json temps (a crashed Studio upload / killed yt-dlp)
+    BEFORE the scan (ING-10). They are not in MEDIA_EXT so they were never ingested, but they accumulate;
+    clear them each pass. A temp that won't unlink (perms/race) is a labeled breadcrumb, never a swallowed
+    error or a pass abort."""
     for f in inbox.glob("*"):
-        if f.is_file() and not f.is_symlink() and f.suffix.lower() in _PARTIAL_EXT:
+        if not f.is_file() or f.is_symlink(): continue
+        if f.suffix.lower() in _PARTIAL_EXT or f.name.endswith(".uploadmeta.json"):
             try:
                 f.unlink()
             except OSError as e:

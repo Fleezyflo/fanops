@@ -913,8 +913,10 @@ class Config:
     @property
     def upload_max_bytes(self) -> int:
         # The Studio upload body ceiling (ING-8). DEFAULT 2048 MB (2 GiB — a long raw clip fits; an abusive
-        # body is refused with 413). Configurable via FANOPS_UPLOAD_MAX_MB for a trusted localhost that ingests
-        # larger masters. CLAMPED >= 1 MB (a 0/negative cap would refuse every upload). Non-int env -> default.
+        # body is refused with 413 on the legacy single-shot POST). Configurable via FANOPS_UPLOAD_MAX_MB for a
+        # trusted localhost that ingests larger masters. The SAME cap bounds each chunked PUT body (S02) — files
+        # larger than this use the init/chunk/finalize path from the browser. CLAMPED >= 1 MB (a 0/negative cap
+        # would refuse every upload). Non-int env -> default.
         try:
             mb = int(os.getenv("FANOPS_UPLOAD_MAX_MB", "2048"))
         except ValueError:
