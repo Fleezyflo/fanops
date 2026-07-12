@@ -28,8 +28,9 @@ def _bounded(cfg, candidate) -> Path | None:
     return p if p.is_relative_to(cfg.base.resolve()) else None
 
 
-def _fallback_response(reason: str) -> Response:
-    _log.warning("thumb fallback: %s", reason)
+def _fallback_response(reason: str, *, log: bool = True) -> Response:
+    if log:
+        _log.warning("thumb fallback: %s", reason)
     return Response(_TRANSPARENT_GIF, mimetype="image/gif",
                     headers={"Cache-Control": "public, max-age=3600"})
 
@@ -65,12 +66,14 @@ def resolve_source_thumb(cfg, source_id: str) -> Response:
             return _serve_cached_jpg(cache)
         try:
             _pw, _ph, dur = probe_dimensions(video)
-        except Exception:
+        except Exception as exc:
+            _log.warning("probe_dimensions failed for source thumb (fail-open): %s", exc)
             dur = None
         at = max(0.5, (dur or 0) * 0.1)
         return _extract_and_serve(video, cache, at_seconds=at)
     except Exception as exc:
-        return _fallback_response(str(exc)[:120])
+        _log.warning("thumb source resolve failed: %s", exc)
+        return _fallback_response(str(exc)[:120], log=False)
 
 
 def resolve_clip_thumb(cfg, clip_id: str) -> Response:
@@ -90,4 +93,5 @@ def resolve_clip_thumb(cfg, clip_id: str) -> Response:
             return _serve_cached_jpg(cache)
         return _extract_and_serve(src, cache, at_seconds=0.5)
     except Exception as exc:
-        return _fallback_response(str(exc)[:120])
+        _log.warning("thumb clip resolve failed: %s", exc)
+        return _fallback_response(str(exc)[:120], log=False)
