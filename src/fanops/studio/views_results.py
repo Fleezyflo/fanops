@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import logging
 import statistics
+import calendar as _cal
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -17,7 +18,7 @@ from fanops.ledger import Ledger
 from fanops.models import LIFT_SCORE, PostState, RenderState
 from fanops.timeutil import parse_iso, is_scheduled_due, schedule_utc
 from fanops.variant_learning import _hook_for_post
-from fanops.studio.views_common import RECENT_WINDOW_HOURS, _batch_title, _imminent, suggest_time, clip_source_of
+from fanops.studio.views_common import RECENT_WINDOW_HOURS, _batch_title, _imminent, suggest_time, clip_source_of, account_color_hue
 
 logger = logging.getLogger(__name__)
 
@@ -399,6 +400,116 @@ def group_schedule_by_account(rows: list) -> list:
     by_acct: dict[str, list] = {}
     for r in rows: by_acct.setdefault(r.account, []).append(r)
     return [(a, by_acct[a]) for a in sorted(by_acct)]
+
+
+@dataclass
+class ScheduleChip:
+    post_id: str
+    account: str
+    clip_id: str
+    platform: str
+    caption: str
+    variant_hook: Optional[str]
+    time_hm: str              # operator-local HH:MM (drag keeps this on date change)
+    hue: int
+    editable: bool
+    lane: str
+    scheduled_time: str       # canonical ISO-Z for move forms
+
+
+@dataclass
+class DayCell:
+    date: str                 # YYYY-MM-DD operator-local
+    in_month: bool
+    is_past: bool
+    is_today: bool
+    chips: list[ScheduleChip]
+
+
+@dataclass
+class CalendarMonth:
+    year: int
+    month: int
+    label: str
+    weeks: list[list[DayCell]]
+    prev_ym: str              # YYYY-MM navigation
+    next_ym: str
+    month_param: str
+
+
+def _schedule_chip(row: ScheduleRow, cfg: Config, *, zone) -> Optional[ScheduleChip]:
+    if not row.scheduled_time:
+        return None
+    try:
+        dt = parse_iso(row.scheduled_time)
+        if dt.tzinfo is None:
+            return None
+        local = dt.astimezone(zone)
+    except (ValueError, TypeError):
+        return None
+    return ScheduleChip(post_id=row.post_id, account=row.account, clip_id=row.clip_id,
+                        platform=row.platform, caption=row.caption, variant_hook=row.variant_hook,
+                        time_hm=local.strftime("%H:%M"), hue=account_color_hue(row.account),
+                        editable=row.editable, lane=row.lane, scheduled_time=row.scheduled_time)
+
+
+def schedule_calendar_month(rows: list[ScheduleRow], cfg: Config, *, year: int, month: int,
+                            account: Optional[str] = None, now: Optional[datetime] = None) -> CalendarMonth:
+    """U7: month grid of scheduled chips in operator-local days. Optional account filters chips only."""
+    from fanops.timeutil import _operator_zone
+    now = now or datetime.now(timezone.utc)
+    zone = _operator_zone(cfg) or timezone.utc
+    today = now.astimezone(zone).date()
+    chips_by_day: dict[str, list[ScheduleChip]] = {}
+    for r in rows:
+        if account is not None and r.account != account:
+            continue
+        chip = _schedule_chip(r, cfg, zone=zone)
+        if chip is None:
+            continue
+        try:
+            dt = parse_iso(r.scheduled_time)
+            local = dt.astimezone(zone)
+            if local.year != year or local.month != month:
+                continue
+            dkey = local.date().isoformat()
+        except (ValueError, TypeError):
+            continue
+        chips_by_day.setdefault(dkey, []).append(chip)
+    for day_chips in chips_by_day.values():
+        day_chips.sort(key=lambda c: c.time_hm)
+    weeks_raw = _cal.monthcalendar(year, month)
+    weeks: list[list[DayCell]] = []
+    for week in weeks_raw:
+        row_cells: list[DayCell] = []
+        for day in week:
+            if day == 0:
+                row_cells.append(DayCell(date="", in_month=False, is_past=False, is_today=False, chips=[]))
+                continue
+            d = datetime(year, month, day, tzinfo=zone).date()
+            dkey = d.isoformat()
+            row_cells.append(DayCell(date=dkey, in_month=True, is_past=d < today, is_today=d == today,
+                                       chips=chips_by_day.get(dkey, [])))
+        weeks.append(row_cells)
+    prev_y, prev_m = (year - 1, 12) if month == 1 else (year, month - 1)
+    next_y, next_m = (year + 1, 1) if month == 12 else (year, month + 1)
+    label = datetime(year, month, 1).strftime("%B %Y")
+    return CalendarMonth(year=year, month=month, label=label, weeks=weeks,
+                         prev_ym=f"{prev_y:04d}-{prev_m:02d}", next_ym=f"{next_y:04d}-{next_m:02d}",
+                         month_param=f"{year:04d}-{month:02d}")
+
+
+def schedule_bucket_split(led: Ledger, rows: list[ScheduleRow]) -> dict[str, dict[str, list[ScheduleRow]]]:
+    """U7: split account-scoped rows into untimed vs timed buckets, each grouped by clip source."""
+    out: dict[str, dict[str, list[ScheduleRow]]] = {"untimed": {}, "timed": {}}
+    for r in rows:
+        bucket = "untimed" if not (r.scheduled_time or "").strip() else "timed"
+        sid = clip_source_of(led, r.clip_id) or ""
+        out[bucket].setdefault(sid, []).append(r)
+    for b in out.values():
+        for sid in b:
+            b[sid].sort(key=lambda x: (x.scheduled_time or "", x.post_id))
+    return out
 
 
 @dataclass

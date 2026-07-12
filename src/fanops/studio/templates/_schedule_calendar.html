@@ -1,0 +1,35 @@
+{# U7: month calendar grid — color-coded chips per account. #}
+<section class="schedule-cal" aria-label="Schedule calendar {{ calendar.label }}">
+  <header class="schedule-cal-nav">
+    <a class="button ghost schedule-cal-prev" href="{{ url_for('schedule', month=calendar.prev_ym, account=active, batch=active_batch|default(none), source=active_source|default(none)) }}">← {{ calendar.prev_ym }}</a>
+    <h3 class="schedule-cal-title">{{ calendar.label }}</h3>
+    <a class="button ghost schedule-cal-next" href="{{ url_for('schedule', month=calendar.next_ym, account=active, batch=active_batch|default(none), source=active_source|default(none)) }}">{{ calendar.next_ym }} →</a>
+  </header>
+  <div class="schedule-cal-grid" role="grid" aria-label="Month days">
+    <div class="schedule-cal-dow" role="row">
+      <span role="columnheader">Mon</span><span role="columnheader">Tue</span><span role="columnheader">Wed</span>
+      <span role="columnheader">Thu</span><span role="columnheader">Fri</span><span role="columnheader">Sat</span><span role="columnheader">Sun</span>
+    </div>
+    {% for week in calendar.weeks %}
+    <div class="schedule-cal-week" role="row">
+      {% for cell in week %}
+      <div class="schedule-cal-day{% if not cell.in_month %} schedule-cal-day--pad{% endif %}{% if cell.is_past %} schedule-cal-day--past{% endif %}{% if cell.is_today %} schedule-cal-day--today{% endif %}"
+           role="gridcell"{% if cell.in_month %} data-date="{{ cell.date }}"{% endif %}{% if cell.is_past %} data-past="1"{% endif %}>
+        {% if cell.in_month %}<span class="schedule-cal-daynum">{{ cell.date[8:10]|int }}</span>{% endif %}
+        <ul class="schedule-cal-chips" role="list">
+          {% for chip in cell.chips %}
+          <li class="schedule-cal-chip{% if chip.editable %} schedule-cal-chip--drag{% endif %}"
+              role="listitem" draggable="{{ 'true' if chip.editable else 'false' }}"
+              data-post-id="{{ chip.post_id }}" data-time-hm="{{ chip.time_hm }}"
+              data-scheduled="{{ chip.scheduled_time }}" style="--chip-hue: {{ chip.hue }}">
+            <span class="schedule-cal-chip-time">{{ chip.time_hm }}</span>
+            <span class="schedule-cal-chip-acct">{{ chip.account }}</span>
+          </li>
+          {% endfor %}
+        </ul>
+      </div>
+      {% endfor %}
+    </div>
+    {% endfor %}
+  </div>
+</section>

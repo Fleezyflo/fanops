@@ -1,6 +1,5 @@
-{# Schedule — per-account queues with inline move controls. #}
-{% from "_state_badge.html" import state_badge %}
-<div id="schedule-body" aria-live="polite"{% if lanes.inflight|length %} hx-get="{{ url_for('schedule', account=active, batch=active_batch|default(none), offset=page.offset if page else none) }}" hx-trigger="every 30s" hx-select="#schedule-body" hx-swap="outerHTML"{% endif %}>
+{# Schedule — month calendar + per-account bucket cockpit. #}
+<div id="schedule-body" aria-live="polite"{% if lanes.inflight|length %} hx-get="{{ url_for('schedule', account=active, batch=active_batch|default(none), month=calendar.month_param, source=active_source|default(none)) }}" hx-trigger="every 30s" hx-select="#schedule-body" hx-swap="outerHTML"{% endif %}>
   {% include "_account_filter.html" %}
   {% with sources=source_chips, chip_route='schedule', active=active %}{% include "_source_filter.html" %}{% endwith %}
   {% if active_source|default(none) %}<p class="meta muted source-scope-banner">Source filter active — bulk re-spread still affects the full approved bucket, not only this source.</p>{% endif %}
@@ -9,87 +8,32 @@
   {% if not cfg.is_live %}<p class="schedule-guard warn">Publishing is off — <a href="{{ url_for('golive_connect') }}">Go Live</a> to ship approved posts.</p>{% endif %}
   {% include "_schedule_cockpit.html" %}
   {% if cfg.is_live and due_plan and due_plan.due and not cockpit and not auto_ship %}
-    <form class="publish-due" hx-post="{{ url_for('do_schedule_publish_due', account=active, batch=active_batch|default(none)) }}" hx-target="#schedule-body" hx-swap="outerHTML">
+    <form class="publish-due" hx-post="{{ url_for('do_schedule_publish_due', account=active, batch=active_batch|default(none), month=calendar.month_param) }}" hx-target="#schedule-body" hx-swap="outerHTML">
       <label class="confirm"><input type="checkbox" name="confirm" value="1"> I confirm {{ due_plan.due }} post{{ 's' if due_plan.due != 1 else '' }} go live</label>
       <button type="submit" class="primary">Publish due ({{ due_plan.due }})</button>{% if due_plan.est_minutes %}<span class="muted">~{{ due_plan.est_minutes }} min</span>{% endif %}
     </form>
   {% endif %}
   {% if approved_total %}
-    <form class="respread" hx-post="{{ url_for('do_reschedule_bucket', account=active, batch=active_batch|default(none)) }}" hx-target="#schedule-body" hx-swap="outerHTML">
+    <form class="respread" hx-post="{{ url_for('do_reschedule_bucket', account=active, batch=active_batch|default(none), month=calendar.month_param) }}" hx-target="#schedule-body" hx-swap="outerHTML">
       <button type="submit">{% if active %}Re-spread {{ active }}{% else %}Re-spread all{% endif %}</button>
       <span class="muted">— fresh cadence for {{ approved_total }} queued post(s){% if active %} on {{ active }} only{% endif %}</span>
     </form>
   {% endif %}
-  {% if rows %}
-  {% for acct, acct_rows in schedule_groups %}
-  <section class="schedule-account-block">
-    <header class="schedule-account-head">
-      <h3>{{ acct }}<span class="muted"> ({{ acct_rows|length }})</span></h3>
-      <div class="schedule-account-tools">
-        <form class="inline-shift" hx-post="{{ url_for('do_schedule_shift', handle=acct, account=active, batch=active_batch|default(none)) }}" hx-target="#schedule-body" hx-swap="outerHTML">
-          <input type="hidden" name="hours" value="24"><button type="submit">+1 day</button>
-        </form>
-        <form class="inline-shift" hx-post="{{ url_for('do_schedule_shift', handle=acct, account=active, batch=active_batch|default(none)) }}" hx-target="#schedule-body" hx-swap="outerHTML">
-          <input type="hidden" name="hours" value="-24"><button type="submit">−1 day</button>
-        </form>
-        <form class="inline-shift" hx-post="{{ url_for('do_reschedule_bucket', account=acct, batch=active_batch|default(none)) }}" hx-target="#schedule-body" hx-swap="outerHTML">
-          <button type="submit">Re-spread account</button>
-        </form>
+  {% include "_schedule_calendar.html" %}
+  {% if active and bucket %}{% include "_schedule_bucket.html" %}
+  {% elif not rows and not active %}<div class="empty">No approved posts yet — approve in Review first.</div>
+  {% elif not rows and active %}<div class="empty">No scheduled posts for {{ active }}.</div>{% endif %}
+  <dialog id="schedule-dialog" class="schedule-dialog">
+    <form method="dialog" class="schedule-dialog-form" id="schedule-dialog-form">
+      <h3>Schedule post</h3>
+      <p class="schedule-dialog-clip meta" id="schedule-dialog-clip"></p>
+      <label>Date <input type="date" name="sched_date" id="schedule-dialog-date" required></label>
+      <label>Time <input type="time" name="sched_time" id="schedule-dialog-time" required></label>
+      <input type="hidden" name="post_id" id="schedule-dialog-post">
+      <div class="schedule-dialog-actions">
+        <button type="button" class="ghost" id="schedule-dialog-cancel">Cancel</button>
+        <button type="submit" class="primary" id="schedule-dialog-save">Save</button>
       </div>
-    </header>
-    <p class="vh">Caption</p>
-    <ul class="schedule-scan-list">
-      {% for r in acct_rows %}
-      <li class="schedule-row lane-{{ r.lane }}">
-        <div class="sched-row-main">
-          {% if r.clip_id %}<img class="sched-thumb" loading="lazy" src="{{ url_for('clip_thumb', clip_id=r.clip_id) }}" alt="">{% endif %}
-          <div class="sched-row-text">
-            <div class="sched-row-head"><span class="muted">{{ r.platform }}</span>{% if r.batch_title %} <span class="muted batch-tag">«{{ r.batch_title }}»</span>{% endif %} · {{ r.scheduled_time | localdt_hybrid or 'unscheduled' }}{% if r.bad_schedule %} <span class="chip warn">bad schedule</span>{% endif %}</div>
-            <p class="sched-caption clamp-1">{% if r.variant_hook %}✦ {{ r.variant_hook }} · {% endif %}{{ r.caption or '—' }}</p>
-            <div class="sched-row-meta">{{ state_badge(r.delivery or r.lane) }}</div>
-          </div>
-          <div class="sched-row-controls">
-            {% if r.lane == 'inflight' %}
-              <span class="muted">Waiting for link</span>
-              {% if r.error_reason %}<span class="err">{{ r.error_reason | operator_error }}</span>{% endif %}
-              <a class="button ghost" href="{{ url_for('posted', delivery='inflight', account=r.account) }}">View</a>
-            {% elif r.editable %}
-              <form class="sched-move" hx-post="{{ url_for('do_schedule_move', post_id=r.post_id, account=active, batch=active_batch|default(none)) }}" hx-target="#schedule-body" hx-swap="outerHTML">
-                <input type="datetime-local" name="new_time" value="{{ r.scheduled_time | localinput }}" aria-label="Time for {{ r.account }} {{ r.platform }}">
-                <button type="submit" class="ghost">Move</button>{# MOL-64: per-row reversible action → tertiary ghost; block-scope tools stay secondary #}
-              </form>
-              {% if r.suggested_time %}
-              <form class="sched-clear" hx-post="{{ url_for('do_schedule_clear', post_id=r.post_id, account=active, batch=active_batch|default(none)) }}" hx-target="#schedule-body" hx-swap="outerHTML">
-                <button type="submit" class="ghost">Clear time</button>{# MOL-64: per-row reversible → ghost #}
-              </form>
-              <form class="sched-suggest" hx-post="{{ url_for('do_schedule_move', post_id=r.post_id, account=active, batch=active_batch|default(none)) }}" hx-target="#schedule-body" hx-swap="outerHTML">
-                <input type="hidden" name="new_time" value="{{ r.suggested_time }}">
-                <button type="submit" class="ghost" title="{{ r.why_suggested or '' }}">Use suggested</button>{# MOL-64: per-row reversible → ghost #}
-              </form>
-              {% endif %}
-              {% if r.ready %}<span class="chip ok schedule-ready">ready</span>{% elif r.ready is not none %}<span class="chip warn schedule-ready">fix clip</span>{% endif %}
-              {% if cfg.is_live and not auto_ship %}
-              <form hx-post="{{ url_for('do_schedule_publish', post_id=r.post_id, account=active, batch=active_batch|default(none)) }}" hx-target="#schedule-body" hx-swap="outerHTML">
-                <label class="confirm"><input type="checkbox" name="confirm" value="1"> live</label>
-                <button type="submit" class="primary"{% if r.ready is false %} disabled title="Clip not ready to ship"{% endif %}>Publish</button>
-              </form>
-              {% endif %}
-              <form hx-post="{{ url_for('do_schedule_unapprove', post_id=r.post_id, account=active, batch=active_batch|default(none)) }}" hx-target="#schedule-body" hx-swap="outerHTML">
-                <button type="submit" class="ghost">← Review</button>{# MOL-64: send-back-to-Review is a reversible per-row nav → ghost (NOT Publish, which ships live and keeps .primary) #}
-              </form>
-            {% else %}<span class="muted">read-only</span>{% endif %}
-          </div>
-        </div>
-      </li>
-      {% endfor %}
-    </ul>
-  </section>
-  {% endfor %}
-  {% if page and page.total > page.items|length %}
-    <div class="grid-more meta">Showing {{ page.offset + 1 }}–{{ page.offset + page.items|length }} of {{ page.total }}.
-      {% if page.next_offset is not none %}<a class="button ghost" href="{{ url_for('schedule', offset=page.next_offset, account=active, batch=active_batch|default(none)) }}">Show more</a>{% endif %}{# MOL-44: pagination disclosure → tertiary #}
-    </div>
-  {% endif %}
-  {% elif active %}<div class="empty">No scheduled posts for {{ active }}.</div>
-  {% else %}<div class="empty">No approved posts yet — approve in Review first.</div>{% endif %}
+    </form>
+  </dialog>
 </div>

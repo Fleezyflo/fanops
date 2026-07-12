@@ -704,6 +704,67 @@ def reschedule_account(cfg: Config, handle: str, *, now: Optional[datetime] = No
     return reschedule_bucket(cfg, now=now, handle=handle)
 
 
+def randomize_account_schedule(cfg: Config, handle: str, *, days: int = 7, source_id: Optional[str] = None,
+                               seed: Optional[int] = None, now: Optional[datetime] = None) -> ActionResult:
+    """U7: scatter one account's queued posts across the next `days` operator-local days with 30-min min-gap
+    and account-window clamp. Optional source_id scopes to one clip source. Seeded RNG for tests."""
+    import random
+    from fanops.studio.views_common import _roll_into_window, clip_source_of
+    from fanops.timeutil import _operator_zone, iso_z
+    handle = (handle or "").strip()
+    if not handle:
+        return ActionResult(ok=True, detail={"rescheduled": 0, "handle": None})
+    now = _now(now)
+    rng = random.Random(seed)
+    min_gap = timedelta(minutes=30)
+    zone = _operator_zone(cfg) or timezone.utc
+    window = cfg.account_window(handle)
+    moved = 0
+    try:
+        with Ledger.transaction(cfg) as led:
+            posts = [p for p in led.posts.values()
+                     if p.state is PostState.queued and p.account == handle
+                     and not _seconds_away(p.scheduled_time, now)]
+            if source_id is not None:
+                posts = [p for p in posts if clip_source_of(led, p.parent_id) == source_id]
+            posts.sort(key=lambda p: p.id)
+            slots: list[datetime] = []
+            for p in posts:
+                placed = False
+                for _ in range(300):
+                    day_off = rng.randint(0, max(0, days - 1))
+                    local_base = now.astimezone(zone).replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=day_off)
+                    open_h = 0 if window is None else window[0]
+                    close_h = 24 if window is None else window[1]
+                    span = max(1, close_h - open_h) if close_h > open_h else 1
+                    hour = open_h + rng.randint(0, span - 1) if span > 1 else open_h
+                    minute = rng.randint(0, 59)
+                    local = local_base.replace(hour=hour % 24, minute=minute)
+                    t = _roll_into_window(local.astimezone(timezone.utc), window, cfg)
+                    if t <= now:
+                        t = now + timedelta(minutes=max(1, cfg.publish_lead_minutes))
+                        t = _roll_into_window(t, window, cfg)
+                    if t <= now:
+                        continue
+                    if all(abs((t - s).total_seconds()) >= min_gap.total_seconds() for s in slots):
+                        slots.append(t)
+                        p.scheduled_time = iso_z(t)
+                        moved += 1
+                        placed = True
+                        break
+                if not placed:
+                    t = (slots[-1] + min_gap) if slots else now + timedelta(minutes=max(1, cfg.publish_lead_minutes))
+                    t = _roll_into_window(t, window, cfg)
+                    if t <= now:
+                        t = now + timedelta(seconds=1)
+                    slots.append(t)
+                    p.scheduled_time = iso_z(t)
+                    moved += 1
+    except Exception as exc:
+        return ActionResult(ok=False, error=f"randomize failed: {str(exc)[:160]}")
+    return ActionResult(ok=True, detail={"rescheduled": moved, "handle": handle, "source_id": source_id})
+
+
 def publish_due_bucket(cfg: Config, *, handle: Optional[str] = None, batch: Optional[str] = None,
                        confirmed: bool = True, now: Optional[datetime] = None) -> ActionResult:
     """Publish every DUE queued post in scope (Schedule 'Publish all due'). LIVE requires confirm + shows rate."""

@@ -139,6 +139,25 @@ def _offset_arg() -> int:
     except (TypeError, ValueError):
         return 0
 
+def _month_arg() -> tuple[int, int]:
+    """U7: ?month=YYYY-MM for the Schedule calendar; absent -> current operator-local month."""
+    raw = (request.args.get("month") or "").strip()
+    if raw:
+        try:
+            y, m = raw.split("-", 1)
+            return int(y), int(m)
+        except (ValueError, TypeError):
+            pass
+    try:
+        from fanops.timeutil import _operator_zone
+        from flask import current_app
+        cfg = current_app.config.get("FANOPS_CFG")
+        zone = _operator_zone(cfg) if cfg else timezone.utc
+    except Exception:
+        zone = timezone.utc
+    today = datetime.now(zone).date()
+    return today.year, today.month
+
 def _account_all_arg():
     # S07: ?account=all is the explicit mixed worklist (None scope, but not bare-entry picker/auto-focus).
     return (request.args.get("account") or "").strip().lower() == "all"
