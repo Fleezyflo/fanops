@@ -139,15 +139,16 @@ def _upload_meta_path(tmp: Path) -> Path:
     return tmp.with_suffix(".uploadmeta.json")   # clip.mp4.uploadpart → clip.mp4.uploadmeta.json
 
 
-def _find_upload_meta(inbox: Path, upload_id: str) -> tuple[Optional[Path], Optional[dict]]:
+def _find_upload_meta(cfg: Config, inbox: Path, upload_id: str) -> tuple[Optional[Path], Optional[dict]]:
     """Locate a chunked-upload meta file by upload_id. Fail-open to (None, None) when absent."""
+    from fanops.log import get_logger
     for p in inbox.glob("*.uploadmeta.json"):
         try:
             meta = __import__("json").loads(p.read_text())
             if meta.get("upload_id") == upload_id:
                 return p, meta
-        except Exception:
-            continue
+        except Exception as exc:
+            get_logger(cfg)("upload", upload_id, "meta_read_failed", path=p.name, err=str(exc)[:160]); continue
     return None, None
 
 
@@ -168,8 +169,9 @@ def upload_init(cfg: Config, filename: str, size: int, sha256: str) -> ActionRes
                     and meta.get("sha256") == sha256 and meta.get("name") == name):
                 received = tmp.stat().st_size
                 return ActionResult(ok=True, detail={"upload_id": meta["upload_id"], "offset": received, "name": name})
-        except Exception:
-            pass
+        except Exception as exc:
+            from fanops.log import get_logger
+            get_logger(cfg)("upload", "-", "meta_resume_failed", err=str(exc)[:160])
     upload_id = uuid.uuid4().hex
     try:
         tmp.write_bytes(b"")                                      # truncate / create the part file
@@ -186,7 +188,7 @@ def upload_init(cfg: Config, filename: str, size: int, sha256: str) -> ActionRes
 def upload_chunk(cfg: Config, upload_id: str, offset: int, data: bytes) -> ActionResult:
     """Append one sequential chunk to an in-progress upload. Offset MUST equal the current part size."""
     inbox = cfg.inbox.resolve()
-    meta_p, meta = _find_upload_meta(inbox, upload_id)
+    meta_p, meta = _find_upload_meta(cfg, inbox, upload_id)
     if not meta_p or not meta:
         return ActionResult(ok=False, error=f"unknown upload: {upload_id}")
     tmp = inbox / f"{meta['name']}.uploadpart"
@@ -211,7 +213,7 @@ def upload_finalize(cfg: Config, upload_id: str, *, batch_name: str = "", target
     """Verify size + sha256, probe the video stream on the .uploadpart, os.replace into the inbox, delete meta.
     When trigger_ingest is True, chains run_ingest like save_uploads_and_ingest."""
     inbox = cfg.inbox.resolve()
-    meta_p, meta = _find_upload_meta(inbox, upload_id)
+    meta_p, meta = _find_upload_meta(cfg, inbox, upload_id)
     if not meta_p or not meta:
         return ActionResult(ok=False, error=f"unknown upload: {upload_id}")
     tmp = inbox / f"{meta['name']}.uploadpart"
