@@ -1,7 +1,6 @@
-/* Review selection dock + focus-mode keyboard shortcuts. */
+/* Review selection dock + source-select helper. */
 (function () {
   function body() { return document.getElementById("review-body"); }
-  function focusRoot() { return document.getElementById("review-focus"); }
   function boxes() { const b = body(); return b ? b.querySelectorAll('input[name="ids"]') : []; }
   function count() {
     let n = 0; boxes().forEach(b => { if (b.checked) n++; });
@@ -9,8 +8,6 @@
     if (el) el.textContent = n ? n + " selected" : "Tick posts below, then approve or reject";
     const bar = document.getElementById("review-action-dock");
     if (bar) bar.classList.toggle("has-selection", n > 0);
-    // MOL-52: the bulk Approve/Reject buttons ship server-rendered disabled (0 on load); reflect live count.
-    // Queried document-wide + re-run from htmx:afterSwap so the disable state survives every swap.
     document.querySelectorAll("[data-bulk-action]").forEach(b => { b.disabled = n === 0; });
   }
   document.addEventListener("change", e => { if (e.target && e.target.name === "ids") count(); });
@@ -24,42 +21,14 @@
     else if (act === "select-batch") {
       const bid = t.dataset.batchId || "";
       b.querySelectorAll('input[name="ids"][data-batch="' + bid + '"]').forEach(x => { x.checked = true; });
+    } else if (act === "select-source") {
+      const sk = t.dataset.sourceKey || "";
+      b.querySelectorAll('input[name="ids"][data-source="' + sk + '"]').forEach(x => { x.checked = true; });
     }
     count();
   });
-  document.addEventListener("keydown", e => {
-    if (!focusRoot() || e.metaKey || e.ctrlKey || e.altKey) return;
-    const tag = (e.target && e.target.tagName) || "";
-    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || (e.target && e.target.isContentEditable)) return;
-    const root = focusRoot();
-    if (e.key === "a" || e.key === "A") {
-      const btn = root.querySelector(".focus-actions .primary");
-      if (btn) { e.preventDefault(); btn.click(); }
-    } else if (e.key === "r" || e.key === "R") {
-      const btn = root.querySelector(".focus-actions .surface-reject");
-      if (btn) { e.preventDefault(); btn.click(); }
-    } else if (e.key === "e" || e.key === "E") {
-      const ed = root.querySelector("details.surface-editor");
-      if (ed) { e.preventDefault(); ed.open = !ed.open; }
-    } else if (e.key === "n" || e.key === "N" || e.key === "ArrowRight") {
-      const next = root.querySelector('.focus-actions a[href*="fi="]');
-      const links = root.querySelectorAll(".focus-actions a.button");
-      const nxt = links.length ? links[links.length - 1] : null;
-      if (nxt && nxt.textContent.indexOf("Next") >= 0) { e.preventDefault(); nxt.click(); }
-    } else if (e.key === "p" || e.key === "P" || e.key === "ArrowLeft") {
-      const links = root.querySelectorAll(".focus-actions a.button");
-      if (links.length && links[0].textContent.indexOf("Previous") >= 0) { e.preventDefault(); links[0].click(); }
-    }
-  });
   document.body.addEventListener("htmx:afterSwap", e => {
-    if (e.detail.target && e.detail.target.id === "review-body") {
-      count();
-      const fr = focusRoot();
-      if (fr) {
-        const v = fr.querySelector("video");
-        if (v && v.src) v.load();
-      }
-    }
+    if (e.detail.target && e.detail.target.id === "review-body") count();
   });
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", count);
   else count();

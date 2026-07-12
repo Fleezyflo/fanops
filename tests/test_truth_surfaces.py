@@ -183,6 +183,6 @@ def test_review_picker_progress_shows_real_totals(tmp_path):
     cfg = Config(root=tmp_path)
     _seed_two_account_picker(cfg)
     html = _client(cfg).get("/review").data.decode()
-    assert "review-account-picker" in html or "Which account" in html
+    assert "review-switcher" in html
     assert "0 awaiting" not in html
     assert "2 awaiting" in html or "awaiting ·" in html

@@ -180,6 +180,32 @@ def approve_moment(cfg: Config, moment_id: str, *, now: Optional[datetime] = Non
         return lambda p: p.parent_id in clip_ids
     return _approve_matching(cfg, pred_for=_pred_for, now=now, detail={"moment": moment_id})
 
+def approve_with_edits(cfg: Config, post_id: str, *, caption: str, hook: str,
+                       now: Optional[datetime] = None) -> ActionResult:
+    """U6: composite approve — persist caption/hook edits when dirty, then promote ONE awaiting post."""
+    from fanops.studio.actions import edit_caption, reburn_hook, _guard_editable_post
+    now = _now(now)
+    led = Ledger.load(cfg)
+    p, err = _guard_editable_post(led, post_id, now)
+    if err:
+        return ActionResult(ok=False, error=err)
+    if p.state is not PostState.awaiting_approval:
+        return ActionResult(ok=False, error=f"post {post_id} is {p.state.value}; only awaiting posts can be approved")
+    clip = led.clips.get(p.parent_id)
+    mom = led.moments.get(clip.parent_id) if clip is not None else None
+    cur_caption = p.caption or ""
+    cur_hook = ((mom.hook if mom is not None else None) or "").strip()
+    new_hook = (hook or "").strip()
+    if (caption or "") != cur_caption:
+        res = edit_caption(cfg, post_id, caption, now=now)
+        if not res.ok:
+            return res
+    if new_hook != cur_hook:
+        res = reburn_hook(cfg, post_id, new_hook, now=now)
+        if not res.ok:
+            return res
+    return _approve_ids_with_render(cfg, resolve_ids=lambda led: [post_id], now=now, detail={"post_id": post_id})
+
 def approve_as_is(cfg: Config, clip_id: str, *, now: Optional[datetime] = None) -> ActionResult:
     r = approve_clip(cfg, clip_id, now=now)
     if not r.ok:

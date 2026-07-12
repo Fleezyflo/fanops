@@ -209,41 +209,38 @@ def test_approve_account_dangling_lineage_not_over_approved(tmp_path):
     assert approve_account(cfg, "a", source="s_1").detail["approved"] == 0   # dangling -> no source match
 
 
-# ============================ HTTP — pivot view + offset + ultra-compact ============================
-def test_pivot_view_renders_only_one_account(tmp_path):
+# ============================ HTTP — feed view + offset ============================
+def test_feed_view_renders_only_one_account(tmp_path):
     cfg = Config(root=tmp_path); _seed_accounts(cfg); led = Ledger.load(cfg); _lineage(led)
     _await(led, "p_a", "clip_1", "a"); _await(led, "p_b", "clip_1", "b"); led.save()
     c = _client(cfg)
-    body = c.get("/review?view=account&account=@a").get_data(as_text=True)
-    assert "p_a" in body and "p_b" not in body                 # only @a's surface is in the pivot
+    body = c.get("/review?account=@a").get_data(as_text=True)
+    assert "p_a" in body and "p_b" not in body
 
-def test_pivot_view_no_account_does_not_500(tmp_path):
+def test_feed_view_no_account_on_bare_shows_switcher(tmp_path):
     cfg = Config(root=tmp_path); _seed_accounts(cfg); led = Ledger.load(cfg); _lineage(led)
     _await(led, "p_a", "clip_1", "a"); led.save()
     c = _client(cfg)
-    assert c.get("/review?view=account").status_code == 200    # view=account w/o ?account= falls back, never 500
+    assert c.get("/review").status_code == 200
 
-def test_ultra_compact_omits_video_keeps_checkboxes(tmp_path):
+def test_feed_always_shows_video(tmp_path):
     cfg = Config(root=tmp_path); _seed_accounts(cfg); led = Ledger.load(cfg); _lineage(led)
     _await(led, "p_a", "clip_1", "a"); led.save()
     c = _client(cfg)
-    body = c.get("/review?view=account&account=@a&compact=ultra").get_data(as_text=True)
-    assert "<video" not in body                                # ZERO <video> in ultra-compact
-    assert 'name="ids"' in body                                # bulk-approve checkboxes still present
+    body = c.get("/review?account=@a&compact=ultra").get_data(as_text=True)
+    assert "<video" in body and 'name="ids"' in body
 
 def test_approve_on_page_n_stays_on_page_n(tmp_path):
-    # seed > 2 pages of awaiting cards (GRID_PAGE_SIZE=24); approve at offset=24 must re-render offset 24
     cfg = Config(root=tmp_path); _seed_accounts(cfg, handles=("a",)); led = Ledger.load(cfg)
     for i in range(60):
         _lineage(led, cid=f"clip_{i}", mid=f"m_{i}", sid=f"s_{i}")
         _await(led, f"p_{i}", f"clip_{i}", "a")
     led.save()
     c = _client(cfg)
-    # approve a non-existent id (no-op, still 200) carrying offset=24 -> the swap stays on page 2
-    resp = c.post("/posts/approve?offset=24", data={"ids": "nope"})
+    resp = c.post("/posts/approve?account=all&offset=24", data={"ids": "nope"})
     assert resp.status_code == 200
     body = resp.get_data(as_text=True)
-    assert "Showing 25–" in body                               # offset 24 preserved (1-based -> "25")
+    assert "Showing 25–" in body
 
 def test_review_default_is_byte_identical(tmp_path):
     # OFF firewall / default-render: the plain /review body must be unchanged by the new args being absent

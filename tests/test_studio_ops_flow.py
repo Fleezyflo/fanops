@@ -33,19 +33,19 @@ def _client(cfg):
     from fanops.studio.app import create_app
     app = create_app(cfg); app.config.update(TESTING=True); return app.test_client()
 
-def test_review_defaults_to_focus_when_account_scoped(tmp_path):
+def test_review_defaults_to_feed_when_account_scoped(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg); _seed(cfg)
     html = _client(cfg).get("/review?account=@a").data.decode()
-    assert "review-focus" in html and "<video" in html
+    assert "review-feed" in html and "<video" in html
 
-def test_review_grid_escape_with_focus_off(tmp_path):
+def test_review_legacy_grid_removed(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg); _seed(cfg)
     html = _client(cfg).get("/review?account=@a&focus=0&grid=1").data.decode()
-    assert "account-pivot" in html and "review-focus" not in html
+    assert "review-feed" in html and "account-pivot" not in html
 
 def test_approve_shows_schedule_outcome(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg); _seed(cfg)
-    html = _client(cfg).post("/posts/approve?account=@a&view=account&focus=1", data={"ids": "p1"}).data.decode()
+    html = _client(cfg).post("/posts/approve?account=@a", data={"ids": "p1"}).data.decode()
     assert "next clip" in html.lower() or "approved" in html.lower()
     assert "/schedule" not in html or "next clip" in html.lower()
     assert Ledger.load(cfg).posts["p1"].state is PostState.queued

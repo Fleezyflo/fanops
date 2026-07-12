@@ -27,6 +27,7 @@ RECENT_WINDOW_HOURS = 24           # spec §6: "what just shipped" read-only con
 GRID_PAGE_SIZE = 24                # max cards rendered per surface page — rendering all 164 <video> at
                                    # once is a real perf + usability problem (the black-box-wall report);
                                    # the total stays VISIBLE with a show-more link, never silent truncation
+REVIEW_FEED_SLICE = 12             # U6: initial per-account Review feed page — lazy-load reveals the rest
 
 
 @dataclass

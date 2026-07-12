@@ -38,15 +38,15 @@ def test_session_bar_on_scoped_pages(tmp_path):
     html = _client(cfg).get("/review?account=@a").data.decode()
     assert "account-session-bar" in html and "a" in html and "Review" in html and "Clear filter" in html
 
-def test_review_defaults_to_focus_with_video(tmp_path):
+def test_review_defaults_to_feed_with_video(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg); _seed(cfg, 1)
     html = _client(cfg).get("/review?account=@a").data.decode()
-    assert "review-focus" in html and "<video" in html
+    assert "review-feed" in html and "<video" in html
 
-def test_focus_mode_renders_player(tmp_path):
+def test_feed_renders_all_pending(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg); _seed(cfg, 2)
-    html = _client(cfg).get("/review?account=@a&focus=1").data.decode()
-    assert "review-focus" in html and "1 / 2" in html
+    html = _client(cfg).get("/review?account=@a").data.decode()
+    assert html.count('class="review-feed-card"') == 2
 
 def test_rail_operator_labels(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg)
@@ -69,4 +69,4 @@ def test_account_at_prefix_resolves_bare_handle(tmp_path):
                       caption="c", state=PostState.awaiting_approval, public_url="dryrun://p"))
     led.save()
     html = _client(cfg).get("/review?account=@markmakmouly").data.decode()
-    assert "review-focus" in html and "No work for" not in html
+    assert "review-feed" in html and "No work for" not in html

@@ -82,6 +82,13 @@ class SurfacePost:
     thumb_url: Optional[str] = None        # lazy preview poster for the account-pivot row (/clip-thumb/{clip_id})
     ready: Optional[bool] = None           # publish_readiness advisory (editable surfaces only)
     ready_reason: Optional[str] = None   # WHY not ready (oversize cap, hook drift, …)
+    # U6 feed: provenance stamped when flattening editable account rows for the continuous feed.
+    reason: Optional[str] = None
+    source_key: Optional[str] = None
+    source_name: Optional[str] = None
+    batch_id: Optional[str] = None
+    batch_created: Optional[str] = None
+    clip_id: Optional[str] = None
 
 
 @dataclass
@@ -666,6 +673,45 @@ def account_pivot_rows(led: Ledger, accounts: Accounts, cfg: Config, *, now: dat
             if s.account == handle:
                 rows.append(replace(s, day=c.day))     # immutable copy: stamp the card's ingest day for the header (no shared-ref mutation)
     return rows
+
+
+def review_feed_rows(led: Ledger, accounts: Accounts, cfg: Config, *, now: datetime, account: Optional[str],
+                     batch: Optional[str] = None, source: Optional[str] = None,
+                     state: Optional[str] = None) -> list[SurfacePost]:
+    """U6: ONE account's editable awaiting surfaces as a flat feed list — source/batch provenance stamped,
+    sorted newest-batch-first then stable source order then post created_at desc. Pure read."""
+    handle = (account or "").strip()
+    if not handle:
+        return []
+    cards = review_buckets(led, accounts, cfg, now=now, account=handle, batch=batch, source=source, state=state)
+    src_order: dict = {}
+    for i, c in enumerate(cards):
+        if c.source_key and c.source_key not in src_order:
+            src_order[c.source_key] = i
+    rows: list[SurfacePost] = []
+    for c in cards:
+        if c.bucket != "editable":
+            continue
+        for s in c.surfaces:
+            if s.account == handle and s.editable:
+                rows.append(replace(s, reason=c.reason, source_key=c.source_key, source_name=c.source_name,
+                                    batch_id=c.batch_id, batch_created=c.batch_created, clip_id=c.clip_id))
+    rows.sort(key=lambda r: src_order.get(r.source_key, 999))
+    rows.sort(key=lambda r: (led.posts[r.post_id].created_at or "") if r.post_id in led.posts else "", reverse=True)
+    rows.sort(key=lambda r: r.batch_created or "\x00", reverse=True)
+    return rows
+
+
+def group_review_by_source(rows: list) -> list:
+    """U6 feed grouper: group flat feed rows by source_key, label=source_name, first-appearance order."""
+    groups: dict = {}
+    labels: dict = {}
+    for r in rows:
+        sk = getattr(r, "source_key", None) or "undated"
+        groups.setdefault(sk, []).append(r)
+        if sk not in labels:
+            labels[sk] = getattr(r, "source_name", None) or sk
+    return [(labels[sk], rs) for sk, rs in groups.items()]
 
 
 def group_review_by_account_surface(rows: list) -> list:

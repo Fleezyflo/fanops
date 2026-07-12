@@ -1,4 +1,4 @@
-# S09: embed surface editor in focus deck — edit caption / re-burn / regenerate without leaving focus.
+# U6: composite approve-with-edits on the per-account feed cards.
 import json
 import pytest
 pytest.importorskip("flask")
@@ -32,50 +32,40 @@ def _client(cfg):
     from fanops.studio.app import create_app
     app = create_app(cfg); app.config.update(TESTING=True); return app.test_client()
 
-def _focus_url(**extra):
-    q = "account=@a&view=account&focus=1&fi=0"
-    for k, v in extra.items():
-        if v is not None: q += f"&{k}={v}"
-    return f"/review?{q}"
-
-def test_focus_card_renders_surface_editor(tmp_path):
+def test_feed_card_renders_caption_and_hook_fields(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg); _seed(cfg)
-    html = _client(cfg).get(_focus_url()).data.decode()
-    assert "details.surface-editor" in html or 'class="surface-editor"' in html
-    assert 'id="focus-editor"' in html
-    assert 'id="edit-p1"' in html
-    assert 'id="caption-p1"' in html
-    assert "<textarea" in html
+    html = _client(cfg).get("/review?account=a").data.decode()
+    assert "review-feed-card" in html
+    assert 'name="caption"' in html and 'name="hook"' in html
+    assert "await caption" in html and "SCROLL HOOK" in html
 
-def test_focus_caption_save_preserves_fi(tmp_path):
+def test_feed_caption_edit_via_composite_approve(tmp_path, mocker, monkeypatch):
+    from datetime import datetime, timezone
+    from fanops.timeutil import iso_z
+    NOW = datetime(2026, 6, 6, 12, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr("fanops.studio.actions._now", lambda n=None: NOW)
     cfg = Config(root=tmp_path); _accounts(cfg); _seed(cfg)
-    c = _client(cfg)
-    html = c.post("/caption/p1?account=@a&view=account&focus=1&fi=0",
-                  data={"caption": "edited in focus"}).data.decode()
-    assert "edited in focus" in html
-    assert "fi=0" in html
-    assert Ledger.load(cfg).posts["p1"].caption == "edited in focus"
-    assert "review-focus" in html
+    from fanops.models import Clip as ClipModel
+    mocker.patch("fanops.clip.render_moment", return_value=(None, ClipModel(
+        id="clip_1", parent_id="m1", path=str(cfg.clips / "clip_1.mp4"), aspect=Fmt.r9x16, state=ClipState.captioned)))
+    html = _client(cfg).post("/posts/approve-with-edits/p1?account=a",
+                             data={"caption": "edited in feed", "hook": "NEW HOOK"}).data.decode()
+    assert Ledger.load(cfg).posts["p1"].caption == "edited in feed"
+    assert Ledger.load(cfg).posts["p1"].state is PostState.queued
+    assert Ledger.load(cfg).posts["p1"].edited_at == iso_z(NOW)
+    assert "Approved" in html or "approved" in html.lower()
 
-def test_focus_reburn_preserves_scope(tmp_path, mocker):
+def test_feed_reburn_via_composite_approve(tmp_path, mocker):
     cfg = Config(root=tmp_path); _accounts(cfg); _seed(cfg)
     rendered = Clip(id="clip_1", parent_id="m1", path=str(cfg.clips / "clip_1.mp4"),
                     aspect=Fmt.r9x16, state=ClipState.rendered)
     mocker.patch("fanops.clip.render_moment", return_value=(Ledger.load(cfg), rendered))
-    html = _client(cfg).post("/reburn-hook/p1?account=@a&view=account&focus=1&fi=0",
-                             data={"hook": "NEW HOOK TEXT"}).data.decode()
-    assert 'id="review-focus"' in html
-    assert "fi=0" in html
+    _client(cfg).post("/posts/approve-with-edits/p1?account=a",
+                      data={"caption": "await caption", "hook": "NEW HOOK TEXT"})
     assert Ledger.load(cfg).moments["m1"].hook == "NEW HOOK TEXT"
 
-def test_focus_editor_keyboard_hint(tmp_path):
+def test_account_all_list_unchanged(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg); _seed(cfg)
-    html = _client(cfg).get(_focus_url()).data.decode()
-    assert "E edit" in html
-
-def test_card_list_unchanged(tmp_path):
-    cfg = Config(root=tmp_path); _accounts(cfg); _seed(cfg)
-    html = _client(cfg).get("/review?view=list&account=@a").data.decode()
-    assert 'id="focus-editor"' not in html
-    assert 'hx-post="/caption/p1?account=' not in html
-    assert 'hx-post="/caption/p1"' in html or "do_caption" in html
+    html = _client(cfg).get("/review?account=all&view=list").data.decode()
+    assert "review-feed-card" not in html
+    assert 'hx-post="/posts/approve-with-edits/' not in html
