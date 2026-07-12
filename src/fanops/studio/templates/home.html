@@ -1,5 +1,4 @@
 {% extends "base.html" %}
-{% from "_term.html" import term %}
 {% block title %}Home{% endblock %}
 {% block body %}
   <h2>Home</h2>
@@ -15,101 +14,50 @@
   </section>
   {% endif %}
 
-
-  <section class="home-loop meta" aria-label="Close the loop">
+  <section class="home-health meta" aria-label="Health">
     <div class="strip-daemon" hx-get="{{ url_for('home_daemon_health') }}" hx-trigger="load" hx-swap="innerHTML"></div>
-    {% if cfg.is_live %}<form class="inline" hx-post="{{ url_for('do_home_pull_metrics') }}" hx-target="#home-loop-result" hx-swap="innerHTML">
-      <button type="submit">Pull metrics</button></form> <span id="home-loop-result"></span>
-    {% else %}<span class="muted">Go live to pull metrics and close the learning loop.</span>{% endif %}
-    {% if cfg.is_live and status.counts.inflight %}<form class="inline" hx-post="{{ url_for('do_home_reconcile') }}" hx-target="#home-loop-result" hx-swap="innerHTML"><button type="submit">Check for links</button></form>{% endif %}
-    {% if status.counts.failed_oversize %}<form class="inline" hx-post="{{ url_for('do_home_retry_oversize') }}" hx-target="#home-loop-result" hx-swap="innerHTML"><button type="submit">Retry too-large ({{ status.counts.failed_oversize }})</button></form>{% endif %}
-    {% if status.counts.failed_rate_limit %}<form class="inline" hx-post="{{ url_for('do_home_retry_rate_limit') }}" hx-target="#home-loop-result" hx-swap="innerHTML"><button type="submit">Retry rate-limited ({{ status.counts.failed_rate_limit }})</button></form>{% endif %}
-    · <a href="{{ url_for('posted', delivery='live') }}">Results</a>
-  </section>
-
-  <section class="ops-board" aria-label="Operations">
-    <a class="ops-tile{{ ' ops-tile--zero' if not status.counts.awaiting_posts else '' }}" href="{{ url_for('review') }}">
-      <span class="ops-label">Awaiting review</span>
-      <span class="ops-value">{{ status.counts.awaiting_posts }}</span>
-      <span class="ops-hint muted">posts · {{ status.counts.awaiting }} moments</span>
-    </a>
-    <a class="ops-tile{{ ' ops-tile--zero' if not status.counts.scheduled else '' }}" href="{{ url_for('schedule') }}">
-      <span class="ops-label">Approved</span>
-      <span class="ops-value">{{ status.counts.scheduled }}</span>
-      <span class="ops-hint muted">{{ status.counts.due_soon }} due now</span>
-    </a>
-    <a class="ops-tile{{ ' ops-tile--zero' if not status.counts.inflight else '' }}" href="{{ url_for('posted', delivery='inflight') }}">
-      <span class="ops-label">In flight</span>
-      <span class="ops-value">{{ status.counts.inflight }}</span>
-      <span class="ops-hint muted">awaiting permalink</span>
-    </a>
-    <a class="ops-tile{{ ' ops-tile--zero' if not status.counts.live_trackable else '' }}" href="{{ url_for('posted', delivery='live') }}">
-      <span class="ops-label">Live</span>
-      <span class="ops-value">{{ status.counts.live_trackable }}</span>
-      <span class="ops-hint muted">with live links</span>
-    </a>
-    <a class="ops-tile{{ ' ops-tile--danger' if status.counts.failed else ' ops-tile--zero' }}" href="{{ url_for('posted', delivery='failed') }}">
-      <span class="ops-label">Failed</span>
-      <span class="ops-value">{{ status.counts.failed }}</span>
-      <span class="ops-hint muted">needs recovery</span>
-    </a>
-    <a class="ops-tile{{ ' ops-tile--warn' if system_strip.blocked_gates else ' ops-tile--zero' }}" href="{{ url_for('gates') }}">
-      <span class="ops-label">Blocked</span>
-      <span class="ops-value">{{ system_strip.blocked_gates }}</span>
-      <span class="ops-hint muted">processing blocked</span>
-    </a>
-  </section>
-  {% if metrics_stale and cfg.is_live %}<p class="warn metrics-stale-hint">Live posts need metrics — <strong>Pull metrics</strong> above closes the learning loop.</p>{% endif %}
-  {% if zero_post_clips %}
-  <section class="alerts-lane zero-post-alert"><h3>Clips with no posts</h3>
-    <p class="warn">{{ zero_post_clips|length }} clip(s) finished processing but birthed zero posts (casting/selection denied every surface).</p>
-    <ul>{% for z in zero_post_clips %}<li class="warn muted">{{ z.window }}s · {{ z.clip_id }}</li>{% endfor %}</ul>
-  </section>
-  {% endif %}
-  {% set zero_batches = batches | selectattr('is_zero_result') | list %}
-  {% if zero_batches %}
-  <section class="alerts-lane"><h3>Alerts</h3>
-    <p class="warn batch-zero-summary" data-warn="zero-result-summary">⚠ {{ zero_batches|length }} upload run{{ 's' if zero_batches|length != 1 else '' }} reached no active account.</p>
-    <ul>{% for b in zero_batches[:3] %}<li class="warn"><a href="{{ url_for('review', batch=b.id) }}">«{{ b.name }}»</a> <span class="badge warn zero-result-badge" data-warn="zero-result">0 posts</span></li>{% endfor %}</ul>
-  </section>
-  {% endif %}
-  {% if review_handoff and review_handoff.awaiting %}
-  <p class="home-start-here"><a class="button primary" href="{{ url_for('review', account=review_handoff.account, view='account', focus=1, batch=review_handoff.batch|default(none)) }}">Start — review {{ review_handoff.awaiting }} for {{ review_handoff.account }}</a></p>
-  {% endif %}
-  <section class="home-accounts" id="home-metrics" data-slot="metrics">
-    <h3>Accounts</h3>
-    {% if status.accounts %}
-    <ul class="home-acct-launcher">
-    {% for a in status.accounts %}
-      {% set w = work_by_account.get(a.handle, {}) %}
-      <li class="home-acct-row">
-        <div class="home-acct-main">
-          <strong>{{ a.handle }}</strong>
-          <span class="muted home-acct-channels">{% for ch in a.channels %}{{ ch.platform }}{% if not loop.last %} · {% endif %}{% endfor %}</span>
-          <span class="home-acct-stats muted" data-acct-count="{{ a.handle }}">{% if w.get('awaiting') %}<span data-acct-awaiting="{{ a.handle }}">{{ w.get('awaiting') }} to review</span>{% endif %}{% if w.get('scheduled') %}{% if w.get('awaiting') %} · {% endif %}<span data-acct-scheduled="{{ a.handle }}">{{ w.get('scheduled') }} scheduled</span>{% endif %}{% if w.get('inflight') %}{% if w.get('awaiting') or w.get('scheduled') %} · {% endif %}<span data-acct-inflight="{{ a.handle }}" class="warn">{{ w.get('inflight') }} waiting for link</span>{% endif %}{% if w.get('failed') %}{% if w.get('awaiting') or w.get('scheduled') or w.get('inflight') %} · {% endif %}<span data-acct-failed="{{ a.handle }}" class="warn">{{ w.get('failed') }} failed</span>{% endif %}{% if not w.get('awaiting') and not w.get('scheduled') and not w.get('inflight') and not w.get('failed') %}<span class="muted">clear</span>{% endif %}</span>
-        </div>
-        <div class="home-acct-ctas">
-          {# MOL-55: "needs action" rows (Review/Schedule, count>0) get a pending cue (accent border + filled count badge) at secondary weight — NOT primary (Home's one primary is .home-start-here); "Open" (browse) drops to quiet .ghost #}
-          {% if w.get('awaiting') %}<a class="button acct-cta-pending" href="{{ url_for('review', account=a.handle, view='account', focus=1, batch=w.get('review_batch')) }}">Review <span class="cta-badge">{{ w.get('awaiting') }}</span></a>
-          {% elif w.get('scheduled') %}<a class="button acct-cta-pending" href="{{ url_for('schedule', account=a.handle) }}">Schedule <span class="cta-badge">{{ w.get('scheduled') }}</span></a>
-          {% else %}<a class="button ghost" href="{{ url_for('review', account=a.handle, view='account') }}">Open</a>{% endif %}
-          {% if w.get('failed') %}<a class="button ghost" href="{{ url_for('posted', account=a.handle, delivery='failed') }}">Failed</a>{% endif %}
-        </div>
-      </li>
-    {% endfor %}
-    </ul>
-    {% else %}<p class="muted"><a href="{{ url_for('golive_connect') }}">Connect accounts</a></p>{% endif %}
-    {% set active_handles = status.accounts | map(attribute='handle') | list %}
-    {% set ns = namespace(any=false) %}
-    {% for handle, n in status.by_account|dictsort %}{% if handle not in active_handles %}{% set ns.any = true %}{% endif %}{% endfor %}
-    {% if ns.any %}
-    <h4>Posts from inactive accounts</h4>
-    <table data-metric="by-account">
-      {% for handle, n in status.by_account|dictsort %}{% if handle not in active_handles %}<tr><td><strong>{{ handle }}</strong></td><td class="muted"><span data-acct-count="{{ handle }}">{{ n }}</span> posts</td></tr>{% endif %}{% endfor %}
-    </table>
+    {% if zero_post_clips %}
+    <p class="warn zero-post-line">{{ zero_post_clips|length }} clip(s) finished processing but birthed zero posts.</p>
     {% endif %}
   </section>
-  {% if batches %}<details class="home-batches"{% if batches|length <= 5 %} open{% endif %}><summary>Batches{{ term('batch') }} ({{ batches|length }})</summary>{# MOL-45: full plural word first, then the ⓘ mark — the term macro renders only the mark, so a leading term() left "es (N)" #}<ul>
-  {% for b in batches %}<li><a href="{{ url_for('review', batch=b.id) }}">{{ b.name }}</a> · {{ b.posts_born }} posts{% if b.is_emptied %} <a class="badge muted emptied-badge" href="{{ url_for('posted') }}">emptied</a>{% elif b.is_zero_result %} <span class="badge warn zero-result-badge" data-warn="zero-result">⚠ 0</span>{% endif %}</li>{% endfor %}
-  </ul></details>{% endif %}
+
+  <section class="home-accounts-panel" aria-label="Accounts">
+    <h3>Accounts</h3>
+    {% if accounts_panel %}
+    <div class="home-acct-grid">
+      {% for tile in accounts_panel %}
+      <a class="home-acct-tile" href="{{ url_for('review', account=tile.handle, view='account') }}">
+        <div class="home-acct-tile-head">
+          <strong>{{ tile.handle }}</strong>
+          {% if tile.awaiting %}<span class="home-acct-badge">{{ tile.awaiting }}</span>{% endif %}
+        </div>
+        <span class="muted home-acct-chips">{% for ch in tile.channels %}{{ ch }}{% if not loop.last %} · {% endif %}{% endfor %}</span>
+        <span class="home-acct-persona muted">{{ tile.persona }}</span>
+        <span class="home-acct-meta muted">{{ tile.followers }} followers · {{ tile.posted_total }} posted</span>
+      </a>
+      {% endfor %}
+    </div>
+    {% else %}<p class="muted"><a href="{{ url_for('golive_connect') }}">Connect accounts</a></p>{% endif %}
+  </section>
+
+  <section class="home-gallery-section" aria-label="Sources">
+    <h3>Sources</h3>
+    <div id="home-gallery">
+      {% include "_home_gallery.html" %}
+    </div>
+  </section>
+
+  <section class="home-cal" aria-label="Week ahead">
+    <h3>Week ahead</h3>
+    <div class="home-cal-grid">
+      {% for day in calendar.days %}
+      <div class="home-cal-col">
+        <div class="home-cal-date muted">{{ day.date }}</div>
+        {% for post in day.posts %}
+        <span class="home-cal-chip" style="--chip-color: {{ post.color }}" title="{{ post.title }}">{{ post.time }}</span>
+        {% endfor %}
+      </div>
+      {% endfor %}
+    </div>
+  </section>
 {% endblock %}

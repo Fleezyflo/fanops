@@ -157,6 +157,7 @@ class Config:
         self.context_path = self.control / "context.md"
         self.tuning_path = self.control / "tuning.json"
         self.hashtags_path = self.control / "hashtags.json"  # M4 dynamic reach-ranked tag store; absent -> frozen pools
+        self.account_stats_path = self.control / "account_stats.json"  # U3: throttled IG follower snapshot per handle; absent -> empty
         self.hashtag_budget_path = self.control / "hashtag_budget.json"  # M4 Meta Graph 30/7-day search budget counter
         self.hashtag_budget_lock = self.control / "hashtag_budget.lock"  # serializes record_query's read-modify-write (concurrent Studio calls lost writes -> quota over-spend)
         self.cutover_path = self.control / "cutover.json"   # live-cutover harness scratch state; NEVER the ledger

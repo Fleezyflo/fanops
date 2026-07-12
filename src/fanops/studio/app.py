@@ -376,10 +376,18 @@ def create_app(cfg: Config) -> Flask:
 
     @app.get("/")
     def index():
-        # Face 2: a real read-only status home (accounts + connection + headline counts + batch entry + per-
-        # account post counts), NOT a redirect. nav_account is injected globally (Face 4 spine); no chip context
-        # here (Home renders no per-surface chip row — the chip universe is a per-tab concern).
-        return render_template("home.html", status=views.home_status(cfg), batches=views.home_batches(cfg), work_by_account=views.account_work_counts(cfg), review_handoff=views.review_handoff(cfg), zero_post_clips=views.zero_post_clips(cfg), tab="home")
+        # U3: three operator panels (accounts, sources gallery, week-ahead calendar) + slim health line.
+        return render_template("home.html", status=views.home_status(cfg),
+                               accounts_panel=views.home_accounts_panel(cfg),
+                               gallery=views.home_source_gallery(cfg, page=1),
+                               calendar=views.home_week_calendar(cfg),
+                               zero_post_clips=views.zero_post_clips(cfg), tab="home")
+
+    @app.get("/home/gallery")
+    def home_gallery():
+        from flask import request
+        page = max(1, int(request.args.get("page", 1) or 1))
+        return render_template("_home_gallery.html", gallery=views.home_source_gallery(cfg, page=page))
 
     @app.post("/home/pull-metrics")
     def do_home_pull_metrics():

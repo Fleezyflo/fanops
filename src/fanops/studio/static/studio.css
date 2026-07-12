@@ -942,6 +942,27 @@ button.ghost:hover, .button.ghost:hover { color:var(--ink); background:transpare
 .home-acct-row { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:.5rem; padding:.65rem .75rem; border:1px solid var(--line); border-radius:var(--r-md); background:var(--surface-1); }
 .home-acct-stats { display:block; font-size:var(--t-meta); margin-top:.2rem; }
 .home-acct-ctas { display:flex; flex-wrap:wrap; gap:.35rem; }
+/* U3 Home rebuild panels */
+.home-health { margin:var(--s-3) 0; }
+.zero-post-line { margin:.35rem 0 0; font-size:var(--t-meta); }
+.home-acct-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:var(--s-3); }
+.home-acct-tile { display:flex; flex-direction:column; gap:.2rem; padding:var(--s-3); border:1px solid var(--line); border-radius:var(--r-md); background:var(--surface-1); text-decoration:none; color:inherit; }
+.home-acct-tile:hover { border-color:var(--accent); }
+.home-acct-tile-head { display:flex; align-items:center; justify-content:space-between; gap:.5rem; }
+.home-acct-badge { background:var(--accent); color:var(--accent-ink); border-radius:999px; padding:.05rem .45rem; font-weight:700; font-size:var(--t-eyebrow); }
+.home-acct-chips, .home-acct-persona, .home-acct-meta { font-size:var(--t-meta); }
+.home-gallery-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(140px,1fr)); gap:var(--s-3); }
+.home-gallery-card { display:flex; flex-direction:column; gap:.25rem; padding:var(--s-2); border:1px solid var(--line); border-radius:var(--r-md); background:var(--surface-1); text-decoration:none; color:inherit; }
+.home-gallery-card:hover { border-color:var(--accent); }
+.home-gallery-thumb { width:100%; aspect-ratio:16/9; object-fit:cover; border-radius:var(--r-sm); background:var(--surface-2); }
+.home-gallery-title { font-size:var(--t-meta); font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.home-gallery-clips { font-size:var(--t-eyebrow); }
+.home-gallery-pager { display:flex; gap:1rem; align-items:center; margin-top:var(--s-3); }
+.home-cal-grid { display:grid; grid-template-columns:repeat(7,1fr); gap:var(--s-2); overflow-x:auto; }
+@media (max-width:900px) { .home-cal-grid { grid-template-columns:repeat(4,1fr); } }
+.home-cal-col { min-width:4.5rem; padding:var(--s-2); border:1px solid var(--line); border-radius:var(--r-sm); background:var(--surface-1); }
+.home-cal-date { font-size:var(--t-eyebrow); margin-bottom:.35rem; }
+.home-cal-chip { display:inline-block; margin:.15rem .1rem 0 0; padding:.1rem .35rem; border-radius:var(--r-sm); font-size:var(--t-eyebrow); background:color-mix(in srgb, var(--chip-color) 25%, var(--surface-2)); border-left:3px solid var(--chip-color); cursor:default; }
 .acct-cta-pending { border-color:var(--accent); }   /* MOL-55: "needs action" row CTA — secondary fill (base .button) + accent border, NO gradient (not primary); reads apart from the .ghost "Open" browse row at a glance */
 .cta-badge { background:var(--accent); color:var(--accent-ink); border-radius:999px; padding:.05rem .4rem; font-weight:700; font-size:var(--t-eyebrow); line-height:1.4; }   /* MOL-55: filled accent count pill — the pending-work count read WITHOUT scanning digits */
 .review-focus { margin:var(--s-3) 0; }

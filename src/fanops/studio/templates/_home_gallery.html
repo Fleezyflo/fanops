@@ -1,0 +1,24 @@
+<div class="home-gallery">
+  {% if gallery.entries %}
+  <div class="home-gallery-grid">
+    {% for item in gallery.entries %}
+    <a class="home-gallery-card" href="{{ item.url }}">
+      <img class="home-gallery-thumb" src="{{ item.thumb_url }}" alt="" loading="lazy" width="160" height="90">
+      <span class="home-gallery-title">{{ item.title }}</span>
+      <span class="home-gallery-clips muted">{{ item.clips }} clip{{ 's' if item.clips != 1 else '' }}</span>
+    </a>
+    {% endfor %}
+  </div>
+  {% if gallery.pages > 1 %}
+  <nav class="home-gallery-pager muted">
+    {% if gallery.page > 1 %}
+    <a hx-get="{{ url_for('home_gallery', page=gallery.page - 1) }}" hx-target="#home-gallery" hx-swap="innerHTML">← Prev</a>
+    {% endif %}
+    <span>Page {{ gallery.page }} / {{ gallery.pages }}</span>
+    {% if gallery.page < gallery.pages %}
+    <a hx-get="{{ url_for('home_gallery', page=gallery.page + 1) }}" hx-target="#home-gallery" hx-swap="innerHTML">Next →</a>
+    {% endif %}
+  </nav>
+  {% endif %}
+  {% else %}<p class="muted">No sources yet — <a href="{{ url_for('run_panel') }}">add footage</a>.</p>{% endif %}
+</div>
