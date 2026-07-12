@@ -607,6 +607,23 @@ def cmd_daemon(cfg: Config, args) -> int:
         print(f"daemon: {e}", file=sys.stderr)
         return 2
 
+def cmd_up(cfg: Config, args) -> int:
+    """`fanops up` — one-step self-healing bring-up (brief docs/design/briefs/16-one-step-bring-up.md).
+    Composes git-freshness (advisory) -> Docker+Postiz (self-healing on-demand script) -> daemon
+    freshness (restart-onto-current-code) -> Studio (report), and prints a 4-line plane status + ONE
+    READY / NOT-READY verdict. Non-zero exit on NOT-READY. Publishes NOTHING (posts stay
+    awaiting_approval), never flips FANOPS_LIVE, never mutates the tree. Degrades honestly off-darwin
+    (the daemon plane reports a typed skip) — mirrors cmd_daemon's try/except, never a raw traceback."""
+    try:
+        res = daemon.up(cfg, kickstart=not getattr(args, "no_restart", False))
+    except (RuntimeError, ToolchainMissingError, ValueError, OSError) as e:
+        print(f"up: {e}", file=sys.stderr); return 2
+    print("fanops up — bring every plane up on current code")
+    for line in daemon.format_up_report(res):
+        print(line)
+    return 0 if res["ready"] else 1
+
+
 def cmd_init(cfg: Config, args) -> int:
     """MOL-303: thin setup walk — doctor checklist + golive setters, idempotent/resumable."""
     from fanops.init_flow import run_init
@@ -768,6 +785,8 @@ def main(argv: list[str] | None = None) -> int:
     p_dlog = dae_sub.add_parser("logs", help="tail the run log"); p_dlog.add_argument("-n", type=int, default=40)
     p_auto = sub.add_parser("autopilot", help="one command -> autonomous: enable llm responder (durably) + install the daemon")
     p_auto.add_argument("--interval", default="10m"); p_auto.add_argument("--no-daemon", action="store_true")
+    p_up = sub.add_parser("up", help="one-step self-healing bring-up: git/Postiz/daemon/Studio -> one READY/NOT-READY verdict")
+    p_up.add_argument("--no-restart", action="store_true", help="skip the daemon freshness kickstart (leave a running daemon on its current code)")
     args = parser.parse_args(argv if argv is not None else sys.argv[1:])
     cfg = Config()
     load_dotenv(cfg.root / ".env", override=True)   # .env is operator truth — beat stale shell env (Studio restart)
@@ -1133,6 +1152,7 @@ def _dispatch(cfg: Config, args) -> int:
     if args.cmd == "publish-queue": return cmd_publish_queue(cfg)
     if args.cmd == "daemon":   return cmd_daemon(cfg, args)
     if args.cmd == "autopilot": return cmd_autopilot(cfg, args)
+    if args.cmd == "up":       return cmd_up(cfg, args)
     if args.cmd == "gc":       return cmd_gc(cfg, args.keep_days if args.keep_days is not None else cfg.gc_keep_days)
     if args.cmd == "compose":  return cmd_compose(cfg, args)
     if args.cmd == "resolve":

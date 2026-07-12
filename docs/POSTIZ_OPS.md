@@ -9,6 +9,12 @@ be **honest** about the state and hand you the exact workaround.
 upstream fix below; when Postiz ships it, this whole page becomes obsolete.
 
 Companion surfaces in FanOps:
+- **`fanops up`** is the one-step composed bring-up entrypoint (git-freshness → Docker+Postiz → daemon
+  freshness → Studio → one READY/NOT-READY verdict). It shells out to `postiz-ondemand.sh ensure`
+  (path overridable via `FANOPS_POSTIZ_ONDEMAND`) for the Postiz plane, so it reuses the honest probe
+  below verbatim and self-heals the crash-loop **once the operator applies the host-side §4.1 patch**
+  to that script (see the bring-up brief `docs/design/briefs/16-one-step-bring-up.md`). It works today
+  against the current script and gets strictly better after the patch.
 - The Studio **system strip** shows a **Postiz API unhealthy** banner when the backend probe fails AND a
   channel routes to postiz (the probe goes *past* the nginx-only container health — see §3).
 - `fanops doctor` surfaces poster/key readiness.

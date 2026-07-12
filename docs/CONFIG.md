@@ -33,6 +33,11 @@ Hand-editing `.env` while a long-lived process runs requires restart; Studio go-
 | `R2_BUCKET` | None | R2 bucket for mirrored clips | .env |
 | `FANOPS_ZERNIO_MAX_UPLOAD_MB` | 4 | Zernio TikTok upload preflight cap | .env |
 
+Path override (not a `Settings` field — read directly, like `postiz_lifecycle`'s script path): set
+**`FANOPS_POSTIZ_ONDEMAND`** to point `fanops up` at a non-default Postiz on-demand script. Default:
+`$HOME/postiz-selfhost/postiz-ondemand.sh`. `fanops up` shells out to `<script> ensure` for its
+Docker+Postiz plane (see the bring-up brief `docs/design/briefs/16-one-step-bring-up.md`).
+
 ## LLM gates (the AI switch + models)
 | Var | Default | Effect | Set |
 |---|---|---|---|
