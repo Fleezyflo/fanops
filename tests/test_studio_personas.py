@@ -281,11 +281,11 @@ def test_account_assignment_is_folded_into_each_card(tmp_path):
 
 
 def test_persona_card_action_tiers_assign_over_hashtag_utils(tmp_path):
-    # MOL-60: on a persona card the CONSEQUENTIAL, rare Assign (rewires which voice drives a real account,
-    # stealing it from another persona) must out-weigh the FREQUENT, low-stakes hashtag utilities (Research /
-    # Add / Check reach — two of which only PROPOSE, never mutate). Per the MOL-44 3-tier system + the
-    # MOL-44/51/55 demote-the-utility pattern: Assign stays secondary (base .button = fill+border), the three
-    # hashtag tools drop to .ghost (text-only). "Tune this voice" keeps the single per-view .primary gradient.
+    # MOL-60 (kept, U9-updated selectors): on a persona card the CONSEQUENTIAL, rare Assign (rewires which
+    # voice drives a real account, stealing it from another persona) must out-weigh the FREQUENT, low-stakes
+    # hashtag utilities (Force refresh now / Add / Check reach — two of which only PROPOSE, never mutate). Per
+    # the MOL-44 3-tier system: Assign stays secondary (base .button = fill+border), the three hashtag tools
+    # drop to .ghost. U9: the card's single .primary is now the zone-2 inline Save (was "Tune this voice").
     import re
     cfg = Config(root=tmp_path)
     _seed_accounts(cfg, [{"handle": "@free", "platforms": ["tiktok"], "status": "active"}])
@@ -297,8 +297,8 @@ def test_persona_card_action_tiers_assign_over_hashtag_utils(tmp_path):
         assert m, f"{label!r} button not found in rendered personas panel"
         return m.group(0)
 
-    # the three hashtag utilities are demoted to the tertiary ghost tier
-    assert 'class="ghost"' in _btn("Research")
+    # the three hashtag utilities are demoted to the tertiary ghost tier (Research is relabelled Force refresh now)
+    assert 'class="ghost"' in _btn("Force refresh now")
     assert 'class="ghost"' in _btn("Add")
     # "Check reach" may wrap across whitespace in the template; match on its title as the anchor
     check = re.search(r'<button\b[^>]*title="look up this tag[^"]*"[^>]*>', html)
@@ -309,5 +309,6 @@ def test_persona_card_action_tiers_assign_over_hashtag_utils(tmp_path):
     assert "ghost" not in assign, "Assign must out-weigh the hashtag utils (not ghost)"
     assert "primary" not in assign, "Assign must not become a second primary (one per view)"
 
-    # the card's single primary stays "Tune this voice"
-    assert html.count('class="persona-edit-open primary"') >= 1
+    # the card's single primary is now the zone-2 inline Save (the drawer-trigger primary is gone)
+    assert 'class="primary">Save</button>' in html
+    assert "Tune this voice" not in html

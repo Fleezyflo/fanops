@@ -13,7 +13,8 @@
        hx-trigger="change delay:50ms, keyup changed delay:400ms"
        hx-include="closest form" hx-target="#persona-compose-{{ cid }}" hx-swap="innerHTML">
     <fieldset class="levers">
-      <legend>Levers — each option shows what it does (from the engine)</legend>
+      <legend>Levers — each option shows what it does (from the engine)
+        <span class="lever-clears-hint muted">Leaving scope or hook angle blank clears it on save.</span></legend>
       <div class="lever-group">
         <span class="lever-label">Clips · favors moments</span>
         {% for c in levers.content_focus %}

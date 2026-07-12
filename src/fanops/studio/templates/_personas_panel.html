@@ -1,7 +1,8 @@
 {# src/fanops/studio/templates/_personas_panel.html — the Personas tab body, htmx-swapped in place
-   (#personas-panel). Add a persona via intake, edit it (in a slide-out drawer), curate its hashtag corpus,
-   connect accounts. Every form swaps the whole panel (outerHTML) so the list + result update after each action.
-   The lever macros live in _persona_levers.html (shared with the drawer). Autoescape stays on (no |safe). #}
+   (#personas-panel). Add a persona via intake; each card is THREE legible zones (U9): identity → an INLINE
+   editor (the same do_personas_edit route + lever_fields macro the drawer uses) → the derived output + the
+   curated hashtag corpus. Every form swaps the whole panel (outerHTML) so the list + result update after each
+   action. The lever macros live in _persona_levers.html (shared with the drawer). Autoescape stays on (no |safe). #}
 {% from "_persona_levers.html" import lever_fields, levers_reference %}
 {% from "_term.html" import term %}
 <div id="personas-panel" aria-live="polite">
@@ -70,86 +71,118 @@
         to lift the persona strings already on your accounts into editable records.</p>
     {% endif %}
     {% for p in page.personas %}
+      {# U9: THREE legible zones per card — (1) what this is, (2) what you can change, (3) what the system
+         derives. The zones answer, in order: identity → editable knobs (with each knob's engine effect) →
+         derived output the operator only reads (except the curated hashtag corpus). #}
       <article class="persona-card">
-        <header class="persona-card-head">
-          <strong>{{ p.name }}</strong>
-        </header>
-        {% if p.voice %}<p class="persona-voice">{{ p.voice }}</p>{% endif %}
 
-        {# The DIFFERENTIATORS, surfaced as comparable chips on the card face — the whole reason personas exist
-           is that these differ per voice, so they belong here, not buried in directive prose. #}
-        <div class="persona-spec" title="how this voice's output differs from the others — the cut length is DERIVED from content focus">
-          {% if p.length_band %}<span class="spec-chip">~{{ p.length_band }} clips</span>{% endif %}
-          {% for c in p.content_focus %}<span class="spec-chip">{{ c }}</span>{% endfor %}
-          {% if p.selection_scope %}<span class="spec-chip">{{ p.selection_scope }} scope</span>{% endif %}
-          {% if p.hook_angle %}<span class="spec-chip">{{ p.hook_angle }} hook</span>{% endif %}
-        </div>
+        {# ── Zone 1 — What this is (read-only identity) ───────────────────────────────────────────── #}
+        <section class="persona-zone persona-zone-identity" aria-label="Persona identity">
+          <p class="persona-zone-eyebrow">What this is</p>
+          <header class="persona-card-head">
+            <strong>{{ p.name }}</strong>
+          </header>
+          {% if p.voice %}<p class="persona-voice">{{ p.voice }}</p>
+          {% else %}<p class="persona-voice muted">No voice written yet — add one below.</p>{% endif %}
 
-        {# Account assignment lives WITH the voice it drives — not in a separate dropdown stack at the page
-           foot. Each driven handle is one click to unlink; the dropdown assigns another (blank persona_id on
-           unlink disconnects; assigning a handle owned elsewhere reassigns it). #}
-        <div class="persona-accounts">
-          <span class="muted persona-accounts-label">Drives</span>
-          {% for h in p.linked_handles %}
-            <span class="chip acct">{{ h }}
-              <button type="button" title="unlink {{ h }}" class="chip-x"
-                hx-post="{{ url_for('do_personas_connect') }}" hx-target="#personas-panel" hx-swap="outerHTML"
-                hx-vals='{{ {"handle": h, "persona_id": ""} | tojson }}'>×</button></span>
-          {% else %}<span class="muted">no account yet</span>{% endfor %}
-          {% set assignable = page.accounts | rejectattr('persona_id', 'equalto', p.id) | list %}
-          {% if assignable %}
-            <form class="inline persona-assign" hx-post="{{ url_for('do_personas_connect') }}" hx-target="#personas-panel" hx-swap="outerHTML">
-              <input type="hidden" name="persona_id" value="{{ p.id }}">
-              <select name="handle" aria-label="assign an account to {{ p.name }}">
-                {% for a in assignable %}<option value="{{ a.handle }}">{{ a.handle }}{% if a.persona_id %} · now {{ a.persona_id }}{% endif %}</option>{% endfor %}
-              </select>
-              <button type="submit">Assign</button>
-            </form>
-          {% endif %}
-        </div>
-
-        <div class="persona-corpus">
-          <span class="muted persona-corpus-label">Hashtags ({{ p.corpus|length }})</span>
-          {% for t in p.corpus %}
-            <span class="chip tag{{ ' high-reach' if t in p.reach_tags else '' }}">{{ t }}{% if t in p.reach_tags %}<span class="reach" title="currently most-active on the platform (live Graph reach)">★</span>{% endif %}{% if p.reach_means.get(t) %}<span class="reach-n" title="live Graph reach (top-media engagement)">· {{ (p.reach_means[t] / 1000) | round(1) }}k</span>{% endif %}
-              <button type="button" title="remove {{ t }}" class="chip-x"
-                hx-post="{{ url_for('do_personas_corpus_remove') }}" hx-target="#personas-panel" hx-swap="outerHTML"
-                hx-vals='{{ {"id": p.id, "tag": t} | tojson }}'>×</button></span>
-          {% else %}<span class="muted">none yet</span>{% endfor %}
-          <div class="persona-corpus-tools">
-            <form class="inline" hx-post="{{ url_for('do_personas_research') }}" hx-target="#personas-panel" hx-swap="outerHTML">
-              <input type="hidden" name="id" value="{{ p.id }}">
-              <input type="text" name="genre" value="{{ p.intake.get('genre', '') }}" placeholder="genre" size="10"
-                title="seeds the hashtag search for this persona (saved when you Research)">
-              <button type="submit" class="ghost" title="propose the reach-best tags this persona is missing">Research</button>{# MOL-60: hashtag utils demoted to ghost so the consequential Assign out-weighs them #}
-            </form>
-            <form class="inline" hx-post="{{ url_for('do_personas_corpus_add') }}" hx-target="#personas-panel" hx-swap="outerHTML">
-              <input type="hidden" name="id" value="{{ p.id }}">
-              <input type="text" name="tag" placeholder="#tag" size="12"><button type="submit" class="ghost">Add</button>{# MOL-60: ghost tier #}
-            </form>
-            <form class="inline" hx-post="{{ url_for('do_personas_recommend') }}" hx-target="#personas-panel" hx-swap="outerHTML">
-              <input type="hidden" name="id" value="{{ p.id }}">
-              <input type="text" name="tag" placeholder="#candidate" size="12"><button type="submit" class="ghost" title="look up this tag's live Instagram reach via the Graph API">Check reach</button>{# MOL-60: ghost tier #}
-            </form>
+          {# Account assignment lives WITH the voice it drives — not in a separate dropdown stack at the page
+             foot. Each driven handle is one click to unlink; the dropdown assigns another (blank persona_id on
+             unlink disconnects; assigning a handle owned elsewhere reassigns it). #}
+          <div class="persona-accounts">
+            <span class="muted persona-accounts-label">Drives</span>
+            {% for h in p.linked_handles %}
+              <span class="chip acct">{{ h }}
+                <button type="button" title="unlink {{ h }}" class="chip-x"
+                  hx-post="{{ url_for('do_personas_connect') }}" hx-target="#personas-panel" hx-swap="outerHTML"
+                  hx-vals='{{ {"handle": h, "persona_id": ""} | tojson }}'>×</button></span>
+            {% else %}<span class="muted">no account yet</span>{% endfor %}
+            {% set assignable = page.accounts | rejectattr('persona_id', 'equalto', p.id) | list %}
+            {% if assignable %}
+              <form class="inline persona-assign" hx-post="{{ url_for('do_personas_connect') }}" hx-target="#personas-panel" hx-swap="outerHTML">
+                <input type="hidden" name="persona_id" value="{{ p.id }}">
+                <select name="handle" aria-label="assign an account to {{ p.name }}">
+                  {% for a in assignable %}<option value="{{ a.handle }}">{{ a.handle }}{% if a.persona_id %} · now {{ a.persona_id }}{% endif %}</option>{% endfor %}
+                </select>
+                <button type="submit">Assign</button>
+              </form>
+            {% endif %}
           </div>
-        </div>
+        </section>
 
-        {# Verbose compiled prose stays as secondary transparency — the comparable spec chips above replace the
-           need to read it just to tell voices apart. #}
-        <details class="persona-detail">
-          <summary class="persona-detail-summary muted">What this persona compiles to</summary>
+        {# ── Zone 2 — What you can change (editable) ──────────────────────────────────────────────────
+           The inline editor reuses the SAME do_personas_edit route + lever_fields macro the drawer uses, so
+           every editable knob shows its adjacent engine effect. The drawer route/template/JS still exist
+           (untouched) — this card no longer TRIGGERS the drawer; it edits in place. #}
+        <section class="persona-zone persona-zone-edit" aria-label="Editable fields">
+          <p class="persona-zone-eyebrow">What you can change</p>
+          <form hx-post="{{ url_for('do_personas_edit') }}" hx-target="#personas-panel" hx-swap="outerHTML">
+            <input type="hidden" name="id" value="{{ p.id }}">
+            <label>Name <input type="text" name="name" value="{{ p.name }}" size="22"></label>
+            <label class="block">Voice <textarea name="voice" rows="2">{{ p.voice }}</textarea></label>
+            {{ lever_fields(levers, effects, p) }}
+            <div class="persona-edit-actions">
+              <button type="submit" class="primary">Save</button>
+              <button type="button" class="danger"
+                hx-post="{{ url_for('do_personas_delete') }}" hx-target="#personas-panel" hx-swap="outerHTML"
+                hx-vals='{{ {"id": p.id} | tojson }}'
+                hx-confirm="Delete persona {{ p.name }}? Linked accounts fall back to their inline persona.">Delete</button>
+            </div>
+          </form>
+        </section>
+
+        {# ── Zone 3 — What the system derives (read-only + corpus overrides) ──────────────────────────
+           Everything here is DERIVED output the operator reads, EXCEPT the hashtag corpus (curation lane:
+           remove/add/force-refresh). The zone updates itself as the levers above change. #}
+        <section class="persona-zone persona-zone-derived" aria-label="Derived output">
+          <p class="persona-zone-eyebrow">Derived — updates itself; edit above to influence it.</p>
+
+          {# 1 · Produces summary — the EXACT per-dimension directive each lever compiles into (what the AI
+             reads), promoted to always-visible so the operator sees the config's downstream effect. #}
           <div class="persona-directives" title="the EXACT instruction each lever compiles into for this persona — what the AI reads per dimension">
             {% if p.instruction %}<p class="persona-instruction"><span class="muted">clips →</span> {{ p.instruction }}</p>{% endif %}
             {% if p.hook_text %}<p class="persona-instruction"><span class="muted">hook →</span> {{ p.hook_text }}</p>{% endif %}
             {% if p.caption_text %}<p class="persona-instruction"><span class="muted">caption →</span> {{ p.caption_text }}</p>{% endif %}
           </div>
-        </details>
 
-        {# Slice 3: the levers live in a slide-out DRAWER now, not a buried per-card collapse. This Edit button
-           htmx-fetches the focus-trapped dialog body into the body-level #persona-drawer (drawer.js opens it). #}
-        <button type="button" class="persona-edit-open primary"
-          hx-get="{{ url_for('do_personas_drawer', pid=p.id) }}" hx-target="#persona-drawer" hx-swap="innerHTML"
-          aria-haspopup="dialog" aria-label="Tune the {{ p.name }} voice">Tune this voice</button>
+          {# 2 · Derived spec line — the differentiators (length is DERIVED from content focus), read-only. #}
+          <p class="persona-spec muted" title="how this voice's output differs — the cut length is DERIVED from content focus">
+            {% if p.length_band %}~{{ p.length_band }} clips{% endif %}
+            {% for c in p.content_focus %} · {{ c }}{% endfor %}
+            {% if p.selection_scope %} · {{ p.selection_scope }} scope{% endif %}
+            {% if p.hook_angle %} · {{ p.hook_angle }} hook{% endif %}
+          </p>
+
+          {# 3 · Hashtag corpus — S12 presentation: each tag with its provenance badge (pinned/auto from meta;
+             a meta-less/None-source tag gets NO badge), its live Graph reach (★ = currently most-active), a
+             remove (×), plus the add / force-refresh / check-reach curation tools. #}
+          <div class="persona-corpus">
+            <span class="muted persona-corpus-label">Hashtags ({{ p.corpus|length }})</span>
+            {% if p.corpus_refreshed_at %}<span class="corpus-refreshed muted" title="last time this corpus was refreshed">last refreshed {{ p.corpus_refreshed_at }}</span>{% endif %}
+            {% for row in p.corpus_tags %}
+              {% set t = row.tag %}
+              <span class="chip tag{{ ' high-reach' if t in p.reach_tags else '' }}">{{ t }}{% if row.source == 'pinned' %}<span class="corpus-prov pinned" title="pinned by you (curated)">pinned</span>{% elif row.source == 'auto' %}<span class="corpus-prov auto" title="auto-added by the reach refresh">auto</span>{% endif %}{% if t in p.reach_tags %}<span class="reach" title="currently most-active on the platform (live Graph reach)">★</span>{% endif %}{% if p.reach_means.get(t) %}<span class="reach-n" title="live Graph reach (top-media engagement)">· {{ (p.reach_means[t] / 1000) | round(1) }}k</span>{% endif %}
+                <button type="button" title="remove {{ t }}" class="chip-x"
+                  hx-post="{{ url_for('do_personas_corpus_remove') }}" hx-target="#personas-panel" hx-swap="outerHTML"
+                  hx-vals='{{ {"id": p.id, "tag": t} | tojson }}'>×</button></span>
+            {% else %}<span class="muted">none yet</span>{% endfor %}
+            <div class="persona-corpus-tools">
+              <form class="inline" hx-post="{{ url_for('do_personas_research') }}" hx-target="#personas-panel" hx-swap="outerHTML">
+                <input type="hidden" name="id" value="{{ p.id }}">
+                <input type="text" name="genre" value="{{ p.intake.get('genre', '') }}" placeholder="genre" size="10"
+                  title="seeds the hashtag search for this persona (saved when you Force refresh)">
+                <button type="submit" class="ghost" title="re-run the reach harvest now and propose the reach-best tags this persona is missing">Force refresh now</button>
+              </form>
+              <form class="inline" hx-post="{{ url_for('do_personas_corpus_add') }}" hx-target="#personas-panel" hx-swap="outerHTML">
+                <input type="hidden" name="id" value="{{ p.id }}">
+                <input type="text" name="tag" placeholder="#tag" size="12"><button type="submit" class="ghost">Add</button>
+              </form>
+              <form class="inline" hx-post="{{ url_for('do_personas_recommend') }}" hx-target="#personas-panel" hx-swap="outerHTML">
+                <input type="hidden" name="id" value="{{ p.id }}">
+                <input type="text" name="tag" placeholder="#candidate" size="12"><button type="submit" class="ghost" title="look up this tag's live Instagram reach via the Graph API">Check reach</button>
+              </form>
+            </div>
+          </div>
+        </section>
       </article>
     {% endfor %}
     {% if page.personas and not page.accounts %}

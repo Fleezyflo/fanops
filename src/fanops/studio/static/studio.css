@@ -790,6 +790,20 @@ button.ghost:hover, .button.ghost:hover { color:var(--ink); background:transpare
 .persona-detail { margin-top:.6rem; }
 .persona-detail > summary.persona-detail-summary { font-size:var(--t-meta); padding:.3rem 0; }
 .persona-edit-open { margin-top:.85rem; }
+/* U9: the three legible zones — each a labelled section (eyebrow heading) so the card answers, top to bottom,
+   what this is / what you can change / what the system derives. Matches the effective-persona eyebrow recipe. */
+.persona-zone { margin-top:var(--s-3); padding-top:var(--s-2); border-top:1px solid var(--line); }
+.persona-zone:first-of-type { margin-top:0; padding-top:0; border-top:0; }
+.persona-zone-eyebrow { margin:0 0 .5rem; font:600 var(--t-eyebrow) var(--sans); text-transform:uppercase; letter-spacing:.08em; color:var(--muted); }
+.persona-zone-edit .persona-edit-actions { display:flex; flex-wrap:wrap; gap:.5rem; margin-top:.75rem; }
+/* the derived zone reads as OUTPUT you consume — muted ground, no input affordance except the corpus tools */
+.persona-zone-derived { background:var(--surface-2, transparent); border-radius:var(--r-md); padding:var(--s-2); margin-top:var(--s-3); border-top:0; }
+.persona-zone-derived .persona-spec { margin:.5rem 0; font-size:var(--t-meta); }
+/* the S12 provenance badge — pinned (curated by the operator) vs auto (added by the reach refresh) */
+.corpus-prov { margin-left:.25rem; font:600 var(--t-eyebrow) var(--sans); text-transform:uppercase; letter-spacing:.05em;
+  padding:.02rem .3rem; border-radius:var(--r-sm); border:1px solid var(--line); color:var(--muted); }
+.corpus-prov.pinned { border-color:var(--accent); color:var(--accent-bright, var(--ink)); }
+.corpus-refreshed { font-size:var(--t-eyebrow); text-transform:uppercase; letter-spacing:.06em; margin-left:.2rem; }
 /* the collapsed "+ Add a persona" reads as a section header, not a buried toggle */
 .disclosure-step > summary.step-summary { font-size:1.05rem; font-weight:600; color:var(--ink); padding:.5rem 0; }
 .persona-add-step { margin-top:var(--s-4); }
