@@ -18,6 +18,7 @@ for what each flag does, how to disable it, and which test guards its OFF contra
 | `creative_variation` | `FANOPS_CREATIVE_VARIATION=0` | **ON** | each active account gets its own caption + burned-in on-screen hook per clip (+ its own length/framing cut under M2) | legacy fan-to-all **single shared clip + moment hook**; the Review approve-with-hook restore flow becomes available (it's an OFF-mode feature) |
 | `account_casting` | `FANOPS_ACCOUNT_CASTING=0` | **ON** | each active account is cast its **own LLM-selected moments** (RF1 `AccountSelection`); crosspost fans a cast moment **only** to its accounts | legacy fan-to-all — every moment reaches every account; no per-account selection gate |
 | `hashtag_trends` | `FANOPS_HASHTAG_TRENDS=0` | **ON** | `hashtags refresh` builds the store from **live Meta Graph** reach (harvest→measure→rank) | frozen reach floor only, no Graph harvest/measure (also the automatic behavior when `META_GRAPH_TOKEN`/`META_IG_USER_ID` are absent — fail-open) |
+| `corpus_auto` | `FANOPS_CORPUS_AUTO=0` | **ON** | `fanops run` auto-refreshes each persona's hashtag corpus on a 12h throttle (Graph discovery when creds+budget allow; offline store re-rank when under target without creds) | no automatic corpus writes — operator curation only |
 
 Disable semantics are uniform: the env var disables the flag **only** on the explicit off-words `0`/`false`/`no`/`off`;
 unset, empty, or anything else → **ON**.
@@ -38,6 +39,11 @@ unset, empty, or anything else → **ON**.
 - **Code:** [config.py:255](../src/fanops/config.py) (`def hashtag_trends`). Master switch for the **background** `hashtags refresh` Graph store build only; the on-demand operator lookup (`meta_graph.tag_metrics`) is gated by creds + budget, never this flag.
 - **OFF contract:** `refresh_store` writes the frozen reach floor only — no Graph harvest/measure; the `hashtags.json` shape (`{tags, reach}`) is unchanged (`reach` empty). Fail-open: identical to ON when no Meta token is configured.
 - **Firewall tests:** `test_hashtag_trends_default_on` + `test_hashtag_trends_explicit_off` ([test_graph_tag_metrics.py:93](../tests/test_graph_tag_metrics.py)).
+
+### `corpus_auto`
+- **Code:** [config.py](../src/fanops/config.py) (`def corpus_auto`). Master switch for the **background** persona corpus refresh (`refresh_corpora_if_due` in `persona_research.py`), throttled via `.corpora_refresh.json` mtime (12h).
+- **OFF contract:** `refresh_corpora_if_due` returns immediately — `personas.json` is never touched by the auto-refresh path.
+- **Firewall tests:** `test_flag_off_byte_identical` ([test_auto_corpus.py](../tests/test_auto_corpus.py)).
 
 ## Notable default-OFF flags (opt-in; byte-identical when off)
 

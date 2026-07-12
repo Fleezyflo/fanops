@@ -130,6 +130,35 @@ def test_full_pool_coverage_walk():
     assert seen >= set(corpus)
 
 
+def test_twelve_tag_corpus_three_passes_disjoint_leaning(tmp_path):
+    """S12: a 12-tag corpus rotated across three consecutive vet/ingest passes yields disjoint-leaning lines."""
+    from fanops.models import Platform, Post, PostState
+    from fanops.accounts import Accounts
+    corpus = [f"#tag{i:02d}" for i in range(12)]
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": [
+        {"handle": "a", "platforms": ["instagram"], "status": "active", "hashtag_corpus": corpus}]}))
+    accts = Accounts.load(cfg)
+    lines: list[list[str]] = []
+    for i in range(3):
+        cid = f"clip_{i}"; mid = f"mom_{i}"
+        _clip(led, cid, mid)
+        request_captions(led, cfg, cid, [("a", Platform.instagram)], accounts=accts)
+        rid = latest_request_id(cfg, "captions", cid)
+        response_path(cfg, "captions", cid).write_text(CaptionSet(request_id=rid, items=[
+            CaptionItem(surface="a/instagram", caption="x", hashtags=["#hiphop"])]).model_dump_json())
+        led = ingest_captions(led, cfg, cid)
+        tags = list(led.clips[cid].meta_captions["a/instagram"]["hashtags"])
+        lines.append(tags)
+        led.add_post(Post(id=f"p{i}", parent_id=cid, account="a", account_id="1", platform=Platform.instagram,
+                          caption=" ".join(tags), hashtags=tags, state=PostState.queued,
+                          created_at=f"2026-07-0{i+1}T12:00:00+00:00"))
+        if i:
+            assert lines[i] != lines[i - 1]
+    assert len({tuple(x) for x in lines}) >= 2
+
+
 def test_tag_exposure_counts(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="p1", parent_id="c1", account="a", account_id="1", platform=Platform.instagram,

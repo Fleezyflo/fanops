@@ -421,6 +421,21 @@ class Config:
         return v not in {"0", "false", "no", "off"}     # DEFAULT ON; only explicit off-words disable it
 
     @property
+    def corpus_auto(self) -> bool:
+        # S12: automated persona corpus refresh during `fanops run` — DEFAULT ON; only explicit off-words disable.
+        v = (os.getenv("FANOPS_CORPUS_AUTO") or "").strip().lower()
+        return v not in {"0", "false", "no", "off"}
+
+    @property
+    def corpus_target(self) -> int:
+        # S12: target curated tags per persona for the auto-refresh writer (pinned tags don't count toward auto slots).
+        try:
+            v = int(os.getenv("FANOPS_CORPUS_TARGET", "12"))
+        except ValueError:
+            return 12
+        return v if v >= 1 else 12
+
+    @property
     def require_full_objective(self) -> bool:
         # T4 opt-in: refuse to AMPLIFY a winner whose lift is DEGRADED (a primary weighted metric was
         # absent from its row -> the lift scalar is a partial objective). DEFAULT OFF (learning stays
