@@ -21,7 +21,7 @@
         {% for ln in result.detail.lines %}<span class="repost-line repost-{{ ln.status }}">{{ ln.surface }} — {% if ln.status == 'minted' %}minted{% elif ln.status == 'already_exists' %}already exists{% else %}skipped{% if ln.error %}: {{ ln.error | operator_error }}{% endif %}{% endif %}</span>{% if not loop.last %} · {% endif %}{% endfor %}
         <a href="{{ url_for('review', batch=result.detail.batch_id) if result.detail.batch_id else url_for('review', account=result.detail.review_account, view='account') }}">Review →</a>
       {% else %}Done.{% endif %}
-    {% elif result.detail.source_id is defined %}Reposted to Review — same account. <a href="{{ url_for('review', batch=result.detail.batch_id) if result.detail.batch_id else url_for('review', account=result.detail.account, view='account') if result.detail.account else url_for('review') }}">Review →</a>
+    {% elif result.detail.source_id is defined and result.detail.post_id is defined %}Reposted to Review — same account. <a href="{{ url_for('review', batch=result.detail.batch_id) if result.detail.batch_id else url_for('review', account=result.detail.account, view='account') if result.detail.account else url_for('review') }}">Review →</a>{# repost_post is the ONLY action returning BOTH post_id+source_id — resume/retire/promote/randomize return source_id WITHOUT post_id and must NOT match here #}
     {% elif result.detail.render_pending %}Hook burn failed for {{ result.detail.render_pending }} — retry approve or check ffmpeg.
     {% elif result.detail.approved is defined %}Approved {{ result.detail.approved }} — on schedule.
     {% elif result.detail.rejected is defined %}Rejected {{ result.detail.rejected }}.

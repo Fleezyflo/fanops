@@ -255,3 +255,33 @@ def test_same_account_banner_links_to_review(tmp_path):
     resp = _client(cfg).post("/posts/repost/p0")
     html = resp.data.decode()
     assert "/review" in html                                   # a Review link on the same-account repost result
+
+
+# ── regression: the same-account branch keys on post_id+source_id, NOT source_id alone ──────────────
+def _render_outcome(cfg, detail):
+    """Render _publish_outcome.html against a hand-built ok ActionResult (pure template routing check)."""
+    from fanops.studio.app import create_app
+    from fanops.studio.actions_common import ActionResult
+    app = create_app(cfg)
+    with app.test_request_context("/"):
+        from flask import render_template
+        return render_template("_publish_outcome.html", result=ActionResult(ok=True, detail=detail))
+
+
+def test_source_only_detail_does_not_hit_repost_banner(tmp_path):
+    # resume/retire/promote_source_studio return {"source_id": ...} WITHOUT post_id — they must NOT render the
+    # U8 same-account repost copy (which was the bug when the branch keyed on source_id alone).
+    cfg = Config(root=tmp_path); _accounts(cfg, {"a0": ["instagram"]})
+    html = _render_outcome(cfg, {"source_id": "s1"})
+    assert "Reposted to Review" not in html                    # source-lifecycle result, not a repost
+    assert "Done." in html                                     # falls through to the generic ok copy
+
+
+def test_randomize_detail_not_hijacked_by_repost_branch(tmp_path):
+    # randomize_account_schedule returns {"rescheduled", "handle", "source_id"} (no outcome). On the base this
+    # already rendered the generic "Done." (it has no `outcome`, so it never reaches the inner rescheduled copy);
+    # the U8 same-account branch (post_id+source_id) must NOT hijack it — behavior stays byte-identical to base.
+    cfg = Config(root=tmp_path); _accounts(cfg, {"a0": ["instagram"]})
+    html = _render_outcome(cfg, {"rescheduled": 3, "handle": "a0", "source_id": "s1"})
+    assert "Reposted to Review" not in html                    # NOT hijacked by the repost branch
+    assert "Done." in html                                     # same generic-ok copy as the pre-U8 base

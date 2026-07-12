@@ -534,8 +534,10 @@ def repost_to_other_accounts(cfg: Config, post_id: str, *, target_accounts: Opti
     if src is None: return ActionResult(ok=False, error=f"no such post: {post_id}")
     clip_id = src.parent_id; platform = src.platform.value; source_account = src.account
     if all_others:
-        try: targets = [a.handle for a in Accounts.load(cfg).active() if a.handle != source_account]
-        except Exception as exc: return ActionResult(ok=False, error=f"accounts.json: {str(exc)[:160]}")
+        # Accounts.load unguarded — mirrors the sibling crosspost_all_to_account (Ledger.load) and the
+        # _posted_panel that renders this result (Accounts.load(cfg).active()); a broken accounts.json 500s
+        # the whole Posted tab regardless, so a redundant local catch here would only add a silent swallow.
+        targets = [a.handle for a in Accounts.load(cfg).active() if a.handle != source_account]
     else:
         seen: dict = {}                                          # dedup preserving order; drop the source account
         for h in (target_accounts or []):
