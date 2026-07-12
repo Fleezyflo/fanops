@@ -23,8 +23,8 @@ Prototype acceptance path — full checklist in **[docs/design/v0.1-ship-route.m
 1. **Install** — `python3.12 -m venv .venv && source .venv/bin/activate` then `pip install -e '.[dev,studio,transcribe,framing]'` and `./scripts/setup-hooks.sh`
 2. **Doctor** — `fanops doctor` exits 0 (green)
 3. **Studio + Go Live intake (S04)** — `fanops studio` → http://127.0.0.1:8787; Go-Live tab: connect Postiz (**Save & test**), add account(s), map each channel to Postiz integration; channel readiness matrix shows all active channels ready
-4. **Upload (S02)** — Run tab: Upload video → Ingest inbox (chunked resumable upload)
-5. **Prepare + Review focus (S07)** — Run tab: Prepare everything; Review tab: bare `/review` account-first picker/auto-focus, approve selected
+4. **Upload (S02)** — Run tab: Add footage → Add to queue (chunked resumable upload)
+5. **Prepare + Review focus (S07)** — Run tab: Make clips; Review tab: bare `/review` account-first picker/auto-focus, approve selected
 6. **Schedule → publish** — Go live if not already (confirm checkbox); Schedule tab or Run tab publish with live confirm; post ships to real account
 7. **Metrics + S06 rotation** — Posted tab shows live URL; metrics arrive (timestamp); two consecutive posts for same account show differing hashtag tag lines
 
