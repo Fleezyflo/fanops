@@ -1,17 +1,19 @@
 <!-- Edit-time rulebook for tests/. Anchors verified 2026-07-03. Commands = root CLAUDE.md. -->
 # tests — traps when writing or fixing a test
 
-## Run it right
+## How the suites run — CI-ONLY, never locally
 
-- Fast UNIT suite (hermetic, no ffmpeg/whisper/network): `python -m pytest -q -m "not integration and not slow"`.
-- Coverage (LOCAL only — CI dropped it as report-only theater, MOL-199): `python -m pytest -q -m "not integration" --cov=src/fanops --cov-report=term-missing`.
-- Integration (`@pytest.mark.integration`): `python -m pytest -q -m integration -rs` — needs real ffmpeg/whisper/TTS;
-  skips cleanly when tooling is absent locally. `FANOPS_REQUIRE_E2E=1` (CI) turns that skip into a FAILURE.
-- **Run under the venv** (`source .venv/bin/activate`) — bare `pytest` mis-reports the `mocker` fixture.
-- Slow cross-face UNIT proofs (`@pytest.mark.slow`): `test_account_first_e2e.py`, `test_hashtag_lifecycle_e2e.py`,
-  `test_review_lanes_e2e.py`, `test_per_persona_e2e.py` — excluded by local `check.sh` / default `check-full.sh`;
-  CI `unit` deselects them (`-m "not integration and not slow"`); CI `e2e` runs `-m slow`.
-  Full local unit parity: `CHECK_FULL_SLOW=1 ./scripts/check-full.sh`.
+**Local test execution is FORBIDDEN** (operator rule): a wave runs many workers on one machine and
+parallel suites crash it. Write tests with your change, push, open the PR — GitHub CI executes them
+and its run is your evidence. The orchestration gate refuses local `pytest`/`check-full.sh` during
+waves; `./scripts/check.sh` is scoped lint + test-mapping only. `FANOPS_LOCAL_TESTS=1` is the
+operator-only override from a human terminal. What CI runs (reference, not for running):
+
+- CI `unit` job: `python -m pytest -q -m "not integration and not slow"` (hermetic, no ffmpeg/whisper/network).
+- CI `e2e` job: `python -m pytest -q -m integration -rs` (real ffmpeg/whisper/TTS; `FANOPS_REQUIRE_E2E=1`
+  turns a skip into a FAILURE) plus the `@pytest.mark.slow` cross-face UNIT proofs (`-m slow`):
+  `test_account_first_e2e.py`, `test_hashtag_lifecycle_e2e.py`, `test_review_lanes_e2e.py`,
+  `test_per_persona_e2e.py`.
 
 ## Hard rules
 

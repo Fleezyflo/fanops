@@ -2,12 +2,12 @@
 set -euo pipefail
 # scripts/check.sh — the EXPLICIT local gate. Run this BEFORE every commit.
 #
-# Scoped, fast: lints only the .py you changed and runs only the tests that cover them, diffed against
-# the origin/main merge-base. Seconds on a small change, not minutes. This is NOT a git hook and is NOT
-# authoritative — CI (ci.yml) runs the full suite on every PR and is the sole gate. This just catches
-# the obvious break before you push, so CI rarely comes back red.
+# Scoped, fast: lints only the .py you changed, diffed against the origin/main merge-base, and
+# verifies changed src modules HAVE a scoped test file. It does NOT run tests: tests execute ONLY in
+# GitHub CI on the PR (operator rule — parallel local suite runs during a wave take the machine
+# down). FANOPS_LOCAL_TESTS=1 is the explicit operator-only override for a scoped local run.
 #
-# Exit non-zero on any ruff or pytest failure. Full-suite parity: ./scripts/check-full.sh
+# Exit non-zero on any ruff (or overridden pytest) failure.
 #
 # Usage:  ./scripts/check.sh                    # scope = changes vs origin/main merge-base
 #         BASE=origin/main ./scripts/check.sh   # override the diff base
@@ -76,8 +76,14 @@ if [[ ${#ORPHANS[@]} -gt 0 ]]; then
   fi
 fi
 
-# 2) Scoped pytest — changed test files + convention/override map (scripts/check_scope.py handles
-# studio/, post/, and alternate test names like test_studio_actions.py).
+# 2) Tests are CI-ONLY. A wave runs many workers on this one machine; parallel local pytest suites
+# crash it. Push, open the PR, cite the CI run. FANOPS_LOCAL_TESTS=1 = operator-only override.
+if [[ "${FANOPS_LOCAL_TESTS:-}" != "1" ]]; then
+  echo "[check] OK — scoped ruff green + test mapping present. Tests run in GitHub CI on your PR (CI-ONLY; never run pytest locally)."
+  exit 0
+fi
+
+# (operator override) Scoped pytest — changed test files + convention/override map.
 TESTS=()
 while IFS= read -r _f; do TESTS+=("$_f"); done < <("$PY" "$ROOT/scripts/check_scope.py" "${CHANGED[@]}")
 

@@ -25,9 +25,11 @@ python3 -m venv .venv && ./.venv/bin/pip install -e '.[dev,studio]'   # each wor
 git config --local core.hooksPath .githooks                            # wire the policy hooks
 ```
 
-RED → GREEN → REFACTOR. Run `./scripts/check.sh` before EVERY commit. **Push after every green check** —
-unpushed work is the only work that can be lost. Conventional commits `fix(scope): … (MOL-xxx)`, one
-logical change each; commit only files you staged.
+Write the ticket's tests WITH the change, but NEVER execute them locally — tests run ONLY in GitHub
+CI on your PR (operator rule: parallel wave suites crash the machine; the gate refuses `pytest`).
+Run `./scripts/check.sh` (scoped lint + test-mapping check) before EVERY commit. **Push after every
+green check** — unpushed work is the only work that can be lost. Conventional commits
+`fix(scope): … (MOL-xxx)`, one logical change each; commit only files you staged.
 
 ## You do NOT merge — the orchestrator lands, serially
 

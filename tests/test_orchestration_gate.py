@@ -208,6 +208,20 @@ def test_cli_before_shell_denies_operator_only_stop(tmp_path):
     assert out.get("permission") == "allow"
 
 
+def test_cli_before_shell_denies_local_test_runs(tmp_path):
+    # operator rule: tests execute ONLY in GitHub CI on the PR — parallel local suites crash the machine
+    for cmd in ("pytest -q", "python -m pytest tests/test_x.py", ".venv/bin/python -m pytest -q",
+                "cd /repo && pytest -q tests/", "CHECK_FULL_SLOW=1 ./scripts/check-full.sh",
+                "bash scripts/check-full.sh"):
+        _, out = _run_cli("before-shell", {"command": cmd}, tmp_path)
+        assert out.get("permission") == "deny", cmd
+    # check.sh (scoped lint) stays allowed; pytest as a mere WORD in a message is not an invocation
+    _, out = _run_cli("before-shell", {"command": "./scripts/check.sh"}, tmp_path)
+    assert out.get("permission") == "allow"
+    _, out = _run_cli("before-shell", {"command": "git commit -m 'align pytest fixture'"}, tmp_path)
+    assert out.get("permission") == "allow"
+
+
 def test_cli_before_shell_denies_interpreter_writes_to_protected_paths(tmp_path):
     _, out = _run_cli("before-shell",
                       {"command": "python3 -c \"open('.cursor/hooks/orchestration_gate.py','w')\""}, tmp_path)

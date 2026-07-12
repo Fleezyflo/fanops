@@ -22,6 +22,6 @@ blockers and skipping already-merged tickets.
 
 ## DONE means (per ticket)
 
-Change matches the ticket's Acceptance block; `ruff` + `pytest` (via `./scripts/check.sh`, or the full
-suite when you touch CI wiring) green; PR opened to `main`; CI green; reported `MOL-xxx CI green, ready
-to land`. The **orchestrator** merges.
+Change matches the ticket's Acceptance block; `./scripts/check.sh` (scoped lint — tests are CI-ONLY,
+never run locally) green; PR opened to `main`; CI green (that run IS your test evidence); reported
+`MOL-xxx CI green, ready to land`. The **orchestrator** merges.
