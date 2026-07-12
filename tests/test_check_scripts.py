@@ -140,6 +140,28 @@ def test_changed_test_file_is_run_directly(sandbox):
     assert "poison" not in log
 
 
+def test_worktree_without_venv_resolves_main_checkout_venv(sandbox, tmp_path):
+    """A worker worktree carries NO venv of its own (no per-worker pip install on one machine):
+    check.sh must fall back to the MAIN checkout's .venv instead of demanding a local one."""
+    repo = sandbox
+    (repo / "src" / "fanops" / "widget.py").write_text("x = 1\n")
+    (repo / "tests" / "test_widget.py").write_text(_FIXTURE_TEST)
+    _commit_all(repo, "baseline")
+    (repo / "src" / "fanops" / "widget.py").write_text("x = 42\n")
+    _commit_all(repo, "touch widget")
+
+    wt = tmp_path / "wt"
+    _git(repo, "worktree", "add", str(wt), "-b", "worker-branch")
+    if (wt / ".venv").exists():
+        shutil.rmtree(wt / ".venv")   # workers carry no venv — the fallback under test
+
+    r = _run(["bash", str(wt / "scripts" / "check.sh")], wt, env=_env(repo))
+
+    assert "no .venv" not in (r.stderr or ""), r.stderr
+    assert r.returncode == 0, f"check.sh failed in a venv-less worktree:\n{r.stdout}\n{r.stderr}"
+    assert "widget.py" in _log(repo)   # ruff ran via the MAIN checkout's venv stub
+
+
 def test_default_never_runs_tests_ci_only(sandbox):
     """WITHOUT the operator override, check.sh lints + orphan-checks but never selects/runs tests."""
     repo = sandbox

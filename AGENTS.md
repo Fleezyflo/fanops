@@ -33,7 +33,9 @@ Correctness and safety beat speed. When unsure, do the safe serial thing.
 git fetch origin
 git worktree add ../fanops-<mol-id> -b <ticket-branch> origin/main
 cd ../fanops-<mol-id>
-python -m venv .venv && ./.venv/bin/pip install -e '.[dev,studio]'   # each worktree needs its OWN venv
+# NO per-worktree venv: tests are CI-only and check.sh resolves ruff from the MAIN checkout's .venv.
+# (N workers each running pip install on this one machine is the same resource class as the
+# parallel-pytest crash.) Create a venv only if the MAIN checkout somehow lacks one.
 ./scripts/setup-hooks.sh                                             # wire the repo policy hooks (idempotent; MOL-198 — check.sh no longer auto-wires)
 ```
 `pre-commit` = secret scan + staged ruff + scoped `check.sh` when `src/`/`tests/` `.py` is staged
@@ -127,7 +129,8 @@ work-loss. Cap concurrency so drift is rare; when it happens, use the re-sync pr
   `origin/main`).
 - **Land branches SERIALLY in dependency order**; after each merge, the next open branch runs the
   re-sync protocol BEFORE continuing.
-- Each parallel branch = own clone/worktree, own venv, own PR. NEVER two agents in one tree.
+- Each parallel branch = own clone/worktree, own PR (no per-worktree venv — see step A). NEVER two
+  agents in one tree.
 - Cloud agents get isolated VMs — the RAM/worktree crash story is local. **Git file collisions still
   apply on the shared repo**; the cap and disjoint-file rule are about merge safety, not machine RAM.
 - Do NOT parallelize to hit a deadline. If only one thing is safe, do one thing and say so:

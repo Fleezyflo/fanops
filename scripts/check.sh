@@ -14,9 +14,16 @@ set -euo pipefail
 
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
+# Venv resolution: own .venv, else the MAIN checkout's .venv (worktrees don't need their own — the
+# default gate is ruff-only and ruff is path-agnostic; N workers each pip-installing a full venv on
+# one machine is the same resource class as the parallel-pytest crash). Tests are CI-only anyway.
 PY="$ROOT/.venv/bin/python"
 if [[ ! -x "$PY" ]]; then
-  echo "[check] .venv missing — run: python -m venv .venv && ./.venv/bin/pip install -e '.[dev,studio]'" >&2
+  COMMON="$(git rev-parse --git-common-dir 2>/dev/null || true)"   # <main>/.git even from a worktree
+  [[ -n "$COMMON" ]] && MAIN_ROOT="$(cd "$(dirname "$COMMON")" && pwd)" && PY="$MAIN_ROOT/.venv/bin/python"
+fi
+if [[ ! -x "$PY" ]]; then
+  echo "[check] no .venv here or in the main checkout — run in the MAIN repo: python -m venv .venv && ./.venv/bin/pip install -e '.[dev,studio]'" >&2
   exit 1
 fi
 
