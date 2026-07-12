@@ -83,16 +83,19 @@ def test_posted_batch_rollup_empty_is_none(tmp_path):
     assert views.posted_batch_rollup([]) is None
 
 
-# ---- route-level: base pagination ----
+# ---- route-level: U7 calendar (offset pagination dropped) ----
 def test_schedule_paginates(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg); _seed(cfg, GPS + 5)
     html = _client(cfg).get("/schedule").data.decode()
-    assert "Show more" in html and f"of {GPS + 5}" in html
+    assert "schedule-cal" in html and "schedule-cal-nav" in html
+    assert "schedule-cal-prev" in html and "schedule-cal-next" in html
+    assert "Show more" not in html
 
 def test_schedule_offset_remainder_is_last_page(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg); _seed(cfg, GPS + 5)
-    html = _client(cfg).get(f"/schedule?offset={GPS}").data.decode()
-    assert f"of {GPS + 5}" in html and "Show more" not in html           # remainder, no further page
+    html = _client(cfg).get("/schedule?month=2099-06").data.decode()
+    assert "schedule-cal" in html and "2099-06" in html
+    assert "Show more" not in html
 
 def test_schedule_small_bucket_no_pagination(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg); _seed(cfg, 3)
@@ -113,8 +116,8 @@ def test_posted_paginates_and_day_head_re_emits_on_page2(tmp_path):
 def test_schedule_batch_label_and_showmore_carries_batch(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg)
     _seed(cfg, GPS + 2, batch_id="bx", batch_name="Drop7")
-    html = _client(cfg).get("/schedule?batch=bx").data.decode()
-    assert "Drop7" in html and "batch=bx" in html                       # per-row label + show-more scope
+    html = _client(cfg).get("/schedule?batch=bx&account=a0").data.decode()
+    assert "Drop7" in html and "batch=bx" in html                       # per-row label + month-nav scope
 
 def test_posted_rollup_renders_only_under_batch(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg)
@@ -137,12 +140,11 @@ def test_schedule_action_urls_carry_batch(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_LIVE", "1"); monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_API_KEY", "k")
     cfg = Config(root=tmp_path); _accounts(cfg)
     _seed(cfg, 1, batch_id="bx", batch_name="Drop")                      # p0 queued + editable in bx
-    html = _client(cfg).get("/schedule?batch=bx").data.decode()
-    assert "/schedule/move/p0?batch=bx" in html
-    assert "/schedule/clear/p0?batch=bx" in html
-    assert "/schedule/publish/p0?batch=bx" in html
-    assert "/schedule/unapprove/p0?batch=bx" in html
-    assert "/schedule/respread?batch=bx" in html
+    html = _client(cfg).get("/schedule?batch=bx&account=a0").data.decode()
+    assert "/schedule/move/p0" in html and "batch=bx" in html
+    assert "/schedule/publish/p0" in html and "batch=bx" in html
+    assert "/schedule/unapprove/p0" in html and "batch=bx" in html
+    assert "/schedule/respread" in html and "batch=bx" in html
 
 def test_posted_action_urls_carry_batch(tmp_path):
     # D2: same contract on Posted — repost / crosspost-one / backfill keep the ?batch= scope.

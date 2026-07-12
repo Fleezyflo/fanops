@@ -148,13 +148,17 @@ def _month_arg() -> tuple[int, int]:
             return int(y), int(m)
         except (ValueError, TypeError):
             pass
+    zone = timezone.utc
     try:
         from fanops.timeutil import _operator_zone
         from flask import current_app
         cfg = current_app.config.get("FANOPS_CFG")
-        zone = _operator_zone(cfg) if cfg else timezone.utc
-    except Exception:
-        zone = timezone.utc
+        if cfg:
+            zone = _operator_zone(cfg) or timezone.utc
+    except Exception as exc:
+        from fanops.errors import fail_open
+        with fail_open("studio.app._month_arg"):
+            raise exc
     today = datetime.now(zone).date()
     return today.year, today.month
 

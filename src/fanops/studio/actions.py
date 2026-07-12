@@ -761,6 +761,9 @@ def randomize_account_schedule(cfg: Config, handle: str, *, days: int = 7, sourc
                     p.scheduled_time = iso_z(t)
                     moved += 1
     except Exception as exc:
+        from fanops.errors import fail_open
+        with fail_open("studio.actions.randomize_account_schedule"):
+            raise exc
         return ActionResult(ok=False, error=f"randomize failed: {str(exc)[:160]}")
     return ActionResult(ok=True, detail={"rescheduled": moved, "handle": handle, "source_id": source_id})
 
