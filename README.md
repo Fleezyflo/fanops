@@ -12,23 +12,23 @@
 
 ```bash
 python3.12 -m venv .venv && source .venv/bin/activate
-pip install -e '.[dev,studio]'    # studio = the web cockpit (Flask)
+pip install -e '.[dev,studio,transcribe,framing]'
 ./scripts/setup-hooks.sh            # repo policy hooks (idempotent)
 ```
 
-## Launch sequence
+## v0.1 quickstart
 
-Follow these steps once to go from zero to a live post. The full walkthrough with exact UI controls and success criteria is in **[docs/RUNBOOK.md](docs/RUNBOOK.md)**.
+Prototype acceptance path — full checklist in **[docs/design/v0.1-ship-route.md](docs/design/v0.1-ship-route.md)**. Extended operator script: **[docs/RUNBOOK.md](docs/RUNBOOK.md)**.
 
-1. **Health check** — `fanops doctor` (read-only; fix anything flagged).
-2. **Open Studio** — `fanops studio` → http://127.0.0.1:8787
-3. **Connect Postiz** — Go-Live tab → paste Postiz URL + API key → Save & test. See [docs/POSTIZ_SETUP.md](docs/POSTIZ_SETUP.md) if Postiz is not running yet.
-4. **Add footage** — Run tab → Upload video → Ingest inbox.
-5. **Prepare clips** — Run tab → Prepare everything (or answer gates in the Gates tab if autopilot is off).
-6. **Review & approve** — Review tab → watch clips → Approve selected.
-7. **Map accounts** — Go-Live tab → add handles, map each channel to its Postiz integration.
-8. **Go live** — Go-Live tab → confirm → **GO LIVE** (publishes to real accounts only after approval).
-9. **Publish** — Run tab → Prepare everything (with live confirm) or let the daemon tick.
+1. **Install** — `python3.12 -m venv .venv && source .venv/bin/activate` then `pip install -e '.[dev,studio,transcribe,framing]'` and `./scripts/setup-hooks.sh`
+2. **Doctor** — `fanops doctor` exits 0 (green)
+3. **Studio + Go Live intake (S04)** — `fanops studio` → http://127.0.0.1:8787; Go-Live tab: connect Postiz (**Save & test**), add account(s), map each channel to Postiz integration; channel readiness matrix shows all active channels ready
+4. **Upload (S02)** — Run tab: Upload video → Ingest inbox (chunked resumable upload)
+5. **Prepare + Review focus (S07)** — Run tab: Prepare everything; Review tab: bare `/review` account-first picker/auto-focus, approve selected
+6. **Schedule → publish** — Go live if not already (confirm checkbox); Schedule tab or Run tab publish with live confirm; post ships to real account
+7. **Metrics + S06 rotation** — Posted tab shows live URL; metrics arrive (timestamp); two consecutive posts for same account show differing hashtag tag lines
+
+Learning ships frozen-as-built (gated P4 dims + timing; hashtag judge = live Graph reach).
 
 > **Safety:** Nothing auto-publishes. Every post is born `awaiting_approval`; only posts you approve in Review enter the publish queue.
 
