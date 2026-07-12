@@ -167,6 +167,13 @@ def register_schedule_routes(app, cfg):
         # 'Post again': spawn a fresh awaiting_approval repost from a shipped post; re-render the library.
         return _posted_panel(actions.repost_post(cfg, post_id))
 
+    @app.post("/posts/repost-others/<post_id>")
+    def do_repost_others(post_id):
+        # U8 'Repost anywhere': re-post a shipped clip onto picked / all OTHER accounts; re-render the library.
+        return _posted_panel(actions.repost_to_other_accounts(
+            cfg, post_id, target_accounts=request.form.getlist("target_accounts"),
+            all_others=bool(request.form.get("all_others"))))
+
     @app.post("/posts/resolve/<post_id>")
     def do_resolve_post(post_id):
         return _posted_panel(actions.resolve_post(

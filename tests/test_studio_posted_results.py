@@ -271,24 +271,22 @@ def test_posted_link_dryrun_row_labels_no_link_not_pending(tmp_path):
     assert "no link" in html                                 # the honest dryrun placeholder, NOT 'pending'
 
 
-# ── MOL-51: per-row action weights ranked deliberately ──────────────────────────────────────────────
+# ── MOL-51: per-row action weights ranked deliberately (U8: repost actions folded into one menu) ──────
 # Before MOL-51 the Posted list row had ~3 default-weight controls (Metrics disclosure, Post again,
 # Crosspost) at IDENTICAL weight, the payoff "View on {platform}" quieter than them, and the Lift value
-# as plain text regardless of magnitude. MOL-51 assigns MOL-44's 3 tiers: the two infrequent utility
-# submit-buttons + the Metrics disclosure → tertiary .ghost; the live permalink stays the accent-bright
-# leading affordance; the Lift value reuses MOL-50's dominant .lift-num. Class-only — no form/hx change.
-def test_posted_utility_buttons_are_ghost(tmp_path):
-    # "Post again" and "Crosspost" are infrequent utility actions -> demoted to the tertiary .ghost tier.
+# as plain text regardless of magnitude. MOL-51 assigned MOL-44's 3 tiers: the infrequent utility controls
+# + the Metrics disclosure → tertiary .ghost; the live permalink stays the accent-bright leading affordance;
+# the Lift value reuses MOL-50's dominant .lift-num. U8 replaced the two per-row repost/crosspost forms with
+# ONE <details> menu ("Post again ▾"), so the demoted tier is now the menu summary + the Metrics disclosure.
+def test_posted_utility_menu_summary_is_ghost(tmp_path):
+    # the row action menu ("Post again ▾") is the infrequent-utility affordance -> tertiary .ghost tier.
     cfg = Config(root=tmp_path)
     _seed_published(cfg, pid="p_live", lift=0.42)            # published + https:// url -> live delivery row
     html = _client(cfg).get("/posted").data.decode()
     import re as _re
-    # every submit button carrying the Post again / Crosspost label must have the ghost class
-    for label in ("Post again", "Crosspost"):
-        m = _re.findall(r'<button[^>]*>' + _re.escape(label) + r'</button>', html)
-        assert m, f"{label!r} button not rendered on the live row"
-        for btn in m:
-            assert "ghost" in btn, f"{label!r} button must be tertiary .ghost, got: {btn}"
+    m = _re.search(r'<summary[^>]*>Post again[^<]*</summary>', html)
+    assert m, "row action menu summary (Post again) not rendered on the live row"
+    assert "ghost" in m.group(0), f"menu summary must be tertiary .ghost, got: {m.group(0)}"
 
 
 def test_posted_metrics_disclosure_is_ghost(tmp_path):
