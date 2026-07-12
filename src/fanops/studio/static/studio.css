@@ -520,6 +520,23 @@ details.batch > summary .muted { font:500 var(--t-meta) var(--sans); }
 .drawer-close { font-size:1.3rem; line-height:1; padding:.1rem .55rem; background:transparent; border:1px solid var(--line); color:var(--muted); }
 .drawer-close:hover { color:var(--ink); border-color:var(--line-bright); }
 .drawer-blast { margin:0; font-size:var(--t-meta); }
+/* S05 — effective persona read projection (drawer-only details block) */
+.effective-persona { margin:var(--s-2) 0; padding:var(--s-2); border:1px solid var(--line); border-radius:var(--r-card); background:var(--surface-2, transparent); }
+.effective-persona > summary { cursor:pointer; font:600 var(--t-eyebrow) var(--sans); letter-spacing:.04em; text-transform:uppercase; color:var(--muted); }
+.effective-heading { margin:var(--s-2) 0 var(--s-1); font:600 var(--t-meta) var(--sans); }
+.effective-chips { display:flex; flex-wrap:wrap; gap:.35rem; margin:0 0 var(--s-1); }
+.provenance-table { width:100%; margin-bottom:var(--s-2); border-collapse:collapse; font-size:var(--t-meta); }
+.provenance-table caption { text-align:left; padding-bottom:.2rem; }
+.provenance-table th { text-align:left; font-weight:500; padding:.2rem .4rem .2rem 0; }
+.provenance-table td { padding:.2rem .4rem; vertical-align:top; }
+.prov-src { color:var(--muted); font-size:.85em; text-transform:capitalize; }
+.directive-block { margin-bottom:var(--s-2); }
+.directive-pre { margin:.25rem 0 0; padding:var(--s-2); background:var(--surface-1); border:1px solid var(--line); border-radius:var(--r-sm); font-size:var(--t-meta); white-space:pre-wrap; overflow-x:auto; }
+.lever-detail-table { width:100%; border-collapse:collapse; font-size:var(--t-meta); margin-bottom:var(--s-2); }
+.lever-detail-table th, .lever-detail-table td { padding:.25rem .4rem; border-top:1px solid var(--line); vertical-align:top; text-align:left; }
+.lever-detail-table thead th { border-top:0; font-weight:600; color:var(--muted); }
+.crosswalk-note { margin:0 0 var(--s-1); font-size:var(--t-meta); }
+.effective-corpus .persona-corpus { display:flex; flex-wrap:wrap; gap:.35rem; margin-top:var(--s-1); }
 /* M4 — the lever manifest / health read (always-visible; no collapse, per the drawer's design) */
 .lever-manifest { margin:var(--s-2) 0; padding:var(--s-2); border:1px solid var(--line); border-radius:var(--r-card); background:var(--surface-2, transparent); }
 .manifest-title { margin:0 0 var(--s-1); font:600 var(--t-eyebrow) var(--sans); letter-spacing:.04em; text-transform:uppercase; color:var(--muted); }

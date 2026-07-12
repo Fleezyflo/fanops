@@ -355,6 +355,96 @@ class PersonaCard:
     # M4: the LEVER MANIFEST — per editable lever {key,label,channels,value,produces,source,health}, derived
     # from the registry + the SAME resolvers the pipeline runs (no-drift). The drawer renders it as a health row.
     lever_manifest: list = field(default_factory=list)
+    # S05: drawer-only effective-persona read projection (fail-open defaults).
+    account_provenance: list = field(default_factory=list)   # [{handle, fields:[{name, value, source}]}]
+    lever_detail: list = field(default_factory=list)         # [{key, label, value, catalog_does, option_effect, produces, health, crosswalk_note}]
+
+
+def _account_provenance(cfg: Config, persona, handles: list) -> list:
+    """Per linked account, mirror accounts._hydrate_from_personas field sourcing for the drawer provenance table."""
+    if not handles:
+        return []
+    try:
+        from fanops.accounts import Account
+        from fanops.models import validate_account_handle
+        from fanops.personas import resolved_cut_spec
+        raw = json.loads(cfg.accounts_path.read_text(encoding="utf-8"))
+        rows = {}
+        for r in raw.get("accounts", []):
+            if not isinstance(r, dict): continue
+            try: rows[validate_account_handle(r.get("handle") or "")] = r
+            except ValueError: continue
+    except Exception as exc:
+        from fanops.log import get_logger
+        get_logger(cfg)("personas", getattr(persona, "id", "-"), "provenance_error", err=str(exc)[:160])
+        return []
+    _prof, _fr = resolved_cut_spec(persona)
+    out: list = []
+    for h in handles:
+        row = rows.get(h) or rows.get("@" + h.lstrip("@"))
+        if not row: continue
+        acc = Account(**row)
+        fields: list = []
+        if (persona.voice or "").strip():
+            fields.append({"name": "voice", "value": persona.voice.strip(), "source": "persona"})
+        else:
+            fields.append({"name": "voice", "value": acc.persona or "", "source": "account"})
+        fields.append({"name": "hashtag_corpus", "value": list(persona.hashtag_corpus), "source": "persona"})
+        fields.append({"name": "content_focus", "value": list(persona.content_focus), "source": "persona"})
+        fields.append({"name": "selection_scope", "value": persona.selection_scope or "", "source": "persona"})
+        fields.append({"name": "hook_angle", "value": persona.hook_angle or "", "source": "persona"})
+        if _prof:
+            fields.append({"name": "clip_profile", "value": _prof, "source": "persona"})
+        else:
+            fields.append({"name": "clip_profile", "value": acc.clip_profile or "", "source": "account"})
+        if _fr:
+            fields.append({"name": "framing", "value": _fr, "source": "persona"})
+        else:
+            fields.append({"name": "framing", "value": acc.framing or "", "source": "account"})
+        out.append({"handle": h, "fields": fields})
+    return out
+
+
+def _lever_detail_rows(cfg: Config, persona, manifest_rows: list, catalog: list, effects: dict) -> list:
+    """Join manifest rows with lever_catalog does + _LEVER_EFFECTS option effects + optional archetype crosswalk."""
+    xnote = ""
+    try:
+        from fanops.lever_docs import archetype_crosswalk_rows
+        xw = next((r for r in archetype_crosswalk_rows() if r["id"] == persona.id), None)
+        if xw:
+            foc = ", ".join(xw["content_focus"]) if xw["content_focus"] else "—"
+            xnote = f"{xw['name']}: {foc} · {xw['hook_angle']} · {xw['selection_scope']} · {xw['intensity']}"
+    except Exception:
+        xnote = ""
+    cat_by = {lv["key"]: lv for lv in (catalog or [])}
+    out: list = []
+    for i, row in enumerate(manifest_rows or []):
+        try:
+            key = row.get("key") or ""
+            cat = cat_by.get(key, {})
+            val = row.get("value")
+            eff_map = (effects or {}).get(key) or {}
+            if key == "content_focus" and isinstance(val, list):
+                parts = [eff_map[v] for v in val if v in eff_map]
+                opt_eff = " · ".join(parts) if parts else "—"
+            elif isinstance(val, str) and val.strip():
+                opt_eff = eff_map.get(val.strip()) or "—"
+            else:
+                opt_eff = "—"
+            produces = row.get("produces")
+            if isinstance(produces, list):
+                prod = " ".join(str(x) for x in produces if x) or "—"
+            else:
+                prod = produces or "—"
+            out.append({"key": key, "label": row.get("label") or key, "value": val,
+                          "catalog_does": cat.get("does") or "—", "option_effect": opt_eff,
+                          "produces": prod, "health": row.get("health") or "—",
+                          "crosswalk_note": xnote if i == 0 else ""})
+        except Exception:
+            out.append({"key": row.get("key", ""), "label": row.get("label", ""), "value": "—",
+                          "catalog_does": "—", "option_effect": "—", "produces": "—", "health": "—",
+                          "crosswalk_note": ""})
+    return out
 
 
 @dataclass
@@ -404,18 +494,29 @@ def personas_page(cfg: Config, *, led: Optional[Ledger] = None) -> "PersonasPage
     means = load_store_reach(cfg)
     def _ranked(corpus):
         return sorted((_norm(t) for t in corpus), key=lambda n: rank.get(n, 10 ** 6))
-    cards = [PersonaCard(id=p.id, name=p.name, voice=p.voice,
+    from fanops.personas import lever_catalog
+    _cat = lever_catalog()
+    _fx = {lv["key"]: {o["value"]: o["effect"] for o in lv["options"]} for lv in _cat}
+    cards: list = []
+    for p in reg.all():
+        facts = persona_facts(cfg, p)
+        mf = manifest(cfg, p)
+        try:
+            acct_prov = _account_provenance(cfg, p, by_pid.get(p.id, []))
+        except Exception:
+            acct_prov = []
+        lev_detail = _lever_detail_rows(cfg, p, mf, _cat, _fx)
+        cards.append(PersonaCard(id=p.id, name=p.name, voice=p.voice,
                          corpus=_ranked(p.hashtag_corpus), intake=dict(p.intake),
                          linked_handles=by_pid.get(p.id, []),
-                         reach_tags=[_norm(t) for t in p.hashtag_corpus if _norm(t) in means],   # MOL-59: measured-reach-gated, not store-present
+                         reach_tags=[_norm(t) for t in p.hashtag_corpus if _norm(t) in means],
                          reach_means={_norm(t): means[_norm(t)] for t in p.hashtag_corpus if _norm(t) in means},
                          content_focus=list(p.content_focus), selection_scope=p.selection_scope, hook_angle=p.hook_angle,
-                         clip_profile=resolved_cut_spec(p)[0], framing=facts["framing"],   # M3: the DERIVED tier (the per-persona pin is retired)
+                         clip_profile=resolved_cut_spec(p)[0], framing=facts["framing"],
                          instruction=compose_persona_instruction(p),
                          length_band=facts["length_band"], lead_tags=facts["lead_tags"],
-                         hook_text=hook_directive(p), caption_text=caption_directive(p),
-                         lever_manifest=manifest(cfg, p))                  # M4: the per-lever produces + health read
-             for p in reg.all() for facts in (persona_facts(cfg, p),)]
+                         hook_text=str(hook_directive(p)), caption_text=caption_directive(p),
+                         lever_manifest=mf, account_provenance=acct_prov, lever_detail=lev_detail))
     links = [PersonaAccountLink(handle=a.handle, persona_id=getattr(a, "persona_id", None)) for a in accts]
     return PersonasPage(personas=cards, accounts=links)
 

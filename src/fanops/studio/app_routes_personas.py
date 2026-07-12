@@ -29,7 +29,7 @@ def register_personas_routes(app, cfg):
         # clean "not found" dialog (p=None), never a 404/500 (htmx would swap an error page into the mount).
         card = next((c for c in views.personas_page(cfg).personas if c.id == pid), None)
         return render_template("_persona_drawer.html", p=card,
-                               levers=_LEVERS, effects=_LEVER_EFFECTS)
+                               levers=_LEVERS, effects=_LEVER_EFFECTS, lever_ref=_LEVER_REF)
 
     @app.post("/personas/compose")
     def do_personas_compose():

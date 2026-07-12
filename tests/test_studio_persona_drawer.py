@@ -48,7 +48,7 @@ def test_drawer_route_renders_levers_visible(tmp_path):
     assert 'id="persona-drawer-heading"' in html         # the labelled, focusable heading drawer.js focuses
     # the five clean levers are PRESENT and not gated behind a second <details> collapse
     assert 'name="content_focus"' in html and 'name="selection_scope"' in html and 'name="hook_angle"' in html
-    assert '<details' not in html                         # nothing in the drawer is hidden behind an expand
+    assert '<details' not in html.replace('<details class="effective-persona"', '')  # only effective-persona may collapse
     assert "Curator" in html
 
 

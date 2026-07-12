@@ -13,23 +13,57 @@
   </header>
   {% if p.linked_handles %}<p class="muted drawer-blast">Edits reach {{ p.linked_handles|join(', ') }}.</p>
   {% else %}<p class="muted drawer-blast">Not connected to any account yet.</p>{% endif %}
-  {# M4 — the LEVER MANIFEST / health: every lever, the channel(s) it owns, its current value, what it
-     produces RIGHT NOW (derived from the same resolvers the pipeline runs), and a ✓/⚠ coherence flag. ⚠ would
-     appear only if a future field were incoherent (dead/invisible/duplicate) — post-M3 every lever is ✓. #}
-  {% if p.lever_manifest %}
-  <section class="lever-manifest" aria-label="Lever health">
-    <h3 class="manifest-title">Lever health · what each lever produces</h3>
-    <table class="manifest-table"><tbody>
-    {% for row in p.lever_manifest %}
-      <tr class="manifest-row {{ 'lever-ok' if row.health == 'ok' else 'lever-warn' }}">
-        <td class="manifest-flag" title="{{ row.health }}">{{ '✓' if row.health == 'ok' else '⚠' }}</td>
-        <td class="manifest-lever">{{ row.label }} <span class="muted">({{ row.channels | join(' · ') }})</span></td>
-        <td class="manifest-produces">{% if row.produces is string %}{{ row.produces or '—' }}{% else %}{{ row.produces | join(' ') if row.produces else '—' }}{% endif %}</td>
-      </tr>
-    {% endfor %}
-    </tbody></table>
-  </section>
-  {% endif %}
+  <details class="effective-persona" open>
+    <summary>Effective persona</summary>
+    <section class="effective-accounts" aria-label="Account provenance">
+      <h3 class="effective-heading">Accounts</h3>
+      {% if p.linked_handles %}
+        <p class="effective-chips">{% for h in p.linked_handles %}<span class="chip">{{ h }}</span>{% endfor %}</p>
+        {% for ac in p.account_provenance %}
+        <table class="provenance-table"><caption class="muted">{{ ac.handle }}</caption><tbody>
+          {% for f in ac.fields %}
+          <tr><th scope="row">{{ f.name }}</th><td>{{ f.value if f.value is string else (f.value | join(', ') if f.value else '—') }}</td><td class="prov-src">{{ f.source }}</td></tr>
+          {% endfor %}
+        </tbody></table>
+        {% endfor %}
+      {% else %}
+        <p class="chip warn">Drives no accounts</p>
+      {% endif %}
+    </section>
+    <section class="effective-directives" aria-label="Compiled directives">
+      <h3 class="effective-heading">Directives</h3>
+      <div class="directive-block"><span class="muted">Pick</span><pre class="directive-pre">{{ p.instruction or '—' }}</pre></div>
+      <div class="directive-block"><span class="muted">Hook</span><pre class="directive-pre">{{ p.hook_text or '—' }}</pre></div>
+      <div class="directive-block"><span class="muted">Caption</span><pre class="directive-pre">{{ p.caption_text or '—' }}</pre></div>
+    </section>
+    <section class="effective-levers" aria-label="Lever detail">
+      <h3 class="effective-heading">Levers</h3>
+      {% if p.lever_detail and p.lever_detail[0].crosswalk_note %}
+        <p class="muted crosswalk-note">{{ p.lever_detail[0].crosswalk_note }}</p>
+      {% endif %}
+      <table class="lever-detail-table"><thead><tr><th>Lever</th><th>Value</th><th>Does</th><th>Effect</th><th>Produces</th><th></th></tr></thead><tbody>
+      {% for row in p.lever_detail %}
+        <tr class="lever-detail-row {{ 'lever-ok' if row.health == 'ok' else 'lever-warn' }}">
+          <td>{{ row.label }}</td>
+          <td>{% if row.value is string %}{{ row.value or '—' }}{% elif row.value %}{{ row.value | join(', ') }}{% else %}—{% endif %}</td>
+          <td class="muted">{{ row.catalog_does }}</td>
+          <td class="muted">{{ row.option_effect }}</td>
+          <td class="muted">{{ row.produces }}</td>
+          <td class="manifest-flag">{{ '✓' if row.health == 'ok' else '⚠' }}</td>
+        </tr>
+      {% else %}<tr><td colspan="6" class="muted">—</td></tr>{% endfor %}
+      </tbody></table>
+    </section>
+    <section class="effective-corpus" aria-label="Hashtag corpus">
+      <h3 class="effective-heading">Corpus</h3>
+      {% if p.lead_tags %}<p class="muted">Lead: {{ p.lead_tags | join(', ') }}</p>{% endif %}
+      <div class="persona-corpus">
+        {% for t in p.corpus[:4] %}
+          <span class="chip tag{{ ' high-reach' if t in p.reach_tags else '' }}">{{ t }}{% if t in p.reach_tags %}<span class="reach" title="currently most-active on the platform (live Graph reach)">★</span>{% endif %}{% if p.reach_means.get(t) %}<span class="reach-n" title="live Graph reach (top-media engagement)">· {{ (p.reach_means[t] / 1000) | round(1) }}k</span>{% endif %}</span>
+        {% else %}<span class="muted">none yet</span>{% endfor %}
+      </div>
+    </section>
+  </details>
   <form hx-post="{{ url_for('do_personas_edit') }}" hx-target="#personas-panel" hx-swap="outerHTML">
     <input type="hidden" name="id" value="{{ p.id }}">
     <label>Name <input type="text" name="name" value="{{ p.name }}" size="22"></label>
