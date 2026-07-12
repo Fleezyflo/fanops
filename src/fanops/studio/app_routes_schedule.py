@@ -137,10 +137,11 @@ def register_schedule_routes(app, cfg):
                                                           # denominator as lineage_stats) so a bar is a STABLE reference
                                                           # across pages — a saves=10 row reads the same width on any page
         accounts = Accounts.load(cfg).active()            # content-lifecycle Phase 4: cross-account picker options
+        tag_exposure = views.tag_exposure(led)
         return render_template("posted.html" if full else "_posted_panel.html", rows=page.items, groups=groups,
                                page=page, rollup=rollup, peaks=peaks, active_batch=batch, active_source=source,
                                source_chips=views.source_universe_for_clips(led, rows_full),
-                               accounts=accounts,
+                               accounts=accounts, tag_exposure=tag_exposure,
                                result=result, tab="posted", active_delivery=delivery, active_failure=failure,
                                failure_rollup=failure_rollup, **_row_chips(rows_full, "posted", account))
 

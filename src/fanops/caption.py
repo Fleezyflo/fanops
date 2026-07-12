@@ -9,7 +9,7 @@ import logging
 import re
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.models import ClipState, Platform, CaptionSet
+from fanops.models import ClipState, Platform, CaptionSet, PostState
 from fanops.agentstep import write_request, read_response, request_path
 # Creative-variation v2: the SAFE half of the A/B loop. Imported here (caption side) ONLY — the
 # amplify/delete-cascade path (track.py/pipeline.py) MUST stay blind to the learner (C1 invariant,
@@ -27,7 +27,7 @@ from fanops.variant_learning import ucb_rank
 # so request_captions' fail-open path is unit-patchable (tests monkeypatch fanops.caption.transferred_hooks).
 from fanops.variant_transfer import transferred_hooks
 from fanops.personas import caption_directive
-from fanops.hashtags import vet_hashtags_traced, load_store
+from fanops.hashtags import vet_hashtags_traced, load_store, _norm
 from fanops.log import get_logger
 from fanops.control import load_guidance
 
@@ -267,7 +267,18 @@ def _caption_entry(tags: list, hashtags_raw: list, *, fallback: bool = False, ta
     return entry
 
 
-def ingest_captions(led: Ledger, cfg: Config, clip_id: str) -> Ledger:
+def _recent_tags(led: Ledger, handle: str, *, n: int = 1) -> list[str]:
+    """The last n non-rejected posts for `handle`, newest first — ordered-dedup union of their hashtags."""
+    posts = [p for p in led.posts_of_account(handle) if p.state is not PostState.rejected]
+    posts.sort(key=lambda p: (p.created_at or p.scheduled_time or ""), reverse=True)
+    out: list[str] = []; seen: set[str] = set()
+    for p in posts[:n]:
+        for t in (p.hashtags or []):
+            h = _norm(t) if isinstance(t, str) else ""
+            if h and h not in seen: seen.add(h); out.append(h)
+    return out
+
+def ingest_captions(led: Ledger, cfg: Config, clip_id: str, *, pass_recent: dict[str, list[str]] | None = None) -> Ledger:
     cs = read_response(cfg, "captions", clip_id, CaptionSet)
     if cs is None:
         return led                                       # pending or stale
@@ -312,10 +323,13 @@ def ingest_captions(led: Ledger, cfg: Config, clip_id: str) -> Ledger:
         # reach-ordered, backfilled, and HARD-capped at 4 (operator rule). Whatever it returned
         # (5-15 random words) becomes <=4 proven tags. The posted caption IS that vetted tag line.
         plat = _platform_for_surface(item.surface, surface_platform)   # AGENT-6: vet under the REQUESTED platform
+        handle = item.surface.split("/", 1)[0]
+        recent = _recent_tags(led, handle) + (pass_recent or {}).get(handle, [])
         tags, sources = vet_hashtags_traced(item.hashtags or _tags_in(item.caption), plat,
                             src.language if src else None, store=load_store(cfg),   # M4: live store when present
                             corpus=surface_corpus.get(item.surface),                # B1: per-persona curated pool leads (the hashtag differentiator)
-                            genre=surface_genre.get(item.surface), cfg=cfg)         # niche floor from persona intake.genre
+                            genre=surface_genre.get(item.surface), cfg=cfg, recent=recent)         # niche floor from persona intake.genre
+        if pass_recent is not None: pass_recent.setdefault(handle, []).extend(tags)
         clip.meta_captions[item.surface] = _caption_entry(tags, [str(h) for h in (item.hashtags or [])], tag_sources=sources)
     answered = {item.surface for item in cs.items}
     missing = requested - answered
@@ -328,9 +342,12 @@ def ingest_captions(led: Ledger, cfg: Config, clip_id: str) -> Ledger:
     # publish": the post is born awaiting_approval, so a human still reviews it before anything ships.
     for surface in sorted(missing):
         plat = _platform_for_surface(surface, surface_platform)   # AGENT-6: vet under the REQUESTED platform
+        handle = surface.split("/", 1)[0]
+        recent = _recent_tags(led, handle) + (pass_recent or {}).get(handle, [])
         tags, sources = vet_hashtags_traced(None, plat, src.language if src else None, store=load_store(cfg),
                             corpus=surface_corpus.get(surface),   # B1: the curated corpus leads the seed (the hashtag differentiator)
-                            genre=surface_genre.get(surface), cfg=cfg)  # niche floor from persona intake.genre
+                            genre=surface_genre.get(surface), cfg=cfg, recent=recent)  # niche floor from persona intake.genre
+        if pass_recent is not None: pass_recent.setdefault(handle, []).extend(tags)
         clip.meta_captions[surface] = _caption_entry(tags, [], fallback=True, tag_sources=sources)
         get_logger(cfg)("captions", clip_id, "caption_fallback_seed", surface=surface)
     if held_reason:
