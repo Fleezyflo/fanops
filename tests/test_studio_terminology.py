@@ -69,10 +69,28 @@ def test_gates_defines_moment_once(tmp_path):
 
 
 def test_review_defines_moment_and_surface_at_most_once(tmp_path):
-    cfg = Config(root=tmp_path); _accounts(cfg, [_active()])
-    html = _client(cfg).get("/review").get_data(as_text=True)
-    assert html.count('data-term="moment"') == 1
-    assert html.count('data-term="surface"') == 1
+    from datetime import datetime, timezone, timedelta
+    from fanops.models import Source, Moment, Clip, Post, Platform, PostState, ClipState, MomentState, Fmt
+    now = datetime(2026, 6, 6, 12, 0, tzinfo=timezone.utc)
+    def _z(dt): return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    cfg = Config(root=tmp_path); _accounts(cfg, [_active("a"), _active("b")])
+    cfg.clips.mkdir(parents=True, exist_ok=True)
+    base = cfg.clips / "c.mp4"; base.write_bytes(b"x")
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="src_1", source_path="/v/show.mp4", language="en"))
+        for acct in ("a", "b"):
+            led.add_moment(Moment(id=f"mom_{acct}", parent_id="src_1", content_token="0-7", start=0, end=7,
+                                  reason="r", state=MomentState.clipped))
+            led.add_clip(Clip(id=f"clip_{acct}", parent_id=f"mom_{acct}", path=str(base), aspect=Fmt.r9x16, state=ClipState.queued))
+            led.add_post(Post(id=f"p_{acct}", parent_id=f"clip_{acct}", account=acct, account_id="1", platform=Platform.instagram,
+                              caption="c", state=PostState.awaiting_approval, scheduled_time=_z(now + timedelta(hours=3))))
+    # U6: bare /review is switcher-only — no glossary inline; legacy worklist on account=all defines moment once.
+    bare = _client(cfg).get("/review").get_data(as_text=True)
+    assert bare.count('data-term="moment"') == 0
+    assert bare.count('data-term="surface"') == 0
+    legacy = _client(cfg).get("/review?account=all&view=list").get_data(as_text=True)
+    assert legacy.count('data-term="moment"') == 1
+    assert legacy.count('data-term="surface"') == 0          # feed UX dropped the inline surface glossary
 
 
 def test_home_no_batch_glossary(tmp_path):

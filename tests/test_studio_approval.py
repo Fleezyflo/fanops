@@ -334,11 +334,12 @@ def test_review_renders_bulk_approve_buttons(tmp_path):
     with Ledger.transaction(cfg) as led:
         _awaiting(led, "p_a", clip="clip_1", acct="a", aid="1")
         _awaiting(led, "p_b", clip="clip_1", acct="b", aid="2")
-    html = _client(cfg).get("/review?view=list").data
+    # U6: bare /review is switcher-only; legacy moment cards + approve-clip live on account=all.
+    html = _client(cfg).get("/review?account=all&view=list").data
     assert b"approve-clip/clip_1" in html                              # per-card "approve all accounts of this moment"
-    # the one-account-across-the-video button appears only when an account filter is active
-    html_a = _client(cfg).get("/review?view=list&account=@a").data
-    assert b"approve-account" in html_a and b"Approve all a" in html_a
+    # per-account feed: source-level select + composite approve-with-edits (not legacy approve-account)
+    html_a = _client(cfg).get("/review?account=@a").data
+    assert b"select-source" in html_a and b"approve-with-edits" in html_a
 
 
 # ---- M3c: compact list mode — a dense, video-less worklist for scanning rich per-account sets ----

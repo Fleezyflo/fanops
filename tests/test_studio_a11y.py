@@ -276,8 +276,9 @@ def test_danger_composes_as_modifier_over_both_tiers():
 
 def test_show_more_disclosure_links_are_ghost():
     # low-stakes pagination/disclosure ("Show more") links are demoted to the tertiary (.ghost) tier.
+    # U6: per-account feed lazy-loads via #feed-sentinel (hx-get), not a "Show more" link — _account_pivot removed.
     tpls = Path(fanops.studio.__file__).parent / "templates"
-    for name in ("_account_pivot.html", "_schedule_panel.html", "publish.html", "_review_body.html"):
+    for name in ("_schedule_panel.html", "publish.html", "_review_body.html"):
         src = (tpls / name).read_text()
         assert 'class="button ghost"' in src and "Show more" in src, \
             f"{name}: the 'Show more' disclosure link must be class=\"button ghost\""
