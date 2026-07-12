@@ -2,9 +2,15 @@
 # Run tab → it streams into 01_inbox → the existing "Ingest inbox" catalogues it. Untrusted multipart
 # input crossing a system boundary, so the path-safety + size-cap gates are tested hard.
 import io
+import pytest
 from pathlib import Path
 from fanops.config import Config
 from fanops.studio import actions, actions_run
+
+
+@pytest.fixture(autouse=True)
+def _gate_off(monkeypatch):
+    monkeypatch.setenv("FANOPS_QUEUE_GATE", "0")
 
 
 class _Up:                                          # a minimal FileStorage stand-in for action-level tests
@@ -153,9 +159,7 @@ def test_upload_route_rejects_oversize_with_clean_panel(tmp_path):
 
 # ---- Task 5: the upload form renders in the Run tab ----
 def test_run_route_shows_upload_form(tmp_path):
-    # The 3-stage console rewrite relabelled the upload submit from "Add video" to "Add to queue"
-    # (the stage ① card explains what "queue" means; the button names the system effect). Same form,
-    # same POST target — the surface label is what changed.
+    # Gate OFF (autouse): upload submit is "Add to queue". Gate ON uses "Add" — see test_queue_gate UI tests.
     from fanops.studio.app import create_app
     app = create_app(Config(root=tmp_path)); app.config.update(TESTING=True)
     r = app.test_client().get("/run")

@@ -82,12 +82,14 @@ def test_pull_metrics_empty_pollable(tmp_path, monkeypatch):
     res = actions.pull_metrics_studio(cfg)
     assert res.ok and res.detail["pollable"] == 0
 
-def test_run_panel_pull_metrics_button(tmp_path, monkeypatch):
+def test_run_panel_metrics_not_on_run_page(tmp_path, monkeypatch):
+    # U4: Pull metrics / Learn card removed from Run — metrics live on Results / daemon.
     monkeypatch.setenv("FANOPS_LIVE", "1")
     monkeypatch.setenv("FANOPS_POSTER", "postiz")
     cfg = Config(root=tmp_path)
     html = _client(cfg).get("/run").data.decode()
-    assert "Pull metrics" in html and "04" in html
+    assert "Pull metrics" not in html and "04" not in html
+    assert "Add footage" in html
 
 def test_bulk_send_to_review_skips_needs_reconcile(tmp_path):
     cfg = Config(root=tmp_path)

@@ -53,6 +53,7 @@ def _make_spoken_sample(dst: Path) -> bool:
     return dst.exists()
 
 def test_real_transcript_drives_moment_and_real_clip_renders(tmp_path, monkeypatch):
+    monkeypatch.setenv("FANOPS_QUEUE_GATE", "0")   # pipeline must catalogue+advance, not hold pending
     if not _have("ffmpeg", "ffprobe", "whisper"):
         _skip_or_fail("needs ffmpeg + whisper on PATH")
     # This is the legacy `whisper` CLI golden path (gated on the `whisper` binary, pinned to a cached

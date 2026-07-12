@@ -172,6 +172,26 @@ def pipeline_status(cfg: Config) -> dict:
     bl = source_backlog(led, cfg)
     snap = run_stage_snapshot(cfg)
     run_chip = f"{snap['stage']}:{snap['unit']}" if snap else None
+    pending_unbound, queue_lines, held_pending = [], [], 0
+    if cfg.queue_gate:
+        for sid, s in sorted(led.sources.items()):
+            if s.origin_kind != "native" or s.state is not SourceState.pending:
+                continue
+            if s.batch_id:
+                held_pending += 1
+            else:
+                pending_unbound.append({"id": sid, "name": Path(s.source_path).name if s.source_path else sid,
+                                        "duration": s.duration, "thumb_url": f"/source-thumb/{sid}"})
+        by_batch: dict[str, list] = {}
+        for sid, s in led.sources.items():
+            if s.origin_kind == "native" and s.state is SourceState.pending and s.batch_id:
+                by_batch.setdefault(s.batch_id, []).append(sid)
+        for bid, sids in sorted(by_batch.items()):
+            b = led.get_batch(bid)
+            if not b:
+                continue
+            queue_lines.append({"batch_id": bid, "name": b.name, "sources": sorted(sids),
+                                "target_accounts": b.target_accounts, "burn_subs": b.burn_subs})
     backlog_rows = []
     for r in bl.rows:
         row = {"id": r.id, "state": r.state, "bucket": r.bucket, "wait_line": r.wait_line,
@@ -185,7 +205,13 @@ def pipeline_status(cfg: Config) -> dict:
         "sources_blocked": bl.blocked_on_gates,
         "sources_recoverable": bl.recoverable,
         "sources_inventory": bl.inventory,
-        "native_total": bl.actionable + bl.blocked_on_gates + bl.recoverable + bl.inventory,
+        "sources_held": bl.held,
+        "native_total": bl.actionable + bl.blocked_on_gates + bl.recoverable + bl.inventory + bl.held,
+        "pending_unbound": pending_unbound,
+        "pending_unbound_count": len(pending_unbound),
+        "queue_lines": queue_lines,
+        "held_pending": held_pending,
+        "queue_gate": cfg.queue_gate,
         "backlog_rows": backlog_rows,
         "run_chip": run_chip,
         "third_party": sum(1 for s in led.sources.values() if s.origin_kind == "third_party"),
@@ -234,21 +260,31 @@ def errored_sources(led: Ledger) -> list[dict]:
 
 def run_next_step(status: dict) -> dict:
     """S3: the Make tab's ONE 'do this next' affordance, derived PURELY from pipeline_status counts (no ledger
-    read; fail-open via .get so a torn/partial dict never raises). The ladder mirrors the real pipeline:
-    add footage → answer gates → run a pass → review. Gates PRECEDE review because a pending decision is
-    BLOCKING mid-pipeline clips (the operator can't finish them until they answer). Returns {key, label, hint};
-    the gate step spells out the gate→clip link ('answer, then Prepare again')."""
+    read; fail-open via .get so a torn/partial dict never raises). Gate ON: add → queue → make. Gate OFF:
+    add → gate → prepare → review (gates PRECEDE review because a pending decision is BLOCKING mid-pipeline
+    clips). Returns {key, label, hint}."""
     s = status if isinstance(status, dict) else {}
     def _n(k):
         try: return int(s.get(k, 0) or 0)
         except (TypeError, ValueError): return 0
     footage = _n("native_total") + _n("third_party")
     gates = _n("pending_moments") + _n("pending_moment_hooks") + _n("pending_captions")
-    awaiting = _n("awaiting")               # ACTIONABLE clips awaiting review (moments) — the SAME unit Home/Review
-                                            # show, so the Make banner agrees with them (was raw posts: "57" vs "17").
+    awaiting = _n("awaiting")
     if footage == 0:
         return {"key": "add", "label": "Add a video to begin",
-                "hint": "Choose a file above, or paste a link under More — then ingest it."}
+                "hint": "Choose a file above, or paste a link under More — then it lands as pending."}
+    if s.get("queue_gate"):
+        if _n("pending_unbound_count"):
+            return {"key": "queue", "label": f"Queue {_n('pending_unbound_count')} pending file(s)",
+                    "hint": "Tick the accounts you want, then click Add to queue."}
+        if _n("held_pending"):
+            return {"key": "make", "label": f"Make clips for {_n('held_pending')} queued file(s)",
+                    "hint": "Release a queue line (or all) to start cutting clips."}
+        if _n("sources"):
+            return {"key": "prepare", "label": "Run a pass",
+                    "hint": "Cut clips and write captions for every released source — they'll land in Review."}
+        return {"key": "add", "label": "Add more footage",
+                "hint": "Upload or drop another file when you're ready."}
     if gates:
         hint = "Some clips are paused waiting on a decision. Answer them, then run Prepare again to finish those clips."
         if awaiting: hint += f" ({awaiting} clip(s) are also waiting in Review.)"
@@ -256,7 +292,6 @@ def run_next_step(status: dict) -> dict:
     if awaiting:
         return {"key": "review", "label": f"{awaiting} clip(s) ready",
                 "hint": "Review and approve them in the Review tab — nothing ships until you do."}
-    # footage exists, no gates, nothing awaiting review -> run a pass (cut the new footage, or produce more).
     return {"key": "prepare", "label": "Run a pass",
             "hint": "Cut clips and write captions for every account — they'll land in Review."}
 

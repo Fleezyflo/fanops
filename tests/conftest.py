@@ -59,6 +59,7 @@ _LEAKY_ENV = ("FANOPS_ROOT", "FANOPS_LIVE", "FANOPS_POSTER", "BLOTATO_API_KEY", 
               # burn_subs DEFAULTS ON (transcript captions); a repo .env =0 must not leak into tests
               # that assume the code default — same class as FANOPS_HOOK_JUDGE above.
               "FANOPS_BURN_SUBS",
+              "FANOPS_QUEUE_GATE",   # U4: default ON — repo .env =0 must not leak into gate-ON tests
               # S03 source sharding: a repo .env value must not leak into tests that assume the code default.
               "FANOPS_SOURCE_SHARD_MIN")
 

@@ -1,30 +1,20 @@
-{# src/fanops/studio/templates/_run_panel.html — Make page rewritten as a 3-stage console (Add → Make →
-   Review). The signature device is the transport-rail eyebrow that names the stages by what they DO,
-   not what the underlying CLI verb is called; each stage card holds exactly the inputs scoped to it. The
-   dead-weight "Ingest added videos" button was retired with PR #231 (ingest_drops auto-batches inbox
-   drops on the next Make pass), so the legacy escape hatch is structurally unnecessary — the file
-   picker AND a manual finder-drop both land in the same queue, made on the same press. #}
+{# src/fanops/studio/templates/_run_panel.html — Make page: Add → Queue → Make (U4 queue gate). #}
 <div id="run-panel" aria-live="polite">
-  {# Phase 2: read-only echo of the casting/volume config (the levers live in Go Live → Routing/casting). #}
   {% if cast_state %}<p class="meta cast-state">Routing: {% if cast_state.casting %}casting ON — {{ cast_state.budget }} moments per account{% else %}casting off (every account gets every moment){% endif %} · clip profile <strong>{{ cast_state.profile }}</strong></p>{% endif %}
 
-  {# Transport rail — the page's signature. Marks which stage the operator is in by lighting the dot.
-     The "live" stage is derived from the same status counts the run_next banner reads, so the rail and
-     the next-step copy never disagree. #}
   {% set _next = run_next_step(status) %}
   <ol class="stage-rail" aria-label="Make pipeline stages">
     <li class="stage-step {% if _next.key in ('add',) %}is-live{% endif %} {% if status.native_total > 0 %}is-done{% endif %}">
-      <span class="stage-num">01</span><span class="stage-label">Add footage</span>
+      <span class="stage-num">01</span><span class="stage-label">Add</span>
     </li>
-    <li class="stage-step {% if _next.key in ('prepare','gate') %}is-live{% endif %}">
-      <span class="stage-num">02</span><span class="stage-label">Make clips</span>
+    <li class="stage-step {% if _next.key == 'queue' %}is-live{% endif %} {% if status.get('held_pending', 0) > 0 or status.get('queue_lines') %}is-done{% endif %}">
+      <span class="stage-num">02</span><span class="stage-label">Queue</span>
     </li>
-    <li class="stage-step {% if _next.key == 'review' %}is-live{% endif %}">
-      <span class="stage-num">03</span><span class="stage-label">Review</span>
+    <li class="stage-step {% if _next.key in ('make', 'prepare') %}is-live{% endif %}">
+      <span class="stage-num">03</span><span class="stage-label">Make</span>
     </li>
   </ol>
 
-  {# The next-step banner stays — same projection, but now it sits BELOW the rail as a one-line nudge. #}
   {% include "_run_next.html" %}
   <div id="run-status-slot" hx-get="{{ url_for('run_status') }}" hx-trigger="load, every 5s" hx-swap="innerHTML">{% include "_run_status.html" %}</div>
 
@@ -50,12 +40,12 @@
     {% endif %}
   {% endif %}
 
-  {# ── ① ADD FOOTAGE ─────────────────────────────────────────────────────────────────────────────── #}
+  {# ── ① ADD ─────────────────────────────────────────────────────────────────────────────────────── #}
   <section class="stage-card">
     <header class="stage-card-head">
       <span class="stage-card-num">01</span>
       <h3>Add footage</h3>
-      <span class="stage-card-hint">Pick video files (or paste a link). They land in the queue.</span>
+      <span class="stage-card-hint">{% if status.queue_gate %}Pick video files or paste a link — they land as <em>pending</em> until you queue them.{% else %}Pick video files (or paste a link). They land in the queue.{% endif %}</span>
     </header>
 
     <form hx-post="{{ url_for('do_run_upload') }}" hx-target="#run-panel" hx-swap="outerHTML"
@@ -71,11 +61,11 @@
         <span id="upload-progress-label" class="muted"></span>
       </div>
 
+      {% if not status.queue_gate %}
       <label class="field">
         <span class="field-label">Batch name <span class="muted">(optional)</span></span>
         <input type="text" name="batch_name" placeholder="e.g. June launch" aria-label="Batch name" class="batch-name">
       </label>
-
       {% if status.accounts and status.accounts|length >= 2 %}
         <fieldset class="batch-target field">
           <legend class="field-label">Targets</legend>
@@ -85,12 +75,13 @@
           {% endfor %}
         </fieldset>
       {% endif %}
+      {% endif %}
 
       <label class="check-row no-subs-opt"><input type="checkbox" name="no_subs" value="1"> Skip subtitles <span class="muted">— burn from transcript by default</span></label>
 
       <div class="stage-actions">
-        <button type="submit" data-busy-label="Adding…">Add to queue</button>
-        <span class="muted">Add via Finder works too — the next Make press picks it up.</span>
+        <button type="submit" data-busy-label="Adding…">{% if status.queue_gate %}Add{% else %}Add to queue{% endif %}</button>
+        {% if status.queue_gate %}<span class="muted">Finder drops work too — they appear in Pending below.</span>{% else %}<span class="muted">Add via Finder works too — the next Make press picks it up.</span>{% endif %}
       </div>
     </form>
 
@@ -105,9 +96,6 @@
     </details>
   </section>
 
-  {# ── ⚠ ERRORED SOURCES (MOL-123) ───────────────────────────────────────────────────────────────────
-     A source parked in error/moments_empty stalled clip production silently. Surface each with the FULL
-     reason + a Resume button (stage-aware: keeps a good transcript). Hidden entirely when none exist. #}
   {% if status.errored %}
   <section class="stage-card stage-card-error" aria-label="Errored sources">
     <header class="stage-card-head">
@@ -141,16 +129,89 @@
   </section>
   {% endif %}
 
-  {# ── ② MAKE CLIPS ──────────────────────────────────────────────────────────────────────────────── #}
-  <section class="stage-card stage-card-primary">
+  {% if status.queue_gate and status.pending_unbound %}
+  <section class="stage-card" aria-label="Pending sources">
+    <header class="stage-card-head">
+      <span class="stage-card-num">⏳</span>
+      <h3>Pending — {{ status.pending_unbound_count }} file{{ 's' if status.pending_unbound_count != 1 else '' }}</h3>
+      <span class="stage-card-hint">Tick accounts — ticking queues clipping for these accounts — then Add to queue.</span>
+    </header>
+    <form hx-post="{{ url_for('do_bind_queue') }}" hx-target="#run-panel" hx-swap="outerHTML"
+          hx-disabled-elt="find button[type=submit]" hx-indicator="this" class="stage-form stage-busy">
+      <ul class="pending-list">
+        {% for p in status.pending_unbound %}
+        <li class="pending-row">
+          <label class="check-row"><input type="checkbox" name="source_ids" value="{{ p.id }}" checked> <strong>{{ p.name }}</strong>{% if p.duration %} <span class="muted">· {{ '%.0f'|format(p.duration) }}s</span>{% endif %}</label>
+        </li>
+        {% endfor %}
+      </ul>
+      <label class="field">
+        <span class="field-label">Queue line name</span>
+        <input type="text" name="batch_name" placeholder="e.g. June launch" required aria-label="Queue line name">
+      </label>
+      {% if status.accounts %}
+        <fieldset class="batch-target field">
+          <legend class="field-label">Accounts</legend>
+          <span class="muted">Ticking queues clipping for these accounts.</span>
+          {% for h in status.accounts %}
+            <label class="check-row"><input type="checkbox" name="target_accounts" value="{{ h }}"> {{ h }}</label>
+          {% endfor %}
+        </fieldset>
+      {% endif %}
+      <label class="check-row no-subs-opt"><input type="checkbox" name="no_subs" value="1"> Skip subtitles</label>
+      <button type="submit" data-busy-label="Queuing…">Add to queue</button>
+    </form>
+  </section>
+  {% endif %}
+
+  {% if status.queue_gate and status.queue_lines %}
+  <section class="stage-card">
     <header class="stage-card-head">
       <span class="stage-card-num">02</span>
+      <h3>Queue — {{ status.held_pending }} held</h3>
+      <span class="stage-card-hint">Each line is a batch of sources × accounts. Make clips releases it into production.</span>
+    </header>
+    <ul class="queue-lines">
+      {% for line in status.queue_lines %}
+      <li class="queue-line">
+        <div class="queue-line-meta">
+          <strong>{{ line.name }}</strong>
+          <span class="muted">· {{ line.sources|length }} source{{ 's' if line.sources|length != 1 else '' }}{% if line.target_accounts %} · {{ line.target_accounts|join(', ') }}{% else %} · all accounts{% endif %}</span>
+        </div>
+        <form hx-post="{{ url_for('do_release_batch') }}" hx-target="#run-panel" hx-swap="outerHTML"
+              hx-disabled-elt="find button[type=submit]" hx-indicator="this" class="stage-form-inline stage-busy">
+          <input type="hidden" name="batch_id" value="{{ line.batch_id }}">
+          {% if status.backend != 'dryrun' %}
+            <label class="confirm danger">⚠ <input type="checkbox" name="confirm" value="1"> confirm</label>
+          {% endif %}
+          <button type="submit" data-busy-label="Releasing…">Make clips</button>
+        </form>
+      </li>
+      {% endfor %}
+    </ul>
+    {% if status.queue_lines|length > 1 %}
+    <form hx-post="{{ url_for('do_release_all') }}" hx-target="#run-panel" hx-swap="outerHTML"
+          hx-disabled-elt="find button[type=submit]" hx-indicator="this" class="stage-busy">
+      {% if status.backend != 'dryrun' %}
+        <label class="confirm danger">⚠ <input type="checkbox" name="confirm" value="1"> confirm all lines</label>
+      {% endif %}
+      <button type="submit" data-busy-label="Releasing all…">Make clips (all queue lines)</button>
+    </form>
+    {% endif %}
+  </section>
+  {% endif %}
+
+  {# ── ③ MAKE ─────────────────────────────────────────────────────────────────────────────────────── #}
+  <section class="stage-card stage-card-primary">
+    <header class="stage-card-head">
+      <span class="stage-card-num">03</span>
       <h3>Make clips</h3>
-      <span class="stage-card-hint">Cut every queued source into clips with captions. New clips appear in Review.</span>
+      <span class="stage-card-hint">Cut every released source into clips with captions. New clips appear in Review.</span>
     </header>
 
     <div class="queue-meter">
       <span><strong>{{ status.sources }}</strong> {% if status.run_chip %}in progress{% else %}queued{% endif %}</span>
+      {% if status.queue_gate %}<span><strong>{{ status.get('held_pending', 0) }}</strong> held in queue</span>{% endif %}
       <span><strong>{{ status.get('sources_blocked', 0) }}</strong> blocked on decisions</span>
       <span><strong>{{ status.get('sources_recoverable', 0) }}</strong> need attention</span>
       <span><strong>{{ status.get('sources_inventory', 0) }}</strong> in library</span>
@@ -158,50 +219,15 @@
       {% if status.native_total %}<a href="{{ url_for('library') }}" class="muted">View all sources →</a>{% endif %}
     </div>
 
-    {# hx-disabled-elt + hx-indicator are htmx-native: the button is disabled and the .stage-busy
-       container is .htmx-request-classed for the lifetime of the POST. No JS, no spinner library —
-       the CSS at the bottom of this file's partner (studio.css .stage-busy) does the rest. #}
     <form class="run-primary stage-busy" hx-post="{{ url_for('do_run_prepare') }}" hx-target="#run-panel"
           hx-swap="outerHTML" hx-disabled-elt="find button[type=submit]" hx-indicator="this">
       {% if status.backend != 'dryrun' %}
-        {# MOL-49: live-arming = ladder Tier-1 (.confirm.danger), unmistakable above informational warns #}
         <label class="confirm danger">⚠ <input type="checkbox" name="confirm" value="1">
           publish to REAL accounts (mode: {{ status.backend }})</label>
       {% endif %}
       <button type="submit" class="primary" data-busy-label="Cutting clips…">Make clips</button>
-      <span class="muted">Cuts, captions, and routes every queued source end-to-end. Around a minute per source.</span>
+      <span class="muted">Cuts, captions, and routes every released source end-to-end. Around a minute per source.</span>
     </form>
-  </section>
-
-  {# ── ③ REVIEW (hand-off, not an action here) ──────────────────────────────────────────────────── #}
-  <section class="stage-card stage-card-handoff">
-    <header class="stage-card-head">
-      <span class="stage-card-num">03</span>
-      <h3>Review</h3>
-      <span class="stage-card-hint">Watch each clip, approve — shipping is automatic on schedule.</span>
-    </header>
-    <p class="stage-handoff-line">
-      {% if review_handoff and review_handoff.awaiting %}<a href="{{ url_for('review', account=review_handoff.account, view='account', focus=1, batch=review_handoff.batch|default(none)) }}" class="stage-handoff-link">Review {{ review_handoff.account }} ({{ review_handoff.awaiting }}) →</a>{% else %}<a href="{{ url_for('review') }}" class="stage-handoff-link">Open Review →</a>{% endif %}
-      <span class="muted">{{ status.posts }} post{{ '' if status.posts == 1 else 's' }} in the ledger.</span>
-    </p>
-  </section>
-
-
-  <section class="stage-card stage-card-handoff">
-    <header class="stage-card-head">
-      <span class="stage-card-num">04</span>
-      <h3>Learn</h3>
-      <span class="stage-card-hint">Pull analytics after posts ship.</span>
-    </header>
-    {% if cfg.is_live %}
-    <form class="inline stage-busy" hx-post="{{ url_for('do_pull_metrics') }}" hx-target="#run-panel" hx-swap="outerHTML" hx-disabled-elt="find button[type=submit]" hx-indicator="this">
-      <button type="submit" data-busy-label="Pulling…">Pull metrics</button>
-      <span class="muted">Updates lift scores for live posts. The daemon does this automatically if installed.</span>
-    </form>
-    {% else %}
-    <p class="muted">Turn on <a href="{{ url_for('golive_connect') }}">Go Live</a> to pull real analytics.</p>
-    {% endif %}
-    <p class="stage-handoff-line"><a href="{{ url_for('posted', delivery='live') }}" class="stage-handoff-link">See results →</a></p>
   </section>
 
   <details class="run-advanced">
@@ -209,15 +235,22 @@
     <div class="run-advanced-body">
       <div class="status status-sub">
         <span>Sources<strong>{{ status.sources }}</strong></span>
+        {% if status.queue_gate %}<span>Held<strong>{{ status.get('held_pending', 0) }}</strong></span>{% endif %}
         <span>3rd-party<strong>{{ status.third_party }}</strong></span>
         <span>Posts<strong>{{ status.posts }}</strong></span>
         <span>Held<strong>{{ status.holds }}</strong></span>
         <span>Awaiting<strong>{{ status.get('pending_moments', 0) + status.get('pending_moment_hooks', 0) + status.get('pending_captions', 0) }}</strong></span>
       </div>
+      {% if not status.queue_gate %}
+      <form hx-post="{{ url_for('do_run_ingest') }}" hx-target="#run-panel" hx-swap="outerHTML"
+            hx-disabled-elt="find button[type=submit]" hx-indicator="this" class="stage-busy">
+        <button type="submit" data-busy-label="Ingesting…">Ingest inbox</button>
+        <span class="muted">Re-catalogue anything sitting in 01_inbox.</span>
+      </form>
+      {% endif %}
       <form hx-post="{{ url_for('do_run_advance') }}" hx-target="#run-panel" hx-swap="outerHTML"
             hx-disabled-elt="find button[type=submit]" hx-indicator="this" class="stage-busy">
         {% if status.backend != 'dryrun' %}
-          {# MOL-49: live-arming = ladder Tier-1 (.confirm.danger), unmistakable above informational warns #}
           <label class="confirm danger">⚠ <input type="checkbox" name="confirm" value="1">
             publish to REAL accounts (mode: {{ status.backend }})</label>
         {% endif %}

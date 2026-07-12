@@ -46,6 +46,7 @@ Hand-editing `.env` while a long-lived process runs requires restart; Studio go-
 | `FANOPS_CLIP_PROFILE` | `talk` | Global clip-length band | S |
 | `FANOPS_VISUAL_START` | on | Strongest-opening-frame cut refinement | .env |
 | `FANOPS_SMART_FRAMING` | on | Subject-aware reframe (fail-open to centered crop) | .env |
+| `FANOPS_QUEUE_GATE` | on | Hold new footage as pending until operator queues + releases (`0` restores auto-ingest) | .env |
 | `FANOPS_AWARE_REFRAME` | off | Global top-third crop bias | .env |
 | `FANOPS_WHISPER_MODEL` | `turbo` | Legacy whisper CLI model | .env |
 | `FANOPS_ASR_MODEL` | `medium` | faster-whisper model | .env |
