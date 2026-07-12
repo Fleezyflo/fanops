@@ -7,7 +7,7 @@
        role="status" aria-live="polite">
     {% if cfg.is_live %}<strong>System mode: live</strong> — posts that ship reach the real platforms.{% else %}<strong>System mode: dryrun</strong> — nothing reaches the platforms. Flip live from <a href="{{ url_for('golive_connect') }}">Go Live</a>.{% endif %}
   </div>
-  <p class="muted">Everything that has shipped, with its live link and lift. <strong>Post again</strong> re-enters Review.</p>
+  <p class="muted">Everything that has shipped, with its live link and lift. <strong>Post again ▾</strong> re-enters Review (same or other accounts).</p>
   {% include "_posted_panel.html" %}
   <script src="{{ url_for('static', filename='posted.js') }}" defer></script>
 {% endblock %}

@@ -147,10 +147,11 @@ def test_schedule_action_urls_carry_batch(tmp_path, monkeypatch):
     assert "/schedule/respread" in html and "batch=bx" in html
 
 def test_posted_action_urls_carry_batch(tmp_path):
-    # D2: same contract on Posted — repost / crosspost-one / backfill keep the ?batch= scope.
+    # D2: same contract on Posted — repost / repost-others / backfill keep the ?batch= scope. U8 replaced
+    # the per-row crosspost text form with the repost-others menu route (keyed on post_id, not clip_id).
     cfg = Config(root=tmp_path); _accounts(cfg, handles=("a0", "a1"))  # >1 account -> backfill form renders
     _seed(cfg, 1, state=PostState.published, batch_id="bx", batch_name="Drop")
     html = _client(cfg).get("/posted?batch=bx").data.decode()
     assert "/posts/repost/p0?batch=bx" in html
-    assert "/posts/crosspost/clip_0?batch=bx" in html
+    assert "/posts/repost-others/p0?batch=bx" in html
     assert "/posts/crosspost-all?batch=bx" in html

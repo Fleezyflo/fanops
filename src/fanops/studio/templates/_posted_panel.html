@@ -57,12 +57,31 @@
         </details>
         {% endif %}
         {% if r.posted_via in ('live', 'dryrun') and not r.is_archived %}
-        <form class="inline" hx-post="{{ url_for('do_repost_post', post_id=r.post_id, account=active, batch=active_batch|default(none)) }}" hx-target="#posted-body" hx-swap="outerHTML"><button type="submit" class="ghost">Post again</button></form>{# MOL-51: infrequent utility → tertiary ghost (class-only, form/hx unchanged) #}
-        <form class="inline posted-crosspost-one" hx-post="{{ url_for('do_crosspost_to_account', clip_id=r.clip_id, account=active, batch=active_batch|default(none)) }}" hx-target="#posted-body" hx-swap="outerHTML">
-          <input name="target_account" placeholder="target @handle" size="14">
-          <input name="platform" placeholder="platform" size="10">
-          <button type="submit" class="ghost">Crosspost</button>{# MOL-51: infrequent utility → tertiary ghost (class-only) #}
-        </form>
+        {# U8: one <details> menu replaces the per-row Post-again form + manual Crosspost text form. Same account
+           uses do_repost_post (epoch id); cross-account uses do_repost_others (thin composer over crosspost). #}
+        <details class="row-actions posted-repost-menu">
+          <summary class="ghost">Post again ▾</summary>{# MOL-51: infrequent utility → tertiary ghost summary #}
+          <div class="row-actions-menu">
+            <form hx-post="{{ url_for('do_repost_post', post_id=r.post_id, account=active, batch=active_batch|default(none)) }}" hx-target="#posted-body" hx-swap="outerHTML">
+              <button type="submit">Same account</button>
+            </form>
+            {% set others = accounts | rejectattr('handle', 'equalto', r.account) | list %}
+            {% if others %}
+            <form hx-post="{{ url_for('do_repost_others', post_id=r.post_id, account=active, batch=active_batch|default(none)) }}" hx-target="#posted-body" hx-swap="outerHTML">
+              <fieldset class="repost-targets"><legend>Pick accounts</legend>
+                {% for a in others %}
+                <label><input type="checkbox" name="target_accounts" value="{{ a.handle }}"> {{ a.handle }}</label>
+                {% endfor %}
+              </fieldset>
+              <button type="submit">Repost to selected</button>
+            </form>
+            <form hx-post="{{ url_for('do_repost_others', post_id=r.post_id, account=active, batch=active_batch|default(none)) }}" hx-target="#posted-body" hx-swap="outerHTML">
+              <input type="hidden" name="all_others" value="1">
+              <button type="submit">All other accounts</button>
+            </form>
+            {% endif %}
+          </div>
+        </details>
         {% elif r.posted_via == 'inflight' %}
         <div class="posted-row-actions">
           <form class="inline inflight-resolve" hx-post="{{ url_for('do_resolve_post', post_id=r.post_id, account=active, batch=active_batch|default(none), delivery=active_delivery|default(none)) }}" hx-target="#posted-body" hx-swap="outerHTML">
