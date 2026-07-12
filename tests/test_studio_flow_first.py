@@ -34,10 +34,12 @@ def test_home_review_link_includes_account(tmp_path):
     html = _client(cfg).get("/").data.decode()
     assert "/review?account=" in html and 'class="home-acct-badge">2</span>' in html
 
-def test_approve_in_focus_shows_next_clip_not_schedule(tmp_path):
+def test_approve_on_feed_stays_in_review_not_schedule(tmp_path):
+    # U6: per-account feed — approving one clip re-renders the feed with the next pending card, not Schedule.
     cfg = Config(root=tmp_path); _accounts(cfg); _seed(cfg)
-    html = _client(cfg).post("/posts/approve?account=@a&view=account&focus=1&fi=0", data={"ids": "p0"}).data.decode()
-    assert "next clip" in html.lower()
+    html = _client(cfg).post("/posts/approve?account=@a", data={"ids": "p0"}).data.decode()
+    assert "review-feed" in html
+    assert "p1" in html
     assert "Open schedule" not in html
 
 def test_review_handoff_picks_busiest_account(tmp_path):
@@ -70,10 +72,11 @@ def test_review_handoff_includes_dominant_batch(tmp_path):
     h = views.review_handoff(cfg)
     assert h.get("batch") == "b1"
 
-def test_focus_shows_hook_preburn_notice(tmp_path):
+def test_feed_shows_hook_in_edit_form(tmp_path):
+    # U6: the moment hook is editable on the feed card (composite approve-with-edits), not a focus banner.
     cfg = Config(root=tmp_path); _accounts(cfg); _seed(cfg, n=1)
     led = Ledger.load(cfg)
     led.moments["m1"] = led.moments["m1"].model_copy(update={"hook": "Wait for it"})
     led.save()
-    html = _client(cfg).get("/review?account=@a&view=account&focus=1&fi=0").data.decode()
-    assert "focus-hook-banner" in html and "Wait for it" in html
+    html = _client(cfg).get("/review?account=@a").data.decode()
+    assert "feed-hook" in html and 'value="Wait for it"' in html

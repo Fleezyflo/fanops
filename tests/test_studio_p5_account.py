@@ -264,16 +264,16 @@ def test_surface_account_param_filters(tmp_path, path, present, absent):
     r = _client(cfg).get(path)
     assert r.status_code == 200 and present in r.data and absent not in r.data
 
-def test_show_more_link_preserves_account_review(tmp_path):
+def test_feed_sentinel_preserves_account_review(tmp_path):
     cfg = Config(root=tmp_path); _seed_accounts(cfg); led = Ledger.load(cfg); _lineage(led)
-    # > GRID_PAGE_SIZE editable cards on @a so a show-more link renders, all on @a
+    # > REVIEW_FEED_SLICE awaiting posts on @a so the lazy-load sentinel renders
     for i in range(30):
         led.add_clip(Clip(id=f"c{i}", parent_id="mom_1", path="/c.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
         led.add_post(Post(id=f"p{i}", parent_id=f"c{i}", account="a", account_id="1", platform=Platform.instagram,
                           caption="x", state=PostState.awaiting_approval, scheduled_time=_z(NOW + timedelta(hours=3))))
     led.save()
-    html = _client(cfg).get("/review?account=@a&focus=0&grid=1").data.decode()
-    assert "Show more" in html and "account=" in html   # both offset= and account= ride the href
+    html = _client(cfg).get("/review?account=@a").data.decode()
+    assert "feed-sentinel" in html and "account=a" in html and "Show more" not in html
 
 def test_show_more_link_preserves_account_publish(tmp_path):
     cfg = Config(root=tmp_path); _seed_accounts(cfg); led = Ledger.load(cfg); _lineage(led)
@@ -285,12 +285,12 @@ def test_show_more_link_preserves_account_publish(tmp_path):
     assert "Show more" in html and "account=" in html
 
 def test_approve_keeps_account_scope(tmp_path):
-    # R1: POST /posts/approve?account=@a re-renders the @a-scoped Review worklist (active chip + only @a).
+    # U6: POST /posts/approve?account=@a re-renders the @a feed (active switcher chip + only @a).
     cfg = Config(root=tmp_path); _seed_two_accounts_all_surfaces(cfg)
     r = _client(cfg).post("/posts/approve?account=@a", data={"ids": ["aw_a"]})
     assert r.status_code == 200
     assert b"await b" not in r.data                          # the swapped panel stays scoped to @a
-    assert b'aria-current="page"' in r.data                  # @a chip is active in the re-rendered panel
+    assert b"chip active" in r.data and b">a <" in r.data    # switcher marks @a active (not aria-current)
 
 def test_schedule_move_keeps_account_scope(tmp_path):
     cfg = Config(root=tmp_path); _seed_two_accounts_all_surfaces(cfg)

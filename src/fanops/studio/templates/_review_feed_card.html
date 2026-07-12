@@ -1,0 +1,17 @@
+{# U6: one feed card — composite approve-with-edits, per-card reject. #}
+<article class="review-feed-card" id="feed-{{ s.post_id }}">
+  <label class="surface-pick"><input type="checkbox" name="ids" value="{{ s.post_id }}"
+    data-source="{{ s.source_key or '' }}" aria-label="select {{ s.account }} {{ s.platform }}"></label>
+  <div class="feed-preview clip-frame thumb">
+    <video controls preload="none" poster="{{ url_for('clip_thumb', clip_id=s.clip_id) }}" src="{{ s.media_url }}" aria-label="preview {{ s.account }}"></video>
+  </div>
+  {% if s.reason %}<p class="meta feed-reason">{{ s.reason }}</p>{% endif %}
+  <form class="feed-edit" hx-post="{{ url_for('do_approve_with_edits', post_id=s.post_id, account=feed_account|default(active)) }}" hx-target="#review-body" hx-swap="outerHTML">
+    <label class="feed-caption">Caption<textarea name="caption" rows="3">{{ s.caption }}</textarea></label>
+    <label class="feed-hook">Hook<input type="text" name="hook" value="{{ s.variant_hook or '' }}"></label>
+    <div class="feed-actions">
+      <button type="submit" class="primary">Approve</button>
+      <button type="button" class="surface-reject" hx-post="{{ url_for('do_reject_posts', account=feed_account|default(active), offset=feed_page.offset if feed_page else 0) }}" hx-vals='{"ids": "{{ s.post_id }}"}' hx-target="#review-body" hx-swap="outerHTML">Reject</button>
+    </div>
+  </form>
+</article>

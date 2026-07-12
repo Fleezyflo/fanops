@@ -1,4 +1,4 @@
-# tests/test_review_focus.py — S07: bare /review account-first entry (picker / auto-focus / account=all mixed).
+# tests/test_review_focus.py — U6: bare /review switcher + feed; account=all mixed worklist.
 import json
 import pytest
 pytest.importorskip("flask")
@@ -40,30 +40,30 @@ def _client(cfg):
     from fanops.studio.app import create_app
     app = create_app(cfg); app.config.update(TESTING=True); return app.test_client()
 
-def test_bare_review_picker_two_accounts(tmp_path):
+def test_bare_review_switcher_two_accounts(tmp_path):
     cfg = Config(root=tmp_path); _seed_two_accounts_all_surfaces(cfg)
     html = _client(cfg).get("/review").data.decode()
-    assert "review-account-picker" in html or "Which account" in html
-    assert "to review" in html
+    assert "review-switcher" in html
+    assert "review-feed" not in html
+    assert "review-pick-prompt" in html
     assert "<video" not in html
-    assert 'class="card clip-card"' not in html
 
-def test_bare_review_auto_focus_one_account(tmp_path):
+def test_bare_review_single_account_switcher_and_feed(tmp_path):
     cfg = Config(root=tmp_path); _seed_accounts(cfg, handles=("a",))
     cfg.clips.mkdir(parents=True, exist_ok=True)
     base = cfg.clips / "c.mp4"; base.write_bytes(b"\x00\x00\x00\x18ftypmp42CLIP")
     with Ledger.transaction(cfg) as led:
         _lineage(led, path=str(base)); _await_post(led, "aw_a", "clip_1", "a")
     r = _client(cfg).get("/review", follow_redirects=False)
-    assert r.status_code == 302
-    loc = r.headers.get("Location", "")
-    assert "account=a" in loc and "view=account" in loc and "focus=1" in loc
+    assert r.status_code == 200
+    html = r.data.decode()
+    assert "review-switcher" in html and "review-feed" in html
+    assert "<video" in html
 
 def test_bare_review_empty_zero_pending(tmp_path):
     cfg = Config(root=tmp_path); _seed_accounts(cfg)
     html = _client(cfg).get("/review").data.decode()
-    assert "review-account-picker" not in html
-    assert "Which account" not in html
+    assert "review-switcher" not in html
     assert "No footage yet" in html
 
 def test_account_all_mixed_worklist(tmp_path):
@@ -78,25 +78,24 @@ def test_account_all_chip_on_cards(tmp_path):
     assert "account-chip" in html
     assert "@a" in html and "@b" in html
 
-def test_focused_strip_scope_agrees(tmp_path):
+def test_feed_strip_scope_agrees(tmp_path):
     cfg = Config(root=tmp_path); _seed_two_accounts_all_surfaces(cfg)
     c = _client(cfg)
     scoped = c.get("/review/live?account=@a").data.decode()
-    body = c.get("/review?account=@a&view=account&focus=1").data.decode()
+    body = c.get("/review?account=@a").data.decode()
     assert "Awaiting <strong>1</strong>" in scoped
     assert 'data-awaiting="1"' in body
 
-def test_batch_link_skips_picker(tmp_path):
+def test_batch_link_skips_switcher_only(tmp_path):
     cfg = Config(root=tmp_path); _seed_two_accounts_all_surfaces(cfg)
     with Ledger.transaction(cfg) as led:
         for p in led.posts.values():
             p.batch_id = "batch_x"
     html = _client(cfg).get("/review?batch=batch_x").data.decode()
-    assert "review-account-picker" not in html
-    assert "Which account" not in html
+    assert "review-pick-prompt" not in html
     assert "clip-card" in html or "await" in html
 
-def test_picker_all_accounts_link(tmp_path):
+def test_switcher_all_accounts_link(tmp_path):
     cfg = Config(root=tmp_path); _seed_two_accounts_all_surfaces(cfg)
     html = _client(cfg).get("/review").data.decode()
     assert "account=all" in html

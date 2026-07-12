@@ -1,55 +1,33 @@
-{# src/fanops/studio/templates/_review_body.html — the swappable Review worklist. The approve/reject bar
-   uses hx-include (NOT a wrapping <form>) because the cards already contain their own edit/snooze/reschedule
-   forms, and nested forms are invalid HTML. Checkboxes (name="ids") live in the editable cards; the bar
-   buttons gather the checked ones scoped to #review-body. Re-rendered standalone by /posts/approve|reject.
-   Phase 4: every mutation url_for ALSO carries offset=page.offset + source=active_source + state=active_state so
-   an approve on page N re-renders page N (R1, scope-stable), and the compact param preserves 'ultra' vs '1'. #}
-{# Phase 4: the compact url param — 'ultra' (zero-<video>) > '1' (dense) > dropped. Rides every action/page URL. #}
+{# src/fanops/studio/templates/_review_body.html — the swappable Review worklist. U6: per-account feed
+   (switcher + source-grouped cards) when ?account=<handle>; account=all keeps the legacy moment-card path. #}
 {% set compact_param = 'ultra' if ultra else (1 if compact else none) %}
 {% from "_term.html" import term %}
 <div id="review-body" data-awaiting="{{ awaiting_total|default(0) }}" aria-live="polite">
-  {# Phase 4: the View toggle — Moments (the default moment-first cards) vs By account (the pivot: one account's
-     entire run as a flat, scannable, progress-counted list). 'By account' needs an account; it's a GET link that
-     keeps the active account (or prompts to pick one). Mirrors the compact toggle's GET-link pattern. #}
-  {# Slice 2: three-way View toggle — Matrix (default moment×account grid) · Moments (legacy cards, ?view=list) ·
-     By account (the pivot). active_view in (none,'matrix') => Matrix is active. GET links; ride the URL. #}
+  {% include "_publish_outcome.html" %}
+  {% if progress %}<div class="meta review-progress" aria-label="progress">{{ progress.awaiting }} awaiting · {{ progress.approved }} approved · {{ progress.held }} held · {{ progress.prepared }} prepared</div>{% endif %}
+  {% if picker_accounts|length >= 1 %}{% include "_review_switcher.html" %}{% endif %}
+  {% if switcher_only|default(false) %}
+    <p class="meta muted review-pick-prompt">Pick an account above to review its feed.</p>
+  {% elif show_feed|default(false) %}
+    {% include "_review_feed.html" %}
+  {% else %}
   <details class="review-advanced"><summary>View &amp; density</summary>
   <div class="meta view-toggle pivot-toggle">View:
     {% if active_view == 'matrix' %}<span class="button active" aria-current="page">Matrix</span>{% else %}<a class="button" href="{{ url_for('review', view='matrix', account=active, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), compact=compact_param) }}">Matrix</a>{% endif %}
     {% if active_view in (none, 'list') %}<span class="button active" aria-current="page">Moments</span>{% else %}<a class="button" href="{{ url_for('review', view='list', account=active, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), compact=compact_param) }}">Moments</a>{% endif %}{{ term('moment') }}
-    {% if active_view == 'account' %}<span class="button active" aria-current="page">By account</span>{% else %}<a class="button" href="{{ url_for('review', view='account', account=active, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), compact=compact_param) }}">By account</a>{% endif %}{{ term('surface') }}
-    {# RF6: the per-account LANES — every decided moment per account with cast/uncast + the +cast/−uncast
-       override (the matrix can't host them). Most useful WITH a focused source; preserves ?source= like the
-       matrix picker. Opt-in, never the default. #}
     {% if active_view == 'lanes' %}<span class="button active" aria-current="page">Lanes</span>{% else %}<a class="button" href="{{ url_for('review', view='lanes', account=active, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), compact=compact_param) }}">Lanes</a>{% endif %}
   </div>
-  {% if not review_picker|default(false) %}{% include "_account_filter.html" %}{% endif %}
-  {% if not review_picker|default(false) %}{% include "_review_account_actions.html" %}{% endif %}
+  {% include "_account_filter.html" %}
+  {% include "_review_account_actions.html" %}
   {% include "_source_filter.html" %}
-  {# Phase 4: the state filter — narrow to ONE state (awaiting/approved/held/prepared). GET links; ride the URL. #}
   {% set states = [('', 'All'), ('awaiting', 'Awaiting'), ('approved', 'Approved'), ('held', 'Held'), ('prepared', 'Prepared')] %}
   <nav class="state-chips" aria-label="Filter by state">{% for sv, sl in states %}<a class="button{{ ' active' if active_state|default(none) == (sv or none) else '' }}"{% if active_state|default(none) == (sv or none) %} aria-current="page"{% endif %} href="{{ url_for('review', view=active_view|default(none), account=active, batch=active_batch|default(none), source=active_source|default(none), state=(sv or none), compact=compact_param) }}">{{ sl }}</a>{% endfor %}</nav>
-  {# Phase 2: when casting is ON, explain WHY accounts carry distinct/fewer posts (config lives in Go Live). #}
   {% if cast_state and cast_state.casting %}<p class="meta cast-state">Casting{{ term('cast') }} ON — {{ cast_state.budget }} moments per account · clip {{ cast_state.profile }}</p>{% endif %}
   {% if active_batch|default(none) %}<div class="meta batch-scope">Showing one batch{{ term('batch') }} — <a href="{{ url_for('review', view=active_view|default(none), account=active, source=active_source|default(none), state=active_state|default(none), compact=compact_param) }}">show all batches</a></div>{% endif %}
-  {# M3c/Phase 4: flip between full / compact / ultra-compact. A GET link (mirrors the account/batch filter
-     pattern); the compact param rides the action/pagination URLs so it persists. #}
-  <div class="meta view-toggle">{% if compact %}<a class="button ghost" href="{{ url_for('review', view=active_view|default(none), account=active, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none)) }}">Full view</a>{% else %}<a class="button ghost" href="{{ url_for('review', view=active_view|default(none), account=active, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), compact=1) }}">Compact view</a>{% endif %}{% if not ultra %} <a class="button ghost" href="{{ url_for('review', view=active_view|default(none), account=active, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), compact='ultra') }}">Ultra-compact</a>{% else %} <span class="button active" aria-current="page">Ultra-compact</span>{% endif %}</div>{# MOL-44: view-toggle disclosure links → tertiary #}
+  <div class="meta view-toggle">{% if compact %}<a class="button ghost" href="{{ url_for('review', view=active_view|default(none), account=active, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none)) }}">Full view</a>{% else %}<a class="button ghost" href="{{ url_for('review', view=active_view|default(none), account=active, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), compact=1) }}">Compact view</a>{% endif %}{% if not ultra %} <a class="button ghost" href="{{ url_for('review', view=active_view|default(none), account=active, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), compact='ultra') }}">Ultra-compact</a>{% else %} <span class="button active" aria-current="page">Ultra-compact</span>{% endif %}</div>
   </details>
-  {% if progress %}<div class="meta review-progress" aria-label="progress">{% if active %}{{ active }} — {% endif %}{{ progress.awaiting }} awaiting · {{ progress.approved }} approved · {{ progress.held }} held · {{ progress.prepared }} prepared</div>{% endif %}
-  {% include "_publish_outcome.html" %}
-  {% if review_picker %}
-    {% include "_review_account_picker.html" %}
-  {% elif lanes %}
-    {# RF6 account-first LANES: one section per account, every decided moment with explicit cast/uncast +
-       the +cast/−uncast override buttons. A TOP-LEVEL branch (like the pivot) so it shows even when zero
-       awaiting cards exist — a targeted account with no posts still gets a lane. Reads AccountSelection. #}
+  {% if lanes %}
     {% include "_review_lanes.html" %}
-  {% elif focus and active and pivot is not none %}
-    {% include "_review_focus.html" %}
-  {% elif active_view == 'account' and active and pivot is not none %}
-    {# Phase 4 account-first PIVOT: @x's entire run as a flat, day-grouped, scannable list. #}
-    {% include "_account_pivot.html" %}
   {% else %}
   {% set prepared = cards | selectattr('bucket','equalto','prepared') | list %}
   {% if prepared %}
@@ -64,22 +42,16 @@
         <p class="meta review-hint">Use the action bar at the bottom — tick surfaces, or approve by moment / account / batch.</p>
       {% endif %}
       {% if key == 'editable' and matrix %}
-        {# Slice 2: the moment×account MATRIX is the default awaiting view (per focused source). It REPLACES the
-           batch-grouped editable cards; the prepared/held/recent buckets below still render as cards. #}
         {% include "_review_matrix.html" %}
       {% elif key == 'editable' %}
-        {# Face 4 (?view=list): account-first, batch-grouped Review — collapsible <details> per REAL Batch
-           (Post.batch_id), first-appearance order, unbatched cards under 'Ungrouped' (sorts LAST). content-lifecycle
-           Phase 3: the running ingest-day header is preserved WITHIN each batch; a day (or batch) spanning the
-           paginated 'Show more' boundary simply re-emits its header/summary on the next page. #}
         {% for batch_id, batch_title, bcards in group | group_review_by_batch %}
         <details class="batch" open>
           <summary>{{ batch_title }} ({{ bcards|length }}){% if batch_id and bcards[0].batch_targets %} <span class="muted batch-targets">→ {{ bcards[0].batch_targets|join(', ') }}</span>{% endif %}{% if batch_id and bcards[0].batch_state %} <span class="muted">· {{ bcards[0].batch_state }}</span>{% endif %}{% if batch_id %} <span class="muted">· {{ bcards[0].batch_created or '—' }}</span>{% endif %}</summary>
-          {% if batch_id and key == 'editable' %}<div class="batch-actions meta">{# MOL-53: separated action band (rule+top margin via .batch-actions); "Approve batch" is SECONDARY — Review's one gradient primary is the dock's "Approve selected", not this; "Select batch" stays ghost helper #}
+          {% if batch_id and key == 'editable' %}<div class="batch-actions meta">
             <button type="button" class="ghost" data-review-action="select-batch" data-batch-id="{{ batch_id }}">Select batch</button>
             <button type="button" hx-post="{{ url_for('do_approve_batch', batch_id=batch_id, account=active, source=active_source|default(none), view=active_view|default(none), compact=compact_param, offset=page.offset) }}" hx-target="#review-body" hx-swap="outerHTML">Approve batch</button>
           </div>{% endif %}
-          {% if batch_id %}<div class="batch-meta meta">{% if bcards[0].batch_excluded %}<span class="batch-excluded" title="this batch's target excludes {{ bcards[0].batch_excluded_names|join(', ') }} — they get no post">{{ bcards[0].batch_excluded }} account(s) excluded by batch target{% if bcards[0].batch_excluded_names %}: {{ bcards[0].batch_excluded_names|join(', ') }}{% endif %}</span>{% if active_batch|default(none) != batch_id %} · {% endif %}{% endif %}{% if active_batch|default(none) != batch_id %}<a class="batch-open" href="{{ url_for('review', batch=batch_id, account=active, source=active_source|default(none), state=active_state|default(none), view=active_view|default(none), compact=compact_param) }}">open just this batch</a>{% endif %}{# MOL-53: quietest tier — plain muted quiet link (underline-on-hover), never a button #}</div>{% endif %}
+          {% if batch_id %}<div class="batch-meta meta">{% if bcards[0].batch_excluded %}<span class="batch-excluded" title="this batch's target excludes {{ bcards[0].batch_excluded_names|join(', ') }} — they get no post">{{ bcards[0].batch_excluded }} account(s) excluded by batch target{% if bcards[0].batch_excluded_names %}: {{ bcards[0].batch_excluded_names|join(', ') }}{% endif %}</span>{% if active_batch|default(none) != batch_id %} · {% endif %}{% endif %}{% if active_batch|default(none) != batch_id %}<a class="batch-open" href="{{ url_for('review', batch=batch_id, account=active, source=active_source|default(none), state=active_state|default(none), view=active_view|default(none), compact=compact_param) }}">open just this batch</a>{% endif %}</div>{% endif %}
           {% set ns = namespace(day=None) %}
           <div class="clip-grid{{ ' compact' if compact else '' }}">
             {% for card in bcards %}
@@ -100,7 +72,7 @@
     <div class="grid-more meta">
       Showing {{ page.offset + 1 }}–{{ page.offset + page.items|length }} of {{ page.total }}.
       {% if page.next_offset is not none %}
-        <a class="button ghost" href="{{ url_for('review', offset=page.next_offset, view=active_view|default(none), account=active, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), compact=compact_param) }}">Show more</a>{# MOL-44: pagination disclosure → tertiary #}
+        <a class="button ghost" href="{{ url_for('review', offset=page.next_offset, view=active_view|default(none), account=active, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), compact=compact_param) }}">Show more</a>
       {% endif %}
       {% if page.offset > 0 %}
         <a class="button" href="{{ url_for('review', view=active_view|default(none), account=active, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), compact=compact_param) }}">Back to start</a>
@@ -109,5 +81,6 @@
   {% endif %}
   {% if not cards %}{% if active %}<div class="empty">No work for {{ active }} — <a href="{{ url_for('review', compact=compact_param) }}">clear the filter</a> to see all accounts.</div>{% else %}<div class="empty">No footage yet — add videos in the Make tab to begin.</div>{% endif %}{% endif %}
   {% endif %}
-  {% if not review_picker|default(false) %}{% include '_review_actions.html' %}{% endif %}
+  {% endif %}
+  {% if not switcher_only|default(false) %}{% include '_review_actions.html' %}{% endif %}
 </div>

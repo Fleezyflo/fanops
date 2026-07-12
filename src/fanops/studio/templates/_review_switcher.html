@@ -1,0 +1,9 @@
+{# U6: sticky per-account chip bar — only accounts with pending work (S10 zero-counter rule). #}
+<nav class="review-switcher sticky" aria-label="Review account">
+  {% for a in picker_accounts %}
+  <a class="button chip{{ ' active' if a.active else '' }}" href="{{ url_for('review', account=a.handle) }}">{{ a.handle }} <span class="cta-badge">{{ a.pending }}</span></a>
+  {% endfor %}
+  {% if picker_accounts|length >= 2 %}
+  <a class="button ghost" href="{{ url_for('review', account='all') }}">All accounts</a>
+  {% endif %}
+</nav>
