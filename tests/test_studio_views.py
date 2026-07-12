@@ -381,7 +381,7 @@ def test_lift_page_renders_delta_arrow_glyphs(tmp_path):
                               public_url="dryrun://%s" % pid))
     from fanops.studio.app import create_app
     app = create_app(cfg); app.config.update(TESTING=True)
-    h = app.test_client().get("/lift").data.decode()
+    h = app.test_client().get("/posted").data.decode()   # U10: the Lift lens is folded onto /posted
     assert "delta-arrow" in h and "delta-up" in h and "delta-down" in h   # median 30 -> HYPE +20 up, CALM -20 down
     assert "▲" in h and "▼" in h
 
@@ -404,9 +404,13 @@ def test_lift_compound_row_demotes_delta_vs_best_when_arrow_shows(tmp_path):
                               public_url="dryrun://%s" % pid))
     from fanops.studio.app import create_app
     app = create_app(cfg); app.config.update(TESTING=True)
-    h = app.test_client().get("/lift").data.decode()
-    assert "delta-arrow" in h                                  # the T-15 arrow still renders (visible comparative)
-    assert "delta-best" not in h                               # the Δ-vs-best figure is NOT a visible cell span
+    h = app.test_client().get("/posted").data.decode()   # U10: the Lift lens is folded onto /posted
+    # U10: MOL-111 is a LIFT-LENS-row guarantee. Scope the assertion to the lens slice (everything from the
+    # "Lift by variant" heading down) — the Posted LIBRARY above it legitimately renders its own Δ-vs-best
+    # via lineage_delta for the same clip's siblings, which is unrelated to the lens's arrow/best demotion.
+    lens = h.split("Lift by variant", 1)[1]
+    assert "delta-arrow" in lens                               # the T-15 arrow still renders (visible comparative)
+    assert "delta-best" not in lens                            # the Δ-vs-best figure is NOT a visible cell span in the lens
     assert "vs best" in h                                      # ...but its value survives, in a title= attribute
 
 

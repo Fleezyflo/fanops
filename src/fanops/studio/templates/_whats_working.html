@@ -1,0 +1,33 @@
+{# src/fanops/studio/templates/_whats_working.html — U10: the gate-honest "What's working" panel. Fed by
+   views.whats_working_panel (a DimInsightRow per creative/timing dim). Three honest states: frozen (learning
+   not validated), collecting (validated but under the 8-post/dim signal threshold — shows "N of 8"), ranked
+   (validated + unlocked — the FULL per-value reach ranking, the rows the actuators read BEFORE the reach-gap
+   winner pick). NO chart. dims rank by RAW reach, not the engagement-weighted lift below. Read-only. #}
+  <h3>What's working</h3>
+  <p class="muted" title="lift_score is the engagement-weighted objective; the dim rankings below rank by raw reach instead.">
+    Lift weights: saves ×4 · shares ×4 · retention ×3 · reach ×0.001 · likes ×0.05.
+    The dim rankings below rank by <strong>raw reach</strong>, not lift.
+  </p>
+  <p class="muted">Cross-account rollup — matches the learning actuators.</p>
+  {% if insights %}
+  <dl class="whats-working">
+    {% for row in insights %}
+    <div class="ww-dim ww-{{ row.state }}">
+      <dt>{{ row.label }}</dt>
+      <dd>
+        {% if row.state == 'ranked' %}
+          <ul class="ww-values">
+            {% for value, agg in row.values %}
+            <li><strong>{{ value }}</strong> · reach {{ agg.reach_mean }} · n={{ agg.n }}</li>
+            {% endfor %}
+          </ul>
+        {% elif row.state == 'collecting' %}
+          <span class="ww-collecting">Collecting — {{ row.progress }}</span>
+        {% else %}
+          <span class="ww-frozen muted">{{ row.progress or 'frozen until live metrics validate' }}</span>
+        {% endif %}
+      </dd>
+    </div>
+    {% endfor %}
+  </dl>
+  {% else %}<div class="empty">No reach signal yet.</div>{% endif %}

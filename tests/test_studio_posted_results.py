@@ -175,7 +175,7 @@ def test_lift_route_carries_clip_id_and_bars(tmp_path):
     assert all(getattr(r, "clip_id", None) == "clip_1" for r in view.variant_rows)  # LiftRow now carries it
     annotated = views.lineage_stats(view.variant_rows)
     assert any(r.rank == 1 and r.sibling_count == 2 for r in annotated)
-    html = _client(cfg).get("/lift").data.decode()
+    html = _client(cfg).get("/posted").data.decode()   # U10: the Lift lens is folded onto /posted
     assert "★" in html and 'class="bar metric-bar"' in html
 
 
@@ -186,7 +186,7 @@ def test_lift_all_degraded_emits_table_note_and_quiet_marker(tmp_path):
         _seed_published(cfg, pid=f"d{i}", clip=f"clip_{i}", lift=0.1 * i, hook=f"H{i}",
                         state=PostState.analyzed,
                         metrics_extra={"lift_degraded": True, "lift_missing_keys": ["retention"]})
-    html = _client(cfg).get("/lift").data.decode()
+    html = _client(cfg).get("/posted").data.decode()   # U10: the Lift lens is folded onto /posted
     assert "retention data missing" in html.lower()        # table-level note emitted once...
     assert 'class="badge degraded"' not in html            # ...loud per-row badge dropped...
     assert "degraded-quiet" in html                        # ...replaced by the quiet per-row marker
@@ -201,7 +201,7 @@ def test_lift_minority_degraded_keeps_loud_badge_no_note(tmp_path):
     for i in range(3):
         _seed_published(cfg, pid=f"ok{i}", clip=f"clip_ok{i}", lift=0.2 + i, hook=f"OK{i}",
                         state=PostState.analyzed)
-    html = _client(cfg).get("/lift").data.decode()
+    html = _client(cfg).get("/posted").data.decode()   # U10: the Lift lens is folded onto /posted
     assert "retention data missing" not in html.lower()    # no table-level note for a minority
     assert 'class="badge degraded"' in html                # the loud per-row badge stays (exception-signal)
     assert "degraded-quiet" not in html
@@ -211,7 +211,7 @@ def test_lift_number_uses_dominant_class(tmp_path):
     # MOL-50: the Lift number is the answer to "which variant won" -> it carries the dominant .lift-num class.
     _seed_published(cfg := Config(root=tmp_path), pid="v", clip="clip_1", lift=0.3, hook="H",
                     state=PostState.analyzed)
-    html = _client(cfg).get("/lift").data.decode()
+    html = _client(cfg).get("/posted").data.decode()   # U10: the Lift lens is folded onto /posted
     assert 'class="lift-num"' in html
 
 
