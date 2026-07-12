@@ -310,5 +310,5 @@ def persona_facts(cfg: Config, p) -> dict:
         store = None
     lead = vet_hashtags([], Platform.instagram,
                         corpus=list(getattr(p, "hashtag_corpus", None) or []), store=store,
-                        genre=((getattr(p, "intake", None) or {}).get("genre") or None))
+                        genre=((getattr(p, "intake", None) or {}).get("genre") or None), cfg=cfg)   # U11: honor the global ban list here too (a banned tag must not show as a persona's "lead tag")
     return {"length_band": f"{band.lo:.0f}-{band.hi:.0f}s", "framing": fr, "lead_tags": lead}

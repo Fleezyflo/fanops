@@ -1,0 +1,131 @@
+{# src/fanops/studio/templates/_hashtags_panel.html — U11 the Hashtags observatory body, htmx-swapped in place
+   (#hashtags-panel). FIVE sections: (1) corpora at a glance (read-only, links to Personas), (2) the reach store
+   (ranked chips, banned struck-through, VIEW-ONLY), (3) the Meta budget meter (fail-closed named plainly),
+   (4) rotation health (consecutive-duplicate warn per account), (5) the global ban lane (the ONLY mutation).
+   Only the ban forms POST (they swap the whole panel). Autoescape stays on (no |safe). #}
+<div id="hashtags-panel" aria-live="polite">
+  {% if result %}
+    <div class="result {{ 'ok' if result.ok else 'err' }}">
+      {% if result.ok %}✓
+        {%- if result.detail and result.detail.banned %} banned {{ result.detail.banned }}
+        {%- elif result.detail and result.detail.unbanned %} unbanned {{ result.detail.unbanned }}
+        {%- else %} done{% endif %}
+      {% else %}✗ {{ result.error }}{% endif %}
+    </div>
+  {% endif %}
+
+  {# ── 1 · Corpora at a glance ─────────────────────────────────────────────────────────────────────
+     One compact row per persona. Read-only — editing lives on Personas (the "edit →" link). No add/remove/
+     research controls here (byte-truth counts from personas.json). #}
+  <section class="hashtag-section corpora-section">
+    <h3>Corpora at a glance</h3>
+    <p class="muted">Each persona's curated pool, its pinned/auto split, when it last changed, and its
+      top tags by live reach. Edit a corpus on Personas.</p>
+    {% if page.corpora %}
+      <table class="corpora-grid">
+        <thead><tr><th>Persona</th><th>Size</th><th>Pinned</th><th>Auto</th><th>Last refreshed</th><th>Top by reach</th><th></th></tr></thead>
+        <tbody>
+          {% for r in page.corpora %}
+            <tr>
+              <td>{{ r.name }}</td>
+              <td>{{ r.size }}</td>
+              <td>{{ r.pinned }}</td>
+              <td>{{ r.auto }}</td>
+              <td>{{ r.last_refreshed | localdt or '—' }}</td>
+              <td>{% for t in r.top3 %}<span class="chip tag ro">{{ t }}</span>{% else %}<span class="muted">—</span>{% endfor %}</td>
+              <td><a href="{{ r.edit_href }}" class="muted">edit →</a></td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="muted">No personas yet — add one on Personas.</p>
+    {% endif %}
+  </section>
+
+  {# ── 2 · The reach store ─────────────────────────────────────────────────────────────────────────
+     "What the system currently believes is worth using" — the ranked pool with per-tag live reach. A banned
+     tag is struck-through (chip.banned) but the store FILE is untouched (view-only). Three states named. #}
+  <section class="hashtag-section store-section">
+    <h3>Reach store</h3>
+    {% if page.store.state == 'frozen floor' %}
+      <p class="muted">No store yet — selection falls back to the <strong>frozen floor</strong> (the built-in
+        reach-ranked pools). Refresh the store on a live deployment to see measured reach here.</p>
+    {% elif page.store.state == 'unreadable' %}
+      <p class="result err">✗ store unreadable — the store file could not be parsed. Selection falls back to the
+        frozen floor; a breadcrumb was logged.</p>
+    {% else %}
+      <p class="muted">Provenance <strong>{{ page.store.provenance }}</strong> · last written {{ page.store.age | localdt or '—' }}.
+        Banned tags are shown struck-through (view only — the store is untouched).</p>
+      <div class="store-tags">
+        {% for t in page.store.tags %}
+          <span class="chip tag{% if t.banned %} banned{% endif %}">{{ t.tag }}{% if t.reach is not none %}<span class="reach-n"> · {{ t.reach | int }}</span>{% endif %}</span>
+        {% else %}<span class="muted">the store is empty — frozen floor applies</span>{% endfor %}
+      </div>
+    {% endif %}
+  </section>
+
+  {# ── 3 · Budget meter ────────────────────────────────────────────────────────────────────────────
+     Meta ig_hashtag_search: 30 unique tags per 7 days, fail-CLOSED. When the counter is unreadable, name the
+     code's actual behavior plainly — no invented numbers. No "check reach" button here (this page is inert). #}
+  <section class="hashtag-section budget-section">
+    <h3>Meta lookup budget</h3>
+    {% if page.budget.fail_closed %}
+      <p class="result err">✗ {{ page.budget.copy }}</p>
+    {% else %}
+      <p class="muted"><strong>{{ page.budget.used }}</strong> used / <strong>{{ page.budget.remaining }}</strong>
+        remaining of {{ page.budget.limit }} per 7 days{% if page.budget.window_reset %} · window resets {{ page.budget.window_reset | localdt }}{% endif %}.</p>
+    {% endif %}
+  </section>
+
+  {# ── 4 · Rotation health ─────────────────────────────────────────────────────────────────────────
+     Per account, the last few shipped/queued tag LINES with consecutive-duplicate detection — the exact
+     pre-S06 failure the operator caught live. Warn chip when two consecutive posts shipped an identical line;
+     green otherwise. Observatory only (never calls vet_hashtags). #}
+  <section class="hashtag-section rotation-section">
+    <h3>Rotation health</h3>
+    {% if page.rotation %}
+      <p class="muted">The last few tag lines per account. A warn flags two consecutive posts that shipped the
+        <em>identical</em> line — rotation not doing its job.</p>
+      {% for acc in page.rotation %}
+        <div class="rotation-account">
+          <strong>{{ acc.account }}</strong>
+          {% if acc.warn %}<span class="chip rotation-warn">consecutive duplicate line</span>
+          {% else %}<span class="chip rotation-ok">rotating</span>{% endif %}
+          <div class="rotation-lines">
+            {% for line in acc.lines %}
+              <div class="rotation-line">{% for t in line %}<span class="chip tag ro">{{ t }}</span>{% else %}<span class="muted">no tags</span>{% endfor %}</div>
+            {% else %}<span class="muted">no recent posts</span>{% endfor %}
+          </div>
+        </div>
+      {% endfor %}
+    {% else %}
+      <p class="muted">No shipped or queued posts yet — nothing to check.</p>
+    {% endif %}
+  </section>
+
+  {# ── 5 · Ban lane ────────────────────────────────────────────────────────────────────────────────
+     The operator's global deny-list. A banned tag disappears from selection (vet_hashtags) and auto-accept
+     (S12), and shows struck-through in the store above. Bans beat pins. The ONLY mutation on this page. #}
+  <section class="hashtag-section ban-section">
+    <h3>Ban lane</h3>
+    <p class="muted">A tag you never want to ship — even one that passes the brand screen and earns reach. It's
+      stripped from selection <em>and</em> the automated corpus refresh; a ban beats an operator pin.</p>
+    <form class="ban-add-form" hx-post="{{ url_for('do_hashtags_ban_add') }}" hx-target="#hashtags-panel" hx-swap="outerHTML">
+      <label>Ban a hashtag <input type="text" name="tag" placeholder="#example" size="20" required></label>
+      <button type="submit" class="primary">Ban</button>
+    </form>
+    {% if page.bans %}
+      <div class="ban-list">
+        {% for t in page.bans %}
+          <span class="chip banned">{{ t }}
+            <button type="button" class="chip-x" title="Unban {{ t }}"
+              hx-post="{{ url_for('do_hashtags_ban_remove') }}" hx-target="#hashtags-panel" hx-swap="outerHTML"
+              hx-vals='{{ {"tag": t} | tojson }}'>×</button></span>
+        {% endfor %}
+      </div>
+    {% else %}
+      <p class="muted">No bans — every reach-vetted tag is eligible.</p>
+    {% endif %}
+  </section>
+</div>

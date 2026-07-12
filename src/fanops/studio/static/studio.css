@@ -1032,3 +1032,18 @@ button.ghost:hover, .button.ghost:hover { color:var(--ink); background:transpare
 .schedule-dialog::backdrop { background:oklch(0% 0 0 / .35); }
 .schedule-dialog-form label { display:block; margin:.5rem 0; }
 .schedule-dialog-actions { display:flex; gap:.5rem; justify-content:flex-end; margin-top:var(--s-2); }
+/* U11 Hashtags observatory. .chip.banned is the operator DENY family (struck-through, danger-tinted) — a
+   banned tag shown for information in the store view + the removable chip in the ban lane; the store FILE is
+   untouched. .rotation-warn/.rotation-ok are the per-account rotation verdict chips (consecutive-dup vs green). */
+.chip.banned { color:var(--danger); border-color:var(--danger); text-decoration:line-through; }
+.rotation-warn { color:var(--warn); border-color:var(--warn); text-decoration:none; }
+.rotation-warn::before { content:"⚠"; margin-right:.2rem; font-size:.9em; }
+.rotation-ok { color:var(--ok); border-color:var(--ok); }
+.hashtag-section { margin:0 0 var(--s-3); }
+.store-tags, .ban-list { display:flex; flex-wrap:wrap; gap:.35rem; margin:.4rem 0; }
+.corpora-grid { margin:.4rem 0; }
+.rotation-account { padding:.4rem 0; border-bottom:1px solid var(--line); }
+.rotation-lines { display:flex; flex-direction:column; gap:.25rem; margin:.3rem 0; }
+.rotation-line { display:flex; flex-wrap:wrap; gap:.25rem; }
+.ban-add-form { display:flex; flex-wrap:wrap; gap:.5rem; align-items:flex-end; margin:.4rem 0; }
+.chip-x { margin-left:.25rem; padding:0 .25rem; background:none; border:none; color:inherit; cursor:pointer; font:inherit; }
