@@ -254,6 +254,8 @@ def _produce_transcript(led: Ledger, cfg: Config, source_id: str, src, out_dir: 
             if not m.get("sha256") or m["sha256"] == src.sha256:
                 audio = str(stem_mp3); src.meta["vocals_isolated"] = True
         if audio == src.source_path:
+            from fanops.pipeline_run import note_stage
+            note_stage(cfg, "transcribe:demucs", source_id)
             voc = isolate_vocals(src.source_path, str(out_dir / "vocals"))
             if voc != src.source_path:
                 src.meta["vocals_isolated"] = True            # a demucs vocal stem exists -> framing.classify_window

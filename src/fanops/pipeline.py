@@ -31,6 +31,7 @@ from fanops.agentstep import pending
 from fanops.responder import _SCHEMA as _RESPONDER_SCHEMA   # the answerable-gate registry; GATE_KINDS derives from it
 from fanops.timeutil import _aware_utc
 from fanops import produce
+from fanops.pipeline_run import note_stage
 
 def _aspects_for(accts: Accounts) -> set[Fmt]:
     return {PLATFORM_ASPECT.get(s.platform, Fmt.r9x16) for s in accts.surfaces()} or {Fmt.r9x16}
@@ -472,6 +473,7 @@ def advance(cfg: Config, *, base_time: str) -> RunSummary:
     # Phase D: ingest in a SHORT transaction FIRST so a brand-new drop is catalogued and VISIBLE to the
     # lock-free pre-warm below — otherwise its transcribe would run inside the main lock. M05: hash+copy+probe
     # run lock-free (stage_inbox_candidates); only the Source mint runs in-lock; archive AFTER commit.
+    note_stage(cfg, "ingest", "-")
     staged = stage_inbox_candidates(cfg)
     with Ledger.transaction(cfg) as led:
         led, _ = ingest_staged(led, cfg, staged)
@@ -501,6 +503,7 @@ def advance(cfg: Config, *, base_time: str) -> RunSummary:
     with Ledger.transaction(cfg) as led:
         # Self-healing: corrupt gate requests quarantine their owning source to error (recoverable).
         from fanops.pipeline_status import heal_corrupt_gates
+        note_stage(cfg, "pipeline", "-")
         heal_corrupt_gates(led, cfg)
         led = reconcile_source_progress(led, cfg, log)
         # B5/E2: snapshot the already-published post ids at transaction ENTRY so the summary's
@@ -508,8 +511,11 @@ def advance(cfg: Config, *, base_time: str) -> RunSummary:
         # `before` and is NOT counted (set difference against the exit state). Ingest already ran (above)
         # and never publishes, so the snapshot here is the correct baseline.
         before = {p.id for p in led.posts_in_state(PostState.published)}
+        note_stage(cfg, "pipeline", "-")
         led = _stage_source_to_moments(led, cfg, accts, log)
+        note_stage(cfg, "moments", "-")
         led = _stage_ingest_moments(led, cfg, log)
+        note_stage(cfg, "moment_hooks", "-")
         led = _stage_moment_hooks(led, cfg, accts, log)
         # Task 9 scoreboard: one read-only digest line of hook quality on EVERY pass — independent of any
         # subsystem flag, so the operator's hook-quality visibility stays on by default. Read-only + fail-open.
@@ -522,11 +528,18 @@ def advance(cfg: Config, *, base_time: str) -> RunSummary:
                 led = route_moments(led, cfg)
             except Exception as e:
                 log("router", "-", "error", err=str(e)[:120])
+        note_stage(cfg, "render", "-")
         led = _stage_render_and_caption(led, cfg, accts, aspects, log)
+        note_stage(cfg, "structural_hooks", "-")
         led = _stage_structural_hooks(led, cfg, log)
+        note_stage(cfg, "captions", "-")
         led = _stage_refresh_caption_requests(led, cfg, accts, log)
+        note_stage(cfg, "captions", "-")
         led = _stage_ingest_captions(led, cfg, log)
+        note_stage(cfg, "crosspost", "-")
         led = _stage_crosspost(led, cfg, accts, base_time, log)
+    note_stage(cfg, "reconcile", "-")
     _reconcile_safe(cfg, log)                            # stranded-post reconcile, out of lock (AUDIT H4)
+    note_stage(cfg, "publish", "-")
     _publish_safe(cfg, log)                              # publish-out-of-lock (own per-post locking)
     return _build_summary(cfg, before)                   # post-publish read-only snapshot + digest
