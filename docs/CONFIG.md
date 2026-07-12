@@ -37,6 +37,7 @@ Hand-editing `.env` while a long-lived process runs requires restart; Studio go-
 | Var | Default | Effect | Set |
 |---|---|---|---|
 | `FANOPS_RESPONDER` | `manual` | THE explicit AI switch (`llm`/`manual`); presence of `claude` never auto-enables | S |
+| `FANOPS_LLM_TRANSPORT` | `claude` | LLM CLI transport (`claude` / `cursor`) | .env |
 | `FANOPS_LLM_MODEL` | per-gate | Force ONE model across all gates | .env |
 | `ANTHROPIC_API_KEY` | None | VESTIGIAL — responder uses the `claude` subscription; not required | .env |
 

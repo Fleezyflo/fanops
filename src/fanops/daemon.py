@@ -45,9 +45,10 @@ def _daemon_path() -> str:
     bin holding `claude` (derived now), homebrew (ffmpeg/whisper), then the system defaults. De-duped,
     absolute — nothing depends on a sourced shell profile at fire time."""
     parts = [str(Path(sys.executable).parent)]
-    claude = shutil.which("claude")
-    if claude:
-        parts.append(str(Path(claude).parent))
+    for _bin in ("claude", "cursor-agent"):
+        found = shutil.which(_bin)
+        if found:
+            parts.append(str(Path(found).parent))
     parts += ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"]
     seen: set[str] = set(); out: list[str] = []
     for p in parts:

@@ -134,6 +134,16 @@ def _pick_timeout_aware_model(duration_seconds: float | None, *, chain: tuple[st
     except ValueError: idx = len(chain) - 1
     return chain[min(idx + max(0, timeout_attempts), len(chain) - 1)]
 
+def resolve_llm_transport(raw: str | None = None) -> str:
+    """LLM CLI transport: claude (default) or cursor-agent headless. Unknown values warn + fall back."""
+    v = (raw if raw is not None else os.getenv("FANOPS_LLM_TRANSPORT") or "").strip().lower()
+    if not v:
+        return "claude"
+    if v not in {"claude", "cursor"}:
+        _log.warning("ignoring unknown FANOPS_LLM_TRANSPORT=%r (using claude); valid: claude, cursor", v)
+        return "claude"
+    return v
+
 class Config:
     def __init__(self, root: Path | str | None = None):
         env_root = os.environ.get("FANOPS_ROOT")
@@ -500,6 +510,14 @@ class Config:
             _log.warning("ignoring unknown FANOPS_RESPONDER=%r (using manual); valid: llm, manual", v)
             return "manual"
         return v
+
+    @property
+    def llm_transport(self) -> str:
+        return resolve_llm_transport()
+
+    @property
+    def llm_cli_binary(self) -> str:
+        return "cursor-agent" if self.llm_transport == "cursor" else "claude"
 
     def llm_model_for(self, kind: str) -> str:
         # V2 M1/F1: the creative brain stays PINNED (an unpinned `claude -p` drifts with the CLI default).

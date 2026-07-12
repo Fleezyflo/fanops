@@ -574,7 +574,7 @@ def cmd_daemon(cfg: Config, args) -> int:
             print(f"daemon installed -> {res['plist']}")
             print(f"  fanops {daemon._fanops_bin()}  |  interval {interval}s  |  loaded {res['loaded']}  |  responder {res['responder']}")
             if res["discloses_llm"]:                      # DISCLOSE the recurring-LLM cost — never silently turn the AI on
-                print(f"  ⚠ hands-off runs the AI responder — invokes `claude` ~every {interval}s. Use `--responder manual` for no-LLM scheduling.")
+                print(f"  ⚠ hands-off runs the AI responder — invokes the LLM CLI ~every {interval}s. Use `--responder manual` for no-LLM scheduling.")
             print("  next: fanops daemon status   |   stop: fanops daemon stop")
             return 0
         if act == "status":
@@ -635,7 +635,7 @@ def cmd_autopilot(cfg: Config, args) -> int:
         # non-darwin / launchctl absent / bad --interval / unwritable .env -> one clean line + exit 2
         print(f"autopilot: {e}", file=sys.stderr); return 2
     print("fanops autopilot — the per-clip work is now autonomous")
-    print(f"  responder -> {res['responder']} (answers its own moment/caption gates via your `claude` login; no hand-typing)")
+    print(f"  responder -> {res['responder']} (answers its own moment/caption gates via the LLM CLI; no hand-typing)")
     print(f"  backend   -> {res['backend']}" + ("  (dryrun: schedules posts, publishes NOTHING)" if res["backend"] == "dryrun" else ""))
     d = res["daemon"]
     if d:
@@ -857,12 +857,24 @@ def _check_preflight(cfg: Config) -> int:
 
     The default dryrun+manual config (no creds) trips neither and passes cleanly (exit 0)."""
     import shutil
+    from fanops.llm import _CURSOR_SUPPORTS_VISION
     problems = []
-    if cfg.responder_mode == "llm" and shutil.which("claude") is None:
-        problems.append(
-            "FANOPS_RESPONDER=llm but `claude` is not on PATH — the autonomous responder shells "
-            "`claude -p` using your existing Claude subscription. Install Claude Code and run "
-            "`claude login` on this host (no API key needed).")
+    if cfg.responder_mode == "llm":
+        cli_bin = cfg.llm_cli_binary
+        if shutil.which(cli_bin) is None:
+            if cli_bin == "cursor-agent":
+                problems.append(
+                    "FANOPS_RESPONDER=llm but `cursor-agent` is not on PATH — the autonomous responder "
+                    "shells `cursor-agent -p`. Install Cursor CLI on this host.")
+            else:
+                problems.append(
+                    "FANOPS_RESPONDER=llm but `claude` is not on PATH — the autonomous responder shells "
+                    "`claude -p` using your existing Claude subscription. Install Claude Code and run "
+                    "`claude login` on this host (no API key needed).")
+        if cfg.llm_transport == "cursor" and not _CURSOR_SUPPORTS_VISION and shutil.which("claude") is None:
+            problems.append(
+                "FANOPS_LLM_TRANSPORT=cursor but `claude` is not on PATH — vision-grounded gates fall "
+                "back to `claude -p`. Install Claude Code and run `claude login` on this host.")
     _raw_poster = (cfg.poster_backend_raw or "").strip().lower()
     if _raw_poster == "postiz" and (cfg.postiz_url is None or cfg.postiz_api_key is None):
         miss = " and ".join(n for n, v in (("POSTIZ_URL", cfg.postiz_url),

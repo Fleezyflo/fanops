@@ -104,7 +104,12 @@ class LlmToolchainError(RuntimeError):
 
 _CONTEXT_LIMIT_MARKERS = ("prompt is too long", "context length", "exceeds the maximum", "too many tokens",
                           "maximum context")
-_TOOLCHAIN_MARKERS = ("unknown option", "unrecognized option", "unknown argument", "unknown command", "usage:")
+_TOOLCHAIN_MARKERS = ("unknown option", "unrecognized option", "unknown argument", "unknown command", "usage:",
+                      "unknown flag", "invalid option", "invalid flag")
+# T01 probe (cursor-agent absent on probe host — defaults from cursor.com/docs/cli/reference/output-format):
+_CURSOR_SUPPORTS_VISION = False
+_CURSOR_MODEL_ALIASES: dict[str, str] = {}
+_CURSOR_RATE_LIMIT_MARKERS = ("rate limit", "too many requests", "429", "503", "529", "overloaded")
 def _is_context_limit(text: str) -> bool:
     t = (text or "").lower()
     return any(m in t for m in _CONTEXT_LIMIT_MARKERS)
@@ -142,6 +147,19 @@ def _frames_unread(env: dict) -> bool:
 
 
 def claude_json_meta(prompt: str, schema: dict, *, timeout: float = 300.0,
+                     images: list[str] | None = None, model: str | None = None,
+                     read_root: str | None = None) -> tuple[dict, str | None, bool]:
+    """Dispatch to claude or cursor-agent transport per FANOPS_LLM_TRANSPORT; vision falls back to claude
+    when cursor transport lacks vision support."""
+    from fanops.config import resolve_llm_transport
+    if resolve_llm_transport() == "cursor":
+        if images and not _CURSOR_SUPPORTS_VISION:
+            return _claude_json_meta(prompt, schema, timeout=timeout, images=images, model=model, read_root=read_root)
+        return _cursor_json_meta(prompt, schema, timeout=timeout, images=images, model=model, read_root=read_root)
+    return _claude_json_meta(prompt, schema, timeout=timeout, images=images, model=model, read_root=read_root)
+
+
+def _claude_json_meta(prompt: str, schema: dict, *, timeout: float = 300.0,
                      images: list[str] | None = None, model: str | None = None,
                      read_root: str | None = None) -> tuple[dict, str | None, bool]:
     """Call `claude -p` with a JSON schema; return (schema-valid object, model-that-answered,
@@ -278,6 +296,111 @@ def claude_json_meta(prompt: str, schema: dict, *, timeout: float = 300.0,
                 return salvaged, resolved, frames_unread
             raise LlmSchemaError(f"claude -p `result` was not JSON: {result[:300]}") from e
     raise LlmSchemaError(f"claude -p envelope had no structured_output or JSON result: {env}")
+
+def _resolve_cursor_model(model: str | None) -> str | None:
+    if not model: return None
+    return _CURSOR_MODEL_ALIASES.get(model, model)
+
+def _build_cursor_cmd(model: str | None) -> list[str]:
+    resolved = _resolve_cursor_model(model)
+    return ["cursor-agent", "-p", "--output-format", "json"] + (["--model", resolved] if resolved else [])
+
+def _cursor_rate_limit_status(returncode: int, stdout: str, stderr: str) -> int | None:
+    rl = _rate_limit_status(returncode, stdout)
+    if rl is not None:
+        return rl
+    body = (stdout or stderr or "").lower()
+    if any(m in body for m in _CURSOR_RATE_LIMIT_MARKERS):
+        return 429
+    return None
+
+def _cursor_json_meta(prompt: str, schema: dict, *, timeout: float = 300.0,
+                      images: list[str] | None = None, model: str | None = None,
+                      read_root: str | None = None) -> tuple[dict, str | None, bool]:
+    """Call `cursor-agent -p` with schema-prefixed stdin; return (object, model, frames_unread)."""
+    def _schema_stdin(base: str) -> str:
+        return ("Respond with ONLY a single JSON object conforming to this schema — no prose, no markdown:\n"
+                + json.dumps(schema) + "\n\n" + base)
+
+    def _run(stdin_prompt: str) -> dict:
+        delay = _RL_BASE_DELAY
+        for attempt in range(_MAX_RL_RETRIES + 1):
+            try:
+                r = subprocess.run(_build_cursor_cmd(model), check=False, capture_output=True, text=True,
+                                   timeout=timeout, input=_schema_stdin(stdin_prompt))
+            except (FileNotFoundError, OSError) as e:
+                raise ToolchainMissingError(
+                    f"cursor-agent not found on PATH — install Cursor CLI or set FANOPS_LLM_TRANSPORT=claude "
+                    f"({type(e).__name__})") from e
+            except subprocess.TimeoutExpired as e:
+                raise LlmTimeoutError(f"cursor-agent -p timed out after {timeout}s") from e
+            rl = _cursor_rate_limit_status(r.returncode, r.stdout, r.stderr)
+            if rl is None:
+                break
+            if attempt >= _MAX_RL_RETRIES:
+                raise LlmRateLimitError(
+                    f"cursor-agent -p rate-limited (status={rl}) after {_MAX_RL_RETRIES} retries")
+            logger.warning("cursor-agent -p rate-limited (status=%s) — backing off %.1fs "
+                           "(attempt %d/%d)", rl, delay, attempt + 1, _MAX_RL_RETRIES)
+            _sleep(delay + random.uniform(0, delay))
+            delay *= 2
+        if r.returncode != 0:
+            body = (r.stderr or r.stdout or "")[:300]
+            if _is_context_limit(body):
+                raise LlmContextLimitError(f"cursor-agent -p context limit (rc={r.returncode}): {body}")
+            if _is_toolchain_error(body):
+                raise LlmToolchainError(f"cursor-agent -p toolchain error (rc={r.returncode}): {body}")
+            raise RuntimeError(f"cursor-agent -p failed (rc={r.returncode}): {body}")
+        try:
+            env = json.loads(r.stdout)
+        except Exception as e:
+            raise LlmSchemaError(f"cursor-agent -p output could not parse as JSON envelope: {(r.stdout or '')[:300]}") from e
+        if not isinstance(env, dict):
+            raise LlmSchemaError(f"cursor-agent -p output could not parse as JSON envelope (not an object): {(r.stdout or '')[:300]}")
+        return env
+
+    frames_unread = False                                    # cursor json envelope has no num_turns analogue
+    env = _run(prompt)
+
+    def _resolve_from_env(e: dict) -> tuple[dict | None, bool]:
+        so = e.get("structured_output")
+        if isinstance(so, dict):
+            return so, False
+        result = e.get("result")
+        if isinstance(result, str):
+            try:
+                return json.loads(result), False
+            except Exception:
+                salvaged = _extract_json_object(result)
+                if salvaged is not None:
+                    logger.warning("cursor-agent -p result salvaged via JSON-repair (prose-wrapped reply)")
+                    return salvaged, False
+                return None, True
+        return None, False
+
+    rep = env.get("model")
+    resolved = rep if isinstance(rep, str) and rep.strip() else _resolve_cursor_model(model)
+    obj, repair_empty = _resolve_from_env(env)
+    if obj is None and repair_empty:
+        env = _run("Your previous reply did not include the required JSON object. Respond with ONLY "
+                   "a single JSON object conforming to this schema — no prose, no markdown:\n"
+                   + json.dumps(schema) + "\n\nOriginal task:\n" + prompt)
+        rep = env.get("model")
+        resolved = rep if isinstance(rep, str) and rep.strip() else resolved
+        obj, repair_empty = _resolve_from_env(env)
+    if obj is not None:
+        return obj, resolved, frames_unread
+    result = env.get("result")
+    if isinstance(result, str):
+        try:
+            return json.loads(result), resolved, frames_unread
+        except Exception as e:
+            salvaged = _extract_json_object(result)
+            if salvaged is not None:
+                logger.warning("cursor-agent -p result salvaged via JSON-repair (prose-wrapped reply)")
+                return salvaged, resolved, frames_unread
+            raise LlmSchemaError(f"cursor-agent -p `result` was not JSON: {result[:300]}") from e
+    raise LlmSchemaError(f"cursor-agent -p envelope had no structured_output or JSON result: {env}")
 
 def claude_json(prompt: str, schema: dict, *, timeout: float = 300.0,
                 images: list[str] | None = None, model: str | None = None,

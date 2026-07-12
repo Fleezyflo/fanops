@@ -91,6 +91,14 @@ def test_doctor_claude_check_only_when_llm(tmp_path, monkeypatch):
     rep2 = doctor.doctor_report(Config(root=tmp_path))
     assert any("claude" in c["label"].lower() for c in rep2["checks"])
 
+
+def test_doctor_cursor_transport_checks_cursor_agent(tmp_path, monkeypatch):
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "cursor")
+    rep = doctor.doctor_report(Config(root=tmp_path))
+    assert any("cursor-agent" in c["label"].lower() for c in rep["checks"])
+    assert any("claude" in c["label"].lower() and "vision" in c["label"].lower() for c in rep["checks"])
+
 def test_doctor_notes_learning_unvalidated(tmp_path, monkeypatch):
     rep = doctor.doctor_report(Config(root=tmp_path))
     assert any("cutover" in n.lower() for n in rep["notes"])    # points at the go-live harness

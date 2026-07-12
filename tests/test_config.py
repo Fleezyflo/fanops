@@ -139,6 +139,23 @@ def test_responder_llm_only_on_explicit_optin(monkeypatch, tmp_path):
     monkeypatch.setenv("FANOPS_RESPONDER", "llm")
     assert Config(root=tmp_path).responder_mode == "llm"        # explicit opt-in still works
 
+def test_llm_transport_defaults_claude_when_unset(monkeypatch, tmp_path):
+    monkeypatch.delenv("FANOPS_LLM_TRANSPORT", raising=False)
+    cfg = Config(root=tmp_path)
+    assert cfg.llm_transport == "claude" and cfg.llm_cli_binary == "claude"
+
+def test_llm_transport_cursor(monkeypatch, tmp_path):
+    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "cursor")
+    cfg = Config(root=tmp_path)
+    assert cfg.llm_transport == "cursor" and cfg.llm_cli_binary == "cursor-agent"
+
+def test_llm_transport_unknown_warns_and_falls_back(monkeypatch, tmp_path, caplog):
+    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "openai")
+    with caplog.at_level(logging.WARNING):
+        cfg = Config(root=tmp_path)
+    assert cfg.llm_transport == "claude"
+    assert any("FANOPS_LLM_TRANSPORT" in r.getMessage() for r in caplog.records)
+
 def test_is_live_backend_requires_backend_and_key(monkeypatch, tmp_path):
     # Stage-6 audit: the "live backend + key" guard gates the learning passes and reconcile at
     # three sites — one property is its single home so the definition of "live" can't drift.
@@ -515,6 +532,14 @@ def test_settings_responder_typo_raises_at_boundary(monkeypatch):
     with pytest.raises(ValidationError) as ei:
         _validate_settings()
     assert "FANOPS_RESPONDER" in str(ei.value)
+
+
+def test_settings_llm_transport_typo_raises_at_boundary(monkeypatch):
+    from pydantic import ValidationError
+    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "openai")
+    with pytest.raises(ValidationError) as ei:
+        _validate_settings()
+    assert "FANOPS_LLM_TRANSPORT" in str(ei.value)
 
 
 def test_settings_bool_typo_raises_at_boundary(monkeypatch):

@@ -255,10 +255,17 @@ def _assemble_doctor_checks(cfg: Config, *, get=None, postiz_probe=None, zernio_
                          "falls back to the legacy whisper CLI"))
     checks.append(_check("yt-dlp on PATH (only for `fanops pull <url>`)", shutil.which("yt-dlp") is not None,
                          "pip install yt-dlp"))
-    # 2. autonomous responder needs the claude CLI ONLY when FANOPS_RESPONDER=llm (mirrors preflight)
+    # 2. autonomous responder needs the LLM CLI ONLY when FANOPS_RESPONDER=llm (mirrors preflight)
     if cfg.responder_mode == "llm":
-        checks.append(_check("claude on PATH (FANOPS_RESPONDER=llm)", shutil.which("claude") is not None,
-                             "install Claude Code + run `claude login` (uses your subscription, no API key)"))
+        from fanops.llm import _CURSOR_SUPPORTS_VISION
+        cli_bin = cfg.llm_cli_binary
+        hint = ("install Cursor CLI" if cli_bin == "cursor-agent"
+                else "install Claude Code + run `claude login` (uses your subscription, no API key)")
+        checks.append(_check(f"{cli_bin} on PATH (FANOPS_RESPONDER=llm)", shutil.which(cli_bin) is not None, hint))
+        if cfg.llm_transport == "cursor" and not _CURSOR_SUPPORTS_VISION:
+            checks.append(_check("claude on PATH (vision fallback for cursor transport)",
+                                 shutil.which("claude") is not None,
+                                 "install Claude Code + run `claude login` (vision gates fall back to claude)"))
     # 2b. brand brief present + non-empty. context.md is injected verbatim into every moment +
     # caption decision (the #1 output lever); its absence used to be SILENT (load_guidance now warns,
     # but a preflight is the visible gate). Read directly + safely so the report never crashes.

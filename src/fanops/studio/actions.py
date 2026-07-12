@@ -154,7 +154,7 @@ def regenerate_caption(cfg: Config, post_id: str, guidance: str = "", *,
     try:                                                # the slow generation, OUTSIDE any lock
         out = model(caption_prompt(payload), CaptionSet.model_json_schema())
     except ToolchainMissingError as exc:
-        return ActionResult(ok=False, error="Regenerate needs the `claude` CLI on PATH (run "
+        return ActionResult(ok=False, error=f"Regenerate needs `{cfg.llm_cli_binary}` on PATH (run "
                             f"`fanops autopilot` once to enable auto mode): {str(exc)[:160]}")
     except Exception as exc:
         return ActionResult(ok=False, error=f"regenerate failed: {str(exc)[:160]}")

@@ -1,5 +1,6 @@
 # tests/test_llm.py
 import json
+import subprocess
 import pytest
 from fanops.errors import ToolchainMissingError
 from fanops.llm import claude_json
@@ -530,3 +531,104 @@ def test_no_json_object_raises_llm_schema_error(mocker):
     mocker.patch("fanops.llm.subprocess.run", return_value=R())
     with pytest.raises(LlmSchemaError, match="was not JSON"):
         claude_json("q", _SCHEMA)
+
+
+# --- T01: cursor-agent transport (FANOPS_LLM_TRANSPORT=cursor) ---
+
+def test_cursor_json_happy_envelope(mocker, monkeypatch):
+    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "cursor")
+    envelope = {"type": "result", "subtype": "success", "result": '{"x": 7}', "model": "claude-4-sonnet"}
+    class R: returncode = 0; stdout = json.dumps(envelope); stderr = ""
+    run = mocker.patch("fanops.llm.subprocess.run", return_value=R())
+    out = claude_json("pick", _SCHEMA)
+    assert out == {"x": 7}
+    cmd = run.call_args[0][0]
+    assert cmd[0] == "cursor-agent" and "-p" in cmd and "json" in cmd
+    assert json.dumps(_SCHEMA) in run.call_args.kwargs["input"]
+
+def test_cursor_json_toolchain_banner(mocker, monkeypatch):
+    from fanops.llm import LlmToolchainError
+    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "cursor")
+    class R: returncode = 1; stdout = "Usage: cursor-agent [options]"; stderr = ""
+    mocker.patch("fanops.llm.subprocess.run", return_value=R())
+    with pytest.raises(LlmToolchainError):
+        claude_json("q", _SCHEMA)
+
+def test_cursor_json_timeout(mocker, monkeypatch):
+    from fanops.llm import LlmTimeoutError
+    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "cursor")
+    mocker.patch("fanops.llm.subprocess.run", side_effect=subprocess.TimeoutExpired("cursor-agent", 1))
+    with pytest.raises(LlmTimeoutError, match="cursor-agent"):
+        claude_json("q", _SCHEMA)
+
+def test_cursor_json_rate_limit_backoff(mocker, monkeypatch):
+    from fanops.llm import claude_json as cj
+    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "cursor")
+    class RL: returncode = 1; stdout = "rate limited"; stderr = ""
+    class OK: returncode = 0; stdout = json.dumps({"result": '{"x": 3}'}); stderr = ""
+    run = mocker.patch("fanops.llm.subprocess.run", side_effect=[RL(), RL(), OK()])
+    sleep = mocker.patch("fanops.llm._sleep")
+    assert cj("q", _SCHEMA) == {"x": 3}
+    assert run.call_count == 3 and sleep.call_count == 2
+
+def test_cursor_json_prose_wrapped_repair(mocker, monkeypatch):
+    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "cursor")
+    picks = {"x": 9}
+    prose = f'Here: {json.dumps(picks)}'
+    envelope = {"result": prose}
+    class R: returncode = 0; stdout = json.dumps(envelope); stderr = ""
+    mocker.patch("fanops.llm.subprocess.run", return_value=R())
+    assert claude_json("q", _SCHEMA) == picks
+
+def test_dispatch_routes_cursor(mocker, monkeypatch):
+    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "cursor")
+    envelope = {"result": '{"x": 1}'}
+    class R: returncode = 0; stdout = json.dumps(envelope); stderr = ""
+    run = mocker.patch("fanops.llm.subprocess.run", return_value=R())
+    claude_json("q", _SCHEMA)
+    assert run.call_args[0][0][0] == "cursor-agent"
+
+def test_dispatch_default_stays_claude(mocker, monkeypatch):
+    monkeypatch.delenv("FANOPS_LLM_TRANSPORT", raising=False)
+    envelope = {"structured_output": {"x": 1}}
+    class R: returncode = 0; stdout = json.dumps(envelope); stderr = ""
+    run = mocker.patch("fanops.llm.subprocess.run", return_value=R())
+    claude_json("q", _SCHEMA)
+    assert run.call_args[0][0][0] == "claude"
+
+def test_dispatch_unknown_warns_claude(mocker, monkeypatch, caplog):
+    import logging
+    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "bogus")
+    envelope = {"structured_output": {"x": 1}}
+    class R: returncode = 0; stdout = json.dumps(envelope); stderr = ""
+    run = mocker.patch("fanops.llm.subprocess.run", return_value=R())
+    with caplog.at_level(logging.WARNING, logger="fanops.config"):
+        claude_json("q", _SCHEMA)
+    assert run.call_args[0][0][0] == "claude"
+    assert any("FANOPS_LLM_TRANSPORT" in r.message for r in caplog.records)
+
+def test_cursor_model_alias_on_gate_pins(mocker, monkeypatch):
+    import fanops.llm as llm_mod
+    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "cursor")
+    monkeypatch.setitem(llm_mod._CURSOR_MODEL_ALIASES, "opus", "claude-4-opus")
+    envelope = {"result": '{"x": 2}'}
+    class R: returncode = 0; stdout = json.dumps(envelope); stderr = ""
+    run = mocker.patch("fanops.llm.subprocess.run", return_value=R())
+    claude_json("q", _SCHEMA, model="opus")
+    i = run.call_args[0][0].index("--model")
+    assert run.call_args[0][0][i + 1] == "claude-4-opus"
+
+def test_cursor_missing_binary(mocker, monkeypatch):
+    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "cursor")
+    def absent(cmd, **kw): raise FileNotFoundError(2, "No such file", cmd[0])
+    mocker.patch("fanops.llm.subprocess.run", side_effect=absent)
+    with pytest.raises(ToolchainMissingError, match="cursor-agent"):
+        claude_json("q", _SCHEMA)
+
+def test_dispatch_vision_fallback_claude(mocker, monkeypatch):
+    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "cursor")
+    envelope = {"structured_output": {"x": 5}, "num_turns": 2}
+    class R: returncode = 0; stdout = json.dumps(envelope); stderr = ""
+    run = mocker.patch("fanops.llm.subprocess.run", return_value=R())
+    claude_json("judge", _SCHEMA, images=["/f/1.jpg"])
+    assert run.call_args[0][0][0] == "claude"

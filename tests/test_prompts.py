@@ -166,7 +166,7 @@ def test_picker_prompt_and_vision_wrapper_json_only():
     assert "ONLY the JSON object matching the provided schema" in p     # A8.2 emphatic ONLY-JSON
     assert "no prose" in p.lower()
     assert "do not describe or narrate the frames" in p.lower()       # A8.3 no describe-frames invite
-    src = inspect.getsource(llm_mod.claude_json_meta)
+    src = inspect.getsource(llm_mod._claude_json_meta)
     for marker in ("Read each image frame below", "You did NOT open the frames"):
         assert marker in src
         chunk = src.split(marker, 1)[1].split("\\n", 1)[0]
