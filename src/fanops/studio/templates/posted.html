@@ -1,13 +1,19 @@
-{# src/fanops/studio/templates/posted.html — the Posted library (proof + reuse) #}
+{# src/fanops/studio/templates/posted.html — U10: the ONE Results surface. The shipped library (proof +
+   reuse) stays unchanged in _posted_panel; below it the performance lenses fold in — the per-variant Lift
+   table, a gate-honest "What's working" panel (frozen/collecting/ranked per creative dim), and a collapsed
+   metrics legend. The lenses render on full-page load only (the HTMX #posted-body swaps stay library-scoped). #}
 {% extends "base.html" %}
-{% block title %}Posted{% endblock %}
+{% block title %}Results{% endblock %}
 {% block body %}
-  <h2>Posted</h2>
+  <h2>Results</h2>
   <div class="mode-banner mode-{{ 'live' if cfg.is_live else 'dryrun' }}" data-testid="posted-mode-banner"
        role="status" aria-live="polite">
     {% if cfg.is_live %}<strong>System mode: live</strong> — posts that ship reach the real platforms.{% else %}<strong>System mode: dryrun</strong> — nothing reaches the platforms. Flip live from <a href="{{ url_for('golive_connect') }}">Go Live</a>.{% endif %}
   </div>
-  <p class="muted">Everything that has shipped, with its live link and lift. <strong>Post again ▾</strong> re-enters Review (same or other accounts).</p>
+  <p class="muted">Everything that has shipped — its live link, lift, and what the reach data is teaching. <strong>Post again ▾</strong> re-enters Review (same or other accounts).</p>
   {% include "_posted_panel.html" %}
+  {% include "_lift_lens.html" %}
+  {% include "_whats_working.html" %}
+  {% include "_metrics_legend.html" %}
   <script src="{{ url_for('static', filename='posted.js') }}" defer></script>
 {% endblock %}

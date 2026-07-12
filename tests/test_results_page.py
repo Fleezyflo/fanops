@@ -142,6 +142,9 @@ def test_no_hashtag_performance_on_page(tmp_path):
 # ── single aggregation path: whats_working_panel has NO local reach re-aggregation ──────────────────
 def test_no_duplicate_reach_aggregation():
     src = inspect.getsource(views.whats_working_panel)
-    assert "aggregate_by_dim" in src                      # rankings flow through the ONE aggregator...
-    # ...and there is NO second reach_mean computation loop inside the panel (no re-derivation of the sort key).
-    assert "reach_mean" not in src.replace('"reach_mean"', "").replace("'reach_mean'", "")
+    body = src.split('"""')[2] if src.count('"""') >= 2 else src   # drop the docstring (prose mentions reach)
+    assert "aggregate_by_dim" in body                     # rankings flow through the ONE aggregator...
+    # ...and the panel never RE-DERIVES reach: no assignment to a reach_mean local, no raw reach metric read
+    # (a second aggregation loop would compute the sort key itself instead of reading aggregate_by_dim's row).
+    assert "reach_mean =" not in body and "reach_mean=" not in body
+    assert '.get("reach"' not in body and ".metrics" not in body

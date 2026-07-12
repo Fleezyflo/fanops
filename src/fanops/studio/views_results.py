@@ -938,3 +938,69 @@ def lift_rows(led: Ledger, cfg: Config, accounts: Optional[Accounts] = None, *,
                     amplify_present=amplify_present, amplify_rows=amplify_rows,
                     amplify_empty_reason=amplify_empty_reason,
                     degraded_count=deg_count, degraded_total=deg_total, degraded_mostly=deg_mostly)
+
+
+@dataclass
+class DimInsightRow:
+    dim: str                          # the stamped Post attribute (clip_profile | first_frame_kind | top_bias | publish_hour | publish_dow)
+    label: str                        # "length" | "opening" | "framing" | "timing (hour)" | "timing (dow)"
+    state: str                        # "frozen" | "collecting" | "ranked"
+    progress: Optional[str] = None    # collecting only: "N of 8 attributed posts" (honest numerator)
+    values: list = None               # ranked only: [(value, aggregate_by_dim row)] sorted reach_mean desc
+
+    def __post_init__(self):
+        if self.values is None:
+            self.values = []
+
+
+# U10: the "What's working" dims, in the panel's fixed order — the P4 creative three, then the two timing
+# axes. Labels are the panel's OWN (the plan's DimInsightRow contract: length/opening/framing + timing
+# hour/dow); a stamped dim reads getattr(p, dim) exactly as aggregate_by_dim / the actuators do.
+_WHATS_WORKING_DIMS = (("clip_profile", "length"), ("first_frame_kind", "opening"),
+                       ("top_bias", "framing"), ("publish_hour", "timing (hour)"),
+                       ("publish_dow", "timing (dow)"))
+
+
+def _fmt_dim_value(dim: str, value: str) -> str:
+    """Render one dim value for the operator. top_bias is a bool dim (aggregate_by_dim keys it as the
+    stringified bool) -> the natural phrasing p4_dim_bias uses; every other dim shows its raw value."""
+    if dim == "top_bias":
+        return "top-anchored" if value == "True" else "centered"
+    return value
+
+
+def whats_working_panel(led: Ledger, cfg: Config) -> list:
+    """U10 — the gate-honest 'What's working' read-model for the Results page. Per creative/timing dim it
+    reports one of three honest states, reusing ONLY the existing gate + aggregator (no new learning code,
+    no second ranking path):
+      frozen     — learning_validated(cfg) is False (no proven live-metric shape); nothing is ranked.
+      collecting — validated but the dim is under the P4 signal threshold (p4_unlocked False); shows the
+                   honest 'N of 8' progress from validation_gate.dim_collecting_progress.
+      ranked     — validated AND unlocked; values are the FULL per-value reach ranking, i.e.
+                   sorted(aggregate_by_dim(led, dim).items(), reach_mean desc). This is the ranking the
+                   actuators read BEFORE the p4_min_reach_gap winner selection — the panel shows every
+                   value's reach, not just the picked winner (so it never disagrees by hiding runners-up).
+    Cross-account rollup (aggregate_by_dim spans accounts), matching the learning actuators. Pure read.
+    FAIL-OPEN: any exception returns [] so the shipped library still renders."""
+    try:
+        from fanops.digest import aggregate_by_dim
+        from fanops.validation_gate import learning_validated, p4_unlocked, dim_collecting_progress
+        validated = learning_validated(cfg)
+        out: list = []
+        for dim, label in _WHATS_WORKING_DIMS:
+            if not validated:
+                out.append(DimInsightRow(dim=dim, label=label, state="frozen",
+                                         progress="frozen until live metrics validate"))
+                continue
+            if not p4_unlocked(led, cfg, dim):
+                n, need = dim_collecting_progress(led, dim)
+                out.append(DimInsightRow(dim=dim, label=label, state="collecting",
+                                         progress=f"{n} of {need} attributed posts"))
+                continue
+            ranked = sorted(aggregate_by_dim(led, dim).items(), key=lambda kv: -kv[1]["reach_mean"])
+            out.append(DimInsightRow(dim=dim, label=label, state="ranked",
+                                     values=[(_fmt_dim_value(dim, v), row) for v, row in ranked]))
+        return out
+    except Exception:
+        logger.warning("whats_working panel degraded (fail-open, empty)", exc_info=True)
+        return []

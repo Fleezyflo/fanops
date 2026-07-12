@@ -1,0 +1,17 @@
+{# src/fanops/studio/templates/_metrics_legend.html — U10: a collapsed-by-default legend for the Results
+   page. Static platform capability matrix (mirrors track._PLATFORM_METRICS — the ONE place that knowledge
+   lives; keep in lockstep if that map changes) + how/when metrics are pulled. metrics_stale (from
+   views.metrics_stale_hint) surfaces a stale banner when live posts exist but most lack analyzed metrics. #}
+  <details class="metrics-legend meta">
+    <summary>What each metric means &amp; where it comes from</summary>
+    {% if metrics_stale %}
+    <p class="warn metrics-stale">Live posts are waiting on analytics — most shipped posts don't have metrics back yet. Pull them from the Run tab, or let the daemon's learn pass catch up.</p>
+    {% endif %}
+    <table class="platform-metrics">
+      <tr><th>Platform</th><th>Metrics available</th></tr>
+      <tr><td>Instagram</td><td>reach · views · saves · shares · likes · comments · retention <span class="muted">(retention is Reels-only, via the Meta Graph)</span></td></tr>
+      <tr><td>TikTok</td><td>reach · views · saves · shares · likes · comments <span class="muted">(no watch-time / retention)</span></td></tr>
+      <tr><td>YouTube / Facebook / X</td><td>reach · views · saves · shares · likes · comments <span class="muted">(via Postiz — no retention)</span></td></tr>
+    </table>
+    <p class="muted">Metrics pull in on the daemon's <code>fanops run</code> learn pass; you can also force a pull from the Run tab's <strong>Pull metrics</strong>.</p>
+  </details>

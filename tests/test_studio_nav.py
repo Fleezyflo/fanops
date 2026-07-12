@@ -72,7 +72,7 @@ def test_full_pages_carry_rail(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg)
     c = _client(cfg)
     for path in FULL_PAGES:
-        r = c.get(path, follow_redirects=(path == "/review"))
+        r = c.get(path, follow_redirects=(path in ("/review", "/lift")))   # U10: /lift 301s to /posted — follow it so the rail is asserted on the destination
         assert r.status_code == 200 and b'class="rail"' in r.data, f"{path} missing the rail"
 
 def test_skiplink_targets_main_content(tmp_path):

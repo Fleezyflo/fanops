@@ -126,5 +126,7 @@ def test_cast_present_when_on_variant_term_absent(tmp_path, monkeypatch):
 def test_all_surfaces_200_with_terms(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg, [_active()])
     c = _client(cfg)
+    # U10: /lift now 301-redirects to the merged Results page (/posted); follow it so this still proves the
+    # destination surface renders 200 with the glossary wired in.
     for path in ("/", "/gates", "/review", "/personas", "/golive", "/schedule", "/posted", "/lift"):
-        assert c.get(path).status_code == 200, path
+        assert c.get(path, follow_redirects=True).status_code == 200, path

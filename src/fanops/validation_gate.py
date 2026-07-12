@@ -39,6 +39,16 @@ def enough_attributed_signal(led, dim: str, *, min_n: int = _MIN_ATTRIBUTED_N,
     return sum(1 for row in agg.values() if row.get("n", 0) >= min_n) >= min_values
 
 
+def dim_collecting_progress(led, dim: str, *, min_n: int = _MIN_ATTRIBUTED_N) -> tuple[int, int]:
+    """Return (best_bucket_n, min_n) from aggregate_by_dim — the honest 'collecting' numerator for the
+    Studio Results panel ('N of 8'). best_bucket_n is the attributed-post count of the FULLEST value of
+    `dim` (the bucket closest to the per-value threshold), 0 when nothing is attributed yet. Reuses the
+    SAME aggregate_by_dim the signal gate reads — one aggregation path, no re-derivation."""
+    from fanops.digest import aggregate_by_dim
+    best = max((row["n"] for row in aggregate_by_dim(led, dim).values()), default=0)
+    return best, min_n
+
+
 def p4_unlocked(led, cfg: Config, dim: str) -> bool:
     """The full P4 unlock for ranking `dim`: PLUMBING proven (cutover metrics_confirmed) AND enough
     attributed SIGNAL. Both are required — never rank a dim on a live metrics shape that was never
