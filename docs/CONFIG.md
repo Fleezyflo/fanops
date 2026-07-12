@@ -25,7 +25,6 @@ Hand-editing `.env` while a long-lived process runs requires restart; Studio go-
 | `ZERNIO_API_KEY` | None | Zernio API key (write-only) | S |
 | `FANOPS_POSTIZ_AUTOSTART` | `1` (on) | Auto-start the local Postiz stack (`postiz_lifecycle`) | .env |
 | `FANOPS_POSTIZ_COMPOSE_DIR` | (blank) | Postiz docker-compose dir for `health` | .env |
-| `FANOPS_POSTIZ_ONDEMAND` | `$HOME/postiz-selfhost/postiz-ondemand.sh` | Path to the Postiz on-demand script `fanops up` shells out to (`ensure`) | .env |
 | `FANOPS_POSTIZ_PUBLISH_PER_MIN` | 4 | Postiz publish throttle (0=off) | .env |
 | `FANOPS_MEDIA_PUBLIC_BASE` | None | Public HTTPS base for mirrored clip media (R2/CDN) | .env |
 | `R2_ACCOUNT_ID` | None | Cloudflare R2 account id (S3-compatible mirror) | .env |
@@ -33,6 +32,11 @@ Hand-editing `.env` while a long-lived process runs requires restart; Studio go-
 | `R2_SECRET_ACCESS_KEY` | None | R2 secret key (write-only) | .env |
 | `R2_BUCKET` | None | R2 bucket for mirrored clips | .env |
 | `FANOPS_ZERNIO_MAX_UPLOAD_MB` | 4 | Zernio TikTok upload preflight cap | .env |
+
+Path override (not a `Settings` field — read directly, like `postiz_lifecycle`'s script path): set
+**`FANOPS_POSTIZ_ONDEMAND`** to point `fanops up` at a non-default Postiz on-demand script. Default:
+`$HOME/postiz-selfhost/postiz-ondemand.sh`. `fanops up` shells out to `<script> ensure` for its
+Docker+Postiz plane (see the bring-up brief `docs/design/briefs/16-one-step-bring-up.md`).
 
 ## LLM gates (the AI switch + models)
 | Var | Default | Effect | Set |

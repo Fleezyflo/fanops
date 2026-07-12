@@ -73,15 +73,14 @@ def test_resolve_ondemand_script_defaults_to_home(tmp_path, monkeypatch):
 # ── git plane: ADVISORY, non-mutating ─────────────────────────────────────────────────────────
 
 def test_git_plane_reports_behind_without_failing_and_never_mutates(tmp_path, monkeypatch):
+    # The real argv is `git -C <root> <subcommand> …` — match the subcommand anywhere in argv, not
+    # a fixed slot, so the assertion tracks the actual command shape.
     calls: list[list[str]] = []
     def fake_git(cmd, *a, **k):
         calls.append(list(cmd))
-        sub = cmd[1] if len(cmd) > 1 else ""
-        if sub == "fetch":
-            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
-        if sub == "rev-list":                       # left-right count: ahead \t behind
+        if "rev-list" in cmd:                        # left-right count: ahead \t behind
             return subprocess.CompletedProcess(cmd, 0, stdout="0\t7\n", stderr="")
-        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")   # fetch (+ any other)
     monkeypatch.setattr(daemon.subprocess, "run", fake_git)
     cfg = Config(root=tmp_path)
 
@@ -90,9 +89,9 @@ def test_git_plane_reports_behind_without_failing_and_never_mutates(tmp_path, mo
     assert plane["ok"] is True                       # advisory -> never fails the run
     assert plane["behind"] == 7
     assert "7" in plane["detail"]
-    # the non-goal that MATTERS: bring-up must NEVER mutate the tree
+    # the non-goal that MATTERS: bring-up must NEVER mutate the tree — no mutating verb in ANY argv
     mutating = {"merge", "reset", "checkout", "rebase", "pull"}
-    assert not any(len(c) > 1 and c[1] in mutating for c in calls), f"git plane mutated: {calls}"
+    assert not any(mutating & set(c) for c in calls), f"git plane mutated: {calls}"
 
 
 def test_git_plane_fetch_failure_is_still_advisory(tmp_path, monkeypatch):
@@ -221,7 +220,7 @@ def test_daemon_plane_off_darwin_typed_skip_no_exception(tmp_path, monkeypatch):
 # ── studio plane: report-only ─────────────────────────────────────────────────────────────────
 
 def test_studio_plane_reports_up_when_port_answers(tmp_path, monkeypatch):
-    monkeypatch.setattr(daemon, "_studio_port_answers", lambda host, port: True)
+    monkeypatch.setattr(daemon, "_studio_port_answers", lambda *a, **k: True)
     cfg = Config(root=tmp_path)
     plane = daemon._plane_studio(cfg)
     assert plane["ok"] is True
@@ -229,7 +228,7 @@ def test_studio_plane_reports_up_when_port_answers(tmp_path, monkeypatch):
 
 
 def test_studio_plane_reports_down_with_launch_command(tmp_path, monkeypatch):
-    monkeypatch.setattr(daemon, "_studio_port_answers", lambda host, port: False)
+    monkeypatch.setattr(daemon, "_studio_port_answers", lambda *a, **k: False)
     cfg = Config(root=tmp_path)
     plane = daemon._plane_studio(cfg)
     assert plane["ok"] is False

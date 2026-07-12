@@ -18,7 +18,7 @@ _INTERNAL_MODULES = (
     "lever_docs.py",
     "ledger.py",
 )
-_CLI_PRINT_COUNT = 142  # +B11 cmd_doctor dep lines (+2); +studio --install/--uninstall + resident-loaded guard + MOL-223 wipe verb
+_CLI_PRINT_COUNT = 145  # +B11 cmd_doctor dep lines (+2); +studio --install/--uninstall + resident-loaded guard + MOL-223 wipe verb; +3 cmd_up (user-facing bring-up report — like cmd_daemon/cmd_autopilot)
 _SRC = Path(__file__).resolve().parents[1] / "src" / "fanops"
 
 
