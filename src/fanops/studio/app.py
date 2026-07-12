@@ -625,6 +625,12 @@ def create_app(cfg: Config) -> Flask:
     register_golive_routes(app, cfg)
 
 
+    # U11: the Hashtags observatory (corpora/store/budget/rotation + the global ban lane). Registered AFTER
+    # personas so the corpora rows' "edit →" link (url_for('personas_view')) resolves.
+    from fanops.studio.app_routes_hashtags import register_hashtags_routes
+    register_hashtags_routes(app, cfg)
+
+
     from fanops.errors import ControlFileError
     @app.errorhandler(ControlFileError)
     def _control_file_error(e):

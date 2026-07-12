@@ -1,0 +1,13 @@
+{# src/fanops/studio/templates/hashtags.html — U11 the Hashtags observatory: the reach store, the Meta budget,
+   cross-account rotation health, and the operator's global ban lane — the system-wide hashtag state that S12
+   (automated corpora) + U9 (per-persona display) leave homeless. Read-only EXCEPT the ban lane. Budget-inert
+   (zero Graph calls on load). Per-persona corpus EDITING lives on the Personas tab (this page links there). #}
+{% extends "base.html" %}
+{% block title %}Hashtags{% endblock %}
+{% block body %}
+  <h2>Hashtags</h2>
+  <p class="muted">The system-wide hashtag picture: what the system currently believes is worth using (the reach
+    store), the Meta lookup budget, cross-account rotation health, and a global ban lane. Loading this page makes
+    <strong>no</strong> Graph calls. Per-persona corpora are edited on <a href="{{ url_for('personas_view') }}">Personas</a>.</p>
+  {% include "_hashtags_panel.html" %}
+{% endblock %}

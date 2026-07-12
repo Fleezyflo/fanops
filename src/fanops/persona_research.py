@@ -7,7 +7,7 @@ offline re-rank. Both are re-exported from fanops.personas — and discover_corp
 from __future__ import annotations
 from datetime import datetime, timezone
 from fanops.config import Config
-from fanops.hashtags import _norm, _screen_content, load_store_reach
+from fanops.hashtags import _norm, _screen_content, _strip_banned, load_bans, load_store_reach
 from fanops.personas import Personas
 
 
@@ -115,6 +115,9 @@ def refresh_persona_corpus(cfg: Config, pid: str, *, get=None, now=None) -> dict
     meta = row.get("hashtag_corpus_meta") if isinstance(row.get("hashtag_corpus_meta"), dict) else {}
     corpus = [_norm(t) for t in (per.hashtag_corpus or []) if isinstance(t, str) and _norm(t)]
     pinned, auto = _partition_corpus(corpus, meta)
+    bans = load_bans(cfg)                        # U11: the operator's global deny-list — ban BEATS pin, so a banned
+    pinned = _strip_banned(pinned, bans)         # tag is dropped from `final` even when pinned (last explicit negative wins)
+    auto = _strip_banned(auto, bans)             # (and a banned auto tag never survives the refresh); bans empty -> byte-identical
     target = cfg.corpus_target
     auto_slots = max(0, target - len(pinned))
     budget = budget_remaining(cfg, now=now)
@@ -123,6 +126,7 @@ def refresh_persona_corpus(cfg: Config, pid: str, *, get=None, now=None) -> dict
     if budget == 0:
         return {"changed": False, "reason": "budget_exhausted"}
     have = set(corpus)
+    corpus_has_ban = any(_norm(t) in bans for t in corpus)   # U11: a banned tag already in the corpus must be PURGED even when the corpus is at/over target with no creds (else the ban never takes)
     store_reach = load_store_reach(cfg)
     cands: list[dict] = []
     if cfg.meta_graph_token and cfg.meta_ig_user_id:
@@ -132,12 +136,14 @@ def refresh_persona_corpus(cfg: Config, pid: str, *, get=None, now=None) -> dict
                                 get=get, offline_fallback=False)
     elif len(corpus) < target:
         cands = [{"tag": t} for t in research_corpus(cfg, pid, limit=target - len(corpus))]
+    elif corpus_has_ban:
+        cands = []          # nothing to ADD, but fall through so `final` (ban-stripped) is written -> the ban is purged
     else:
         return {"changed": False}
     screened = _screen_content([c["tag"] for c in cands if isinstance(c, dict) and c.get("tag")], cfg)
     cand_by_tag = {_norm(c["tag"]): c for c in cands if isinstance(c, dict) and _norm(c.get("tag", ""))}
-    novel = [t for t in screened if _norm(t) not in have]
-    pool = list(dict.fromkeys(auto + novel))
+    novel = _strip_banned([t for t in screened if _norm(t) not in have], bans)   # U11: a banned discovered tag never re-enters (store refresh must not resurrect a ban)
+    pool = _strip_banned(list(dict.fromkeys(auto + novel)), bans)                 # belt-and-suspenders: no banned tag reaches new_auto/final
     pool.sort(key=lambda t: _reach_key(t, cand_by_tag, store_reach, meta), reverse=True)
     new_auto = pool[:auto_slots] if auto_slots else []
     final = pinned + new_auto

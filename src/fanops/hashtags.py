@@ -91,6 +91,53 @@ def load_store_reach(cfg) -> dict[str, float]:
     except (OSError, json.JSONDecodeError, ValueError, TypeError):
         return {}
 
+def load_bans(cfg) -> set[str]:
+    """U11: the operator's GLOBAL hashtag deny-list (00_control/hashtag_bans.json `{"bans": [...]}`),
+    normalized. A tag here NEVER ships — it is stripped from vet_hashtags' selection AND from the S12
+    auto-accept corpus refresh (ban beats pin). Corrupt / missing / mis-shaped -> set() (no bans, fail-open
+    — a torn file must not crash a run; the negative gate simply doesn't apply). Never raises."""
+    p = cfg.hashtag_bans_path
+    if not p.exists():
+        return set()
+    try:
+        d = json.loads(p.read_text())
+        bans = d.get("bans") if isinstance(d, dict) else None
+        return {_norm(t) for t in bans if isinstance(t, str) and _norm(t)} if isinstance(bans, list) else set()
+    except (OSError, json.JSONDecodeError, ValueError, TypeError):
+        return set()
+
+def _strip_banned(tags: list[str], bans: set[str]) -> list[str]:
+    """Drop every banned tag from an ordered tag list (normalization-insensitive), preserving order.
+    bans empty -> byte-identical (the list is returned filtered on an empty set = unchanged)."""
+    if not bans:
+        return list(tags)
+    return [t for t in tags if _norm(t) not in bans]
+
+def add_ban(cfg, tag: str) -> None:
+    """Add ONE tag to the global ban list — normalized, deduped, atomic (flock'd read-modify-write +
+    os.replace). An empty/blank tag is a no-op. Mirrors record_query's flock idiom. Best-effort persist:
+    on a write/lock failure the ban simply isn't recorded (the file stays as it was), never raises a run."""
+    h = _norm(tag)
+    if not h:
+        return
+    from fanops.controlio import write_json_atomic
+    from fanops.ledger import _file_lock       # lazy: reuse the proven fcntl flock (accounts.py pattern) without a top-level cycle
+    with _file_lock(cfg.hashtag_bans_lock):
+        bans = sorted(load_bans(cfg) | {h})
+        write_json_atomic(cfg.hashtag_bans_path, {"bans": bans})
+
+def remove_ban(cfg, tag: str) -> None:
+    """Remove ONE tag from the global ban list atomically (normalization-insensitive). A tag not present
+    is a clean no-op. Mirrors add_ban's flock'd read-modify-write."""
+    h = _norm(tag)
+    if not h:
+        return
+    from fanops.controlio import write_json_atomic
+    from fanops.ledger import _file_lock
+    with _file_lock(cfg.hashtag_bans_lock):
+        bans = sorted(load_bans(cfg) - {h})
+        write_json_atomic(cfg.hashtag_bans_path, {"bans": bans})
+
 def vetted_menu(store: list[str] | None = None, genre: str | None = None) -> list[str]:
     """The vetted tags as one flat, reach-ordered, de-duplicated list — the MENU the caption prompt
     tells the model to pick from. With a live `store` (M4) it IS the menu; else the niche floor for
@@ -198,12 +245,16 @@ def vet_hashtags(tags: list[str] | None, platform: Platform, language: str | Non
     `content` (per-clip content-derived tags, content_tag_candidates) ALSO joins the membership so a
     clip-specific tag the model picked SURVIVES, floats just behind the corpus (clip info ahead of reach),
     and RESERVES one slot so the clip's own information always reaches the line when present.
-    content=None/empty -> byte-identical (no membership change, no float, no reserved slot)."""
-    corpus_norm = _dedupe_norm(corpus)
-    content_norm = _screen_content(_dedupe_norm(content), cfg)   # MOL-76: brand-risk screen the raw-transcript floor BEFORE it joins the gate/floats/floors
-    vetted = ((set(store) if store else set(niche_floor(genre)) | set(_ARABIC)
+    content=None/empty -> byte-identical (no membership change, no float, no reserved slot).
+    `cfg` (U11): when passed, load_bans(cfg) is a hard NEGATIVE gate — a banned tag is stripped from the
+    corpus, the content floor, the vetted membership, the backfill, AND the final line, so it NEVER ships
+    even when curated/pinned (ban beats pin). cfg=None -> bans=set() -> byte-identical to today."""
+    bans = load_bans(cfg) if cfg is not None else set()   # U11: the operator's global deny-list. cfg=None -> empty -> byte-identical.
+    corpus_norm = _strip_banned(_dedupe_norm(corpus), bans)   # U11: a banned tag never leads/floors/reserves — even when curated (ban beats pin)
+    content_norm = _strip_banned(_screen_content(_dedupe_norm(content), cfg), bans)   # MOL-76 brand-screen THEN U11 ban-strip the raw-transcript floor BEFORE it joins the gate/floats/floors
+    vetted = (((set(store) if store else set(niche_floor(genre)) | set(_ARABIC)
                | {t for v in _DISCOVERY.values() for t in v})
-              | set(corpus_norm) | set(content_norm))   # corpus + content join the gate
+              | set(corpus_norm) | set(content_norm)) - bans)   # corpus + content join the gate; U11: bans leave the membership (so the model can't pick one)
     base_rank = {t: i for i, t in enumerate(store)} if store else dict(_RANK)
     # Preference float ahead of the frozen rank: corpus (operator curation) > content (clip info).
     preferred: list[str] = []
@@ -254,9 +305,9 @@ def vet_hashtags(tags: list[str] | None, platform: Platform, language: str | Non
     # exhausted. content=[] -> identical tail -> byte-identical.
     for h in corpus_norm + disc_floor + (store or []) + _composition(platform, language, genre) + content_norm:
         if len(kept) >= max_tags: break
-        if h not in seen:
+        if h not in seen and _norm(h) not in bans:   # U11: a banned store/discovery/composition backfill tag never takes a slot (a good tag fills it)
             seen.add(h); kept.append(h)
-    return kept[:max_tags]                           # hard cap
+    return _strip_banned(kept, bans)[:max_tags]      # hard cap; U11: final guarantee no banned tag ships (bans empty -> byte-identical)
 
 _ARABIC_SET = set(_ARABIC)
 _DISCOVERY_SET = {t for v in _DISCOVERY.values() for t in v}

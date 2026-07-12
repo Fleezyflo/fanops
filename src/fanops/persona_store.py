@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 from fanops.config import Config
-from fanops.hashtags import _norm
+from fanops.hashtags import _norm, _strip_banned, load_bans
 from fanops.controlio import load_raw_list, write_json_atomic   # shared atomic control-file IO
 from fanops.personas import (CONTENT_FOCUS, SELECTION_SCOPE_LEVELS, HOOK_ANGLES, Personas, _slug)
 
@@ -191,12 +191,13 @@ def apply_auto_corpus(cfg: Config, pid: str, *, tags: list[str], meta: dict[str,
             existing_meta = d.get("hashtag_corpus_meta") if isinstance(d.get("hashtag_corpus_meta"), dict) else {}
             cur = d.get("hashtag_corpus") if isinstance(d.get("hashtag_corpus"), list) else []
             cur_norm = [_norm(t) for t in cur if isinstance(t, str) and _norm(t)]
-            pinned: list[str] = []; pseen: set[str] = set()
-            for t in cur_norm:
+            bans = load_bans(cfg)          # U11: ban BEATS pin — a banned tag is NOT re-preserved as pinned here
+            pinned: list[str] = []; pseen: set[str] = set()   # (this writer reconstructs pinned from the FILE, so the ban must apply at the write too, else refresh_persona_corpus' strip is undone)
+            for t in _strip_banned(cur_norm, bans):
                 if _is_pinned(existing_meta, t) and t not in pseen:
                     pseen.add(t); pinned.append(t)
             incoming: list[str] = []; iseen: set[str] = set()
-            for t in tags:
+            for t in _strip_banned(list(tags), bans):   # U11: and a banned incoming auto tag never lands
                 n = _norm(t) if isinstance(t, str) else ""
                 if n and n not in iseen: iseen.add(n); incoming.append(n)
             out: list[str] = []; oseen: set[str] = set()
