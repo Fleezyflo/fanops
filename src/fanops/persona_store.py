@@ -6,6 +6,7 @@ never leaves a torn file. The validators are the WRITE boundary — a typo'd lev
 so the file never lands a record that won't reload. All names are re-exported from fanops.personas."""
 from __future__ import annotations
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 from fanops.config import Config
@@ -170,6 +171,55 @@ def update_persona(cfg: Config, pid: str, *, name=_UNSET, voice=_UNSET, intake=_
     return pid
 
 
+def _is_pinned(meta: dict, tag: str) -> bool:
+    """Legacy tags with no meta entry are pinned; explicit source=pinned stays pinned."""
+    m = meta.get(tag) if isinstance(meta.get(tag), dict) else None
+    if m is None: return True
+    return (m.get("source") or "pinned") == "pinned"
+
+
+def apply_auto_corpus(cfg: Config, pid: str, *, tags: list[str], meta: dict[str, dict]) -> None:
+    """Atomic writer inside _personas_txn: set hashtag_corpus (normalized, deduped, ≤ _CORPUS_CAP) and merge the
+    hashtag_corpus_meta sidecar. NEVER removes or overwrites pinned tags (source=pinned or legacy=no meta); auto
+    slots fill/prune only the non-pinned tail."""
+    p = cfg.personas_path
+    with _personas_txn(cfg):
+        raw, plist = _load_raw(p)
+        found = False
+        for d in plist:
+            if not (isinstance(d, dict) and d.get("id") == pid): continue
+            existing_meta = d.get("hashtag_corpus_meta") if isinstance(d.get("hashtag_corpus_meta"), dict) else {}
+            cur = d.get("hashtag_corpus") if isinstance(d.get("hashtag_corpus"), list) else []
+            cur_norm = [_norm(t) for t in cur if isinstance(t, str) and _norm(t)]
+            pinned: list[str] = []; pseen: set[str] = set()
+            for t in cur_norm:
+                if _is_pinned(existing_meta, t) and t not in pseen:
+                    pseen.add(t); pinned.append(t)
+            incoming: list[str] = []; iseen: set[str] = set()
+            for t in tags:
+                n = _norm(t) if isinstance(t, str) else ""
+                if n and n not in iseen: iseen.add(n); incoming.append(n)
+            out: list[str] = []; oseen: set[str] = set()
+            for t in pinned:
+                if t not in oseen: oseen.add(t); out.append(t)
+            for t in incoming:
+                if t in pseen or t in oseen: continue
+                oseen.add(t); out.append(t)
+            if len(out) > _CORPUS_CAP: out = out[:_CORPUS_CAP]
+            merged = dict(existing_meta)
+            for k, v in meta.items():
+                nk = _norm(k) if isinstance(k, str) else ""
+                if not nk or not isinstance(v, dict): continue
+                if not _is_pinned(merged, nk):
+                    merged[nk] = v
+            d["hashtag_corpus"] = out
+            d["hashtag_corpus_meta"] = {t: merged[t] for t in out if t in merged}
+            found = True
+        if not found:
+            raise KeyError(pid)
+        write_json_atomic(p, raw)
+
+
 def add_corpus_tag(cfg: Config, pid: str, tag: str) -> str:
     """Add ONE hashtag to a persona's curated corpus atomically — normalized (#prefix, lowercase),
     deduped, capped at _CORPUS_CAP. Empty tag -> ValueError. Unknown id -> KeyError."""
@@ -192,6 +242,9 @@ def add_corpus_tag(cfg: Config, pid: str, tag: str) -> str:
                 if len(out) > _CORPUS_CAP:
                     raise ValueError(f"corpus full ({_CORPUS_CAP} tags) — remove one before adding {h}")
                 d["hashtag_corpus"] = out
+                meta = d.get("hashtag_corpus_meta") if isinstance(d.get("hashtag_corpus_meta"), dict) else {}
+                meta[h] = {"source": "pinned", "reach": None, "added": datetime.now(timezone.utc).isoformat()}
+                d["hashtag_corpus_meta"] = meta
                 found = True
         if not found:
             raise KeyError(pid)

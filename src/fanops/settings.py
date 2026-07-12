@@ -19,7 +19,7 @@ _VALID_BACKENDS = frozenset({"dryrun", "postiz", "zernio"})
 _VALID_RESPONDERS = frozenset({"llm", "manual"})
 PosterBackend = Literal["dryrun", "postiz", "zernio"]
 _BOOL_ENV_FIELDS = (
-    "FANOPS_LIVE", "FANOPS_HASHTAG_TRENDS", "FANOPS_REQUIRE_FULL_OBJECTIVE", "FANOPS_SMART_FRAMING",
+    "FANOPS_LIVE", "FANOPS_HASHTAG_TRENDS", "FANOPS_CORPUS_AUTO", "FANOPS_REQUIRE_FULL_OBJECTIVE", "FANOPS_SMART_FRAMING",
     "FANOPS_VISUAL_START", "FANOPS_ISOLATE_VOCALS", "FANOPS_BURN_SUBS", "FANOPS_AWARE_REFRAME",
     "FANOPS_ACCOUNT_CASTING", "FANOPS_HOOK_ROUTER", "FANOPS_IMPACT_CUT", "FANOPS_INTRO_TEASE",
     "FANOPS_VARIANT_LEARNING", "FANOPS_VARIANT_AMPLIFY", "FANOPS_VARIANT_UCB", "FANOPS_VARIANT_TRANSFER",
@@ -139,6 +139,8 @@ class Settings(BaseSettings):
     META_IG_USER_ID: str | None = None
     META_GRAPH_URL: str = ""
     FANOPS_HASHTAG_TRENDS: str = ""
+    FANOPS_CORPUS_AUTO: str = ""
+    FANOPS_CORPUS_TARGET: int = 12
     FANOPS_REQUIRE_FULL_OBJECTIVE: str = ""
     FANOPS_RESPONDER: str = ""
     FANOPS_LLM_MODEL: str = ""
@@ -195,6 +197,12 @@ class Settings(BaseSettings):
                      "XDG_CACHE_HOME", mode="before")
     @classmethod
     def _opt_str(cls, v): return _strip_opt(v)
+
+    @field_validator("FANOPS_CORPUS_TARGET", mode="before")
+    @classmethod
+    def _corpus_target(cls, v):
+        iv = _parse_int(v, 12)
+        return iv if iv >= 1 else 12
 
     @field_validator("FANOPS_VARIANT_MIN_POSTS", mode="before")
     @classmethod
