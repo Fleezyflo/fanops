@@ -176,20 +176,23 @@ def test_panel_shows_next_blocker_banner(tmp_path, monkeypatch):
     assert "Next:" in html and "connect Postiz or Zernio first" in html
 
 
-def test_panel_readiness_matrix_fresh_all_x(tmp_path, monkeypatch):
+def test_panel_onboarding_card_fresh_all_x(tmp_path, monkeypatch):
+    # U12: the per-channel truth moved from the fleet readiness-matrix into each account's card ladder — a
+    # fresh (nothing-mapped) channel shows every ladder rung failing (✗). Same truth, re-grouped by account.
     cfg = _clean(monkeypatch, tmp_path)
     _seed(cfg, [{"handle": "ig", "account_id": "", "platforms": ["instagram"], "status": "active"}])
     html = _client(cfg).get("/golive").get_data(as_text=True)
-    assert "readiness-matrix" in html
-    assert html.count("✗") >= 5                              # mapped/creds/persona etc all fail
+    assert "onboarding-card" in html and "onboarding-ladder" in html
+    assert html.count("✗") >= 5                              # mapped/creds/persona etc all fail in the ladder
 
 
-def test_panel_readiness_matrix_live_ready_all_check(tmp_path, monkeypatch):
+def test_panel_onboarding_card_live_ready_all_check(tmp_path, monkeypatch):
+    # U12: a live-ready channel's card ladder shows the rungs passing (✓) and the card reads ready.
     cfg = _clean(monkeypatch, tmp_path); monkeypatch.setenv("ZERNIO_API_KEY", "sk")
     _seed(cfg, [{"handle": "tk", "account_id": "", "platforms": ["tiktok"], "status": "active",
                  "integrations": {"tiktok": "tk_1"}, "backends": {"tiktok": "zernio"}, "persona": "v"}])
     html = _client(cfg).get("/golive").get_data(as_text=True)
-    assert "readiness-matrix" in html and "channel-ready" in html
+    assert "onboarding-card" in html and "onboarding-ladder" in html
     assert "✓" in html
 
 

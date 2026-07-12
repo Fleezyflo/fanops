@@ -1,8 +1,11 @@
 {# src/fanops/studio/templates/_golive_panel.html — the Go-Live tab body, htmx-swapped in place
-   (#golive-panel). Add accounts, map each (handle × platform) channel to its own Postiz integration,
-   see readiness, flip dryrun<->live. The API key is WRITE-ONLY: never rendered (status.key_set is a
-   bool); autoescape stays on (no |safe). Each form swaps the whole panel (outerHTML) so the mode
-   banner + checks update after every action. #}
+   (#golive-panel). U12 ACCOUNT-CENTRIC: onboarding is now ONE card per handle (status.account_cards),
+   each carrying its own channel ladder + a single next-action CTA that deep-links to the exact form that
+   clears it — so onboarding one account never means hopping stations. The station VERBS are unchanged
+   (every hx-post endpoint / field name / hx-target / hx-swap is byte-identical); only the IA moved. The
+   go_live gate order is untouched. The API key / Meta token stay WRITE-ONLY: never rendered (bools only);
+   autoescape stays on (no |safe). Each form swaps the whole panel (outerHTML) so the mode banner + checks
+   update after every action. #}
 <div id="golive-panel" aria-live="polite">
   {% set gs = step|default(none) %}
   {% if status.half_live %}
@@ -36,7 +39,7 @@
   {% endif %}
 
   {% if gs is none or gs == 'connect' %}
-  <details class="golive-step disclosure-step" {% if not (status.key_set or status.zernio_key_set) %}open{% endif %}>
+  <details id="golive-connect" class="golive-step disclosure-step" {% if not (status.key_set or status.zernio_key_set) %}open{% endif %}>
     <summary class="step-summary">1 · Connect Postiz
       {%- if status.key_set %} <span class="step-done">✓ Postiz</span>{% endif %}
       {%- if status.zernio_key_set %} <span class="step-done">✓ Zernio</span>{% endif %}
@@ -68,35 +71,45 @@
   </details>
 
   {% endif %}
-  {% if gs is none or gs == 'accounts' %}
-  <details class="golive-step disclosure-step" {% if not status.accounts %}open{% endif %}>
-    <summary class="step-summary">2 · Add an account
-      {%- if status.accounts %} <span class="step-done">✓ {{ status.accounts|length }} active</span>{% endif %}</summary>
-    <p class="muted">Add a handle and tick the platforms it posts to — no JSON editing. It lands active,
-      ready to map below. (FanOps never logs into the social network; Postiz holds the channel auth.)</p>
-    <form hx-post="{{ url_for('do_golive_account_add') }}" hx-target="#golive-panel" hx-swap="outerHTML">
-      <label>Handle <input type="text" name="handle" placeholder="@newaccount" size="20"></label>
-      <span class="platforms">
-        {% for p in all_platforms %}
-          <label class="platform-pick"><input type="checkbox" name="platform" value="{{ p }}"> {{ p }}</label>
-        {% endfor %}
-      </span>
-      <label>Persona <input type="text" name="persona" placeholder="optional — caption voice" size="24"></label>
-      <button type="submit">Add account</button>
-    </form>
-  </details>
+  {% if gs is none or gs == 'accounts' or not status.accounts %}
+  {# U12 acceptance #5: a fresh workspace must show the add-account affordance FIRST, never a dead-end —
+     so it renders on the accounts step AND whenever there are no active accounts yet. #}
+  <article class="onboarding-new-card golive-step">
+    <details class="disclosure-step" {% if not status.accounts %}open{% endif %}>
+      <summary class="step-summary">2 · Add an account
+        {%- if status.accounts %} <span class="step-done">✓ {{ status.accounts|length }} active</span>{% endif %}</summary>
+      <p class="muted">Add a handle and tick the platforms it posts to — no JSON editing. It lands active,
+        then its card below walks you through the rest. (FanOps never logs into the social network; Postiz
+        holds the channel auth.)</p>
+      <form hx-post="{{ url_for('do_golive_account_add') }}" hx-target="#golive-panel" hx-swap="outerHTML">
+        <label>Handle <input type="text" name="handle" placeholder="@newaccount" size="20"></label>
+        <span class="platforms">
+          {% for p in all_platforms %}
+            <label class="platform-pick"><input type="checkbox" name="platform" value="{{ p }}"> {{ p }}</label>
+          {% endfor %}
+        </span>
+        <label>Persona <input type="text" name="persona" placeholder="optional — caption voice" size="24"></label>
+        <button type="submit">Add account</button>
+      </form>
+    </details>
+  </article>
 
   {% endif %}
-  {% if gs is none or gs == 'live' %}
+  {% if gs is none or gs == 'accounts' or gs == 'live' %}
+  {# 3 · Map channels & tune accounts — the account cards live here (the per-channel ladder + CTA replace the
+     end-of-page fleet matrix). Fleet-wide affordances (Discover, casting/clip tuning) stay global, above/below
+     the cards; the per-account map / backend / persona / Meta-creds forms RELOCATE into each card body. #}
   <section class="golive-step">
     {% set map_done = status.channels and status.channels|rejectattr('mapped')|list|length == 0 and status.channels|rejectattr('backend')|list|length == 0 %}
     {% set persona_done = status.channels and status.channels|rejectattr('persona')|list|length == 0 %}
     <h3>3 · Map channels &amp; tune accounts
       {%- if map_done %} <span class="step-done">✓ mapped</span>{% endif %}
       {%- if persona_done %} <span class="step-done">✓ personas</span>{% endif %}</h3>
-    <p class="muted">One-click: <strong>Discover</strong> lists every channel your connected schedulers
-      (Postiz + Zernio) already hold and proposes a handle for each — tick the ones to adopt, edit the
-      handle, optionally route them live. Or map a channel manually below.</p>
+    <p class="muted">One card per account below — each shows its channel ladder and the single next thing to do.
+      <strong>Discover</strong> lists every channel your connected schedulers (Postiz + Zernio) already hold so
+      you can adopt them in one click.</p>
+
+    {# fleet discover + refresh — ONE global block above the cards (never duplicated per card) #}
     <form hx-post="{{ url_for('do_golive_discover') }}" hx-target="#golive-panel" hx-swap="outerHTML">
       <button type="submit" class="primary">Discover channels (Postiz + Zernio)</button>
     </form>
@@ -106,7 +119,7 @@
     {% if yt_wanted and discovered is not none and yt_discovered|length == 0 %}
       <div class="youtube-checklist banner" role="note">
         <strong>YouTube:</strong> your account targets YouTube but Discover found no YouTube channels on the
-        connected schedulers — map a YouTube integration manually below or connect YouTube inside Postiz/Zernio first.
+        connected schedulers — map a YouTube integration manually in its card below or connect YouTube inside Postiz/Zernio first.
       </div>
     {% endif %}
     {% if discovered is not none %}
@@ -143,119 +156,24 @@
     </form>
     {% set integrations = (result.detail.get('integrations') if (result and result.detail and result.detail.get('integrations')) else None) %}
     {% if integrations %}
-      <p class="muted">Found {{ integrations|length }} integration(s) — pick one per channel, then Save.</p>
+      <p class="muted">Found {{ integrations|length }} integration(s) — pick one per channel in its card, then Save.</p>
     {% endif %}
-    {% if status.accounts %}
-      <form hx-post="{{ url_for('do_golive_map') }}" hx-target="#golive-panel" hx-swap="outerHTML">
-        <table class="golive-map">
-          {% for a in status.accounts %}
-            {% for ch in a.channels %}
-              <tr>
-                <td><strong>{{ a.handle }}</strong> <span class="muted">{{ ch.platform }}</span></td>
-                <td>
-                  {% if integrations %}
-                    {% set matches = integrations|selectattr('platform', 'equalto', ch.platform)|list %}
-                    {% set opts = matches if matches else integrations %}
-                    <select name="map__{{ a.handle }}__{{ ch.platform }}" aria-label="Postiz integration for {{ a.handle }} {{ ch.platform }}">
-                      <option value="">— keep current ({{ ch.integration_id or 'unmapped' }}) —</option>
-                      {% for it in opts %}
-                        <option value="{{ it.id }}" {{ 'selected' if it.id == ch.integration_id else '' }}>{{ it.name }} · {{ it.platform }} ({{ it.id }})</option>
-                      {% endfor %}
-                    </select>
-                  {% else %}
-                    <span class="muted">current: {{ ch.integration_id or 'unmapped' }}</span>
-                    <input type="text" name="map__{{ a.handle }}__{{ ch.platform }}" placeholder="paste integration id (or Refresh to pick)">
-                  {% endif %}
-                </td>
-              </tr>
-            {% endfor %}
-          {% endfor %}
-        </table>
-        <button type="submit">Save channel mappings</button>
-      </form>
-      <details class="channel-backends golive-sub">
-        <summary class="sub-summary"><strong>Scheduler per channel</strong> <span class="muted">— advanced routing (IG via Postiz, TikTok via Zernio)</span></summary>
-        <p class="muted">Which backend publishes each channel. <em>default</em> = the global. Routing a channel
-          to a LIVE backend (Postiz / Zernio) needs that scheduler connected above + a confirm — it's a
-          per-account go-live.</p>
-        {% for a in status.accounts %}{% for ch in a.channels %}
-        <form class="channel-backend-row meta" hx-post="{{ url_for('do_golive_account_backend') }}" hx-target="#golive-panel" hx-swap="outerHTML">
-          <input type="hidden" name="handle" value="{{ a.handle }}">
-          <input type="hidden" name="platform" value="{{ ch.platform }}">
-          <span><strong>{{ a.handle }}</strong> <span class="muted">{{ ch.platform }}</span> → <span class="ro">{{ ch.backend or 'default' }}</span></span>
-          <label class="backend-pick">backend
-            <select name="backend" aria-label="Scheduler backend for {{ a.handle }} {{ ch.platform }}">
-              <option value="default" {{ 'selected' if not ch.backend else '' }}>default (global)</option>
-              {% for b in ['postiz', 'zernio', 'dryrun'] %}<option value="{{ b }}" {{ 'selected' if b == ch.backend else '' }}>{{ b }}</option>{% endfor %}
-            </select></label>
-          <label class="confirm">⚠ <input type="checkbox" name="confirm" value="1"> publish to the REAL account</label>
-          <button type="submit">Set backend</button>
-        </form>
-        {% endfor %}{% endfor %}
-      </details>
-      <details class="account-meta-creds golive-sub">
-        <summary>Per-account Meta credentials <span class="muted">(optional — for multi-handle IG insights)</span></summary>
-        <p class="muted">Each IG handle can carry its OWN Meta Graph IG Business user id + access token, so
-          insights &amp; live-linking read the RIGHT handle instead of the single global <code>META_IG_USER_ID</code>.
-          The id is stored in accounts.json; the token is write-only (a per-handle <code>.env</code> key) and never shown back.
-          Leave blank to use the global credential.</p>
-        {% for a in status.accounts %}
-        <form class="meta-creds-row meta" hx-post="{{ url_for('do_golive_account_meta_creds') }}" hx-target="#golive-panel" hx-swap="outerHTML">
-          <input type="hidden" name="handle" value="{{ a.handle }}">
-          <span><strong>{{ a.handle }}</strong>
-            {% if a.meta_token_set %}<span class="chip ok" title="A per-handle Graph access token is set">✦ token set</span>
-            {% else %}<span class="chip ro" title="No per-handle token — uses the global META_GRAPH_TOKEN">○ global token</span>{% endif %}</span>
-          <label>IG user id <input type="text" name="ig_user_id" value="{{ a.ig_user_id }}" placeholder="global" size="18" aria-label="Meta IG user id for {{ a.handle }}"></label>
-          <label>access token <input type="password" name="token" placeholder="{{ 'unchanged' if a.meta_token_set else 'global' }}" size="18" autocomplete="off" aria-label="Meta access token for {{ a.handle }} (write-only)"></label>
-          <button type="submit">Save Meta creds</button>
-        </form>
+
+    {# the account cards — one per handle (active first, then demoted), each a re-projection of channel_readiness #}
+    {% if status.account_cards %}
+      <div class="onboarding-cards">
+        {% for card in status.account_cards %}
+          {% include "_golive_account_card.html" %}
         {% endfor %}
-      </details>
-      <div class="account-manage">
-        <p class="muted">Link each account to a persona (voice + hashtags), or demote/remove it. Demote stops
-          publishing but keeps the row + history; remove clears a placeholder.</p>
-        {% for a in status.accounts %}
-        <div class="account-row meta">
-          {# S8: the account→persona LINK state — a first-class Persona record (persona_id) drives the
-             voice/corpus hydration; an unlinked account uses only inline text. #}
-          <span><strong>{{ a.handle }}</strong>
-            {% if a.persona_id %}<span class="chip ok persona-linked" title="Linked to the '{{ a.persona_id }}' persona — its voice / corpus hydrate this account">✦ persona: {{ a.persona_id }}</span>
-            {% else %}<span class="chip ro no-persona" title="No first-class persona linked — uses inline text only">○ no persona</span>{% endif %}</span>
-          {% if not a.persona_id %}<p class="muted"><a href="{{ url_for('personas_view') }}">Link a first-class persona → Personas tab</a></p>{% endif %}
-          <form class="persona-edit" hx-post="{{ url_for('do_golive_account_persona') }}" hx-target="#golive-panel" hx-swap="outerHTML">
-            <input type="hidden" name="handle" value="{{ a.handle }}">
-            <label class="persona-pick">persona
-              <textarea name="persona" rows="2" aria-label="Persona for {{ a.handle }}" placeholder="What this account clips + its hook angle">{{ a.persona or '' }}</textarea></label>
-            <button type="submit">Save persona</button>
-          </form>
-          <form hx-post="{{ url_for('do_golive_account_demote') }}" hx-target="#golive-panel" hx-swap="outerHTML"
-                hx-confirm="Demote {{ a.handle }} to planned? It stops publishing but keeps its row.">
-            <input type="hidden" name="handle" value="{{ a.handle }}">
-            <button type="submit">Demote</button>
-          </form>
-          <form hx-post="{{ url_for('do_golive_account_remove') }}" hx-target="#golive-panel" hx-swap="outerHTML"
-                hx-confirm="Remove {{ a.handle }} entirely? This deletes it from accounts.json.">
-            <input type="hidden" name="handle" value="{{ a.handle }}">
-            <button type="submit" class="danger">Remove</button>
-          </form>
-        </div>
-        {% endfor %}
-        {% if status.demoted %}
-        <div class="account-row meta demoted-accounts">
-          <p class="muted">Demoted (planned) accounts — not publishing. Promote to re-activate (a demote is no longer one-way).</p>
-          {% for a in status.demoted %}
-          <span><strong>{{ a.handle }}</strong> <span class="muted">demoted</span>
-            {% if a.persona_id %}<span class="chip ro persona-linked" title="Was linked to the '{{ a.persona_id }}' persona before demotion">✦ persona: {{ a.persona_id }}</span>{% endif %}</span>
-          <form hx-post="{{ url_for('do_golive_account_promote') }}" hx-target="#golive-panel" hx-swap="outerHTML">
-            <input type="hidden" name="handle" value="{{ a.handle }}">
-            <button type="submit">Promote to active</button>
-          </form>
-          {% endfor %}
-        </div>
-        {% endif %}
       </div>
+    {% else %}
+      <p class="muted">No active accounts yet — add one above, then its card walks you through mapping its channels.</p>
+    {% endif %}
+
+    {% if status.accounts %}
+      {# fleet content tuning (casting / clip length) — NOT per-account onboarding, so it stays global here #}
       <details class="golive-sub content-diff">
-        <summary class="sub-summary"><strong>Content &amp; differentiation</strong> <span class="muted">— casting · clip length</span></summary>
+        <summary class="sub-summary"><strong>Content &amp; differentiation</strong> <span class="muted">— casting · clip length (fleet-wide)</span></summary>
       <div class="account-hooks routing-casting">
         <p class="muted"><strong>Routing / casting</strong> — how moments are distributed across accounts, plus clip length.
           Default: casting ON (each account gets its own selected moments).</p>
@@ -284,11 +202,11 @@
         </form>
       </div>
       </details>
-    {% else %}
-      <p class="muted">No active accounts yet — add one above, then map its channels here.</p>
     {% endif %}
   </section>
 
+  {% endif %}
+  {% if gs is none or gs == 'live' %}
   <section class="golive-step">
     <h3>4 · Readiness</h3>
     <div class="deps-live" hx-get="{{ url_for('do_golive_health') }}" hx-trigger="load" hx-target="this" hx-swap="innerHTML">
@@ -305,25 +223,10 @@
   <section class="golive-step golive-flip">
     {% set golive_ready = status.channels|selectattr('ready')|list|length > 0 %}
     <h3>5 · Go live{%- if golive_ready %} <span class="step-done">✓ ready</span>{% endif %}</h3>
-    {% if status.channels %}
-    <table class="readiness-matrix golive-map">
-      <tr><th>handle</th><th>platform</th><th>backend</th><th>mapped</th><th>creds</th><th>persona</th><th>window</th><th>blocker</th></tr>
-      {% for ch in status.channels %}
-      <tr class="{{ 'channel-ready' if ch.ready else '' }}">
-        <td><strong>{{ ch.handle }}</strong></td>
-        <td>{{ ch.platform }}</td>
-        <td>{{ ch.backend or '—' }}</td>
-        <td>{{ '✓' if ch.mapped else '✗' }}</td>
-        <td>{{ '✓' if ch.creds else '✗' }}</td>
-        <td>{{ '✓' if ch.persona else '✗' }}</td>
-        <td>{{ '✓' if ch.window else '✗' }}</td>
-        <td>{% if ch.first_blocker %}<span class="muted">{{ ch.first_blocker }}</span>{% else %}—{% endif %}</td>
-      </tr>
-      {% endfor %}
-    </table>
-    {% endif %}
+    <p class="muted">Per-channel readiness is on each account's card above. Arming publishes every reviewed post
+      to real accounts — it needs at least one channel fully ready (mapped · creds · persona · routed).</p>
     {% if status.half_live %}
-      <p class="muted">The LIVE flag is set but nothing routes live — posts stay queued. Route a channel to a live backend above, or flip back to dryrun.</p>
+      <p class="muted">The LIVE flag is set but nothing routes live — posts stay queued. Route a channel to a live backend in its card above, or flip back to dryrun.</p>
       <form hx-post="{{ url_for('do_golive_dryrun') }}" hx-target="#golive-panel" hx-swap="outerHTML">
         <button type="submit">Back to dryrun</button>
       </form>
