@@ -14,7 +14,6 @@ from flask import Flask, abort, render_template, request, send_file
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Platform
-from fanops.discover import make_thumbnail        # reuse the cheap one-frame ffmpeg extractor for clip posters
 from fanops.studio import views, actions
 from fanops.personas import lever_catalog        # the code-derived lever catalog (every option + its real effect)
 from fanops.timeutil import local_input_to_utc_z, to_local_display, to_local_display_hybrid, to_local_input  # local-time rendering at the web boundary
@@ -570,31 +569,20 @@ def create_app(cfg: Config) -> Flask:
             abort(404)
         return send_file(path, mimetype="image/jpeg")
 
+    @app.get("/thumb/source/<source_id>")
+    def thumb_source(source_id):
+        from fanops.studio.thumb_media import resolve_source_thumb
+        return resolve_source_thumb(cfg, source_id)
+
+    @app.get("/thumb/clip/<clip_id>")
+    def thumb_clip(clip_id):
+        from fanops.studio.thumb_media import resolve_clip_thumb
+        return resolve_clip_thumb(cfg, clip_id)
+
     @app.get("/clip-thumb/<clip_id>")
     def clip_thumb(clip_id):
-        # A cached JPEG first-frame for a clip, so the grid's <video preload="none"> shows a real
-        # frame (poster=) instead of a black box. Mirrors clip_media's ledger-resolve + _bounded
-        # path-safety; reuses discover.make_thumbnail (one ffmpeg frame). FAIL-OPEN: a missing clip,
-        # a vanished file, or ffmpeg absent/failing is a 404, never a 500 — the player just shows its
-        # own blank box, exactly as before, and the operator can still click to load the video.
-        if "/" in clip_id or "\\" in clip_id or ".." in clip_id:  # bare id only — mirror review_thumb's guard
-            abort(404)
-        clip = Ledger.load(cfg).clips.get(clip_id)
-        src = _bounded(cfg, clip.path if clip else None)
-        if not src or not os.path.exists(src):
-            abort(404)
-        cache = _bounded(cfg, cfg.clips / f"{clip_id}.jpg")   # cache next to the clip, inside cfg.base
-        if cache is None:
-            abort(404)
-        # Cache is FRESH only if it exists, is non-empty, AND is at least as new as the clip mp4. A
-        # re-rendered clip (new burned hook, SAME clip_id) bumps the mp4 mtime, so a poster older than
-        # the mp4 is stale and must be re-extracted — otherwise the cockpit shows the OLD hook forever.
-        fresh = (cache.exists() and cache.stat().st_size > 0
-                 and cache.stat().st_mtime >= os.path.getmtime(src))
-        if not fresh:                                         # absent / 0-byte partial / older than the clip -> (re)extract
-            if not make_thumbnail(src, cache, at_seconds=0.5) or cache.stat().st_size == 0:
-                abort(404)                                    # ffmpeg missing/failed/empty -> fail-open
-        return send_file(cache, mimetype="image/jpeg")
+        from fanops.studio.thumb_media import resolve_clip_thumb
+        return resolve_clip_thumb(cfg, clip_id)
 
     # ── A2: the Personas page — personas become editable/addable/connectable in the browser ───────────
     from fanops.studio.app_routes_personas import register_personas_routes

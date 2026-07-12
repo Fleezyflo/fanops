@@ -52,6 +52,62 @@ def _gates_for_source(cfg: Config, led: Ledger, source_id: str, *, pend: dict[st
     return {"moments": moments, "moment_hooks": hooks, "captions": captions}
 
 
+_APPROVED_STATES = frozenset({PostState.queued, PostState.submitting, PostState.submitted,
+                              PostState.published, PostState.analyzed})
+
+
+def _source_stats_ext(led: Ledger, source_id: str, moms: dict, clips_bm: dict, posts_bc: dict) -> dict:
+    """Per-source counts for source_progress (extends _source_stats with approval/edit buckets)."""
+    moments = moms.get(source_id, [])
+    clips = [c for m in moments for c in clips_bm.get(m.id, [])]
+    posts = [p for c in clips for p in posts_bc.get(c.id, [])]
+    return {"clips": len(clips), "posts": len(posts),
+            "approved": sum(1 for p in posts if p.state in _APPROVED_STATES),
+            "rejected": sum(1 for p in posts if p.state is PostState.rejected),
+            "edited": sum(1 for p in posts if p.edited_at),
+            "published": sum(1 for p in posts if p.state in (PostState.published, PostState.analyzed))}
+
+
+@dataclass
+class SourceProgress:
+    title: str
+    state: str
+    bucket: str
+    wait_line: Optional[str]
+    clips: int
+    posts: int
+    approved: int
+    rejected: int
+    edited: int
+    published: int
+
+
+def source_progress(cfg: Config) -> dict[str, SourceProgress]:
+    """Per-source progress read-model for library UI (fail-open -> {})."""
+    try:
+        led = Ledger.load(cfg)
+        moms, clips_bm, posts_bc = lineage_maps(led)
+        from fanops.pipeline_status import source_backlog
+        from fanops.studio.views_review import _source_label
+        bl = source_backlog(led, cfg)
+        backlog = {r.id: r for r in bl.rows}
+        out: dict[str, SourceProgress] = {}
+        for sid, src in led.sources.items():
+            stats = _source_stats_ext(led, sid, moms, clips_bm, posts_bc)
+            brow = backlog.get(sid)
+            out[sid] = SourceProgress(
+                title=_source_label(src), state=src.state.value,
+                bucket=brow.bucket if brow else "inventory",
+                wait_line=brow.wait_line if brow else None,
+                clips=stats["clips"], posts=stats["posts"], approved=stats["approved"],
+                rejected=stats["rejected"], edited=stats["edited"], published=stats["published"],
+            )
+        return out
+    except Exception as exc:
+        _log.warning("source_progress fail-open", exc_info=exc)
+        return {}
+
+
 def _source_stats(led: Ledger, source_id: str, moms: dict, clips_bm: dict, posts_bc: dict) -> dict:
     """≤6 stats for one source from pre-built lineage maps (O(1) per source on list)."""
     moments = moms.get(source_id, [])

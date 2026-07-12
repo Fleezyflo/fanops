@@ -86,6 +86,10 @@ def clear_time(cfg: Config, post_id: str, *, now: Optional[datetime] = None) -> 
     return ActionResult(ok=True, detail={"post_id": post_id})
 
 
+def _stamp_edited(led: Ledger, post_id: str, now: datetime) -> None:
+    led.posts[post_id].edited_at = iso_z(now)
+
+
 def edit_caption(cfg: Config, post_id: str, caption: str, *, now: Optional[datetime] = None) -> ActionResult:
     from fanops.caption import brand_risk_flag       # function-local: the ONE off-brand guardrail captions use (no module cycle)
     now = _now(now)
@@ -97,6 +101,7 @@ def edit_caption(cfg: Config, post_id: str, caption: str, *, now: Optional[datet
         if err:
             return ActionResult(ok=False, error=err)
         p.caption = caption
+        _stamp_edited(led, post_id, now)
     return ActionResult(ok=True, detail={"post_id": post_id, "caption": caption})
 
 
@@ -175,6 +180,7 @@ def regenerate_caption(cfg: Config, post_id: str, guidance: str = "", *,
             return ActionResult(ok=False, error=err2)
         p2.caption = new_caption
         p2.hashtags = new_tags
+        _stamp_edited(led2, post_id, _now(None))
     return ActionResult(ok=True, detail={"post_id": post_id, "caption": new_caption, "hashtags": new_tags})
 
 
@@ -215,6 +221,7 @@ def reburn_hook(cfg: Config, post_id: str, hook: str, *, now: Optional[datetime]
             led2.clips[rc.id] = rc.model_copy(
                 update={"state": orig.state, "meta_captions": _inherit_captions(orig.meta_captions)}
             ) if orig else rc
+            _stamp_edited(led2, post_id, _now(None))
     except Exception as exc:
         return ActionResult(ok=False, error=f"re-burn failed: {str(exc)[:160]}")
     return ActionResult(ok=True, detail={"post_id": post_id, "hook": hook, "hook_burned": hook_burned})
