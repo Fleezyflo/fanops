@@ -9,10 +9,15 @@ it never commits or pushes — workers push their own branches.
 
 ## Enforcement
 
-Cursor hook payloads carry NO caller identity, and `readonly` (the only per-agent write block) would
-also block the orchestrator's land. So the hard guarantees sit at boundaries the gate can judge from
-the command string / event payload alone: `.cursor/hooks.json` → `.cursor/hooks/orchestration_gate.py`,
-`failClosed: true`.
+One enforcement brain, two runtimes. All decision logic lives in
+`.cursor/hooks/orchestration_gate.py`; Cursor wires it via `.cursor/hooks.json` (`failClosed: true`),
+Claude Code via `.claude/settings.json` hooks through the thin adapter
+`.claude/hooks/orchestration_gate_claude.py`. Cursor hook payloads carry NO caller identity, so its
+guarantees sit at boundaries judged from the command string / event payload alone. Claude Code
+payloads DO carry the caller's `agent_type`, which enables two Claude-only upgrades: verification
+records are writable ONLY by a `fanops-worker` sub-agent, and Write/Edit of orchestration state or
+enforcement machinery is denied for everyone during a wave (the un-hookable-Write residual below is
+Cursor-only).
 
 The gate is INERT unless a wave is engaged — `FANOPS_ORCHESTRATED=1` or the
 `.orchestration/state/ACTIVE` marker (created by `orchestrate.py start`) — so committing the hooks
@@ -32,9 +37,10 @@ changes nothing for normal sessions. While active:
 | Done is measured, not declared | `orchestrate.py done` exits 0 only when `repo_sweep --require-pristine` is green (unmeasurable → exit 3, never a false done); exit 0 auto-disengages the wave. `stop` is operator-only — denied from inside a run. |
 
 **NOT enforced (residuals):**
-- Cursor's Write tool cannot be hooked: protected files can still be WRITTEN by any agent. The
-  land-time checks make such writes un-landable, not impossible. Keystroke-level prevention requires
-  the readonly option below.
+- CURSOR RUNTIME ONLY: Cursor's Write tool cannot be hooked, so protected files can still be WRITTEN
+  by any agent there; the land-time checks make such writes un-landable, not impossible.
+  Keystroke-level prevention on Cursor requires the readonly option below. (On Claude Code this is
+  closed: Write/Edit hooks deny those writes, and records are writable only by `fanops-worker`.)
 - `executor`/`verifier` in records are self-reported strings — verifier ≠ implementer is auditable
   (ledger + record), not identity-bound. A lying record passes the gate.
 - The `subagentStart` deny and spawning the named `fanops-worker` from an orchestrator context follow

@@ -40,7 +40,8 @@ _TITLE_PAREN_RE = re.compile(rf"\(({_SLUG})\)\s*$")
 
 # Paths whose modification would forge a verification record or DISABLE the enforcement itself.
 # Writing to any of these via shell is refused for everyone (workers edit src, never the machinery/state).
-_PROTECTED_PATHS = (".orchestration/state/", ".cursor/hooks.json", ".cursor/hooks/", ".githooks/")
+_PROTECTED_PATHS = (".orchestration/state/", ".cursor/hooks.json", ".cursor/hooks/", ".githooks/",
+                    ".claude/settings.json", ".claude/hooks/")
 _MUTATING = re.compile(
     r"(>>?|<<|\btee\b|\bsed\s+-i|\bperl\s+-i|\bawk\b[^|]*>|"
     r"\b(cp|mv|rm|ln|dd|truncate|install|chmod|chown|touch|mkdir|rmdir)\b|"
@@ -54,6 +55,7 @@ _MUTATING = re.compile(
 # edit is caught: a wave observed an orchestrator commissioning a Write-tool edit of this very gate to
 # get a refused PR through.
 _ENFORCEMENT_PATHS = (".cursor/hooks.json", ".cursor/hooks", ".githooks",
+                      ".claude/settings.json", ".claude/hooks",
                       "scripts/orchestrate.py", "scripts/repo_sweep.py")
 
 

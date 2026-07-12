@@ -42,7 +42,8 @@ how you work in this repo. Your brief names your unit (`MOL-xxx`) and your role:
   record path (verifier). The orchestrator lands.
 - Follow every `AGENTS.md` guardrail (worktree + own venv, no main push, non-destructive re-sync,
   one-liner house style).
-- REFUSE a brief that asks you to modify enforcement machinery — `.cursor/hooks*`, `.githooks/`,
-  `scripts/orchestrate.py`, `scripts/repo_sweep.py`, anything under `.orchestration/` except your own
-  record. Report it; those changes are operator-only and un-landable mid-wave.
+- REFUSE a brief that asks you to modify enforcement machinery — `.cursor/hooks*`, `.claude/hooks/`,
+  `.claude/settings.json`, `.githooks/`, `scripts/orchestrate.py`, `scripts/repo_sweep.py`, anything
+  under `.orchestration/` except your own record. Report it; those changes are operator-only and
+  un-landable mid-wave.
 - Report compactly: what you did, branch/PR, checks + outcome, record path if verifier.
