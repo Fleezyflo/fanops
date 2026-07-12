@@ -1047,3 +1047,24 @@ button.ghost:hover, .button.ghost:hover { color:var(--ink); background:transpare
 .rotation-line { display:flex; flex-wrap:wrap; gap:.25rem; }
 .ban-add-form { display:flex; flex-wrap:wrap; gap:.5rem; align-items:flex-end; margin:.4rem 0; }
 .chip-x { margin-left:.25rem; padding:0 .25rem; background:none; border:none; color:inherit; cursor:pointer; font:inherit; }
+/* U12 Go-Live account-centric onboarding cards. Mirrors the .persona-card / .home-acct-row tier (raised
+   surface-1 slab, --line border, --r-lg radius) — NO new design tokens. One card per handle carrying its
+   channel ladder (✓/✗ rungs) + a single next-action CTA; the add-account affordance is the leading new-card. */
+.onboarding-cards { display:flex; flex-direction:column; gap:var(--s-3); margin:var(--s-3) 0; }
+.onboarding-card { border:1px solid var(--line); border-radius:var(--r-lg); padding:var(--s-4); background:var(--surface-1); box-shadow:var(--elev-1); }
+.onboarding-card.is-demoted { opacity:.85; }
+.onboarding-new-card { border-style:dashed; }
+.onboarding-card-head { display:flex; align-items:center; flex-wrap:wrap; gap:.5rem; margin-bottom:.5rem; }
+.onboarding-card-head strong { font-size:1.05rem; }
+.onboarding-card-head .card-status { margin-left:auto; }
+.chip.backend-summary { text-transform:none; letter-spacing:0; }
+.onboarding-ladder { list-style:none; margin:.3rem 0 .6rem; padding:0; display:flex; flex-direction:column; gap:.35rem; }
+.ladder-channel { display:flex; flex-wrap:wrap; align-items:center; gap:.5rem; padding:.35rem .5rem; background:var(--surface-2); border:1px solid var(--line); border-radius:var(--r-md); }
+.ladder-platform { min-width:5.5rem; }
+.ladder-rung { font-size:var(--t-meta); color:var(--muted); white-space:nowrap; }
+.ladder-rung.ok { color:var(--ok); } .ladder-rung.err { color:var(--danger); }
+.ladder-rung.insights { border-left:1px solid var(--line-bright); padding-left:.5rem; }
+.card-cta { justify-self:start; margin:.2rem 0; }
+.card-ready-note { margin:.3rem 0; }
+.onboarding-forms { margin-top:.6rem; padding-top:.5rem; border-top:1px solid var(--line); }
+.onboarding-forms > form, .onboarding-forms > .account-row { margin:.5rem 0; }

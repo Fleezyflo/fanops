@@ -89,6 +89,24 @@ class GoLiveStatus:
     half_live_hint: str = ""           # operator-facing explanation (names the ignored FANOPS_POSTER value)
     channels: list[ChannelReadiness] = field(default_factory=list)  # S04: per-(handle×platform) readiness matrix
     next_blocker: str = ""             # earliest first_blocker across channels; connect-first when none
+    account_cards: list["AccountOnboardingCard"] = field(default_factory=list)  # U12: account-centric onboarding
+                                       # cards — a display-only RE-PROJECTION of `channels` grouped by handle
+                                       # (+ demoted). NEVER recomputes readiness; the template renders these.
+
+
+@dataclass
+class AccountOnboardingCard:
+    """U12: one card per handle (active or demoted) for account-centric onboarding — a pure DISPLAY projection
+    of channel_readiness re-grouped by account, so onboarding one account never means hopping stations. It
+    NEVER recomputes readiness: `channels` is the subset of channel_readiness for this handle, `next_blocker`
+    is that handle's WORST channel first_blocker (same _blocker_priority order the fleet next_blocker uses),
+    `next_anchor` deep-links the CTA to the existing form that clears it, and `insights_rows` is the
+    display-only IG-creds / TikTok-ceiling capability read (it must NOT feed ChannelReadiness.ready)."""
+    account: GoLiveAccount            # active or demoted (the header + persona chip source)
+    channels: list[ChannelReadiness]  # subset of channel_readiness for this handle ([] for a demoted account)
+    next_blocker: str                 # worst-channel first_blocker (fleet order), "" when the account is ready
+    next_anchor: str                  # in-page fragment id the single CTA deep-links to ("" when ready)
+    insights_rows: list[dict]         # display-only: [{platform, ok, label}] — capability, NOT a readiness gate
 
 
 @dataclass
@@ -601,6 +619,8 @@ def golive_demoted_accounts(cfg: Config) -> list:
         return [GoLiveAccount(
             handle=a.handle, persona=a.persona,
             persona_id=getattr(a, "persona_id", None),     # S8: the linked first-class Persona (badge), additive
+            ig_user_id=(a.ig_user_id or ""),               # U12: parity with golive_accounts so a demoted IG card
+            meta_token_set=cfg.meta_token_set_for(a.handle),  # can still show its insights row (BOOL only; SECRET)
             channels=[GoLiveChannel(platform=p.value,
                                     integration_id=a.integrations.get(p.value) or a.account_id or "",
                                     backend=a.backends.get(p.value) or "")
@@ -1205,6 +1225,78 @@ def _next_blocker(channels: list[ChannelReadiness]) -> str:
     return min(blockers, key=_blocker_priority)
 
 
+def _card_worst_blocker(channels: list[ChannelReadiness]) -> str:
+    """The WORST (highest-priority) first_blocker across ONE handle's channels — the card's single CTA. Uses the
+    SAME _blocker_priority ordering the fleet _next_blocker uses (never a new order). "" when every channel is
+    ready. An empty ladder (a demoted account has no channel_readiness rows) has no publish blocker -> ""."""
+    blockers = [c.first_blocker for c in channels if c.first_blocker]
+    return min(blockers, key=_blocker_priority) if blockers else ""
+
+
+def _card_next_anchor(handle: str, blocker: str, channels: list[ChannelReadiness]) -> str:
+    """Map a card's worst blocker to the in-page fragment id of the EXISTING form that clears it (NO new route).
+    Matched on the exact strings _channel_first_blocker returns; the map/backend anchors point at the FIRST
+    channel of this handle whose own first_blocker is that phrase (the deep-linked form id in the card body)."""
+    if not blocker:
+        return ""
+    if blocker == "connect Postiz or Zernio first" or (blocker.startswith("connect ") and "first (set " in blocker):
+        return "#golive-connect"
+    if blocker == "map an integration id":
+        ch = next((c for c in channels if c.first_blocker == blocker), None)
+        return f"#map-{handle}-{ch.platform}" if ch else "#golive-connect"
+    if blocker == "route to a scheduler backend":
+        ch = next((c for c in channels if c.first_blocker == blocker), None)
+        return f"#backend-{handle}-{ch.platform}" if ch else "#golive-connect"
+    if blocker == "link a persona":
+        return f"#persona-{handle}"
+    return "#golive-connect"
+
+
+def _card_insights_rows(account: "GoLiveAccount") -> list[dict]:
+    """DISPLAY-ONLY per-platform insights capability for a card — it MUST NOT feed ChannelReadiness.ready (the
+    live-arming gate is publish-only). instagram: ✓ when the handle carries BOTH its own ig_user_id and a
+    per-handle Graph token (meta_token_set); ✗ names the Meta-creds fix (MOL-112 blindness made visible).
+    tiktok: always ✗ — Zernio exposes publish but no per-account insights parity (red-flag 3). youtube/other:
+    OMITTED entirely (no false parity). Order follows the account's channels."""
+    rows: list[dict] = []
+    for ch in account.channels:
+        p = ch.platform
+        if p == "instagram":
+            ok = bool((account.ig_user_id or "").strip() and account.meta_token_set)
+            label = ("Instagram insights connected" if ok
+                     else "Connect Meta creds for Instagram insights (metrics + followers blind otherwise)")
+            rows.append({"platform": p, "ok": ok, "label": label})
+        elif p == "tiktok":
+            rows.append({"platform": p, "ok": False, "label": "Insights not available via Zernio"})
+        # youtube / any other platform: no insights row (no false IG-parity)
+    return rows
+
+
+def onboarding_account_cards(cfg: Config) -> list[AccountOnboardingCard]:
+    """U12: the account-centric onboarding read-model — one AccountOnboardingCard per handle (active first,
+    then demoted). A pure DISPLAY projection: it RE-GROUPS channel_readiness(cfg) by handle (never a second
+    readiness computation), picks that handle's worst-channel blocker as the single CTA (fleet order), maps it
+    to the existing form's anchor, and attaches the display-only insights rows. Demoted accounts have no
+    channel_readiness rows (only active() is projected) -> empty ladder + a promote CTA in the template."""
+    chans = channel_readiness(cfg)
+    by_handle: dict[str, list[ChannelReadiness]] = {}
+    for c in chans:
+        by_handle.setdefault(c.handle, []).append(c)
+    cards: list[AccountOnboardingCard] = []
+    for acct in golive_accounts(cfg):                     # active accounts, in accounts.json order
+        ladder = by_handle.get(acct.handle, [])
+        blocker = _card_worst_blocker(ladder)
+        cards.append(AccountOnboardingCard(
+            account=acct, channels=ladder, next_blocker=blocker,
+            next_anchor=_card_next_anchor(acct.handle, blocker, ladder),
+            insights_rows=_card_insights_rows(acct)))
+    for acct in golive_demoted_accounts(cfg):             # demoted (planned) accounts — promotable, empty ladder
+        cards.append(AccountOnboardingCard(
+            account=acct, channels=[], next_blocker="", next_anchor="",
+            insights_rows=_card_insights_rows(acct)))
+    return cards
+
+
 def golive_status(cfg: Config) -> GoLiveStatus:
     """Lock-free read-model for the Go-Live tab: the publish mode (dryrun/live), whether Postiz is
     configured (postiz_url is shown — it is NON-secret; key_set is a BOOL only, the key itself is never
@@ -1236,6 +1328,7 @@ def golive_status(cfg: Config) -> GoLiveStatus:
         zernio_key_set=cfg.zernio_api_key is not None,  # Zernio slice 4: BOOL only (connect-block state)
         accounts=accts,
         channels=chans, next_blocker=_next_blocker(chans),
+        account_cards=onboarding_account_cards(cfg),   # U12: account-centric cards (display re-projection of channels)
         checks=report["checks"],
         notes=report["notes"],
         learning_validated=learning_validated(cfg),    # M3: shows whether the loop is unfrozen (cutover done)
