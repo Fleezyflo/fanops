@@ -33,7 +33,7 @@ _OVERRIDES: dict[str, tuple[str, ...]] = {
     "src/fanops/post/run.py": ("tests/test_post_run.py",),
     "src/fanops/studio/actions_approve.py": ("tests/test_studio_approval.py",),
     "src/fanops/studio/actions_common.py": ("tests/test_studio_golive.py",),
-    "src/fanops/studio/actions_run.py": ("tests/test_studio_run.py",),
+    "src/fanops/studio/actions_run.py": ("tests/test_studio_run.py", "tests/test_studio_upload.py", "tests/test_upload_chunked.py"),
     "src/fanops/studio/actions_segments.py": ("tests/test_moments_segments.py",),
     "src/fanops/studio/actions_wipe.py": ("tests/test_studio_wipe.py",),
     "src/fanops/studio/app_routes_review.py": ("tests/test_studio_app.py",),

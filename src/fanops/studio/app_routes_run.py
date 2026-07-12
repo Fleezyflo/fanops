@@ -4,7 +4,7 @@ register_run_routes(app, cfg) registers them under their ORIGINAL endpoint names
 create_app calls it. The 413 errorhandler re-renders the Run panel at HTTP 200 so htmx 2.x swaps it
 (a non-2xx body is dropped); _run_panel is defined before it in the same scope, so the closure resolves."""
 from __future__ import annotations
-from flask import render_template, request
+from flask import jsonify, render_template, request
 from werkzeug.exceptions import RequestEntityTooLarge
 from fanops.studio import actions, views
 
@@ -58,6 +58,34 @@ def register_run_routes(app, cfg):
                                                            batch_name=request.form.get("batch_name", ""),
                                                            target_accounts=request.form.getlist("target_accounts"),
                                                            burn_subs=burn_subs))
+
+    @app.post("/run/upload/init")
+    def do_run_upload_init():
+        body = request.get_json(silent=True) or {}
+        res = actions.upload_init(cfg, body.get("filename", ""), int(body.get("size") or 0), body.get("sha256", ""))
+        if not res.ok:
+            return jsonify({"ok": False, "error": res.error}), 400
+        return jsonify({"ok": True, **(res.detail or {})})
+
+    @app.put("/run/upload/chunk")
+    def do_run_upload_chunk():
+        upload_id = request.args.get("upload_id", "")
+        try: offset = int(request.args.get("offset") or -1)
+        except ValueError: offset = -1
+        res = actions.upload_chunk(cfg, upload_id, offset, request.get_data())
+        if not res.ok and res.detail and "received" in res.detail:
+            return jsonify(res.detail), 409
+        if not res.ok:
+            return jsonify({"ok": False, "error": res.error}), 400
+        return jsonify({"ok": True, **(res.detail or {})})
+
+    @app.post("/run/upload/finalize")
+    def do_run_upload_finalize():
+        burn_subs = False if request.form.get("no_subs") else None
+        return _run_panel(actions.upload_finalize(cfg, request.form.get("upload_id", ""),
+                                                   batch_name=request.form.get("batch_name", ""),
+                                                   target_accounts=request.form.getlist("target_accounts"),
+                                                   burn_subs=burn_subs))
 
     @app.post("/run/resume")
     def do_run_resume():

@@ -3,9 +3,9 @@
 of the post-production surfaces — depends only on actions_common (ActionResult/_now); never on a sibling action
 module, so the import graph stays acyclic."""
 from __future__ import annotations
-import os, subprocess, uuid
+import hashlib, os, subprocess, uuid
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import Optional, Sequence, Union
 
 from werkzeug.datastructures import FileStorage
 from werkzeug.utils import secure_filename
@@ -115,6 +115,143 @@ def run_pull(cfg: Config, url: str) -> ActionResult:
     return ActionResult(ok=True, detail={"sources": n, "added": added})
 
 
+def _resolve_upload_dest(inbox: Path, raw: str, allowed_ext: set[str]) -> Union[tuple[str, Path, Path], tuple[None, str]]:
+    """Path-safety triad for one upload: secure_filename + traversal reject + inbox-bound resolve. Returns
+    (name, dest, tmp) on success or (None, skip_reason) on rejection — shared by save_uploads and chunked upload."""
+    name = secure_filename(raw)                                    # strips path, .., unsafe chars; "" if hostile
+    if not name or "/" in raw or "\\" in raw or ".." in raw:       # reject traversal on the RAW name (mirror approve_candidate)
+        return None, "unsafe name"
+    if Path(name).suffix.lower() not in allowed_ext:
+        return None, "unsupported type"
+    suffix = Path(name).suffix
+    name = Path(name).stem[:255 - len(suffix) - len(".uploadpart")] + suffix   # keep name + temp-suffix ≤ NAME_MAX
+    dest = (inbox / name).resolve()
+    if not dest.is_relative_to(inbox):                             # belt-and-braces: final path MUST stay in the inbox
+        return None, "escapes inbox"
+    if dest.exists():                                             # ING-4: a truncated/sanitized collision must NOT os.replace over a DIFFERENT video
+        stem = Path(name).stem[:255 - len(suffix) - len(".uploadpart") - 9]   # leave room for a -xxxxxxxx discriminator
+        name = f"{stem}-{uuid.uuid4().hex[:8]}{suffix}"; dest = (inbox / name).resolve()   # sha identity is downstream; the inbox name is pure staging
+    tmp = inbox / f"{name}.uploadpart"                            # same-dir temp → os.replace is atomic; suffix ∉ MEDIA_EXT so a leaked temp is never ingested
+    return name, dest, tmp
+
+
+def _upload_meta_path(tmp: Path) -> Path:
+    return tmp.with_suffix(".uploadmeta.json")   # clip.mp4.uploadpart → clip.mp4.uploadmeta.json
+
+
+def _find_upload_meta(inbox: Path, upload_id: str) -> tuple[Optional[Path], Optional[dict]]:
+    """Locate a chunked-upload meta file by upload_id. Fail-open to (None, None) when absent."""
+    for p in inbox.glob("*.uploadmeta.json"):
+        try:
+            meta = __import__("json").loads(p.read_text())
+            if meta.get("upload_id") == upload_id:
+                return p, meta
+        except Exception:
+            continue
+    return None, None
+
+
+def upload_init(cfg: Config, filename: str, size: int, sha256: str) -> ActionResult:
+    """Begin or resume a chunked inbox upload. Validates the filename like save_uploads, then either resumes
+    a matching .uploadpart + .uploadmeta.json (same filename/size/sha256) or creates fresh empty temps."""
+    dest_root = cfg.inbox; dest_root.mkdir(parents=True, exist_ok=True)
+    inbox = dest_root.resolve()
+    resolved = _resolve_upload_dest(inbox, filename or "", _VIDEO_EXT)
+    if resolved[0] is None:
+        return ActionResult(ok=False, error=resolved[1])
+    name, dest, tmp = resolved
+    meta_p = _upload_meta_path(tmp)
+    if tmp.exists() and meta_p.exists():
+        try:
+            meta = __import__("json").loads(meta_p.read_text())
+            if (meta.get("filename") == filename and meta.get("size") == size
+                    and meta.get("sha256") == sha256 and meta.get("name") == name):
+                received = tmp.stat().st_size
+                return ActionResult(ok=True, detail={"upload_id": meta["upload_id"], "offset": received, "name": name})
+        except Exception:
+            pass
+    upload_id = uuid.uuid4().hex
+    try:
+        tmp.write_bytes(b"")                                      # truncate / create the part file
+        from fanops.controlio import write_json_atomic
+        write_json_atomic(meta_p, {"upload_id": upload_id, "filename": filename, "name": name,
+                                     "size": size, "sha256": sha256, "received": 0, "dest": str(dest)})
+    except OSError as exc:
+        try: tmp.unlink(missing_ok=True); meta_p.unlink(missing_ok=True)
+        except OSError: pass
+        return ActionResult(ok=False, error=exc.strerror or "write failed")
+    return ActionResult(ok=True, detail={"upload_id": upload_id, "offset": 0, "name": name})
+
+
+def upload_chunk(cfg: Config, upload_id: str, offset: int, data: bytes) -> ActionResult:
+    """Append one sequential chunk to an in-progress upload. Offset MUST equal the current part size."""
+    inbox = cfg.inbox.resolve()
+    meta_p, meta = _find_upload_meta(inbox, upload_id)
+    if not meta_p or not meta:
+        return ActionResult(ok=False, error=f"unknown upload: {upload_id}")
+    tmp = inbox / f"{meta['name']}.uploadpart"
+    if not tmp.exists():
+        return ActionResult(ok=False, error=f"unknown upload: {upload_id}")
+    received = tmp.stat().st_size
+    if offset != received:
+        return ActionResult(ok=False, error="offset mismatch", detail={"received": received, "error": "offset mismatch"})
+    try:
+        with open(tmp, "ab") as fh: fh.write(data)
+        received = tmp.stat().st_size
+        meta = {**meta, "received": received}
+        from fanops.controlio import write_json_atomic
+        write_json_atomic(meta_p, meta)
+    except OSError as exc:
+        return ActionResult(ok=False, error=exc.strerror or "write failed")
+    return ActionResult(ok=True, detail={"received": received})
+
+
+def upload_finalize(cfg: Config, upload_id: str, *, batch_name: str = "", target_accounts=(),
+                    burn_subs: bool | None = None, trigger_ingest: bool = True) -> ActionResult:
+    """Verify size + sha256, probe the video stream on the .uploadpart, os.replace into the inbox, delete meta.
+    When trigger_ingest is True, chains run_ingest like save_uploads_and_ingest."""
+    inbox = cfg.inbox.resolve()
+    meta_p, meta = _find_upload_meta(inbox, upload_id)
+    if not meta_p or not meta:
+        return ActionResult(ok=False, error=f"unknown upload: {upload_id}")
+    tmp = inbox / f"{meta['name']}.uploadpart"
+    dest = Path(meta.get("dest") or str(inbox / meta["name"]))
+    if not tmp.exists():
+        return ActionResult(ok=False, error=f"unknown upload: {upload_id}")
+    got_size = tmp.stat().st_size
+    if got_size != meta.get("size"):
+        return ActionResult(ok=False, error=f"size mismatch — expected {meta.get('size')}, got {got_size}")
+    got_sha = hashlib.sha256(tmp.read_bytes()).hexdigest()
+    if got_sha != meta.get("sha256"):
+        try: tmp.unlink(missing_ok=True); meta_p.unlink(missing_ok=True)
+        except OSError: pass
+        return ActionResult(ok=False, error="sha256 mismatch — upload rejected")
+    try:
+        from fanops.ingest import has_video_stream                # local import so a test's mocker.patch is seen
+        try:
+            if not has_video_stream(tmp):
+                tmp.unlink(missing_ok=True); meta_p.unlink(missing_ok=True)
+                return ActionResult(ok=False, error="no video stream")
+        except ToolchainMissingError:
+            tmp.unlink(missing_ok=True); meta_p.unlink(missing_ok=True)
+            return ActionResult(ok=False, error="cannot verify video — install ffmpeg")
+        os.replace(tmp, dest)
+        meta_p.unlink(missing_ok=True)
+    except OSError as exc:
+        try: tmp.unlink(missing_ok=True)
+        except OSError: pass
+        return ActionResult(ok=False, error=exc.strerror or "write failed")
+    if not trigger_ingest:
+        return ActionResult(ok=True, detail={"saved": [meta["name"]]})
+    ing = run_ingest(cfg, batch_name=batch_name, target_accounts=target_accounts, burn_subs=burn_subs)
+    detail = {"saved": [meta["name"]], **(ing.detail or {})}
+    if not ing.ok:
+        return ActionResult(ok=False, detail=detail,
+                            error=f"uploaded 1 file(s), but auto-ingest failed (they're in 01_inbox — "
+                                  f"click 'Ingest inbox' to retry): {ing.error}")
+    return ActionResult(ok=True, detail=detail)
+
+
 def save_uploads(cfg: Config, files: Sequence[FileStorage], *, probe: bool = True,
                  allowed_ext: Optional[set[str]] = None, dest_dir: Optional[Path] = None) -> ActionResult:
     """Stream operator-uploaded raw video into cfg.inbox so `run_ingest` catalogues it — the browser
@@ -134,20 +271,10 @@ def save_uploads(cfg: Config, files: Sequence[FileStorage], *, probe: bool = Tru
     inbox = dest_root.resolve()                                    # the bound everything below is kept within
     for f in files:
         raw = f.filename or ""
-        name = secure_filename(raw)                                    # strips path, .., unsafe chars; "" if hostile
-        if not name or "/" in raw or "\\" in raw or ".." in raw:       # reject traversal on the RAW name (mirror approve_candidate)
-            skipped.append((raw, "unsafe name")); continue
-        if Path(name).suffix.lower() not in allowed_ext:
-            skipped.append((raw, "unsupported type")); continue
-        suffix = Path(name).suffix
-        name = Path(name).stem[:255 - len(suffix) - len(".uploadpart")] + suffix   # keep name + temp-suffix ≤ NAME_MAX so an overlong name never trips an OSError that embeds the fs path in a skip reason
-        dest = (inbox / name).resolve()
-        if not dest.is_relative_to(inbox):                             # belt-and-braces: final path MUST stay in the inbox
-            skipped.append((raw, "escapes inbox")); continue
-        if dest.exists():                                             # ING-4: a truncated/sanitized collision must NOT os.replace over a DIFFERENT video
-            stem = Path(name).stem[:255 - len(suffix) - len(".uploadpart") - 9]   # leave room for a -xxxxxxxx discriminator
-            name = f"{stem}-{uuid.uuid4().hex[:8]}{suffix}"; dest = (inbox / name).resolve()   # sha identity is downstream; the inbox name is pure staging
-        tmp = inbox / f"{name}.uploadpart"                            # same-dir temp → os.replace is atomic; suffix ∉ MEDIA_EXT so a leaked temp is never ingested
+        resolved = _resolve_upload_dest(inbox, raw, allowed_ext)
+        if resolved[0] is None:
+            skipped.append((raw, resolved[1])); continue
+        name, dest, tmp = resolved
         try:
             f.save(str(tmp))                                          # FileStorage.save streams in chunks (no full-buffer)
             if probe:
