@@ -102,7 +102,7 @@ def test_cli_install_discloses_recurring_llm(tmp_path, monkeypatch, capsys):
     assert main(["daemon", "install"]) == 0
     out = capsys.readouterr().out
     assert "responder llm" in out
-    assert "claude" in out and "manual" in out                            # discloses cost + the opt-out
+    assert "LLM CLI" in out and "manual" in out                           # discloses cost + the opt-out
 
 
 def test_cli_install_manual_is_silent_on_llm(tmp_path, monkeypatch, capsys):
