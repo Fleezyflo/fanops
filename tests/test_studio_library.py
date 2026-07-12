@@ -39,7 +39,8 @@ def test_asset_catalog_records_read_failure_not_silent(tmp_path, monkeypatch):
     monkeypatch.setattr(Ledger, "load", _boom)
     cat = views.asset_catalog(cfg)
     assert cat == {"native": [], "third_party": [],
-                   "backlog": {"actionable": 0, "blocked_on_gates": 0, "recoverable": 0, "inventory": 0}}
+                   "backlog": {"actionable": 0, "blocked_on_gates": 0, "recoverable": 0, "inventory": 0},
+                   "run_active": False}
     log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
     assert "library" in log and "error" in log                   # the failure is RECORDED, not swallowed
 

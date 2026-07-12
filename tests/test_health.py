@@ -122,7 +122,10 @@ def test_golive_health_renders_dep_alert_for_degraded_postiz(tmp_path, monkeypat
     rows = [health.DepHealth("docker", True, "daemon up"),
             health.DepHealth("postiz", False, "answers HTTP but API unhealthy (502) — publishes stalled"),
             health.DepHealth("zernio", True, "reachable")]
-    out = env.get_template("_golive_health.html").render(health=rows)
+    postiz_hint = {"parked": False, "hint": ""}          # S10 route contract: parked postiz suppresses dep-alert
+    blocking_deps = [d for d in rows if not d.ok and not (d.name == "postiz" and postiz_hint.get("parked"))]
+    out = env.get_template("_golive_health.html").render(health=rows, postiz_hint=postiz_hint,
+                                                         blocking_deps=blocking_deps)
     assert "dep-alert" in out and "postiz" in out         # Tier-1 alert fires on the degraded row
     assert 'class="err"' in out                           # the row itself carries the err treatment
 
