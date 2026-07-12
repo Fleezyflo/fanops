@@ -21,6 +21,19 @@ from fanops.studio.views_common import RECENT_WINDOW_HOURS, _batch_title, _immin
 
 logger = logging.getLogger(__name__)
 
+_EXPOSURE_STATES = frozenset({PostState.awaiting_approval, PostState.queued, PostState.published, PostState.analyzed, PostState.needs_reconcile, PostState.submitting, PostState.submitted})
+
+def tag_exposure(led: Ledger) -> dict[str, list[tuple[str, int]]]:
+    """Per-account hashtag exposure counts across in-flight + shipped posts (excludes rejected/failed/retired)."""
+    counts: dict[str, dict[str, int]] = {}
+    for p in led.posts.values():
+        if p.state not in _EXPOSURE_STATES:
+            continue
+        bucket = counts.setdefault(p.account, {})
+        for t in (p.hashtags or []):
+            bucket[t] = bucket.get(t, 0) + 1
+    return {h: sorted(tags.items(), key=lambda x: (-x[1], x[0])) for h, tags in counts.items()}
+
 
 @dataclass
 class ScheduleRow:

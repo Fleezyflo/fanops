@@ -24,6 +24,15 @@
   </form></div>
   {% endif %}
   {% if active_batch and rollup %}<div class="batch-rollup meta">This batch: {{ rollup.posted }} posted · mean lift {{ '%.2f'|format(rollup.mean_lift) if rollup.mean_lift is not none else '—' }}</div>{% endif %}
+  {% if tag_exposure %}
+  <details class="tag-exposure meta"><summary>Tag exposure</summary>
+    {% for handle, tags in tag_exposure.items() if not active or handle == active %}
+    <div class="tag-exposure-account"><strong>{{ handle }}</strong>
+      {% for tag, count in tags %}<span class="chip">{{ tag }} ×{{ count }}</span>{% endfor %}
+    </div>
+    {% endfor %}
+  </details>
+  {% endif %}
   {% if rows %}
   {% for day, day_rows in (groups if groups else [('', rows)]) %}
   <h3 class="day-head">{{ day or 'undated' }}</h3>

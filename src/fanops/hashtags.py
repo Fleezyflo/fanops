@@ -184,7 +184,7 @@ def _screen_content(content_norm: list[str], cfg=None) -> list[str]:
 def vet_hashtags(tags: list[str] | None, platform: Platform, language: str | None = None,
                  max_tags: int = 4, *, store: list[str] | None = None,
                  corpus: list[str] | None = None, content: list[str] | None = None,
-                 genre: str | None = None, cfg=None) -> list[str]:
+                 genre: str | None = None, cfg=None, recent: list[str] | None = None) -> list[str]:
     """Return at most `max_tags` reach-vetted hashtags. Keeps the model's VETTED tags (reach-ordered),
     then backfills the balanced default until full. Drops every non-vetted word, dedupes case/'#'
     variants, hard-caps the count. Deterministic; never empty (the default always fills). With a live
@@ -222,7 +222,13 @@ def vet_hashtags(tags: list[str] | None, platform: Platform, language: str | Non
         h = _norm(t)
         if h in vetted and h not in seen:
             seen.add(h); kept.append(h)
-    kept.sort(key=lambda h: rank.get(h, 999))       # reach order (corpus, content, Graph-reach store, or frozen rank)
+    recent_set = set(_dedupe_norm(recent or []))
+    def _tier(h):
+        if h in corpus_norm: return 0
+        if h in content_norm: return 1
+        if store and h in base_rank: return 2
+        return 3
+    kept.sort(key=lambda h: (_tier(h), 1 if h in recent_set else 0, rank.get(h, 999)))       # reach order (corpus, content, Graph-reach store, or frozen rank)
     # Reserved floors take the TAIL slots so the corpus/reach LEAD is preserved: region reach first
     # (non-negotiable under a corpus — a curated corpus must not strip AR reach), then ONE clip-content tag (the
     # operator's "tags based off information" ask). Each guarantees its signal reaches the <=max_tags line even
@@ -272,13 +278,13 @@ def vet_hashtags_traced(tags: list[str] | None, platform: Platform, language: st
                         max_tags: int = 4, *, store: list[str] | None = None,
                         corpus: list[str] | None = None,
                         content: list[str] | None = None, genre: str | None = None,
-                        cfg=None) -> tuple[list[str], dict[str, str]]:
+                        cfg=None, recent: list[str] | None = None) -> tuple[list[str], dict[str, str]]:
     """vet_hashtags + a provenance `source` per shipped tag. SAME selection as vet_hashtags (DRY — it
     calls it), then labels each kept tag by the signal it traces to (content|corpus|region|graph-reach|
     discovery|genre-floor). This proves every shipped tag is evidence-backed — the hashtag-axis instance
     of the operator's 'every knob real, no theater' rule."""
     out = vet_hashtags(tags, platform, language, max_tags,
-                       store=store, corpus=corpus, content=content, genre=genre, cfg=cfg)
+                       store=store, corpus=corpus, content=content, genre=genre, cfg=cfg, recent=recent)
     content_set = set(_dedupe_norm(content)); corpus_set = set(_dedupe_norm(corpus))
     store_set = set(store) if store else set()
     sources = {t: _tag_source(t, content_set=content_set, corpus_set=corpus_set, store_set=store_set) for t in out}
