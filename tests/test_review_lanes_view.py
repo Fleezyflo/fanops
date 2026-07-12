@@ -56,7 +56,7 @@ def test_lanes_view_returns_200(tmp_path):
 
 def test_default_view_has_no_lane_markup(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg)
-    html = _client(cfg).get("/review").data.decode()
+    html = _client(cfg).get("/review?account=all").data.decode()
     assert "account-lanes" not in html                          # lanes is opt-in — the default view is untouched
 
 def test_lanes_view_renders_a_lane_per_account(tmp_path):

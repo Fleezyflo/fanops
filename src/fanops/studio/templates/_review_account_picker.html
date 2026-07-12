@@ -1,0 +1,20 @@
+{# S07: bare /review entry when 2+ accounts have pending work — pick one account before cards. #}
+<section class="review-account-picker home-accounts" aria-label="Choose account to review">
+  <h3>Which account?</h3>
+  <p class="meta muted">Review one account at a time — pick who to focus on.</p>
+  <ul class="home-acct-launcher">
+  {% for a in picker_accounts %}
+    <li class="home-acct-row">
+      <div class="home-acct-main">
+        <strong>{{ a.handle }}</strong>
+        <span class="muted home-acct-channels">{% for p in a.platforms %}{{ p }}{% if not loop.last %} · {% endif %}{% endfor %}</span>
+        <span class="home-acct-stats muted">{{ a.pending }} to review</span>
+      </div>
+      <div class="home-acct-ctas">
+        <a class="button acct-cta-pending" href="{{ url_for('review', account=a.handle, view='account', focus=1) }}">Review <span class="cta-badge">{{ a.pending }}</span></a>
+      </div>
+    </li>
+  {% endfor %}
+  </ul>
+  <p class="meta"><a href="{{ url_for('review', account='all') }}">All accounts</a> — mixed worklist</p>
+</section>

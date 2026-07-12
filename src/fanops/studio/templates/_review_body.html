@@ -23,8 +23,8 @@
        matrix picker. Opt-in, never the default. #}
     {% if active_view == 'lanes' %}<span class="button active" aria-current="page">Lanes</span>{% else %}<a class="button" href="{{ url_for('review', view='lanes', account=active, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), compact=compact_param) }}">Lanes</a>{% endif %}
   </div>
-  {% include "_account_filter.html" %}
-  {% include "_review_account_actions.html" %}
+  {% if not review_picker|default(false) %}{% include "_account_filter.html" %}{% endif %}
+  {% if not review_picker|default(false) %}{% include "_review_account_actions.html" %}{% endif %}
   {% include "_source_filter.html" %}
   {# Phase 4: the state filter — narrow to ONE state (awaiting/approved/held/prepared). GET links; ride the URL. #}
   {% set states = [('', 'All'), ('awaiting', 'Awaiting'), ('approved', 'Approved'), ('held', 'Held'), ('prepared', 'Prepared')] %}
@@ -38,7 +38,9 @@
   </details>
   {% if progress %}<div class="meta review-progress" aria-label="progress">{% if active %}{{ active }} — {% endif %}{{ progress.awaiting }} awaiting · {{ progress.approved }} approved · {{ progress.held }} held · {{ progress.prepared }} prepared</div>{% endif %}
   {% include "_publish_outcome.html" %}
-  {% if lanes %}
+  {% if review_picker %}
+    {% include "_review_account_picker.html" %}
+  {% elif lanes %}
     {# RF6 account-first LANES: one section per account, every decided moment with explicit cast/uncast +
        the +cast/−uncast override buttons. A TOP-LEVEL branch (like the pivot) so it shows even when zero
        awaiting cards exist — a targeted account with no posts still gets a lane. Reads AccountSelection. #}
@@ -107,5 +109,5 @@
   {% endif %}
   {% if not cards %}{% if active %}<div class="empty">No work for {{ active }} — <a href="{{ url_for('review', compact=compact_param) }}">clear the filter</a> to see all accounts.</div>{% else %}<div class="empty">No footage yet — add videos in the Make tab to begin.</div>{% endif %}{% endif %}
   {% endif %}
-  {% include '_review_actions.html' %}
+  {% if not review_picker|default(false) %}{% include '_review_actions.html' %}{% endif %}
 </div>

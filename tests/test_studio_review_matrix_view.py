@@ -44,7 +44,7 @@ def _client(cfg):
 
 def test_review_defaults_to_cards_with_video(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg)
-    html = _client(cfg).get("/review").data.decode()
+    html = _client(cfg).get("/review?account=all").data.decode()
     assert 'class="review-matrix"' not in html                       # the sparse matrix is no longer the default
     assert "<video" in html                                          # the master clip player is on the DEFAULT view — approve what you can SEE
     assert 'class="button active" aria-current="page">Moments' in html  # the cards (Moments) toggle is the active default
@@ -136,5 +136,5 @@ def test_review_empty_shows_teaching_state(tmp_path):
     cfg = Config(root=tmp_path)
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.accounts_path.write_text(json.dumps({"accounts": []}))
-    html = _client(cfg).get("/review").data.decode()
+    html = _client(cfg).get("/review?account=all").data.decode()
     assert 'class="review-matrix"' not in html and "No footage yet" in html   # no source → guided empty state, never a 500

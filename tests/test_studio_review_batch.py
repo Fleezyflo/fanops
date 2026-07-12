@@ -197,7 +197,7 @@ def test_route_unknown_batch_is_recoverable(tmp_path):        # B2 stale id
 def test_route_unbatched_has_no_batch_param_or_excluded(tmp_path):   # nonregression / byte-identity
     cfg = Config(root=tmp_path); _seed_accounts(cfg); led = Ledger.load(cfg); _lineage(led)
     _await(led, "p_a", "clip_1", "a"); led.save()
-    html = _client(cfg).get("/review").data.decode()
+    html = _client(cfg).get("/review?account=all").data.decode()
     assert "batch=" not in html and "excluded by batch target" not in html and "show all batches" not in html
 
 

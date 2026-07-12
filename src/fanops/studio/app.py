@@ -140,13 +140,18 @@ def _offset_arg() -> int:
     except (TypeError, ValueError):
         return 0
 
+def _account_all_arg():
+    # S07: ?account=all is the explicit mixed worklist (None scope, but not bare-entry picker/auto-focus).
+    return (request.args.get("account") or "").strip().lower() == "all"
+
 def _account_arg():
     # P5: the per-account filter from ?account=. A blank/absent param -> None (the unfiltered "All"
     # view); read from request.args, so an htmx POST that carries account= in its action URL re-applies
     # the same scope after a mutation (R1). Never raises; an unknown handle simply matches zero rows.
     # @-agnostic: operators may type @handle while accounts.json/ledger use bare handles.
+    # S07: account=all -> None (mixed view) BEFORE resolve_account_handle ("all" is not a handle).
     v = (request.args.get("account") or "").strip()
-    if not v:
+    if not v or v.lower() == "all":
         return None
     try:
         from flask import current_app

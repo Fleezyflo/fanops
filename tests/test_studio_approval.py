@@ -101,7 +101,7 @@ def test_awaiting_surface_is_editable_never_imminent(tmp_path):
 
 def test_get_review_renders_checkbox_and_approve_button(tmp_path):
     cfg = Config(root=tmp_path); _seed_review(cfg, pid="p1")
-    html = _client(cfg).get("/review").data
+    html = _client(cfg).get("/review?account=all").data
     assert b'name="ids"' in html and b'value="p1"' in html
     assert b"Approve selected" in html and b"Reject selected" in html
 
@@ -347,7 +347,7 @@ def test_compact_view_omits_video_players(tmp_path):
     with Ledger.transaction(cfg) as led:
         _awaiting(led, "p_a", clip="clip_1", acct="a", aid="1")
         _awaiting(led, "p_b", clip="clip_1", acct="b", aid="2")
-    full = _client(cfg).get("/review").data
+    full = _client(cfg).get("/review?account=all").data
     compact = _client(cfg).get("/review?compact=1").data
     assert b"<video" in full                       # the default view shows the per-account video switcher
     assert b"<video" not in compact                # compact drops the heavy players for a scannable list
@@ -383,7 +383,7 @@ def test_compact_toggle_links_both_ways(tmp_path):
     cfg = Config(root=tmp_path); _seed_two_accounts(cfg); _seed_review_lineage(cfg)
     with Ledger.transaction(cfg) as led:
         _awaiting(led, "p_a", clip="clip_1", acct="a", aid="1")
-    full = _client(cfg).get("/review").data
+    full = _client(cfg).get("/review?account=all").data
     compact = _client(cfg).get("/review?compact=1").data
     assert b"compact=1" in full and b"Compact" in full                # the full view offers a way INTO compact
     assert b"Full" in compact                                         # the compact view offers a way back to full

@@ -5,11 +5,11 @@ registers them under their ORIGINAL endpoint names (url_for byte-identical); cre
 Shared arg-parsers + the card-chip helper come from app (loaded before create_app runs, so cycle-free)."""
 from __future__ import annotations
 from datetime import datetime, timezone
-from flask import render_template, request
+from flask import redirect, render_template, request, url_for
 from fanops.accounts import Accounts
 from fanops.ledger import Ledger
 from fanops.studio import actions, views
-from fanops.studio.app import _account_arg, _batch_arg, _card_chips, _compact_arg, _focus_arg, _focus_idx_arg, _offset_arg, _source_arg, _state_arg, _time_arg, _ultra_arg, _view_arg
+from fanops.studio.app import _account_all_arg, _account_arg, _batch_arg, _card_chips, _compact_arg, _focus_arg, _focus_idx_arg, _offset_arg, _source_arg, _state_arg, _time_arg, _ultra_arg, _view_arg
 
 
 def register_review_routes(app, cfg):
@@ -21,6 +21,7 @@ def register_review_routes(app, cfg):
         # reads over the SAME scoped cards, re-derived each swap so they ride the URL (R1).
         led = Ledger.load(cfg); accounts = Accounts.load(cfg); now = datetime.now(timezone.utc)
         account = _account_arg(); batch = _batch_arg(); source = _source_arg(); state = _state_arg()
+        account_all = _account_all_arg()
         view = _view_arg()
         if account and view is None:
             view = "account"
@@ -35,10 +36,18 @@ def register_review_routes(app, cfg):
                 focus = True
         focus_idx = _focus_idx_arg()
         cards_full = views.review_buckets(led, accounts, cfg, now=now)               # universe for chips
-        scoped = bool(account or batch or source or state)
+        pending_full = {h: n for h, n in views.review_awaiting_by_account(cards_full).items() if n > 0}
+        bare_entry = (not account and not batch and not source and not state and not account_all
+                      and view is None and "compact" not in request.args and "ultra" not in request.args)
+        review_picker = bare_entry and len(pending_full) >= 2
+        mixed_view = account_all or (bare_entry and len(pending_full) == 0)
+        scoped = bool(account or batch or source or state or account_all)
         cards = (views.review_buckets(led, accounts, cfg, now=now, account=account, batch=batch,
                                       source=source, state=state) if scoped else cards_full)
+        if review_picker:
+            cards = []
         counts = views.review_counts(cards)              # counts reflect what's shown (the scoped worklist)
+        full_counts = views.review_counts(cards_full) if review_picker else counts
         progress = views.review_progress(cards)          # Phase 4 per-scope header (awaiting/approved/held/prepared)
         sources = views.source_universe(cards_full)      # Phase 4 source-filter chip universe (key, basename)
         # Phase 4 account-first pivot: only meaningful WITH an account; view=account but no account falls back to
@@ -52,6 +61,14 @@ def register_review_routes(app, cfg):
         focus_item = focus_queue[focus_idx] if focus and focus_queue else None
         pivot = views.paginate(pivot_rows, _offset_arg()) if pivot_rows is not None else None
         page = views.paginate(cards, _offset_arg())
+        picker_accounts = []
+        if review_picker:
+            active_map = {a.handle: a for a in accounts.active()}
+            for h, n in sorted(pending_full.items()):
+                if h not in active_map: continue
+                acct = active_map[h]
+                plats = [getattr(p, "value", p) for p in acct.platforms]
+                picker_accounts.append({"handle": h, "platforms": plats, "pending": n})
         # Slice 2: the moment×account MATRIX is the DEFAULT awaiting view (view absent/'matrix'); ?view=list is the
         # legacy-card escape, ?view=account the pivot. It renders ONE focused source — the ?source= filter doubles as
         # the picker; with no pick we focus the newest (source_choices[0]). Built only when it'll actually show (not
@@ -76,15 +93,20 @@ def register_review_routes(app, cfg):
         if view == "account" and account and pivot_rows is not None:
             awaiting_by_account = {account: len([r for r in pivot_rows if r.editable])}
         ctx = dict(cards=page.items, page=page, tab="review", compact=compact, ultra=ultra, focus=focus, focus_idx=focus_idx, focus_queue=focus_queue, focus_item=focus_item, active_view=view, awaiting_by_account=awaiting_by_account, backend=cfg.poster_backend, counts=counts,
-                   awaiting_total=counts["awaiting"], active_batch=batch, progress=progress, sources=sources,
+                   awaiting_total=full_counts["awaiting"], active_batch=batch, progress=progress, sources=sources,
                    pivot=(pivot.items if pivot is not None else None), pivot_page=pivot, result=result,
                    matrix=matrix, lanes=lanes, source_choices=choices, focused_source=focused,
+                   review_picker=review_picker, account_all=account_all, mixed_view=mixed_view,
+                   picker_accounts=picker_accounts, pending_accounts=pending_full, bare_entry=bare_entry,
                    **_card_chips(cards_full, account))
         return ctx
 
     @app.get("/review")
     def review():
         ctx = _review_context()
+        if ctx.get("bare_entry") and len(ctx.get("pending_accounts") or {}) == 1:
+            h = next(iter(ctx["pending_accounts"]))
+            return redirect(url_for("review", account=h, view="account", focus=1))
         return render_template("review.html", shown=ctx["counts"]["awaiting"], **ctx)
 
     def _review_panel(result=None):
