@@ -36,15 +36,19 @@ def _read_body(lock_path: Path) -> dict:
         return {}
 
 
+def _iso_age(raw: str) -> int:
+    try:
+        t0 = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        return int(time.time() - t0.timestamp())
+    except Exception:
+        return 0
+
+
 def _stage_age(body: dict) -> int:
     stage_started = body.get("stage_started")
     if not stage_started:
         return 0
-    try:
-        t0 = datetime.fromisoformat(stage_started.replace("Z", "+00:00"))
-        return int(time.time() - t0.timestamp())
-    except Exception:
-        return 0
+    return _iso_age(stage_started)
 
 
 def note_stage(cfg: Config, stage: str, unit_id: str) -> None:
@@ -131,14 +135,7 @@ def run_status_line(cfg: Config) -> str:
             body = _read_body(lock_path)
             pid = body.get("pid", "?")
             started = body.get("started")
-            if started:
-                try:
-                    t0 = datetime.fromisoformat(started.replace("Z", "+00:00"))
-                    age = int(time.time() - t0.timestamp())
-                except Exception:
-                    age = 0
-            else:
-                age = 0
+            age = _iso_age(started) if started else 0
             line = f"run={pid} age={age}"
             stage = body.get("stage")
             if stage:
