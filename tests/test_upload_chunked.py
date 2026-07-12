@@ -1,8 +1,7 @@
 # tests/test_upload_chunked.py — S02: sequential resumable chunked browser upload for Studio Run-tab ingestion.
 import hashlib, io, json
-from pathlib import Path
 from fanops.config import Config
-from fanops.studio import actions, actions_run
+from fanops.studio import actions
 
 
 def _sha(b: bytes) -> str:
