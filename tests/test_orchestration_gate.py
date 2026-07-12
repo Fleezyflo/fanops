@@ -240,8 +240,38 @@ def test_cli_land_fails_closed_when_enforcement_unverifiable(tmp_path):
 
 def test_enforcement_hits_filters_paths():
     hits = og.enforcement_hits(["src/fanops/models.py", "scripts/orchestrate.py",
-                                ".cursor/hooks/orchestration_gate.py", "docs/x.md"])
-    assert hits == ["scripts/orchestrate.py", ".cursor/hooks/orchestration_gate.py"]
+                                ".cursor/hooks/orchestration_gate.py", "docs/x.md",
+                                ".claude/settings.json", ".claude/hooks/orchestration_gate_claude.py"])
+    assert hits == ["scripts/orchestrate.py", ".cursor/hooks/orchestration_gate.py",
+                    ".claude/settings.json", ".claude/hooks/orchestration_gate_claude.py"]
+
+
+def test_records_required_prices_verification_to_risk():
+    hot = {"src/fanops/models.py", "src/fanops/crosspost.py"}
+    req, why = og.records_required(["src/fanops/models.py", "tests/test_models.py"], hot)
+    assert req and "hot file" in why
+    req, why = og.records_required([f"src/fanops/m{i}.py" for i in range(6)], hot)
+    assert req and "broad" in why
+    req, why = og.records_required(["src/fanops/widget.py", "tests/test_widget.py"], hot)
+    assert not req and "green CI" in why
+    req, why = og.records_required(["(unverifiable: gh unavailable)"], hot)
+    assert req and "fail closed" in why
+
+
+def test_land_decision_skips_records_when_not_required(tmp_path):
+    # no record on disk: small non-hot change lands on green CI alone; unit tag still mandatory
+    ok, why = og.land_decision(["MOL-777"], tmp_path, "abc123", required=False)
+    assert ok is True
+    ok, _ = og.land_decision([], tmp_path, "abc123", required=False)
+    assert ok is False
+
+
+def test_hot_files_reads_lanes_guard(tmp_path):
+    (tmp_path / ".agents").mkdir()
+    (tmp_path / ".agents" / "lanes.json").write_text(json.dumps(
+        {"guard": {"src/fanops/models.py": "picking"}, "lanes": {}}))
+    assert og.hot_files(tmp_path) == {"src/fanops/models.py"}
+    assert og.hot_files(tmp_path / "nope") == set()
 
 
 # ==== FORTIFICATION ==========================================================

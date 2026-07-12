@@ -31,10 +31,12 @@ python scripts/orchestrate.py done     # exits 0 only when everything is landed 
 
 ## Guarantees while a wave runs
 
-Nothing lands without a *different* sub-agent's verification record pinned to the PR's current head;
-every spawn and land is ledgered (`.orchestration/state/ledger.jsonl`); spawn types and models are
-locked; no destructive git; the gate and its state are tamper-protected. Scope is the whole repo —
-open PRs, conflicts, stale branches included. Details: [`.orchestration/SPEC.md`](.orchestration/SPEC.md).
+Nothing lands unless the PR's CI is green (gate-enforced); risky changes — lane hot files or broad
+diffs — additionally require a *different* sub-agent's verification record pinned to the PR's current
+head (small non-hot changes land on green CI alone, no verifier spend); every spawn and land is
+ledgered (`.orchestration/state/ledger.jsonl`); spawn types and models are locked; no destructive
+git; the gate and its state are tamper-protected. Scope is the whole repo — open PRs, conflicts,
+stale branches included. Details: [`.orchestration/SPEC.md`](.orchestration/SPEC.md).
 
 ## Notes
 

@@ -44,11 +44,15 @@ no `general-purpose`, no `shell`, no model field (the gate denies them). The bri
    Units sharing no file run in parallel NOW (one message, multiple spawns); only collisions serialize.
 4. **Execute** — one worker per unit: implement, validate, fix, push a feature branch, open a PR
    tagged `MOL-xxx`.
-5. **Verify** — ONE verifier per unit (never the implementer, never you) checks the acceptance
-   criteria and writes the record pinning the PR head. An existing record IS the verification.
-6. **Land** — record + CI green → `gh pr merge --delete-branch`. A stale-record refusal (new commits
-   on the PR) is the ONLY re-verify trigger. After each land: `status`, re-plan, fresh briefs
-   (new `origin/main`) for queued units that conflicted.
+5. **Verify — only where the gate demands it.** A verification record is required only for units
+   whose PR touches `lanes.json` hot files or is broad (>5 files). For those, spawn ONE verifier
+   (never the implementer, never you) to check acceptance criteria and write the head-pinned record;
+   an existing record IS the verification. Small non-hot units skip this step — green CI is their
+   land key; do NOT spawn a verifier for them.
+6. **Land** — CI green → `gh pr merge --delete-branch`. The gate enforces green checks on every land
+   and demands records only per the tier above; a stale-record refusal (new commits on the PR) is
+   the ONLY re-verify trigger. After each land: `status`, re-plan, fresh briefs (new `origin/main`)
+   for queued units that conflicted.
 7. Repeat. Anything a land needs first — conflict, failing check, rebase — is a worker unit, then
    its verification, then the land.
 

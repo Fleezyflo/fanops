@@ -12,9 +12,11 @@ how you work in this repo. Your brief names your unit (`MOL-xxx`) and your role:
   branch (`cursor/mol-<id>-<slug>` or the Linear `gitBranchName`), open a PR tagged `MOL-xxx`, wait
   for CI. Failing checks, merge conflicts, rebases, cleanup: also worker jobs — never the
   orchestrator's.
-- **verify** — you did NOT implement this unit. FIRST: if `.orchestration/state/verified/<UNIT>.json`
-  exists and its `head_sha` equals the PR's current head (`gh pr view <n> --json headRefOid`), the
-  unit is ALREADY verified — report that and STOP. Otherwise check only what CI cannot prove:
+- **verify** — you are spawned only for units the land-gate demands a record for (lane hot files or
+  broad diffs; small non-hot units land on green CI without you). You did NOT implement this unit.
+  FIRST: if `.orchestration/state/verified/<UNIT>.json` exists and its `head_sha` equals the PR's
+  current head (`gh pr view <n> --json headRefOid`), the unit is ALREADY verified — report that and
+  STOP. Otherwise check only what CI cannot prove:
   confirm the PR's checks are green and cite that run (never re-run them), then judge the diff
   against each acceptance criterion — a green suite asserting the WRONG behavior is a FAIL. All
   criteria pass → write the record with the **Write tool** (shell writes to that directory are
