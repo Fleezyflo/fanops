@@ -295,13 +295,46 @@ def postiz_health_for_banner(cfg: Config, *, now: "float | None" = None) -> dict
     except Exception as e:
         _log.debug("due_publish_plan failed in banner read (treat as idle): %s", e)
     if postiz_due <= 0:
-        return {"show": True, "danger": False, "status": status,
-                "hint": "Postiz idle (starts on publish)"}
+        if _postiz_local_autostart(cfg):
+            hint = "Postiz idle (starts on publish)"
+        else:
+            where = f" (status: {status})" if status is not None else ""
+            hint = f"Postiz API unreachable{where}"
+        return {"show": True, "danger": False, "status": status, "hint": hint}
     where = f" (status: {status})" if status is not None else ""
     return {"show": True, "danger": True, "status": status,
             "hint": (f"Postiz API unhealthy{where} — publishes via Postiz are stalled. The container's "
                      "health check is nginx-only and can lie; check `docker logs postiz` (see "
                      "docs/POSTIZ_OPS.md).")}
+
+
+def _postiz_local_autostart(cfg: Config) -> bool:
+    """True when local Postiz would auto-start on publish (presentation gate — no docker/script probe)."""
+    if not cfg.postiz_autostart:
+        return False
+    from fanops.postiz_lifecycle import _backend_is_postiz, _is_local
+    if not _backend_is_postiz(cfg):
+        return False
+    return _is_local(cfg.postiz_url or "")
+
+
+def postiz_autostart_hint(cfg: Config, *, now: "float | None" = None) -> dict:
+    """S10 golive/strip presentation: parked local Postiz (reaper-idle) vs a real publish stall.
+    Returns {parked, hint, danger, block_alert, show, status}. Reuses postiz_health_for_banner probe cache."""
+    banner = postiz_health_for_banner(cfg, now=now)
+    local_autostart = _postiz_local_autostart(cfg)
+    danger = bool(banner.get("danger"))
+    parked = bool(banner.get("show") and not danger and local_autostart)
+    if parked:
+        hint = "Postiz idle (starts on publish)"
+    elif banner.get("show") and not danger:
+        sc = banner.get("status")
+        where = f" (status: {sc})" if sc is not None else ""
+        hint = f"Postiz API unreachable{where}"
+    else:
+        hint = banner.get("hint") or ""
+    return {"parked": parked, "hint": hint, "danger": danger, "block_alert": danger,
+            "show": bool(banner.get("show")), "status": banner.get("status")}
 
 
 # MOL-125: shared transient-network failure classifier for publish error_reason strings (Studio recovery +

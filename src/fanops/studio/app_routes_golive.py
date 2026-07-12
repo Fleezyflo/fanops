@@ -151,10 +151,14 @@ def register_golive_routes(app, cfg):
     @app.get("/golive/health")
     def do_golive_health():
         from fanops.health import system_health
+        from fanops.studio import views_common
         health = system_health(cfg)
+        postiz_hint = views_common.postiz_autostart_hint(cfg)
+        blocking_deps = [d for d in health if not d.ok and not (d.name == "postiz" and postiz_hint.get("parked"))]
         if request.args.get("compact"):
             return render_template("_health_pills.html", health=health)
-        return render_template("_golive_health.html", health=health)
+        return render_template("_golive_health.html", health=health, postiz_hint=postiz_hint,
+                               blocking_deps=blocking_deps)
 
     @app.get("/golive/connect")
     def golive_connect():

@@ -150,7 +150,7 @@
     </header>
 
     <div class="queue-meter">
-      <span><strong>{{ status.sources }}</strong> in progress</span>
+      <span><strong>{{ status.sources }}</strong> {% if status.run_chip %}in progress{% else %}queued{% endif %}</span>
       <span><strong>{{ status.get('sources_blocked', 0) }}</strong> blocked on decisions</span>
       <span><strong>{{ status.get('sources_recoverable', 0) }}</strong> need attention</span>
       <span><strong>{{ status.get('sources_inventory', 0) }}</strong> in library</span>

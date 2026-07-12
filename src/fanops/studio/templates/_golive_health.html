@@ -3,11 +3,13 @@
 {# MOL-48 — `health` is system_health(cfg): ONLY the runtime dependencies (docker/postiz/zernio), so any
    down row is unambiguously a failing SYSTEM dependency. Promote it to a banner-level alert above the strip
    (Tier-1), naming the down dep(s), so "postiz unreachable" while LIVE is the first thing the eye lands on. #}
-{% set down = health | rejectattr('ok') | list %}
-{% if down %}<p class="dep-alert" role="alert"><strong>Dependency down</strong> — {{ down | map(attribute='name') | join(', ') }} unreachable while publishing is configured LIVE. Reviewed posts cannot ship until it recovers.</p>{% endif %}
-<p class="muted"><strong>System dependencies</strong> — live (auto-started on launch; nothing sits silently off).</p>
+{# S10 — parked local Postiz (reaper-idle, zero due postiz posts) is expected cold state: muted hint only,
+   NOT the "cannot ship" dep-alert. Real stalls (due postiz posts waiting) still block. #}
+{% if blocking_deps %}<p class="dep-alert" role="alert"><strong>Dependency down</strong> — {{ blocking_deps | map(attribute='name') | join(', ') }} unreachable while publishing is configured LIVE. Reviewed posts cannot ship until it recovers.</p>{% endif %}
+{% if postiz_hint and postiz_hint.parked and postiz_hint.hint %}<p class="muted postiz-parked-hint">{{ postiz_hint.hint }}</p>{% endif %}
+<p class="muted"><strong>System dependencies</strong> — live (auto-started on publish when local; nothing sits silently off).</p>
 <ul class="checks deps">
   {% for d in health %}
-    <li class="{{ 'ok' if d.ok else 'err' }}">{{ '●' if d.ok else '○' }} {{ d.name }} — {{ d.detail }}</li>
+    <li class="{% if d.ok %}ok{% elif d.name == 'postiz' and postiz_hint and postiz_hint.parked %}parked{% else %}err{% endif %}">{{ '●' if d.ok else ('◐' if d.name == 'postiz' and postiz_hint and postiz_hint.parked else '○') }} {{ d.name }} — {% if d.name == 'postiz' and postiz_hint and postiz_hint.parked %}parked (idle; {{ postiz_hint.hint }}){% else %}{{ d.detail }}{% endif %}</li>
   {% endfor %}
 </ul>
