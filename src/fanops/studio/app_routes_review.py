@@ -13,7 +13,7 @@ from fanops.studio.app import _account_all_arg, _account_arg, _batch_arg, _card_
 
 
 def register_review_routes(app, cfg):
-    def _review_context(*, result=None):
+    def _review_context(*, result=None, regen_note=None, reburn_note=None):
         # Phase 4: ONE builder for the Review render-kwargs, shared by the full page (review) AND the htmx swap
         # body (_review_panel) so the scope (account/batch/source/state), the pivot, the progress header, and the
         # pagination NEVER drift between the two. All four filters compose (P5 + B2 + Phase 4 source/state);
@@ -98,6 +98,7 @@ def register_review_routes(app, cfg):
                    matrix=matrix, lanes=lanes, source_choices=choices, focused_source=focused,
                    review_picker=review_picker, account_all=account_all, mixed_view=mixed_view,
                    picker_accounts=picker_accounts, pending_accounts=pending_full, bare_entry=bare_entry,
+                   regen_note=regen_note, reburn_note=reburn_note,
                    **_card_chips(cards_full, account))
         return ctx
 
@@ -109,9 +110,24 @@ def register_review_routes(app, cfg):
             return redirect(url_for("review", account=h, view="account", focus=1))
         return render_template("review.html", shown=ctx["counts"]["awaiting"], **ctx)
 
-    def _review_panel(result=None):
+    def _review_panel(result=None, *, regen_note=None, reburn_note=None):
         # R1: account/batch/source/state/offset/view all ride the POST URL into request.args -> scope preserved.
-        return render_template("_review_body.html", **_review_context(result=result))
+        return render_template("_review_body.html", **_review_context(result=result, regen_note=regen_note, reburn_note=reburn_note))
+
+    def _focus_mutation_response(result, *, regen_note=None, reburn_note=None, post_id=None):
+        if _focus_arg():
+            return _review_panel(result=result, regen_note=regen_note, reburn_note=reburn_note)
+        if not result.ok:
+            return render_template("_result.html", result=result)
+        if post_id is None:
+            return render_template("_result.html", result=result)
+        s = views.surface_for_post(Ledger.load(cfg), Accounts.load(cfg), post_id,
+                                   now=datetime.now(timezone.utc), cfg=cfg)
+        if s is None:
+            return render_template("_result.html",
+                                   result=actions.ActionResult(ok=False, error=f"post vanished: {post_id}"))
+        return render_template("_surface_edit.html", s=s, regen_note=regen_note, reburn_note=reburn_note,
+                               backend=cfg.poster_backend)
 
     @app.get("/review/live")
     def review_live():
@@ -246,17 +262,10 @@ def register_review_routes(app, cfg):
         return _review_panel(actions.clear_segments(cfg, src, moment_id))
 
 
-    def _render_surface_edit(post_id, result):
+    def _render_surface_edit(post_id, result, *, regen_note=None, reburn_note=None):
         # P1: on success re-render _surface_edit.html via surface_for_post so the editor's time input
         # reflects the fresh value (mirrors do_regenerate); on failure show the clean inline error.
-        if not result.ok:
-            return render_template("_result.html", result=result)
-        s = views.surface_for_post(Ledger.load(cfg), Accounts.load(cfg), post_id,
-                                   now=datetime.now(timezone.utc), cfg=cfg)
-        if s is None:
-            return render_template("_result.html",
-                                   result=actions.ActionResult(ok=False, error=f"post vanished: {post_id}"))
-        return render_template("_surface_edit.html", s=s, backend=cfg.poster_backend)
+        return _focus_mutation_response(result, regen_note=regen_note, reburn_note=reburn_note, post_id=post_id)
 
     @app.post("/reschedule/<post_id>")
     def do_reschedule(post_id):
@@ -281,6 +290,8 @@ def register_review_routes(app, cfg):
     @app.post("/caption/<post_id>")
     def do_caption(post_id):
         result = actions.edit_caption(cfg, post_id, request.form.get("caption", ""))
+        if _focus_arg():
+            return _review_panel(result=result)
         return render_template("_result.html", result=result)
 
     @app.post("/regenerate/<post_id>")
@@ -289,14 +300,7 @@ def register_review_routes(app, cfg):
         # field so the operator SEES the new caption land in the box. On failure (not editable, bad
         # model output, off-brand reject, claude absent) show the clean error instead of a 500.
         result = actions.regenerate_caption(cfg, post_id, request.form.get("guidance") or "")
-        if not result.ok:
-            return render_template("_result.html", result=result)
-        s = views.surface_for_post(Ledger.load(cfg), Accounts.load(cfg), post_id,
-                                   now=datetime.now(timezone.utc), cfg=cfg)
-        if s is None:
-            return render_template("_result.html",
-                                   result=actions.ActionResult(ok=False, error=f"post vanished: {post_id}"))
-        return render_template("_surface_edit.html", s=s, regen_note=result.detail, backend=cfg.poster_backend)
+        return _focus_mutation_response(result, regen_note=result.detail if result.ok else None, post_id=post_id)
 
     @app.post("/restore-persona-hook/<post_id>")
     def do_restore_persona_hook(post_id):
@@ -309,14 +313,7 @@ def register_review_routes(app, cfg):
         # swap the editor so the new hook lands in the box (and a "couldn't burn (no libass)" warning shows
         # if the burn failed open). Clean inline error on a guard/unknown-post failure, never a 500.
         result = actions.reburn_hook(cfg, post_id, request.form.get("hook") or "")
-        if not result.ok:
-            return render_template("_result.html", result=result)
-        s = views.surface_for_post(Ledger.load(cfg), Accounts.load(cfg), post_id,
-                                   now=datetime.now(timezone.utc), cfg=cfg)
-        if s is None:
-            return render_template("_result.html",
-                                   result=actions.ActionResult(ok=False, error=f"post vanished: {post_id}"))
-        return render_template("_surface_edit.html", s=s, reburn_note=result.detail, backend=cfg.poster_backend)
+        return _focus_mutation_response(result, reburn_note=result.detail if result.ok else None, post_id=post_id)
 
     @app.post("/snooze/<clip_id>")
     def do_snooze(clip_id):
