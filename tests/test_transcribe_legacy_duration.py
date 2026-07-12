@@ -20,6 +20,15 @@ def test_whisper_model_for_scales_with_duration(monkeypatch):
     assert cfg.whisper_model_for(None) == "turbo"         # unknown duration -> fast default
 
 
+def test_whisper_model_for_prefers_large_v3_whenever_it_fits(monkeypatch):
+    # Mirror of asr_model_for: no fixed length gate — the chain starts at large-v3 and the timeout
+    # budget alone steps it down (subtitle-garbage incident 2026-07-12).
+    monkeypatch.delenv("FANOPS_WHISPER_MODEL", raising=False)
+    cfg = Config(root=Path("/tmp/nonexistent-x"))
+    assert cfg.whisper_model_for(600.0) == "large-v3"     # fits: 600*2.5 < the 2640s budget
+    assert cfg.whisper_model_for(1500.0) == "turbo"       # large-v3 too slow -> turbo still fits
+
+
 def test_whisper_model_for_pin_wins_verbatim(monkeypatch):
     monkeypatch.setenv("FANOPS_WHISPER_MODEL", "small")   # operator pin is their call, never overridden
     cfg = Config(root=Path("/tmp/nonexistent-x"))

@@ -9,7 +9,7 @@ ENGINE: prefers faster-whisper (the [asr] extra, via the fanops._fwrun runner) a
 (int8 makes even large-v3 practical on CPU). FAILS OPEN to the legacy `whisper` CLI (turbo) when
 faster-whisper is absent (CI / air-gapped), so transcription always runs."""
 from __future__ import annotations
-import contextlib, json, shutil, subprocess, sys
+import contextlib, json, shutil, subprocess, sys, time
 from pathlib import Path
 from fanops.config import Config
 from fanops.ledger import Ledger
@@ -273,12 +273,15 @@ def _produce_transcript(led: Ledger, cfg: Config, source_id: str, src, out_dir: 
     # absent — and that fallback is ALSO duration-aware (cfg.whisper_model_for, audit c0-f2).
     attempts = int(src.meta.get("whisper_timeout_attempts", 0))
     if _fw_available():
+        engine = "faster-whisper"
         used_model = model or cfg.asr_model_for(src.duration, timeout_attempts=attempts)
         cmd = fw_cmd(audio, str(out_dir), used_model, cfg.asr_language)
     else:
-        used_model = model or cfg.whisper_model_for(src.duration, timeout_attempts=attempts)
-        cmd = whisper_cmd(audio, str(out_dir), _resolve_model(used_model), cfg.asr_language)
+        engine = "whisper-cli"
+        used_model = _resolve_model(model or cfg.whisper_model_for(src.duration, timeout_attempts=attempts))
+        cmd = whisper_cmd(audio, str(out_dir), used_model, cfg.asr_language)
     timeout_s = _whisper_timeout(src.duration)
+    t0 = time.monotonic()
     try:
         r = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=timeout_s)
     except (FileNotFoundError, OSError) as e:
@@ -319,9 +322,16 @@ def _produce_transcript(led: Ledger, cfg: Config, source_id: str, src, out_dir: 
     src.language = data.get("language")
     src.meta["transcribed"] = True
     led.set_source_state(source_id, SourceState.transcribed)
+    # Provenance: record WHICH engine+model produced this transcript, and the measured wall-time
+    # (wall_s vs duration = the real per-host RTF — the calibration data _ASR_MODEL_RTF needs).
+    wall_s = round(time.monotonic() - t0, 1)
+    get_logger(cfg)("transcribe", source_id, "transcribed", engine=engine, model=used_model,
+                    wall_s=wall_s, duration=src.duration or "", language=src.language or "",
+                    segments=len(src.transcript or []))
     try:
         from fanops.artifacts import stamp_stage
         rel = str(js.relative_to(cfg.agent_io))
-        stamp_stage(cfg, source_id, "transcribe", artifact=rel, schema=1, sha256=src.sha256)
+        stamp_stage(cfg, source_id, "transcribe", artifact=rel, schema=1, sha256=src.sha256,
+                    extra={"engine": engine, "model": used_model, "wall_s": wall_s})
     except (OSError, ValueError): pass
     return led

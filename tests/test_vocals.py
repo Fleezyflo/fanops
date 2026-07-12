@@ -52,6 +52,31 @@ def test_isolate_vocals_failopen_when_stem_missing(tmp_path, mocker):
     mocker.patch("fanops.vocals.subprocess.run", return_value=R())
     assert isolate_vocals(str(src), str(tmp_path / "w")) == str(src)
 
+def test_isolate_vocals_failopen_logs_breadcrumb(tmp_path, mocker, caplog):
+    # Every fail-open branch must leave a WARNING breadcrumb (house norm): a silent isolation skip
+    # left the 2026-07-12 subtitle-garbage incident undiagnosable — nothing recorded WHY the raw
+    # mix was transcribed. One test, all three branches; caplog cleared between phases.
+    import logging
+    src = tmp_path / "src_1.mp4"; src.write_bytes(b"VID")
+    with caplog.at_level(logging.WARNING, logger="fanops.vocals"):
+        # (1) demucs absent -> FileNotFoundError before the process starts
+        mocker.patch("fanops.vocals.subprocess.run",
+                     side_effect=FileNotFoundError(2, "No such file", "demucs"))
+        assert isolate_vocals(str(src), str(tmp_path / "w1")) == str(src)
+        assert any("fail-open" in r.message and "FileNotFoundError" in r.message for r in caplog.records)
+        caplog.clear()
+        # (2) nonzero rc -> the stderr tail is the diagnosis; it must survive into the log
+        class R: returncode = 1; stderr = "model fetch blocked"; stdout = ""
+        mocker.patch("fanops.vocals.subprocess.run", return_value=R())
+        assert isolate_vocals(str(src), str(tmp_path / "w2")) == str(src)
+        assert any("rc=1" in r.message and "model fetch blocked" in r.message for r in caplog.records)
+        caplog.clear()
+        # (3) rc 0 but the stem never landed (schema drift)
+        class R0: returncode = 0; stderr = ""; stdout = ""
+        mocker.patch("fanops.vocals.subprocess.run", return_value=R0())
+        assert isolate_vocals(str(src), str(tmp_path / "w3")) == str(src)
+        assert any("vocals.mp3" in r.message and "missing" in r.message for r in caplog.records)
+
 def test_demucs_env_sets_certifi_bundle(monkeypatch):
     # the macOS SSL cert fix: demucs fetches its model over https; point SSL_CERT_FILE at certifi
     monkeypatch.delenv("SSL_CERT_FILE", raising=False)
