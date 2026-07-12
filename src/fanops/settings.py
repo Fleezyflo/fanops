@@ -177,6 +177,7 @@ class Settings(BaseSettings):
     FANOPS_P4_MIN_REACH_GAP: float = 0.0
     FANOPS_GC_KEEP_DAYS: int = 30
     FANOPS_UPLOAD_MAX_MB: int = 2048
+    FANOPS_SOURCE_SHARD_MIN: int = 45
     FANOPS_OPERATOR_TZ: str = ""
     FANOPS_REALISTIC_CADENCE: str = ""
     FANOPS_PUBLISH_LEAD_MINUTES: int = 0
@@ -222,6 +223,10 @@ class Settings(BaseSettings):
     @field_validator("FANOPS_UPLOAD_MAX_MB", mode="before")
     @classmethod
     def _upload_mb(cls, v): return _parse_int_failopen(v, 2048)
+
+    @field_validator("FANOPS_SOURCE_SHARD_MIN", mode="before")
+    @classmethod
+    def _shard_min(cls, v): return _parse_int_failopen(v, 45)
 
     @field_validator("FANOPS_ZERNIO_MAX_UPLOAD_MB", mode="before")
     @classmethod
@@ -270,6 +275,10 @@ class Settings(BaseSettings):
     @field_validator("FANOPS_GC_KEEP_DAYS", mode="after")
     @classmethod
     def _gc_clamp(cls, v): return v if v >= 1 else 30
+
+    @field_validator("FANOPS_SOURCE_SHARD_MIN", mode="after")
+    @classmethod
+    def _shard_clamp(cls, v): return v if v >= 0 else 0
 
     @field_validator("FANOPS_UPLOAD_MAX_MB", "FANOPS_ZERNIO_MAX_UPLOAD_MB", mode="after")
     @classmethod
