@@ -48,9 +48,19 @@ def isolate_vocals(audio_path: str, out_dir: str, *, model: str = _DEFAULT_MODEL
     try:
         r = subprocess.run(demucs_cmd(audio_path, out_dir, model=model), check=False,
                            capture_output=True, text=True, timeout=_DEMUCS_TIMEOUT, env=_demucs_env())
-    except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
-        return audio_path                    # demucs absent / unspawnable / hung -> raw audio
-    if r.returncode != 0:
-        return audio_path                    # model fetch blocked / separation failed -> raw audio
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired) as exc:
+        # demucs absent / unspawnable / hung -> raw audio. Logged so a silent isolation skip is
+        # diagnosable post-hoc (a source transcribed off the raw mix loses the biggest ASR lever).
+        logger.warning("isolate_vocals fail-open (%s): %s: %s — transcribing the raw mix",
+                       audio_path, type(exc).__name__, str(exc)[:160])
+        return audio_path
+    if r.returncode != 0:                    # model fetch blocked / separation failed -> raw audio
+        logger.warning("isolate_vocals fail-open (%s): demucs rc=%s: %s — transcribing the raw mix",
+                       audio_path, r.returncode, (r.stderr or "")[-300:].strip())
+        return audio_path
     vocals = Path(out_dir) / model / Path(audio_path).stem / "vocals.mp3"
-    return str(vocals) if vocals.exists() else audio_path
+    if not vocals.exists():                  # rc 0 but no stem written (schema drift) -> raw audio
+        logger.warning("isolate_vocals fail-open (%s): demucs rc=0 but %s missing — transcribing the raw mix",
+                       audio_path, vocals)
+        return audio_path
+    return str(vocals)
