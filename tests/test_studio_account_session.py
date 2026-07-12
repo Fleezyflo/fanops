@@ -51,7 +51,7 @@ def test_feed_renders_all_pending(tmp_path):
 def test_rail_operator_labels(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg)
     html = _client(cfg).get("/").data.decode()
-    assert "Add &amp; run" in html and ">Blocked<" in html and "Manual publish" in html
+    assert "Add &amp; run" in html and ">Hashtags<" in html and "Manual publish" in html
 
 
 def test_account_at_prefix_resolves_bare_handle(tmp_path):
