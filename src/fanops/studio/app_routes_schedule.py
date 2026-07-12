@@ -11,26 +11,29 @@ from fanops.ledger import Ledger
 from fanops.models import LIFT_SCORE, PostState
 from fanops.variant_learning import _hook_for_post
 from fanops.studio import actions, views
-from fanops.studio.app import _account_arg, _batch_arg, _delivery_arg, _failure_arg, _offset_arg, _row_chips, _source_arg, _time_arg, _with_active
+from fanops.studio.app import _account_arg, _batch_arg, _delivery_arg, _failure_arg, _month_arg, _offset_arg, _row_chips, _source_arg, _time_arg, _with_active
 
 
 def register_schedule_routes(app, cfg):
     def _schedule_panel(result=None, *, full=False):
         led = Ledger.load(cfg); now = datetime.now(timezone.utc); account = _account_arg(); batch = _batch_arg()
-        source = _source_arg()
+        source = _source_arg(); year, month = _month_arg()
         rows_full = views.schedule_rows(led, cfg, now=now)                            # universe for chips (account-only)
         rows = (views.schedule_rows(led, cfg, now=now, account=account, batch=batch, source=source)
                 if (account or batch or source) else rows_full)
         approved_total = sum(1 for r in rows if r.editable)              # Face 5: full scoped count (pre-slice, page-safe banner)
-        page = views.paginate(rows, _offset_arg())
-        lanes = views.schedule_lanes(page.items)
-        schedule_groups = views.group_schedule_by_account(page.items)
+        cal_rows = views.schedule_rows(led, cfg, now=now, account=account, batch=batch, source=source)
+        calendar = views.schedule_calendar_month(cal_rows, cfg, year=year, month=month, account=account, now=now)
+        bucket = views.schedule_bucket_split(led, [r for r in rows if r.account == account]) if account else None
+        lanes = views.schedule_lanes(rows)
+        schedule_groups = views.group_schedule_by_account(rows) if not account else []
         due_plan = views.due_publish_plan(cfg, handle=account or None, batch=batch, now=now)
         cockpit = views.schedule_cockpit(led, cfg, account, now=now) if account else None
         inflight_watch = views.inflight_watch(led, cfg, account=account, now=now)
         tmpl = "schedule.html" if full else "_schedule_panel.html"
         src_chips = views.source_universe_for_clips(led, rows_full)
-        return render_template(tmpl, rows=page.items, lanes=lanes, schedule_groups=schedule_groups, groups=None, page=page, approved_total=approved_total,
+        return render_template(tmpl, rows=rows, lanes=lanes, schedule_groups=schedule_groups, groups=None,
+                               calendar=calendar, bucket=bucket, approved_total=approved_total,
                                active_batch=batch, active_source=source, source_chips=src_chips, due_plan=due_plan, cockpit=cockpit, inflight_watch=inflight_watch, auto_ship=views.schedule_auto_ship(cfg), result=result, tab="schedule",
                                # R3-followup UI-LIE-FIX: the per-channel truth, NOT the legacy global. On a
                                # live deployment with per-channel routing cfg.poster_backend reads 'dryrun'
@@ -93,6 +96,16 @@ def register_schedule_routes(app, cfg):
     @app.post("/schedule/accept-suggested/<handle>")
     def do_schedule_accept_suggested(handle):
         return _schedule_panel(actions.accept_suggested_account(cfg, views.resolve_account_handle(handle, cfg)))
+
+    @app.post("/schedule/randomize/<handle>")
+    def do_schedule_randomize(handle):
+        try:
+            days = int(request.form.get("days", 7))
+        except (TypeError, ValueError):
+            days = 7
+        src = (request.form.get("source_id") or "").strip() or None
+        return _schedule_panel(actions.randomize_account_schedule(cfg, views.resolve_account_handle(handle, cfg),
+                                                                  days=days, source_id=src))
 
     @app.post("/schedule/publish-due")
     def do_schedule_publish_due():

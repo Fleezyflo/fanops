@@ -72,11 +72,9 @@ def test_get_schedule_shows_integration_publish_sendback_respread(tmp_path):
     assert b"Re-spread" in html           # routine respread
 
 def test_schedule_row_renders_lazy_clip_preview(tmp_path):
-    # The Schedule bucket previews each clip without re-introducing the 150-<video> perf hit the table was
-    # built to avoid: a collapsed thumbnail (lazy poster) that expands to a preload=none player, mirroring
-    # the Publish-by-hand pattern. ScheduleRow already carries clip_id + post_id, so this is template-only.
+    # U7: per-account bucket cockpit previews each clip with lazy thumbnails (replaces the flat scan-list).
     cfg = Config(root=tmp_path); _seed(cfg, pid="p1", account_id="ig_integ_1")
-    html = _client(cfg).get("/schedule").data.decode()
+    html = _client(cfg).get("/schedule", query_string={"account": "a"}).data.decode()
     assert "/clip-thumb/clip_1" in html          # the poster frame for the row's clip
     assert 'loading="lazy"' in html              # the collapsed thumbnail never fetches off-screen
 
@@ -92,13 +90,13 @@ def test_schedule_unapprove_route_sends_back_to_review(tmp_path):
     assert r.status_code == 200 and Ledger.load(cfg).posts["p1"].state is PostState.awaiting_approval
 
 def test_schedule_move_route_reschedules_and_rerenders_panel(tmp_path):
-    # Move re-renders the whole bucket (so the row's time is fresh, not stale in the input). local-time:
-    # the panel shows the operator's LOCAL form of the time; the ledger keeps canonical UTC.
-    from fanops.timeutil import to_local_input
+    # Move re-renders the whole panel (calendar + bucket) so the operator sees the fresh time.
     cfg = Config(root=tmp_path); _seed(cfg, pid="p1")
-    r = _client(cfg).post("/schedule/move/p1", data={"new_time": "2099-09-09T09:00:00Z"})
-    assert r.status_code == 200 and to_local_input("2099-09-09T09:00:00Z").encode() in r.data
+    r = _client(cfg).post("/schedule/move/p1", data={"new_time": "2099-09-09T09:00:00Z"},
+                          query_string={"account": "a", "month": "2099-09"})
+    assert r.status_code == 200
     assert Ledger.load(cfg).posts["p1"].scheduled_time == "2099-09-09T09:00:00Z"
+    assert b"09:00" in r.data
 
 
 def test_due_publish_plan_estimates_postiz_rate(tmp_path, monkeypatch):

@@ -454,9 +454,10 @@ def test_review_renders_suggestion_and_clear_action(tmp_path):
 
 def test_schedule_renders_suggestion_and_clear_action(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg, tmp_path)         # p_base/p_var are queued + editable
-    html = _client(cfg).get("/schedule").data.decode()
-    assert "/schedule/clear/p_base" in html                   # Clear-time form action for the editable row
+    html = _client(cfg).get("/schedule?account=a").data.decode()
+    assert "schedule-dialog-open" in html                     # U7: per-account bucket schedules via dialog
     assert "Use suggested" in html
+    assert "/schedule/unapprove/p_base" in html               # ← Review keeps batch scope on the row
 
 def test_clear_route_on_awaiting_returns_empty_time_input(tmp_path):
     cfg = Config(root=tmp_path); _seed_awaiting(cfg, tmp_path)

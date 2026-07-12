@@ -1,0 +1,69 @@
+{# U7: per-account untimed/timed buckets grouped by source. #}
+{% from "_state_badge.html" import state_badge %}
+<section class="schedule-bucket" aria-label="Queue for {{ active }}">
+  {% macro source_groups(bucket_key) %}
+    {% for sid, src_rows in bucket[bucket_key].items() %}
+    <div class="schedule-bucket-source">
+      <h4 class="schedule-bucket-source-head">{% if sid %}{% for s_id, s_name in source_chips %}{% if s_id == sid %}{{ s_name }}{% endif %}{% endfor %}{% else %}Unknown source{% endif %}
+        <span class="muted"> ({{ src_rows|length }})</span></h4>
+      <ul class="schedule-bucket-list" role="list">
+        {% for r in src_rows %}
+        <li class="schedule-bucket-row lane-{{ r.lane }}" role="listitem" data-post-id="{{ r.post_id }}" data-clip-id="{{ r.clip_id }}">
+          {% if r.clip_id %}<img class="sched-thumb" loading="lazy" src="{{ url_for('clip_thumb', clip_id=r.clip_id) }}" alt="">{% endif %}
+          <div class="sched-row-text">
+            <div class="sched-row-head"><span class="muted">{{ r.platform }}</span>{% if r.batch_title %} <span class="muted batch-tag">«{{ r.batch_title }}»</span>{% endif %}
+              · {{ r.scheduled_time | localdt_hybrid or 'unscheduled' }}{% if r.bad_schedule %} <span class="chip warn">bad schedule</span>{% endif %}</div>
+            <p class="sched-caption clamp-1">{% if r.variant_hook %}✦ {{ r.variant_hook }} · {% endif %}{{ r.caption or '—' }}</p>
+            <div class="sched-row-meta">{{ state_badge(r.delivery or r.lane) }}</div>
+          </div>
+          <div class="sched-row-controls">
+            {% if r.lane == 'inflight' %}
+              <span class="muted">Waiting for link</span>
+              {% if r.error_reason %}<span class="err">{{ r.error_reason | operator_error }}</span>{% endif %}
+              <a class="button ghost" href="{{ url_for('posted', delivery='inflight', account=r.account) }}">View</a>
+            {% elif r.editable %}
+              <button type="button" class="ghost schedule-dialog-open" data-post-id="{{ r.post_id }}" data-clip-id="{{ r.clip_id }}"
+                      data-caption="{{ (r.variant_hook or r.caption or '')|e }}">Schedule…</button>
+              {% if r.suggested_time %}
+              <form class="sched-suggest" hx-post="{{ url_for('do_schedule_move', post_id=r.post_id, account=active, batch=active_batch|default(none), month=calendar.month_param) }}" hx-target="#schedule-body" hx-swap="outerHTML">
+                <input type="hidden" name="new_time" value="{{ r.suggested_time }}">
+                <button type="submit" class="ghost" title="{{ r.why_suggested or '' }}">Use suggested</button>
+              </form>
+              {% endif %}
+              {% if r.ready %}<span class="chip ok schedule-ready">ready</span>{% elif r.ready is not none %}<span class="chip warn schedule-ready">fix clip</span>{% endif %}
+              {% if cfg.is_live and not auto_ship %}
+              <form hx-post="{{ url_for('do_schedule_publish', post_id=r.post_id, account=active, batch=active_batch|default(none), month=calendar.month_param) }}" hx-target="#schedule-body" hx-swap="outerHTML">
+                <label class="confirm"><input type="checkbox" name="confirm" value="1"> live</label>
+                <button type="submit" class="primary"{% if r.ready is false %} disabled title="Clip not ready to ship"{% endif %}>Publish</button>
+              </form>
+              {% endif %}
+              <form hx-post="{{ url_for('do_schedule_unapprove', post_id=r.post_id, account=active, batch=active_batch|default(none), month=calendar.month_param) }}" hx-target="#schedule-body" hx-swap="outerHTML">
+                <button type="submit" class="ghost">← Review</button>
+              </form>
+            {% else %}<span class="muted">read-only</span>{% endif %}
+          </div>
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% else %}
+    <p class="meta muted">No {{ bucket_key }} posts.</p>
+    {% endfor %}
+  {% endmacro %}
+  <div class="schedule-bucket-tools">
+    <form class="inline" hx-post="{{ url_for('do_schedule_randomize', handle=active, account=active, batch=active_batch|default(none), month=calendar.month_param, source=active_source|default(none)) }}" hx-target="#schedule-body" hx-swap="outerHTML">
+      <input type="hidden" name="days" value="7">{% if active_source|default(none) %}<input type="hidden" name="source_id" value="{{ active_source }}">{% endif %}
+      <button type="submit" class="ghost">Randomize week</button>
+    </form>
+    <form class="inline-shift" hx-post="{{ url_for('do_schedule_shift', handle=active, account=active, batch=active_batch|default(none), month=calendar.month_param) }}" hx-target="#schedule-body" hx-swap="outerHTML">
+      <input type="hidden" name="hours" value="24"><button type="submit">+1 day</button>
+    </form>
+    <form class="inline-shift" hx-post="{{ url_for('do_schedule_shift', handle=active, account=active, batch=active_batch|default(none), month=calendar.month_param) }}" hx-target="#schedule-body" hx-swap="outerHTML">
+      <input type="hidden" name="hours" value="-24"><button type="submit">−1 day</button>
+    </form>
+  </div>
+  <h3 class="schedule-bucket-head">Needs a time</h3>
+  {{ source_groups('untimed') }}
+  <h3 class="schedule-bucket-head">Scheduled</h3>
+  {{ source_groups('timed') }}
+</section>

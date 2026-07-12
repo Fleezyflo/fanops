@@ -103,5 +103,5 @@ def test_schedule_panel_renders_hook_column(tmp_path):
                           caption="c", state=PostState.queued, scheduled_time="2099-06-06T12:00:00Z",
                           public_url="dryrun://p1"))
     app = create_app(cfg); app.config.update(TESTING=True)
-    html = app.test_client().get("/schedule").data
+    html = app.test_client().get("/schedule?account=a").data
     assert b"sched-caption" in html and "watch his face".encode() in html and b"\xe2\x9c\xa6" in html

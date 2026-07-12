@@ -278,7 +278,7 @@ def test_show_more_disclosure_links_are_ghost():
     # low-stakes pagination/disclosure ("Show more") links are demoted to the tertiary (.ghost) tier.
     # U6: per-account feed lazy-loads via #feed-sentinel (hx-get), not a "Show more" link — _account_pivot removed.
     tpls = Path(fanops.studio.__file__).parent / "templates"
-    for name in ("_schedule_panel.html", "publish.html", "_review_body.html"):
+    for name in ("publish.html", "_review_body.html"):
         src = (tpls / name).read_text()
         assert 'class="button ghost"' in src and "Show more" in src, \
             f"{name}: the 'Show more' disclosure link must be class=\"button ghost\""
@@ -731,21 +731,22 @@ def test_schedule_account_tools_are_a_separated_band():
 
 
 def test_schedule_per_row_reversible_actions_are_ghost():
-    # Move / Clear time / Use suggested / ← Review are per-row, reversible → tertiary .ghost.
-    src = (Path(fanops.studio.__file__).parent / "templates" / "_schedule_panel.html").read_text()
-    for label in (">Move<", ">Clear time<", ">Use suggested<", "← Review"):
+    # U7: Schedule… / Use suggested / ← Review are per-row, reversible → tertiary .ghost (bucket UI).
+    src = (Path(fanops.studio.__file__).parent / "templates" / "_schedule_bucket.html").read_text()
+    for label in (">Schedule…<", ">Use suggested<", "← Review"):
         idx = src.find(label)
-        assert idx != -1, f"expected {label!r} button in _schedule_panel.html"
+        assert idx != -1, f"expected {label!r} button in _schedule_bucket.html"
         button_open = src.rfind("<button", 0, idx)
-        assert 'class="ghost"' in src[button_open:idx], \
-            f"the {label!r} per-row action must be a tertiary .ghost button (MOL-64), got: {src[button_open:idx]!r}"
+        seg = src[button_open:idx]
+        assert "ghost" in seg and 'class="primary"' not in seg, \
+            f"the {label!r} per-row action must be a tertiary .ghost button (MOL-64), got: {seg!r}"
 
 
 def test_schedule_publish_keeps_distinct_primary_weight():
     # Publish SHIPS LIVE — it must NOT be ghosted; it keeps its .primary weight (consequence-legible).
-    src = (Path(fanops.studio.__file__).parent / "templates" / "_schedule_panel.html").read_text()
+    src = (Path(fanops.studio.__file__).parent / "templates" / "_schedule_bucket.html").read_text()
     idx = src.find(">Publish<")
-    assert idx != -1, "expected the Publish button in _schedule_panel.html"
+    assert idx != -1, "expected the Publish button in _schedule_bucket.html"
     button_open = src.rfind("<button", 0, idx)
     seg = src[button_open:idx]
     assert 'class="primary"' in seg, f"Publish must keep .primary weight (never ghost), got: {seg!r}"

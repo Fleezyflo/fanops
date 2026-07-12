@@ -55,8 +55,8 @@ def test_schedule_panel_renders_caption_column(tmp_path):
         led.add_post(Post(id="q1", parent_id="clip_1", account="a", account_id="1", platform=Platform.instagram,
                           caption="UNIQUECAP shippable", state=PostState.queued,
                           scheduled_time=_z(NOW + timedelta(hours=9))))
-    html = _client(cfg).get("/schedule").data
-    assert b"Caption" in html               # the new column header
+    html = _client(cfg).get("/schedule?account=a").data
+    assert b"sched-caption" in html         # U7: caption in per-account bucket row
     assert b"UNIQUECAP shippable" in html   # the caption text rendered in-row
 
 

@@ -401,6 +401,13 @@ def lineage_maps(led: Ledger) -> tuple[dict, dict, dict]:
     return moms, clips_bm, posts_bc
 
 
+def account_color_hue(handle: str) -> int:
+    """U7: deterministic HSL hue 0–359 from account handle (SHA1). Pure."""
+    import hashlib
+    h = hashlib.sha1((handle or "").encode(), usedforsecurity=False).hexdigest()
+    return int(h[:8], 16) % 360
+
+
 def clip_source_of(led: Ledger, clip_id: str) -> Optional[str]:
     """Resolve clip -> moment -> source id for Schedule/Posted source= filter."""
     clip = led.clips.get(clip_id)
