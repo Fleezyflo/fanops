@@ -48,7 +48,7 @@ def register_review_routes(app, cfg):
             cards = []
         counts = views.review_counts(cards)              # counts reflect what's shown (the scoped worklist)
         full_counts = views.review_counts(cards_full) if review_picker else counts
-        progress = views.review_progress(cards)          # Phase 4 per-scope header (awaiting/approved/held/prepared)
+        progress = views.review_progress(cards_full if review_picker else cards)          # Phase 4 per-scope header (awaiting/approved/held/prepared)
         sources = views.source_universe(cards_full)      # Phase 4 source-filter chip universe (key, basename)
         # Phase 4 account-first pivot: only meaningful WITH an account; view=account but no account falls back to
         # the moment view (account_pivot_rows returns [] -> the body renders the cards path, never a 500).

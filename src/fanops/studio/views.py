@@ -269,6 +269,8 @@ def asset_catalog(cfg: Config) -> dict:
         led = Ledger.load(cfg)
         from fanops.pipeline_status import source_backlog
         bl = source_backlog(led, cfg)
+        from fanops.pipeline_run import run_stage_snapshot
+        run_active = run_stage_snapshot(cfg) is not None
         by_id = {r.id: r for r in bl.rows}
         from fanops.models import SourceState
         rows = [{"id": s.id, "origin_kind": s.origin_kind, "state": s.state.value,
@@ -284,12 +286,13 @@ def asset_catalog(cfg: Config) -> dict:
         return {"native": [r for r in rows if r["origin_kind"] == "native"],
                 "third_party": [r for r in rows if r["origin_kind"] == "third_party"],
                 "backlog": {"actionable": bl.actionable, "blocked_on_gates": bl.blocked_on_gates,
-                            "recoverable": bl.recoverable, "inventory": bl.inventory}}
+                            "recoverable": bl.recoverable, "inventory": bl.inventory},
+                "run_active": run_active}
     except Exception as exc:                          # invariant: the Library tab must never 500 — but
         from fanops.log import get_logger             # a read-fail is RECORDED, never silently shown as "empty"
         get_logger(cfg)("library", "-", "error", err=str(exc)[:160])
         return {"native": [], "third_party": [], "backlog": {"actionable": 0, "blocked_on_gates": 0,
-                                                            "recoverable": 0, "inventory": 0}}
+                                                            "recoverable": 0, "inventory": 0}, "run_active": False}
 
 
 def pending_stitches(cfg: Config) -> list:

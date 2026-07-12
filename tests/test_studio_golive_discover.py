@@ -133,18 +133,33 @@ def test_golive_health_failing_dep_row_carries_loud_class(tmp_path, monkeypatch)
 
 
 def test_golive_health_emits_banner_alert_when_a_dependency_is_down(tmp_path, monkeypatch):
-    # MOL-48 fix 2: system_health feeds ONLY system dependencies (docker/postiz/zernio), so a down row
-    # is unambiguously a failing dependency — promote it to a banner-level alert above the strip. The
-    # banner names the down dependency and carries the loud banner class (.banner.warn / .banner-alert).
-    cfg = _clean(monkeypatch, tmp_path); _seed(cfg, [])
+    # MOL-48 fix 2 + S10: a down Postiz with a DUE postiz-routed post is a real stall — promote to the
+    # dep-alert banner. Parked-idle Postiz (reaper-stopped, zero due) must NOT raise this alert (see
+    # test_truth_surfaces.py); here we seed the stall path so the banner contract stays covered.
+    cfg = _clean(monkeypatch, tmp_path)
+    monkeypatch.setenv("FANOPS_LIVE", "1"); monkeypatch.setenv("POSTIZ_URL", "http://127.0.0.1:5000")
+    monkeypatch.setenv("POSTIZ_API_KEY", "pk")
+    _seed(cfg, [{"handle": "ig", "account_id": "1", "platforms": ["instagram"], "status": "active",
+                 "integrations": {"instagram": "ig_1"}, "backends": {"instagram": "postiz"}}])
+    from fanops.ledger import Ledger
+    from fanops.models import Clip, ClipState, Fmt, Moment, MomentState, Platform, Post, PostState, Source
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="src_1", source_path="/v/s.mp4", language="en"))
+        led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
+                              reason="r", state=MomentState.clipped))
+        led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c/clip_1.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
+        led.add_post(Post(id="due_p1", parent_id="clip_1", account="ig", account_id="1", platform=Platform.instagram,
+                          caption="fire", state=PostState.queued, scheduled_time="2020-01-01T12:00:00Z",
+                          public_url="dryrun://clip_1"))
     import fanops.health as health
     monkeypatch.setattr(health, "system_health", lambda c: [
         health.DepHealth("docker", True, "daemon up"),
         health.DepHealth("postiz", False, "unreachable"),
         health.DepHealth("zernio", True, "reachable")])
     body = _client(cfg).get("/golive/health").data.decode()
-    assert "dep-alert" in body, "a down dependency must raise a banner-level alert above the strip"
+    assert "dep-alert" in body, "a real Postiz stall must raise a banner-level alert above the strip"
     assert "postiz" in body.split("dep-alert", 1)[1][:200], "the alert must name the down dependency (postiz)"
+    assert "cannot ship" in body.lower()
 
 
 def test_golive_health_no_banner_when_all_deps_up(tmp_path, monkeypatch):
