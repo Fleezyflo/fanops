@@ -79,6 +79,44 @@ def test_resume_action_unknown_source_is_not_ok(tmp_path, monkeypatch):
 
 # ── route-level: the /run/resume endpoint re-renders the panel with the source recovered ──
 
+def test_strip_errored_links_library_detail(tmp_path, monkeypatch):
+    import pytest
+    pytest.importorskip("flask")
+    cfg = _cfg(tmp_path, monkeypatch)
+    _add_errored(cfg, "src_1")
+    from fanops.studio.app import create_app
+    app = create_app(cfg); app.config.update(TESTING=True)
+    html = app.test_client().get("/").data.decode()
+    assert "/library/src_1" in html
+
+def test_run_errored_name_links_library_detail(tmp_path, monkeypatch):
+    import pytest
+    pytest.importorskip("flask")
+    cfg = _cfg(tmp_path, monkeypatch)
+    _add_errored(cfg, "src_1")
+    from fanops.studio.app import create_app
+    app = create_app(cfg); app.config.update(TESTING=True)
+    html = app.test_client().get("/run").data.decode()
+    assert "/library/src_1" in html
+    assert 'name="source_id" value="src_1"' in html          # Resume form still present
+
+def test_run_next_recover_links_library(tmp_path, monkeypatch):
+    import pytest
+    pytest.importorskip("flask")
+    from fanops.studio import views as v
+    cfg = _cfg(tmp_path, monkeypatch)
+    _add_errored(cfg, "src_1")
+    _real = v.pipeline_status
+    def stub(c):
+        st = _real(c)
+        st["sources_recoverable"] = 1
+        return st
+    monkeypatch.setattr(v, "pipeline_status", stub)
+    from fanops.studio.app import create_app
+    app = create_app(cfg); app.config.update(TESTING=True)
+    html = app.test_client().get("/run").data.decode()
+    assert "run-next-recover" in html and "/library/src_1" in html
+
 def test_run_resume_route_recovers_and_rerenders(tmp_path, monkeypatch):
     import pytest
     pytest.importorskip("flask")

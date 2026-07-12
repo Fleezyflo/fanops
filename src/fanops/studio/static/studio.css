@@ -249,6 +249,7 @@ input[type=checkbox] { width:auto; accent-color:var(--accent); transform:scale(1
 .run-next { border:1px solid var(--line); border-left:3px solid var(--accent); border-radius:var(--r-md);
   background:var(--surface-1); padding:.7rem 1rem; margin:var(--s-4) 0 var(--s-3); }
 .run-next-gate { border-left-color:var(--warn); }
+.run-next-recover { border-left-color:var(--danger); }
 .run-next-review { border-left-color:var(--ok); }
 .run-next-eyebrow { font:600 var(--t-eyebrow) var(--mono); letter-spacing:.08em; text-transform:uppercase; color:var(--faint); margin-right:.4rem; }
 .run-next-label { margin:0 0 .2rem; font-size:var(--t-lg); color:var(--ink); }

@@ -415,6 +415,16 @@ def test_run_next_step_prepare_when_footage_no_output():
     assert views.run_next_step(_st(sources=2))["key"] == "prepare"
 
 
+def test_run_next_step_recover_before_gate():
+    n = views.run_next_step(_st(sources=1, sources_recoverable=1, pending_moments=2))
+    assert n["key"] == "recover"
+
+def test_run_next_step_recover_before_prepare():
+    assert views.run_next_step(_st(sources=2, sources_recoverable=1))["key"] == "recover"
+
+def test_run_next_step_recover_before_review():
+    assert views.run_next_step(_st(sources=2, sources_recoverable=1, awaiting=4))["key"] == "recover"
+
 def test_run_next_step_gate_when_decisions_pending():
     n = views.run_next_step(_st(sources=2, pending_moments=3))
     assert n["key"] == "gate" and "3" in n["label"]

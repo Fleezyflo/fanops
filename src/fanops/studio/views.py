@@ -273,6 +273,11 @@ def run_next_step(status: dict) -> dict:
     if footage == 0:
         return {"key": "add", "label": "Add a video to begin",
                 "hint": "Choose a file above, or paste a link under More — then it lands as pending."}
+    recoverable = _n("sources_recoverable")
+    if recoverable:
+        label = f"{recoverable} source{'s' if recoverable != 1 else ''} need attention"
+        return {"key": "recover", "label": label,
+                "hint": "Open the source in Library to read the failure and resume or reset from there."}
     if s.get("queue_gate"):
         if _n("pending_unbound_count"):
             return {"key": "queue", "label": f"Queue {_n('pending_unbound_count')} pending file(s)",
@@ -659,9 +664,10 @@ def build_system_strip(cfg: Config) -> dict:
         blocked = ps.get("sources_blocked", 0) or (ps.get("pending_moments", 0) + ps.get("pending_moment_hooks", 0)
                                                    + ps.get("pending_captions", 0))
         recoverable = ps.get("sources_recoverable", 0)
+        errored_first_id = (ps.get("errored") or [{}])[0].get("id")
     except Exception as exc:
         get_logger(cfg)("system_strip", "-", "pipeline_status_error", err=str(exc)[:160])
-        blocked = 0; recoverable = 0
+        blocked = 0; recoverable = 0; errored_first_id = None
     failed = 0
     try:
         failed = sum(1 for p in Ledger.load(cfg).posts.values() if p.state is PostState.failed)
@@ -697,7 +703,8 @@ def build_system_strip(cfg: Config) -> dict:
         postiz_down = {"show": False}
     return {"is_live": cfg.is_live, "mode": _publish_mode_label(cfg), "blocked_gates": blocked,
             "recoverable_sources": recoverable, "failed": failed, "insights_blocked": insights_blocked,
-            "errored_sources": errored, "half_live": half_live, "half_live_hint": half_live_hint,
+            "errored_sources": errored, "errored_first_id": errored_first_id,
+            "half_live": half_live, "half_live_hint": half_live_hint,
             "postiz_down": postiz_down}
 
 
