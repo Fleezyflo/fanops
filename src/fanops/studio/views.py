@@ -36,6 +36,19 @@ class GoLiveChannel:
 
 
 @dataclass
+class ChannelReadiness:
+    handle: str
+    platform: str
+    backend: str          # effective_provider resolved, "" if none
+    mapped: bool
+    creds: bool           # backend_has_creds(effective_provider) — publish creds NOT Meta
+    persona: bool         # persona_id or inline persona (account-level)
+    window: bool          # True always today (default-open window)
+    ready: bool           # MUST agree with go_live
+    first_blocker: str    # earliest failing check as action phrase; "" when ready
+
+
+@dataclass
 class GoLiveAccount:
     handle: str
     persona: Optional[str]
@@ -74,6 +87,8 @@ class GoLiveStatus:
     setup_next: str = ""               # next operator action for the current setup_state
     half_live: bool = False            # D15/MOL-297: LIVE flag set but nothing routes live — warn, never solid-green LIVE
     half_live_hint: str = ""           # operator-facing explanation (names the ignored FANOPS_POSTER value)
+    channels: list[ChannelReadiness] = field(default_factory=list)  # S04: per-(handle×platform) readiness matrix
+    next_blocker: str = ""             # earliest first_blocker across channels; connect-first when none
 
 
 @dataclass
@@ -848,6 +863,76 @@ def build_spine(*, counts: dict, has_accounts: bool, here: Optional[str],
                          inflight=inflight, blocked_gates=blocked_gates, next_params=next_params or {})
 
 
+def _blocker_priority(msg: str) -> int:
+    if msg == "connect Postiz or Zernio first": return 0
+    if msg == "map an integration id": return 1
+    if msg == "route to a scheduler backend": return 2
+    if msg.startswith("connect ") and "first (set " in msg: return 3
+    if msg == "link a persona": return 4
+    return 99
+
+
+def _channel_first_blocker(cfg: Config, *, mapped: bool, has_integ: bool, has_backend: bool,
+                           backend: str, persona_ok: bool) -> str:
+    if not cfg.postiz_api_key and not cfg.zernio_api_key:
+        return "connect Postiz or Zernio first"
+    if not mapped:
+        return "map an integration id"
+    if has_integ and not has_backend:
+        return "route to a scheduler backend"
+    if has_backend and not has_integ:
+        return "map an integration id"
+    if backend:
+        from fanops.config import _LIVE_BACKENDS
+        if backend in _LIVE_BACKENDS and not cfg.backend_has_creds(backend):
+            need = {"zernio": "ZERNIO_API_KEY", "postiz": "POSTIZ_API_KEY"}.get(backend, "the backend's API key")
+            return f"connect {backend} first (set {need})"
+    if cfg.account_casting and not persona_ok:
+        return "link a persona"
+    return ""
+
+
+def channel_readiness(cfg: Config) -> list[ChannelReadiness]:
+    """S04: per-(handle×platform) readiness for the Go-Live matrix — mirrors go_live gates without mutating."""
+    from fanops.models import Platform
+    try:
+        accounts = Accounts.load(cfg)
+        live_ready = set(accounts.live_ready_channels())
+    except Exception as exc:
+        from fanops.log import get_logger
+        get_logger(cfg)("golive", "-", "channel_readiness_error", err=str(exc)[:160])
+        return []
+    out: list[ChannelReadiness] = []
+    for a in accounts.active():
+        persona_ok = bool((a.persona_id or "").strip() or (a.persona or "").strip())
+        for p in a.platforms:
+            pv = p.value
+            mapped = bool(a.integrations.get(pv) or a.account_id)
+            has_integ = bool(a.integrations.get(pv))
+            has_backend = bool(a.backends.get(pv))
+            backend = accounts.effective_provider(a.handle, Platform(p)) or ""
+            creds = bool(backend and cfg.backend_has_creds(backend))
+            r2 = (has_integ and not has_backend) or (has_backend and not has_integ)
+            in_live = (a.handle, pv, backend) in live_ready if backend else False
+            ready = in_live and not r2 and (not cfg.account_casting or persona_ok)
+            blocker = _channel_first_blocker(cfg, mapped=mapped, has_integ=has_integ, has_backend=has_backend,
+                                             backend=backend, persona_ok=persona_ok)
+            if blocker:
+                ready = False
+            out.append(ChannelReadiness(handle=a.handle, platform=pv, backend=backend, mapped=mapped, creds=creds,
+                                        persona=persona_ok, window=True, ready=ready, first_blocker=blocker))
+    return out
+
+
+def _next_blocker(channels: list[ChannelReadiness]) -> str:
+    if not channels:
+        return "connect Postiz or Zernio first"
+    blockers = [c.first_blocker for c in channels if c.first_blocker]
+    if not blockers:
+        return ""
+    return min(blockers, key=_blocker_priority)
+
+
 def golive_status(cfg: Config) -> GoLiveStatus:
     """Lock-free read-model for the Go-Live tab: the publish mode (dryrun/live), whether Postiz is
     configured (postiz_url is shown — it is NON-secret; key_set is a BOOL only, the key itself is never
@@ -869,6 +954,7 @@ def golive_status(cfg: Config) -> GoLiveStatus:
     from fanops.validation_gate import learning_validated
     from fanops.doctor import setup_state, setup_next_action
     half_live, half_live_hint = _half_live_state(cfg)
+    chans = channel_readiness(cfg)
     return GoLiveStatus(
         mode=_publish_mode_label(cfg),               # provider-aware (M3); 'dryrun' when not live
         is_live=cfg.is_live,
@@ -877,6 +963,7 @@ def golive_status(cfg: Config) -> GoLiveStatus:
         key_set=cfg.postiz_api_key is not None,       # BOOL only — the API key value is NEVER exposed
         zernio_key_set=cfg.zernio_api_key is not None,  # Zernio slice 4: BOOL only (connect-block state)
         accounts=accts,
+        channels=chans, next_blocker=_next_blocker(chans),
         checks=report["checks"],
         notes=report["notes"],
         learning_validated=learning_validated(cfg),    # M3: shows whether the loop is unfrozen (cutover done)
