@@ -77,6 +77,14 @@ def enforcement_dirty(root) -> list:
 # `fanops-orchestrator` during a wave is the parallel-orchestrator double-merge failure.
 _WAVE_AGENTS = {"fanops-worker", "fanops-lander"}
 
+# Local test execution is operator-FORBIDDEN: a wave runs many workers on ONE machine, and N parallel
+# pytest suites take it down. Tests run ONLY in GitHub CI on the PR. Matches command-position pytest /
+# python -m pytest / check-full.sh (env-var and bash/path prefixes included); check.sh stays allowed —
+# it is scoped LINT only.
+_LOCAL_TESTS = re.compile(
+    r"(?:^|[|&;])\s*(?:[A-Z_]+=\S+\s+)*(?:bash\s+|sh\s+)?(?:\S*/)?"
+    r"(?:pytest\b|python3?\s+-m\s+pytest\b|check-full\.sh\b)")
+
 
 def _root(arg_root=None) -> Path:
     return Path(arg_root or os.environ.get("CURSOR_PROJECT_DIR") or os.getcwd())
@@ -273,6 +281,12 @@ def handle_before_shell(data: dict, root) -> int:
             "REFUSED (orchestration gate): `orchestrate.py stop` is OPERATOR-ONLY (human terminal). "
             "Enforcement cannot be turned off from inside the run — finish the wave; `done` disengages "
             "itself when it exits 0."))
+    if _LOCAL_TESTS.search(cmd):
+        return _emit("deny", agent_message=(
+            "REFUSED (orchestration gate): local test runs are FORBIDDEN — the suite executes ONLY in "
+            "GitHub CI on your PR (parallel local suite runs take the operator's machine down). Write "
+            "the tests with your change, push the branch, open the PR, and cite the CI run as evidence. "
+            "`./scripts/check.sh` (scoped lint) is the only local gate."))
     pp = protected_write_target(cmd)
     if pp:
         return _emit("deny", agent_message=(

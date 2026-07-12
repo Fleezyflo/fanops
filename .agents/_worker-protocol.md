@@ -6,9 +6,11 @@ how you work in this repo. Your brief names your unit (`MOL-xxx`) and your role:
 
 - **scope** — read the ticket, extract its acceptance criteria verbatim, decompose into units, report
   each unit's touched files/resources. No code changes.
-- **implement / fix** — the full change: TDD where the repo expects it, `./scripts/check.sh` green,
-  push a feature branch (`cursor/mol-<id>-<slug>` or the Linear `gitBranchName`), open a PR tagged
-  `MOL-xxx`. Failing checks, merge conflicts, rebases, cleanup: also worker jobs — never the
+- **implement / fix** — the full change: write the ticket's tests WITH the change but NEVER execute
+  them locally — tests run ONLY in GitHub CI on your PR (the gate refuses `pytest`; parallel local
+  suites crash the operator's machine). `./scripts/check.sh` (scoped lint) green, push a feature
+  branch (`cursor/mol-<id>-<slug>` or the Linear `gitBranchName`), open a PR tagged `MOL-xxx`, wait
+  for CI. Failing checks, merge conflicts, rebases, cleanup: also worker jobs — never the
   orchestrator's.
 - **verify** — you did NOT implement this unit. FIRST: if `.orchestration/state/verified/<UNIT>.json`
   exists and its `head_sha` equals the PR's current head (`gh pr view <n> --json headRefOid`), the

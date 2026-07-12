@@ -102,7 +102,7 @@ def _log(repo):
 
 
 def test_scopes_to_changed_module_and_its_test(sandbox):
-    """A change to one module lints that module + runs its test; leaves the poison module untouched."""
+    """Under the operator override, a change to one module lints it + selects its test; poison untouched."""
     repo = sandbox
     (repo / "src" / "fanops" / "widget.py").write_text("x = 1\n")
     (repo / "tests" / "test_widget.py").write_text(_FIXTURE_TEST)
@@ -113,7 +113,7 @@ def test_scopes_to_changed_module_and_its_test(sandbox):
     (repo / "src" / "fanops" / "widget.py").write_text("x = 42\n")
     _commit_all(repo, "touch widget")
 
-    r = _run(["bash", _sandbox_check(repo)], repo, env=_env(repo))
+    r = _run(["bash", _sandbox_check(repo)], repo, env={**_env(repo), "FANOPS_LOCAL_TESTS": "1"})
     log = _log(repo)
 
     assert r.returncode == 0, f"check.sh failed unexpectedly:\n{r.stdout}\n{r.stderr}"
@@ -123,7 +123,7 @@ def test_scopes_to_changed_module_and_its_test(sandbox):
 
 
 def test_changed_test_file_is_run_directly(sandbox):
-    """Editing a test file (not a src module) runs THAT test file."""
+    """Under the operator override, editing a test file (not a src module) selects THAT test file."""
     repo = sandbox
     (repo / "tests" / "test_alpha.py").write_text(_FIXTURE_TEST)
     (repo / "src" / "fanops" / "poison.py").write_text("y = 2\n")
@@ -132,12 +132,31 @@ def test_changed_test_file_is_run_directly(sandbox):
     (repo / "tests" / "test_alpha.py").write_text(_FIXTURE_TEST.replace("== 6", "== 6  # touched"))
     _commit_all(repo, "touch test_alpha")
 
-    r = _run(["bash", _sandbox_check(repo)], repo, env=_env(repo))
+    r = _run(["bash", _sandbox_check(repo)], repo, env={**_env(repo), "FANOPS_LOCAL_TESTS": "1"})
     log = _log(repo)
 
     assert r.returncode == 0, f"{r.stdout}\n{r.stderr}"
     assert "test_alpha.py" in log
     assert "poison" not in log
+
+
+def test_default_never_runs_tests_ci_only(sandbox):
+    """WITHOUT the operator override, check.sh lints + orphan-checks but never selects/runs tests."""
+    repo = sandbox
+    (repo / "src" / "fanops" / "widget.py").write_text("x = 1\n")
+    (repo / "tests" / "test_widget.py").write_text(_FIXTURE_TEST)
+    _commit_all(repo, "baseline")
+
+    (repo / "src" / "fanops" / "widget.py").write_text("x = 42\n")
+    _commit_all(repo, "touch widget")
+
+    r = _run(["bash", _sandbox_check(repo)], repo, env=_env(repo))
+    log = _log(repo)
+
+    assert r.returncode == 0, f"{r.stdout}\n{r.stderr}"
+    assert "CI-ONLY" in r.stdout, f"missing CI-only notice:\n{r.stdout}"
+    assert "pytest" not in log, f"pytest ran without the operator override:\n{log}"
+    assert "widget.py" in log  # ruff still linted the change
 
 
 def test_no_python_change_runs_nothing(sandbox):
@@ -222,7 +241,7 @@ def test_check_full_slow_env_mirrors_ci():
 
 
 def test_scopes_studio_module_to_studio_test(sandbox):
-    """A studio/ subdir change maps to tests/test_studio_<name>.py (not skipped by top-level-only glob)."""
+    """Operator override: a studio/ subdir change maps to tests/test_studio_<name>.py."""
     repo = sandbox
     (repo / "src" / "fanops" / "studio").mkdir(parents=True, exist_ok=True)
     (repo / "src" / "fanops" / "studio" / "widget.py").write_text("x = 1\n")
@@ -233,7 +252,7 @@ def test_scopes_studio_module_to_studio_test(sandbox):
     (repo / "src" / "fanops" / "studio" / "widget.py").write_text("x = 42\n")
     _commit_all(repo, "touch studio widget")
 
-    r = _run(["bash", _sandbox_check(repo)], repo, env=_env(repo))
+    r = _run(["bash", _sandbox_check(repo)], repo, env={**_env(repo), "FANOPS_LOCAL_TESTS": "1"})
     log = _log(repo)
 
     assert r.returncode == 0, f"{r.stdout}\n{r.stderr}"

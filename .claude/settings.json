@@ -7,12 +7,14 @@
   },
   "permissions": {
     "allow": [
-      "Bash(pytest:*)",
-      "Bash(python -m pytest:*)",
       "Bash(ruff check:*)",
       "Bash(pip install -e:*)"
     ],
     "deny": [
+      "Bash(pytest:*)",
+      "Bash(python -m pytest:*)",
+      "Bash(python3 -m pytest:*)",
+      "Bash(./scripts/check-full.sh:*)",
       "Bash(black:*)",
       "Bash(ruff format:*)",
       "Bash(sudo:*)",

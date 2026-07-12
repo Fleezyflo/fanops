@@ -45,8 +45,9 @@ CI is the authoritative gate; `check.sh` also runs by hand (step F) before commi
 every blocker it names (if a blocker is NOT merged to `origin/main`, STOP: "blocked on MOL-x");
 the files it names. Anchors may have drifted ±30 lines — **trust the symbol, re-find the line.**
 
-**C. RED** — write the ticket's named tests FIRST, run them, confirm they FAIL for the right
-reason, paste the failure.
+**C. RED** — write the ticket's named tests FIRST. Do NOT execute them locally — tests are
+**CI-ONLY** (operator rule: parallel wave suites crash this machine; the orchestration gate refuses
+`pytest`/`check-full.sh`). Your PR's CI run is where they prove themselves.
 
 **D. GREEN** — smallest change that passes. No speculative scope. Honor every
 "KEEP"/"do NOT delete"/"byte-identical" clause verbatim.
@@ -55,11 +56,12 @@ reason, paste the failure.
 
 **F. Verify locally — run `./scripts/check.sh` before EVERY commit**
 ```bash
-./scripts/check.sh          # scoped ruff + pytest on changed modules vs origin/main merge-base — seconds
+./scripts/check.sh          # scoped ruff + changed-src-has-a-test check — seconds. Does NOT run tests.
 ```
 Green or you're not done. `pre-commit` also runs `BASE=HEAD ./scripts/check.sh` when `src/`/`tests/` `.py`
 is staged; run step F by hand anyway (merge-base scope catches cross-commit drift pre-commit skips).
-(Broad refactor that scoping can't cover? `./scripts/check-full.sh` for full CI parity — minutes.)
+**Tests execute ONLY in GitHub CI on your PR — never locally.** (`FANOPS_LOCAL_TESTS=1` and
+`./scripts/check-full.sh` are operator-only overrides from a human terminal.)
 
 **G. Commit + push — push freely; CI is the gate.** The `pre-commit` hook runs secret scan + staged ruff
 + scoped `check.sh` (when `src/`/`tests/` `.py` staged); `pre-push` only blocks main/force-push.
