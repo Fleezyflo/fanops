@@ -414,7 +414,9 @@ def _lever_detail_rows(cfg: Config, persona, manifest_rows: list, catalog: list,
         if xw:
             foc = ", ".join(xw["content_focus"]) if xw["content_focus"] else "—"
             xnote = f"{xw['name']}: {foc} · {xw['hook_angle']} · {xw['selection_scope']} · {xw['intensity']}"
-    except Exception:
+    except Exception as exc:
+        from fanops.log import get_logger
+        get_logger(cfg)("personas", getattr(persona, "id", "-"), "crosswalk_error", err=str(exc)[:160])
         xnote = ""
     cat_by = {lv["key"]: lv for lv in (catalog or [])}
     out: list = []
@@ -440,7 +442,10 @@ def _lever_detail_rows(cfg: Config, persona, manifest_rows: list, catalog: list,
                           "catalog_does": cat.get("does") or "—", "option_effect": opt_eff,
                           "produces": prod, "health": row.get("health") or "—",
                           "crosswalk_note": xnote if i == 0 else ""})
-        except Exception:
+        except Exception as exc:
+            from fanops.log import get_logger
+            get_logger(cfg)("personas", getattr(persona, "id", "-"), "lever_detail_error",
+                           key=row.get("key", ""), err=str(exc)[:160])
             out.append({"key": row.get("key", ""), "label": row.get("label", ""), "value": "—",
                           "catalog_does": "—", "option_effect": "—", "produces": "—", "health": "—",
                           "crosswalk_note": ""})
@@ -503,7 +508,9 @@ def personas_page(cfg: Config, *, led: Optional[Ledger] = None) -> "PersonasPage
         mf = manifest(cfg, p)
         try:
             acct_prov = _account_provenance(cfg, p, by_pid.get(p.id, []))
-        except Exception:
+        except Exception as exc:
+            from fanops.log import get_logger
+            get_logger(cfg)("personas", p.id, "provenance_error", err=str(exc)[:160])
             acct_prov = []
         lev_detail = _lever_detail_rows(cfg, p, mf, _cat, _fx)
         cards.append(PersonaCard(id=p.id, name=p.name, voice=p.voice,

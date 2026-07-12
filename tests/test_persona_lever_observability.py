@@ -107,5 +107,5 @@ def test_drawer_renders_lever_health_panel(tmp_path):
     pid = add_persona(cfg, name="P", voice="a devoted fan", content_focus=["storytelling"], hook_angle="curiosity")
     app = create_app(cfg); app.config.update(TESTING=True)
     html = app.test_client().get(f"/personas/drawer/{pid}").get_data(as_text=True)
-    assert "Lever health" in html and "✓" in html           # the manifest/health panel renders, all coherent
+    assert 'class="effective-persona"' in html and "Levers" in html and "✓" in html
     assert "⚠" not in html                                   # no incoherent lever post-M3
