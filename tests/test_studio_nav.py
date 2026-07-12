@@ -1,6 +1,8 @@
-# tests/test_studio_nav.py — Slice 1 (sidebar cockpit nav). FIRST nav coverage: the old top-bar +
-# "Advanced" dropdown was never tested (no test references nav-more/nav-primary/"Advanced"). These pin
-# the new left-rail IA: every surface reachable in one click, grouped, a11y-correct, account-spine intact.
+# tests/test_studio_nav.py — sidebar cockpit nav. Pins the left-rail IA: grouped, a11y-correct, account-spine
+# intact. U13 consolidated the rail to 10 default entries: Blocked/Lift/Live library left the rail (their
+# pages stay REACHABLE as deep links — asserted below under "reachable routes", just not rail links), Hashtags
+# joined Setup, and Footage/Stitches moved behind FANOPS_SHOW_EXTRAS. The old top-bar + "Advanced" dropdown
+# was never tested; these keep the rail honest.
 import json
 import pytest
 pytest.importorskip("flask")
@@ -25,9 +27,14 @@ def _client(cfg):
     from fanops.studio.app import create_app
     app = create_app(cfg); app.config.update(TESTING=True); return app.test_client()
 
-# every full-page surface (route → label fragment in the rail). The whole point: NONE is hidden.
-FULL_PAGES = ["/", "/run", "/review", "/publish", "/lift", "/posted", "/candidates", "/library",
-              "/stitches", "/schedule", "/gates", "/personas", "/golive/connect"]
+# RAIL SURFACES = every full-page surface that IS a default rail link (U13: exactly these 10). The whole
+# point: NONE of these is hidden.
+RAIL_PAGES = ["/", "/run", "/review", "/schedule", "/posted", "/publish", "/library", "/personas",
+              "/hashtags", "/golive/connect"]
+# REACHABLE (off-rail) = pages the rail no longer links but that MUST stay reachable as deep links. Each
+# maps to its expected terminal status: /gates is a live page (badge target); /lift + /live-library 301
+# (folded by U10 + U13). Route coverage MOVED here from the rail inventory — never dropped.
+REACHABLE_ROUTES = {"/gates": 200, "/lift": 301, "/live-library": 301}
 RAIL_GROUPS = [b"Work", b"Library", b"Setup"]
 
 def test_rail_landmark_present(tmp_path):
@@ -40,11 +47,26 @@ def test_no_advanced_dropdown(tmp_path):
     html = _client(cfg).get("/").data
     assert b"nav-more" not in html and b">Advanced<" not in html  # the buried dropdown is GONE
 
-def test_every_surface_linked_one_click(tmp_path):
+def test_every_rail_surface_linked_one_click(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg)
     html = _client(cfg).get("/").data.decode()
-    for path in FULL_PAGES:
+    for path in RAIL_PAGES:
         assert f'href="{path}"' in html, f"{path} not reachable from the rail"
+
+def test_offrail_routes_stay_reachable(tmp_path):
+    # U13: Blocked/Lift/Live library left the RAIL but the routes must still resolve (deep links / bookmarks).
+    cfg = Config(root=tmp_path); _seed(cfg)
+    c = _client(cfg)
+    for path, want in REACHABLE_ROUTES.items():
+        r = c.get(path)
+        assert r.status_code == want, f"{path} expected {want}, got {r.status_code}"
+
+def test_offrail_routes_absent_from_rail(tmp_path):
+    cfg = Config(root=tmp_path); _seed(cfg)
+    html = _client(cfg).get("/").data.decode()
+    rail = html[html.index('id="rail-nav"'):html.index('</nav>', html.index('id="rail-nav"'))]
+    for path in REACHABLE_ROUTES:
+        assert f'href="{path}"' not in rail, f"{path} should have left the rail (still reachable, not railed)"
 
 def test_rail_groups_labelled(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg)
@@ -68,11 +90,11 @@ def test_account_spine_threads_rail(tmp_path):
     html = _client(cfg).get("/review?account=@a").data
     assert b"/personas?account=a" in html and b"account-session-bar" in html and b"a" in html  # the a filter rides every rail link
 
-def test_full_pages_carry_rail(tmp_path):
+def test_rail_pages_carry_rail(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg)
     c = _client(cfg)
-    for path in FULL_PAGES:
-        r = c.get(path, follow_redirects=(path in ("/review", "/lift")))   # U10: /lift 301s to /posted — follow it so the rail is asserted on the destination
+    for path in RAIL_PAGES:
+        r = c.get(path, follow_redirects=(path == "/review"))
         assert r.status_code == 200 and b'class="rail"' in r.data, f"{path} missing the rail"
 
 def test_skiplink_targets_main_content(tmp_path):
@@ -85,31 +107,32 @@ def test_brand_and_skip_survive(tmp_path):
     html = _client(cfg).get("/").data
     assert b"nav-brand" in html and b"skip-nav" in html
 
-# S1 — de-junk "Setup": the four OPERATIONAL surfaces move into their own "Library" group so "Setup" means
-# only "configure this account once". Links MOVE (never drop / never hide) — every surface stays one click.
+# S1 — de-junk "Setup": the OPERATIONAL surfaces live in "Library" so "Setup" means "configure once".
 def test_library_group_precedes_setup_group(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg)
     html = _client(cfg).get("/").data.decode()
     assert 'id="rg-library"' in html and html.index('id="rg-library"') < html.index('id="rg-setup"')  # operational Library above one-time Setup
 
-def test_library_group_holds_the_operational_surfaces(tmp_path):
+def test_library_group_holds_library(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg)
     html = _client(cfg).get("/").data.decode()
     library = html[html.index('id="rg-library"'):html.index('id="rg-setup"')]   # the Library group's slice (it precedes Setup)
-    for path in ("/lift", "/candidates", "/library", "/stitches"):
-        assert f'href="{path}"' in library, f"{path} not under Library"
+    assert 'href="/library"' in library                       # U13: the one default Library surface
+    for path in ("/lift", "/live-library"):                    # folded away — not in the Library group
+        assert f'href="{path}"' not in library, f"{path} should be folded, not railed"
 
-def test_setup_group_is_only_personas_and_accounts(tmp_path):
+def test_setup_group_holds_personas_hashtags_accounts(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg)
     html = _client(cfg).get("/").data.decode()
     rail_end = html.index('</nav>', html.index('id="rg-setup"'))
     setup = html[html.index('id="rg-setup"'):rail_end]
-    assert 'href="/personas"' in setup and 'href="/golive/connect"' in setup
-    for path in ("/candidates", "/library", "/stitches", "/gates"):
-        assert f'href="{path}"' not in setup, f"{path} should have left Setup for Tools"
+    assert 'href="/personas"' in setup and 'href="/hashtags"' in setup and 'href="/golive/connect"' in setup
+    for path in ("/candidates", "/library", "/gates"):
+        assert f'href="{path}"' not in setup, f"{path} should not be in Setup"
 
-def test_work_group_holds_decisions(tmp_path):
+def test_gates_left_the_work_group(tmp_path):
+    # U13: Blocked (/gates) is no longer a Work rail link — the Add & run badge deep-links to it instead.
     cfg = Config(root=tmp_path); _seed(cfg)
     html = _client(cfg).get("/").data.decode()
     wf = html[html.index('id="rg-work"'):html.index('id="rg-library"')]
-    assert 'href="/gates"' in wf
+    assert 'href="/gates"' not in wf

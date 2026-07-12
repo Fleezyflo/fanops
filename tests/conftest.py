@@ -60,6 +60,7 @@ _LEAKY_ENV = ("FANOPS_ROOT", "FANOPS_LIVE", "FANOPS_POSTER", "BLOTATO_API_KEY", 
               # that assume the code default — same class as FANOPS_HOOK_JUDGE above.
               "FANOPS_BURN_SUBS",
               "FANOPS_QUEUE_GATE",   # U4: default ON — repo .env =0 must not leak into gate-ON tests
+              "FANOPS_SHOW_EXTRAS",   # U13: default OFF — repo .env =1 must not leak into the extras-hidden nav tests
               # S03 source sharding: a repo .env value must not leak into tests that assume the code default.
               "FANOPS_SOURCE_SHARD_MIN",
               # bringup: the `fanops up` on-demand-script path override — a repo .env value must not leak

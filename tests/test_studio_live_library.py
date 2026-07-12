@@ -75,12 +75,12 @@ def test_live_library_scope_label_no_creds(tmp_path, monkeypatch):
     assert label                                            # never blank; a no-creds label still renders
 
 
-# ---- route ----
+# ---- route (U13: the live library is folded into /library?view=live; /live-library 301s there) ----
 def test_live_library_route_renders(tmp_path):
     cfg = Config(root=tmp_path)
     _seed_imported(cfg, [ImportedMedia(media_id="M1", permalink="https://ig/reel/A/", product_type="REELS",
                                        account="ig-777", metrics={"reach": 1200})])
-    r = _client(cfg).get("/live-library")
+    r = _client(cfg).get("/library?view=live")             # the folded live lens (was /live-library)
     assert r.status_code == 200
     body = r.get_data(as_text=True)
     assert "https://ig/reel/A/" in body                     # the permalink is shown
@@ -91,7 +91,7 @@ def test_live_library_route_renders(tmp_path):
 
 def test_live_library_route_empty_state(tmp_path):
     cfg = Config(root=tmp_path)                             # no imported media at all
-    r = _client(cfg).get("/live-library")
+    r = _client(cfg).get("/library?view=live")
     assert r.status_code == 200
     body = r.get_data(as_text=True)
     assert "not authored here" in body.lower() or "viewed there" in body.lower()   # still labeled
@@ -99,8 +99,20 @@ def test_live_library_route_empty_state(tmp_path):
     assert "no live" in body.lower() or "nothing" in body.lower() or "empty" in body.lower() or "no imported" in body.lower()
 
 
-def test_live_library_in_nav(tmp_path):
+def test_live_library_get_redirects_to_folded_lens(tmp_path):
+    # U13: the old /live-library GET is a 301 to the folded lens — bookmarks/links move.
+    cfg = Config(root=tmp_path)
+    r = _client(cfg).get("/live-library")
+    assert r.status_code == 301
+    assert "/library?view=live" in r.headers["Location"]
+
+
+def test_live_library_reachable_from_nav(tmp_path):
+    # U13: the standalone /live-library rail link is gone; the Library surface (which carries the live lens)
+    # is the rail entry. The live lens itself is reachable via the Library page's lens switcher.
     cfg = Config(root=tmp_path)
     r = _client(cfg).get("/")
     assert r.status_code == 200
-    assert "/live-library" in r.get_data(as_text=True)     # reachable from the rail nav
+    body = r.get_data(as_text=True)
+    assert 'href="/library"' in body                       # Library is railed; its lens switcher reaches ?view=live
+    assert 'href="/live-library"' not in body              # the standalone link was folded away
