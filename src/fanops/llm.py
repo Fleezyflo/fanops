@@ -3,8 +3,11 @@
 SDK — keeps one toolchain (no second SDK dependency) and fits the codebase's shell-a-binary idiom
 (like ffmpeg/whisper); `claude` becomes one more absence-guarded binary. We hand `claude` the EXACT
 pydantic JSON schema via --json-schema so the model returns schema-conformant output in
-`structured_output`, which collapses most "LLM returned malformed JSON" risk. --allowedTools "" =
-pure generator (no tool use, no file access — the responder must not wander).
+`structured_output`, which collapses most "LLM returned malformed JSON" risk. A CLI that predates
+--json-schema (2026-07-12: a stale daemon PATH pinned claude 2.0.30 and every gate call died on
+"unknown option") gets ONE flagless retry with the schema carried in the prompt instead — degraded
+conformance, never a mass failure. --allowedTools "" = pure generator (no tool use, no file access
+— the responder must not wander).
 
 AUTH (load-bearing — operator decision 2026-06-04: use the EXISTING `claude` subscription, NOT an
 API key): we DO NOT pass `--bare`. Under `--bare`, Anthropic auth is STRICTLY `ANTHROPIC_API_KEY`
@@ -123,6 +126,20 @@ _RATELIMIT_STATUSES = {429, 503, 529}
 _MAX_RL_RETRIES = 4                                  # total attempts = retries + 1
 _RL_BASE_DELAY = 2.0                                 # seconds; doubled per attempt + jittered
 
+def _prompt_side_schema(schema: dict, base: str) -> str:
+    """Prompt-side schema constraint — the transport-agnostic fallback when the CLI can't take the
+    schema as a flag (cursor-agent always; claude CLIs predating --json-schema). The envelope then
+    has no structured_output, so the caller's `result`-parse path does the extraction."""
+    return ("Respond with ONLY a single JSON object conforming to this schema — no prose, no markdown:\n"
+            + json.dumps(schema) + "\n\n" + base)
+
+def _json_schema_flag_rejected(returncode: int, body: str) -> bool:
+    """True iff this failure is specifically the claude CLI not KNOWING --json-schema (an outdated
+    install — 2026-07-12: a stale daemon PATH pinned claude 2.0.30 and every gate call died on
+    `error: unknown option '--json-schema'`). Keyed on the flag name so no other usage error is
+    mistaken for it."""
+    return returncode != 0 and "--json-schema" in (body or "") and _is_toolchain_error(body)
+
 def _rate_limit_status(returncode: int, stdout: str) -> int | None:
     """The retryable rate-limit status if this result is one, else None. claude -p emits a nonzero
     rc AND a JSON envelope on stdout carrying `api_error_status` when rate-limited (observed live).
@@ -186,38 +203,51 @@ def _claude_json_meta(prompt: str, schema: dict, *, timeout: float = 300.0,
     # could hit ARG_MAX -> E2BIG, surfaced misleadingly as "claude not found". STDIN has neither limit.
     # --model (when pinned) is appended LAST so it never lands between --allowedTools and its value
     # (the argv-order the tests assert on — audit H).
-    def _build_cmd(allowed: str) -> list[str]:
-        return ["claude", "-p",
-                "--output-format", "json",
-                "--json-schema", json.dumps(schema),
-                "--allowedTools", allowed,
-                "--strict-mcp-config"] + (["--model", model] if model else [])
+    def _build_cmd(allowed: str, *, schema_flag: bool = True) -> list[str]:
+        return (["claude", "-p",
+                 "--output-format", "json"]
+                + (["--json-schema", json.dumps(schema)] if schema_flag else [])
+                + ["--allowedTools", allowed,
+                   "--strict-mcp-config"] + (["--model", model] if model else []))
 
     def _run(stdin_prompt: str, allowed: str = allowed) -> dict:
-        # Rate-limit backoff (mirrors the publishers' jittered exponential retry (postiz/zernio)):
-        # a 429/503/529 is rejected pre-processing and SAFE to retry. Without this a usage spike turned
-        # the whole autonomous run into a silent no-op (one log line per gate). A timeout / hard nonzero
-        # exit is NOT retried here (timeout has its own one-shot retry in the responder).
-        delay = _RL_BASE_DELAY
-        for attempt in range(_MAX_RL_RETRIES + 1):
-            try:
-                r = subprocess.run(_build_cmd(allowed), check=False, capture_output=True, text=True, timeout=timeout, input=stdin_prompt)
-            except (FileNotFoundError, OSError) as e:
-                raise ToolchainMissingError(
-                    f"claude not found on PATH — install Claude Code to run the autonomous responder "
-                    f"({type(e).__name__})") from e
-            except subprocess.TimeoutExpired as e:
-                raise LlmTimeoutError(f"claude -p timed out after {timeout}s") from e
-            rl = _rate_limit_status(r.returncode, r.stdout)
-            if rl is None:
-                break                                        # success or a hard (non-retryable) failure
-            if attempt >= _MAX_RL_RETRIES:
-                raise LlmRateLimitError(
-                    f"claude -p rate-limited (api_error_status={rl}) after {_MAX_RL_RETRIES} retries")
-            logger.warning("claude -p rate-limited (api_error_status=%s) — backing off %.1fs "
-                           "(attempt %d/%d)", rl, delay, attempt + 1, _MAX_RL_RETRIES)
-            _sleep(delay + random.uniform(0, delay))         # jitter so many gates don't retry in lockstep
-            delay *= 2
+        def _attempt(schema_flag: bool) -> subprocess.CompletedProcess:
+            # Rate-limit backoff (mirrors the publishers' jittered exponential retry (postiz/zernio)):
+            # a 429/503/529 is rejected pre-processing and SAFE to retry. Without this a usage spike turned
+            # the whole autonomous run into a silent no-op (one log line per gate). A timeout / hard nonzero
+            # exit is NOT retried here (timeout has its own one-shot retry in the responder).
+            delay = _RL_BASE_DELAY
+            for attempt in range(_MAX_RL_RETRIES + 1):
+                try:
+                    r = subprocess.run(_build_cmd(allowed, schema_flag=schema_flag), check=False,
+                                       capture_output=True, text=True, timeout=timeout,
+                                       input=stdin_prompt if schema_flag else _prompt_side_schema(schema, stdin_prompt))
+                except (FileNotFoundError, OSError) as e:
+                    raise ToolchainMissingError(
+                        f"claude not found on PATH — install Claude Code to run the autonomous responder "
+                        f"({type(e).__name__})") from e
+                except subprocess.TimeoutExpired as e:
+                    raise LlmTimeoutError(f"claude -p timed out after {timeout}s") from e
+                rl = _rate_limit_status(r.returncode, r.stdout)
+                if rl is None:
+                    return r                                 # success or a hard (non-retryable) failure
+                if attempt >= _MAX_RL_RETRIES:
+                    raise LlmRateLimitError(
+                        f"claude -p rate-limited (api_error_status={rl}) after {_MAX_RL_RETRIES} retries")
+                logger.warning("claude -p rate-limited (api_error_status=%s) — backing off %.1fs "
+                               "(attempt %d/%d)", rl, delay, attempt + 1, _MAX_RL_RETRIES)
+                _sleep(delay + random.uniform(0, delay))     # jitter so many gates don't retry in lockstep
+                delay *= 2
+            return r
+        r = _attempt(True)
+        if _json_schema_flag_rejected(r.returncode, r.stderr or r.stdout):
+            # An outdated claude CLI (pre---json-schema) rejects the flag with a usage error. Retry
+            # ONCE with the schema carried in the prompt instead (the cursor transport's mechanism) —
+            # degraded conformance beats mass-failing every gate. The retry's own failure falls
+            # through to the normal classification below (no loop: the retry never carries the flag).
+            logger.warning("claude CLI rejected --json-schema (outdated install?) — retrying with "
+                           "prompt-side schema")
+            r = _attempt(False)
         if r.returncode != 0:
             body = (r.stderr or r.stdout or "")[:300]
             if _is_context_limit(body):                       # AGENT-2: a too-big payload -> typed, not generic
@@ -319,8 +349,7 @@ def _cursor_json_meta(prompt: str, schema: dict, *, timeout: float = 300.0,
                       read_root: str | None = None) -> tuple[dict, str | None, bool]:
     """Call `cursor-agent -p` with schema-prefixed stdin; return (object, model, frames_unread)."""
     def _schema_stdin(base: str) -> str:
-        return ("Respond with ONLY a single JSON object conforming to this schema — no prose, no markdown:\n"
-                + json.dumps(schema) + "\n\n" + base)
+        return _prompt_side_schema(schema, base)
 
     def _run(stdin_prompt: str) -> dict:
         delay = _RL_BASE_DELAY

@@ -41,10 +41,20 @@ def _fanops_bin() -> str:
     return str(Path(sys.executable).parent / "fanops")
 
 def _daemon_path() -> str:
-    """Full PATH to bake into the plist (launchd gives a bare one). Order: venv bin, the node
-    bin holding `claude` (derived now), homebrew (ffmpeg/whisper), then the system defaults. De-duped,
-    absolute — nothing depends on a sourced shell profile at fire time."""
+    """Full PATH to bake into the plist (launchd gives a bare one). Order: venv bin, ~/.local/bin
+    when it holds `claude` (the native-install symlink — tracks the operator's CURRENT claude), the
+    bin dirs holding `claude`/`cursor-agent` per shutil.which, homebrew (ffmpeg/whisper), then the
+    system defaults. De-duped, absolute — nothing depends on a sourced shell profile at fire time.
+
+    The stable shim dir goes AHEAD of the which()-derived parent because which() answers from THIS
+    process's PATH: under the keeper's baked plist PATH that re-derives the same stale pin forever
+    (2026-07-12: an nvm v18 dir pinned claude 2.0.30, which predates --json-schema, and every
+    moment_hooks/captions gate call failed for days). The existence check is PATH-independent, so a
+    plist rewrite from ANY environment converges on the current claude."""
     parts = [str(Path(sys.executable).parent)]
+    stable = Path.home() / ".local" / "bin"
+    if (stable / "claude").exists():
+        parts.append(str(stable))
     for _bin in ("claude", "cursor-agent"):
         found = shutil.which(_bin)
         if found:
