@@ -14,8 +14,8 @@
   <script src="{{ url_for('static', filename='drawer.js') }}" defer></script>
 </head>
 <body>
-  {%- macro rail_link(endpoint, key, label) -%}
-<a href="{{ url_for(endpoint, account=nav_account) }}" class="rail-link{% if tab == key %} active{% endif %}"{% if tab == key %} aria-current="page"{% endif %}>{{ label }}</a>
+  {%- macro rail_link(endpoint, key, label, badge=0) -%}
+<a href="{{ url_for(endpoint, account=nav_account) }}" class="rail-link{% if tab == key %} active{% endif %}"{% if tab == key %} aria-current="page"{% endif %}>{{ label }}{% if badge and badge > 0 %}<span class="rail-badge" data-testid="rail-badge" title="{{ badge }} processing decision{{ 's' if badge != 1 else '' }} blocked">{{ badge }}</span>{% endif %}</a>
   {%- endmacro -%}
   <a class="skip-nav vh" href="#main-content">Skip to content</a>
   <div class="app-shell">
@@ -25,27 +25,29 @@
     <nav class="rail" id="rail-nav" aria-label="Studio navigation">
       <a class="nav-brand" href="{{ url_for('index') }}">FanOps Studio</a>
       <ul class="rail-list" role="list">
+        {# U13: Work holds the 6 decision surfaces. Blocked left the rail (the /gates page stays a live
+           route — the Add & run badge deep-links to it when gates block). #}
         <li class="rail-group"><p class="rail-group-label" id="rg-work">Work</p>
           <ul role="list" aria-labelledby="rg-work">
             <li>{{ rail_link('index','home','Home') }}</li>
-            <li>{{ rail_link('run_panel','run','Add & run') }}</li>
-            <li>{{ rail_link('gates','gates','Blocked') }}</li>
+            <li>{{ rail_link('run_panel','run','Add & run', badge=system_strip.blocked_gates) }}</li>
             <li>{{ rail_link('review','review','Review') }}</li>
             <li>{{ rail_link('schedule','schedule','Schedule') }}</li>
             <li>{{ rail_link('posted','posted','Results') }}</li>
             <li>{{ rail_link('publish_panel','publish','Manual publish') }}</li>
           </ul></li>
+        {# U13: Library holds the one asset surface (Live library folded into /library?view=live; Lift
+           folded into Results by U10). Footage + Stitches are power-user extras, revealed by FANOPS_SHOW_EXTRAS. #}
         <li class="rail-group"><p class="rail-group-label" id="rg-library">Library</p>
           <ul role="list" aria-labelledby="rg-library">
-            <li>{{ rail_link('lift','lift','Lift') }}</li>
-            <li>{{ rail_link('live_library','live','Live library') }}</li>
             <li>{{ rail_link('library','library','Library') }}</li>
-            <li>{{ rail_link('candidates','footage','Footage') }}</li>
-            <li>{{ rail_link('stitches','stitches','Stitches') }}</li>
+            {% if cfg.show_extras %}<li>{{ rail_link('candidates','footage','Footage') }}</li>{% endif %}
+            {% if cfg.show_extras %}<li>{{ rail_link('stitches','stitches','Stitches') }}</li>{% endif %}
           </ul></li>
         <li class="rail-group"><p class="rail-group-label" id="rg-setup">Setup</p>
           <ul role="list" aria-labelledby="rg-setup">
             <li>{{ rail_link('personas_view','personas','Personas') }}</li>
+            <li>{{ rail_link('hashtags_view','hashtags','Hashtags') }}</li>
             <li>{{ rail_link('golive_connect','golive','Go Live') }}</li>
           </ul></li>
       </ul>

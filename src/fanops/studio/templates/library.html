@@ -1,4 +1,22 @@
-{# src/fanops/studio/templates/library.html — M1 asset-memory tab #}
+{# src/fanops/studio/templates/library.html — M1 asset-memory tab. U13: two lenses on the ONE Library
+   surface — Assets (the catalogued footage, default) and Live mirrored (?view=live, the live IG media
+   mirrored from the platform, "viewed there, not authored here"). The live lens folds the retired
+   /live-library page (301'd here); it reuses views.live_library / live_library_scope + the wipe surface,
+   unchanged. Lens chips reuse the delivery-tabs / .button pattern (same as the Posted delivery filter). #}
 {% extends "base.html" %}
 {% block title %}Library{% endblock %}
-{% block body %}{% include "_library_panel.html" %}{% endblock %}
+{% block body %}
+  {% set lens = view|default('') %}
+  <nav class="delivery-tabs" aria-label="Library lens">
+    <a class="button{{ '' if lens == 'live' else ' active' }}"{{ '' if lens == 'live' else ' aria-current=page' }} href="{{ url_for('library', account=nav_account) }}" data-testid="lens-assets">Assets</a>
+    <a class="button{{ ' active' if lens == 'live' else '' }}"{{ ' aria-current=page' if lens == 'live' else '' }} href="{{ url_for('library', account=nav_account, view='live') }}" data-testid="lens-live">Live mirrored</a>
+  </nav>
+  {% if lens == 'live' %}
+  <h2>Live library</h2>
+  <p class="muted">Live Instagram posts mirrored from the platform — <strong>viewed there, not authored here</strong>. These are real media on the connected account that this system did not create; Posted is our own shipped library.</p>
+  {% include "_live_library_panel.html" %}
+  {% include "_wipe_panel.html" %}
+  {% else %}
+  {% include "_library_panel.html" %}
+  {% endif %}
+{% endblock %}

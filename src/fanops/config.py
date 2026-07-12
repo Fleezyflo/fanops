@@ -594,6 +594,12 @@ class Config:
         return v not in ("0", "false", "no", "off")
 
     @property
+    def show_extras(self) -> bool:
+        # U13: FANOPS_SHOW_EXTRAS=1 reveals Footage + Stitches in the Library rail group; default OFF.
+        v = (os.getenv("FANOPS_SHOW_EXTRAS") or "").strip().lower()
+        return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
+
+    @property
     def smart_framing(self) -> bool:
         # Subject-aware reframe (framing.subject_focus): slide the 9:16 crop onto the detected subject
         # instead of the blind top/center bias. DEFAULT ON — but only because the pass is FAIL-OPEN: with

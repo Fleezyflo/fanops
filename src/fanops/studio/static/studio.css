@@ -72,6 +72,8 @@ em { font-style:italic; color:var(--ink); }
 .rail-link.active:focus-visible { box-shadow:0 0 0 2px var(--accent-dim), 0 0 0 5px var(--accent-bright); }
 .rail .active-account { margin-top:auto; padding:.5rem .4rem 0; font-size:var(--t-meta); color:var(--muted); line-height:1.5; }
 .rail .active-account strong { color:var(--ink); }
+/* U13: blocked-gates count on the Add & run rail link — SOLID --danger fill (same loud signal as the system-strip gate alert), floated right so the label reads first. */
+.rail-badge { float:right; min-width:1.1rem; padding:0 .35rem; border-radius:999px; background:var(--danger); color:var(--danger-ink); font-size:var(--t-eyebrow); font-weight:700; line-height:1.4; text-align:center; }
 .workspace { min-width:0; }
 .skip-to-nav { display:none; }   /* a mobile-only "jump to nav" escape; the desktop rail is always visible */
 
@@ -877,6 +879,7 @@ button.ghost:hover, .button.ghost:hover { color:var(--ink); background:transpare
 .posted-row.delivery-failed .posted-accent { background:var(--state-failed); }
 .posted-main { flex:1; min-width:0; padding:var(--s-2); }
 .delivery-tabs { display:flex; flex-wrap:wrap; gap:.35rem; margin:var(--s-2) 0; }
+.delivery-tabs .button.active { background:var(--accent-dim); border-color:var(--accent); color:var(--ink); }   /* U13: active lens/filter tab — same accent treatment as .account-chips */
 .failure-chips { display:flex; flex-wrap:wrap; gap:.35rem; margin:0 0 var(--s-2); }
 .failure-chips .button.active { background:var(--danger-dim); border-color:var(--danger); }
 .recover-bar { display:flex; flex-wrap:wrap; gap:.5rem; align-items:center; margin:0 0 var(--s-3); padding:var(--s-2);
