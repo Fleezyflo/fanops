@@ -674,6 +674,25 @@ def test_request_moment_hooks_is_write_once(tmp_path):
     led = request_moment_hooks(led, cfg, "src_1")     # second pass — must be a no-op for this gate
     assert latest_request_id(cfg, "moment_hooks", "src_1.14.00-18.00") == rid1
 
+def test_request_moment_hooks_skips_llm_when_no_trusted_speech(tmp_path, monkeypatch):
+    monkeypatch.setenv("FANOPS_SPEECH_TRUST", "1")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
+                          state=SourceState.signalled, duration=60.0, language="en",
+                          transcript=[{"start": 10.0, "end": 28.0, "text": "background noise",
+                                       "no_speech_prob": 0.95, "avg_logprob": -0.2, "compression_ratio": 1.2}],
+                          signal_peaks=[{"t": 16.0, "kind": "scene_cut", "score": 0.6}],
+                          meta={"transcribed": True}))
+    led = request_moments(led, cfg, "src_1")
+    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=18.0, reason="visual beat")])
+    led = request_moment_hooks(led, cfg, "src_1")
+    from fanops.agentstep import read_response
+    dec = read_response(cfg, "moment_hooks", "src_1.14.00-18.00", MomentHookDecision)
+    assert dec is not None and dec.hook is None
+    led = ingest_moment_hooks(led, cfg, "src_1")
+    assert led.moments_of("src_1")[0].hook is None
+    assert led.moments_of("src_1")[0].state is MomentState.decided
+
 def test_decide_hooks_promotes_picked_to_decided_with_window_hook(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
     led = request_moments(led, cfg, "src_1")

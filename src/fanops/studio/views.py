@@ -209,7 +209,8 @@ def pipeline_status(cfg: Config) -> dict:
             if not b:
                 continue
             queue_lines.append({"batch_id": bid, "name": b.name, "sources": sorted(sids),
-                                "target_accounts": b.target_accounts, "burn_subs": b.burn_subs})
+                                "target_accounts": b.target_accounts, "burn_subs": b.burn_subs,
+                                "speech_trust": b.speech_trust})
     backlog_rows = []
     for r in bl.rows:
         row = {"id": r.id, "state": r.state, "bucket": r.bucket, "wait_line": r.wait_line,

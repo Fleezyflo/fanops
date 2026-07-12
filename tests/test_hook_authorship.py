@@ -64,6 +64,13 @@ def test_ingest_moment_hooks_persists_m_hook_only(tmp_path):
     assert m.state is MomentState.decided and m.hook == "the part you'll replay"
 
 # ---- null hook clean promotion (MOL-476 retry machinery removed) ------------------------------------
+def test_moment_hook_prompt_allows_null_when_speech_trust():
+    p = {"start": 10.0, "end": 28.0, "reason": "r", "transcript_excerpt": "", "language": "en",
+         "guidance": "", "frames": [], "signal_peaks": [], "speech_trust": True,
+         "personas": [{"handle": "markmakmouly", "persona": "craft angle"}]}
+    out = moment_hook_prompt(p)
+    assert "hook: null" in out and "set dressing" in out
+
 def test_moment_hook_prompt_forbids_null_license():
     p = {"start": 10.0, "end": 28.0, "reason": "r", "transcript_excerpt": "", "language": "en",
          "guidance": "", "frames": [], "signal_peaks": [],

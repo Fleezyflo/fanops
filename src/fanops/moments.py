@@ -10,7 +10,7 @@ from fanops.ledger import Ledger
 from fanops.models import (Moment, MomentRequest, MomentDecision, MomentPick, MomentState, SourceState,
                            MomentHookRequest, MomentHookDecision)
 from fanops.ids import child_id
-from fanops.agentstep import write_request, read_response, latest_request_id, discard_gates_for, discard_gate, clear_attempts, gate_keys_for
+from fanops.agentstep import write_request, write_response, read_response, latest_request_id, discard_gates_for, discard_gate, clear_attempts, gate_keys_for
 from fanops.hookcheck import is_weak_hook
 from fanops.keyframes import extract_keyframes
 from fanops.bands import band_for
@@ -195,11 +195,16 @@ def _corpus_hit(text, corpus) -> bool:
             if needle and needle in hay: return True
     except Exception: return False
     return False
-def _bounded_transcript(transcript: list, peaks: list, *, corpus=None) -> tuple:
+def _bounded_transcript(transcript: list, peaks: list, *, corpus=None, src_lang=None, speech_trust=False) -> tuple:
     """Return (segments_to_send, dropped_count). Keeps segments whose [start,end] midpoint is nearest a peak's
     `t` until the char budget is spent; preserves chronological order. Empty/under-budget -> (transcript, 0).
-    When corpus is non-empty, corpus-matching segments rank ahead of equidistant non-matches (bonus, not filter)."""
+    When corpus is non-empty, corpus-matching segments rank ahead of equidistant non-matches (bonus, not filter).
+    When speech_trust, untrusted ASR segments are dropped before budgeting."""
     segs = transcript or []
+    if speech_trust:
+        from fanops.transcribe import trusted_segments
+        trusted = trusted_segments(segs, src_lang=src_lang)
+        segs = trusted
     if sum(len(str(s.get("text", ""))) for s in segs) <= _TRANSCRIPT_CHAR_BUDGET:
         return segs, 0
     pts = sorted({float(p.get("t")) for p in (peaks or []) if isinstance(p, dict) and _is_num(p.get("t"))})
@@ -294,9 +299,13 @@ def request_moments(led: Ledger, cfg: Config, source_id: str, accounts=None, *, 
     frames = _source_frames(cfg, src)
     peaks = src.signal_peaks or []
     g = load_guidance(cfg) if guidance is None else guidance
+    batch = led.get_batch(src.batch_id) if getattr(src, "batch_id", None) else None
+    from fanops.transcribe import resolve_speech_trust
+    trust = resolve_speech_trust(cfg, batch)
     targets = _targeted_active_accounts(led, cfg, source_id, accounts)
     if targets is None:
-        transcript, dropped = _bounded_transcript(src.transcript or [], peaks)
+        transcript, dropped = _bounded_transcript(src.transcript or [], peaks,
+                                                    src_lang=src.language, speech_trust=trust)
         if dropped:
             get_logger(cfg)("source", source_id, "transcript_truncated", dropped=dropped, total=len(src.transcript or []))
         personas = _persona_peaks(peaks, _pick_personas(cfg, accounts))
@@ -311,6 +320,7 @@ def request_moments(led: Ledger, cfg: Config, source_id: str, accounts=None, *, 
                                 personas=personas,
                                 frames=frames).model_dump()
         payload.pop("request_id", None)
+        if trust: payload["speech_trust"] = True
         if not payload.get("personas"):
             payload.pop("personas", None)
         discard_gates_for(cfg, "moments", source_id)
@@ -327,7 +337,8 @@ def request_moments(led: Ledger, cfg: Config, source_id: str, accounts=None, *, 
     for a in targets:
         entry = _persona_entry(cfg, a)
         persona_peaks = filter_peaks_by_intensity(peaks, entry.get("intensity") or None)
-        transcript, dropped = _bounded_transcript(src.transcript or [], persona_peaks, corpus=entry.get("corpus"))
+        transcript, dropped = _bounded_transcript(src.transcript or [], persona_peaks, corpus=entry.get("corpus"),
+                                                    src_lang=src.language, speech_trust=trust)
         if dropped:
             get_logger(cfg)("source", source_id, "transcript_truncated", dropped=dropped,
                             total=len(src.transcript or []), handle=a.handle)
@@ -343,6 +354,7 @@ def request_moments(led: Ledger, cfg: Config, source_id: str, accounts=None, *, 
                                 personas=[pe],
                                 frames=frames).model_dump()
         payload.pop("request_id", None)
+        if trust: payload["speech_trust"] = True
         write_request(cfg, kind="moments", key=f"{source_id}.{a.handle}", payload=payload)
     led.set_source_state(source_id, SourceState.moments_requested)
     return led
@@ -523,6 +535,9 @@ def request_moment_hooks(led: Ledger, cfg: Config, source_id: str, accounts=None
     # flag is off / accounts is None / on any scorer error (fail-open).
     styles = proven_hook_styles(led, cfg, accounts)
     guidance = load_guidance(cfg)
+    batch = led.get_batch(src.batch_id) if getattr(src, "batch_id", None) else None
+    from fanops.transcribe import resolve_speech_trust, window_has_trusted_speech
+    trust = resolve_speech_trust(cfg, batch)
     for m in list(led.moments.values()):
         if m.parent_id != source_id or m.state is not MomentState.picked:
             continue
@@ -552,6 +567,13 @@ def request_moment_hooks(led: Ledger, cfg: Config, source_id: str, accounts=None
         payload.pop("request_id", None)
         if styles:
             payload["learned_hooks"] = styles      # optional KEY (mirrors caption), not a model field
+        if trust: payload["speech_trust"] = True
+        if trust and not window_has_trusted_speech(src, cs, ce):
+            rid = write_request(cfg, kind="moment_hooks", key=key, payload=payload)
+            write_response(cfg, "moment_hooks", key,
+                           MomentHookDecision(hook=None, request_id=rid).model_dump_json(indent=2))
+            get_logger(cfg)("source", source_id, "hook_skipped_no_speech", moment=m.id)
+            continue
         write_request(cfg, kind="moment_hooks", key=key, payload=payload)
     return led
 

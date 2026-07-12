@@ -496,6 +496,7 @@ class Batch(BaseModel):
     error_reason: Optional[str] = None
     burn_subs: Optional[bool] = None                     # per-batch subtitle override: None => use global cfg.burn_subs;
                                                          # False => skip (e.g. music clips where lyric subs hurt); True => force on
+    speech_trust: Optional[bool] = None                  # per-batch speech-trust override: None => cfg.speech_trust
 
 def batch_id(name: str, created_at: str) -> str:
     """Content-addressed id keyed on (name, microsecond-precision created_at): a re-submit of the same

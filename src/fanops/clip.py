@@ -562,7 +562,12 @@ def _subtitles_vf(led: Ledger, cfg: Config, moment_id: str, cid: str, aspect: Fm
     # batch can skip lyric subs (burn_subs=False) while talk stays on, or vice-versa. None override -> global.
     batch = led.get_batch(src.batch_id) if getattr(src, "batch_id", None) else None
     burn = batch.burn_subs if (batch is not None and batch.burn_subs is not None) else cfg.burn_subs
-    segments = (src.transcript or []) if burn else []   # transcript is opt-in (global default, per-batch override)
+    raw = src.transcript or []
+    if burn:
+        from fanops.transcribe import resolve_speech_trust, trusted_segments
+        segments = trusted_segments(raw, src_lang=src.language) if resolve_speech_trust(cfg, batch) else raw
+    else:
+        segments = []
     if not hook and not segments:                        # no hook, no opted-in transcript -> clean clip
         return None, False                               # nothing wanted -> not a failure
     if not overlay.ffmpeg_has_textfilter():

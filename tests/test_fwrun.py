@@ -12,8 +12,9 @@ class _FakeWord:
     def __init__(self, word, start, end): self.word = word; self.start = start; self.end = end
 
 class _FakeSeg:
-    def __init__(self, start, end, text, words=None):
+    def __init__(self, start, end, text, words=None, *, avg_logprob=None, no_speech_prob=None, compression_ratio=None):
         self.start = start; self.end = end; self.text = text; self.words = words
+        self.avg_logprob = avg_logprob; self.no_speech_prob = no_speech_prob; self.compression_ratio = compression_ratio
 
 class _FakeInfo:
     def __init__(self, language): self.language = language
@@ -61,6 +62,14 @@ def test_transcribe_to_json_segment_without_words_omits_key(tmp_path, mocker):
     mocker.patch("fanops._fwrun._load_model", return_value=_FakeModel([_FakeSeg(0.0, 1.0, "hi", words=None)], "en"))
     js = fwrun.transcribe_to_json(str(tmp_path / "s.mp3"), str(tmp_path / "o"), "large-v3", None)
     assert "words" not in json.loads(Path(js).read_text())["segments"][0]
+
+
+def test_transcribe_to_json_preserves_quality_metadata(tmp_path, mocker):
+    segs = [_FakeSeg(0.0, 2.0, "hi", avg_logprob=-0.42, no_speech_prob=0.08, compression_ratio=1.6)]
+    mocker.patch("fanops._fwrun._load_model", return_value=_FakeModel(segs, "en"))
+    js = fwrun.transcribe_to_json(str(tmp_path / "s.mp3"), str(tmp_path / "o"), "large-v3", None)
+    seg = json.loads(Path(js).read_text())["segments"][0]
+    assert seg["avg_logprob"] == -0.42 and seg["no_speech_prob"] == 0.08 and seg["compression_ratio"] == 1.6
 
 
 def test_main_parses_args_and_runs(tmp_path, mocker):

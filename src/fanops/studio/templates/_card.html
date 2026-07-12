@@ -27,7 +27,7 @@
 
     {# P5: lineage context so the operator knows WHICH source + WHERE in it this clip came from, plus an
        optional transcript peek (collapsed) — the data was already on the card, just never surfaced. #}
-    <div class="meta clip-lineage"><span class="ro">from</span> {{ card.source_name }} <span class="ro">·</span> {{ card.moment_window }}s</div>
+    <div class="meta clip-lineage"><span class="ro">from</span> {{ card.source_name }} <span class="ro">·</span> {{ card.moment_window }}s{% if card.speech_trust_label %} <span class="chip {{ 'ok' if card.speech_trust_label == 'trusted' else 'warn' }}" title="ASR speech-trust in this moment window (FANOPS_SPEECH_TRUST)">speech {{ card.speech_trust_label }}</span>{% endif %}</div>
     {% if card.transcript_excerpt %}<details class="clip-transcript"><summary>Transcript</summary><p class="meta">{{ card.transcript_excerpt }}</p></details>{% endif %}
 
     {# M3d: the shared-moment hook-removed badge + restore choice for clips whose hook was auto-stripped. #}

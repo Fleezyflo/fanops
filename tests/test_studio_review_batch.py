@@ -49,6 +49,30 @@ def test_review_card_unbatched_batch_field_none(tmp_path):
     card = next(c for c in review_buckets(led, Accounts.load(cfg), cfg, now=NOW) if c.bucket == "editable")
     assert card.batch_id is None and card.batch_title is None   # byte-identical: nothing batched
 
+def test_review_card_speech_trust_label_when_enabled(monkeypatch, tmp_path):
+    monkeypatch.setenv("FANOPS_SPEECH_TRUST", "1")
+    cfg = Config(root=tmp_path); _seed_accounts(cfg); led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path="/v/show.mp4", language="en", batch_id="batch_x",
+                          transcript=[{"start": 0.0, "end": 5.0, "text": "they slept on me here",
+                                       "avg_logprob": -0.2, "no_speech_prob": 0.05, "compression_ratio": 1.2},
+                                      {"start": 5.0, "end": 8.0, "text": "noise line",
+                                       "no_speech_prob": 0.95, "avg_logprob": -0.2, "compression_ratio": 1.2}]))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7, reason="r",
+                          state=MomentState.clipped))
+    led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c/clip.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
+    led.add_batch(Batch(id="batch_x", name="Launch Week", target_accounts=["a"]))
+    _await(led, "p_a", "clip_1", "a", batch_id="batch_x")
+    card = next(c for c in review_buckets(led, Accounts.load(cfg), cfg, now=NOW) if c.bucket == "editable")
+    assert card.speech_trust_label == "mixed"
+
+def test_review_card_speech_trust_label_none_when_off(monkeypatch, tmp_path):
+    monkeypatch.delenv("FANOPS_SPEECH_TRUST", raising=False)
+    cfg = Config(root=tmp_path); _seed_accounts(cfg); led = Ledger.load(cfg); _lineage(led, batch_id="batch_x")
+    led.add_batch(Batch(id="batch_x", name="Launch Week", target_accounts=["a"]))
+    _await(led, "p_a", "clip_1", "a", batch_id="batch_x")
+    card = next(c for c in review_buckets(led, Accounts.load(cfg), cfg, now=NOW) if c.bucket == "editable")
+    assert card.speech_trust_label is None
+
 def test_review_card_batch_fields_default_none():
     # back-compat: constructing ReviewCard with the EXISTING keyword set still works (None defaults).
     rc = ReviewCard(clip_id="c", preview_url="", source_name="", label="", moment_window="", reason="",

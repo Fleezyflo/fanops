@@ -125,15 +125,105 @@ def fw_cmd(src: str, out_dir: str, model: str, language: str = "") -> list[str]:
     return [sys.executable, "-m", "fanops._fwrun", "--model", model, "--language", language,
             "--output_dir", out_dir, src]
 
+_SEGMENT_QUALITY_KEYS = ("avg_logprob", "no_speech_prob", "compression_ratio")
+
 def _segment(s: dict) -> dict:
     """One transcript segment: {start,end,text}, plus `words` ([{word,start,end}]) when whisper
-    emitted word timestamps (--word_timestamps). The words list is kept only when it's a non-empty
-    list of dicts carrying a "word" key, so a schema quirk can never poison the overlay's sync."""
+    emitted word timestamps (--word_timestamps). Optional quality keys (avg_logprob, no_speech_prob,
+    compression_ratio) pass through when present — additive, old JSON without them is unchanged."""
     seg = {"start": s["start"], "end": s["end"], "text": s["text"].strip()}
     words = s.get("words")
     if isinstance(words, list) and words and all(isinstance(w, dict) and "word" in w for w in words):
         seg["words"] = [{"word": w["word"], "start": w.get("start"), "end": w.get("end")} for w in words]
+    for k in _SEGMENT_QUALITY_KEYS:
+        if k in s:
+            try: seg[k] = float(s[k])
+            except (TypeError, ValueError): pass
     return seg
+
+def _transcript_schema(segments: list[dict]) -> int:
+    """Sidecar schema version: 2 when any segment carries ASR quality metadata."""
+    for seg in segments or []:
+        if any(k in seg for k in _SEGMENT_QUALITY_KEYS):
+            return 2
+    return 1
+
+# Whisper-default quality thresholds for speech-trust filtering (FANOPS_SPEECH_TRUST).
+_NO_SPEECH_MAX = 0.6
+_AVG_LOGPROB_MIN = -1.0
+_COMPRESSION_RATIO_MAX = 2.4
+_SCRIPT_LATIN_ON_AR = 0.70          # Latin-majority segment on an ar source -> junk transliteration
+_SPEECH_MIN_WORDS = 2               # mirrors framing._window_has_speech bar
+
+def _lang_base(tag: str | None) -> str | None:
+    if not tag: return None
+    base = tag.strip().lower().replace("_", "-").split("-", 1)[0]
+    return base or None
+
+def _script_counts(text: str) -> tuple[int, int, int]:
+    """Return (alpha, latin, cjk) char counts for script-coherence checks."""
+    alpha = latin = cjk = 0
+    for c in text or "":
+        if not c.isalpha(): continue
+        alpha += 1
+        o = ord(c)
+        if '\u0600' <= c <= '\u06ff': pass                          # Arabic — not latin
+        elif o < 128 or (0x00C0 <= o <= 0x024F): latin += 1         # Basic Latin + Latin-1 supplement
+        elif 0x4E00 <= o <= 0x9FFF or 0x3040 <= o <= 0x30FF: cjk += 1
+    return alpha, latin, cjk
+
+def _segment_script_ok(text: str, *, src_lang: str | None) -> bool:
+    """Reject obvious script flaps (Arabic-as-Latin junk, CJK on en/ar sources). Fail-open when unknown."""
+    base = _lang_base(src_lang)
+    alpha, latin, cjk = _script_counts(text)
+    if not alpha: return False
+    if base == "ar" and latin / alpha > _SCRIPT_LATIN_ON_AR: return False
+    if base in ("en", "ar") and cjk / alpha > 0.3: return False
+    return True
+
+def _has_quality_metadata(seg: dict) -> bool:
+    return any(k in seg for k in _SEGMENT_QUALITY_KEYS)
+
+def segment_trusted(seg: dict, *, src_lang: str | None = None) -> bool:
+    """True when a transcript segment is plausibly real speech — not ASR noise on music/b-roll."""
+    text = (seg.get("text") or "").strip()
+    if not text: return False
+    if not _segment_script_ok(text, src_lang=src_lang): return False
+    if _has_quality_metadata(seg):
+        try:
+            nsp = seg.get("no_speech_prob")
+            if nsp is not None and float(nsp) > _NO_SPEECH_MAX: return False
+            alp = seg.get("avg_logprob")
+            if alp is not None and float(alp) < _AVG_LOGPROB_MIN: return False
+            cr = seg.get("compression_ratio")
+            if cr is not None and float(cr) > _COMPRESSION_RATIO_MAX: return False
+        except (TypeError, ValueError):
+            pass
+    return True
+
+def trusted_segments(transcript: list[dict] | None, *, src_lang: str | None = None) -> list[dict]:
+    """Filter to segments passing segment_trusted; None/[] -> []."""
+    return [s for s in (transcript or []) if segment_trusted(s, src_lang=src_lang)]
+
+def window_has_trusted_speech(src, start: float, end: float) -> bool:
+    """True when trusted transcript segments overlap [start,end) with >= _SPEECH_MIN_WORDS tokens."""
+    lang = getattr(src, "language", None)
+    words = 0
+    for seg in trusted_segments(getattr(src, "transcript", None) or [], src_lang=lang):
+        try:
+            s, e = seg.get("start"), seg.get("end")
+            if not isinstance(s, (int, float)) or not isinstance(e, (int, float)): continue
+            if e <= start or s >= end: continue
+            words += sum(1 for tok in (seg.get("text") or "").split() if any(c.isalpha() for c in tok))
+        except (AttributeError, TypeError):
+            continue
+    return words >= _SPEECH_MIN_WORDS
+
+def resolve_speech_trust(cfg, batch=None) -> bool:
+    """Global FANOPS_SPEECH_TRUST with optional per-batch override (mirrors burn_subs resolution)."""
+    if batch is not None and getattr(batch, "speech_trust", None) is not None:
+        return bool(batch.speech_trust)
+    return cfg.speech_trust
 
 def purge_source_artifacts(cfg: Config, source_id: str, source_path: str, *,
                            clip_ids: list[str] | None = None, preserve_vocals: bool = False) -> None:
@@ -331,7 +421,8 @@ def _produce_transcript(led: Ledger, cfg: Config, source_id: str, src, out_dir: 
     try:
         from fanops.artifacts import stamp_stage
         rel = str(js.relative_to(cfg.agent_io))
-        stamp_stage(cfg, source_id, "transcribe", artifact=rel, schema=1, sha256=src.sha256,
+        stamp_stage(cfg, source_id, "transcribe", artifact=rel,
+                    schema=_transcript_schema(src.transcript or []), sha256=src.sha256,
                     extra={"engine": engine, "model": used_model, "wall_s": wall_s})
     except (OSError, ValueError): pass
     return led

@@ -674,6 +674,14 @@ class Config:
         return (v or "").strip().lower() not in {"0", "false", "no", "off"}
 
     @property
+    def speech_trust(self) -> bool:
+        # Filter untrusted ASR segments at consumption (captions, moment pick, hook gate). DEFAULT OFF
+        # (opt-in): when ON, transcribe.segment_trusted drops junk on music/b-roll/logistics windows.
+        # Per-batch Batch.speech_trust can override. Only explicit on-words enable; mirrors hook_router.
+        v = (os.getenv("FANOPS_SPEECH_TRUST") or "").strip().lower()
+        return v in {"1", "true", "yes", "on"}
+
+    @property
     def aware_reframe(self) -> bool:
         # Theme 2 (pipeline-quality): bias a VERTICAL height-crop toward the upper third so a subject's
         # head isn't cut by ffmpeg's default centre crop (clip.reframe_filter). OPT-IN/DEFAULT OFF —

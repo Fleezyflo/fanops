@@ -56,9 +56,10 @@ Docker+Postiz plane (see the bring-up brief `docs/design/briefs/16-one-step-brin
 | `FANOPS_AWARE_REFRAME` | off | Global top-third crop bias | .env |
 | `FANOPS_WHISPER_MODEL` | duration-aware | Legacy whisper CLI model pin; unset = large-v3→turbo→… by timeout budget | .env |
 | `FANOPS_ASR_MODEL` | duration-aware | faster-whisper model pin; unset = large-v3→medium→… by timeout budget. A pin wins verbatim and DISABLES the timeout downgrade — the 2026-07-12 subtitle-garbage incident was a stale `small` pin | .env |
-| `FANOPS_ASR_LANGUAGE` | `en,ar` | Whisper candidate languages; a single value FORCES that language (kills per-segment EN/AR detection) | .env |
+| `FANOPS_ASR_LANGUAGE` | `en,ar` | Comma list enables faster-whisper `multilingual=True` (per-segment detection over all languages — NOT restricted to listed langs); a single value FORCES that language | .env |
 | `FANOPS_ISOLATE_VOCALS` | on | Demucs beat-stripping before Whisper | .env |
 | `FANOPS_BURN_SUBS` | on | Burn transcript captions (the on-screen hook is a separate layer) | .env |
+| `FANOPS_SPEECH_TRUST` | off | Filter untrusted ASR segments at caption burn, moment pick, and hook gate (`transcribe.segment_trusted`) | .env |
 | `FANOPS_SUBTITLE_FONT` | `Arial Unicode MS` | .ass subtitle font | .env |
 | `FANOPS_IMPACT_CUT` | off | Impact-cut stitch producer | .env |
 | `FANOPS_INTRO_TEASE` | off | Intro-tease stitch producer | .env |

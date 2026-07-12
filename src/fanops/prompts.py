@@ -67,7 +67,7 @@ def _target_pick_count(duration: float, band: Band = TALK) -> int:
     if duration < band.lo: return 1
     return max(1, min(_MAX_TARGET_PICKS, round(duration / band.span)))
 
-def _hook_spec(max_words: int = 6, directive=None) -> str:
+def _hook_spec(max_words: int = 6, directive=None, *, allow_null: bool = False) -> str:
     """Shared on-screen hook craft. Universal retention-science floor + persona-supplied demos/bans (MOL-173)."""
     floor = (
         f"  The on-screen hook is the single biggest lever on reach: ~70% watch MUTED and decide in under "
@@ -102,8 +102,12 @@ def _hook_spec(max_words: int = 6, directive=None) -> str:
         f"    BANNED (universal floor): ANY THIRD-PERSON narration of the artist; LYRIC PARAPHRASE; "
         f"GENERIC filler; hooking on the EDITING or camera; BAIT the clip never pays off; fabricated "
         f"ROUND numbers or authority stats.\n"
-        f"    OUTPUT: <={max_words} words; no em-dashes, en-dashes, or smart quotes. You MUST author a "
-        f"non-null hook — hook is REQUIRED, never null.\n")
+        + (f"    OUTPUT: <={max_words} words; no em-dashes, en-dashes, or smart quotes. Return `hook: null` "
+           f"when this window has no trusted spoken dialog (music drop, b-roll, logistics, ASR noise). "
+           f"Never invent a hook from set dressing or transcript garbage.\n"
+           if allow_null else
+           f"    OUTPUT: <={max_words} words; no em-dashes, en-dashes, or smart quotes. You MUST author a "
+           f"non-null hook — hook is REQUIRED, never null.\n"))
     persona = ""
     if directive is not None:
         demos = getattr(directive, "demos", None) or []
@@ -258,7 +262,10 @@ def moment_pick_prompt(payload: dict) -> str:
         "Do NOT describe or narrate the frames in your answer; your answer is the JSON picks alone.\n"
         "  - Use the SIGNAL PEAKS only to find WHERE the energy is. Prefer moments that align with a "
         "transcript line and/or a signal peak; do not depend on the transcript being correct.\n"
-        "  - `segments`: when the best clip stitches NON-CONTIGUOUS spans that belong together (supercut), "
+        + ("  - Untrusted ASR segments (music/b-roll noise) must NOT anchor a pick alone — require a "
+           "signal peak and/or visual strength.\n"
+           if payload.get("speech_trust") else "")
+        + "  - `segments`: when the best clip stitches NON-CONTIGUOUS spans that belong together (supercut), "
         "carry `segments` as [[start,end],...]. HARD RULE: ascending source order, non-overlapping within "
         "the pick — plays in original sequence, never reordered. Prefer segments when beats are separated "
         "by dead air or a weaker bridge. Omit or empty = single window.\n"
@@ -284,6 +291,7 @@ def moment_hook_prompt(payload: dict) -> str:
     end = float(payload.get("end", 0.0) or 0.0)
     dur = max(0.0, end - start)
     has_frames = bool(payload.get("frames"))   # AGENT-9: [] (no source file / failed probe) -> text-only, honest prompt
+    allow_null = bool(payload.get("speech_trust"))
     # P4(c): a cross-surface union of gated winning on-screen-hook styles (the SAME signal caption uses).
     # A STYLE cue to lean toward, NOT copy. Absent/empty/None -> no block (byte-identical).
     learned = payload.get("learned_hooks")
@@ -319,15 +327,20 @@ def moment_hook_prompt(payload: dict) -> str:
         f"THIS CLIP: {start:.1f}s to {end:.1f}s ({dur:.0f}s long).\n"
         f"WHY IT WAS PICKED (source to transform, NOT to echo): {_inline(payload.get('reason', ''))}\n"
         "HARD RULES:\n"
-        "  - `hook` is the ON-SCREEN TEXT shown in the clip's first ~2 seconds. It is NOT a caption of the "
-        "audio and NOT a quote of the transcript — its only job is keeping the VIEWER watching. You MUST "
-        "author a non-null hook — never return hook = null.\n"
+        + ("  - `hook` is the ON-SCREEN TEXT shown in the clip's first ~2 seconds. It is NOT a caption of the "
+           "audio and NOT a quote of the transcript — its only job is keeping the VIEWER watching. Return "
+           "`hook: null` when this window has no trusted spoken dialog (music, b-roll, logistics, ASR noise); "
+           "never invent a hook from set dressing.\n"
+           if allow_null else
+           "  - `hook` is the ON-SCREEN TEXT shown in the clip's first ~2 seconds. It is NOT a caption of the "
+           "audio and NOT a quote of the transcript — its only job is keeping the VIEWER watching. You MUST "
+           "author a non-null hook — never return hook = null.\n")
         + ("  - FRAMES: stills from THIS clip's window are attached as images — SEE them and write the "
            "hook true to what is actually ON SCREEN, not only the transcript.\n" if has_frames else
            "  - NO FRAMES are attached for this clip; write the hook from the transcript excerpt and signal "
            "peaks below. Do NOT claim to describe anything on screen you cannot read here.\n")
         + _hook_decision(has_frames, _directive_from_payload(payload))
-        + _hook_spec(6, _directive_from_payload(payload))
+        + _hook_spec(6, _directive_from_payload(payload), allow_null=allow_null)
         + learned_block
         + persona_block +
         "  - Use the SIGNAL PEAKS only to find WHERE the energy is, never as the hook's subject; do not "

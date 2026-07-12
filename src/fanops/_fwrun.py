@@ -6,8 +6,8 @@ large-v3 is OFFERED because, on Demucs-isolated vocals, it is the proven music/r
 (clean coherent Arabic where turbo produced gibberish), and int8 makes even large-v3 practical on CPU
 (~1-4min/clip vs 5-15 via the stock whisper CLI). Free, on-machine, NO API.
 
-Writes whisper-compatible JSON ({language, segments:[{start,end,text[,words]}]}) named by the INPUT
-stem, so transcribe.py's existing JSON parser + per-source .json lookup are unchanged. The model
+Writes whisper-compatible JSON ({language, segments:[{start,end,text[,words][,avg_logprob,no_speech_prob,compression_ratio]}]})
+named by the INPUT stem, so transcribe.py's existing JSON parser + per-source .json lookup are unchanged. The model
 load is behind _load_model so the JSON-shaping logic is testable without importing faster-whisper
 (an optional [asr] extra). FAIL-LOUD: any failure exits nonzero so transcribe_source parks the
 source as a RETRIABLE error — never a silent empty transcript. The fallback to the legacy whisper
@@ -31,6 +31,16 @@ def _load_model(model: str):
     return WhisperModel(model, device="cpu", compute_type="int8")
 
 
+def _seg_quality(s) -> dict:
+    """Optional faster-whisper quality fields — preserved at the JSON boundary for speech-trust filtering."""
+    out = {}
+    for key in ("avg_logprob", "no_speech_prob", "compression_ratio"):
+        v = getattr(s, key, None)
+        if v is not None:
+            try: out[key] = float(v)
+            except (TypeError, ValueError): pass
+    return out
+
 def _word(w) -> dict:
     """Serialize one faster-whisper word, None-guarding start/end (the runtime can emit null word
     timings — same case the overlay already tolerates; never float(None))."""
@@ -40,9 +50,9 @@ def _word(w) -> dict:
 
 def transcribe_to_json(audio: str, out_dir: str, model: str, language: str | None) -> str:
     """Transcribe `audio` with faster-whisper and write whisper-shaped JSON to
-    <out_dir>/<audio-stem>.json; return that path. A comma-list `language` (e.g. "en,ar") PINS multiple
-    candidates -> per-segment detection (multilingual=True), so EN directing lines + AR verses in ONE
-    source both transcribe; a single value forces that language; ""/None -> unconstrained auto-detect.
+    <out_dir>/<audio-stem>.json; return that path. A comma-list `language` (e.g. "en,ar") enables
+    multilingual=True (per-segment detection over Whisper's full language set — it does NOT restrict
+    candidates to the listed langs); a single value forces that language; ""/None -> unconstrained auto-detect.
     word_timestamps drive the overlay's sync."""
     wm = _load_model(model)
     langs = [x for x in (language or "").replace(",", " ").split() if x]
@@ -51,7 +61,7 @@ def transcribe_to_json(audio: str, out_dir: str, model: str, language: str | Non
                                    multilingual=multi, word_timestamps=True, task="transcribe")
     out = []
     for s in segments:                                   # faster-whisper yields segments lazily
-        seg = {"start": float(s.start), "end": float(s.end), "text": s.text}
+        seg = {"start": float(s.start), "end": float(s.end), "text": s.text, **_seg_quality(s)}
         words = getattr(s, "words", None)
         if words: seg["words"] = [_word(w) for w in words]
         out.append(seg)

@@ -4,7 +4,13 @@ from pathlib import Path
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Source, SourceState
-from fanops.transcribe import whisper_cmd, fw_cmd, transcribe_source
+from fanops.transcribe import whisper_cmd, fw_cmd, transcribe_source, _segment
+
+def test_segment_passes_through_quality_metadata():
+    raw = {"start": 0.0, "end": 2.0, "text": " hi", "avg_logprob": -0.5, "no_speech_prob": 0.1, "compression_ratio": 1.4}
+    seg = _segment(raw)
+    assert seg["text"] == "hi" and seg["avg_logprob"] == -0.5
+    assert seg["no_speech_prob"] == 0.1 and seg["compression_ratio"] == 1.4
 
 def test_whisper_cmd_shape():
     cmd = whisper_cmd("/s/x.mp4", "/out", model="small")
@@ -31,9 +37,8 @@ def test_fw_cmd_shape():
     assert cmd[cmd.index("--language") + 1] == ""            # "" -> runner auto-detects (EN+AR)
     assert cmd[cmd.index("--output_dir") + 1] == "/out" and cmd[-1] == "/s/x.mp3"
 
-def test_fwrun_pins_en_ar_as_multilingual(tmp_path, mocker):
-    # "en,ar" pins BOTH candidates -> per-segment detection (multilingual=True, language=None) so a mixed
-    # EN+AR source transcribes; a single value forces that language; the runner never drops the pin.
+def test_fwrun_enables_multilingual_for_comma_list(tmp_path, mocker):
+    # "en,ar" enables multilingual=True (language=None) — per-segment detection; NOT a candidate pin.
     from fanops import _fwrun
     calls = {}
     class _Info: language = "en"
