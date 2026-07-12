@@ -14,7 +14,7 @@ rather than silently no-op'ing; a systemd --user sibling is the natural follow-u
 guard marks the seam). Every `launchctl` call mirrors ingest._run_ffprobe (timeout + typed
 ToolchainMissingError on absence). Backend stays dryrun by default — this never publishes."""
 from __future__ import annotations
-import contextlib, os, plistlib, re, shutil, subprocess, sys, time
+import contextlib, json, os, plistlib, re, shutil, socket, subprocess, sys, time
 from datetime import datetime, timezone
 from pathlib import Path
 from fanops.config import Config
@@ -487,7 +487,6 @@ def _heartbeat_age_s(cfg: Config) -> float | None:
     """Age in seconds of the last heartbeat line in run.log, or None if no log / no heartbeat / a
     short or unparseable file. Reads JSON heartbeats (log.py) by stage+ts; legacy TAB lines still
     parse via the leading ISO column."""
-    import json
     p = cfg.log_path
     if not p.exists():
         return None
@@ -514,3 +513,231 @@ def _heartbeat_age_s(cfg: Config) -> float | None:
     if ts.tzinfo is None:
         ts = ts.replace(tzinfo=timezone.utc)
     return (datetime.now(timezone.utc) - ts).total_seconds()
+
+
+# ── one-step bring-up (`fanops up`) ────────────────────────────────────────────────────────────
+# Composes the four planes a cold/half-broken machine needs — git freshness (advisory), Docker+Postiz
+# (self-healing via the existing on-demand script), daemon freshness (restart-onto-current-code), and
+# Studio (report-only) — into ONE ordered, idempotent sequence that ends in a single honest verdict.
+# Brief: docs/design/briefs/16-one-step-bring-up.md. Reuses `postiz-ondemand.sh ensure` verbatim
+# (its docker_up + honest 200/401 probe + Mastra self-heal) and daemon.ensure's aliveness contract;
+# it reimplements NONE of Docker/compose/launchd. Never publishes (posts are born awaiting_approval),
+# never flips FANOPS_LIVE, never mutates the git tree.
+
+_DEFAULT_ONDEMAND = Path.home() / "postiz-selfhost" / "postiz-ondemand.sh"
+_ONDEMAND_WAIT_S = 200          # cold Postiz boot budget (script's own WAIT_S=180 + slack)
+_KICKSTART_HEARTBEAT_TRIES = 60 # confirm one fresh loop heartbeat after a restart (~2 min at 2s)
+_KICKSTART_HEARTBEAT_STEP = 2.0
+_STUDIO_LAUNCH_CMD = f"fanops studio --host {STUDIO_DEFAULT_HOST} --port {STUDIO_DEFAULT_PORT}"
+
+
+def _ondemand_script() -> Path:
+    """Path to the self-hosted Postiz on-demand script. FANOPS_POSTIZ_ONDEMAND overrides; else the
+    conventional $HOME/postiz-selfhost/postiz-ondemand.sh (mirrors postiz_lifecycle._SCRIPT)."""
+    v = (os.getenv("FANOPS_POSTIZ_ONDEMAND") or "").strip()
+    return Path(v).expanduser() if v else (Path.home() / "postiz-selfhost" / "postiz-ondemand.sh")
+
+
+def _tail(text: str, n: int = 6) -> str:
+    """Last n non-empty lines of a captured stream, one-lined for the verdict."""
+    lines = [ln for ln in (text or "").splitlines() if ln.strip()]
+    return " | ".join(lines[-n:]) if lines else ""
+
+
+def _newest_loop_heartbeat_ts(cfg: Config) -> datetime | None:
+    """Timestamp of the newest resident-loop heartbeat in run.log (tz-aware UTC), or None. Same line
+    shape daemon._heartbeat_age_s reads (JSON stage=heartbeat origin=loop; legacy TAB fallback) — kept
+    separate so _heartbeat_age_s stays byte-identical (health_model/doctor depend on it)."""
+    p = cfg.log_path
+    if not p.exists():
+        return None
+    last_ts = None
+    try:
+        for line in p.read_text().splitlines():
+            if not line.strip():
+                continue
+            try:
+                rec = json.loads(line)
+                if rec.get("stage") == "heartbeat" and rec.get("origin") == "loop":
+                    last_ts = rec.get("ts")
+            except json.JSONDecodeError:
+                if "\theartbeat\t" in line:
+                    last_ts = line.split("\t", 1)[0]
+    except OSError:
+        return None
+    if last_ts is None:
+        return None
+    try:
+        ts = datetime.fromisoformat(last_ts)
+    except ValueError:
+        return None
+    return ts.replace(tzinfo=timezone.utc) if ts.tzinfo is None else ts
+
+
+def _heartbeat_fresh_since(cfg: Config, since: datetime, *,
+                           tries: int = _KICKSTART_HEARTBEAT_TRIES,
+                           step: float = _KICKSTART_HEARTBEAT_STEP) -> bool:
+    """Poll run.log until a loop heartbeat newer than `since` (the restart instant) appears. The
+    load-bearing freshness proof: a restarted daemon writes a NEW heartbeat on its first tick, so a
+    line strictly newer than the kickstart means the fresh process is alive on current code. Bounded
+    — returns False if none arrives within tries*step (the daemon didn't come back healthy)."""
+    for _ in range(max(1, tries)):
+        ts = _newest_loop_heartbeat_ts(cfg)
+        if ts is not None and ts > since:
+            return True
+        time.sleep(step)
+    return False
+
+
+def _studio_port_answers(host: str = STUDIO_DEFAULT_HOST, port: int = STUDIO_DEFAULT_PORT) -> bool:
+    """True iff something is ACCEPTING on the Studio port (liveness, not launchd registration —
+    mirrors cli._studio_port_busy). A refused connect is the expected negative, not an error."""
+    try:
+        with socket.create_connection((host or STUDIO_DEFAULT_HOST, port), timeout=1.0):
+            return True
+    except OSError:
+        return False
+
+
+# ── the four planes (each returns a small verdict dict; tests drive them in isolation) ──────────
+
+def _plane_git(cfg: Config) -> dict:
+    """ADVISORY git freshness: `git fetch`, then report how far the checkout's `main` trails
+    `origin/main`. NEVER mutates the tree (no merge/reset/checkout — binding non-goal §6: a prior
+    sync clobbered a live accounts.json, another produced a false verdict). Always ok=True: a stale
+    tree or a failed fetch is surfaced, never fatal. The operator decides whether to sync."""
+    behind = ahead = None
+    try:
+        fetched = subprocess.run(["git", "-C", str(cfg.root), "fetch", "origin"],
+                                 capture_output=True, text=True, timeout=60)
+        if fetched.returncode != 0:
+            return {"plane": "git", "ok": True, "behind": None, "ahead": None,
+                    "detail": f"advisory: git fetch failed ({_tail(fetched.stderr, 2) or 'non-zero'}) — skipped freshness check"}
+        rev = subprocess.run(["git", "-C", str(cfg.root), "rev-list", "--left-right", "--count", "main...origin/main"],
+                             capture_output=True, text=True, timeout=30)
+        if rev.returncode == 0 and rev.stdout.strip():
+            parts = rev.stdout.split()
+            if len(parts) == 2:
+                ahead, behind = int(parts[0]), int(parts[1])
+    except (OSError, subprocess.TimeoutExpired, ValueError) as e:
+        return {"plane": "git", "ok": True, "behind": None, "ahead": None,
+                "detail": f"advisory: freshness check skipped ({type(e).__name__})"}
+    if behind is None:
+        detail = "advisory: could not compare main to origin/main (skipped)"
+    elif behind == 0:
+        detail = "main is current with origin/main"
+    else:
+        detail = f"main is {behind} commit(s) behind origin/main — sync is the operator's call (bring-up does not mutate the tree)"
+    return {"plane": "git", "ok": True, "behind": behind, "ahead": ahead, "detail": detail}
+
+
+def _plane_postiz(cfg: Config) -> dict:
+    """Docker + Postiz plane: shell out to `postiz-ondemand.sh ensure` (which starts Docker, brings
+    the stack up idempotently, self-heals the Mastra crash-loop, and runs the honest 200/401-past-nginx
+    probe — all reused verbatim). Gate: exit 0 = Postiz ready; non-zero surfaces the script's stderr
+    tail (the honest diagnostic). A missing script emits a clear NOT-READY for this plane, no crash."""
+    script = _ondemand_script()
+    if not script.exists():
+        return {"plane": "postiz", "ok": False,
+                "detail": f"on-demand script not found at {script} — set FANOPS_POSTIZ_ONDEMAND or install ~/postiz-selfhost/postiz-ondemand.sh"}
+    try:
+        r = subprocess.run(["bash", str(script), "ensure"], capture_output=True, text=True, timeout=_ONDEMAND_WAIT_S)
+    except subprocess.TimeoutExpired:
+        return {"plane": "postiz", "ok": False, "detail": f"postiz-ondemand.sh ensure timed out after {_ONDEMAND_WAIT_S}s"}
+    except OSError as e:
+        return {"plane": "postiz", "ok": False, "detail": f"could not run postiz-ondemand.sh ({type(e).__name__}: {e})"}
+    if r.returncode == 0:
+        return {"plane": "postiz", "ok": True, "detail": _tail(r.stdout, 2) or "backend answering past nginx"}
+    tail = _tail(r.stderr) or _tail(r.stdout) or f"exit {r.returncode}"
+    return {"plane": "postiz", "ok": False, "detail": tail}
+
+
+def _plane_daemon(cfg: Config, *, kickstart: bool = True) -> dict:
+    """Daemon freshness plane. First ensure the launchd agent is LOADED via the existing
+    daemon.ensure (unchanged aliveness contract — the keeper depends on it). If it was ALREADY
+    running, `launchctl kickstart -k` restarts it onto current code (safe: posts are born
+    awaiting_approval, nothing publishes on restart) and we confirm ONE fresh heartbeat newer than
+    the restart. A not-yet-loaded daemon is brought up by ensure's own bootstrap (no kickstart).
+    Off-darwin / launchctl-absent -> a typed honest skip (ok=False, skipped=True), never a crash —
+    freshness simply can't be proven on this platform (mirrors cmd_daemon's degrade posture)."""
+    try:
+        was_running = _confirm_loaded(LABEL)
+        ens = ensure(cfg)                          # aliveness: load if absent / rewrite a stale plist
+    except (RuntimeError, ToolchainMissingError) as e:
+        return {"plane": "daemon", "ok": False, "skipped": True, "restarted": False, "detail": str(e)}
+    if not ens.get("loaded"):
+        return {"plane": "daemon", "ok": False, "skipped": False, "restarted": False,
+                "detail": "daemon plist present but launchctl could not load it — run `fanops daemon status`"}
+    if was_running and kickstart:
+        since = datetime.now(timezone.utc)
+        kr = _launchctl("kickstart", "-k", f"gui/{os.getuid()}/{LABEL}")
+        if kr.returncode != 0:
+            return {"plane": "daemon", "ok": False, "skipped": False, "restarted": False,
+                    "detail": f"kickstart failed (rc {kr.returncode}: {_tail(kr.stderr, 2) or 'no output'})"}
+        if not _heartbeat_fresh_since(cfg, since):
+            return {"plane": "daemon", "ok": False, "skipped": False, "restarted": True,
+                    "detail": "restarted but no fresh heartbeat within the wait window — check 07_reports/daemon.err"}
+        return {"plane": "daemon", "ok": True, "skipped": False, "restarted": True,
+                "detail": "restarted onto current code; fresh heartbeat confirmed"}
+    return {"plane": "daemon", "ok": True, "skipped": False, "restarted": False,
+            "detail": f"loaded ({ens.get('action')})"}
+
+
+def _plane_studio(cfg: Config) -> dict:
+    """Studio plane — REPORT ONLY (never fails the verdict, never daemonizes Studio: out of scope,
+    no com.fanops.studio job here). If 127.0.0.1:8787 answers, report up; else print the exact launch
+    command (already in .claude/launch.json)."""
+    if _studio_port_answers():
+        return {"plane": "studio", "ok": True, "report_only": True,
+                "detail": f"answering at http://{STUDIO_DEFAULT_HOST}:{STUDIO_DEFAULT_PORT}"}
+    return {"plane": "studio", "ok": False, "report_only": True,
+            "detail": f"not serving — start it with: {_STUDIO_LAUNCH_CMD}"}
+
+
+def up(cfg: Config, *, kickstart: bool = True) -> dict:
+    """Compose the four planes in dependency order, gating each GATING plane on the prior's real
+    health signal, and return ONE verdict. git (advisory) -> postiz (gate) -> daemon (gate) ->
+    studio (report). Short-circuits at the first FAILING gate (postiz/daemon): a plane whose probe
+    fails stops the sequence with its diagnostic (honesty principle — never READY on an unproven
+    plane). git behind-main and a down Studio are surfaced but never block READY."""
+    git = _plane_git(cfg)
+    result = {"git": git, "postiz": None, "daemon": None, "studio": None,
+              "ready": False, "first_fail": None, "verdict": ""}
+
+    postiz = _plane_postiz(cfg); result["postiz"] = postiz
+    if not postiz["ok"]:
+        result["first_fail"] = "postiz"
+        result["verdict"] = _render_verdict(result)
+        return result
+
+    daemon_p = _plane_daemon(cfg, kickstart=kickstart); result["daemon"] = daemon_p
+    if not daemon_p["ok"]:
+        result["first_fail"] = "daemon"
+        result["verdict"] = _render_verdict(result)
+        return result
+
+    studio = _plane_studio(cfg); result["studio"] = studio    # report-only: never a gate
+    result["ready"] = True
+    result["verdict"] = _render_verdict(result)
+    return result
+
+
+def _render_verdict(result: dict) -> str:
+    """One READY / NOT-READY line. NOT-READY names the first failing plane + its diagnostic tail."""
+    if result["ready"]:
+        return "READY"
+    ff = result["first_fail"]
+    detail = (result.get(ff) or {}).get("detail", "") if ff else ""
+    return f"NOT-READY: {ff} — {detail}" if ff else "NOT-READY"
+
+
+def format_up_report(result: dict) -> list[str]:
+    """The 4-line plane status + the verdict, for the CLI to print. A plane not reached (short-circuit)
+    prints as pending."""
+    def line(name: str) -> str:
+        p = result.get(name)
+        if p is None:
+            return f"  [ -- ] {name}: (not reached)"
+        mark = "ok  " if p["ok"] else ("skip" if p.get("skipped") else "DOWN")
+        return f"  [{mark}] {name}: {p.get('detail', '')}"
+    return [line("git"), line("postiz"), line("daemon"), line("studio"), result["verdict"]]

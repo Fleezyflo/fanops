@@ -25,6 +25,7 @@ Hand-editing `.env` while a long-lived process runs requires restart; Studio go-
 | `ZERNIO_API_KEY` | None | Zernio API key (write-only) | S |
 | `FANOPS_POSTIZ_AUTOSTART` | `1` (on) | Auto-start the local Postiz stack (`postiz_lifecycle`) | .env |
 | `FANOPS_POSTIZ_COMPOSE_DIR` | (blank) | Postiz docker-compose dir for `health` | .env |
+| `FANOPS_POSTIZ_ONDEMAND` | `$HOME/postiz-selfhost/postiz-ondemand.sh` | Path to the Postiz on-demand script `fanops up` shells out to (`ensure`) | .env |
 | `FANOPS_POSTIZ_PUBLISH_PER_MIN` | 4 | Postiz publish throttle (0=off) | .env |
 | `FANOPS_MEDIA_PUBLIC_BASE` | None | Public HTTPS base for mirrored clip media (R2/CDN) | .env |
 | `R2_ACCOUNT_ID` | None | Cloudflare R2 account id (S3-compatible mirror) | .env |
