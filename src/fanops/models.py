@@ -338,6 +338,7 @@ class Post(BaseModel):
                                         # run.py published transition. The Posted-archive day-anchor ("what shipped
                                         # Tuesday") — scheduled_time is INTENT day, not publish day. None until
                                         # published; old/in-flight rows fall back to scheduled_time in the grouper.
+    edited_at: Optional[str] = None  # ISO-8601 UTC; set on operator caption/hook edits
 
     @field_validator("account", mode="before")
     @classmethod
