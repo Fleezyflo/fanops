@@ -6,16 +6,24 @@ M1 race the producer lock closes: two concurrent transcribe_source calls for the
 must spawn ONE whisper subprocess. The per-(stage, source) producer lock + on-disk artifact
 short-circuit makes the bad path unconstructable, not guarded by a re-raceable sentinel.
 
-M3 reduce-txn invariant: on a produced source (transcript JSON warm), advance()'s main
-ledger transaction completes in well under one wall-clock second — the in-lock transcribe
-call is a microsecond cache hit by construction. A future regression that re-introduces an
-in-lock subprocess spawn would balloon this past 1s.
+M3 reduce-txn invariant: on a produced source (transcript JSON warm), advance()'s in-lock
+transcribe_source / detect_signals calls ADOPT the producer's cached artifact and never shell out
+— the slow whisper/ffmpeg subprocess that once wedged the daemon under the flock. The contract is
+proven by asserting those two producers spawn NO subprocess while the flock is held, NOT by a
+wall-clock bound (which flakes under a contended CI host). (Bounded keyframe ffmpeg the reducer
+runs downstream is permitted and deliberately NOT counted.) A generous env-tunable duration budget
+stays as a soft signal for a non-subprocess in-lock stall.
 
 Mutation proofs:
 - Remove the transcribe stage_lock acquire -> test_double_transcribe_spawns_one_whisper fails.
-- Re-introduce a slow in-lock subprocess inside _stage_source_to_moments -> the wall-clock
-  bound in test_main_reduce_txn_is_short fails."""
+- Drop the in-lock adopt-or-defer guard in detect_signals (defeat the warm-sidecar adopt AND the
+  `if in_lock` defer) so the reducer shells its ffmpeg passes under the flock -> the in-lock
+  producer subprocess assertion in test_main_reduce_txn_is_short fails (verified: it records the 3
+  silencedetect/scdet/astats spawns). detect_signals is the producer that reliably runs `in_lock`
+  on this warm path — transcribe_source short-circuits on its warm JSON before its own in-lock
+  guard — but transcribe_source is watched too (it exercises in-lock on a cold-transcript tick)."""
 import json
+import os
 import threading
 import time
 from pathlib import Path
@@ -143,8 +151,20 @@ def test_main_reduce_txn_is_short(tmp_path, monkeypatch, mocker):
     (out_dir / "src_warm.json").write_text(json.dumps({"language": "en", "segments": [
         {"start": 0.0, "end": 1.0, "text": "warm"}]}))
 
-    # If the producer's stitch prewarm tries to shell anything, return a no-op.
+    # A no-op subprocess spy so the produce prewarm never actually shells out; it also RECORDS the
+    # argv of any call made while `_in_producer[0]` is set (see below) — that flag marks the window
+    # INSIDE an in-lock transcribe_source / detect_signals call, which is exactly where the M3
+    # contract forbids a spawn. (All fanops modules share the one stdlib `subprocess` object, so
+    # patching `.run` here catches every subprocess spawn repo-wide, incl. the bounded keyframe
+    # ffmpeg the reducer legitimately runs — which is why the recorder gates on `_in_producer`, not
+    # on merely being inside the transaction: keyframe extraction under the flock is NOT the hazard.)
+    _in_producer = [False]
+    in_lock_producer_subprocess: list[list[str]] = []
+
     def noop(cmd, **kw):
+        if _in_producer[0]:
+            in_lock_producer_subprocess.append(list(cmd) if isinstance(cmd, (list, tuple)) else [str(cmd)])
+
         class R:
             returncode = 0
             stderr = ""
@@ -160,7 +180,31 @@ def test_main_reduce_txn_is_short(tmp_path, monkeypatch, mocker):
     mocker.patch("fanops.pipeline.ingest_staged", side_effect=lambda led, cfg, staged, **kw: (led, IngestCounts()))
     mocker.patch("fanops.pipeline._archive_staged")
 
-    # Spy the ledger transaction so we can isolate the time spent INSIDE its critical section.
+    # THE CONTRACT SENSOR: wrap the two adopt-or-defer producers the reducer calls under the flock
+    # (transcribe_source / detect_signals, both `in_lock=True` at pipeline.py). Set `_in_producer`
+    # only for the duration of each call, so `noop` above records any subprocess THAT call spawns.
+    # On a warm source both must take the cache-adopt branch and never reach subprocess.run — that
+    # is the M3 "cache hit by construction" invariant, asserted directly (immune to CI contention,
+    # unlike a wall-clock bound). pipeline.py binds both as module-level names, so patch them there.
+    import fanops.pipeline as pipeline_mod
+    real_transcribe = pipeline_mod.transcribe_source
+    real_detect = pipeline_mod.detect_signals
+
+    def watched_transcribe(*a, **kw):
+        prev, _in_producer[0] = _in_producer[0], True
+        try: return real_transcribe(*a, **kw)
+        finally: _in_producer[0] = prev
+
+    def watched_detect(*a, **kw):
+        prev, _in_producer[0] = _in_producer[0], True
+        try: return real_detect(*a, **kw)
+        finally: _in_producer[0] = prev
+
+    mocker.patch.object(pipeline_mod, "transcribe_source", watched_transcribe)
+    mocker.patch.object(pipeline_mod, "detect_signals", watched_detect)
+
+    # Spy the ledger transaction for a soft secondary signal: the wall-clock time inside the
+    # critical section. Kept generous + env-tunable so a contended CI host never flakes it.
     import fanops.ledger as ledger_mod
     real_transaction = ledger_mod.Ledger.transaction
     txn_durations: list[float] = []
@@ -179,10 +223,22 @@ def test_main_reduce_txn_is_short(tmp_path, monkeypatch, mocker):
     from fanops.pipeline import advance
     advance(cfg, base_time="2026-06-29T12:00:00Z")
 
-    # advance() opens 2 transactions: the short ingest one and the main reduce one. Both must be
-    # under 1s wall clock on a warm source.
+    # THE INVARIANT (M3 lock-free produce contract): on a warm source, the reducer's in-lock
+    # transcribe_source / detect_signals calls ADOPT the producer's cached artifact and NEVER shell
+    # out — the slow whisper/ffmpeg subprocess that once wedged the daemon under the flock. Asserted
+    # directly on the sensor above; a regression that re-introduced an in-lock spawn (removed the
+    # cache short-circuit, or dropped the `in_lock` adopt-or-defer guard) trips it deterministically,
+    # not on a fragile wall-clock threshold.
     assert len(txn_durations) >= 1
+    assert in_lock_producer_subprocess == [], (
+        f"an in-lock producer (transcribe_source/detect_signals) spawned a subprocess while holding "
+        f"the ledger flock — M3's lock-free produce contract is broken (the reducer must adopt the "
+        f"warm artifact, never shell whisper/ffmpeg under the flock): {in_lock_producer_subprocess}")
+    # Soft secondary signal: even a cache-hit reduce should be quick. Generous + env-tunable so a
+    # contended parallel-worktree CI host never flakes it; the subprocess assertion above is the
+    # real gate, so this only catches a non-subprocess in-lock stall.
+    budget = float(os.environ.get("FANOPS_REDUCE_TXN_BUDGET_S", "10.0"))
     longest = max(txn_durations)
-    assert longest < 1.0, (
-        f"main reduce txn held the ledger flock for {longest:.3f}s — a slow in-lock subprocess "
-        f"has regressed; M3's lock-free produce contract is broken")
+    assert longest < budget, (
+        f"main reduce txn held the ledger flock for {longest:.3f}s (budget {budget:.1f}s) with NO "
+        f"in-lock producer subprocess — a non-subprocess in-lock stall has regressed M3's fast-reduce contract")
