@@ -52,8 +52,10 @@ def test_nav_links_bare_when_unfiltered(tmp_path):
 def test_spine_indicator_on_every_tab(tmp_path, path):
     # the global filter is visible (and recoverable) from EVERY tab — even tabs that don't themselves filter,
     # so the operator always sees + can clear the active account selection.
+    # U10: /lift now 301-redirects to /posted (carrying ?account=); follow it so the spine bar is asserted
+    # on the destination surface (a no-op follow for the tabs that render directly).
     cfg = Config(root=tmp_path); _seed(cfg)
-    html = _client(cfg).get(path + "?account=@a").data
+    html = _client(cfg).get(path + "?account=@a", follow_redirects=True).data
     assert html and b"account-session-bar" in html and b"a" in html and b"Clear filter" in html
 
 def test_clear_link_targets_current_path(tmp_path):
