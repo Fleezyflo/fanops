@@ -101,7 +101,7 @@ def test_review_shows_approval_not_publish_now(tmp_path, monkeypatch):
     from fanops.studio.app import create_app
     cfg = Config(root=tmp_path); _seed(cfg, state=PostState.awaiting_approval)
     app = create_app(cfg); app.config.update(TESTING=True)
-    r = app.test_client().get("/review")
+    r = app.test_client().get("/review?account=all")
     assert r.status_code == 200 and b"Approve selected" in r.data and b"Publish now" not in r.data
 
 
