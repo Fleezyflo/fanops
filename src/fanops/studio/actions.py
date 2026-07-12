@@ -515,7 +515,52 @@ def repost_post(cfg: Config, post_id: str) -> ActionResult:
                               variation_axis=src.variation_axis))
     except Exception as exc:
         return ActionResult(ok=False, error=f"repost failed: {str(exc)[:160]}")
-    return ActionResult(ok=True, detail={"post_id": new_id, "source_id": post_id})
+    return ActionResult(ok=True, detail={"post_id": new_id, "source_id": post_id, "batch_id": src.batch_id, "account": src.account})
+
+def repost_to_other_accounts(cfg: Config, post_id: str, *, target_accounts: Optional[list] = None,
+                             all_others: bool = False, now: Optional[datetime] = None) -> ActionResult:
+    """U8 'Repost anywhere': re-post an already-shipped clip onto ONE or ALL OTHER accounts. A THIN composer
+    over crosspost_to_account (NOT a fourth Post() mint site): resolve the source post's clip + platform +
+    account, then fan out one crosspost_to_account per target on the SAME platform as the shipped row. Each
+    minted post is born awaiting_approval (approval gate intact, scheduled_time=None — no auto-schedule).
+    Targets: all_others=True -> every OTHER active handle; else the picked (deduped) target_accounts minus the
+    source account. Per-target honesty mirrors crosspost_all_to_account: ok=True when ANY target minted OR
+    already_exists, ok=False only when EVERY target skipped. Same-account reuse is NOT this path — that's
+    repost_post (epoch id, fan-accounts-repost-freely); crosspost_to_account on the same (clip,surface) would
+    just report already_exists. Never a 500 (crosspost_to_account fail-opens per target)."""
+    from fanops.accounts import Accounts
+    now = _now(now)
+    src = Ledger.load(cfg).posts.get(post_id)                    # read-only resolve (the mint verb owns the transaction)
+    if src is None: return ActionResult(ok=False, error=f"no such post: {post_id}")
+    clip_id = src.parent_id; platform = src.platform.value; source_account = src.account
+    if all_others:
+        # Accounts.load unguarded — mirrors the sibling crosspost_all_to_account (Ledger.load) and the
+        # _posted_panel that renders this result (Accounts.load(cfg).active()); a broken accounts.json 500s
+        # the whole Posted tab regardless, so a redundant local catch here would only add a silent swallow.
+        targets = [a.handle for a in Accounts.load(cfg).active() if a.handle != source_account]
+    else:
+        seen: dict = {}                                          # dedup preserving order; drop the source account
+        for h in (target_accounts or []):
+            if h and h != source_account and h not in seen: seen[h] = True
+        targets = list(seen)
+    if not targets: return ActionResult(ok=False, error="pick at least one other account to repost to")
+    lines: list = []
+    for handle in targets:
+        r = crosspost_to_account(cfg, clip_id, handle, platform, now=now)
+        surface = (r.detail or {}).get("surface") if r.ok else f"{handle}/{platform}"
+        if not r.ok:
+            lines.append({"surface": surface, "status": "skipped", "post_id": None, "error": r.error})
+        elif r.detail and r.detail.get("already_exists"):
+            lines.append({"surface": surface, "status": "already_exists", "post_id": r.detail.get("post_id"), "error": None})
+        else:
+            lines.append({"surface": surface, "status": "minted", "post_id": (r.detail or {}).get("post_id"), "error": None})
+    minted = [ln for ln in lines if ln["status"] == "minted"]
+    existed = [ln for ln in lines if ln["status"] == "already_exists"]
+    review_account = (minted[0]["surface"].split("/")[0] if minted else targets[0])   # first mint (else first pick) for the Review link
+    detail = {"outcome": "repost_anywhere", "lines": lines, "batch_id": src.batch_id, "review_account": review_account}
+    if not minted and not existed:                              # every target skipped -> honest failure (mirror crosspost_all_to_account)
+        return ActionResult(ok=False, error=f"nothing reposted ({len(lines)} skipped) — no matching surface / held / retired", detail=detail)
+    return ActionResult(ok=True, detail=detail)
 
 def _warm_target_aspect(cfg: Config, moment_id: str, aspect) -> None:
     # #4 lock-free pre-render (mirror pipeline._prewarm): _clip_for_aspect on a THROWAWAY Ledger.load snapshot
