@@ -545,5 +545,5 @@ def run_prepare(cfg: Config, base_time: Optional[str] = None, *, confirmed: bool
     if not done and cfg.responder_mode == "llm":
         return ActionResult(ok=False, detail=summary,
                             error="auto-prepare did not finish — gates still pending after 10 passes "
-                            "(is `claude` working?); run Prepare again or answer them in the Gates tab")
+                            "(is the LLM CLI working?); run Prepare again or answer them in the Gates tab")
     return ActionResult(ok=True, detail=summary)
