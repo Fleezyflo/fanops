@@ -632,3 +632,76 @@ def test_dispatch_vision_fallback_claude(mocker, monkeypatch):
     run = mocker.patch("fanops.llm.subprocess.run", return_value=R())
     claude_json("judge", _SCHEMA, images=["/f/1.jpg"])
     assert run.call_args[0][0][0] == "claude"
+
+
+# --- 2026-07-12 incident: a claude CLI predating --json-schema (2.0.30, pinned by a stale daemon
+# plist PATH) rejected EVERY gate call with rc=1 "error: unknown option '--json-schema'" — hook=null
+# clips + fallback hashtag-only captions for days. The transport now retries ONCE without the flag,
+# carrying the schema in the prompt (the cursor transport's mechanism), so an outdated CLI degrades
+# to prompt-side schema instead of mass-failing every moment_hooks/captions gate. ---
+
+def _json_schema_reject():
+    return type("R", (), {"returncode": 1, "stdout": "",
+                          "stderr": "error: unknown option '--json-schema'"})()
+
+def test_json_schema_flag_rejected_falls_back_to_prompt_side_schema(mocker):
+    # old CLI: no --json-schema, no structured_output — the retry parses `result` instead.
+    ok = type("R", (), {"returncode": 0, "stdout": json.dumps({"result": '{"x": 7}'}), "stderr": ""})()
+    run = mocker.patch("fanops.llm.subprocess.run", side_effect=[_json_schema_reject(), ok])
+    assert claude_json("pick a number", _SCHEMA) == {"x": 7}
+    assert run.call_count == 2
+    assert "--json-schema" in run.call_args_list[0][0][0]      # tried the native flag first
+    retry_cmd = run.call_args_list[1][0][0]
+    assert "--json-schema" not in retry_cmd                    # retried without it
+    assert retry_cmd[0] == "claude" and "--strict-mcp-config" in retry_cmd
+    i = retry_cmd.index("--allowedTools"); assert retry_cmd[i + 1] == ""   # still a pure generator
+    retry_prompt = run.call_args_list[1].kwargs["input"]
+    assert json.dumps(_SCHEMA) in retry_prompt                 # the schema rides the prompt instead
+    assert "ONLY a single JSON object" in retry_prompt
+    assert "pick a number" in retry_prompt                     # original prompt preserved
+
+def test_json_schema_fallback_logs_warning_breadcrumb(mocker, caplog):
+    import logging
+    ok = type("R", (), {"returncode": 0, "stdout": json.dumps({"result": '{"x": 1}'}), "stderr": ""})()
+    mocker.patch("fanops.llm.subprocess.run", side_effect=[_json_schema_reject(), ok])
+    with caplog.at_level(logging.WARNING, logger="fanops.llm"):
+        claude_json("q", _SCHEMA)
+    assert any("--json-schema" in r.message for r in caplog.records)
+
+def test_json_schema_fallback_retry_failure_keeps_classification(mocker):
+    # the retry's own failure surfaces through the existing typed classification (here: hard failure)
+    hard = type("R", (), {"returncode": 1, "stdout": "", "stderr": "auth failed"})()
+    run = mocker.patch("fanops.llm.subprocess.run", side_effect=[_json_schema_reject(), hard])
+    with pytest.raises(RuntimeError, match="claude -p failed"):
+        claude_json("q", _SCHEMA)
+    assert run.call_count == 2
+
+def test_json_schema_persistent_reject_raises_toolchain_no_loop(mocker):
+    # a CLI that errors identically on the flagless retry raises the typed toolchain error —
+    # exactly one retry, never a loop.
+    from fanops.llm import LlmToolchainError
+    run = mocker.patch("fanops.llm.subprocess.run",
+                       side_effect=[_json_schema_reject(), _json_schema_reject()])
+    with pytest.raises(LlmToolchainError):
+        claude_json("q", _SCHEMA)
+    assert run.call_count == 2
+
+def test_other_toolchain_errors_do_not_trigger_fallback(mocker):
+    # only a --json-schema rejection retries; any other unknown option fails fast as before.
+    from fanops.llm import LlmToolchainError
+    bad = type("R", (), {"returncode": 1, "stdout": "",
+                         "stderr": "error: unknown option '--frobnicate'"})()
+    run = mocker.patch("fanops.llm.subprocess.run", return_value=bad)
+    with pytest.raises(LlmToolchainError):
+        claude_json("q", _SCHEMA)
+    assert run.call_count == 1
+
+def test_json_schema_fallback_on_vision_path_keeps_read_grant(mocker):
+    # the fallback lives in the shared _run, so the vision gates inherit it — Read grant intact.
+    ok = type("R", (), {"returncode": 0,
+                        "stdout": json.dumps({"result": '{"x": 2}', "num_turns": 2}), "stderr": ""})()
+    run = mocker.patch("fanops.llm.subprocess.run", side_effect=[_json_schema_reject(), ok])
+    assert claude_json("judge", _SCHEMA, images=["/f/1.jpg"]) == {"x": 2}
+    retry_cmd = run.call_args_list[1][0][0]
+    assert "--json-schema" not in retry_cmd
+    i = retry_cmd.index("--allowedTools"); assert retry_cmd[i + 1] == "Read"

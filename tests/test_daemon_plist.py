@@ -67,6 +67,30 @@ def test_installed_interval_missing_or_corrupt_returns_none(tmp_path, monkeypatc
     assert daemon.installed_interval(cfg) is None
 
 
+def test_daemon_path_prefers_stable_local_bin_over_which_pin(tmp_path, monkeypatch):
+    # 2026-07-12 incident: the plist PATH baked the nvm dir which() saw at install time; that dir's
+    # claude (2.0.30) predates --json-schema and every gate call failed — and the keeper re-derived
+    # the SAME stale pin from its own baked PATH forever. ~/.local/bin/claude (the native-install
+    # symlink) tracks the operator's CURRENT claude and its existence check is PATH-independent, so
+    # it must come BEFORE any which()-derived parent.
+    monkeypatch.setenv("HOME", str(tmp_path))
+    stable = tmp_path / ".local" / "bin"; stable.mkdir(parents=True)
+    (stable / "claude").write_text("#!/bin/sh\n")
+    stale = tmp_path / "nvm" / "v18" / "bin"; stale.mkdir(parents=True)
+    (stale / "claude").write_text("#!/bin/sh\n")
+    monkeypatch.setattr(daemon.shutil, "which", lambda b: str(stale / b) if b == "claude" else None)
+    parts = daemon._daemon_path().split(":")
+    assert str(stable) in parts and str(stale) in parts
+    assert parts.index(str(stable)) < parts.index(str(stale))
+
+
+def test_daemon_path_without_stable_claude_is_unchanged(tmp_path, monkeypatch):
+    # no ~/.local/bin/claude -> the dir is NOT added (no speculative PATH entries).
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(daemon.shutil, "which", lambda b: None)
+    assert str(tmp_path / ".local" / "bin") not in daemon._daemon_path().split(":")
+
+
 def test_install_bootstraps_idempotently(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setattr(daemon.sys, "platform", "darwin")
