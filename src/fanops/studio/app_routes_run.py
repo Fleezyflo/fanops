@@ -113,6 +113,23 @@ def register_run_routes(app, cfg):
         return _run_panel(actions.run_prepare(cfg, request.form.get("base_time") or None,
                                               confirmed=bool(request.form.get("confirm"))))
 
+    @app.post("/run/bind-queue")
+    def do_bind_queue():
+        burn_subs = False if request.form.get("no_subs") else None
+        return _run_panel(actions.bind_queue(cfg, source_ids=request.form.getlist("source_ids"),
+                                             batch_name=request.form.get("batch_name", ""),
+                                             target_accounts=request.form.getlist("target_accounts"),
+                                             burn_subs=burn_subs))
+
+    @app.post("/run/release-batch")
+    def do_release_batch():
+        return _run_panel(actions.release_batch(cfg, request.form.get("batch_id", ""),
+                                                confirmed=bool(request.form.get("confirm"))))
+
+    @app.post("/run/release-all")
+    def do_release_all():
+        return _run_panel(actions.release_all_held(cfg, confirmed=bool(request.form.get("confirm"))))
+
     @app.get("/library")
     def library():
         # M1 asset memory: every Source the system remembers, split native vs third-party.

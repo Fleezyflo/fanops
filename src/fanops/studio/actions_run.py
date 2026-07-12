@@ -21,9 +21,6 @@ from fanops.studio.actions_common import ActionResult, _now
 _VIDEO_EXT = {".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi"}   # the has_video_stream subset of MEDIA_EXT
 if not (_VIDEO_EXT <= MEDIA_EXT): raise ValueError("_VIDEO_EXT drifted out of ingest.MEDIA_EXT")  # import-time drift guard (not assert — survives -O)
 
-_KICK_TTL_S = 300   # legacy — replaced by run_lease probe; kept only as a comment anchor for WS-D1 history
-
-
 def kick_prepare(cfg: Config) -> bool:
     """WS-D1 Phase 3 — de-lazify: spawn a DETACHED `fanops run` so a fresh browser ingest starts processing
     IMMEDIATELY instead of waiting up to one daemon interval. BEST-EFFORT + FAIL-OPEN: every failure is
@@ -49,11 +46,101 @@ def kick_prepare(cfg: Config) -> bool:
         get_logger(cfg)("run", "-", "kick_failed", err=str(exc)[:160]); return False
 
 
+def catalogue_inbox(cfg: Config) -> ActionResult:
+    """Gate-ON intake: stage+ingest inbox footage as pending — no batch mint, no kick_prepare."""
+    from fanops.ingest import stage_inbox_candidates, ingest_staged, _archive_staged
+    from fanops.digest import write_digest
+    n = added = 0; counts = None
+    try:
+        staged = stage_inbox_candidates(cfg)
+        with Ledger.transaction(cfg) as led:
+            led, counts = ingest_staged(led, cfg, staged)
+            added = counts.added; n = len(led.sources)
+        _archive_staged(cfg, staged)
+        write_digest(Ledger.load(cfg), cfg)
+    except Exception as exc:
+        return ActionResult(ok=False, error=f"ingest failed: {str(exc)[:160]}")
+    detail = {"sources": n, "added": added}
+    if counts is not None and counts.excluded: detail["excluded"] = counts.excluded
+    if counts is not None and counts.skipped: detail["skipped"] = counts.skipped
+    if counts is not None and counts.retired_dedup: detail["retired_dedup"] = counts.retired_dedup
+    return ActionResult(ok=True, detail=detail)
+
+
+def bind_queue(cfg: Config, *, source_ids, batch_name: str = "", target_accounts=(),
+               burn_subs: bool | None = None) -> ActionResult:
+    """Stamp unbound pending sources onto a new Batch (one transaction). Repeatable → multiple queue lines."""
+    from fanops.batches import create_batch
+    from fanops.accounts import Accounts
+    from fanops.models import SourceState, batch_id as _batch_id
+    name = (batch_name or "").strip()
+    if not name:
+        return ActionResult(ok=False, error="batch name required")
+    ids = [s for s in (source_ids or []) if s]
+    if not ids:
+        return ActionResult(ok=False, error="select at least one pending source")
+    try:
+        with Ledger.transaction(cfg) as led:
+            now_iso = iso_z(_now(None))
+            stamp = [sid for sid in ids if (s := led.sources.get(sid)) and s.state is SourceState.pending and not s.batch_id]
+            if not stamp:
+                return ActionResult(ok=False, error="no unbound pending sources in selection")
+            bid = _batch_id(name, now_iso)
+            for sid in stamp:
+                led.sources[sid] = led.sources[sid].model_copy(update={"batch_id": bid})
+            active = {a.handle for a in Accounts.load(cfg).active()}
+            batch = create_batch(led, name=name, target_accounts=list(target_accounts),
+                                 now_iso=now_iso, active_handles=active, burn_subs=burn_subs)
+    except Exception as exc:
+        return ActionResult(ok=False, error=f"bind failed: {str(exc)[:160]}")
+    detail = {"batch": batch.name, "batch_id": batch.id, "sources": len(stamp), "target_accounts": batch.target_accounts}
+    if batch.error_reason: detail["warnings"] = [batch.error_reason]
+    return ActionResult(ok=True, detail=detail)
+
+
+def release_batch(cfg: Config, batch_id: str, *, confirmed: bool = True) -> ActionResult:
+    """Release one queue line: held pending→catalogued for that batch; kick when ≥1 released."""
+    from fanops.models import SourceState
+    if cfg.is_live and not confirmed:
+        return ActionResult(ok=False, error=f"LIVE backend ({cfg.effective_publish_mode()}): releasing "
+                            "starts clip production — tick the confirm box, then run again.")
+    released = 0
+    try:
+        with Ledger.transaction(cfg) as led:
+            for sid, s in list(led.sources.items()):
+                if s.state is SourceState.pending and s.batch_id == batch_id:
+                    led.set_source_state(sid, SourceState.catalogued); released += 1
+    except Exception as exc:
+        return ActionResult(ok=False, error=f"release failed: {str(exc)[:160]}")
+    if released >= 1: kick_prepare(cfg)
+    return ActionResult(ok=True, detail={"released": released, "batch_id": batch_id})
+
+
+def release_all_held(cfg: Config, *, confirmed: bool = True) -> ActionResult:
+    """Release every held queue line (pending + batch_id set); one kick when ≥1 released."""
+    from fanops.models import SourceState
+    if cfg.is_live and not confirmed:
+        return ActionResult(ok=False, error=f"LIVE backend ({cfg.effective_publish_mode()}): releasing "
+                            "starts clip production — tick the confirm box, then run again.")
+    released = 0
+    try:
+        with Ledger.transaction(cfg) as led:
+            for sid, s in list(led.sources.items()):
+                if s.state is SourceState.pending and s.batch_id:
+                    led.set_source_state(sid, SourceState.catalogued); released += 1
+    except Exception as exc:
+        return ActionResult(ok=False, error=f"release failed: {str(exc)[:160]}")
+    if released >= 1: kick_prepare(cfg)
+    return ActionResult(ok=True, detail={"released": released})
+
+
 def run_ingest(cfg: Config, *, batch_name: str = "", target_accounts=(), burn_subs: bool | None = None) -> ActionResult:
     """Drive `fanops ingest` from the browser: catalogue 01_inbox under one transaction (the exact
     cmd_ingest path). When batch_name is non-blank, mint a named, account-targeted Batch in the SAME
     transaction and catalogue the inbox under its id (blank name => today's ungrouped ingest, byte-
     identical). A toolchain-absent / control-file error is surfaced as a clean ActionResult, never a 500."""
+    if cfg.queue_gate:
+        return catalogue_inbox(cfg)
     from fanops.ingest import stage_inbox_candidates, ingest_staged, _archive_staged
     from fanops.digest import write_digest
     from fanops.batches import create_batch
@@ -112,6 +199,7 @@ def run_pull(cfg: Config, url: str) -> ActionResult:
         write_digest(Ledger.load(cfg), cfg)
     except Exception as exc:
         return ActionResult(ok=False, error=f"pull failed: {str(exc)[:160]}")
+    if added >= 1 and not cfg.queue_gate: kick_prepare(cfg)
     return ActionResult(ok=True, detail={"sources": n, "added": added})
 
 
@@ -245,7 +333,8 @@ def upload_finalize(cfg: Config, upload_id: str, *, batch_name: str = "", target
         return ActionResult(ok=False, error=exc.strerror or "write failed")
     if not trigger_ingest:
         return ActionResult(ok=True, detail={"saved": [meta["name"]]})
-    ing = run_ingest(cfg, batch_name=batch_name, target_accounts=target_accounts, burn_subs=burn_subs)
+    ing = catalogue_inbox(cfg) if cfg.queue_gate else run_ingest(cfg, batch_name=batch_name,
+                                                                  target_accounts=target_accounts, burn_subs=burn_subs)
     detail = {"saved": [meta["name"]], **(ing.detail or {})}
     if not ing.ok:
         return ActionResult(ok=False, detail=detail,
@@ -309,7 +398,10 @@ def save_uploads_and_ingest(cfg: Config, files: Sequence[FileStorage], *, batch_
     up = save_uploads(cfg, files)
     if not up.ok:
         return up                                          # nothing landed -> nothing to ingest
-    ing = run_ingest(cfg, batch_name=batch_name, target_accounts=target_accounts, burn_subs=burn_subs)
+    if cfg.queue_gate:
+        ing = catalogue_inbox(cfg)
+    else:
+        ing = run_ingest(cfg, batch_name=batch_name, target_accounts=target_accounts, burn_subs=burn_subs)
     detail = {**(up.detail or {}), **(ing.detail or {})}
     if not ing.ok:
         n = len((up.detail or {}).get("saved", []))

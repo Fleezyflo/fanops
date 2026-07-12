@@ -10,6 +10,10 @@ from fanops.errors import ToolchainMissingError
 from fanops.ingest import (ingest_drops, sha256_of, is_excluded, scan_local, probe_dimensions,
                            has_video_stream, download_url)
 
+@pytest.fixture(autouse=True)
+def _gate_off(monkeypatch):
+    monkeypatch.setenv("FANOPS_QUEUE_GATE", "0")
+
 def _put(p, b):
     p.parent.mkdir(parents=True, exist_ok=True); p.write_bytes(b)
 

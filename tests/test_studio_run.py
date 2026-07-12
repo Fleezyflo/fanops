@@ -1,11 +1,17 @@
 # tests/test_studio_run.py — Studio as pipeline DRIVER: ingest/advance/pull from the browser through
 # the same lock-safe paths the CLI uses, so the operator never needs the terminal.
 import json
+import pytest
 from types import SimpleNamespace
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Source, SourceState
 from fanops.studio import views, actions
+
+
+@pytest.fixture(autouse=True)
+def _gate_off(monkeypatch):
+    monkeypatch.setenv("FANOPS_QUEUE_GATE", "0")
 
 
 def _src_in_inbox(cfg, mocker, name="a.mp4"):

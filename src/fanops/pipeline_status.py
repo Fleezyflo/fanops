@@ -116,7 +116,7 @@ def status_control_lines(cfg: Config, led) -> tuple[str, str | None]:
 class SourceBacklogRow:
     id: str
     state: str
-    bucket: str          # actionable | blocked_on_gates | recoverable | inventory
+    bucket: str          # actionable | blocked_on_gates | recoverable | inventory | held
     wait_line: str | None
     block_reason: str | None
     artifacts: str | None = None
@@ -128,11 +128,14 @@ class SourceBacklog:
     blocked_on_gates: int
     recoverable: int
     inventory: int
+    held: int
     rows: list[SourceBacklogRow]
 
 
 def _source_bucket(cfg: Config, led, source_id: str, s) -> str:
     """Classify one native source into a backlog bucket (priority order)."""
+    if s.state is SourceState.pending:
+        return "held"
     if s.state in _INVENTORY_STATES:
         return "inventory"
     if s.state in _RECOVERABLE:
@@ -150,7 +153,7 @@ def source_backlog(led, cfg: Config) -> SourceBacklog:
     must derive source counts from here — never re-count raw ledger states."""
     from fanops.artifacts import artifact_summary
     rows: list[SourceBacklogRow] = []
-    counts = {"actionable": 0, "blocked_on_gates": 0, "recoverable": 0, "inventory": 0}
+    counts = {"actionable": 0, "blocked_on_gates": 0, "recoverable": 0, "inventory": 0, "held": 0}
     for sid, s in sorted(led.sources.items()):
         if s.origin_kind != "native":
             continue
@@ -164,7 +167,8 @@ def source_backlog(led, cfg: Config) -> SourceBacklog:
         rows.append(SourceBacklogRow(id=sid, state=s.state.value, bucket=bucket, wait_line=wl,
                                      block_reason=br, artifacts=art))
     return SourceBacklog(actionable=counts["actionable"], blocked_on_gates=counts["blocked_on_gates"],
-                       recoverable=counts["recoverable"], inventory=counts["inventory"], rows=rows)
+                       recoverable=counts["recoverable"], inventory=counts["inventory"], held=counts["held"],
+                       rows=rows)
 
 
 def heal_corrupt_gates(led, cfg: Config) -> int:

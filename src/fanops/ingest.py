@@ -318,10 +318,12 @@ def _mint_candidate(led: Ledger, cfg: Config, c: StagedCandidate, *, now_iso: st
         if prior is not None and prior.source_origin != c.origin:
             get_logger(cfg)("ingest", prior.id, "origin_path_conflict", want=c.origin, have=prior.source_origin)
         return True
-    led.add_source(Source(id=c.sid, state=SourceState.catalogued, source_path=str(c.dest),
+    birth = SourceState.pending if cfg.queue_gate else SourceState.catalogued
+    eff_batch = None if cfg.queue_gate else c.batch_id
+    led.add_source(Source(id=c.sid, state=birth, source_path=str(c.dest),
                           source_origin=c.origin, origin_kind=c.origin_kind, sha256=c.digest,
                           width=c.width, height=c.height, duration=c.duration, created_at=now_iso,
-                          degraded_reason=c.degraded_reason, batch_id=c.batch_id,
+                          degraded_reason=c.degraded_reason, batch_id=eff_batch,
                           meta={"bytes": c.bytes}))
     return True
 
@@ -404,7 +406,7 @@ def ingest_staged(led: Ledger, cfg: Config, staged: StagedInbox, *, batch_id: st
     _auto_batch_id: str | None = None
     for c in staged.candidates:
         eff = c.batch_id or batch_id
-        if eff is None and not c.dedup_only:
+        if eff is None and not c.dedup_only and not cfg.queue_gate:
             if _auto_batch_id is None:
                 from fanops.batches import resolve_or_mint_drop_batch
                 _auto_batch_id = resolve_or_mint_drop_batch(led).id

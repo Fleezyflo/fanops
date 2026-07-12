@@ -2,9 +2,15 @@
 # Root fix at the chokepoint: ingest_drops auto-resolves/mints a daily drop-batch when the caller did not
 # pass one, so a Source.batch_id=None is unconstructable from any path (Studio, CLI, daemon, third-party).
 import datetime as _dt
+import pytest
 from fanops.config import Config
 from fanops.ingest import ingest_drops
 from fanops.ledger import Ledger
+
+
+@pytest.fixture(autouse=True)
+def _gate_off(monkeypatch):
+    monkeypatch.setenv("FANOPS_QUEUE_GATE", "0")
 
 
 def _put_video(p, mocker):

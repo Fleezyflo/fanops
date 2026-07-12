@@ -570,6 +570,13 @@ class Config:
         return v not in ("0", "false", "no", "off")     # DEFAULT ON; unset/empty/other -> True
 
     @property
+    def queue_gate(self) -> bool:
+        # U4: explicit run queue — new footage births pending until the operator ticks accounts, adds to
+        # queue, and clicks Make clips. DEFAULT ON; FANOPS_QUEUE_GATE=0 restores byte-identical auto-ingest.
+        v = (os.getenv("FANOPS_QUEUE_GATE") or "").strip().lower()
+        return v not in ("0", "false", "no", "off")
+
+    @property
     def smart_framing(self) -> bool:
         # Subject-aware reframe (framing.subject_focus): slide the 9:16 crop onto the detected subject
         # instead of the blind top/center bias. DEFAULT ON — but only because the pass is FAIL-OPEN: with

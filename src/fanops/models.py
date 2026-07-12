@@ -59,6 +59,8 @@ def realized_seconds(pick: "MomentPick | Moment") -> float:
 
 
 class SourceState(str, Enum):
+    pending = "pending"               # U4: catalogued-on-arrival (id/sha/duration real) but held until operator
+                                      # releases — invisible to every pipeline stage reducer (keys on catalogued+).
     catalogued = "catalogued"; transcribed = "transcribed"; signalled = "signalled"
     moments_requested = "moments_requested"
     picks_decided = "picks_decided"   # M1b (frame-seeing two-pass): pass-1 picks reconciled into `picked`
