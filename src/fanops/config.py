@@ -924,6 +924,18 @@ class Config:
         return max(1, mb) * 1024 * 1024
 
     @property
+    def source_shard_min(self) -> int:
+        # Native inbox videos longer than this (minutes) are split once at catalogue time into independent
+        # part-sources via ffmpeg stream-copy (S03). DEFAULT 45 — a 2h drop becomes ~25-min parts without
+        # blocking the pipeline on one giant source. 0 = OFF (byte-identical to pre-shard ingest). CLAMPED >= 0.
+        # Non-int env -> default.
+        try:
+            m = int(os.getenv("FANOPS_SOURCE_SHARD_MIN", "45"))
+        except ValueError:
+            return 45
+        return max(0, m)
+
+    @property
     def operator_tz(self) -> str:
         """M1: the explicit operator timezone string (IANA name, e.g. 'America/New_York') used by
         the timeutil web-boundary helpers to render every scheduled time. DEFAULT 'UTC' — never
