@@ -3,15 +3,12 @@ publish/respread/send-back), the all-time Posted library (+ repost / crosspost-t
 Lift view. register_schedule_routes(app, cfg) registers them under their ORIGINAL endpoint names (url_for
 byte-identical); create_app calls it. Helpers come from app (loaded before create_app runs, so cycle-free)."""
 from __future__ import annotations
-from collections import Counter
 from datetime import datetime, timezone
-from flask import render_template, request
+from flask import redirect, render_template, request, url_for
 from fanops.accounts import Accounts
 from fanops.ledger import Ledger
-from fanops.models import LIFT_SCORE, PostState
-from fanops.variant_learning import _hook_for_post
 from fanops.studio import actions, views
-from fanops.studio.app import _account_arg, _batch_arg, _delivery_arg, _failure_arg, _month_arg, _offset_arg, _row_chips, _source_arg, _time_arg, _with_active
+from fanops.studio.app import _account_arg, _batch_arg, _delivery_arg, _failure_arg, _month_arg, _offset_arg, _row_chips, _source_arg, _time_arg
 
 
 def register_schedule_routes(app, cfg):
@@ -114,18 +111,10 @@ def register_schedule_routes(app, cfg):
 
     @app.get("/lift")
     def lift():
-        led = Ledger.load(cfg); accts = Accounts.load(cfg); account = _account_arg()
-        view = views.lift_rows(led, cfg, accts, account=account)
-        view.variant_rows = views.lineage_stats(view.variant_rows)   # S6: rank which hook won within each clip's lineage (returns NEW rows)
-        views.account_median_deltas(view.variant_rows)    # T-15: Δ vs the account's median lift (additive to Δ-vs-best)
-        peaks = views.metric_peaks(view.variant_rows)     # S6: micro-bar normalisation over the shown variants
-        # Chip universe from a CHEAP post scan (the same analyzed-variant predicate lift_rows uses), so we
-        # call lift_rows ONCE — building an unfiltered view just for chips would re-run its per-row gate I/O.
-        vcounts = Counter(p.account for p in led.posts.values()
-                          if _hook_for_post(led, p) and p.state is PostState.analyzed and LIFT_SCORE in p.metrics)
-        chips = {"chip_accounts": _with_active(vcounts, account), "chip_counts": dict(vcounts),
-                 "chip_route": "lift", "chip_total": sum(vcounts.values()), "active": account}
-        return render_template("lift.html", view=view, peaks=peaks, tab="lift", **chips)
+        # U10: Lift folded into the one Results surface at /posted. 301 (permanent) so bookmarks/links
+        # move; ALL query args (incl. ?account=) ride through url_for VERBATIM (a duplicate account= is
+        # NOT re-passed — request.args already carries it, so **request.args alone preserves it).
+        return redirect(url_for("posted", **request.args), code=301)
 
     def _posted_panel(result=None, *, full=False):
         led = Ledger.load(cfg); account = _account_arg(); batch = _batch_arg(); source = _source_arg()
@@ -149,14 +138,26 @@ def register_schedule_routes(app, cfg):
         peaks = views.metric_peaks(rows)                  # S6: normalise micro-bars over the FULL filtered set (same
                                                           # denominator as lineage_stats) so a bar is a STABLE reference
                                                           # across pages — a saves=10 row reads the same width on any page
-        accounts = Accounts.load(cfg).active()            # content-lifecycle Phase 4: cross-account picker options
+        accts = Accounts.load(cfg)
+        accounts = accts.active()                          # content-lifecycle Phase 4: cross-account picker options
         tag_exposure = views.tag_exposure(led)
+        # U10: the performance lenses (Lift + What's-working + legend) refresh on FULL-page load only — the
+        # HTMX #posted-body swaps (library filter / repost / recover) stay scoped to the library, so the
+        # lenses aren't re-rendered on every action. Mirror the (now-removed) /lift handler's call sequence
+        # verbatim so the folded lens shows byte-identical data. account scopes BOTH the library and the lens.
+        lift_ctx: dict = {}
+        if full:
+            lift_view = views.lift_rows(led, cfg, accts, account=account)
+            lift_view.variant_rows = views.lineage_stats(lift_view.variant_rows)   # S6: rank hooks within each clip's lineage
+            views.account_median_deltas(lift_view.variant_rows)                    # T-15: Δ vs the account's median lift
+            lift_ctx = {"lift_view": lift_view, "lift_peaks": views.metric_peaks(lift_view.variant_rows),
+                        "insights": views.whats_working_panel(led, cfg), "metrics_stale": views.metrics_stale_hint(cfg)}
         return render_template("posted.html" if full else "_posted_panel.html", rows=page.items, groups=groups,
                                page=page, rollup=rollup, peaks=peaks, active_batch=batch, active_source=source,
                                source_chips=views.source_universe_for_clips(led, rows_full),
                                accounts=accounts, tag_exposure=tag_exposure,
                                result=result, tab="posted", active_delivery=delivery, active_failure=failure,
-                               failure_rollup=failure_rollup, **_row_chips(rows_full, "posted", account))
+                               failure_rollup=failure_rollup, **lift_ctx, **_row_chips(rows_full, "posted", account))
 
     @app.get("/posted")
     def posted():

@@ -25,8 +25,9 @@ changes nothing for normal sessions. While active:
 
 | Guarantee | Mechanism |
 |---|---|
-| Nothing unverified lands | `gh pr merge` and raw `gh api …/merge` denied unless every `MOL-xxx` on the PR (branch + title + body) has a passing verification record. |
-| A record covers exactly the commits it saw | record `head_sha` must equal the PR's current `headRefOid`; stale → land refused (the ONLY re-verify trigger). |
+| Nothing red lands | every land (`gh pr merge` and raw `gh api …/merge`) runs `gh pr checks` — non-green or unverifiable → refused. |
+| Verification is priced to risk | an independent verification record is demanded ONLY where wrongness is expensive: the PR touches a `lanes.json` hot file, is broad (>5 files), or its file list is unverifiable (`records_required`, fail closed). Small non-hot changes land on green CI alone — no verifier is spawned for them. Rationale: CI cannot catch an implementer grading their own homework (tests asserting the misread behavior), so an independent diff-vs-acceptance read is bought only where that failure costs the most. |
+| A record covers exactly the commits it saw | where a record is demanded, its `head_sha` must equal the PR's current `headRefOid`; stale → land refused (the ONLY re-verify trigger). |
 | Only named wave agents spawn; models stay pinned | `subagentStart` denies any type outside {`fanops-worker`, `fanops-lander`}: ad-hoc types (`general-purpose`, `shell`) are where spawn-time models take effect, and a second `fanops-orchestrator` mid-wave is the double-merge incident. Allowed agents' frontmatter pins `model: inherit`. |
 | The orchestrator never runs nested — even outside a wave | spawning `fanops-orchestrator` as a subagent is denied UNCONDITIONALLY (a nested orchestrator cannot spawn workers); the deny message redirects the calling agent to take over as the orchestrator top-level, so `/fanops-orchestrator` self-corrects. |
 | Every spawn and land attributed | `subagentStart`/`subagentStop` and lands append `state/ledger.jsonl` (type, model, task, status); denied spawns are ledgered as `subagent_denied`. |
@@ -53,11 +54,12 @@ command to `fanops-lander` (same gate applies). Default ships non-readonly: the 
 
 ## Records and lifecycle
 
-Scope → implement (parallel where non-conflicting) → verify (a DIFFERENT sub-agent) → land
-(orchestrator). The verifier writes `.orchestration/state/verified/<UNIT>.json`; the schema and
-writing rules live in `.agents/_worker-protocol.md` (verify role). The gate lands a PR only when
-every unit on it has a record with `passed: true`, a sub-agent `verifier` differing from `executor`,
-and a `head_sha` matching the PR's current head.
+Scope → implement (parallel where non-conflicting) → verify (a DIFFERENT sub-agent, ONLY for
+hot-file/broad units) → land (orchestrator, on green CI). The verifier writes
+`.orchestration/state/verified/<UNIT>.json`; the schema and writing rules live in
+`.agents/_worker-protocol.md` (verify role). Where the tier demands records, the gate lands a PR
+only when every unit on it has one with `passed: true`, a sub-agent `verifier` differing from
+`executor`, and a `head_sha` matching the PR's current head.
 
 `state/` is git-ignored runtime data; `ledger.jsonl` is the attribution record — proof nothing was
 silently done by the orchestrator itself.

@@ -53,8 +53,8 @@ def test_templates_auto_reload_enabled(tmp_path):
 def test_tabs_return_200(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg, tmp_path)
     c = _client(cfg)
-    for path, needle in [("/review", b"Review"), ("/schedule", b"Schedule"), ("/lift", b"Lift")]:
-        r = c.get(path); assert r.status_code == 200 and needle in r.data
+    for path, needle in [("/review", b"Review"), ("/schedule", b"Schedule"), ("/posted", b"Lift by variant")]:
+        r = c.get(path); assert r.status_code == 200 and needle in r.data   # U10: Lift folded onto /posted (200, not a redirect)
 
 def test_root_renders_home(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg, tmp_path)

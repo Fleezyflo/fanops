@@ -200,13 +200,14 @@ def is_unit_verified(unit_id: str, root, head_sha: str = "") -> tuple:
     return True, "verified"
 
 
-def land_decision(unit_ids: list, root, head_sha: str = "") -> tuple:
-    """Allow a land only when at least one unit is identified AND every identified unit is verified
-    against the PR's current head."""
+def land_decision(unit_ids: list, root, head_sha: str = "", required: bool = True) -> tuple:
+    """Allow a land only when at least one unit is identified AND — for record-required (hot/broad)
+    changes — every identified unit has a fresh sub-agent verification record."""
     if not unit_ids:
-        return False, ("land refused: no unit id found on the PR/branch — cannot confirm a "
-                       "sub-agent verified this work. Tag the unit (MOL-xxx or Unit: <slug>) and have a "
-                       "verifier sub-agent write its record.")
+        return False, ("land refused: no unit id found on the PR/branch — attribution requires a unit "
+                       "tag (MOL-xxx or Unit: <slug>) on the branch, title, or body.")
+    if not required:
+        return True, "green CI is the land key for a small non-hot change"
     for u in unit_ids:
         ok, reason = is_unit_verified(u, root, head_sha)
         if not ok:
@@ -226,26 +227,65 @@ def append_ledger(root, entry: dict) -> None:
 # ---- I/O wrapper (gh lookup for a PR's units) -------------------------------
 
 def enforcement_hits(paths) -> list:
-    """Subset of `paths` that fall under the enforcement machinery (pure; testable)."""
+    """Subset of `paths` that fall under the enforcement machinery (pure; testable; derived from
+    _ENFORCEMENT_PATHS so new enforcement homes are covered automatically)."""
     out = []
     for p in paths:
         p = (p or "").strip()
         if not p: continue
-        if (p == ".cursor/hooks.json" or p.startswith(".cursor/hooks/") or p.startswith(".githooks/")
-                or p in ("scripts/orchestrate.py", "scripts/repo_sweep.py")):
+        if any(p == e or p.startswith(e.rstrip("/") + "/") for e in _ENFORCEMENT_PATHS):
             out.append(p)
     return out
 
 
-def _pr_enforcement_files(pr_number: str) -> list:
-    """Enforcement files a PR modifies (best-effort via gh; unverifiable → blocking sentinel)."""
+def _pr_changed_files(pr_number: str) -> list:
+    """Files a PR modifies (best-effort via gh; unverifiable → blocking sentinel)."""
     try:
         out = subprocess.run(["gh", "pr", "view", pr_number, "--json", "files",
                               "-q", ".files[].path"], capture_output=True, text=True, timeout=30)
         if out.returncode != 0: return ["(unverifiable: gh files lookup failed)"]
-        return enforcement_hits(out.stdout.splitlines())
+        return [ln.strip() for ln in out.stdout.splitlines() if ln.strip()]
     except Exception:
         return ["(unverifiable: gh unavailable)"]
+
+
+def _pr_checks_green(pr_number: str) -> tuple:
+    """(ok, why): every reported check on the PR is green (best-effort via gh; fail closed)."""
+    try:
+        out = subprocess.run(["gh", "pr", "checks", pr_number], capture_output=True, text=True, timeout=45)
+        if out.returncode == 0: return True, "checks green"
+        tail = [ln.strip() for ln in (out.stdout or out.stderr).strip().splitlines() if ln.strip()]
+        return False, "PR checks are not green (" + ("; ".join(tail[-3:]) if tail else f"gh exit {out.returncode}") + ")"
+    except Exception:
+        return False, "PR checks unverifiable (gh unavailable) — fail closed"
+
+
+# Verification is priced to risk: an independent verifier is a real token cost, and most units are
+# small, non-hot, and fully proven by CI + the ticket's own tests. A record is demanded only where a
+# wrong-but-green change is expensive: lane hot files, broad diffs, or an unknowable file list.
+_RECORD_FILE_BUDGET = 5
+
+
+def hot_files(root) -> set:
+    """Lane hot files from .agents/lanes.json guard map (file -> owning lane). Empty when unreadable."""
+    try:
+        g = json.loads((_root(root) / ".agents" / "lanes.json").read_text()).get("guard", {})
+        return set(g) if isinstance(g, dict) else set()
+    except Exception:
+        return set()
+
+
+def records_required(changed_files, hot) -> tuple:
+    """Risk tier (pure): (required, why). Fail closed on an unverifiable file list."""
+    files = list(changed_files or [])
+    if any(str(f).startswith("(unverifiable") for f in files):
+        return True, "changed files unverifiable — fail closed to full verification"
+    hits = sorted(set(files) & set(hot))
+    if hits:
+        return True, "touches lane hot file(s): " + ", ".join(hits[:4])
+    if len(files) > _RECORD_FILE_BUDGET:
+        return True, f"broad change ({len(files)} files > {_RECORD_FILE_BUDGET})"
+    return False, f"small non-hot change ({len(files)} files) — green CI suffices"
 
 
 def _pr_units(pr_number: str) -> tuple:
@@ -308,20 +348,28 @@ def handle_before_shell(data: dict, root) -> int:
                 "during a wave, by any tool. Report this to the operator; enforcement changes land via a "
                 "reviewed PR before a wave, never mid-wave."))
         pr = parse_pr_merge(cmd)
+        changed = _pr_changed_files(pr) if pr else []
+        touched = enforcement_hits(changed)
+        if touched:
+            return _emit("deny", agent_message=(
+                "REFUSED (orchestration gate): this PR modifies enforcement machinery ("
+                + ", ".join(touched[:5]) + "). Enforcement changes are OPERATOR-ONLY and merge "
+                "outside a wave — report to the operator; do not attempt another route."))
         if pr:
-            touched = _pr_enforcement_files(pr)
-            if touched:
+            green, why = _pr_checks_green(pr)
+            if not green:
                 return _emit("deny", agent_message=(
-                    "REFUSED (orchestration gate): this PR modifies enforcement machinery ("
-                    + ", ".join(touched[:5]) + "). Enforcement changes are OPERATOR-ONLY and merge "
-                    "outside a wave — report to the operator; do not attempt another route."))
+                    f"REFUSED (orchestration gate): {why}. The gate lands only green PRs — wait for "
+                    "CI, or delegate a fix worker if it is red, then retry."))
         units, head_sha = _pr_units(pr) if pr else ([], "")
-        allow, reason = land_decision(units, root, head_sha)
+        required, tier = records_required(changed, hot_files(root)) if pr else (True, "no PR number parsed")
+        allow, reason = land_decision(units, root, head_sha, required)
         if not allow:
-            return _emit("deny", agent_message=f"REFUSED (orchestration gate): {reason}")
+            return _emit("deny", agent_message=f"REFUSED (orchestration gate): {reason} "
+                         f"(verification tier: {tier})")
         append_ledger(root, {"event": "land", "pr": pr, "units": units, "head_sha": head_sha,
-                             "command": cmd})
-        return _emit("allow", agent_message=f"land allowed: {', '.join(units)} verified by sub-agent(s).")
+                             "records_required": required, "tier": tier, "command": cmd})
+        return _emit("allow", agent_message=f"land allowed — {tier}; units: {', '.join(units)}.")
     return _emit("allow")
 
 
