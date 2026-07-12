@@ -982,6 +982,14 @@ def _cmd_run_pass(cfg: Config, base_time: str) -> dict | None:
             get_logger(cfg)("hashtags", "-", "store_refreshed", measured=r.get("measured", 0), total=r.get("total", 0))
     except Exception as e:
         get_logger(cfg)("hashtags", "-", "refresh_error", err=f"{type(e).__name__}: {str(e)[:120]}")
+    # U3: throttled IG follower snapshot — own try/except; refresh_account_stats_if_due never raises.
+    try:
+        from fanops.fanops_account_stats import refresh_account_stats_if_due
+        r = refresh_account_stats_if_due(cfg)
+        if r.get("refreshed"):
+            get_logger(cfg)("account_stats", "-", "refreshed", updated=r.get("updated", 0), total=r.get("total", 0))
+    except Exception as e:
+        get_logger(cfg)("account_stats", "-", "refresh_error", err=f"{type(e).__name__}: {str(e)[:120]}")
     # S12: automated persona corpus refresh — own throttle (12h via .corpora_refresh.json mtime), own try/except.
     try:
         from fanops.persona_research import refresh_corpora_if_due

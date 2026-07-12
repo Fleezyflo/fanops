@@ -3,7 +3,7 @@
 from __future__ import annotations
 import json
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -958,6 +958,125 @@ def home_batches(cfg: Config) -> list[HomeBatch]:
         from fanops.log import get_logger
         get_logger(cfg)("home_batches", "-", "error", err=str(exc)[:160])
         return []
+
+
+def load_account_stats(cfg: Config) -> dict[str, dict]:
+    """Read account_stats.json; corrupt/missing -> {}."""
+    try:
+        p = cfg.account_stats_path
+        if not p.exists():
+            return {}
+        raw = json.loads(p.read_text())
+        return raw if isinstance(raw, dict) else {}
+    except Exception as exc:
+        from fanops.log import get_logger
+        get_logger(cfg)("home", "-", "account_stats_read_error", err=str(exc)[:120])
+        return {}
+
+
+_HOME_CAL_COLORS = ("#4a9e8e", "#c85a7a", "#5888dd", "#e6a23c", "#6c8ebf", "#d74a4a", "#8bc34a", "#f90")
+
+
+def home_accounts_panel(cfg: Config) -> list[dict]:
+    """Compact account tiles for Home: handle, platforms, persona, followers, posted total, awaiting badge."""
+    accounts = golive_accounts(cfg)
+    wc = account_work_counts(cfg)
+    stats = load_account_stats(cfg)
+    personas = None
+    try:
+        from fanops.personas import Personas
+        personas = Personas.load(cfg)
+    except Exception as exc:
+        from fanops.log import get_logger
+        get_logger(cfg)("home", "-", "personas_load_error", err=str(exc)[:120])
+    posted_by: dict[str, int] = {}
+    try:
+        led = Ledger.load(cfg)
+        for p in led.posts.values():
+            if p.state in (PostState.published, PostState.analyzed):
+                posted_by[p.account] = posted_by.get(p.account, 0) + 1
+    except Exception as exc:
+        from fanops.log import get_logger
+        get_logger(cfg)("home", "-", "posted_total_error", err=str(exc)[:120])
+    out = []
+    for a in accounts:
+        persona_name = "no persona"
+        if personas and a.persona_id:
+            pr = personas.get(a.persona_id)
+            if pr and pr.name:
+                persona_name = pr.name
+        elif a.persona:
+            persona_name = a.persona
+        snap = stats.get(a.handle) or {}
+        followers = snap.get("followers") if isinstance(snap.get("followers"), int) else "—"
+        w = wc.get(a.handle, {})
+        out.append({"handle": a.handle, "channels": [ch.platform for ch in a.channels],
+                    "persona": persona_name, "followers": followers,
+                    "posted_total": posted_by.get(a.handle, 0), "awaiting": int(w.get("awaiting") or 0)})
+    return out
+
+
+def home_source_gallery(cfg: Config, *, page: int = 1, per_page: int = 12) -> dict:
+    """Native sources newest-first with clip counts and thumb URLs."""
+    try:
+        led = Ledger.load(cfg)
+        moms, clips_bm, _posts_bc = lineage_maps(led)
+        rows = []
+        for sid, src in led.sources.items():
+            if getattr(src, "origin_kind", None) == "third_party":
+                continue
+            moments = moms.get(sid, [])
+            clips_n = sum(len(clips_bm.get(m.id, [])) for m in moments)
+            title = Path(src.source_path).name if src.source_path else sid
+            rows.append({"id": sid, "title": title, "clips": clips_n, "created_at": src.created_at or "",
+                         "thumb_url": f"/thumb/source/{sid}", "url": f"/library/{sid}"})
+        rows.sort(key=lambda r: (r["created_at"], r["id"]), reverse=True)
+        total = len(rows)
+        pages = max(1, (total + per_page - 1) // per_page)
+        page = max(1, min(page, pages))
+        start = (page - 1) * per_page
+        items = rows[start:start + per_page]
+        return {"entries": items, "page": page, "pages": pages, "total": total}
+    except Exception as exc:
+        from fanops.log import get_logger
+        get_logger(cfg)("home", "-", "source_gallery_error", err=str(exc)[:120])
+        return {"entries": [], "page": 1, "pages": 1, "total": 0}
+
+
+def home_week_calendar(cfg: Config) -> dict:
+    """Rolling 7-day columns of future-scheduled queued posts in operator_tz."""
+    from fanops.timeutil import _operator_zone, parse_iso
+    zone = _operator_zone(cfg)
+    now = datetime.now(timezone.utc)
+    today = datetime.now(zone).date()
+    day_keys = [(today + timedelta(days=i)).isoformat() for i in range(7)]
+    buckets: dict[str, list] = {d: [] for d in day_keys}
+    try:
+        led = Ledger.load(cfg)
+        for p in led.posts.values():
+            if p.state is not PostState.queued or not p.scheduled_time:
+                continue
+            try:
+                dt = parse_iso(p.scheduled_time)
+                if dt.tzinfo is None or dt <= now:
+                    continue
+                local = dt.astimezone(zone)
+                dkey = local.date().isoformat()
+                if dkey not in buckets:
+                    continue
+                plat = getattr(p.platform, "value", p.platform) if p.platform else "?"
+                color = _HOME_CAL_COLORS[hash(p.account) % len(_HOME_CAL_COLORS)]
+                buckets[dkey].append({"time": local.strftime("%H:%M"), "account": p.account,
+                                      "platform": plat, "color": color,
+                                      "title": f"{local.strftime('%H:%M')} · {p.account} · {plat}"})
+            except (ValueError, TypeError):
+                continue
+        for posts in buckets.values():
+            posts.sort(key=lambda x: x["time"])
+    except Exception as exc:
+        from fanops.log import get_logger
+        get_logger(cfg)("home", "-", "week_calendar_error", err=str(exc)[:120])
+    return {"days": [{"date": d, "posts": buckets[d]} for d in day_keys]}
 
 
 @dataclass

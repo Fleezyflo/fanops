@@ -29,10 +29,10 @@ def _client(cfg):
     from fanops.studio.app import create_app
     app = create_app(cfg); app.config.update(TESTING=True); return app.test_client()
 
-def test_home_review_link_includes_focus(tmp_path):
+def test_home_review_link_includes_account(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg); _seed(cfg)
     html = _client(cfg).get("/").data.decode()
-    assert "focus=1" in html and ">Review " in html and "cta-badge" in html   # MOL-55: count moved into the pending badge (was "Review (N)")
+    assert "/review?account=" in html and 'class="home-acct-badge">2</span>' in html
 
 def test_approve_in_focus_shows_next_clip_not_schedule(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg); _seed(cfg)
@@ -52,14 +52,8 @@ def test_schedule_auto_ship_false_without_daemon(tmp_path, monkeypatch):
 
 def test_rail_posts_label_is_results(tmp_path):
     cfg = Config(root=tmp_path)
-    html = _client(cfg).get("/").data.decode()
+    html = _client(cfg).get("/review").data.decode()
     assert ">Results</a>" in html or "Results</a>" in html
-
-
-def test_home_start_here_banner(tmp_path):
-    cfg = Config(root=tmp_path); _accounts(cfg); _seed(cfg, n=2)
-    html = _client(cfg).get("/").data.decode()
-    assert "home-start-here" in html and "Start — review" in html
 
 def test_review_handoff_includes_dominant_batch(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg)

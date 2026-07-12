@@ -216,18 +216,14 @@ def test_ops_tile_zero_carries_no_accent_border():
     assert dgr.get("border-color") == "var(--danger)", "danger tile keeps its accent (fires only when nonzero)"
 
 
-def test_home_template_emits_ops_tile_zero_conditionally():
+def test_home_template_no_ops_tiles(tmp_path):
     src = (Path(fanops.studio.__file__).parent / "templates" / "home.html").read_text()
-    # every ops-tile <a> must carry a conditional ops-tile--zero class driven by its count being 0/falsey
-    assert "ops-tile--zero" in src, "home.html must conditionally emit ops-tile--zero"
-    # the six tiles each gate the zero class on their own count value
-    assert src.count("ops-tile--zero") >= 6, "each of the 6 ops-tiles must gate its own ops-tile--zero"
+    assert "ops-tile" not in src, "U3 Home removed the ops-board tiles"
 
 
-def test_home_zero_tile_renders_recessive_class(tmp_path):
-    # on a fresh (empty) ledger every count is 0 → every rendered ops-tile carries ops-tile--zero
+def test_home_renders_account_tiles(tmp_path):
     h = _html(Config(root=tmp_path))
-    assert h.count("ops-tile--zero") >= 6, "a zero-count Home must mark all six tiles ops-tile--zero"
+    assert "home-acct-tile" in h or "Connect accounts" in h
 
 
 # ── MOL-44: 3 real button tiers (primary / secondary / tertiary) + danger as a modifier ────────────

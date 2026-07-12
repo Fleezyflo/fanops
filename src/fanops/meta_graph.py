@@ -131,6 +131,24 @@ _HARVEST_CAP = 5000                 # upper bound on distinct co-tags per harves
 def _now() -> datetime:
     return datetime.now(timezone.utc)
 
+def account_overview(cfg: Config, handle: str, *, get=None) -> Optional[dict]:
+    """Per-handle IG follower snapshot via Graph GET /{ig_user_id}?fields=followers_count. Returns
+    {"followers": int, "fetched_at": iso} or None when creds/token/ig_user_id are absent or the call fails.
+    FAIL-OPEN: logs once on error, never echoes the token."""
+    creds = resolve_meta_creds(cfg, handle=handle)
+    if not (creds.ig_user_id and creds.token):
+        return None
+    body = _graph_get(cfg, creds.ig_user_id, {"fields": "followers_count"}, get=get, token=creds.token)
+    if not body:
+        get_logger(cfg)("account_stats", handle, "overview_fail", err="graph_none")
+        return None
+    fc = body.get("followers_count")
+    if not isinstance(fc, (int, float)) or isinstance(fc, bool):
+        get_logger(cfg)("account_stats", handle, "overview_fail", err="bad_shape")
+        return None
+    return {"followers": int(fc), "fetched_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")}
+
+
 def _graph_get(cfg: Config, path: str, params: dict, *, get=None, token: Optional[str] = None):
     """Read-only Graph GET -> parsed JSON dict, or None on ANY failure (fail-soft enhancement). The
     token rides in the `access_token` param; it is never placed in a logged string. `token` overrides the

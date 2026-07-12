@@ -57,10 +57,11 @@ def test_tabs_return_200(tmp_path):
         r = c.get(path); assert r.status_code == 200 and needle in r.data
 
 def test_root_renders_home(tmp_path):
-    # Face 2: GET / is a real status home page now, NOT a redirect to /review.
     cfg = Config(root=tmp_path); _seed(cfg, tmp_path)
     r = _client(cfg).get("/")
-    assert r.status_code == 200 and b"Home" in r.data and b"Posted" in r.data
+    html = r.data.decode()
+    assert r.status_code == 200 and b"Home" in r.data
+    assert "Accounts" in html and "Sources" in html and "Week ahead" in html
 
 def test_home_nav_link(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg, tmp_path)
@@ -126,32 +127,14 @@ def test_daemon_health_off_no_llm_disclosure_when_manual(tmp_path, monkeypatch):
     assert "data-daemon-warn" not in html and "claude" not in html.lower()
 
 def test_home_metrics_per_account(tmp_path):
-    # S10: an ACTIVE account's post count renders INLINE on its account row; the #home-metrics table is now
-    # only the orphan fallback (handles with history but no active account), so it is absent when @a is active.
-    cfg = Config(root=tmp_path); _seed(cfg, tmp_path)       # _seed births @a posts (@a is an active account)
-    html = _client(cfg).get("/").data.decode()
-    assert 'data-slot="metrics"' in html                   # the section still exists (orphan fallback)
-    assert 'data-acct-count="a"' in html                  # @a's count is inline on its account row
-    assert 'data-metric="by-account"' not in html          # no orphans -> no fallback table
-
-def test_home_term_glossary_is_phrasing_content(tmp_path):
-    # Root fix: the inline glossary mark term() must be PHRASING content (<span>, not <details>).
-    from fanops.batches import create_batch
     cfg = Config(root=tmp_path); _seed(cfg, tmp_path)
-    led = Ledger.load(cfg)
-    create_batch(led, name="B1", target_accounts=["a"], now_iso="2026-06-22T00:00:00.000001Z"); led.save()
     html = _client(cfg).get("/").data.decode()
-    assert '<span class="term"' in html
-    assert '<details class="term"' not in html
+    assert "home-acct-tile" in html and "home-accounts-panel" in html
 
-def test_home_batch_deep_link_and_zero_result(tmp_path):
+def test_home_gallery_panel(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg, tmp_path)
-    from fanops.batches import create_batch
-    led = Ledger.load(cfg)
-    ghost = create_batch(led, name="Ghost", target_accounts=["ghost"], now_iso="2026-06-22T00:00:00.000001Z")
-    led.add_source(Source(id="s_ghost", source_path="/v.mp4", batch_id=ghost.id)); led.save()
     html = _client(cfg).get("/").data.decode()
-    assert "/review?batch=" in html and 'data-warn="zero-result"' in html   # deep-link + the silent-fail badge
+    assert "home-gallery" in html and "/library/src_1" in html
 
 def test_home_no_zero_result_for_matched_batch(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg, tmp_path)

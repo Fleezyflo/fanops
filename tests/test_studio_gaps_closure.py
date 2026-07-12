@@ -118,7 +118,7 @@ def test_home_renders_zero_post_clip_warning(tmp_path):
     led.add_clip(Clip(id="orph", parent_id="m1", path=str(cdir / "orph.mp4"), aspect=Fmt.r9x16, state=ClipState.queued))
     led.save()
     html = _client(cfg).get("/").data.decode()
-    assert "birthed zero posts" in html and "orph" in html
+    assert "birthed zero posts" in html and "zero-post-line" in html
 
 
 def test_account_work_counts_includes_review_batch(tmp_path):

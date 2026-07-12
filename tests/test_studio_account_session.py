@@ -27,11 +27,11 @@ def _client(cfg):
     from fanops.studio.app import create_app
     app = create_app(cfg); app.config.update(TESTING=True); return app.test_client()
 
-def test_home_account_launcher_shows_work_counts(tmp_path):
+def test_home_account_tile_shows_awaiting_badge(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg); _seed(cfg, 2)
     html = _client(cfg).get("/").data.decode()
-    assert ">Review " in html and '<span class="cta-badge">2</span>' in html   # MOL-55: count in the pending badge (was "Review (2)")
-    assert 'data-acct-awaiting="a"' in html
+    assert 'class="home-acct-badge">2</span>' in html
+    assert "/review?account=" in html
 
 def test_session_bar_on_scoped_pages(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg); _seed(cfg, 1)
