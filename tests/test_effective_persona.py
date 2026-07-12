@@ -3,7 +3,7 @@ import json
 import pytest
 pytest.importorskip("flask")
 from fanops.config import Config
-from fanops.accounts import Accounts, link_persona, set_clip_profile
+from fanops.accounts import link_persona
 from fanops import personas as core
 from fanops.studio import views
 from fanops.persona_directives import casting_directive, hook_directive, caption_directive
