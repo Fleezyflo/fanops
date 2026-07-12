@@ -5,6 +5,7 @@ import time
 from fanops.accounts import Accounts
 from fanops.config import Config
 from fanops.controlio import write_json_atomic
+from fanops.log import get_logger
 from fanops.meta_graph import account_overview
 
 
@@ -20,7 +21,8 @@ def refresh_account_stats_if_due(cfg: Config, *, max_age_s: int = 43200, get=Non
             try:
                 raw = json.loads(p.read_text())
                 store = raw if isinstance(raw, dict) else {}
-            except Exception:
+            except Exception as exc:
+                get_logger(cfg)("account_stats", "-", "read_error", err=str(exc)[:120])
                 store = {}
         updated = 0
         for a in Accounts.load(cfg).active():
@@ -34,4 +36,5 @@ def refresh_account_stats_if_due(cfg: Config, *, max_age_s: int = 43200, get=Non
         write_json_atomic(cfg.account_stats_path, store)
         return {"refreshed": True, "updated": updated, "total": len(store)}
     except Exception as exc:
+        get_logger(cfg)("account_stats", "-", "refresh_error", err=str(exc)[:120])
         return {"refreshed": False, "reason": f"error: {str(exc)[:120]}"}

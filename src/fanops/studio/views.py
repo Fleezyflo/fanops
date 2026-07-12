@@ -968,7 +968,9 @@ def load_account_stats(cfg: Config) -> dict[str, dict]:
             return {}
         raw = json.loads(p.read_text())
         return raw if isinstance(raw, dict) else {}
-    except Exception:
+    except Exception as exc:
+        from fanops.log import get_logger
+        get_logger(cfg)("home", "-", "account_stats_read_error", err=str(exc)[:120])
         return {}
 
 
@@ -984,16 +986,18 @@ def home_accounts_panel(cfg: Config) -> list[dict]:
     try:
         from fanops.personas import Personas
         personas = Personas.load(cfg)
-    except Exception:
-        pass
+    except Exception as exc:
+        from fanops.log import get_logger
+        get_logger(cfg)("home", "-", "personas_load_error", err=str(exc)[:120])
     posted_by: dict[str, int] = {}
     try:
         led = Ledger.load(cfg)
         for p in led.posts.values():
             if p.state in (PostState.published, PostState.analyzed):
                 posted_by[p.account] = posted_by.get(p.account, 0) + 1
-    except Exception:
-        pass
+    except Exception as exc:
+        from fanops.log import get_logger
+        get_logger(cfg)("home", "-", "posted_total_error", err=str(exc)[:120])
     out = []
     for a in accounts:
         persona_name = "no persona"
@@ -1033,7 +1037,9 @@ def home_source_gallery(cfg: Config, *, page: int = 1, per_page: int = 12) -> di
         start = (page - 1) * per_page
         items = rows[start:start + per_page]
         return {"entries": items, "page": page, "pages": pages, "total": total}
-    except Exception:
+    except Exception as exc:
+        from fanops.log import get_logger
+        get_logger(cfg)("home", "-", "source_gallery_error", err=str(exc)[:120])
         return {"entries": [], "page": 1, "pages": 1, "total": 0}
 
 
@@ -1067,8 +1073,9 @@ def home_week_calendar(cfg: Config) -> dict:
                 continue
         for posts in buckets.values():
             posts.sort(key=lambda x: x["time"])
-    except Exception:
-        pass
+    except Exception as exc:
+        from fanops.log import get_logger
+        get_logger(cfg)("home", "-", "week_calendar_error", err=str(exc)[:120])
     return {"days": [{"date": d, "posts": buckets[d]} for d in day_keys]}
 
 
