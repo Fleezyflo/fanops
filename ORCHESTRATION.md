@@ -5,10 +5,12 @@ lands the verified results itself. You don't manage it after launch.
 
 ## 1. Start the orchestrator — top-level, never as a subagent
 
-- **Preferred:** start a Cursor Cloud Agent (or chat) on this repo with **`fanops-orchestrator`**
-  selected as the agent.
-- **Hand-off:** tell any TOP-LEVEL agent: *"Act as the FanOps orchestrator — read
+- **Cursor:** start a Cloud Agent (or chat) on this repo with **`fanops-orchestrator`** selected as
+  the agent, or tell any TOP-LEVEL agent: *"Act as the FanOps orchestrator — read
   `.cursor/agents/fanops-orchestrator.md` and follow it."*
+- **Claude Code:** type **`/fanops-orchestrator <tasks or plan>`** — the command runs in the current
+  conversation (no nesting), which becomes the orchestrator. Same process, same gate
+  (`.claude/settings.json` hooks), same ledger and land rules.
 
 Typing `/fanops-orchestrator <plan>` into a chat spawns the orchestrator as a SUBAGENT — nested, it
 cannot spawn workers. The gate now refuses that spawn unconditionally and redirects the chat's own

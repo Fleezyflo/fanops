@@ -74,6 +74,51 @@
             "description": "Blocks a DUMB question (re-asking the brief, reduced-ambition options, rule-governed, or asked with no decision-work) by correlating against this turn's transcript — a real fork survives"
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/orchestration_gate_claude.py\"",
+            "timeout": 45,
+            "description": "FanOps orchestration gate (land-gate, protected paths, destructive git, operator-only stop) — inert unless a wave is engaged"
+          }
+        ]
+      },
+      {
+        "matcher": "Task|Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/orchestration_gate_claude.py\"",
+            "timeout": 15,
+            "description": "FanOps spawn allowlist + attribution ledger; fanops-orchestrator-as-subagent denied unconditionally with a take-over redirect"
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/orchestration_gate_claude.py\"",
+            "timeout": 15,
+            "description": "FanOps wave write-protection: verification records writable only by fanops-worker; orchestration state + enforcement machinery not writable at all — inert outside waves"
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/orchestration_gate_claude.py\"",
+            "timeout": 15,
+            "description": "FanOps attribution ledger: records each sub-agent's completion during a wave"
+          }
+        ]
       }
     ]
   }
