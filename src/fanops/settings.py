@@ -17,6 +17,7 @@ _OFF = frozenset({"0", "false", "no", "off"})
 _VALID_BOOL = _ON | _OFF
 _VALID_BACKENDS = frozenset({"dryrun", "postiz", "zernio"})
 _VALID_RESPONDERS = frozenset({"llm", "manual"})
+_VALID_LLM_TRANSPORTS = frozenset({"claude", "cursor"})
 PosterBackend = Literal["dryrun", "postiz", "zernio"]
 _BOOL_ENV_FIELDS = (
     "FANOPS_LIVE", "FANOPS_HASHTAG_TRENDS", "FANOPS_CORPUS_AUTO", "FANOPS_REQUIRE_FULL_OBJECTIVE", "FANOPS_SMART_FRAMING",
@@ -29,7 +30,7 @@ _BOOL_ENV_FIELDS = (
     "FANOPS_POSTIZ_AUTOSTART",
 )
 _STRIP_STR_FIELDS = (
-    "FANOPS_POSTER", "FANOPS_LIVE", "FANOPS_RESPONDER", "FANOPS_LLM_MODEL", "FANOPS_ARTIST_NAME",
+    "FANOPS_POSTER", "FANOPS_LIVE", "FANOPS_RESPONDER", "FANOPS_LLM_TRANSPORT", "FANOPS_LLM_MODEL", "FANOPS_ARTIST_NAME",
     "FANOPS_CLIP_PROFILE", "FANOPS_WHISPER_MODEL", "FANOPS_ASR_MODEL", "FANOPS_ASR_LANGUAGE",
     "FANOPS_SUBTITLE_FONT", "ZERNIO_API_URL", "META_GRAPH_URL", "FANOPS_OPERATOR_TZ",
 )
@@ -71,6 +72,15 @@ def _validate_responder(v: object) -> str:
     return s
 
 
+def _validate_llm_transport(v: object) -> str:
+    if v is None: return ""
+    s = str(v).strip().lower()
+    if not s: return ""
+    if s not in _VALID_LLM_TRANSPORTS:
+        raise ValueError(f"unrecognized FANOPS_LLM_TRANSPORT={s!r}; valid: claude, cursor")
+    return s
+
+
 def _strict_validate_poster(v: object) -> str:
     if v is None: return ""
     s = str(v).strip()
@@ -86,6 +96,15 @@ def _strict_validate_responder(v: object) -> str:
     if not s: return ""
     if s not in _VALID_RESPONDERS:
         raise ValueError(f"unrecognized FANOPS_RESPONDER={s!r}; valid: llm, manual")
+    return s
+
+
+def _strict_validate_llm_transport(v: object) -> str:
+    if v is None: return ""
+    s = str(v).strip().lower()
+    if not s: return ""
+    if s not in _VALID_LLM_TRANSPORTS:
+        raise ValueError(f"unrecognized FANOPS_LLM_TRANSPORT={s!r}; valid: claude, cursor")
     return s
 
 
@@ -144,6 +163,7 @@ class Settings(BaseSettings):
     FANOPS_CORPUS_TARGET: int = 12
     FANOPS_REQUIRE_FULL_OBJECTIVE: str = ""
     FANOPS_RESPONDER: str = ""
+    FANOPS_LLM_TRANSPORT: str = ""
     FANOPS_LLM_MODEL: str = ""
     FANOPS_ARTIST_NAME: str = ""
     FANOPS_CLIP_PROFILE: str = ""
@@ -313,6 +333,10 @@ class Settings(BaseSettings):
     @classmethod
     def _responder(cls, v): return _validate_responder(v)
 
+    @field_validator("FANOPS_LLM_TRANSPORT", mode="before")
+    @classmethod
+    def _llm_transport(cls, v): return _validate_llm_transport(v)
+
     @field_validator(*_BOOL_ENV_FIELDS, mode="before")
     @classmethod
     def _bool_word(cls, v): return _validate_bool_word(v)
@@ -332,6 +356,14 @@ class Settings(BaseSettings):
         if v not in _VALID_RESPONDERS:
             _log.warning("ignoring unknown FANOPS_RESPONDER=%r (using manual); valid: llm, manual", v)
             return "manual"
+        return v
+
+    def llm_transport(self) -> str:
+        v = (self.FANOPS_LLM_TRANSPORT or "").strip().lower()
+        if not v: return "claude"
+        if v not in _VALID_LLM_TRANSPORTS:
+            _log.warning("ignoring unknown FANOPS_LLM_TRANSPORT=%r (using claude); valid: claude, cursor", v)
+            return "claude"
         return v
 
     def opt_on(self, raw: str, *, default: bool) -> bool:
@@ -356,6 +388,8 @@ class Settings(BaseSettings):
             data["FANOPS_POSTER"] = _strict_field("FANOPS_POSTER", _strict_validate_poster, v)
         if (v := data.get("FANOPS_RESPONDER")):
             data["FANOPS_RESPONDER"] = _strict_field("FANOPS_RESPONDER", _strict_validate_responder, v)
+        if (v := data.get("FANOPS_LLM_TRANSPORT")):
+            data["FANOPS_LLM_TRANSPORT"] = _strict_field("FANOPS_LLM_TRANSPORT", _strict_validate_llm_transport, v)
         for name in _BOOL_ENV_FIELDS:
             if (v := data.get(name)):
                 data[name] = _strict_field(name, _strict_validate_bool_word, v)

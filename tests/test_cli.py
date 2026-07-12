@@ -316,6 +316,30 @@ def test_preflight_passes_llm_when_claude_present_no_api_key(tmp_path, monkeypat
     assert _check_preflight(Config(root=tmp_path)) == 0
 
 
+def test_preflight_blocks_cursor_when_cursor_agent_absent(tmp_path, monkeypatch, mocker, capsys):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "cursor")
+    mocker.patch("shutil.which", side_effect=lambda b: "/usr/local/bin/claude" if b == "claude" else None)
+    from fanops.config import Config
+    from fanops.cli import _check_preflight
+    assert _check_preflight(Config(root=tmp_path)) == 2
+    err = capsys.readouterr().err
+    assert "cursor-agent" in err and "Traceback" not in err
+
+
+def test_preflight_cursor_requires_claude_for_vision_fallback(tmp_path, monkeypatch, mocker, capsys):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "cursor")
+    mocker.patch("shutil.which", side_effect=lambda b: "/usr/local/bin/cursor-agent" if b == "cursor-agent" else None)
+    from fanops.config import Config
+    from fanops.cli import _check_preflight
+    assert _check_preflight(Config(root=tmp_path)) == 2
+    err = capsys.readouterr().err
+    assert "vision" in err.lower() and "claude" in err
+
+
 def test_run_halts_cleanly_when_responder_raises(tmp_path, monkeypatch, mocker, capsys):
     # AUDIT H7: `fanops run` is the REQUIRED unattended mode. If the LLM responder raises
     # (model call error, a malformed response failing validation), the run loop must DEGRADE
