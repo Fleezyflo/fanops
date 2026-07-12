@@ -24,6 +24,8 @@ def _seed(cfg):
     led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
     led.add_post(Post(id="aw_a", parent_id="clip_1", account="a", account_id="1", platform=Platform.instagram,
                       caption="c", state=PostState.awaiting_approval, scheduled_time=_z(NOW + timedelta(hours=3))))
+    led.add_post(Post(id="aw_b", parent_id="clip_1", account="b", account_id="1", platform=Platform.instagram,
+                      caption="c", state=PostState.awaiting_approval, scheduled_time=_z(NOW + timedelta(hours=3))))
     led.save()
 
 flask = pytest.importorskip("flask")

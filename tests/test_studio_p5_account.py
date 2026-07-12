@@ -305,7 +305,7 @@ def test_posted_repost_keeps_account_scope(tmp_path):
 
 def test_account_filter_chips_rendered(tmp_path):
     cfg = Config(root=tmp_path); _seed_two_accounts_all_surfaces(cfg)
-    html = _client(cfg).get("/review").data.decode()
+    html = _client(cfg).get("/review?account=all").data.decode()
     assert ">All<" in html or ">All " in html                # the All chip is always rendered
     assert "account=" in html and "account=" in html # one chip per distinct account
     active = _client(cfg).get("/review?account=@a").data.decode()

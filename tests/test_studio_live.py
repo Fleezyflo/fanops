@@ -40,7 +40,7 @@ def _client(cfg):
 
 def test_review_page_has_live_poller_and_data_awaiting(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg, awaiting=2)
-    r = _client(cfg).get("/review")
+    r = _client(cfg).get("/review?account=all")
     assert r.status_code == 200
     assert b'hx-trigger="every 5s"' in r.data           # the strip self-polls
     assert b'data-awaiting="2"' in r.data               # the worklist marks its rendered awaiting count

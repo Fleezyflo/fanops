@@ -250,7 +250,7 @@ def test_review_default_is_byte_identical(tmp_path):
     cfg = Config(root=tmp_path); _seed_accounts(cfg); led = Ledger.load(cfg); _lineage(led)
     _await(led, "p_a", "clip_1", "a"); led.save()
     c = _client(cfg)
-    plain = c.get("/review").get_data(as_text=True)
+    plain = c.get("/review?account=all").get_data(as_text=True)
     # a moment-first default render shows the moment card path (the per-account <video> switcher), not the pivot
     assert "review-body" in plain
     assert "account-pivot" not in plain                        # the pivot template is NOT rendered by default

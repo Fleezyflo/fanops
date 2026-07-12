@@ -77,7 +77,7 @@ def test_review_grid_capped_with_visible_count(tmp_path, monkeypatch):
     monkeypatch.delenv("FANOPS_POSTER", raising=False)
     cfg = Config(root=tmp_path); _accounts(cfg)
     _seed(cfg, n_clips=views.GRID_PAGE_SIZE + 5, state=PostState.awaiting_approval)
-    html = _client(cfg).get("/review").data.decode()
+    html = _client(cfg).get("/review?account=all").data.decode()
     cards = html.count('class="card clip-card"')
     assert cards <= views.GRID_PAGE_SIZE, "the grid must be capped to a page"
     assert str(views.GRID_PAGE_SIZE + 5) in html, "the TOTAL count must be visible (not silently truncated)"

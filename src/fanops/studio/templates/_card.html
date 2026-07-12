@@ -19,7 +19,7 @@
   {% endif %}
 
   <div class="clip-body">
-    <div class="clip-title">{{ card.label }}</div>
+    <div class="clip-title">{{ card.label }}{% if (account_all|default(false) or (not active and card.surfaces|length == 1)) and card.surfaces|length == 1 %} <span class="chip account-chip">@{{ card.surfaces[0].account }}</span>{% endif %}</div>
     <div class="meta clip-reason">{{ card.reason }}</div>
     {# Face 4 follow-up (C3): which accounts this moment was cast to (read-only). Empty/casting-OFF -> "all
        accounts" (a moment with no cast affinity reaches every account). Non-interactive spans, group aria-label. #}
