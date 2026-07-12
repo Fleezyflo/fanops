@@ -21,13 +21,17 @@ def _client(cfg):
     return app.test_client()
 
 
-def test_panel_edit_is_a_drawer_trigger_not_nested_details(tmp_path):
+def test_panel_edit_is_an_inline_form_not_a_drawer_trigger(tmp_path):
+    # U9: the card now edits IN PLACE — it carries the inline do_personas_edit form and NO drawer trigger
+    # (no hx-target="#persona-drawer" on the card, no nested Edit collapse). The drawer route/mount/JS still
+    # exist and are proven by the /personas/drawer/<pid> tests below; the card just stopped triggering them.
     cfg = Config(root=tmp_path)
-    pid = core.add_persona(cfg, name="Curator", voice="champions craft")
+    core.add_persona(cfg, name="Curator", voice="champions craft")
     html = _client(cfg).get("/personas").data.decode()
-    # the card's Edit is now an htmx drawer trigger — never a second nested expand
-    assert f'/personas/drawer/{pid}' in html
-    assert 'hx-target="#persona-drawer"' in html
+    # the card's editor is the proven /personas/edit route, swapping the panel (not the drawer mount)
+    assert '/personas/edit' in html and 'hx-target="#personas-panel"' in html
+    # the card no longer targets the drawer mount, and never a second nested Edit expand
+    assert 'hx-target="#persona-drawer"' not in html
     assert '<details class="persona-edit">' not in html and '<summary>Edit</summary>' not in html
 
 

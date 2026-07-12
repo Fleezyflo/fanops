@@ -419,6 +419,11 @@ class PersonaCard:
     # S05: drawer-only effective-persona read projection (fail-open defaults).
     account_provenance: list = field(default_factory=list)   # [{handle, fields:[{name, value, source}]}]
     lever_detail: list = field(default_factory=list)         # [{key, label, value, catalog_does, option_effect, produces, health, crosswalk_note}]
+    # U9: the DERIVED-zone corpus projection — one row per curated tag with its S12 provenance meta, so the
+    # card's zone-3 renders pin/auto badge + reach WITHOUT hand-rolling a second reader of hashtag_corpus_meta
+    # (built from the SAME persona_research helpers views_hashtags uses). Fail-open to [] / "".
+    corpus_tags: list = field(default_factory=list)          # [{tag, source, reach, added}] — source is the RAW meta value ("pinned"/"auto"/None) so a meta-less/None-source tag renders a plain chip (no badge)
+    corpus_refreshed_at: str = ""                            # max `added` across this persona's meta (else the .corpora_refresh.json ts); "" when unknown
 
 
 def _account_provenance(cfg: Config, persona, handles: list) -> list:
@@ -513,6 +518,51 @@ def _lever_detail_rows(cfg: Config, persona, manifest_rows: list, catalog: list,
     return out
 
 
+def _corpus_tag_rows(cfg: Config, persona) -> tuple[list, str]:
+    """U9: the DERIVED-zone corpus projection — REUSES the persona_research readers views_hashtags leans on
+    (`_persona_row` for the raw hashtag_corpus_meta, load_store_reach for the reach number) rather than
+    hand-rolling a second reader. Returns (rows, refreshed_at): rows = [{tag, source, reach, added}] one per
+    corpus tag (source is the RAW meta value — "pinned"/"auto"/None — so a meta-less tag renders a plain chip),
+    refreshed_at = max `added` across the meta, else the .corpora_refresh.json marker ts. Fail-open: any trip
+    -> ([], "")."""
+    from fanops.persona_research import _persona_row
+    from fanops.hashtags import load_store_reach, _norm
+    try:
+        row = _persona_row(cfg, persona.id) or {}
+        meta = row.get("hashtag_corpus_meta") if isinstance(row.get("hashtag_corpus_meta"), dict) else {}
+        reach = load_store_reach(cfg)
+        rows: list = []; seen: set = set()
+        for t in (persona.hashtag_corpus or []):
+            n = _norm(t) if isinstance(t, str) else ""
+            if not n or n in seen: continue
+            seen.add(n)
+            m = meta.get(n) if isinstance(meta.get(n), dict) else {}
+            src = m.get("source")                                 # RAW: "pinned" | "auto" | None (meta-less) -> the template badges only pinned/auto
+            r = m.get("reach")                                    # per-tag stamped reach (S12 auto rows carry it)
+            if r is None: r = reach.get(n)                        # else the live store reach (the ★-tags' number)
+            rows.append({"tag": n, "source": src, "reach": r, "added": m.get("added")})
+        stamps = [m.get("added") for m in meta.values() if isinstance(m, dict) and isinstance(m.get("added"), str)]
+        refreshed = max(stamps) if stamps else _corpora_marker_ts(cfg)
+        return rows, refreshed
+    except Exception as exc:
+        from fanops.log import get_logger
+        get_logger(cfg)("personas", getattr(persona, "id", "-"), "corpus_projection_error", err=str(exc)[:160])
+        return [], ""
+
+
+def _corpora_marker_ts(cfg: Config) -> str:
+    """U9: the S12 .corpora_refresh.json `ts` fallback (persona_research.refresh_corpora_if_due writes it) —
+    the last time the auto-refresh swept ALL personas. Read-only; "" when the marker is absent/unreadable."""
+    try:
+        marker = cfg.control / ".corpora_refresh.json"
+        if not marker.exists(): return ""
+        raw = json.loads(marker.read_text())
+        ts = raw.get("ts") if isinstance(raw, dict) else None
+        return ts if isinstance(ts, str) else ""
+    except Exception:
+        return ""
+
+
 @dataclass
 class PersonaAccountLink:
     """A2: one account row for the Personas "connect" section — its current persona link (or None), so
@@ -574,6 +624,7 @@ def personas_page(cfg: Config, *, led: Optional[Ledger] = None) -> "PersonasPage
             get_logger(cfg)("personas", p.id, "provenance_error", err=str(exc)[:160])
             acct_prov = []
         lev_detail = _lever_detail_rows(cfg, p, mf, _cat, _fx)
+        corpus_rows, corpus_refreshed = _corpus_tag_rows(cfg, p)   # U9: the derived-zone corpus projection (S12 meta), fail-open ([], "")
         cards.append(PersonaCard(id=p.id, name=p.name, voice=p.voice,
                          corpus=_ranked(p.hashtag_corpus), intake=dict(p.intake),
                          linked_handles=by_pid.get(p.id, []),
@@ -584,7 +635,8 @@ def personas_page(cfg: Config, *, led: Optional[Ledger] = None) -> "PersonasPage
                          instruction=compose_persona_instruction(p),
                          length_band=facts["length_band"], lead_tags=facts["lead_tags"],
                          hook_text=str(hook_directive(p)), caption_text=caption_directive(p),
-                         lever_manifest=mf, account_provenance=acct_prov, lever_detail=lev_detail))
+                         lever_manifest=mf, account_provenance=acct_prov, lever_detail=lev_detail,
+                         corpus_tags=corpus_rows, corpus_refreshed_at=corpus_refreshed))
     links = [PersonaAccountLink(handle=a.handle, persona_id=getattr(a, "persona_id", None)) for a in accts]
     return PersonasPage(personas=cards, accounts=links)
 
