@@ -174,15 +174,17 @@ def refresh_corpora_if_due(cfg: Config, *, max_age_s: int = 43200, get=None, now
         except ControlFileError as e:
             return {"refreshed": False, "aborted": "corrupt_personas", "reason": str(e)}
         changed = 0; added_n = 0; removed_n = 0
+        from fanops.errors import fail_open
         for per in personas:
-            try:
+            r = {"changed": False}
+            with fail_open(f"persona_research.refresh_corpora.{per.id}"):
                 r = refresh_persona_corpus(cfg, per.id, get=get, now=now)
-            except Exception:
-                continue
             if r.get("changed"):
                 changed += 1; added_n += len(r.get("added") or []); removed_n += len(r.get("removed") or [])
         write_json_atomic(marker, {"ts": datetime.now(timezone.utc).isoformat(), "personas": len(personas),
                                    "changed": changed, "added": added_n, "removed": removed_n})
         return {"refreshed": True, "personas": len(personas), "changed": changed, "added": added_n, "removed": removed_n}
     except Exception as exc:
+        from fanops.log import get_logger
+        get_logger(cfg)("corpus", "-", "refresh_error", err=f"{type(exc).__name__}: {str(exc)[:120]}")
         return {"refreshed": False, "reason": f"error: {str(exc)[:120]}"}
