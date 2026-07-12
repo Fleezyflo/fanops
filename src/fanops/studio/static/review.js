@@ -38,6 +38,9 @@
     } else if (e.key === "r" || e.key === "R") {
       const btn = root.querySelector(".focus-actions .surface-reject");
       if (btn) { e.preventDefault(); btn.click(); }
+    } else if (e.key === "e" || e.key === "E") {
+      const ed = root.querySelector("details.surface-editor");
+      if (ed) { e.preventDefault(); ed.open = !ed.open; }
     } else if (e.key === "n" || e.key === "N" || e.key === "ArrowRight") {
       const next = root.querySelector('.focus-actions a[href*="fi="]');
       const links = root.querySelectorAll(".focus-actions a.button");
@@ -49,7 +52,14 @@
     }
   });
   document.body.addEventListener("htmx:afterSwap", e => {
-    if (e.detail.target && e.detail.target.id === "review-body") count();
+    if (e.detail.target && e.detail.target.id === "review-body") {
+      count();
+      const fr = focusRoot();
+      if (fr) {
+        const v = fr.querySelector("video");
+        if (v && v.src) v.load();
+      }
+    }
   });
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", count);
   else count();

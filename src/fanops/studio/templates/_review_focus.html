@@ -2,7 +2,7 @@
 {% set compact_param = 'ultra' if ultra else (1 if compact else none) %}
 <div class="review-focus" id="review-focus">
   <div class="focus-toolbar meta"><strong>{{ active }}</strong> <span class="muted">{{ focus_idx + 1 }} / {{ focus_queue|length }}</span>
-    <span class="muted-hint">A approve · R reject · arrows navigate</span>
+    <span class="muted-hint">E edit · A approve · R reject · N/P arrows navigate</span>
     <a class="button ghost" href="{{ url_for('review', view='account', account=active, focus=0, grid=1, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), offset=pivot_page.offset if pivot_page else none) }}">Grid</a>
     <a class="button ghost" href="{{ url_for('posted', account=active, delivery='live') }}">Results</a>
   </div>
@@ -19,6 +19,14 @@
       <p><span class="muted">{{ focus_item.platform }}</span></p>
       {% if focus_item.caption %}<p class="focus-caption">{{ focus_item.caption }}</p>{% endif %}
     </div>
+    {% if focus_item.editable %}
+    {% set s = focus_item %}
+    {% set focus_edit = true %}
+    <details class="surface-editor" id="focus-editor">
+      <summary>Edit</summary>
+      {% include "_surface_edit.html" %}
+    </details>
+    {% endif %}
     <div class="focus-actions">
       {% if focus_idx > 0 %}
       <a class="button" href="{{ url_for('review', view='account', account=active, focus=1, fi=focus_idx - 1, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), offset=pivot_page.offset if pivot_page else none) }}">← Previous</a>

@@ -3,11 +3,16 @@
    inline by _card.html and re-rendered STANDALONE by /regenerate (htmx outerHTML swap of #edit-<id>)
    so the regenerated caption lands straight back in the box. The per-surface result sink
    (#res-<id>) lives in _card.html, OUTSIDE this block, so it survives the regenerate swap. #}
+{% if focus_edit %}
+{% set _hx_target = '#review-body' %}
+{% set _hx_swap = 'outerHTML' %}
+{% set _scope = dict(view='account', account=active, focus=1, fi=focus_idx, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), offset=pivot_page.offset if pivot_page else none) %}
+{% endif %}
 <div class="surface-edit" id="edit-{{ s.post_id }}">
   {% if regen_note is defined and regen_note %}
     <div class="result ok">Regenerated — the new caption is in the box below. Save it, reschedule, or regenerate again for another take.</div>
   {% endif %}
-  <form hx-post="{{ url_for('do_caption', post_id=s.post_id) }}" hx-target="#res-{{ s.post_id }}" hx-swap="innerHTML">
+  <form hx-post="{{ url_for('do_caption', post_id=s.post_id, **(_scope if focus_edit else {})) }}" hx-target="{{ _hx_target if focus_edit else '#res-' ~ s.post_id }}" hx-swap="{{ _hx_swap if focus_edit else 'innerHTML' }}">
     <label for="caption-{{ s.post_id }}">Caption — edit anything the system wrote</label>
     <textarea id="caption-{{ s.post_id }}" name="caption" rows="3">{{ s.caption }}</textarea>
     <button type="submit">Save caption</button>
@@ -18,7 +23,7 @@
     {% for tag, src in s.tag_sources.items() %}<span class="chip tag-src tag-src-{{ src }}">{{ tag }} · {{ src }}</span>{% endfor %}
   </p>
   {% endif %}
-  <form hx-post="{{ url_for('do_regenerate', post_id=s.post_id) }}" hx-target="#edit-{{ s.post_id }}" hx-swap="outerHTML">
+  <form hx-post="{{ url_for('do_regenerate', post_id=s.post_id, **(_scope if focus_edit else {})) }}" hx-target="{{ _hx_target if focus_edit else '#edit-' ~ s.post_id }}" hx-swap="{{ _hx_swap if focus_edit else 'outerHTML' }}">
     <label for="guidance-{{ s.post_id }}">Not right? Tell the system what to change, then regenerate</label>
     <input id="guidance-{{ s.post_id }}" type="text" name="guidance" placeholder="e.g. punchier · mention the beat drop · less hype">
     <button type="submit" class="primary">Regenerate caption</button>
@@ -30,7 +35,7 @@
   {% if reburn_note is defined and reburn_note and not reburn_note.hook_burned %}
     <div class="result err">Hook saved, but ffmpeg couldn't burn it on screen (no libass / nothing burnable) — this surface ships CLEAN. Install libass to burn the text.</div>
   {% endif %}
-  <form hx-post="{{ url_for('do_reburn_hook', post_id=s.post_id) }}" hx-target="#edit-{{ s.post_id }}" hx-swap="outerHTML">
+  <form hx-post="{{ url_for('do_reburn_hook', post_id=s.post_id, **(_scope if focus_edit else {})) }}" hx-target="{{ _hx_target if focus_edit else '#edit-' ~ s.post_id }}" hx-swap="{{ _hx_swap if focus_edit else 'outerHTML' }}">
     <label for="hook-{{ s.post_id }}">On-screen hook <span class="muted">(burned into the video — keep it short)</span></label>
     <textarea id="hook-{{ s.post_id }}" name="hook" rows="2">{{ s.variant_hook }}</textarea>
     <button type="submit">Re-burn text</button>
@@ -38,19 +43,19 @@
   {% endif %}
   {# Reschedule + suggest/clear post to /reschedule-surface & /clear, which re-render THIS editor (outerHTML
      swap of #edit-<id>) so the time input always reflects the fresh value — not the stale /reschedule result. #}
-  <form hx-post="{{ url_for('do_reschedule_surface', post_id=s.post_id) }}" hx-target="#edit-{{ s.post_id }}" hx-swap="outerHTML">
+  <form hx-post="{{ url_for('do_reschedule_surface', post_id=s.post_id, **(_scope if focus_edit else {})) }}" hx-target="{{ _hx_target if focus_edit else '#edit-' ~ s.post_id }}" hx-swap="{{ _hx_swap if focus_edit else 'outerHTML' }}">
     <label for="time-{{ s.post_id }}">Scheduled time <span class="muted">(your local time)</span></label>
     <input id="time-{{ s.post_id }}" type="datetime-local" name="new_time" value="{{ s.scheduled_time | localinput }}">
     <button type="submit">Reschedule</button>
     {% if s.suggested_time %}<span class="muted">Suggested: {{ s.suggested_time | localdt }}</span>{% endif %}
   </form>
   {% if s.suggested_time %}
-  <form hx-post="{{ url_for('do_reschedule_surface', post_id=s.post_id) }}" hx-target="#edit-{{ s.post_id }}" hx-swap="outerHTML">
+  <form hx-post="{{ url_for('do_reschedule_surface', post_id=s.post_id, **(_scope if focus_edit else {})) }}" hx-target="{{ _hx_target if focus_edit else '#edit-' ~ s.post_id }}" hx-swap="{{ _hx_swap if focus_edit else 'outerHTML' }}">
     <input type="hidden" name="new_time" value="{{ s.suggested_time }}">
     <button type="submit">Use suggested</button>
   </form>
   {% endif %}
-  <form hx-post="{{ url_for('do_clear', post_id=s.post_id) }}" hx-target="#edit-{{ s.post_id }}" hx-swap="outerHTML">
+  <form hx-post="{{ url_for('do_clear', post_id=s.post_id, **(_scope if focus_edit else {})) }}" hx-target="{{ _hx_target if focus_edit else '#edit-' ~ s.post_id }}" hx-swap="{{ _hx_swap if focus_edit else 'outerHTML' }}">
     <button type="submit">Clear time</button>
   </form>
   {# Publish-now lives on the Schedule tab now (post-approval-lifecycle): a Review post is awaiting_approval,
