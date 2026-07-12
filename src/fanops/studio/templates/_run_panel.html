@@ -4,7 +4,7 @@
 
   {% set _next = run_next_step(status) %}
   <ol class="stage-rail" aria-label="Make pipeline stages">
-    <li class="stage-step {% if _next.key in ('add',) %}is-live{% endif %} {% if status.native_total > 0 %}is-done{% endif %}">
+    <li class="stage-step {% if _next.key in ('add', 'recover') %}is-live{% endif %} {% if status.native_total > 0 %}is-done{% endif %}">
       <span class="stage-num">01</span><span class="stage-label">Add</span>
     </li>
     <li class="stage-step {% if _next.key == 'queue' %}is-live{% endif %} {% if status.get('held_pending', 0) > 0 or status.get('queue_lines') %}is-done{% endif %}">
@@ -107,7 +107,7 @@
       {% for e in status.errored %}
       <li class="errored-row">
         <div class="errored-meta">
-          <strong>{{ e.name }}</strong> <span class="muted">· {{ e.state }}{% if e.batch_id %} · batch {{ e.batch_id }}{% endif %}</span>
+          <strong><a href="{{ url_for('library_source', source_id=e.id) }}">{{ e.name }}</a></strong> <span class="muted">· {{ e.state }}{% if e.batch_id %} · batch {{ e.batch_id }}{% endif %}</span>
           <pre class="errored-reason">{{ e.error_reason or 'no reason recorded' }}</pre>
         </div>
         <form hx-post="{{ url_for('do_run_resume') }}" hx-target="#run-panel" hx-swap="outerHTML"

@@ -1,7 +1,7 @@
 {# _run_next.html — S3: the Make tab's single "do this next" banner. Gate ON: add → queue → make.
-   Gate OFF: add → gate → prepare → review. #}
+   Gate OFF: add → recover → gate → prepare → review. #}
 {% set step = run_next_step(status) %}
 <div class="run-next run-next-{{ step.key }}" aria-live="polite">
-  <p class="run-next-label"><span class="run-next-eyebrow">Next</span> {{ step.label }}{% if step.key == 'review' and not status.queue_gate %} — {% if review_handoff and review_handoff.awaiting %}<a href="{{ url_for('review', account=review_handoff.account, view='account', focus=1, batch=review_handoff.batch|default(none)) }}">review {{ review_handoff.account }}</a>{% else %}<a href="{{ url_for('review') }}">open Review</a>{% endif %}{% endif %}</p>
+  <p class="run-next-label"><span class="run-next-eyebrow">Next</span> {{ step.label }}{% if step.key == 'recover' and status.errored %} — <a href="{{ url_for('library_source', source_id=status.errored[0].id) }}">{{ status.errored[0].name }}</a>{% elif step.key == 'review' and not status.queue_gate %} — {% if review_handoff and review_handoff.awaiting %}<a href="{{ url_for('review', account=review_handoff.account, view='account', focus=1, batch=review_handoff.batch|default(none)) }}">review {{ review_handoff.account }}</a>{% else %}<a href="{{ url_for('review') }}">open Review</a>{% endif %}{% endif %}</p>
   <p class="run-next-hint muted">{{ step.hint }}</p>
 </div>

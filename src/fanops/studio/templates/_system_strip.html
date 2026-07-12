@@ -16,8 +16,8 @@
   <div class="strip-deps" hx-get="{{ url_for('do_golive_health', compact=1) }}" hx-trigger="load" hx-swap="innerHTML"><span class="muted">deps…</span></div>
   {% if system_strip.blocked_gates %}<a class="strip-alert danger" href="{{ url_for('gates') }}">{{ system_strip.blocked_gates }} gate{{ 's' if system_strip.blocked_gates != 1 else '' }} blocked</a>{% endif %}
   {% if system_strip.failed %}<a class="strip-alert danger" href="{{ url_for('posted', delivery='failed') }}">{{ system_strip.failed }} failed</a>{% endif %}
-  {# MOL-123: an errored/moments_empty source means clip production silently stalled — surface it LOUD, linking to the Run tab's recovery list. #}
-  {% if system_strip.errored_sources %}<a class="strip-alert danger" href="{{ url_for('run_panel') }}" title="A source failed mid-pipeline (e.g. a signal-detection timeout). Open Make to see the reason and Resume it.">{{ system_strip.errored_sources }} source{{ 's' if system_strip.errored_sources != 1 else '' }} errored</a>{% endif %}
+  {# MOL-123 / U5: an errored/moments_empty source means clip production silently stalled — surface it LOUD, linking to the first source's Library detail for diagnosis. #}
+  {% if system_strip.errored_sources %}<a class="strip-alert danger" href="{% if system_strip.errored_first_id %}{{ url_for('library_source', source_id=system_strip.errored_first_id) }}{% else %}{{ url_for('run_panel') }}{% endif %}" title="A source failed mid-pipeline (e.g. a signal-detection timeout). Open Library to read the reason and Resume it.">{{ system_strip.errored_sources }} source{{ 's' if system_strip.errored_sources != 1 else '' }} errored</a>{% endif %}
   {% if system_strip.insights_blocked %}<a class="strip-alert danger" href="{{ url_for('golive_view') }}" title="Grant the instagram_manage_insights token scope — IG reach/retention is frozen at its last snapshot until then">IG insights blocked</a>{% endif %}
   <div class="strip-daemon" hx-get="{{ url_for('home_daemon_health') }}" hx-trigger="load" hx-swap="innerHTML"></div>
 </div>
