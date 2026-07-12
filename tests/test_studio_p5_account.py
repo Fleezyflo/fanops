@@ -257,7 +257,7 @@ def _seed_two_accounts_all_surfaces(cfg):
     ("/schedule?account=@a", b"q_a", b"q_b"),
     ("/posted?account=@a", b"https://insta/a", b"https://insta/b"),
     ("/publish?account=@a", b"q_a", b"q_b"),
-    ("/lift?account=@a", b"HOOK_a", b"HOOK_b"),
+    ("/posted?account=@a", b"HOOK_a", b"HOOK_b"),   # U10: the Lift lens (variant hooks) is folded onto /posted
 ])
 def test_surface_account_param_filters(tmp_path, path, present, absent):
     cfg = Config(root=tmp_path); _seed_two_accounts_all_surfaces(cfg)
