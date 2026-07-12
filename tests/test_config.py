@@ -263,6 +263,15 @@ def test_asr_model_for_no_medium_inversion_on_long_cpu(monkeypatch, tmp_path):
     for dur in (1801, 2000, 2700):
         assert cfg.asr_model_for(float(dur)) != "medium"
 
+def test_asr_model_for_prefers_large_v3_whenever_it_fits(monkeypatch, tmp_path):
+    # Subtitle-garbage incident (2026-07-12): the old fixed 300s gate stranded every real source
+    # (all >5min) on medium — the proven EN+AR winner (large-v3) was unreachable by construction.
+    # The chain now always STARTS at large-v3; only the timeout budget steps it down.
+    monkeypatch.delenv("FANOPS_ASR_MODEL", raising=False)
+    cfg = Config(root=tmp_path)
+    assert cfg.asr_model_for(600.0) == "large-v3"      # 10-min source: 600*2.5 fits the 2640s budget
+    assert cfg.asr_model_for(1589.0) == "medium"       # 26.5-min: large-v3 blows the budget -> medium
+
 def test_asr_model_for_downgrades_on_timeout_attempts(monkeypatch, tmp_path):
     monkeypatch.delenv("FANOPS_ASR_MODEL", raising=False)
     cfg = Config(root=tmp_path)

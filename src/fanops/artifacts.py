@@ -38,8 +38,10 @@ def _load_manifest(cfg: Config, source_id: str) -> dict:
 
 
 def stamp_stage(cfg: Config, source_id: str, stage: str, *, artifact: str, schema: int,
-                sha256: str | None = None) -> None:
-    """Record a completed stage in the advisory manifest (atomic tmp + os.replace)."""
+                sha256: str | None = None, extra: dict | None = None) -> None:
+    """Record a completed stage in the advisory manifest (atomic tmp + os.replace). `extra` merges
+    stage-specific provenance into the record (e.g. transcribe's engine/model/wall_s); the reserved
+    keys (at/artifact/schema) always win."""
     if stage not in _STAGE_ORDER:
         return
     d = _load_manifest(cfg, source_id)
@@ -47,8 +49,9 @@ def stamp_stage(cfg: Config, source_id: str, stage: str, *, artifact: str, schem
         d["sha256"] = sha256
     d["source_id"] = source_id
     d["v"] = _MANIFEST_V
-    d.setdefault("stages", {})[stage] = {"at": datetime.now(timezone.utc).isoformat(),
-                                         "artifact": artifact, "schema": schema}
+    rec = dict(extra) if extra else {}
+    rec.update({"at": datetime.now(timezone.utc).isoformat(), "artifact": artifact, "schema": schema})
+    d.setdefault("stages", {})[stage] = rec
     write_json_atomic(manifest_path(cfg, source_id), d)
 
 

@@ -97,10 +97,6 @@ _BACKEND_PLATFORMS = {
 # quality unchanged + the hook is the operator's #1 ask). `captions` (hashtags only) stays MECHANICAL
 # -> sonnet. FANOPS_LLM_MODEL overrides all.
 _GATE_MODEL_DEFAULTS = {"moments": "opus", "moment_hooks": "opus", "captions": "sonnet"}
-# Below this SOURCE length (seconds) the duration-aware ASR default upgrades to large-v3 — on little
-# audio the most accurate model is cheap; at/above it (or unknown) the faster medium keeps a long
-# source's transcription bounded under transcribe._WHISPER_TIMEOUT. ~5min = a short clip, not a full set.
-_ASR_SHORT_SOURCE_SECONDS = 300.0
 # Expected CPU realtime factors (incident data, MOL-481) — used to reject models that cannot finish
 # within the whisper subprocess timeout budget before the kill fires.
 _ASR_MODEL_RTF = {"large-v3": 2.5, "medium": 1.6, "small": 1.0, "base": 0.5}
@@ -625,20 +621,20 @@ class Config:
         # Duration-aware ASR selection (MOL-481): an explicit FANOPS_ASR_MODEL pin is the operator's call
         # and wins verbatim; otherwise pick the best model whose expected CPU RTF fits inside the whisper
         # subprocess timeout budget, stepping down large-v3->medium->small->base. timeout_attempts steps
-        # down further after prior timeout kills (auto-resume doom-loop mitigation).
+        # down further after prior timeout kills (auto-resume doom-loop mitigation). The chain always
+        # STARTS at large-v3 — the proven EN+AR accuracy winner (subtitle-garbage incident 2026-07-12);
+        # the budget math alone decides when a source is too long for it, not a fixed length gate.
         if os.getenv("FANOPS_ASR_MODEL", "").strip(): return self.asr_model
-        preferred = "large-v3" if (duration_seconds is not None and duration_seconds <= _ASR_SHORT_SOURCE_SECONDS) else "medium"
         return _pick_timeout_aware_model(duration_seconds, chain=_ASR_MODEL_CHAIN, rtf=_ASR_MODEL_RTF,
-                                       preferred=preferred, timeout_attempts=timeout_attempts)
+                                       preferred="large-v3", timeout_attempts=timeout_attempts)
 
     def whisper_model_for(self, duration_seconds: float | None, *, timeout_attempts: int = 0) -> str:
         # Duration-aware selection for the LEGACY `whisper` CLI fallback (audit c0-f2) — the analog of
         # asr_model_for for the [asr]-extra-absent path (CI / air-gapped). An explicit FANOPS_WHISPER_MODEL
         # pin is the operator's call and wins verbatim; otherwise timeout-aware like asr_model_for.
         if os.getenv("FANOPS_WHISPER_MODEL", "").strip(): return self.whisper_model
-        preferred = "large-v3" if (duration_seconds is not None and duration_seconds <= _ASR_SHORT_SOURCE_SECONDS) else "turbo"
         return _pick_timeout_aware_model(duration_seconds, chain=_WHISPER_MODEL_CHAIN, rtf=_WHISPER_MODEL_RTF,
-                                       preferred=preferred, timeout_attempts=timeout_attempts)
+                                       preferred="large-v3", timeout_attempts=timeout_attempts)
 
     @property
     def asr_language(self) -> str:

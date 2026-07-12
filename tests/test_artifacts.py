@@ -23,6 +23,18 @@ def test_stamp_stage_writes_manifest_atomically(tmp_path):
     assert "at" in d["stages"]["transcribe"]
 
 
+def test_stamp_stage_merges_extra_provenance(tmp_path):
+    # `extra` carries stage-specific provenance (transcribe's engine/model/wall_s) into the stage
+    # record; the reserved keys (at/artifact/schema) always win over a colliding extra key.
+    cfg = _cfg(tmp_path)
+    artifacts.stamp_stage(cfg, "src_1", "transcribe", artifact="transcripts/vid.json", schema=1,
+                          extra={"engine": "faster-whisper", "model": "large-v3", "wall_s": 42.5,
+                                 "artifact": "SPOOFED"})
+    rec = json.loads(artifacts.manifest_path(cfg, "src_1").read_text())["stages"]["transcribe"]
+    assert rec["engine"] == "faster-whisper" and rec["model"] == "large-v3" and rec["wall_s"] == 42.5
+    assert rec["artifact"] == "transcripts/vid.json"      # reserved key beats the extra collision
+
+
 def test_infer_resume_stage_from_warm_transcript(tmp_path):
     cfg = _cfg(tmp_path)
     out = cfg.agent_io / "transcripts"
