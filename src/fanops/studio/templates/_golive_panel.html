@@ -13,6 +13,9 @@
     <div class="banner dryrun">● DRYRUN — writes payloads, posts nothing</div>
   {% endif %}
   <div class="banner setup">setup: {{ status.setup_state }} — {{ status.setup_next }}</div>
+  {% if status.next_blocker %}
+    <div class="banner next-blocker"><strong>Next:</strong> {{ status.next_blocker }}</div>
+  {% endif %}
 
   {% if result %}
     <div class="result {{ 'ok' if result.ok else 'err' }}">
@@ -86,7 +89,11 @@
   {% endif %}
   {% if gs is none or gs == 'live' %}
   <section class="golive-step">
-    <h3>3 · Map channels &amp; tune accounts</h3>
+    {% set map_done = status.channels and status.channels|rejectattr('mapped')|list|length == 0 and status.channels|rejectattr('backend')|list|length == 0 %}
+    {% set persona_done = status.channels and status.channels|rejectattr('persona')|list|length == 0 %}
+    <h3>3 · Map channels &amp; tune accounts
+      {%- if map_done %} <span class="step-done">✓ mapped</span>{% endif %}
+      {%- if persona_done %} <span class="step-done">✓ personas</span>{% endif %}</h3>
     <p class="muted">One-click: <strong>Discover</strong> lists every channel your connected schedulers
       (Postiz + Zernio) already hold and proposes a handle for each — tick the ones to adopt, edit the
       handle, optionally route them live. Or map a channel manually below.</p>
@@ -94,6 +101,14 @@
       <button type="submit" class="primary">Discover channels (Postiz + Zernio)</button>
     </form>
     {% set discovered = result.detail.get('channels') if (result and result.detail and result.detail.get('channels') is not none) else none %}
+    {% set yt_wanted = status.accounts|map(attribute='channels')|sum(start=[])|selectattr('platform', 'equalto', 'youtube')|list|length > 0 %}
+    {% set yt_discovered = discovered|selectattr('platform', 'equalto', 'youtube')|list if discovered is not none else [] %}
+    {% if yt_wanted and discovered is not none and yt_discovered|length == 0 %}
+      <div class="youtube-checklist banner" role="note">
+        <strong>YouTube:</strong> your account targets YouTube but Discover found no YouTube channels on the
+        connected schedulers — map a YouTube integration manually below or connect YouTube inside Postiz/Zernio first.
+      </div>
+    {% endif %}
     {% if discovered is not none %}
       {% if discovered %}
       <form class="golive-discover" hx-post="{{ url_for('do_golive_adopt') }}" hx-target="#golive-panel" hx-swap="outerHTML">
@@ -206,6 +221,7 @@
           <span><strong>{{ a.handle }}</strong>
             {% if a.persona_id %}<span class="chip ok persona-linked" title="Linked to the '{{ a.persona_id }}' persona — its voice / corpus hydrate this account">✦ persona: {{ a.persona_id }}</span>
             {% else %}<span class="chip ro no-persona" title="No first-class persona linked — uses inline text only">○ no persona</span>{% endif %}</span>
+          {% if not a.persona_id %}<p class="muted"><a href="{{ url_for('personas_view') }}">Link a first-class persona → Personas tab</a></p>{% endif %}
           <form class="persona-edit" hx-post="{{ url_for('do_golive_account_persona') }}" hx-target="#golive-panel" hx-swap="outerHTML">
             <input type="hidden" name="handle" value="{{ a.handle }}">
             <label class="persona-pick">persona
@@ -287,7 +303,25 @@
   </section>
 
   <section class="golive-step golive-flip">
-    <h3>5 · Go live</h3>
+    {% set golive_ready = status.channels|selectattr('ready')|list|length > 0 %}
+    <h3>5 · Go live{%- if golive_ready %} <span class="step-done">✓ ready</span>{% endif %}</h3>
+    {% if status.channels %}
+    <table class="readiness-matrix golive-map">
+      <tr><th>handle</th><th>platform</th><th>backend</th><th>mapped</th><th>creds</th><th>persona</th><th>window</th><th>blocker</th></tr>
+      {% for ch in status.channels %}
+      <tr class="{{ 'channel-ready' if ch.ready else '' }}">
+        <td><strong>{{ ch.handle }}</strong></td>
+        <td>{{ ch.platform }}</td>
+        <td>{{ ch.backend or '—' }}</td>
+        <td>{{ '✓' if ch.mapped else '✗' }}</td>
+        <td>{{ '✓' if ch.creds else '✗' }}</td>
+        <td>{{ '✓' if ch.persona else '✗' }}</td>
+        <td>{{ '✓' if ch.window else '✗' }}</td>
+        <td>{% if ch.first_blocker %}<span class="muted">{{ ch.first_blocker }}</span>{% else %}—{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% endif %}
     {% if status.half_live %}
       <p class="muted">The LIVE flag is set but nothing routes live — posts stay queued. Route a channel to a live backend above, or flip back to dryrun.</p>
       <form hx-post="{{ url_for('do_golive_dryrun') }}" hx-target="#golive-panel" hx-swap="outerHTML">
