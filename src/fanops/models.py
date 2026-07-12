@@ -182,6 +182,7 @@ class Source(BaseModel):
                                                 # at catalogue (add_source setdefault); old ledgers load native.
     batch_id: Optional[str] = None              # Account-First Studio: the named ingest Batch this source belongs to.
                                                 # WRITE-ONCE at _catalogue_file (mirrors origin_kind); None == ungrouped.
+    title: Optional[str] = None                 # U1: pipeline-generated descriptive title, write-once at first moment ingest.
     sha256: Optional[str] = None
     duration: Optional[float] = None
     width: Optional[int] = None                 # FIX F68 — probed at ingest for safe reframe
@@ -198,6 +199,11 @@ class Source(BaseModel):
                                                 # _catalogue_file / rebuild discovered. None on old ledgers ->
                                                 # migration v2->v3 backfill (file mtime, else stamp). The Review
                                                 # day-anchor ("clips I dropped in").
+
+def source_display_title(src: Source) -> str:
+    if src.title: return src.title
+    from pathlib import Path
+    return Path(src.source_path).stem if src.source_path else src.id
 
 class Moment(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
@@ -588,6 +594,7 @@ class MomentDecision(BaseModel):
     source_id: Optional[str] = None             # gate-populated (moments kind); not model-authored
     request_id: Optional[str] = None            # gate-populated; not model-authored
     picks: list[MomentPick] = Field(default_factory=list)
+    source_title: Optional[str] = None          # U1: neutral descriptive title of the footage (model-authored)
 
 # M1b pass-2: ONE per-pick frame-seeing hook gate. The request carries the PICKED WINDOW + frames
 # extracted over that window (clip.fit_window), so the author writes a hook grounded in the exact
