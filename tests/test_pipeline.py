@@ -1,9 +1,15 @@
+# tests/test_pipeline.py
 import json
+import pytest
 from pathlib import Path
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Source, SourceState, PostState
 from fanops.pipeline import advance
+
+@pytest.fixture(autouse=True)
+def _gate_off(monkeypatch):
+    monkeypatch.setenv("FANOPS_QUEUE_GATE", "0")
 
 def _put(p, b): p.parent.mkdir(parents=True, exist_ok=True); p.write_bytes(b)
 

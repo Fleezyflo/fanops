@@ -59,6 +59,8 @@ def catalogue_inbox(cfg: Config) -> ActionResult:
         _archive_staged(cfg, staged)
         write_digest(Ledger.load(cfg), cfg)
     except Exception as exc:
+        from fanops.log import get_logger
+        get_logger(cfg)("run", "-", "catalogue_failed", err=str(exc)[:160])
         return ActionResult(ok=False, error=f"ingest failed: {str(exc)[:160]}")
     detail = {"sources": n, "added": added}
     if counts is not None and counts.excluded: detail["excluded"] = counts.excluded
@@ -92,6 +94,8 @@ def bind_queue(cfg: Config, *, source_ids, batch_name: str = "", target_accounts
             batch = create_batch(led, name=name, target_accounts=list(target_accounts),
                                  now_iso=now_iso, active_handles=active, burn_subs=burn_subs)
     except Exception as exc:
+        from fanops.log import get_logger
+        get_logger(cfg)("run", "-", "bind_failed", err=str(exc)[:160])
         return ActionResult(ok=False, error=f"bind failed: {str(exc)[:160]}")
     detail = {"batch": batch.name, "batch_id": batch.id, "sources": len(stamp), "target_accounts": batch.target_accounts}
     if batch.error_reason: detail["warnings"] = [batch.error_reason]
@@ -111,6 +115,8 @@ def release_batch(cfg: Config, batch_id: str, *, confirmed: bool = True) -> Acti
                 if s.state is SourceState.pending and s.batch_id == batch_id:
                     led.set_source_state(sid, SourceState.catalogued); released += 1
     except Exception as exc:
+        from fanops.log import get_logger
+        get_logger(cfg)("run", "-", "release_batch_failed", err=str(exc)[:160])
         return ActionResult(ok=False, error=f"release failed: {str(exc)[:160]}")
     if released >= 1: kick_prepare(cfg)
     return ActionResult(ok=True, detail={"released": released, "batch_id": batch_id})
@@ -129,6 +135,8 @@ def release_all_held(cfg: Config, *, confirmed: bool = True) -> ActionResult:
                 if s.state is SourceState.pending and s.batch_id:
                     led.set_source_state(sid, SourceState.catalogued); released += 1
     except Exception as exc:
+        from fanops.log import get_logger
+        get_logger(cfg)("run", "-", "release_all_failed", err=str(exc)[:160])
         return ActionResult(ok=False, error=f"release failed: {str(exc)[:160]}")
     if released >= 1: kick_prepare(cfg)
     return ActionResult(ok=True, detail={"released": released})

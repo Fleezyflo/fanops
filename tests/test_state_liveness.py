@@ -38,6 +38,10 @@ TERMINAL: dict[type[Enum], frozenset[Enum]] = {
 
 EXITS: dict[type[Enum], dict[Enum, list[ExitRef]]] = {
     SourceState: {
+        SourceState.pending: [
+            ("fanops.studio.actions_run", "release_batch", "pending -> catalogued (one queue line)"),
+            ("fanops.studio.actions_run", "release_all_held", "pending -> catalogued (all held)"),
+        ],
         SourceState.catalogued: [
             ("fanops.transcribe", "transcribe_source", "catalogued -> transcribed"),
             ("fanops.pipeline", "resume_source", "error/moments_empty rewind"),

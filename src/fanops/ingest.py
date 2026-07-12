@@ -319,7 +319,7 @@ def _mint_candidate(led: Ledger, cfg: Config, c: StagedCandidate, *, now_iso: st
             get_logger(cfg)("ingest", prior.id, "origin_path_conflict", want=c.origin, have=prior.source_origin)
         return True
     birth = SourceState.pending if cfg.queue_gate else SourceState.catalogued
-    eff_batch = None if cfg.queue_gate else c.batch_id
+    eff_batch = c.batch_id if (c.batch_id or not cfg.queue_gate) else None
     led.add_source(Source(id=c.sid, state=birth, source_path=str(c.dest),
                           source_origin=c.origin, origin_kind=c.origin_kind, sha256=c.digest,
                           width=c.width, height=c.height, duration=c.duration, created_at=now_iso,
