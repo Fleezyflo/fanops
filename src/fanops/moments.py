@@ -394,6 +394,17 @@ def _reconcile_valid_picks(led: Ledger, cfg: Config, source_id: str, deduped: li
     led.set_source_state(source_id, SourceState.picks_decided)
     return led
 
+def _sanitize_source_title(raw: str | None) -> str | None:
+    from fanops.text import sanitize_generated_text
+    t = sanitize_generated_text(raw, max_words=8)
+    return (t[:80] if t else None)
+
+def _maybe_stamp_source_title(led: Ledger, source_id: str, dec: MomentDecision) -> None:
+    src = led.sources[source_id]
+    if src.title is not None: return
+    title = _sanitize_source_title(dec.source_title)
+    if title: src.title = title
+
 def _ingest_moments_dotted(led: Ledger, cfg: Config, source_id: str, keys: list[str]) -> Ledger:
     """Atomic union over per-account pick gates — owner from key, personas pinned to owner."""
     src = led.sources[source_id]
@@ -403,10 +414,11 @@ def _ingest_moments_dotted(led: Ledger, cfg: Config, source_id: str, keys: list[
     all_empty = True
     log = get_logger(cfg)
     prefix = f"{source_id}."
-    for key in keys:
+    for key in sorted(keys):
         dec = read_response(cfg, "moments", key, MomentDecision)
         if dec is None:
             return led
+        _maybe_stamp_source_title(led, source_id, dec)
         owner = key.removeprefix(prefix)
         gate_valid: list[MomentPick] = []
         for pick in dec.picks:
@@ -452,6 +464,7 @@ def ingest_moments(led: Ledger, cfg: Config, source_id: str) -> Ledger:
     dec = read_response(cfg, "moments", source_id, MomentDecision)
     if dec is None:
         return led
+    _maybe_stamp_source_title(led, source_id, dec)
     src = led.sources[source_id]
     rejected = 0
     reasons: list[str] = []

@@ -251,6 +251,8 @@ def moment_pick_prompt(payload: dict) -> str:
         "  - `reason` is REQUIRED: one sentence on WHY this moment hits for the owning persona's "
         "lens (what makes it scroll-stopping for that account's audience). Never use em-dashes (—) or "
         "en-dashes (–); use a comma or period.\n"
+        "  - `source_title`: REQUIRED, a neutral, descriptive title of what this footage IS (≤8 words). "
+        "Not a hook, no hashtags, no persona voice, no em-dashes.\n"
         "  - FRAMES: a few stills sampled across the source may be ATTACHED as images — SEE them to "
         "judge which moments are visually strong (who/where, lighting, motion), not only the transcript. "
         "Do NOT describe or narrate the frames in your answer; your answer is the JSON picks alone.\n"

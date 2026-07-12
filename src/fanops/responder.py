@@ -25,9 +25,11 @@ from fanops.log import get_logger
 def screen_model_text(obj):
     """MOL-166: ONE text-screen chokepoint — sanitize model-authored strings before *.response.json is written."""
     from fanops.text import sanitize_generated_text
+    from fanops.moments import _sanitize_source_title
     if isinstance(obj, MomentDecision):
         picks = [p.model_copy(update={"reason": sanitize_generated_text(p.reason) or ""}) for p in obj.picks]
-        return obj.model_copy(update={"picks": picks})
+        st = _sanitize_source_title(obj.source_title) if obj.source_title else None
+        return obj.model_copy(update={"picks": picks, "source_title": st})
     if isinstance(obj, MomentHookDecision):
         h = (obj.hook or "").strip()
         hook = sanitize_generated_text(h) if h else None

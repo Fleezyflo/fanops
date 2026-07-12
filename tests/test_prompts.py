@@ -119,6 +119,7 @@ def test_moment_pick_prompt_forbids_em_dash_in_reason():
     p = moment_pick_prompt({"duration": 42.0, "transcript": [], "signal_peaks": [],
                             "language": "en", "guidance": ""})
     assert "em-dash" in p.lower() or "em dash" in p.lower()   # belt-and-suspenders for the sanitizer
+    assert "source_title" in p
 
 def test_target_pick_count_song_band_fewer_longer_picks():
     # A song's hook/verse (SONG span 26.5s) is a longer unit than talk (17s), so the same source
