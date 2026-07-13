@@ -174,14 +174,17 @@ def _cache_is_quality_complete(data: dict) -> bool:
     return True
 
 def _trust_tier(seg: dict, *, src_lang: str | None = None) -> str:
-    """Plan B metadata layer — Plan C adds script gate for full tier."""
-    if not (seg.get("text") or "").strip():
+    """Compose L1 metadata + L2 script coherence into full / degraded / rejected."""
+    text = (seg.get("text") or "").strip()
+    if not text:
+        return "rejected"
+    if not _segment_script_coherent(text, src_lang=src_lang):
         return "rejected"
     if all(k in seg for k in _SEGMENT_QUALITY_KEYS):
         if not _segment_metadata_pass(seg):
             return "rejected"
-        return "degraded"                                      # metadata pass; script layer pending (Plan C)
-    return "degraded"                                          # metadata missing/incomplete
+        return "full"
+    return "degraded"
 
 def _finalize_segments(raw: list[dict], src_lang: str | None) -> list[dict]:
     """Normalize raw whisper segments and stamp trust_tier + trusted on each."""
@@ -205,6 +208,7 @@ def _log_transcript_tiers(cfg: Config | None, source_id: str, segments: list[dic
     get_logger(cfg)("transcribe", source_id, "transcript_tiers", full=full, degraded=degraded, rejected=rejected)
 
 _SCRIPT_LATIN_ON_AR = 0.70          # Latin-majority segment on an ar source -> junk transliteration
+_SCRIPT_CJK_ON_EN_AR = 0.30         # CJK-majority segment on en/ar source -> junk hallucination
 _SPEECH_MIN_WORDS = 2               # mirrors framing._window_has_speech bar
 
 def _lang_base(tag: str | None) -> str | None:
@@ -224,24 +228,24 @@ def _script_counts(text: str) -> tuple[int, int, int]:
         elif 0x4E00 <= o <= 0x9FFF or 0x3040 <= o <= 0x30FF: cjk += 1
     return alpha, latin, cjk
 
-def _segment_script_ok(text: str, *, src_lang: str | None) -> bool:
-    """Reject obvious script flaps (Arabic-as-Latin junk, CJK on en/ar sources). Fail-open when unknown."""
+def _segment_script_coherent(text: str, *, src_lang: str | None) -> bool:
+    """L2: reject obvious script flaps (Arabic-as-Latin junk, CJK on en/ar sources). Fail-open when unknown."""
     base = _lang_base(src_lang)
     alpha, latin, cjk = _script_counts(text)
     if not alpha: return False
     if base == "ar" and latin / alpha > _SCRIPT_LATIN_ON_AR: return False
-    if base in ("en", "ar") and cjk / alpha > 0.3: return False
+    if base in ("en", "ar") and cjk / alpha > _SCRIPT_CJK_ON_EN_AR: return False
     return True
 
 def segment_trusted(seg: dict, *, src_lang: str | None = None) -> bool:
-    """True when a transcript segment is plausibly real speech — not ASR noise on music/b-roll."""
-    text = (seg.get("text") or "").strip()
-    if not text: return False
-    if not _segment_script_ok(text, src_lang=src_lang): return False
-    return _segment_metadata_pass(seg)
+    """True only for full-trust segments (L1 metadata pass + L2 script coherence)."""
+    tier = seg.get("trust_tier")
+    if tier is None:
+        tier = _trust_tier(seg, src_lang=src_lang)
+    return tier == "full"
 
 def trusted_segments(transcript: list[dict] | None, *, src_lang: str | None = None) -> list[dict]:
-    """Filter to segments passing segment_trusted; None/[] -> []."""
+    """Filter to full-trust segments only; None/[] -> []. Prefers stamped trust_tier when present."""
     return [s for s in (transcript or []) if segment_trusted(s, src_lang=src_lang)]
 
 def window_has_trusted_speech(src, start: float, end: float) -> bool:

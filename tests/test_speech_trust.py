@@ -2,13 +2,31 @@
 from fanops.models import Source, SourceState, Batch
 from fanops.config import Config
 from fanops.transcribe import (segment_trusted, trusted_segments, window_has_trusted_speech,
-                                resolve_speech_trust, _segment_metadata_pass,
+                                resolve_speech_trust, _segment_metadata_pass, _trust_tier,
                                 _NO_SPEECH_MAX, _AVG_LOGPROB_MIN, _COMPRESSION_RATIO_MAX)
-from tests.fixtures.speech_segments import GOOD_AR, MUSIC_HALLUC
+from tests.fixtures.speech_segments import (GOOD_AR, MUSIC_HALLUC, LATIN_JUNK_AR, CJK_JUNK_EN,
+                                              LEGACY_EN)
 
 
 def _seg(text, *, start=0.0, end=2.0, **kw):
     return {"start": start, "end": end, "text": text, **kw}
+
+
+def test_trust_tier_matrix():
+    """Plan C L2: six-case trust_tier / segment_trusted composition."""
+    assert _trust_tier(GOOD_AR, src_lang="ar") == "full"
+    assert segment_trusted(GOOD_AR, src_lang="ar") is True
+    assert _trust_tier(MUSIC_HALLUC, src_lang="en") == "rejected"
+    assert segment_trusted(MUSIC_HALLUC, src_lang="en") is False
+    assert _trust_tier(LATIN_JUNK_AR, src_lang="ar") == "rejected"
+    assert segment_trusted(LATIN_JUNK_AR, src_lang="ar") is False
+    assert _trust_tier(CJK_JUNK_EN, src_lang="en") == "rejected"
+    assert segment_trusted(CJK_JUNK_EN, src_lang="en") is False
+    assert _trust_tier(LEGACY_EN, src_lang="en") == "degraded"
+    assert segment_trusted(LEGACY_EN, src_lang="en") is False   # degraded ≠ full
+    empty = _seg("  ")
+    assert _trust_tier(empty, src_lang="en") == "rejected"
+    assert segment_trusted(empty, src_lang="en") is False
 
 
 def test_segment_trusted_accepts_clean_arabic_with_metadata():
@@ -41,11 +59,11 @@ def test_segment_trusted_rejects_cjk_on_en_source():
     assert segment_trusted(seg, src_lang="en") is False
 
 
-def test_segment_trusted_legacy_segment_without_metadata_not_trusted():
-    good = _seg("they slept on me")
-    bad = _seg("xyz abc def ghi")  # latin on ar
-    assert segment_trusted(good, src_lang="en") is False
-    assert segment_trusted(bad, src_lang="ar") is False
+def test_segment_trusted_uses_stamped_trust_tier():
+    stamped = {**GOOD_AR, "trust_tier": "degraded", "trusted": False}
+    assert segment_trusted(stamped, src_lang="ar") is False
+    stamped["trust_tier"] = "full"
+    assert segment_trusted(stamped, src_lang="ar") is True
 
 
 def test_segment_metadata_pass_matrix():
@@ -60,21 +78,28 @@ def test_segment_metadata_pass_matrix():
     assert _segment_metadata_pass({**GOOD_AR, "compression_ratio": _COMPRESSION_RATIO_MAX}) is True
 
 
-def test_trusted_segments_filters_list():
+def test_trusted_segments_filters_full_tier_only():
     segs = [_seg("good line", avg_logprob=-0.2, no_speech_prob=0.05, compression_ratio=1.2),
-            _seg("noise", no_speech_prob=0.95, avg_logprob=-0.2, compression_ratio=1.2)]
+            _seg("noise", no_speech_prob=0.95, avg_logprob=-0.2, compression_ratio=1.2),
+            LEGACY_EN,
+            {**GOOD_AR, "trust_tier": "full", "trusted": True}]
     out = trusted_segments(segs, src_lang="en")
-    assert len(out) == 1 and out[0]["text"] == "good line"
+    texts = [s["text"] for s in out]
+    assert "good line" in texts
+    assert "noise" not in texts
+    assert LEGACY_EN["text"] not in texts                              # degraded, not full
+    assert GOOD_AR["text"] in texts                                    # stamped full tier
 
 
-def test_window_has_trusted_speech_requires_overlap_and_word_count():
+def test_window_has_trusted_speech_requires_full_tier_overlap_and_word_count():
     src = Source(id="s1", source_path="/x.mp4", state=SourceState.transcribed, language="en",
                  transcript=[_seg("they slept on me here", start=1.0, end=4.0,
                                   avg_logprob=-0.2, no_speech_prob=0.05, compression_ratio=1.2),
-                             _seg("noise", start=10.0, end=12.0, no_speech_prob=0.95)])
+                             _seg("noise", start=10.0, end=12.0, no_speech_prob=0.95),
+                             {**LEGACY_EN, "start": 5.0, "end": 8.0}])   # degraded — no overlap credit
     assert window_has_trusted_speech(src, 0.0, 5.0) is True
     assert window_has_trusted_speech(src, 10.0, 13.0) is False
-    assert window_has_trusted_speech(src, 5.0, 9.0) is False
+    assert window_has_trusted_speech(src, 5.0, 9.0) is False           # legacy degraded only
 
 
 def test_resolve_speech_trust_batch_override(monkeypatch, tmp_path):
