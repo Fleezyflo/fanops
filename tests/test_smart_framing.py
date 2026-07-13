@@ -531,12 +531,14 @@ def _talk_src(**kw):
 
 def test_classify_multi_speaker_talk():
     # >=2 stable faces + real speech in the window -> the ONLY content type that switches speakers.
-    src = _talk_src(transcript=[{"start": 10.0, "end": 13.5, "text": "so tell me about your new record"}])
+    from tests.fixtures.speech_segments import talk_seg
+    src = _talk_src(transcript=[talk_seg("so tell me about your new record", start=10.0, end=13.5)])
     st = _stats([[[0.25, 0.5, 0.2, 0.45], [0.78, 0.45, 0.18, 0.4]]] * 4)
     assert framing.classify_window(None, src, start=10.0, end=14.0, stats=st) == framing.CT_MULTI
 
 def test_classify_single_speaker_talk():
-    src = _talk_src(transcript=[{"start": 10.0, "end": 13.5, "text": "let me explain how this works"}])
+    from tests.fixtures.speech_segments import talk_seg
+    src = _talk_src(transcript=[talk_seg("let me explain how this works", start=10.0, end=13.5)])
     st = _stats([[[0.5, 0.5, 0.22, 0.45]]] * 4)
     assert framing.classify_window(None, src, start=10.0, end=14.0, stats=st) == framing.CT_SINGLE
 

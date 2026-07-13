@@ -11,6 +11,7 @@ from __future__ import annotations
 import json, os
 from pathlib import Path
 from statistics import median
+from fanops.transcribe import window_has_trusted_speech as _window_has_speech
 
 _SIDECAR_V = 5               # track-sidecar schema (v5: + min-shot-duration merge — no rapid cut-away-and-back)
 _KF_COUNT = 5                # frames sampled across the window — enough for a stable median, cheap to probe
@@ -184,22 +185,6 @@ CT_SINGLE = "single-speaker-talk"   # 1 face + speech -> subject lock + zoom + e
 CT_MUSIC = "music"                  # face + vocal/audio, no speech -> wider lock (stage/body context), no flicker
 CT_SILENT = "silent"               # face, no speech, no vocal stem -> subject lock, no flicker
 CT_NOPEOPLE = "no-people"          # no face -> safe center / motion-saliency follow
-_SPEECH_MIN_WORDS = 2              # >=2 alpha words overlapping the window == real speech (mirrors real_transcript_signal)
-
-def _window_has_speech(src, start: float, end: float) -> bool:
-    """True when the source transcript has real spoken words overlapping [start,end). Mirrors the
-    transcribe.real_transcript_signal bar (alphabetic tokens + numeric timing), scoped to the window.
-    None/[] transcript -> False (untranscribed or ran-no-speech)."""
-    words = 0
-    for seg in (getattr(src, "transcript", None) or []):
-        try:
-            s, e = seg.get("start"), seg.get("end")
-            if not isinstance(s, (int, float)) or not isinstance(e, (int, float)): continue
-            if e > start and s < end:                         # segment overlaps the window
-                words += sum(1 for tok in (seg.get("text") or "").split() if any(c.isalpha() for c in tok))
-        except (AttributeError, TypeError):
-            continue                                          # a malformed segment never sinks the check
-    return words >= _SPEECH_MIN_WORDS
 
 _PHANTOM_QUALITY_RATIO = 0.3  # min (score×fh) of a secondary face relative to the dominant to count as real
 

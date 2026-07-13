@@ -4,6 +4,11 @@ JSON into [{start,end,text}] + detected language. Distinguishes 'ran, no speech'
 [], meta.transcribed=True) from 'not run' (transcript None) so a failed run can recover.
 Missing JSON -> error state, never a crash.
 
+Speech-trust (L1–L3): segments carry optional quality metadata + stamped trust_tier (full /
+degraded / rejected). Production consumers use trusted_segments / window_has_trusted_speech /
+excerpt_for_window — full-tier overlap only. real_transcript_signal is E2E-only (proves whisper
+ran on real audio); do NOT use it for subs, hooks, or framing.
+
 ENGINE: prefers faster-whisper (the [asr] extra, via the fanops._fwrun runner) at FANOPS_ASR_MODEL
 (default **medium**) — strong on music/rap EN+AR; large-v3 is available as the max-accuracy opt-in
 (int8 makes even large-v3 practical on CPU). FAILS OPEN to the legacy `whisper` CLI (turbo) when
@@ -75,8 +80,10 @@ def _resolve_model(model: str) -> str:
 
 def real_transcript_signal(transcript: list[dict]) -> bool:
     """True iff `transcript` is proof that REAL whisper ran on REAL audio — NOT that any one
-    specific word survived (CI-2). Used by the real-tooling E2E in place of a brittle single-token
-    check that bet on macOS `say`'s acoustics and failed under the Linux CI's espeak vocoder.
+    specific word survived (CI-2). E2E-only: do NOT use for subs, hooks, framing, or moment gates —
+    use trusted_segments / window_has_trusted_speech / excerpt_for_window instead. Used by the
+    real-tooling E2E in place of a brittle single-token check that bet on macOS `say`'s acoustics
+    and failed under the Linux CI's espeak vocoder.
 
     The contract has two parts, both required, so the check is robust across TTS engines yet still
     rejects a fake/empty/stub transcript (the v1 bug this E2E guards against — "false safety is
@@ -261,6 +268,22 @@ def window_has_trusted_speech(src, start: float, end: float) -> bool:
         except (AttributeError, TypeError):
             continue
     return words >= _SPEECH_MIN_WORDS
+
+def excerpt_for_window(src, start: float, end: float, *, max_chars: int = 240) -> str:
+    """Join full-trust segment text overlapping [start,end); truncate to max_chars."""
+    lang = getattr(src, "language", None)
+    parts: list[str] = []
+    for seg in trusted_segments(getattr(src, "transcript", None) or [], src_lang=lang):
+        try:
+            s, e = seg.get("start"), seg.get("end")
+            if not isinstance(s, (int, float)) or not isinstance(e, (int, float)): continue
+            if e <= start or s >= end: continue
+            text = (seg.get("text") or "").strip()
+            if text: parts.append(text)
+        except (AttributeError, TypeError):
+            continue
+    joined = " ".join(parts)
+    return joined if len(joined) <= max_chars else joined[:max_chars]
 
 def resolve_speech_trust(cfg, batch=None) -> bool:
     """Global FANOPS_SPEECH_TRUST with optional per-batch override (mirrors burn_subs resolution)."""
