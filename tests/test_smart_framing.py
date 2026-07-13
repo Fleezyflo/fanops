@@ -774,7 +774,8 @@ def test_face_count_real_two_shot_is_multi():
 
 def test_classify_phantom_decoy_routes_to_single(tmp_path, monkeypatch):
     # end-to-end: phantom wall-art face next to a real speaker must NOT trigger multi-speaker switching.
-    src = _talk_src(transcript=[{"start": 10.0, "end": 13.5, "text": "here is my take on this"}])
+    from tests.fixtures.speech_segments import talk_seg
+    src = _talk_src(transcript=[talk_seg("here is my take on this", start=10.0, end=13.5)])
     real_face = [0.30, 0.50, 0.25, 0.45, 0.87]
     phantom   = [0.75, 0.48, 0.06, 0.43, 0.64]
     st = _stats([[real_face, phantom]] * 4)
