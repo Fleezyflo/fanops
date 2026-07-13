@@ -73,7 +73,7 @@ def test_adopt_warm_artifacts_loads_transcript_json(tmp_path):
         led = artifacts.adopt_warm_artifacts(led, cfg, "src_1")
     s = led.sources["src_1"]
     assert s.transcript[0]["text"] == "warm"
-    assert s.transcript[0]["trust_tier"] == "rejected" and s.transcript[0]["trusted"] is False
+    assert s.transcript[0]["trust_tier"] == "degraded" and s.transcript[0]["trusted"] is False
     assert s.meta["transcribed"] is True
 
 

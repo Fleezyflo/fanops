@@ -126,6 +126,22 @@ def fw_cmd(src: str, out_dir: str, model: str, language: str = "") -> list[str]:
             "--output_dir", out_dir, src]
 
 _SEGMENT_QUALITY_KEYS = ("avg_logprob", "no_speech_prob", "compression_ratio")
+# Whisper-default quality thresholds for speech-trust filtering (FANOPS_SPEECH_TRUST).
+_NO_SPEECH_MAX = 0.6
+_AVG_LOGPROB_MIN = -1.0
+_COMPRESSION_RATIO_MAX = 2.4
+
+def _segment_metadata_pass(seg: dict) -> bool:
+    """L1a–L1c: all three quality keys present and within thresholds; partial keys -> False."""
+    if not all(k in seg for k in _SEGMENT_QUALITY_KEYS):
+        return False
+    try:
+        if float(seg["no_speech_prob"]) > _NO_SPEECH_MAX: return False
+        if float(seg["avg_logprob"]) < _AVG_LOGPROB_MIN: return False
+        if float(seg["compression_ratio"]) > _COMPRESSION_RATIO_MAX: return False
+    except (TypeError, ValueError):
+        return False
+    return True
 
 def _segment(s: dict) -> dict:
     """One transcript segment: {start,end,text}, plus `words` ([{word,start,end}]) when whisper
@@ -157,18 +173,22 @@ def _cache_is_quality_complete(data: dict) -> bool:
             return False
     return True
 
-def _trust_tier_stub(seg: dict) -> str:
-    """Plan A stub — Plan B/C wire full/degraded tiers from quality metadata."""
+def _trust_tier(seg: dict, *, src_lang: str | None = None) -> str:
+    """Plan B metadata layer — Plan C adds script gate for full tier."""
     if not (seg.get("text") or "").strip():
         return "rejected"
-    return "rejected"
+    if all(k in seg for k in _SEGMENT_QUALITY_KEYS):
+        if not _segment_metadata_pass(seg):
+            return "rejected"
+        return "degraded"                                      # metadata pass; script layer pending (Plan C)
+    return "degraded"                                          # metadata missing/incomplete
 
 def _finalize_segments(raw: list[dict], src_lang: str | None) -> list[dict]:
     """Normalize raw whisper segments and stamp trust_tier + trusted on each."""
     out: list[dict] = []
     for s in raw or []:
         seg = _segment(s)
-        tier = _trust_tier_stub(seg)
+        tier = _trust_tier(seg, src_lang=src_lang)
         seg["trust_tier"] = tier
         seg["trusted"] = tier == "full"
         out.append(seg)
@@ -184,10 +204,6 @@ def _log_transcript_tiers(cfg: Config | None, source_id: str, segments: list[dic
         else: rejected += 1
     get_logger(cfg)("transcribe", source_id, "transcript_tiers", full=full, degraded=degraded, rejected=rejected)
 
-# Whisper-default quality thresholds for speech-trust filtering (FANOPS_SPEECH_TRUST).
-_NO_SPEECH_MAX = 0.6
-_AVG_LOGPROB_MIN = -1.0
-_COMPRESSION_RATIO_MAX = 2.4
 _SCRIPT_LATIN_ON_AR = 0.70          # Latin-majority segment on an ar source -> junk transliteration
 _SPEECH_MIN_WORDS = 2               # mirrors framing._window_has_speech bar
 
@@ -217,25 +233,12 @@ def _segment_script_ok(text: str, *, src_lang: str | None) -> bool:
     if base in ("en", "ar") and cjk / alpha > 0.3: return False
     return True
 
-def _has_quality_metadata(seg: dict) -> bool:
-    return any(k in seg for k in _SEGMENT_QUALITY_KEYS)
-
 def segment_trusted(seg: dict, *, src_lang: str | None = None) -> bool:
     """True when a transcript segment is plausibly real speech — not ASR noise on music/b-roll."""
     text = (seg.get("text") or "").strip()
     if not text: return False
     if not _segment_script_ok(text, src_lang=src_lang): return False
-    if _has_quality_metadata(seg):
-        try:
-            nsp = seg.get("no_speech_prob")
-            if nsp is not None and float(nsp) > _NO_SPEECH_MAX: return False
-            alp = seg.get("avg_logprob")
-            if alp is not None and float(alp) < _AVG_LOGPROB_MIN: return False
-            cr = seg.get("compression_ratio")
-            if cr is not None and float(cr) > _COMPRESSION_RATIO_MAX: return False
-        except (TypeError, ValueError):
-            pass
-    return True
+    return _segment_metadata_pass(seg)
 
 def trusted_segments(transcript: list[dict] | None, *, src_lang: str | None = None) -> list[dict]:
     """Filter to segments passing segment_trusted; None/[] -> []."""

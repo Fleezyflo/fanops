@@ -2,7 +2,9 @@
 from fanops.models import Source, SourceState, Batch
 from fanops.config import Config
 from fanops.transcribe import (segment_trusted, trusted_segments, window_has_trusted_speech,
-                                resolve_speech_trust)
+                                resolve_speech_trust, _segment_metadata_pass,
+                                _NO_SPEECH_MAX, _AVG_LOGPROB_MIN, _COMPRESSION_RATIO_MAX)
+from tests.fixtures.speech_segments import GOOD_AR, MUSIC_HALLUC
 
 
 def _seg(text, *, start=0.0, end=2.0, **kw):
@@ -39,11 +41,22 @@ def test_segment_trusted_rejects_cjk_on_en_source():
     assert segment_trusted(seg, src_lang="en") is False
 
 
-def test_segment_trusted_legacy_segment_uses_script_heuristic_only():
+def test_segment_trusted_legacy_segment_without_metadata_not_trusted():
     good = _seg("they slept on me")
     bad = _seg("xyz abc def ghi")  # latin on ar
-    assert segment_trusted(good, src_lang="en") is True
+    assert segment_trusted(good, src_lang="en") is False
     assert segment_trusted(bad, src_lang="ar") is False
+
+
+def test_segment_metadata_pass_matrix():
+    assert _segment_metadata_pass(GOOD_AR) is True
+    assert _segment_metadata_pass(MUSIC_HALLUC) is False                    # high no_speech_prob
+    assert _segment_metadata_pass({**GOOD_AR, "avg_logprob": -1.5}) is False
+    assert _segment_metadata_pass({**GOOD_AR, "compression_ratio": 3.0}) is False
+    assert _segment_metadata_pass({**GOOD_AR, "avg_logprob": -0.3, "no_speech_prob": 0.05}) is False
+    assert _segment_metadata_pass({**GOOD_AR, "no_speech_prob": _NO_SPEECH_MAX}) is True
+    assert _segment_metadata_pass({**GOOD_AR, "avg_logprob": _AVG_LOGPROB_MIN}) is True
+    assert _segment_metadata_pass({**GOOD_AR, "compression_ratio": _COMPRESSION_RATIO_MAX}) is True
 
 
 def test_trusted_segments_filters_list():

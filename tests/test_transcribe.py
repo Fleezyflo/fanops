@@ -330,7 +330,7 @@ def test_transcribe_adopts_existing_json_and_skips_subprocess(tmp_path, mocker):
     s = led.sources["src_1"]
     assert s.state is SourceState.transcribed and s.language == "en"
     assert s.transcript[0]["text"] == "cached line" and s.meta.get("transcribed") is True
-    assert s.transcript[0]["trust_tier"] == "rejected" and s.transcript[0]["trusted"] is False
+    assert s.transcript[0]["trust_tier"] == "degraded" and s.transcript[0]["trusted"] is False
 
 def test_stale_cache_without_metadata_not_adopted(tmp_path, mocker):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
@@ -353,7 +353,7 @@ def test_stale_cache_without_metadata_not_adopted(tmp_path, mocker):
 
 def test_finalize_segments_stamps_tier_fields():
     segs = _finalize_segments([talk_seg("hello world")], "en")
-    assert segs[0]["trust_tier"] == "rejected" and segs[0]["trusted"] is False
+    assert segs[0]["trust_tier"] == "degraded" and segs[0]["trusted"] is False
     empty = _finalize_segments([{"start": 0.0, "end": 1.0, "text": "  "}], "en")
     assert empty[0]["trust_tier"] == "rejected" and empty[0]["trusted"] is False
 
