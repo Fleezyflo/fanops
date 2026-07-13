@@ -646,9 +646,9 @@ class Config:
 
     @property
     def asr_language(self) -> str:
-        # Default "en,ar" — a comma list PINS the candidate languages: the runner enables faster-whisper
-        # per-segment detection (multilingual) so English directing lines AND Arabic verses in the SAME
-        # source both transcribe. A SINGLE value (e.g. "ar") forces one language; "" = unconstrained auto.
+        # Default "en,ar" — a comma list enables faster-whisper multilingual=True (per-segment language
+        # detection over ALL languages — the list does NOT pin/restrict candidate langs). A SINGLE value
+        # (e.g. "ar") forces that one language; "" = unconstrained auto-detect.
         v = os.getenv("FANOPS_ASR_LANGUAGE")
         return v.strip() if v and v.strip() else "en,ar"
 

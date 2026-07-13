@@ -4,10 +4,15 @@ JSON into [{start,end,text}] + detected language. Distinguishes 'ran, no speech'
 [], meta.transcribed=True) from 'not run' (transcript None) so a failed run can recover.
 Missing JSON -> error state, never a crash.
 
-Speech-trust (L1–L3): segments carry optional quality metadata + stamped trust_tier (full /
-degraded / rejected). Production consumers use trusted_segments / window_has_trusted_speech /
-excerpt_for_window — full-tier overlap only. real_transcript_signal is E2E-only (proves whisper
-ran on real audio); do NOT use it for subs, hooks, or framing.
+Speech-trust (L1–L3, always-on — no env toggle): each segment gets a stamped trust_tier (full /
+degraded / rejected). Production gates (subs burn, moment pick, hook excerpt, framing classify)
+consume only full-tier segments via trusted_segments / window_has_trusted_speech /
+excerpt_for_window. degraded = legacy cache missing ASR quality keys → _adopt_cached_transcript
+refuses adoption and the next pass re-transcribes. rejected = junk/script flap or failed L1 thresholds.
+
+real_transcript_signal is a SEPARATE E2E-only contract: it proves whisper ran on real audio
+(whisper-shaped segments + ≥4 word tokens total), NOT per-segment trust. Do NOT substitute it
+for segment_trusted / window_has_trusted_speech in production paths.
 
 ENGINE: prefers faster-whisper (the [asr] extra, via the fanops._fwrun runner) at FANOPS_ASR_MODEL
 (default **medium**) — strong on music/rap EN+AR; large-v3 is available as the max-accuracy opt-in
