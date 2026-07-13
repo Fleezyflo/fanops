@@ -16,7 +16,16 @@ from fanops.log import get_logger
 T = TypeVar("T", bound=BaseModel)
 
 def _dir(cfg: Config) -> Path:
-    d = cfg.agent_io / "requests"
+    # PATH ONLY — never mkdir here. This is called on every read (pending/request_path/response_path/
+    # latest_request_id), and a status render hits it O(files) times; a mkdir per read is pure syscall
+    # waste. Readers tolerate an absent dir by construction: Path.glob on a missing dir yields [] and the
+    # per-file readers guard with .exists(). The dir is created at WRITE time via _ensure_dir (below).
+    return cfg.agent_io / "requests"
+
+
+def _ensure_dir(cfg: Config) -> Path:
+    """The request dir, created if absent. Called ONLY on write paths (write_request / bump_attempts)."""
+    d = _dir(cfg)
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -39,6 +48,7 @@ def latest_request_id(cfg: Config, kind: str, key: str) -> str | None:
         return None
 
 def write_request(cfg: Config, *, kind: str, key: str, payload: dict) -> str:
+    _ensure_dir(cfg)                           # create the request dir at WRITE time (readers never mkdir)
     p = request_path(cfg, kind, key)
     # New id whenever the request is (re)written — old responses become stale.
     prev = latest_request_id(cfg, kind, key) or "0"
@@ -129,6 +139,7 @@ def _attempts_path(cfg: Config, kind: str, key: str) -> Path:
     return _dir(cfg) / f"{kind}__{key}.attempts.json"
 
 def bump_attempts(cfg: Config, kind: str, key: str) -> int:
+    _ensure_dir(cfg)                           # create the request dir at WRITE time (readers never mkdir)
     p = _attempts_path(cfg, kind, key)
     try: n = json.loads(p.read_text()).get("n", 0)
     except Exception: n = 0
