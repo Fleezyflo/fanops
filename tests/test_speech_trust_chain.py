@@ -45,7 +45,8 @@ def test_talk_window_subs_and_snap_use_trusted_only(tmp_path, mocker, monkeypatc
     assert float(cmd[cmd.index("-ss") + 1]) == 9.3
     assert round(float(cmd[cmd.index("-ss") + 1]) + float(cmd[cmd.index("-to") + 1]), 1) == 22.0
     ass = next(cfg.clips.glob("*.ass")).read_text(encoding="utf-8")
-    assert "they slept on me" in ass and "junk" not in ass.lower()
+    ass_l = ass.lower()
+    assert "slept" in ass_l and "watch this part" in ass_l and "junk" not in ass_l
 
 
 def test_music_window_junk_excluded_from_subs_and_snap(tmp_path, mocker, monkeypatch):
