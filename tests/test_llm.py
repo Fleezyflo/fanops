@@ -607,9 +607,23 @@ def test_dispatch_unknown_warns_claude(mocker, monkeypatch, caplog):
     assert run.call_args[0][0][0] == "claude"
     assert any("FANOPS_LLM_TRANSPORT" in r.message for r in caplog.records)
 
-def test_cursor_model_alias_on_gate_pins(mocker, monkeypatch):
+def test_cursor_gate_model_not_forwarded_uses_auto(mocker, monkeypatch):
+    # The per-gate claude tier (opus/sonnet) is Claude-only — it is NOT forwarded to cursor-agent,
+    # which picks its OWN model (no --model) unless the operator forces one via FANOPS_LLM_MODEL.
+    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "cursor")
+    monkeypatch.delenv("FANOPS_LLM_MODEL", raising=False)
+    envelope = {"result": '{"x": 2}'}
+    class R: returncode = 0; stdout = json.dumps(envelope); stderr = ""
+    run = mocker.patch("fanops.llm.subprocess.run", return_value=R())
+    claude_json("q", _SCHEMA, model="opus")
+    assert run.call_args[0][0][0] == "cursor-agent"
+    assert "--model" not in run.call_args[0][0]                # AUTO — gate tier dropped
+
+def test_cursor_operator_forced_model_pins(mocker, monkeypatch):
+    # FANOPS_LLM_MODEL forces ONE cursor model (alias-resolved) even though the per-gate tier is dropped.
     import fanops.llm as llm_mod
     monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "cursor")
+    monkeypatch.setenv("FANOPS_LLM_MODEL", "opus")
     monkeypatch.setitem(llm_mod._CURSOR_MODEL_ALIASES, "opus", "claude-4-opus")
     envelope = {"result": '{"x": 2}'}
     class R: returncode = 0; stdout = json.dumps(envelope); stderr = ""
