@@ -14,11 +14,12 @@ from fanops.errors import ToolchainMissingError
 from fanops import daemon
 
 
-def _heartbeat_line(ts: str) -> str:
-    # EXACT shape get_logger writes for _heartbeat (JSON; daemon._heartbeat_age_s reads stage+ts+origin=loop).
+def _heartbeat_line(ts: str, *, code: str = "deadbeef") -> str:
+    # EXACT shape get_logger writes for _heartbeat (JSON; daemon._heartbeat_age_s reads stage+ts+origin=loop,
+    # daemon._last_heartbeat_code reads `code` — the running-HEAD SHA the pump reports each tick).
     import json
     rec = {"ts": ts, "level": "info", "stage": "heartbeat", "unit_id": "-", "outcome": "ok", "origin": "loop",
-           "heartbeat": ts, "fanops_version": "0.3.0", "published_in_run": "0"}
+           "heartbeat": ts, "fanops_version": "0.3.0", "published_in_run": "0", "code": code}
     return json.dumps(rec, separators=(",", ":")) + "\n"
 
 
@@ -349,6 +350,57 @@ def test_status_no_heartbeat_handles_empty_log(tmp_path, monkeypatch):
     monkeypatch.setattr(daemon.subprocess, "run", _fake_launchctl(list=(0, '\t"PID" = 9;\n')))
     rep = daemon.status(cfg, interval=600)
     assert rep["heartbeat_age_s"] is None
+
+
+# ── _last_heartbeat_code (the keeper's running-SHA reader) ───────────────────────────────────
+
+def test_last_heartbeat_code_reads_code_from_loop_heartbeat(tmp_path):
+    # A loop heartbeat carrying `code` -> that SHA is returned (the last one wins if several).
+    cfg = Config(root=tmp_path)
+    cfg.reports.mkdir(parents=True, exist_ok=True)
+    now = datetime.now(timezone.utc).isoformat()
+    cfg.log_path.write_text(_heartbeat_line(now, code="cafef00d"))
+    assert daemon._last_heartbeat_code(cfg) == "cafef00d"
+
+
+def test_last_heartbeat_code_none_when_no_log(tmp_path):
+    # No run.log -> None (fail-open; the keeper's drift branch then disarms).
+    cfg = Config(root=tmp_path)
+    assert daemon._last_heartbeat_code(cfg) is None
+
+
+def test_last_heartbeat_code_none_when_code_field_absent(tmp_path):
+    # A pre-upgrade loop heartbeat with NO `code` key -> None (load-bearing: never storm an old pump).
+    cfg = Config(root=tmp_path)
+    cfg.reports.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now(timezone.utc).isoformat()
+    rec = {"ts": ts, "level": "info", "stage": "heartbeat", "unit_id": "-", "outcome": "ok",
+           "origin": "loop", "heartbeat": ts, "fanops_version": "0.3.0"}       # no `code`
+    cfg.log_path.write_text(json.dumps(rec) + "\n")
+    assert daemon._last_heartbeat_code(cfg) is None
+
+
+def test_last_heartbeat_code_ignores_non_loop_and_non_heartbeat(tmp_path):
+    # A non-loop heartbeat (no origin=loop) and an ordinary stage line both carry no owned `code` for the
+    # keeper -> None. Only a stage==heartbeat + origin==loop record counts (same filter as _heartbeat_age_s).
+    cfg = Config(root=tmp_path)
+    cfg.reports.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now(timezone.utc).isoformat()
+    manual_hb = {"ts": ts, "stage": "heartbeat", "unit_id": "-", "outcome": "ok",
+                 "heartbeat": ts, "code": "manual"}                            # NO origin=loop
+    activity = {"ts": ts, "stage": "llm", "unit_id": "-", "outcome": "ok", "code": "activity"}
+    cfg.log_path.write_text(json.dumps(manual_hb) + "\n" + json.dumps(activity) + "\n")
+    assert daemon._last_heartbeat_code(cfg) is None
+
+
+def test_last_heartbeat_code_keeps_last_of_several(tmp_path):
+    # Multiple loop heartbeats -> the LAST record's code wins (scan-forward-overwrite, like _heartbeat_age_s).
+    cfg = Config(root=tmp_path)
+    cfg.reports.mkdir(parents=True, exist_ok=True)
+    t0 = datetime.now(timezone.utc).isoformat()
+    t1 = datetime.now(timezone.utc).isoformat()
+    cfg.log_path.write_text(_heartbeat_line(t0, code="old111") + _heartbeat_line(t1, code="new222"))
+    assert daemon._last_heartbeat_code(cfg) == "new222"
 
 
 # ── Task 4: stop + tail_logs ─────────────────────────────────────────────────────────────────

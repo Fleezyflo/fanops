@@ -14,11 +14,13 @@ rather than silently no-op'ing; a systemd --user sibling is the natural follow-u
 guard marks the seam). Every `launchctl` call mirrors ingest._run_ffprobe (timeout + typed
 ToolchainMissingError on absence). Backend stays dryrun by default — this never publishes."""
 from __future__ import annotations
-import contextlib, json, os, plistlib, re, shutil, socket, subprocess, sys, time
+import contextlib, json, logging, os, plistlib, re, shutil, socket, subprocess, sys, time
 from datetime import datetime, timezone
 from pathlib import Path
 from fanops.config import Config
 from fanops.errors import ToolchainMissingError
+
+_log = logging.getLogger(__name__)
 
 LABEL = "com.fanops.run"
 KEEPER_LABEL = "com.fanops.keeper"
@@ -183,6 +185,26 @@ def _require_darwin() -> None:
     if sys.platform != "darwin":
         raise RuntimeError("fanops daemon is macOS-only (launchd); no systemd --user port yet")
 
+def _pump_pid_age_s() -> tuple[int | None, int | None]:
+    """(pid, age_s) of the resident pump from launchd + `ps -o etimes=`, or (None, None) when the pump
+    has no PID (not loaded / not running). age_s is None when a PID exists but its start-age is
+    unreadable/unparseable — the caller MUST treat that as 'do not storm' (skip), never as 'settled'.
+    Used only by the keeper's code-drift storm guard: a freshly-kickstarted pump has a young PID, so
+    its stale heartbeat (still the OLD SHA until the fresh pass finishes) must not trigger a re-kickstart."""
+    r = _launchctl("list", LABEL)
+    pid = _grep_int(r.stdout, "PID") if r.returncode == 0 else None
+    if pid is None:
+        return None, None
+    age = None
+    try:
+        ps = subprocess.run(["ps", "-o", "etimes=", "-p", str(pid)],
+                            capture_output=True, text=True, timeout=10)
+        if ps.returncode == 0 and ps.stdout.strip():
+            age = int(ps.stdout.strip())
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        age = None                                        # unreadable -> caller skips (never storm)
+    return pid, age
+
 def _confirm_loaded(label: str) -> bool:
     return _launchctl("print", f"gui/{os.getuid()}/{label}").returncode == 0
 
@@ -264,6 +286,31 @@ def ensure(cfg: Config) -> dict:
             _cleanup_legacy_artifacts(cfg)
             if action == "none":
                 action = "rewrite_plist"
+    # Code-drift self-heal (keeper-adopts-pump): the pump's in-process os.execv adopter was deleted, so
+    # the EXTERNAL keeper adopts new code. Compare the SHA the pump reports in its heartbeat to the SHA
+    # on disk; kickstart the PUMP (not the keeper) when they differ. Kill switch default-on (matches
+    # cli). Fail-open with one breadcrumb — a git/launchctl hiccup leaves the pump alone.
+    if os.getenv("FANOPS_AUTO_ADOPT", "1") != "0":
+        from fanops.errors import fail_open
+        with fail_open("ensure.kickstart_stale_code"):
+            running = _last_heartbeat_code(cfg)              # SHA the pump reports it is on
+            deployed = _version_signal(cfg)[0]               # SHA on disk now
+            if running is not None and deployed is not None and running != deployed:
+                # STORM GUARD (replaces the deleted execv's baseline re-capture = one kickstart/deploy):
+                # the keeper is stateless across 120s fires, and the pump's stale heartbeat keeps the OLD
+                # SHA until its FIRST post-restart pass finishes (minutes-hours). Skip re-kickstarting while
+                # the pump PID is younger than one keeper interval — err toward skip-not-storm when age is
+                # unreadable. Exactly one kickstart per drift, then quiet until the fresh heartbeat clears it.
+                pid, age = _pump_pid_age_s()
+                if pid is not None and (age is None or age < KEEPER_POLL_INTERVAL_S):
+                    _log.warning("ensure.kickstart_stale_code: pump pid=%s age=%ss < %ss (or unreadable) "
+                                 "— skipping to avoid a restart storm (running=%s deployed=%s)",
+                                 pid, age, KEEPER_POLL_INTERVAL_S, running, deployed)
+                else:
+                    _launchctl("kickstart", "-k", f"gui/{os.getuid()}/{LABEL}")   # cycle the PUMP onto new code
+                    _kickstart_studio_if_present(cfg)         # Studio's only adopter now (execv path deleted)
+                    if action == "none":
+                        action = "kickstart_stale_code"
     return {"label": LABEL, "loaded": loaded, "action": action}
 
 _VERDICT_UNLOADED_ALARM = "installed but NOT loaded — should be running"
@@ -538,6 +585,31 @@ def _heartbeat_age_s(cfg: Config) -> float | None:
     if ts.tzinfo is None:
         ts = ts.replace(tzinfo=timezone.utc)
     return (datetime.now(timezone.utc) - ts).total_seconds()
+
+
+def _last_heartbeat_code(cfg: Config) -> str | None:
+    """The `code` (running-HEAD SHA) from the pump's most recent loop heartbeat in run.log, or None.
+    Fail-open to None on: no log, unreadable, no heartbeat line, or a pre-upgrade heartbeat with no
+    `code` field. Reads JSON heartbeats by stage=='heartbeat' + origin=='loop' (same convention as
+    _heartbeat_age_s). None is load-bearing: the keeper's drift branch treats it as 'don't kickstart'
+    (disarm), so a pre-upgrade pump missing the `code` key is never stormed."""
+    p = cfg.log_path
+    if not p.exists():
+        return None
+    try:
+        code = None
+        for line in p.read_text().splitlines():
+            if not line.strip():
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if rec.get("stage") == "heartbeat" and rec.get("origin") == "loop":
+                code = rec.get("code")
+        return code
+    except OSError:
+        return None
 
 
 # ── one-step bring-up (`fanops up`) ────────────────────────────────────────────────────────────
