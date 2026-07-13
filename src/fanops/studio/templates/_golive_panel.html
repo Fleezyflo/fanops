@@ -247,18 +247,31 @@
   <section class="golive-step" id="hands-off">
     <h3>Hands-off processing</h3>
     <p class="muted">Two independent switches. <strong>AI responder</strong> decides whether the pipeline writes its own
-      hooks/captions by calling <code>claude</code>. <strong>Pipeline driver</strong> decides whether that runs unattended
-      on a schedule. Claude runs ONLY when the AI responder is ON — never just because it's installed.</p>
+      hooks/captions by invoking <code>{{ status.llm_cli_binary }}</code>. <strong>Pipeline driver</strong> decides whether that runs unattended
+      on a schedule. The LLM CLI runs ONLY when the AI responder is ON — never just because it's installed.</p>
     <div class="account-hooks" id="ai-responder">
       <p class="muted"><strong>AI responder</strong> — {% if status.responder_mode == 'llm' %}the pipeline answers its own
-        gates by invoking <code>claude</code> on every run.{% else %}off — gates wait for you (hand-write in the Gates/Review tabs).{% endif %}</p>
+        gates by invoking <code>{{ status.llm_cli_binary }}</code> on every run.{% else %}off — gates wait for you (hand-write in the Gates/Review tabs).{% endif %}</p>
       <form hx-post="{{ url_for('do_golive_responder') }}" hx-target="#golive-panel" hx-swap="outerHTML">
         {% if status.responder_mode == 'llm' %}
-          <span class="ok">● ON — pipeline auto-writes via claude</span>
-          <button type="submit" name="on" value="">Turn off (manual — no claude)</button>
+          <span class="ok">● ON — pipeline auto-writes via {{ status.llm_cli_binary }}</span>
+          <button type="submit" name="on" value="">Turn off (manual — no LLM)</button>
         {% else %}
-          <span class="muted">○ off — no claude calls; gates stay pending</span>
-          <button type="submit" name="on" value="1">Turn on AI (runs claude)</button>
+          <span class="muted">○ off — no LLM calls; gates stay pending</span>
+          <button type="submit" name="on" value="1">Turn on AI (runs {{ status.llm_cli_binary }})</button>
+        {% endif %}
+      </form>
+    </div>
+    <div class="account-hooks" id="llm-transport">
+      <p class="muted"><strong>LLM transport</strong> —
+        {% if status.llm_transport == 'cursor' %}<code>cursor-agent</code> (Cursor CLI headless){% else %}<code>claude</code> (Claude Code subscription login){% endif %}.</p>
+      <form hx-post="{{ url_for('do_golive_llm_transport') }}" hx-target="#golive-panel" hx-swap="outerHTML">
+        {% if status.llm_transport == 'cursor' %}
+          <span class="ok">● Cursor</span>
+          <button type="submit" name="transport" value="claude">Switch to Claude</button>
+        {% else %}
+          <span class="muted">○ Claude (default)</span>
+          <button type="submit" name="transport" value="cursor">Switch to Cursor</button>
         {% endif %}
       </form>
     </div>
@@ -270,7 +283,7 @@
           {% if status.daemon.verdict == 'alive' %}running · last tick {{ status.daemon.heartbeat_age_s|int }}s ago.
           {% elif not status.daemon.loaded %}off (optional). Turn it on to auto-ingest, advance &amp; reconcile every {{ ((status.daemon.interval or 600) // 60) }} min.
           {% else %}installed but not running ({{ status.daemon.verdict }}).{% endif %}
-          {% if status.responder_mode == 'llm' and status.daemon.loaded %} With AI on, each tick invokes <code>claude</code>.{% endif %}</p>
+          {% if status.responder_mode == 'llm' and status.daemon.loaded %} With AI on, each tick invokes <code>{{ status.llm_cli_binary }}</code>.{% endif %}</p>
         <form hx-post="{{ url_for('do_golive_daemon_install') if not status.daemon.loaded else url_for('do_golive_daemon_uninstall') }}"
               hx-target="#golive-panel" hx-swap="outerHTML">
           {% if not status.daemon.loaded %}

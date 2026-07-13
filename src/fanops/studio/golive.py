@@ -253,6 +253,19 @@ def set_ai_responder(cfg: Config, on: bool) -> ActionResult:
     return ActionResult(ok=True, detail={"responder": "llm" if on else "manual"})
 
 
+def set_llm_transport(cfg: Config, transport: str) -> ActionResult:
+    """Set FANOPS_LLM_TRANSPORT (claude | cursor) from the Go-Live tab — which CLI the autonomous responder
+    shells when FANOPS_RESPONDER=llm. Dual-written (.env + os.environ) so it takes effect immediately on the
+    next gate without a Studio restart. Unknown values -> clean error."""
+    transport = (transport or "").strip().lower()
+    if transport not in ("claude", "cursor"):
+        return ActionResult(ok=False, error="llm transport must be claude or cursor")
+    err = _dual_write(cfg, "FANOPS_LLM_TRANSPORT", transport)
+    if err:
+        return ActionResult(ok=False, error=err)
+    return ActionResult(ok=True, detail={"llm_transport": transport, "llm_cli_binary": cfg.llm_cli_binary})
+
+
 def install_daemon(cfg: Config, interval: str = "10m") -> ActionResult:
     """Install + load the launchd pipeline driver (hands-off processing) from the Go-Live tab — no CLI. The
     daemon is SCHEDULING only; it inherits the ambient AI switch (set_ai_responder), so installing it never

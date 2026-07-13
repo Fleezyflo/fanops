@@ -74,7 +74,9 @@ class GoLiveStatus:
     learning_validated: bool = False   # M3: cutover.json metrics_confirmed — the loop is unfrozen on this backend
     account_casting: bool = False      # per-account moment casting ON (FANOPS_ACCOUNT_CASTING) — distinct moment sets per account
     clip_profile: str = "talk"         # clip-length band (FANOPS_CLIP_PROFILE): talk 12-22s / song 18-35s
-    responder_mode: str = "manual"     # THE AI switch (FANOPS_RESPONDER): 'llm' = pipeline answers gates via claude, 'manual' = human/pending
+    responder_mode: str = "manual"     # THE AI switch (FANOPS_RESPONDER): 'llm' = pipeline answers gates via LLM CLI, 'manual' = human/pending
+    llm_transport: str = "claude"      # FANOPS_LLM_TRANSPORT: claude | cursor (which CLI shells for gates)
+    llm_cli_binary: str = "claude"     # resolved binary name for operator copy (claude | cursor-agent)
     daemon: Optional[dict] = None      # launchd pipeline-driver health (verdict/loaded/interval/responder), None off-darwin
     demoted: list = field(default_factory=list)   # Phase 3: planned/demoted accounts (promotable) — golive_accounts lists only active()
     # Phase 6: A/B learning-loop INTENT flags (default OFF). ON sets intent only — the apply paths stay
@@ -1387,6 +1389,7 @@ def golive_status(cfg: Config) -> GoLiveStatus:
         account_casting=cfg.account_casting,           # per-account moment casting toggle state (persona diff)
         clip_profile=cfg.clip_profile,                 # clip-length band (talk/song)
         responder_mode=cfg.responder_mode,             # THE AI switch state (llm/manual) — surfaced for the toggle
+        llm_transport=cfg.llm_transport, llm_cli_binary=cfg.llm_cli_binary,
         daemon=daemon_health(cfg),                     # launchd driver health for the Go-Live daemon control (None off-darwin)
         demoted=golive_demoted_accounts(cfg),          # Phase 3: promotable planned accounts
         variant_learning=cfg.variant_learning,         # Phase 6: A/B learning-loop intent flags (default OFF)

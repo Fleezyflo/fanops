@@ -805,7 +805,32 @@ def test_golive_status_carries_responder_and_daemon(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path); monkeypatch.setenv("FANOPS_RESPONDER", "llm")
     st = views.golive_status(cfg)
     assert st.responder_mode == "llm"
+    assert st.llm_transport == "claude" and st.llm_cli_binary == "claude"
     assert st.daemon is None or isinstance(st.daemon, dict)        # dict on darwin, None off-darwin — never raises
+
+def test_set_llm_transport_toggles_dual_write(tmp_path, monkeypatch):
+    cfg = _clean(monkeypatch, tmp_path)
+    res = golive.set_llm_transport(cfg, "cursor")
+    assert res.ok and res.detail["llm_transport"] == "cursor" and res.detail["llm_cli_binary"] == "cursor-agent"
+    assert "FANOPS_LLM_TRANSPORT=cursor" in (tmp_path / ".env").read_text()
+    assert cfg.llm_transport == "cursor" and cfg.llm_cli_binary == "cursor-agent"
+    res = golive.set_llm_transport(cfg, "claude")
+    assert res.ok and res.detail["llm_transport"] == "claude"
+    assert "FANOPS_LLM_TRANSPORT=claude" in (tmp_path / ".env").read_text()
+
+def test_set_llm_transport_rejects_unknown(tmp_path, monkeypatch):
+    cfg = _clean(monkeypatch, tmp_path)
+    res = golive.set_llm_transport(cfg, "openai")
+    assert not res.ok and "claude or cursor" in res.error
+
+def test_golive_llm_transport_route_flips_cursor(tmp_path, monkeypatch):
+    from fanops.studio.app import create_app
+    cfg = _clean(monkeypatch, tmp_path)
+    app = create_app(cfg); app.config.update(TESTING=True)
+    r = app.test_client().post("/golive/llm-transport", data={"transport": "cursor"})
+    assert r.status_code == 200
+    assert cfg.llm_transport == "cursor"
+    assert "Switch to Claude" in r.get_data(as_text=True)
 
 def test_golive_responder_route_toggles_on(tmp_path, monkeypatch):
     from fanops.studio.app import create_app
@@ -819,4 +844,4 @@ def test_golive_responder_route_toggles_on(tmp_path, monkeypatch):
 def test_golive_panel_shows_hands_off_section(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path)
     html = _client(cfg).get("/golive").get_data(as_text=True)
-    assert "Hands-off processing" in html and "AI responder" in html
+    assert "Hands-off processing" in html and "AI responder" in html and "LLM transport" in html
