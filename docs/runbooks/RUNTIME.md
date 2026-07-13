@@ -308,6 +308,47 @@ briefly on the ledger lock, then `LockBusyError`-skip (see *Overlapping runs —
 
 ---
 
+## Speech-trust tier upgrade — pre-PR #619 sources
+
+Sources transcribed **before** the speech-trust layers landed (PR #619) may still carry ledger rows
+or on-disk whisper JSON whose segments lack a persisted `trust_tier` stamp (legacy transcript
+shape). **Runtime production gates are safe without migration:** `segment_trusted` /
+`trusted_segments` / `window_has_trusted_speech` live-evaluate via `_trust_tier` when the stamp is
+absent, so subs, snap, pick prompts, hook excerpts, and framing classify still consume **full-tier
+only**. Studio Library and Gates may show `degraded` / `rejected` chips on those rows for operator
+honesty.
+
+When an operator wants **fresh full-tier stamps** on disk (clean Library transcript, re-opened
+moment gates on trusted speech, or a source stuck on degraded cache that `_adopt_cached_transcript`
+refuses):
+
+1. **Force T0 rewind** — purge stale whisper/signals caches so adoption cannot short-circuit:
+
+   ```bash
+   fanops retry-source <source_id> --from-stage catalogued --force
+   ```
+
+   (MOL-471: also discards `moments` + `moment_hooks` gates and reconciles away unprotected
+   moments; respects protected posts.)
+
+2. **Re-transcribe** — `fanops advance` (or `fanops run` until the source passes transcribe).
+   `_finalize_segments` stamps `trust_tier` + `trusted` on every segment; incomplete quality
+   metadata is refused at adopt and triggers a real whisper run.
+
+3. **Verify** — open Studio **Library** for the source (tier chips) or inspect
+   `04_agent_io/transcripts/<stem>.json` — each segment should carry `trust_tier: "full"` when L1+L2
+   pass.
+
+**Stale pending gates:** gates opened **before** upgrade may still show untrusted segments in the
+transcript panel; click-to-fill skips `degraded` / `rejected` rows (`gates.js`). Discard or
+re-request those gates after the force-retry transcribe completes.
+
+Without `--force`, `--from-stage catalogued` alone clears ledger transcribed state but **on-disk
+whisper JSON may still be adopted** if it passes the quality-complete check — use `--force` when the
+goal is a guaranteed re-run with fresh stamps.
+
+---
+
 ## ASR language pinning — code-switched rap (MOL-475)
 
 **Problem.** The default `FANOPS_ASR_LANGUAGE=en,ar` sets `multilingual=True` in

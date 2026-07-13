@@ -539,6 +539,50 @@ def test_request_moments_carries_clip_profile(tmp_path, monkeypatch):
     payload = json.loads(request_path(cfg, "moments", "src_1").read_text())
     assert payload["clip_profile"] == "song"
 
+def _run_log_outcomes(cfg):
+    if not cfg.log_path.exists(): return []
+    return [json.loads(line)["outcome"] for line in cfg.log_path.read_text().splitlines() if line.strip()]
+
+def test_validate_pick_logs_pick_speech_mismatch(tmp_path):
+    cfg = Config(root=tmp_path)
+    src = Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
+                 state=SourceState.signalled, duration=60.0, language="en",
+                 transcript=[{**MUSIC_HALLUC, "start": 14.0, "end": 18.0}],
+                 meta={"transcribed": True})
+    pick = MomentPick(start=14.0, end=18.0, reason="visual beat",
+                      transcript_excerpt="invented LLM line")
+    assert validate_pick(pick, duration=60.0, src=src, cfg=cfg) is None
+    assert "pick_speech_mismatch" in _run_log_outcomes(cfg)
+
+def test_request_moments_logs_speech_untrusted_dropped(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
+                          state=SourceState.signalled, duration=60.0, language="en",
+                          transcript=[talk_seg("good line", start=0.0, end=3.0),
+                                      {**MUSIC_HALLUC, "start": 14.0, "end": 18.0}],
+                          signal_peaks=[{"t": 16.0, "kind": "scene_cut", "score": 0.6}],
+                          meta={"transcribed": True}))
+    led = request_moments(led, cfg, "src_1")
+    recs = [json.loads(line) for line in cfg.log_path.read_text().splitlines() if line.strip()]
+    dropped = [r for r in recs if r["outcome"] == "speech_untrusted_dropped"]
+    assert dropped and dropped[0]["count"] == "1"
+
+def test_ingest_logs_excerpt_overwritten(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
+                          state=SourceState.signalled, duration=60.0, language="en",
+                          transcript=[{**MUSIC_HALLUC, "start": 14.0, "end": 28.0}],
+                          signal_peaks=[{"t": 16.0, "kind": "scene_cut", "score": 0.6}],
+                          meta={"transcribed": True}))
+    led = request_moments(led, cfg, "src_1")
+    led = _ingest_picks(led, cfg, "src_1",
+                        [MomentPick(start=14.0, end=18.0, reason="bar lands",
+                                    transcript_excerpt="totally invented LLM junk line")])
+    recs = [json.loads(line) for line in cfg.log_path.read_text().splitlines() if line.strip()]
+    overwritten = [r for r in recs if r["outcome"] == "excerpt_overwritten"]
+    assert overwritten and overwritten[0]["token"] == "14.00-18.00"
+    assert not led.moments_of("src_1")[0].transcript_excerpt
+
 def test_validate_pick_rejects_bad_bounds():
     assert validate_pick(MomentPick(start=5, end=3, reason="r"), duration=20.0) is not None  # end<start
     assert validate_pick(MomentPick(start=-1, end=3, reason="r"), duration=20.0) is not None # start<0

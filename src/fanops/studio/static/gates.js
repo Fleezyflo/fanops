@@ -1,5 +1,6 @@
 // Gates: transcript click-to-fill + dynamic moment pick rows.
   function fillFromSeg(seg) {
+    if (!seg || seg.classList.contains('seg-trust-degraded') || seg.classList.contains('seg-trust-rejected')) return;
     var card = seg.closest('.card'); if (!card) return;
     var rows = card.querySelectorAll('.pick-row');
     for (var i = 0; i < rows.length; i++) {
