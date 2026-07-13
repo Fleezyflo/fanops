@@ -109,8 +109,9 @@ _CONTEXT_LIMIT_MARKERS = ("prompt is too long", "context length", "exceeds the m
                           "maximum context")
 _TOOLCHAIN_MARKERS = ("unknown option", "unrecognized option", "unknown argument", "unknown command", "usage:",
                       "unknown flag", "invalid option", "invalid flag")
-# T01 probe (cursor-agent absent on probe host — defaults from cursor.com/docs/cli/reference/output-format):
-_CURSOR_SUPPORTS_VISION = False
+# Cursor-agent reads frames via its Read tool on the --add-dir keyframe path (proven live). True both
+# disables the legacy vision->claude fallback AND drops the preflight/doctor "cursor needs claude" gate.
+_CURSOR_SUPPORTS_VISION = True
 _CURSOR_MODEL_ALIASES: dict[str, str] = {}
 _CURSOR_RATE_LIMIT_MARKERS = ("rate limit", "too many requests", "429", "503", "529", "overloaded")
 def _is_context_limit(text: str) -> bool:
@@ -166,14 +167,13 @@ def _frames_unread(env: dict) -> bool:
 def claude_json_meta(prompt: str, schema: dict, *, timeout: float = 300.0,
                      images: list[str] | None = None, model: str | None = None,
                      read_root: str | None = None) -> tuple[dict, str | None, bool]:
-    """Dispatch to claude or cursor-agent transport per FANOPS_LLM_TRANSPORT; vision falls back to claude
-    when cursor transport lacks vision support. Cursor uses its OWN auto model selection (no --model) —
+    """Dispatch to claude or cursor-agent transport per FANOPS_LLM_TRANSPORT. When the toggle is cursor
+    EVERY gate call (text AND vision) goes to cursor-agent — no code-decided fallback to claude; vision
+    frames ride cursor's Read tool via --add-dir. Cursor uses its OWN auto model selection (no --model) —
     the per-gate claude tiers (opus/sonnet) are Claude-only and are NOT forwarded to cursor-agent; the
     operator can still force ONE cursor model via FANOPS_LLM_MODEL."""
     from fanops.config import resolve_llm_transport
     if resolve_llm_transport() == "cursor":
-        if images and not _CURSOR_SUPPORTS_VISION:
-            return _claude_json_meta(prompt, schema, timeout=timeout, images=images, model=model, read_root=read_root)
         forced = (os.getenv("FANOPS_LLM_MODEL") or "").strip() or None   # AUTO unless the operator forces one
         return _cursor_json_meta(prompt, schema, timeout=timeout, images=images, model=forced, read_root=read_root)
     return _claude_json_meta(prompt, schema, timeout=timeout, images=images, model=model, read_root=read_root)
@@ -334,9 +334,11 @@ def _resolve_cursor_model(model: str | None) -> str | None:
     if not model: return None
     return _CURSOR_MODEL_ALIASES.get(model, model)
 
-def _build_cursor_cmd(model: str | None) -> list[str]:
+def _build_cursor_cmd(model: str | None, read_root: str | None = None) -> list[str]:
     resolved = _resolve_cursor_model(model)
-    return ["cursor-agent", "-p", "--output-format", "json", "--trust"] + (["--model", resolved] if resolved else [])
+    return (["cursor-agent", "-p", "--output-format", "json", "--trust"]
+            + (["--add-dir", read_root] if read_root else [])   # grant Read access to the keyframes dir
+            + (["--model", resolved] if resolved else []))
 
 def _cursor_rate_limit_status(returncode: int, stdout: str, stderr: str) -> int | None:
     rl = _rate_limit_status(returncode, stdout)
@@ -358,7 +360,7 @@ def _cursor_json_meta(prompt: str, schema: dict, *, timeout: float = 300.0,
         delay = _RL_BASE_DELAY
         for attempt in range(_MAX_RL_RETRIES + 1):
             try:
-                r = subprocess.run(_build_cursor_cmd(model), check=False, capture_output=True, text=True,
+                r = subprocess.run(_build_cursor_cmd(model, read_root), check=False, capture_output=True, text=True,
                                    timeout=timeout, input=_schema_stdin(stdin_prompt))
             except (FileNotFoundError, OSError) as e:
                 raise ToolchainMissingError(
@@ -392,7 +394,16 @@ def _cursor_json_meta(prompt: str, schema: dict, *, timeout: float = 300.0,
         return env
 
     frames_unread = False                                    # cursor json envelope has no num_turns analogue
-    env = _run(prompt)
+    # cursor-agent narrates by default ("I'll read the image frame first."), so demand JSON-only and,
+    # for vision gates, tell it to Read the --add-dir frame paths FIRST (same shape as _claude_json_meta).
+    _JSON_ONLY = ("\n\nOutput ONLY the JSON object as the first and only characters of your reply — "
+                  "no preamble, no prose, no markdown fences, no explanation.")
+    if images:
+        base = ("Read each image frame path below with your Read tool FIRST, then complete the task:\n"
+                + "\n".join(images) + "\n\n" + prompt + _JSON_ONLY)
+    else:
+        base = prompt + _JSON_ONLY
+    env = _run(base)
 
     def _resolve_from_env(e: dict) -> tuple[dict | None, bool]:
         so = e.get("structured_output")
