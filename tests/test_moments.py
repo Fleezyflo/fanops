@@ -11,6 +11,7 @@ from fanops.moments import (request_moments, ingest_moments, request_moment_hook
 from fanops.agentstep import gate_keys_for
 from fanops.adjust import amplify
 from fanops.ids import child_id
+from tests.fixtures.speech_segments import talk_seg, MUSIC_HALLUC, LEGACY_EN
 
 # M1b (frame-seeing two-pass): the moment gate is split. PASS 1 (request_moments/ingest_moments) picks
 # the WINDOWS -> moments are born `picked` (NOT renderable) and the source lands `picks_decided`. PASS 2
@@ -60,8 +61,11 @@ def _decide_hooks(led, cfg, source_id, hooks=None, accounts=None):
 def _src(led, cfg, dur=20.0):
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
                           state=SourceState.signalled, duration=dur, language="en",
-                          transcript=[{"start": 0, "end": 3, "text": "intro"},
-                                      {"start": 14, "end": 18, "text": "they slept on me"}],
+                          transcript=[talk_seg("intro line here", start=0, end=3),
+                                      talk_seg("they slept on me", start=14, end=18),
+                                      talk_seg("second wave line here", start=20, end=34),
+                                      talk_seg("another bar lands here", start=40, end=54),
+                                      talk_seg("late verse lands here", start=60, end=74)],
                           signal_peaks=[{"t": 16.0, "kind": "scene_cut", "score": 0.6}],
                           meta={"transcribed": True}))
 
@@ -674,6 +678,51 @@ def test_request_moment_hooks_is_write_once(tmp_path):
     led = request_moment_hooks(led, cfg, "src_1")     # second pass — must be a no-op for this gate
     assert latest_request_id(cfg, "moment_hooks", "src_1.14.00-18.00") == rid1
 
+def test_request_moment_hooks_skips_llm_when_no_trusted_speech(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
+                          state=SourceState.signalled, duration=60.0, language="en",
+                          transcript=[{**MUSIC_HALLUC, "start": 10.0, "end": 28.0}],
+                          signal_peaks=[{"t": 16.0, "kind": "scene_cut", "score": 0.6}],
+                          meta={"transcribed": True}))
+    led = request_moments(led, cfg, "src_1")
+    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=18.0, reason="visual beat")])
+    led = request_moment_hooks(led, cfg, "src_1")
+    from fanops.agentstep import read_response
+    dec = read_response(cfg, "moment_hooks", "src_1.14.00-18.00", MomentHookDecision)
+    assert dec is not None and dec.hook is None
+    led = ingest_moment_hooks(led, cfg, "src_1")
+    assert led.moments_of("src_1")[0].hook is None
+    assert led.moments_of("src_1")[0].state is MomentState.decided
+
+def test_ingest_overwrites_junk_excerpt(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
+                          state=SourceState.signalled, duration=60.0, language="en",
+                          transcript=[talk_seg("they slept on me here", start=14.0, end=18.0)],
+                          signal_peaks=[{"t": 16.0, "kind": "scene_cut", "score": 0.6}],
+                          meta={"transcribed": True}))
+    led = request_moments(led, cfg, "src_1")
+    led = _ingest_picks(led, cfg, "src_1",
+                        [MomentPick(start=14.0, end=18.0, reason="bar lands",
+                                    transcript_excerpt="totally invented LLM junk line")])
+    m = led.moments_of("src_1")[0]
+    assert m.transcript_excerpt == "they slept on me here"
+
+def test_ingest_degraded_yields_empty_excerpt(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
+                          state=SourceState.signalled, duration=60.0, language="en",
+                          transcript=[{**LEGACY_EN, "start": 14.0, "end": 18.0}],
+                          signal_peaks=[{"t": 16.0, "kind": "scene_cut", "score": 0.6}],
+                          meta={"transcribed": True}))
+    led = request_moments(led, cfg, "src_1")
+    led = _ingest_picks(led, cfg, "src_1",
+                        [MomentPick(start=14.0, end=18.0, reason="bar lands",
+                                    transcript_excerpt="they slept on me")])
+    m = led.moments_of("src_1")[0]
+    assert not m.transcript_excerpt
+
 def test_decide_hooks_promotes_picked_to_decided_with_window_hook(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
     led = request_moments(led, cfg, "src_1")
@@ -960,7 +1009,7 @@ def test_validate_pick_rejects_blank_reason():
 # ---- AGENT-2: the pick-payload transcript is bounded (sampled near peaks), small inputs byte-identical ----
 def test_long_transcript_is_truncated_with_marker():
     from fanops.moments import _bounded_transcript
-    segs = [{"start": float(i), "end": float(i) + 1, "text": "x" * 1000} for i in range(200)]
+    segs = [talk_seg("x" * 1000, start=float(i), end=float(i) + 1) for i in range(200)]
     peaks = [{"t": 50.0, "kind": "scene_cut", "score": 9.0}]
     kept, dropped = _bounded_transcript(segs, peaks)
     assert dropped > 0 and kept and len(kept) < len(segs)
@@ -973,7 +1022,7 @@ def test_bounded_transcript_biases_to_filtered_peaks(monkeypatch):
     from fanops import moments
     from fanops.moments import _bounded_transcript
     monkeypatch.setattr(moments, "_TRANSCRIPT_CHAR_BUDGET", 5000)
-    segs = [{"start": float(i), "end": float(i) + 1, "text": "line " * 20} for i in range(200)]
+    segs = [talk_seg("line " * 20, start=float(i), end=float(i) + 1) for i in range(200)]
     peaks_early = [{"t": 5.0, "kind": "energy", "score": 9.0}]
     peaks_late = [{"t": 195.0, "kind": "energy", "score": 9.0}]
     kept_early, _ = _bounded_transcript(segs, peaks_early)
@@ -987,9 +1036,9 @@ def test_bounded_transcript_corpus_bonus(monkeypatch):
     from fanops import moments
     from fanops.moments import _bounded_transcript
     monkeypatch.setattr(moments, "_TRANSCRIPT_CHAR_BUDGET", 50)
-    near_plain = {"start": 48.0, "end": 52.0, "text": "x" * 40}           # mid=50, no corpus hit
-    near_corpus = {"start": 49.0, "end": 51.0, "text": "freestyle " * 4}  # mid=50, corpus hit
-    far = [{"start": float(i * 10), "end": float(i * 10) + 1, "text": "z" * 200} for i in range(30)]
+    near_plain = talk_seg("x" * 40, start=48.0, end=52.0)           # mid=50, no corpus hit
+    near_corpus = talk_seg("freestyle " * 4, start=49.0, end=51.0)  # mid=50, corpus hit
+    far = [talk_seg("z" * 200, start=float(i * 10), end=float(i * 10) + 1) for i in range(30)]
     segs = sorted(far + [near_plain, near_corpus], key=lambda s: s["start"])
     peaks = [{"t": 50.0}]
     kept, _ = _bounded_transcript(segs, peaks, corpus=["freestyle"])
@@ -1001,7 +1050,7 @@ def test_bounded_transcript_corpus_not_a_filter(monkeypatch):
     from fanops import moments
     from fanops.moments import _bounded_transcript
     monkeypatch.setattr(moments, "_TRANSCRIPT_CHAR_BUDGET", 200)
-    segs = [{"start": float(i), "end": float(i) + 1, "text": "off theme " * 10} for i in range(50)]
+    segs = [talk_seg("off theme " * 10, start=float(i), end=float(i) + 1) for i in range(50)]
     peaks = [{"t": 25.0}]
     kept, dropped = _bounded_transcript(segs, peaks, corpus=["freestyle", "drill"])
     assert kept and dropped > 0
@@ -1010,7 +1059,7 @@ def test_bounded_transcript_corpus_not_a_filter(monkeypatch):
 
 def test_bounded_transcript_no_corpus_byte_identical():
     from fanops.moments import _bounded_transcript
-    segs = [{"start": float(i), "end": float(i) + 1, "text": "x" * 1000} for i in range(200)]
+    segs = [talk_seg("x" * 1000, start=float(i), end=float(i) + 1) for i in range(200)]
     peaks = [{"t": 50.0, "kind": "scene_cut", "score": 9.0}]
     baseline = _bounded_transcript(segs, peaks)
     assert _bounded_transcript(segs, peaks, corpus=None) == baseline

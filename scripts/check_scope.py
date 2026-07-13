@@ -31,6 +31,7 @@ _OVERRIDES: dict[str, tuple[str, ...]] = {
     "src/fanops/produce.py": ("tests/test_publish_post.py",),
     "src/fanops/settings.py": ("tests/test_config.py",),
     "src/fanops/timing_bias.py": ("tests/test_culmination_coverage.py",),
+    "src/fanops/transcribe.py": ("tests/test_transcribe.py", "tests/test_speech_trust.py"),
     "src/fanops/post/run.py": ("tests/test_post_run.py",),
     "src/fanops/studio/actions_approve.py": ("tests/test_studio_approval.py",),
     "src/fanops/studio/actions_common.py": ("tests/test_studio_golive.py",),

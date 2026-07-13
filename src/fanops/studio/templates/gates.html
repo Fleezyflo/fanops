@@ -68,9 +68,10 @@
         <span class="muted">{{ '%.1f'|format(g.duration or 0.0) }}s{% if g.language %}, {{ g.language }}{% endif %}</span>
         {% if g.transcript %}
           <details open><summary>transcript — click a line to fill a pick</summary>
-            <ol class="transcript">{% for seg in g.transcript %}<li class="seg" tabindex="0" role="button"
+            <ol class="transcript">{% for seg in g.transcript %}<li class="seg{% if seg.trust_tier is defined and seg.trust_tier != 'full' %} seg-trust-{{ seg.trust_tier }}{% endif %}" tabindex="0" role="button"
                  data-start="{{ '%.2f'|format(seg.start or 0.0) }}" data-end="{{ '%.2f'|format(seg.end or 0.0) }}">
               <span class="muted">{{ '%.1f'|format(seg.start or 0.0) }}–{{ '%.1f'|format(seg.end or 0.0) }}</span>
+              {% if seg.trust_tier is defined and seg.trust_tier != 'full' %}<span class="chip warn seg-tier" title="ASR trust tier">{{ seg.trust_tier }}</span>{% endif %}
               {{ seg.text or '' }}</li>{% endfor %}</ol>
           </details>
         {% endif %}

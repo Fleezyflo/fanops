@@ -9,6 +9,7 @@ from fanops.moments import request_moments, ingest_moments, request_moment_hooks
 from fanops.agentstep import request_path, response_path, latest_request_id
 from fanops.prompts import moment_hook_prompt
 from fanops.responder import screen_model_text
+from tests.fixtures.speech_segments import talk_seg
 
 def _accts(cfg, handles_personas):
     a = Accounts(cfg)
@@ -20,7 +21,9 @@ def _seed_src(cfg, dur=60.0):
     led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
                           state=SourceState.signalled, language="en", duration=dur,
-                          signal_peaks=[{"t": 16.0, "kind": "scene_cut", "score": 0.6}]))
+                          transcript=[talk_seg("they slept on me here", start=10.0, end=28.0)],
+                          signal_peaks=[{"t": 16.0, "kind": "scene_cut", "score": 0.6}],
+                          meta={"transcribed": True}))
     return led
 
 def _pick(led, cfg, owner=None):
@@ -64,6 +67,13 @@ def test_ingest_moment_hooks_persists_m_hook_only(tmp_path):
     assert m.state is MomentState.decided and m.hook == "the part you'll replay"
 
 # ---- null hook clean promotion (MOL-476 retry machinery removed) ------------------------------------
+def test_moment_hook_prompt_allows_null():
+    p = {"start": 10.0, "end": 28.0, "reason": "r", "transcript_excerpt": "", "language": "en",
+         "guidance": "", "frames": [], "signal_peaks": [],
+         "personas": [{"handle": "markmakmouly", "persona": "craft angle"}]}
+    out = moment_hook_prompt(p)
+    assert "hook: null" in out and "set dressing" in out
+
 def test_moment_hook_prompt_forbids_null_license():
     p = {"start": 10.0, "end": 28.0, "reason": "r", "transcript_excerpt": "", "language": "en",
          "guidance": "", "frames": [], "signal_peaks": [],

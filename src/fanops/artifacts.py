@@ -134,7 +134,7 @@ def infer_resume_stage(cfg: Config, led: Ledger, source_id: str) -> str | None:
 
 def adopt_warm_artifacts(led: Ledger, cfg: Config, source_id: str) -> Ledger:
     """Adopt warm transcript JSON when ledger is stale (catalogued/error, empty transcript)."""
-    from fanops.transcribe import _adopt_cached_transcript, _segment
+    from fanops.transcribe import _adopt_cached_transcript, _cache_is_quality_complete, _finalize_segments
     s = led.sources.get(source_id)
     if s is None or bool(s.transcript):
         return led
@@ -144,13 +144,16 @@ def adopt_warm_artifacts(led: Ledger, cfg: Config, source_id: str) -> Ledger:
     if s.state in (SourceState.error, SourceState.moments_empty):
         try:
             data = json.loads(cached.read_text())
-            s.transcript = [_segment(seg) for seg in data.get("segments", [])]
-            s.language = data.get("language")
+            if not _cache_is_quality_complete(data):
+                return led
+            lang = data.get("language")
+            s.transcript = _finalize_segments(data.get("segments", []), lang)
+            s.language = lang
             s.meta["transcribed"] = True
         except (OSError, json.JSONDecodeError, KeyError, TypeError, AttributeError):
             pass
         return led
-    if _adopt_cached_transcript(led, source_id, cached):
+    if _adopt_cached_transcript(led, source_id, cached, cfg=cfg):
         return led
     return led
 

@@ -411,6 +411,9 @@ summary:focus-visible { outline:none; box-shadow:var(--ring); }
 .seg { padding:.3rem .55rem; border-radius:var(--r-sm); cursor:pointer; font-size:var(--t-meta); line-height:1.45; transition:background var(--dur) var(--ease); }
 .seg:hover { background:var(--accent-dim); }
 .seg .muted { font:var(--t-eyebrow) var(--mono); margin-right:.4rem; }
+.seg-trust-degraded { opacity:.75; }
+.seg-trust-rejected { opacity:.55; font-style:italic; }
+.seg-tier { font-size:var(--t-eyebrow); margin-right:.35rem; vertical-align:middle; }
 .pick-row { display:grid; grid-template-columns:6rem 6rem 1fr; gap:.5rem; margin:.4rem 0; }
 @media (max-width:560px) { .pick-row { grid-template-columns:1fr 1fr; } .pick-row input:last-child { grid-column:1/-1; } }
 

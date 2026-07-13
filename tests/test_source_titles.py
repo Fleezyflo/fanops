@@ -6,6 +6,7 @@ from fanops.models import (Source, SourceState, MomentDecision, MomentPick, sour
 from fanops.moments import ingest_moments, request_moments, _sanitize_source_title
 from fanops.agentstep import response_path, latest_request_id
 from fanops.responder import screen_model_text
+from tests.fixtures.speech_segments import talk_seg
 
 
 def _mp(s, e, reason="r"):
@@ -14,7 +15,7 @@ def _mp(s, e, reason="r"):
 
 def _src(led, cfg, dur=60.0, *, path="/videos/interview.mp4"):
     led.add_source(Source(id="src_1", source_path=path, state=SourceState.signalled, duration=dur,
-                          language="en", transcript=[{"start": 0, "end": 8, "text": "hello"}],
+                          language="en", transcript=[talk_seg("hello world", start=0.0, end=8.0)],
                           signal_peaks=[], meta={"transcribed": True}))
 
 

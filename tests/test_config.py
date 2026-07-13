@@ -226,6 +226,7 @@ def test_burn_subs_defaults_on_and_respects_env(monkeypatch, tmp_path):
     monkeypatch.setenv("FANOPS_BURN_SUBS", "1")
     assert Config(root=tmp_path).burn_subs is True
 
+
 def test_isolate_vocals_defaults_on_and_respects_env(monkeypatch, tmp_path):
     # DEFAULT ON: stripping the beat (Demucs) before Whisper is the music-transcription fix; it
     # fails open to raw audio when demucs is absent, so ON is safe. Only off-words disable it.

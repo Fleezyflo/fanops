@@ -10,7 +10,7 @@ from fanops.ledger import Ledger
 from fanops.models import (Moment, MomentRequest, MomentDecision, MomentPick, MomentState, SourceState,
                            MomentHookRequest, MomentHookDecision)
 from fanops.ids import child_id
-from fanops.agentstep import write_request, read_response, latest_request_id, discard_gates_for, discard_gate, clear_attempts, gate_keys_for
+from fanops.agentstep import write_request, write_response, read_response, latest_request_id, discard_gates_for, discard_gate, clear_attempts, gate_keys_for
 from fanops.hookcheck import is_weak_hook
 from fanops.keyframes import extract_keyframes
 from fanops.bands import band_for
@@ -160,7 +160,7 @@ def _drop_overlaps(picks: list[MomentPick]) -> list[MomentPick]:
             peers.append(p); out.append(p)
     return out
 
-def validate_pick(pick: MomentPick, *, duration: float) -> str | None:
+def validate_pick(pick: MomentPick, *, duration: float, src=None, cfg=None) -> str | None:
     """Return a reason string if the pick is invalid, else None."""
     if not (math.isfinite(pick.start) and math.isfinite(pick.end)):
         return f"non-finite timestamp ({pick.start}->{pick.end})"   # AUDIT H4
@@ -174,6 +174,10 @@ def validate_pick(pick: MomentPick, *, duration: float) -> str | None:
         return f"too short ({pick.end - pick.start:.2f}s)"
     if not (pick.reason or "").strip():
         return "blank reason"   # MOM-6: a rationale-less pick rides the casting fit signal + hook brief blind
+    if src is not None and cfg is not None and (pick.transcript_excerpt or "").strip():
+        from fanops.transcribe import window_has_trusted_speech
+        if not window_has_trusted_speech(src, pick.start, pick.end):
+            get_logger(cfg)("moments", getattr(src, "id", "-"), "pick_speech_mismatch", warn=True)
     return None
 
 # AGENT-2: the pick prompt must stay under the claude -p context ceiling. A long source's whole transcript
@@ -195,11 +199,18 @@ def _corpus_hit(text, corpus) -> bool:
             if needle and needle in hay: return True
     except Exception: return False
     return False
-def _bounded_transcript(transcript: list, peaks: list, *, corpus=None) -> tuple:
+def _bounded_transcript(transcript: list, peaks: list, *, corpus=None, src_lang=None,
+                        cfg=None, source_id: str | None = None) -> tuple:
     """Return (segments_to_send, dropped_count). Keeps segments whose [start,end] midpoint is nearest a peak's
     `t` until the char budget is spent; preserves chronological order. Empty/under-budget -> (transcript, 0).
-    When corpus is non-empty, corpus-matching segments rank ahead of equidistant non-matches (bonus, not filter)."""
-    segs = transcript or []
+    When corpus is non-empty, corpus-matching segments rank ahead of equidistant non-matches (bonus, not filter).
+    Full-trust segments only — untrusted ASR is dropped before budgeting."""
+    from fanops.transcribe import trusted_segments
+    raw = transcript or []
+    segs = trusted_segments(raw, src_lang=src_lang)
+    dropped_untrusted = len(raw) - len(segs)
+    if dropped_untrusted and cfg:
+        get_logger(cfg)("source", source_id or "-", "speech_untrusted_dropped", count=dropped_untrusted)
     if sum(len(str(s.get("text", ""))) for s in segs) <= _TRANSCRIPT_CHAR_BUDGET:
         return segs, 0
     pts = sorted({float(p.get("t")) for p in (peaks or []) if isinstance(p, dict) and _is_num(p.get("t"))})
@@ -296,7 +307,8 @@ def request_moments(led: Ledger, cfg: Config, source_id: str, accounts=None, *, 
     g = load_guidance(cfg) if guidance is None else guidance
     targets = _targeted_active_accounts(led, cfg, source_id, accounts)
     if targets is None:
-        transcript, dropped = _bounded_transcript(src.transcript or [], peaks)
+        transcript, dropped = _bounded_transcript(src.transcript or [], peaks,
+                                                    src_lang=src.language, cfg=cfg, source_id=source_id)
         if dropped:
             get_logger(cfg)("source", source_id, "transcript_truncated", dropped=dropped, total=len(src.transcript or []))
         personas = _persona_peaks(peaks, _pick_personas(cfg, accounts))
@@ -327,7 +339,8 @@ def request_moments(led: Ledger, cfg: Config, source_id: str, accounts=None, *, 
     for a in targets:
         entry = _persona_entry(cfg, a)
         persona_peaks = filter_peaks_by_intensity(peaks, entry.get("intensity") or None)
-        transcript, dropped = _bounded_transcript(src.transcript or [], persona_peaks, corpus=entry.get("corpus"))
+        transcript, dropped = _bounded_transcript(src.transcript or [], persona_peaks, corpus=entry.get("corpus"),
+                                                    src_lang=src.language, cfg=cfg, source_id=source_id)
         if dropped:
             get_logger(cfg)("source", source_id, "transcript_truncated", dropped=dropped,
                             total=len(src.transcript or []), handle=a.handle)
@@ -376,15 +389,22 @@ def _reconcile_valid_picks(led: Ledger, cfg: Config, source_id: str, deduped: li
         owner_n[o] = owner_n.get(o, 0) + 1
     if owner_n:
         get_logger(cfg)("source", source_id, "owner_picks", **owner_n)
+    src = led.sources[source_id]
+    log = get_logger(cfg)
+    from fanops.transcribe import excerpt_for_window
     for pick in deduped:
         token = _token(pick)
         owner = (pick.personas or [None])[0]
         mid = _owned_moment_id(source_id, owner, token)
         clip_prof, framing = _stamp_owner_spec(cfg, owner, by_handle)
+        excerpt = excerpt_for_window(src, pick.start, pick.end) or ""
+        llm_excerpt = (pick.transcript_excerpt or "").strip()
+        if llm_excerpt and not excerpt:
+            log("source", source_id, "excerpt_overwritten", token=token)
         keep[mid] = Moment(id=mid, parent_id=source_id, state=MomentState.picked,
                            content_token=token, start=pick.start, end=pick.end,
                            reason=pick.reason,
-                           transcript_excerpt=pick.transcript_excerpt,
+                           transcript_excerpt=excerpt,
                            signal_score=pick.signal_score,
                            affinities=list(pick.personas),
                            clip_profile=clip_prof, framing=framing,
@@ -426,7 +446,7 @@ def _ingest_moments_dotted(led: Ledger, cfg: Config, source_id: str, keys: list[
             if echoed and echoed != owner:
                 log("moments", f"{source_id}.{owner}", "owner_mismatch", warn=True, echoed=echoed)
             stamped = pick.model_copy(update={"personas": [owner]})
-            bad = validate_pick(stamped, duration=src.duration or 0.0)
+            bad = validate_pick(stamped, duration=src.duration or 0.0, src=src, cfg=cfg)
             if bad:
                 continue
             gate_valid.append(stamped)
@@ -470,7 +490,7 @@ def ingest_moments(led: Ledger, cfg: Config, source_id: str) -> Ledger:
     reasons: list[str] = []
     valid: list[MomentPick] = []
     for pick in dec.picks:
-        bad = validate_pick(pick, duration=src.duration or 0.0)
+        bad = validate_pick(pick, duration=src.duration or 0.0, src=src, cfg=cfg)
         if bad:
             rejected += 1; reasons.append(bad)
             continue
@@ -523,6 +543,7 @@ def request_moment_hooks(led: Ledger, cfg: Config, source_id: str, accounts=None
     # flag is off / accounts is None / on any scorer error (fail-open).
     styles = proven_hook_styles(led, cfg, accounts)
     guidance = load_guidance(cfg)
+    from fanops.transcribe import window_has_trusted_speech
     for m in list(led.moments.values()):
         if m.parent_id != source_id or m.state is not MomentState.picked:
             continue
@@ -552,6 +573,12 @@ def request_moment_hooks(led: Ledger, cfg: Config, source_id: str, accounts=None
         payload.pop("request_id", None)
         if styles:
             payload["learned_hooks"] = styles      # optional KEY (mirrors caption), not a model field
+        if not window_has_trusted_speech(src, cs, ce):
+            rid = write_request(cfg, kind="moment_hooks", key=key, payload=payload)
+            write_response(cfg, "moment_hooks", key,
+                           MomentHookDecision(hook=None, request_id=rid).model_dump_json(indent=2))
+            get_logger(cfg)("source", source_id, "hook_skipped_no_speech", moment=m.id)
+            continue
         write_request(cfg, kind="moment_hooks", key=key, payload=payload)
     return led
 

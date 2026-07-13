@@ -310,10 +310,11 @@ briefly on the ledger lock, then `LockBusyError`-skip (see *Overlapping runs —
 
 ## ASR language pinning — code-switched rap (MOL-475)
 
-**Problem.** The default `FANOPS_ASR_LANGUAGE=en,ar` turns on faster-whisper **per-segment**
-language detection (`multilingual=True` in `src/fanops/_fwrun.py`). On Arabic-primary rap with
-occasional English ad-libs, that can **flap** between AR and EN mid-verse — gibberish or wrong-script
-lines in the transcript, which then poisons moment selection and burned-in subs.
+**Problem.** The default `FANOPS_ASR_LANGUAGE=en,ar` sets `multilingual=True` in
+`src/fanops/_fwrun.py` — faster-whisper then runs **per-segment language detection over its full
+supported language set** (the comma list does **not** restrict candidates to EN and AR only). On
+Arabic-primary rap with occasional English ad-libs, that can **flap** between scripts mid-verse —
+gibberish or wrong-script lines in the transcript, which then poisons moment selection and burned-in subs.
 
 **Phase 1 (least intervention — operator pin, no code default change).** For an Arabic-rap batch where
 the verses are Arabic-primary, set in the **runtime `.env`** (repo root, read at process start):
@@ -356,7 +357,8 @@ representative clip from the batch) before committing to the pin:
 
 **Wiring (for operators tracing config).** `FANOPS_ASR_LANGUAGE` → `Config.asr_language`
 (`src/fanops/config.py`) → `fw_cmd(..., cfg.asr_language)` → `fanops._fwrun --language …`
-→ `_fwrun.transcribe_to_json` (comma list ⇒ `multilingual=True`; single value ⇒ forced language).
+→ `_fwrun.transcribe_to_json` (comma list ⇒ `multilingual=True` over all Whisper languages, **not**
+a candidate pin; single value ⇒ forced language for the whole source).
 Demucs vocal isolation (`FANOPS_ISOLATE_VOCALS`, default ON) should stay on for rap regardless of
 language pin.
 

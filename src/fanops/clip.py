@@ -45,6 +45,10 @@ def _nearest(value: float, candidates: list[float], max_shift: float) -> float |
     in_range = [c for c in candidates if abs(c - value) <= max_shift]
     return min(in_range, key=lambda c: abs(c - value)) if in_range else None
 
+def _trusted_transcript(src) -> list[dict]:
+    from fanops.transcribe import trusted_segments
+    return trusted_segments(src.transcript or [], src_lang=getattr(src, "language", None))
+
 def snap_window(start: float, end: float, transcript: list[dict] | None,
                 *, duration: float = 0.0, max_shift: float = _SNAP_MAX_SHIFT_S) -> tuple[float, float]:
     """Nudge [start,end] onto nearby transcript-line boundaries so a clip never begins mid-word or
@@ -562,7 +566,12 @@ def _subtitles_vf(led: Ledger, cfg: Config, moment_id: str, cid: str, aspect: Fm
     # batch can skip lyric subs (burn_subs=False) while talk stays on, or vice-versa. None override -> global.
     batch = led.get_batch(src.batch_id) if getattr(src, "batch_id", None) else None
     burn = batch.burn_subs if (batch is not None and batch.burn_subs is not None) else cfg.burn_subs
-    segments = (src.transcript or []) if burn else []   # transcript is opt-in (global default, per-batch override)
+    raw = src.transcript or []
+    if burn:
+        from fanops.transcribe import trusted_segments
+        segments = trusted_segments(raw, src_lang=src.language)
+    else:
+        segments = []
     if not hook and not segments:                        # no hook, no opted-in transcript -> clean clip
         return None, False                               # nothing wanted -> not a failure
     if not overlay.ffmpeg_has_textfilter():
@@ -756,7 +765,7 @@ def render_moment(led: Ledger, cfg: Config, moment_id: str, *,
     if not is_stitch and not spans:
         band = band_for(_moment_profile(m, cfg))
         cs, ce = fit_window(m.start, m.end, src.duration or 0.0, lo=band.lo, hi=band.hi)  # widen to a real clip
-        cs, ce = snap_window(cs, ce, src.transcript, duration=src.duration or 0.0)  # land on clean phrase boundaries
+        cs, ce = snap_window(cs, ce, _trusted_transcript(src), duration=src.duration or 0.0)  # land on clean phrase boundaries
         # P1 T1: refine the entry onto the strongest opening frame, applied LAST (after band + snap) so the
         # rendered cut and the first_frame_kind provenance AGREE — snap can't silently undo a visual pick and
         # leave the dim lying (it would poison P4, which ranks first_frame_kind). Both 1.5s shifts otherwise
@@ -917,7 +926,7 @@ def render_account_cut(led: Ledger, cfg: Config, moment_id: str, *, aspect: Fmt,
         else:
             band = band_for(profile)
             cs, ce = fit_window(m.start, m.end, src.duration or 0.0, lo=band.lo, hi=band.hi)   # the account's band
-            cs, ce = snap_window(cs, ce, src.transcript, duration=src.duration or 0.0)
+            cs, ce = snap_window(cs, ce, _trusted_transcript(src), duration=src.duration or 0.0)
             if cfg.visual_start:                                  # same strong-frame entry the shared clip uses
                 cs, _ = pick_visual_start(src.source_path, cs, ce, scene_peaks=src.signal_peaks, out_dir=cfg.clips)
             realized = ce - cs                                    # P3: the account cut's REALIZED window length (post snap+visual-start)

@@ -32,6 +32,7 @@ from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Source, SourceState
 from fanops.transcribe import transcribe_source
+from tests.fixtures.speech_segments import talk_seg
 
 
 def test_double_transcribe_spawns_one_whisper(tmp_path, mocker, monkeypatch):
@@ -57,8 +58,7 @@ def test_double_transcribe_spawns_one_whisper(tmp_path, mocker, monkeypatch):
         outdir = Path(cmd[cmd.index("--output_dir") + 1])
         outdir.mkdir(parents=True, exist_ok=True)
         (outdir / f"{Path(cmd[-1]).stem}.json").write_text(
-            json.dumps({"language": "en", "segments": [
-                {"start": 0.0, "end": 1.0, "text": "one"}]}))
+            json.dumps({"language": "en", "segments": [talk_seg("one", start=0.0, end=1.0)]}))
 
         class R:
             returncode = 0
@@ -99,7 +99,7 @@ def test_transcribe_short_circuits_on_existing_json(tmp_path, mocker, monkeypatc
     out_dir = cfg.agent_io / "transcripts"
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "src_warm.json").write_text(json.dumps({"language": "en", "segments": [
-        {"start": 0.0, "end": 1.0, "text": "warm"}]}))
+        talk_seg("warm", start=0.0, end=1.0)]}))
 
     calls: list[list[str]] = []
 
@@ -149,7 +149,7 @@ def test_main_reduce_txn_is_short(tmp_path, monkeypatch, mocker):
     out_dir = cfg.agent_io / "transcripts"
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "src_warm.json").write_text(json.dumps({"language": "en", "segments": [
-        {"start": 0.0, "end": 1.0, "text": "warm"}]}))
+        talk_seg("warm", start=0.0, end=1.0)]}))
 
     # A no-op subprocess spy so the produce prewarm never actually shells out; it also RECORDS the
     # argv of any call made while `_in_producer[0]` is set (see below) — that flag marks the window
