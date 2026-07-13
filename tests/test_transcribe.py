@@ -4,7 +4,8 @@ from pathlib import Path
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Source, SourceState
-from fanops.transcribe import whisper_cmd, fw_cmd, transcribe_source, _segment
+from fanops.transcribe import whisper_cmd, fw_cmd, transcribe_source, _adopt_cached_transcript, _finalize_segments, _segment
+from tests.fixtures.speech_segments import LEGACY_EN, talk_seg
 
 def test_segment_passes_through_quality_metadata():
     raw = {"start": 0.0, "end": 2.0, "text": " hi", "avg_logprob": -0.5, "no_speech_prob": 0.1, "compression_ratio": 1.4}
@@ -322,13 +323,39 @@ def test_transcribe_adopts_existing_json_and_skips_subprocess(tmp_path, mocker):
                           state=SourceState.catalogued))
     out_dir = cfg.agent_io / "transcripts"; out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "src_1.json").write_text(json.dumps(
-        {"language": "en", "segments": [{"start": 0.0, "end": 2.0, "text": " cached line"}]}))
+        {"language": "en", "segments": [talk_seg("cached line")]}))
     spy = mocker.patch("fanops.transcribe.subprocess.run")
     led = transcribe_source(led, cfg, "src_1")
     spy.assert_not_called()                                   # warm artifact reused — no whisper, no isolation
     s = led.sources["src_1"]
     assert s.state is SourceState.transcribed and s.language == "en"
     assert s.transcript[0]["text"] == "cached line" and s.meta.get("transcribed") is True
+    assert s.transcript[0]["trust_tier"] == "rejected" and s.transcript[0]["trusted"] is False
+
+def test_stale_cache_without_metadata_not_adopted(tmp_path, mocker):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
+                          state=SourceState.catalogued))
+    out_dir = cfg.agent_io / "transcripts"; out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "src_1.json").write_text(json.dumps({"language": "en", "segments": [LEGACY_EN]}))
+    assert _adopt_cached_transcript(led, "src_1", out_dir / "src_1.json", cfg=cfg) is False
+    spy = mocker.patch("fanops.transcribe.subprocess.run")
+    def fake_run(cmd, **kw):
+        outdir = Path(cmd[cmd.index("--output_dir") + 1]); outdir.mkdir(parents=True, exist_ok=True)
+        (outdir / f"{Path(cmd[-1]).stem}.json").write_text(json.dumps(
+            {"language": "en", "segments": [talk_seg("fresh line")]}))
+        class R: returncode = 0; stderr = ""; stdout = ""
+        return R()
+    spy.side_effect = fake_run
+    led = transcribe_source(led, cfg, "src_1")
+    spy.assert_called_once()
+    assert led.sources["src_1"].transcript[0]["text"] == "fresh line"
+
+def test_finalize_segments_stamps_tier_fields():
+    segs = _finalize_segments([talk_seg("hello world")], "en")
+    assert segs[0]["trust_tier"] == "rejected" and segs[0]["trusted"] is False
+    empty = _finalize_segments([{"start": 0.0, "end": 1.0, "text": "  "}], "en")
+    assert empty[0]["trust_tier"] == "rejected" and empty[0]["trusted"] is False
 
 def test_transcribe_reruns_when_cached_json_is_corrupt(tmp_path, mocker):
     # Conservative skip: a truncated/corrupt cached JSON must NOT be adopted — fall through to a real

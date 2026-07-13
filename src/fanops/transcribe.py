@@ -148,6 +148,42 @@ def _transcript_schema(segments: list[dict]) -> int:
             return 2
     return 1
 
+def _cache_is_quality_complete(data: dict) -> bool:
+    """True when every non-empty cached segment carries all ASR quality keys."""
+    for s in data.get("segments") or []:
+        text = (s.get("text") or "").strip()
+        if not text: continue
+        if not all(k in s for k in _SEGMENT_QUALITY_KEYS):
+            return False
+    return True
+
+def _trust_tier_stub(seg: dict) -> str:
+    """Plan A stub — Plan B/C wire full/degraded tiers from quality metadata."""
+    if not (seg.get("text") or "").strip():
+        return "rejected"
+    return "rejected"
+
+def _finalize_segments(raw: list[dict], src_lang: str | None) -> list[dict]:
+    """Normalize raw whisper segments and stamp trust_tier + trusted on each."""
+    out: list[dict] = []
+    for s in raw or []:
+        seg = _segment(s)
+        tier = _trust_tier_stub(seg)
+        seg["trust_tier"] = tier
+        seg["trusted"] = tier == "full"
+        out.append(seg)
+    return out
+
+def _log_transcript_tiers(cfg: Config | None, source_id: str, segments: list[dict]) -> None:
+    if not cfg: return
+    full = degraded = rejected = 0
+    for seg in segments or []:
+        tier = seg.get("trust_tier", "rejected")
+        if tier == "full": full += 1
+        elif tier == "degraded": degraded += 1
+        else: rejected += 1
+    get_logger(cfg)("transcribe", source_id, "transcript_tiers", full=full, degraded=degraded, rejected=rejected)
+
 # Whisper-default quality thresholds for speech-trust filtering (FANOPS_SPEECH_TRUST).
 _NO_SPEECH_MAX = 0.6
 _AVG_LOGPROB_MIN = -1.0
@@ -249,10 +285,11 @@ def purge_source_artifacts(cfg: Config, source_id: str, source_path: str, *,
             (cfg.clips / f"{cid}.render.json").unlink()
 
 
-def _adopt_cached_transcript(led: Ledger, source_id: str, cached: Path) -> bool:
+def _adopt_cached_transcript(led: Ledger, source_id: str, cached: Path, *, cfg: Config | None = None) -> bool:
     """Adopt the on-disk whisper JSON into the in-memory Source row. Returns True iff adoption
     succeeded (the cache existed AND parsed AND had the expected shape). A corrupt/truncated cache
-    returns False so the caller can fall through to a real run that overwrites it.
+    or incomplete quality metadata returns False so the caller can fall through to a real run that
+    overwrites it.
 
     Pulled out as a free function (instead of a closure inside transcribe_source) because the
     stage-lock re-check needs to call exactly the same adoption logic — DRY across the
@@ -261,12 +298,16 @@ def _adopt_cached_transcript(led: Ledger, source_id: str, cached: Path) -> bool:
         data = json.loads(cached.read_text())
     except (OSError, json.JSONDecodeError):
         return False
+    if not _cache_is_quality_complete(data):
+        return False
     try:
         src = led.sources[source_id]
-        src.transcript = [_segment(s) for s in data.get("segments", [])]
-        src.language = data.get("language")
+        lang = data.get("language")
+        src.transcript = _finalize_segments(data.get("segments", []), lang)
+        src.language = lang
         src.meta["transcribed"] = True
         led.set_source_state(source_id, SourceState.transcribed)
+        _log_transcript_tiers(cfg, source_id, src.transcript or [])
         return True
     except (KeyError, TypeError, AttributeError):
         return False
@@ -289,11 +330,12 @@ def transcribe_source(led: Ledger, cfg: Config, source_id: str, *, model: str | 
     # produce path which will overwrite it. The stem is the SOURCE stem in both engines (isolation
     # moves vocals to "{source_stem}.mp3"), so the lookup is stable.
     cached = out_dir / f"{Path(src.source_path).stem}.json"
-    if cached.exists() and _adopt_cached_transcript(led, source_id, cached):
+    if cached.exists() and _adopt_cached_transcript(led, source_id, cached, cfg=cfg):
         try:
             from fanops.artifacts import stamp_stage
             rel = str(cached.relative_to(cfg.agent_io))
-            stamp_stage(cfg, source_id, "transcribe", artifact=rel, schema=1, sha256=src.sha256)
+            stamp_stage(cfg, source_id, "transcribe", artifact=rel,
+                        schema=_transcript_schema(src.transcript or []), sha256=src.sha256)
         except (OSError, ValueError): pass
         return led
     # MOL-122 / H10: the reducer calls this INSIDE the ledger flock only to ADOPT the producer's warm
@@ -316,7 +358,7 @@ def transcribe_source(led: Ledger, cfg: Config, source_id: str, *, model: str | 
         # Re-check INSIDE the lock — this is the short-circuit that closes the race. The first
         # producer wrote the JSON; the second producer reaches this line and adopts. Crucially the
         # subprocess.run below NEVER executes in the second producer.
-        if cached.exists() and _adopt_cached_transcript(led, source_id, cached):
+        if cached.exists() and _adopt_cached_transcript(led, source_id, cached, cfg=cfg):
             return led
         return _produce_transcript(led, cfg, source_id, src, out_dir, model)
 
@@ -401,7 +443,8 @@ def _produce_transcript(led: Ledger, cfg: Config, source_id: str, src, out_dir: 
         return led
     try:
         data = json.loads(js.read_text())
-        src.transcript = [_segment(s) for s in data.get("segments", [])]
+        src.transcript = _finalize_segments(data.get("segments", []), data.get("language"))
+        _log_transcript_tiers(cfg, source_id, src.transcript or [])
     except (json.JSONDecodeError, KeyError, TypeError, AttributeError) as e:
         # whisper killed mid-write (disk full, OOM) leaves TRUNCATED JSON; a schema drift loses
         # start/end/text keys. Same per-source shape as the absent/timeout/no-JSON branches above —
