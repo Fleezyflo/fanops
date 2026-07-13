@@ -640,13 +640,19 @@ def test_cursor_missing_binary(mocker, monkeypatch):
     with pytest.raises(ToolchainMissingError, match="cursor-agent"):
         claude_json("q", _SCHEMA)
 
-def test_dispatch_vision_fallback_claude(mocker, monkeypatch):
+def test_dispatch_vision_routes_to_cursor(mocker, monkeypatch):
+    # No code-decided fallback: cursor transport answers vision gates itself. The frame dir is granted
+    # via --add-dir and the frame path is prepended to the stdin so cursor can Read it.
     monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "cursor")
-    envelope = {"structured_output": {"x": 5}, "num_turns": 2}
+    monkeypatch.delenv("FANOPS_LLM_MODEL", raising=False)
+    envelope = {"structured_output": {"x": 5}}
     class R: returncode = 0; stdout = json.dumps(envelope); stderr = ""
     run = mocker.patch("fanops.llm.subprocess.run", return_value=R())
-    claude_json("judge", _SCHEMA, images=["/f/1.jpg"])
-    assert run.call_args[0][0][0] == "claude"
+    claude_json("judge", _SCHEMA, images=["/f/1.jpg"], read_root="/f")
+    argv = run.call_args[0][0]
+    assert argv[0] == "cursor-agent"                          # no fallback to claude
+    i = argv.index("--add-dir"); assert argv[i + 1] == "/f"   # keyframes dir granted to cursor
+    assert "/f/1.jpg" in run.call_args[1]["input"]            # frame path prepended for the Read tool
 
 
 # --- 2026-07-12 incident: a claude CLI predating --json-schema (2.0.30, pinned by a stale daemon
