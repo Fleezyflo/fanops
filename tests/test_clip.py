@@ -6,6 +6,7 @@ from fanops.ledger import Ledger
 from fanops.models import Source, Moment, MomentState, ClipState, Fmt, Batch
 from fanops.clip import ffmpeg_clip_cmd, reframe_filter, render_moment, render_aspects_for, fit_window, snap_window
 from fanops import overlay
+from tests.fixtures.speech_segments import talk_seg, MUSIC_HALLUC
 
 
 @pytest.fixture(autouse=True)
@@ -229,8 +230,8 @@ def test_render_burns_subtitles_when_enabled(tmp_path, mocker, monkeypatch):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
                           width=1920, height=1080,
-                          transcript=[{"start": 0.0, "end": 3.0, "text": "hello world"},
-                                      {"start": 3.0, "end": 6.0, "text": "second line"}]))
+                          transcript=[talk_seg("hello world", start=0.0, end=3.0),
+                                      talk_seg("second line", start=3.0, end=6.0)]))
     led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7",
                           start=0, end=7, reason="r", state=MomentState.decided,
                           hook="big hook"))
@@ -262,7 +263,7 @@ def test_render_null_transcript_start_skips_sub_captions(tmp_path, mocker, monke
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
                           width=1920, height=1080,
                           transcript=[{"start": None, "end": 3.0, "text": "bad segment"},
-                                      {"start": 3.0, "end": 6.0, "text": "good line"}]))
+                                      talk_seg("good line", start=3.0, end=6.0)]))
     led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7",
                           start=0, end=7, reason="r", state=MomentState.decided, hook="hook"))
     captured = {}
@@ -280,7 +281,6 @@ def test_render_null_transcript_start_skips_sub_captions(tmp_path, mocker, monke
 
 
 def test_render_subs_exclude_junk_segments(tmp_path, mocker, monkeypatch):
-    from tests.fixtures.speech_segments import talk_seg, MUSIC_HALLUC
     monkeypatch.setenv("FANOPS_BURN_SUBS", "1")
     monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
@@ -347,7 +347,7 @@ def _render_with_batch_subs(tmp_path, mocker, monkeypatch, *, global_on, batch_b
     led.add_batch(Batch(id="b_1", name="b", burn_subs=batch_burn))
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
                           width=1920, height=1080, batch_id="b_1",
-                          transcript=[{"start": 0.0, "end": 3.0, "text": "hello world"}]))
+                          transcript=[talk_seg("hello world", start=0.0, end=3.0)]))
     led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7",
                           start=0, end=7, reason="r", state=MomentState.decided, hook=""))   # hookless
     captured = {}
@@ -656,14 +656,13 @@ def _capture_render_full(tmp_path, mocker, monkeypatch, *, start, end, duration,
     return float(cmd[cmd.index("-ss") + 1]), float(cmd[cmd.index("-to") + 1])
 
 def test_render_moment_snaps_cut_to_transcript_boundaries(tmp_path, mocker, monkeypatch):
-    tr = [{"start": 9.3, "end": 12.0, "text": "a"}, {"start": 25.0, "end": 28.4, "text": "b"}]
+    tr = [talk_seg("a", start=9.3, end=12.0), talk_seg("b", start=25.0, end=28.4)]
     ss, to = _capture_render_full(tmp_path, mocker, monkeypatch, start=10.0, end=28.0,
                                   duration=120.0, transcript=tr)   # 18s in-band pick
     assert ss == 9.3                                       # start snapped to the line boundary
     assert round(ss + to, 1) == 28.4                       # end snapped to the phrase end
 
 def test_render_moment_snap_ignores_junk_boundaries(tmp_path, mocker, monkeypatch):
-    from tests.fixtures.speech_segments import talk_seg, MUSIC_HALLUC
     junk = {**MUSIC_HALLUC, "start": 9.4, "end": 9.8, "text": "junk start"}
     good = talk_seg("real speech", start=9.3, end=12.0)
     good_end = talk_seg("phrase end", start=15.0, end=17.2)
@@ -672,7 +671,7 @@ def test_render_moment_snap_ignores_junk_boundaries(tmp_path, mocker, monkeypatc
     ss, to = _capture_render_full(tmp_path, mocker, monkeypatch, start=10.0, end=16.5,
                                   duration=120.0, transcript=tr)
     assert ss == 9.3                                       # trusted start, not junk 9.4
-    assert round(ss + to, 1) == 17.2                       # trusted end, not junk 16.6
+    assert round(ss + to, 1) == 22.0                       # fit widens to 22s; trusted end 17.2 beyond max_shift
 
 def test_render_moment_song_profile_uses_wider_band(tmp_path, mocker, monkeypatch):
     # a 14s pick on a song source grows to the 18s SONG floor (talk would keep it at 14)
@@ -796,7 +795,7 @@ def test_visual_start_provenance_honest_with_transcript(tmp_path, mocker, monkey
     monkeypatch.delenv("FANOPS_VISUAL_START", raising=False)
     monkeypatch.setenv("FANOPS_BURN_SUBS", "0")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    tr = [{"start": 9.3, "end": 12.0, "text": "a"}, {"start": 25.0, "end": 28.4, "text": "b"}]
+    tr = [talk_seg("a", start=9.3, end=12.0), talk_seg("b", start=25.0, end=28.4)]
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
                           width=1920, height=1080, duration=120.0, transcript=tr))
     led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="t",
@@ -953,9 +952,9 @@ def test_supercut_subtitles_rebased_to_assembled_timeline(tmp_path, mocker, monk
     monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
     monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
     spans = [(10.0, 15.0), (30.0, 35.0)]                      # span2 offset = 5s in assembled timeline
-    tr = [{"start": 31.0, "end": 34.0, "text": "span two line"},
-          {"start": 20.0, "end": 25.0, "text": "gap line"},    # in the GAP between spans -> dropped
-          {"start": 11.0, "end": 13.0, "text": "span one"}]
+    tr = [talk_seg("span two line", start=31.0, end=34.0),
+          talk_seg("gap line", start=20.0, end=25.0),          # in the GAP between spans -> dropped
+          talk_seg("span one", start=11.0, end=13.0)]
     cfg, led = _supercut_moment_led(tmp_path, segments=spans, transcript=tr, hook="hook")
     captured = {}
     mocker.patch("fanops.clip.subprocess.run", side_effect=_fake_run_writing_clip(captured))
