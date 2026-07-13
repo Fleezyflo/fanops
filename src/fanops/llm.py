@@ -23,7 +23,7 @@ is the accepted cost of riding the existing login instead of an API key. The cro
 therefore needs a logged-in `claude` (a valid `claude login` on the host), NOT `ANTHROPIC_API_KEY`.
 Documented in RUNTIME.md "the autonomous LLM responder" and README install."""
 from __future__ import annotations
-import json, logging, random, re, subprocess, time
+import json, logging, os, random, re, subprocess, time
 from fanops.errors import ToolchainMissingError
 
 logger = logging.getLogger("fanops.llm")
@@ -167,12 +167,15 @@ def claude_json_meta(prompt: str, schema: dict, *, timeout: float = 300.0,
                      images: list[str] | None = None, model: str | None = None,
                      read_root: str | None = None) -> tuple[dict, str | None, bool]:
     """Dispatch to claude or cursor-agent transport per FANOPS_LLM_TRANSPORT; vision falls back to claude
-    when cursor transport lacks vision support."""
+    when cursor transport lacks vision support. Cursor uses its OWN auto model selection (no --model) —
+    the per-gate claude tiers (opus/sonnet) are Claude-only and are NOT forwarded to cursor-agent; the
+    operator can still force ONE cursor model via FANOPS_LLM_MODEL."""
     from fanops.config import resolve_llm_transport
     if resolve_llm_transport() == "cursor":
         if images and not _CURSOR_SUPPORTS_VISION:
             return _claude_json_meta(prompt, schema, timeout=timeout, images=images, model=model, read_root=read_root)
-        return _cursor_json_meta(prompt, schema, timeout=timeout, images=images, model=model, read_root=read_root)
+        forced = (os.getenv("FANOPS_LLM_MODEL") or "").strip() or None   # AUTO unless the operator forces one
+        return _cursor_json_meta(prompt, schema, timeout=timeout, images=images, model=forced, read_root=read_root)
     return _claude_json_meta(prompt, schema, timeout=timeout, images=images, model=model, read_root=read_root)
 
 
