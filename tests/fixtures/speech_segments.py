@@ -10,7 +10,7 @@ MUSIC_HALLUC = {"start": 0.0, "end": 2.0, "text": "background noise",
 LATIN_JUNK_AR = {"start": 0.0, "end": 2.0, "text": "man shay khbar hada",
                  "avg_logprob": -0.3, "no_speech_prob": 0.05, "compression_ratio": 1.5}
 
-CJK_JUNK_EN = {"start": 0.0, "end": 2.0, "text": "man東西test",
+CJK_JUNK_EN = {"start": 0.0, "end": 2.0, "text": "東西東西test",
                "avg_logprob": -0.2, "no_speech_prob": 0.05, "compression_ratio": 1.2}
 
 LEGACY_EN = {"start": 0.0, "end": 2.0, "text": "they slept on me"}

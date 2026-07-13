@@ -35,7 +35,7 @@ def test_segment_trusted_rejects_latin_junk_on_ar_source():
 
 
 def test_segment_trusted_rejects_cjk_on_en_source():
-    seg = _seg("man東西test", avg_logprob=-0.2, no_speech_prob=0.05, compression_ratio=1.2)
+    seg = _seg("東西東西test", avg_logprob=-0.2, no_speech_prob=0.05, compression_ratio=1.2)
     assert segment_trusted(seg, src_lang="en") is False
 
 

@@ -13,6 +13,7 @@ from fanops.models import Moment, MomentState, Source, SourceState
 from fanops.pipeline import resume_source
 from fanops.cli import main
 from fanops.studio import actions
+from tests.fixtures.speech_segments import talk_seg
 
 
 def _errored(cfg, *, transcript, transcribed):
@@ -217,7 +218,7 @@ def test_auto_resume_from_error_with_warm_transcript(tmp_path):
     Path(path).write_bytes(b"V")
     (cfg.agent_io / "transcripts").mkdir(parents=True)
     (cfg.agent_io / "transcripts" / "vid.json").write_text(json.dumps(
-        {"language": "en", "segments": [{"start": 0, "end": 1, "text": "warm"}]}))
+        {"language": "en", "segments": [talk_seg("warm", start=0, end=1)]}))
     with Ledger.transaction(cfg) as led:
         led.add_source(Source(id="s1", source_path=path, state=SourceState.error,
                               error_reason="TimeoutExpired: whisper hung", transcript=None,
@@ -235,7 +236,7 @@ def test_toolchain_missing_error_not_auto_resumed(tmp_path):
     path = str(tmp_path / "vid.mp4")
     (cfg.agent_io / "transcripts").mkdir(parents=True)
     (cfg.agent_io / "transcripts" / "vid.json").write_text(json.dumps(
-        {"language": "en", "segments": [{"start": 0, "end": 1, "text": "warm"}]}))
+        {"language": "en", "segments": [talk_seg("warm", start=0, end=1)]}))
     with Ledger.transaction(cfg) as led:
         led.add_source(Source(id="s1", source_path=path, state=SourceState.error,
                               error_reason="toolchain missing: whisper (FileNotFoundError)"))

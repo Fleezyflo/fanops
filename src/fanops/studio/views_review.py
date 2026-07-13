@@ -173,7 +173,9 @@ def _speech_trust_label(cfg: Config, led: Ledger, mom, src, batch) -> Optional[s
             return "none"
         trusted = trusted_segments(in_win, src_lang=src.language)
         return "trusted" if len(trusted) == len(in_win) else "mixed"
-    except Exception:
+    except Exception as exc:
+        from fanops.log import get_logger
+        get_logger(cfg)("review", getattr(mom, "id", "-"), "speech_trust_label_error", err=str(exc)[:160])
         return None
 
 def _length_label(profile: Optional[str]) -> Optional[str]:
