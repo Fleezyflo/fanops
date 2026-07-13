@@ -220,6 +220,9 @@ def test_daemon_plane_off_darwin_typed_skip_no_exception(tmp_path, monkeypatch):
 # ── studio plane: report-only ─────────────────────────────────────────────────────────────────
 
 def test_studio_plane_reports_up_when_port_answers(tmp_path, monkeypatch):
+    # No plist installed -> report-only branch (plist absence forced so the operator's real
+    # com.fanops.studio.plist can't flip this test onto the kickstart branch).
+    monkeypatch.setattr(daemon, "studio_plist_path", lambda: tmp_path / "com.fanops.studio.plist")
     monkeypatch.setattr(daemon, "_studio_port_answers", lambda *a, **k: True)
     cfg = Config(root=tmp_path)
     plane = daemon._plane_studio(cfg)
@@ -228,12 +231,41 @@ def test_studio_plane_reports_up_when_port_answers(tmp_path, monkeypatch):
 
 
 def test_studio_plane_reports_down_with_launch_command(tmp_path, monkeypatch):
+    monkeypatch.setattr(daemon, "studio_plist_path", lambda: tmp_path / "com.fanops.studio.plist")
     monkeypatch.setattr(daemon, "_studio_port_answers", lambda *a, **k: False)
     cfg = Config(root=tmp_path)
     plane = daemon._plane_studio(cfg)
     assert plane["ok"] is False
     assert plane["report_only"] is True                 # never fails the overall verdict
     assert "fanops studio" in plane["detail"]            # the exact command to run
+
+
+def test_studio_plane_kickstarts_when_plist_present(tmp_path, monkeypatch):
+    # Plist installed -> REAL restart: kickstart -k the studio label, then the port gate confirms.
+    plist = tmp_path / "com.fanops.studio.plist"; plist.write_text("<plist/>")
+    monkeypatch.setattr(daemon, "studio_plist_path", lambda: plist)
+    fake = _fake_launchctl(kickstart=(0, ""))
+    monkeypatch.setattr(daemon.subprocess, "run", fake)
+    monkeypatch.setattr(daemon, "_studio_port_answers", lambda *a, **k: True)
+    cfg = Config(root=tmp_path)
+    plane = daemon._plane_studio(cfg)
+    assert plane["ok"] is True and plane["report_only"] is True
+    assert "cycled onto current code" in plane["detail"]
+    # kickstart -k gui/<uid>/com.fanops.studio actually fired
+    assert any(c[:3] == ["launchctl", "kickstart", "-k"] and c[-1].endswith(daemon.STUDIO_LABEL)
+               for c in fake.calls)
+
+
+def test_studio_plane_reports_not_answering_when_restart_fails_port(tmp_path, monkeypatch):
+    # Plist present, kickstart ok, but the port never answers -> not-answering (still non-gating).
+    plist = tmp_path / "com.fanops.studio.plist"; plist.write_text("<plist/>")
+    monkeypatch.setattr(daemon, "studio_plist_path", lambda: plist)
+    monkeypatch.setattr(daemon.subprocess, "run", _fake_launchctl(kickstart=(0, "")))
+    monkeypatch.setattr(daemon, "_studio_port_answers", lambda *a, **k: False)
+    cfg = Config(root=tmp_path)
+    plane = daemon._plane_studio(cfg)
+    assert plane["ok"] is False and plane["report_only"] is True
+    assert "not answering" in plane["detail"]
 
 
 # ── composer: order + short-circuit + honest verdict ──────────────────────────────────────────
@@ -382,6 +414,21 @@ def test_heartbeat_fresh_since_false_when_only_stale(tmp_path, monkeypatch):
     since = datetime.now(timezone.utc)
     _write_heartbeat(cfg, ts=since - timedelta(seconds=30))   # older than the restart instant
     assert daemon._heartbeat_fresh_since(cfg, since, tries=2, step=0.0) is False
+
+
+def test_heartbeat_fresh_since_true_on_any_new_line_not_only_loop_heartbeat(tmp_path, monkeypatch):
+    # Change 1e: the freshness proof now polls _newest_activity_ts (ANY run.log line), so a restarted
+    # daemon proves healthy on its FIRST stage line — not only after a whole pass finishes (a loop
+    # heartbeat lands only then). A non-heartbeat line newer than the restart instant is enough.
+    import json
+    monkeypatch.setattr(daemon.time, "sleep", lambda _s: None)
+    cfg = Config(root=tmp_path)
+    cfg.reports.mkdir(parents=True, exist_ok=True)
+    since = datetime.now(timezone.utc)
+    rec = {"ts": (since + timedelta(seconds=3)).isoformat(), "level": "info",
+           "stage": "transcribe", "unit_id": "src-1", "outcome": "ok"}   # a NON-heartbeat stage line
+    cfg.log_path.write_text(json.dumps(rec) + "\n")
+    assert daemon._heartbeat_fresh_since(cfg, since, tries=2, step=0.0) is True
 
 
 def test_no_publish_side_effect_in_bringup(tmp_path, monkeypatch):

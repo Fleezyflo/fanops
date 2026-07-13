@@ -207,16 +207,35 @@ _STAGE_HANG_CEILING_S = 3600
 
 
 def daemon_progress(cfg: Config) -> tuple[bool, str | None, dict | None]:
-    """Mid-pass liveness override: flock-held stage younger than ceiling => pump alive despite stale heartbeat."""
+    """Activity-aware mid-pass liveness — the ONE owner both daemon.status and doctor call so the
+    verdict is identical on every surface (no split-brain). Two signals combine:
+      • snap = run_stage_snapshot(cfg) — the flock-held {stage, unit, stage_age} or None.
+      • act  = daemon._newest_activity_ts(cfg) — the NEWEST run.log line of any kind.
+    ALIVE when the log is FRESH (silent < ceiling): a stage that keeps emitting is working, however
+    long it runs (a big transcribe/LLM stage legitimately runs >1h and logs every ~60s — that is NOT
+    wedged). WEDGED only when a stage IS held AND the log has gone SILENT past the ceiling. A dead
+    process (no launchd PID) is caught IMMEDIATELY by daemon.status — this override governs only the
+    narrow "PID alive but stage silently hung" case, at the cost of up to _STAGE_HANG_CEILING_S (1h)
+    detection lag (the ceiling MUST exceed the longest legitimate silent gap, or it false-flags a
+    working pass). Returns the (alive_mid, line, snap) triple both callers destructure."""
+    from datetime import datetime, timezone
     from fanops.errors import fail_open
-    snap = None
+    from fanops import daemon
+    snap = None; act = None
     with fail_open("daemon_progress"):
         from fanops.pipeline_run import run_stage_snapshot
         snap = run_stage_snapshot(cfg)
-    if not snap:
-        return False, None, None
-    line = f"mid-pass: {snap['stage']} ({snap['unit']}) {int(snap['stage_age'])}s"
-    return snap["stage_age"] < _STAGE_HANG_CEILING_S, line, snap
+        act = daemon._newest_activity_ts(cfg)
+    silent_s = (datetime.now(timezone.utc) - act).total_seconds() if act else None
+    # ALIVE: the log is fresh (still emitting) — working, however long the current stage runs.
+    if silent_s is not None and silent_s < _STAGE_HANG_CEILING_S:
+        line = (f"mid-pass: {snap['stage']} ({snap['unit']}) {int(snap['stage_age'])}s" if snap
+                else f"active: last log {int(silent_s)}s ago")
+        return True, line, snap
+    # WEDGED: a stage is held AND the log has gone SILENT past the ceiling.
+    if snap and silent_s is not None and silent_s >= _STAGE_HANG_CEILING_S:
+        return False, f"mid-pass: {snap['stage']} ({snap['unit']}) SILENT {int(silent_s)}s", snap
+    return False, None, None
 
 
 def heartbeat_stale(cfg: Config, *, interval: int | None = None) -> tuple[float | None, bool, int]:

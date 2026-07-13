@@ -220,12 +220,34 @@ def _hold_lock(cfg, body: dict | None = None):
     return fd
 
 
+def _append_log_line(cfg, *, stage="stage", ts=None):
+    """Append one run.log line at `ts` (any stage) — the activity signal status now keys ALIVE off."""
+    cfg.reports.mkdir(parents=True, exist_ok=True)
+    ts = ts or datetime.now(timezone.utc).isoformat()
+    rec = {"ts": ts, "level": "info", "stage": stage, "unit_id": "-", "outcome": "ok"}
+    with cfg.log_path.open("a") as fh:
+        fh.write(json.dumps(rec) + "\n")
+
+
+def test_status_alive_on_fresh_activity_no_loop_heartbeat(tmp_path, monkeypatch):
+    # THE FIX: a live PID + a fresh run.log line of ANY kind (NO loop heartbeat — the first pass hasn't
+    # finished) reads ALIVE, not "loaded but stale". This is the false-banner case the plan targets.
+    cfg = Config(root=tmp_path)
+    _append_log_line(cfg, stage="llm")                      # fresh activity, but no stage=heartbeat/origin=loop line
+    monkeypatch.setattr(daemon.subprocess, "run", _fake_launchctl(list=(0, '\t"PID" = 7;\n')))
+    rep = daemon.status(cfg, interval=600)
+    assert rep["loaded"] is True
+    assert rep["verdict"] == "alive"                        # activity governs — loop heartbeat absent
+    assert rep.get("run_line") is not None and "active" in rep["run_line"]
+
+
 def test_status_alive_mid_pass_despite_stale_heartbeat(tmp_path, monkeypatch):
     from fanops.pipeline_run import note_stage
     cfg = Config(root=tmp_path)
     cfg.reports.mkdir(parents=True, exist_ok=True)
     old = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
     cfg.log_path.write_text(_heartbeat_line(old))
+    _append_log_line(cfg, stage="llm")                      # fresh activity: the held stage IS still emitting
     monkeypatch.setattr(daemon.subprocess, "run", _fake_launchctl(list=(0, '\t"PID" = 7;\n')))
     fd = _hold_lock(cfg, {"pid": 4242, "started": "2020-01-01T00:00:00Z"})
     try:
@@ -239,21 +261,24 @@ def test_status_alive_mid_pass_despite_stale_heartbeat(tmp_path, monkeypatch):
         fcntl.flock(fd, fcntl.LOCK_UN); os.close(fd)
 
 
-def test_status_stage_stuck_when_mid_pass_exceeds_ceiling(tmp_path, monkeypatch):
+def test_status_stage_stuck_when_stage_held_and_log_silent(tmp_path, monkeypatch):
+    # WEDGED: a stage IS held AND the newest run.log line is SILENT past the ceiling. Verdict names the
+    # stage + the SILENCE (not stage_age — the word is "SILENT").
     from fanops.health_model import _STAGE_HANG_CEILING_S
     cfg = Config(root=tmp_path)
     cfg.reports.mkdir(parents=True, exist_ok=True)
-    old = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
-    cfg.log_path.write_text(_heartbeat_line(old))
+    silent_ts = (datetime.now(timezone.utc) - timedelta(seconds=_STAGE_HANG_CEILING_S + 120))
+    cfg.log_path.write_text("")                             # only the silent line below is in run.log
+    _append_log_line(cfg, stage="transcribe", ts=silent_ts.isoformat())
     monkeypatch.setattr(daemon.subprocess, "run", _fake_launchctl(list=(0, '\t"PID" = 7;\n')))
-    stage_old = (datetime.now(timezone.utc) - timedelta(seconds=_STAGE_HANG_CEILING_S + 120)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    stage_old = silent_ts.strftime("%Y-%m-%dT%H:%M:%SZ")
     fd = _hold_lock(cfg, {"pid": 4242, "started": stage_old, "stage": "transcribe", "unit": "src-1",
                           "stage_started": stage_old})
     try:
         rep = daemon.status(cfg, interval=600)
         assert rep["verdict"] != "alive"
         assert "stage stuck" in rep["verdict"]
-        assert "transcribe" in rep["verdict"]
+        assert "transcribe" in rep["verdict"] and "SILENT" in rep["verdict"]
     finally:
         import fcntl
         fcntl.flock(fd, fcntl.LOCK_UN); os.close(fd)
@@ -268,6 +293,46 @@ def test_status_stale_without_lease_unchanged(tmp_path, monkeypatch):
     rep = daemon.status(cfg, interval=600)
     assert "loaded but stale" in rep["verdict"]
     assert rep.get("run_line") is None
+
+
+def _status_alive(rep) -> bool:
+    return rep["verdict"] == "alive"
+
+
+@pytest.mark.parametrize("scenario", ["fresh_activity", "stage_silent", "old_no_lease"])
+def test_status_and_doctor_agree_no_split_brain(tmp_path, monkeypatch, scenario):
+    """THE anti-split-brain assertion (the test that would have caught the old bug): daemon.status and
+    doctor._daemon_liveness_check derive alive/dead from the SAME liveness owner (daemon_progress), so
+    they MUST agree on every fixture. Backlog is kept empty so the only signal is liveness."""
+    from fanops.health_model import _STAGE_HANG_CEILING_S
+    from fanops.doctor import _daemon_liveness_check
+    cfg = Config(root=tmp_path)
+    cfg.reports.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(daemon.subprocess, "run", _fake_launchctl(list=(0, '\t"PID" = 7;\n')))
+    fd = None
+    if scenario == "fresh_activity":
+        _append_log_line(cfg, stage="llm")                 # live PID + fresh line -> both ALIVE
+        expect_alive = True
+    elif scenario == "stage_silent":
+        silent_ts = (datetime.now(timezone.utc) - timedelta(seconds=_STAGE_HANG_CEILING_S + 120))
+        _append_log_line(cfg, stage="transcribe", ts=silent_ts.isoformat())
+        s = silent_ts.strftime("%Y-%m-%dT%H:%M:%SZ")
+        fd = _hold_lock(cfg, {"pid": 4242, "started": s, "stage": "transcribe", "unit": "src-1",
+                              "stage_started": s})
+        expect_alive = False                               # stage held + silent -> both DEAD
+    else:  # old_no_lease
+        old = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+        cfg.log_path.write_text(_heartbeat_line(old))      # old heartbeat, no lease -> both DEAD
+        expect_alive = False
+    try:
+        st = daemon.status(cfg, interval=600)
+        chk = _daemon_liveness_check(cfg)
+        assert _status_alive(st) is expect_alive
+        assert chk["ok"] is expect_alive                   # doctor's verdict tracks status' verdict
+    finally:
+        if fd is not None:
+            import fcntl
+            fcntl.flock(fd, fcntl.LOCK_UN); os.close(fd)
 
 
 def test_status_not_installed_when_list_fails(tmp_path, monkeypatch):
