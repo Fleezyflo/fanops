@@ -8,12 +8,18 @@ from fanops.models import (MomentPick, MomentHookDecision, Source, MomentDecisio
 from fanops.moments import ingest_moment_hooks, request_moment_hooks, ingest_moments, request_moments
 from fanops.agentstep import response_path, latest_request_id
 from fanops.responder import screen_model_text
+from tests.fixtures.speech_segments import GOOD_AR, talk_seg
 
 
 def _seed_led(cfg, language: str):
     led = Ledger.load(cfg)
+    if language == "ar":
+        segs = [{**GOOD_AR, "start": 10.0, "end": 28.0, "text": "الجزء اللي هتعيده"}]
+    else:
+        segs = [talk_seg("they slept on me here", start=10.0, end=28.0)]
     led.add_source(Source(id="src_ar", source_path=str(cfg.sources / "src_ar.mp4"),
-                          state=SourceState.signalled, language=language, duration=60.0))
+                          state=SourceState.signalled, language=language, duration=60.0,
+                          transcript=segs, meta={"transcribed": True}))
     return led
 
 

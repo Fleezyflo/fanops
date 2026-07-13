@@ -397,14 +397,14 @@ def _reconcile_valid_picks(led: Ledger, cfg: Config, source_id: str, deduped: li
         owner = (pick.personas or [None])[0]
         mid = _owned_moment_id(source_id, owner, token)
         clip_prof, framing = _stamp_owner_spec(cfg, owner, by_handle)
-        excerpt = excerpt_for_window(src, pick.start, pick.end)
+        excerpt = excerpt_for_window(src, pick.start, pick.end) or ""
         llm_excerpt = (pick.transcript_excerpt or "").strip()
         if llm_excerpt and not excerpt:
             log("source", source_id, "excerpt_overwritten", token=token)
         keep[mid] = Moment(id=mid, parent_id=source_id, state=MomentState.picked,
                            content_token=token, start=pick.start, end=pick.end,
                            reason=pick.reason,
-                           transcript_excerpt=excerpt or None,
+                           transcript_excerpt=excerpt,
                            signal_score=pick.signal_score,
                            affinities=list(pick.personas),
                            clip_profile=clip_prof, framing=framing,
