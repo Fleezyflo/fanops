@@ -6,8 +6,8 @@ MOH FLOW FAN OPS: intelligent clip + cross-post engine. Pure-Python `src/` layou
 ## Commands
 
 - Install: `pip install -e '.[dev]'` — extras: `[studio]` (Flask cockpit, imported lazily), `[transcribe]` (whisper CLI), `[compose]` (MoviePy produced-clip compositing — `fanops compose`, lazy + fail-open)
-- Fast unit suite (CI `unit` job — CI-ONLY, never run locally): `python -m pytest -q -m "not integration"`
-- Integration suite (CI `e2e` job — CI-ONLY, never run locally): `python -m pytest -q -m integration -rs` — needs real ffmpeg/ffprobe/whisper/espeak on PATH; CI sets `FANOPS_REQUIRE_E2E=1` so a skip fails
+- Fast unit suite (CI `unit` job — never on the operator's Mac; Linux/cloud sessions may run it): `python -m pytest -q -m "not integration"`
+- Integration suite (CI `e2e` job — effectively CI-only: the real toolchain lives there): `python -m pytest -q -m integration -rs` — needs real ffmpeg/ffprobe/whisper/espeak on PATH; CI sets `FANOPS_REQUIRE_E2E=1` so a skip fails
 - Lint: `ruff check .` (pyflakes F + pycodestyle E only)
 - Studio dev server: `fanops studio` (localhost:8787; requires `[studio]` extra)
 - Browser ingestion (no Finder): the Studio **Run** tab **Upload video** form streams raw video into `01_inbox/` (validated: video ext, traversal-safe `secure_filename`, inbox-bound resolve, atomic `.uploadpart`→`os.replace`; 2 GiB `MAX_CONTENT_LENGTH` cap) → click **Ingest inbox** to catalogue it. `actions.save_uploads` owns the contract; an oversize body re-renders the panel at HTTP 200 ("too large") since htmx 2.x drops non-2xx swaps.
@@ -23,10 +23,12 @@ MOH FLOW FAN OPS: intelligent clip + cross-post engine. Pure-Python `src/` layou
 
 ## Constraints
 
-- NEVER run the test suite locally — `pytest` / `check-full.sh` execute ONLY in GitHub CI on a PR.
-  Parallel wave workers each running the suite crash this machine; the orchestration gate refuses
-  local runs during waves and `./scripts/check.sh` is lint-only. `FANOPS_LOCAL_TESTS=1` is the
-  operator-only override from a human terminal.
+- NEVER run the test suite on the operator's Mac — stacked/parallel suite runs crash this host
+  (waves run many workers on one machine). The Darwin test gate (`.claude/hooks/darwin_test_gate.py`)
+  denies `pytest` / `check-full.sh` here, the orchestration gate additionally refuses them during
+  waves, and `./scripts/check.sh` is lint-only. On Linux the suite RUNS: GitHub CI on every PR, and
+  a Claude cloud session (Linux sandbox) runs `./scripts/check-full.sh` before pushing.
+  `FANOPS_LOCAL_TESTS=1` is the operator-only override from a human terminal.
 - NEVER mass-reformat: no `black`, no `ruff format`. The compact one-liner house style
   (E701/E702/E401/E501 ignored) is deliberate — rationale in pyproject.toml comments.
 - The global 60s pytest timeout is a deadlock guardrail (ledger SQLite busy_timeout). A hanging test

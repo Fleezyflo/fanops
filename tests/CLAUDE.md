@@ -1,13 +1,15 @@
 <!-- Edit-time rulebook for tests/. Anchors verified 2026-07-03. Commands = root CLAUDE.md. -->
 # tests — traps when writing or fixing a test
 
-## How the suites run — CI-ONLY, never locally
+## How the suites run — never on the operator's Mac; CI and Linux sandboxes execute them
 
-**Local test execution is FORBIDDEN** (operator rule): a wave runs many workers on one machine and
-parallel suites crash it. Write tests with your change, push, open the PR — GitHub CI executes them
-and its run is your evidence. The orchestration gate refuses local `pytest`/`check-full.sh` during
-waves; `./scripts/check.sh` is scoped lint + test-mapping only. `FANOPS_LOCAL_TESTS=1` is the
-operator-only override from a human terminal. What CI runs (reference, not for running):
+**The suite never runs on the operator's Mac** (machine rule, not a repo rule): a wave runs many
+workers on one machine and parallel suites crash it. The Darwin test gate
+(`.claude/hooks/darwin_test_gate.py`) denies `pytest`/`check-full.sh` there, the orchestration gate
+additionally refuses them during waves, and `./scripts/check.sh` is scoped lint + test-mapping
+only. `FANOPS_LOCAL_TESTS=1` is the operator-only override from a human terminal. On Linux the
+suite RUNS: GitHub CI executes it on every PR (its run is your evidence), and a Claude cloud
+session runs `./scripts/check-full.sh` before pushing. What CI runs:
 
 - CI `unit` job: `python -m pytest -q -m "not integration and not slow"` (hermetic, no ffmpeg/whisper/network).
 - CI `e2e` job: `python -m pytest -q -m integration -rs` (real ffmpeg/whisper/TTS; `FANOPS_REQUIRE_E2E=1`

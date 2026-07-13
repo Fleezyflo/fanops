@@ -11,10 +11,6 @@
       "Bash(pip install -e:*)"
     ],
     "deny": [
-      "Bash(pytest:*)",
-      "Bash(python -m pytest:*)",
-      "Bash(python3 -m pytest:*)",
-      "Bash(./scripts/check-full.sh:*)",
       "Bash(black:*)",
       "Bash(ruff format:*)",
       "Bash(sudo:*)",
@@ -74,6 +70,17 @@
             "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/decide_dont_ask.py\"",
             "timeout": 10,
             "description": "Blocks a DUMB question (re-asking the brief, reduced-ambition options, rule-governed, or asked with no decision-work) by correlating against this turn's transcript — a real fork survives"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/darwin_test_gate.py\"",
+            "timeout": 10,
+            "description": "Machine-scoped local-test guard: denies pytest/check-full.sh on the operator's Mac (stacked suite runs crash the host); inert on Linux (CI, cloud) where the suite runs. FANOPS_LOCAL_TESTS=1 is the operator override"
           }
         ]
       },
