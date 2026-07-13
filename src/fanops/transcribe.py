@@ -133,7 +133,7 @@ def fw_cmd(src: str, out_dir: str, model: str, language: str = "") -> list[str]:
             "--output_dir", out_dir, src]
 
 _SEGMENT_QUALITY_KEYS = ("avg_logprob", "no_speech_prob", "compression_ratio")
-# Whisper-default quality thresholds for speech-trust filtering (FANOPS_SPEECH_TRUST).
+# Whisper-default quality thresholds for speech-trust filtering.
 _NO_SPEECH_MAX = 0.6
 _AVG_LOGPROB_MIN = -1.0
 _COMPRESSION_RATIO_MAX = 2.4
@@ -284,12 +284,6 @@ def excerpt_for_window(src, start: float, end: float, *, max_chars: int = 240) -
             continue
     joined = " ".join(parts)
     return joined if len(joined) <= max_chars else joined[:max_chars]
-
-def resolve_speech_trust(cfg, batch=None) -> bool:
-    """Global FANOPS_SPEECH_TRUST with optional per-batch override (mirrors burn_subs resolution)."""
-    if batch is not None and getattr(batch, "speech_trust", None) is not None:
-        return bool(batch.speech_trust)
-    return cfg.speech_trust
 
 def purge_source_artifacts(cfg: Config, source_id: str, source_path: str, *,
                            clip_ids: list[str] | None = None, preserve_vocals: bool = False) -> None:

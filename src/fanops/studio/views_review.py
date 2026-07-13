@@ -113,7 +113,6 @@ class ReviewCard:
     hook_removed: Optional[str] = None   # Moment.hook_removed: the model's hook is_weak_hook stripped. Present ->
                                          # the clip is clean but a good hook was killed; Review badges it + offers
                                          # "approve with hook". None -> nothing was stripped.
-    speech_trust_label: Optional[str] = None   # trusted | mixed | none when FANOPS_SPEECH_TRUST is on; else None
     batch_id: Optional[str] = None       # Face 4: Post.batch_id (Face 1's denormalized Batch.id) — the REAL
                                          # Batch these posts belong to; None == unbatched (groups under 'Ungrouped').
     batch_title: Optional[str] = None    # the Batch.name (led.get_batch(batch_id).name); None when unbatched.
@@ -157,26 +156,6 @@ def _lineage_for_clip(led: Ledger, clip):
     language = src.language if src else None
     excerpt = mom.transcript_excerpt if mom else None
     return source_name, label, moment_window, reason, language, excerpt
-
-def _speech_trust_label(cfg: Config, led: Ledger, mom, src, batch) -> Optional[str]:
-    """Read-only speech-trust chip for Review: trusted | mixed | none. None when speech trust is OFF."""
-    try:
-        from fanops.transcribe import resolve_speech_trust, trusted_segments, window_has_trusted_speech
-        if not resolve_speech_trust(cfg, batch) or mom is None or src is None:
-            return None
-        raw = src.transcript or []
-        in_win = [s for s in raw if isinstance(s.get("start"), (int, float)) and isinstance(s.get("end"), (int, float))
-                  and s["end"] > mom.start and s["start"] < mom.end]
-        if not in_win:
-            return "none"
-        if not window_has_trusted_speech(src, mom.start, mom.end):
-            return "none"
-        trusted = trusted_segments(in_win, src_lang=src.language)
-        return "trusted" if len(trusted) == len(in_win) else "mixed"
-    except Exception as exc:
-        from fanops.log import get_logger
-        get_logger(cfg)("review", getattr(mom, "id", "-"), "speech_trust_label_error", err=str(exc)[:160])
-        return None
 
 def _length_label(profile: Optional[str]) -> Optional[str]:
     """The clip-length band of `profile` as an operator-facing seconds string (e.g. "long" -> "28–45s").
@@ -290,7 +269,6 @@ def _card(led: Ledger, clip, posts, bucket: str, cfg: Config, personas: dict, no
     source_name, label, window, reason, language, excerpt = _lineage_for_clip(led, clip)
     accts = acct_by_handle or {}
     mom = led.moments.get(clip.parent_id)                 # the moment carries hook_removed (clip -> moment)
-    src = led.sources.get(mom.parent_id) if mom is not None else None
     _by_norm = _handle_display_map(accts)
     _affs = _display_handles(sorted(set(mom.affinities or [])), _by_norm) if mom is not None else []   # P13: Moment.affinities (the gate input)
     surfaces = [_surface(p, persona=personas.get(p.account), now=now, cfg=cfg, led=led, acct=accts.get(p.account), affinities=_affs)
@@ -312,7 +290,6 @@ def _card(led: Ledger, clip, posts, bucket: str, cfg: Config, personas: dict, no
         held=bool(clip.held), held_reason=clip.held_reason, transcript_excerpt=excerpt,
         surfaces=surfaces, bucket=bucket, clip_state=clip.state.value,
         hook_removed=(mom.hook_removed if mom is not None else None),
-        speech_trust_label=_speech_trust_label(cfg, led, mom, src, b),
         batch_id=bid, batch_title=(b.name if b is not None else None),
         batch_targets=tgts, batch_state=(b.state.value if b is not None else None),
         batch_created=(b.created_at if b is not None else None), batch_excluded=excluded,

@@ -41,8 +41,7 @@ def register_run_routes(app, cfg):
     def do_run_ingest():
         return _run_panel(actions.run_ingest(cfg, batch_name=request.form.get("batch_name", ""),
                                              target_accounts=request.form.getlist("target_accounts"),
-                                             burn_subs=(False if request.form.get("no_subs") else None),
-                                             speech_trust=(True if request.form.get("speech_trust") else None)))
+                                             burn_subs=(False if request.form.get("no_subs") else None)))
 
     @app.post("/run/pull")
     def do_run_pull():
@@ -56,11 +55,10 @@ def register_run_routes(app, cfg):
         # counts (htmx outerHTML). The manual "Ingest inbox" button stays for a re-ingest / failed retry.
         # "no_subs" checkbox (e.g. a music batch) -> burn_subs=False override; unchecked -> None -> global default.
         burn_subs = False if request.form.get("no_subs") else None
-        speech_trust = True if request.form.get("speech_trust") else None
         return _run_panel(actions.save_uploads_and_ingest(cfg, request.files.getlist("files"),
                                                            batch_name=request.form.get("batch_name", ""),
                                                            target_accounts=request.form.getlist("target_accounts"),
-                                                           burn_subs=burn_subs, speech_trust=speech_trust))
+                                                           burn_subs=burn_subs))
 
     @app.post("/run/upload/init")
     def do_run_upload_init():
@@ -85,11 +83,10 @@ def register_run_routes(app, cfg):
     @app.post("/run/upload/finalize")
     def do_run_upload_finalize():
         burn_subs = False if request.form.get("no_subs") else None
-        speech_trust = True if request.form.get("speech_trust") else None
         return _run_panel(actions.upload_finalize(cfg, request.form.get("upload_id", ""),
                                                    batch_name=request.form.get("batch_name", ""),
                                                    target_accounts=request.form.getlist("target_accounts"),
-                                                   burn_subs=burn_subs, speech_trust=speech_trust))
+                                                   burn_subs=burn_subs))
 
     @app.post("/run/resume")
     def do_run_resume():
@@ -120,11 +117,10 @@ def register_run_routes(app, cfg):
     @app.post("/run/bind-queue")
     def do_bind_queue():
         burn_subs = False if request.form.get("no_subs") else None
-        speech_trust = True if request.form.get("speech_trust") else None
         return _run_panel(actions.bind_queue(cfg, source_ids=request.form.getlist("source_ids"),
                                              batch_name=request.form.get("batch_name", ""),
                                              target_accounts=request.form.getlist("target_accounts"),
-                                             burn_subs=burn_subs, speech_trust=speech_trust))
+                                             burn_subs=burn_subs))
 
     @app.post("/run/release-batch")
     def do_release_batch():

@@ -78,7 +78,6 @@
       {% endif %}
 
       <label class="check-row no-subs-opt"><input type="checkbox" name="no_subs" value="1"> Skip subtitles <span class="muted">— burn from transcript by default</span></label>
-      <label class="check-row speech-trust-opt"><input type="checkbox" name="speech_trust" value="1"> Speech trust <span class="muted">— filter junk ASR for subs/picks/hooks</span></label>
 
       <div class="stage-actions">
         <button type="submit" data-busy-label="Adding…">{% if status.queue_gate %}Add{% else %}Add to queue{% endif %}</button>
@@ -160,7 +159,6 @@
         </fieldset>
       {% endif %}
       <label class="check-row no-subs-opt"><input type="checkbox" name="no_subs" value="1"> Skip subtitles</label>
-      <label class="check-row speech-trust-opt"><input type="checkbox" name="speech_trust" value="1"> Speech trust</label>
       <button type="submit" data-busy-label="Queuing…">Add to queue</button>
     </form>
   </section>

@@ -70,7 +70,7 @@ def catalogue_inbox(cfg: Config) -> ActionResult:
 
 
 def bind_queue(cfg: Config, *, source_ids, batch_name: str = "", target_accounts=(),
-               burn_subs: bool | None = None, speech_trust: bool | None = None) -> ActionResult:
+               burn_subs: bool | None = None) -> ActionResult:
     """Stamp unbound pending sources onto a new Batch (one transaction). Repeatable → multiple queue lines."""
     from fanops.batches import create_batch
     from fanops.accounts import Accounts
@@ -92,8 +92,7 @@ def bind_queue(cfg: Config, *, source_ids, batch_name: str = "", target_accounts
                 led.sources[sid] = led.sources[sid].model_copy(update={"batch_id": bid})
             active = {a.handle for a in Accounts.load(cfg).active()}
             batch = create_batch(led, name=name, target_accounts=list(target_accounts),
-                                 now_iso=now_iso, active_handles=active, burn_subs=burn_subs,
-                                 speech_trust=speech_trust)
+                                 now_iso=now_iso, active_handles=active, burn_subs=burn_subs)
     except Exception as exc:
         from fanops.log import get_logger
         get_logger(cfg)("run", "-", "bind_failed", err=str(exc)[:160])
@@ -143,8 +142,7 @@ def release_all_held(cfg: Config, *, confirmed: bool = True) -> ActionResult:
     return ActionResult(ok=True, detail={"released": released})
 
 
-def run_ingest(cfg: Config, *, batch_name: str = "", target_accounts=(), burn_subs: bool | None = None,
-               speech_trust: bool | None = None) -> ActionResult:
+def run_ingest(cfg: Config, *, batch_name: str = "", target_accounts=(), burn_subs: bool | None = None) -> ActionResult:
     """Drive `fanops ingest` from the browser: catalogue 01_inbox under one transaction (the exact
     cmd_ingest path). When batch_name is non-blank, mint a named, account-targeted Batch in the SAME
     transaction and catalogue the inbox under its id (blank name => today's ungrouped ingest, byte-
@@ -170,8 +168,7 @@ def run_ingest(cfg: Config, *, batch_name: str = "", target_accounts=(), burn_su
                 # handle is FLAGGED at creation (else crosspost silently skips every surface -> 0 posts).
                 active = {a.handle for a in Accounts.load(cfg).active()}   # loaded only on the batched path (byte-identical otherwise)
                 batch = create_batch(led, name=batch_name, target_accounts=list(target_accounts),
-                                     now_iso=now_iso, active_handles=active, burn_subs=burn_subs,
-                                     speech_trust=speech_trust)   # same (name, now_iso) -> same id == bid stamped above
+                                     now_iso=now_iso, active_handles=active, burn_subs=burn_subs)
             n = len(led.sources)
         _archive_staged(cfg, staged)
         write_digest(Ledger.load(cfg), cfg)
@@ -308,7 +305,7 @@ def upload_chunk(cfg: Config, upload_id: str, offset: int, data: bytes) -> Actio
 
 
 def upload_finalize(cfg: Config, upload_id: str, *, batch_name: str = "", target_accounts=(),
-                    burn_subs: bool | None = None, speech_trust: bool | None = None,
+                    burn_subs: bool | None = None,
                     trigger_ingest: bool = True) -> ActionResult:
     """Verify size + sha256, probe the video stream on the .uploadpart, os.replace into the inbox, delete meta.
     When trigger_ingest is True, chains run_ingest like save_uploads_and_ingest."""
@@ -347,7 +344,7 @@ def upload_finalize(cfg: Config, upload_id: str, *, batch_name: str = "", target
         return ActionResult(ok=True, detail={"saved": [meta["name"]]})
     ing = catalogue_inbox(cfg) if cfg.queue_gate else run_ingest(cfg, batch_name=batch_name,
                                                                   target_accounts=target_accounts,
-                                                                  burn_subs=burn_subs, speech_trust=speech_trust)
+                                                                  burn_subs=burn_subs)
     detail = {"saved": [meta["name"]], **(ing.detail or {})}
     if not ing.ok:
         return ActionResult(ok=False, detail=detail,
@@ -401,8 +398,7 @@ def save_uploads(cfg: Config, files: Sequence[FileStorage], *, probe: bool = Tru
 
 
 def save_uploads_and_ingest(cfg: Config, files: Sequence[FileStorage], *, batch_name: str = "",
-                            target_accounts=(), burn_subs: bool | None = None,
-                            speech_trust: bool | None = None) -> ActionResult:
+                            target_accounts=(), burn_subs: bool | None = None) -> ActionResult:
     """One-click upload->catalogue (M5 fast-follow): stream the uploads (save_uploads) and, IF any landed,
     immediately run the ingest pass so the operator doesn't need a second 'Ingest inbox' click. A save
     failure short-circuits (nothing landed -> nothing to ingest). An ingest failure is surfaced but the
@@ -416,7 +412,7 @@ def save_uploads_and_ingest(cfg: Config, files: Sequence[FileStorage], *, batch_
         ing = catalogue_inbox(cfg)
     else:
         ing = run_ingest(cfg, batch_name=batch_name, target_accounts=target_accounts,
-                         burn_subs=burn_subs, speech_trust=speech_trust)
+                         burn_subs=burn_subs)
     detail = {**(up.detail or {}), **(ing.detail or {})}
     if not ing.ok:
         n = len((up.detail or {}).get("saved", []))

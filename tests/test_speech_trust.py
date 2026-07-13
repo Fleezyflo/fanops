@@ -1,8 +1,7 @@
 # tests/test_speech_trust.py — segment_trusted / trusted_segments / window_has_trusted_speech / excerpt_for_window
-from fanops.models import Source, SourceState, Batch
-from fanops.config import Config
+from fanops.models import Source, SourceState
 from fanops.transcribe import (segment_trusted, trusted_segments, window_has_trusted_speech,
-                                excerpt_for_window, resolve_speech_trust, _segment_metadata_pass,
+                                excerpt_for_window, _segment_metadata_pass,
                                 _trust_tier, _NO_SPEECH_MAX, _AVG_LOGPROB_MIN, _COMPRESSION_RATIO_MAX)
 from tests.fixtures.speech_segments import (GOOD_AR, MUSIC_HALLUC, LATIN_JUNK_AR, CJK_JUNK_EN,
                                               LEGACY_EN, talk_seg)
@@ -129,16 +128,3 @@ def test_excerpt_for_window_joins_full_tier_only():
     src2 = Source(id="s2", source_path="/y.mp4", state=SourceState.transcribed, language="en",
                   transcript=[talk_seg(long.strip(), start=0.0, end=10.0)])
     assert len(excerpt_for_window(src2, 0.0, 10.0, max_chars=240)) == 240
-
-
-def test_resolve_speech_trust_batch_override(monkeypatch, tmp_path):
-    monkeypatch.delenv("FANOPS_SPEECH_TRUST", raising=False)
-    cfg = Config(root=tmp_path)
-    assert resolve_speech_trust(cfg, None) is False
-    assert resolve_speech_trust(cfg, Batch(id="b", name="b", speech_trust=True)) is True
-    assert resolve_speech_trust(cfg, Batch(id="b", name="b", speech_trust=False)) is False
-    assert resolve_speech_trust(cfg, Batch(id="b", name="b")) is False
-    monkeypatch.setenv("FANOPS_SPEECH_TRUST", "1")
-    cfg_on = Config(root=tmp_path)
-    assert resolve_speech_trust(cfg_on, Batch(id="b", name="b", speech_trust=False)) is False
-    assert resolve_speech_trust(cfg_on, Batch(id="b", name="b")) is True

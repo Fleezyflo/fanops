@@ -226,15 +226,6 @@ def test_burn_subs_defaults_on_and_respects_env(monkeypatch, tmp_path):
     monkeypatch.setenv("FANOPS_BURN_SUBS", "1")
     assert Config(root=tmp_path).burn_subs is True
 
-def test_speech_trust_defaults_off_and_respects_env(monkeypatch, tmp_path):
-    monkeypatch.delenv("FANOPS_SPEECH_TRUST", raising=False)
-    assert Config(root=tmp_path).speech_trust is False
-    monkeypatch.setenv("FANOPS_SPEECH_TRUST", "1")
-    assert Config(root=tmp_path).speech_trust is True
-    monkeypatch.setenv("FANOPS_SPEECH_TRUST", "on")
-    assert Config(root=tmp_path).speech_trust is True
-    monkeypatch.setenv("FANOPS_SPEECH_TRUST", "0")
-    assert Config(root=tmp_path).speech_trust is False
 
 def test_isolate_vocals_defaults_on_and_respects_env(monkeypatch, tmp_path):
     # DEFAULT ON: stripping the beat (Demucs) before Whisper is the music-transcription fix; it
