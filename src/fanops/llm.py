@@ -336,7 +336,7 @@ def _resolve_cursor_model(model: str | None) -> str | None:
 
 def _build_cursor_cmd(model: str | None) -> list[str]:
     resolved = _resolve_cursor_model(model)
-    return ["cursor-agent", "-p", "--output-format", "json"] + (["--model", resolved] if resolved else [])
+    return ["cursor-agent", "-p", "--output-format", "json", "--trust"] + (["--model", resolved] if resolved else [])
 
 def _cursor_rate_limit_status(returncode: int, stdout: str, stderr: str) -> int | None:
     rl = _rate_limit_status(returncode, stdout)
