@@ -43,6 +43,9 @@ def wait_for_gate(cfg: Config, led, *, kind: str, key: str) -> str:
 
 
 def _pending_gates(cfg: Config) -> list[tuple[float, str, str]]:
+    """Every pending gate as (mtime, kind, key), oldest first. ONE scan across all gate kinds — the
+    single place the request dir is globbed. Callers that need the same list per source should build a
+    PendingIndex once (below) and thread it, not call this per source."""
     out: list[tuple[float, str, str]] = []
     for kind in GATE_KINDS:
         for key in pending(cfg, kind=kind):
@@ -56,21 +59,40 @@ def _pending_gates(cfg: Config) -> list[tuple[float, str, str]]:
     return out
 
 
-def top_wait_line(cfg: Config, led) -> str | None:
+@dataclass(frozen=True)
+class PendingIndex:
+    """A ONE-scan projection of the pending gates, so a full status render is O(files) not O(sources).
+
+    `ordered` is every pending gate (mtime, kind, key) oldest-first (identical to `_pending_gates`).
+    `by_source` maps each owning source id -> its own gates, oldest-first — so `source_wait_line` and
+    `_source_has_pending_gate` become dict lookups instead of re-globbing the request dir per source.
+    Gates whose owner can't be resolved (gate_source_id -> None) are omitted from `by_source` (they were
+    never attributable to a source, so no source ever considered them owned)."""
+    ordered: list[tuple[float, str, str]]
+    by_source: dict[str, list[tuple[float, str, str]]]
+
+    @classmethod
+    def build(cls, cfg: Config, led) -> "PendingIndex":
+        ordered = _pending_gates(cfg)
+        by_source: dict[str, list[tuple[float, str, str]]] = {}
+        for mtime, kind, key in ordered:
+            sid = gate_source_id(led, kind, key)
+            if sid is not None:
+                by_source.setdefault(sid, []).append((mtime, kind, key))
+        return cls(ordered=ordered, by_source=by_source)
+
+
+def top_wait_line(cfg: Config, led, idx: PendingIndex | None = None) -> str | None:
     """The oldest pending gate as a wait= line, or None when no gate is pending."""
-    gates = _pending_gates(cfg)
+    gates = (idx or PendingIndex.build(cfg, led)).ordered
     if not gates:
         return None
     _, kind, key = gates[0]
     return wait_for_gate(cfg, led, kind=kind, key=key)
 
 
-def _source_has_pending_gate(cfg: Config, led, source_id: str) -> bool:
-    for kind in GATE_KINDS:
-        for key in pending(cfg, kind=kind):
-            if gate_source_id(led, kind, key) == source_id:
-                return True
-    return False
+def _source_has_pending_gate(led, source_id: str, idx: PendingIndex) -> bool:
+    return source_id in idx.by_source
 
 
 def _source_has_non_terminal_clip(led, source_id: str) -> bool:
@@ -84,23 +106,21 @@ def _source_has_non_terminal_clip(led, source_id: str) -> bool:
 
 def visible_source_ids(led, cfg: Config) -> list[str]:
     """Sources that belong on status — closes the disappearing-gate bug on moments_decided."""
+    idx = PendingIndex.build(cfg, led)
     out: list[str] = []
     for sid, s in sorted(led.sources.items()):
         if s.state is SourceState.retired:
             continue
         if s.state is SourceState.moments_decided:
-            if not (_source_has_pending_gate(cfg, led, sid) or _source_has_non_terminal_clip(led, sid)):
+            if not (_source_has_pending_gate(led, sid, idx) or _source_has_non_terminal_clip(led, sid)):
                 continue
         out.append(sid)
     return out
 
 
-def source_wait_line(cfg: Config, led, source_id: str) -> str | None:
+def source_wait_line(cfg: Config, led, source_id: str, idx: PendingIndex | None = None) -> str | None:
     """The oldest pending gate owned by source_id, or None."""
-    owned: list[tuple[float, str, str]] = []
-    for mtime, kind, key in _pending_gates(cfg):
-        if gate_source_id(led, kind, key) == source_id:
-            owned.append((mtime, kind, key))
+    owned = (idx or PendingIndex.build(cfg, led)).by_source.get(source_id)
     if not owned:
         return None
     _, kind, key = owned[0]
@@ -132,7 +152,7 @@ class SourceBacklog:
     rows: list[SourceBacklogRow]
 
 
-def _source_bucket(cfg: Config, led, source_id: str, s) -> str:
+def _source_bucket(led, source_id: str, s, idx: PendingIndex) -> str:
     """Classify one native source into a backlog bucket (priority order)."""
     if s.state is SourceState.pending:
         return "held"
@@ -141,9 +161,9 @@ def _source_bucket(cfg: Config, led, source_id: str, s) -> str:
     if s.state in _RECOVERABLE:
         return "recoverable"
     if s.state is SourceState.moments_decided:
-        if not (_source_has_pending_gate(cfg, led, source_id) or _source_has_non_terminal_clip(led, source_id)):
+        if not (_source_has_pending_gate(led, source_id, idx) or _source_has_non_terminal_clip(led, source_id)):
             return "inventory"
-    if _source_has_pending_gate(cfg, led, source_id):
+    if _source_has_pending_gate(led, source_id, idx):
         return "blocked_on_gates"
     return "actionable"
 
@@ -152,14 +172,15 @@ def source_backlog(led, cfg: Config) -> SourceBacklog:
     """Canonical projection: asset inventory vs actionable backlog. Every consumer (Studio, CLI, doctor)
     must derive source counts from here — never re-count raw ledger states."""
     from fanops.artifacts import artifact_summary
+    idx = PendingIndex.build(cfg, led)   # ONE scan of the request dir — makes this render O(files), not O(sources)
     rows: list[SourceBacklogRow] = []
     counts = {"actionable": 0, "blocked_on_gates": 0, "recoverable": 0, "inventory": 0, "held": 0}
     for sid, s in sorted(led.sources.items()):
         if s.origin_kind != "native":
             continue
-        bucket = _source_bucket(cfg, led, sid, s)
+        bucket = _source_bucket(led, sid, s, idx)
         counts[bucket] += 1
-        wl = source_wait_line(cfg, led, sid)
+        wl = source_wait_line(cfg, led, sid, idx)
         br = s.error_reason if s.state in _RECOVERABLE else None
         if bucket == "blocked_on_gates" and wl and wl.startswith("wait=error:"):
             br = wl.split("wait=error:", 1)[-1]
