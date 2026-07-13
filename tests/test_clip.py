@@ -279,6 +279,31 @@ def test_render_null_transcript_start_skips_sub_captions(tmp_path, mocker, monke
     assert "good line" in ass and "bad segment" not in ass
 
 
+def test_render_subs_exclude_junk_segments(tmp_path, mocker, monkeypatch):
+    from tests.fixtures.speech_segments import talk_seg, MUSIC_HALLUC
+    monkeypatch.setenv("FANOPS_BURN_SUBS", "1")
+    monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
+                          width=1920, height=1080, language="en",
+                          transcript=[talk_seg("trusted line here", start=0.0, end=3.0),
+                                      {**MUSIC_HALLUC, "start": 3.0, "end": 6.0, "text": "background noise"}]))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7",
+                          start=0, end=7, reason="r", state=MomentState.decided, hook=""))
+    captured = {}
+    def fake_run(cmd, **kw):
+        captured["cmd"] = cmd
+        if not str(cmd[-1]).startswith("-"):
+            out = Path(cmd[-1]); out.parent.mkdir(parents=True, exist_ok=True); out.write_bytes(b"CLIP")
+        class R: returncode = 0; stderr = ""; stdout = ""
+        return R()
+    mocker.patch("fanops.clip.subprocess.run", side_effect=fake_run)
+    led, clip = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
+    assert clip.state is ClipState.rendered
+    ass = next(cfg.clips.glob("*.ass")).read_text(encoding="utf-8")
+    assert "trusted line here" in ass and "background noise" not in ass
+
+
 def test_render_failopen_when_no_textfilter(tmp_path, mocker, monkeypatch):
     # burn_subs ON but ffmpeg LACKS the text filter -> NO "subtitles=" in -vf, the clip still
     # renders, and exactly ONE warning is logged. NEVER raises.
@@ -636,6 +661,18 @@ def test_render_moment_snaps_cut_to_transcript_boundaries(tmp_path, mocker, monk
                                   duration=120.0, transcript=tr)   # 18s in-band pick
     assert ss == 9.3                                       # start snapped to the line boundary
     assert round(ss + to, 1) == 28.4                       # end snapped to the phrase end
+
+def test_render_moment_snap_ignores_junk_boundaries(tmp_path, mocker, monkeypatch):
+    from tests.fixtures.speech_segments import talk_seg, MUSIC_HALLUC
+    junk = {**MUSIC_HALLUC, "start": 9.4, "end": 9.8, "text": "junk start"}
+    good = talk_seg("real speech", start=9.3, end=12.0)
+    good_end = talk_seg("phrase end", start=15.0, end=17.2)
+    junk_end = {**MUSIC_HALLUC, "start": 16.0, "end": 16.6, "text": "junk end"}
+    tr = [junk, good, good_end, junk_end]
+    ss, to = _capture_render_full(tmp_path, mocker, monkeypatch, start=10.0, end=16.5,
+                                  duration=120.0, transcript=tr)
+    assert ss == 9.3                                       # trusted start, not junk 9.4
+    assert round(ss + to, 1) == 17.2                       # trusted end, not junk 16.6
 
 def test_render_moment_song_profile_uses_wider_band(tmp_path, mocker, monkeypatch):
     # a 14s pick on a song source grows to the 18s SONG floor (talk would keep it at 14)

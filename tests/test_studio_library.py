@@ -92,3 +92,16 @@ def test_run_panel_shows_third_party_count(tmp_path):
     cfg = Config(root=tmp_path); _seed_mixed(cfg)
     r = _client(cfg).get("/run")
     assert r.status_code == 200 and b"3rd-party" in r.data           # operator still sees uploaded assets on Run
+
+
+def test_library_transcript_stamps_trust_tier(tmp_path):
+    from tests.fixtures.speech_segments import talk_seg, MUSIC_HALLUC
+    from fanops.studio.views_library import source_pipeline_map
+    cfg = Config(root=tmp_path)
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="src_1", source_path="/talk.mp4", state=SourceState.transcribed, language="en",
+                              transcript=[talk_seg("good line", start=0.0, end=2.0),
+                                          {**MUSIC_HALLUC, "start": 2.0, "end": 4.0}]))
+    detail = source_pipeline_map(cfg, "src_1")
+    tiers = [s["trust_tier"] for s in detail["transcript"].segments]
+    assert tiers == ["full", "rejected"]

@@ -1402,6 +1402,7 @@ def gate_rows(cfg: Config) -> list[dict]:
     Same enumeration `fanops respond` uses, surfaced for the browser."""
     from fanops.agentstep import pending, request_path
     from fanops.pipeline_status import _gate_is_corrupt
+    from fanops.transcribe import _trust_tier
     rows: list[dict] = []
     for kind in ("moments", "moment_hooks", "captions"):
         for key in pending(cfg, kind=kind):
@@ -1416,5 +1417,17 @@ def gate_rows(cfg: Config) -> list[dict]:
                                                        # gate form whose blank submit could write a bad answer
                                                        # (ecc audit). The corruption is already logged by
                                                        # latest_request_id during pending().
+            if kind == "moments" and payload.get("transcript"):
+                lang = payload.get("language")
+                tr = []
+                for seg in payload["transcript"]:
+                    if isinstance(seg, dict):
+                        s = dict(seg)
+                        if "trust_tier" not in s:
+                            s["trust_tier"] = _trust_tier(s, src_lang=lang)
+                        tr.append(s)
+                    else:
+                        tr.append(seg)
+                payload = {**payload, "transcript": tr}
             rows.append({"kind": kind, "key": key, **payload})
     return rows
