@@ -544,6 +544,7 @@ def test_cursor_json_happy_envelope(mocker, monkeypatch):
     assert out == {"x": 7}
     cmd = run.call_args[0][0]
     assert cmd[0] == "cursor-agent" and "-p" in cmd and "json" in cmd
+    assert "--trust" in cmd                              # headless gate answers must not hit the workspace-trust wall
     assert json.dumps(_SCHEMA) in run.call_args.kwargs["input"]
 
 def test_cursor_json_toolchain_banner(mocker, monkeypatch):
