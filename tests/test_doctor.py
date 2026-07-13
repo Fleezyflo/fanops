@@ -424,3 +424,34 @@ def test_doctor_fails_on_dead_daemon_or_past_due_backlog(tmp_path, monkeypatch):
     _seed_queued_post(cfg_d, when=FUT)
     c_d = _daemon_check(doctor.doctor_report(cfg_d))
     assert c_d is not None and c_d["ok"] is True
+
+
+def test_doctor_passes_stale_heartbeat_during_live_mid_pass(tmp_path, monkeypatch):
+    import fcntl, os
+    from datetime import datetime, timezone, timedelta
+    from fanops.pipeline_run import note_stage, _lock_path
+    cfg = Config(root=tmp_path)
+    _write_heartbeat(cfg, age_seconds=3 * 3600)
+    FUT = (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()
+    _seed_queued_post(cfg, when=FUT)
+    monkeypatch.setattr("fanops.daemon.subprocess.run",
+                        _fake_launchctl_daemon(list=(0, '\t"PID" = 1;\n')))
+    lp = _lock_path(cfg)
+    lp.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(str(lp), os.O_CREAT | os.O_RDWR)
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    try:
+        note_stage(cfg, "transcribe", "src-1")
+        c = _daemon_check(doctor.doctor_report(cfg))
+        assert c is not None and c["ok"] is True
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN); os.close(fd)
+
+
+def _fake_launchctl_daemon(**spec):
+    import subprocess
+    def run(cmd, *a, **k):
+        verb = cmd[1] if len(cmd) > 1 else ""
+        rc, out = spec.get(verb, (0, ""))
+        return subprocess.CompletedProcess(cmd, rc, stdout=out, stderr="")
+    return run

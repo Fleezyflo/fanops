@@ -372,6 +372,7 @@ def status(cfg: Config, *, interval: int = 600) -> dict:
     pid = _grep_int(r.stdout, "PID") if loaded else None
     last_exit = _grep_int(r.stdout, "LastExitStatus") if loaded else None
     age, stale, iv = heartbeat_stale(cfg, interval=installed_interval(cfg) or interval)
+    run_line = None
     exec_fail = None
     target = _installed_program(cfg)
     if loaded and target and not os.access(target, os.X_OK):
@@ -385,9 +386,21 @@ def status(cfg: Config, *, interval: int = 600) -> dict:
     elif not stale:
         verdict = "alive"
     else:
-        verdict = f"loaded but stale (last heartbeat {int(age)}s ago)"
+        from fanops.health_model import daemon_progress
+        alive_mid, progress_line, snap = daemon_progress(cfg)
+        if alive_mid:
+            verdict = "alive"
+            run_line = progress_line
+        elif progress_line is not None:
+            if snap:
+                verdict = f"loaded but stage stuck ({snap['stage']} {int(snap['stage_age'])}s)"
+            else:
+                verdict = f"loaded but stale (last heartbeat {int(age)}s ago)"
+            run_line = progress_line
+        else:
+            verdict = f"loaded but stale (last heartbeat {int(age)}s ago)"
     return {"installed": installed, "loaded": loaded, "pid": pid, "last_exit": last_exit,
-            "heartbeat_age_s": age, "verdict": verdict, "exec_fail": exec_fail}
+            "heartbeat_age_s": age, "verdict": verdict, "exec_fail": exec_fail, "run_line": run_line}
 
 def stop(cfg: Config, *, remove: bool = False) -> dict:
     """Unload the agent, then CONFIRM the real outcome (W10) instead of hardcoding success: the agent is

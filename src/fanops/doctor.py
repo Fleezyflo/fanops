@@ -200,8 +200,12 @@ def _daemon_liveness_check(cfg: Config) -> dict:
     except Exception as e:
         backlog_unknown = True
         logging.getLogger("fanops.doctor").debug("daemon backlog read failed: %s", e)
-    # (a) heartbeat staleness / absence
+    # (a) heartbeat staleness / absence — mid-pass stage overrides stale heartbeat (shared with daemon.status)
+    from fanops.health_model import daemon_progress, _STAGE_HANG_CEILING_S
+    alive_mid, progress_line, snap = daemon_progress(cfg)
     stale = age is None or age > _DAEMON_STALE_TICKS * interval
+    if alive_mid:
+        stale = False
     ok = (not stale) and backlog_n == 0 and not backlog_unknown
     if ok:
         return _check(lbl, True, "")
@@ -210,8 +214,16 @@ def _daemon_liveness_check(cfg: Config) -> dict:
         parts.append("no daemon heartbeat in run.log — the pump has never completed a tick (or run.log is "
                      "missing). Install/start it: `fanops daemon install` then check `fanops daemon status`")
     elif stale:
-        parts.append(f"daemon heartbeat is {int(age)}s old (> {_DAEMON_STALE_TICKS}x the {interval}s tick) — the "
-                     f"pump looks dead/stopped; approved posts won't send. Restart it (`fanops daemon status`)")
+        if progress_line is not None and not alive_mid:
+            if snap:
+                parts.append(f"daemon mid-pass stage stuck — {snap['stage']} has run {int(snap['stage_age'])}s "
+                             f"(>{_STAGE_HANG_CEILING_S}s ceiling); the pump may be wedged")
+            else:
+                parts.append(f"daemon heartbeat is {int(age)}s old (> {_DAEMON_STALE_TICKS}x the {interval}s tick) — the "
+                             f"pump looks dead/stopped; approved posts won't send. Restart it (`fanops daemon status`)")
+        else:
+            parts.append(f"daemon heartbeat is {int(age)}s old (> {_DAEMON_STALE_TICKS}x the {interval}s tick) — the "
+                         f"pump looks dead/stopped; approved posts won't send. Restart it (`fanops daemon status`)")
     if backlog_n:
         parts.append(f"{backlog_n} queued post(s) past-due by up to {oldest_h:.1f}h — backlog is piling up "
                      f"(the pump isn't draining the queue)")
