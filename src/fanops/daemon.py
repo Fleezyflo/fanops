@@ -362,10 +362,15 @@ def sibling_agents_status() -> list[dict]:
 
 
 def status(cfg: Config, *, interval: int = 600) -> dict:
-    """Read-only liveness + readiness: plist-on-disk + not-loaded is an ALARM (should be running);
-    loaded + heartbeat-fresh is alive; loaded + heartbeat-stale is stale. `interval` is the installed
-    cadence — alive iff the last heartbeat is younger than 3 intervals."""
-    from fanops.health_model import heartbeat_stale
+    """Read-only liveness + readiness — PID-primary, thin caller of the one liveness owner. A live
+    launchd PID + fresh activity is the PRIMARY truth: while loaded and daemon_progress reports
+    alive_mid (the newest run.log line of ANY kind is younger than the ceiling), the verdict is
+    `alive` REGARDLESS of the loop-heartbeat age (that heartbeat only lands after a whole pass
+    finishes, so it must NEVER flip a fast-logging pass to stale). `heartbeat_age_s` stays in the
+    dict for telemetry but no longer governs the verdict on its own. Not-loaded is an ALARM (should
+    be running); a stage held with the log SILENT past the ceiling is stage-stuck; genuinely dead
+    (no PID) is the ONLY 'not running' verdict. `interval` is the installed cadence."""
+    from fanops.health_model import heartbeat_stale, daemon_progress
     installed = plist_path().exists()
     r = _launchctl("list", LABEL)
     loaded = r.returncode == 0
@@ -381,22 +386,19 @@ def status(cfg: Config, *, interval: int = 600) -> dict:
         verdict = _VERDICT_UNLOADED_ALARM if installed else "not installed"
     elif exec_fail:
         verdict = f"loaded but interpreter not executable: {exec_fail['target']}"
-    elif age is None:
-        verdict = "loaded but no heartbeat yet"
     elif not stale:
-        verdict = "alive"
+        verdict = "alive"                                    # fresh loop heartbeat (regression path)
     else:
-        from fanops.health_model import daemon_progress
         alive_mid, progress_line, snap = daemon_progress(cfg)
-        if alive_mid:
+        run_line = progress_line
+        if alive_mid:                                        # fresh activity governs — never 'stale'/'not running'
             verdict = "alive"
-            run_line = progress_line
-        elif progress_line is not None:
-            if snap:
-                verdict = f"loaded but stage stuck ({snap['stage']} {int(snap['stage_age'])}s)"
-            else:
-                verdict = f"loaded but stale (last heartbeat {int(age)}s ago)"
-            run_line = progress_line
+        elif snap and progress_line is not None:             # stage held AND log silent past ceiling
+            act = _newest_activity_ts(cfg)                   # report the SILENCE (not stage_age) — matches the word
+            silent = int((datetime.now(timezone.utc) - act).total_seconds()) if act else 0
+            verdict = f"loaded but stage stuck ({snap['stage']} SILENT {silent}s)"
+        elif age is None:
+            verdict = "loaded but no heartbeat yet"
         else:
             verdict = f"loaded but stale (last heartbeat {int(age)}s ago)"
     return {"installed": installed, "loaded": loaded, "pid": pid, "last_exit": last_exit,
@@ -567,10 +569,15 @@ def _tail(text: str, n: int = 6) -> str:
     return " | ".join(lines[-n:]) if lines else ""
 
 
-def _newest_loop_heartbeat_ts(cfg: Config) -> datetime | None:
-    """Timestamp of the newest resident-loop heartbeat in run.log (tz-aware UTC), or None. Same line
-    shape daemon._heartbeat_age_s reads (JSON stage=heartbeat origin=loop; legacy TAB fallback) — kept
-    separate so _heartbeat_age_s stays byte-identical (health_model/doctor depend on it)."""
+def _newest_activity_ts(cfg: Config) -> datetime | None:
+    """Timestamp of the newest parseable run.log line of ANY kind (tz-aware UTC), or None. Every
+    structured record carries a top-level `ts` (log.py); legacy TAB lines expose the ISO in their
+    leading column. This is the liveness signal that proves life DURING a long pass — a working stage
+    emits a run.log line every ~60s (every stage/gate/llm call), so a fresh newest line means the pump
+    is still working, however long the current stage runs. Read-only (no writes/threads), fail-open to
+    None on no-log/unreadable/unparseable. Kept OFF _heartbeat_age_s (frozen byte-for-byte:
+    health_model/doctor + the Prometheus gauge depend on it) — this reader counts EVERY line, not just
+    the loop heartbeat, which is exactly why it can't share that byte-identical reader."""
     p = cfg.log_path
     if not p.exists():
         return None
@@ -581,11 +588,13 @@ def _newest_loop_heartbeat_ts(cfg: Config) -> datetime | None:
                 continue
             try:
                 rec = json.loads(line)
-                if rec.get("stage") == "heartbeat" and rec.get("origin") == "loop":
-                    last_ts = rec.get("ts")
+                ts = rec.get("ts")
+                if ts:
+                    last_ts = ts
             except json.JSONDecodeError:
-                if "\theartbeat\t" in line:
-                    last_ts = line.split("\t", 1)[0]
+                first = line.split("\t", 1)[0].strip()       # legacy TAB line: leading ISO column
+                if first:
+                    last_ts = first
     except OSError:
         return None
     if last_ts is None:
@@ -600,12 +609,14 @@ def _newest_loop_heartbeat_ts(cfg: Config) -> datetime | None:
 def _heartbeat_fresh_since(cfg: Config, since: datetime, *,
                            tries: int = _KICKSTART_HEARTBEAT_TRIES,
                            step: float = _KICKSTART_HEARTBEAT_STEP) -> bool:
-    """Poll run.log until a loop heartbeat newer than `since` (the restart instant) appears. The
-    load-bearing freshness proof: a restarted daemon writes a NEW heartbeat on its first tick, so a
-    line strictly newer than the kickstart means the fresh process is alive on current code. Bounded
-    — returns False if none arrives within tries*step (the daemon didn't come back healthy)."""
+    """Poll run.log until ANY new line newer than `since` (the restart instant) appears. The
+    load-bearing freshness proof: a restarted daemon writes SOME run.log line within its first stage
+    (not only a loop heartbeat, which won't land until the first whole pass FINISHES — hours on a big
+    pass), so a line strictly newer than the kickstart means the fresh process is alive on current
+    code within seconds. Bounded — returns False if none arrives within tries*step (the daemon didn't
+    come back healthy)."""
     for _ in range(max(1, tries)):
-        ts = _newest_loop_heartbeat_ts(cfg)
+        ts = _newest_activity_ts(cfg)
         if ts is not None and ts > since:
             return True
         time.sleep(step)
@@ -620,6 +631,29 @@ def _studio_port_answers(host: str = STUDIO_DEFAULT_HOST, port: int = STUDIO_DEF
             return True
     except OSError:
         return False
+
+
+def _version_signal(cfg: Config) -> tuple[str | None, str]:
+    """The running-code signal the self-adopt loop compares each tick, plus its SOURCE. Prefers
+    `git -C cfg.root rev-parse HEAD` (cheap, moves per-commit — the real change signal); falls back to
+    `fanops.__version__` (near-useless for change detection — stale, doesn't move per-commit, so it
+    only guards a totally git-less tree); returns (None, 'unavailable') when BOTH are absent so the
+    caller can DISARM self-adopt and log a DEGRADED line rather than appear armed but never fire.
+    Fail-open with a breadcrumb: a git error / missing binary degrades to the version fallback."""
+    from fanops.errors import fail_open
+    head = None
+    with fail_open("version_signal.git"):
+        r = subprocess.run(["git", "-C", str(cfg.root), "rev-parse", "HEAD"],
+                           capture_output=True, text=True, timeout=15)
+        if r.returncode == 0 and r.stdout.strip():
+            head = r.stdout.strip()
+    if head:
+        return head, "git-head"
+    try:
+        from fanops import __version__
+    except ImportError:
+        return None, "unavailable"
+    return (str(__version__), "version") if __version__ else (None, "unavailable")
 
 
 # ── the four planes (each returns a small verdict dict; tests drive them in isolation) ──────────
@@ -706,10 +740,45 @@ def _plane_daemon(cfg: Config, *, kickstart: bool = True) -> dict:
             "detail": f"loaded ({ens.get('action')})"}
 
 
+def _redeploy_studio(cfg: Config) -> bool:
+    """Cycle the Studio resident onto current code, iff its launchd job is installed. `kickstart -k`
+    SIGKILLs the old resident (no request drain — an in-flight localhost request is dropped; tolerable
+    for a single-operator cockpit) and launchd relaunches it via KeepAlive. Returns True when the job
+    exists AND the port answers after the restart. Returns False when no plist is installed (nothing to
+    cycle) or the restart didn't come back answering. Off-darwin / launchctl-absent -> False (fail-open;
+    the caller keeps its report-only posture). Shared by _plane_studio and _kickstart_studio_if_present."""
+    if not studio_plist_path().exists():
+        return False
+    try:
+        kr = _launchctl("kickstart", "-k", f"gui/{os.getuid()}/{STUDIO_LABEL}")
+    except (RuntimeError, ToolchainMissingError):
+        return False
+    if kr.returncode != 0:
+        return False
+    return _studio_port_answers()
+
+
+def _kickstart_studio_if_present(cfg: Config) -> None:
+    """Best-effort Studio redeploy used by the self-adopt path (cli run loop): if the Studio launchd
+    job is installed, cycle it onto current code; no-op when absent. Never raises (fail-open with a
+    breadcrumb) — a Studio redeploy hiccup must not abort the daemon's own self-adopt re-exec."""
+    from fanops.errors import fail_open
+    with fail_open("kickstart_studio_if_present"):
+        _redeploy_studio(cfg)
+
+
 def _plane_studio(cfg: Config) -> dict:
-    """Studio plane — REPORT ONLY (never fails the verdict, never daemonizes Studio: out of scope,
-    no com.fanops.studio job here). If 127.0.0.1:8787 answers, report up; else print the exact launch
-    command (already in .claude/launch.json)."""
+    """Studio plane — non-gating (never fails the overall verdict). When the com.fanops.studio launchd
+    job is installed, ACTUALLY cycle it onto current code via _redeploy_studio and report cycled +
+    answering; when absent (no plist to cycle), stay report-only and print the exact launch command
+    (in .claude/launch.json). Either way Studio never blocks `up`'s READY (report-only gate posture
+    unchanged) — the difference is `fanops up` now cycles Studio instead of just printing a command."""
+    if studio_plist_path().exists():
+        if _redeploy_studio(cfg):
+            return {"plane": "studio", "ok": True, "report_only": True,
+                    "detail": f"cycled onto current code; answering at http://{STUDIO_DEFAULT_HOST}:{STUDIO_DEFAULT_PORT}"}
+        return {"plane": "studio", "ok": False, "report_only": True,
+                "detail": f"restarted but not answering on {STUDIO_DEFAULT_HOST}:{STUDIO_DEFAULT_PORT} — check 07_reports/studio.err"}
     if _studio_port_answers():
         return {"plane": "studio", "ok": True, "report_only": True,
                 "detail": f"answering at http://{STUDIO_DEFAULT_HOST}:{STUDIO_DEFAULT_PORT}"}

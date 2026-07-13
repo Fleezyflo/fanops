@@ -54,11 +54,24 @@ def test_daemon_progress_absent_when_no_lease(tmp_path):
     assert alive is False and line is None and snap is None
 
 
+def _write_log_line(cfg, *, stage="stage", ts=None):
+    """Append one run.log line at `ts` (any stage) — the activity signal daemon_progress now reads."""
+    import json
+    from datetime import datetime, timezone
+    cfg.reports.mkdir(parents=True, exist_ok=True)
+    ts = ts or datetime.now(timezone.utc).isoformat()
+    rec = {"ts": ts, "level": "info", "stage": stage, "unit_id": "-", "outcome": "ok"}
+    with cfg.log_path.open("a") as fh:
+        fh.write(json.dumps(rec) + "\n")
+
+
 def test_daemon_progress_alive_when_fresh_stage(tmp_path):
+    # ALIVE = a stage is held AND the log is FRESH (still emitting). The mid-pass line names the stage.
     import fcntl, os
     from fanops.health_model import daemon_progress, _STAGE_HANG_CEILING_S
     from fanops.pipeline_run import note_stage, _lock_path
     cfg = Config(root=tmp_path)
+    _write_log_line(cfg, stage="llm")                       # fresh run.log line == the pump is emitting
     lp = _lock_path(cfg)
     lp.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(str(lp), os.O_CREAT | os.O_RDWR)
@@ -73,24 +86,52 @@ def test_daemon_progress_alive_when_fresh_stage(tmp_path):
         fcntl.flock(fd, fcntl.LOCK_UN); os.close(fd)
 
 
-def test_daemon_progress_stuck_when_stage_age_above_ceiling(tmp_path):
+def test_daemon_progress_alive_when_stage_old_but_log_fresh(tmp_path):
+    # THE DEVIATION PROOF: a long-running stage (stage_age >> ceiling) that is STILL LOGGING is ALIVE,
+    # not wedged. Wedged is LOG SILENCE, never stage_age — a big transcribe legitimately runs >1h.
     import fcntl, json, os
     from datetime import datetime, timezone, timedelta
     from fanops.health_model import daemon_progress, _STAGE_HANG_CEILING_S
     from fanops.pipeline_run import _lock_path
     cfg = Config(root=tmp_path)
-    old = (datetime.now(timezone.utc) - timedelta(seconds=_STAGE_HANG_CEILING_S + 60)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    _write_log_line(cfg, stage="llm")                       # fresh activity NOW
+    old = (datetime.now(timezone.utc) - timedelta(seconds=_STAGE_HANG_CEILING_S + 600)).strftime("%Y-%m-%dT%H:%M:%SZ")
     lp = _lock_path(cfg)
     lp.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(str(lp), os.O_CREAT | os.O_RDWR)
     fcntl.flock(fd, fcntl.LOCK_EX)
     os.ftruncate(fd, 0); os.lseek(fd, 0, os.SEEK_SET)
     os.write(fd, json.dumps({"pid": 1, "started": old, "stage": "transcribe", "unit": "src-1",
-                             "stage_started": old}).encode())
+                             "stage_started": old}).encode())   # stage_age > ceiling
+    try:
+        alive, line, snap = daemon_progress(cfg)
+        assert alive is True and snap is not None               # long-but-logging != wedged
+        assert line is not None and "mid-pass: transcribe" in line
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN); os.close(fd)
+
+
+def test_daemon_progress_wedged_when_stage_held_and_log_silent(tmp_path):
+    # WEDGED = a stage IS held AND the newest run.log line is SILENT past the ceiling.
+    import fcntl, json, os
+    from datetime import datetime, timezone, timedelta
+    from fanops.health_model import daemon_progress, _STAGE_HANG_CEILING_S
+    from fanops.pipeline_run import _lock_path
+    cfg = Config(root=tmp_path)
+    old = (datetime.now(timezone.utc) - timedelta(seconds=_STAGE_HANG_CEILING_S + 120))
+    _write_log_line(cfg, stage="transcribe", ts=old.isoformat())   # newest log line is SILENT > ceiling
+    old_s = old.strftime("%Y-%m-%dT%H:%M:%SZ")
+    lp = _lock_path(cfg)
+    lp.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(str(lp), os.O_CREAT | os.O_RDWR)
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    os.ftruncate(fd, 0); os.lseek(fd, 0, os.SEEK_SET)
+    os.write(fd, json.dumps({"pid": 1, "started": old_s, "stage": "transcribe", "unit": "src-1",
+                             "stage_started": old_s}).encode())
     try:
         alive, line, snap = daemon_progress(cfg)
         assert alive is False and snap is not None
-        assert line is not None and "transcribe" in line
+        assert line is not None and "transcribe" in line and "SILENT" in line
     finally:
         fcntl.flock(fd, fcntl.LOCK_UN); os.close(fd)
 

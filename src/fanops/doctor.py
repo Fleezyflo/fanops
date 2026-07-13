@@ -216,7 +216,9 @@ def _daemon_liveness_check(cfg: Config) -> dict:
     elif stale:
         if progress_line is not None and not alive_mid:
             if snap:
-                parts.append(f"daemon mid-pass stage stuck — {snap['stage']} has run {int(snap['stage_age'])}s "
+                act = daemon._newest_activity_ts(cfg)         # log-SILENCE, not stage_age — the wedged signal
+                silent = int((now - act).total_seconds()) if act else 0
+                parts.append(f"daemon mid-pass stage stuck — {snap['stage']} log SILENT {silent}s "
                              f"(>{_STAGE_HANG_CEILING_S}s ceiling); the pump may be wedged")
             else:
                 parts.append(f"daemon heartbeat is {int(age)}s old (> {_DAEMON_STALE_TICKS}x the {interval}s tick) — the "
@@ -465,7 +467,7 @@ def setup_next_action(cfg: Config) -> str:
     led = Ledger.load(cfg)
     bl = source_backlog(led, cfg)
     if bl.blocked_on_gates:
-        return f"{bl.blocked_on_gates} source(s) blocked on gate(s) — answer in Studio Gates or run `fanops status`"
+        return f"{bl.blocked_on_gates} source(s) awaiting gate answer(s) — answer in Studio Gates or run `fanops status`"
     if bl.recoverable:
         return f"{bl.recoverable} source(s) need attention — run `fanops status` then Resume/Reset in Studio Make"
     state = setup_state(cfg)

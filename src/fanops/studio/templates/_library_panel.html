@@ -14,7 +14,7 @@
 
   {% if catalog.backlog %}
   <p class="meta backlog-summary">{{ catalog.backlog.actionable }} {% if catalog.run_active %}in progress{% else %}queued{% endif %} ·
-    {{ catalog.backlog.blocked_on_gates }} blocked · {{ catalog.backlog.recoverable }} need attention ·
+    {{ catalog.backlog.blocked_on_gates }} awaiting · {{ catalog.backlog.recoverable }} need attention ·
     {{ catalog.backlog.inventory }} in library</p>
   {% endif %}
 

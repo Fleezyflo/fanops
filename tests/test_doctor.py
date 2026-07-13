@@ -426,12 +426,27 @@ def test_doctor_fails_on_dead_daemon_or_past_due_backlog(tmp_path, monkeypatch):
     assert c_d is not None and c_d["ok"] is True
 
 
+def _append_fresh_line(cfg, *, stage="llm"):
+    """Append one FRESH run.log line of any kind — the activity signal daemon_progress reads to prove
+    a long stage is still emitting (== alive)."""
+    import json
+    from datetime import datetime, timezone
+    cfg.log_path.parent.mkdir(parents=True, exist_ok=True)
+    rec = {"ts": datetime.now(timezone.utc).isoformat(), "level": "info", "stage": stage,
+           "unit_id": "-", "outcome": "ok"}
+    with open(cfg.log_path, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(rec, separators=(",", ":")) + "\n")
+
+
 def test_doctor_passes_stale_heartbeat_during_live_mid_pass(tmp_path, monkeypatch):
+    # The daemon check inherits the fix: a stale LOOP heartbeat but FRESH run.log activity (the pass is
+    # still emitting) reads alive, not "pump wedged". Activity — not stage_age, not the loop heartbeat.
     import fcntl, os
     from datetime import datetime, timezone, timedelta
     from fanops.pipeline_run import note_stage, _lock_path
     cfg = Config(root=tmp_path)
-    _write_heartbeat(cfg, age_seconds=3 * 3600)
+    _write_heartbeat(cfg, age_seconds=3 * 3600)             # loop heartbeat is 3h stale
+    _append_fresh_line(cfg, stage="llm")                    # ...but the pass IS still emitting NOW
     FUT = (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()
     _seed_queued_post(cfg, when=FUT)
     monkeypatch.setattr("fanops.daemon.subprocess.run",
@@ -446,6 +461,51 @@ def test_doctor_passes_stale_heartbeat_during_live_mid_pass(tmp_path, monkeypatc
         assert c is not None and c["ok"] is True
     finally:
         fcntl.flock(fd, fcntl.LOCK_UN); os.close(fd)
+
+
+def test_doctor_hint_says_log_silent_when_stage_wedged(tmp_path, monkeypatch):
+    # Change 1d wording: when a stage IS held AND the log has gone SILENT past the ceiling, the doctor
+    # mid-pass hint says "log SILENT {n}s", NOT "has run {stage_age}s" — silence is the wedged signal.
+    import fcntl, json, os
+    from datetime import datetime, timezone, timedelta
+    from fanops.health_model import _STAGE_HANG_CEILING_S
+    from fanops.pipeline_run import _lock_path
+    cfg = Config(root=tmp_path)
+    _write_heartbeat(cfg, age_seconds=3 * 3600)             # stale loop heartbeat
+    sil = datetime.now(timezone.utc) - timedelta(seconds=_STAGE_HANG_CEILING_S + 200)
+    rec = {"ts": sil.isoformat(), "level": "info", "stage": "transcribe", "unit_id": "src-1", "outcome": "ok"}
+    with open(cfg.log_path, "a", encoding="utf-8") as fh:   # newest line is SILENT > ceiling
+        fh.write(json.dumps(rec) + "\n")
+    monkeypatch.setattr("fanops.daemon.subprocess.run",
+                        _fake_launchctl_daemon(list=(0, '\t"PID" = 1;\n')))
+    s = sil.strftime("%Y-%m-%dT%H:%M:%SZ")
+    lp = _lock_path(cfg); lp.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(str(lp), os.O_CREAT | os.O_RDWR)
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    os.ftruncate(fd, 0); os.lseek(fd, 0, os.SEEK_SET)
+    os.write(fd, json.dumps({"pid": 1, "started": s, "stage": "transcribe", "unit": "src-1",
+                             "stage_started": s}).encode())
+    try:
+        c = _daemon_check(doctor.doctor_report(cfg))
+        assert c is not None and c["ok"] is False
+        assert "log SILENT" in c["hint"] and "has run" not in c["hint"]
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN); os.close(fd)
+
+
+def test_setup_next_action_awaiting_gate_wording(tmp_path, monkeypatch):
+    # Change 4 wording: operator prose says "awaiting gate answer(s)", never "blocked on gate(s)"
+    # (pending work the cursor responder is clearing — not a fault). The internal field name
+    # blocked_on_gates is untouched (machine-scraped); only the human sentence changed.
+    from fanops import pipeline_status
+    from fanops.pipeline_status import SourceBacklog
+    from fanops.doctor import setup_next_action
+    cfg = Config(root=tmp_path)
+    fake = SourceBacklog(actionable=0, blocked_on_gates=3, recoverable=0, inventory=0, held=0, rows=[])
+    monkeypatch.setattr(pipeline_status, "source_backlog", lambda led, c: fake)
+    msg = setup_next_action(cfg)
+    assert "awaiting gate answer(s)" in msg
+    assert "blocked on gate" not in msg
 
 
 def _fake_launchctl_daemon(**spec):

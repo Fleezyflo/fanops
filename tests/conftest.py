@@ -68,7 +68,10 @@ _LEAKY_ENV = ("FANOPS_ROOT", "FANOPS_LIVE", "FANOPS_POSTER", "BLOTATO_API_KEY", 
               "FANOPS_SOURCE_SHARD_MIN",
               # bringup: the `fanops up` on-demand-script path override — a repo .env value must not leak
               # into the bring-up tests that assert the DEFAULT $HOME/postiz-selfhost path when unset.
-              "FANOPS_POSTIZ_ONDEMAND")
+              "FANOPS_POSTIZ_ONDEMAND",
+              # self-adopt: DEFAULTS ON — a repo .env =0 (or =1) must not leak into the loop tests
+              # (test_run_loop.py runs `run --loop`; adoption must be decided by the test, not the env).
+              "FANOPS_AUTO_ADOPT")
 
 
 def pytest_configure(config):

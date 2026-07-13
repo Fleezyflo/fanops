@@ -1259,14 +1259,44 @@ def _dispatch(cfg: Config, args) -> int:
         if (rc := _check_accounts(cfg)):  return rc
         if (rc := _check_preflight(cfg)):  return rc
         if args.loop:
+            import os
             try:
                 interval = daemon.parse_interval(args.interval)
             except (RuntimeError, ValueError, OSError) as e:
                 print(f"run: {e}", file=sys.stderr)
                 return 2
+            # Self-adopt is OFF entirely unless explicitly enabled (default on) — when off, NO git
+            # subprocess is spawned here or in the loop (the loop stays byte-identical to a plain run).
+            # When on, capture the baseline signal ONCE: it ARMS only on a `git-head` baseline — the
+            # only signal that moves per-commit; the `version` fallback is stale (the plan calls it
+            # near-useless for change detection), so a version/None baseline DISARMS self-adopt (never
+            # a spurious or a never-fires re-exec). Log the resolved source+value (or a DEGRADED line)
+            # ONCE so an operator can SEE whether adoption is armed instead of it being mute.
+            _adopt_on = os.getenv("FANOPS_AUTO_ADOPT", "1") != "0"
+            _adopt_base = None; _adopt_armed = False
+            if _adopt_on:
+                _adopt_base, _adopt_src = daemon._version_signal(cfg)
+                _adopt_armed = _adopt_src == "git-head"
+                if _adopt_base is None:
+                    get_logger(cfg)("adopt", "-", "degraded",
+                                    detail="no git, no version signal; self-adopt disarmed")
+                elif not _adopt_armed:
+                    get_logger(cfg)("adopt", "-", "disarmed", source=_adopt_src, signal=_adopt_base,
+                                    detail="not a git-head signal; self-adopt disarmed")
+                else:
+                    get_logger(cfg)("adopt", "-", "baseline", source=_adopt_src, signal=_adopt_base)
             while True:
                 load_dotenv(cfg.root / ".env", override=True)   # operator disk truth each tick (B01 C1)
                 cfg = Config(cfg.root)                          # side-effect-free; re-read after dotenv
+                # SELF-ADOPT at the quiescent loop TOP — NO run lease is held here (_cmd_run_pass wraps
+                # the whole pass in run_lease), so re-execing abandons nothing (flock self-heals on exec).
+                # Fires only when armed (git-head baseline) AND the current git HEAD moved from it.
+                if _adopt_armed:
+                    _sig, _src = daemon._version_signal(cfg)
+                    if _src == "git-head" and _sig is not None and _sig != _adopt_base:
+                        get_logger(cfg)("adopt", "-", "reexec", **{"from": _adopt_base, "to": _sig})
+                        daemon._kickstart_studio_if_present(cfg)     # cycle Studio onto new code too
+                        os.execv(sys.executable, [sys.executable, *sys.argv])   # never returns
                 base_time = _fresh_run_base_time()
                 try:
                     if (s := _cmd_run_pass(cfg, base_time)) is not None:
