@@ -163,3 +163,44 @@ def test_reexec_fires_before_lease_never_mid_pass(tmp_path, monkeypatch):
         cli.main(["run", "--loop", "--interval", "60s"])
     # tick 1 ran the pass (signal unchanged); tick 2 adopted at the TOP and never ran the pass.
     assert pass_ticks["n"] == 1                              # exactly one pass ran; the adopting tick did not
+
+
+# ── real _version_signal (NOT monkeypatched) — proves the signal follows the CODE tree, not cfg.root ──
+
+def test_version_signal_reads_head_from_code_tree_not_cfg_root(tmp_path, monkeypatch):
+    # The fix: _version_signal must `git rev-parse HEAD` in the tree holding the running fanops package
+    # (fanops.__file__'s parent), NOT cfg.root (the DATA workspace, which by the FANOPS_ROOT split has no
+    # .git). We point fanops.__file__ into a fresh hermetic git tree and assert the git-head arm fires.
+    import shutil, subprocess
+    if shutil.which("git") is None:
+        pytest.skip("git not on PATH")                       # belt-and-suspenders; git is standard in CI
+    import fanops
+    from fanops.config import Config
+    # a fresh, self-contained git tree with one commit (hermetic — never touches the enclosing repo)
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "config", "user.email", "t@t"], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "config", "user.name", "t"], check=True)
+    (tmp_path / "seed.txt").write_text("x")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "commit", "-q", "-m", "seed"], check=True)
+    pkg = tmp_path / "fake_pkg"; pkg.mkdir()                  # real dir so .resolve().parent lands in the tree
+    (pkg / "__init__.py").write_text("")
+    monkeypatch.setattr(fanops, "__file__", str(pkg / "__init__.py"))   # auto-restored on teardown
+    want = subprocess.run(["git", "-C", str(tmp_path), "rev-parse", "HEAD"],
+                          capture_output=True, text=True, check=True).stdout.strip()
+    sig, src = daemon._version_signal(Config(tmp_path))       # cfg.root is IRRELEVANT now — code tree wins
+    assert (sig, src) == (want, "git-head")                  # armed from the CODE tree's HEAD
+
+
+def test_version_signal_falls_back_to_version_when_no_git(tmp_path, monkeypatch):
+    # A real pip install (no .git anywhere above the package) must be byte-identical to today: the version
+    # fallback, source "version" — which DISARMS self-adopt (the cli loop arms only on "git-head"). Point
+    # fanops.__file__ into a git-less tmp dir and assert (__version__, "version").
+    import fanops
+    from fanops.config import Config
+    pkg = tmp_path / "fake_pkg"; pkg.mkdir()                  # no `git init` anywhere above tmp_path
+    (pkg / "__init__.py").write_text("")
+    monkeypatch.setattr(fanops, "__file__", str(pkg / "__init__.py"))
+    monkeypatch.setattr(fanops, "__version__", "9.9.9")      # explicit non-empty string for determinism
+    sig, src = daemon._version_signal(Config(tmp_path))
+    assert (sig, src) == ("9.9.9", "version")                # git-less install -> version source -> DISARMS
