@@ -40,15 +40,21 @@ def _word(w) -> dict:
 
 def transcribe_to_json(audio: str, out_dir: str, model: str, language: str | None) -> str:
     """Transcribe `audio` with faster-whisper and write whisper-shaped JSON to
-    <out_dir>/<audio-stem>.json; return that path. A comma-list `language` (e.g. "en,ar") PINS multiple
-    candidates -> per-segment detection (multilingual=True), so EN directing lines + AR verses in ONE
-    source both transcribe; a single value forces that language; ""/None -> unconstrained auto-detect.
-    word_timestamps drive the overlay's sync."""
+    <out_dir>/<audio-stem>.json; return that path. A comma-list `language` (e.g. "en,ar") enables
+    per-segment detection (multilingual=True) so EN directing lines + AR verses in ONE source both
+    transcribe — but NOTE: the listed candidates CANNOT be enforced (faster-whisper's per-segment
+    detection ranges over ALL whisper languages; a sung/noisy segment can come back in a language
+    nobody spoke — the burn layer's script scrub in overlay._scrub_caption_text is the enforcement
+    point). A single value forces that language; ""/None -> whole-file auto-detect. word_timestamps
+    drive the overlay's sync. vad_filter + condition_on_previous_text=False are the standard
+    anti-hallucination controls (2026-07-13 incident: repetition loops + a CJK mash on song
+    playback) — VAD drops non-speech windows, conditioning-off stops one bad segment from cascading."""
     wm = _load_model(model)
     langs = [x for x in (language or "").replace(",", " ").split() if x]
     multi = len(langs) > 1                                # >1 candidate -> per-segment language detection
     segments, info = wm.transcribe(audio, language=(None if multi else (langs[0] if langs else None)),
-                                   multilingual=multi, word_timestamps=True, task="transcribe")
+                                   multilingual=multi, word_timestamps=True, task="transcribe",
+                                   vad_filter=True, condition_on_previous_text=False)
     out = []
     for s in segments:                                   # faster-whisper yields segments lazily
         seg = {"start": float(s.start), "end": float(s.end), "text": s.text}

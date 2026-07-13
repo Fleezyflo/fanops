@@ -97,9 +97,15 @@ not taste — the viewer-POV meter + the learning loop pick winners from real da
 - **Lyric paraphrase** — restating the bar they can already hear; NOT a caption, NOT a quote.
 - **Generic filler that names no feeling and fits any clip** ("his coldest opener").
 - **Hooking on the editing** ("watch how this cuts", "drone up").
+- **Set-dressing / scenery curiosity** — a question about what the frame merely LOOKS like ("why is
+  the room bleeding red", "why is the clock frozen", "why are they standing like that"). The clip
+  never answers it, so it's bait; it describes the SET, not the viewer. (Live incident 2026-07-13:
+  a red-lit shoot-BTS window produced six of these.)
 - **Bait** the clip doesn't pay off.
 
-A clip with no honest hook is better **clean** (hook = null) than slop.
+A clip with no honest hook is better **clean** (hook = null) than slop — and the generator's OUTPUT
+rule says exactly that: hook whenever an honest one exists; null for a window with no verbal/event
+anchor (song playback, b-roll, set logistics). Null is a last resort, never a shortcut.
 
 ---
 

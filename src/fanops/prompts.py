@@ -100,10 +100,15 @@ def _hook_spec(max_words: int = 6, directive=None) -> str:
         f"RECOGNITION that beat gives the VIEWER; 3) write the trigger that delivers it; 4) cut every "
         f"throat-clearing word, <={max_words} words.\n"
         f"    BANNED (universal floor): ANY THIRD-PERSON narration of the artist; LYRIC PARAPHRASE; "
-        f"GENERIC filler; hooking on the EDITING or camera; BAIT the clip never pays off; fabricated "
-        f"ROUND numbers or authority stats.\n"
-        f"    OUTPUT: <={max_words} words; no em-dashes, en-dashes, or smart quotes. You MUST author a "
-        f"non-null hook — hook is REQUIRED, never null.\n")
+        f"GENERIC filler; hooking on the EDITING or camera; hooking on SET DRESSING or scenery — a "
+        f"question about what the frame merely LOOKS like (a red light, a prop, a clock, how people "
+        f"stand) that the clip never answers is BAIT, not curiosity; BAIT the clip never pays off; "
+        f"fabricated ROUND numbers or authority stats.\n"
+        f"    OUTPUT: <={max_words} words; no em-dashes, en-dashes, or smart quotes. Author a hook "
+        f"whenever an HONEST one exists — that is the norm, and most clips have one. If NOTHING said "
+        f"or happening in THIS window can fire a trigger honestly (song playback, b-roll, set "
+        f"logistics), return null: a clean clip beats scenery bait. null is a last resort, never a "
+        f"shortcut.\n")
     persona = ""
     if directive is not None:
         demos = getattr(directive, "demos", None) or []
