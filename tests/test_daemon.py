@@ -207,6 +207,69 @@ def test_status_stale_on_old_heartbeat(tmp_path, monkeypatch):
     assert "stale" in rep["verdict"]
 
 
+def _hold_lock(cfg, body: dict | None = None):
+    import fcntl
+    from fanops.pipeline_run import _lock_path
+    lp = _lock_path(cfg)
+    lp.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(str(lp), os.O_CREAT | os.O_RDWR)
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    if body is not None:
+        os.ftruncate(fd, 0); os.lseek(fd, 0, os.SEEK_SET)
+        os.write(fd, json.dumps(body).encode())
+    return fd
+
+
+def test_status_alive_mid_pass_despite_stale_heartbeat(tmp_path, monkeypatch):
+    from fanops.pipeline_run import note_stage
+    cfg = Config(root=tmp_path)
+    cfg.reports.mkdir(parents=True, exist_ok=True)
+    old = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    cfg.log_path.write_text(_heartbeat_line(old))
+    monkeypatch.setattr(daemon.subprocess, "run", _fake_launchctl(list=(0, '\t"PID" = 7;\n')))
+    fd = _hold_lock(cfg, {"pid": 4242, "started": "2020-01-01T00:00:00Z"})
+    try:
+        note_stage(cfg, "transcribe", "src-1")
+        rep = daemon.status(cfg, interval=600)
+        assert rep["verdict"] == "alive"
+        assert rep.get("run_line") is not None
+        assert "mid-pass: transcribe" in rep["run_line"]
+    finally:
+        import fcntl
+        fcntl.flock(fd, fcntl.LOCK_UN); os.close(fd)
+
+
+def test_status_stage_stuck_when_mid_pass_exceeds_ceiling(tmp_path, monkeypatch):
+    from fanops.health_model import _STAGE_HANG_CEILING_S
+    cfg = Config(root=tmp_path)
+    cfg.reports.mkdir(parents=True, exist_ok=True)
+    old = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    cfg.log_path.write_text(_heartbeat_line(old))
+    monkeypatch.setattr(daemon.subprocess, "run", _fake_launchctl(list=(0, '\t"PID" = 7;\n')))
+    stage_old = (datetime.now(timezone.utc) - timedelta(seconds=_STAGE_HANG_CEILING_S + 120)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    fd = _hold_lock(cfg, {"pid": 4242, "started": stage_old, "stage": "transcribe", "unit": "src-1",
+                          "stage_started": stage_old})
+    try:
+        rep = daemon.status(cfg, interval=600)
+        assert rep["verdict"] != "alive"
+        assert "stage stuck" in rep["verdict"]
+        assert "transcribe" in rep["verdict"]
+    finally:
+        import fcntl
+        fcntl.flock(fd, fcntl.LOCK_UN); os.close(fd)
+
+
+def test_status_stale_without_lease_unchanged(tmp_path, monkeypatch):
+    cfg = Config(root=tmp_path)
+    cfg.reports.mkdir(parents=True, exist_ok=True)
+    old = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    cfg.log_path.write_text(_heartbeat_line(old))
+    monkeypatch.setattr(daemon.subprocess, "run", _fake_launchctl(list=(0, '\t"PID" = 7;\n')))
+    rep = daemon.status(cfg, interval=600)
+    assert "loaded but stale" in rep["verdict"]
+    assert rep.get("run_line") is None
+
+
 def test_status_not_installed_when_list_fails(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path)
     monkeypatch.setattr(daemon.subprocess, "run", _fake_launchctl(list=(1, "")))
