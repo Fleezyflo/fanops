@@ -211,10 +211,10 @@ def _face_count(stats: dict | None) -> int:
     return counts[len(counts) // 2]                           # median per-frame real-face count
 
 def classify_window(cfg, src, *, start: float, end: float, stats: dict | None) -> str:
-    """Pure routing over the cached detect stats + transcript: one of the five CT_* strings. No ffmpeg,
-    no cv2. faces==0 -> no-people; faces>=2 + speech -> multi-speaker-talk; 1 face + speech -> single;
-    face + no speech -> music (a demucs vocal stem present) else silent. Stats None -> no-people (the
-    caller fails open to the centered crop regardless)."""
+    """Pure routing over the cached detect stats + trusted transcript: one of the five CT_* strings. No
+    ffmpeg, no cv2. faces==0 -> no-people; faces>=2 + trusted speech -> multi-speaker-talk; 1 face +
+    trusted speech -> single; face + no trusted speech -> music (a demucs vocal stem present) else silent.
+    Stats None -> no-people (the caller fails open to the centered crop regardless)."""
     faces = _face_count(stats)
     if faces <= 0:
         return CT_NOPEOPLE

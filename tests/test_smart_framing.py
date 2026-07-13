@@ -565,8 +565,26 @@ def test_classify_old_source_without_meta_does_not_crash():
 
 def test_classify_stats_none_is_no_people():
     # detection unavailable -> no face data -> no-people (caller fails open to centered crop regardless).
-    src = _talk_src(transcript=[{"start": 10.0, "end": 13.0, "text": "hello there friend"}])
+    from tests.fixtures.speech_segments import talk_seg
+    src = _talk_src(transcript=[talk_seg("hello there friend", start=10.0, end=13.0)])
     assert framing.classify_window(None, src, start=10.0, end=14.0, stats=None) == framing.CT_NOPEOPLE
+
+def test_classify_junk_asr_with_face_not_talk():
+    # Plan E L4b: high no_speech_prob junk ASR + face must NOT route to talk (music or silent only).
+    from tests.fixtures.speech_segments import MUSIC_HALLUC
+    src = _talk_src(transcript=[{**MUSIC_HALLUC, "start": 10.0, "end": 13.5}])
+    st = _stats([[[0.5, 0.5, 0.22, 0.45]]] * 4)
+    ct = framing.classify_window(None, src, start=10.0, end=14.0, stats=st)
+    assert ct in (framing.CT_MUSIC, framing.CT_SILENT), f"junk ASR must not classify as talk, got {ct!r}"
+
+def test_classify_degraded_legacy_not_talk():
+    # Plan E L4c: degraded-tier legacy segment + 2 faces must NOT trigger multi-speaker talk.
+    from tests.fixtures.speech_segments import LEGACY_EN
+    src = _talk_src(transcript=[{**LEGACY_EN, "start": 10.0, "end": 13.5}])
+    st = _stats([[[0.25, 0.5, 0.2, 0.45], [0.78, 0.45, 0.18, 0.4]]] * 4)
+    ct = framing.classify_window(None, src, start=10.0, end=14.0, stats=st)
+    assert ct != framing.CT_MULTI, f"degraded legacy must not route to MULTI, got {ct!r}"
+    assert ct in (framing.CT_MUSIC, framing.CT_SILENT), f"degraded legacy must not classify as talk, got {ct!r}"
 
 
 # ---------------------------------------------------------------- _resolve_framing strategy router ----
