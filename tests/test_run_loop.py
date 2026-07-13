@@ -16,6 +16,7 @@ def _idle_summary():
 def _setup_accounts(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("FANOPS_POSTER", raising=False)
+    monkeypatch.setenv("FANOPS_AUTO_ADOPT", "0")   # these exercise loop iteration, not self-adopt re-exec
     from fanops.config import Config
     cfg = Config(root=tmp_path)
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)

@@ -1266,12 +1266,20 @@ def _dispatch(cfg: Config, args) -> int:
                 print(f"run: {e}", file=sys.stderr)
                 return 2
             # Self-adopt baseline captured ONCE: the running-code signal every tick compares against.
-            # Log it (or a DEGRADED line) so an operator can SEE whether self-adopt is armed — a silent
-            # no-signal-forever bug (git rev-parse failing on a non-git/worktree root) is thereby visible.
+            # ARMED only on a `git-head` baseline — that is the only signal that moves per-commit; the
+            # `version` fallback is stale and doesn't change per-commit (the plan calls it near-useless
+            # for change detection), so a version/None baseline DISARMS self-adopt (never a spurious or
+            # a never-fires re-exec). Log the resolved source+value (or a DEGRADED line) ONCE so an
+            # operator can SEE whether adoption is armed — a silent no-signal-forever bug is thereby
+            # visible instead of mute. FANOPS_AUTO_ADOPT=0 disables it outright.
             _adopt_base, _adopt_src = daemon._version_signal(cfg)
+            _adopt_armed = os.getenv("FANOPS_AUTO_ADOPT", "1") != "0" and _adopt_src == "git-head"
             if _adopt_base is None:
                 get_logger(cfg)("adopt", "-", "degraded",
                                 detail="no git, no version signal; self-adopt disarmed")
+            elif not _adopt_armed:
+                get_logger(cfg)("adopt", "-", "disarmed", source=_adopt_src, signal=_adopt_base,
+                                detail="not a git-head signal (or AUTO_ADOPT=0); self-adopt disarmed")
             else:
                 get_logger(cfg)("adopt", "-", "baseline", source=_adopt_src, signal=_adopt_base)
             while True:
@@ -1279,13 +1287,13 @@ def _dispatch(cfg: Config, args) -> int:
                 cfg = Config(cfg.root)                          # side-effect-free; re-read after dotenv
                 # SELF-ADOPT at the quiescent loop TOP — NO run lease is held here (_cmd_run_pass wraps
                 # the whole pass in run_lease), so re-execing abandons nothing (flock self-heals on exec).
-                # Fires only when the version signal CHANGED from the baseline; fail-SAFE on an absent
-                # signal (sig is None short-circuits — never re-exec blind). FANOPS_AUTO_ADOPT=0 disables.
-                _sig, _ = daemon._version_signal(cfg)
-                if os.getenv("FANOPS_AUTO_ADOPT", "1") != "0" and _sig is not None and _sig != _adopt_base:
-                    get_logger(cfg)("adopt", "-", "reexec", **{"from": _adopt_base, "to": _sig})
-                    daemon._kickstart_studio_if_present(cfg)     # cycle Studio onto new code too
-                    os.execv(sys.executable, [sys.executable, *sys.argv])   # never returns
+                # Fires only when armed (git-head baseline) AND the current git HEAD moved from it.
+                if _adopt_armed:
+                    _sig, _src = daemon._version_signal(cfg)
+                    if _src == "git-head" and _sig is not None and _sig != _adopt_base:
+                        get_logger(cfg)("adopt", "-", "reexec", **{"from": _adopt_base, "to": _sig})
+                        daemon._kickstart_studio_if_present(cfg)     # cycle Studio onto new code too
+                        os.execv(sys.executable, [sys.executable, *sys.argv])   # never returns
                 base_time = _fresh_run_base_time()
                 try:
                     if (s := _cmd_run_pass(cfg, base_time)) is not None:
