@@ -6,8 +6,8 @@ large-v3 is OFFERED because, on Demucs-isolated vocals, it is the proven music/r
 (clean coherent Arabic where turbo produced gibberish), and int8 makes even large-v3 practical on CPU
 (~1-4min/clip vs 5-15 via the stock whisper CLI). Free, on-machine, NO API.
 
-Writes whisper-compatible JSON ({language, segments:[{start,end,text[,words]}]}) named by the INPUT
-stem, so transcribe.py's existing JSON parser + per-source .json lookup are unchanged. The model
+Writes whisper-compatible JSON ({language, segments:[{start,end,text[,words][,avg_logprob,no_speech_prob,compression_ratio]}]})
+named by the INPUT stem, so transcribe.py's existing JSON parser + per-source .json lookup are unchanged. The model
 load is behind _load_model so the JSON-shaping logic is testable without importing faster-whisper
 (an optional [asr] extra). FAIL-LOUD: any failure exits nonzero so transcribe_source parks the
 source as a RETRIABLE error — never a silent empty transcript. The fallback to the legacy whisper
@@ -30,6 +30,16 @@ def _load_model(model: str):
     from faster_whisper import WhisperModel
     return WhisperModel(model, device="cpu", compute_type="int8")
 
+
+def _seg_quality(s) -> dict:
+    """Optional faster-whisper quality fields — preserved at the JSON boundary for speech-trust filtering."""
+    out = {}
+    for key in ("avg_logprob", "no_speech_prob", "compression_ratio"):
+        v = getattr(s, key, None)
+        if v is not None:
+            try: out[key] = float(v)
+            except (TypeError, ValueError): pass
+    return out
 
 def _word(w) -> dict:
     """Serialize one faster-whisper word, None-guarding start/end (the runtime can emit null word
@@ -57,7 +67,7 @@ def transcribe_to_json(audio: str, out_dir: str, model: str, language: str | Non
                                    vad_filter=True, condition_on_previous_text=False)
     out = []
     for s in segments:                                   # faster-whisper yields segments lazily
-        seg = {"start": float(s.start), "end": float(s.end), "text": s.text}
+        seg = {"start": float(s.start), "end": float(s.end), "text": s.text, **_seg_quality(s)}
         words = getattr(s, "words", None)
         if words: seg["words"] = [_word(w) for w in words]
         out.append(seg)

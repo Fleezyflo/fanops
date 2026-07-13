@@ -4,6 +4,16 @@ JSON into [{start,end,text}] + detected language. Distinguishes 'ran, no speech'
 [], meta.transcribed=True) from 'not run' (transcript None) so a failed run can recover.
 Missing JSON -> error state, never a crash.
 
+Speech-trust (L1–L3, always-on — no env toggle): each segment gets a stamped trust_tier (full /
+degraded / rejected). Production gates (subs burn, moment pick, hook excerpt, framing classify)
+consume only full-tier segments via trusted_segments / window_has_trusted_speech /
+excerpt_for_window. degraded = legacy cache missing ASR quality keys → _adopt_cached_transcript
+refuses adoption and the next pass re-transcribes. rejected = junk/script flap or failed L1 thresholds.
+
+real_transcript_signal is a SEPARATE E2E-only contract: it proves whisper ran on real audio
+(whisper-shaped segments + ≥4 word tokens total), NOT per-segment trust. Do NOT substitute it
+for segment_trusted / window_has_trusted_speech in production paths.
+
 ENGINE: prefers faster-whisper (the [asr] extra, via the fanops._fwrun runner) at FANOPS_ASR_MODEL
 (default **medium**) — strong on music/rap EN+AR; large-v3 is available as the max-accuracy opt-in
 (int8 makes even large-v3 practical on CPU). FAILS OPEN to the legacy `whisper` CLI (turbo) when
@@ -75,8 +85,10 @@ def _resolve_model(model: str) -> str:
 
 def real_transcript_signal(transcript: list[dict]) -> bool:
     """True iff `transcript` is proof that REAL whisper ran on REAL audio — NOT that any one
-    specific word survived (CI-2). Used by the real-tooling E2E in place of a brittle single-token
-    check that bet on macOS `say`'s acoustics and failed under the Linux CI's espeak vocoder.
+    specific word survived (CI-2). E2E-only: do NOT use for subs, hooks, framing, or moment gates —
+    use trusted_segments / window_has_trusted_speech / excerpt_for_window instead. Used by the
+    real-tooling E2E in place of a brittle single-token check that bet on macOS `say`'s acoustics
+    and failed under the Linux CI's espeak vocoder.
 
     The contract has two parts, both required, so the check is robust across TTS engines yet still
     rejects a fake/empty/stub transcript (the v1 bug this E2E guards against — "false safety is
@@ -125,15 +137,158 @@ def fw_cmd(src: str, out_dir: str, model: str, language: str = "") -> list[str]:
     return [sys.executable, "-m", "fanops._fwrun", "--model", model, "--language", language,
             "--output_dir", out_dir, src]
 
+_SEGMENT_QUALITY_KEYS = ("avg_logprob", "no_speech_prob", "compression_ratio")
+# Whisper-default quality thresholds for speech-trust filtering.
+_NO_SPEECH_MAX = 0.6
+_AVG_LOGPROB_MIN = -1.0
+_COMPRESSION_RATIO_MAX = 2.4
+
+def _segment_metadata_pass(seg: dict) -> bool:
+    """L1a–L1c: all three quality keys present and within thresholds; partial keys -> False."""
+    if not all(k in seg for k in _SEGMENT_QUALITY_KEYS):
+        return False
+    try:
+        if float(seg["no_speech_prob"]) > _NO_SPEECH_MAX: return False
+        if float(seg["avg_logprob"]) < _AVG_LOGPROB_MIN: return False
+        if float(seg["compression_ratio"]) > _COMPRESSION_RATIO_MAX: return False
+    except (TypeError, ValueError):
+        return False
+    return True
+
 def _segment(s: dict) -> dict:
     """One transcript segment: {start,end,text}, plus `words` ([{word,start,end}]) when whisper
-    emitted word timestamps (--word_timestamps). The words list is kept only when it's a non-empty
-    list of dicts carrying a "word" key, so a schema quirk can never poison the overlay's sync."""
+    emitted word timestamps (--word_timestamps). Optional quality keys (avg_logprob, no_speech_prob,
+    compression_ratio) pass through when present — additive, old JSON without them is unchanged."""
     seg = {"start": s["start"], "end": s["end"], "text": s["text"].strip()}
     words = s.get("words")
     if isinstance(words, list) and words and all(isinstance(w, dict) and "word" in w for w in words):
         seg["words"] = [{"word": w["word"], "start": w.get("start"), "end": w.get("end")} for w in words]
+    for k in _SEGMENT_QUALITY_KEYS:
+        if k in s:
+            try: seg[k] = float(s[k])
+            except (TypeError, ValueError): pass
     return seg
+
+def _transcript_schema(segments: list[dict]) -> int:
+    """Sidecar schema version: 2 when any segment carries ASR quality metadata."""
+    for seg in segments or []:
+        if any(k in seg for k in _SEGMENT_QUALITY_KEYS):
+            return 2
+    return 1
+
+def _cache_is_quality_complete(data: dict) -> bool:
+    """True when every non-empty cached segment carries all ASR quality keys."""
+    for s in data.get("segments") or []:
+        text = (s.get("text") or "").strip()
+        if not text: continue
+        if not all(k in s for k in _SEGMENT_QUALITY_KEYS):
+            return False
+    return True
+
+def _trust_tier(seg: dict, *, src_lang: str | None = None) -> str:
+    """Compose L1 metadata + L2 script coherence into full / degraded / rejected."""
+    text = (seg.get("text") or "").strip()
+    if not text:
+        return "rejected"
+    if not _segment_script_coherent(text, src_lang=src_lang):
+        return "rejected"
+    if all(k in seg for k in _SEGMENT_QUALITY_KEYS):
+        if not _segment_metadata_pass(seg):
+            return "rejected"
+        return "full"
+    return "degraded"
+
+def _finalize_segments(raw: list[dict], src_lang: str | None) -> list[dict]:
+    """Normalize raw whisper segments and stamp trust_tier + trusted on each."""
+    out: list[dict] = []
+    for s in raw or []:
+        seg = _segment(s)
+        tier = _trust_tier(seg, src_lang=src_lang)
+        seg["trust_tier"] = tier
+        seg["trusted"] = tier == "full"
+        out.append(seg)
+    return out
+
+def _log_transcript_tiers(cfg: Config | None, source_id: str, segments: list[dict]) -> None:
+    if not cfg: return
+    full = degraded = rejected = 0
+    for seg in segments or []:
+        tier = seg.get("trust_tier", "rejected")
+        if tier == "full": full += 1
+        elif tier == "degraded": degraded += 1
+        else: rejected += 1
+    get_logger(cfg)("transcribe", source_id, "transcript_tiers", full=full, degraded=degraded, rejected=rejected)
+
+_SCRIPT_LATIN_ON_AR = 0.70          # Latin-majority segment on an ar source -> junk transliteration
+_SCRIPT_CJK_ON_EN_AR = 0.30         # CJK-majority segment on en/ar source -> junk hallucination
+_SPEECH_MIN_WORDS = 2               # mirrors framing._window_has_speech bar
+
+def _lang_base(tag: str | None) -> str | None:
+    if not tag: return None
+    base = tag.strip().lower().replace("_", "-").split("-", 1)[0]
+    return base or None
+
+def _script_counts(text: str) -> tuple[int, int, int]:
+    """Return (alpha, latin, cjk) char counts for script-coherence checks."""
+    alpha = latin = cjk = 0
+    for c in text or "":
+        if not c.isalpha(): continue
+        alpha += 1
+        o = ord(c)
+        if '\u0600' <= c <= '\u06ff': pass                          # Arabic — not latin
+        elif o < 128 or (0x00C0 <= o <= 0x024F): latin += 1         # Basic Latin + Latin-1 supplement
+        elif 0x4E00 <= o <= 0x9FFF or 0x3040 <= o <= 0x30FF: cjk += 1
+    return alpha, latin, cjk
+
+def _segment_script_coherent(text: str, *, src_lang: str | None) -> bool:
+    """L2: reject obvious script flaps (Arabic-as-Latin junk, CJK on en/ar sources). Fail-open when unknown."""
+    base = _lang_base(src_lang)
+    alpha, latin, cjk = _script_counts(text)
+    if not alpha: return False
+    if base == "ar" and latin / alpha > _SCRIPT_LATIN_ON_AR: return False
+    if base in ("en", "ar") and cjk / alpha > _SCRIPT_CJK_ON_EN_AR: return False
+    return True
+
+def segment_trusted(seg: dict, *, src_lang: str | None = None) -> bool:
+    """True only for full-trust segments (L1 metadata pass + L2 script coherence)."""
+    tier = seg.get("trust_tier")
+    if tier is None:
+        tier = _trust_tier(seg, src_lang=src_lang)
+    return tier == "full"
+
+def trusted_segments(transcript: list[dict] | None, *, src_lang: str | None = None) -> list[dict]:
+    """Filter to full-trust segments only; None/[] -> []. Prefers stamped trust_tier when present."""
+    return [s for s in (transcript or []) if segment_trusted(s, src_lang=src_lang)]
+
+def window_has_trusted_speech(src, start: float, end: float) -> bool:
+    """True when trusted transcript segments overlap [start,end) with >= _SPEECH_MIN_WORDS tokens."""
+    lang = getattr(src, "language", None)
+    words = 0
+    for seg in trusted_segments(getattr(src, "transcript", None) or [], src_lang=lang):
+        try:
+            s, e = seg.get("start"), seg.get("end")
+            if not isinstance(s, (int, float)) or not isinstance(e, (int, float)): continue
+            if e <= start or s >= end: continue
+            words += sum(1 for tok in (seg.get("text") or "").split() if any(c.isalpha() for c in tok))
+        except (AttributeError, TypeError):
+            continue
+    return words >= _SPEECH_MIN_WORDS
+
+def excerpt_for_window(src, start: float, end: float, *, max_chars: int = 240) -> str:
+    """Join full-trust segment text overlapping [start,end); truncate to max_chars."""
+    lang = getattr(src, "language", None)
+    parts: list[str] = []
+    for seg in trusted_segments(getattr(src, "transcript", None) or [], src_lang=lang):
+        try:
+            s, e = seg.get("start"), seg.get("end")
+            if not isinstance(s, (int, float)) or not isinstance(e, (int, float)): continue
+            if e <= start or s >= end: continue
+            text = (seg.get("text") or "").strip()
+            if text: parts.append(text)
+        except (AttributeError, TypeError):
+            continue
+    joined = " ".join(parts)
+    return joined if len(joined) <= max_chars else joined[:max_chars]
 
 def purge_source_artifacts(cfg: Config, source_id: str, source_path: str, *,
                            clip_ids: list[str] | None = None, preserve_vocals: bool = False) -> None:
@@ -159,10 +314,11 @@ def purge_source_artifacts(cfg: Config, source_id: str, source_path: str, *,
             (cfg.clips / f"{cid}.render.json").unlink()
 
 
-def _adopt_cached_transcript(led: Ledger, source_id: str, cached: Path) -> bool:
+def _adopt_cached_transcript(led: Ledger, source_id: str, cached: Path, *, cfg: Config | None = None) -> bool:
     """Adopt the on-disk whisper JSON into the in-memory Source row. Returns True iff adoption
     succeeded (the cache existed AND parsed AND had the expected shape). A corrupt/truncated cache
-    returns False so the caller can fall through to a real run that overwrites it.
+    or incomplete quality metadata returns False so the caller can fall through to a real run that
+    overwrites it.
 
     Pulled out as a free function (instead of a closure inside transcribe_source) because the
     stage-lock re-check needs to call exactly the same adoption logic — DRY across the
@@ -171,12 +327,16 @@ def _adopt_cached_transcript(led: Ledger, source_id: str, cached: Path) -> bool:
         data = json.loads(cached.read_text())
     except (OSError, json.JSONDecodeError):
         return False
+    if not _cache_is_quality_complete(data):
+        return False
     try:
         src = led.sources[source_id]
-        src.transcript = [_segment(s) for s in data.get("segments", [])]
-        src.language = data.get("language")
+        lang = data.get("language")
+        src.transcript = _finalize_segments(data.get("segments", []), lang)
+        src.language = lang
         src.meta["transcribed"] = True
         led.set_source_state(source_id, SourceState.transcribed)
+        _log_transcript_tiers(cfg, source_id, src.transcript or [])
         return True
     except (KeyError, TypeError, AttributeError):
         return False
@@ -199,11 +359,12 @@ def transcribe_source(led: Ledger, cfg: Config, source_id: str, *, model: str | 
     # produce path which will overwrite it. The stem is the SOURCE stem in both engines (isolation
     # moves vocals to "{source_stem}.mp3"), so the lookup is stable.
     cached = out_dir / f"{Path(src.source_path).stem}.json"
-    if cached.exists() and _adopt_cached_transcript(led, source_id, cached):
+    if cached.exists() and _adopt_cached_transcript(led, source_id, cached, cfg=cfg):
         try:
             from fanops.artifacts import stamp_stage
             rel = str(cached.relative_to(cfg.agent_io))
-            stamp_stage(cfg, source_id, "transcribe", artifact=rel, schema=1, sha256=src.sha256)
+            stamp_stage(cfg, source_id, "transcribe", artifact=rel,
+                        schema=_transcript_schema(src.transcript or []), sha256=src.sha256)
         except (OSError, ValueError): pass
         return led
     # MOL-122 / H10: the reducer calls this INSIDE the ledger flock only to ADOPT the producer's warm
@@ -226,7 +387,7 @@ def transcribe_source(led: Ledger, cfg: Config, source_id: str, *, model: str | 
         # Re-check INSIDE the lock — this is the short-circuit that closes the race. The first
         # producer wrote the JSON; the second producer reaches this line and adopts. Crucially the
         # subprocess.run below NEVER executes in the second producer.
-        if cached.exists() and _adopt_cached_transcript(led, source_id, cached):
+        if cached.exists() and _adopt_cached_transcript(led, source_id, cached, cfg=cfg):
             return led
         return _produce_transcript(led, cfg, source_id, src, out_dir, model)
 
@@ -311,7 +472,8 @@ def _produce_transcript(led: Ledger, cfg: Config, source_id: str, src, out_dir: 
         return led
     try:
         data = json.loads(js.read_text())
-        src.transcript = [_segment(s) for s in data.get("segments", [])]
+        src.transcript = _finalize_segments(data.get("segments", []), data.get("language"))
+        _log_transcript_tiers(cfg, source_id, src.transcript or [])
     except (json.JSONDecodeError, KeyError, TypeError, AttributeError) as e:
         # whisper killed mid-write (disk full, OOM) leaves TRUNCATED JSON; a schema drift loses
         # start/end/text keys. Same per-source shape as the absent/timeout/no-JSON branches above —
@@ -331,7 +493,8 @@ def _produce_transcript(led: Ledger, cfg: Config, source_id: str, src, out_dir: 
     try:
         from fanops.artifacts import stamp_stage
         rel = str(js.relative_to(cfg.agent_io))
-        stamp_stage(cfg, source_id, "transcribe", artifact=rel, schema=1, sha256=src.sha256,
+        stamp_stage(cfg, source_id, "transcribe", artifact=rel,
+                    schema=_transcript_schema(src.transcript or []), sha256=src.sha256,
                     extra={"engine": engine, "model": used_model, "wall_s": wall_s})
     except (OSError, ValueError): pass
     return led

@@ -5,6 +5,7 @@ from fanops.ledger import Ledger
 from fanops.models import Source, SourceState
 from fanops import artifacts
 from fanops.transcribe import purge_source_artifacts
+from tests.fixtures.speech_segments import talk_seg
 
 
 def _cfg(tmp_path):
@@ -65,13 +66,14 @@ def test_adopt_warm_artifacts_loads_transcript_json(tmp_path):
     path = str(cfg.sources / "vid.mp4")
     (cfg.agent_io / "transcripts").mkdir(parents=True)
     (cfg.agent_io / "transcripts" / "vid.json").write_text(json.dumps(
-        {"language": "en", "segments": [{"start": 0, "end": 1, "text": "warm"}]}))
+        {"language": "en", "segments": [talk_seg("warm")]}))
     with Ledger.transaction(cfg) as led:
         led.add_source(Source(id="src_1", source_path=path, state=SourceState.error, transcript=None,
                               meta={"transcribed": False}, error_reason="TimeoutExpired: x"))
         led = artifacts.adopt_warm_artifacts(led, cfg, "src_1")
     s = led.sources["src_1"]
-    assert s.transcript == [{"start": 0, "end": 1, "text": "warm"}]
+    assert s.transcript[0]["text"] == "warm"
+    assert s.transcript[0]["trust_tier"] == "full" and s.transcript[0]["trusted"] is True
     assert s.meta["transcribed"] is True
 
 

@@ -214,7 +214,7 @@ compose.compose_clip(base, out, TemplateSpec) -> cli.cmd_compose  [operator-run 
 - `_DETECT_V = 1` (framing.py:64) — detect-grid sidecar schema version.
 - `_DETECT_FPS = 4.0` (framing.py:65) — grid sampling rate for `detect_window`/classification (cheap, sufficient for ~1s decisions).
 - `CT_MULTI = "multi-speaker-talk"`, `CT_SINGLE = "single-speaker-talk"`, `CT_MUSIC = "music"`, `CT_SILENT = "silent"`, `CT_NOPEOPLE = "no-people"` (framing.py:179-183) — the five content-type classification strings.
-- `_SPEECH_MIN_WORDS = 2` (framing.py:184) — ≥2 alphabetic word tokens overlapping the window counts as real speech (mirrors `transcribe.real_transcript_signal`'s bar).
+- `_SPEECH_MIN_WORDS = 2` (transcribe.py:219) — ≥2 alphabetic word tokens in **full-trust** segments overlapping the window (`window_has_trusted_speech`; NOT `real_transcript_signal`, which is E2E-only with a ≥4-word total-text bar).
 - `_ASD_FPS = 9.0` (framing.py:224) — per-frame active-speaker-detection sampling rate; finer than the 4fps classify grid because mouth-motion needs it (resolves "who's talking" to ~0.1s).
 - `_ASD_HOLD_S = 0.35` (framing.py:226) — minimum dwell before the committed speaker switches (anti-flicker hysteresis; was 0.8s, then ~4s before that — now lands cuts within ~0.45s of the real turn).
 - `_ASD_RATIO = 1.2` (framing.py:228) — the talker's mouth-motion must exceed the other side's by this factor to be the instantaneous speaker.
@@ -232,7 +232,7 @@ compose.compose_clip(base, out, TemplateSpec) -> cli.cmd_compose  [operator-run 
 - `_detect_sidecar(cfg, source_id)` (framing.py:92) — pure path builder: `<agent_io>/framing/<source_id>.detect.json`. Called by `detect_window`.
 - `_load_detect_cache(path)` (framing.py:95) — like `_load_cache` but for the detect-grid sidecar (`_DETECT_V`). Called by `detect_window`.
 - `detect_window(cfg, src, *, start, end)` (framing.py:104) — **THE single detection pass**: one grid extraction over `[start,end)`, caching every face's `(cx,cy,fh,ey)` per frame to `<source_id>.detect.json`; feeds `classify_window`, `subject_focus`, and (indirectly, via the same on-disk cache being consulted first) is the fast-path check for `speaker_track`/`motion_saliency`'s own grid passes. Bracketed by a per-`(framing, source_id)` `stage_lock` so two concurrent callers don't race the sidecar; cache is checked both before and after lock acquisition. Returns `None` on every fail-open path. **Shells ffmpeg** (via `keyframes.extract_frames_grid`), writes a sidecar. Called by `clip._resolve_framing`, `subject_focus`.
-- `_window_has_speech(src, start, end)` (framing.py:186) — pure: `True` if the transcript has ≥`_SPEECH_MIN_WORDS` alphabetic tokens overlapping the window. Called by `classify_window`.
+- `window_has_trusted_speech(src, start, end)` (transcribe.py:258; framing.py:14 imported as `_window_has_speech`) — pure: `True` if full-trust transcript segments overlapping the window carry ≥`_SPEECH_MIN_WORDS` alphabetic tokens. Called by `classify_window`.
 - `_face_count(stats)` (framing.py:201) — pure: median per-frame face count from detect stats (a liberal estimate — `speaker_track` still requires two stable positions to actually switch). Called by `classify_window`.
 - `classify_window(cfg, src, *, start, end, stats)` (framing.py:211) — **pure routing function**, no ffmpeg/cv2: maps face-count + speech + vocals-isolated meta to one of the five `CT_*` strings. Called by `clip._resolve_framing`.
 - `_mouth_roi(cv2, img, face)` (framing.py:234) — pure/fail-open: fixed-size grayscale crop of a YuNet face's mouth region for frame-to-frame motion comparison; `None` on any crop failure. Called by `_track_observe`.
@@ -398,7 +398,7 @@ compose.compose_clip(base, out, TemplateSpec) -> cli.cmd_compose  [operator-run 
 - `framing.py:19` `_MIN_CONF = 0.34`
 - `framing.py:20` `_SCORE_THRESH = 0.6`
 - `framing.py:65` `_DETECT_FPS = 4.0`
-- `framing.py:184` `_SPEECH_MIN_WORDS = 2`
+- `transcribe.py:219` `_SPEECH_MIN_WORDS = 2`
 - `framing.py:224` `_ASD_FPS = 9.0`
 - `framing.py:226` `_ASD_HOLD_S = 0.35`
 - `framing.py:228` `_ASD_RATIO = 1.2`

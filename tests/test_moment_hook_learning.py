@@ -10,6 +10,7 @@ from fanops.moments import request_moments, ingest_moments, request_moment_hooks
 from fanops.models import MomentDecision, MomentPick
 from fanops.agentstep import response_path, latest_request_id
 from fanops.prompts import moment_hook_prompt
+from tests.fixtures.speech_segments import talk_seg
 
 
 def _vpost(led, pid, account, hook, lift, platform=Platform.instagram):
@@ -36,7 +37,8 @@ def _on(monkeypatch):
 
 def _signalled_source(led, sid="s1"):
     led.add_source(Source(id=sid, source_path="x.mp4", state=SourceState.signalled, duration=30.0,
-                          transcript=[], signal_peaks=[], language="en"))
+                          transcript=[talk_seg("they slept on me here", start=10.0, end=28.0)],
+                          signal_peaks=[], language="en", meta={"transcribed": True}))
 
 
 # ---- C1: proven_hook_styles — gated cross-surface union, dual-flag, fail-open ----

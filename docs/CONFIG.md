@@ -1,9 +1,9 @@
 <!-- Generated: 2026-07-03 | Source: docs/CODEMAPS + docs/CODEMAPS/subsystem-traces | Maintained by hand hereafter -->
-# FanOps configuration reference — 66 environment variables
+# FanOps configuration reference — 65 environment variables
 
 A projection of [CODEMAPS/system-lens-map.md](CODEMAPS/system-lens-map.md) §1.2–1.3 (the authoritative table,
 each row with a verified `config.py` read-line). Read that for the read-site line numbers; read THIS for the
-operator/dev overview. **64 distinct env vars** — **13 Studio-settable** (Go-Live tab via `golive._dual_write`,
+operator/dev overview. **63 distinct env vars** — **13 Studio-settable** (Go-Live tab via `golive._dual_write`,
 which writes both `.env` and `os.environ`), **52 `.env`/shell-ONLY** (no UI). `Set` column: **S** = Studio-settable,
 `.env` = shell-only. Defaults are the CODE defaults.
 
@@ -42,7 +42,7 @@ Docker+Postiz plane (see the bring-up brief `docs/design/briefs/16-one-step-brin
 | Var | Default | Effect | Set |
 |---|---|---|---|
 | `FANOPS_RESPONDER` | `manual` | THE explicit AI switch (`llm`/`manual`); presence of `claude` never auto-enables | S |
-| `FANOPS_LLM_TRANSPORT` | `claude` | LLM CLI transport (`claude` / `cursor`) | .env |
+| `FANOPS_LLM_TRANSPORT` | `claude` | LLM CLI transport (`claude` / `cursor`) | S |
 | `FANOPS_LLM_MODEL` | per-gate | Force ONE model across all gates | .env |
 | `ANTHROPIC_API_KEY` | None | VESTIGIAL — responder uses the `claude` subscription; not required | .env |
 
@@ -56,7 +56,7 @@ Docker+Postiz plane (see the bring-up brief `docs/design/briefs/16-one-step-brin
 | `FANOPS_AWARE_REFRAME` | off | Global top-third crop bias | .env |
 | `FANOPS_WHISPER_MODEL` | duration-aware | Legacy whisper CLI model pin; unset = large-v3→turbo→… by timeout budget | .env |
 | `FANOPS_ASR_MODEL` | duration-aware | faster-whisper model pin; unset = large-v3→medium→… by timeout budget. A pin wins verbatim and DISABLES the timeout downgrade — the 2026-07-12 subtitle-garbage incident was a stale `small` pin | .env |
-| `FANOPS_ASR_LANGUAGE` | `en,ar` | Whisper candidate languages; a single value FORCES that language (kills per-segment EN/AR detection) | .env |
+| `FANOPS_ASR_LANGUAGE` | `en,ar` | Comma list enables faster-whisper `multilingual=True` (per-segment detection over all languages — NOT restricted to listed langs); a single value FORCES that language | .env |
 | `FANOPS_ISOLATE_VOCALS` | on | Demucs beat-stripping before Whisper | .env |
 | `FANOPS_BURN_SUBS` | on | Burn transcript captions (the on-screen hook is a separate layer) | .env |
 | `FANOPS_SUBTITLE_FONT` | `Arial Unicode MS` | .ass subtitle font | .env |
@@ -65,6 +65,18 @@ Docker+Postiz plane (see the bring-up brief `docs/design/briefs/16-one-step-brin
 | `FANOPS_ARTIST_NAME` | `Moh Flow` | YouTube title fallback display name | .env |
 | `XDG_CACHE_HOME` | `~/.cache` | Whisper checkpoint cache root | .env |
 | `SSL_CERT_FILE` / `REQUESTS_CA_BUNDLE` | certifi | TLS bundle for the faster-whisper runner (setdefault) | .env |
+
+### Speech layers (always-on — no env toggle)
+
+Every transcript segment is stamped `trust_tier` at finalize time (`transcribe._finalize_segments`):
+
+| Tier | Meaning | Production effect |
+|---|---|---|
+| **full** | L1 ASR quality metadata within thresholds (`avg_logprob`, `no_speech_prob`, `compression_ratio`) AND L2 script coherence for the source language | Consumed by `trusted_segments`, `window_has_trusted_speech`, `excerpt_for_window`, and `segment_trusted` |
+| **degraded** | Text present and script-coherent but missing one or more L1 quality keys (typical of legacy whisper-CLI cache) | **Re-transcribe signal**: `_adopt_cached_transcript` refuses incomplete caches (`_cache_is_quality_complete` → `False`), so the next pass re-runs ASR and overwrites with quality-complete segments |
+| **rejected** | Empty text, script junk (e.g. Latin flap on an Arabic source), or L1 metadata out of threshold | Never admitted to subs burn, moment pick, hook excerpt, or framing speech classification |
+
+Speech-trust filtering is **invariant always-on** — there is no `FANOPS_SPEECH_TRUST` switch. Production paths never use raw transcript text without passing through the full-tier gate. `real_transcript_signal` is a separate E2E-only helper (proves whisper ran on real audio); do not use it for per-segment trust.
 
 ## Per-account differentiation
 | Var | Default | Effect | Set |

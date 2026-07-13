@@ -6,6 +6,7 @@ from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Source, SourceState, PostState
 from fanops.pipeline import advance
+from tests.fixtures.speech_segments import talk_seg
 
 @pytest.fixture(autouse=True)
 def _gate_off(monkeypatch):
@@ -25,7 +26,7 @@ def _ff(mocker):
         if _is_asr(cmd):
             outdir = Path(cmd[cmd.index("--output_dir") + 1]); outdir.mkdir(parents=True, exist_ok=True)
             (outdir / f"{Path(cmd[-1]).stem}.json").write_text(json.dumps(
-                {"language": "en", "segments": [{"start": 14.0, "end": 18.0, "text": "they slept on me"}]}))
+                {"language": "en", "segments": [talk_seg("they slept on me", start=14.0, end=18.0)]}))
             class R: returncode=0; stderr=""; stdout=""
             return R()
         if cmd[0] in ("ffmpeg",) and "null" in cmd:
@@ -198,7 +199,7 @@ def test_one_bad_source_does_not_wedge_the_pass(tmp_path, monkeypatch, mocker):
                 raise OSError("whisper exploded")
             outdir = Path(cmd[cmd.index("--output_dir") + 1]); outdir.mkdir(parents=True, exist_ok=True)
             (outdir / f"{Path(cmd[-1]).stem}.json").write_text(json.dumps(
-                {"language":"en","segments":[{"start":0,"end":2,"text":"hi"}]}))
+                {"language": "en", "segments": [talk_seg("hi", start=0, end=2)]}))
             class R: returncode=0; stderr=""; stdout=""
             return R()
         if cmd[0] == "ffmpeg":
@@ -254,7 +255,7 @@ def test_advance_rollback_recovers_warm_artifacts(tmp_path, monkeypatch, mocker)
             asr_calls.append(tuple(cmd))                      # count the EXPENSIVE whisper invocations
             outdir = Path(cmd[cmd.index("--output_dir") + 1]); outdir.mkdir(parents=True, exist_ok=True)
             (outdir / f"{Path(cmd[-1]).stem}.json").write_text(json.dumps(
-                {"language": "en", "segments": [{"start": 14.0, "end": 18.0, "text": "they slept on me"}]}))
+                {"language": "en", "segments": [talk_seg("they slept on me", start=14.0, end=18.0)]}))
             class R: returncode=0; stderr=""; stdout=""
             return R()
         if cmd[0] == "ffprobe":
@@ -311,7 +312,7 @@ def test_advance_auto_resumes_error_source_with_warm_transcript(tmp_path, monkey
             asr_calls.append(tuple(cmd))
             outdir = Path(cmd[cmd.index("--output_dir") + 1]); outdir.mkdir(parents=True, exist_ok=True)
             (outdir / f"{Path(cmd[-1]).stem}.json").write_text(json.dumps(
-                {"language": "en", "segments": [{"start": 14.0, "end": 18.0, "text": "they slept on me"}]}))
+                {"language": "en", "segments": [talk_seg("they slept on me", start=14.0, end=18.0)]}))
             class R: returncode=0; stderr=""; stdout=""
             return R()
         if cmd[0] == "ffprobe":

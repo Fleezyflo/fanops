@@ -168,7 +168,7 @@ def run_ingest(cfg: Config, *, batch_name: str = "", target_accounts=(), burn_su
                 # handle is FLAGGED at creation (else crosspost silently skips every surface -> 0 posts).
                 active = {a.handle for a in Accounts.load(cfg).active()}   # loaded only on the batched path (byte-identical otherwise)
                 batch = create_batch(led, name=batch_name, target_accounts=list(target_accounts),
-                                     now_iso=now_iso, active_handles=active, burn_subs=burn_subs)   # same (name, now_iso) -> same id == bid stamped above
+                                     now_iso=now_iso, active_handles=active, burn_subs=burn_subs)
             n = len(led.sources)
         _archive_staged(cfg, staged)
         write_digest(Ledger.load(cfg), cfg)
@@ -305,7 +305,8 @@ def upload_chunk(cfg: Config, upload_id: str, offset: int, data: bytes) -> Actio
 
 
 def upload_finalize(cfg: Config, upload_id: str, *, batch_name: str = "", target_accounts=(),
-                    burn_subs: bool | None = None, trigger_ingest: bool = True) -> ActionResult:
+                    burn_subs: bool | None = None,
+                    trigger_ingest: bool = True) -> ActionResult:
     """Verify size + sha256, probe the video stream on the .uploadpart, os.replace into the inbox, delete meta.
     When trigger_ingest is True, chains run_ingest like save_uploads_and_ingest."""
     inbox = cfg.inbox.resolve()
@@ -342,7 +343,8 @@ def upload_finalize(cfg: Config, upload_id: str, *, batch_name: str = "", target
     if not trigger_ingest:
         return ActionResult(ok=True, detail={"saved": [meta["name"]]})
     ing = catalogue_inbox(cfg) if cfg.queue_gate else run_ingest(cfg, batch_name=batch_name,
-                                                                  target_accounts=target_accounts, burn_subs=burn_subs)
+                                                                  target_accounts=target_accounts,
+                                                                  burn_subs=burn_subs)
     detail = {"saved": [meta["name"]], **(ing.detail or {})}
     if not ing.ok:
         return ActionResult(ok=False, detail=detail,
@@ -409,7 +411,8 @@ def save_uploads_and_ingest(cfg: Config, files: Sequence[FileStorage], *, batch_
     if cfg.queue_gate:
         ing = catalogue_inbox(cfg)
     else:
-        ing = run_ingest(cfg, batch_name=batch_name, target_accounts=target_accounts, burn_subs=burn_subs)
+        ing = run_ingest(cfg, batch_name=batch_name, target_accounts=target_accounts,
+                         burn_subs=burn_subs)
     detail = {**(up.detail or {}), **(ing.detail or {})}
     if not ing.ok:
         n = len((up.detail or {}).get("saved", []))

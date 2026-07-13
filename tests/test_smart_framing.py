@@ -531,12 +531,14 @@ def _talk_src(**kw):
 
 def test_classify_multi_speaker_talk():
     # >=2 stable faces + real speech in the window -> the ONLY content type that switches speakers.
-    src = _talk_src(transcript=[{"start": 10.0, "end": 13.5, "text": "so tell me about your new record"}])
+    from tests.fixtures.speech_segments import talk_seg
+    src = _talk_src(transcript=[talk_seg("so tell me about your new record", start=10.0, end=13.5)])
     st = _stats([[[0.25, 0.5, 0.2, 0.45], [0.78, 0.45, 0.18, 0.4]]] * 4)
     assert framing.classify_window(None, src, start=10.0, end=14.0, stats=st) == framing.CT_MULTI
 
 def test_classify_single_speaker_talk():
-    src = _talk_src(transcript=[{"start": 10.0, "end": 13.5, "text": "let me explain how this works"}])
+    from tests.fixtures.speech_segments import talk_seg
+    src = _talk_src(transcript=[talk_seg("let me explain how this works", start=10.0, end=13.5)])
     st = _stats([[[0.5, 0.5, 0.22, 0.45]]] * 4)
     assert framing.classify_window(None, src, start=10.0, end=14.0, stats=st) == framing.CT_SINGLE
 
@@ -563,8 +565,26 @@ def test_classify_old_source_without_meta_does_not_crash():
 
 def test_classify_stats_none_is_no_people():
     # detection unavailable -> no face data -> no-people (caller fails open to centered crop regardless).
-    src = _talk_src(transcript=[{"start": 10.0, "end": 13.0, "text": "hello there friend"}])
+    from tests.fixtures.speech_segments import talk_seg
+    src = _talk_src(transcript=[talk_seg("hello there friend", start=10.0, end=13.0)])
     assert framing.classify_window(None, src, start=10.0, end=14.0, stats=None) == framing.CT_NOPEOPLE
+
+def test_classify_junk_asr_with_face_not_talk():
+    # Plan E L4b: high no_speech_prob junk ASR + face must NOT route to talk (music or silent only).
+    from tests.fixtures.speech_segments import MUSIC_HALLUC
+    src = _talk_src(transcript=[{**MUSIC_HALLUC, "start": 10.0, "end": 13.5}])
+    st = _stats([[[0.5, 0.5, 0.22, 0.45]]] * 4)
+    ct = framing.classify_window(None, src, start=10.0, end=14.0, stats=st)
+    assert ct in (framing.CT_MUSIC, framing.CT_SILENT), f"junk ASR must not classify as talk, got {ct!r}"
+
+def test_classify_degraded_legacy_not_talk():
+    # Plan E L4c: degraded-tier legacy segment + 2 faces must NOT trigger multi-speaker talk.
+    from tests.fixtures.speech_segments import LEGACY_EN
+    src = _talk_src(transcript=[{**LEGACY_EN, "start": 10.0, "end": 13.5}])
+    st = _stats([[[0.25, 0.5, 0.2, 0.45], [0.78, 0.45, 0.18, 0.4]]] * 4)
+    ct = framing.classify_window(None, src, start=10.0, end=14.0, stats=st)
+    assert ct != framing.CT_MULTI, f"degraded legacy must not route to MULTI, got {ct!r}"
+    assert ct in (framing.CT_MUSIC, framing.CT_SILENT), f"degraded legacy must not classify as talk, got {ct!r}"
 
 
 # ---------------------------------------------------------------- _resolve_framing strategy router ----
@@ -772,7 +792,8 @@ def test_face_count_real_two_shot_is_multi():
 
 def test_classify_phantom_decoy_routes_to_single(tmp_path, monkeypatch):
     # end-to-end: phantom wall-art face next to a real speaker must NOT trigger multi-speaker switching.
-    src = _talk_src(transcript=[{"start": 10.0, "end": 13.5, "text": "here is my take on this"}])
+    from tests.fixtures.speech_segments import talk_seg
+    src = _talk_src(transcript=[talk_seg("here is my take on this", start=10.0, end=13.5)])
     real_face = [0.30, 0.50, 0.25, 0.45, 0.87]
     phantom   = [0.75, 0.48, 0.06, 0.43, 0.64]
     st = _stats([[real_face, phantom]] * 4)

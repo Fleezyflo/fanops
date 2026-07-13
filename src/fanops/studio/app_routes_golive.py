@@ -49,8 +49,13 @@ def register_golive_routes(app, cfg):
     @app.post("/golive/responder")
     def do_golive_responder():
         # THE explicit AI switch (FANOPS_RESPONDER=llm|manual). Explicit "1"==on (NOT bool(str)). This is the
-        # ONLY intended way to turn the LLM responder on/off — claude fires because this is on, never on PATH alone.
+        # ONLY intended way to turn the LLM responder on/off — the LLM CLI fires because this is on, never on PATH alone.
         return _golive_panel(golive.set_ai_responder(cfg, request.form.get("on") == "1"))
+
+    @app.post("/golive/llm-transport")
+    def do_golive_llm_transport():
+        # FANOPS_LLM_TRANSPORT=claude|cursor — which headless CLI shells when the AI responder is ON.
+        return _golive_panel(golive.set_llm_transport(cfg, request.form.get("transport", "")))
 
     @app.post("/golive/daemon-install")
     def do_golive_daemon_install():

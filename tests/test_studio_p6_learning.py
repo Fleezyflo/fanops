@@ -93,5 +93,5 @@ def test_gates_transcript_segments_keyboard_operable(tmp_path, monkeypatch):
         "signal_peaks": [{"t": 1.0, "score": 0.9}], "language": "en"})
     html = _client(cfg).get("/gates").data.decode()
     # a .seg must be focusable + announce as an actionable control, so keyboard users get the click-to-fill
-    assert 'class="seg"' in html
+    assert 'class="seg seg-trust-degraded"' in html
     assert 'tabindex="0"' in html and 'role="button"' in html

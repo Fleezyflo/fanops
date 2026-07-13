@@ -19,7 +19,7 @@
   {% endif %}
   <h3>Transcript <span class="muted">({{ detail.transcript.source }}, {{ detail.transcript.total }} segs{% if detail.transcript.word_count %}, {{ detail.transcript.word_count }} words this page{% endif %})</span></h3>
   <ul class="transcript-segs">{% for seg in detail.transcript.segments %}
-    <li><span class="muted">{{ '%.1f'|format(seg.start or 0) }}–{{ '%.1f'|format(seg.end or 0) }}s</span> {{ seg.text }}</li>
+    <li class="{% if seg.trust_tier and seg.trust_tier != 'full' %}seg-trust-{{ seg.trust_tier }}{% endif %}"><span class="muted">{{ '%.1f'|format(seg.start or 0) }}–{{ '%.1f'|format(seg.end or 0) }}s</span>{% if seg.trust_tier and seg.trust_tier != 'full' %} <span class="chip warn seg-tier" title="ASR trust tier">{{ seg.trust_tier }}</span>{% endif %} {{ seg.text }}</li>
   {% endfor %}{% if not detail.transcript.segments %}<li class="empty">no transcript</li>{% endif %}</ul>
   {% if detail.transcript.next_offset is not none %}
   <p><a class="button ghost" href="{{ url_for('library_source', source_id=detail.source_id, offset=detail.transcript.next_offset) }}">More transcript</a></p>

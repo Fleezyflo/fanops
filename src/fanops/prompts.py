@@ -67,7 +67,7 @@ def _target_pick_count(duration: float, band: Band = TALK) -> int:
     if duration < band.lo: return 1
     return max(1, min(_MAX_TARGET_PICKS, round(duration / band.span)))
 
-def _hook_spec(max_words: int = 6, directive=None) -> str:
+def _hook_spec(max_words: int = 6, directive=None, *, allow_null: bool = False) -> str:
     """Shared on-screen hook craft. Universal retention-science floor + persona-supplied demos/bans (MOL-173)."""
     floor = (
         f"  The on-screen hook is the single biggest lever on reach: ~70% watch MUTED and decide in under "
@@ -104,11 +104,12 @@ def _hook_spec(max_words: int = 6, directive=None) -> str:
         f"question about what the frame merely LOOKS like (a red light, a prop, a clock, how people "
         f"stand) that the clip never answers is BAIT, not curiosity; BAIT the clip never pays off; "
         f"fabricated ROUND numbers or authority stats.\n"
-        f"    OUTPUT: <={max_words} words; no em-dashes, en-dashes, or smart quotes. Author a hook "
-        f"whenever an HONEST one exists — that is the norm, and most clips have one. If NOTHING said "
-        f"or happening in THIS window can fire a trigger honestly (song playback, b-roll, set "
-        f"logistics), return null: a clean clip beats scenery bait. null is a last resort, never a "
-        f"shortcut.\n")
+        + (f"    OUTPUT: <={max_words} words; no em-dashes, en-dashes, or smart quotes. Return `hook: null` "
+           f"when this window has no trusted spoken dialog (music drop, b-roll, logistics, ASR noise). "
+           f"Never invent a hook from set dressing or transcript garbage.\n"
+           if allow_null else
+           f"    OUTPUT: <={max_words} words; no em-dashes, en-dashes, or smart quotes. You MUST author a "
+           f"non-null hook — hook is REQUIRED, never null.\n"))
     persona = ""
     if directive is not None:
         demos = getattr(directive, "demos", None) or []
@@ -325,14 +326,15 @@ def moment_hook_prompt(payload: dict) -> str:
         f"WHY IT WAS PICKED (source to transform, NOT to echo): {_inline(payload.get('reason', ''))}\n"
         "HARD RULES:\n"
         "  - `hook` is the ON-SCREEN TEXT shown in the clip's first ~2 seconds. It is NOT a caption of the "
-        "audio and NOT a quote of the transcript — its only job is keeping the VIEWER watching. You MUST "
-        "author a non-null hook — never return hook = null.\n"
+        "audio and NOT a quote of the transcript — its only job is keeping the VIEWER watching. Return "
+        "`hook: null` when this window has no trusted spoken dialog (music, b-roll, logistics, ASR noise); "
+        "never invent a hook from set dressing.\n"
         + ("  - FRAMES: stills from THIS clip's window are attached as images — SEE them and write the "
            "hook true to what is actually ON SCREEN, not only the transcript.\n" if has_frames else
            "  - NO FRAMES are attached for this clip; write the hook from the transcript excerpt and signal "
            "peaks below. Do NOT claim to describe anything on screen you cannot read here.\n")
         + _hook_decision(has_frames, _directive_from_payload(payload))
-        + _hook_spec(6, _directive_from_payload(payload))
+        + _hook_spec(6, _directive_from_payload(payload), allow_null=True)
         + learned_block
         + persona_block +
         "  - Use the SIGNAL PEAKS only to find WHERE the energy is, never as the hook's subject; do not "
