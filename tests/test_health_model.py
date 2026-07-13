@@ -50,8 +50,8 @@ def test_doctor_report_includes_deps_key(tmp_path, monkeypatch):
 def test_daemon_progress_absent_when_no_lease(tmp_path):
     from fanops.health_model import daemon_progress
     cfg = Config(root=tmp_path)
-    alive, line = daemon_progress(cfg)
-    assert alive is False and line is None
+    alive, line, snap = daemon_progress(cfg)
+    assert alive is False and line is None and snap is None
 
 
 def test_daemon_progress_alive_when_fresh_stage(tmp_path):
@@ -65,8 +65,8 @@ def test_daemon_progress_alive_when_fresh_stage(tmp_path):
     fcntl.flock(fd, fcntl.LOCK_EX)
     try:
         note_stage(cfg, "transcribe", "src-1")
-        alive, line = daemon_progress(cfg)
-        assert alive is True
+        alive, line, snap = daemon_progress(cfg)
+        assert alive is True and snap is not None
         assert line is not None and "mid-pass: transcribe" in line and "src-1" in line
         assert _STAGE_HANG_CEILING_S == 3600
     finally:
@@ -88,8 +88,8 @@ def test_daemon_progress_stuck_when_stage_age_above_ceiling(tmp_path):
     os.write(fd, json.dumps({"pid": 1, "started": old, "stage": "transcribe", "unit": "src-1",
                              "stage_started": old}).encode())
     try:
-        alive, line = daemon_progress(cfg)
-        assert alive is False
+        alive, line, snap = daemon_progress(cfg)
+        assert alive is False and snap is not None
         assert line is not None and "transcribe" in line
     finally:
         fcntl.flock(fd, fcntl.LOCK_UN); os.close(fd)
@@ -102,5 +102,6 @@ def test_heartbeat_stale_shape_unchanged(tmp_path, monkeypatch):
     monkeypatch.setattr(daemon, "_heartbeat_age_s", lambda c: 42.5)
     age, stale, iv = heartbeat_stale(cfg, interval=600)
     assert age == 42.5 and stale is False and iv == 600
+    monkeypatch.setattr(daemon, "_heartbeat_age_s", lambda c: 350.0)
     age2, stale2, iv2 = heartbeat_stale(cfg, interval=100)
     assert stale2 is True and iv2 == 100

@@ -202,7 +202,7 @@ def _daemon_liveness_check(cfg: Config) -> dict:
         logging.getLogger("fanops.doctor").debug("daemon backlog read failed: %s", e)
     # (a) heartbeat staleness / absence — mid-pass stage overrides stale heartbeat (shared with daemon.status)
     from fanops.health_model import daemon_progress, _STAGE_HANG_CEILING_S
-    alive_mid, progress_line = daemon_progress(cfg)
+    alive_mid, progress_line, snap = daemon_progress(cfg)
     stale = age is None or age > _DAEMON_STALE_TICKS * interval
     if alive_mid:
         stale = False
@@ -215,11 +215,6 @@ def _daemon_liveness_check(cfg: Config) -> dict:
                      "missing). Install/start it: `fanops daemon install` then check `fanops daemon status`")
     elif stale:
         if progress_line is not None and not alive_mid:
-            try:
-                from fanops.pipeline_run import run_stage_snapshot
-                snap = run_stage_snapshot(cfg)
-            except Exception:
-                snap = None
             if snap:
                 parts.append(f"daemon mid-pass stage stuck — {snap['stage']} has run {int(snap['stage_age'])}s "
                              f"(>{_STAGE_HANG_CEILING_S}s ceiling); the pump may be wedged")

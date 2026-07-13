@@ -206,17 +206,17 @@ def daemon_liveness_check(cfg: Config) -> dict:
 _STAGE_HANG_CEILING_S = 3600
 
 
-def daemon_progress(cfg: Config) -> tuple[bool, str | None]:
+def daemon_progress(cfg: Config) -> tuple[bool, str | None, dict | None]:
     """Mid-pass liveness override: flock-held stage younger than ceiling => pump alive despite stale heartbeat."""
-    try:
+    from fanops.errors import fail_open
+    snap = None
+    with fail_open("daemon_progress"):
         from fanops.pipeline_run import run_stage_snapshot
         snap = run_stage_snapshot(cfg)
-    except Exception:
-        return False, None
     if not snap:
-        return False, None
+        return False, None, None
     line = f"mid-pass: {snap['stage']} ({snap['unit']}) {int(snap['stage_age'])}s"
-    return snap["stage_age"] < _STAGE_HANG_CEILING_S, line
+    return snap["stage_age"] < _STAGE_HANG_CEILING_S, line, snap
 
 
 def heartbeat_stale(cfg: Config, *, interval: int | None = None) -> tuple[float | None, bool, int]:

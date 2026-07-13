@@ -387,16 +387,11 @@ def status(cfg: Config, *, interval: int = 600) -> dict:
         verdict = "alive"
     else:
         from fanops.health_model import daemon_progress
-        alive_mid, progress_line = daemon_progress(cfg)
+        alive_mid, progress_line, snap = daemon_progress(cfg)
         if alive_mid:
             verdict = "alive"
             run_line = progress_line
         elif progress_line is not None:
-            try:
-                from fanops.pipeline_run import run_stage_snapshot
-                snap = run_stage_snapshot(cfg)
-            except Exception:
-                snap = None
             if snap:
                 verdict = f"loaded but stage stuck ({snap['stage']} {int(snap['stage_age'])}s)"
             else:
