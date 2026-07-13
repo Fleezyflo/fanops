@@ -32,6 +32,10 @@ def _stub_run(mocker, cli, *, advance_side_effect=None, summary=None):
         mocker.patch.object(cli, "advance", side_effect=advance_side_effect)
     mocker.patch.object(cli, "get_responder",
                         return_value=type("_R", (), {"answer_pending": lambda self, c: None})())
+    # _heartbeat now records the running-code SHA; stub it so these hermetic loop tests never spawn the
+    # `git rev-parse` subprocess (the CI unit job is subprocess-free) — it also makes the per-tick loop
+    # deterministic. The real snapshot-once path is covered by test_self_adopt/test_daemon.
+    mocker.patch.object(cli, "_running_code_sha", return_value="testsha")
 
 
 def _stop_loop_after(mocker, n):

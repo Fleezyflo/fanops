@@ -1036,6 +1036,21 @@ def _cmd_run_pass(cfg: Config, base_time: str) -> dict | None:
     return s
 
 
+_RUNNING_CODE_SHA: tuple[str | None] | None = None   # process-lifetime snapshot; see _running_code_sha
+
+def _running_code_sha(cfg: Config) -> str | None:
+    """The git-HEAD SHA this pump PROCESS was loaded from, snapshotted ONCE at the first heartbeat and
+    cached for the process's life. This is deliberately NOT re-read per tick: _version_signal reads the
+    checkout's CURRENT on-disk HEAD, so after an operator `git pull` it would report the NEW disk SHA
+    while this process still runs the OLD code in memory — which would make the keeper's drift check
+    (heartbeat `code` vs disk SHA) ALWAYS equal and adoption NEVER fire. A start-of-process snapshot is
+    the running-code truth the keeper needs: it stays the OLD SHA until a restart loads the new code and
+    a fresh process snapshots the new SHA (clearing the drift). Also spares a `git rev-parse` per tick."""
+    global _RUNNING_CODE_SHA
+    if _RUNNING_CODE_SHA is None:
+        _RUNNING_CODE_SHA = (daemon._version_signal(cfg)[0],)
+    return _RUNNING_CODE_SHA[0]
+
 def _heartbeat(cfg: Config, s: dict, *, origin: str | None = None) -> None:
     """B5/E2: emit a heartbeat line every run/advance so an external monitor diffing consecutive
     lines can tell 'alive-but-idle' (ts advances, published_in_run may be 0) from 'cron is dead'
@@ -1048,7 +1063,7 @@ def _heartbeat(cfg: Config, s: dict, *, origin: str | None = None) -> None:
         "fanops_version": fanops.__version__,
         "published_in_run": s.get("published_in_run", 0),
         "last_published_age_hours": s.get("last_published_age_hours"),
-        "code": daemon._version_signal(cfg)[0],   # running-HEAD SHA (#627 made correct); None if git-less — the keeper compares it to disk to adopt new code
+        "code": _running_code_sha(cfg),   # SHA this PROCESS loaded (snapshot at start); the keeper compares it to disk to adopt new code
     }
     print(json.dumps(hb))
     fields = dict(hb)
