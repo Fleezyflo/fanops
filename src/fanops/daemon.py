@@ -635,15 +635,19 @@ def _studio_port_answers(host: str = STUDIO_DEFAULT_HOST, port: int = STUDIO_DEF
 
 def _version_signal(cfg: Config) -> tuple[str | None, str]:
     """The running-code signal the self-adopt loop compares each tick, plus its SOURCE. Prefers
-    `git -C cfg.root rev-parse HEAD` (cheap, moves per-commit — the real change signal); falls back to
-    `fanops.__version__` (near-useless for change detection — stale, doesn't move per-commit, so it
-    only guards a totally git-less tree); returns (None, 'unavailable') when BOTH are absent so the
-    caller can DISARM self-adopt and log a DEGRADED line rather than appear armed but never fire.
-    Fail-open with a breadcrumb: a git error / missing binary degrades to the version fallback."""
+    `git rev-parse HEAD` in the CODE checkout that holds the running `fanops` package (moves
+    per-commit — the real change signal); falls back to `fanops.__version__` (stale, doesn't move
+    per-commit, so it only guards a totally git-less install); returns (None, 'unavailable') when
+    BOTH are absent so the caller DISARMS self-adopt and logs a DEGRADED line rather than appear
+    armed but never fire. NB: the signal follows the CODE tree, NOT cfg.root — cfg.root is the DATA
+    workspace and (by design, the FANOPS_ROOT split) may have no .git. Fail-open with a breadcrumb:
+    a git error / missing binary degrades to the version fallback."""
     from fanops.errors import fail_open
+    import fanops, pathlib
     head = None
     with fail_open("version_signal.git"):
-        r = subprocess.run(["git", "-C", str(cfg.root), "rev-parse", "HEAD"],
+        code_root = pathlib.Path(fanops.__file__).resolve().parent
+        r = subprocess.run(["git", "-C", str(code_root), "rev-parse", "HEAD"],
                            capture_output=True, text=True, timeout=15)
         if r.returncode == 0 and r.stdout.strip():
             head = r.stdout.strip()
@@ -659,18 +663,22 @@ def _version_signal(cfg: Config) -> tuple[str | None, str]:
 # ── the four planes (each returns a small verdict dict; tests drive them in isolation) ──────────
 
 def _plane_git(cfg: Config) -> dict:
-    """ADVISORY git freshness: `git fetch`, then report how far the checkout's `main` trails
-    `origin/main`. NEVER mutates the tree (no merge/reset/checkout — binding non-goal §6: a prior
-    sync clobbered a live accounts.json, another produced a false verdict). Always ok=True: a stale
-    tree or a failed fetch is surfaced, never fatal. The operator decides whether to sync."""
+    """ADVISORY git freshness: `git fetch`, then report how far the CODE checkout's `main` trails
+    `origin/main`. Runs against the tree holding the running `fanops` package (NOT cfg.root — the DATA
+    workspace, which by the FANOPS_ROOT split may have no .git), same as the self-adopt signal. NEVER
+    mutates the tree (no merge/reset/checkout — binding non-goal §6: a prior sync clobbered a live
+    accounts.json, another produced a false verdict). Always ok=True: a stale tree or a failed fetch is
+    surfaced, never fatal. The operator decides whether to sync."""
+    import fanops, pathlib
+    code_root = pathlib.Path(fanops.__file__).resolve().parent
     behind = ahead = None
     try:
-        fetched = subprocess.run(["git", "-C", str(cfg.root), "fetch", "origin"],
+        fetched = subprocess.run(["git", "-C", str(code_root), "fetch", "origin"],
                                  capture_output=True, text=True, timeout=60)
         if fetched.returncode != 0:
             return {"plane": "git", "ok": True, "behind": None, "ahead": None,
                     "detail": f"advisory: git fetch failed ({_tail(fetched.stderr, 2) or 'non-zero'}) — skipped freshness check"}
-        rev = subprocess.run(["git", "-C", str(cfg.root), "rev-list", "--left-right", "--count", "main...origin/main"],
+        rev = subprocess.run(["git", "-C", str(code_root), "rev-list", "--left-right", "--count", "main...origin/main"],
                              capture_output=True, text=True, timeout=30)
         if rev.returncode == 0 and rev.stdout.strip():
             parts = rev.stdout.split()
