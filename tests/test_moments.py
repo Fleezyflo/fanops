@@ -61,8 +61,11 @@ def _decide_hooks(led, cfg, source_id, hooks=None, accounts=None):
 def _src(led, cfg, dur=20.0):
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
                           state=SourceState.signalled, duration=dur, language="en",
-                          transcript=[talk_seg("intro", start=0, end=3),
-                                      talk_seg("they slept on me", start=14, end=18)],
+                          transcript=[talk_seg("intro line here", start=0, end=3),
+                                      talk_seg("they slept on me", start=14, end=18),
+                                      talk_seg("second wave line here", start=20, end=34),
+                                      talk_seg("another bar lands here", start=40, end=54),
+                                      talk_seg("late verse lands here", start=60, end=74)],
                           signal_peaks=[{"t": 16.0, "kind": "scene_cut", "score": 0.6}],
                           meta={"transcribed": True}))
 
