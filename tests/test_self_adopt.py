@@ -1,182 +1,216 @@
-"""Self-adopting deploy: the resident `fanops run --loop` re-execs at the QUIESCENT loop top when the
-running-code signal (git HEAD / version) changes from the baseline captured once before the loop.
+"""Keeper-adopts-pump: the pump's in-process os.execv self-adopt is GONE. The resident `fanops run
+--loop` records its running-HEAD SHA in every loop heartbeat (`_heartbeat(code=...)`), and the EXTERNAL
+keeper (com.fanops.keeper, StartInterval 120s, `fanops daemon ensure`) compares that SHA to the SHA on
+disk and kickstarts the PUMP when they drift. Adoption thus survives a wedged pump (the detector no
+longer lives inside the thing that must restart).
 
-Boundary safety is the whole point: os.execv fires at the loop TOP, BEFORE `_cmd_run_pass` acquires the
-run lease, so it abandons no in-flight pass (flock self-heals on exec). These tests drive `main(["run",
-"--loop", ...])` with every external seam faked — the version signal, the account/preflight guards,
-`_cmd_run_pass`, the Studio kickstart — and break the otherwise-infinite loop deterministically by
-monkeypatching `os.execv` / `time.sleep` to raise a sentinel.
+These tests drive `daemon.ensure(cfg)` directly and assert the kickstart behavior against a recorded
+launchctl. Setup mirrors test_daemon_keeper.py: HOME repointed at tmp_path, sys.platform forced darwin,
+the pump `print` returns (0,"") so ensure sees it LOADED (no bootstrap) and no plist is written so
+installed_interval is None (no plist-drift rewrite) — every run lands directly in the code-drift branch.
 
-os.environ / cwd are sandboxed per test (chdir tmp_path); FANOPS_AUTO_ADOPT is set explicitly so a
-leaked repo .env value can't decide the test (tests/CLAUDE.md _LEAKY_ENV gotcha)."""
+STORM GUARD: the deleted execv re-captured its baseline per re-exec, so it fired ONCE per deploy. The
+keeper is stateless across 120s fires and the pump's stale heartbeat keeps the OLD SHA until its first
+post-restart pass finishes — so ensure must NOT re-kickstart while the pump PID is younger than one
+keeper interval. test_storm_guard_holds is the regression guard for that property.
+
+FANOPS_AUTO_ADOPT is set explicitly in every test so a leaked repo .env value can't decide it
+(tests/CLAUDE.md _LEAKY_ENV gotcha)."""
 from __future__ import annotations
-import os
+import os, subprocess
 
 import pytest
 
-from fanops import cli, daemon
+from fanops.config import Config
+from fanops import daemon
 
 
-class _Sentinel(Exception):
-    """Raised from a faked os.execv / time.sleep to break the resident loop deterministically."""
+def _fake_launchctl(**spec):
+    """Recorder for subprocess.run. `spec` maps a launchctl sub-verb (cmd[1]) to (rc, stdout); a
+    `gui/.../<label>` key overrides the `print` verb for that label. Records every argv in `.calls`."""
+    calls: list[list[str]] = []
+    def run(cmd, *a, **k):
+        calls.append(list(cmd))
+        verb = cmd[1] if len(cmd) > 1 else ""
+        if verb == "print" and len(cmd) > 2:
+            key = cmd[2]
+            rc, out = spec.get(key, spec.get("print", (0, "")))
+        else:
+            rc, out = spec.get(verb, (0, ""))
+        return subprocess.CompletedProcess(cmd, rc, stdout=out, stderr="")
+    run.calls = calls
+    return run
 
 
-def _disarm_guards(monkeypatch, tmp_path):
-    """Neutralize everything the run loop touches EXCEPT the self-adopt decision under test."""
-    monkeypatch.chdir(tmp_path)                              # Config() roots at tmp
-    monkeypatch.setattr(cli, "_check_accounts", lambda cfg: 0)
-    monkeypatch.setattr(cli, "_check_preflight", lambda cfg: 0)
-    monkeypatch.setattr(cli, "_heartbeat", lambda *a, **k: None)
-    monkeypatch.setattr(daemon, "_kickstart_studio_if_present", lambda cfg: None)
-    # sleep is the loop's tail — raise the sentinel there so a tick that does NOT adopt still terminates.
-    monkeypatch.setattr(cli.time, "sleep", lambda _s: (_ for _ in ()).throw(_Sentinel("sleep")))
+def _base_ensure_env(monkeypatch, tmp_path):
+    """The shared setup that lands ensure() in the code-drift branch: pump LOADED (no bootstrap), no
+    plist on disk (installed_interval None -> no plist-drift). Returns (cfg, fake, uid)."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(daemon.sys, "platform", "darwin")
+    monkeypatch.setattr(daemon, "_require_darwin", lambda: None)   # CI runs Linux; skip the darwin guard
+    uid = os.getuid()
+    main_print = f"gui/{uid}/{daemon.LABEL}"
+    fake = _fake_launchctl(**{main_print: (0, "")})
+    monkeypatch.setattr(daemon.subprocess, "run", fake)
+    return Config(root=tmp_path), fake, uid
 
 
-def _version_sequence(*values):
-    """A fake _version_signal that yields `values` in order (last value repeats) — each a (sig, src)."""
-    calls = {"n": 0}
-    def fake(cfg):
-        i = min(calls["n"], len(values) - 1)
-        calls["n"] += 1
-        return values[i]
-    fake.calls = calls
-    return fake
+def _kickstart_argv(uid):
+    return ["launchctl", "kickstart", "-k", f"gui/{uid}/{daemon.LABEL}"]
 
 
-def test_reexec_on_version_change_second_tick(tmp_path, monkeypatch):
-    # baseline = ("aaa","git-head"); tick 1 sees "aaa" (no change) -> runs pass -> sleep sentinel breaks?
-    # No: we want to reach tick 2 where the signal flips to "bbb" and execv fires. So tick-1 _cmd_run_pass
-    # must NOT raise; the loop proceeds to time.sleep -> sentinel. We therefore let execv (tick 2) win by
-    # making the FIRST poll already return the changed value is wrong; instead: baseline captured first,
-    # then each loop-top poll. Sequence: [baseline capture]="aaa", [tick1 top]="aaa", [tick2 top]="bbb".
-    _disarm_guards(monkeypatch, tmp_path)
+def test_kickstarts_pump_on_drift(tmp_path, monkeypatch):
+    # running SHA "aaa" != deployed SHA "bbb", storm guard permits (no pump PID) -> ensure kickstarts the
+    # PUMP and returns action "kickstart_stale_code"; Studio is cycled too (its only adopter now).
+    cfg, fake, uid = _base_ensure_env(monkeypatch, tmp_path)
     monkeypatch.setenv("FANOPS_AUTO_ADOPT", "1")
-    seq = _version_sequence(("aaa", "git-head"), ("aaa", "git-head"), ("bbb", "git-head"))
-    monkeypatch.setattr(daemon, "_version_signal", seq)
-    # tick 1 runs a normal pass; DO NOT let sleep end the test on tick 1 — instead make _cmd_run_pass a
-    # no-op that returns None so nothing is printed, and let the loop continue to sleep... which raises.
-    # To reach tick 2 we must swallow the tick-1 sentinel: raise it only from execv, not sleep.
-    monkeypatch.setattr(cli.time, "sleep", lambda _s: None)  # tick 1 sleeps quietly, loop continues
-    monkeypatch.setattr(cli, "_cmd_run_pass", lambda cfg, bt: None)
-    execv_calls = []
-    def fake_execv(path, argv):
-        execv_calls.append((path, list(argv)))
-        raise _Sentinel("execv")                             # break the loop the instant adoption fires
-    monkeypatch.setattr(os, "execv", fake_execv)
+    monkeypatch.setattr(daemon, "_last_heartbeat_code", lambda cfg: "aaa")
+    monkeypatch.setattr(daemon, "_version_signal", lambda cfg: ("bbb", "git-head"))
+    monkeypatch.setattr(daemon, "_pump_pid_age_s", lambda: (None, None))   # no PID -> nothing to storm; kickstart proceeds
+    studio_calls = []
+    monkeypatch.setattr(daemon, "_kickstart_studio_if_present", lambda cfg: studio_calls.append(cfg))
 
-    with pytest.raises(_Sentinel):
-        cli.main(["run", "--loop", "--interval", "60s"])
+    res = daemon.ensure(cfg)
 
-    assert len(execv_calls) == 1                             # adopted exactly once
-    path, argv = execv_calls[0]
-    import sys
-    assert path == sys.executable and argv == [sys.executable, *sys.argv]   # re-exec self, same argv
+    assert _kickstart_argv(uid) in fake.calls                # the exact PUMP kickstart argv fired
+    assert res["action"] == "kickstart_stale_code"
+    assert studio_calls, "Studio must be cycled onto new code too (execv path deleted)"
 
 
-def test_no_reexec_when_signal_unchanged(tmp_path, monkeypatch):
-    # Signal never changes -> never adopts; the loop terminates via the tick-1 sleep sentinel instead.
-    _disarm_guards(monkeypatch, tmp_path)
+def test_no_kickstart_when_shas_match(tmp_path, monkeypatch):
+    # running == deployed -> no drift -> no kickstart; action stays whatever load/plist self-heals set ("none").
+    cfg, fake, uid = _base_ensure_env(monkeypatch, tmp_path)
     monkeypatch.setenv("FANOPS_AUTO_ADOPT", "1")
+    monkeypatch.setattr(daemon, "_last_heartbeat_code", lambda cfg: "same")
     monkeypatch.setattr(daemon, "_version_signal", lambda cfg: ("same", "git-head"))
-    monkeypatch.setattr(cli, "_cmd_run_pass", lambda cfg, bt: None)
-    execv_calls = []
-    monkeypatch.setattr(os, "execv", lambda p, a: execv_calls.append((p, a)))
+    monkeypatch.setattr(daemon, "_pump_pid_age_s", lambda: (None, None))
+    monkeypatch.setattr(daemon, "_kickstart_studio_if_present", lambda cfg: None)
 
-    with pytest.raises(_Sentinel):                           # sleep sentinel ends tick 1
-        cli.main(["run", "--loop", "--interval", "60s"])
-    assert execv_calls == []                                 # unchanged signal -> no re-exec
+    res = daemon.ensure(cfg)
 
-
-def test_no_reexec_when_auto_adopt_disabled(tmp_path, monkeypatch):
-    # FANOPS_AUTO_ADOPT=0 disables self-adopt even when the signal changes.
-    _disarm_guards(monkeypatch, tmp_path)
-    monkeypatch.setenv("FANOPS_AUTO_ADOPT", "0")
-    monkeypatch.setattr(daemon, "_version_signal",
-                        _version_sequence(("aaa", "git-head"), ("bbb", "git-head")))
-    monkeypatch.setattr(cli, "_cmd_run_pass", lambda cfg, bt: None)
-    execv_calls = []
-    monkeypatch.setattr(os, "execv", lambda p, a: execv_calls.append((p, a)))
-
-    with pytest.raises(_Sentinel):                           # sleep sentinel ends tick 1
-        cli.main(["run", "--loop", "--interval", "60s"])
-    assert execv_calls == []                                 # kill switch honored
+    assert _kickstart_argv(uid) not in fake.calls
+    assert res["action"] == "none"
 
 
-def test_no_reexec_when_signal_none_and_degraded_line_logged(tmp_path, monkeypatch):
-    # _version_signal -> (None, "unavailable"): self-adopt is DISARMED (never re-exec on an absent
-    # signal — fail-safe) AND the startup log carries the DEGRADED breadcrumb (the silent-no-signal
-    # -forever regression guard). We capture the log by patching cli.get_logger.
-    _disarm_guards(monkeypatch, tmp_path)
+def test_no_kickstart_when_running_sha_absent(tmp_path, monkeypatch):
+    # _last_heartbeat_code -> None (no log / pre-upgrade heartbeat with no `code`) DISARMS the drift branch.
+    cfg, fake, uid = _base_ensure_env(monkeypatch, tmp_path)
     monkeypatch.setenv("FANOPS_AUTO_ADOPT", "1")
+    monkeypatch.setattr(daemon, "_last_heartbeat_code", lambda cfg: None)
+    monkeypatch.setattr(daemon, "_version_signal", lambda cfg: ("bbb", "git-head"))
+    monkeypatch.setattr(daemon, "_pump_pid_age_s", lambda: (None, None))
+    monkeypatch.setattr(daemon, "_kickstart_studio_if_present", lambda cfg: None)
+
+    res = daemon.ensure(cfg)
+
+    assert _kickstart_argv(uid) not in fake.calls           # absent running SHA -> never kickstart
+    assert res["action"] == "none"
+
+
+def test_no_kickstart_when_deployed_sha_absent(tmp_path, monkeypatch):
+    # _version_signal -> (None,"unavailable") (git-less install) DISARMS the drift branch.
+    cfg, fake, uid = _base_ensure_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("FANOPS_AUTO_ADOPT", "1")
+    monkeypatch.setattr(daemon, "_last_heartbeat_code", lambda cfg: "aaa")
     monkeypatch.setattr(daemon, "_version_signal", lambda cfg: (None, "unavailable"))
-    monkeypatch.setattr(cli, "_cmd_run_pass", lambda cfg, bt: None)
-    logged = []
-    monkeypatch.setattr(cli, "get_logger",
-                        lambda cfg: (lambda *a, **k: logged.append((a, k))))
-    execv_calls = []
-    monkeypatch.setattr(os, "execv", lambda p, a: execv_calls.append((p, a)))
+    monkeypatch.setattr(daemon, "_pump_pid_age_s", lambda: (None, None))
+    monkeypatch.setattr(daemon, "_kickstart_studio_if_present", lambda cfg: None)
 
-    with pytest.raises(_Sentinel):                           # sleep sentinel ends tick 1
-        cli.main(["run", "--loop", "--interval", "60s"])
-    assert execv_calls == []                                 # None signal short-circuits -> never re-exec
-    # the DEGRADED breadcrumb was emitted at startup (outcome + a detail naming the disarm)
-    degraded = [(a, k) for (a, k) in logged if a[:3] == ("adopt", "-", "degraded")]
-    assert degraded, f"expected an 'adopt/-/degraded' log line, got {logged}"
-    assert "disarmed" in str(degraded[0][1])
+    res = daemon.ensure(cfg)
+
+    assert _kickstart_argv(uid) not in fake.calls           # absent deployed SHA -> never kickstart
+    assert res["action"] == "none"
 
 
-def test_baseline_log_names_source_and_value(tmp_path, monkeypatch):
-    # The happy-path startup line names the SOURCE + the signal so an operator can SEE adoption is armed.
-    _disarm_guards(monkeypatch, tmp_path)
+def test_storm_guard_holds(tmp_path, monkeypatch):
+    # THE CRITICAL REGRESSION GUARD. Drift is present (running "aaa" != deployed "bbb") BUT the pump PID
+    # is younger than KEEPER_POLL_INTERVAL_S — it was just kickstarted and hasn't written its fresh-SHA
+    # heartbeat yet. ensure MUST NOT re-kickstart (else a storm every 120s). Fake _launchctl("list",..)
+    # to return a PID and fake `ps -o etimes=` to a small number so _pump_pid_age_s reports a young pump.
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(daemon.sys, "platform", "darwin")
+    monkeypatch.setattr(daemon, "_require_darwin", lambda: None)
+    uid = os.getuid()
+    main_print = f"gui/{uid}/{daemon.LABEL}"
+    # `list <LABEL>` returns a live PID; every other verb (incl. the pump `print` -> loaded) defaults via spec.
+    fake = _fake_launchctl(list=(0, '\t"PID" = 4321;\n\t"LastExitStatus" = 0;\n'), **{main_print: (0, "")})
+    real_run = fake
+    ps_calls = []
+    def run(cmd, *a, **k):
+        if cmd[:1] == ["ps"]:                                # the etimes probe -> young pump (10s)
+            ps_calls.append(list(cmd))
+            return subprocess.CompletedProcess(cmd, 0, stdout="10\n", stderr="")
+        return real_run(cmd, *a, **k)
+    run.calls = fake.calls
+    monkeypatch.setattr(daemon.subprocess, "run", run)
     monkeypatch.setenv("FANOPS_AUTO_ADOPT", "1")
-    monkeypatch.setattr(daemon, "_version_signal", lambda cfg: ("abc123", "git-head"))
-    monkeypatch.setattr(cli, "_cmd_run_pass", lambda cfg, bt: None)
-    logged = []
-    monkeypatch.setattr(cli, "get_logger",
-                        lambda cfg: (lambda *a, **k: logged.append((a, k))))
-    monkeypatch.setattr(os, "execv", lambda p, a: None)
+    monkeypatch.setattr(daemon, "_last_heartbeat_code", lambda cfg: "aaa")
+    monkeypatch.setattr(daemon, "_version_signal", lambda cfg: ("bbb", "git-head"))
+    studio_calls = []
+    monkeypatch.setattr(daemon, "_kickstart_studio_if_present", lambda cfg: studio_calls.append(cfg))
+    cfg = Config(root=tmp_path)
 
-    with pytest.raises(_Sentinel):                           # sleep sentinel ends tick 1 (signal unchanged)
-        cli.main(["run", "--loop", "--interval", "60s"])
-    baseline = [(a, k) for (a, k) in logged if a[:3] == ("adopt", "-", "baseline")]
-    assert baseline, f"expected an 'adopt/-/baseline' log line, got {logged}"
-    assert baseline[0][1].get("source") == "git-head" and baseline[0][1].get("signal") == "abc123"
+    res = daemon.ensure(cfg)
+
+    assert _kickstart_argv(uid) not in fake.calls           # young pump -> guard SKIPS the re-kickstart
+    assert ps_calls, "the storm guard must actually probe pump PID age via `ps -o etimes=`"
+    assert not studio_calls                                 # skipped path does not cycle Studio either
+    assert res["action"] == "none"                          # no drift action set on a guarded skip
 
 
-def test_reexec_fires_before_lease_never_mid_pass(tmp_path, monkeypatch):
-    # Boundary proof: adoption fires at the loop TOP, BEFORE _cmd_run_pass (which holds the run lease).
-    # We assert _cmd_run_pass is NEVER entered on the adopting tick — execv wins first, so no lease is
-    # ever held when we re-exec.
-    _disarm_guards(monkeypatch, tmp_path)
+def test_storm_guard_lets_settled_pump_through(tmp_path, monkeypatch):
+    # Complement to the guard: a pump whose PID is OLDER than one interval is settled — a genuine drift
+    # on it (its heartbeat SHOULD have refreshed by now but hasn't) is a real stale-code case -> kickstart.
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(daemon.sys, "platform", "darwin")
+    monkeypatch.setattr(daemon, "_require_darwin", lambda: None)
+    uid = os.getuid()
+    main_print = f"gui/{uid}/{daemon.LABEL}"
+    fake = _fake_launchctl(list=(0, '\t"PID" = 4321;\n'), **{main_print: (0, "")})
+    def run(cmd, *a, **k):
+        if cmd[:1] == ["ps"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="99999\n", stderr="")   # old pump
+        return fake(cmd, *a, **k)
+    run.calls = fake.calls
+    monkeypatch.setattr(daemon.subprocess, "run", run)
     monkeypatch.setenv("FANOPS_AUTO_ADOPT", "1")
-    monkeypatch.setattr(cli.time, "sleep", lambda _s: None)  # tick 1 continues to tick 2
-    monkeypatch.setattr(daemon, "_version_signal",
-                        _version_sequence(("aaa", "git-head"), ("aaa", "git-head"), ("bbb", "git-head")))
-    pass_ticks = {"n": 0}
-    monkeypatch.setattr(cli, "_cmd_run_pass",
-                        lambda cfg, bt: pass_ticks.__setitem__("n", pass_ticks["n"] + 1) or None)
-    def fake_execv(p, a):
-        raise _Sentinel("execv")
-    monkeypatch.setattr(os, "execv", fake_execv)
+    monkeypatch.setattr(daemon, "_last_heartbeat_code", lambda cfg: "aaa")
+    monkeypatch.setattr(daemon, "_version_signal", lambda cfg: ("bbb", "git-head"))
+    monkeypatch.setattr(daemon, "_kickstart_studio_if_present", lambda cfg: None)
+    cfg = Config(root=tmp_path)
 
-    with pytest.raises(_Sentinel):
-        cli.main(["run", "--loop", "--interval", "60s"])
-    # tick 1 ran the pass (signal unchanged); tick 2 adopted at the TOP and never ran the pass.
-    assert pass_ticks["n"] == 1                              # exactly one pass ran; the adopting tick did not
+    res = daemon.ensure(cfg)
+
+    assert _kickstart_argv(uid) in fake.calls               # settled pump + drift -> kickstart fires
+    assert res["action"] == "kickstart_stale_code"
+
+
+def test_kill_switch_blocks_drift_kickstart(tmp_path, monkeypatch):
+    # FANOPS_AUTO_ADOPT=0 -> the whole drift branch is skipped even with drift present.
+    cfg, fake, uid = _base_ensure_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("FANOPS_AUTO_ADOPT", "0")
+    monkeypatch.setattr(daemon, "_last_heartbeat_code", lambda cfg: "aaa")
+    monkeypatch.setattr(daemon, "_version_signal", lambda cfg: ("bbb", "git-head"))
+    monkeypatch.setattr(daemon, "_pump_pid_age_s", lambda: (None, None))
+    monkeypatch.setattr(daemon, "_kickstart_studio_if_present", lambda cfg: None)
+
+    res = daemon.ensure(cfg)
+
+    assert _kickstart_argv(uid) not in fake.calls           # kill switch honored
+    assert res["action"] == "none"
 
 
 # ── real _version_signal (NOT monkeypatched) — proves the signal follows the CODE tree, not cfg.root ──
+# (retained from the pre-keeper suite: _version_signal is still the deployed-SHA source the keeper reads.)
 
 def test_version_signal_reads_head_from_code_tree_not_cfg_root(tmp_path, monkeypatch):
-    # The fix: _version_signal must `git rev-parse HEAD` in the tree holding the running fanops package
+    # _version_signal must `git rev-parse HEAD` in the tree holding the running fanops package
     # (fanops.__file__'s parent), NOT cfg.root (the DATA workspace, which by the FANOPS_ROOT split has no
     # .git). We point fanops.__file__ into a fresh hermetic git tree and assert the git-head arm fires.
-    import shutil, subprocess
+    import shutil
     if shutil.which("git") is None:
         pytest.skip("git not on PATH")                       # belt-and-suspenders; git is standard in CI
     import fanops
-    from fanops.config import Config
-    # a fresh, self-contained git tree with one commit (hermetic — never touches the enclosing repo)
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     subprocess.run(["git", "-C", str(tmp_path), "config", "user.email", "t@t"], check=True)
     subprocess.run(["git", "-C", str(tmp_path), "config", "user.name", "t"], check=True)
@@ -189,18 +223,17 @@ def test_version_signal_reads_head_from_code_tree_not_cfg_root(tmp_path, monkeyp
     want = subprocess.run(["git", "-C", str(tmp_path), "rev-parse", "HEAD"],
                           capture_output=True, text=True, check=True).stdout.strip()
     sig, src = daemon._version_signal(Config(tmp_path))       # cfg.root is IRRELEVANT now — code tree wins
-    assert (sig, src) == (want, "git-head")                  # armed from the CODE tree's HEAD
+    assert (sig, src) == (want, "git-head")                  # deployed SHA read from the CODE tree's HEAD
 
 
 def test_version_signal_falls_back_to_version_when_no_git(tmp_path, monkeypatch):
-    # A real pip install (no .git anywhere above the package) must be byte-identical to today: the version
-    # fallback, source "version" — which DISARMS self-adopt (the cli loop arms only on "git-head"). Point
-    # fanops.__file__ into a git-less tmp dir and assert (__version__, "version").
+    # A real pip install (no .git anywhere above the package): the version fallback, source "version" —
+    # which the keeper's drift branch treats as (None-flavored) deployed SHA is a string, not a git-head;
+    # here we only pin that the fallback shape is unchanged. Point fanops.__file__ into a git-less tmp dir.
     import fanops
-    from fanops.config import Config
     pkg = tmp_path / "fake_pkg"; pkg.mkdir()                  # no `git init` anywhere above tmp_path
     (pkg / "__init__.py").write_text("")
     monkeypatch.setattr(fanops, "__file__", str(pkg / "__init__.py"))
     monkeypatch.setattr(fanops, "__version__", "9.9.9")      # explicit non-empty string for determinism
     sig, src = daemon._version_signal(Config(tmp_path))
-    assert (sig, src) == ("9.9.9", "version")                # git-less install -> version source -> DISARMS
+    assert (sig, src) == ("9.9.9", "version")                # git-less install -> version source
