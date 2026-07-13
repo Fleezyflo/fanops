@@ -53,7 +53,8 @@ def test_segment_metadata_pass_matrix():
     assert _segment_metadata_pass(MUSIC_HALLUC) is False                    # high no_speech_prob
     assert _segment_metadata_pass({**GOOD_AR, "avg_logprob": -1.5}) is False
     assert _segment_metadata_pass({**GOOD_AR, "compression_ratio": 3.0}) is False
-    assert _segment_metadata_pass({**GOOD_AR, "avg_logprob": -0.3, "no_speech_prob": 0.05}) is False
+    partial = {k: v for k, v in GOOD_AR.items() if k != "compression_ratio"}
+    assert _segment_metadata_pass(partial) is False
     assert _segment_metadata_pass({**GOOD_AR, "no_speech_prob": _NO_SPEECH_MAX}) is True
     assert _segment_metadata_pass({**GOOD_AR, "avg_logprob": _AVG_LOGPROB_MIN}) is True
     assert _segment_metadata_pass({**GOOD_AR, "compression_ratio": _COMPRESSION_RATIO_MAX}) is True
