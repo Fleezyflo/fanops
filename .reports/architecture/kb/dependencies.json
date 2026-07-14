@@ -50,22 +50,22 @@
   }
  },
  "totals": {
-  "modules": 129,
-  "compile_edges_G1": 539,
-  "runtime_lazy_edges": 324,
+  "modules": 130,
+  "compile_edges_G1": 548,
+  "runtime_lazy_edges": 327,
   "typing_only_edges": 6,
-  "lazy_edges_to_equal_or_higher_level": 107,
-  "___of_which_STRICTLY_UPWARD": 56,
+  "lazy_edges_to_equal_or_higher_level": 108,
+  "___of_which_STRICTLY_UPWARD": 57,
   "___of_which_LATERAL_same_level": 51,
   "G1_non_trivial_sccs": 1,
   "G1c_levels": 11,
   "G2_module_sccs": 8,
-  "G2_largest_scc_modules": 45,
+  "G2_largest_scc_modules": 47,
   "subsystems": 19,
   "CYCLE_7_RECONCILIATION": {
-   "status": "*** THESE NUMBERS ARE DERIVED_FROM_CODE. THEY ROT. *** They were correct at fcffa73 and WRONG one commit later (#634). The authoritative twin is derived/dependencies.json; rule ARCH-009 now fails CI when they disagree. MIGRATION TARGET: delete this block and point at the derived twin.",
-   "updated_at_HEAD": "modules 127->129 · compile_edges_G1 528->539 · runtime_lazy_edges 323->324. #634 added framing_outcomes + reframe.",
-   "what_did_NOT_move": "*** The layering did not get worse. strictly_upward stays 56, lateral stays 51, G1c_levels stays 11, and there is still exactly ONE non-trivial compile-time SCC (the persona triple). The new code added no inversion and no cycle. ***",
+   "status": "*** THESE NUMBERS ARE DERIVED_FROM_CODE. THEY ROT. *** They were correct at fcffa73 and WRONG one commit later (#634) — and then rotted AGAIN, while Cycle 7's own PR was open (#635). Twice in two commits. The authoritative twin is derived/dependencies.json; rule ARCH-009 now fails CI when they disagree. MIGRATION TARGET: delete this block and point at the derived twin.",
+   "updated_at_HEAD": "modules 127->129->130 · compile_edges_G1 528->539->548 · runtime_lazy_edges 323->324->327. #634 added framing_outcomes + reframe; #635 added reframe_apply.",
+   "what_did_NOT_move": "*** The layering still did not get worse. lateral stays 51, G1c_levels stays 11, and there is still exactly ONE non-trivial compile-time SCC (the persona triple). strictly_upward went 56->57 and the G2 SCC grew 45->47 — #635's new module joined the existing lazy-cycle mass rather than creating a new inversion. No new cycle, no new level. ***",
    "G2_module_sccs_is_AMBIGUOUS": "The value 8 is the NON-TRIVIAL SCC count. The TOTAL (including singletons) is 69. Cycle 5 never stated which it meant; its enumerated `all_sccs` list makes it the non-trivial one. derived/dependencies.json now emits BOTH, named (`G2_non_trivial_sccs`, `G2_module_sccs_total`).",
    "independent_revalidation": "Cycle 7 rebuilt this graph with a fresh extractor and reproduced Cycle 5 EXACTLY at fcffa73 on 17 of 18 censuses — including all of 528 / 323 / 6 / 107 / 56 / 51 / 45 / 11 / 1. Cycle 5's graph is CONFIRMED, not merely inherited."
   }

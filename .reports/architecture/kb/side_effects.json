@@ -12,11 +12,11 @@
  },
 
  "counts_AST_verified": {
-  "subprocess_call_sites": 33,
+  "subprocess_call_sites": 35,
   "network_call_sites_literal_requests": 15,
   "ledger_transaction_sites": 74,
   "mkdtemp_sites": 2,
-  "rmtree_sites": 2,
+  "rmtree_sites": 3,
   "os_environ_write_sites": 2,
   "exception_handlers": 721,
   "bare_except": 0,

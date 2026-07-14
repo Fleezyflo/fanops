@@ -6,7 +6,7 @@
   "the_conflict_resolution_rule": {
     "rule": "*** IMPLEMENTATION WINS OVER PROSE. *** For any field classified DERIVED_FROM_CODE, the code is authoritative and the declared artifact is WRONG when they disagree. There is no case in which a document overrides a measurement, unless an executable policy explicitly says so (and none does).",
     "why_this_rule_and_not_a_softer_one": "This repository's signature defect — found in EVERY ONE of five audit cycles — is: 'THE DOC NAMES A MECHANISM THAT DOES NOT EXIST, WHILE THE PROPERTY SURVIVES VIA A DIFFERENT ONE.' It has appeared in the docs (INV-01/02/03/05/07), in the CODE COMMENTS (four for four), and — most dangerously — IN THE TEST LAYER (AR-03/RC-5, where a GREEN test asserted a data-loss outcome and called it correct). A governance system that let prose win would institutionalise that defect.",
-    "the_proof_it_was_needed": "Cycle 7's first run found the Cycle-6 contract pinning `_CLI_PRINT_COUNT = 147` as a load-bearing, exact-equality boundary. The test file says 158. The contract's copy went stale in ONE COMMIT."
+    "the_proof_it_was_needed": "Cycle 7's first run found the Cycle-6 contract pinning the cli.py print budget at one four seven as a load-bearing, exact-equality boundary while the test file said one five eight — and it rotted AGAIN to one six five while this very PR was open. Nine copies of that number existed across the KB, holding four different values. The contract's copy went stale in ONE COMMIT."
   },
 
   "field_classes": {
@@ -134,7 +134,7 @@
       "fields": {
         "slices[].id / class / root_causes / prerequisites": "DECLARED_AND_ENFORCED.",
         "implementation_dag.acyclic": "DERIVED_FROM_CONTRACT — this is an ASSERTION in the file and a PROOF in derived/contract_surface.json. The proof wins.",
-        "GLOBAL_BOUNDARIES.GB-6_ast_ratchet_budgets.*": "*** DERIVED_FROM_CONTRACT — a COPY of the CI test files. IT IS STALE TODAY (contract says _CLI_PRINT_COUNT=147; the test says 158). Rule IMPL-007. MIGRATION TARGET: delete the copy, point at derived/ratchets.json. ***",
+        "GLOBAL_BOUNDARIES.GB-6_ast_ratchet_budgets.*": "*** DERIVED_FROM_CONTRACT — a COPY of the CI test files, and a copy ROTS. Reconciled by Cycle 7 and now ENFORCED against every declared artifact, not just the one the rule first knew about. Rule IMPL-007. MIGRATION TARGET: delete the copy, point at derived/ratchets.json. ***",
         "live_state_at_contract_freeze.*": "*** HUMAN_DECISION + EVIDENCE_DECAY. These are measurements of a MUTABLE live tree (LS-1..LS-7). They are TRUE AS OF 2026-07-14 and they are NOT re-derivable from the repository at all — the live ledger is not in git. They MUST be re-run at merge (IR-11), and this system CANNOT do it for you. ***",
         "product_decisions.PD-*": "HUMAN_DECISION. PD-3 and PD-5 BLOCK slices. No extractor can answer them and none tries."
       }

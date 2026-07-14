@@ -29,6 +29,12 @@ from pathlib import Path
 
 from .common import ARCH, CONTRACT, DERIVED, GOVERNANCE, KB, REPO, SRC, load
 
+# Artifacts that are HISTORY, not live claims. A corrections record must keep saying what was true
+# when it was written — retroactively editing an erratum so it matches today destroys the only
+# account of what went wrong, which is the one thing an erratum is for. Named explicitly, never a
+# wildcard, so this cannot quietly become an escape hatch for a doc that simply went stale.
+_HISTORY = frozenset({"CYCLE6_CORRECTIONS.md"})
+
 BLOCKING = "BLOCKING"
 WARNING = "WARNING"
 INFO = "INFO"
@@ -605,16 +611,47 @@ def _ratchet_drift(rat: dict) -> list[Finding]:
                       "nobody can read is a budget nobody enforces — and a rule that silently "
                       "extracts nothing reports success. Store it as a structured field.",
                       [f"unparseable: {pr[:90]}"]))
-    if contract_num is not None and declared_cli is not None and contract_num != declared_cli:
-        out.append(_f("IMPL-007",
-                      "The implementation contract's copy of the cli.py print budget is STALE. "
-                      "It is pinned as a load-bearing, exact-equality budget shared by three slices "
-                      "(GB-6 / IR-4) — a wrong value makes the boundary unenforceable and would fail "
-                      "a slice for a reason unrelated to its change.",
-                      [f"contract GB-6 says _CLI_PRINT_COUNT = {contract_num}",
-                       f"tests/test_internal_prints_routed.py says {declared_cli}",
-                       f"measured in src/fanops/cli.py: {declared_cli}",
-                       "the TEST is authoritative; the contract's copy rotted"]))
+
+    # *** EVERY LIVE COPY, not just the one this rule happened to know about. ***
+    #
+    # The rule originally read ONLY contract/implementation_contract.json. The number turned out to
+    # exist in NINE places across the KB, holding FOUR DIFFERENT VALUES (147 / 158 / 165) — and the
+    # two worst were `contract/prompts/C6-S08.md` and `C6-S09.md`, the LIVE IMPLEMENTATION PROMPTS
+    # handed to whoever builds those slices. They said "`_CLI_PRINT_COUNT = 147` … DO NOT CHANGE THE
+    # COUNT." An implementer obeying that prompt writes the wrong constant and CI goes red for a
+    # reason unrelated to their change — which is the precise failure GB-6/IR-4 exists to prevent.
+    # A rule named "the ratchet budgets the contract COPIES must match the tests that ENFORCE them"
+    # was reporting green throughout. Checking ONE copy of a duplicated number is not enforcement;
+    # it is a rule scoped to the place its author happened to remember.
+    #
+    # THE ASSIGNMENT FORM IS A LIVE CLAIM. `_CLI_PRINT_COUNT = N` anywhere in a declared artifact
+    # asserts a current fact and is held to the test. Prose *about* the past ("the contract once
+    # pinned it at one four seven") is narrative and is not a claim — write history as prose.
+    #
+    # _HISTORY is excluded because a corrections record MUST keep saying what was true when it was
+    # written; retroactively editing an erratum to match today destroys the only account of what
+    # went wrong. It is a small, named list, not a wildcard, so it cannot become a loophole.
+    for path in sorted(ARCH.rglob("*")):
+        if path.suffix not in (".json", ".md") or not path.is_file():
+            continue
+        if path.name in _HISTORY or DERIVED in path.parents:
+            continue
+        try:
+            blob = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        for found in sorted({int(x) for x in re.findall(r"_CLI_PRINT_COUNT\s*=\s*(\d+)", blob)}):
+            if declared_cli is None or found == declared_cli:
+                continue
+            out.append(_f("IMPL-007",
+                          "A DECLARED artifact's copy of the cli.py print budget is STALE. It is "
+                          "pinned as a load-bearing, exact-equality budget shared by three slices "
+                          "(GB-6 / IR-4) — a wrong value makes the boundary unenforceable and would "
+                          "fail a slice for a reason unrelated to its change.",
+                          [f"{path.relative_to(ARCH).as_posix()} says _CLI_PRINT_COUNT = {found}",
+                           f"tests/test_internal_prints_routed.py says {declared_cli}",
+                           f"measured in src/fanops/cli.py: {declared_cli}",
+                           "the TEST is authoritative; the declared copy rotted"]))
 
     # the per-file swallow ceilings the contract restates
     ceilings = gb6.get("swallow_ratchet", {}).get("budget_ceiling__must_not_exceed", {})

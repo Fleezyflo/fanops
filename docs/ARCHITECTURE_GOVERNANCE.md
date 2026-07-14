@@ -4,7 +4,7 @@
 
 # FanOps — Architecture & Implementation Governance
 
-**Source fingerprint `f47af2c0e8d921ec` · generator `arch/1.0.0`**
+**Source fingerprint `5a589019f7eed0c8` · generator `arch/1.0.0`**
 
 Regenerate: `python -m tools.arch regen`
 
@@ -16,15 +16,15 @@ Regenerate: `python -m tools.arch regen`
 
 | | |
 |---|---|
-| Modules | **129** |
-| Compile-time import edges (G1) | **539** |
-| Lazy (in-function) edges | **324** |
+| Modules | **130** |
+| Compile-time import edges (G1) | **548** |
+| Lazy (in-function) edges | **327** |
 | Typing-only edges | 6 |
 | Non-trivial compile-time SCCs | **1** |
 | Layer levels (G1c, the SCC-condensation) | **11** |
-| Lazy edges strictly UPWARD (layering inversions) | **56** |
+| Lazy edges strictly UPWARD (layering inversions) | **57** |
 | Lazy edges lateral (same level — *not* inversions) | 51 |
-| Largest G2 potential-dependency SCC | 45 modules |
+| Largest G2 potential-dependency SCC | 47 modules |
 | Environment variables read | **73** |
 | Route endpoints (method × path) | **150** (109 mutating) |
 | CLI verbs | 55 unique (60 `add_parser` sites) |
@@ -46,7 +46,7 @@ Regenerate: `python -m tools.arch regen`
 
 ## 2. The subsystem partition
 
-**Totality: ✅ TOTAL** — 129/129 modules assigned, 0 unassigned, 0 ghosts.
+**Totality: ✅ TOTAL** — 130/130 modules assigned, 0 unassigned, 0 ghosts.
 
 > The partition is an **analytic overlay** (Cycle 5). Nothing in the code enforces it. The module set is a **fact**; the grouping is a **model**. Totality is therefore a checkable property, and rule `ARCH-001` checks it.
 
@@ -58,11 +58,11 @@ Regenerate: `python -m tools.arch regen`
 |---|---|
 | env write sites | **2** |
 | ledger transaction sites | **74** |
-| lock sites | **20** |
+| lock sites | **22** |
 | mkdtemp sites | **2** |
 | network sites literal requests | **15** |
-| rmtree sites | **2** |
-| subprocess sites | **33** |
+| rmtree sites | **3** |
+| subprocess sites | **35** |
 
 > meta_graph uses an INJECTABLE `get` (so tests never touch the network). It is a real network seam and a literal `requests.*` census does NOT see it. Recorded here so the census is not mistaken for the whole truth.
 
@@ -70,7 +70,7 @@ Regenerate: `python -m tools.arch regen`
 
 ## 4. The ratchets — mechanically enforced in CI today
 
-- `cli.py` `print()` count — **declared by the test: 158** · **measured: 158** (an *exact-equality* budget shared by three slices)
+- `cli.py` `print()` count — **declared by the test: 165** · **measured: 165** (an *exact-equality* budget shared by three slices)
 - Zero-`print()` modules: 9
 - Silent-broad-`except` baseline: 49 files
 

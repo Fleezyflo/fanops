@@ -51,43 +51,43 @@
       },
       {
         "call": "Ledger.transaction",
-        "line": 989
-      },
-      {
-        "call": "Ledger.transaction",
         "line": 1001
       },
       {
         "call": "Ledger.transaction",
-        "line": 1012
+        "line": 1013
       },
       {
         "call": "Ledger.transaction",
-        "line": 1154
+        "line": 1024
       },
       {
         "call": "Ledger.transaction",
-        "line": 1167
+        "line": 1210
       },
       {
         "call": "Ledger.transaction",
-        "line": 1241
+        "line": 1223
       },
       {
         "call": "Ledger.transaction",
-        "line": 1249
+        "line": 1297
       },
       {
         "call": "Ledger.transaction",
-        "line": 1257
+        "line": 1305
       },
       {
         "call": "Ledger.transaction",
-        "line": 1264
+        "line": 1313
       },
       {
         "call": "Ledger.transaction",
-        "line": 1273
+        "line": 1320
+      },
+      {
+        "call": "Ledger.transaction",
+        "line": 1329
       }
     ],
     "fanops.ledger_wipe": [
@@ -430,6 +430,16 @@
         "line": 132
       }
     ],
+    "fanops.reframe_apply": [
+      {
+        "call": "fcntl.flock",
+        "line": 169
+      },
+      {
+        "call": "fcntl.flock",
+        "line": 182
+      }
+    ],
     "fanops.stage_lock": [
       {
         "call": "fcntl.flock",
@@ -445,7 +455,7 @@
     "fanops.cli": [
       {
         "call": "tempfile.mkdtemp",
-        "line": 1116
+        "line": 1170
       }
     ],
     "fanops.post.compress": [
@@ -529,6 +539,12 @@
   },
   "regeneration_command": "python -m tools.arch regen",
   "rmtree": {
+    "fanops.reframe_apply": [
+      {
+        "call": "shutil.rmtree",
+        "line": 932
+      }
+    ],
     "fanops.transcribe": [
       {
         "call": "shutil.rmtree",
@@ -684,6 +700,16 @@
         "line": 545
       }
     ],
+    "fanops.reframe_apply": [
+      {
+        "call": "subprocess.run",
+        "line": 220
+      },
+      {
+        "call": "subprocess.run",
+        "line": 313
+      }
+    ],
     "fanops.signals": [
       {
         "call": "subprocess.run",
@@ -712,10 +738,10 @@
   "totals": {
     "env_write_sites": 2,
     "ledger_transaction_sites": 74,
-    "lock_sites": 20,
+    "lock_sites": 22,
     "mkdtemp_sites": 2,
     "network_sites_literal_requests": 15,
-    "rmtree_sites": 2,
-    "subprocess_sites": 33
+    "rmtree_sites": 3,
+    "subprocess_sites": 35
   }
 }

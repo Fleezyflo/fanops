@@ -3,7 +3,7 @@
   "confidence": "CERTAIN",
   "declared_by_the_ci_tests": {
     "print": {
-      "cli_print_count": 158,
+      "cli_print_count": 165,
       "zero_print_modules": [
         "clip.py",
         "compose.py",
@@ -76,7 +76,7 @@
   "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",
   "measured": {
     "print_calls_by_module": {
-      "fanops.cli": 158,
+      "fanops.cli": 165,
       "fanops.log": 1,
       "fanops.paths_rebase": 2
     },

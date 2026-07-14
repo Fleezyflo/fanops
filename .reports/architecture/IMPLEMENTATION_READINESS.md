@@ -13,7 +13,7 @@ Do not repair the repository."* Below is what I looked for and what I found.
 
 | Attack | Result |
 |---|---|
-| **Hidden coupling** | 🔴 **FOUND ONE.** `cli.py`'s `_CLI_PRINT_COUNT = 147` is an **exact-equality** assertion, and **three slices touch `cli.py`.** Two landing with a bumped constant break each other. **Cycle 4 did not name it.** → **Repaired:** *no slice may change the print count* (`GB-6`/`IR-4`). |
+| **Hidden coupling** | 🔴 **FOUND ONE.** `cli.py`'s `_CLI_PRINT_COUNT = 165` is an **exact-equality** assertion, and **three slices touch `cli.py`.** Two landing with a bumped constant break each other. **Cycle 4 did not name it.** → **Repaired:** *no slice may change the print count* (`GB-6`/`IR-4`). |
 | **Overlapping slices** | 🔴 **FOUND TWO.** `studio/actions.py` (S06 + S09) and `cli.py` (S08 + S09 + S10). Cycle 4 called both *"same-file conflict only; a rebase resolves it."* **That is true of the TEXT and false of the CONTRACT** — two slices editing one file with no declared partition is how one silently widens into the other. → **Repaired:** both **partitioned by function** in `file_ownership.json`. |
 | **Duplicated ownership** | ✅ **NONE.** Every file has exactly one owning slice, or an explicit function-level partition. |
 | **Rollback conflicts** | 🔴 **FOUND ONE.** If `S03` and `S04` are both merged, **revert `S04` first** — reverting `S03` alone re-opens the strand-creation path while the ladder is still draining. Safe either way; the pair has a preferred order. → **Recorded.** |

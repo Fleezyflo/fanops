@@ -72,7 +72,7 @@
         "swallow": "baseline 3 — SHARED across S08/S09/S10. NONE may raise it."
       },
       "exists": true,
-      "function_count": 41,
+      "function_count": 42,
       "is_partitioned": true,
       "missing": false,
       "owners": [
@@ -155,7 +155,7 @@
         "swallow": "*** NOT IN THE BASELINE -> 0 allowed. ANY new silent broad `except` here FAILS CI IMMEDIATELY (`new_files != []`). ***"
       },
       "exists": true,
-      "function_count": 70,
+      "function_count": 71,
       "is_partitioned": false,
       "missing": false,
       "owners": [

@@ -89,6 +89,7 @@
     "fanops.prompts",
     "fanops.reconcile",
     "fanops.reframe",
+    "fanops.reframe_apply",
     "fanops.responder",
     "fanops.router",
     "fanops.secret_provider",
@@ -227,6 +228,7 @@
     "fanops.prompts": "S07_agent_gate",
     "fanops.reconcile": "S13_reconcile_metrics",
     "fanops.reframe": "S18_health_diag",
+    "fanops.reframe_apply": "S19_maintenance",
     "fanops.responder": "S07_agent_gate",
     "fanops.router": "S08_selection",
     "fanops.secret_provider": "S02_configuration",
@@ -275,9 +277,9 @@
     "fanops.vocals": "S06_media_analysis"
   },
   "totals": {
-    "assigned": 129,
+    "assigned": 130,
     "ghosts": 0,
-    "modules": 129,
+    "modules": 130,
     "unassigned": 0
   },
   "unassigned_modules": []
