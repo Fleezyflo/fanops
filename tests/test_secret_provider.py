@@ -34,15 +34,18 @@ def test_get_secret_absent_returns_none(monkeypatch):
     assert sp.get_secret("POSTIZ_API_KEY") is None
 
 
-def test_get_secret_import_error_fail_open(monkeypatch, caplog):
+def test_get_secret_import_error_is_silent(monkeypatch, caplog):
+    """Absent [keyring] extra is the DOCUMENTED optional state, not a fault: read fails open to env
+    with NO warning (else every secret-property read of a healthy env-only install spams a WARNING)."""
     monkeypatch.delitem(sys.modules, "keyring", raising=False)
     sp = importlib.reload(secret_provider)
     with caplog.at_level(logging.WARNING):
         assert sp.get_secret("POSTIZ_API_KEY") is None
-    assert any("keyring" in r.getMessage().lower() for r in caplog.records)
+    assert not any("keyring" in r.getMessage().lower() for r in caplog.records)
 
 
 def test_get_secret_backend_error_fail_open(monkeypatch, caplog):
+    """keyring INSTALLED but backend broken CAN mask an operator secret — still worth a breadcrumb."""
     class _Kr:
         @staticmethod
         def get_password(service, username):
@@ -51,6 +54,51 @@ def test_get_secret_backend_error_fail_open(monkeypatch, caplog):
     with caplog.at_level(logging.WARNING):
         assert sp.get_secret("ZERNIO_API_KEY") is None
     assert any("fail-open" in r.getMessage().lower() or "ZERNIO_API_KEY" in r.getMessage() for r in caplog.records)
+
+
+def test_set_secret_verifies_readback(monkeypatch):
+    """A backend that ACCEPTS set_password but DROPS the value (get returns None) is a failed write,
+    not a success — set_secret must raise so the caller never scrubs the .env fallback (see
+    _dual_write). 'Written' means 'retrievable'."""
+    class _DropKr:
+        @staticmethod
+        def set_password(service, username, password):
+            return None                      # accepts the write...
+        @staticmethod
+        def get_password(service, username):
+            return None                      # ...but never persisted it
+    sp = _reload_secret_provider(monkeypatch, _DropKr())
+    with pytest.raises(OSError, match="round-trip"):
+        sp.set_secret("POSTIZ_API_KEY", "vanishes")
+
+
+def test_set_secret_readback_mismatch_raises(monkeypatch):
+    """A backend that returns a DIFFERENT value than written is also a failed write."""
+    class _WrongKr:
+        @staticmethod
+        def set_password(service, username, password):
+            return None
+        @staticmethod
+        def get_password(service, username):
+            return "something-else"
+    sp = _reload_secret_provider(monkeypatch, _WrongKr())
+    with pytest.raises(OSError, match="round-trip"):
+        sp.set_secret("POSTIZ_API_KEY", "intended")
+
+
+def test_set_secret_round_trips_on_good_backend(monkeypatch):
+    """A real backend that persists the value is accepted with no error."""
+    class _GoodKr:
+        _v: dict = {}
+        @staticmethod
+        def set_password(service, username, password):
+            _GoodKr._v[(service, username)] = password
+        @staticmethod
+        def get_password(service, username):
+            return _GoodKr._v.get((service, username))
+    sp = _reload_secret_provider(monkeypatch, _GoodKr())
+    sp.set_secret("POSTIZ_API_KEY", "persists")     # must not raise
+    assert sp.get_secret("POSTIZ_API_KEY") == "persists"
 
 
 def test_resolve_secret_keyring_wins(monkeypatch):

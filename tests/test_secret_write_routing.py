@@ -108,3 +108,33 @@ def test_set_secret_rejects_newline(monkeypatch):
     install_mem_keyring(monkeypatch)
     with pytest.raises(ValueError, match="newline"):
         secret_provider.set_secret("POSTIZ_API_KEY", "bad\nline")
+
+
+def test_dual_write_does_not_scrub_env_when_keyring_write_vanishes(tmp_path, monkeypatch):
+    """THE defect: writes are keyring-only and _dual_write SCRUBS the plaintext .env fallback on a
+    'successful' write. If the backend accepts the write but drops the value, the old code erased the
+    secret from BOTH stores. set_secret now verifies read-back, so _dual_write returns an error AND
+    leaves the legacy .env value (and os.environ) intact — the secret is never lost."""
+    class _DropKeyring:
+        @staticmethod
+        def set_password(service, username, password): return None      # accepts...
+        @staticmethod
+        def get_password(service, username): return None                # ...but drops it
+        @staticmethod
+        def delete_password(service, username): return None
+    import importlib, sys
+    monkeypatch.setitem(sys.modules, "keyring", _DropKeyring)
+    sp = importlib.reload(secret_provider)
+    monkeypatch.setattr(golive, "secret_provider", sp, raising=False)
+
+    cfg = _clean(monkeypatch, tmp_path)
+    (tmp_path / ".env").write_text("POSTIZ_API_KEY=legacy-still-here\n")
+    monkeypatch.setenv("POSTIZ_API_KEY", "legacy-still-here")
+
+    err = golive._dual_write(cfg, "POSTIZ_API_KEY", "new-secret-that-wont-persist")
+
+    assert err is not None                                              # operator is told it failed
+    assert "POSTIZ_API_KEY=legacy-still-here" in (tmp_path / ".env").read_text()  # fallback preserved
+    assert os.environ["POSTIZ_API_KEY"] == "legacy-still-here"          # process env untouched
+    # restore the real in-memory keyring for any later test in this module
+    install_mem_keyring(monkeypatch)
