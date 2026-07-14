@@ -545,21 +545,18 @@ def render_reframed(src_path: str, dst: str, cs: float, ce: float, aspect_value:
         with contextlib.suppress(OSError):
             os.unlink(tmp)
 
-def _subtitles_vf(led: Ledger, cfg: Config, moment_id: str, cid: str, aspect: Fmt,
-                  *, clip_start: float, clip_end: float, supercut_spans: list[tuple[float, float]] | None = None):
-    """Build the burned-on-screen-text `-vf` fragment for this clip, or return None (reframe only).
-    FAIL-OPEN by contract: a clip is NEVER blocked on its text. Two independent layers:
-      • the RETENTION HOOK (m.hook) — the default on-screen text, a curiosity-gap line that drives
-        watch-through (NOT a transcript). Burned whenever the moment has a hook. SUPPRESSED here when
-        a per-account burn_hook_only pass burns a per-surface hook, and
-        burning the moment hook too would STACK two hooks on one clip.
-      • the TRANSCRIPT captions — gated by burn_subs (default ON). Showing what the audio says is
-        redundant (the viewer hears it) and only as good as the auto-transcription; useful for
-        talking-head content, wrong for music — music batches opt out via Batch.burn_subs=False.
-    Returns (vf_fragment_or_None, hook_burn_failed). hook_burn_failed is True when on-screen text WAS
-    wanted (a hook, or opted-in transcript) but could NOT be burned — ffmpeg lacks the text filter, or
-    build_ass yielded empty — so render_moment flags the clip (F9) instead of shipping a fine-looking
-    clip that silently lost its text. False when there was nothing to burn (clean clip) or it burned."""
+def _build_ass_text(led: Ledger, cfg: Config, moment_id: str, cid: str, aspect: Fmt,
+                    *, clip_start: float, clip_end: float,
+                    supercut_spans: list[tuple[float, float]] | None = None) -> tuple[str | None, bool]:
+    """PURE derivation of this clip's burn-in .ass TEXT: everything _subtitles_vf does EXCEPT the write.
+    Returns (ass_text_or_None, hook_burn_failed) — the same two values, same meanings, same order.
+
+    Split out because `ass` is a FINGERPRINT FIELD (see _render_fingerprint). The only other way to
+    derive it read-only would be to re-implement this rule inside a second module, free to drift from
+    the renderer — and the fingerprint would then attest to text the renderer never produced. Same probe
+    order (ffmpeg_has_textfilter BEFORE any build), same log lines, same hook_burn_failed semantics.
+
+    READ-ONLY BY CONSTRUCTION: calls overlay.build_ass / build_supercut_ass, never overlay.write_ass."""
     m = led.moments[moment_id]
     src = led.sources[m.parent_id]
     hook = ((m.hook or "").strip() or None)
@@ -603,6 +600,30 @@ def _subtitles_vf(led: Ledger, cfg: Config, moment_id: str, cid: str, aspect: Fm
                                      width=tw, height=th, font=cfg.subtitle_font)
     if not ass_text or not ass_text.strip():
         return None, True                                # WANTED but produced no burnable text -> F9 flag
+    return ass_text, False
+
+
+def _subtitles_vf(led: Ledger, cfg: Config, moment_id: str, cid: str, aspect: Fmt,
+                  *, clip_start: float, clip_end: float, supercut_spans: list[tuple[float, float]] | None = None):
+    """Build the burned-on-screen-text `-vf` fragment for this clip, or return None (reframe only).
+    FAIL-OPEN by contract: a clip is NEVER blocked on its text. Two independent layers:
+      • the RETENTION HOOK (m.hook) — the default on-screen text, a curiosity-gap line that drives
+        watch-through (NOT a transcript). Burned whenever the moment has a hook. SUPPRESSED here when
+        a per-account burn_hook_only pass burns a per-surface hook, and
+        burning the moment hook too would STACK two hooks on one clip.
+      • the TRANSCRIPT captions — gated by burn_subs (default ON). Showing what the audio says is
+        redundant (the viewer hears it) and only as good as the auto-transcription; useful for
+        talking-head content, wrong for music — music batches opt out via Batch.burn_subs=False.
+    Returns (vf_fragment_or_None, hook_burn_failed). hook_burn_failed is True when on-screen text WAS
+    wanted (a hook, or opted-in transcript) but could NOT be burned — ffmpeg lacks the text filter, or
+    build_ass yielded empty — so render_moment flags the clip (F9) instead of shipping a fine-looking
+    clip that silently lost its text. False when there was nothing to burn (clean clip) or it burned.
+
+    BUILD -> WRITE -> vf. The derivation is _build_ass_text (pure); this adds the one side effect."""
+    ass_text, hook_burn_failed = _build_ass_text(led, cfg, moment_id, cid, aspect, clip_start=clip_start,
+                                                 clip_end=clip_end, supercut_spans=supercut_spans)
+    if ass_text is None:
+        return None, hook_burn_failed
     ass_path = cfg.clips / f"{cid}.ass"
     overlay.write_ass(ass_text, ass_path)
     return overlay.subtitles_vf(ass_path), False
@@ -616,12 +637,18 @@ def _subtitles_vf(led: Ledger, cfg: Config, moment_id: str, cid: str, aspect: Fm
 _REFRAME_GEOM_V = 4          # bump to force re-render of ZOOM/eyeline/dynamic clips after a geometry-math change
                              # (v4: STATIC locked-off crop per shot — no jitter; adaptive far-speaker zoom + min-shot merge)
 
-def _render_fingerprint(src_path: str, cs: float, ce: float, aspect_value: str,
-                        src_w: int, src_h: int, ass_text: str, *, top_bias: bool = False,
-                        focus: tuple | None = None, track: list | None = None,
-                        content_type: str | None = None,
-                        supercut_segments: list[tuple[float, float]] | None = None,
-                        supercut_span_entries: list | None = None) -> str:
+def _render_fingerprint_payload(src_path: str, cs: float, ce: float, aspect_value: str,
+                                src_w: int, src_h: int, ass_text: str, *, top_bias: bool = False,
+                                focus: tuple | None = None, track: list | None = None,
+                                content_type: str | None = None,
+                                supercut_segments: list[tuple[float, float]] | None = None,
+                                supercut_span_entries: list | None = None) -> dict:
+    """The fingerprint PAYLOAD — every input that determines the rendered bytes, before hashing.
+
+    Split out from _render_fingerprint (which is now a thin hash over this) so a read-only caller can
+    DIFF two payloads. `{cid}.render.json` persists ONLY the sha256, never the payload, so the historical
+    inputs are gone: you cannot diff a hash. A reconstruction must therefore be a PROOF — enumerate the
+    candidate legacy payloads, hash each, and accept the one whose digest equals the stored one."""
     payload = {"src": src_path, "cs": round(cs, 3), "ce": round(ce, 3), "aspect": aspect_value,
                "w": src_w, "h": src_h, "ass": ass_text}
     if top_bias:                                          # additive: absent key -> byte-identical fp to today
@@ -641,8 +668,30 @@ def _render_fingerprint(src_path: str, cs: float, ce: float, aspect_value: str,
             payload["sc_spans"] = [[round(s[0], 2), round(s[1], 2)]
                                    + [round(v, 3) if v is not None else None for v in s[2:]]
                                    for s in supercut_span_entries]
-    blob = json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
-    return hashlib.sha256(blob).hexdigest()
+    return payload
+
+def fingerprint_payload_bytes(payload: dict) -> bytes:
+    """The EXACT canonical serialization _render_fingerprint hashes. Candidate reconstruction dedups on
+    THESE BYTES, never on dict equality: {"cs": 0.0} and {"cs": -0.0} compare equal as dicts but
+    serialize differently, so a dict-keyed dedup could silently drop a byte-distinct candidate and
+    report a false UNRECONSTRUCTABLE. No candidate axis can produce a signed zero today (fit_window
+    floors at 0.0, focus is clamped to [0,1], _compute_track snaps track[0][0] to 0.0) — this is
+    DEFENCE, not a bug fix, and it costs nothing."""
+    return json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
+
+def fingerprint_of_payload(payload: dict) -> str:
+    return hashlib.sha256(fingerprint_payload_bytes(payload)).hexdigest()
+
+def _render_fingerprint(src_path: str, cs: float, ce: float, aspect_value: str,
+                        src_w: int, src_h: int, ass_text: str, *, top_bias: bool = False,
+                        focus: tuple | None = None, track: list | None = None,
+                        content_type: str | None = None,
+                        supercut_segments: list[tuple[float, float]] | None = None,
+                        supercut_span_entries: list | None = None) -> str:
+    return fingerprint_of_payload(_render_fingerprint_payload(
+        src_path, cs, ce, aspect_value, src_w, src_h, ass_text, top_bias=top_bias, focus=focus,
+        track=track, content_type=content_type, supercut_segments=supercut_segments,
+        supercut_span_entries=supercut_span_entries))
 
 def _resolve_framing(cfg: Config, src, cs: float, ce: float):
     """Pick the reframe strategy for this window: (focus, track, content_type). Classify the window once,
@@ -657,23 +706,12 @@ def _resolve_framing(cfg: Config, src, cs: float, ce: float):
     MISS after successful construction (no face found -> centered); a broken prerequisite never reaches them."""
     if not cfg.smart_framing:
         return None, None, None
-    rt = framing._framing_runtime_or_raise(cfg)   # constructs the ONE detector, or REFUSES (never a silent centre-crop)
-    stats = framing.detect_window(cfg, src, start=cs, end=ce, _rt=rt)
-    ct = framing.classify_window(cfg, src, start=cs, end=ce, stats=stats)
-    if ct == framing.CT_MULTI:
-        track = framing.speaker_track(cfg, src, start=cs, end=ce, src_w=src.width or 0, src_h=src.height or 0, _rt=rt)
-        if track:
-            return None, track, ct
-        ct = framing.CT_SINGLE                            # classed multi but not a real 2-shot -> single lock
-    if ct in (framing.CT_SINGLE, framing.CT_MUSIC, framing.CT_SILENT):
-        focus = framing.subject_focus(cfg, src, start=cs, end=ce, _rt=rt)
-        if focus is not None:
-            return focus, None, ct
-    if ct in (framing.CT_MUSIC, framing.CT_SILENT, framing.CT_NOPEOPLE):
-        sal = framing.motion_saliency(cfg, src, start=cs, end=ce, _rt=rt)   # follow the action when there's no face
-        if sal is not None:
-            return sal, None, None                       # 2-tuple -> pan only, NO zoom (no subject to size to)
-    return None, None, None                              # centered crop (today)
+    # The routing moved to framing._resolve: SAME calls, SAME order, SAME 3-tuple — plus the diagnostics
+    # (which strategy ran, which failed, and WHY) this function used to throw away. capture_failures
+    # DEFAULTS TO FALSE, so every exception still propagates byte-for-byte and render_moment /
+    # render_account_cut keep their handlers verbatim. A flipped default would silently convert
+    # production fail-loud into fail-open; test_framing_outcomes pins it.
+    return framing._resolve(cfg, src, cs, ce).as_tuple()
 
 def _fingerprint_matches(fp_path, fp: str) -> bool:
     try:

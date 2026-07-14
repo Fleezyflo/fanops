@@ -1,0 +1,118 @@
+{
+  "layer": 2,
+  "authored_against": "the approved reframe design (v12) + its three implementation conditions",
+  "NOT_attributed_to": "the legacy implementation. These are AUTHORED EXPECTATIONS, not observed history. The legacy resolver cannot emit an attempt, an applicability flag, a required-for-centering flag, a failure event, a negative result, a degraded list, or a strategy-scoped event chain — every one of those is an invention of this design. Recording them under a legacy SHA would be the design certifying itself, so they live here, plainly labelled, and are validated against the SPEC.",
+  "expectations": [
+    {
+      "id": "ct_single_no_face_is_the_only_legitimate_centre",
+      "why": "The detector RAN TO COMPLETION and found no face. That is a conclusion, not a failure.",
+      "content_type": "single-speaker-talk",
+      "stub_events": {"subject_focus": "no_face"},
+      "final_outcome": "centered_no_subject",
+      "root_cause": null,
+      "attempts": [{"strategy": "subject_focus", "state": "completed", "required_for_center": true}],
+      "degraded_strategies": []
+    },
+    {
+      "id": "ffmpeg_absent_is_never_a_legitimate_centre",
+      "why": "The clip is centred because the TOOLCHAIN was broken. Nothing observed an empty room.",
+      "content_type": "no-people",
+      "detection_events": ["ffmpeg_unavailable"],
+      "final_outcome": "unresolved",
+      "root_cause": "ffmpeg_unavailable"
+    },
+    {
+      "id": "empty_glob_is_no_frames_not_ffmpeg_unavailable",
+      "why": "ffmpeg ran CLEAN and wrote nothing. Today that is the same bare [] as an absent binary.",
+      "detection_events": ["no_frames"],
+      "final_outcome": "unresolved",
+      "root_cause": "no_frames"
+    },
+    {
+      "id": "detection_phase_exception_is_not_a_strategy_exception",
+      "why": "C-1. No strategy had started. Reusing strategy_raised here would name a strategy that never ran — a fabricated attribution.",
+      "raise_in": "detect_window",
+      "exception": "OSError",
+      "final_outcome": "unresolved",
+      "root_cause": "detection_raised",
+      "attempts": [],
+      "forbidden_events": ["strategy_raised"]
+    },
+    {
+      "id": "stage_lock_busy_is_named_precisely",
+      "why": "A producer lock we could not take is actionable and distinct from a generic blowup.",
+      "raise_in": "detect_window",
+      "exception": "StageBusyError",
+      "final_outcome": "unresolved",
+      "root_cause": "stage_lock_busy",
+      "attempts": []
+    },
+    {
+      "id": "ct_multi_track_FAILED_plus_no_face_is_unresolved",
+      "why": "speaker_track did not conclude 'no 2-shot' — it BLEW UP. A centre it did not license is not defensible.",
+      "content_type": "multi-speaker-talk",
+      "stub_events": {"speaker_track": "strategy_raised", "subject_focus": "no_face"},
+      "final_outcome": "unresolved",
+      "root_cause": "strategy_raised"
+    },
+    {
+      "id": "ct_multi_track_COMPLETED_no_track_plus_no_face_is_a_legitimate_centre",
+      "why": "The distinction that carries this whole design: COMPLETED-with-a-negative is NOT failure. Both required strategies ran to a conclusion and found nothing.",
+      "content_type": "multi-speaker-talk",
+      "stub_events": {"speaker_track": "no_track", "subject_focus": "no_face"},
+      "final_outcome": "centered_no_subject",
+      "root_cause": null,
+      "degraded_strategies": []
+    },
+    {
+      "id": "earlier_required_failure_plus_later_success_is_resolved_but_degraded",
+      "why": "Trusted, but WORSE than a healthy pass would have produced: the speaker cuts are lost. A non-zero degraded count is a go/no-go input.",
+      "content_type": "multi-speaker-talk",
+      "stub_events": {"speaker_track": "strategy_raised"},
+      "subject_focus_returns": [0.61, 0.44, 0.3, 0.38],
+      "final_outcome": "detected_single",
+      "degraded_strategies": ["speaker_track"]
+    },
+    {
+      "id": "no_people_alone_never_authorizes_a_centre",
+      "why": "CT_NOPEOPLE routes to saliency. The centre is only defensible once saliency ALSO completes.",
+      "content_type": "no-people",
+      "stub_events": {"motion_saliency": "no_motion"},
+      "final_outcome": "centered_no_subject",
+      "attempts": [{"strategy": "motion_saliency", "state": "completed", "required_for_center": true}]
+    },
+    {
+      "id": "no_people_with_a_FAILED_saliency_is_unresolved",
+      "content_type": "no-people",
+      "stub_events": {"motion_saliency": "detector_runtime_failed"},
+      "final_outcome": "unresolved",
+      "root_cause": "detector_runtime_failed"
+    },
+    {
+      "id": "motion_saliency_success_keeps_content_type_None",
+      "why": "C-2 / D9. A 2-tuple focus carries no face height, so nothing zooms. The guard is THIS tuple assertion and the Layer-1 vector — NOT the fingerprint golden, which cannot see the change: _render_fingerprint gates `ct` behind `geom`, and geom is False for a 2-tuple.",
+      "content_type": "music",
+      "stub_events": {"subject_focus": "no_face"},
+      "motion_saliency_returns": [0.61, 0.44],
+      "final_outcome": "motion_focus",
+      "returned_tuple_content_type": null
+    },
+    {
+      "id": "unattributed_none_is_never_benign",
+      "why": "A None nobody explained is a FAILURE, not an empty room.",
+      "content_type": "single-speaker-talk",
+      "stub_events": {"subject_focus": "__silent_none__"},
+      "final_outcome": "unresolved",
+      "root_cause": "unknown"
+    },
+    {
+      "id": "a_hard_failure_outranks_a_trailing_negative",
+      "why": "The strategies fail OPEN — they return None NORMALLY after a hard failure, and may record a negative on the way out. Completion is decided by the EVIDENCE, never by the fact of returning.",
+      "content_type": "single-speaker-talk",
+      "stub_events": {"subject_focus": ["detector_runtime_failed", "no_face"]},
+      "final_outcome": "unresolved",
+      "root_cause": "detector_runtime_failed",
+      "attempts": [{"strategy": "subject_focus", "state": "failed", "required_for_center": true}]
+    }
+  ]
+}
