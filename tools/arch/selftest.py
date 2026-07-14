@@ -265,46 +265,50 @@ def _inject(cid: str, root: Path, p: dict) -> None:
 
 
 # ── the harness ─────────────────────────────────────────────────────────────────────────────
+def detect(c: Control) -> tuple[bool, str]:
+    """Run ONE control end to end: fixture → baseline → inject → did the named rule fire?
+
+    *** THIS IS THE ONLY IMPLEMENTATION. ***
+
+    `run()` (the CLI) and `tests/test_arch_governance.py` (pytest) BOTH call it. They used to each
+    have their own copy of this logic, with their own `if c.id == "NC-08"` special case — and the
+    moment NC-23 was added, only one copy learned about it. `python -m tools.arch selftest`
+    reported 23/23 while pytest failed NC-23, on the same commit. Two implementations of "does this
+    control detect?" will always drift, and the one that drifts is the one nobody watches.
+    """
+    with fixture() as (root, p):
+        sig_before = _sig(_run(p))
+        _inject(c.id, root, p)
+
+        # NC-08 and NC-23 assert on GENERATED-ARTIFACT INTEGRITY, which is a byte-comparison, not a
+        # policy Finding — the check that makes every other one trustworthy. NC-08 covers derived/;
+        # NC-23 covers the generated DOC, which lives outside derived/ and which the derived
+        # byte-compare therefore never inspected.
+        if c.id in ("NC-08", "NC-23"):
+            if c.id == "NC-08":
+                stale, want = drift.stale_artifacts(p["DERIVED"]), "modules.json"
+            else:
+                stale, want = drift.stale_docs(), "ARCHITECTURE_GOVERNANCE.md"
+            hit = [d for d in stale if d.artifact == want]
+            if not hit:
+                return False, f"NOT DETECTED — a hand-edited {want} went unnoticed"
+            ev = (hit[0].evidence or ["byte-compare failed"])[0]
+            return True, f"{len(stale)} stale artifact(s) detected: {ev[:60]}"
+
+        new = [(f.rule, e) for f in _run(p) for e in f.evidence if (f.rule, e) not in sig_before]
+        hit_ev = [e for r, e in new if r == c.expect_rule]
+        if not hit_ev:
+            return False, f"NOT DETECTED — {c.expect_rule} produced no new evidence"
+        return True, f"{c.expect_rule} fired with NEW evidence: {hit_ev[0][:76]}"
+
+
 def run(verbose: bool = True) -> int:
     results: list[tuple[Control, bool, str]] = []
 
     for c in CONTROLS:
         try:
-            with fixture() as (root, p):
-                before = _run(p)
-                sig_before = _sig(before)
-
-                _inject(c.id, root, p)
-
-                if c.id == "NC-08":
-                    # this control is about GENERATED-ARTIFACT INTEGRITY, which is not a policy
-                    # rule but a byte-comparison — the check that makes every other one trustworthy
-                    stale = drift.stale_artifacts(p["DERIVED"])
-                    ok = any(d.artifact == "modules.json" for d in stale)
-                    detail = (f"{len(stale)} stale artifact(s) detected"
-                              if ok else "NOT DETECTED — a hand-edited generated file went unnoticed")
-                    results.append((c, ok, detail))
-                    continue
-
-                if c.id == "NC-23":
-                    # same shape as NC-08, one layer out: the generated DOC, which lives outside
-                    # derived/ and which the derived byte-compare therefore never inspected
-                    stale = drift.stale_docs()
-                    ok = any(d.artifact == "ARCHITECTURE_GOVERNANCE.md" for d in stale)
-                    detail = (f"{len(stale)} stale doc(s) detected: {stale[0].evidence[:1]}"
-                              if ok else "NOT DETECTED — a hand-edited generated DOC went unnoticed")
-                    results.append((c, ok, detail))
-                    continue
-
-                after = _run(p)
-                new = [(f.rule, e) for f in after for e in f.evidence
-                       if (f.rule, e) not in sig_before]
-                hit = [e for r, e in new if r == c.expect_rule]
-                ok = bool(hit)
-                detail = (f"{c.expect_rule} fired with NEW evidence: {hit[0][:76]}"
-                          if ok else
-                          f"NOT DETECTED — {c.expect_rule} produced no new evidence")
-                results.append((c, ok, detail))
+            ok, detail = detect(c)
+            results.append((c, ok, detail))
         except Exception as exc:  # a control that cannot run is a control that proves nothing
             results.append((c, False, f"CONTROL ERRORED: {type(exc).__name__}: {exc}"))
 

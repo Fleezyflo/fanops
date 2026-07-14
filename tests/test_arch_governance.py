@@ -166,22 +166,15 @@ def test_negative_control_is_detected(control):
     Demanding NEW evidence is what makes this rigorous. The live tree carries real findings, so a
     control that merely asserted "the rule fires" would pass on pre-existing noise and prove
     nothing. This proves the validator DISCRIMINATES.
+
+    This DELEGATES to `selftest.detect` rather than re-deriving the check. It used to carry its own
+    copy — including its own `if control.id == "NC-08"` special case — and when NC-23 was added,
+    only the CLI copy learned about it: `python -m tools.arch selftest` reported 23/23 green while
+    this test failed NC-23, on the very same commit. One behavior, one implementation.
     """
-    with selftest.fixture() as (root, paths):
-        before = selftest._sig(selftest._run(paths))
-        selftest._inject(control.id, root, paths)
-
-        if control.id == "NC-08":
-            stale = drift.stale_artifacts(paths["DERIVED"])
-            assert any(d.artifact == "modules.json" for d in stale), \
-                "a HAND-EDITED generated artifact went undetected"
-            return
-
-        after = selftest._run(paths)
-        new = [e for f in after for e in f.evidence
-               if f.rule == control.expect_rule and (f.rule, e) not in before]
-        assert new, (
-            f"{control.expect_rule} did NOT fire on an injected `{control.defect}`. "
-            f"The rule is DECORATIVE: it is claimed in the policy set but does not detect the "
-            f"defect it names. That is worse than having no rule, because it manufactures "
-            f"confidence.")
+    ok, detail = selftest.detect(control)
+    assert ok, (
+        f"{control.expect_rule} did NOT fire on an injected `{control.defect}` ({detail}). "
+        f"The rule is DECORATIVE: it is claimed in the policy set but does not detect the "
+        f"defect it names. That is worse than having no rule, because it manufactures "
+        f"confidence.")
