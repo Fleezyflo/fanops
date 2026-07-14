@@ -685,6 +685,12 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser("status"); sub.add_parser("ingest"); sub.add_parser("digest"); sub.add_parser("respond")
     sub.add_parser("reconcile")
+    p_reframe = sub.add_parser("reframe", help="READ-ONLY: classify the clip corpus for the reframe migration")
+    p_reframe.add_argument("--dry-run", action="store_true",
+                           help="required — there is no mutation mode; this command writes only to a scratch root")
+    p_reframe.add_argument("--limit", type=int, help="classify at most N clips (a PARTIAL run: go/no-go is suppressed)")
+    p_reframe.add_argument("--scratch", help="scratch root (default: a fresh temp dir). ALL writes land here.")
+    p_reframe.add_argument("--json", action="store_true", help="emit the full manifest as JSON")
     p_rec = sub.add_parser("recover", help="delivery recovery read-models")
     rec_sub = p_rec.add_subparsers(dest="recover_cmd", required=True)
     rec_sub.add_parser("audit", help="read-only live/inflight/failed bucket table")
@@ -1095,7 +1101,47 @@ def _studio_port_busy(host: str, port: int) -> bool:
         return False
 
 
+def cmd_reframe(cfg: Config, args) -> int:
+    """READ-ONLY corpus classification for the reframe migration decision.
+
+    --dry-run is MANDATORY because there is no other mode: this command mutates nothing, ever. It reads
+    the production tree, writes every byte it produces into a scratch root, and PROVES it did so with a
+    before/after scan of the protected root. It re-renders nothing and it touches no ledger."""
+    import tempfile
+    from pathlib import Path
+    from fanops.reframe import ReframePaths, run_dry_run
+    if not args.dry_run:
+        print("fanops reframe is READ-ONLY: pass --dry-run. No mutation mode exists.", file=sys.stderr)
+        return 2
+    scratch = Path(args.scratch) if args.scratch else Path(tempfile.mkdtemp(prefix="fanops_reframe_"))
+    paths = ReframePaths.build(cfg.root, scratch)
+    man = run_dry_run(paths, limit=args.limit, argv=sys.argv[1:])
+    if args.json:
+        print(json.dumps(man, indent=2, sort_keys=True))
+        return 0 if man["analysis_phase_clean"] else 1
+    s = man["summary"]
+    print(f"reframe dry-run — scratch: {paths.scratch_root}")
+    print(f"  clips classified: {len(man['clips'])}" + ("  (PARTIAL — --limit)" if man["partial"] else ""))
+    for k, v in sorted(s["totals"].items(), key=lambda kv: -kv[1]):
+        print(f"    {v:6d}  {k}")
+    if s["framing_unresolved_by_root_cause"]:
+        print("  framing_unresolved by root cause:")
+        for k, v in sorted(s["framing_unresolved_by_root_cause"].items(), key=lambda kv: -kv[1]):
+            print(f"    {v:6d}  {k}")
+    if not man["analysis_phase_clean"]:
+        print("  *** THE ANALYSIS PHASE MUTATED THE PROTECTED ROOT — this run is void ***", file=sys.stderr)
+        return 1
+    print("  protected root unchanged (existence/type/size/mode/mtime/inode/content verified)")
+    if s["go_no_go"] is None:
+        print("  go/no-go: SUPPRESSED (a partial run cannot support a corpus-wide claim)")
+    else:
+        b = s["go_no_go"]["blockers"]
+        print(f"  go/no-go: {b and 'BLOCKED: ' + '; '.join(b) or 'no blockers'} ({s['go_no_go']['eligible']} eligible)")
+    return 0
+
+
 def _dispatch(cfg: Config, args) -> int:
+    if args.cmd == "reframe":  return cmd_reframe(cfg, args)
     if args.cmd == "status":   return cmd_status(cfg)
     if args.cmd == "recover":
         if args.recover_cmd == "audit": return cmd_recover_audit(cfg)

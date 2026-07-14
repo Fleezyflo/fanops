@@ -9,9 +9,13 @@ crops centered (today's behavior). Detection is DETERMINISTIC per (source, windo
 to a per-source sidecar, mirroring signals.detect_signals — the in-lock commit re-probes nothing."""
 from __future__ import annotations
 import json, os
+from dataclasses import dataclass
 from pathlib import Path
 from statistics import median
-from fanops.errors import ToolchainMissingError
+from fanops.errors import StageBusyError, ToolchainMissingError
+from fanops.framing_outcomes import (HARD_FAILURE_EVENTS, NEGATIVE_RESULT_EVENTS, FramingEventType as _FE,
+                                     FramingOutcome as _FO, FramingStrategy as _FS, FramingTrace,
+                                     ResolverInvariantError, StrategyAttempt, StrategyState, record as _rec)
 from fanops.transcribe import window_has_trusted_speech as _window_has_speech
 
 _SIDECAR_V = 5               # track-sidecar schema (v5: + min-shot-duration merge — no rapid cut-away-and-back)
@@ -164,7 +168,7 @@ def _load_detect_cache(path: Path) -> dict:
     except (OSError, json.JSONDecodeError, TypeError):
         return {}
 
-def detect_window(cfg, src, *, start: float, end: float, _rt=None) -> dict | None:
+def detect_window(cfg, src, *, start: float, end: float, _rt=None, _trace=None) -> dict | None:
     """ONE grid pass over [start,end) -> {fps, frames:[[ [cx,cy,fh,ey], ... per face ], ... per frame ]},
     cached per (source, window) in a `<source_id>.detect.json` sidecar. This is the SINGLE detection that
     feeds classify_window + subject_focus + speaker_track + motion_saliency. Returns None on every fail-open
@@ -181,8 +185,14 @@ def detect_window(cfg, src, *, start: float, end: float, _rt=None) -> dict | Non
     The first acquirer fills the cache; the second enters the critical section, finds the cached
     window, returns. Cache is checked BEFORE the lock as a fast path (no contention on a warm
     sidecar) AND AFTER acquisition as the race-closing re-check. Atomic sidecar write (tmp +
-    os.replace) so a torn write never poisons a concurrent reader."""
+    os.replace) so a torn write never poisons a concurrent reader.
+
+    `_trace` (internal, framing_outcomes.FramingTrace): records WHY this returned None — an invalid
+    window, an absent ffmpeg, a failed encode, an empty glob, a detector blowup. Today all of those
+    are one indistinguishable `None`, which classify_window then turns into CT_NOPEOPLE. Byte-identical
+    when `_trace is None` (the production path)."""
     if not (end > start):
+        _rec(_trace, _FE.INVALID_WINDOW, window_s=round(end - start, 3))
         return None
     source_id = getattr(src, "id", "nosrc")
     path = _detect_sidecar(cfg, source_id)
@@ -196,9 +206,12 @@ def detect_window(cfg, src, *, start: float, end: float, _rt=None) -> dict | Non
     else:
         cv2 = _cv2()
         if cv2 is None:
+            _rec(_trace, _FE.CV2_UNAVAILABLE)                  # ‡ legacy path: production already raised
             return None
         det = _detector(cv2)
         if det is None:
+            # _detector swallows BOTH causes behind one None. Separate them rather than emit one vague event.
+            _rec(_trace, _FE.DETECTOR_INIT_FAILED if _model_path().exists() else _FE.MODEL_MISSING)
             return None
     # Slow path: per-(framing, source_id) lock so the detection runs ONCE for this source. Re-check
     # the sidecar inside the lock — the first acquirer wrote it during its critical section.
@@ -215,16 +228,19 @@ def detect_window(cfg, src, *, start: float, end: float, _rt=None) -> dict | Non
         # the frames on disk and short-circuit.
         frames = keyframes.extract_frames_grid(getattr(src, "source_path", ""), start, end,
                                                fps=_DETECT_FPS, out_dir=tmp, width=_KF_WIDTH,
-                                               source_id=source_id, cfg=cfg)
+                                               source_id=source_id, cfg=cfg, _trace=_trace)
         stats = None
         try:
             if frames:
                 stats = {"fps": _DETECT_FPS,
                          "frames": [[list(t) for t in _detect_faces(cv2, det, fp)] for fp in frames]}
-        except Exception:
+        except Exception as exc:
+            _rec(_trace, _FE.DETECTOR_RUNTIME_FAILED, exc_type=type(exc).__name__)
             stats = None                                      # fail-open by contract
         if stats is None:
-            return None
+            return None                                       # frames==[] -> keyframes ALREADY recorded which one
+        _rec(_trace, _FE.FACES_DETECTED, frames=len(frames), fps=_DETECT_FPS,
+             faces=sum(len(fr) for fr in stats["frames"]))
         cache[key] = stats
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -277,13 +293,20 @@ def _face_count(stats: dict | None) -> int:
     counts = sorted(_real_n(fr) for fr in frames)
     return counts[len(counts) // 2]                           # median per-frame real-face count
 
-def classify_window(cfg, src, *, start: float, end: float, stats: dict | None) -> str:
+def classify_window(cfg, src, *, start: float, end: float, stats: dict | None, _trace=None) -> str:
     """Pure routing over the cached detect stats + trusted transcript: one of the five CT_* strings. No
     ffmpeg, no cv2. faces==0 -> no-people; faces>=2 + trusted speech -> multi-speaker-talk; 1 face +
     trusted speech -> single; face + no trusted speech -> music (a demucs vocal stem present) else silent.
-    Stats None -> no-people (the caller fails open to the centered crop regardless)."""
+
+    Stats None -> no-people. THIS IS THE THIRD ERASURE: a detection that FAILED (absent ffmpeg, a dead
+    encode, a detector blowup) arrives here as `None` and gets MANUFACTURED into CT_NOPEOPLE — an
+    affirmative claim that the room was empty, which nothing observed. The return value is UNCHANGED
+    (production depends on it), but framing._resolve now refuses to TRUST an outcome the detection phase
+    failed into: it pins final_outcome=UNRESOLVED with the real root_cause, so an empty room and a broken
+    toolchain stop being the same answer."""
     faces = _face_count(stats)
     if faces <= 0:
+        _rec(_trace, _FE.NO_PEOPLE, faces=0)
         return CT_NOPEOPLE
     if _window_has_speech(src, start, end):
         return CT_MULTI if faces >= 2 else CT_SINGLE
@@ -442,35 +465,58 @@ def _assemble_track(obs: list[dict], fps: float):
         return None                                           # one position the whole clip -> static focus identical
     return [tuple(s) for s in merged]
 
-def speaker_track(cfg, src, *, start: float, end: float, src_w: int, src_h: int, _rt=None):
+def speaker_track(cfg, src, *, start: float, end: float, src_w: int, src_h: int, _rt=None, _trace=None):
     """Follow the ACTIVE speaker across a 2-shot: a time-ordered list of (t0,t1,fx,fy,fh,ey) segments (times
     RELATIVE to the clip start) — fx/fy the talker's centroid, fh the face height (drives per-segment zoom),
     ey the eye-line (drives composition). Returns None — the fail-open signal to use the STATIC subject_focus —
     whenever there's nothing dynamic to do: no [framing] extra, a single-camera window (one face throughout),
     one position, or any error. So a single-subject clip is byte-identical to before; only a real two-person
-    2-shot gets a speaker-following cut. NEVER raises. Cached per (source, window).
+    2-shot gets a speaker-following cut. Cached per (source, window).
+
+    NOT "never raises" in the strict sense — the try below catches everything _compute_track throws
+    (including the stage_lock / mkdir OSErrors that reach it through extract_frames_grid) and returns
+    None NORMALLY. That is exactly why COMPLETION CANNOT BE INFERRED FROM A NORMAL RETURN: this
+    function returns the same None after a hard failure as it does after concluding "no 2-shot here".
+    `_trace` is what separates them.
     `_rt` (internal): reuse the resolution's ALREADY-constructed detector instead of building another."""
     if not (end > start):
+        _rec(_trace, _FE.INVALID_WINDOW, window_s=round(end - start, 3))
         return None
     path = _track_sidecar(cfg, getattr(src, "id", "nosrc"))
     cache = _load_cache(path)
     key = _wkey(start, end)
     if key in cache:
         e = cache[key]
-        return [tuple(seg) for seg in e] if e else None
+        if not e:
+            _rec(_trace, _FE.NO_TRACK, segments=0)            # a CACHED conclusion is still a conclusion
+            return None
+        _rec(_trace, _FE.TRACK_ASSEMBLED, segments=len(e))
+        return [tuple(seg) for seg in e]
     result = None
+    hard = False                                              # did a HARD failure happen, or did we conclude?
     try:
         if _rt is not None:                                   # reuse the resolution's one constructed detector
             cv2, det = _rt.cv2, _rt.detector
         else:
             cv2 = _cv2()
             det = _detector(cv2) if cv2 is not None else None
-        if det is not None:
-            result = _compute_track(cv2, det, cfg, src, start, end)
-    except Exception:
-        result = None                                         # fail-open by contract -> static focus
+        if det is None:                                       # ‡ legacy _rt=None path: production already raised
+            _rec(_trace, _FE.CV2_UNAVAILABLE if cv2 is None else _FE.DETECTOR_INIT_FAILED)
+            hard = True
+        else:
+            result = _compute_track(cv2, det, cfg, src, start, end, _trace=_trace)
+    except Exception as exc:
+        # ONE broad handler on purpose: the swallow ratchet counts them per file, and splitting this
+        # into two typed handlers would add one. StageBusyError is a producer lock we could not take —
+        # an actionable, distinct cause, never a generic strategy blowup.
+        _rec(_trace, _FE.STAGE_LOCK_BUSY if isinstance(exc, StageBusyError) else _FE.STRATEGY_RAISED,
+             exc_type=type(exc).__name__)
+        result = None; hard = True                            # fail-open by contract -> static focus
     if result is None:
+        if not hard:
+            _rec(_trace, _FE.NO_TRACK, segments=0)            # frames + faces, but no real 2-shot: a CONCLUSION
         return None                                           # M12: transient None is not cached (detect_window parity)
+    _rec(_trace, _FE.TRACK_ASSEMBLED, segments=len(result))
     cache[key] = result
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -479,7 +525,7 @@ def speaker_track(cfg, src, *, start: float, end: float, src_w: int, src_h: int,
         return result                                         # cache write failure just re-probes next time
     return result
 
-def _compute_track(cv2, det, cfg, src, start: float, end: float):
+def _compute_track(cv2, det, cfg, src, start: float, end: float, _trace=None):
     """speaker_track's detection body: ONE grid pass (extract_frames_grid) -> per-frame _track_observe ->
     pure _assemble_track. The active-speaker decision needs PIXELS (mouth motion), which the JSON detect
     stats can't carry, so this runs its own grid pass; only multi-speaker windows pay it. The first/last
@@ -491,7 +537,7 @@ def _compute_track(cv2, det, cfg, src, start: float, end: float):
     # detect_window and motion_saliency on the same window — one ffmpeg, not three.
     frames = keyframes.extract_frames_grid(getattr(src, "source_path", ""), start, end,
                                            fps=_ASD_FPS, out_dir=tmp, width=_KF_WIDTH,
-                                           source_id=source_id, cfg=cfg)
+                                           source_id=source_id, cfg=cfg, _trace=_trace)
     track = _assemble_track(_track_observe(cv2, det, frames), _ASD_FPS)
     if not track:
         return None
@@ -514,17 +560,27 @@ def _median_face(stats: dict | None):
     return (round(median(p[0] for p in picks), 4), round(median(p[1] for p in picks), 4),
             round(median(p[2] for p in picks), 4), round(median(p[3] for p in picks), 4), conf)
 
-def subject_focus(cfg, src, *, start: float, end: float, _rt=None):
+def subject_focus(cfg, src, *, start: float, end: float, _rt=None, _trace=None):
     """The dominant subject as (fx, fy, fh, ey) in [0,1] across this window — centroid + face HEIGHT (for
     zoom-to-consistent-size) + eye-line (for composition) — reduced from the SINGLE detect_window grid pass
-    (so no separate keyframe probe). None when smart framing can't place it (no [framing] extra, fewer than
-    _MIN_CONF frames with a face, or any failure) -> the render falls back to the centered crop. NEVER raises.
+    (so no separate keyframe probe). None when smart framing can't place it (fewer than _MIN_CONF frames
+    with a face) -> the render falls back to the centered crop.
+
+    This function has NO try/except and RE-ENTERS detect_window, so a stage_lock StageBusyError or an
+    mkdir OSError raised down there PROPAGATES straight out of it — the "NEVER raises" this docstring
+    used to claim was false. Normally the inner call is a warm-cache hit and re-probes nothing, but when
+    the sidecar write failed, detect_window returns stats WITHOUT caching, so it really does re-probe.
+    framing._resolve wraps the call in an _AttemptSpan, which records the escape and re-raises it unless
+    the caller asked to capture — production propagation is therefore unchanged.
     `_rt` (internal): reuse the resolution's constructed detector via detect_window (one construction)."""
     if not (end > start):
+        _rec(_trace, _FE.INVALID_WINDOW, window_s=round(end - start, 3))
         return None
-    m = _median_face(detect_window(cfg, src, start=start, end=end, _rt=_rt))
+    m = _median_face(detect_window(cfg, src, start=start, end=end, _rt=_rt, _trace=_trace))
     if m is None or m[4] < _MIN_CONF:
+        _rec(_trace, _FE.NO_FACE, conf=(m[4] if m is not None else 0.0))
         return None                                           # too few detections -> fail-open to centered crop
+    _rec(_trace, _FE.FOCUS_PLACED, conf=m[4])
     return (m[0], m[1], m[2], m[3])
 
 def _saliency_centroid(cv2, frames: list[str]):
@@ -556,22 +612,34 @@ def _saliency_centroid(cv2, frames: list[str]):
 def _saliency_sidecar(cfg, source_id: str) -> Path:
     return cfg.agent_io / "framing" / f"{source_id}.saliency.json"
 
-def motion_saliency(cfg, src, *, start: float, end: float, _rt=None):
+def motion_saliency(cfg, src, *, start: float, end: float, _rt=None, _trace=None):
     """For music / silent / no-people windows with NO face to lock: the centroid of inter-frame motion, so
     the crop drifts toward where the action is instead of a blind center. ONE grid pass; (fx,fy) or None
     (fail-open -> centered). CACHED per (source, window) — like detect_window/speaker_track — so the in-lock
-    commit re-probes nothing and the warm-artifact skip never re-spawns ffmpeg. NEVER raises.
-    `_rt` (internal): reuse the resolution's cv2 module (saliency needs cv2 for pixel diffs, not the detector)."""
+    commit re-probes nothing and the warm-artifact skip never re-spawns ffmpeg.
+    `_rt` (internal): reuse the resolution's cv2 module (saliency needs cv2 for pixel diffs, not the detector).
+
+    Like subject_focus, "NEVER raises" was false: extract_frames_grid below sits OUTSIDE the try, so a
+    stage_lock / mkdir OSError propagates. Left exactly as-is; the _AttemptSpan records and re-raises it.
+
+    The returned focus is a bare 2-TUPLE (fx, fy) — no face height, so nothing to size a zoom to. That is
+    why _resolve returns content_type=None on this branch and MUST KEEP DOING SO (see _resolve)."""
     if not (end > start):
+        _rec(_trace, _FE.INVALID_WINDOW, window_s=round(end - start, 3))
         return None
     path = _saliency_sidecar(cfg, getattr(src, "id", "nosrc"))
     cache = _load_cache(path)
     key = _wkey(start, end)
     if key in cache:
         e = cache[key]
-        return tuple(e) if e else None
+        if not e:
+            _rec(_trace, _FE.NO_MOTION)                       # a CACHED conclusion is still a conclusion
+            return None
+        _rec(_trace, _FE.MOTION_PLACED)
+        return tuple(e)
     cv2 = _rt.cv2 if _rt is not None else _cv2()
     if cv2 is None:
+        _rec(_trace, _FE.CV2_UNAVAILABLE)                     # ‡ legacy path: production already raised
         return None                                           # extra absent -> don't cache (may install later)
     from fanops import keyframes
     source_id = getattr(src, "id", "nosrc")
@@ -580,13 +648,18 @@ def motion_saliency(cfg, src, *, start: float, end: float, _rt=None):
     # detect_window and speaker_track on the same window.
     frames = keyframes.extract_frames_grid(getattr(src, "source_path", ""), start, end,
                                            fps=_ASD_FPS, out_dir=tmp, width=_KF_WIDTH,
-                                           source_id=source_id, cfg=cfg)
+                                           source_id=source_id, cfg=cfg, _trace=_trace)
+    hard = False                                              # a blowup, or a real "no motion here"?
     try:
         result = _saliency_centroid(cv2, frames) if frames else None
-    except Exception:
-        result = None
+    except Exception as exc:
+        _rec(_trace, _FE.DETECTOR_RUNTIME_FAILED, exc_type=type(exc).__name__)
+        result = None; hard = True
     if result is None:
-        return None                                           # M12: transient None is not cached (detect_window parity)
+        if frames and not hard:
+            _rec(_trace, _FE.NO_MOTION, frames=len(frames))   # frames extracted; the pixel layer found nothing
+        return None                                           # no frames -> keyframes ALREADY recorded which failure
+    _rec(_trace, _FE.MOTION_PLACED, frames=len(frames))
     cache[key] = list(result)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -594,3 +667,253 @@ def motion_saliency(cfg, src, *, start: float, end: float, _rt=None):
     except OSError:
         return result                                         # cache write failure just re-probes next time
     return tuple(result)
+
+
+# ---- The resolver: the routing clip._resolve_framing used to own, now instrumented -------------------
+# This is the whole point of the module. The routing is UNCHANGED — same calls, same order, same
+# arguments, same 3-tuple, same exceptions — but every branch now says WHY it went the way it did.
+
+@dataclass(frozen=True)
+class FramingResolution:
+    """What the resolver decided AND why.
+
+    `as_tuple()` is the exact `(focus, track, content_type)` clip._resolve_framing has always returned.
+    Production reads ONLY that. Everything else is diagnostics, and diagnostics authorize nothing."""
+    focus: tuple | None
+    track: list | None
+    content_type: str | None                       # the RETURNED ct — None on the saliency branch (D9/C-2)
+    final_outcome: _FO
+    final_strategy: _FS
+    root_cause: _FE | None                         # set iff final_outcome is UNRESOLVED
+    classified_content_type: str | None            # what classify_window said — DIAGNOSTIC, not the returned ct
+    attempts: tuple
+    events: tuple
+    degraded_strategies: tuple
+
+    def as_tuple(self):
+        return self.focus, self.track, self.content_type
+
+    def to_json(self) -> dict:
+        return {"final_outcome": self.final_outcome.value, "final_strategy": self.final_strategy.value,
+                "root_cause": (self.root_cause.value if self.root_cause else None),
+                "classified_content_type": self.classified_content_type,
+                "attempts": [a.to_json() for a in self.attempts],
+                "events": [e.to_json() for e in self.events],
+                "degraded_strategies": [s.value for s in self.degraded_strategies]}
+
+
+class _AttemptSpan:
+    """PRIVATE mutable builder for ONE strategy attempt. Never leaves _resolve; never serialized.
+
+    Execution is mutable, evidence is immutable, and they are DIFFERENT OBJECTS: there is no
+    partially-built StrategyAttempt, because only `finalize()` mints one and it mints it whole."""
+    __slots__ = ("_trace", "_strategy", "_applicable", "_required", "_started", "_result", "_closed")
+
+    def __init__(self, trace: FramingTrace, strategy: _FS, *, applicable: bool, required_for_center: bool):
+        self._trace = trace; self._strategy = strategy
+        self._applicable = applicable; self._required = required_for_center
+        self._started = False; self._result = None; self._closed = False
+
+    def __enter__(self):
+        self._started = True
+        self._trace.open_span(self._strategy)                 # events now attribute to THIS strategy
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self._trace.close_span(self._strategy)
+        return False                                          # NEVER suppress — _resolve decides
+
+    @property
+    def result(self):
+        return self._result
+
+    def set_result(self, value) -> None:
+        """The strategy's return value, verbatim. Called once, on a normal return."""
+        if self._closed: raise ResolverInvariantError("set_result after finalize()")
+        self._result = value
+
+    def set_raised(self, exc: BaseException) -> None:
+        """The strategy ESCAPED. Must be called while the span is still open, or the event would
+        attribute to the detection phase — naming a phase that did not fail."""
+        if self._closed: raise ResolverInvariantError("set_raised after finalize()")
+        self._trace.record(_FE.STAGE_LOCK_BUSY if isinstance(exc, StageBusyError) else _FE.STRATEGY_RAISED,
+                           exc_type=type(exc).__name__)
+
+    def finalize(self) -> StrategyAttempt:
+        """ATOMIC. One invariant-valid frozen record. Not re-runnable.
+
+        Completion is decided by the EVIDENCE, never by the fact of returning: the strategies fail open,
+        so they return None NORMALLY after a hard failure. A hard failure OUTRANKS a conclusive negative
+        even when both were recorded during the same call."""
+        if self._closed: raise ResolverInvariantError("finalize() is not re-runnable")
+        self._closed = True
+        seen = [e.event for e in self._trace.events_for(self._strategy)]
+        hard = [e for e in seen if e in HARD_FAILURE_EVENTS]
+        negs = [e for e in seen if e in NEGATIVE_RESULT_EVENTS]
+        common = dict(strategy=self._strategy, applicable=self._applicable,
+                      required_for_center=self._required, started=self._started)
+        if hard:                                              # 1. a hard failure outranks EVERYTHING
+            return StrategyAttempt(**common, completed=False, failure_event=hard[0],
+                                   negative_result=None, produced_focus=False)
+        if bool(self._result):                                # 2. a trusted focus / track came back
+            return StrategyAttempt(**common, completed=True, failure_event=None,
+                                   negative_result=None, produced_focus=True)
+        if negs:                                              # 3. a conclusive negative: it RAN and found nothing
+            return StrategyAttempt(**common, completed=True, failure_event=None,
+                                   negative_result=negs[-1], produced_focus=False)
+        return StrategyAttempt(**common, completed=False, failure_event=_FE.UNKNOWN,   # 4. unattributed:
+                               negative_result=None, produced_focus=False)             #    NEVER benign
+
+
+# Applicability, derived from the routing below. Every strategy the routing includes is also REQUIRED
+# for a defensible centre — no optional strategy exists today. The two stay distinct because they MEAN
+# different things: a future optional strategy must consciously set required_for_center=False.
+_ROUTE: dict = {
+    CT_MULTI:    (_FS.SPEAKER_TRACK, _FS.SUBJECT_FOCUS),   # a failed track falls to SINGLE -> no saliency
+    CT_SINGLE:   (_FS.SUBJECT_FOCUS,),
+    CT_MUSIC:    (_FS.SUBJECT_FOCUS, _FS.MOTION_SALIENCY),
+    CT_SILENT:   (_FS.SUBJECT_FOCUS, _FS.MOTION_SALIENCY),
+    CT_NOPEOPLE: (_FS.MOTION_SALIENCY,),
+}
+
+
+def _resolve(cfg, src, cs: float, ce: float, *, _trace=None, capture_failures: bool = False) -> FramingResolution:
+    """Route this window to a reframe strategy, and record WHY.
+
+    THE EXCEPTION CONTRACT (the load-bearing rule). This function must let escape EXACTLY what
+    clip._resolve_framing lets escape today:
+
+      * `capture_failures=False` (THE DEFAULT — the production path). Every exception propagates
+        byte-for-byte as before. render_moment (no handler) and render_account_cut
+        (ToolchainMissingError -> raise; other Exception -> fail-open) keep their handlers verbatim.
+        A flipped default would silently convert production fail-loud into fail-open.
+      * `capture_failures=True` (the read-only dry-run). A strategy exception becomes STRATEGY_RAISED /
+        STAGE_LOCK_BUSY and the clip becomes UNRESOLVED, so one bad clip cannot abort a corpus scan.
+
+    THE PREFLIGHT IS CARVED OUT. `_framing_runtime_or_raise` runs before any span opens and is NEVER
+    captured: a dry-run without a detector is meaningless, so ToolchainMissingError stays FATAL IN BOTH
+    MODES. `capture_failures` governs per-strategy and detection-phase exceptions only.
+
+    THE DETECTION PHASE IS A HARD TRUST GATE. When it fails, `ct` was MANUFACTURED (a failed detection
+    yields CT_NOPEOPLE), so no downstream result can be trusted — not a centre, and not a focus a
+    strategy happened to place without knowing whether a subject exists. We therefore PIN
+    final_outcome=UNRESOLVED with the real root_cause.
+
+    But we DO NOT short-circuit the routing to do it. The strategies still run and the 3-tuple is still
+    returned VERBATIM, because that tuple feeds clip._render_fingerprint: returning a centred tuple
+    where legacy returned a saliency focus would change the fingerprint of every affected clip and make
+    the daemon RE-RENDER it on the next pass. This is an evidence-gathering change; it mutates nothing.
+    The trust gate lives in the OUTCOME, never in the tuple."""
+    trace = _trace if _trace is not None else FramingTrace()
+    rt = _framing_runtime_or_raise(cfg)      # PREFLIGHT: constructs the ONE detector, or REFUSES. Fatal in BOTH modes.
+
+    # ---- detection phase: the ONLY unscoped context. No span is open; its events carry strategy=None. ----
+    try:
+        stats = detect_window(cfg, src, start=cs, end=ce, _rt=rt, _trace=trace)
+        ct = classify_window(cfg, src, start=cs, end=ce, stats=stats, _trace=trace)
+    except ToolchainMissingError:
+        raise                                                 # a broken prerequisite is never captured
+    except StageBusyError as exc:
+        trace.record(_FE.STAGE_LOCK_BUSY, exc_type=type(exc).__name__)
+        if not capture_failures: raise                        # production: propagation UNCHANGED
+        return _unresolved(trace, _FE.STAGE_LOCK_BUSY, (), None)
+    except Exception as exc:
+        # A DETECTION-phase escape, before any strategy started. It gets its OWN event: reusing
+        # STRATEGY_RAISED here would name a strategy that never ran — a fabricated attribution.
+        trace.record(_FE.DETECTION_RAISED, exc_type=type(exc).__name__)
+        if not capture_failures: raise                        # production: propagation UNCHANGED
+        return _unresolved(trace, _FE.DETECTION_RAISED, (), None)
+
+    detection_failure = trace.detection_hard_failure()
+    if detection_failure is None and stats is None:
+        trace.record(_FE.UNKNOWN)                             # a None nobody attributed -> never read as benign
+        detection_failure = _FE.UNKNOWN
+
+    attempts: list = []
+    ran: set = set()
+
+    def _run(strategy: _FS, fn):
+        ran.add(strategy)
+        span = _AttemptSpan(trace, strategy, applicable=True, required_for_center=True)
+        with span:                                            # __exit__ closes the span on EVERY path
+            try:
+                span.set_result(fn())
+            except ToolchainMissingError:
+                raise                                         # never captured, in either mode
+            except Exception as exc:
+                span.set_raised(exc)                          # evidence FIRST, while the span is still open
+                if not capture_failures:
+                    raise                                     # production: propagation UNCHANGED
+        attempts.append(span.finalize())
+        return span.result
+
+    # ---- the routing, byte-for-byte the legacy control flow (clip._resolve_framing:663-676) ----
+    focus = None; track = None; out_ct = None
+    strategy = _FS.CENTERED; outcome = None
+    ct_eff = ct
+
+    if ct_eff == CT_MULTI:
+        track = _run(_FS.SPEAKER_TRACK, lambda: speaker_track(cfg, src, start=cs, end=ce,
+                                                              src_w=src.width or 0, src_h=src.height or 0,
+                                                              _rt=rt, _trace=trace))
+        if track:
+            out_ct, strategy, outcome = ct_eff, _FS.SPEAKER_TRACK, _FO.DETECTED_MULTI
+        else:
+            track = None                                      # a falsy track is not a track
+            ct_eff = CT_SINGLE                                # classed multi but not a real 2-shot -> single lock
+
+    if outcome is None and ct_eff in (CT_SINGLE, CT_MUSIC, CT_SILENT):
+        focus = _run(_FS.SUBJECT_FOCUS, lambda: subject_focus(cfg, src, start=cs, end=ce, _rt=rt, _trace=trace))
+        if focus is not None:
+            out_ct, strategy = ct_eff, _FS.SUBJECT_FOCUS
+            outcome = _FO.MUSIC_FOCUS if ct_eff == CT_MUSIC else _FO.DETECTED_SINGLE
+
+    if outcome is None and ct_eff in (CT_MUSIC, CT_SILENT, CT_NOPEOPLE):
+        sal = _run(_FS.MOTION_SALIENCY, lambda: motion_saliency(cfg, src, start=cs, end=ce, _rt=rt, _trace=trace))
+        if sal is not None:
+            # D9 / C-2: content_type STAYS None here, and must keep doing so. A 2-tuple focus carries no
+            # face height, so nothing zooms. The guard is the Layer-1 tuple vector, NOT the fingerprint
+            # golden: _render_fingerprint gates `ct` behind `geom`, which is False for a 2-tuple, so
+            # returning ct here would change the fingerprint of exactly NOTHING and slip through silently.
+            focus, track, out_ct = sal, None, None
+            strategy, outcome = _FS.MOTION_SALIENCY, _FO.MOTION_FOCUS
+
+    if outcome is None:                                       # centered crop (today)
+        focus = None; track = None; out_ct = None
+
+    # SKIPPED: routing INCLUDED it, but a prior strategy resolved first, so it never started.
+    for s in _ROUTE.get(ct, ()):
+        if s not in ran:
+            attempts.append(StrategyAttempt(strategy=s, applicable=True, required_for_center=True,
+                                            started=False, completed=False, failure_event=None,
+                                            negative_result=None, produced_focus=False))
+    atts = tuple(attempts)
+    degraded = tuple(a.strategy for a in atts if a.required_for_center and a.state is StrategyState.FAILED)
+
+    if detection_failure is not None:                         # the hard trust gate — outranks any strategy result
+        final_outcome, root = _FO.UNRESOLVED, detection_failure
+    elif outcome is not None:
+        final_outcome, root = outcome, None
+    else:
+        required = [a for a in atts if a.required_for_center]
+        bad = [a for a in required if a.state is not StrategyState.COMPLETED]   # FAILED or (unreachably) SKIPPED
+        if bad:
+            final_outcome = _FO.UNRESOLVED
+            root = next((a.failure_event for a in bad if a.failure_event is not None), _FE.UNKNOWN)
+        elif any(a.produced_focus for a in required):
+            raise ResolverInvariantError("centered terminal reached with a focus-producing required strategy")
+        else:
+            final_outcome, root = _FO.CENTERED_NO_SUBJECT, None   # the ONLY legitimate centre
+
+    return FramingResolution(focus=focus, track=track, content_type=out_ct, final_outcome=final_outcome,
+                             final_strategy=strategy, root_cause=root, classified_content_type=ct,
+                             attempts=atts, events=trace.events, degraded_strategies=degraded)
+
+
+def _unresolved(trace: FramingTrace, root: _FE, attempts: tuple, ct: str | None) -> FramingResolution:
+    """A capture-mode early exit: the detection phase escaped, so nothing ran and nothing is trusted.
+    The 3-tuple is the centered crop — the same thing the raising production path would never have
+    reached a return for at all."""
+    return FramingResolution(focus=None, track=None, content_type=None, final_outcome=_FO.UNRESOLVED,
+                             final_strategy=_FS.CENTERED, root_cause=root, classified_content_type=ct,
+                             attempts=attempts, events=trace.events, degraded_strategies=())

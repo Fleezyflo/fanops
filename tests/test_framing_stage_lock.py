@@ -49,7 +49,7 @@ def test_concurrent_detect_window_runs_once(tmp_path, monkeypatch):
     grid_calls: list = []
     call_lock = threading.Lock()
 
-    def slow_grid(video, start, end, *, fps, out_dir, width, source_id=None, cfg=None):
+    def slow_grid(video, start, end, *, fps, out_dir, width, source_id=None, cfg=None, _trace=None):
         with call_lock:
             grid_calls.append((video, start, end, fps))
         time.sleep(0.3)
@@ -95,7 +95,7 @@ def test_sidecar_short_circuits_in_lock_path(tmp_path, monkeypatch):
 
     calls: list = []
 
-    def grid(video, start, end, *, fps, out_dir, width, source_id=None, cfg=None):
+    def grid(video, start, end, *, fps, out_dir, width, source_id=None, cfg=None, _trace=None):
         calls.append((start, end))
         from pathlib import Path
         p = Path(out_dir); p.mkdir(parents=True, exist_ok=True)

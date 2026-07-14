@@ -659,6 +659,19 @@ class Ledger:
     # records. PRESERVE-and-RETIRE exactly like a live post, at BOTH checks below (post-loop AND clip-drop).
     _PROTECTED_POST_STATES = _LIVE_POST_STATES + (PostState.awaiting_approval, PostState.queued, PostState.retired)
 
+    def post_is_remote_or_publishable(self, post) -> bool:
+        """True when this post is live on a platform, could still publish, or already carries a hosted
+        asset — i.e. re-rendering the clip underneath it would swap the bytes out from under something
+        real. This is the POST-side remote guard, used by the reframe dry-run.
+
+        Deliberately SEPARATE from reframe._clip_has_remote_media (which reads Clip.media_url): a clip and
+        a post cache their uploaded URL in DIFFERENT fields, and conflating them would let one hide the
+        other. Both are reported independently. `queued` is included because it is APPROVED and publishes
+        on the next due sweep — it is not a draft."""
+        if getattr(post, "media_urls", None):
+            return True
+        return post.state in (self._LIVE_POST_STATES + (PostState.queued,))
+
     def _delete_moment_cascade(self, moment_id: str) -> None:
         survived = False
         for c in self.clips_of(moment_id):

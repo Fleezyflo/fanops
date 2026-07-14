@@ -1,3 +1,4 @@
+import json
 import subprocess
 import pytest
 from pathlib import Path
@@ -1040,3 +1041,127 @@ def test_native_default_render_has_no_template_overlay(tmp_path, mocker, monkeyp
     vf = _vf_of(captured["cmd"])
     assert vf == reframe_filter("9:16", 1920, 1080)              # exactly the reframe — no template/subtitle filter
     assert "subtitles=" not in vf
+
+
+# ---------------------------------------------------------------------------------------------------
+# Reframe dry-run seams: the fingerprint payload split, and the extracted _build_ass_text.
+# These GUARD the refactor — they do not test the dry-run itself (that is test_reframe_dryrun.py).
+# ---------------------------------------------------------------------------------------------------
+from fanops.clip import (_build_ass_text, _render_fingerprint, _render_fingerprint_payload,   # noqa: E402
+                         _REFRAME_GEOM_V, fingerprint_of_payload, fingerprint_payload_bytes)
+
+_FP_KW = dict(src_path="/s.mp4", cs=1.0, ce=11.0, aspect_value="9:16", src_w=1920, src_h=1080, ass_text="X")
+_FOCUS4 = (0.61, 0.44, 0.30, 0.38)          # subject lock: zooms  -> geom True
+_SAL2 = (0.61, 0.44)                        # motion saliency: pans -> geom False
+_TRACK = [(0.0, 5.0, 0.3, 0.5, 0.28, 0.4), (5.0, 10.0, 0.7, 0.5, 0.28, 0.4)]
+
+
+@pytest.mark.parametrize("kw", [
+    dict(),                                                                    # centered
+    dict(focus=_FOCUS4, content_type="single-speaker-talk"),                   # subject lock
+    dict(track=_TRACK, content_type="multi-speaker-talk"),                     # active-speaker track
+    dict(focus=_SAL2, content_type=None),                                      # motion saliency
+    dict(supercut_segments=[(1.0, 3.0), (7.0, 9.0)]),                          # supercut
+    dict(top_bias=True),
+])
+def test_fingerprint_payload_split_is_hash_compatible(kw):
+    """The payload/hash split changed NOTHING: _render_fingerprint is still sha256 over the exact same
+    canonical bytes.
+
+    This proves the fingerprint SERIALIZATION is unchanged. It does NOT prove rendered-byte identity —
+    that is protected separately by the filter-argument tests, the Layer-1 routing characterization, the
+    ASS goldens below, and the E2E suite."""
+    payload = _render_fingerprint_payload(**_FP_KW, **kw)
+    assert fingerprint_of_payload(payload) == _render_fingerprint(**_FP_KW, **kw)
+    assert fingerprint_payload_bytes(payload) == json.dumps(payload, sort_keys=True,
+                                                            ensure_ascii=False).encode("utf-8")
+
+
+def test_fingerprint_CANNOT_see_a_content_type_on_a_saliency_focus():
+    """C-2 / D9, stated as a NEGATIVE so nobody mistakes the fingerprint golden for coverage of it.
+
+    `ct` only enters the payload when `geom` is true, and geom is FALSE for a 2-tuple focus. So if a
+    refactor made the saliency branch 'helpfully' return a content_type, EVERY saliency clip's
+    fingerprint would be UNCHANGED and this family of tests would stay green. The only guards that can
+    see it are the Layer-1 tuple vector (test_framing_outcomes) and the resolver's own assertion."""
+    base = _render_fingerprint(**_FP_KW, focus=_SAL2, track=None, content_type=None)
+    for ct in ("music", "silent", "no-people"):
+        assert _render_fingerprint(**_FP_KW, focus=_SAL2, track=None, content_type=ct) == base
+    # ... whereas on a 4-tuple focus (geom True) the content_type DOES change the bytes:
+    assert _render_fingerprint(**_FP_KW, focus=_FOCUS4, content_type="music") \
+        != _render_fingerprint(**_FP_KW, focus=_FOCUS4, content_type=None)
+    assert _render_fingerprint_payload(**_FP_KW, focus=_FOCUS4, content_type="music")["geom"] == _REFRAME_GEOM_V
+
+
+def _ass_corpus(tmp_path, monkeypatch, *, hook=None, transcript=None, burn="1", batch_burn=None):
+    monkeypatch.setenv("FANOPS_BURN_SUBS", burn)
+    monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    bid = None
+    if batch_burn is not None:
+        b = Batch(id="bat_1", name="b", burn_subs=batch_burn); led.add_batch(b); bid = b.id
+    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "s.mp4"), width=1920, height=1080,
+                          duration=120.0, transcript=transcript or [], language="en", batch_id=bid))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="t", start=10.0, end=28.0,
+                          reason="r", state=MomentState.decided, hook=hook))
+    return led, cfg
+
+
+def test_build_ass_text_is_pure_and_writes_nothing(tmp_path, monkeypatch):
+    """The seam exists precisely so payload_new's `ass` can be derived WITHOUT the write that
+    _subtitles_vf performs (overlay.write_ass). A second implementation would be free to drift."""
+    led, cfg = _ass_corpus(tmp_path, monkeypatch, hook="wait for it")
+    monkeypatch.setattr(overlay, "write_ass", lambda *a, **k: pytest.fail("_build_ass_text must not write"))
+    text, hbf = _build_ass_text(led, cfg, "mom_1", "clip_1", Fmt.r9x16, clip_start=10.0, clip_end=28.0)
+    assert text and "wait for it" in text and hbf is False
+    assert not (cfg.clips / "clip_1.ass").exists()
+
+
+@pytest.mark.parametrize("aspect", [Fmt.r9x16, Fmt.r1x1, Fmt.r16x9])
+def test_build_ass_text_golden_per_aspect(tmp_path, monkeypatch, aspect):
+    led, cfg = _ass_corpus(tmp_path, monkeypatch, hook="the drop hits here")
+    text, _ = _build_ass_text(led, cfg, "mom_1", "c", aspect, clip_start=10.0, clip_end=28.0)
+    tw, th = {"9:16": (1080, 1920), "1:1": (1080, 1080), "16:9": (1920, 1080)}[aspect.value]
+    assert f"PlayResX: {tw}" in text and f"PlayResY: {th}" in text
+
+
+def test_build_ass_text_hook_only_transcript_only_and_both(tmp_path, monkeypatch):
+    seg = [talk_seg("hello there", start=11.0, end=13.0)]   # trusted_segments needs the full quality metadata
+    hook_only, _ = _build_ass_text(*_ass_corpus(tmp_path / "a", monkeypatch, hook="H", burn="0"),
+                                   "mom_1", "c", Fmt.r9x16, clip_start=10.0, clip_end=28.0)
+    tx_only, _ = _build_ass_text(*_ass_corpus(tmp_path / "b", monkeypatch, transcript=seg),
+                                 "mom_1", "c", Fmt.r9x16, clip_start=10.0, clip_end=28.0)
+    both, _ = _build_ass_text(*_ass_corpus(tmp_path / "c", monkeypatch, hook="H", transcript=seg),
+                              "mom_1", "c", Fmt.r9x16, clip_start=10.0, clip_end=28.0)
+    assert hook_only and "H" in hook_only
+    assert tx_only and "hello there" in tx_only and "H" not in tx_only.split("Dialogue")[-1]
+    assert both and "H" in both and "hello there" in both
+
+
+def test_build_ass_text_none_when_nothing_wanted_and_is_NOT_a_failure(tmp_path, monkeypatch):
+    """The (None, False) that leaves a stale {cid}.ass on disk — D6, the trap the dry-run must survive."""
+    led, cfg = _ass_corpus(tmp_path, monkeypatch, hook=None, burn="0")
+    text, hbf = _build_ass_text(led, cfg, "mom_1", "c", Fmt.r9x16, clip_start=10.0, clip_end=28.0)
+    assert text is None and hbf is False
+
+
+def test_build_ass_text_flags_a_wanted_but_unburnable_hook(tmp_path, monkeypatch):
+    led, cfg = _ass_corpus(tmp_path, monkeypatch, hook="H")
+    monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: False)
+    text, hbf = _build_ass_text(led, cfg, "mom_1", "c", Fmt.r9x16, clip_start=10.0, clip_end=28.0)
+    assert text is None and hbf is True            # WANTED but unburnable -> the F9 flag, unchanged
+
+
+def test_build_ass_text_batch_burn_subs_override_still_wins(tmp_path, monkeypatch):
+    seg = [talk_seg("lyrics", start=11.0, end=13.0)]
+    led, cfg = _ass_corpus(tmp_path, monkeypatch, transcript=seg, burn="1", batch_burn=False)
+    text, hbf = _build_ass_text(led, cfg, "mom_1", "c", Fmt.r9x16, clip_start=10.0, clip_end=28.0)
+    assert text is None and hbf is False           # the music batch opted OUT, and cfg.burn_subs=1 loses
+
+
+def test_a_stale_ass_on_disk_does_not_affect_the_newly_derived_text(tmp_path, monkeypatch):
+    led, cfg = _ass_corpus(tmp_path, monkeypatch, hook="new hook")
+    cfg.clips.mkdir(parents=True, exist_ok=True)
+    (cfg.clips / "c.ass").write_text("[Script Info]\nOLD STALE HOOK\n")
+    text, _ = _build_ass_text(led, cfg, "mom_1", "c", Fmt.r9x16, clip_start=10.0, clip_end=28.0)
+    assert "new hook" in text and "OLD STALE HOOK" not in text

@@ -19,6 +19,7 @@ import subprocess
 from pathlib import Path
 
 from fanops.config import Config
+from fanops.framing_outcomes import FramingEventType as _FE, record as _rec
 
 _KF_TIMEOUT = 30.0   # one bounded ffmpeg per frame; a hung extract is reaped, never wedges the pass
 
@@ -80,7 +81,7 @@ def _existing_cached_frames(cache_dir: Path) -> list[str]:
 def extract_frames_grid(video_path: str, start: float, end: float, *, fps: float,
                         out_dir: str | Path, width: int = 960, timeout: float = _GRID_TIMEOUT,
                         source_id: str | None = None,
-                        cfg: Config | None = None) -> list[str]:
+                        cfg: Config | None = None, _trace=None) -> list[str]:
     """SINGLE-PASS frame sampler: ONE ffmpeg `-vf fps=N,scale=W:-2` pass writing numbered jpgs across the
     whole [start,end) window, vs extract_keyframes' one -ss spawn PER frame. This is what makes fine-grained
     (sub-second) face/speaker detection affordable — fps=4 over a 20s window is 1 ffmpeg call (~80 frames),
@@ -96,8 +97,16 @@ def extract_frames_grid(video_path: str, start: float, end: float, *, fps: float
     casting), the function falls back to the legacy out_dir+stamp behaviour byte-for-byte.
 
     The cfg= kwarg is for the cache-path resolution (cfg.agent_io); when omitted but source_id is
-    present, a Config() with default root is used."""
+    present, a Config() with default root is used. PASS IT EXPLICITLY from any caller that must not
+    write to the production root: a default Config() resolves FANOPS_ROOT (or cwd), so an omitted cfg=
+    silently lands the grid jpgs, the `.complete` marker and the stage_lock in the LIVE tree.
+
+    `_trace` (internal, framing_outcomes.FramingTrace): when threaded, every degraded return records a
+    CONCRETE event first, so a caller can tell an absent ffmpeg from a failed encode from a genuinely
+    empty glob — today all three collapse to one `[]`. Byte-identical when `_trace is None` (the
+    production path): `record()` is a single `is None` test."""
     if not (end > start):
+        _rec(_trace, _FE.INVALID_WINDOW, window_s=round(end - start, 3))
         return []
 
     # M2 cache path — opt-in. The non-source_id branch is byte-identical to pre-M2 (back-compat).
@@ -123,7 +132,7 @@ def extract_frames_grid(video_path: str, start: float, end: float, *, fps: float
             if cached:
                 return cached
             written = _run_grid_extract(video_path, start, end, fps=fps, out_dir=cache_dir,
-                                        width=width, timeout=timeout)
+                                        width=width, timeout=timeout, _trace=_trace)
             if written:
                 try:
                     from fanops.artifacts import stamp_stage
@@ -134,7 +143,7 @@ def extract_frames_grid(video_path: str, start: float, end: float, *, fps: float
 
     # Legacy path — no cache, no lock; byte-identical to pre-M2 for callers without a source_id.
     return _run_grid_extract(video_path, start, end, fps=fps, out_dir=Path(out_dir), width=width,
-                             timeout=timeout)
+                             timeout=timeout, _trace=_trace)
 
 
 def _wipe_partial_grid(out_dir: Path, stamp: int) -> None:
@@ -147,9 +156,18 @@ def _wipe_partial_grid(out_dir: Path, stamp: int) -> None:
 
 
 def _run_grid_extract(video_path: str, start: float, end: float, *, fps: float, out_dir: Path,
-                      width: int, timeout: float) -> list[str]:
+                      width: int, timeout: float, _trace=None) -> list[str]:
     """Run the one bounded ffmpeg grid pass + return the sorted jpgs. Shared between the cached
-    and legacy paths; fail-open exactly like the pre-M2 body. NEVER raises."""
+    and legacy paths; fail-open exactly like the pre-M2 body.
+
+    NOT "never raises", despite what this docstring said before: `out_dir.mkdir` below sits OUTSIDE
+    the try, so an OSError from it propagates. That is left EXACTLY as it is — the caller
+    (framing.detect_window / _compute_track / motion_saliency) inherits it, and framing._resolve is
+    where it is now recorded and re-raised. Changing it here would change production behaviour.
+
+    `_trace` (internal): every degraded `[]` return records a CONCRETE event first, so an absent
+    ffmpeg (FFMPEG_UNAVAILABLE), a failed encode (FRAME_EXTRACTION_FAILED) and a clean run that wrote
+    nothing (NO_FRAMES) stop being the same `[]`. Byte-identical when `_trace is None`."""
     out_dir.mkdir(parents=True, exist_ok=True)
     stamp = int(round(start * 100))                       # window-keyed prefix so concurrent windows don't collide
     pattern = out_dir / f"grid_{stamp}_%05d.jpg"
@@ -157,13 +175,24 @@ def _run_grid_extract(video_path: str, start: float, end: float, *, fps: float, 
         r = subprocess.run(["ffmpeg", "-y", "-ss", f"{start:.3f}", "-i", video_path,
                             "-t", f"{end - start:.3f}", "-vf", f"fps={fps},scale={width}:-2", str(pattern)],
                            check=False, capture_output=True, text=True, timeout=timeout)
-    except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+    except FileNotFoundError:                            # ffmpeg ABSENT from PATH — never even spawned
         _wipe_partial_grid(out_dir, stamp)
+        _rec(_trace, _FE.FFMPEG_UNAVAILABLE)
+        return []                                        # ffmpeg unusable -> degrade
+    except (OSError, subprocess.TimeoutExpired) as exc:  # spawned and died, or hung and was reaped
+        _wipe_partial_grid(out_dir, stamp)
+        _rec(_trace, _FE.FRAME_EXTRACTION_FAILED, exc_type=type(exc).__name__)
         return []                                        # ffmpeg unusable -> degrade
     if r.returncode != 0:
         _wipe_partial_grid(out_dir, stamp)
+        _rec(_trace, _FE.FRAME_EXTRACTION_FAILED, rc=r.returncode)
         return []                                        # encode failed -> degrade (no partial grid)
     written = [str(p) for p in sorted(out_dir.glob(f"grid_{stamp}_*.jpg"))]
+    if not written:
+        # rc==0 AND the glob is empty: ffmpeg ran clean and wrote nothing (window past EOF, no
+        # decodable video stream). Today this returns the same bare `[]` as an ABSENT ffmpeg — the
+        # third erasure. It is a REAL outcome and it gets its own event.
+        _rec(_trace, _FE.NO_FRAMES, fps=fps, window_s=round(end - start, 3))
     if written:
         try:
             (out_dir / ".complete").write_text("1")
