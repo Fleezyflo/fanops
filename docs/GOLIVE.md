@@ -18,7 +18,7 @@ key, or service.
 
 ```bash
 python3.12 -m venv .venv && source .venv/bin/activate
-pip install -e '.[dev,transcribe,studio]'      # transcribe = whisper; studio = the web cockpit
+pip install -e '.[dev,transcribe,studio,framing]'  # transcribe = whisper; studio = the web cockpit; framing = OpenCV subject-aware reframe (REQUIRED: smart framing is ON by default and refuses without it)
 brew install ffmpeg                             # macOS; ffmpeg >= 6 (ffprobe ships with it)
 fanops doctor                                   # read-only health screen — fix anything it flags
 ```
