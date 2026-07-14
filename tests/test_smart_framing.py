@@ -825,6 +825,56 @@ def test_framing_construction_and_extraction_counts_reported(tmp_path, monkeypat
     print("[framing-counts] init scope = PER-RESOLUTION (fresh _FramingRuntime each _resolve_framing): "
           f"create=1 every resolution (never 2); warm sidecar cuts extraction {cold['grid']}->{warm['grid']}")
 
+# (13) OFF CONTRACT: the toggle is evaluated BEFORE the runtime build, so the retained OFF path never
+# requires OpenCV. If _resolve_framing ever built the runtime first, OFF would start demanding the extra.
+def test_resolve_off_never_constructs_runtime(tmp_path, monkeypatch):
+    from fanops.clip import _resolve_framing
+    monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
+    def _boom_rt(cfg): raise AssertionError("framing runtime CONSTRUCTED while smart_framing is OFF")
+    def _boom_cv2(): raise AssertionError("cv2 consulted while smart_framing is OFF")
+    monkeypatch.setattr(framing, "_framing_runtime_or_raise", _boom_rt)
+    monkeypatch.setattr(framing, "_cv2", _boom_cv2)
+    cfg = Config(root=tmp_path); src = _talk_src()
+    assert _resolve_framing(cfg, src, 0.0, 10.0) == (None, None, None)   # centered; no runtime, no cv2
+
+# (14) OBJECT LIFETIME / CONCURRENCY: the runtime is created INSIDE each _resolve_framing and is never
+# stored in module, config, source, or any shared cache — so a YuNet detector (which carries mutable
+# setInputSize state) can never be shared across concurrent resolutions. Asserted BOTH sequentially and
+# across two real threads.
+def test_framing_runtime_is_per_invocation_never_shared(tmp_path, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from fanops.clip import _resolve_framing
+    real_rt = framing._framing_runtime_or_raise
+    seen = []
+    lock = __import__("threading").Lock()
+    monkeypatch.setattr(framing, "_cv2", lambda: _fake_cv2_with_create(lambda *a, **k: object()))
+    monkeypatch.setattr(framing, "_detector", lambda cv2: object())      # a DISTINCT detector object per build
+    def _spy(cfg):
+        rt = real_rt(cfg)
+        with lock: seen.append(rt)
+        return rt
+    monkeypatch.setattr(framing, "_framing_runtime_or_raise", _spy)
+    monkeypatch.setattr(framing, "detect_window", lambda *a, **k: None)  # never touch the fake detector
+    monkeypatch.setattr(framing, "classify_window", lambda *a, **k: framing.CT_NOPEOPLE)
+    monkeypatch.setattr(framing, "motion_saliency", lambda *a, **k: None)
+    cfg = Config(root=tmp_path); src = _talk_src()
+
+    _resolve_framing(cfg, src, 0.0, 5.0)                                  # sequential x2
+    _resolve_framing(cfg, src, 0.0, 5.0)
+    with ThreadPoolExecutor(max_workers=2) as ex:                         # concurrent x2
+        list(ex.map(lambda _: _resolve_framing(cfg, src, 0.0, 5.0), range(2)))
+
+    assert len(seen) == 4
+    assert len({id(rt) for rt in seen}) == 4, "each resolution must build its OWN runtime (none cached/shared)"
+    assert len({id(rt.detector) for rt in seen}) == 4, "each resolution must own its detector (YuNet holds mutable state)"
+    # nothing stashed a runtime in module state, on the Config, or on the Source
+    assert not [k for k, v in vars(framing).items() if isinstance(v, framing._FramingRuntime)], \
+        "no module-level _FramingRuntime may be retained"
+    assert not [a for a in dir(cfg) if isinstance(getattr(cfg, a, None), framing._FramingRuntime)], \
+        "the runtime must never be stored on Config"
+    assert not [a for a in dir(src) if isinstance(getattr(src, a, None), framing._FramingRuntime)], \
+        "the runtime must never be stored on the Source"
+
 # (12) no suite-wide or autouse require_cv2 / runtime bypass exists (guards the 6dca52c regression class)
 def test_no_autouse_framing_guard_bypass():
     conf = Path(__file__).with_name("conftest.py").read_text(encoding="utf-8")
