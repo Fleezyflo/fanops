@@ -837,10 +837,13 @@ def test_resolve_off_never_constructs_runtime(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path); src = _talk_src()
     assert _resolve_framing(cfg, src, 0.0, 10.0) == (None, None, None)   # centered; no runtime, no cv2
 
-# (14) OBJECT LIFETIME / CONCURRENCY: the runtime is created INSIDE each _resolve_framing and is never
-# stored in module, config, source, or any shared cache — so a YuNet detector (which carries mutable
-# setInputSize state) can never be shared across concurrent resolutions. Asserted BOTH sequentially and
-# across two real threads.
+# (14) OBJECT LIFETIME / CONCURRENCY. What THIS TEST proves: PER-INVOCATION ALLOCATION on the path it
+# exercises — 2 sequential + 2 concurrent resolutions yield 4 distinct _FramingRuntime objects and 4 distinct
+# detector objects, and no runtime is retained in module/Config/Source state at the end. It does NOT prove that
+# no OTHER code path could retain one; that rests on code inspection (one construction site framing.py:100; the
+# only callers are clip._resolve_framing (local binding) and require_cv2 (builds+discards); consumers only READ
+# _rt.cv2/_rt.detector; no global/module cache). See docs/design/cv2-decision-record-v4.md §4b. Together they
+# are why a YuNet detector (mutable setInputSize state) is never shared across concurrent resolutions.
 def test_framing_runtime_is_per_invocation_never_shared(tmp_path, monkeypatch):
     from concurrent.futures import ThreadPoolExecutor
     from fanops.clip import _resolve_framing

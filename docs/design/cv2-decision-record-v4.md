@@ -83,15 +83,26 @@ run:** with the ordering deliberately inverted (runtime built before the toggle 
 "framing runtime CONSTRUCTED while smart_framing is OFF" — so it is a real guard, not a tautology. The retained
 OFF path therefore does not require OpenCV.
 
-### 4b. Object lifetime / concurrency — the runtime never crosses concurrent work
+### 4b. Object lifetime / concurrency — evidence is TEST **plus** CODE INSPECTION
 
-The runtime is created inside each `_resolve_framing` invocation and is never stored in module, config, source,
-or any shared cache (`framing.py`: constructed at the `return _FramingRuntime(...)` and held only in the caller's
-local `rt`; no `global`, no module cache).
-`test_framing_runtime_is_per_invocation_never_shared` asserts, over 2 sequential + 2 concurrent
-(`ThreadPoolExecutor`) resolutions: **4 distinct `_FramingRuntime` objects and 4 distinct detector objects**, and
-that no `_FramingRuntime` is retained in `vars(framing)`, on the `Config`, or on the `Source`. This is why YuNet's
-mutable `setInputSize` state is safe: no detector is ever shared across concurrent resolutions.
+The two halves of this claim rest on different evidence, and are stated separately.
+
+**What the test proves.** `test_framing_runtime_is_per_invocation_never_shared` drives 2 sequential + 2
+concurrent (`ThreadPoolExecutor`) resolutions and asserts **4 distinct `_FramingRuntime` objects and 4 distinct
+detector objects**, plus that no `_FramingRuntime` is retained in `vars(framing)`, on the `Config`, or on the
+`Source` at the end of the run. That establishes **per-invocation allocation on the path it exercises**. It does
+NOT mathematically prove that no other code path could retain a runtime.
+
+**What code inspection adds** (the basis for the stronger claim):
+- `_FramingRuntime` has exactly **one** construction site — `framing.py:100`, `return _FramingRuntime(cv2, detector)`.
+- `_framing_runtime_or_raise` has exactly **two** callers: `clip.py:660` (binds the result to the local `rt` and
+  threads it as the internal `_rt=` kwarg) and `framing.py:107` (`require_cv2`, which builds and **discards**).
+- The four consumers only **read** `_rt.cv2` / `_rt.detector` (`framing.py:195`, `:464`, `:573`); none stores them.
+- There is no `global`, no module-level cache, no `lru_cache`/`@cache`, and no assignment of a runtime or detector
+  onto `Config`, `Source`, or any sidecar. (Sidecars persist detection **results** as JSON — never the detector.)
+
+**Together**, the test and the inspection support the conclusion that no detector is shared across concurrent
+resolutions, which is what makes YuNet's mutable `setInputSize` state safe here.
 
 ## 5. Actual CI ffmpeg probe (`scripts/ci_env_probe.py`, unit job — MEASURED, not inferred)
 
@@ -192,8 +203,9 @@ defect in this candidate).
 Every acceptance criterion is met and CI-verified (run 29328162939 + the follow-up run for the two added tests):
 a broken prerequisite refuses loudly at every render entry point and can never become centered output; a genuine
 detection miss still centers; the detector is constructed exactly once per resolution; the OFF path builds no
-runtime and requires no OpenCV; the runtime never crosses concurrent work; no suite-wide bypass exists; the base
-install refuses; the unit lane's ffmpeg-absent/cv2-present contract is measured, not assumed.
+runtime and requires no OpenCV; no runtime is shared across concurrent resolutions (per-invocation allocation is
+TESTED, and the no-other-path-retains-one claim rests on code inspection — see §4b); no suite-wide bypass exists;
+the base install refuses; the unit lane's ffmpeg-absent/cv2-present contract is measured, not assumed.
 
 **Open product decisions (out of scope here):** the off-switch policy (retain / deprecate / remove — F3) and
 cv2-as-base-dependency vs the optional extra (F4).
