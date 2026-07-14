@@ -267,8 +267,18 @@ def _publish_one(cfg: Config, post_id: str, backend: str, *, account_id: str | N
             return None                                # lost the race / not eligible — no-op (F11)
         if due_cutoff is not None and not is_scheduled_due(post, due_cutoff):   # M08: re-check dueness under lock
             return None
-        if is_real_submission_id(post.submission_id):  # XC-7: re-publishing a post that already has a real id MAY
-            get_logger(cfg)("publish", post_id, "republish_with_real_id", sub=post.submission_id)   # double-post (repost-freely OK, log it)
+        # RC-1 (S03): refuse the claim HERE for a post that ALREADY carries a real submission_id — it has
+        # been POSTed, and re-POSTing the SAME post id is the double-POST we forbid (MOL-115). Declining
+        # INSIDE the claim is a clean no-op: the post stays `queued` and visible. The bug this fixes was
+        # declining ONE PHASE LATER, in the network phase, AFTER the claim had already committed
+        # `submitting` — which stranded the post claimed-but-never-published with nothing to un-claim it.
+        # (Reposting CONTENT freely is `repost_post`, which mints a NEW id. PD-1: refuse + surface the
+        # skipped count, WITHOUT a republish action.)
+        if is_real_submission_id(post.submission_id):
+            get_logger(cfg)("publish", post_id, "skip_resubmit_existing_id", sub=post.submission_id)
+            if _tally is not None:
+                _tally["skip_resubmit_existing_id"] = _tally.get("skip_resubmit_existing_id", 0) + 1
+            return None                                # leave it `queued` — never claimed, never stranded
         post.state = PostState.submitting              # crash-safe intent, persisted on txn exit (F11/B4)
     # ---- NETWORK (no lock held) ----
     led = Ledger.load(cfg)
@@ -284,62 +294,70 @@ def _publish_one(cfg: Config, post_id: str, backend: str, *, account_id: str | N
         if _tally is not None:
             _tally["no_integration_id"] = _tally.get("no_integration_id", 0) + 1
         return None
-    if is_real_submission_id(post.submission_id):   # MOL-115 idempotency: never double-POST
+    if is_real_submission_id(post.submission_id):
+        # MOL-115 defense-in-depth: RC-1's guard now lives in the CLAIM, which refuses a real-id post and
+        # leaves it `queued`, so this branch is UNREACHABLE on the normal path. If a concurrent writer
+        # stamped a real id onto this `submitting` post between claim and here, refuse the POST and leave
+        # it `submitting`: the post WAS posted before (that is why it carries a real id), so reconcile
+        # POLLS that id and resolves it — exactly its job for a stranded `submitting`. Never double-POST,
+        # never re-drive it here, and never un-claim it back to `queued` (which would re-attempt a publish).
         get_logger(cfg)("publish", post_id, "skip_resubmit_existing_id", sub=post.submission_id)
-    else:
-        poster = get_poster(cfg, backend)              # per-account backend (slice 2), default = global
-        delay = 0.5
-        for attempt in range(_PUBLISH_TRANSIENT_MAX):
-            try:
-                _ensure_media(led, cfg, post, backend, account_id=post.account_id)
-                _publish_throttle_wait(cfg, backend, post.account_id)   # throttle only before the real POST
-                led = poster.publish(led, post.id)
-                post = led.posts[post_id]
-                if post.state is PostState.submitted:
-                    # R1/D2: gate the submitted -> published promotion on public_url. A backend that returns
-                    # 'submitted' without a permalink (a Postiz async-permalink case, a misbehaving stub, or
-                    # the pre-R1 DryRunPoster) MUST park in needs_reconcile — reconcile.py back-fills the URL
-                    # on the next pass. Without this gate, the post promotes to 'published' with public_url=''
-                    # and the Pydantic R1 invariant would refuse the ledger save below; fail-closed BEFORE
-                    # construction so the operator sees a clean needs_reconcile row, not a ValidationError 500.
-                    if (post.public_url or "").strip():
-                        post.state = PostState.published
-                        post.published_at = iso_z(datetime.now(timezone.utc))   # TRUE publish time (Posted-archive day-anchor)
-                        # Leg 3 (timing): bucket the true publish time into operator-local (hour, weekday) so
-                        # timing_bias can rank reach-by-hour without every reader re-doing tz math. Single tz
-                        # home (timeutil.publish_buckets); fail-safe (None,None) leaves the dim unranked.
-                        post.publish_hour, post.publish_dow = _publish_buckets(post.published_at, cfg)
-                    else:
+        if _tally is not None:
+            _tally["skip_resubmit_existing_id"] = _tally.get("skip_resubmit_existing_id", 0) + 1
+        return None
+    poster = get_poster(cfg, backend)              # per-account backend (slice 2), default = global
+    delay = 0.5
+    for attempt in range(_PUBLISH_TRANSIENT_MAX):
+        try:
+            _ensure_media(led, cfg, post, backend, account_id=post.account_id)
+            _publish_throttle_wait(cfg, backend, post.account_id)   # throttle only before the real POST
+            led = poster.publish(led, post.id)
+            post = led.posts[post_id]
+            if post.state is PostState.submitted:
+                # R1/D2: gate the submitted -> published promotion on public_url. A backend that returns
+                # 'submitted' without a permalink (a Postiz async-permalink case, a misbehaving stub, or
+                # the pre-R1 DryRunPoster) MUST park in needs_reconcile — reconcile.py back-fills the URL
+                # on the next pass. Without this gate, the post promotes to 'published' with public_url=''
+                # and the Pydantic R1 invariant would refuse the ledger save below; fail-closed BEFORE
+                # construction so the operator sees a clean needs_reconcile row, not a ValidationError 500.
+                if (post.public_url or "").strip():
+                    post.state = PostState.published
+                    post.published_at = iso_z(datetime.now(timezone.utc))   # TRUE publish time (Posted-archive day-anchor)
+                    # Leg 3 (timing): bucket the true publish time into operator-local (hour, weekday) so
+                    # timing_bias can rank reach-by-hour without every reader re-doing tz math. Single tz
+                    # home (timeutil.publish_buckets); fail-safe (None,None) leaves the dim unranked.
+                    post.publish_hour, post.publish_dow = _publish_buckets(post.published_at, cfg)
+                else:
+                    post.state = PostState.needs_reconcile
+                    post.error_reason = ("publish_missing_url: backend returned submitted without a permalink — "
+                                         "reconcile will back-fill on next pass (R1/D2 gate)")
+                    get_logger(cfg)("publish", post_id, "publish_missing_url",
+                                    backend=backend, submission_id=post.submission_id)
+            break                                        # poster decided (submitted/needs_reconcile/failed) or promoted
+        except Exception as exc:
+            if _is_fatal_auth_error(exc):
+                raise                                  # bad key/401: halt, don't burn the queue (H8)
+            if _is_transient_publish_error(exc) and attempt < _PUBLISH_TRANSIENT_MAX - 1:
+                _sleep(delay + random.uniform(0, delay * 0.5)); delay = min(delay * 2, 8.0)
+                continue
+            if post.state is not PostState.needs_reconcile:   # C1/#17: don't downgrade an ambiguous-live park
+                if _is_transient_publish_error(exc):
+                    red = redact(str(exc), cfg.postiz_api_key, cfg.zernio_api_key)
+                    if is_real_submission_id(post.submission_id):
                         post.state = PostState.needs_reconcile
-                        post.error_reason = ("publish_missing_url: backend returned submitted without a permalink — "
-                                             "reconcile will back-fill on next pass (R1/D2 gate)")
-                        get_logger(cfg)("publish", post_id, "publish_missing_url",
-                                        backend=backend, submission_id=post.submission_id)
-                break                                        # poster decided (submitted/needs_reconcile/failed) or promoted
-            except Exception as exc:
-                if _is_fatal_auth_error(exc):
-                    raise                                  # bad key/401: halt, don't burn the queue (H8)
-                if _is_transient_publish_error(exc) and attempt < _PUBLISH_TRANSIENT_MAX - 1:
-                    _sleep(delay + random.uniform(0, delay * 0.5)); delay = min(delay * 2, 8.0)
-                    continue
-                if post.state is not PostState.needs_reconcile:   # C1/#17: don't downgrade an ambiguous-live park
-                    if _is_transient_publish_error(exc):
-                        red = redact(str(exc), cfg.postiz_api_key, cfg.zernio_api_key)
-                        if is_real_submission_id(post.submission_id):
-                            post.state = PostState.needs_reconcile
-                            post.error_reason = "publish transient error (retries exhausted): " + red
-                        else:
-                            from fanops.studio.views_common import transient_daemon_retry_count
-                            n = transient_daemon_retry_count(post.error_reason)
-                            post.state = PostState.failed
-                            msg = "publish failed: " + red
-                            post.error_reason = (f"transient_daemon_retry={n}/{_DAEMON_TRANSIENT_MAX}|{msg}"
-                                                 if n else msg)
+                        post.error_reason = "publish transient error (retries exhausted): " + red
                     else:
+                        from fanops.studio.views_common import transient_daemon_retry_count
+                        n = transient_daemon_retry_count(post.error_reason)
                         post.state = PostState.failed
-                        post.error_reason = "publish failed: " + redact(str(exc), cfg.postiz_api_key,
-                                                                        cfg.zernio_api_key)   # scrub any leaked key
-                break
+                        msg = "publish failed: " + red
+                        post.error_reason = (f"transient_daemon_retry={n}/{_DAEMON_TRANSIENT_MAX}|{msg}"
+                                             if n else msg)
+                else:
+                    post.state = PostState.failed
+                    post.error_reason = "publish failed: " + redact(str(exc), cfg.postiz_api_key,
+                                                                    cfg.zernio_api_key)   # scrub any leaked key
+            break
     net = {f: getattr(post, f) for f in _NET_POST_FIELDS}
     clip = led.clips.get(post.parent_id)
     clip_media = clip.media_url if clip is not None else None   # carry the F44 upload cache forward
@@ -448,7 +466,7 @@ def publish_due(cfg: Config, *, now: str | None = None, account: str | None = No
         from fanops.postiz_lifecycle import ensure_up
         ensure_up(cfg)
     log = get_logger(cfg)
-    published = no_provider = no_integration_id = not_distributed = 0
+    published = no_provider = no_integration_id = not_distributed = skipped_existing_id = 0
     for post in due:
         provider = _post_provider(cfg, accounts, post)
         if provider is None:                           # live but the channel has no provider -> skip, leave queued
@@ -470,8 +488,10 @@ def publish_due(cfg: Config, *, now: str | None = None, account: str | None = No
         if _publish_one(cfg, post.id, provider, account_id=acct_id, _tally=tally, due_cutoff=cutoff) == PostState.published.value:
             published += 1
         no_integration_id += tally.get("no_integration_id", 0)
+        skipped_existing_id += tally.get("skip_resubmit_existing_id", 0)   # RC-1/S03: refused-at-claim, left queued
     return {"due": len(due), "published": published, "no_provider": no_provider,
-            "no_integration_id": no_integration_id, "not_distributed": not_distributed}
+            "no_integration_id": no_integration_id, "not_distributed": not_distributed,
+            "skipped_existing_id": skipped_existing_id}
 
 
 def publish_post(cfg: Config, post_id: str) -> str | None:
