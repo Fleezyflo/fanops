@@ -740,6 +740,24 @@ def _moment_top_bias(m, cfg: Config) -> bool:
     if m is not None and m.framing == "center": return False
     return cfg.aware_reframe
 
+def _refuse_if_migrating(cfg: Config, clip_id: str) -> None:
+    """The reframe-migration guard on the SHARED render entry points.
+
+    While `fanops reframe --apply` holds `00_control/reframe.lock`, no other process may render: the
+    migration backs up, re-renders and atomically replaces `{cid}.mp4` + `{cid}.render.json`, and a daemon
+    or Studio render landing on the same clip mid-flight could overwrite a migrated clip with a centred one
+    (or be overwritten itself, leaving a backup that no longer matches anything).
+
+    It RAISES (MigrationLockHeld). It does not fail open and it does not degrade to a centred crop — both
+    would produce exactly the silent, blind-centred output this whole migration exists to eliminate.
+    Stopping the services is an operational gate; THIS is the invariant. Outside a migration the lockfile
+    does not exist, this is one `Path.exists()`, and every existing exception semantic is unchanged.
+
+    Imported lazily: `reframe_apply` imports this module, so a top-level import would be circular."""
+    from fanops.reframe_apply import assert_render_allowed
+    assert_render_allowed(cfg, clip_id)
+
+
 def render_moment(led: Ledger, cfg: Config, moment_id: str, *,
                   aspect: Fmt = Fmt.r9x16, cut_window: tuple[float, float] | None = None,
                   clip_id: str | None = None, born_state: ClipState = ClipState.rendered) -> tuple[Ledger, Clip]:
@@ -752,6 +770,7 @@ def render_moment(led: Ledger, cfg: Config, moment_id: str, *,
     m = led.moments[moment_id]
     src = led.sources[m.parent_id]
     cid = clip_id if is_stitch else child_id("clip", moment_id, aspect.value)  # content-addressed by aspect (bare)
+    _refuse_if_migrating(cfg, cid)                          # reframe migration in flight -> raise, never race it
     cfg.clips.mkdir(parents=True, exist_ok=True)
     dst = cfg.clips / f"{cid}.mp4"
     first_frame_kind = None
@@ -944,6 +963,10 @@ def render_account_cut(led: Ledger, cfg: Config, moment_id: str, *, aspect: Fmt,
     NO moment (the shared Clip owns the moment anchor — §4 of the per-account plan). Mirrors render_moment's
     window math (fit_window + snap + visual-start) so the per-account cut opens on the same strong frame the
     shared clip does. The hook .ass is 0-based (build_ass(clip_start=0) — the -ss output is 0-based)."""
+    # OUTSIDE the try, deliberately: the broad `except Exception -> (False, None)` fail-open below would
+    # otherwise SWALLOW the migration refusal and silently fall back to burn_hook_only over a clip the
+    # migration is mid-way through replacing. This guard is the one thing here that must not fail open.
+    _refuse_if_migrating(cfg, f"account_cut:{moment_id}")
     ass_path = None
     tmp = str(out_path) + ".part"
     try:
