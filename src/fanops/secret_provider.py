@@ -6,6 +6,7 @@ from __future__ import annotations
 import logging
 
 _log = logging.getLogger("fanops.secret_provider")
+_backend_warned = False   # broken-keyring breadcrumb fires ONCE per process (fail-open house norm)
 _SERVICE = "fanops"
 _SECRET_KEYS = frozenset({"POSTIZ_API_KEY", "ZERNIO_API_KEY", "META_GRAPH_TOKEN"})
 _PER_HANDLE_TOKEN_PREFIX = "META_GRAPH_TOKEN__"
@@ -46,9 +47,15 @@ def get_secret(env_key: str, *, quiet: bool = False) -> str | None:
         return None
     except Exception as exc:
         # keyring IS installed but the backend failed (no Secret Service, locked Keychain, etc.).
-        # This CAN mask a secret the operator wrote to keyring, so it is worth a breadcrumb.
-        if not quiet:
-            _log.warning("keyring read unavailable for %s (fail-open to env): %s", env_key, exc)
+        # This CAN mask a secret the operator wrote to keyring, so it is worth a breadcrumb — but
+        # get_secret runs on EVERY secret-property read, so warn ONCE per process, not per read (a
+        # per-read warning historically flooded studio.err with 64k identical lines). The backend
+        # being down is not key-specific, so one global signal suffices.
+        global _backend_warned
+        if not quiet and not _backend_warned:
+            _backend_warned = True
+            _log.warning("keyring read unavailable for %s (fail-open to env; further keyring errors "
+                         "this process are suppressed): %s", env_key, exc)
         return None
     if raw is None:
         return None

@@ -37,6 +37,32 @@ _MIN_INTERVAL = 60                                    # launchd ThrottleInterval
 def plist_path() -> Path:
     return Path.home() / "Library/LaunchAgents" / f"{LABEL}.plist"
 
+def installed_root() -> Path | None:
+    """The root the installed main-daemon plist is pinned to (its WorkingDirectory), or None when no
+    plist is installed / it is unreadable. Read-only; mirrors install's plist read (line ~251)."""
+    p = plist_path()
+    if not p.exists():
+        return None
+    try:
+        wd = plistlib.loads(p.read_bytes()).get("WorkingDirectory")
+    except Exception as exc:                             # unreadable/corrupt plist -> no divergence claim (fail-open)
+        _log.warning("installed_root: could not read %s (%s); skipping divergence check", p, exc)
+        return None
+    return Path(wd).resolve() if wd else None
+
+def root_divergence(cfg: Config) -> Path | None:
+    """The installed daemon's pinned root when it DIFFERS from cfg.root AND cfg fell back to cwd
+    (root_source == 'cwd') — i.e. this process would touch a different ledger than the daemon and the
+    operator did not ask for that. None (no warning) when aligned, when FANOPS_ROOT/arg was explicit,
+    or when no daemon is installed. FANOPS_ROOT is shell-only BY DESIGN (docs/CONFIG.md), so an
+    unexported shell silently roots at cwd — this is the ONE surface that catches the split."""
+    if getattr(cfg, "root_source", None) != "cwd":       # deliberate FANOPS_ROOT/arg -> never nag
+        return None
+    pinned = installed_root()
+    if pinned is None or pinned == cfg.root.resolve():
+        return None
+    return pinned
+
 def _fanops_bin() -> str:
     # The `fanops` next to the running interpreter — so the daemon uses the SAME venv that installed it,
     # never a different one earlier on PATH.
@@ -449,7 +475,8 @@ def status(cfg: Config, *, interval: int = 600) -> dict:
         else:
             verdict = f"loaded but stale (last heartbeat {int(age)}s ago)"
     return {"installed": installed, "loaded": loaded, "pid": pid, "last_exit": last_exit,
-            "heartbeat_age_s": age, "verdict": verdict, "exec_fail": exec_fail, "run_line": run_line}
+            "heartbeat_age_s": age, "verdict": verdict, "exec_fail": exec_fail, "run_line": run_line,
+            "root": str(cfg.root), "daemon_root": str(installed_root() or "")}
 
 def stop(cfg: Config, *, remove: bool = False) -> dict:
     """Unload the agent, then CONFIRM the real outcome (W10) instead of hardcoding success: the agent is

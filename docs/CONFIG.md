@@ -12,6 +12,8 @@ which writes both `.env` and `os.environ`), **52 `.env`/shell-ONLY** (no UI). `S
 |---|---|---|---|
 | `FANOPS_ROOT` | cwd | MohFlow-FanOps tree root; locates `.env`. **Shell/export only — never a `.env` key** (circular). | shell |
 
+Because `FANOPS_ROOT` is shell-only, an interactive shell that never exported it silently roots at `cwd` — a different ledger than the daemon (pinned via its plist `WorkingDirectory`). Any `fanops` CLI command now prints a one-line `WARN:` to stderr when it falls back to `cwd` while an installed daemon is pinned elsewhere (`daemon.root_divergence`); `fanops daemon status` also shows both roots. Export `FANOPS_ROOT` (or `cd` to the workspace) to silence it.
+
 Hand-editing `.env` while a long-lived process runs requires restart; Studio go-live/autopilot dual-writes (`os.environ` + `.env`) remain live without restart.
 
 ## Publish / live (the dryrun↔live boundary + credentials)

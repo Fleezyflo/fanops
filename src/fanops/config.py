@@ -143,12 +143,14 @@ def resolve_llm_transport(raw: str | None = None) -> str:
 class Config:
     def __init__(self, root: Path | str | None = None):
         env_root = os.environ.get("FANOPS_ROOT")
+        # root_source records WHERE the root came from (additive metadata; the root PICKED is unchanged) so
+        # daemon.root_divergence can distinguish a deliberate FANOPS_ROOT/arg from a silent cwd fallback.
         if root:
-            self.root = Path(root)
+            self.root = Path(root); self.root_source = "arg"
         elif env_root:
-            self.root = Path(env_root).expanduser().resolve()
+            self.root = Path(env_root).expanduser().resolve(); self.root_source = "env"
         else:
-            self.root = Path.cwd()
+            self.root = Path.cwd(); self.root_source = "cwd"
         self.base = self.root / "MohFlow-FanOps"
         for attr, name in _STAGE.items():
             setattr(self, attr, self.base / name)

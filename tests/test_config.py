@@ -605,3 +605,14 @@ def test_config_explicit_root_beats_fanops_root(tmp_path, monkeypatch):
     explicit.mkdir()
     monkeypatch.setenv("FANOPS_ROOT", str(other))
     assert Config(root=explicit).root == explicit
+
+
+def test_config_root_source_tracks_origin(tmp_path, monkeypatch):
+    # root_source is additive metadata used by daemon.root_divergence to tell a deliberate root from a
+    # silent cwd fallback; the root PICKED is unchanged (asserted by the sibling precedence tests).
+    monkeypatch.delenv("FANOPS_ROOT", raising=False)
+    monkeypatch.chdir(tmp_path)
+    assert Config().root_source == "cwd"
+    monkeypatch.setenv("FANOPS_ROOT", str(tmp_path))
+    assert Config().root_source == "env"
+    assert Config(root=tmp_path).root_source == "arg"      # explicit arg wins even with FANOPS_ROOT set
