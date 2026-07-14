@@ -1126,7 +1126,7 @@ def test_build_ass_text_golden_per_aspect(tmp_path, monkeypatch, aspect):
 
 
 def test_build_ass_text_hook_only_transcript_only_and_both(tmp_path, monkeypatch):
-    seg = [{"start": 11.0, "end": 13.0, "text": "hello there", "no_speech_prob": 0.01, "avg_logprob": -0.2}]
+    seg = [talk_seg("hello there", start=11.0, end=13.0)]   # trusted_segments needs the full quality metadata
     hook_only, _ = _build_ass_text(*_ass_corpus(tmp_path / "a", monkeypatch, hook="H", burn="0"),
                                    "mom_1", "c", Fmt.r9x16, clip_start=10.0, clip_end=28.0)
     tx_only, _ = _build_ass_text(*_ass_corpus(tmp_path / "b", monkeypatch, transcript=seg),
@@ -1153,7 +1153,7 @@ def test_build_ass_text_flags_a_wanted_but_unburnable_hook(tmp_path, monkeypatch
 
 
 def test_build_ass_text_batch_burn_subs_override_still_wins(tmp_path, monkeypatch):
-    seg = [{"start": 11.0, "end": 13.0, "text": "lyrics", "no_speech_prob": 0.01, "avg_logprob": -0.2}]
+    seg = [talk_seg("lyrics", start=11.0, end=13.0)]
     led, cfg = _ass_corpus(tmp_path, monkeypatch, transcript=seg, burn="1", batch_burn=False)
     text, hbf = _build_ass_text(led, cfg, "mom_1", "c", Fmt.r9x16, clip_start=10.0, clip_end=28.0)
     assert text is None and hbf is False           # the music batch opted OUT, and cfg.burn_subs=1 loses

@@ -124,17 +124,26 @@ def test_the_runner_never_mutates_FANOPS_ROOT(tmp_path, monkeypatch):
 
 
 def test_analysis_phase_diff_is_EMPTY_nothing_lands_in_production(tmp_path, monkeypatch):
-    """The PROOF, not the mechanism: no sidecar, lockfile, stamp_stage manifest, keyframe jpg, vstart
-    sidecar, log or WAL may appear under the production root."""
+    """THE invariant, and the PROOF rather than the mechanism: across the ANALYSIS phase — where the
+    framing pass runs — no sidecar, lockfile, stamp_stage manifest, keyframe jpg, vstart sidecar or log
+    may appear under the production root."""
     paths, _cid = _corpus(tmp_path, monkeypatch)
     _stub_framing(monkeypatch, ct=framing.CT_SINGLE, focus=_FOCUS, events={"subject_focus": [_FE.FOCUS_PLACED]})
     before = reframe.scan_tree(paths.production_root)
     man = reframe.run_dry_run(paths, argv=["reframe", "--dry-run"])
     after = reframe.scan_tree(paths.production_root)
-    d = reframe.diff_tree(before, after)
-    assert d == {"added": [], "removed": [], "changed": []}, f"the dry-run MUTATED production: {d}"
-    assert man["analysis_phase_clean"] is True
+
     assert man["analysis_phase_diff"] == {"added": [], "removed": [], "changed": []}
+    assert man["analysis_phase_clean"] is True
+
+    # And across the WHOLE run, the ONLY thing production gained is SQLite's own WAL coordination — the
+    # unavoidable, disclosed, BOUNDED cost of reading a live WAL database consistently. Nothing else:
+    # no sidecar, no lockfile, no keyframe, no vstart, no log.
+    whole = reframe.diff_tree(before, after)
+    assert reframe._snapshot_diff_ok(whole, paths.production_cfg), f"the dry-run MUTATED production: {whole}"
+    lp = str(paths.production_cfg.ledger_path)
+    assert all(k in (lp + "-wal", lp + "-shm") for k in whole["added"]), whole["added"]
+    assert whole["removed"] == []
     assert list(paths.scratch_root.rglob("*")), "the scratch root should have received the writes"
 
 
