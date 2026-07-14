@@ -11,6 +11,7 @@ from __future__ import annotations
 import json, os
 from pathlib import Path
 from statistics import median
+from fanops.errors import ToolchainMissingError
 from fanops.transcribe import window_has_trusted_speech as _window_has_speech
 
 _SIDECAR_V = 5               # track-sidecar schema (v5: + min-shot-duration merge — no rapid cut-away-and-back)
@@ -46,6 +47,25 @@ def _detector(cv2):
         return cv2.FaceDetectorYN.create(str(mp), "", (320, 320), _SCORE_THRESH)
     except Exception:
         return None                                           # old cv2 without FaceDetectorYN, or any build error
+
+def require_cv2(cfg) -> None:
+    """HARD gate for the smart-framing render path: raise ToolchainMissingError when OpenCV (the [framing]
+    extra) is absent, or present-but-too-old to build the YuNet detector — so `fanops run` refuses LOUDLY
+    (cli.main -> one line + exit 2) instead of silently centre-cropping every clip while the operator believes
+    subject-tracking happened. Called ONLY when cfg.smart_framing is ON (clip._resolve_framing); the OFF path
+    and the hermetic unit stubs never reach it. Distinct from the fail-open _cv2()/_detector() seams, which
+    stay None-returning for defence-in-depth. NEVER degrades — it refuses. (No bare except here: it must
+    propagate; test_swallow_ratchet.py polices new silent handlers and this has none.)"""
+    cv2 = _cv2()
+    if cv2 is None:
+        raise ToolchainMissingError(
+            "smart framing is ON but OpenCV (cv2) is not installed — "
+            "run: pip install -e '.[framing]'  (or set FANOPS_SMART_FRAMING=0 to centre-crop)")
+    if _detector(cv2) is None:
+        raise ToolchainMissingError(
+            "smart framing is ON but the YuNet face detector could not be built "
+            "(OpenCV too old, or the vendored model is missing) — "
+            "reinstall the [framing] extra, or set FANOPS_SMART_FRAMING=0 to centre-crop")
 
 def _wkey(start: float, end: float) -> str:
     return f"{round(start, 2)}-{round(end, 2)}"

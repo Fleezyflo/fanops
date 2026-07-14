@@ -67,7 +67,12 @@ class ToolchainMissingError(Exception):
     catches it -> clean exit 2, never a raw traceback. Distinct from the ffmpeg/whisper-absent case
     DOWNSTREAM of ingest (render_moment/transcribe_source), which CAN record ClipState.error /
     SourceState.error and leave the unit retriable — those do NOT raise this. Skipping the drop
-    instead of raising would be WORSE (it silently drops a real video and never retries)."""
+    instead of raising would be WORSE (it silently drops a real video and never retries).
+    ALSO raised by framing.require_cv2 when smart_framing is ON but OpenCV (the [framing] extra) is
+    absent or too old to build the YuNet detector: the render path REFUSES rather than silently
+    centre-crop every clip while the operator believes subject-tracking happened. Same operator-facing
+    contract (one line: `pip install -e '.[framing]'`, exit 2). Gated on smart_framing, so the OFF
+    path and the hermetic unit job (cv2 absent by design) never trigger it."""
 
 
 class DownloadError(Exception):

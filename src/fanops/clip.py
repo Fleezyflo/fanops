@@ -648,9 +648,12 @@ def _resolve_framing(cfg: Config, src, cs: float, ce: float):
     then route — active-speaker TRACK only for real multi-speaker talk; subject-lock FOCUS (zoomed) for a
     single/music/silent subject; motion-SALIENCY (a no-zoom 2-tuple) for music/silent/no-people with no face;
     else centered (None,None,None). Gated entirely by cfg.smart_framing so OFF is byte-identical to today.
-    Every framing call is fail-open (None), so any miss degrades to the centered crop."""
+    When smart_framing is ON, cv2 (the [framing] extra) is REQUIRED — require_cv2 raises ToolchainMissingError
+    if it's absent/unbuildable, so the operator never silently ships blind-centred clips they believe were
+    subject-tracked. The per-strategy calls below stay fail-open (a detection MISS degrades to centered)."""
     if not cfg.smart_framing:
         return None, None, None
+    framing.require_cv2(cfg)          # smart framing ON but cv2 absent -> REFUSE (never a silent centre-crop)
     stats = framing.detect_window(cfg, src, start=cs, end=ce)
     ct = framing.classify_window(cfg, src, start=cs, end=ce, stats=stats)
     if ct == framing.CT_MULTI:
