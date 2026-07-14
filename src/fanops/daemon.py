@@ -45,8 +45,9 @@ def installed_root() -> Path | None:
         return None
     try:
         wd = plistlib.loads(p.read_bytes()).get("WorkingDirectory")
-    except Exception:
-        return None                                      # unreadable/corrupt plist -> no divergence claim (fail-open)
+    except Exception as exc:                             # unreadable/corrupt plist -> no divergence claim (fail-open)
+        _log.warning("installed_root: could not read %s (%s); skipping divergence check", p, exc)
+        return None
     return Path(wd).resolve() if wd else None
 
 def root_divergence(cfg: Config) -> Path | None:
