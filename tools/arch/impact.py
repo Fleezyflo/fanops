@@ -20,6 +20,7 @@ import tempfile
 from pathlib import Path
 
 from .common import DERIVED, REPO, SRC, load
+from .drift import stale_artifacts
 from .generate import generate
 
 NO_CHANGE = "NO_ARCHITECTURAL_CHANGE"
@@ -249,9 +250,32 @@ def report(base: str = "origin/main") -> dict:
                          f"shared by three slices — update the test in THIS PR, and only one open PR "
                          f"may move it (GB-6 / IR-4).")
 
+    # "derived/ moved but src/ did not" is a PROXY for "somebody hand-edited a generated file".
+    # It is an UNSOUND proxy, and it fires on two perfectly legitimate diffs:
+    #
+    #   * the artifacts are being ADDED for the first time (this system's own bootstrap PR — there
+    #     was nothing to edit), and
+    #   * a PR that merely REGENERATES artifacts an earlier PR left stale, which is exactly the
+    #     correction we want people to make.
+    #
+    # And the proxy is unnecessary, because the PROOF is already computed: `stale_artifacts()`
+    # regenerates from THIS tree's source and byte-compares. If it is clean, the committed
+    # artifacts provably equal what the generator produces — "hand-edited" is not a suspicion that
+    # survives that, it is simply false. Only when the byte-compare FAILS is the inference sound,
+    # and in that case say what is actually wrong rather than that something "could not be decided".
+    #
+    # Guessing where a proof is available is how a checker earns a reputation for crying wolf, and
+    # a checker nobody believes is a checker nobody reads.
     if touched_derived and not touched_src:
-        bump(UNKNOWN, "derived/ artifacts were edited without a corresponding source change. "
-                      "Generated files are never hand-edited (ARCH-006).")
+        stale = stale_artifacts()
+        if stale:
+            bump(UNKNOWN, "derived/ artifacts do NOT match regeneration from this tree's source — "
+                          "they were hand-edited or are stale (ARCH-006): "
+                          + ", ".join(sorted(d.artifact for d in stale)))
+        else:
+            bump(COMPATIBLE, "derived/ artifacts changed with no source change, and regeneration "
+                             "reproduces them byte-for-byte — a regeneration catching up, not a "
+                             "hand-edit.")
 
     rep["classification"] = worst
     if worst == NO_CHANGE and (touched_src or touched_canonical):
