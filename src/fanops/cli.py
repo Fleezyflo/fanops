@@ -1269,7 +1269,11 @@ def _dispatch(cfg: Config, args) -> int:
             print(f"  [{'ok  ' if d.ok else 'DOWN'}] {d.name}: {d.detail}")
         # debug EXPLICITLY off (stage-5 audit): a stray FLASK_DEBUG=1 in the operator's env would
         # otherwise enable the Werkzeug interactive debugger — arbitrary code exec on the cockpit.
-        app.run(host=args.host, port=args.port, debug=False)
+        # threaded=True: the cockpit streams large /media/ clips (HTTP 206). The Werkzeug dev server
+        # defaults to one-request-at-a-time, so a single in-flight video stream starves every other
+        # request (page loads hang → "Studio won't load"). Threading lets navigation proceed while a
+        # clip streams. localhost-only, low concurrency — the dev server is adequate; no WSGI server needed.
+        app.run(host=args.host, port=args.port, debug=False, threaded=True)
         return 0
     if args.cmd == "run":
         if (rc := _check_accounts(cfg)):  return rc
