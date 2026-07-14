@@ -11,6 +11,7 @@
 # below exist precisely so that this file cannot become that.
 from __future__ import annotations
 
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -122,6 +123,47 @@ def test_every_rule_is_reachable():
 
 
 # ── 3. the registries are governed ──────────────────────────────────────────────────────────
+_SIX = ("authoritative_source", "regeneration_command", "validation_mechanism",
+        "owner", "permitted_manual_edits", "conflict_resolution")
+_CLASSES = {"DERIVED_FROM_CODE", "DERIVED_FROM_CONTRACT", "DECLARED_AND_ENFORCED",
+            "GENERATED_FROM_SCHEMA", "HUMAN_DECISION", "UNKNOWN"}
+
+
+def test_field_authority_declares_all_six_attributes():
+    """Every governed artifact must say WHERE its truth lives, and by what right.
+
+    The Cycle 7 closure audit found `authoritative_source` absent from all ten entries, and no
+    regeneration path on the four DECLARED artifacts. Both were *inferable* — from the field class,
+    from `source_inputs` inside the derived artifacts — and "inferable" is precisely what this
+    system exists to stop accepting. A fact a machine cannot read is a fact that rots.
+
+    This also pins the classification vocabulary: an artifact whose fields use a class outside the
+    six is a field nobody has actually decided the authority of.
+    """
+    import json
+    arts = json.loads((REPO / ".reports/architecture/governance/field_authority.json")
+                      .read_text(encoding="utf-8"))["artifacts"]
+    assert arts, "the field-authority map governs NOTHING — it has no artifact entries"
+
+    for e in arts:
+        missing = [k for k in _SIX if not str(e.get(k, "")).strip()]
+        assert not missing, (
+            f"{e.get('artifact', '<unnamed>')} does not declare {missing}. Every governed artifact "
+            f"must state where its truth lives, how to regenerate it (or that it cannot be), how it "
+            f"is validated, who owns it, what may be hand-edited, and who wins on conflict.")
+
+        for field, cls in e["fields"].items():
+            # The class name may be wrapped in emphasis and followed by prose
+            # (`*** DECLARED_AND_ENFORCED — why ***`), so match the NAME anywhere in the value
+            # rather than assuming it is the first token. Splitting on whitespace and taking [0]
+            # yields "***" for that shape — a parser that reports "unclassified" for a field that
+            # is, in fact, classified. Same failure mode as IMPL-007's backtick.
+            assert any(re.search(rf"\b{c}\b", str(cls)) for c in _CLASSES), (
+                f"{e['artifact']} field {field!r} is classified {str(cls)[:60]!r}, which names none "
+                f"of the six authority classes {sorted(_CLASSES)}. An unclassified field has no "
+                f"owner and no conflict rule.")
+
+
 def test_registries_are_valid():
     errs = registries.validate()
     assert errs == [], "invalid exception/unknown registry entries:\n  " + "\n  ".join(errs)

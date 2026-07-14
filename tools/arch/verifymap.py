@@ -110,7 +110,25 @@ def render(reqs: list[Requirement], impact: dict) -> str:
         return ("## Required verification\n\nNone — this diff arms no high-risk change class.\n")
     L = ["## Required verification", "",
          f"This diff is classified **{impact['classification']}** and arms "
-         f"**{len(reqs)}** verification class(es). CI fails if a high-risk change ships without them.",
+         f"**{len(reqs)}** verification class(es).",
+         "",
+         # *** SAY WHAT IS TRUE, NOT WHAT SOUNDS RIGOROUS. ***
+         # This line used to read "CI fails if a high-risk change ships without them." IT DOES NOT.
+         # `verify` always exits 0; the only failing step in the impact job is `impact --strict`,
+         # which fails on BREAKING_CHANGE / UNKNOWN_IMPACT and knows nothing about tests. Deciding
+         # whether a given test DISCHARGES a verification class is a semantic judgement no static
+         # checker can make, so no such gate exists — and claiming one did was AR-03 ("a check whose
+         # name promises what its assertion does not deliver") committed by the system built to
+         # prevent it, in the one sentence an operator was most likely to trust.
+         "> ⚠️ **This is a requirement on the AUTHOR and the REVIEWER, not a CI gate.** CI cannot "
+         "decide whether a particular test discharges a verification class — that is a semantic "
+         "judgement. What CI *does* enforce is narrower and worth knowing exactly:",
+         ">",
+         "> * `impact --strict` fails the PR on `BREAKING_CHANGE` or `UNKNOWN_IMPACT`.",
+         "> * `IMPL-006` fails the PR if a verification the matrix already names **disappears**.",
+         ">",
+         "> Nothing fails a PR merely for *not adding* the tests below. Ship them anyway, or say in "
+         "review why the class does not apply.",
          ""]
     for r in reqs:
         L += [f"### `{r.verification}`  ← armed by `{r.trigger}`", "",
