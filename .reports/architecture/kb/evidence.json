@@ -1,0 +1,165 @@
+{
+ "$schema": "fanops-arch-kb/evidence/v2",
+ "cycle": 5,
+ "git_head": "fcffa73",
+ "generated": "2026-07-14",
+ "purpose": "The provenance ledger. For every class of architectural claim in this KB: how it was derived, what would falsify it, and how far it can be trusted.",
+ "evidence_classes": {
+  "AST": "produced by a whole-tree AST pass over all 127 modules of src/fanops. The STRONGEST class for any 'nothing does X' / 'exactly N do X' claim.",
+  "EXECUTED": "a controlled experiment was RUN against a temp root. The strongest class for any claim about LIBRARY BEHAVIOUR (pydantic, SQLite) or RACE OUTCOME.",
+  "SOURCE": "read directly from source at fcffa73, cited file:line.",
+  "LIVE_LEDGER": "read READ-ONLY (sqlite mode=ro) from the operator's real ledger.",
+  "INFERRED": "derived from other evidence; no direct observation.",
+  "UNKNOWN": "recorded in unknowns.json. Never presented as fact."
+ },
+ "the_authority_order_applied": "executable code > executed experiment > AST census > prior-cycle JSON > prior-cycle prose > code comments > documentation. *** Documentation was used as a LEAD, NEVER as proof. Where docs and code disagreed, code won and the disagreement is recorded as a finding. ***",
+ "cycle_5_derivations": [
+  {
+   "claim": "127 modules; 528 compile-time import edges; 323 in-function (lazy) edges; 6 typing-only edges.",
+   "evidence_class": "AST",
+   "method": "scratchpad/c5_deps.py \u2014 imports classified by SYNTACTIC POSITION (module level / inside a FunctionDef / under `if TYPE_CHECKING:` / inside try-except ImportError).",
+   "falsifiable_by": "any module-level fanops import the parser misclassified. Re-run the script.",
+   "confidence": "CERTAIN"
+  },
+  {
+   "claim": "EXACTLY ONE compile-time module cycle: {personas, persona_store, persona_research}.",
+   "evidence_class": "AST (Tarjan SCC over the module-level edge set)",
+   "falsifiable_by": "a second SCC of size > 1 in the compile-time graph.",
+   "confidence": "CERTAIN"
+  },
+  {
+   "claim": "The full graph (compile + lazy) contains a 45-module SCC; all 19 subsystems collapse into ONE SCC.",
+   "evidence_class": "AST (Tarjan)",
+   "confidence": "CERTAIN"
+  },
+  {
+   "claim": "*** 107 of 323 lazy edges point to an EQUAL-OR-HIGHER LEVEL \u2014 56 STRICTLY UPWARD (true layering inversions) + 51 LATERAL (same-level deferred imports). *** Legal only because the import is deferred to call time.",
+   "evidence_class": "AST",
+   "method": "level(SCC) = longest-path depth over the SCC-CONDENSATION of the compile-time graph (a DAG by construction); every module inherits its SCC's level. An edge a->b is 'upward' iff level(b) > level(a), 'lateral' iff equal.",
+   "known_limitation": "*** The condensed graph CANNOT contain a violation by construction \u2014 level is DEFINED by it. This metric is therefore only meaningful for the LAZY edges, which is exactly what it is used for. Stated so no reader over-reads it. ***",
+   "supersedes": "COUP-09 (Cycle 2), which recorded NINE such imports.",
+   "confidence": "CERTAIN for the COUNT; the INTENT distribution is UNKNOWN (UNK-C5-2)",
+   "superseded_v1_value": "106 (produced by an entry-order-dependent cycle-cutting DFS \u2014 see C5-SC-3)"
+  },
+  {
+   "claim": "The 7-subsystem compile-time cycle (registry/agent-gate/selection/render/caption/metrics/learning) is REAL, not a boundary artifact.",
+   "evidence_class": "AST + BOUNDARY CORRECTION",
+   "method": "*** An initial partition produced a 13-subsystem cycle. Each closing edge was traced to its MODULE-level source. THREE proved to be MIS-DRAWN BOUNDARIES (paths_rebase->post.media, transcribe->stage_lock, moment_hook_learning->variant_learning) and the partition was CORRECTED. The 7-subsystem cycle is what SURVIVES that correction. ***",
+   "why_this_matters": "The brief forbids inventing architecture. A subsystem cycle produced by careless clustering is a FABRICATED violation. This one was checked at module level before being asserted.",
+   "confidence": "CERTAIN"
+  },
+  {
+   "claim": "The subsystem partition is TOTAL: 127/127 modules, 0 unassigned, 0 double-assigned, 0 ghosts, *** 19 subsystems (S01-S19; S16 = Studio). ***",
+   "evidence_class": "AST (mechanical coverage check)",
+   "confidence": "CERTAIN",
+   "scope_caveat": "*** SUBSYSTEMS ARE AN ANALYTIC OVERLAY imposed by Cycle 5. They are NOT declared anywhere in the repository and NOTHING enforces them. The MODULES and the IMPORT EDGES are FACTS; the GROUPING is a MODEL. Any claim made at subsystem level must be traced to module-level edges before it is trusted (C5-SC-2). ***",
+   "v1_errata": "The v1 KB variously said '18 subsystems', '18 + Studio' and '19'. The correct and only number is 19."
+  }
+ ],
+ "cross_validation_that_the_analyzer_is_correct": {
+  "note": "*** The single strongest reason to trust Cycle 5's dependency numbers: the SAME AST pass independently reproduced Cycle 3's censuses EXACTLY, without being told what they were. ***",
+  "matches": [
+   {
+    "metric": "subprocess call sites",
+    "cycle_3": 32,
+    "cycle_5_AST": 32,
+    "verdict": "EXACT MATCH"
+   },
+   {
+    "metric": "Ledger.transaction sites",
+    "cycle_3": 74,
+    "cycle_5_AST": 74,
+    "verdict": "EXACT MATCH"
+   },
+   {
+    "metric": "tempfile.mkdtemp sites",
+    "cycle_3": 1,
+    "cycle_5_AST": 1,
+    "verdict": "EXACT MATCH"
+   },
+   {
+    "metric": "shutil.rmtree sites",
+    "cycle_3": 2,
+    "cycle_5_AST": 2,
+    "verdict": "EXACT MATCH"
+   },
+   {
+    "metric": "os.environ write sites",
+    "cycle_2": 2,
+    "cycle_5_AST": 2,
+    "verdict": "EXACT MATCH (INV-18 upheld)"
+   },
+   {
+    "metric": "literal requests.* network sites",
+    "cycle_3": "15 (list included meta_graph's INJECTABLE get; OMITTED cli.py:183)",
+    "cycle_5_AST": "15 literal + meta_graph's injectable seam",
+    "verdict": "*** ONE CORRECTION \u2014 see C5-COR-01 ***"
+   }
+  ]
+ },
+ "cycle_5_self_corrections": [
+  {
+   "id": "C5-SC-1",
+   "what": "An earlier Cycle-5 pass reported 39 network call sites.",
+   "why_it_was_wrong": "The query matched `s.get(...)` and `session.get(...)` on PLAIN DICTS, not just requests.Session. It counted `led.get()`, `info.get()` etc. as network calls.",
+   "corrected_to": "15 literal requests.<verb> sites.",
+   "the_lesson": "*** This is Cycle-2's method note biting the cycle that wrote it down: A CENSUS IS ONLY AS GOOD AS ITS QUERY. It is recorded here rather than quietly fixed, because a silently-corrected census is indistinguishable from one that was never wrong \u2014 and the next reader deserves to know the failure mode is live. ***"
+  },
+  {
+   "id": "C5-SC-2",
+   "what": "An earlier Cycle-5 subsystem partition produced a 13-subsystem compile-time cycle.",
+   "why_it_was_wrong": "THREE of the closing edges were artifacts of MIS-DRAWN BOUNDARIES, not real inversions: stage_lock (a lock PRIMITIVE) was filed under orchestration; paths_rebase (a RECOVERY utility) under persistence; moment_hook_learning (a LEARNING module) under selection.",
+   "corrected_to": "a 7-subsystem cycle, with every closing edge traced to its module-level source before being asserted.",
+   "the_lesson": "*** Aggregating modules into subsystems MANUFACTURES cycles that do not exist at module level. A subsystem-level violation must be traced to its module-level edges BEFORE it is reported, or the audit fabricates the very architecture it was asked not to invent. ***"
+  },
+  {
+   "id": "C5-SC-3",
+   "what": "The v1 KB called the compile-time import graph 'an 11-level DAG (modulo the one persona cycle)' and reported 106 upward lazy edges.",
+   "why_it_was_wrong": "*** A graph containing a cycle is NOT a DAG. *** What was actually computed was a CYCLE-CUTTING DFS depth (`if m in seen: return 0`), which is ENTRY-ORDER-DEPENDENT for nodes inside an SCC. The correct construct is the SCC CONDENSATION (a DAG by construction), on which level is well-defined for every module.",
+   "corrected_to": "The SCC-CONDENSED compile graph is an 11-level DAG. Recomputing against true condensed levels changed SIX module levels (personas 4->3, caption 5->4, studio.views_review 5->4, studio.views 6->5, studio.actions_approve 7->6, studio.app_routes_live 7->6) and moved the count from 106 to *** 107 ***.",
+   "and_it_exposed_a_second_error": "*** The single number 106 CONFLATED two different things. Decomposed: 56 STRICTLY UPWARD (true layering inversions) + 51 LATERAL (same-level deferred imports, which are NOT inversions). ***",
+   "the_lesson": "A derived number inherits the soundness of its DEFINITION. 'Modulo the one cycle' was hand-waving that hid an entry-order-dependent metric."
+  },
+  {
+   "id": "C5-SC-4",
+   "what": "The v1 KB asserted 'the domain core is a compile-time cycle' and 'this is not a defect ... the import graph is telling the truth about the product.'",
+   "why_it_was_wrong": "*** TWO errors. (1) At MODULE level the domain core is ACYCLIC \u2014 124 of 127 modules are singleton SCCs, and the only compile-time import cycle (personas x3) is UNRELATED to the learning loop. The 7-subsystem cycle exists ONLY in the AGGREGATED view. (2) 'The loop is the product, therefore the wiring is correct' IS A NON SEQUITUR: a feedback loop in data/control flow does NOT require a cycle in the static import graph \u2014 it could be closed by the orchestrator or via a shared abstraction. ***",
+   "corrected_to": "SPLIT into two claims with different confidences. (A) The domain feedback loop is intentional and IS the product \u2014 CERTAIN. (B) Whether the mutual-import WIRING that realizes it is intentional \u2014 UNKNOWN. The 'not a defect' verdict is RETRACTED.",
+   "the_lesson": "*** The comfortable inference is the dangerous one. 'It's the product, leave it alone' would have told a future engineer that a design choice was a given. ***"
+  }
+ ],
+ "inherited_evidence_reverified_by_cycle_5": {
+  "note": "Cycle 5 did not re-execute the destructive experiments (the restore race, the strand). It RE-DERIVED the structural facts those experiments depend on, by AST.",
+  "reverified": [
+   "restore_snapshot is the SOLE consumer of ledger.lock (AST lock census: ledger.py:551 _file_lock; ledger.py:484/540 store.lock) -> RC-4's premise HOLDS",
+   "compress.py:21 is the ONLY mkdtemp and there is NO rmtree touching it (AST) -> RC-10 HOLDS",
+   "exactly 2 os.environ write sites -> INV-18 HOLDS",
+   "the [framing]/cv2 try-except is the only fail-CLOSED optional import; whisper/flask/certifi/keyring all fail open -> INV-17 HOLDS"
+  ]
+ },
+ "coverage_metrics": {
+  "modules_in_tree": 127,
+  "modules_covered_by_WHOLE-TREE AST CENSUS": 127,
+  "coverage_of_structural_primitives": "*** 100%. Every ledger transaction, lock, network call, subprocess, mkdtemp, rmtree, env read and env write in src/fanops is enumerated. ***",
+  "modules_whose_BUSINESS LOGIC was read across all 5 cycles": "~100 of 127",
+  "modules_never_read": "~27 (variant_*, digest, hookscore/hookcheck, persona_directives/levers/research, text, bands, frames, audio_energy, most studio/views_*)",
+  "what_the_census_PROVES_about_the_27": "*** They contain NO ledger writer, NO lock, NO network call, NO status client and NO subprocess. That is a structural guarantee, not an assumption. *** Their business logic remains unread (UNK-C5-3).",
+  "the_honest_statement": "Cycle 5 achieves 100% STRUCTURAL coverage and ~79% BEHAVIOURAL coverage. Prior cycles could only claim the latter.",
+  "note_on_G3": "*** The runtime CALL graph was NOT derived. Every SCC claim in this KB is about the STATIC POTENTIAL-DEPENDENCY graph (a superset). They BOUND blast radius; they do not ESTABLISH it. ***"
+ },
+ "what_would_falsify_this_KB": [
+  "Any module-level fanops import the AST parser misclassified -> re-run scratchpad/c5_deps.py.",
+  "A ledger writer, lock, or network call inside one of the 27 unread modules -> would falsify the census, which enumerated all 127.",
+  "A second compile-time module cycle -> would falsify the Tarjan SCC.",
+  "A production caller of Ledger.add_render -> would REACTIVATE the dormant Render.path writes (IF-1) and falsify the 'Render is never minted' claim.",
+  "A path that produces Post(state=published, public_url='') -> would move AR-08 from LATENT to CRITICAL."
+ ],
+ "operational_constraint_on_this_cycle": {
+  "id": "OPS-001",
+  "status": "*** STILL ENGAGED \u2014 FIVE CONSECUTIVE CYCLES. ***",
+  "observed_this_cycle": "The gate REFUSED a compound shell command merely because it NAMED .orchestration/state/ (a read-only `ls`), and REFUSED a `general-purpose` subagent spawn ('spawn type general-purpose is not allowed during a wave').",
+  "consequence": "Cycles 1, 2, 3, 4 AND 5 were all executed SINGLE-THREADED. No parallel verification of Cycle 5's dependency claims was possible \u2014 the independent verifier this cycle attempted to spawn was refused.",
+  "mitigation_applied": "Cycle 5 self-verified by CROSS-VALIDATION instead: the same AST pass independently reproduced four of Cycle 3's censuses exactly. That is weaker than an independent agent, and it is recorded as such.",
+  "disengage": "`orchestrate.py stop` \u2014 AN OPERATOR ACTION, not a code change. It remains the single largest constraint on this audit's throughput."
+ }
+}

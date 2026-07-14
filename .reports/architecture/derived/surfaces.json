@@ -1,0 +1,2035 @@
+{
+  "$schema": "fanops-arch/derived/surfaces",
+  "cli_verb_sites": [
+    {
+      "line": 714,
+      "module": "fanops.cli",
+      "verb": "adjust"
+    },
+    {
+      "line": 709,
+      "module": "fanops.cli",
+      "verb": "advance"
+    },
+    {
+      "line": 717,
+      "module": "fanops.cli",
+      "verb": "amplify-variants"
+    },
+    {
+      "line": 708,
+      "module": "fanops.cli",
+      "verb": "audit"
+    },
+    {
+      "line": 748,
+      "module": "fanops.cli",
+      "verb": "audit"
+    },
+    {
+      "line": 763,
+      "module": "fanops.cli",
+      "verb": "auth"
+    },
+    {
+      "line": 807,
+      "module": "fanops.cli",
+      "verb": "autopilot"
+    },
+    {
+      "line": 752,
+      "module": "fanops.cli",
+      "verb": "bulk-send-to-review"
+    },
+    {
+      "line": 730,
+      "module": "fanops.cli",
+      "verb": "compose"
+    },
+    {
+      "line": 736,
+      "module": "fanops.cli",
+      "verb": "config"
+    },
+    {
+      "line": 761,
+      "module": "fanops.cli",
+      "verb": "cutover"
+    },
+    {
+      "line": 796,
+      "module": "fanops.cli",
+      "verb": "daemon"
+    },
+    {
+      "line": 686,
+      "module": "fanops.cli",
+      "verb": "digest"
+    },
+    {
+      "line": 728,
+      "module": "fanops.cli",
+      "verb": "discover"
+    },
+    {
+      "line": 786,
+      "module": "fanops.cli",
+      "verb": "discover"
+    },
+    {
+      "line": 789,
+      "module": "fanops.cli",
+      "verb": "docs"
+    },
+    {
+      "line": 792,
+      "module": "fanops.cli",
+      "verb": "docs"
+    },
+    {
+      "line": 735,
+      "module": "fanops.cli",
+      "verb": "doctor"
+    },
+    {
+      "line": 782,
+      "module": "fanops.cli",
+      "verb": "doctor"
+    },
+    {
+      "line": 804,
+      "module": "fanops.cli",
+      "verb": "ensure"
+    },
+    {
+      "line": 716,
+      "module": "fanops.cli",
+      "verb": "gc"
+    },
+    {
+      "line": 783,
+      "module": "fanops.cli",
+      "verb": "hashtags"
+    },
+    {
+      "line": 745,
+      "module": "fanops.cli",
+      "verb": "health"
+    },
+    {
+      "line": 686,
+      "module": "fanops.cli",
+      "verb": "ingest"
+    },
+    {
+      "line": 740,
+      "module": "fanops.cli",
+      "verb": "init"
+    },
+    {
+      "line": 798,
+      "module": "fanops.cli",
+      "verb": "install"
+    },
+    {
+      "line": 729,
+      "module": "fanops.cli",
+      "verb": "intake"
+    },
+    {
+      "line": 780,
+      "module": "fanops.cli",
+      "verb": "learn"
+    },
+    {
+      "line": 787,
+      "module": "fanops.cli",
+      "verb": "lever"
+    },
+    {
+      "line": 769,
+      "module": "fanops.cli",
+      "verb": "lift"
+    },
+    {
+      "line": 806,
+      "module": "fanops.cli",
+      "verb": "logs"
+    },
+    {
+      "line": 712,
+      "module": "fanops.cli",
+      "verb": "map-media"
+    },
+    {
+      "line": 767,
+      "module": "fanops.cli",
+      "verb": "metrics"
+    },
+    {
+      "line": 718,
+      "module": "fanops.cli",
+      "verb": "p4-bias"
+    },
+    {
+      "line": 778,
+      "module": "fanops.cli",
+      "verb": "paths-rebase"
+    },
+    {
+      "line": 764,
+      "module": "fanops.cli",
+      "verb": "post"
+    },
+    {
+      "line": 726,
+      "module": "fanops.cli",
+      "verb": "promote-source"
+    },
+    {
+      "line": 747,
+      "module": "fanops.cli",
+      "verb": "publish-queue"
+    },
+    {
+      "line": 710,
+      "module": "fanops.cli",
+      "verb": "pull"
+    },
+    {
+      "line": 687,
+      "module": "fanops.cli",
+      "verb": "reconcile"
+    },
+    {
+      "line": 706,
+      "module": "fanops.cli",
+      "verb": "recover"
+    },
+    {
+      "line": 688,
+      "module": "fanops.cli",
+      "verb": "reframe"
+    },
+    {
+      "line": 785,
+      "module": "fanops.cli",
+      "verb": "refresh"
+    },
+    {
+      "line": 719,
+      "module": "fanops.cli",
+      "verb": "resolve"
+    },
+    {
+      "line": 686,
+      "module": "fanops.cli",
+      "verb": "respond"
+    },
+    {
+      "line": 725,
+      "module": "fanops.cli",
+      "verb": "retire-source"
+    },
+    {
+      "line": 727,
+      "module": "fanops.cli",
+      "verb": "retry-metrics"
+    },
+    {
+      "line": 722,
+      "module": "fanops.cli",
+      "verb": "retry-source"
+    },
+    {
+      "line": 793,
+      "module": "fanops.cli",
+      "verb": "run"
+    },
+    {
+      "line": 686,
+      "module": "fanops.cli",
+      "verb": "status"
+    },
+    {
+      "line": 803,
+      "module": "fanops.cli",
+      "verb": "status"
+    },
+    {
+      "line": 805,
+      "module": "fanops.cli",
+      "verb": "stop"
+    },
+    {
+      "line": 755,
+      "module": "fanops.cli",
+      "verb": "studio"
+    },
+    {
+      "line": 750,
+      "module": "fanops.cli",
+      "verb": "tail"
+    },
+    {
+      "line": 790,
+      "module": "fanops.cli",
+      "verb": "threshold"
+    },
+    {
+      "line": 711,
+      "module": "fanops.cli",
+      "verb": "track"
+    },
+    {
+      "line": 721,
+      "module": "fanops.cli",
+      "verb": "unhold"
+    },
+    {
+      "line": 809,
+      "module": "fanops.cli",
+      "verb": "up"
+    },
+    {
+      "line": 713,
+      "module": "fanops.cli",
+      "verb": "verify-live"
+    },
+    {
+      "line": 771,
+      "module": "fanops.cli",
+      "verb": "wipe"
+    }
+  ],
+  "cli_verbs": [
+    "adjust",
+    "advance",
+    "amplify-variants",
+    "audit",
+    "auth",
+    "autopilot",
+    "bulk-send-to-review",
+    "compose",
+    "config",
+    "cutover",
+    "daemon",
+    "digest",
+    "discover",
+    "docs",
+    "doctor",
+    "ensure",
+    "gc",
+    "hashtags",
+    "health",
+    "ingest",
+    "init",
+    "install",
+    "intake",
+    "learn",
+    "lever",
+    "lift",
+    "logs",
+    "map-media",
+    "metrics",
+    "p4-bias",
+    "paths-rebase",
+    "post",
+    "promote-source",
+    "publish-queue",
+    "pull",
+    "reconcile",
+    "recover",
+    "reframe",
+    "refresh",
+    "resolve",
+    "respond",
+    "retire-source",
+    "retry-metrics",
+    "retry-source",
+    "run",
+    "status",
+    "stop",
+    "studio",
+    "tail",
+    "threshold",
+    "track",
+    "unhold",
+    "up",
+    "verify-live",
+    "wipe"
+  ],
+  "confidence": "CERTAIN",
+  "generated_by": "tools/arch",
+  "generator_version": "arch/1.0.0",
+  "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",
+  "metric_definitions": {
+    "cli_add_parser_sites": "add_parser() call sites — higher, because nested subparsers (e.g. `recover audit`) register additional verbs. Cycle 5's `verbs_total: 59` is THIS metric, while its enumerated list is the 54.",
+    "cli_verbs_unique": "distinct verb names.",
+    "route_endpoints": "one per (method, path) — the Flask unit. `/golive/live` has a GET page AND a POST that flips the system to LIVE PUBLISHING; keying on PATH collapses them into one, which is why the endpoint is canonical.",
+    "route_unique_paths": "distinct URL paths. Cycle 5's '149 routes' is THIS metric."
+  },
+  "regeneration_command": "python -m tools.arch regen",
+  "routes": [
+    {
+      "decorator": "app.get",
+      "handler": "index",
+      "line": 402,
+      "methods": [
+        "GET"
+      ],
+      "module": "fanops.studio.app",
+      "mutating": false,
+      "path": "/"
+    },
+    {
+      "decorator": "app.get",
+      "handler": "candidates",
+      "line": 475,
+      "methods": [
+        "GET"
+      ],
+      "module": "fanops.studio.app",
+      "mutating": false,
+      "path": "/candidates"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_approve_candidate",
+      "line": 480,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app",
+      "mutating": true,
+      "path": "/candidates/approve/<eid>"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_caption",
+      "line": 239,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_review",
+      "mutating": true,
+      "path": "/caption/<post_id>"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_cast_add",
+      "line": 183,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_review",
+      "mutating": true,
+      "path": "/cast/add/<moment_id>"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_cast_remove",
+      "line": 190,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_review",
+      "mutating": true,
+      "path": "/cast/remove/<moment_id>"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_clear",
+      "line": 234,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_review",
+      "mutating": true,
+      "path": "/clear/<post_id>"
+    },
+    {
+      "decorator": "app.get",
+      "handler": "clip_thumb",
+      "line": 615,
+      "methods": [
+        "GET"
+      ],
+      "module": "fanops.studio.app",
+      "mutating": false,
+      "path": "/clip-thumb/<clip_id>"
+    },
+    {
+      "decorator": "app.get",
+      "handler": "clip_media",
+      "line": 563,
+      "methods": [
+        "GET"
+      ],
+      "module": "fanops.studio.app",
+      "mutating": false,
+      "path": "/clips/<clip_id>"
+    },
+    {
+      "decorator": "app.get",
+      "handler": "gates",
+      "line": 526,
+      "methods": [
+        "GET"
+      ],
+      "module": "fanops.studio.app",
+      "mutating": false,
+      "path": "/gates"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_answer_gate",
+      "line": 532,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app",
+      "mutating": true,
+      "path": "/gates/answer/<kind>/<key>"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_dismiss_gate",
+      "line": 544,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app",
+      "mutating": true,
+      "path": "/gates/dismiss/<kind>/<key>"
+    },
+    {
+      "decorator": "app.get",
+      "handler": "golive_view",
+      "line": 14,
+      "methods": [
+        "GET"
+      ],
+      "module": "fanops.studio.app_routes_golive",
+      "mutating": false,
+      "path": "/golive"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_golive_account_add",
+      "line": 30,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_golive",
+      "mutating": true,
+      "path": "/golive/account/add"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_golive_account_backend",
+      "line": 107,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_golive",
+      "mutating": true,
+      "path": "/golive/account/backend"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_golive_account_demote",
+      "line": 130,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_golive",
+      "mutating": true,
+      "path": "/golive/account/demote"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_golive_account_meta_creds",
+      "line": 98,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_golive",
+      "mutating": true,
+      "path": "/golive/account/meta-creds"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_golive_account_persona",
+      "line": 115,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_golive",
+      "mutating": true,
+      "path": "/golive/account/persona"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_golive_account_promote",
+      "line": 120,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_golive",
+      "mutating": true,
+      "path": "/golive/account/promote"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_golive_account_remove",
+      "line": 125,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_golive",
+      "mutating": true,
+      "path": "/golive/account/remove"
+    },
+    {
+      "decorator": "app.get",
+      "handler": "golive_accounts_page",
+      "line": 174,
+      "methods": [
+        "GET"
+      ],
+      "module": "fanops.studio.app_routes_golive",
+      "mutating": false,
+      "path": "/golive/accounts"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_golive_adopt",
+      "line": 146,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_golive",
+      "mutating": true,
+      "path": "/golive/adopt"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_golive_amplify",
+      "line": 78,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_golive",
+      "mutating": true,
+      "path": "/golive/amplify"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_golive_casting",
+      "line": 38,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_golive",
+      "mutating": true,
+      "path": "/golive/casting"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_golive_clip_profile",
+      "line": 45,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_golive",
+      "mutating": true,
+      "path": "/golive/clip-profile"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_golive_config",
+      "line": 26,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_golive",
+      "mutating": true,
+      "path": "/golive/config"
+    },
+    {
+      "decorator": "app.get",
+      "handler": "golive_connect",
+      "line": 169,
+      "methods": [
+        "GET"
+      ],
+      "module": "fanops.studio.app_routes_golive",
+      "mutating": false,
+      "path": "/golive/connect"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_golive_daemon_install",
+      "line": 61,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_golive",
+      "mutating": true,
+      "path": "/golive/daemon-install"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_golive_daemon_uninstall",
+      "line": 67,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_golive",
+      "mutating": true,
+      "path": "/golive/daemon-uninstall"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_golive_discover",
+      "line": 139,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_golive",
+      "mutating": true,
+      "path": "/golive/discover"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_golive_dryrun",
+      "line": 213,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_golive",
+      "mutating": true,
+      "path": "/golive/dryrun"
+    },
+    {
+      "decorator": "app.get",
+      "handler": "do_golive_health",
+      "line": 157,
+      "methods": [
+        "GET"
+      ],
+      "module": "fanops.studio.app_routes_golive",
+      "mutating": false,
+      "path": "/golive/health"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_golive_learning",
+      "line": 72,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_golive",
+      "mutating": true,
+      "path": "/golive/learning"
+    },
+    {
+      "decorator": "app.get",
+      "handler": "golive_live_page",
+      "line": 179,
+      "methods": [
+        "GET"
+      ],
+      "module": "fanops.studio.app_routes_golive",
+      "mutating": false,
+      "path": "/golive/live"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_golive_live",
+      "line": 206,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_golive",
+      "mutating": true,
+      "path": "/golive/live"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_golive_llm_transport",
+      "line": 56,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_golive",
+      "mutating": true,
+      "path": "/golive/llm-transport"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_golive_map",
+      "line": 184,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_golive",
+      "mutating": true,
+      "path": "/golive/map"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_golive_refresh",
+      "line": 135,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_golive",
+      "mutating": true,
+      "path": "/golive/refresh"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_golive_responder",
+      "line": 50,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_golive",
+      "mutating": true,
+      "path": "/golive/responder"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_golive_transfer",
+      "line": 88,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_golive",
+      "mutating": true,
+      "path": "/golive/transfer"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_golive_ucb",
+      "line": 83,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_golive",
+      "mutating": true,
+      "path": "/golive/ucb"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_golive_validate",
+      "line": 217,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_golive",
+      "mutating": true,
+      "path": "/golive/validate"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_golive_zernio_config",
+      "line": 93,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_golive",
+      "mutating": true,
+      "path": "/golive/zernio-config"
+    },
+    {
+      "decorator": "app.get",
+      "handler": "hashtags_view",
+      "line": 19,
+      "methods": [
+        "GET"
+      ],
+      "module": "fanops.studio.app_routes_hashtags",
+      "mutating": false,
+      "path": "/hashtags"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_hashtags_ban_add",
+      "line": 27,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_hashtags",
+      "mutating": true,
+      "path": "/hashtags/ban/add"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_hashtags_ban_remove",
+      "line": 31,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_hashtags",
+      "mutating": true,
+      "path": "/hashtags/ban/remove"
+    },
+    {
+      "decorator": "app.get",
+      "handler": "healthz",
+      "line": 385,
+      "methods": [
+        "GET"
+      ],
+      "module": "fanops.studio.app",
+      "mutating": false,
+      "path": "/healthz"
+    },
+    {
+      "decorator": "app.get",
+      "handler": "home_daemon_health",
+      "line": 433,
+      "methods": [
+        "GET"
+      ],
+      "module": "fanops.studio.app",
+      "mutating": false,
+      "path": "/home/daemon-health"
+    },
+    {
+      "decorator": "app.get",
+      "handler": "home_gallery",
+      "line": 411,
+      "methods": [
+        "GET"
+      ],
+      "module": "fanops.studio.app",
+      "mutating": false,
+      "path": "/home/gallery"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_home_pull_metrics",
+      "line": 417,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app",
+      "mutating": true,
+      "path": "/home/pull-metrics"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_home_reconcile",
+      "line": 421,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app",
+      "mutating": true,
+      "path": "/home/reconcile"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_home_retry_oversize",
+      "line": 429,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app",
+      "mutating": true,
+      "path": "/home/retry-oversize"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_home_retry_rate_limit",
+      "line": 425,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app",
+      "mutating": true,
+      "path": "/home/retry-rate-limit"
+    },
+    {
+      "decorator": "app.get",
+      "handler": "keyframe",
+      "line": 589,
+      "methods": [
+        "GET"
+      ],
+      "module": "fanops.studio.app",
+      "mutating": false,
+      "path": "/keyframe/<source_id>/<name>"
+    },
+    {
+      "decorator": "app.get",
+      "handler": "keyframe",
+      "line": 589,
+      "methods": [
+        "GET"
+      ],
+      "module": "fanops.studio.app",
+      "mutating": false,
+      "path": "/keyframe/<source_id>/<whash>/<name>"
+    },
+    {
+      "decorator": "app.get",
+      "handler": "library",
+      "line": 135,
+      "methods": [
+        "GET"
+      ],
+      "module": "fanops.studio.app_routes_run",
+      "mutating": false,
+      "path": "/library"
+    },
+    {
+      "decorator": "app.get",
+      "handler": "library_source",
+      "line": 149,
+      "methods": [
+        "GET"
+      ],
+      "module": "fanops.studio.app_routes_run",
+      "mutating": false,
+      "path": "/library/<source_id>"
+    },
+    {
+      "decorator": "app.get",
+      "handler": "library_source_live",
+      "line": 158,
+      "methods": [
+        "GET"
+      ],
+      "module": "fanops.studio.app_routes_run",
+      "mutating": false,
+      "path": "/library/<source_id>/live"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_library_promote",
+      "line": 190,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_run",
+      "mutating": true,
+      "path": "/library/promote"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_library_resume",
+      "line": 179,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_run",
+      "mutating": true,
+      "path": "/library/resume"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_library_retire",
+      "line": 186,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_run",
+      "mutating": true,
+      "path": "/library/retire"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_thirdparty_upload",
+      "line": 167,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_run",
+      "mutating": true,
+      "path": "/library/upload"
+    },
+    {
+      "decorator": "app.get",
+      "handler": "lift",
+      "line": 113,
+      "methods": [
+        "GET"
+      ],
+      "module": "fanops.studio.app_routes_schedule",
+      "mutating": false,
+      "path": "/lift"
+    },
+    {
+      "decorator": "app.get",
+      "handler": "live_library",
+      "line": 25,
+      "methods": [
+        "GET"
+      ],
+      "module": "fanops.studio.app_routes_live",
+      "mutating": false,
+      "path": "/live-library"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_wipe_confirm",
+      "line": 40,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_live",
+      "mutating": true,
+      "path": "/live-library/wipe/confirm"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_wipe_preview",
+      "line": 34,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_live",
+      "mutating": true,
+      "path": "/live-library/wipe/preview"
+    },
+    {
+      "decorator": "app.get",
+      "handler": "media_preview",
+      "line": 555,
+      "methods": [
+        "GET"
+      ],
+      "module": "fanops.studio.app",
+      "mutating": false,
+      "path": "/media-preview/<post_id>"
+    },
+    {
+      "decorator": "app.get",
+      "handler": "media",
+      "line": 548,
+      "methods": [
+        "GET"
+      ],
+      "module": "fanops.studio.app",
+      "mutating": false,
+      "path": "/media/<post_id>"
+    },
+    {
+      "decorator": "app.get",
+      "handler": "metrics",
+      "line": 395,
+      "methods": [
+        "GET"
+      ],
+      "module": "fanops.studio.app",
+      "mutating": false,
+      "path": "/metrics"
+    },
+    {
+      "decorator": "app.get",
+      "handler": "personas_view",
+      "line": 13,
+      "methods": [
+        "GET"
+      ],
+      "module": "fanops.studio.app_routes_personas",
+      "mutating": false,
+      "path": "/personas"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_personas_add",
+      "line": 42,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_personas",
+      "mutating": true,
+      "path": "/personas/add"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_personas_compose",
+      "line": 35,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_personas",
+      "mutating": true,
+      "path": "/personas/compose"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_personas_connect",
+      "line": 80,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_personas",
+      "mutating": true,
+      "path": "/personas/connect"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_personas_corpus_add",
+      "line": 60,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_personas",
+      "mutating": true,
+      "path": "/personas/corpus/add"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_personas_corpus_remove",
+      "line": 64,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_personas",
+      "mutating": true,
+      "path": "/personas/corpus/remove"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_personas_delete",
+      "line": 56,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_personas",
+      "mutating": true,
+      "path": "/personas/delete"
+    },
+    {
+      "decorator": "app.get",
+      "handler": "do_personas_drawer",
+      "line": 25,
+      "methods": [
+        "GET"
+      ],
+      "module": "fanops.studio.app_routes_personas",
+      "mutating": false,
+      "path": "/personas/drawer/<pid>"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_personas_edit",
+      "line": 49,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_personas",
+      "mutating": true,
+      "path": "/personas/edit"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_personas_migrate",
+      "line": 85,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_personas",
+      "mutating": true,
+      "path": "/personas/migrate"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_personas_recommend",
+      "line": 74,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_personas",
+      "mutating": true,
+      "path": "/personas/recommend"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_personas_research",
+      "line": 68,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_personas",
+      "mutating": true,
+      "path": "/personas/research"
+    },
+    {
+      "decorator": "app.get",
+      "handler": "posted",
+      "line": 163,
+      "methods": [
+        "GET"
+      ],
+      "module": "fanops.studio.app_routes_schedule",
+      "mutating": false,
+      "path": "/posted"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_approve_posts",
+      "line": 132,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_review",
+      "mutating": true,
+      "path": "/posts/approve"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_approve_account",
+      "line": 166,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_review",
+      "mutating": true,
+      "path": "/posts/approve-account"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_approve_as_is",
+      "line": 154,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_review",
+      "mutating": true,
+      "path": "/posts/approve-as-is/<clip_id>"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_approve_batch",
+      "line": 158,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_review",
+      "mutating": true,
+      "path": "/posts/approve-batch/<batch_id>"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_approve_channel",
+      "line": 174,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_review",
+      "mutating": true,
+      "path": "/posts/approve-channel"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_approve_clip",
+      "line": 162,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_review",
+      "mutating": true,
+      "path": "/posts/approve-clip/<clip_id>"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_approve_moment",
+      "line": 170,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_review",
+      "mutating": true,
+      "path": "/posts/approve-moment/<moment_id>"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_approve_with_edits",
+      "line": 145,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_review",
+      "mutating": true,
+      "path": "/posts/approve-with-edits/<post_id>"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_approve_with_hook",
+      "line": 150,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_review",
+      "mutating": true,
+      "path": "/posts/approve-with-hook/<clip_id>"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_crosspost_all",
+      "line": 197,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_schedule",
+      "mutating": true,
+      "path": "/posts/crosspost-all"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_crosspost_to_account",
+      "line": 191,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_schedule",
+      "mutating": true,
+      "path": "/posts/crosspost/<clip_id>"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_recover_posts",
+      "line": 185,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_schedule",
+      "mutating": true,
+      "path": "/posts/recover"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_reject_posts",
+      "line": 137,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_review",
+      "mutating": true,
+      "path": "/posts/reject"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_repost_others",
+      "line": 172,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_schedule",
+      "mutating": true,
+      "path": "/posts/repost-others/<post_id>"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_repost_post",
+      "line": 167,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_schedule",
+      "mutating": true,
+      "path": "/posts/repost/<post_id>"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_resolve_post",
+      "line": 179,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_schedule",
+      "mutating": true,
+      "path": "/posts/resolve/<post_id>"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_unapprove_post",
+      "line": 141,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_review",
+      "mutating": true,
+      "path": "/posts/unapprove/<post_id>"
+    },
+    {
+      "decorator": "app.get",
+      "handler": "publish_panel",
+      "line": 493,
+      "methods": [
+        "GET"
+      ],
+      "module": "fanops.studio.app",
+      "mutating": false,
+      "path": "/publish"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_publish_now",
+      "line": 512,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app",
+      "mutating": true,
+      "path": "/publish/now/<post_id>"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_mark_posted",
+      "line": 507,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app",
+      "mutating": true,
+      "path": "/publish/posted/<post_id>"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_reburn_hook",
+      "line": 256,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_review",
+      "mutating": true,
+      "path": "/reburn-hook/<post_id>"
+    },
+    {
+      "decorator": "app.get",
+      "handler": "reconcile_strip_partial",
+      "line": 520,
+      "methods": [
+        "GET"
+      ],
+      "module": "fanops.studio.app",
+      "mutating": false,
+      "path": "/reconcile-strip"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_regenerate",
+      "line": 246,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_review",
+      "mutating": true,
+      "path": "/regenerate/<post_id>"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_reschedule_surface",
+      "line": 229,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_review",
+      "mutating": true,
+      "path": "/reschedule-surface/<post_id>"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_reschedule",
+      "line": 224,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_review",
+      "mutating": true,
+      "path": "/reschedule/<post_id>"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_restore_persona_hook",
+      "line": 251,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_review",
+      "mutating": true,
+      "path": "/restore-persona-hook/<post_id>"
+    },
+    {
+      "decorator": "app.get",
+      "handler": "review",
+      "line": 89,
+      "methods": [
+        "GET"
+      ],
+      "module": "fanops.studio.app_routes_review",
+      "mutating": false,
+      "path": "/review"
+    },
+    {
+      "decorator": "app.get",
+      "handler": "review_thumb",
+      "line": 484,
+      "methods": [
+        "GET"
+      ],
+      "module": "fanops.studio.app",
+      "mutating": false,
+      "path": "/review-thumb/<eid>"
+    },
+    {
+      "decorator": "app.get",
+      "handler": "review_feed_slice",
+      "line": 97,
+      "methods": [
+        "GET"
+      ],
+      "module": "fanops.studio.app_routes_review",
+      "mutating": false,
+      "path": "/review/feed-slice"
+    },
+    {
+      "decorator": "app.get",
+      "handler": "review_live",
+      "line": 117,
+      "methods": [
+        "GET"
+      ],
+      "module": "fanops.studio.app_routes_review",
+      "mutating": false,
+      "path": "/review/live"
+    },
+    {
+      "decorator": "app.get",
+      "handler": "review_panel_refresh",
+      "line": 128,
+      "methods": [
+        "GET"
+      ],
+      "module": "fanops.studio.app_routes_review",
+      "mutating": false,
+      "path": "/review/refresh"
+    },
+    {
+      "decorator": "app.get",
+      "handler": "run_panel",
+      "line": 22,
+      "methods": [
+        "GET"
+      ],
+      "module": "fanops.studio.app_routes_run",
+      "mutating": false,
+      "path": "/run"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_run_advance",
+      "line": 101,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_run",
+      "mutating": true,
+      "path": "/run/advance"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_bind_queue",
+      "line": 118,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_run",
+      "mutating": true,
+      "path": "/run/bind-queue"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_run_ingest",
+      "line": 41,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_run",
+      "mutating": true,
+      "path": "/run/ingest"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_run_prepare",
+      "line": 111,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_run",
+      "mutating": true,
+      "path": "/run/prepare"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_run_pull",
+      "line": 47,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_run",
+      "mutating": true,
+      "path": "/run/pull"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_pull_metrics",
+      "line": 107,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_run",
+      "mutating": true,
+      "path": "/run/pull-metrics"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_release_all",
+      "line": 131,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_run",
+      "mutating": true,
+      "path": "/run/release-all"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_release_batch",
+      "line": 126,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_run",
+      "mutating": true,
+      "path": "/run/release-batch"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_run_resume",
+      "line": 92,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_run",
+      "mutating": true,
+      "path": "/run/resume"
+    },
+    {
+      "decorator": "app.get",
+      "handler": "run_status",
+      "line": 29,
+      "methods": [
+        "GET"
+      ],
+      "module": "fanops.studio.app_routes_run",
+      "mutating": false,
+      "path": "/run/status"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_run_upload",
+      "line": 51,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_run",
+      "mutating": true,
+      "path": "/run/upload"
+    },
+    {
+      "decorator": "app.put",
+      "handler": "do_run_upload_chunk",
+      "line": 72,
+      "methods": [
+        "PUT"
+      ],
+      "module": "fanops.studio.app_routes_run",
+      "mutating": true,
+      "path": "/run/upload/chunk"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_run_upload_finalize",
+      "line": 84,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_run",
+      "mutating": true,
+      "path": "/run/upload/finalize"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_run_upload_init",
+      "line": 64,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_run",
+      "mutating": true,
+      "path": "/run/upload/init"
+    },
+    {
+      "decorator": "app.get",
+      "handler": "schedule",
+      "line": 42,
+      "methods": [
+        "GET"
+      ],
+      "module": "fanops.studio.app_routes_schedule",
+      "mutating": false,
+      "path": "/schedule"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_schedule_accept_suggested",
+      "line": 94,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_schedule",
+      "mutating": true,
+      "path": "/schedule/accept-suggested/<handle>"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_schedule_clear",
+      "line": 70,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_schedule",
+      "mutating": true,
+      "path": "/schedule/clear/<post_id>"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_schedule_move",
+      "line": 64,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_schedule",
+      "mutating": true,
+      "path": "/schedule/move/<post_id>"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_schedule_publish_due",
+      "line": 108,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_schedule",
+      "mutating": true,
+      "path": "/schedule/publish-due"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_schedule_publish",
+      "line": 76,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_schedule",
+      "mutating": true,
+      "path": "/schedule/publish/<post_id>"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_schedule_randomize",
+      "line": 98,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_schedule",
+      "mutating": true,
+      "path": "/schedule/randomize/<handle>"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_schedule_reconcile",
+      "line": 84,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_schedule",
+      "mutating": true,
+      "path": "/schedule/reconcile"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_reschedule_bucket",
+      "line": 54,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_schedule",
+      "mutating": true,
+      "path": "/schedule/respread"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_schedule_shift",
+      "line": 46,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_schedule",
+      "mutating": true,
+      "path": "/schedule/shift/<handle>"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_schedule_unapprove",
+      "line": 59,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_schedule",
+      "mutating": true,
+      "path": "/schedule/unapprove/<post_id>"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_clear_segments",
+      "line": 214,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_review",
+      "mutating": true,
+      "path": "/segments/clear/<moment_id>"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_set_segments",
+      "line": 197,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_review",
+      "mutating": true,
+      "path": "/segments/set/<moment_id>"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_snooze",
+      "line": 261,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_review",
+      "mutating": true,
+      "path": "/snooze/<clip_id>"
+    },
+    {
+      "decorator": "app.get",
+      "handler": "source_media",
+      "line": 574,
+      "methods": [
+        "GET"
+      ],
+      "module": "fanops.studio.app",
+      "mutating": false,
+      "path": "/source-media/<source_id>"
+    },
+    {
+      "decorator": "app.get",
+      "handler": "stitches",
+      "line": 452,
+      "methods": [
+        "GET"
+      ],
+      "module": "fanops.studio.app",
+      "mutating": false,
+      "path": "/stitches"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_approve_stitches",
+      "line": 462,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app",
+      "mutating": true,
+      "path": "/stitches/approve"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_dismiss_stitches",
+      "line": 466,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app",
+      "mutating": true,
+      "path": "/stitches/dismiss"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_release_stitches",
+      "line": 470,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app",
+      "mutating": true,
+      "path": "/stitches/release"
+    },
+    {
+      "decorator": "app.get",
+      "handler": "thumb_clip",
+      "line": 610,
+      "methods": [
+        "GET"
+      ],
+      "module": "fanops.studio.app",
+      "mutating": false,
+      "path": "/thumb/clip/<clip_id>"
+    },
+    {
+      "decorator": "app.get",
+      "handler": "thumb_source",
+      "line": 605,
+      "methods": [
+        "GET"
+      ],
+      "module": "fanops.studio.app",
+      "mutating": false,
+      "path": "/thumb/source/<source_id>"
+    },
+    {
+      "decorator": "app.post",
+      "handler": "do_unhold",
+      "line": 266,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_review",
+      "mutating": true,
+      "path": "/unhold/<clip_id>"
+    }
+  ],
+  "source_inputs": [
+    "src/fanops/**/*.py"
+  ],
+  "totals": {
+    "cli_add_parser_sites": 60,
+    "cli_verbs_unique": 55,
+    "route_endpoints": 150,
+    "route_endpoints_mutating": 109,
+    "route_unique_paths": 149
+  }
+}

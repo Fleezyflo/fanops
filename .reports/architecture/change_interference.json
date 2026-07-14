@@ -1,0 +1,173 @@
+{
+  "$schema": "fanops-architecture-interference/v1",
+  "cycle": 4,
+  "git_head": "fcffa73",
+  "generated": "2026-07-14",
+  "prose_twin": "CHANGE_INTERFERENCE_MATRIX.md",
+  "method": "Pairwise classification by FILE OVERLAP *and* STATE OWNERSHIP. Per the brief, no pair is declared 'independent' on the strength of differing filenames alone; each was checked for shared entity/field/lock/gate ownership.",
+
+  "classification_scheme": [
+    "independent",
+    "ordering_dependency",
+    "same_file_conflict_only",
+    "semantic_conflict",
+    "supersedes",
+    "must_ship_atomically",
+    "unsafe_concurrent"
+  ],
+
+  "slices": {
+    "S01": {"title": "restore_snapshot in-place under the ledger lock", "root": "RC-4 + RC-5",
+            "files": ["src/fanops/ledger.py:546-553", "src/fanops/ledger_sqlite.py:59-154", "tests/test_ledger_sqlite_store.py:161-186"],
+            "state_owned": ["the ledger WRITE path (store.lock / write_raw)", "ledger.lock (LCK-008)"],
+            "gates": []},
+    "S02": {"title": "canonical backend normalization at the read boundary", "root": "RC-3",
+            "files": ["src/fanops/accounts.py", "src/fanops/post/__init__.py", "src/fanops/settings.py (_VALID_BACKENDS consolidation)"],
+            "state_owned": ["Account.backends (the VALUE)", "Accounts.skipped_rows", "the provider resolution chain"],
+            "gates": ["live_ready_channels()", "is_live_backend (INDIRECTLY — it derives from live_ready_channels)"]},
+    "S03": {"title": "the publish CLAIM refuses a post it will not POST", "root": "RC-1",
+            "files": ["src/fanops/post/run.py:256-292", "src/fanops/post/run.py:428 (C3-F3 log, batched)"],
+            "state_owned": ["the queued->submitting transition (P4)"],
+            "gates": []},
+    "S04": {"title": "reconcile terminal ladder = f(state, age)", "root": "RC-2 + RC-8 (reconcile half)",
+            "files": ["src/fanops/reconcile.py:604-778"],
+            "state_owned": ["submitting->needs_reconcile (P16)", "the GAVE UP: label (P17)", "reconcile.py:767 the suppression key"],
+            "gates": []},
+    "S05": {"title": "ZernioStatusClient: 404 -> {'status':'unknown'}", "root": "RC-2 (sibling)",
+            "files": ["src/fanops/post/metrics.py:511-531"],
+            "state_owned": ["the get_status seam's return shape (Zernio)"],
+            "gates": []},
+    "S06": {"title": "bulk_send_to_review clears error_reason", "root": "RC-8 (revert half)",
+            "files": ["src/fanops/studio/actions.py:944-951"],
+            "state_owned": ["Post.error_reason (on the revert path)"],
+            "gates": []},
+    "S07": {"title": "reconcile/publish gate parity", "root": "RC-3b",
+            "files": ["src/fanops/pipeline.py:311-338"],
+            "state_owned": [],
+            "gates": ["*** cfg.is_live_backend (the _reconcile_safe gate) ***"]},
+    "S08": {"title": "daemon health: alive != succeeding", "root": "RC-6",
+            "files": ["src/fanops/daemon.py:437-479", "src/fanops/health_model.py", "src/fanops/cli.py (the success signal)"],
+            "state_owned": ["the status verdict string", "last_success_age_s (NEW)"],
+            "gates": []},
+    "S09": {"title": "the shrink temp dir gets an owner", "root": "RC-10 + C4-F5",
+            "files": ["src/fanops/post/compress.py:19-35", "src/fanops/studio/actions.py:1029-1034 + :1100-1102", "src/fanops/cli.py (a clean verb)", "src/fanops/doctor.py (a check)"],
+            "state_owned": ["Post.media_urls (on the shrink path)", "the fanops-shrink-* dir lifetime"],
+            "gates": []},
+    "S10": {"title": "irreversible retirement policy", "root": "RC-7",
+            "status": "BLOCKED ON PD-3 — DO NOT EXECUTE",
+            "files": ["src/fanops/adjust.py:82-96", "src/fanops/cli.py:151-155"],
+            "state_owned": ["MomentState.retired"],
+            "gates": ["cfg.is_live_backend (the _learn_pass gate)"]}
+  },
+
+  "matrix": [
+    {"pair": ["S01", "S02"], "class": "independent", "why": "Disjoint files. Disjoint state: S01 owns the ledger WRITE path; S02 owns a control-file VALUE. S01 does not add a ledger writer, and S02 adds none. No shared gate."},
+    {"pair": ["S01", "S03"], "class": "independent", "why": "Disjoint files. S03 REMOVES a ledger transition; S01 changes HOW every transition is persisted. S03's tests use Ledger.transaction, which S01 does not modify (S01 only changes restore_snapshot)."},
+    {"pair": ["S01", "S04"], "class": "independent", "why": "Disjoint files, disjoint state."},
+    {"pair": ["S01", "S05"], "class": "independent"},
+    {"pair": ["S01", "S06"], "class": "independent"},
+    {"pair": ["S01", "S07"], "class": "independent"},
+    {"pair": ["S01", "S08"], "class": "independent", "why": "S08 may touch cli.py; S01 does not."},
+    {"pair": ["S01", "S09"], "class": "independent", "why": "*** CHECKED SPECIFICALLY: S09 deletes files that a cascade txn's deferred unlinks might also target. But S09 deletes 04_agent_io/fanops-shrink-* (shrink outputs), while _drain_deferred_unlinks deletes CLIP .mp4s under 03_clips. Disjoint path spaces. AND S01 makes the unlink race impossible anyway. Independent, but S01 SHOULD land first as defence."},
+    {"pair": ["S01", "S10"], "class": "independent"},
+
+    {"pair": ["S02", "S03"], "class": "independent", "why": "S02 decides WHICH backend string reaches get_poster; S03 decides WHETHER a post is claimed. Different questions, different files."},
+    {"pair": ["S02", "S04"], "class": "independent"},
+    {"pair": ["S02", "S05"], "class": "independent"},
+    {"pair": ["S02", "S06"], "class": "independent"},
+    {"pair": ["S02", "S07"], "class": "ordering_dependency", "order": "S02 BEFORE S07",
+     "why": "*** SHARED GATE: both change what is_live_backend means in practice. *** S02 normalizes malformed backends, so live_ready_channels() stops returning [] for a typo -> is_live_backend stops being spuriously False -> S07's premise (reconcile switched off while publish runs) becomes much HARDER to reach. S02 therefore SHRINKS S07's blast radius. Landing S07 first is not wrong, but its test fixtures would encode a malformed-backend world that S02 then eliminates, forcing a rewrite. NOT a semantic conflict — an ordering preference with a real test cost.",
+     "does_not_supersede": "S07 is STILL REQUIRED after S02: a credential-less or provider-less deployment yields live_ready_channels()==[] with NO malformed value at all."},
+    {"pair": ["S02", "S08"], "class": "independent"},
+    {"pair": ["S02", "S09"], "class": "independent"},
+    {"pair": ["S02", "S10"], "class": "semantic_conflict_LATENT", "why": "Both read cfg.is_live_backend as a gate (S10's _learn_pass gate; S02 changes what feeds it). If S02 makes a previously-dark channel live, is_live_backend flips True and _learn_pass — INCLUDING the IRREVERSIBLE retire() — starts running on a deployment where it previously did not. *** THIS IS A REAL, NON-OBVIOUS INTERACTION AND IT IS THE STRONGEST ARGUMENT FOR ANSWERING PD-3 BEFORE SHIPPING S02. *** Mitigation if PD-3 is unanswered: S02 must log the is_live_backend transition loudly, and the operator must be told that fixing a typo'd backend can UNFREEZE the learning pass."},
+
+    {"pair": ["S03", "S04"], "class": "ordering_dependency", "order": "S03 BEFORE S04 (preferred, not required)",
+     "why": "*** COMPLEMENTARY, NOT CONFLICTING. *** S03 stops the strand being CREATED (via the publish door). S04 drains posts ALREADY stranded (by any door, including the LEGITIMATE crash-during-network door, which must remain). Neither breaks the other. Code files are disjoint (run.py vs reconcile.py). BUT if S04 lands first while publish keeps re-creating strands, the new ladder escalates a churn of posts publish immediately re-strands — noisy, not dangerous. Ship S03 first: stop the bleeding, then drain.",
+     "both_required_for": "INT-2 (every submitting post terminates). Neither alone achieves it: S03 closes one creation door; S04 handles every door."},
+    {"pair": ["S03", "S05"], "class": "independent"},
+    {"pair": ["S03", "S06"], "class": "semantic_dependency", "why": "S06 preserves submission_id on revert ('keep the lineage'). That is SAFE ONLY BECAUSE S03 makes the claim refuse a real-sid post. *** If S06 shipped and S03 did NOT, S06 would change nothing about the strand — the post still reverts with a real sid, gets approved, and strands. *** S06 is a HYGIENE fix (the stale reason); S03 is the SAFETY fix. S06 without S03 is not harmful, merely incomplete. Order: S03 first."},
+    {"pair": ["S03", "S07"], "class": "independent"},
+    {"pair": ["S03", "S08"], "class": "same_file_conflict_only", "why": "S03 may touch run.py:428 (the C3-F3 log, batched); S08 touches cli.py. NO overlap in fact. Listed only because both could plausibly be assigned cli.py work. Assign the cli.py success-signal to S08 EXCLUSIVELY."},
+    {"pair": ["S03", "S09"], "class": "independent", "why": "run.py:294 calls _ensure_media -> apply_shrink_to_post, which S09 changes. But S03 REMOVES a code path (the claim of a real-sid post) and does not touch _ensure_media. Verified: S03's edits are at run.py:256-292; S09's are in compress.py + actions.py. Disjoint."},
+    {"pair": ["S03", "S10"], "class": "independent"},
+
+    {"pair": ["S04", "S05"], "class": "supersedes", "direction": "S04 supersedes S05 FOR THE STRAND",
+     "why": "*** S05 MUST NOT SHIP ALONE. *** Once S04 hoists the terminal out of the poll-outcome branch, a raising Zernio poll no longer prevents the terminal — so S05 is no longer load-bearing for C3-F2. S05 remains INDEPENDENTLY CORRECT (a 404 semantically IS 'unknown', not an error, and returning it lets the published/failed detection work at all on Zernio). Ship S05 WITH or AFTER S04. Shipping S05 alone is the brief's explicitly-forbidden shallow fix: 'adding another special case ... without defining submission lifecycle ownership'."},
+    {"pair": ["S04", "S06"], "class": "must_coordinate", "why": "*** TWO HALVES OF RC-8, IN DIFFERENT FILES. *** S04 owns reconcile.py:767 (change the suppression key from 'any error_reason' to _is_giveup). S06 owns actions.py:944-951 (clear the stale reason on revert). NO file conflict. But INT-7 ('no status string may suppress the system's own attention') holds ONLY when BOTH land. Do NOT duplicate the :767 fix into S06."},
+    {"pair": ["S04", "S07"], "class": "semantic_dependency", "why": "*** S07 IS AN ENABLER FOR S04'S GUARANTEE. *** If _reconcile_safe is gated OFF (is_live_backend False), S04's terminal ladder NEVER RUNS. So INT-2 holds only once BOTH land. Neither breaks the other; S04's ladder is correct but unreachable in the all-channels-malformed deployment until S07 lands. Order: either, but BOTH are required to close F-A's 'permanently unlabeled' variant."},
+    {"pair": ["S04", "S08"], "class": "independent"},
+    {"pair": ["S04", "S09"], "class": "independent"},
+    {"pair": ["S04", "S10"], "class": "independent"},
+
+    {"pair": ["S05", "S06"], "class": "independent"},
+    {"pair": ["S05", "S07"], "class": "independent"},
+    {"pair": ["S05", "S08"], "class": "independent"},
+    {"pair": ["S05", "S09"], "class": "independent"},
+    {"pair": ["S05", "S10"], "class": "independent"},
+
+    {"pair": ["S06", "S07"], "class": "independent"},
+    {"pair": ["S06", "S08"], "class": "independent"},
+    {"pair": ["S06", "S09"], "class": "same_file_conflict_only", "why": "*** BOTH TOUCH studio/actions.py. *** S06 edits :944-951 (bulk_send_to_review). S09 edits :1029-1034 and :1100-1102 (the two retry paths that persist the file:// temp URL). ~80 lines apart, different functions, no shared state. A textual merge conflict is possible if both are in flight on the same branch point; a rebase resolves it. NOT a semantic conflict."},
+    {"pair": ["S06", "S10"], "class": "independent"},
+
+    {"pair": ["S07", "S08"], "class": "independent"},
+    {"pair": ["S07", "S09"], "class": "independent"},
+    {"pair": ["S07", "S10"], "class": "semantic_conflict_LATENT", "why": "S10's _learn_pass is gated on cfg.is_live_backend — the SAME gate S07 removes from _reconcile_safe. S07 does NOT touch the learn gate. But an engineer 'unifying the gating' could remove BOTH, which would run the IRREVERSIBLE retire() on a not-live-backend deployment. *** FORBIDDEN SCOPE EXPANSION, written into the S07 prompt. ***"},
+
+    {"pair": ["S08", "S09"], "class": "same_file_conflict_only", "why": "Both may touch cli.py — S08 for the success signal, S09 for a `fanops clean --shrink` verb. Different regions. Rebase resolves."},
+    {"pair": ["S08", "S10"], "class": "same_file_conflict_only", "why": "Both touch cli.py — S08 the daemon loop (:1300-1313), S10 _learn_pass (:151-155). Different regions."},
+
+    {"pair": ["S09", "S10"], "class": "independent"}
+  ],
+
+  "reframe_stream_interference": {
+    "question": "The reframe/framing work is a SEPARATE ACTIVE STREAM. Which Cycle-4 slices overlap it?",
+    "verdict": "*** ZERO OVERLAP — verified by FILE and by STATE OWNERSHIP, not by filename. ***",
+    "current_state_of_the_stream": "The reframe stream's most recent commit IS HEAD (fcffa73, 'fix(framing): cv2 required'). Nothing is in flight — no unmerged reframe branch exists. So there is no concurrent-edit hazard TODAY.",
+    "file_overlap": {
+      "reframe_files": ["src/fanops/framing.py", "src/fanops/clip.py", "src/fanops/keyframes.py"],
+      "cycle4_files": ["reconcile.py", "post/run.py", "post/__init__.py", "post/providers.py", "post/compress.py", "post/metrics.py", "ledger.py", "ledger_sqlite.py", "accounts.py", "studio/actions.py", "pipeline.py", "cli.py", "daemon.py", "health_model.py", "adjust.py", "doctor.py", "settings.py"],
+      "intersection": "EMPTY"
+    },
+    "state_ownership_check": {
+      "note": "The brief FORBIDS concluding 'parallel-safe' from differing filenames. This is the behavioural check.",
+      "framing.py": "ZERO references to Ledger or `led.` (grep -c => 0). Pure detection. Owns NO ledger state.",
+      "keyframes.py": "ZERO references to Ledger or `led.` (grep -c => 0). A content-addressed cache. Owns NO ledger state.",
+      "clip.py": "*** Its ONLY three occurrences of the token `Render` are DOCSTRINGS (lines 1, 503, 904). It never constructs, reads, or writes a Render row, and never touches led.renders. *** It writes ClipState and clip FILES. Cycle-4's Cluster-D slice (S09) touches Post.media_urls and the shrink temp dir — neither of which clip.py reads or writes.",
+      "conclusion": "The reframe stream and every Cycle-4 slice are DISJOINT in state ownership, not merely in filenames."
+    },
+    "the_one_forward_looking_hazard": {
+      "id": "IF-1",
+      "statement": "*** If a FUTURE reframe slice starts MINTING Render rows (i.e. gives Ledger.add_render its first caller, or stops crosspost.py:225 hardcoding render_id=None), it would REACTIVATE the currently-unreachable C3-F5. *** The Render.path writes at compress.py:112, compress.py:131 and run.py:367 are guarded ONLY by `if r is not None:` / `if post.render_id:`. They are dormant because nothing mints a Render — not because they are safe.",
+      "action": "This must be recorded on the reframe stream's own risk list, NOT fixed by a Cycle-4 slice. A Cycle-4 slice that 'defensively' repaired the Render.path writes would be fixing an unreachable path — over-engineering — and would conflict with whatever the reframe stream decides Render should mean.",
+      "recommendation": "S09's prompt includes a REGRESSION TEST (test_no_persisted_media_url_points_into_a_shrink_dir) written so that it would ALSO catch a Render.path regression if Renders are ever minted. That is the cheapest possible guard and it costs the reframe stream nothing."
+    }
+  },
+
+  "concurrency_verdicts": {
+    "safe_to_BUILD_in_parallel": ["S01", "S02", "S08", "S09"],
+    "why_those_four": "Disjoint files, disjoint state ownership, no shared gate, and no ordering dependency among them. S01 and S02 in particular touch entirely separate subsystems (ledger write path vs the accounts control file).",
+    "must_be_SEQUENTIAL": {
+      "chain": ["S03", "S04", "S05"],
+      "why": "S03 -> S04 is an ordering preference with a real cost (S04-first causes escalation churn while publish keeps re-stranding). S04 -> S05 is a supersedes relation (S05 alone is a forbidden shallow fix). All three also concentrate on ONE architectural question — submission lifecycle ownership — and splitting them across concurrent authors would fragment the contract they are jointly defining."
+    },
+    "may_be_DESIGNED_concurrently_but_not_IMPLEMENTED_concurrently": {
+      "pair": ["S02", "S07"],
+      "why": "Shared gate (is_live_backend). S02 changes what feeds it; S07 changes who reads it. Designing both at once is fine and desirable; implementing concurrently risks two authors encoding contradictory assumptions about what is_live_backend means."
+    },
+    "must_ship_ATOMICALLY": [
+      {"unit": "S01 source fix + S01 test rewrite", "why": "*** NON-NEGOTIABLE (RC-5). *** test_restore_snapshot_serializes_with_transaction currently ASSERTS the data-loss outcome. Any correct fix turns it red. A maintainer seeing a green test go red will read the FIX as the regression. The test rewrite IS part of the fix."},
+      {"unit": "S04's reconcile.py:739-777 rewrite INCLUDING the :767 suppression-key change", "why": "The latch lives INSIDE the branch S04 rewrites. Splitting it would leave the ladder reachable but its outcome still suppressed."}
+    ],
+    "unsafe_concurrent": [
+      {"pair": ["S03", "S04"], "why": "Not a code conflict — a CONTRACT conflict. Both define the meaning of `submitting`. Two authors in parallel will produce two lifecycles."}
+    ],
+    "blocked_on_product_decisions": {
+      "S10": "PD-3 — DO NOT EXECUTE.",
+      "S04_semantics": "PD-2 — the SHAPE is decided; the exact terminal for a real token needs the call. Recommendation: the same ladder (GAVE UP: is a label, not a state change, so it cannot double-post).",
+      "S03_completeness": "PD-1 — SHIP ANYWAY. The claim-refusal is safe with or without a republish action.",
+      "S02_edge": "PD-4 — nearly not a decision (it moves set_backend's existing rule to the read boundary). The residual call is skip-and-flag vs raise; recommendation is skip-and-flag via the existing skipped_rows channel."
+    }
+  }
+}

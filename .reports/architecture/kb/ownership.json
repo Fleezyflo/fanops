@@ -1,0 +1,330 @@
+{
+ "$schema": "fanops-arch-kb/ownership/v1",
+ "cycle": 5,
+ "git_head": "fcffa73",
+ "generated": "2026-07-14",
+ "purpose": "For every architectural asset: who may CREATE it, who may MUTATE it, who may READ it, who owns its LIFECYCLE. Answers 'if I change X, who breaks?' without re-reading the tree.",
+ "provenance": {
+  "method": "Synthesis of the Cycle-2 AST writer census (mutation_writers.json, transitions.json) + the Cycle-5 AST dependency/lock/txn census. Every ownership claim is backed by a writer site; a claim of SOLE ownership is backed by an AST writer census, never a grep (Cycle-2 method note).",
+  "confidence_scale": "CERTAIN = AST-verified writer set. HIGH = source-read, single-site. UNKNOWN = recorded in unknowns.json."
+ },
+ "ownership_semantics": {
+  "authoritative_owner": "the single module whose contract defines the asset's legal values and transitions",
+  "mutation_authority": "every module that WRITES it (AST writer census)",
+  "read_authority": "every module that READS it (informative; not exhaustive where readers are many)",
+  "lifecycle_authority": "who CREATES and who RETIRES/DELETES it"
+ },
+ "persistent_entities": [
+  {
+   "asset": "Source",
+   "store": "ledger.sqlite / led.sources",
+   "authoritative_owner": "fanops.ingest (mint) + fanops.ledger (contract)",
+   "mutation_authority": [
+    "ingest.py:323 (birth)",
+    "transcribe.py:338,486",
+    "signals.py:161,204",
+    "moments.py:330,360,414,649,335,475,507",
+    "responder.py:182",
+    "pipeline.py:76,96,98,119,130",
+    "pipeline_status.py:209",
+    "ledger.py:736 (retire_source)",
+    "ledger.py:757 (rebuild_catalog -> discovered)",
+    "studio/actions_run.py:116,136"
+   ],
+   "lifecycle_authority": "ingest creates (content-addressed, setdefault -> replay is a no-op); ledger.retire_source is the ONLY retirement path (operator-only; the FILE is left on disk)",
+   "confidence": "CERTAIN"
+  },
+  {
+   "asset": "Moment",
+   "store": "led.moments",
+   "authoritative_owner": "fanops.moments",
+   "mutation_authority": [
+    "moments.py:404 (picked)",
+    "moments.py:646 (decided)",
+    "clip.py:741,758,815,872 (clipped)",
+    "adjust.py:95 (retired - IRREVERSIBLE)",
+    "ledger.py:687 (cascade survivor)",
+    "pipeline.py:228 (_quarantine -> error)",
+    "studio/actions_casting.py:26,44 (affinities via setattr)"
+   ],
+   "lifecycle_authority": "moments.ingest_moments creates; adjust.retire is the ONLY irreversible retirement (ledger.reconcile_moments REFUSES to un-retire, ledger.py:636-642)",
+   "unique_property": "THE ONLY model with validate_assignment=True (models.py:211). setattr IS validated here; model_copy still bypasses (INV-01b).",
+   "confidence": "CERTAIN"
+  },
+  {
+   "asset": "Clip",
+   "store": "led.clips",
+   "authoritative_owner": "fanops.clip",
+   "mutation_authority": [
+    "clip.py (render_moment, born_state kwarg default = rendered)",
+    "clip.py:830,838,847,860 (born error)",
+    "stitch_render.py:251,333,348 (stitch_draft)",
+    "caption.py:223,297,316,356,360",
+    "crosspost.py:286 (queued)",
+    "ledger.py:720 (retire_clip)",
+    "pipeline.py:292 (_quarantine)",
+    "cli.py:1199",
+    "studio/actions.py:1184",
+    "studio/actions_approve.py:245"
+   ],
+   "no_writer": [
+    "ClipState.published",
+    "ClipState.analyzed"
+   ],
+   "consequence_of_no_writer": "ledger._LIVE_CLIP_STATES (ledger.py:649) is read at ledger.py:665 as clip_live -> ALWAYS FALSE. A DEAD GUARD. Cascade protection holds entirely via _PROTECTED_POST_STATES.",
+   "confidence": "CERTAIN"
+  },
+  {
+   "asset": "Post",
+   "store": "led.posts",
+   "authoritative_owner": "SPLIT \u2014 THIS IS THE ARCHITECTURE'S CENTRAL OWNERSHIP DEFECT",
+   "the_split": "crosspost MINTS it; Ledger.approve_post OWNS the approval gate; post.run OWNS queued->submitting; reconcile OWNS submitting/submitted/needs_reconcile; track OWNS published->analyzed. NO component owns the lifecycle of a REMOTE SUBMISSION. publish CREATES `submitting` posts it will never re-drive (RC-1); reconcile REFUSES to terminate them (RC-2). Neither owns them, so they live forever.",
+   "mutation_authority_state": "21 writer sites (AST census, transitions.json). Includes 5 GENERIC/DYNAMIC writers a literal grep cannot see: cli.py:395 PostState(args.status), actions.py:870 p.state=st, run.py:357 setattr(p,f,v), reconcile.py:725 model_copy(update=upd), pipeline.py:151 model_copy(update={'state':error_state}).",
+   "sole_writers": {
+    "PostState.retired": "cli.py:395 (fanops resolve <id> retired)",
+    "network POST": "post/run.py:296 _publish_one (INV-09)",
+    "published->analyzed": "track.py:193 + cli.py:395"
+   },
+   "no_writer": [
+    "PostState.error"
+   ],
+   "confidence": "CERTAIN"
+  },
+  {
+   "asset": "Render",
+   "store": "led.renders",
+   "authoritative_owner": "NONE \u2014 the entity is never minted",
+   "mutation_authority": [
+    "run.py:363 (media_url)",
+    "run.py:367 (path)",
+    "compress.py:112,131 (path)",
+    "paths_rebase.py:75 (path)"
+   ],
+   "creation_authority": "ZERO. Ledger.add_render has NO CALLERS (AST). Render(...) is constructed ONLY in the two deserializers (ledger.py:458, ledger_bridge.py:44). crosspost.py:225 hardcodes render_id=None on every minted Post. LIVE LEDGER (read-only): 0 renders, 0 of 347 posts carry a render_id.",
+   "consequence": "led.renders is ALWAYS EMPTY. Every led.renders.get(...) returns None. All Render.path writes sit behind `if r is not None:` guards that are ALWAYS FALSE. RenderState is driverless (FIND-001, upheld across 5 cycles).",
+   "forward_hazard": "IF-1 \u2014 a future reframe slice that gives add_render its first caller REACTIVATES the dormant Render.path writes.",
+   "confidence": "CERTAIN"
+  },
+  {
+   "asset": "StitchPlan",
+   "store": "led.stitch_plans",
+   "authoritative_owner": "fanops.stitch_render + fanops.ledger",
+   "mutation_authority": [
+    "ledger.py:762 (add, setdefault)",
+    "ledger.py:766 (approved; guard: state is suggested)",
+    "ledger.py:770 (dismissed; guard: state in (suggested,approved))",
+    "stitch_render.py:336,350 (in_use)",
+    "stitch_render.py:316,327,330,335,344,362 (error)",
+    "impact_cut.py:83"
+   ],
+   "note": "The ONLY fully-driven auxiliary state machine in the system \u2014 every declared state has a writer.",
+   "confidence": "CERTAIN"
+  },
+  {
+   "asset": "Batch",
+   "store": "led.batches",
+   "authoritative_owner": "fanops.batches",
+   "no_writer": [
+    "BatchState.closed",
+    "BatchState.error"
+   ],
+   "note": "Born `open`; NO writer AND NO reader for closed/error. models.py:488 concedes it: 'born open; this build only ever sets open'.",
+   "confidence": "CERTAIN"
+  },
+  {
+   "asset": "ImportedMedia",
+   "store": "led.imported_media",
+   "authoritative_owner": "fanops.reconcile",
+   "mutation_authority": [
+    "ledger.py:562 add_imported_media \u2014 a TRUE UPSERT (last-write-wins), deliberately NOT setdefault, so a re-pull's fresher metrics win"
+   ],
+   "note": "The ONE entity with a NATURAL key (the platform's own Graph media_id) and no lineage by construction.",
+   "confidence": "CERTAIN"
+  }
+ ],
+ "control_files": [
+  {
+   "asset": "accounts.json",
+   "authoritative_owner": "fanops.accounts",
+   "lock": "accounts.lock (fcntl.flock)",
+   "mutation_authority": [
+    "10 mutators: write_integration:372, set_backend:400, add_account:438, ensure_channel:474, set_status:513, set_clip_profile:536, set_ig_user_id:561, set_persona:585, remove_account:605, link_persona:320"
+   ],
+   "second_writer": "THE OPERATOR, BY HAND. accounts.py:112-113 documents hand-editing as the normal channel. This is the door RC-3 comes through: set_backend normalizes+validates; the LOAD boundary does not.",
+   "read_authority": [
+    "post/run.py (publish routing)",
+    "studio/*",
+    "doctor",
+    "config (LAZILY \u2014 config.py reaches UP to accounts)"
+   ],
+   "confidence": "CERTAIN"
+  },
+  {
+   "asset": "personas.json",
+   "authoritative_owner": "fanops.persona_store",
+   "lock": "personas.lock",
+   "confidence": "CERTAIN"
+  },
+  {
+   "asset": "hashtag_bans.json",
+   "authoritative_owner": "fanops.hashtags",
+   "lock": "hashtag_bans.lock",
+   "confidence": "CERTAIN"
+  },
+  {
+   "asset": "hashtag_budget.json",
+   "authoritative_owner": "fanops.meta_graph",
+   "lock": "hashtag_budget.lock",
+   "confidence": "CERTAIN"
+  },
+  {
+   "asset": "hashtags.json",
+   "authoritative_owner": "fanops.fanops_hashtags (refresh_store)",
+   "lock": "NONE",
+   "confidence": "CERTAIN"
+  },
+  {
+   "asset": "cutover.json",
+   "authoritative_owner": "fanops.track (_auto_validate_metrics_shape) + the cutover probe",
+   "lock": "NONE",
+   "note": "Gates learning_validated. AUTO-stamped by the first real non-degraded live metric.",
+   "confidence": "CERTAIN"
+  },
+  {
+   "asset": "timing_bias.json",
+   "authoritative_owner": "fanops.timing_bias",
+   "lock": "NONE",
+   "confidence": "CERTAIN"
+  },
+  {
+   "asset": "tuning.json",
+   "authoritative_owner": "THE OPERATOR (hand-edit)",
+   "lock": "NONE",
+   "validation": "config._sanitize_tuning \u2014 warn+drop, NEVER raise (config.py:32-57)",
+   "confidence": "CERTAIN"
+  },
+  {
+   "asset": ".env",
+   "authoritative_owner": "fanops.studio.golive (_dual_write) + the operator",
+   "lock": "NONE",
+   "note": "Secrets go to the OS KEYRING ONLY, never plaintext .env.",
+   "confidence": "CERTAIN"
+  },
+  {
+   "asset": "account_stats.json / insights_blocked.json / learn_doctor.json / context.md",
+   "authoritative_owner": "fanops_account_stats / reconcile / learn_doctor / (UNKNOWN consumer \u2014 see UNK-004)",
+   "confidence": "HIGH"
+  }
+ ],
+ "locks": [
+  {
+   "lock": "L1 ledger",
+   "primitive": "SQLite BEGIN IMMEDIATE on a dedicated connection",
+   "owner": "fanops.ledger_sqlite",
+   "guards": "all 8 entity maps",
+   "timeout": "30s -> typed LockBusyError",
+   "held_across_io": false,
+   "sites": "74 Ledger.transaction sites (AST)"
+  },
+  {
+   "lock": "L2 control files",
+   "primitive": "fcntl.flock per <file>.lock",
+   "owner": "fanops.ledger._file_lock (reused by accounts, personas, hashtags, meta_graph)",
+   "held_across_io": false
+  },
+  {
+   "lock": "L3 run lease",
+   "primitive": "fcntl.flock LOCK_NB on 00_control/.run.lock",
+   "owner": "fanops.pipeline_run",
+   "held_across_io": true,
+   "note": "held for the WHOLE pass"
+  },
+  {
+   "lock": "L4 stage lock",
+   "primitive": "fcntl.flock on <agent_io>/.locks/<stage>/<key>.lock",
+   "owner": "fanops.stage_lock",
+   "held_across_io": true,
+   "note": "held across whisper/ffmpeg"
+  },
+  {
+   "lock": "L5 ledger.lock",
+   "primitive": "fcntl.flock on 00_control/ledger.lock",
+   "owner": "fanops.ledger.restore_snapshot (ledger.py:551) \u2014 its SOLE consumer",
+   "excludes": "NOTHING. Mutually invisible to L1's BEGIN IMMEDIATE.",
+   "verdict": "RC-4 / C4-F2a \u2014 PROVEN silent data loss AND silent media deletion. The sibling SIX LINES ABOVE (Ledger.snapshot, ledger.py:540) takes the CORRECT lock (store.lock()).",
+   "confidence": "CERTAIN (executed, Cycles 2+4)"
+  }
+ ],
+ "L1_L2_exclusion": "NONE (COUP-01). The ledger and the control files do not exclude each other. Handled for the one case that matters: publish re-resolves the integration id at publish time and FINALIZE merges account_id with an explicit 'in-flight wins' policy.",
+ "cross_cutting_owners": {
+  "identity_minting": {
+   "owner": "fanops.ids",
+   "rule": "SHA-1, usedforsecurity=False, \\x00-joined, truncated to 12 hex. Builtin hash() is BANNED (PEP 456 salts it per interpreter). ids.py:2,7.",
+   "consumers": "every entity id in the system",
+   "coupling": "COUP-04 \u2014 ledger._SID_RE hardcodes the FORMAT ids.py mints; changing the id length silently breaks orphan detection."
+  },
+  "logging": {
+   "owner": "fanops.log (get_logger)",
+   "fan_in": 32
+  },
+  "errors": {
+   "owner": "fanops.errors",
+   "fan_in": 31
+  },
+  "time": {
+   "owner": "fanops.timeutil",
+   "fan_in": 17,
+   "note": "publish_buckets FAILS CLOSED to UTC"
+  },
+  "config": {
+   "owner": "fanops.config",
+   "fan_in": 82,
+   "note": "THE most-depended-on module in the system. Depth 0 (no compile-time fanops imports) yet it lazily reaches UP to accounts and meta_graph."
+  }
+ },
+ "ownership_pathologies": [
+  {
+   "id": "OWN-1",
+   "class": "MISSING OWNERSHIP",
+   "asset": "the lifecycle of a remote submission (Post in submitting/submitted/needs_reconcile)",
+   "detail": "publish CREATES the state and will never re-drive it; reconcile is its SOLE reader and cannot always terminate it. No component owns it. This is the root of RC-1+RC-2 and the single largest architectural hole in the system.",
+   "confidence": "CERTAIN"
+  },
+  {
+   "id": "OWN-2",
+   "class": "SHARED OWNERSHIP / OVERLOADED CHANNEL",
+   "asset": "Post.error_reason",
+   "detail": "ONE free-text field, ~14 writers, FOUR machine semantics: a retry counter (transient_daemon_retry=n/3), a terminal marker (GAVE UP: prefix), a quarantine sentinel (unverified:), and a do-not-look-again LATCH (reconcile.py:767 `if post.error_reason: continue`). The breadcrumb that tells the operator a post is stuck IS the mechanism that stops the system looking at it again.",
+   "confidence": "CERTAIN"
+  },
+  {
+   "id": "OWN-3",
+   "class": "AMBIGUOUS OWNERSHIP",
+   "asset": "the backend identifier (Account.backends[platform])",
+   "detail": "Normalized at ONE write boundary (accounts.set_backend) and consumed RAW by FIVE resolvers with FOUR different unknown-value behaviours. No canonical normalize-and-validate at the READ boundary. RC-3.",
+   "confidence": "CERTAIN"
+  },
+  {
+   "id": "OWN-4",
+   "class": "MISSING OWNERSHIP",
+   "asset": "the fanops-shrink-* temp dir",
+   "detail": "compress.maybe_shrink_for_cap mkdtemps it (the ONLY mkdtemp in src/fanops, AST-confirmed) and NOTHING removes it (no rmtree anywhere in the tree except transcribe's demucs cleanup). RC-10.",
+   "confidence": "CERTAIN"
+  },
+  {
+   "id": "OWN-5",
+   "class": "CIRCULAR OWNERSHIP (SUBSYSTEM level \u2014 NOT an import cycle)",
+   "asset": "the learning loop",
+   "detail": "*** S08 selection <-> S14 learning is a cycle in the SUBSYSTEM graph (moments -> moment_hook_learning; adjust -> moments). IT IS NOT A MODULE-LEVEL IMPORT CYCLE \u2014 both modules are singleton SCCs, and the domain core is ACYCLIC at module level. *** What it DOES mean: selection and learning are MUTUALLY DEPENDENT and cannot be reasoned about, or extracted, independently. What it does NOT mean: any load-order fragility.",
+   "confidence": "CERTAIN",
+   "intentionality": "The DOMAIN feedback loop is intentional and IS the product (CERTAIN). Whether the MUTUAL-IMPORT WIRING that realizes it is intentional is UNKNOWN (UNK-C5-4) \u2014 the loop could equally be closed by the orchestrator or via a shared abstraction."
+  },
+  {
+   "id": "OWN-6",
+   "class": "SECOND WRITER OUTSIDE THE CODE",
+   "asset": "accounts.json, tuning.json, .env",
+   "detail": "The OPERATOR is an unmodelled writer of three control files, by documented design. Every load-boundary validation gap is therefore reachable. This is not a bug; it is an ownership fact the code must be written against.",
+   "confidence": "CERTAIN"
+  }
+ ]
+}

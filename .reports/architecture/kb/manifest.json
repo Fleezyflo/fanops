@@ -1,0 +1,122 @@
+{
+ "$schema": "fanops-arch-kb/manifest/v2",
+ "cycle": 5,
+ "git_head": "fcffa73",
+ "generated": "2026-07-14",
+ "status": "CANONICAL. This is the architectural source for all future maintenance, validation, governance, CI and change-impact analysis.",
+ "prose_twin": "../ARCHITECTURE_MANIFEST.md",
+ "scope_discipline": {
+  "cycle_5_DID": [
+   "build the canonical architectural model of the repository AS IT EXISTS",
+   "derive the module dependency graph (NO PRIOR CYCLE DID THIS)",
+   "partition all 127 modules into subsystems (totality proven)",
+   "record every architectural claim with provenance",
+   "record what cannot be proven, as unknown"
+  ],
+  "cycle_5_did_NOT": [
+   "modify production code",
+   "implement architectural changes",
+   "design remediation",
+   "create CI enforcement",
+   "create policy rules",
+   "create drift detection",
+   "run the test suite (forbidden by repo policy)",
+   "search for new bugs",
+   "repeat the Cycle 1-4 audits"
+  ],
+  "remediation_authority": "UNCHANGED \u2014 Cycle 4's ../IMPLEMENTATION_SEQUENCE.md, ../REMEDIATION_OPTIONS.md and ../CHANGE_INTERFERENCE_MATRIX.md remain authoritative and are NOT superseded."
+ },
+ "repository_summary": {
+  "what_it_is": "A closed-loop clip-and-crosspost engine. A source video is ingested, transcribed and analysed; an LLM (a SUBPROCESS, not an API) picks moments and writes hooks; clips are rendered per-account; captions and hashtags are composed per-persona; posts are minted AWAITING OPERATOR APPROVAL; approved posts publish to IG/YouTube (Postiz) and TikTok (Zernio); reach is measured (Meta Graph); and the measurements BIAS THE NEXT ROUND OF SELECTION.",
+  "the_defining_architectural_fact": "*** THE SYSTEM IS A CLOSED LEARNING LOOP \u2014 AND THE MODULE IMPORT GRAPH REALIZES IT WITHOUT A MODULE-LEVEL IMPORT CYCLE. *** The DOMAIN feedback loop (select -> render -> caption -> publish -> measure -> learn -> select) is INTENTIONAL and IS the product (CERTAIN). At MODULE level the domain core is ACYCLIC: 124 of 127 modules are singleton SCCs, and the ONLY compile-time import cycle in the tree (personas x3) is UNRELATED to the loop. At SUBSYSTEM level \u2014 an ANALYTIC AGGREGATION \u2014 seven subsystems form a cycle, which is REAL COUPLING but NOT an import cycle. *** Whether the mutual-import WIRING that produces it is intentional is UNKNOWN, and the v1 manifest's claim that it 'is not a defect' is RETRACTED (C5-COR-09). ***",
+  "layout": "pure-Python src/ layout, 127 modules, Python 3.12-3.13",
+  "persistence": "ONE SQLite ledger (WAL, synchronous=FULL), 8 entity maps, schema v11, full-document replace",
+  "the_only_queue": "A FILESYSTEM QUEUE (04_agent_io/requests/*.request.json <-> .response.json). No broker.",
+  "scheduling": "launchd ONLY. No cron, no APScheduler, no in-process timer.",
+  "entry_points": [
+   "fanops CLI (59 verbs)",
+   "the launchd daemon (com.fanops.run + keeper)",
+   "the Flask Studio (149 routes, 0 authenticated)"
+  ],
+  "the_engine": "pipeline.advance() \u2014 a five-phase pass. Every entry point funnels into it.",
+  "the_cardinal_rule_honoured": "No network call and no heavy subprocess EVER runs inside the ledger lock. Verified at every site.",
+  "the_safety_property_that_matters_most": "INV-08 \u2014 a post is BORN awaiting_approval; publish_due iterates `queued` ONLY; only approve_post (guarded on awaiting_approval) promotes. NOTHING publishes without an explicit operator approval, even on a live backend with the daemon running."
+ },
+ "topology": {
+  "subsystems": 19,
+  "subsystem_definition": "An ANALYTIC OVERLAY imposed by Cycle 5 \u2014 not declared in the repo, not enforced. See kb/subsystems.json DEFINITION.",
+  "modules": 127,
+  "partition_totality": "PROVEN \u2014 127/127, 0 unassigned, 0 ghosts",
+  "compile_time_import_graph_G1": "NOT a DAG \u2014 it contains 1 non-trivial SCC (personas x3). 124 of 127 modules are singletons.",
+  "SCC_condensed_compile_graph_G1c": "*** An 11-level DAG \u2014 BY CONSTRUCTION. This is the ONLY sense in which FanOps has a layered compile-time structure, and it is an OUTPUT of the import structure, not an ENFORCED constraint. ***",
+  "static_potential_dependency_graph_G2": "*** compile UNION lazy. A STATIC OVER-APPROXIMATION of runtime dependency \u2014 a lazy import materializes only if its function is called. Contains a 45-module SCC; all 19 subsystems in one SCC. These BOUND the blast radius; they do NOT establish it. G2 is a SUPERSET of the runtime call graph, which was NOT derived. ***",
+  "domain_core_at_module_level": "*** ACYCLIC. ***"
+ },
+ "the_four_structural_holes": [
+  {
+   "id": "AR-01",
+   "hole": "THE SUBMISSION LIFECYCLE HAS NO OWNER",
+   "severity": "HIGH",
+   "one_line": "publish CREATES posts in a state it will never re-drive; reconcile is that state's SOLE reader and cannot always terminate it. Three independent exclusions each strand a post forever. PROVEN: still `submitting` at +100,000h."
+  },
+  {
+   "id": "AR-02 + AR-03",
+   "hole": "THE RESTORE RACE, AND THE GREEN TEST THAT LOCKS IT IN",
+   "severity": "CRITICAL",
+   "one_line": "restore_snapshot takes a lock in NO domain, then os.replace's the DB. A live writer's commit() SUCCEEDS, its data is discarded, AND its deferred media unlinks PROCEED \u2014 deleting real .mp4s whose rows the restore brings back. And a green CI test ASSERTS that outcome and calls it correct."
+  },
+  {
+   "id": "AR-04",
+   "hole": "IMPORT-TIME ACYCLICITY IS PURCHASED, NOT DESIGNED",
+   "severity": "MEDIUM",
+   "one_line": "107 of 323 lazy imports point to an equal-or-higher LEVEL \u2014 56 STRICTLY UPWARD (true layering inversions) + 51 lateral. `config` \u2014 level 0, fan-in 82 \u2014 reaches UP to accounts and meta_graph. Module init order is load-bearing and NOTHING enforces it."
+  },
+  {
+   "id": "AR-09",
+   "hole": "THE OPERATOR IS AN UNMODELLED SECOND WRITER",
+   "severity": "HIGH",
+   "one_line": "accounts.json / tuning.json / .env are DOCUMENTED as hand-editable. The write boundaries are sound; the LOAD boundaries have no validation. Every load-boundary gap is therefore reachable BY DESIGN."
+  }
+ ],
+ "the_recurring_defect_shape": {
+  "statement": "*** THE DOC NAMES A MECHANISM THAT DOES NOT EXIST, WHILE THE PROPERTY SURVIVES VIA A DIFFERENT ONE. ***",
+  "found_in": [
+   "the docs (INV-01, INV-02, INV-03, INV-05, INV-07)",
+   "the code comments (4 for 4 \u2014 see below)",
+   "*** THE TEST LAYER (AR-03) \u2014 the most dangerous instance ***"
+  ],
+  "the_mechanical_tell": "A load-bearing assumption written as a STATEMENT OF FACT sits at the exact site of a live bug. FOUR FOR FOUR: reconcile.py:76 ('its status WILL resolve'), providers.py:53 ('no live account routes to an unknown backend'), test_ledger_sqlite_store.py:183 ('restorer blocked on flock'), ledger.py:487 ('a rolled-back txn never deletes a file it did not drop').",
+  "actionable": "*** grep the tree for comments containing 'never', 'cannot', 'WILL', 'no ... routes to'. Each is a hypothesis the author did not test. And for every invariant claimed to be protected by a test, READ THE TEST'S ASSERTION, NOT ITS NAME. ***"
+ },
+ "coverage": {
+  "structural_coverage": "127/127 = 100% \u2014 every Ledger.transaction, lock, network call, subprocess, mkdtemp, rmtree, env read and env write in src/fanops is ENUMERATED",
+  "behavioural_coverage": "~100/127 = ~79% \u2014 business logic actually read across 5 cycles",
+  "modules_never_read": "~27",
+  "what_the_census_PROVES_about_them": "*** They contain NO ledger writer, NO lock, NO network call, NO status client, NO subprocess. A STRUCTURAL GUARANTEE, not an assumption \u2014 and strictly stronger than anything Cycles 1-4 could claim. Their business logic remains unread (UNK-C5-3). ***"
+ },
+ "indices": {
+  "subsystems": "kb/subsystems.json",
+  "ownership": "kb/ownership.json",
+  "dependencies": "kb/dependencies.json",
+  "lifecycles": "kb/lifecycles.json (defers to ../transitions.json as CANONICAL)",
+  "persistence": "kb/persistence.json",
+  "side_effects": "kb/side_effects.json (supersedes ../side_effects.json)",
+  "configuration": "kb/configuration.json",
+  "integrations": "kb/integrations.json",
+  "maintenance_operations": "kb/maintenance.json",
+  "invariants": "kb/invariants.json",
+  "risks": "kb/risks.json",
+  "unknowns": "kb/unknowns.json",
+  "evidence": "kb/evidence.json",
+  "caches_and_fingerprints": "kb/persistence.json -> caches[], fingerprints[]",
+  "state_transitions": "../transitions.json (Cycle 2, CANONICAL, re-verified by Cycle 5)",
+  "route_contract": "../route_contract.json (Cycle 2, CANONICAL \u2014 all 149 routes)"
+ },
+ "operational_constraint": {
+  "id": "OPS-001",
+  "status": "*** STILL ENGAGED \u2014 FIVE CONSECUTIVE CYCLES ***",
+  "cost_to_this_cycle": "The gate REFUSED the independent verifier Cycle 5 attempted to spawn to REFUTE its own dependency claims. Cycle 5 fell back to cross-validation (the same AST pass reproduced four of Cycle 3's censuses exactly) \u2014 which is WEAKER than an independent agent, and is recorded as such.",
+  "disengage": "orchestrate.py stop \u2014 AN OPERATOR ACTION, not a code change."
+ },
+ "revision": "CORRECTED \u2014 see ../CYCLE5_CORRECTIONS.md C5-COR-06..09"
+}

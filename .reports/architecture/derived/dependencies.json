@@ -1,0 +1,3476 @@
+{
+  "$schema": "fanops-arch/derived/dependencies",
+  "G1_non_trivial_sccs": [
+    [
+      "fanops.persona_research",
+      "fanops.persona_store",
+      "fanops.personas"
+    ]
+  ],
+  "G2_non_trivial_sccs": [
+    [
+      "fanops.accounts",
+      "fanops.adjust",
+      "fanops.agentstep",
+      "fanops.artifacts",
+      "fanops.caption",
+      "fanops.clip",
+      "fanops.config",
+      "fanops.control",
+      "fanops.digest",
+      "fanops.framing",
+      "fanops.hashtags",
+      "fanops.hookscore",
+      "fanops.ingest",
+      "fanops.keyframes",
+      "fanops.ledger",
+      "fanops.ledger_bridge",
+      "fanops.ledger_sqlite",
+      "fanops.llm",
+      "fanops.log",
+      "fanops.meta_graph",
+      "fanops.moment_hook_learning",
+      "fanops.moments",
+      "fanops.p4_dim_bias",
+      "fanops.persona_directives",
+      "fanops.persona_research",
+      "fanops.persona_store",
+      "fanops.personas",
+      "fanops.pipeline_run",
+      "fanops.post",
+      "fanops.post.compress",
+      "fanops.post.dryrun",
+      "fanops.post.media",
+      "fanops.post.metrics",
+      "fanops.post.postiz",
+      "fanops.post.providers",
+      "fanops.post.zernio",
+      "fanops.prompts",
+      "fanops.reframe",
+      "fanops.reframe_apply",
+      "fanops.responder",
+      "fanops.signals",
+      "fanops.stage_lock",
+      "fanops.timing_bias",
+      "fanops.transcribe",
+      "fanops.validation_gate",
+      "fanops.variant_amplify",
+      "fanops.vocals"
+    ],
+    [
+      "fanops.studio.app",
+      "fanops.studio.app_routes_golive",
+      "fanops.studio.app_routes_personas",
+      "fanops.studio.app_routes_review",
+      "fanops.studio.app_routes_run",
+      "fanops.studio.app_routes_schedule"
+    ],
+    [
+      "fanops.autopilot",
+      "fanops.daemon",
+      "fanops.doctor",
+      "fanops.health",
+      "fanops.health_model"
+    ],
+    [
+      "fanops.cutover",
+      "fanops.cutover_postiz",
+      "fanops.track"
+    ],
+    [
+      "fanops.post.run",
+      "fanops.studio.views_common",
+      "fanops.studio.views_results"
+    ],
+    [
+      "fanops.pipeline",
+      "fanops.pipeline_status"
+    ],
+    [
+      "fanops.studio.actions",
+      "fanops.studio.actions_approve"
+    ],
+    [
+      "fanops.studio.views",
+      "fanops.studio.views_library"
+    ]
+  ],
+  "confidence": "CERTAIN",
+  "edges": {
+    "fanops": {
+      "compile": [],
+      "lazy": [],
+      "optional": [],
+      "typing": []
+    },
+    "fanops._fwrun": {
+      "compile": [
+        "fanops.config"
+      ],
+      "lazy": [],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.accounts": {
+      "compile": [
+        "fanops.bands",
+        "fanops.config",
+        "fanops.controlio",
+        "fanops.errors",
+        "fanops.models",
+        "fanops.settings"
+      ],
+      "lazy": [
+        "fanops.bands",
+        "fanops.ledger",
+        "fanops.personas"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.adjust": {
+      "compile": [
+        "fanops.accounts",
+        "fanops.config",
+        "fanops.ledger",
+        "fanops.models",
+        "fanops.moments"
+      ],
+      "lazy": [],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.agentstep": {
+      "compile": [
+        "fanops.config",
+        "fanops.ids",
+        "fanops.log"
+      ],
+      "lazy": [],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.artifacts": {
+      "compile": [
+        "fanops.config",
+        "fanops.controlio",
+        "fanops.ledger",
+        "fanops.models"
+      ],
+      "lazy": [
+        "fanops.signals",
+        "fanops.transcribe"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.audio_energy": {
+      "compile": [],
+      "lazy": [],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.audit": {
+      "compile": [
+        "fanops.config"
+      ],
+      "lazy": [],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.autopilot": {
+      "compile": [
+        "fanops.config"
+      ],
+      "lazy": [
+        "fanops",
+        "fanops.daemon",
+        "fanops.doctor"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.bands": {
+      "compile": [],
+      "lazy": [],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.batches": {
+      "compile": [
+        "fanops.models",
+        "fanops.timeutil"
+      ],
+      "lazy": [],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.caption": {
+      "compile": [
+        "fanops.agentstep",
+        "fanops.config",
+        "fanops.control",
+        "fanops.hashtags",
+        "fanops.ledger",
+        "fanops.log",
+        "fanops.models",
+        "fanops.personas",
+        "fanops.variant_learning",
+        "fanops.variant_transfer"
+      ],
+      "lazy": [
+        "fanops.accounts",
+        "fanops.personas",
+        "fanops.validation_gate"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.casting": {
+      "compile": [],
+      "lazy": [],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.cli": {
+      "compile": [
+        "fanops",
+        "fanops.accounts",
+        "fanops.adjust",
+        "fanops.agentstep",
+        "fanops.autopilot",
+        "fanops.config",
+        "fanops.daemon",
+        "fanops.digest",
+        "fanops.errors",
+        "fanops.ingest",
+        "fanops.ledger",
+        "fanops.log",
+        "fanops.models",
+        "fanops.p4_dim_bias",
+        "fanops.pipeline",
+        "fanops.reconcile",
+        "fanops.responder",
+        "fanops.timing_bias",
+        "fanops.track",
+        "fanops.variant_amplify"
+      ],
+      "lazy": [
+        "fanops",
+        "fanops.accounts",
+        "fanops.audit",
+        "fanops.compose",
+        "fanops.config_introspect",
+        "fanops.cutover",
+        "fanops.daemon",
+        "fanops.discover",
+        "fanops.doctor",
+        "fanops.fanops_account_stats",
+        "fanops.fanops_hashtags",
+        "fanops.health",
+        "fanops.health_model",
+        "fanops.ingest",
+        "fanops.init_flow",
+        "fanops.learn_doctor",
+        "fanops.ledger_wipe",
+        "fanops.lever_docs",
+        "fanops.llm",
+        "fanops.meta_graph",
+        "fanops.models",
+        "fanops.paths_rebase",
+        "fanops.persona_research",
+        "fanops.pipeline",
+        "fanops.pipeline_run",
+        "fanops.pipeline_status",
+        "fanops.reconcile",
+        "fanops.reframe",
+        "fanops.reframe_apply",
+        "fanops.studio.actions",
+        "fanops.studio.app",
+        "fanops.studio.views",
+        "fanops.studio.views_results",
+        "fanops.track"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.clip": {
+      "compile": [
+        "fanops",
+        "fanops.bands",
+        "fanops.config",
+        "fanops.errors",
+        "fanops.frames",
+        "fanops.framing",
+        "fanops.ids",
+        "fanops.ledger",
+        "fanops.log",
+        "fanops.models",
+        "fanops.overlay"
+      ],
+      "lazy": [
+        "fanops.artifacts",
+        "fanops.errors",
+        "fanops.impact_cut",
+        "fanops.ingest",
+        "fanops.reframe_apply",
+        "fanops.stage_lock",
+        "fanops.transcribe"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.compose": {
+      "compile": [],
+      "lazy": [
+        "fanops.clip",
+        "fanops.impact_cut"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.config": {
+      "compile": [],
+      "lazy": [
+        "fanops.accounts",
+        "fanops.errors",
+        "fanops.meta_graph",
+        "fanops.models",
+        "fanops.secret_provider"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.config_introspect": {
+      "compile": [
+        "fanops.config",
+        "fanops.secret_provider",
+        "fanops.settings"
+      ],
+      "lazy": [],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.control": {
+      "compile": [
+        "fanops.config"
+      ],
+      "lazy": [],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.controlio": {
+      "compile": [
+        "fanops.errors"
+      ],
+      "lazy": [],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.crosspost": {
+      "compile": [
+        "fanops",
+        "fanops.accounts",
+        "fanops.bands",
+        "fanops.casting",
+        "fanops.clip",
+        "fanops.config",
+        "fanops.ids",
+        "fanops.ledger",
+        "fanops.log",
+        "fanops.models",
+        "fanops.overlay",
+        "fanops.tagging",
+        "fanops.timeutil"
+      ],
+      "lazy": [
+        "fanops.timing_bias"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.cutover": {
+      "compile": [
+        "fanops.config",
+        "fanops.controlio",
+        "fanops.errors",
+        "fanops.track"
+      ],
+      "lazy": [
+        "fanops",
+        "fanops.cutover_postiz"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.cutover_postiz": {
+      "compile": [
+        "fanops.config",
+        "fanops.errors",
+        "fanops.post",
+        "fanops.post.postiz"
+      ],
+      "lazy": [
+        "fanops.cutover",
+        "fanops.post.metrics"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.daemon": {
+      "compile": [
+        "fanops.config",
+        "fanops.errors"
+      ],
+      "lazy": [
+        "fanops",
+        "fanops.autopilot",
+        "fanops.controlio",
+        "fanops.errors",
+        "fanops.health_model"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.digest": {
+      "compile": [
+        "fanops.agentstep",
+        "fanops.config",
+        "fanops.ledger",
+        "fanops.models",
+        "fanops.validation_gate",
+        "fanops.variant_learning",
+        "fanops.variant_transfer"
+      ],
+      "lazy": [
+        "fanops.accounts",
+        "fanops.p4_dim_bias",
+        "fanops.timing_bias",
+        "fanops.validation_gate",
+        "fanops.variant_amplify"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.discover": {
+      "compile": [
+        "fanops.config",
+        "fanops.controlio",
+        "fanops.errors",
+        "fanops.ingest",
+        "fanops.ledger"
+      ],
+      "lazy": [],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.doctor": {
+      "compile": [
+        "fanops.accounts",
+        "fanops.config",
+        "fanops.validation_gate"
+      ],
+      "lazy": [
+        "fanops",
+        "fanops.accounts",
+        "fanops.daemon",
+        "fanops.errors",
+        "fanops.health_model",
+        "fanops.ledger",
+        "fanops.llm",
+        "fanops.log",
+        "fanops.meta_graph",
+        "fanops.models",
+        "fanops.pipeline_status",
+        "fanops.post.zernio",
+        "fanops.settings",
+        "fanops.timeutil",
+        "fanops.transcribe"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.errors": {
+      "compile": [],
+      "lazy": [],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.fanops_account_stats": {
+      "compile": [
+        "fanops.accounts",
+        "fanops.config",
+        "fanops.controlio",
+        "fanops.log",
+        "fanops.meta_graph"
+      ],
+      "lazy": [],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.fanops_hashtags": {
+      "compile": [
+        "fanops.config",
+        "fanops.controlio",
+        "fanops.hashtags",
+        "fanops.log"
+      ],
+      "lazy": [
+        "fanops.errors",
+        "fanops.meta_graph",
+        "fanops.personas"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.frames": {
+      "compile": [],
+      "lazy": [],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.framing": {
+      "compile": [
+        "fanops.errors",
+        "fanops.framing_outcomes",
+        "fanops.transcribe"
+      ],
+      "lazy": [
+        "fanops",
+        "fanops.artifacts",
+        "fanops.keyframes",
+        "fanops.stage_lock"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.framing_outcomes": {
+      "compile": [],
+      "lazy": [],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.gate_keys": {
+      "compile": [],
+      "lazy": [],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.hashtags": {
+      "compile": [
+        "fanops.models"
+      ],
+      "lazy": [
+        "fanops.caption",
+        "fanops.controlio",
+        "fanops.ledger"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.health": {
+      "compile": [
+        "fanops.config",
+        "fanops.health_model"
+      ],
+      "lazy": [
+        "fanops.health_model"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.health_model": {
+      "compile": [
+        "fanops.config"
+      ],
+      "lazy": [
+        "fanops",
+        "fanops.daemon",
+        "fanops.doctor",
+        "fanops.errors",
+        "fanops.health",
+        "fanops.learn_doctor",
+        "fanops.ledger",
+        "fanops.meta_graph",
+        "fanops.models",
+        "fanops.pipeline_run",
+        "fanops.post.postiz",
+        "fanops.studio.views_review"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.hookcheck": {
+      "compile": [],
+      "lazy": [],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.hookscore": {
+      "compile": [
+        "fanops.models"
+      ],
+      "lazy": [
+        "fanops.log"
+      ],
+      "optional": [],
+      "typing": [
+        "fanops.config",
+        "fanops.ledger"
+      ]
+    },
+    "fanops.ids": {
+      "compile": [],
+      "lazy": [],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.impact_cut": {
+      "compile": [
+        "fanops.models"
+      ],
+      "lazy": [],
+      "optional": [],
+      "typing": [
+        "fanops.models"
+      ]
+    },
+    "fanops.ingest": {
+      "compile": [
+        "fanops.config",
+        "fanops.errors",
+        "fanops.ids",
+        "fanops.ledger",
+        "fanops.log",
+        "fanops.models",
+        "fanops.timeutil"
+      ],
+      "lazy": [
+        "fanops.batches"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.init_flow": {
+      "compile": [
+        "fanops.config",
+        "fanops.doctor"
+      ],
+      "lazy": [
+        "fanops.studio.golive"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.intro_match": {
+      "compile": [
+        "fanops.agentstep",
+        "fanops.compose",
+        "fanops.config",
+        "fanops.control",
+        "fanops.ids",
+        "fanops.keyframes",
+        "fanops.ledger",
+        "fanops.models",
+        "fanops.router"
+      ],
+      "lazy": [],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.keyframes": {
+      "compile": [
+        "fanops.config",
+        "fanops.framing_outcomes"
+      ],
+      "lazy": [
+        "fanops.artifacts",
+        "fanops.stage_lock"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.learn_doctor": {
+      "compile": [
+        "fanops.config",
+        "fanops.controlio",
+        "fanops.ledger",
+        "fanops.log",
+        "fanops.models",
+        "fanops.track"
+      ],
+      "lazy": [
+        "fanops.errors",
+        "fanops.post.metrics"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.ledger": {
+      "compile": [
+        "fanops.config",
+        "fanops.errors",
+        "fanops.ids",
+        "fanops.log",
+        "fanops.models"
+      ],
+      "lazy": [
+        "fanops.ingest",
+        "fanops.ledger_bridge",
+        "fanops.ledger_sqlite",
+        "fanops.router",
+        "fanops.timeutil"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.ledger_bridge": {
+      "compile": [
+        "fanops.config",
+        "fanops.errors",
+        "fanops.ledger",
+        "fanops.ledger_sqlite",
+        "fanops.models"
+      ],
+      "lazy": [
+        "fanops.errors"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.ledger_sqlite": {
+      "compile": [
+        "fanops.config",
+        "fanops.errors"
+      ],
+      "lazy": [],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.ledger_wipe": {
+      "compile": [
+        "fanops.config",
+        "fanops.ledger",
+        "fanops.models"
+      ],
+      "lazy": [],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.lever_docs": {
+      "compile": [
+        "fanops",
+        "fanops.bands",
+        "fanops.config",
+        "fanops.moments",
+        "fanops.persona_levers",
+        "fanops.personas",
+        "fanops.prompts"
+      ],
+      "lazy": [
+        "fanops.log"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.llm": {
+      "compile": [
+        "fanops.errors"
+      ],
+      "lazy": [
+        "fanops.config"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.log": {
+      "compile": [
+        "fanops.config"
+      ],
+      "lazy": [],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.meta_graph": {
+      "compile": [
+        "fanops.config",
+        "fanops.errors",
+        "fanops.hashtags",
+        "fanops.log"
+      ],
+      "lazy": [
+        "fanops.accounts",
+        "fanops.errors",
+        "fanops.ledger",
+        "fanops.models",
+        "fanops.post.metrics"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.metrics_schedule": {
+      "compile": [],
+      "lazy": [
+        "fanops.timeutil"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.models": {
+      "compile": [
+        "fanops.ids"
+      ],
+      "lazy": [],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.moment_hook_learning": {
+      "compile": [
+        "fanops.hookscore",
+        "fanops.log",
+        "fanops.variant_learning"
+      ],
+      "lazy": [],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.moments": {
+      "compile": [
+        "fanops.accounts",
+        "fanops.agentstep",
+        "fanops.bands",
+        "fanops.clip",
+        "fanops.config",
+        "fanops.control",
+        "fanops.hookcheck",
+        "fanops.ids",
+        "fanops.keyframes",
+        "fanops.ledger",
+        "fanops.log",
+        "fanops.models",
+        "fanops.moment_hook_learning",
+        "fanops.personas"
+      ],
+      "lazy": [
+        "fanops.accounts",
+        "fanops.caption",
+        "fanops.ids",
+        "fanops.persona_directives",
+        "fanops.persona_levers",
+        "fanops.personas",
+        "fanops.signals",
+        "fanops.text",
+        "fanops.transcribe"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.overlay": {
+      "compile": [],
+      "lazy": [],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.p4_dim_bias": {
+      "compile": [
+        "fanops.adjust",
+        "fanops.config",
+        "fanops.digest",
+        "fanops.ledger",
+        "fanops.log",
+        "fanops.models",
+        "fanops.validation_gate"
+      ],
+      "lazy": [],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.paths_rebase": {
+      "compile": [
+        "fanops.config",
+        "fanops.ledger",
+        "fanops.post.media"
+      ],
+      "lazy": [
+        "fanops.controlio"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.persona_directives": {
+      "compile": [
+        "fanops",
+        "fanops.config",
+        "fanops.persona_levers"
+      ],
+      "lazy": [
+        "fanops",
+        "fanops.bands",
+        "fanops.hashtags",
+        "fanops.log",
+        "fanops.models",
+        "fanops.persona_levers"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.persona_levers": {
+      "compile": [],
+      "lazy": [
+        "fanops.bands"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.persona_research": {
+      "compile": [
+        "fanops.config",
+        "fanops.hashtags",
+        "fanops.personas"
+      ],
+      "lazy": [
+        "fanops.controlio",
+        "fanops.errors",
+        "fanops.hashtags",
+        "fanops.log",
+        "fanops.meta_graph",
+        "fanops.persona_store"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.persona_store": {
+      "compile": [
+        "fanops.config",
+        "fanops.controlio",
+        "fanops.hashtags",
+        "fanops.personas"
+      ],
+      "lazy": [
+        "fanops.accounts",
+        "fanops.ledger",
+        "fanops.personas"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.personas": {
+      "compile": [
+        "fanops.config",
+        "fanops.errors",
+        "fanops.persona_directives",
+        "fanops.persona_levers",
+        "fanops.persona_research",
+        "fanops.persona_store"
+      ],
+      "lazy": [],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.pipeline": {
+      "compile": [
+        "fanops",
+        "fanops.accounts",
+        "fanops.agentstep",
+        "fanops.caption",
+        "fanops.casting",
+        "fanops.clip",
+        "fanops.config",
+        "fanops.crosspost",
+        "fanops.digest",
+        "fanops.errors",
+        "fanops.hookscore",
+        "fanops.ingest",
+        "fanops.intro_match",
+        "fanops.ledger",
+        "fanops.log",
+        "fanops.models",
+        "fanops.moments",
+        "fanops.pipeline_run",
+        "fanops.post.run",
+        "fanops.produce",
+        "fanops.reconcile",
+        "fanops.responder",
+        "fanops.router",
+        "fanops.signals",
+        "fanops.stitch_render",
+        "fanops.timeutil",
+        "fanops.transcribe"
+      ],
+      "lazy": [
+        "fanops.agentstep",
+        "fanops.artifacts",
+        "fanops.pipeline_status",
+        "fanops.transcribe"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.pipeline_run": {
+      "compile": [
+        "fanops.config",
+        "fanops.errors"
+      ],
+      "lazy": [],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.pipeline_status": {
+      "compile": [
+        "fanops.agentstep",
+        "fanops.config",
+        "fanops.gate_keys",
+        "fanops.models",
+        "fanops.pipeline",
+        "fanops.pipeline_run"
+      ],
+      "lazy": [
+        "fanops.artifacts",
+        "fanops.log"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.post": {
+      "compile": [
+        "fanops.config",
+        "fanops.ledger"
+      ],
+      "lazy": [
+        "fanops.post.dryrun",
+        "fanops.post.providers"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.post.compress": {
+      "compile": [
+        "fanops.config",
+        "fanops.log"
+      ],
+      "lazy": [
+        "fanops.accounts",
+        "fanops.ledger",
+        "fanops.models",
+        "fanops.post.media"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.post.dryrun": {
+      "compile": [
+        "fanops.config",
+        "fanops.ledger",
+        "fanops.log"
+      ],
+      "lazy": [],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.post.media": {
+      "compile": [
+        "fanops.config",
+        "fanops.ledger"
+      ],
+      "lazy": [
+        "fanops.post"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.post.metrics": {
+      "compile": [
+        "fanops.config",
+        "fanops.errors",
+        "fanops.log",
+        "fanops.post.postiz",
+        "fanops.post.zernio",
+        "fanops.text",
+        "fanops.timeutil"
+      ],
+      "lazy": [
+        "fanops",
+        "fanops.errors",
+        "fanops.meta_graph"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.post.postiz": {
+      "compile": [
+        "fanops.config",
+        "fanops.errors",
+        "fanops.ledger",
+        "fanops.models",
+        "fanops.text"
+      ],
+      "lazy": [
+        "fanops.timeutil"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.post.providers": {
+      "compile": [
+        "fanops.config"
+      ],
+      "lazy": [
+        "fanops.post.dryrun",
+        "fanops.post.media",
+        "fanops.post.postiz",
+        "fanops.post.zernio"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.post.run": {
+      "compile": [
+        "fanops.accounts",
+        "fanops.config",
+        "fanops.errors",
+        "fanops.ledger",
+        "fanops.log",
+        "fanops.models",
+        "fanops.post",
+        "fanops.post.media",
+        "fanops.timeutil"
+      ],
+      "lazy": [
+        "fanops.post.compress",
+        "fanops.post.dryrun",
+        "fanops.post.media",
+        "fanops.postiz_lifecycle",
+        "fanops.studio.views_common",
+        "fanops.timeutil"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.post.zernio": {
+      "compile": [
+        "fanops.config",
+        "fanops.errors",
+        "fanops.ledger",
+        "fanops.models",
+        "fanops.post.compress",
+        "fanops.text"
+      ],
+      "lazy": [],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.postiz_lifecycle": {
+      "compile": [],
+      "lazy": [
+        "fanops.accounts"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.produce": {
+      "compile": [
+        "fanops.artifacts",
+        "fanops.clip",
+        "fanops.config",
+        "fanops.ledger",
+        "fanops.models",
+        "fanops.signals",
+        "fanops.stitch_render",
+        "fanops.transcribe"
+      ],
+      "lazy": [
+        "fanops.moments",
+        "fanops.pipeline_run"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.prompts": {
+      "compile": [
+        "fanops.bands",
+        "fanops.hashtags"
+      ],
+      "lazy": [],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.reconcile": {
+      "compile": [
+        "fanops.config",
+        "fanops.errors",
+        "fanops.ledger",
+        "fanops.log",
+        "fanops.models",
+        "fanops.text",
+        "fanops.timeutil"
+      ],
+      "lazy": [
+        "fanops",
+        "fanops.accounts",
+        "fanops.meta_graph",
+        "fanops.models",
+        "fanops.post.metrics",
+        "fanops.post.run",
+        "fanops.postiz_lifecycle"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.reframe": {
+      "compile": [
+        "fanops",
+        "fanops.bands",
+        "fanops.clip",
+        "fanops.config",
+        "fanops.framing",
+        "fanops.framing_outcomes",
+        "fanops.ids",
+        "fanops.ledger",
+        "fanops.log"
+      ],
+      "lazy": [],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.reframe_apply": {
+      "compile": [
+        "fanops",
+        "fanops.bands",
+        "fanops.clip",
+        "fanops.config",
+        "fanops.framing",
+        "fanops.ledger",
+        "fanops.log",
+        "fanops.overlay",
+        "fanops.reframe"
+      ],
+      "lazy": [
+        "fanops.reframe"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.responder": {
+      "compile": [
+        "fanops.agentstep",
+        "fanops.config",
+        "fanops.control",
+        "fanops.errors",
+        "fanops.gate_keys",
+        "fanops.llm",
+        "fanops.log",
+        "fanops.models",
+        "fanops.prompts"
+      ],
+      "lazy": [
+        "fanops.ledger",
+        "fanops.moments",
+        "fanops.text"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.router": {
+      "compile": [
+        "fanops.models"
+      ],
+      "lazy": [],
+      "optional": [],
+      "typing": [
+        "fanops.config",
+        "fanops.ledger",
+        "fanops.models"
+      ]
+    },
+    "fanops.secret_provider": {
+      "compile": [],
+      "lazy": [],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.settings": {
+      "compile": [],
+      "lazy": [
+        "fanops.secret_provider"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.signals": {
+      "compile": [
+        "fanops.audio_energy",
+        "fanops.config",
+        "fanops.errors",
+        "fanops.ingest",
+        "fanops.ledger",
+        "fanops.log",
+        "fanops.models"
+      ],
+      "lazy": [
+        "fanops.agentstep",
+        "fanops.artifacts",
+        "fanops.responder"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.stage_lock": {
+      "compile": [
+        "fanops.config",
+        "fanops.errors"
+      ],
+      "lazy": [],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.stitch_render": {
+      "compile": [
+        "fanops.config",
+        "fanops.ids",
+        "fanops.impact_cut",
+        "fanops.ledger",
+        "fanops.log",
+        "fanops.models",
+        "fanops.router"
+      ],
+      "lazy": [
+        "fanops.clip",
+        "fanops.compose"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.studio": {
+      "compile": [],
+      "lazy": [],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.studio.actions": {
+      "compile": [
+        "fanops.audit",
+        "fanops.config",
+        "fanops.errors",
+        "fanops.ids",
+        "fanops.ledger",
+        "fanops.models",
+        "fanops.studio.actions_approve",
+        "fanops.studio.actions_casting",
+        "fanops.studio.actions_common",
+        "fanops.studio.actions_run",
+        "fanops.studio.actions_segments",
+        "fanops.studio.views",
+        "fanops.timeutil"
+      ],
+      "lazy": [
+        "fanops.accounts",
+        "fanops.agentstep",
+        "fanops.caption",
+        "fanops.clip",
+        "fanops.crosspost",
+        "fanops.digest",
+        "fanops.errors",
+        "fanops.gate_keys",
+        "fanops.hashtags",
+        "fanops.llm",
+        "fanops.models",
+        "fanops.pipeline",
+        "fanops.post",
+        "fanops.post.compress",
+        "fanops.post.postiz",
+        "fanops.post.run",
+        "fanops.post.zernio",
+        "fanops.postiz_lifecycle",
+        "fanops.prompts",
+        "fanops.reconcile",
+        "fanops.studio.views_common",
+        "fanops.studio.views_results",
+        "fanops.timeutil",
+        "fanops.track"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.studio.actions_approve": {
+      "compile": [
+        "fanops.audit",
+        "fanops.config",
+        "fanops.ledger",
+        "fanops.log",
+        "fanops.models",
+        "fanops.studio.actions_common",
+        "fanops.studio.views",
+        "fanops.studio.views_common",
+        "fanops.timeutil"
+      ],
+      "lazy": [
+        "fanops.clip",
+        "fanops.studio.actions"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.studio.actions_casting": {
+      "compile": [
+        "fanops.ledger",
+        "fanops.models",
+        "fanops.studio.actions_common"
+      ],
+      "lazy": [],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.studio.actions_common": {
+      "compile": [],
+      "lazy": [],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.studio.actions_run": {
+      "compile": [
+        "fanops.config",
+        "fanops.errors",
+        "fanops.ingest",
+        "fanops.ledger",
+        "fanops.studio.actions_common",
+        "fanops.timeutil"
+      ],
+      "lazy": [
+        "fanops.accounts",
+        "fanops.batches",
+        "fanops.controlio",
+        "fanops.daemon",
+        "fanops.digest",
+        "fanops.errors",
+        "fanops.ingest",
+        "fanops.log",
+        "fanops.models",
+        "fanops.pipeline",
+        "fanops.pipeline_run",
+        "fanops.responder"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.studio.actions_segments": {
+      "compile": [
+        "fanops.ledger",
+        "fanops.models",
+        "fanops.moments",
+        "fanops.studio.actions_common"
+      ],
+      "lazy": [],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.studio.actions_wipe": {
+      "compile": [
+        "fanops",
+        "fanops.config",
+        "fanops.ledger",
+        "fanops.ledger_wipe",
+        "fanops.log",
+        "fanops.studio.actions_common"
+      ],
+      "lazy": [],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.studio.app": {
+      "compile": [
+        "fanops.config",
+        "fanops.ledger",
+        "fanops.models",
+        "fanops.personas",
+        "fanops.studio",
+        "fanops.studio.actions",
+        "fanops.studio.views",
+        "fanops.timeutil"
+      ],
+      "lazy": [
+        "fanops.errors",
+        "fanops.health_model",
+        "fanops.post.media",
+        "fanops.studio.app_routes_golive",
+        "fanops.studio.app_routes_hashtags",
+        "fanops.studio.app_routes_live",
+        "fanops.studio.app_routes_personas",
+        "fanops.studio.app_routes_review",
+        "fanops.studio.app_routes_run",
+        "fanops.studio.app_routes_schedule",
+        "fanops.studio.preview_media",
+        "fanops.studio.thumb_media",
+        "fanops.timeutil"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.studio.app_routes_golive": {
+      "compile": [
+        "fanops.studio",
+        "fanops.studio.actions",
+        "fanops.studio.app",
+        "fanops.studio.golive",
+        "fanops.studio.views"
+      ],
+      "lazy": [
+        "fanops.health",
+        "fanops.studio",
+        "fanops.studio.views_common"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.studio.app_routes_hashtags": {
+      "compile": [
+        "fanops.ledger",
+        "fanops.studio",
+        "fanops.studio.hashtags",
+        "fanops.studio.views_hashtags"
+      ],
+      "lazy": [],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.studio.app_routes_live": {
+      "compile": [
+        "fanops.ledger",
+        "fanops.studio",
+        "fanops.studio.actions_wipe",
+        "fanops.studio.views"
+      ],
+      "lazy": [],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.studio.app_routes_personas": {
+      "compile": [
+        "fanops.studio",
+        "fanops.studio.app",
+        "fanops.studio.personas",
+        "fanops.studio.views"
+      ],
+      "lazy": [],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.studio.app_routes_review": {
+      "compile": [
+        "fanops.accounts",
+        "fanops.ledger",
+        "fanops.studio",
+        "fanops.studio.actions",
+        "fanops.studio.app",
+        "fanops.studio.views",
+        "fanops.studio.views_common"
+      ],
+      "lazy": [],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.studio.app_routes_run": {
+      "compile": [
+        "fanops.ledger",
+        "fanops.studio",
+        "fanops.studio.actions",
+        "fanops.studio.actions_wipe",
+        "fanops.studio.views"
+      ],
+      "lazy": [
+        "fanops.studio.app"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.studio.app_routes_schedule": {
+      "compile": [
+        "fanops.accounts",
+        "fanops.ledger",
+        "fanops.studio",
+        "fanops.studio.actions",
+        "fanops.studio.app",
+        "fanops.studio.views"
+      ],
+      "lazy": [],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.studio.golive": {
+      "compile": [
+        "fanops",
+        "fanops.accounts",
+        "fanops.autopilot",
+        "fanops.config",
+        "fanops.cutover",
+        "fanops.errors",
+        "fanops.log",
+        "fanops.models",
+        "fanops.post",
+        "fanops.post.postiz",
+        "fanops.post.zernio",
+        "fanops.secret_provider",
+        "fanops.studio.actions"
+      ],
+      "lazy": [
+        "fanops",
+        "fanops.daemon",
+        "fanops.ledger",
+        "fanops.meta_graph",
+        "fanops.models",
+        "fanops.timeutil"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.studio.hashtags": {
+      "compile": [
+        "fanops",
+        "fanops.config",
+        "fanops.hashtags",
+        "fanops.log",
+        "fanops.studio.actions"
+      ],
+      "lazy": [],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.studio.personas": {
+      "compile": [
+        "fanops",
+        "fanops.accounts",
+        "fanops.config",
+        "fanops.personas",
+        "fanops.studio.actions"
+      ],
+      "lazy": [
+        "fanops.meta_graph",
+        "fanops.personas"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.studio.preview_media": {
+      "compile": [
+        "fanops.config",
+        "fanops.ledger",
+        "fanops.post.media"
+      ],
+      "lazy": [],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.studio.thumb_media": {
+      "compile": [
+        "fanops.discover",
+        "fanops.ingest",
+        "fanops.ledger"
+      ],
+      "lazy": [
+        "fanops.post.media"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.studio.views": {
+      "compile": [
+        "fanops.accounts",
+        "fanops.config",
+        "fanops.errors",
+        "fanops.ledger",
+        "fanops.models",
+        "fanops.studio",
+        "fanops.studio.views_common",
+        "fanops.studio.views_library",
+        "fanops.studio.views_live",
+        "fanops.studio.views_results",
+        "fanops.studio.views_review",
+        "fanops.timeutil"
+      ],
+      "lazy": [
+        "fanops",
+        "fanops.accounts",
+        "fanops.agentstep",
+        "fanops.config",
+        "fanops.daemon",
+        "fanops.doctor",
+        "fanops.hashtags",
+        "fanops.lever_docs",
+        "fanops.log",
+        "fanops.meta_graph",
+        "fanops.models",
+        "fanops.persona_research",
+        "fanops.personas",
+        "fanops.pipeline",
+        "fanops.pipeline_run",
+        "fanops.pipeline_status",
+        "fanops.studio.views_results",
+        "fanops.timeutil",
+        "fanops.transcribe",
+        "fanops.validation_gate"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.studio.views_common": {
+      "compile": [
+        "fanops.config",
+        "fanops.ledger",
+        "fanops.models",
+        "fanops.timeutil"
+      ],
+      "lazy": [
+        "fanops.accounts",
+        "fanops.crosspost",
+        "fanops.post.postiz",
+        "fanops.postiz_lifecycle",
+        "fanops.studio.views_results",
+        "fanops.timeutil"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.studio.views_hashtags": {
+      "compile": [
+        "fanops.config",
+        "fanops.hashtags",
+        "fanops.ledger",
+        "fanops.log",
+        "fanops.persona_research",
+        "fanops.personas",
+        "fanops.studio.views_results"
+      ],
+      "lazy": [
+        "fanops.meta_graph"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.studio.views_library": {
+      "compile": [
+        "fanops.config",
+        "fanops.ledger",
+        "fanops.models",
+        "fanops.studio.views_common"
+      ],
+      "lazy": [
+        "fanops.agentstep",
+        "fanops.artifacts",
+        "fanops.log",
+        "fanops.pipeline_status",
+        "fanops.studio",
+        "fanops.studio.views",
+        "fanops.studio.views_review",
+        "fanops.transcribe"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.studio.views_live": {
+      "compile": [
+        "fanops.config",
+        "fanops.ledger",
+        "fanops.models"
+      ],
+      "lazy": [],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.studio.views_results": {
+      "compile": [
+        "fanops.accounts",
+        "fanops.config",
+        "fanops.ledger",
+        "fanops.models",
+        "fanops.studio.views_common",
+        "fanops.timeutil",
+        "fanops.variant_learning"
+      ],
+      "lazy": [
+        "fanops.crosspost",
+        "fanops.digest",
+        "fanops.log",
+        "fanops.post.compress",
+        "fanops.post.run",
+        "fanops.studio.views_common",
+        "fanops.timeutil",
+        "fanops.validation_gate",
+        "fanops.variant_amplify"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.studio.views_review": {
+      "compile": [
+        "fanops.accounts",
+        "fanops.bands",
+        "fanops.config",
+        "fanops.ledger",
+        "fanops.models",
+        "fanops.personas",
+        "fanops.studio.actions_common",
+        "fanops.studio.views_common",
+        "fanops.timeutil"
+      ],
+      "lazy": [
+        "fanops.studio.views_results"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.tagging": {
+      "compile": [
+        "fanops.ledger",
+        "fanops.timeutil"
+      ],
+      "lazy": [],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.text": {
+      "compile": [],
+      "lazy": [],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.timeutil": {
+      "compile": [],
+      "lazy": [],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.timing_bias": {
+      "compile": [
+        "fanops.config",
+        "fanops.digest",
+        "fanops.ledger",
+        "fanops.log",
+        "fanops.validation_gate"
+      ],
+      "lazy": [
+        "fanops.validation_gate"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.track": {
+      "compile": [
+        "fanops.config",
+        "fanops.ledger",
+        "fanops.log",
+        "fanops.metrics_schedule",
+        "fanops.models",
+        "fanops.timeutil"
+      ],
+      "lazy": [
+        "fanops",
+        "fanops.accounts",
+        "fanops.cutover",
+        "fanops.meta_graph",
+        "fanops.models",
+        "fanops.post.metrics",
+        "fanops.reconcile",
+        "fanops.validation_gate"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.transcribe": {
+      "compile": [
+        "fanops.config",
+        "fanops.errors",
+        "fanops.ledger",
+        "fanops.log",
+        "fanops.models",
+        "fanops.stage_lock",
+        "fanops.vocals"
+      ],
+      "lazy": [
+        "fanops.artifacts",
+        "fanops.pipeline_run"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.validation_gate": {
+      "compile": [
+        "fanops.config"
+      ],
+      "lazy": [
+        "fanops.digest"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.variant_amplify": {
+      "compile": [
+        "fanops.adjust",
+        "fanops.config",
+        "fanops.ids",
+        "fanops.ledger",
+        "fanops.log",
+        "fanops.models",
+        "fanops.validation_gate",
+        "fanops.variant_learning"
+      ],
+      "lazy": [],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.variant_learning": {
+      "compile": [
+        "fanops.models"
+      ],
+      "lazy": [],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.variant_transfer": {
+      "compile": [
+        "fanops.models",
+        "fanops.variant_learning"
+      ],
+      "lazy": [],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.vocals": {
+      "compile": [
+        "fanops.config"
+      ],
+      "lazy": [],
+      "optional": [],
+      "typing": []
+    }
+  },
+  "external_packages": {
+    "compile": [
+      "__future__",
+      "argparse",
+      "calendar",
+      "collections",
+      "concurrent",
+      "contextlib",
+      "copy",
+      "dataclasses",
+      "datetime",
+      "dotenv",
+      "enum",
+      "errno",
+      "fcntl",
+      "flask",
+      "hashlib",
+      "hmac",
+      "inspect",
+      "json",
+      "logging",
+      "math",
+      "os",
+      "pathlib",
+      "plistlib",
+      "pydantic",
+      "pydantic_settings",
+      "random",
+      "re",
+      "requests",
+      "secrets",
+      "shutil",
+      "socket",
+      "sqlite3",
+      "stat",
+      "statistics",
+      "subprocess",
+      "sys",
+      "tempfile",
+      "time",
+      "typing",
+      "urllib",
+      "uuid",
+      "werkzeug"
+    ],
+    "lazy": [
+      "certifi",
+      "collections",
+      "cv2",
+      "datetime",
+      "dotenv",
+      "faster_whisper",
+      "flask",
+      "hashlib",
+      "json",
+      "keyring",
+      "logging",
+      "math",
+      "moviepy",
+      "numpy",
+      "os",
+      "pathlib",
+      "pydantic",
+      "random",
+      "re",
+      "requests",
+      "shutil",
+      "socket",
+      "sqlite3",
+      "subprocess",
+      "tempfile",
+      "time",
+      "urllib",
+      "whisper"
+    ],
+    "optional": [
+      "zoneinfo"
+    ],
+    "typing": [
+      "datetime"
+    ]
+  },
+  "fan_in_compile": {
+    "fanops": 12,
+    "fanops._fwrun": 0,
+    "fanops.accounts": 15,
+    "fanops.adjust": 3,
+    "fanops.agentstep": 8,
+    "fanops.artifacts": 1,
+    "fanops.audio_energy": 1,
+    "fanops.audit": 2,
+    "fanops.autopilot": 2,
+    "fanops.bands": 9,
+    "fanops.batches": 0,
+    "fanops.caption": 1,
+    "fanops.casting": 2,
+    "fanops.cli": 0,
+    "fanops.clip": 6,
+    "fanops.compose": 1,
+    "fanops.config": 84,
+    "fanops.config_introspect": 0,
+    "fanops.control": 4,
+    "fanops.controlio": 8,
+    "fanops.crosspost": 1,
+    "fanops.cutover": 1,
+    "fanops.cutover_postiz": 0,
+    "fanops.daemon": 1,
+    "fanops.digest": 4,
+    "fanops.discover": 1,
+    "fanops.doctor": 1,
+    "fanops.errors": 31,
+    "fanops.fanops_account_stats": 0,
+    "fanops.fanops_hashtags": 0,
+    "fanops.frames": 1,
+    "fanops.framing": 3,
+    "fanops.framing_outcomes": 3,
+    "fanops.gate_keys": 2,
+    "fanops.hashtags": 8,
+    "fanops.health": 0,
+    "fanops.health_model": 1,
+    "fanops.hookcheck": 1,
+    "fanops.hookscore": 2,
+    "fanops.ids": 12,
+    "fanops.impact_cut": 1,
+    "fanops.ingest": 6,
+    "fanops.init_flow": 0,
+    "fanops.intro_match": 1,
+    "fanops.keyframes": 2,
+    "fanops.learn_doctor": 0,
+    "fanops.ledger": 55,
+    "fanops.ledger_bridge": 0,
+    "fanops.ledger_sqlite": 1,
+    "fanops.ledger_wipe": 1,
+    "fanops.lever_docs": 0,
+    "fanops.llm": 1,
+    "fanops.log": 34,
+    "fanops.meta_graph": 1,
+    "fanops.metrics_schedule": 1,
+    "fanops.models": 48,
+    "fanops.moment_hook_learning": 1,
+    "fanops.moments": 4,
+    "fanops.overlay": 3,
+    "fanops.p4_dim_bias": 1,
+    "fanops.paths_rebase": 0,
+    "fanops.persona_directives": 1,
+    "fanops.persona_levers": 3,
+    "fanops.persona_research": 2,
+    "fanops.persona_store": 1,
+    "fanops.personas": 9,
+    "fanops.pipeline": 2,
+    "fanops.pipeline_run": 2,
+    "fanops.pipeline_status": 0,
+    "fanops.post": 3,
+    "fanops.post.compress": 1,
+    "fanops.post.dryrun": 0,
+    "fanops.post.media": 3,
+    "fanops.post.metrics": 0,
+    "fanops.post.postiz": 3,
+    "fanops.post.providers": 0,
+    "fanops.post.run": 1,
+    "fanops.post.zernio": 2,
+    "fanops.postiz_lifecycle": 0,
+    "fanops.produce": 1,
+    "fanops.prompts": 2,
+    "fanops.reconcile": 2,
+    "fanops.reframe": 1,
+    "fanops.reframe_apply": 0,
+    "fanops.responder": 2,
+    "fanops.router": 3,
+    "fanops.secret_provider": 2,
+    "fanops.settings": 2,
+    "fanops.signals": 2,
+    "fanops.stage_lock": 1,
+    "fanops.stitch_render": 2,
+    "fanops.studio": 9,
+    "fanops.studio.actions": 8,
+    "fanops.studio.actions_approve": 1,
+    "fanops.studio.actions_casting": 1,
+    "fanops.studio.actions_common": 7,
+    "fanops.studio.actions_run": 1,
+    "fanops.studio.actions_segments": 1,
+    "fanops.studio.actions_wipe": 2,
+    "fanops.studio.app": 4,
+    "fanops.studio.app_routes_golive": 0,
+    "fanops.studio.app_routes_hashtags": 0,
+    "fanops.studio.app_routes_live": 0,
+    "fanops.studio.app_routes_personas": 0,
+    "fanops.studio.app_routes_review": 0,
+    "fanops.studio.app_routes_run": 0,
+    "fanops.studio.app_routes_schedule": 0,
+    "fanops.studio.golive": 1,
+    "fanops.studio.hashtags": 1,
+    "fanops.studio.personas": 1,
+    "fanops.studio.preview_media": 0,
+    "fanops.studio.thumb_media": 0,
+    "fanops.studio.views": 9,
+    "fanops.studio.views_common": 6,
+    "fanops.studio.views_hashtags": 1,
+    "fanops.studio.views_library": 1,
+    "fanops.studio.views_live": 1,
+    "fanops.studio.views_results": 2,
+    "fanops.studio.views_review": 1,
+    "fanops.tagging": 1,
+    "fanops.text": 4,
+    "fanops.timeutil": 17,
+    "fanops.timing_bias": 1,
+    "fanops.track": 3,
+    "fanops.transcribe": 3,
+    "fanops.validation_gate": 5,
+    "fanops.variant_amplify": 1,
+    "fanops.variant_learning": 6,
+    "fanops.variant_transfer": 2,
+    "fanops.vocals": 1
+  },
+  "fan_out_compile": {
+    "fanops": 0,
+    "fanops._fwrun": 1,
+    "fanops.accounts": 6,
+    "fanops.adjust": 5,
+    "fanops.agentstep": 3,
+    "fanops.artifacts": 4,
+    "fanops.audio_energy": 0,
+    "fanops.audit": 1,
+    "fanops.autopilot": 1,
+    "fanops.bands": 0,
+    "fanops.batches": 2,
+    "fanops.caption": 10,
+    "fanops.casting": 0,
+    "fanops.cli": 20,
+    "fanops.clip": 11,
+    "fanops.compose": 0,
+    "fanops.config": 0,
+    "fanops.config_introspect": 3,
+    "fanops.control": 1,
+    "fanops.controlio": 1,
+    "fanops.crosspost": 13,
+    "fanops.cutover": 4,
+    "fanops.cutover_postiz": 4,
+    "fanops.daemon": 2,
+    "fanops.digest": 7,
+    "fanops.discover": 5,
+    "fanops.doctor": 3,
+    "fanops.errors": 0,
+    "fanops.fanops_account_stats": 5,
+    "fanops.fanops_hashtags": 4,
+    "fanops.frames": 0,
+    "fanops.framing": 3,
+    "fanops.framing_outcomes": 0,
+    "fanops.gate_keys": 0,
+    "fanops.hashtags": 1,
+    "fanops.health": 2,
+    "fanops.health_model": 1,
+    "fanops.hookcheck": 0,
+    "fanops.hookscore": 1,
+    "fanops.ids": 0,
+    "fanops.impact_cut": 1,
+    "fanops.ingest": 7,
+    "fanops.init_flow": 2,
+    "fanops.intro_match": 9,
+    "fanops.keyframes": 2,
+    "fanops.learn_doctor": 6,
+    "fanops.ledger": 5,
+    "fanops.ledger_bridge": 5,
+    "fanops.ledger_sqlite": 2,
+    "fanops.ledger_wipe": 3,
+    "fanops.lever_docs": 7,
+    "fanops.llm": 1,
+    "fanops.log": 1,
+    "fanops.meta_graph": 4,
+    "fanops.metrics_schedule": 0,
+    "fanops.models": 1,
+    "fanops.moment_hook_learning": 3,
+    "fanops.moments": 14,
+    "fanops.overlay": 0,
+    "fanops.p4_dim_bias": 7,
+    "fanops.paths_rebase": 3,
+    "fanops.persona_directives": 3,
+    "fanops.persona_levers": 0,
+    "fanops.persona_research": 3,
+    "fanops.persona_store": 4,
+    "fanops.personas": 6,
+    "fanops.pipeline": 27,
+    "fanops.pipeline_run": 2,
+    "fanops.pipeline_status": 6,
+    "fanops.post": 2,
+    "fanops.post.compress": 2,
+    "fanops.post.dryrun": 3,
+    "fanops.post.media": 2,
+    "fanops.post.metrics": 7,
+    "fanops.post.postiz": 5,
+    "fanops.post.providers": 1,
+    "fanops.post.run": 9,
+    "fanops.post.zernio": 6,
+    "fanops.postiz_lifecycle": 0,
+    "fanops.produce": 8,
+    "fanops.prompts": 2,
+    "fanops.reconcile": 7,
+    "fanops.reframe": 9,
+    "fanops.reframe_apply": 9,
+    "fanops.responder": 9,
+    "fanops.router": 1,
+    "fanops.secret_provider": 0,
+    "fanops.settings": 0,
+    "fanops.signals": 7,
+    "fanops.stage_lock": 2,
+    "fanops.stitch_render": 7,
+    "fanops.studio": 0,
+    "fanops.studio.actions": 13,
+    "fanops.studio.actions_approve": 9,
+    "fanops.studio.actions_casting": 3,
+    "fanops.studio.actions_common": 0,
+    "fanops.studio.actions_run": 6,
+    "fanops.studio.actions_segments": 4,
+    "fanops.studio.actions_wipe": 6,
+    "fanops.studio.app": 8,
+    "fanops.studio.app_routes_golive": 5,
+    "fanops.studio.app_routes_hashtags": 4,
+    "fanops.studio.app_routes_live": 4,
+    "fanops.studio.app_routes_personas": 4,
+    "fanops.studio.app_routes_review": 7,
+    "fanops.studio.app_routes_run": 5,
+    "fanops.studio.app_routes_schedule": 6,
+    "fanops.studio.golive": 13,
+    "fanops.studio.hashtags": 5,
+    "fanops.studio.personas": 5,
+    "fanops.studio.preview_media": 3,
+    "fanops.studio.thumb_media": 3,
+    "fanops.studio.views": 12,
+    "fanops.studio.views_common": 4,
+    "fanops.studio.views_hashtags": 7,
+    "fanops.studio.views_library": 4,
+    "fanops.studio.views_live": 3,
+    "fanops.studio.views_results": 7,
+    "fanops.studio.views_review": 9,
+    "fanops.tagging": 2,
+    "fanops.text": 0,
+    "fanops.timeutil": 0,
+    "fanops.timing_bias": 5,
+    "fanops.track": 6,
+    "fanops.transcribe": 7,
+    "fanops.validation_gate": 1,
+    "fanops.variant_amplify": 8,
+    "fanops.variant_learning": 1,
+    "fanops.variant_transfer": 2,
+    "fanops.vocals": 1
+  },
+  "generated_by": "tools/arch",
+  "generator_version": "arch/1.0.0",
+  "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",
+  "lazy_downward_count": 219,
+  "lazy_lateral": [
+    {
+      "from": "fanops.accounts",
+      "from_level": 2,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.ledger",
+      "to_level": 2
+    },
+    {
+      "from": "fanops.artifacts",
+      "from_level": 3,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.transcribe",
+      "to_level": 3
+    },
+    {
+      "from": "fanops.autopilot",
+      "from_level": 1,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.daemon",
+      "to_level": 1
+    },
+    {
+      "from": "fanops.cli",
+      "from_level": 9,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.studio.app",
+      "to_level": 9
+    },
+    {
+      "from": "fanops.config",
+      "from_level": 0,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.errors",
+      "to_level": 0
+    },
+    {
+      "from": "fanops.config",
+      "from_level": 0,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.secret_provider",
+      "to_level": 0
+    },
+    {
+      "from": "fanops.cutover",
+      "from_level": 4,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.cutover_postiz",
+      "to_level": 4
+    },
+    {
+      "from": "fanops.cutover_postiz",
+      "from_level": 4,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.cutover",
+      "to_level": 4
+    },
+    {
+      "from": "fanops.cutover_postiz",
+      "from_level": 4,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.post.metrics",
+      "to_level": 4
+    },
+    {
+      "from": "fanops.daemon",
+      "from_level": 1,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.autopilot",
+      "to_level": 1
+    },
+    {
+      "from": "fanops.daemon",
+      "from_level": 1,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.controlio",
+      "to_level": 1
+    },
+    {
+      "from": "fanops.daemon",
+      "from_level": 1,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.health_model",
+      "to_level": 1
+    },
+    {
+      "from": "fanops.doctor",
+      "from_level": 3,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.meta_graph",
+      "to_level": 3
+    },
+    {
+      "from": "fanops.doctor",
+      "from_level": 3,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.post.zernio",
+      "to_level": 3
+    },
+    {
+      "from": "fanops.doctor",
+      "from_level": 3,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.transcribe",
+      "to_level": 3
+    },
+    {
+      "from": "fanops.fanops_hashtags",
+      "from_level": 3,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.meta_graph",
+      "to_level": 3
+    },
+    {
+      "from": "fanops.fanops_hashtags",
+      "from_level": 3,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.personas",
+      "to_level": 3
+    },
+    {
+      "from": "fanops.hashtags",
+      "from_level": 2,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.ledger",
+      "to_level": 2
+    },
+    {
+      "from": "fanops.health_model",
+      "from_level": 1,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.daemon",
+      "to_level": 1
+    },
+    {
+      "from": "fanops.health_model",
+      "from_level": 1,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.models",
+      "to_level": 1
+    },
+    {
+      "from": "fanops.health_model",
+      "from_level": 1,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.pipeline_run",
+      "to_level": 1
+    },
+    {
+      "from": "fanops.keyframes",
+      "from_level": 1,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.stage_lock",
+      "to_level": 1
+    },
+    {
+      "from": "fanops.learn_doctor",
+      "from_level": 4,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.post.metrics",
+      "to_level": 4
+    },
+    {
+      "from": "fanops.ledger",
+      "from_level": 2,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.router",
+      "to_level": 2
+    },
+    {
+      "from": "fanops.metrics_schedule",
+      "from_level": 0,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.timeutil",
+      "to_level": 0
+    },
+    {
+      "from": "fanops.persona_directives",
+      "from_level": 1,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.log",
+      "to_level": 1
+    },
+    {
+      "from": "fanops.persona_directives",
+      "from_level": 1,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.models",
+      "to_level": 1
+    },
+    {
+      "from": "fanops.persona_levers",
+      "from_level": 0,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.bands",
+      "to_level": 0
+    },
+    {
+      "from": "fanops.persona_research",
+      "from_level": 3,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.meta_graph",
+      "to_level": 3
+    },
+    {
+      "from": "fanops.persona_research",
+      "from_level": 3,
+      "jump": 0,
+      "same_scc": true,
+      "to": "fanops.persona_store",
+      "to_level": 3
+    },
+    {
+      "from": "fanops.persona_store",
+      "from_level": 3,
+      "jump": 0,
+      "same_scc": true,
+      "to": "fanops.personas",
+      "to_level": 3
+    },
+    {
+      "from": "fanops.post",
+      "from_level": 3,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.post.dryrun",
+      "to_level": 3
+    },
+    {
+      "from": "fanops.post.compress",
+      "from_level": 2,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.accounts",
+      "to_level": 2
+    },
+    {
+      "from": "fanops.post.compress",
+      "from_level": 2,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.ledger",
+      "to_level": 2
+    },
+    {
+      "from": "fanops.post.media",
+      "from_level": 3,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.post",
+      "to_level": 3
+    },
+    {
+      "from": "fanops.produce",
+      "from_level": 6,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.moments",
+      "to_level": 6
+    },
+    {
+      "from": "fanops.reconcile",
+      "from_level": 3,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.meta_graph",
+      "to_level": 3
+    },
+    {
+      "from": "fanops.settings",
+      "from_level": 0,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.secret_provider",
+      "to_level": 0
+    },
+    {
+      "from": "fanops.signals",
+      "from_level": 4,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.responder",
+      "to_level": 4
+    },
+    {
+      "from": "fanops.studio.actions_run",
+      "from_level": 4,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.digest",
+      "to_level": 4
+    },
+    {
+      "from": "fanops.studio.actions_run",
+      "from_level": 4,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.responder",
+      "to_level": 4
+    },
+    {
+      "from": "fanops.studio.app",
+      "from_level": 9,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.studio.app_routes_run",
+      "to_level": 9
+    },
+    {
+      "from": "fanops.studio.app_routes_run",
+      "from_level": 9,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.studio.app",
+      "to_level": 9
+    },
+    {
+      "from": "fanops.studio.views_common",
+      "from_level": 3,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.post.postiz",
+      "to_level": 3
+    },
+    {
+      "from": "fanops.studio.views_library",
+      "from_level": 4,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.studio.views_review",
+      "to_level": 4
+    },
+    {
+      "from": "fanops.studio.views_results",
+      "from_level": 4,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.digest",
+      "to_level": 4
+    },
+    {
+      "from": "fanops.studio.views_results",
+      "from_level": 4,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.post.run",
+      "to_level": 4
+    },
+    {
+      "from": "fanops.studio.views_review",
+      "from_level": 4,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.studio.views_results",
+      "to_level": 4
+    },
+    {
+      "from": "fanops.track",
+      "from_level": 3,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.meta_graph",
+      "to_level": 3
+    },
+    {
+      "from": "fanops.track",
+      "from_level": 3,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.reconcile",
+      "to_level": 3
+    },
+    {
+      "from": "fanops.transcribe",
+      "from_level": 3,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.artifacts",
+      "to_level": 3
+    }
+  ],
+  "lazy_upward": [
+    {
+      "from": "fanops.compose",
+      "from_level": 0,
+      "jump": 5,
+      "same_scc": false,
+      "to": "fanops.clip",
+      "to_level": 5
+    },
+    {
+      "from": "fanops.doctor",
+      "from_level": 3,
+      "jump": 5,
+      "same_scc": false,
+      "to": "fanops.pipeline_status",
+      "to_level": 8
+    },
+    {
+      "from": "fanops.init_flow",
+      "from_level": 4,
+      "jump": 5,
+      "same_scc": false,
+      "to": "fanops.studio.golive",
+      "to_level": 9
+    },
+    {
+      "from": "fanops.digest",
+      "from_level": 4,
+      "jump": 4,
+      "same_scc": false,
+      "to": "fanops.p4_dim_bias",
+      "to_level": 8
+    },
+    {
+      "from": "fanops.digest",
+      "from_level": 4,
+      "jump": 4,
+      "same_scc": false,
+      "to": "fanops.variant_amplify",
+      "to_level": 8
+    },
+    {
+      "from": "fanops.studio.views_library",
+      "from_level": 4,
+      "jump": 4,
+      "same_scc": false,
+      "to": "fanops.pipeline_status",
+      "to_level": 8
+    },
+    {
+      "from": "fanops.studio.views_results",
+      "from_level": 4,
+      "jump": 4,
+      "same_scc": false,
+      "to": "fanops.variant_amplify",
+      "to_level": 8
+    },
+    {
+      "from": "fanops.config",
+      "from_level": 0,
+      "jump": 3,
+      "same_scc": false,
+      "to": "fanops.meta_graph",
+      "to_level": 3
+    },
+    {
+      "from": "fanops.health_model",
+      "from_level": 1,
+      "jump": 3,
+      "same_scc": false,
+      "to": "fanops.learn_doctor",
+      "to_level": 4
+    },
+    {
+      "from": "fanops.health_model",
+      "from_level": 1,
+      "jump": 3,
+      "same_scc": false,
+      "to": "fanops.studio.views_review",
+      "to_level": 4
+    },
+    {
+      "from": "fanops.studio.actions_run",
+      "from_level": 4,
+      "jump": 3,
+      "same_scc": false,
+      "to": "fanops.pipeline",
+      "to_level": 7
+    },
+    {
+      "from": "fanops.studio.views",
+      "from_level": 5,
+      "jump": 3,
+      "same_scc": false,
+      "to": "fanops.pipeline_status",
+      "to_level": 8
+    },
+    {
+      "from": "fanops.studio.views_common",
+      "from_level": 3,
+      "jump": 3,
+      "same_scc": false,
+      "to": "fanops.crosspost",
+      "to_level": 6
+    },
+    {
+      "from": "fanops.validation_gate",
+      "from_level": 1,
+      "jump": 3,
+      "same_scc": false,
+      "to": "fanops.digest",
+      "to_level": 4
+    },
+    {
+      "from": "fanops.autopilot",
+      "from_level": 1,
+      "jump": 2,
+      "same_scc": false,
+      "to": "fanops.doctor",
+      "to_level": 3
+    },
+    {
+      "from": "fanops.clip",
+      "from_level": 5,
+      "jump": 2,
+      "same_scc": false,
+      "to": "fanops.reframe_apply",
+      "to_level": 7
+    },
+    {
+      "from": "fanops.compose",
+      "from_level": 0,
+      "jump": 2,
+      "same_scc": false,
+      "to": "fanops.impact_cut",
+      "to_level": 2
+    },
+    {
+      "from": "fanops.config",
+      "from_level": 0,
+      "jump": 2,
+      "same_scc": false,
+      "to": "fanops.accounts",
+      "to_level": 2
+    },
+    {
+      "from": "fanops.hashtags",
+      "from_level": 2,
+      "jump": 2,
+      "same_scc": false,
+      "to": "fanops.caption",
+      "to_level": 4
+    },
+    {
+      "from": "fanops.health_model",
+      "from_level": 1,
+      "jump": 2,
+      "same_scc": false,
+      "to": "fanops.doctor",
+      "to_level": 3
+    },
+    {
+      "from": "fanops.health_model",
+      "from_level": 1,
+      "jump": 2,
+      "same_scc": false,
+      "to": "fanops.meta_graph",
+      "to_level": 3
+    },
+    {
+      "from": "fanops.health_model",
+      "from_level": 1,
+      "jump": 2,
+      "same_scc": false,
+      "to": "fanops.post.postiz",
+      "to_level": 3
+    },
+    {
+      "from": "fanops.keyframes",
+      "from_level": 1,
+      "jump": 2,
+      "same_scc": false,
+      "to": "fanops.artifacts",
+      "to_level": 3
+    },
+    {
+      "from": "fanops.post.providers",
+      "from_level": 1,
+      "jump": 2,
+      "same_scc": false,
+      "to": "fanops.post.dryrun",
+      "to_level": 3
+    },
+    {
+      "from": "fanops.post.providers",
+      "from_level": 1,
+      "jump": 2,
+      "same_scc": false,
+      "to": "fanops.post.media",
+      "to_level": 3
+    },
+    {
+      "from": "fanops.post.providers",
+      "from_level": 1,
+      "jump": 2,
+      "same_scc": false,
+      "to": "fanops.post.postiz",
+      "to_level": 3
+    },
+    {
+      "from": "fanops.post.providers",
+      "from_level": 1,
+      "jump": 2,
+      "same_scc": false,
+      "to": "fanops.post.zernio",
+      "to_level": 3
+    },
+    {
+      "from": "fanops.postiz_lifecycle",
+      "from_level": 0,
+      "jump": 2,
+      "same_scc": false,
+      "to": "fanops.accounts",
+      "to_level": 2
+    },
+    {
+      "from": "fanops.responder",
+      "from_level": 4,
+      "jump": 2,
+      "same_scc": false,
+      "to": "fanops.moments",
+      "to_level": 6
+    },
+    {
+      "from": "fanops.stitch_render",
+      "from_level": 3,
+      "jump": 2,
+      "same_scc": false,
+      "to": "fanops.clip",
+      "to_level": 5
+    },
+    {
+      "from": "fanops.studio.actions_approve",
+      "from_level": 6,
+      "jump": 2,
+      "same_scc": false,
+      "to": "fanops.studio.actions",
+      "to_level": 8
+    },
+    {
+      "from": "fanops.studio.views",
+      "from_level": 5,
+      "jump": 2,
+      "same_scc": false,
+      "to": "fanops.lever_docs",
+      "to_level": 7
+    },
+    {
+      "from": "fanops.studio.views",
+      "from_level": 5,
+      "jump": 2,
+      "same_scc": false,
+      "to": "fanops.pipeline",
+      "to_level": 7
+    },
+    {
+      "from": "fanops.studio.views_results",
+      "from_level": 4,
+      "jump": 2,
+      "same_scc": false,
+      "to": "fanops.crosspost",
+      "to_level": 6
+    },
+    {
+      "from": "fanops.accounts",
+      "from_level": 2,
+      "jump": 1,
+      "same_scc": false,
+      "to": "fanops.personas",
+      "to_level": 3
+    },
+    {
+      "from": "fanops.artifacts",
+      "from_level": 3,
+      "jump": 1,
+      "same_scc": false,
+      "to": "fanops.signals",
+      "to_level": 4
+    },
+    {
+      "from": "fanops.config",
+      "from_level": 0,
+      "jump": 1,
+      "same_scc": false,
+      "to": "fanops.models",
+      "to_level": 1
+    },
+    {
+      "from": "fanops.digest",
+      "from_level": 4,
+      "jump": 1,
+      "same_scc": false,
+      "to": "fanops.timing_bias",
+      "to_level": 5
+    },
+    {
+      "from": "fanops.health_model",
+      "from_level": 1,
+      "jump": 1,
+      "same_scc": false,
+      "to": "fanops.health",
+      "to_level": 2
+    },
+    {
+      "from": "fanops.health_model",
+      "from_level": 1,
+      "jump": 1,
+      "same_scc": false,
+      "to": "fanops.ledger",
+      "to_level": 2
+    },
+    {
+      "from": "fanops.ledger",
+      "from_level": 2,
+      "jump": 1,
+      "same_scc": false,
+      "to": "fanops.ingest",
+      "to_level": 3
+    },
+    {
+      "from": "fanops.ledger",
+      "from_level": 2,
+      "jump": 1,
+      "same_scc": false,
+      "to": "fanops.ledger_bridge",
+      "to_level": 3
+    },
+    {
+      "from": "fanops.meta_graph",
+      "from_level": 3,
+      "jump": 1,
+      "same_scc": false,
+      "to": "fanops.post.metrics",
+      "to_level": 4
+    },
+    {
+      "from": "fanops.persona_directives",
+      "from_level": 1,
+      "jump": 1,
+      "same_scc": false,
+      "to": "fanops.hashtags",
+      "to_level": 2
+    },
+    {
+      "from": "fanops.pipeline",
+      "from_level": 7,
+      "jump": 1,
+      "same_scc": false,
+      "to": "fanops.pipeline_status",
+      "to_level": 8
+    },
+    {
+      "from": "fanops.post.compress",
+      "from_level": 2,
+      "jump": 1,
+      "same_scc": false,
+      "to": "fanops.post.media",
+      "to_level": 3
+    },
+    {
+      "from": "fanops.reconcile",
+      "from_level": 3,
+      "jump": 1,
+      "same_scc": false,
+      "to": "fanops.post.metrics",
+      "to_level": 4
+    },
+    {
+      "from": "fanops.reconcile",
+      "from_level": 3,
+      "jump": 1,
+      "same_scc": false,
+      "to": "fanops.post.run",
+      "to_level": 4
+    },
+    {
+      "from": "fanops.studio.app",
+      "from_level": 9,
+      "jump": 1,
+      "same_scc": false,
+      "to": "fanops.studio.app_routes_golive",
+      "to_level": 10
+    },
+    {
+      "from": "fanops.studio.app",
+      "from_level": 9,
+      "jump": 1,
+      "same_scc": false,
+      "to": "fanops.studio.app_routes_hashtags",
+      "to_level": 10
+    },
+    {
+      "from": "fanops.studio.app",
+      "from_level": 9,
+      "jump": 1,
+      "same_scc": false,
+      "to": "fanops.studio.app_routes_personas",
+      "to_level": 10
+    },
+    {
+      "from": "fanops.studio.app",
+      "from_level": 9,
+      "jump": 1,
+      "same_scc": false,
+      "to": "fanops.studio.app_routes_review",
+      "to_level": 10
+    },
+    {
+      "from": "fanops.studio.app",
+      "from_level": 9,
+      "jump": 1,
+      "same_scc": false,
+      "to": "fanops.studio.app_routes_schedule",
+      "to_level": 10
+    },
+    {
+      "from": "fanops.studio.views_common",
+      "from_level": 3,
+      "jump": 1,
+      "same_scc": false,
+      "to": "fanops.studio.views_results",
+      "to_level": 4
+    },
+    {
+      "from": "fanops.studio.views_library",
+      "from_level": 4,
+      "jump": 1,
+      "same_scc": false,
+      "to": "fanops.studio.views",
+      "to_level": 5
+    },
+    {
+      "from": "fanops.track",
+      "from_level": 3,
+      "jump": 1,
+      "same_scc": false,
+      "to": "fanops.cutover",
+      "to_level": 4
+    },
+    {
+      "from": "fanops.track",
+      "from_level": 3,
+      "jump": 1,
+      "same_scc": false,
+      "to": "fanops.post.metrics",
+      "to_level": 4
+    }
+  ],
+  "levels": {
+    "fanops": 0,
+    "fanops._fwrun": 1,
+    "fanops.accounts": 2,
+    "fanops.adjust": 7,
+    "fanops.agentstep": 2,
+    "fanops.artifacts": 3,
+    "fanops.audio_energy": 0,
+    "fanops.audit": 1,
+    "fanops.autopilot": 1,
+    "fanops.bands": 0,
+    "fanops.batches": 2,
+    "fanops.caption": 4,
+    "fanops.casting": 0,
+    "fanops.cli": 9,
+    "fanops.clip": 5,
+    "fanops.compose": 0,
+    "fanops.config": 0,
+    "fanops.config_introspect": 1,
+    "fanops.control": 1,
+    "fanops.controlio": 1,
+    "fanops.crosspost": 6,
+    "fanops.cutover": 4,
+    "fanops.cutover_postiz": 4,
+    "fanops.daemon": 1,
+    "fanops.digest": 4,
+    "fanops.discover": 4,
+    "fanops.doctor": 3,
+    "fanops.errors": 0,
+    "fanops.fanops_account_stats": 4,
+    "fanops.fanops_hashtags": 3,
+    "fanops.frames": 0,
+    "fanops.framing": 4,
+    "fanops.framing_outcomes": 0,
+    "fanops.gate_keys": 0,
+    "fanops.hashtags": 2,
+    "fanops.health": 2,
+    "fanops.health_model": 1,
+    "fanops.hookcheck": 0,
+    "fanops.hookscore": 2,
+    "fanops.ids": 0,
+    "fanops.impact_cut": 2,
+    "fanops.ingest": 3,
+    "fanops.init_flow": 4,
+    "fanops.intro_match": 3,
+    "fanops.keyframes": 1,
+    "fanops.learn_doctor": 4,
+    "fanops.ledger": 2,
+    "fanops.ledger_bridge": 3,
+    "fanops.ledger_sqlite": 1,
+    "fanops.ledger_wipe": 3,
+    "fanops.lever_docs": 7,
+    "fanops.llm": 1,
+    "fanops.log": 1,
+    "fanops.meta_graph": 3,
+    "fanops.metrics_schedule": 0,
+    "fanops.models": 1,
+    "fanops.moment_hook_learning": 3,
+    "fanops.moments": 6,
+    "fanops.overlay": 0,
+    "fanops.p4_dim_bias": 8,
+    "fanops.paths_rebase": 4,
+    "fanops.persona_directives": 1,
+    "fanops.persona_levers": 0,
+    "fanops.persona_research": 3,
+    "fanops.persona_store": 3,
+    "fanops.personas": 3,
+    "fanops.pipeline": 7,
+    "fanops.pipeline_run": 1,
+    "fanops.pipeline_status": 8,
+    "fanops.post": 3,
+    "fanops.post.compress": 2,
+    "fanops.post.dryrun": 3,
+    "fanops.post.media": 3,
+    "fanops.post.metrics": 4,
+    "fanops.post.postiz": 3,
+    "fanops.post.providers": 1,
+    "fanops.post.run": 4,
+    "fanops.post.zernio": 3,
+    "fanops.postiz_lifecycle": 0,
+    "fanops.produce": 6,
+    "fanops.prompts": 3,
+    "fanops.reconcile": 3,
+    "fanops.reframe": 6,
+    "fanops.reframe_apply": 7,
+    "fanops.responder": 4,
+    "fanops.router": 2,
+    "fanops.secret_provider": 0,
+    "fanops.settings": 0,
+    "fanops.signals": 4,
+    "fanops.stage_lock": 1,
+    "fanops.stitch_render": 3,
+    "fanops.studio": 0,
+    "fanops.studio.actions": 8,
+    "fanops.studio.actions_approve": 6,
+    "fanops.studio.actions_casting": 3,
+    "fanops.studio.actions_common": 0,
+    "fanops.studio.actions_run": 4,
+    "fanops.studio.actions_segments": 7,
+    "fanops.studio.actions_wipe": 4,
+    "fanops.studio.app": 9,
+    "fanops.studio.app_routes_golive": 10,
+    "fanops.studio.app_routes_hashtags": 10,
+    "fanops.studio.app_routes_live": 6,
+    "fanops.studio.app_routes_personas": 10,
+    "fanops.studio.app_routes_review": 10,
+    "fanops.studio.app_routes_run": 9,
+    "fanops.studio.app_routes_schedule": 10,
+    "fanops.studio.golive": 9,
+    "fanops.studio.hashtags": 9,
+    "fanops.studio.personas": 9,
+    "fanops.studio.preview_media": 4,
+    "fanops.studio.thumb_media": 5,
+    "fanops.studio.views": 5,
+    "fanops.studio.views_common": 3,
+    "fanops.studio.views_hashtags": 5,
+    "fanops.studio.views_library": 4,
+    "fanops.studio.views_live": 3,
+    "fanops.studio.views_results": 4,
+    "fanops.studio.views_review": 4,
+    "fanops.tagging": 3,
+    "fanops.text": 0,
+    "fanops.timeutil": 0,
+    "fanops.timing_bias": 5,
+    "fanops.track": 3,
+    "fanops.transcribe": 3,
+    "fanops.validation_gate": 1,
+    "fanops.variant_amplify": 8,
+    "fanops.variant_learning": 2,
+    "fanops.variant_transfer": 3,
+    "fanops.vocals": 1
+  },
+  "levels_by_level": {
+    "0": [
+      "fanops",
+      "fanops.audio_energy",
+      "fanops.bands",
+      "fanops.casting",
+      "fanops.compose",
+      "fanops.config",
+      "fanops.errors",
+      "fanops.frames",
+      "fanops.framing_outcomes",
+      "fanops.gate_keys",
+      "fanops.hookcheck",
+      "fanops.ids",
+      "fanops.metrics_schedule",
+      "fanops.overlay",
+      "fanops.persona_levers",
+      "fanops.postiz_lifecycle",
+      "fanops.secret_provider",
+      "fanops.settings",
+      "fanops.studio",
+      "fanops.studio.actions_common",
+      "fanops.text",
+      "fanops.timeutil"
+    ],
+    "1": [
+      "fanops._fwrun",
+      "fanops.audit",
+      "fanops.autopilot",
+      "fanops.config_introspect",
+      "fanops.control",
+      "fanops.controlio",
+      "fanops.daemon",
+      "fanops.health_model",
+      "fanops.keyframes",
+      "fanops.ledger_sqlite",
+      "fanops.llm",
+      "fanops.log",
+      "fanops.models",
+      "fanops.persona_directives",
+      "fanops.pipeline_run",
+      "fanops.post.providers",
+      "fanops.stage_lock",
+      "fanops.validation_gate",
+      "fanops.vocals"
+    ],
+    "10": [
+      "fanops.studio.app_routes_golive",
+      "fanops.studio.app_routes_hashtags",
+      "fanops.studio.app_routes_personas",
+      "fanops.studio.app_routes_review",
+      "fanops.studio.app_routes_schedule"
+    ],
+    "2": [
+      "fanops.accounts",
+      "fanops.agentstep",
+      "fanops.batches",
+      "fanops.hashtags",
+      "fanops.health",
+      "fanops.hookscore",
+      "fanops.impact_cut",
+      "fanops.ledger",
+      "fanops.post.compress",
+      "fanops.router",
+      "fanops.variant_learning"
+    ],
+    "3": [
+      "fanops.artifacts",
+      "fanops.doctor",
+      "fanops.fanops_hashtags",
+      "fanops.ingest",
+      "fanops.intro_match",
+      "fanops.ledger_bridge",
+      "fanops.ledger_wipe",
+      "fanops.meta_graph",
+      "fanops.moment_hook_learning",
+      "fanops.persona_research",
+      "fanops.persona_store",
+      "fanops.personas",
+      "fanops.post",
+      "fanops.post.dryrun",
+      "fanops.post.media",
+      "fanops.post.postiz",
+      "fanops.post.zernio",
+      "fanops.prompts",
+      "fanops.reconcile",
+      "fanops.stitch_render",
+      "fanops.studio.actions_casting",
+      "fanops.studio.views_common",
+      "fanops.studio.views_live",
+      "fanops.tagging",
+      "fanops.track",
+      "fanops.transcribe",
+      "fanops.variant_transfer"
+    ],
+    "4": [
+      "fanops.caption",
+      "fanops.cutover",
+      "fanops.cutover_postiz",
+      "fanops.digest",
+      "fanops.discover",
+      "fanops.fanops_account_stats",
+      "fanops.framing",
+      "fanops.init_flow",
+      "fanops.learn_doctor",
+      "fanops.paths_rebase",
+      "fanops.post.metrics",
+      "fanops.post.run",
+      "fanops.responder",
+      "fanops.signals",
+      "fanops.studio.actions_run",
+      "fanops.studio.actions_wipe",
+      "fanops.studio.preview_media",
+      "fanops.studio.views_library",
+      "fanops.studio.views_results",
+      "fanops.studio.views_review"
+    ],
+    "5": [
+      "fanops.clip",
+      "fanops.studio.thumb_media",
+      "fanops.studio.views",
+      "fanops.studio.views_hashtags",
+      "fanops.timing_bias"
+    ],
+    "6": [
+      "fanops.crosspost",
+      "fanops.moments",
+      "fanops.produce",
+      "fanops.reframe",
+      "fanops.studio.actions_approve",
+      "fanops.studio.app_routes_live"
+    ],
+    "7": [
+      "fanops.adjust",
+      "fanops.lever_docs",
+      "fanops.pipeline",
+      "fanops.reframe_apply",
+      "fanops.studio.actions_segments"
+    ],
+    "8": [
+      "fanops.p4_dim_bias",
+      "fanops.pipeline_status",
+      "fanops.studio.actions",
+      "fanops.variant_amplify"
+    ],
+    "9": [
+      "fanops.cli",
+      "fanops.studio.app",
+      "fanops.studio.app_routes_run",
+      "fanops.studio.golive",
+      "fanops.studio.hashtags",
+      "fanops.studio.personas"
+    ]
+  },
+  "metric_definitions": {
+    "compile_edges_G1": "unique (source, target) pairs where the import is at MODULE LEVEL. `from P import n` yields an edge to P (P/__init__.py must execute) AND to P.n when n is itself a module.",
+    "lazy_edges": "unique (source, target) pairs where the import sits inside a FunctionDef. Materializes only if the function is CALLED.",
+    "lazy_edges_lateral": "lazy edges where level(target) == level(source). NOT inversions.",
+    "lazy_edges_strictly_upward": "lazy edges where level(target) > level(source) — TRUE layering inversions, legal ONLY because deferred to call time.",
+    "level": "longest-path depth over the SCC-CONDENSATION of G1 (a DAG by construction). level(X)=0 if X imports nothing internal; else 1+max(level(targets))."
+  },
+  "regeneration_command": "python -m tools.arch regen",
+  "source_inputs": [
+    "src/fanops/**/*.py"
+  ],
+  "totals": {
+    "G1_non_trivial_sccs": 1,
+    "G1_sccs_total": 128,
+    "G1c_levels": 11,
+    "G2_largest_scc_size": 47,
+    "G2_module_sccs_total": 68,
+    "G2_non_trivial_sccs": 8,
+    "compile_edges_G1": 548,
+    "lazy_edges": 327,
+    "lazy_edges_lateral": 51,
+    "lazy_edges_strictly_upward": 57,
+    "lazy_edges_to_equal_or_higher_level": 108,
+    "modules": 130,
+    "optional_edges": 0,
+    "typing_only_edges": 6
+  }
+}

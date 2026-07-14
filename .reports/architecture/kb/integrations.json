@@ -1,0 +1,121 @@
+{
+ "$schema": "fanops-arch-kb/integrations/v1",
+ "cycle": 5,
+ "git_head": "fcffa73",
+ "generated": "2026-07-14",
+ "purpose": "Every external integration: what it is, who owns the client, what it is authoritative for, how it fails, and what it can never be asked.",
+ "provenance": "AST census of literal requests.* sites + subprocess sites + try/except ImportError sites, cross-read against Cycles 1-4.",
+
+ "external_services": [
+  {
+   "id": "EXT-POSTIZ",
+   "service": "Postiz (self-hosted, localhost:4007)",
+   "owner_module": "fanops.post.postiz",
+   "authoritative_for": "PUBLISHING to Instagram + YouTube",
+   "endpoints": ["POST /public/v1/posts (THE PUBLISH)", "POST /upload (multipart)", "POST /upload-from-url", "GET /integrations", "GET /public/v1/posts (status, +/-35d window)"],
+   "idempotency_key": "*** NONE. The backend has no idempotency key. *** This single fact is why PostState.needs_reconcile exists.",
+   "critical_shape": "*** _postiz_permalink ALWAYS returns None BY DESIGN. A fresh Postiz publish CANNOT self-promote to `published` — it lands `submitted` with no URL and parks in needs_reconcile. The steady-state happy path is submitting -> submitted -> needs_reconcile -> published. ***",
+   "status_endpoint_shape": "NO per-post endpoint. An unknown id is a row ABSENT from a 200-OK LIST page -> {'status':'unknown'} -> DOES NOT RAISE. This is the ONLY reason the terminal ladder works at all.",
+   "auth_failure": "401 -> PostizAuthError -> HALTS the run (INV-11)",
+   "lifecycle": "postiz_lifecycle.ensure_up SHELLS DOCKER from publish_due when `due` is non-empty",
+   "known_operational_hazard": "the Mastra 1600-column pg crash-loop recurs on Postiz upgrades (project memory)",
+   "confidence": "CERTAIN"
+  },
+  {
+   "id": "EXT-ZERNIO",
+   "service": "Zernio",
+   "owner_module": "fanops.post.zernio",
+   "authoritative_for": "PUBLISHING to TikTok",
+   "endpoints": ["POST /posts (THE PUBLISH)", "POST /media/upload-token", "POST /media/upload", "GET /accounts", "GET /posts/{id} (status)"],
+   "sibling_parity": "VERIFIED byte-for-byte symmetric with Postiz on the publish failure ladder. The parity HOLDS.",
+   "status_endpoint_shape": "*** HAS a true per-post lookup. An unknown id is a 404 -> RAISES RuntimeError. *** THE DIVERGENCE IS IN THE REMOTE API, NOT IN FANOPS CODE — both clients raise identically on >=300 (metrics.py:164-165 vs :516-517). Cycle 3 mis-attributed this to a FanOps sibling-parity divergence; Cycle 4 corrected it.",
+   "consequence": "*** The reconcile terminal ladder sits on the SUCCESSFUL-POLL branch, so a raising poll can never reach it. The escalation and give-up are DEAD CODE ON ZERNIO, and the `gave_up` digest bucket NEVER FIRES for TikTok. C3-F2. ***",
+   "confidence": "CERTAIN"
+  },
+  {
+   "id": "EXT-META-GRAPH",
+   "service": "Meta Graph API",
+   "owner_module": "fanops.meta_graph",
+   "authoritative_for": "*** INSTAGRAM PERFORMANCE METRICS — the SOLE IG metric reader. *** Also hashtag reach + co-occurrence discovery.",
+   "NOT_authoritative_for": "PUBLISHING. Publishing goes via Postiz ONLY. (Project memory: fanops-account-connection-truth.)",
+   "client_shape": "an INJECTABLE `get` so tests never touch the network — which is why an AST pass over literal requests.* calls does NOT see it.",
+   "budget": "30/7-day query budget, persisted in hashtag_budget.json under a flock",
+   "known_constraint": "IG has NO trending-by-topic endpoint, so co-occurrence harvesting off top_media captions is the Graph-native discovery path.",
+   "known_operational_hazard": "*** all 3 IG accounts share ONE Meta credential (ig_user_id=None), so the independent publish-verification check is BLIND to 2 of 3. MOL-112. ***",
+   "confidence": "CERTAIN"
+  },
+  {
+   "id": "EXT-R2",
+   "service": "Cloudflare R2",
+   "owner_module": "fanops.post.postiz (SigV4 by hand, no boto3)",
+   "authoritative_for": "public media hosting for the publish path",
+   "idempotency": "*** TRUE. The object key is fanops/{sha256(file)[:32]}{suffix} — CONTENT-ADDRESSED, so a re-upload overwrites the same object. ***",
+   "confidence": "CERTAIN"
+  },
+  {
+   "id": "EXT-LLM",
+   "service": "Claude",
+   "owner_module": "fanops.llm",
+   "transport": "*** A SUBPROCESS (`claude -p`), NOT AN HTTP API. *** It rides the operator's existing `claude login`.",
+   "critical_fact": "ANTHROPIC_API_KEY is NOT required, and `claude --bare -p` PROVABLY FAILS because it never reads the keychain (llm.py:12-23).",
+   "authoritative_for": "answering the four agent-gate kinds (moments, moment_hooks, captions; intro_match is unanswerable)",
+   "retry": "rate-limit retry, bounded by _MAX_RL_RETRIES",
+   "confidence": "CERTAIN"
+  },
+  {
+   "id": "EXT-FFMPEG",
+   "service": "ffmpeg / ffprobe",
+   "owner_modules": ["clip (13 sites)", "ingest (10)", "overlay (5)", "keyframes (4)", "signals (3)", "discover (4)", "post.compress (1)", "studio.actions_run (3)"],
+   "critical_constraint": "*** ffmpeg selects its MUXER BY FILE EXTENSION. A temp file must be <dst>.part.mp4, not <dst>.part (COUP-07 / MOL-78). ***",
+   "confidence": "CERTAIN"
+  },
+  {
+   "id": "EXT-WHISPER",
+   "service": "whisper / faster_whisper",
+   "owner_module": "fanops.transcribe",
+   "optionality": "OPTIONAL, fail-OPEN (try/except ImportError)",
+   "known_incident": "stale ASR pins in a live .env (override=True beats everything) produced nonsense subtitles; provenance is now logged.",
+   "confidence": "CERTAIN"
+  },
+  {
+   "id": "EXT-CV2",
+   "service": "OpenCV (the [framing] extra)",
+   "owner_module": "fanops.framing",
+   "optionality": "*** THE ONLY FAIL-CLOSED OPTIONAL DEPENDENCY IN THE SYSTEM. *** With smart_framing ON (the DEFAULT) and cv2 absent, framing.require_cv2 raises ToolchainMissingError -> EXIT 2. Every other extra fails OPEN. INV-17.",
+   "escape": "FANOPS_SMART_FRAMING=0 restores the blind centre-crop",
+   "confidence": "CERTAIN"
+  },
+  {
+   "id": "EXT-LAUNCHD",
+   "service": "launchd (macOS)",
+   "owner_module": "fanops.daemon",
+   "authoritative_for": "*** ALL SCHEDULING. There is no cron, no APScheduler, no in-process timer. ***",
+   "agents": ["com.fanops.run (RunAtLoad + KeepAlive; interval rides EnvironmentVariables.FANOPS_DAEMON_INTERVAL — there is NO StartInterval)", "com.fanops.keeper (120s poll)", "com.fanops.studio"],
+   "critical_constraint": "*** the plist BAKES A FULL PATH at install time, because launchd supplies a bare one. A stale baked PATH pinned an old `claude` binary and killed every gate for 3 days (project memory: daemon-only-failures-check-plist-path). ***",
+   "confidence": "CERTAIN"
+  },
+  {
+   "id": "EXT-DOCKER",
+   "service": "Docker",
+   "owner_modules": ["postiz_lifecycle", "health", "health_model"],
+   "note": "SHELLED FROM THE PUBLISH PATH — publish_due calls postiz_lifecycle.ensure_up when `due` is non-empty.",
+   "confidence": "CERTAIN"
+  },
+  {
+   "id": "EXT-KEYRING",
+   "service": "OS Keyring",
+   "owner_module": "fanops.secret_provider",
+   "contract": "*** READS fail OPEN; WRITES fail CLOSED. *** set_secret writes, then READS IT BACK, and raises OSError if the value does not round-trip — LOAD-BEARING, because the caller then scrubs the plaintext .env fallback on success. An accepted-but-dropped write would erase the secret from BOTH stores.",
+   "confidence": "CERTAIN"
+  }
+ ],
+
+ "http_library": "requests — the SOLE HTTP library in src/fanops (AST-verified: 15 literal requests.* sites, no aiohttp/httpx/urllib3-direct).",
+
+ "integration_invariants": [
+  "NO network call and NO heavy subprocess EVER runs inside the ledger lock (L1). Verified at every site.",
+  "_publish_one (run.py:296) is the SOLE caller of poster.publish. INV-09.",
+  "NEITHER publish backend has an idempotency key. Every ambiguous send PARKS in needs_reconcile and is NEVER re-POSTed. This is the entire double-publish defence.",
+  "Meta Graph is a METRIC READER ONLY. It never publishes."
+ ]
+}

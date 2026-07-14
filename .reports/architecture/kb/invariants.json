@@ -1,0 +1,174 @@
+{
+ "$schema": "fanops-arch-kb/invariants/v1",
+ "cycle": 5,
+ "git_head": "fcffa73",
+ "generated": "2026-07-14",
+ "purpose": "Every architectural invariant the repository ACTUALLY enforces — classified by ENFORCEMENT MECHANISM, not by what a doc claims.",
+
+ "prime_directive": "*** DO NOT STRENGTHEN AN INVARIANT BEYOND WHAT THE REPOSITORY ENFORCES. *** An invariant that holds by four manual call-site guards is NOT 'bound at the type level', however the docstring reads. This index records the MECHANISM separately from the PROPERTY, because the codebase's single most repeatable defect shape is: THE DOC NAMES A MECHANISM THAT DOES NOT EXIST, WHILE THE PROPERTY SURVIVES VIA A DIFFERENT ONE.",
+
+ "enforcement_classes": {
+  "MECHANICAL_TYPE": "a type/validator raises. The property CANNOT be violated through that door.",
+  "MECHANICAL_GUARD": "an in-lock re-check or explicit conditional refuses the illegal transition.",
+  "MECHANICAL_TEST": "a CI test fails on violation.",
+  "MECHANICAL_ASSERT": "an import-time assert.",
+  "STRUCTURAL": "the property holds because no code path exists to violate it (reachability, not enforcement).",
+  "CONVENTION": "the property holds because every author has so far written it correctly. NOTHING enforces it.",
+  "DOCUMENTATION_ONLY": "a doc asserts it; no mechanism enforces it; it may or may not hold.",
+  "INFERRED": "derived, not directly observed."
+ },
+
+ "invariants": [
+  {"id": "INV-08", "statement": "NO-AUTO-PUBLISH: an unapproved post is structurally unpublishable.",
+   "holds": true, "enforcement": "MECHANICAL_GUARD",
+   "mechanism": "Post is BORN awaiting_approval (models.py:298 — the model DEFAULT, so even a bare Post(...) is unpublishable). publish_due iterates `queued` ONLY (run.py:442). Ledger.approve_post is guarded on `state is awaiting_approval` (ledger.py:579). Every OTHER writer of `queued` is guarded on a SOURCE state of failed/error/submitting — so none can leave awaiting_approval.",
+   "doc_drift": "src/fanops/CLAUDE.md claims a SINGLE-WRITER property ('do NOT set queued anywhere except approve_post'). *** THAT MECHANISM IS FALSE — there are 7 writers. *** The PROPERTY holds via approve_post's GUARD, not via single-writership. INV-02.",
+   "consequence_of_breaking": "auto-publication without operator approval — the system's most important safety property",
+   "confidence": "CERTAIN", "scope": "Post"},
+
+  {"id": "INV-09", "statement": "_publish_one is the SOLE caller of poster.publish (the network POST).",
+   "holds": true, "enforcement": "STRUCTURAL", "mechanism": "AST: run.py:296 is the only poster.publish call site. Both entry points (publish_due, publish_post) funnel through it.",
+   "consequence_of_breaking": "a second, unguarded network-POST path", "confidence": "CERTAIN", "scope": "publish"},
+
+  {"id": "INV-10", "statement": "needs_reconcile is NEVER downgraded to failed.",
+   "holds": true, "enforcement": "MECHANICAL_GUARD", "mechanism": "guarded at BOTH layers: run.py:325 (`if post.state is not PostState.needs_reconcile`), postiz.py:433, zernio.py:271.",
+   "why_it_matters": "`failed` is RE-QUEUEABLE. Downgrading an ambiguous park would risk a DOUBLE-PUBLISH.", "confidence": "CERTAIN", "scope": "Post"},
+
+  {"id": "INV-11", "statement": "AuthError halts the run and never burns the queue.",
+   "holds": true, "enforcement": "MECHANICAL_GUARD", "mechanism": "_is_fatal_auth_error matches by TYPE, not substring (the H8 fix), and RE-RAISES (run.py:320).",
+   "scope_correction": "*** TRUE FOR ONE PASS. At the DAEMON level it does NOT imply the run STOPS: a persistent AuthError is re-driven EVERY TICK, FOREVER, writing no heartbeat and changing no ledger state — while daemon status still reports `alive`. C3-F8 + C3-F9. ***",
+   "confidence": "CERTAIN", "scope": "publish (one pass)"},
+
+  {"id": "INV-12", "statement": "Ledger writes are atomic.",
+   "holds": true, "enforcement": "MECHANICAL_GUARD", "mechanism": "BEGIN IMMEDIATE + DELETE-then-re-INSERT full replace + WAL + synchronous=FULL. Save runs ONLY on clean exit; any raise rolls back.",
+   "scope_limit": "*** ATOMIC PER TRANSACTION, NEVER PER FIELD. And this invariant is DEFEATED by restore_snapshot (RC-4), which is not a ledger writer at all — it replaces the FILE. ***",
+   "confidence": "CERTAIN", "scope": "ledger"},
+
+  {"id": "INV-13", "statement": "A newer on-disk schema is REFUSED, never downgraded.",
+   "holds": true, "enforcement": "MECHANICAL_GUARD", "mechanism": "ledger.py:436-440 raises _NewerSchema.", "confidence": "CERTAIN", "scope": "ledger"},
+
+  {"id": "INV-15", "statement": "_JITTER_MAX < _STEP_MIN, therefore the crosspost schedule is MONOTONIC in index.",
+   "holds": true, "enforcement": "MECHANICAL_ASSERT",
+   "mechanism": "*** A MODULE-LEVEL assert (crosspost.py:30) — THE ONLY IMPORT-TIME ASSERT IN THE CODEBASE. *** Reinforced by a defensive `while t <= prev_slot: t += _STEP_MIN` loop.",
+   "note": "The STRONGEST invariant in the system: it cannot even be imported in a violating state.", "confidence": "CERTAIN", "scope": "scheduling"},
+
+  {"id": "INV-16", "statement": "Builtin hash() is BANNED; every id is SHA-1-derived.",
+   "holds": true, "enforcement": "CONVENTION (+ a documented rationale)",
+   "mechanism": "ids.py:2 documents WHY (PEP 456 salts hash() per interpreter, which would break cross-process idempotency). ids.py:7 implements SHA-1[:12]. *** NOTHING MECHANICALLY PREVENTS a future author from calling hash(). ***",
+   "consequence_of_breaking": "content-addressing breaks across processes; the whole replay-is-a-no-op property collapses",
+   "confidence": "CERTAIN", "scope": "identity"},
+
+  {"id": "INV-17", "statement": "[framing]/cv2 is the ONLY fail-CLOSED optional dependency.",
+   "holds": true, "enforcement": "MECHANICAL_GUARD",
+   "mechanism": "framing.require_cv2 -> ToolchainMissingError -> exit 2 when smart_framing is ON (the default). AST-confirmed: the other try/except ImportError sites (whisper, flask, certifi, keyring) all fail OPEN.",
+   "confidence": "CERTAIN", "scope": "render"},
+
+  {"id": "INV-18", "statement": "golive is the ONLY setter of FANOPS_LIVE=1.",
+   "holds": true, "enforcement": "STRUCTURAL",
+   "mechanism": "*** AST: EXACTLY 2 os.environ[...] assignment sites in src/ — golive.py:66 (the generic _dual_write) and autopilot.py:80 (FANOPS_RESPONDER). *** Only golive writes FANOPS_LIVE.",
+   "gates": "accounts-valid -> >=1 live-ready channel -> past-due-backlog gate -> explicit confirm",
+   "confidence": "CERTAIN", "scope": "config"},
+
+  {"id": "INV-19", "statement": "Every ledger model is FORWARD-compatible (pydantic extra='ignore').",
+   "holds": true, "enforcement": "MECHANICAL_TYPE (by DEFAULT, not by declaration)",
+   "mechanism": "No ledger model sets `extra=`; pydantic v2's default IS extra='ignore'. An OLDER binary parsing a NEWER ledger drops unknown keys rather than crashing.",
+   "fragility": "*** It holds by DEFAULT, not by DECLARATION. Setting extra='forbid' on any ledger model — a change that looks like tightening — turns a forward-rolled ledger into a hard ControlFileError. SHIM-005. ***",
+   "confidence": "CERTAIN", "scope": "ledger"},
+
+  {"id": "INV-CAS", "statement": "Cascade delete never orphans a live post or its media.",
+   "holds": true, "enforcement": "MECHANICAL_GUARD",
+   "mechanism": "_PROTECTED_POST_STATES (ledger.py:660). When NO protected post hangs off a clip, the cascade deletes THE POSTS TOO, so nothing is orphaned.",
+   "dead_half": "*** The CLIP half of the guard (_LIVE_CLIP_STATES) is DEAD CODE — nothing writes ClipState.published/analyzed, so clip_live is ALWAYS FALSE. The property holds entirely on the POST check. INV-06. ***",
+   "confidence": "CERTAIN", "scope": "ledger"},
+
+  {"id": "INV-DEFER", "statement": "A rolled-back transaction never deletes a file it did not drop.",
+   "holds": "CONDITIONALLY",
+   "enforcement": "MECHANICAL_GUARD (ordering)",
+   "mechanism": "cascade .mp4 unlinks drain AFTER _save_unlocked (ledger.py:487-488).",
+   "*** THE INVERSION ***": "TRUE against a normal ROLLBACK. *** FALSE against a RESTORE RACE: the txn COMMITS SUCCESSFULLY into an ORPHANED inode — so it is never rolled back — so the unlinks PROCEED, deleting real media whose rows the restore brings back. C4-F2a. The safety property INVERTS exactly where it is most needed. ***",
+   "confidence": "CERTAIN (executed)", "scope": "ledger + media"},
+
+  {"id": "INV-LOCK", "statement": "No network call and no heavy subprocess ever runs inside the ledger lock.",
+   "holds": true, "enforcement": "CONVENTION (+ an explicit adopt-or-defer contract)",
+   "mechanism": "transcribe_source and detect_signals take `in_lock=True` and ADOPT-OR-DEFER — they never shell whisper/ffmpeg under the lock. A cold cache costs ONE TICK of latency, never a held lock. *** Verified at every site, but NOTHING MECHANICALLY PREVENTS a new in-lock network call. ***",
+   "confidence": "CERTAIN", "scope": "pipeline"},
+
+  {"id": "INV-REPLAY", "statement": "A whole-pipeline REPLAY is a NO-OP for entity creation.",
+   "holds": true, "enforcement": "MECHANICAL_GUARD",
+   "mechanism": "every id is CONTENT-ADDRESSED (ids.py:7) + the whole add_* family is `setdefault`.",
+   "one_deliberate_exception": "crosspost._mint_surface_post DELETES and re-mints a post whose prior state is `rejected` or `failed` — a re-run CAN resurrect a rejected post.",
+   "second_exception": "add_imported_media is a true UPSERT (deliberate: a re-pull's fresher metrics must win).",
+   "confidence": "CERTAIN", "scope": "all entities"},
+
+  {"id": "INV-SWALLOW", "statement": "A new silent broad `except` cannot be added.",
+   "holds": true, "enforcement": "MECHANICAL_TEST",
+   "mechanism": "tests/test_swallow_ratchet.py (an AST test) FAILS a new broad `except` that neither logs nor fail-opens. Baseline: 49 grandfathered silent handlers. A companion ratchet pins cli.py's print() count.",
+   "note": "One of only two MECHANICALLY-TESTED architectural invariants in the system.",
+   "confidence": "CERTAIN", "scope": "all modules"}
+ ],
+
+ "invariants_that_are_FALSE_as_written": [
+  {"id": "INV-01", "doc_claim": "the R1 published-URL invariant is 'bound at the TYPE LEVEL so no door can produce the ghost row'.",
+   "reality": "*** FALSE for 4 of the 5 doors it names. *** Construction raises. model_copy(update=) does NOT. setattr does NOT. The bad row model_dump()s CLEANLY — and the NEXT Ledger.load raises, bricking the ENTIRE ledger (a LOAD-TIME POISON PILL, not a rejected write).",
+   "property_holds_via": "FOUR INDEPENDENT MANUAL CALL-SITE GUARDS (run.py:305, actions.py:268, cli.py:384, dryrun.py:39). A fifth door added without a manual guard SAVES CLEANLY and then bricks the daemon and every Studio page at once.",
+   "false_subclaim": "two code comments assert 'Pydantic re-validates on serialization'. *** IT DOES NOT. *** Executed against pydantic 2.13.4.",
+   "enforcement_actual": "CONVENTION (4 manual guards)", "confidence": "CERTAIN (executed)"},
+
+  {"id": "INV-02", "doc_claim": "'do NOT set a post's state to queued anywhere except Ledger.approve_post' (a SINGLE-WRITER property).",
+   "reality": "*** FALSE — there are SEVEN writers of `queued`. ***",
+   "property_holds_via": "every non-approve_post writer is guarded on a SOURCE state of failed/error/submitting, so none can leave awaiting_approval. The SAFETY PROPERTY (INV-08) HOLDS; the doc's MECHANISM does not exist.",
+   "verdict": "*** NOT A DEFECT. Doc drift. *** Recorded so no cycle re-litigates it.", "confidence": "CERTAIN"},
+
+  {"id": "INV-03", "doc_claim": "'get_poster RAISES rather than build a DryRunPoster when live'.",
+   "reality": "*** FALSE. *** The guard fires ONLY on the literal string 'dryrun' (case-insensitively); the PROVIDERS lookup is case-SENSITIVE. They disagree. An unrecognised backend ('Postiz', 'postiz ', 'blotato') returns a *** DryRunPoster ON A LIVE SYSTEM ***, without raising.",
+   "reachability": "a hand-edit of accounts.json — THE DOCUMENTED OPERATOR CHANNEL. The WRITE boundary (set_backend) is sound; the LOAD boundary has no validation at all.",
+   "worst_variant": "'postiz ' (trailing space) is VISUALLY IDENTICAL to 'postiz' in any UI, JSON dump, or diff.",
+   "verdict": "CURRENTLY REACHABLE DEFECT (RC-3).", "confidence": "CERTAIN (executed)"},
+
+  {"id": "INV-04", "doc_claim": "the intro_match gate is live.",
+   "reality": "*** FALSE — it is STRUCTURALLY UNANSWERABLE. *** It is written (intro_match.py:108) but ABSENT from responder._SCHEMA, and answer_pending iterates _SCHEMA ONLY. The autonomous responder can NEVER see it.",
+   "verdict": "UNFINISHED (not dead, not orphaned). Dormant behind FANOPS_INTRO_TEASE (DEFAULT OFF). With the flag ON, unanswerable request files accumulate FOREVER and are invisible to the status view.",
+   "confidence": "CERTAIN"},
+
+  {"id": "INV-05", "doc_claim": "'Settings is a typed env boundary constructed per Config()'.",
+   "reality": "*** FALSE. Config.__init__ NEVER constructs a Settings. *** Settings.runtime_load has ZERO callers. All of Config's os.getenv calls read the env DIRECTLY, uncached, per access.",
+   "consequence": "There is NO runtime precedence conflict, because there is NO runtime handoff. The hazard is MAINTENANCE: two hand-maintained parsers for one env surface, and _VALID_BACKENDS defined TWICE.",
+   "confidence": "CERTAIN"},
+
+  {"id": "INV-07", "doc_claim": "'00_control/ledger.lock is vestigial'.",
+   "reality": "*** FALSE. It has ONE live consumer (restore_snapshot) and it is WORSE THAN DEAD: a live lock that EXCLUDES NOTHING. ***",
+   "history": "Cycle 1 filed it as DEAD on the strength of the word 'vestigial' IN A COMMENT — breaking its own method note ('a code comment is not evidence').",
+   "confidence": "CERTAIN (executed)"},
+
+  {"id": "INV-20", "doc_claim": "the CLAUDE.md line-number citations for every safety claim.",
+   "reality": "*** FALSE — 10 of 10 checked are STALE. *** Function names and semantics are RIGHT; only the citations rotted.",
+   "why_it_matters": "the citations are HOW a future editor finds the guard they are told not to break.",
+   "confidence": "CERTAIN"},
+
+  {"id": "INV-21", "doc_claim": "(none — authorization is simply absent)",
+   "reality": "*** VERIFIED-ABSENT. 149 routes, 108 mutating, 0 authenticated, 0 CSRF-protected, no before_request hook. ***",
+   "verdict": "A RECORDED, ACCEPTED DECISION (studio/CLAUDE.md: 'no auth by design ... declined as out-of-scope for localhost'). The boundary is the NETWORK INTERFACE. Recorded as ground truth, NOT as a recommendation — but note that any change to --host removes the only control.",
+   "confidence": "CERTAIN"}
+ ],
+
+ "invariants_that_are_LATENT_only": [
+  {"id": "INV-01b", "statement": "model_copy(update=) bypasses EVERY validator on EVERY model — INCLUDING Moment's, despite validate_assignment=True (which protects setattr ONLY).",
+   "reachable_today": false,
+   "why_not": "set_segments deliberately ROUND-TRIPS through Moment.model_validate (which DOES run validators) and uses model_copy only for a field with no validator.",
+   "latent_hazard": "PROVEN: model_copy(update={'segments': [...]}) leaves a STALE start/end envelope — the Moment's declared window and its segments would disagree, and the clip would render the WRONG SPAN.",
+   "load_bearing_coupling": "*** actions_casting.cast_add/cast_remove are correct ONLY because Moment.validate_assignment=True. Converting them to model_copy 'for consistency with the other 57 sites' would silently stop canonicalizing affinities — and a non-canonical '@Foo' would make that moment post NOWHERE, silently. COUP-07. ***",
+   "confidence": "CERTAIN (executed)"}
+ ],
+
+ "enforcement_summary": {
+  "MECHANICAL_TYPE": 1,
+  "MECHANICAL_GUARD": 8,
+  "MECHANICAL_TEST": 1,
+  "MECHANICAL_ASSERT": 1,
+  "STRUCTURAL": 2,
+  "CONVENTION": 3,
+  "FALSE_AS_WRITTEN": 7,
+  "LATENT": 1,
+  "the_uncomfortable_ratio": "*** Of the system's most important safety properties, exactly ONE is enforced by a CI test (the swallow ratchet) and exactly ONE by an import-time assert (schedule monotonicity). The no-auto-publish invariant — the single most important property in the product — is enforced by an IN-LOCK GUARD, which is sound, but its DOC describes a single-writer mechanism that does not exist. The R1 published-URL invariant is enforced by FOUR MANUAL CALL-SITE GUARDS while its docstring claims the type system does it. ***"
+ }
+}

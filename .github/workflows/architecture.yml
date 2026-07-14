@@ -1,0 +1,201 @@
+name: architecture
+
+# Cycle 7 — continuous architecture & implementation governance.
+#
+# Three gates, and the split is EVIDENCE-BASED, not guessed:
+#
+#   gate      drift + policy + registries          seconds    EVERY pull request
+#   impact    the PR's architectural blast radius  seconds    EVERY pull request
+#   controls  the negative-control suite           minutes    PATH-SELECTED (+ on push to main)
+#
+# No exact count or duration is written here ON PURPOSE. A number in a comment is a number that
+# rots, and a rotted number in a governance file is this repo's signature defect (AR-03: the doc
+# names a mechanism that does not exist). The authoritative count is `tools/arch/selftest.py`
+# CONTROLS; the authoritative duration is whatever this job just took.
+#
+# The negative controls prove the VALIDATORS work. They need re-proving when the validators — or
+# the artifacts they read — change. A pure src/ change does not alter the validators, and `gate`
+# already catches its drift. The selection rule lives in tools/arch/select.py, it FAILS OPEN, and
+# it is TESTED (tests/test_arch_governance.py::test_deep_gate_selection).
+#
+# NOTE: tools/arch is STDLIB-ONLY. These jobs need no pip install and no lockfile — which is why
+# they can afford to run on every PR.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "17 5 * * 1"        # Mondays 05:17 UTC — scheduled reconciliation
+
+concurrency:
+  group: arch-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    name: gate (drift + policy + registries)
+    if: github.event_name != 'schedule'
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+
+      # The single check that makes every other one trustworthy: if the committed derived/
+      # artifacts differ from regeneration, every claim downstream of them is a claim about a
+      # file somebody hand-edited.
+      - name: Regenerate + byte-compare + policy + registries
+        run: python -m tools.arch ci
+
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo "## Architecture gate"
+            echo '```'
+            python -m tools.arch drift || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  impact:
+    name: impact report
+    if: github.event_name == 'pull_request'
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0        # `git archive <base>` needs the base tree to rebuild it
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+
+      # Written to the JOB SUMMARY, not to a PR comment. A comment would need
+      # `pull-requests: write`, and escalating this repo's permissions is a decision for the
+      # operator, not a side effect of adding a report. Flipping it to `gh pr comment` is a
+      # one-line change if that trade is wanted.
+      - name: Architectural + implementation impact
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          {
+            python -m tools.arch impact --base "$BASE"
+            echo
+            python -m tools.arch verify --base "$BASE"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # UNKNOWN_IMPACT is NEVER treated as safe. A diff whose blast radius cannot be computed is
+      # not a diff anyone can wave through.
+      - name: Fail on BREAKING / UNKNOWN_IMPACT
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: python -m tools.arch impact --base "$BASE" --strict > /dev/null
+
+  controls:
+    name: negative controls (validator effectiveness)
+    if: github.event_name != 'schedule'
+    timeout-minutes: 15
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+
+      - name: Decide whether the deep gate is required (FAILS OPEN)
+        id: select
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git diff --name-only "$BASE...HEAD" > /tmp/changed.txt || true
+          else
+            git diff --name-only HEAD~1...HEAD > /tmp/changed.txt || true
+          fi
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import pathlib, sys
+          sys.path.insert(0, ".")
+          from tools.arch.select import deep_required
+          try:
+              changed = [l for l in pathlib.Path("/tmp/changed.txt").read_text().splitlines() if l]
+          except Exception:
+              changed = None            # unreadable -> FAIL OPEN
+          run, why = deep_required(changed)
+          print(f"run={'true' if run else 'false'}")
+          print(f"why={why}")
+          PY
+
+      - name: Why
+        run: echo "deep gate = ${{ steps.select.outputs.run }} — ${{ steps.select.outputs.why }}"
+
+      # 21 injected defects, each asserting its rule fires with evidence that was ABSENT before.
+      # A MISSED control means the rule it names is DECORATIVE — claimed in the policy set but not
+      # actually firing. That is worse than no rule: it manufactures confidence. (This gate caught
+      # exactly that in its own IMPL-007 on the first run.)
+      - name: Negative controls
+        if: steps.select.outputs.run == 'true'
+        run: python -m tools.arch selftest
+
+  reconcile:
+    name: scheduled reconciliation
+    if: github.event_name == 'schedule'
+    timeout-minutes: 20
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+
+      # *** IT NEVER SILENTLY REWRITES A CANONICAL ARTIFACT. *** It regenerates, and if anything
+      # moved it FAILS with a reviewable diff. An auto-commit here would be a bot quietly editing
+      # the architecture of record, which is the opposite of governance.
+      - name: Regenerate and detect drift (produces a reviewable diff, never a silent rewrite)
+        run: |
+          python -m tools.arch regen
+          python -m tools.arch docs
+          # `git diff` alone is BLIND to an artifact the generator NEWLY created: an untracked file
+          # is not a diff. If the code grew a construct that produces an 11th derived artifact, the
+          # naive check would report "no drift" while a brand-new, uncommitted piece of the
+          # architecture of record sat on the runner's disk. Untracked output counts as drift.
+          UNTRACKED="$(git ls-files --others --exclude-standard)"
+          if ! git diff --quiet || [ -n "$UNTRACKED" ]; then
+            {
+              echo "## 🔴 Scheduled reconciliation found drift"
+              echo
+              echo "The canonical artifacts no longer match the code. This job does **not** commit"
+              echo "the fix — a bot silently editing the architecture of record is the opposite of"
+              echo "governance. Review the diff below and land it deliberately."
+              echo
+              if [ -n "$UNTRACKED" ]; then
+                echo "**Newly generated, never committed:**"
+                echo '```'
+                echo "$UNTRACKED"
+                echo '```'
+              fi
+              echo '```diff'
+              git diff
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            git --no-pager diff --stat
+            [ -n "$UNTRACKED" ] && echo "untracked: $UNTRACKED"
+            exit 1
+          fi
+          echo "no drift" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Policy + registries (expired exceptions, UNKNOWN growth)
+        run: python -m tools.arch ci
+
+      - name: Negative controls (the validators still work)
+        run: python -m tools.arch selftest

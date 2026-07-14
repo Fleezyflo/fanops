@@ -1,0 +1,383 @@
+{
+  "$schema": "fanops-architecture-sequence/v1",
+  "cycle": 4,
+  "git_head": "fcffa73",
+  "generated": "2026-07-14",
+  "prose_twin": "IMPLEMENTATION_SEQUENCE.md",
+  "status": "PROPOSED. Nothing executed. Each slice has an approval-ready prompt under prompts/.",
+
+  "repo_policy_context": {
+    "test_lane": "NEVER run the suite locally (CLAUDE.md). pytest runs ONLY in GitHub CI on a PR. ./scripts/check.sh is lint-only (ruff check .).",
+    "ci_jobs": ["unit (python -m pytest -q -m 'not integration')", "base-install", "e2e (needs real ffmpeg/whisper; FANOPS_REQUIRE_E2E=1)", "ci-timing"],
+    "ast_ratchets": "tests/test_swallow_ratchet.py fails a NEW silent broad `except`; tests/test_internal_prints_routed.py pins cli.py's print() count. BOTH must be replayed before pushing (project memory: fanops-ast-ratchets-catch-new-except-and-prints).",
+    "land_gate": "A non-MOL PR title MUST carry `(Unit: <slug>)`; the lowercased slug must match the verifier record filename (project memory: land-gate-needs-a-unit-tag).",
+    "no_mass_reformat": "No black, no ruff format. The compact one-liner house style is deliberate.",
+    "orchestrator_rule": "ONE orchestrator landing session at a time; git fetch + gh pr view the target before merge."
+  },
+
+  "sequence_rationale": {
+    "the_brief_proposed": ["observability+characterization tests", "provider validation", "submission lifecycle", "manual recovery", "validation-safe mutation", "snapshot/restore", "durable media", "daemon health", "irreversible learning"],
+    "CHANGED_BY_EVIDENCE": [
+      {
+        "change": "*** SNAPSHOT/RESTORE MOVED FROM #6 TO #1. ***",
+        "why": "It is the ONLY defect that causes UNRECOVERABLE LOSS OF MEDIA (C4-F2a, proven by execution), it is triggered by the DOCUMENTED recovery procedure, and it is fully independent (own files, own lock domain). Leaving it at #6 while sequencing five other slices ahead of it cannot be justified once the media-deletion consequence is known."
+      },
+      {
+        "change": "'observability and characterization tests' is NOT a standalone first slice.",
+        "why": "*** RC-5: the characterization test for the highest-severity defect ALREADY EXISTS AND ENCODES THE BUG. *** You cannot write a passing characterization test for restore FIRST — the honest one fails, and the existing one passes for the wrong reason. The test rewrite must ship WITH the source fix (atomic). Characterization tests are therefore folded INTO each slice, not hoisted into a phase of their own."
+      },
+      {
+        "change": "'validation-safe mutation boundary' moved from #5 to LAST.",
+        "why": "RC-9 has ZERO current reachability (AST-verified: no code path produces the poison row). Fixing it at #5 would spend the audit's credibility on a bug nobody can hit while RC-4 silently deletes media."
+      },
+      {
+        "change": "'manual recovery normalization' (#4) SPLIT.",
+        "why": "Its safety half is S03 (the claim refusal, which makes preserving submission_id safe). Its hygiene half is S06 (clearing the stale error_reason). They have different roots, different files, and different severities."
+      }
+    ]
+  },
+
+  "phases": [
+    {
+      "phase": 1,
+      "name": "STOP THE MEDIA LOSS",
+      "slices": ["S01"],
+      "parallel_with": ["S02", "S08", "S09"],
+      "gate_to_phase_2": "S01 merged. It blocks nothing, but it is the only CRITICAL defect and nothing should be landed ahead of it."
+    },
+    {
+      "phase": 2,
+      "name": "CLOSE THE LIVE-MODE CONTRACT",
+      "slices": ["S02", "S07"],
+      "order_within": "S02 BEFORE S07",
+      "gate": "PD-4 (recommendation given; near-mechanical). *** AND: if PD-3 is unanswered, S02 MUST log the is_live_backend transition loudly — see the S02<->S10 semantic conflict. ***"
+    },
+    {
+      "phase": 3,
+      "name": "GIVE THE SUBMISSION LIFECYCLE AN OWNER",
+      "slices": ["S03", "S04", "S05", "S06"],
+      "order_within": "S03 -> S04 (+ S05 with/after S04) -> S06",
+      "MUST_BE_SEQUENTIAL": true,
+      "gate": "PD-2 for S04's exact terminal semantics (the SHAPE is decided; the recommendation is the same age ladder, because GAVE UP: is a LABEL and cannot double-post). S03 ships regardless of PD-1.",
+      "operational_gate": "*** S04 REQUIRES A REPORT-ONLY DRY RUN BEFORE IT WRITES. *** On first pass after deploy, every currently-stranded post becomes eligible for escalation AT ONCE."
+    },
+    {
+      "phase": 4,
+      "name": "MAKE FAILURE VISIBLE",
+      "slices": ["S08", "S09"],
+      "parallel_with": ["phase 1", "phase 2"],
+      "note": "These are independent of everything and can be built at any time. Placed here only because they are lower severity."
+    },
+    {
+      "phase": 5,
+      "name": "BLOCKED / DEFERRED",
+      "slices": ["S10", "RC-9"],
+      "gate": "S10 -> PD-3, unanswered. RC-9 -> latent, zero reachability."
+    }
+  ],
+
+  "slices": [
+    {
+      "id": "S01",
+      "prompt": "prompts/C4-SLICE-01.md",
+      "title": "restore_snapshot writes the snapshot IN PLACE, under the ledger's own lock",
+      "root_problem": "RC-4: os.replace of the SQLite file orphans the inode a live writer holds open; restore_snapshot's flock excludes nothing. The writer's commit() succeeds, its data is discarded, AND its deferred media unlinks proceed (C4-F2a).",
+      "prerequisites": [],
+      "acceptance_criteria": [
+        "A writer holding BEGIN IMMEDIATE BLOCKS a concurrent restore until it commits (measured: it must take > 0.3s when the writer holds for 0.4s; today it takes 0.001s).",
+        "The writer's commit is VISIBLE (not orphaned) before the restore supersedes it.",
+        "*** A cascade transaction's deferred media unlinks NEVER delete a file whose ledger row the restore brings back. *** (C4-F2a — the severity driver.)",
+        "A restore against a CORRUPT live db STILL SUCCEEDS via the explicit fallback (EXP-C4-3(C) proves the in-place path raises DatabaseError there).",
+        "The snapshot FILE format is unchanged (a post-fix snapshot restores on pre-fix code).",
+        "*** A TWO-PROCESS contention test passes (not threads). SQLite locking is per-inode and cross-process; the thread experiments are indicative, not sufficient. ***"
+      ],
+      "files": ["src/fanops/ledger.py:546-553", "src/fanops/ledger_sqlite.py:59-154", "tests/test_ledger_sqlite_store.py:161-186"],
+      "tests": [
+        {"name": "test_restore_snapshot_serializes_with_transaction", "action": "*** REWRITE — IT CURRENTLY ASSERTS THE DATA LOSS. ***", "must_fail_before": true,
+         "detail": "Today: asserts `store.read_raw() == doc` ('restore wins; no orphan srcX') and PASSES *because* the writer's committed row was destroyed. Its comment at :183 ('restorer blocked on flock held by writer') is FALSE. After the fix it must assert the restorer BLOCKED and the writer's commit was VISIBLE before being superseded."},
+        {"name": "test_restore_does_not_orphan_media_unlinks", "action": "NEW", "must_fail_before": true},
+        {"name": "test_restore_falls_back_on_corrupt_db", "action": "NEW", "must_fail_before": false, "note": "passes today via os.replace; pins the fallback"},
+        {"name": "test_restore_two_process_contention", "action": "NEW", "must_fail_before": true}
+      ],
+      "migration": "NONE (no schema change, no on-disk format change).",
+      "operational": "Behaviour change: a restore now BLOCKS (up to the 30s LockBusyError bound) while a writer holds the ledger. Today it silently wins. Blocking is CORRECT: a restore that cannot serialize must fail loudly, not corrupt.",
+      "ci_lanes": ["unit"],
+      "self_merge_on_green": false,
+      "independent_verifier_required": true,
+      "why_verifier": "*** It touches the ledger WRITE path, and the existing test encodes the defect. A reviewer who does not know RC-5 will read the newly-red test as a regression and reject the fix. *** The verifier must be briefed on RC-5 specifically.",
+      "rollback": "Revert the PR. The snapshot file format is unchanged, so a snapshot taken post-fix restores fine on pre-fix code.",
+      "forbidden_scope_expansion": [
+        "Do NOT touch Ledger.transaction, _save_unlocked, or any other writer — they are ALREADY correct.",
+        "Do NOT 'unify' the A<->B lock domains (COUP-01). Out of scope.",
+        "Do NOT fix the wipe's MOL-71 preview gap.",
+        "Do NOT delete ledger.lock in this PR even though it becomes genuinely dead — that is a separate, trivial cleanup and bundling it obscures the diff."
+      ],
+      "kills": "ledger.lock (LCK-008 / DEAD-005) loses its sole consumer and becomes GENUINELY dead for the first time — three cycles after being wrongly filed as dead."
+    },
+
+    {
+      "id": "S02",
+      "prompt": "prompts/C4-SLICE-02.md",
+      "title": "Canonical backend normalization at the READ boundary",
+      "root_problem": "RC-3: a backend id is normalized at ONE write boundary (set_backend) and consumed RAW by five resolvers with four different unknown-value behaviours. A hand-edited 'Postiz' resolves to a DryRunPoster on a LIVE system.",
+      "prerequisites": [],
+      "acceptance_criteria": [
+        "The executed Cycle-2 matrix ('postiz','Postiz','POSTIZ','postiz ',' postiz','blotato','dryrun','DryRun') x {Accounts.load, Accounts.validate, effective_provider, get_poster, get_media_uploader}: NO cell may construct a DryRunPoster while cfg.is_live.",
+        "A case/whitespace variant NORMALIZES (the channel publishes correctly — today it silently does not).",
+        "A genuinely-unknown name ('blotato') SKIPS the channel and appears in Accounts.validate()'s problems (today it silently dry-runs).",
+        "normalize_backend is the SINGLE home for the rule; set_backend calls it (its inline copy is removed).",
+        "Existing VALID accounts.json files normalize to themselves (byte-identical behaviour)."
+      ],
+      "files": ["src/fanops/accounts.py", "src/fanops/post/__init__.py:13-29", "src/fanops/settings.py (_VALID_BACKENDS consolidation)"],
+      "tests": [
+        {"name": "test_backend_normalization_matrix", "action": "NEW", "must_fail_before": true},
+        {"name": "test_unknown_backend_is_surfaced_not_silent", "action": "NEW", "must_fail_before": true},
+        {"name": "test_valid_accounts_json_is_unchanged", "action": "NEW (non-regression)", "must_fail_before": false}
+      ],
+      "migration": "NONE. Existing valid registries normalize to themselves.",
+      "operational": "*** MEDIUM RISK: this changes WHICH CHANNELS ARE LIVE. *** A deployment currently relying on a malformed value to stay in dryrun would START PUBLISHING. The go_live past-due-backlog gate (the existing anti-machine-gun guard) is untouched and remains the safety net.",
+      "PRODUCT_GATE": "PD-4 (recommendation: normalize case/whitespace; skip-and-flag an unknown name via the existing skipped_rows channel — this is not new policy, it moves set_backend's existing rule to the door that lacks it).",
+      "CRITICAL_INTERACTION": "*** S02 <-> S10 (RC-7). *** If S02 normalizes a typo'd backend, a previously-dark channel goes live -> is_live_backend flips True -> _learn_pass starts running, INCLUDING the IRREVERSIBLE retire(). Fixing a typo could silently begin permanently retiring moment lineages. If PD-3 is unanswered, S02 MUST log the is_live_backend transition loudly and the operator MUST be told.",
+      "ci_lanes": ["unit"],
+      "self_merge_on_green": false,
+      "independent_verifier_required": true,
+      "why_verifier": "It changes which channels publish live. The blast radius is a real, external side effect.",
+      "rollback": "Revert. No persisted state changes.",
+      "forbidden_scope_expansion": [
+        "Do NOT make Account.backends a typed enum — pydantic would then REFUSE to load a legacy registry, converting a soft skip into a hard ControlFileError (the exact failure mode SHIM-005 exists to prevent).",
+        "Do NOT add CSRF to /golive/account/backend (F-C is a recorded accepted decision).",
+        "Do NOT touch the legacy FANOPS_POSTER bridge (accounts.py:196-201)."
+      ]
+    },
+
+    {
+      "id": "S03",
+      "prompt": "prompts/C4-SLICE-03.md",
+      "title": "The publish CLAIM refuses a post it will not POST",
+      "root_problem": "RC-1: _publish_one CLAIMS queued->submitting and COMMITS (run.py:272), THEN decides not to POST (run.py:287). Nothing un-claims. It returns the SUCCESS-SHAPED string 'submitting' having done nothing.",
+      "prerequisites": [],
+      "acceptance_criteria": [
+        "A queued post carrying a REAL submission_id is NOT claimed: after publish_due it is STILL `queued`, poster.publish was NOT called, and the transaction committed NO mutation.",
+        "publish_due's tally SURFACES the refusal (today the post vanishes from the tally entirely).",
+        "A fake-token (fanops_) post still publishes normally (non-regression).",
+        "The contradictory `republish_with_real_id` log at run.py:270-271 is DELETED (it authorizes what run.py:287 then forbids).",
+        "The now-dead skip at run.py:287-288 is DELETED."
+      ],
+      "files": ["src/fanops/post/run.py:256-292", "src/fanops/post/run.py:428 (the C3-F3 log-free swallow — batched, same file)"],
+      "tests": [
+        {"name": "test_claim_refuses_real_submission_id", "action": "NEW", "must_fail_before": true,
+         "detail": "MUST FAIL on current source (today the post becomes `submitting`). This is the EXP-C4-1 chain, encoded."},
+        {"name": "test_claim_still_publishes_a_fake_token_post", "action": "NEW (non-regression)", "must_fail_before": false},
+        {"name": "test_publish_due_tally_surfaces_the_refusal", "action": "NEW", "must_fail_before": true}
+      ],
+      "migration": "NONE for new posts. *** Posts ALREADY stranded in `submitting` are NOT healed by this slice — S04 heals them. ***",
+      "operational": "LOW risk. It strictly REMOVES a state transition; it adds none.",
+      "PRODUCT_GATE": "PD-1 does NOT block. Ship without a republish action — the claim-refusal is safe either way, and strictly safer than today.",
+      "ci_lanes": ["unit"],
+      "self_merge_on_green": false,
+      "independent_verifier_required": true,
+      "why_verifier": "It touches the publish path — the highest-consequence code in the system.",
+      "rollback": "Revert. No persisted state changes.",
+      "forbidden_scope_expansion": [
+        "Do NOT build the 'republish (mint a new submission)' action — that is PD-1, undecided.",
+        "Do NOT touch the CLAIM's other guards (state is queued; due re-check under lock). They are correct.",
+        "Do NOT remove the crash-during-network path into `submitting` — it is LEGITIMATE (F11) and MUST remain.",
+        "Do NOT change reconcile.py. That is S04."
+      ]
+    },
+
+    {
+      "id": "S04",
+      "prompt": "prompts/C4-SLICE-04.md",
+      "title": "The reconcile terminal ladder is a pure function of (state, age)",
+      "root_problem": "RC-2: the escalation and give-up sit on the SUCCESSFUL-POLL branch (reconcile.py:739), both gate on _is_fake_token (:746,:757), and any non-empty error_reason permanently suppresses attention (:767). THREE independent exclusions, each of which alone strands a post forever.",
+      "prerequisites": ["S03 (preferred — stop the bleeding before draining)"],
+      "acceptance_criteria": [
+        "*** THE 32-CELL MATRIX: (backend in {postiz,zernio}) x (poll in {published,failed,unknown,RAISES}) x (token in {fake,real}) x (error_reason in {empty,stale}). EVERY cell must reach a terminal or retryable state by +72h. ***",
+        "The terminal decision is a PURE function of (state, age) — it consults neither the poll outcome, nor the token's provenance, nor error_reason.",
+        "A raising poll (Zernio 404, any 5xx, any timeout) NO LONGER prevents the terminal.",
+        "*** `GAVE UP:` remains a LABEL written to error_reason — it changes NO state, so a given-up post is NOT re-queueable and CANNOT double-post. This is the safety property that makes the whole slice safe; it must be pinned by a test. ***",
+        "reconcile.py:767's suppression key becomes the EXPLICIT terminal marker (_is_giveup), not 'error_reason is non-empty'. A post with a TRANSIENT reason must still be VISITED.",
+        "The `gave_up` digest bucket fires on Zernio for the first time."
+      ],
+      "files": ["src/fanops/reconcile.py:604-778"],
+      "tests": [
+        {"name": "test_terminal_ladder_matrix", "action": "NEW (parametrized, 32 cells)", "must_fail_before": true,
+         "detail": "MUST FAIL on current source — today THREE of the four axes can veto the terminal."},
+        {"name": "test_giveup_is_a_label_not_a_state_change", "action": "NEW (double-post safety)", "must_fail_before": false},
+        {"name": "test_reconcile_visits_a_post_carrying_a_transient_reason", "action": "NEW", "must_fail_before": true}
+      ],
+      "migration": "*** OPERATIONAL, NOT SCHEMA — AND THIS IS THE MOST IMPORTANT NOTE IN THE AUDIT. *** On the FIRST pass after deploy, EVERY currently-stranded post becomes eligible for escalation AT ONCE. On the live ledger that is bounded (347 posts) but the operator MUST be warned.",
+      "operational_gate": "*** SHIP A REPORT-ONLY MODE FIRST (`fanops reconcile --report-terminals`) so the operator SEES the blast radius before it is WRITTEN. Do not let the first run of the new ladder be the first time anyone learns how many posts it will touch. ***",
+      "PRODUCT_GATE": "PD-2 (the SHAPE is decided; the recommendation is the SAME age ladder for a real token, because GAVE UP: is a label and cannot double-post).",
+      "ci_lanes": ["unit"],
+      "self_merge_on_green": false,
+      "independent_verifier_required": true,
+      "why_verifier": "It changes the terminal semantics of the publish lifecycle and will write to many rows on first run.",
+      "rollback": "*** Revert does NOT un-escalate posts the new ladder already labeled. *** That is acceptable (the labels are TRUE) but must be stated in the PR.",
+      "forbidden_scope_expansion": [
+        "Do NOT raise _SUBMITTING_ESCALATE_AFTER or _RECONCILE_GIVEUP_AFTER. The escalation is not LATE, it is UNREACHABLE. Changing a timeout on a structurally unreachable branch is the brief's named shallow fix.",
+        "Do NOT make the Studio requeue family accept `submitting` — that hands the operator a button to re-drive a post whose REMOTE FATE IS UNKNOWN. A double-post vector.",
+        "Do NOT change post/run.py. That is S03.",
+        "Do NOT change studio/actions.py. That is S06."
+      ]
+    },
+
+    {
+      "id": "S05",
+      "prompt": "prompts/C4-SLICE-05.md",
+      "title": "Status-client parity: an unknown id is `unknown`, not an error",
+      "root_problem": "RC-2 (sibling). ZernioStatusClient raises RuntimeError on a 404; PostizStatusClient returns {'status':'unknown'} for the same condition. NOTE: Cycle 3 mis-attributed this to a FanOps-side divergence — BOTH clients raise on >=300 identically. The divergence is the REMOTE ENDPOINT SHAPE (list-page-absence vs per-post 404).",
+      "prerequisites": ["S04"],
+      "MUST_NOT_SHIP_ALONE": true,
+      "why": "*** Alone, it fixes the fake-token Zernio case and leaves BOTH the real-token case (C3-F1) and the 500-forever case unterminated. That is the brief's explicitly-forbidden shallow fix: 'adding another special case ... without defining submission lifecycle ownership'. ***",
+      "acceptance_criteria": [
+        "ZernioStatusClient.get_status returns {'status': 'unknown'} on a 404, before the generic >=300 raise.",
+        "A 5xx STILL raises (per-post-isolated by reconcile_posts -> parked, never guessed failed). Only 404 changes.",
+        "A 401 STILL raises ZernioAuthError (the halt path is untouched)."
+      ],
+      "files": ["src/fanops/post/metrics.py:511-531"],
+      "tests": [{"name": "test_zernio_404_is_unknown_not_an_error", "action": "NEW", "must_fail_before": true},
+                {"name": "test_zernio_5xx_still_raises", "action": "NEW (non-regression)", "must_fail_before": false},
+                {"name": "test_zernio_401_still_halts", "action": "NEW (non-regression)", "must_fail_before": false}],
+      "ci_lanes": ["unit"],
+      "self_merge_on_green": true,
+      "self_merge_condition": "ONLY if S04 is already merged. Otherwise it is a shallow fix and must be blocked.",
+      "independent_verifier_required": false,
+      "rollback": "Revert.",
+      "forbidden_scope_expansion": ["Do NOT change the 5xx or 401 handling. Only the 404."]
+    },
+
+    {
+      "id": "S06",
+      "prompt": "prompts/C4-SLICE-06.md",
+      "title": "A recovery action must not leave a post carrying a stale status string",
+      "root_problem": "RC-8 / C4-F1a: bulk_send_to_review clears scheduled_time, public_url, metrics and published_at — but NOT error_reason. The stale reason trips reconcile.py:767's latch on the FIRST pass, so a reverted post goes silent immediately and its displayed reason LIES about its state.",
+      "prerequisites": ["S03 (S06 is hygiene; S03 is the safety fix that makes preserving submission_id safe)"],
+      "acceptance_criteria": [
+        "After bulk_send_to_review, post.error_reason is None.",
+        "submission_id and batch_id are STILL preserved ('keep the lineage') — this slice does NOT touch them.",
+        "The reconcile-side half (:767) is NOT touched here — it belongs to S04."
+      ],
+      "files": ["src/fanops/studio/actions.py:944-951"],
+      "tests": [{"name": "test_revert_clears_stale_reason", "action": "NEW", "must_fail_before": true,
+                 "detail": "MUST FAIL on current source. Encodes EXP-C4-1's observation that a reverted post reaches `submitting` still carrying 'reconciled: poster reports failed (...)'."}],
+      "migration": "NONE.",
+      "ci_lanes": ["unit"],
+      "self_merge_on_green": true,
+      "independent_verifier_required": false,
+      "rollback": "Revert.",
+      "forbidden_scope_expansion": [
+        "Do NOT clear submission_id — that is PD-1, undecided, and S03 makes preserving it SAFE.",
+        "Do NOT fix reconcile.py:767 here — S04 owns it. Duplicating it would create a merge conflict on the same branch.",
+        "Do NOT split error_reason's four overloaded semantics into typed fields. That is a larger change with a migration; it is DEFERRED and filed."
+      ]
+    },
+
+    {
+      "id": "S07",
+      "prompt": "prompts/C4-SLICE-07.md",
+      "title": "Reconcile and publish are gated on the same predicate",
+      "root_problem": "RC-3b: _reconcile_safe is gated on cfg.is_live_backend (pipeline.py:318); _publish_safe is not (pipeline.py:334). The SOLE READER of `submitting` can be switched off while the WRITER keeps producing it.",
+      "prerequisites": ["S02 (preferred — S02 shrinks the reachability S07 must handle)"],
+      "acceptance_criteria": [
+        "With is_live=True and live_ready_channels()==[], EITHER both _reconcile_safe and _publish_safe run, OR neither does.",
+        "*** PRE-FLIGHT (the acceptance criterion that decides the option): confirm reconcile_due makes ZERO network calls on a dryrun-only deployment. If it does not, take Option B (gate BOTH) instead of Option A (gate NEITHER). ***",
+        "Dryrun preview writing is NOT regressed."
+      ],
+      "files": ["src/fanops/pipeline.py:311-338"],
+      "tests": [{"name": "test_reconcile_and_publish_gate_parity", "action": "NEW", "must_fail_before": true},
+                {"name": "test_reconcile_makes_no_network_calls_when_not_live", "action": "NEW (the pre-flight, pinned)", "must_fail_before": false}],
+      "ci_lanes": ["unit"],
+      "self_merge_on_green": false,
+      "independent_verifier_required": true,
+      "rollback": "Revert.",
+      "forbidden_scope_expansion": [
+        "*** DO NOT ALSO REMOVE THE is_live_backend GATE FROM _learn_pass (cli.py:965). *** That gate protects the IRREVERSIBLE retire(). 'Unifying the gating' would run permanent moment retirement on a not-live-backend deployment. This is the S07<->S10 semantic conflict and it is the single most dangerous scope expansion in the whole sequence."
+      ]
+    },
+
+    {
+      "id": "S08",
+      "prompt": "prompts/C4-SLICE-08.md",
+      "title": "Daemon health: `alive` must not mean `succeeding`",
+      "root_problem": "RC-6: daemon.status returns `alive` whenever the newest run.log line of ANY kind is fresh. A pass that halts on a rotated key still logs stage lines -> `alive`, while NO heartbeat has been written and nothing publishes.",
+      "prerequisites": [],
+      "acceptance_criteria": [
+        "status(cfg) returns `last_success_age_s` distinct from `heartbeat_age_s`.",
+        "A daemon whose EVERY pass raises does NOT return a bare verdict `alive`.",
+        "*** daemon_progress REMAINS the mid-pass liveness owner. This slice ADDS a signal; it MOVES none. *** (project memory: liveness-verdict-single-owner)",
+        "A healthy fast-logging pass is still NOT flipped to `stale` (the property the alive_mid override exists to protect)."
+      ],
+      "files": ["src/fanops/daemon.py:437-479", "src/fanops/health_model.py", "src/fanops/cli.py (the success signal — S08 owns cli.py EXCLUSIVELY among the slices)"],
+      "tests": [{"name": "test_daemon_status_distinguishes_alive_from_succeeding", "action": "NEW", "must_fail_before": true},
+                {"name": "test_healthy_fast_pass_is_not_flipped_stale", "action": "NEW (non-regression — the alive_mid property)", "must_fail_before": false}],
+      "ci_lanes": ["unit"],
+      "self_merge_on_green": true,
+      "independent_verifier_required": false,
+      "rollback": "Revert.",
+      "forbidden_scope_expansion": [
+        "Do NOT touch _heartbeat_age_s's role in the alive/stale decision (project memory: liveness-verdict-single-owner).",
+        "Do NOT re-word the existing verdict strings without adding the new SIGNAL — that is the brief's named shallow fix.",
+        "Do NOT fix the half-live banner suppression (C3-OBS-5). Different surface, separate finding."
+      ]
+    },
+
+    {
+      "id": "S09",
+      "prompt": "prompts/C4-SLICE-09.md",
+      "title": "The shrink temp dir gets an owner",
+      "root_problem": "RC-10: compress.maybe_shrink_for_cap mkdtemps into 04_agent_io and NOTHING removes it (the only mkdtemp in src/fanops; AST-confirmed). C4-F5: the Studio oversize-retry path persists Post.media_urls INTO that dir, inside a committed transaction.",
+      "prerequisites": [],
+      "PROVEN_INDEPENDENT": "*** EXP-C4-4: Cycle 3's claim that 'the fix for the leak would BREAK the pointer' is REFUTED BY EXECUTION. media_path_for_post (compress.py:61-65) falls back to clip.path, and the next shrink re-points media_urls at a fresh file. NO migration, NO relocation, NO atomicity requirement. ***",
+      "acceptance_criteria": [
+        "The shrink temp dir is removed once its output has been uploaded (or is written to a deterministic, owned location instead of mkdtemp).",
+        "No persisted Post.media_urls entry resolves under a directory matching fanops-shrink-*.",
+        "*** The publish path STILL WORKS after the shrink dir is removed (the self-heal, PINNED by a test so a future change cannot silently break it). ***",
+        "A `fanops clean --shrink` verb (or equivalent) removes the ALREADY-LEAKED dirs on the live tree, and a doctor check surfaces them."
+      ],
+      "files": ["src/fanops/post/compress.py:19-35", "src/fanops/studio/actions.py:1029-1034 + :1100-1102", "src/fanops/cli.py (a clean verb — COORDINATE WITH S08, which owns cli.py)", "src/fanops/doctor.py"],
+      "tests": [
+        {"name": "test_shrink_tempdir_is_cleaned", "action": "NEW", "must_fail_before": true},
+        {"name": "test_no_persisted_media_url_points_into_a_shrink_dir", "action": "NEW", "must_fail_before": true,
+         "detail": "*** Write this so it would ALSO catch a Render.path regression if Renders are ever minted (see IF-1). That is the cheapest possible guard against the reframe stream reactivating C3-F5, and it costs that stream nothing. ***"},
+        {"name": "test_publish_still_works_after_the_shrink_dir_is_removed", "action": "NEW (pins the self-heal)", "must_fail_before": false}
+      ],
+      "migration": "A one-time clean of the already-leaked tree.",
+      "ci_lanes": ["unit"],
+      "self_merge_on_green": true,
+      "independent_verifier_required": false,
+      "rollback": "Revert.",
+      "forbidden_scope_expansion": [
+        "Do NOT 'defensively' repair the Render.path writes (compress.py:112, :131, run.py:367). They are UNREACHABLE (no Render is ever minted; crosspost.py:225 hardcodes render_id=None; live ledger: 0 renders / 0 posts with a render_id). Fixing unreachable code is over-engineering AND it would conflict with whatever the reframe stream decides Render should mean.",
+        "Do NOT add a cron/tmpwatch janitor. The code that CREATES the dir must own its lifetime.",
+        "Do NOT touch the Postiz multipart orphaned-media leak (R-03) — that is a REMOTE leak, out of scope."
+      ]
+    },
+
+    {
+      "id": "S10",
+      "prompt": "prompts/C4-SLICE-10.md",
+      "title": "Irreversible retirement policy",
+      "status": "*** BLOCKED ON PD-3. DO NOT EXECUTE. ***",
+      "root_problem": "RC-7: adjust.retire writes the IRREVERSIBLE MomentState.retired, gated ONLY on cfg.is_live_backend, firing at n=3 analyzed posts — while every REVERSIBLE bias actuator waits for learning_validated AND p4_unlocked (>=8 posts x >=2 values).",
+      "why_blocked": "Whether this is an intentionally aggressive policy or an oversight CANNOT be recovered from the code, and the brief forbids inferring product intent. The guards that DO exist (bottom-20% AND lift<20.0 AND not-a-winner AND not-lift_degraded) are real and considered — which is evidence FOR intent.",
+      "options_offered_no_recommendation": [
+        "A: gate retire behind p4_unlocked (removes the AGGRESSION)",
+        "B: make retirement REVERSIBLE via an operator un-retire verb (removes the ASYMMETRY, keeps the policy — arguably the better framing)",
+        "C: leave it; DOCUMENT it (if intentional, the defect is that INV-14 creates a FALSE IMPRESSION by being true only as scoped)"
+      ],
+      "prerequisites": ["PD-3 answered by the operator"],
+      "CRITICAL_INTERACTION": "See S02<->S10. If S02 ships first and normalizes a typo'd backend, is_live_backend flips True and _learn_pass — including retire() — starts running on a deployment where it previously did not."
+    }
+  ],
+
+  "parallelism_verdict": {
+    "safe_to_build_in_parallel": ["S01", "S02", "S08", "S09"],
+    "must_be_sequential": ["S03 -> S04 -> S05"],
+    "design_concurrently_implement_sequentially": ["S02", "S07"],
+    "blocked": ["S10 (PD-3)"],
+    "deferred_zero_reachability": ["RC-9 (the mutation/validator boundary)"],
+    "reframe_stream": "*** VERIFIED PARALLEL-SAFE — zero file overlap AND zero state overlap. *** framing.py and keyframes.py have ZERO ledger references; clip.py's only three `Render` tokens are docstrings. Cycle-4 implementation may proceed alongside reframe work. The ONE forward-looking hazard (IF-1: a future reframe slice minting Render rows would reactivate the unreachable C3-F5) belongs on the REFRAME stream's risk list, not in a Cycle-4 slice."
+  }
+}

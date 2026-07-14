@@ -1,0 +1,193 @@
+{
+ "$schema": "fanops-arch-kb/risks/v1",
+ "cycle": 5,
+ "git_head": "fcffa73",
+ "generated": "2026-07-14",
+ "purpose": "The architectural RISK register \u2014 structural properties that make the system fragile, independent of any specific bug. A risk is a shape, not an incident.",
+ "scope_note": "*** This index records RISK, not REMEDIATION. The fixes belong to ../REMEDIATION_OPTIONS.md and ../IMPLEMENTATION_SEQUENCE.md (Cycle 4). Cycle 5 does not design fixes. ***",
+ "risks": [
+  {
+   "id": "AR-01",
+   "risk": "THE SUBMISSION LIFECYCLE HAS NO OWNER",
+   "class": "missing_ownership",
+   "severity": "HIGH",
+   "structural_statement": "`publish` CREATES posts in a state it will never re-drive. `reconcile` is that state's SOLE reader and cannot always terminate it. No component owns the interval between 'we sent it' and 'we know what happened'.",
+   "why_it_is_a_RISK_not_just_a_BUG": "Even after RC-1/RC-2 are fixed, NOTHING in the architecture assigns that ownership. The next feature that writes `submitting` re-opens the hole.",
+   "evidence": [
+    "post/run.py:264-272 (CLAIM commits)",
+    "post/run.py:287 (then SKIPS the POST)",
+    "reconcile.py:739/746/757/767 (three independent exclusions from the terminal)"
+   ],
+   "worst_credible_consequence": "A post the operator believes is publishing sits in `submitting` indefinitely. Never published, never failed, never surfaced, never counted. SILENT NON-DELIVERY.",
+   "reachable_by": "AN ORDINARY OPERATOR WORKFLOW \u2014 a platform-rejected post, sent back to fix the caption, re-approved.",
+   "confidence": "CERTAIN (executed)"
+  },
+  {
+   "id": "AR-02",
+   "risk": "TWO LOCK DOMAINS THAT DO NOT EXCLUDE EACH OTHER",
+   "class": "concurrency",
+   "severity": "CRITICAL",
+   "structural_statement": "The ledger (SQLite BEGIN IMMEDIATE) and the control files (fcntl.flock) are mutually invisible. And `restore_snapshot` takes a flock on a THIRD file that participates in NO domain, then os.replace's the database.",
+   "the_deeper_fact": "*** os.replace of a SQLite file is FUNDAMENTALLY INCOMPATIBLE with SQLite's inode-based locking. The write lock is held on the INODE via an open fd. NO lock acquired before an os.replace can protect it. *** Taking the right lock narrows the window; it does not close it.",
+   "the_inversion": "The deferred-unlink design ('a rolled-back txn never deletes a file it did not drop') is CORRECT against a rollback and INVERTS against a restore race: the txn COMMITS into an orphan, so it is never rolled back, so the unlinks PROCEED. *** The ledger comes back claiming the media exists. The .mp4 is gone. ***",
+   "worst_credible_consequence": "SILENT, UNRECOVERABLE LOSS OF MEDIA, reached by following the DOCUMENTED wipe-rollback procedure while the daemon is running.",
+   "confidence": "CERTAIN (executed, Cycles 2 and 4)"
+  },
+  {
+   "id": "AR-03",
+   "risk": "THE VERIFICATION LAYER CAN ENCODE THE DEFECT",
+   "class": "verification",
+   "severity": "CRITICAL",
+   "structural_statement": "*** A GREEN CI TEST ASSERTS THE DATA-LOSS OUTCOME AND CALLS IT CORRECT. *** tests/test_ledger_sqlite_store.py:161-186 stages exactly the restore race. Its comment names a mechanism that does not exist ('restorer blocked on flock held by writer' \u2014 the restorer is NEVER blocked; measured at 0.001s). Its assertion PASSES *BECAUSE* the writer's committed row was destroyed.",
+   "why_this_is_the_most_dangerous_entry_in_the_register": "It is a REGRESSION LOCK ON THE BUG. Any correct fix turns it RED \u2014 and a maintainer seeing a green test go red will read THE FIX as the regression.",
+   "the_generalization": "The codebase's recurring shape is 'the doc names a mechanism that does not exist, while the property survives via a different one.' This is that shape IN THE TEST LAYER. *** For every invariant an audit claims is protected by a test, read the test's ASSERTION, not its NAME. ***",
+   "confidence": "CERTAIN (executed)"
+  },
+  {
+   "id": "AR-04",
+   "risk": "IMPORT-TIME ACYCLICITY IS PURCHASED, NOT DESIGNED",
+   "class": "dependency_structure",
+   "severity": "MEDIUM",
+   "structural_statement": "*** 107 of 323 in-function imports point to an EQUAL-OR-HIGHER LEVEL: 56 STRICTLY UPWARD (true layering inversions) + 51 LATERAL. *** The SCC-CONDENSED compile-time graph is an 11-level DAG ONLY because those imports are deferred to call time. In the STATIC POTENTIAL-DEPENDENCY graph (compile UNION lazy) the tree contains a 45-MODULE SCC and all 19 subsystems collapse into one \u2014 an UPPER BOUND on coupling, not a measurement of it.",
+   "the_sharpest_instance": "*** `config` \u2014 LEVEL 0, fan-in 82, THE most-depended-on module in the system \u2014 lazily reaches UP to `accounts` (level 2) and `meta_graph` (level 3). The base of the stack calls the middle of it. ***",
+   "why_it_is_a_RISK": "Module initialization order is LOAD-BEARING and NOTHING ENFORCES IT. Hoisting any one of the 56 STRICTLY-UPWARD lazy imports to module level \u2014 a change that looks like a cleanup \u2014 breaks the process at start. There is no test, no lint rule, and no layer declaration that would catch it.",
+   "supersedes": "COUP-09 recorded NINE such imports and framed them as a deliberate, bounded cycle-breaking device. The nine are a SUBSET of the 107 (56 strictly upward). *** HOW MANY OF THE REST ARE DELIBERATE IS UNKNOWN (UNK-C5-2) \u2014 the v1 index asserted 'most were not deliberate', which is NOT SUPPORTED by any evidence and is RETRACTED. ***",
+   "confidence": "CERTAIN (AST + Tarjan SCC condensation)",
+   "scope_correction": "*** The compile-time graph is NOT a DAG \u2014 it has one non-trivial SCC (personas x3). Its CONDENSATION is a DAG by construction. And the DOMAIN CORE IS ACYCLIC AT MODULE LEVEL: 124 of 127 modules are singleton SCCs. The v1 index conflated 'condensed DAG' with 'DAG' and reported 106 instead of 107. ***"
+  },
+  {
+   "id": "AR-05",
+   "risk": "A FREE-TEXT FIELD IS A MACHINE CONTROL CHANNEL",
+   "class": "overloaded_ownership",
+   "severity": "MEDIUM",
+   "structural_statement": "Post.error_reason has ~14 writers and FOUR machine semantics: a retry COUNTER, a terminal MARKER, a quarantine SENTINEL, and a do-not-look-again LATCH.",
+   "the_pathology": "*** The breadcrumb that tells the operator a post is stuck IS the same mechanism that stops the system from ever looking at it again (reconcile.py:767: `if post.error_reason: continue`). A status field and a suppression flag CANNOT be the same string. ***",
+   "compounding": "bulk_send_to_review clears scheduled_time, public_url, metrics and published_at \u2014 but NOT error_reason. So a reverted post carries a STALE reason from its previous life, which trips the latch ON THE FIRST PASS. The post is silent from pass one and its displayed reason actively LIES about its state.",
+   "confidence": "CERTAIN (executed)"
+  },
+  {
+   "id": "AR-06",
+   "risk": "A PRODUCER AND ITS SOLE CONSUMER ARE GATED ON DIFFERENT PREDICATES",
+   "class": "gating_asymmetry",
+   "severity": "HIGH",
+   "structural_statement": "_reconcile_safe runs only `if cfg.is_live_backend` (pipeline.py:318). _publish_safe has NO such gate (pipeline.py:334). *** The SOLE READER of `submitting` can be switched OFF while the WRITER keeps producing it. ***",
+   "generalized": "A state with a producer and no consumer is a LEAK BY CONSTRUCTION. Nothing in the architecture pairs them.",
+   "confidence": "CERTAIN"
+  },
+  {
+   "id": "AR-07",
+   "risk": "GATE STRENGTH IS INVERSELY CORRELATED WITH BLAST RADIUS",
+   "class": "destructive_automation",
+   "severity": "MEDIUM",
+   "structural_statement": "*** The ONE IRREVERSIBLE learning actuator (adjust.retire -> MomentState.retired, which reconcile_moments REFUSES to un-retire) is gated ONLY on cfg.is_live_backend and fires at n=3 analyzed posts. Every REVERSIBLE bias actuator waits for learning_validated AND p4_unlocked (>=8 posts x >=2 values). ***",
+   "why_it_is_a_RISK_not_a_DEFECT": "The guards that DO exist are real and considered (bottom-20% AND lift<20.0 AND not-a-winner AND not-lift_degraded) \u2014 which is EVIDENCE FOR INTENT. Whether this is an intentionally aggressive policy or an oversight is NOT RECOVERABLE FROM THE CODE.",
+   "status": "*** BLOCKED ON PD-3. The brief forbids inferring product intent. Filed, not fixed. ***",
+   "confidence": "CERTAIN"
+  },
+  {
+   "id": "AR-08",
+   "risk": "VALIDATORS RUN AT CONSTRUCTION ONLY; EVERY MUTATION API BYPASSES THEM",
+   "class": "latent_poison_pill",
+   "severity": "LOW today / CRITICAL if reached",
+   "structural_statement": "model_copy(update=) bypasses EVERY validator on EVERY model. setattr bypasses all EXCEPT on Moment. The failure mode is NOT a rejected write \u2014 it is a LOAD-TIME POISON PILL: the bad row SAVES CLEANLY and BRICKS THE NEXT Ledger.load, taking down the daemon and every Studio page at once.",
+   "current_reachability": "*** ZERO. No code path produces the poison row. *** AST-verified across three cycles.",
+   "why_it_stays_in_the_register": "The R1 invariant survives via FOUR INDEPENDENT MANUAL GUARDS. A FIFTH DOOR added without one is a single-commit path to a bricked ledger, and nothing would catch it in review.",
+   "confidence": "CERTAIN"
+  },
+  {
+   "id": "AR-09",
+   "risk": "AN UNMODELLED SECOND WRITER: THE OPERATOR",
+   "class": "trust_boundary",
+   "severity": "HIGH",
+   "structural_statement": "accounts.json, tuning.json and .env are DOCUMENTED as hand-editable. The code's write boundaries (set_backend etc.) are sound; the LOAD boundaries are not. *** Every load-boundary validation gap is therefore REACHABLE BY DESIGN, not by accident. ***",
+   "the_instance": "RC-3 \u2014 a hand-edited 'Postiz' (capital P) or 'postiz ' (trailing space) resolves to a DryRunPoster ON A LIVE SYSTEM, silently.",
+   "confidence": "CERTAIN (executed)"
+  },
+  {
+   "id": "AR-10",
+   "risk": "`alive` CONFLATES 'THE PROCESS IS RUNNING' WITH 'THE WORK IS SUCCEEDING'",
+   "class": "observability",
+   "severity": "MEDIUM",
+   "structural_statement": "SIX distinct liveness facts are collapsed into ONE word: process alive / loop ticking / pass started / *pass SUCCEEDED* / *state ADVANCED* / *publishing healthy*. daemon status reports the first two and names the result `alive`, which the operator reads as the fourth.",
+   "the_data_already_exists": "heartbeat_age_s IS in the returned dict, and the heartbeat fires ONLY when a pass succeeds \u2014 *** it already IS the success signal. It is simply not READ as one. The VERDICT discards it. ***",
+   "worst_consequence": "the operator asks the system's own liveness question and is told `alive` while nothing publishes.",
+   "confidence": "CERTAIN"
+  },
+  {
+   "id": "AR-11",
+   "risk": "A DIRECTORY WITH NO OWNER",
+   "class": "resource_leak",
+   "severity": "LOW",
+   "structural_statement": "compress.maybe_shrink_for_cap mkdtemps into 04_agent_io. It is the ONLY mkdtemp in src/fanops (AST) and there is NO rmtree anywhere in the tree that touches it. One dir + one re-encoded mp4 per oversize upload, FOREVER, with NO log, NO metric, NO doctor check and NO wipe path.",
+   "confidence": "CERTAIN (executed)"
+  },
+  {
+   "id": "AR-12",
+   "risk": "THE 'THIS CAN'T HAPPEN' COMMENT IS A RELIABLE DEFECT MARKER",
+   "class": "method / meta",
+   "severity": "MEDIUM",
+   "structural_statement": "*** FOUR FOR FOUR. *** Every load-bearing assumption written as a statement of fact sits at the exact site of a live bug:",
+   "instances": [
+    {
+     "site": "reconcile.py:76",
+     "comment": "'its status WILL resolve, never escalated'",
+     "reality": "it does not resolve when the platform deleted the post. C3-F1."
+    },
+    {
+     "site": "providers.py:53-55",
+     "comment": "'no live account routes to an unknown backend'",
+     "reality": "a hand-edit \u2014 the DOCUMENTED operator channel \u2014 routes exactly there. F-A."
+    },
+    {
+     "site": "test_ledger_sqlite_store.py:183",
+     "comment": "'restorer blocked on flock held by writer'",
+     "reality": "the restorer is NEVER blocked. Measured: 0.001s. RC-5."
+    },
+    {
+     "site": "ledger.py:487-488",
+     "comment": "deferred unlink is 'correct: a rolled-back txn never deletes a file it did not drop'",
+     "reality": "TRUE against a rollback; the txn COMMITS into an orphan in a restore race. C4-F2a."
+    }
+   ],
+   "actionable_method_note": "*** grep the tree for comments containing 'never', 'cannot', 'WILL', or 'no ... routes to'. Each is a HYPOTHESIS THE AUTHOR DID NOT TEST. ***",
+   "confidence": "CERTAIN"
+  },
+  {
+   "id": "AR-13",
+   "risk": "108 UNAUTHENTICATED MUTATING ROUTES",
+   "class": "security",
+   "severity": "ACCEPTED",
+   "structural_statement": "149 Studio routes, 108 mutating, 0 authenticated, 0 CSRF-protected \u2014 including POST /golive/live (flip to live publishing), POST /schedule/publish-due (publish the whole due bucket) and POST /live-library/wipe/confirm (destructive wipe).",
+   "status": "*** A RECORDED, ACCEPTED DECISION (studio/CLAUDE.md: 'no auth by design ... declined as out-of-scope for localhost'). Recorded here as GROUND TRUTH, not as a recommendation. ***",
+   "the_only_control": "the network interface (app.run(host=...), default 127.0.0.1:8787). *** Any change to --host removes it. ***",
+   "confidence": "CERTAIN"
+  },
+  {
+   "id": "AR-14",
+   "risk": "A REGISTRY THAT MUST BE EDITED IN N PLACES WILL EVENTUALLY BE EDITED IN N-1",
+   "class": "extension_point",
+   "severity": "MEDIUM",
+   "structural_statement": "The gate-kind registry is TRIPLICATED and UNLINKED: the WRITE site, responder._SCHEMA (the ANSWER registry), and gate_keys.gate_source_id (the OWNERSHIP resolver). *** NOTHING \u2014 no test, no type, no assertion \u2014 ties the three together. ***",
+   "the_proof_it_is_live": "intro_match is registered in ONE of the three, and is therefore PERMANENTLY UNANSWERABLE. It is the standing demonstration of this risk, shipped.",
+   "sibling_instance": "_VALID_BACKENDS is defined TWICE (config.py:72 and settings.py:18) \u2014 one guards the WRITE boundary, one the READ boundary. If they drift, the two boundaries disagree about what a legal backend is. That is exactly the gap RC-3 exploits.",
+   "confidence": "CERTAIN"
+  },
+  {
+   "id": "AR-15",
+   "risk": "PROCESS-LOCAL STATE IN A SYSTEM THAT MAY GO MULTI-PROCESS",
+   "class": "concurrency",
+   "severity": "LOW today",
+   "structural_statement": "run._publish_throttle_last is a MODULE-LEVEL DICT. *** If fanops ever runs as N concurrent publisher processes, the Postiz per-minute throttle becomes silently per-process and N processes publish N x the rate limit. *** Self-declared in post/CLAUDE.md; single-process by design today.",
+   "confidence": "CERTAIN"
+  }
+ ],
+ "risk_ranking_by_what_it_actually_costs": [
+  "AR-02 + AR-03 (media loss + the test that locks it in) \u2014 CRITICAL, and AR-03 makes AR-02 harder to fix than to find",
+  "AR-01 + AR-06 (the submission lifecycle has no owner, and its sole reader can be switched off) \u2014 HIGH",
+  "AR-09 (the operator is an unmodelled writer) \u2014 HIGH, and it is the door AR-01's worst variant comes through",
+  "AR-04 (import acyclicity is purchased, not designed) \u2014 MEDIUM, but it is the risk that makes every OTHER refactor dangerous",
+  "AR-05, AR-07, AR-10, AR-14 \u2014 MEDIUM",
+  "AR-08, AR-11, AR-15 \u2014 LOW today; AR-08 is CRITICAL if a fifth door is ever added",
+  "AR-13 \u2014 ACCEPTED, recorded, not a finding"
+ ]
+}

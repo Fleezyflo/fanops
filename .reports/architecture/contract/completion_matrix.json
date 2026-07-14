@@ -1,0 +1,161 @@
+{
+  "$schema": "fanops-impl-contract/completion/v1",
+  "cycle": 6,
+  "git_head": "fcffa73",
+  "purpose": "*** COMPLETION IS ARCHITECTURAL, NOT PROCEDURAL. A slice is not done because CI is green. It is done when the architecture it claimed to change HAS CHANGED, the architecture it promised not to touch HAS NOT, and both facts are DEMONSTRATED. ***",
+
+  "the_universal_completion_gate": {
+    "note": "*** ALL TEN conditions must hold. A slice failing ANY ONE is INCOMPLETE, however green CI is. ***",
+    "C1_implementation_matches_architecture": "The slice closes the root cause it claims, and the INTENDED INVARIANT (INT-n) it targets now HOLDS — demonstrated by an INVARIANT test that FAILED BEFORE and PASSES AFTER.",
+    "C2_preservation_boundaries_held": "Every PRESERVATION test in the slice's row passes, AND every GLOBAL BOUNDARY (GB-1..GB-7) is unviolated by the diff.",
+    "C3_mutation_boundaries_respected": "*** The diff touches NO file outside the slice's `file_ownership.json` allowance, and NO function outside its permitted region within a partitioned file. MECHANICALLY CHECKABLE. ***",
+    "C4_verification_passes": "CI `unit` green. *** BOTH AST RATCHETS REPLAYED. *** No ratchet baseline raised.",
+    "C5_rollback_validated": "The rollback CLASS is stated in the PR, and for a DATA/WORLD-IRREVERSIBLE slice the RESIDUE is measured and stated.",
+    "C6_no_architectural_drift": "*** No new architectural assumption was introduced. If the implementation appeared to REQUIRE one, the slice is BLOCKED — not silently expanded. ***",
+    "C7_documentation_regenerated": "The KB files named in `traceability.json -> regeneration` are updated. *** An invariant that changed from FALSE to VERIFIED must be re-classified — otherwise the KB becomes the next INV-20. ***",
+    "C8_traceability_regenerated": "The slice's row in traceability.json is marked COMPLETE with the merged commit SHA.",
+    "C9_approvals_recorded": "Every approval in the slice's `approvals_required` is RECORDED IN WRITING. *** For S01 that INCLUDES the verifier confirming they were briefed on RC-5. ***",
+    "C10_live_state_merge_gate_re_run": "*** For S02, S04 and S10: the live-state probe (IR-11) is RE-RUN AT MERGE and its result STATED. A risk collapsed on 2026-07-14 and not re-checked at merge is a risk that was merely NOT LOOKED AT. ***"
+  },
+
+  "per_slice": {
+    "CM-S01": {
+      "slice": "S01", "root_causes": ["RC-4", "RC-5"], "invariant": "INT-5",
+      "complete_when": [
+        "A writer holding BEGIN IMMEDIATE BLOCKS a concurrent restore until it commits (*** measurable: > 0.3s when the writer holds 0.4s. TODAY: 0.001s. ***)",
+        "The writer's commit is VISIBLE — not orphaned — before the restore supersedes it.",
+        "*** A cascade txn's DEFERRED MEDIA UNLINKS never delete a file whose ledger row the restore brings back. (C4-F2a — THE SEVERITY DRIVER.) ***",
+        "A restore against a CORRUPT live db STILL SUCCEEDS via the explicit fallback.",
+        "*** The TWO-PROCESS contention test passes. NOT THREADS. This is a MERGE GATE. ***",
+        "The snapshot FILE FORMAT is unchanged (a post-fix snapshot restores on pre-fix code).",
+        "*** `tests/test_ledger_sqlite_store.py:161-186` is REWRITTEN, IN THIS PR, and the verifier CONFIRMS IN WRITING that they were briefed on RC-5. ***",
+        "*** ZERO new print() in ledger.py (it is in `_INTERNAL_MODULES`). ZERO new silent broad `except` in ledger.py or ledger_sqlite.py (NEITHER is in the swallow baseline -> any new one FAILS CI IMMEDIATELY). ***",
+        "`Ledger.transaction`, `_save_unlocked`, `_drain_deferred_unlinks` and `Ledger.snapshot` are UNTOUCHED.",
+        "`ledger.lock` is NOT deleted in this PR (it becomes genuinely dead for the first time — but bundling that OBSCURES THE DIFF)."
+      ],
+      "NOT_complete_if": "*** The fix takes `store.lock()` and keeps `os.replace`. That NARROWS the window and LEAVES THE RACE. SQLite's write lock is held on the INODE via an open fd; NO lock acquired before an os.replace can protect it. If the diff still contains an os.replace on the happy path, THE SLICE IS WRONG. ***"
+    },
+    "CM-S02": {
+      "slice": "S02", "root_causes": ["RC-3"], "invariant": "INT-3",
+      "complete_when": [
+        "*** NO CELL of the 8x5 matrix constructs a `DryRunPoster` while `cfg.is_live`. ***",
+        "A case/whitespace variant NORMALIZES and the channel publishes correctly.",
+        "'blotato' SKIPS the channel AND appears in `Accounts.validate()`'s problems.",
+        "`normalize_backend` is the SINGLE home for the rule; `set_backend` CALLS it (its inline copy deleted); `_VALID_BACKENDS` collapses to ONE definition.",
+        "*** Existing VALID accounts.json normalizes to ITSELF — byte-identical. (LS-3: this is the ONLY case on the live tree.) ***",
+        "*** MOL-79 per-row leniency SURVIVES — one bad row is SKIPPED, never crashes the registry. Pinned by a PRESERVATION test. ***",
+        "*** GB-1: NO module-level import added that inverts the layering. `accounts` is L2; `config` (L0, fan-in 82) reaches UP to it LAZILY. ***",
+        "*** GB-2: nothing in the PROVIDERS chain deleted on 'zero callers' (COUP-10: six lazy lambdas, all live). ***",
+        "*** GB-3: `Account.backends` is NOT converted to a typed enum. (The REJECTED Option C. It would make pydantic REFUSE to load a legacy registry — a hard ControlFileError. The exact failure SHIM-005 exists to prevent.) ***",
+        "*** C10: the live accounts.json check is RE-RUN and STATED. If a malformed value has appeared since 2026-07-14, the loud `is_live_backend` transition log + operator briefing RE-ARM. ***"
+      ],
+      "NOT_complete_if": "*** Only `get_poster`'s guard is hardened. That leaves FOUR SIBLING RESOLVERS DIVERGENT — `get_media_uploader` STILL silently returns the dryrun uploader. The brief names this exactly: 'tightening only one provider resolver while leaving sibling resolvers divergent.' ***"
+    },
+    "CM-S03": {
+      "slice": "S03", "root_causes": ["RC-1"], "invariant": "INT-1",
+      "complete_when": [
+        "A `queued` post carrying a REAL submission_id is NOT claimed: STILL `queued` after publish_due, `poster.publish` NOT called, txn committed NO mutation.",
+        "`publish_due`'s tally SURFACES the refusal. (*** Today the post VANISHES from the tally — that silence is HALF the defect. ***)",
+        "A fake-token post still publishes normally.",
+        "*** run.py:270-271 (`republish_with_real_id`, which LOGS AND PROCEEDS) and run.py:287-288 (the now-dead skip) are BOTH DELETED. They are TWO GUARDS ON ONE PREDICATE, 17 LINES APART, WITH OPPOSITE INTENTS. ***",
+        "*** THE CRASH-DURING-NETWORK PATH INTO `submitting` REMAINS (F11). Pinned by a PRESERVATION test. ***",
+        "*** GB-4: no new unguarded door to `published`/`analyzed`. (S11 should already be enforcing this.) ***"
+      ],
+      "NOT_complete_if": "*** A 'republish (mint a new submission)' action is built. That is PD-1, UNDECIDED. Ship the refusal WITHOUT it — it is safe either way and strictly safer than today. ***"
+    },
+    "CM-S04": {
+      "slice": "S04", "root_causes": ["RC-2", "RC-8 (reconcile half)"], "invariant": "INT-2 (+ INT-7 jointly with S06)",
+      "complete_when": [
+        "*** ALL 32 CELLS of the terminal-ladder matrix reach a terminal or retryable state by +72h. (Today THREE of the four axes can VETO the terminal.) ***",
+        "The terminal decision is a PURE function of (state, age) — it consults NEITHER the poll outcome, NOR the token's provenance, NOR error_reason.",
+        "A RAISING poll (every Zernio 404, any 5xx, any timeout) NO LONGER prevents the terminal.",
+        "*** `GAVE UP:` remains a LABEL. It changes NO state. A given-up post is NOT re-queueable and CANNOT double-post. PINNED BY A PRESERVATION TEST — this is the safety property the whole slice rests on. ***",
+        "reconcile.py:767's suppression key is the EXPLICIT `_is_giveup` marker. A post with a TRANSIENT reason is still VISITED.",
+        "*** The :767 change SHIPS IN THIS PR. It lives INSIDE the branch S04 rewrites; splitting it leaves the ladder REACHABLE but its outcome SUPPRESSED. ***",
+        "The `gave_up` digest bucket fires on Zernio for the first time.",
+        "*** Report-only mode (`fanops reconcile --report-terminals`) SHIPS FIRST — as a PERMANENT gate. ***",
+        "*** C10: the live reconcilable count is RE-RUN and STATED. (2026-07-14: ZERO.) If > 0, the report-only output is PASTED INTO THE PR before the ladder is allowed to write. ***"
+      ],
+      "NOT_complete_if": [
+        "*** A timeout was raised. The escalation is not LATE — IT IS UNREACHABLE. The brief names this shallow fix explicitly. ***",
+        "*** The Studio requeue family was made to accept `submitting`. That hands the operator a button to RE-DRIVE A POST WHOSE REMOTE FATE IS UNKNOWN. A DOUBLE-POST VECTOR. Terminate (label) first, THEN recover. ***",
+        "*** `_is_fake_token` was merely dropped from the two terminals. That closes the Postiz case ONLY — a raising poll still bails at :635 and the latch still fires at :767. TWO OF THREE EXCLUSIONS SURVIVE. ***"
+      ]
+    },
+    "CM-S05": {
+      "slice": "S05", "root_causes": ["RC-2 (sibling)"], "invariant": "INT-2 (defence in depth)",
+      "complete_when": ["`ZernioStatusClient.get_status` returns `{'status':'unknown'}` on a 404.", "*** A 5xx STILL raises. A 401 STILL raises `ZernioAuthError`. ONLY THE 404 CHANGES. ***", "*** S04 IS ALREADY MERGED. ***"],
+      "NOT_complete_if": "*** IT SHIPPED ALONE. Alone it fixes the fake-token Zernio case and leaves BOTH the real-token case AND the 500-forever case unterminated — the brief's explicitly-forbidden shallow fix. ***"
+    },
+    "CM-S06": {
+      "slice": "S06", "root_causes": ["RC-8 (revert half)"], "invariant": "INT-7 (*** jointly with S04 — NEITHER ALONE ACHIEVES IT ***)",
+      "complete_when": ["After `bulk_send_to_review`, `post.error_reason` IS `None`.", "*** `submission_id` and `batch_id` are STILL PRESERVED ('keep the lineage'). ***", "*** reconcile.py:767 is NOT TOUCHED — S04 OWNS IT. ***", "The PR STATES that the four requeue paths DO clear error_reason and `bulk_send_to_review` does not — *** that asymmetry is the EVIDENCE the omission is a BUG, not a POLICY. ***"],
+      "NOT_complete_if": "*** `submission_id` was cleared. That would let a re-approved post RE-POST — and if it was actually live, THAT IS A DUPLICATE ON THE PLATFORM. PD-1, UNDECIDED. ***"
+    },
+    "CM-S07": {
+      "slice": "S07", "root_causes": ["RC-3b"], "invariant": "INT-4",
+      "complete_when": [
+        "With `is_live=True` and `live_ready_channels()==[]`: EITHER both gates run, OR neither.",
+        "*** THE PRE-FLIGHT PASSED: `reconcile_due` makes ZERO network calls on a dryrun-only deployment. (If it does NOT, take Option B — gate BOTH — instead of Option A.) ***",
+        "Dryrun preview writing is NOT regressed.",
+        "*** `test_learn_pass_is_still_gated_on_is_live_backend` EXISTS AND PASSES. ***",
+        "*** The independent verifier CONFIRMS IN WRITING that `_learn_pass`'s gate (cli.py:965) is UNTOUCHED. ***",
+        "*** ZERO new print() in pipeline.py (it is in `_INTERNAL_MODULES`). ***"
+      ],
+      "NOT_complete_if": "*** THE `is_live_backend` GATE WAS ALSO REMOVED FROM `_learn_pass`. That would run PERMANENT, IRREVERSIBLE MOMENT RETIREMENT on a deployment where learning was frozen — while PD-3, the question of whether that policy is even CORRECT, IS UNANSWERED. THIS IS THE WORST OUTCOME THE PROGRAM CAN PRODUCE. ***"
+    },
+    "CM-S08": {
+      "slice": "S08", "root_causes": ["RC-6"], "invariant": "INT-6",
+      "complete_when": ["`status(cfg)` returns `last_success_age_s`, DISTINCT from `heartbeat_age_s`.", "A daemon whose EVERY pass raises does NOT return a bare `alive`.", "*** `daemon_progress` REMAINS the mid-pass liveness owner. `_heartbeat_age_s`'s role in the alive/stale decision is UNCHANGED. THIS SLICE ADDS A SIGNAL; IT MOVES NONE. ***", "A healthy FAST-LOGGING pass is still NOT flipped to `stale`.", "*** cli.py's print() count is UNCHANGED (147). ***", "The PR CONFIRMS no consumer parses the verdict STRING for equality with 'alive'."],
+      "NOT_complete_if": "*** The verdict strings were merely RE-WORDED without adding the new SIGNAL. The brief names this exactly: 'changing daemon status wording without separating progress signals.' ONE SIGNAL IS ANSWERING TWO QUESTIONS — that is the defect. ***"
+    },
+    "CM-S09": {
+      "slice": "S09", "root_causes": ["RC-10"], "invariant": "INT-8",
+      "complete_when": [
+        "The shrink temp dir is REMOVED once its output is uploaded (or is not a `mkdtemp` at all).",
+        "NO persisted `Post.media_urls` entry resolves under a `fanops-shrink-*` dir.",
+        "*** The publish path STILL WORKS after the shrink dir is removed — THE SELF-HEAL, PINNED BY A TEST. This slice DEPENDS on `media_path_for_post`'s clip fallback. ***",
+        "`fanops clean --shrink` removes the already-leaked dirs; a doctor check surfaces them.",
+        "*** The PR REPORTS the live count. (2026-07-14: 41 dirs, 04_agent_io = 924 MB.) ***",
+        "*** cli.py's print() count is UNCHANGED (147). ***",
+        "*** The regression test is written to ALSO catch a `Render.path` regression if Renders are ever minted (IF-1). ***"
+      ],
+      "NOT_complete_if": [
+        "*** The `Render.path` writes were 'defensively' repaired. THEY ARE UNREACHABLE — LS-4 confirms it against the LIVE TREE (0 renders, 0/347 posts with a render_id), not merely by AST. Fixing unreachable code is over-engineering AND would conflict with whatever the reframe stream decides `Render` should mean. ***",
+        "*** A migration was designed. Cycle 3's claim that 'the fix for the leak would BREAK the pointer' is REFUTED BY EXECUTION (EXP-C4-4). If you are designing a migration, YOU ARE SOLVING A REFUTED PROBLEM. ***",
+        "A cron/tmpwatch janitor was added. It is now SAFE — but it is the WRONG HOME. *** The code that CREATES the dir must own its lifetime. ***"
+      ]
+    },
+    "CM-S10": {"slice": "S10", "status": "*** BLOCKED ON PD-3. NO COMPLETION CRITERIA MAY BE WRITTEN UNTIL THE OPERATOR ANSWERS. ***", "when_unblocked": "The PR must QUOTE THE OPERATOR'S DECISION VERBATIM and report the live retired-moment count (2026-07-14: ZERO)."},
+    "CM-S11": {
+      "slice": "S11", "root_causes": ["RC-9"], "invariant": "*** INT-9 — PINNED, NOT SATISFIED. The contract states this explicitly rather than implying the invariant now holds. ***",
+      "complete_when": [
+        "An AST policy test enumerates EVERY write site that can set `PostState.published`/`analyzed` and asserts each carries an explicit non-empty `public_url` guard.",
+        "*** The FOUR known doors (run.py:305, actions.py:268, cli.py:384, dryrun.py:39) are the BASELINE. A FIFTH makes CI RED. ***",
+        "A second test PINS the real `model_copy` bypass behaviour, so a pydantic upgrade that CHANGES it is CAUGHT rather than silently relied upon.",
+        "*** ZERO production files changed. ***"
+      ],
+      "explicitly_NOT_claimed": "*** THIS SLICE DOES NOT FIX RC-9. `model_copy` still bypasses every validator. The contract does not pretend otherwise. What it achieves: RC-9 CANNOT BECOME REACHABLE WITHOUT CI GOING RED. ***"
+    },
+    "CM-S12": {"slice": "S12", "status": "*** PROPOSED — BLOCKED ON PD-5. ***", "complete_when": ["An AST policy test asserts NO module-level `fanops` import points to an equal-or-higher layer level (kb/dependencies.json -> layering.levels).", "*** The 56 STRICTLY-UPWARD lazy edges are the ALLOWED-LAZY baseline. Hoisting ANY ONE makes CI RED. ***", "ZERO production files changed."]}
+  },
+
+  "program_completion": {
+    "the_program_is_complete_when": [
+      "*** EVERY approved root cause (RC-1..RC-10) has a MERGED slice, or a RECORDED HUMAN DECISION to defer it. ***",
+      "*** INT-1 through INT-8 HOLD, each demonstrated by an INVARIANT test that FAILED BEFORE and PASSES AFTER. ***",
+      "*** INT-9 is PINNED (S11) — the contract does NOT claim it HOLDS. ***",
+      "*** PD-1, PD-2, PD-3, PD-4 and PD-5 are ANSWERED IN WRITING — or explicitly and knowingly left open, with the slices they block still blocked. ***",
+      "*** The KB is REGENERATED: 7 invariants currently classified FALSE (INV-01, 02, 03, 04, 05, 07, 20) are re-derived, and those the program fixed are re-classified. AN UNREGENERATED KB IS THE NEXT INV-20. ***",
+      "*** Cycle 7 mechanically enforces file_ownership.json, the GLOBAL BOUNDARIES, and the AST-ratchet budgets — WITHOUT introducing a new architectural assumption. ***"
+    ],
+    "what_the_program_deliberately_does_NOT_do": [
+      "*** It does not FIX RC-9. Zero reachability. It PINS it. ***",
+      "*** It does not fix AR-13 (CSRF on 108 routes). A RECORDED, ACCEPTED decision. Re-raise as a PRODUCT question, not a bug. ***",
+      "*** It does not fix AR-14 / INV-04 (intro_match structurally unanswerable). Dormant behind a DEFAULT-OFF flag. ***",
+      "*** It does not fix AR-04 unless PD-5 approves S12. GB-1 forbids making it worse; only S12 would make it enforceable. ***",
+      "*** It does not touch the reframe stream. Verified disjoint by STATE OWNERSHIP, and LS-4 re-confirms it against the live tree. ***",
+      "*** It does not build a `Post` lifecycle state machine. Correct long-term; DEFERRED until S03/S04/S06 have settled the semantics — so the state machine would encode a KNOWN-CORRECT contract rather than the current one. ***"
+    ]
+  }
+}

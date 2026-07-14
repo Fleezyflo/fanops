@@ -1,0 +1,3998 @@
+{
+  "cycle": 2,
+  "git_head": "fcffa73",
+  "generated": "2026-07-14",
+  "totals": {
+    "routes": 149,
+    "mutating": 108,
+    "read_only": 41,
+    "authenticated": 0,
+    "csrf_protected": 0
+  },
+  "authorization_model": "NONE \u2014 no auth, no session, no CSRF, no before_request hook anywhere in studio/. Recorded decision (src/fanops/studio/CLAUDE.md: 'no auth by design \u2014 don't add CSRF/rate-limit tickets; declined as out-of-scope for localhost'). Boundary = the network interface: app.run(host=...) , cli.py:1285, default 127.0.0.1:8787.",
+  "csrf_model": "EVERY mutating route is CSRF-exposed. Flask has no CSRF token; forms are plain htmx POSTs. Any page the operator visits can forge a POST to any of these while the Studio is running.",
+  "routes": [
+    {
+      "route": "/healthz",
+      "methods": [
+        "GET"
+      ],
+      "file": "app.py",
+      "line": 385,
+      "handler": "healthz",
+      "actions": [
+        "build_health_report",
+        "get",
+        "to_json_dict"
+      ],
+      "mutating": false,
+      "authorization": "NONE",
+      "csrf": "n/a",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": true,
+      "validates": false,
+      "idempotent": null
+    },
+    {
+      "route": "/metrics",
+      "methods": [
+        "GET"
+      ],
+      "file": "app.py",
+      "line": 395,
+      "handler": "metrics",
+      "actions": [
+        "get",
+        "render_prometheus_metrics"
+      ],
+      "mutating": false,
+      "authorization": "NONE",
+      "csrf": "n/a",
+      "ledger_write": false,
+      "ledger_read": true,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": false,
+      "idempotent": null
+    },
+    {
+      "route": "/",
+      "methods": [
+        "GET"
+      ],
+      "file": "app.py",
+      "line": 402,
+      "handler": "index",
+      "actions": [
+        "get",
+        "home_accounts_panel",
+        "home_source_gallery",
+        "home_status",
+        "home_week_calendar",
+        "zero_post_clips"
+      ],
+      "mutating": false,
+      "authorization": "NONE",
+      "csrf": "n/a",
+      "ledger_write": false,
+      "ledger_read": true,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/home/gallery",
+      "methods": [
+        "GET"
+      ],
+      "file": "app.py",
+      "line": 411,
+      "handler": "home_gallery",
+      "actions": [
+        "get",
+        "home_source_gallery"
+      ],
+      "mutating": false,
+      "authorization": "NONE",
+      "csrf": "n/a",
+      "ledger_write": false,
+      "ledger_read": true,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": false,
+      "idempotent": null
+    },
+    {
+      "route": "/home/pull-metrics",
+      "methods": [
+        "POST"
+      ],
+      "file": "app.py",
+      "line": 417,
+      "handler": "do_home_pull_metrics",
+      "actions": [
+        "pull_metrics_studio"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": true,
+      "ledger_read": true,
+      "fs_write": false,
+      "network": true,
+      "subprocess": false,
+      "audit": true,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/home/reconcile",
+      "methods": [
+        "POST"
+      ],
+      "file": "app.py",
+      "line": 421,
+      "handler": "do_home_reconcile",
+      "actions": [
+        "reconcile_inflight"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": true,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/home/retry-rate-limit",
+      "methods": [
+        "POST"
+      ],
+      "file": "app.py",
+      "line": 425,
+      "handler": "do_home_retry_rate_limit",
+      "actions": [
+        "retry_rate_limited_failures"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": true,
+      "ledger_read": true,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": true,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/home/retry-oversize",
+      "methods": [
+        "POST"
+      ],
+      "file": "app.py",
+      "line": 429,
+      "handler": "do_home_retry_oversize",
+      "actions": [
+        "retry_oversize_failures"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": true,
+      "ledger_read": true,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": true,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/home/daemon-health",
+      "methods": [
+        "GET"
+      ],
+      "file": "app.py",
+      "line": 433,
+      "handler": "home_daemon_health",
+      "actions": [
+        "daemon_health",
+        "get"
+      ],
+      "mutating": false,
+      "authorization": "NONE",
+      "csrf": "n/a",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": true,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": false,
+      "idempotent": null
+    },
+    {
+      "route": "/stitches",
+      "methods": [
+        "GET"
+      ],
+      "file": "app.py",
+      "line": 452,
+      "handler": "stitches",
+      "actions": [
+        "get",
+        "pending_stitch_drafts",
+        "pending_stitches"
+      ],
+      "mutating": false,
+      "authorization": "NONE",
+      "csrf": "n/a",
+      "ledger_write": false,
+      "ledger_read": true,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": false,
+      "idempotent": null
+    },
+    {
+      "route": "/stitches/approve",
+      "methods": [
+        "POST"
+      ],
+      "file": "app.py",
+      "line": 462,
+      "handler": "do_approve_stitches",
+      "actions": [
+        "_stitches_panel",
+        "approve_stitches"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": true,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/stitches/dismiss",
+      "methods": [
+        "POST"
+      ],
+      "file": "app.py",
+      "line": 466,
+      "handler": "do_dismiss_stitches",
+      "actions": [
+        "_stitches_panel",
+        "dismiss_stitches"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": true,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/stitches/release",
+      "methods": [
+        "POST"
+      ],
+      "file": "app.py",
+      "line": 470,
+      "handler": "do_release_stitches",
+      "actions": [
+        "_stitches_panel",
+        "release_stitches"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": true,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/candidates",
+      "methods": [
+        "GET"
+      ],
+      "file": "app.py",
+      "line": 475,
+      "handler": "candidates",
+      "actions": [
+        "get",
+        "review_candidates"
+      ],
+      "mutating": false,
+      "authorization": "NONE",
+      "csrf": "n/a",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": false,
+      "idempotent": null
+    },
+    {
+      "route": "/candidates/approve/<eid>",
+      "methods": [
+        "POST"
+      ],
+      "file": "app.py",
+      "line": 480,
+      "handler": "do_approve_candidate",
+      "actions": [
+        "approve_candidate"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": true,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/review-thumb/<eid>",
+      "methods": [
+        "GET"
+      ],
+      "file": "app.py",
+      "line": 484,
+      "handler": "review_thumb",
+      "actions": [
+        "_bounded",
+        "get"
+      ],
+      "mutating": false,
+      "authorization": "NONE",
+      "csrf": "n/a",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/publish",
+      "methods": [
+        "GET"
+      ],
+      "file": "app.py",
+      "line": 493,
+      "handler": "publish_panel",
+      "actions": [
+        "_account_arg",
+        "_offset_arg",
+        "_publish_mode_label",
+        "_row_chips",
+        "get",
+        "paginate",
+        "publish_queue"
+      ],
+      "mutating": false,
+      "authorization": "NONE",
+      "csrf": "n/a",
+      "ledger_write": false,
+      "ledger_read": true,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": true,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/publish/posted/<post_id>",
+      "methods": [
+        "POST"
+      ],
+      "file": "app.py",
+      "line": 507,
+      "handler": "do_mark_posted",
+      "actions": [
+        "get",
+        "mark_published"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": true,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": true,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/publish/now/<post_id>",
+      "methods": [
+        "POST"
+      ],
+      "file": "app.py",
+      "line": 512,
+      "handler": "do_publish_now",
+      "actions": [
+        "get",
+        "publish_now"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": true,
+      "ledger_read": true,
+      "fs_write": false,
+      "network": true,
+      "subprocess": false,
+      "audit": true,
+      "env_write": false,
+      "confirm_gate": true,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/reconcile-strip",
+      "methods": [
+        "GET"
+      ],
+      "file": "app.py",
+      "line": 520,
+      "handler": "reconcile_strip_partial",
+      "actions": [
+        "_account_arg",
+        "get",
+        "inflight_watch",
+        "load"
+      ],
+      "mutating": false,
+      "authorization": "NONE",
+      "csrf": "n/a",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/gates",
+      "methods": [
+        "GET"
+      ],
+      "file": "app.py",
+      "line": 526,
+      "handler": "gates",
+      "actions": [
+        "gate_rows",
+        "get"
+      ],
+      "mutating": false,
+      "authorization": "NONE",
+      "csrf": "n/a",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": false,
+      "idempotent": null
+    },
+    {
+      "route": "/gates/answer/<kind>/<key>",
+      "methods": [
+        "POST"
+      ],
+      "file": "app.py",
+      "line": 532,
+      "handler": "do_answer_gate",
+      "actions": [
+        "_parse_gate_form",
+        "answer_gate",
+        "failure"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": true,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/gates/dismiss/<kind>/<key>",
+      "methods": [
+        "POST"
+      ],
+      "file": "app.py",
+      "line": 544,
+      "handler": "do_dismiss_gate",
+      "actions": [
+        "dismiss_gate_studio"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": false,
+      "ledger_read": true,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": true,
+      "env_write": false,
+      "confirm_gate": true,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/media/<post_id>",
+      "methods": [
+        "GET"
+      ],
+      "file": "app.py",
+      "line": 548,
+      "handler": "media",
+      "actions": [
+        "_bounded",
+        "_media_path_for_post",
+        "get",
+        "load"
+      ],
+      "mutating": false,
+      "authorization": "NONE",
+      "csrf": "n/a",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/media-preview/<post_id>",
+      "methods": [
+        "GET"
+      ],
+      "file": "app.py",
+      "line": 555,
+      "handler": "media_preview",
+      "actions": [
+        "_bounded",
+        "get",
+        "load",
+        "preview_media_path"
+      ],
+      "mutating": false,
+      "authorization": "NONE",
+      "csrf": "n/a",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/clips/<clip_id>",
+      "methods": [
+        "GET"
+      ],
+      "file": "app.py",
+      "line": 563,
+      "handler": "clip_media",
+      "actions": [
+        "_bounded",
+        "get",
+        "load",
+        "resolve_media_path"
+      ],
+      "mutating": false,
+      "authorization": "NONE",
+      "csrf": "n/a",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/source-media/<source_id>",
+      "methods": [
+        "GET"
+      ],
+      "file": "app.py",
+      "line": 574,
+      "handler": "source_media",
+      "actions": [
+        "_bounded",
+        "get",
+        "load",
+        "resolve_media_path"
+      ],
+      "mutating": false,
+      "authorization": "NONE",
+      "csrf": "n/a",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/keyframe/<source_id>/<name>",
+      "methods": [
+        "GET"
+      ],
+      "file": "app.py",
+      "line": 589,
+      "handler": "keyframe",
+      "actions": [
+        "_bounded",
+        "get"
+      ],
+      "mutating": false,
+      "authorization": "NONE",
+      "csrf": "n/a",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/keyframe/<source_id>/<whash>/<name>",
+      "methods": [
+        "GET"
+      ],
+      "file": "app.py",
+      "line": 589,
+      "handler": "keyframe",
+      "actions": [
+        "_bounded",
+        "get"
+      ],
+      "mutating": false,
+      "authorization": "NONE",
+      "csrf": "n/a",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/thumb/source/<source_id>",
+      "methods": [
+        "GET"
+      ],
+      "file": "app.py",
+      "line": 605,
+      "handler": "thumb_source",
+      "actions": [
+        "get",
+        "resolve_source_thumb"
+      ],
+      "mutating": false,
+      "authorization": "NONE",
+      "csrf": "n/a",
+      "ledger_write": false,
+      "ledger_read": true,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": false,
+      "idempotent": null
+    },
+    {
+      "route": "/thumb/clip/<clip_id>",
+      "methods": [
+        "GET"
+      ],
+      "file": "app.py",
+      "line": 610,
+      "handler": "thumb_clip",
+      "actions": [
+        "get",
+        "resolve_clip_thumb"
+      ],
+      "mutating": false,
+      "authorization": "NONE",
+      "csrf": "n/a",
+      "ledger_write": false,
+      "ledger_read": true,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": false,
+      "idempotent": null
+    },
+    {
+      "route": "/clip-thumb/<clip_id>",
+      "methods": [
+        "GET"
+      ],
+      "file": "app.py",
+      "line": 615,
+      "handler": "clip_thumb",
+      "actions": [
+        "get",
+        "resolve_clip_thumb"
+      ],
+      "mutating": false,
+      "authorization": "NONE",
+      "csrf": "n/a",
+      "ledger_write": false,
+      "ledger_read": true,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": false,
+      "idempotent": null
+    },
+    {
+      "route": "/golive",
+      "methods": [
+        "GET"
+      ],
+      "file": "app_routes_golive.py",
+      "line": 14,
+      "handler": "golive_view",
+      "actions": [
+        "get",
+        "golive_status"
+      ],
+      "mutating": false,
+      "authorization": "NONE",
+      "csrf": "n/a",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": true,
+      "validates": false,
+      "idempotent": null
+    },
+    {
+      "route": "/golive/config",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_golive.py",
+      "line": 26,
+      "handler": "do_golive_config",
+      "actions": [
+        "_golive_panel",
+        "get",
+        "set_postiz_config"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": true,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/golive/account/add",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_golive.py",
+      "line": 30,
+      "handler": "do_golive_account_add",
+      "actions": [
+        "_golive_panel",
+        "add_account",
+        "get"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": true,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/golive/casting",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_golive.py",
+      "line": 38,
+      "handler": "do_golive_casting",
+      "actions": [
+        "_golive_panel",
+        "get",
+        "set_account_casting"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": true,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/golive/clip-profile",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_golive.py",
+      "line": 45,
+      "handler": "do_golive_clip_profile",
+      "actions": [
+        "_golive_panel",
+        "get",
+        "set_clip_profile"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": true,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/golive/responder",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_golive.py",
+      "line": 50,
+      "handler": "do_golive_responder",
+      "actions": [
+        "_golive_panel",
+        "get",
+        "set_ai_responder"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": true,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/golive/llm-transport",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_golive.py",
+      "line": 56,
+      "handler": "do_golive_llm_transport",
+      "actions": [
+        "_golive_panel",
+        "get",
+        "set_llm_transport"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": true,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/golive/daemon-install",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_golive.py",
+      "line": 61,
+      "handler": "do_golive_daemon_install",
+      "actions": [
+        "_golive_panel",
+        "get",
+        "install_daemon"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": true,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/golive/daemon-uninstall",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_golive.py",
+      "line": 67,
+      "handler": "do_golive_daemon_uninstall",
+      "actions": [
+        "_golive_panel",
+        "uninstall_daemon"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": true,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/golive/learning",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_golive.py",
+      "line": 72,
+      "handler": "do_golive_learning",
+      "actions": [
+        "_golive_panel",
+        "get",
+        "set_variant_learning"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": true,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/golive/amplify",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_golive.py",
+      "line": 78,
+      "handler": "do_golive_amplify",
+      "actions": [
+        "_golive_panel",
+        "get",
+        "set_variant_amplify"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": true,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/golive/ucb",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_golive.py",
+      "line": 83,
+      "handler": "do_golive_ucb",
+      "actions": [
+        "_golive_panel",
+        "get",
+        "set_variant_ucb"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": true,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/golive/transfer",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_golive.py",
+      "line": 88,
+      "handler": "do_golive_transfer",
+      "actions": [
+        "_golive_panel",
+        "get",
+        "set_variant_transfer"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": true,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/golive/zernio-config",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_golive.py",
+      "line": 93,
+      "handler": "do_golive_zernio_config",
+      "actions": [
+        "_golive_panel",
+        "get",
+        "set_zernio_config"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": true,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/golive/account/meta-creds",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_golive.py",
+      "line": 98,
+      "handler": "do_golive_account_meta_creds",
+      "actions": [
+        "_golive_panel",
+        "get",
+        "set_meta_creds"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": true,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/golive/account/backend",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_golive.py",
+      "line": 107,
+      "handler": "do_golive_account_backend",
+      "actions": [
+        "_golive_panel",
+        "get",
+        "set_account_backend"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": true,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/golive/account/persona",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_golive.py",
+      "line": 115,
+      "handler": "do_golive_account_persona",
+      "actions": [
+        "_golive_panel",
+        "get",
+        "set_persona"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": true,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/golive/account/promote",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_golive.py",
+      "line": 120,
+      "handler": "do_golive_account_promote",
+      "actions": [
+        "_golive_panel",
+        "get",
+        "promote_account"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/golive/account/remove",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_golive.py",
+      "line": 125,
+      "handler": "do_golive_account_remove",
+      "actions": [
+        "_golive_panel",
+        "get",
+        "remove_account"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": true,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/golive/account/demote",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_golive.py",
+      "line": 130,
+      "handler": "do_golive_account_demote",
+      "actions": [
+        "_golive_panel",
+        "demote_account",
+        "get"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/golive/refresh",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_golive.py",
+      "line": 135,
+      "handler": "do_golive_refresh",
+      "actions": [
+        "_golive_panel",
+        "refresh_integrations"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/golive/discover",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_golive.py",
+      "line": 139,
+      "handler": "do_golive_discover",
+      "actions": [
+        "_golive_panel",
+        "discover_channels"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": true,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/golive/adopt",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_golive.py",
+      "line": 146,
+      "handler": "do_golive_adopt",
+      "actions": [
+        "_golive_panel",
+        "adopt_channels",
+        "get"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": true,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/golive/health",
+      "methods": [
+        "GET"
+      ],
+      "file": "app_routes_golive.py",
+      "line": 157,
+      "handler": "do_golive_health",
+      "actions": [
+        "get",
+        "postiz_autostart_hint",
+        "system_health"
+      ],
+      "mutating": false,
+      "authorization": "NONE",
+      "csrf": "n/a",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": false,
+      "idempotent": null
+    },
+    {
+      "route": "/golive/connect",
+      "methods": [
+        "GET"
+      ],
+      "file": "app_routes_golive.py",
+      "line": 169,
+      "handler": "golive_connect",
+      "actions": [
+        "get",
+        "golive_status"
+      ],
+      "mutating": false,
+      "authorization": "NONE",
+      "csrf": "n/a",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": true,
+      "validates": false,
+      "idempotent": null
+    },
+    {
+      "route": "/golive/accounts",
+      "methods": [
+        "GET"
+      ],
+      "file": "app_routes_golive.py",
+      "line": 174,
+      "handler": "golive_accounts_page",
+      "actions": [
+        "get",
+        "golive_status"
+      ],
+      "mutating": false,
+      "authorization": "NONE",
+      "csrf": "n/a",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": true,
+      "validates": false,
+      "idempotent": null
+    },
+    {
+      "route": "/golive/live",
+      "methods": [
+        "GET"
+      ],
+      "file": "app_routes_golive.py",
+      "line": 179,
+      "handler": "golive_live_page",
+      "actions": [
+        "get",
+        "golive_status"
+      ],
+      "mutating": false,
+      "authorization": "NONE",
+      "csrf": "n/a",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": true,
+      "validates": false,
+      "idempotent": null
+    },
+    {
+      "route": "/golive/map",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_golive.py",
+      "line": 184,
+      "handler": "do_golive_map",
+      "actions": [
+        "_golive_panel",
+        "get",
+        "map_account"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/golive/live",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_golive.py",
+      "line": 206,
+      "handler": "do_golive_live",
+      "actions": [
+        "_golive_panel",
+        "get",
+        "go_live"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": false,
+      "ledger_read": true,
+      "fs_write": false,
+      "network": true,
+      "subprocess": false,
+      "audit": false,
+      "env_write": true,
+      "confirm_gate": true,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/golive/dryrun",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_golive.py",
+      "line": 213,
+      "handler": "do_golive_dryrun",
+      "actions": [
+        "_golive_panel",
+        "go_dryrun"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": true,
+      "confirm_gate": true,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/golive/validate",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_golive.py",
+      "line": 217,
+      "handler": "do_golive_validate",
+      "actions": [
+        "_golive_panel",
+        "get",
+        "validate_learning"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": true,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/hashtags",
+      "methods": [
+        "GET"
+      ],
+      "file": "app_routes_hashtags.py",
+      "line": 19,
+      "handler": "hashtags_view",
+      "actions": [
+        "_page",
+        "get"
+      ],
+      "mutating": false,
+      "authorization": "NONE",
+      "csrf": "n/a",
+      "ledger_write": false,
+      "ledger_read": true,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": false,
+      "idempotent": null
+    },
+    {
+      "route": "/hashtags/ban/add",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_hashtags.py",
+      "line": 27,
+      "handler": "do_hashtags_ban_add",
+      "actions": [
+        "_hashtags_panel",
+        "add_ban",
+        "get"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": true,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": false,
+      "idempotent": null
+    },
+    {
+      "route": "/hashtags/ban/remove",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_hashtags.py",
+      "line": 31,
+      "handler": "do_hashtags_ban_remove",
+      "actions": [
+        "_hashtags_panel",
+        "get",
+        "remove_ban"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": true,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": false,
+      "idempotent": null
+    },
+    {
+      "route": "/live-library",
+      "methods": [
+        "GET"
+      ],
+      "file": "app_routes_live.py",
+      "line": 25,
+      "handler": "live_library",
+      "actions": [
+        "get"
+      ],
+      "mutating": false,
+      "authorization": "NONE",
+      "csrf": "n/a",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": false,
+      "idempotent": null
+    },
+    {
+      "route": "/live-library/wipe/preview",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_live.py",
+      "line": 34,
+      "handler": "do_wipe_preview",
+      "actions": [
+        "_page",
+        "preview_wipe"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": false,
+      "ledger_read": true,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/live-library/wipe/confirm",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_live.py",
+      "line": 40,
+      "handler": "do_wipe_confirm",
+      "actions": [
+        "_page",
+        "confirm_wipe",
+        "get",
+        "preview_wipe"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": false,
+      "ledger_read": true,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": true,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/personas",
+      "methods": [
+        "GET"
+      ],
+      "file": "app_routes_personas.py",
+      "line": 13,
+      "handler": "personas_view",
+      "actions": [
+        "get",
+        "personas_page"
+      ],
+      "mutating": false,
+      "authorization": "NONE",
+      "csrf": "n/a",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": false,
+      "idempotent": null
+    },
+    {
+      "route": "/personas/drawer/<pid>",
+      "methods": [
+        "GET"
+      ],
+      "file": "app_routes_personas.py",
+      "line": 25,
+      "handler": "do_personas_drawer",
+      "actions": [
+        "get",
+        "personas_page"
+      ],
+      "mutating": false,
+      "authorization": "NONE",
+      "csrf": "n/a",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": false,
+      "idempotent": null
+    },
+    {
+      "route": "/personas/compose",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_personas.py",
+      "line": 35,
+      "handler": "do_personas_compose",
+      "actions": [
+        "preview_compose"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/personas/add",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_personas.py",
+      "line": 42,
+      "handler": "do_personas_add",
+      "actions": [
+        "_personas_panel",
+        "create_persona",
+        "get"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/personas/edit",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_personas.py",
+      "line": 49,
+      "handler": "do_personas_edit",
+      "actions": [
+        "_personas_panel",
+        "edit_persona",
+        "get"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/personas/delete",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_personas.py",
+      "line": 56,
+      "handler": "do_personas_delete",
+      "actions": [
+        "_personas_panel",
+        "delete_persona",
+        "get"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": true,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": false,
+      "idempotent": null
+    },
+    {
+      "route": "/personas/corpus/add",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_personas.py",
+      "line": 60,
+      "handler": "do_personas_corpus_add",
+      "actions": [
+        "_personas_panel",
+        "add_corpus_tag",
+        "get"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": true,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/personas/corpus/remove",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_personas.py",
+      "line": 64,
+      "handler": "do_personas_corpus_remove",
+      "actions": [
+        "_personas_panel",
+        "get",
+        "remove_corpus_tag"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": true,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": false,
+      "idempotent": null
+    },
+    {
+      "route": "/personas/research",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_personas.py",
+      "line": 68,
+      "handler": "do_personas_research",
+      "actions": [
+        "_personas_panel",
+        "get",
+        "research_corpus"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": false,
+      "idempotent": null
+    },
+    {
+      "route": "/personas/recommend",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_personas.py",
+      "line": 74,
+      "handler": "do_personas_recommend",
+      "actions": [
+        "_personas_panel",
+        "get",
+        "recommend_tag"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": true,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": true,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/personas/connect",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_personas.py",
+      "line": 80,
+      "handler": "do_personas_connect",
+      "actions": [
+        "_personas_panel",
+        "connect_account",
+        "get"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/personas/migrate",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_personas.py",
+      "line": 85,
+      "handler": "do_personas_migrate",
+      "actions": [
+        "_personas_panel",
+        "run_migration"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/review",
+      "methods": [
+        "GET"
+      ],
+      "file": "app_routes_review.py",
+      "line": 89,
+      "handler": "review",
+      "actions": [
+        "_review_context",
+        "get"
+      ],
+      "mutating": false,
+      "authorization": "NONE",
+      "csrf": "n/a",
+      "ledger_write": false,
+      "ledger_read": true,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": false,
+      "idempotent": null
+    },
+    {
+      "route": "/review/feed-slice",
+      "methods": [
+        "GET"
+      ],
+      "file": "app_routes_review.py",
+      "line": 97,
+      "handler": "review_feed_slice",
+      "actions": [
+        "_review_context",
+        "get"
+      ],
+      "mutating": false,
+      "authorization": "NONE",
+      "csrf": "n/a",
+      "ledger_write": false,
+      "ledger_read": true,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": false,
+      "idempotent": null
+    },
+    {
+      "route": "/review/live",
+      "methods": [
+        "GET"
+      ],
+      "file": "app_routes_review.py",
+      "line": 117,
+      "handler": "review_live",
+      "actions": [
+        "_account_arg",
+        "get",
+        "load",
+        "review_buckets",
+        "review_counts"
+      ],
+      "mutating": false,
+      "authorization": "NONE",
+      "csrf": "n/a",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/review/refresh",
+      "methods": [
+        "GET"
+      ],
+      "file": "app_routes_review.py",
+      "line": 128,
+      "handler": "review_panel_refresh",
+      "actions": [
+        "_review_panel",
+        "get"
+      ],
+      "mutating": false,
+      "authorization": "NONE",
+      "csrf": "n/a",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": false,
+      "idempotent": null
+    },
+    {
+      "route": "/posts/approve",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_review.py",
+      "line": 132,
+      "handler": "do_approve_posts",
+      "actions": [
+        "_review_panel",
+        "approve_posts",
+        "get"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": true,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/posts/reject",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_review.py",
+      "line": 137,
+      "handler": "do_reject_posts",
+      "actions": [
+        "_review_panel",
+        "reject_posts"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": true,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/posts/unapprove/<post_id>",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_review.py",
+      "line": 141,
+      "handler": "do_unapprove_post",
+      "actions": [
+        "_review_panel",
+        "unapprove_post"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": false,
+      "idempotent": null
+    },
+    {
+      "route": "/posts/approve-with-edits/<post_id>",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_review.py",
+      "line": 145,
+      "handler": "do_approve_with_edits",
+      "actions": [
+        "_review_panel",
+        "approve_with_edits",
+        "get"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": false,
+      "ledger_read": true,
+      "fs_write": false,
+      "network": false,
+      "subprocess": true,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/posts/approve-with-hook/<clip_id>",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_review.py",
+      "line": 150,
+      "handler": "do_approve_with_hook",
+      "actions": [
+        "_review_panel",
+        "approve_with_hook"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": true,
+      "ledger_read": true,
+      "fs_write": false,
+      "network": false,
+      "subprocess": true,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/posts/approve-as-is/<clip_id>",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_review.py",
+      "line": 154,
+      "handler": "do_approve_as_is",
+      "actions": [
+        "_review_panel",
+        "approve_as_is"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": false,
+      "idempotent": null
+    },
+    {
+      "route": "/posts/approve-batch/<batch_id>",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_review.py",
+      "line": 158,
+      "handler": "do_approve_batch",
+      "actions": [
+        "_review_panel",
+        "approve_batch"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": false,
+      "idempotent": null
+    },
+    {
+      "route": "/posts/approve-clip/<clip_id>",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_review.py",
+      "line": 162,
+      "handler": "do_approve_clip",
+      "actions": [
+        "_review_panel",
+        "approve_clip"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": false,
+      "idempotent": null
+    },
+    {
+      "route": "/posts/approve-account",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_review.py",
+      "line": 166,
+      "handler": "do_approve_account",
+      "actions": [
+        "_account_arg",
+        "_batch_arg",
+        "_review_panel",
+        "_source_arg",
+        "approve_account"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/posts/approve-moment/<moment_id>",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_review.py",
+      "line": 170,
+      "handler": "do_approve_moment",
+      "actions": [
+        "_review_panel",
+        "approve_moment"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": false,
+      "idempotent": null
+    },
+    {
+      "route": "/posts/approve-channel",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_review.py",
+      "line": 174,
+      "handler": "do_approve_channel",
+      "actions": [
+        "_review_panel",
+        "approve_account",
+        "get"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/cast/add/<moment_id>",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_review.py",
+      "line": 183,
+      "handler": "do_cast_add",
+      "actions": [
+        "_account_arg",
+        "_review_panel",
+        "_source_arg",
+        "cast_add",
+        "get"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": true,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/cast/remove/<moment_id>",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_review.py",
+      "line": 190,
+      "handler": "do_cast_remove",
+      "actions": [
+        "_account_arg",
+        "_review_panel",
+        "_source_arg",
+        "cast_remove",
+        "get"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": true,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/segments/set/<moment_id>",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_review.py",
+      "line": 197,
+      "handler": "do_set_segments",
+      "actions": [
+        "_review_panel",
+        "_source_arg",
+        "get",
+        "set_segments"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": true,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/segments/clear/<moment_id>",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_review.py",
+      "line": 214,
+      "handler": "do_clear_segments",
+      "actions": [
+        "_review_panel",
+        "_source_arg",
+        "clear_segments"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": true,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/reschedule/<post_id>",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_review.py",
+      "line": 224,
+      "handler": "do_reschedule",
+      "actions": [
+        "_time_arg",
+        "reschedule_post"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": true,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/reschedule-surface/<post_id>",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_review.py",
+      "line": 229,
+      "handler": "do_reschedule_surface",
+      "actions": [
+        "_render_surface_edit",
+        "_time_arg",
+        "reschedule_post"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": true,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/clear/<post_id>",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_review.py",
+      "line": 234,
+      "handler": "do_clear",
+      "actions": [
+        "_render_surface_edit",
+        "clear_time"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": true,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": true,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/caption/<post_id>",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_review.py",
+      "line": 239,
+      "handler": "do_caption",
+      "actions": [
+        "_focus_arg",
+        "_review_panel",
+        "edit_caption",
+        "get"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": true,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/regenerate/<post_id>",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_review.py",
+      "line": 246,
+      "handler": "do_regenerate",
+      "actions": [
+        "_focus_mutation_response",
+        "get",
+        "regenerate_caption"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": true,
+      "ledger_read": true,
+      "fs_write": false,
+      "network": false,
+      "subprocess": true,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": true,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/restore-persona-hook/<post_id>",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_review.py",
+      "line": 251,
+      "handler": "do_restore_persona_hook",
+      "actions": [
+        "_review_panel",
+        "restore_persona_hook"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": false,
+      "ledger_read": true,
+      "fs_write": false,
+      "network": false,
+      "subprocess": true,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/reburn-hook/<post_id>",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_review.py",
+      "line": 256,
+      "handler": "do_reburn_hook",
+      "actions": [
+        "_focus_mutation_response",
+        "get",
+        "reburn_hook"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": true,
+      "ledger_read": true,
+      "fs_write": false,
+      "network": false,
+      "subprocess": true,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/snooze/<clip_id>",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_review.py",
+      "line": 261,
+      "handler": "do_snooze",
+      "actions": [
+        "snooze_clip"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": true,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/unhold/<clip_id>",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_review.py",
+      "line": 266,
+      "handler": "do_unhold",
+      "actions": [
+        "release_held_clip"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": true,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/run",
+      "methods": [
+        "GET"
+      ],
+      "file": "app_routes_run.py",
+      "line": 22,
+      "handler": "run_panel",
+      "actions": [
+        "_run_handoff",
+        "get",
+        "pipeline_status"
+      ],
+      "mutating": false,
+      "authorization": "NONE",
+      "csrf": "n/a",
+      "ledger_write": false,
+      "ledger_read": true,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": true,
+      "validates": false,
+      "idempotent": null
+    },
+    {
+      "route": "/run/status",
+      "methods": [
+        "GET"
+      ],
+      "file": "app_routes_run.py",
+      "line": 29,
+      "handler": "run_status",
+      "actions": [
+        "get",
+        "pipeline_status"
+      ],
+      "mutating": false,
+      "authorization": "NONE",
+      "csrf": "n/a",
+      "ledger_write": false,
+      "ledger_read": true,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": true,
+      "validates": false,
+      "idempotent": null
+    },
+    {
+      "route": "/run/ingest",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_run.py",
+      "line": 41,
+      "handler": "do_run_ingest",
+      "actions": [
+        "_run_panel",
+        "get",
+        "run_ingest"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": true,
+      "ledger_read": true,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/run/pull",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_run.py",
+      "line": 47,
+      "handler": "do_run_pull",
+      "actions": [
+        "_run_panel",
+        "get",
+        "run_pull"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": true,
+      "ledger_read": true,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/run/upload",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_run.py",
+      "line": 51,
+      "handler": "do_run_upload",
+      "actions": [
+        "_run_panel",
+        "get",
+        "save_uploads_and_ingest"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/run/upload/init",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_run.py",
+      "line": 64,
+      "handler": "do_run_upload_init",
+      "actions": [
+        "get",
+        "upload_init"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": true,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/run/upload/finalize",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_run.py",
+      "line": 84,
+      "handler": "do_run_upload_finalize",
+      "actions": [
+        "_run_panel",
+        "get",
+        "upload_finalize"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": true,
+      "network": false,
+      "subprocess": true,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/run/resume",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_run.py",
+      "line": 92,
+      "handler": "do_run_resume",
+      "actions": [
+        "_run_panel",
+        "get",
+        "resume_source_studio"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": true,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": true,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/run/advance",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_run.py",
+      "line": 101,
+      "handler": "do_run_advance",
+      "actions": [
+        "_run_panel",
+        "get",
+        "run_advance"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": true,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/run/pull-metrics",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_run.py",
+      "line": 107,
+      "handler": "do_pull_metrics",
+      "actions": [
+        "_run_panel",
+        "pull_metrics_studio"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": true,
+      "ledger_read": true,
+      "fs_write": false,
+      "network": true,
+      "subprocess": false,
+      "audit": true,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/run/prepare",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_run.py",
+      "line": 111,
+      "handler": "do_run_prepare",
+      "actions": [
+        "_run_panel",
+        "get",
+        "run_prepare"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": true,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/run/bind-queue",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_run.py",
+      "line": 118,
+      "handler": "do_bind_queue",
+      "actions": [
+        "_run_panel",
+        "bind_queue",
+        "get"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": true,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/run/release-batch",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_run.py",
+      "line": 126,
+      "handler": "do_release_batch",
+      "actions": [
+        "_run_panel",
+        "get",
+        "release_batch"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": true,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": true,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/run/release-all",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_run.py",
+      "line": 131,
+      "handler": "do_release_all",
+      "actions": [
+        "_run_panel",
+        "get",
+        "release_all_held"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": true,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": true,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/library",
+      "methods": [
+        "GET"
+      ],
+      "file": "app_routes_run.py",
+      "line": 135,
+      "handler": "library",
+      "actions": [
+        "get",
+        "library_catalog",
+        "live_library",
+        "live_library_scope",
+        "load"
+      ],
+      "mutating": false,
+      "authorization": "NONE",
+      "csrf": "n/a",
+      "ledger_write": false,
+      "ledger_read": true,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": false,
+      "idempotent": null
+    },
+    {
+      "route": "/library/<source_id>",
+      "methods": [
+        "GET"
+      ],
+      "file": "app_routes_run.py",
+      "line": 149,
+      "handler": "library_source",
+      "actions": [
+        "_offset_arg",
+        "get",
+        "source_pipeline_map"
+      ],
+      "mutating": false,
+      "authorization": "NONE",
+      "csrf": "n/a",
+      "ledger_write": false,
+      "ledger_read": true,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/library/<source_id>/live",
+      "methods": [
+        "GET"
+      ],
+      "file": "app_routes_run.py",
+      "line": 158,
+      "handler": "library_source_live",
+      "actions": [
+        "_offset_arg",
+        "get",
+        "source_pipeline_map"
+      ],
+      "mutating": false,
+      "authorization": "NONE",
+      "csrf": "n/a",
+      "ledger_write": false,
+      "ledger_read": true,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/library/upload",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_run.py",
+      "line": 167,
+      "handler": "do_thirdparty_upload",
+      "actions": [
+        "library_catalog",
+        "run_ingest_thirdparty",
+        "save_thirdparty_uploads"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": true,
+      "ledger_read": true,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/library/resume",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_run.py",
+      "line": 179,
+      "handler": "do_library_resume",
+      "actions": [
+        "_library_panel",
+        "get",
+        "resume_source_studio"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": true,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": true,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/library/retire",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_run.py",
+      "line": 186,
+      "handler": "do_library_retire",
+      "actions": [
+        "_library_panel",
+        "get",
+        "retire_source_studio"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": true,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": true,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/library/promote",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_run.py",
+      "line": 190,
+      "handler": "do_library_promote",
+      "actions": [
+        "_library_panel",
+        "get",
+        "promote_source_studio"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": true,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": true,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/schedule",
+      "methods": [
+        "GET"
+      ],
+      "file": "app_routes_schedule.py",
+      "line": 42,
+      "handler": "schedule",
+      "actions": [
+        "_schedule_panel",
+        "get"
+      ],
+      "mutating": false,
+      "authorization": "NONE",
+      "csrf": "n/a",
+      "ledger_write": false,
+      "ledger_read": true,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": false,
+      "idempotent": null
+    },
+    {
+      "route": "/schedule/shift/<handle>",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_schedule.py",
+      "line": 46,
+      "handler": "do_schedule_shift",
+      "actions": [
+        "_schedule_panel",
+        "get",
+        "shift_account_schedule"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": true,
+      "ledger_read": true,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/schedule/respread",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_schedule.py",
+      "line": 54,
+      "handler": "do_reschedule_bucket",
+      "actions": [
+        "_account_arg",
+        "_schedule_panel",
+        "reschedule_bucket"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": true,
+      "ledger_read": true,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": true,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/schedule/unapprove/<post_id>",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_schedule.py",
+      "line": 59,
+      "handler": "do_schedule_unapprove",
+      "actions": [
+        "_schedule_panel",
+        "unapprove_post"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": false,
+      "ledger_read": true,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": false,
+      "idempotent": null
+    },
+    {
+      "route": "/schedule/move/<post_id>",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_schedule.py",
+      "line": 64,
+      "handler": "do_schedule_move",
+      "actions": [
+        "_schedule_panel",
+        "_time_arg",
+        "reschedule_post"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": true,
+      "ledger_read": true,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/schedule/clear/<post_id>",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_schedule.py",
+      "line": 70,
+      "handler": "do_schedule_clear",
+      "actions": [
+        "_schedule_panel",
+        "clear_time"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": true,
+      "ledger_read": true,
+      "fs_write": false,
+      "network": true,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/schedule/publish/<post_id>",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_schedule.py",
+      "line": 76,
+      "handler": "do_schedule_publish",
+      "actions": [
+        "_schedule_panel",
+        "get",
+        "publish_now"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": true,
+      "ledger_read": true,
+      "fs_write": false,
+      "network": true,
+      "subprocess": false,
+      "audit": true,
+      "env_write": false,
+      "confirm_gate": true,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/schedule/reconcile",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_schedule.py",
+      "line": 84,
+      "handler": "do_schedule_reconcile",
+      "actions": [
+        "_account_arg",
+        "_schedule_panel",
+        "get",
+        "inflight_watch",
+        "load",
+        "reconcile_inflight"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": false,
+      "ledger_read": true,
+      "fs_write": false,
+      "network": true,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/schedule/accept-suggested/<handle>",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_schedule.py",
+      "line": 94,
+      "handler": "do_schedule_accept_suggested",
+      "actions": [
+        "_schedule_panel",
+        "accept_suggested_account",
+        "resolve_account_handle"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": true,
+      "ledger_read": true,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/schedule/randomize/<handle>",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_schedule.py",
+      "line": 98,
+      "handler": "do_schedule_randomize",
+      "actions": [
+        "_schedule_panel",
+        "get",
+        "randomize_account_schedule",
+        "resolve_account_handle"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": true,
+      "ledger_read": true,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/schedule/publish-due",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_schedule.py",
+      "line": 108,
+      "handler": "do_schedule_publish_due",
+      "actions": [
+        "_account_arg",
+        "_batch_arg",
+        "_schedule_panel",
+        "get",
+        "publish_due_bucket"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": false,
+      "ledger_read": true,
+      "fs_write": false,
+      "network": true,
+      "subprocess": false,
+      "audit": true,
+      "env_write": false,
+      "confirm_gate": true,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/lift",
+      "methods": [
+        "GET"
+      ],
+      "file": "app_routes_schedule.py",
+      "line": 113,
+      "handler": "lift",
+      "actions": [
+        "get"
+      ],
+      "mutating": false,
+      "authorization": "NONE",
+      "csrf": "n/a",
+      "ledger_write": false,
+      "ledger_read": false,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": false,
+      "idempotent": null
+    },
+    {
+      "route": "/posted",
+      "methods": [
+        "GET"
+      ],
+      "file": "app_routes_schedule.py",
+      "line": 163,
+      "handler": "posted",
+      "actions": [
+        "_posted_panel",
+        "get"
+      ],
+      "mutating": false,
+      "authorization": "NONE",
+      "csrf": "n/a",
+      "ledger_write": false,
+      "ledger_read": true,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": false,
+      "idempotent": null
+    },
+    {
+      "route": "/posts/repost/<post_id>",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_schedule.py",
+      "line": 167,
+      "handler": "do_repost_post",
+      "actions": [
+        "_posted_panel",
+        "repost_post"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": true,
+      "ledger_read": true,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/posts/repost-others/<post_id>",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_schedule.py",
+      "line": 172,
+      "handler": "do_repost_others",
+      "actions": [
+        "_posted_panel",
+        "get",
+        "repost_to_other_accounts"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": false,
+      "ledger_read": true,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/posts/resolve/<post_id>",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_schedule.py",
+      "line": 179,
+      "handler": "do_resolve_post",
+      "actions": [
+        "_posted_panel",
+        "get",
+        "resolve_post"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": true,
+      "ledger_read": true,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": true,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/posts/recover",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_schedule.py",
+      "line": 185,
+      "handler": "do_recover_posts",
+      "actions": [
+        "_posted_panel",
+        "get",
+        "recover_posts"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": true,
+      "ledger_read": true,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": true,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/posts/crosspost/<clip_id>",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_schedule.py",
+      "line": 191,
+      "handler": "do_crosspost_to_account",
+      "actions": [
+        "_posted_panel",
+        "crosspost_to_account",
+        "get"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": true,
+      "ledger_read": true,
+      "fs_write": false,
+      "network": false,
+      "subprocess": false,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    },
+    {
+      "route": "/posts/crosspost-all",
+      "methods": [
+        "POST"
+      ],
+      "file": "app_routes_schedule.py",
+      "line": 197,
+      "handler": "do_crosspost_all",
+      "actions": [
+        "_posted_panel",
+        "crosspost_all_to_account",
+        "get"
+      ],
+      "mutating": true,
+      "authorization": "NONE",
+      "csrf": "EXPOSED",
+      "ledger_write": false,
+      "ledger_read": true,
+      "fs_write": false,
+      "network": false,
+      "subprocess": true,
+      "audit": false,
+      "env_write": false,
+      "confirm_gate": false,
+      "validates": true,
+      "idempotent": null
+    }
+  ]
+}

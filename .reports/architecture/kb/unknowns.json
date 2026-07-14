@@ -1,0 +1,155 @@
+{
+ "$schema": "fanops-arch-kb/unknowns/v1",
+ "cycle": 5,
+ "git_head": "fcffa73",
+ "generated": "2026-07-14",
+ "purpose": "Every architectural area that CANNOT be proven from the repository. Recorded so no future cycle mistakes SILENCE for COVERAGE.",
+ "prime_directive": "*** DO NOT SPECULATE. An unknown stays unknown. A plausible answer recorded as fact is worse than an admitted gap, because the next reader cannot tell them apart. ***",
+ "closed_by_cycle_5": [
+  {
+   "id": "UNK-002",
+   "was": "intro_match gate-key resolution has no branch",
+   "closed": "Cycle 2 \u2014 structurally unanswerable (INV-04)"
+  },
+  {
+   "id": "UNK-001",
+   "was": "Persona identity field + minting function",
+   "closed": "Cycle 2 \u2014 Persona has NO state field and NO minted id; identity is the record key in personas.json"
+  },
+  {
+   "id": "UNK-006",
+   "was": "get_poster live-guard unverified",
+   "closed": "Cycle 2 \u2014 the invariant is FALSE (INV-03)"
+  },
+  {
+   "id": "UNK-007",
+   "was": "Settings vs Config precedence unproven",
+   "closed": "Cycle 2 \u2014 there is no precedence; they never meet (INV-05)"
+  },
+  {
+   "id": "UNK-010",
+   "was": "Studio per-route ownership: 149 routes, 0 traced",
+   "closed": "Cycle 2 \u2014 all 149 attributed"
+  },
+  {
+   "id": "UNK-011",
+   "was": "_DAEMON_TRANSIENT_MAX value",
+   "closed": "Cycle 2 \u2014 = 3 (run.py:68)"
+  },
+  {
+   "id": "UNK-DEP",
+   "was": "the module dependency graph was NEVER BUILT by any cycle",
+   "closed": "*** CYCLE 5 \u2014 see kb/dependencies.json. 528 compile edges, 323 lazy, 1 compile-time module cycle (personas x3), an 11-level SCC-CONDENSED DAG, a 45-module STATIC POTENTIAL-DEPENDENCY SCC, and 107 lazy edges to an equal-or-higher level (56 strictly upward). ***"
+  }
+ ],
+ "open_unknowns": [
+  {
+   "id": "UNK-004",
+   "question": "Who CONSUMES 00_control/context.md? Config declares context_path \u2014 is anything reading it?",
+   "evidence_collected": "Config.context_path is declared (config.py). No reader was found by name-based search in any cycle.",
+   "evidence_missing": "An AST census of file READS (open/read_text) keyed on context_path. Cycle 5's AST pass censused WRITES, not reads.",
+   "affected_subsystem": "S02_configuration",
+   "architectural_risk": "LOW. If nothing reads it, it is a reserved surface; if something does, it is an undocumented input.",
+   "confidence": "UNKNOWN",
+   "recommended_investigation": "AST census of Path.read_text / open() call sites resolving to cfg.context_path. Cheap; one pass."
+  },
+  {
+   "id": "UNK-009",
+   "question": "What are the exact hashed INPUTS of variant_amplify._evidence_fingerprint (variant_amplify.py:49)?",
+   "evidence_collected": "The function exists and is named as a fingerprint.",
+   "evidence_missing": "Its body was never read. variant_*.py remains uninspected across all five cycles.",
+   "affected_subsystem": "S14_learning",
+   "architectural_risk": "LOW-MEDIUM. A fingerprint's input set IS its cache-invalidation contract. An under-specified fingerprint silently reuses stale evidence; an over-specified one thrashes. Neither is visible without reading it.",
+   "confidence": "UNKNOWN",
+   "recommended_investigation": "Read variant_amplify.py:40-70. Trivial."
+  },
+  {
+   "id": "UNK-003",
+   "question": "Who calls the TikTok oEmbed verification path?",
+   "evidence_collected": "post/metrics.py contains oEmbed helpers (_oembed_author_key, metrics.py:386).",
+   "evidence_missing": "The call graph into it.",
+   "affected_subsystem": "S13_reconcile_metrics",
+   "architectural_risk": "LOW",
+   "confidence": "UNKNOWN"
+  },
+  {
+   "id": "UNK-005",
+   "question": "What is the cardinality of the frozen VETTED hashtag set, and does it still bound anything now that the persona corpus JOINS the vetted membership?",
+   "evidence_collected": "VETTED is documented as the COLD-START FLOOR, not canonical (project CLAUDE.md).",
+   "evidence_missing": "The set's size and its live intersection with the corpora.",
+   "affected_subsystem": "S10_caption_hashtag",
+   "architectural_risk": "LOW",
+   "confidence": "UNKNOWN"
+  },
+  {
+   "id": "UNK-C5-1",
+   "question": "*** Is the compile-time import cycle {personas <-> persona_store <-> persona_research} INTENTIONAL, or an accident that Python happens to tolerate? ***",
+   "evidence_collected": "It is the ONLY module-level import cycle in the tree (AST, Cycle 5). personas imports persona_store AND persona_research at module level; both import personas back at module level. Python resolves it via partial-module binding.",
+   "evidence_missing": "Any comment, test, or commit message declaring the intent. Unlike several of the 56 STRICTLY-UPWARD LAZY imports \u2014 some of which carry explicit 'break the cycle' comments \u2014 this one is at MODULE level and is UNDEFENDED.",
+   "affected_subsystem": "S04_registry",
+   "architectural_risk": "MEDIUM. A compile-time cycle is LOAD-ORDER SENSITIVE. It works today; a reordering of imports inside personas.py could turn it into an ImportError at process start, and nothing would catch it before deploy.",
+   "confidence": "UNKNOWN (the FACT is CERTAIN; the INTENT is not recoverable)",
+   "recommended_investigation": "git log -S on the three files to find whether the cycle was introduced deliberately. If accidental, it is the cheapest structural fix in the tree."
+  },
+  {
+   "id": "UNK-C5-2",
+   "question": "*** Of the 56 STRICTLY-UPWARD lazy imports (of 107 equal-or-higher-level lazy edges), how many are DELIBERATE cycle-breaks and how many are incidental? ***",
+   "evidence_collected": "COUP-09 (Cycle 2) enumerated NINE and documented them as deliberate. The Cycle-5 AST pass finds 107 lazy edges to an equal-or-higher level, of which 56 are STRICTLY upward. The nine are a SUBSET.",
+   "evidence_missing": "Per-edge intent. Cycle 5 did not read the 56 strictly-upward call sites. Some are certainly deliberate cycle-breaks; some are lazy-loading for startup cost or optionality; some may be incidental. *** THE DISTRIBUTION IS NOT KNOWN AND IS NOT GUESSED. ***",
+   "affected_subsystem": "ALL \u2014 this is a whole-tree property",
+   "architectural_risk": "*** MEDIUM-HIGH. This is the risk that makes every OTHER refactor dangerous. *** Module init order is load-bearing and NOTHING enforces it: no test, no lint rule, no layer declaration. Hoisting any one of the 56 strictly-upward imports to module level \u2014 a change that looks like a cleanup \u2014 could break the process at start.",
+   "confidence": "CERTAIN for the COUNT (56 upward / 51 lateral); UNKNOWN for the INTENT distribution",
+   "recommended_investigation": "Classify the 56 by reading each import site's enclosing function. The list is in kb/dependencies.json -> layering.lazy_edges_to_equal_or_higher_level.strictly_upward.edges, sorted by level jump \u2014 start at the top (compose->clip +5, doctor->pipeline_status +5, init_flow->studio.golive +5)."
+  },
+  {
+   "id": "UNK-C5-3",
+   "question": "Do the 27 modules never inspected by ANY of the five cycles contain a ledger writer, a lock, a network call, or a status client?",
+   "evidence_collected": "*** PARTIALLY ANSWERED, AND THE ANSWER IS NO. *** Cycle 5's AST censuses cover the FULL 127-module tree: the ledger-transaction census (74 sites), the lock census (7 modules), the network census (15 sites) and the subprocess census (32 sites) each enumerate EVERY module. None of the uninspected modules appears in any of them.",
+   "evidence_missing": "Their INTERNAL logic. The censuses prove they hold no lock, write no ledger transaction, and make no network call \u2014 they do NOT prove their business logic is correct.",
+   "uninspected_modules": [
+    "variant_learning",
+    "variant_transfer",
+    "variant_amplify (partially)",
+    "digest",
+    "hookscore",
+    "hookcheck",
+    "persona_directives",
+    "persona_levers",
+    "persona_research",
+    "text",
+    "bands",
+    "frames",
+    "audio_energy",
+    "most studio/views_*"
+   ],
+   "affected_subsystem": "S14_learning, S10_caption_hashtag, S16_studio",
+   "architectural_risk": "LOW for STRUCTURE (proven by census), UNKNOWN for BEHAVIOUR.",
+   "confidence": "PARTIAL \u2014 structural absence is CERTAIN; behavioural correctness is UNKNOWN",
+   "note": "*** This is a genuinely stronger statement than Cycles 1-4 could make, and it is what a whole-tree AST census buys you: 'no claim rests on them' is now 'they provably contain none of the dangerous primitives'. ***"
+  },
+  {
+   "id": "UNK-C5-4",
+   "question": "*** Is the MUTUAL-IMPORT WIRING that produces the 7-subsystem cycle an INTENTIONAL design choice, or is it incidental? *** (NOTE: this is NOT the same question as 'is the domain feedback loop intentional?' \u2014 that one is ANSWERED: YES, CERTAIN, it is the product.)",
+   "evidence_collected": "The 7-subsystem cycle is REAL at subsystem level and boundary-corrected; every closing edge traces to a real module edge. BUT: at MODULE level the domain core is ACYCLIC (124 of 127 modules are singleton SCCs). So the subsystem cycle is REAL COUPLING produced by AGGREGATION \u2014 it is NOT an import cycle.",
+   "evidence_missing": "Any comment, ADR, or test declaring that the loop SHOULD be closed by direct cross-module import (adjust -> moments) rather than by the ORCHESTRATOR (pipeline calling both) or via a SHARED ABSTRACTION.",
+   "affected_subsystem": "S04, S07, S08, S09, S10, S13, S14",
+   "architectural_risk": "MEDIUM. Not because the coupling is wrong, but because it is UNDOCUMENTED and its ALTERNATIVE (dependency inversion / orchestrator-closed loop) was never evaluated on the record. A future engineer will either (a) reason about selection independently of learning and be wrong, or (b) preserve the wiring believing it is load-bearing when it is merely one option.",
+   "confidence": "UNKNOWN (the COUPLING is CERTAIN; the INTENT of the wiring is not recoverable from code)",
+   "the_non_sequitur_to_avoid": "*** A feedback loop in DATA/CONTROL FLOW does NOT require a cycle in the STATIC IMPORT GRAPH. 'The loop is the product, therefore this wiring is correct' DOES NOT FOLLOW. The v1 KB made exactly that inference and it is RETRACTED (C5-COR-09). ***"
+  }
+ ],
+ "product_decisions_that_are_NOT_architectural_unknowns": {
+  "note": "*** These are UNDECIDED, not UNKNOWN. The code cannot answer them and the brief forbids inferring product intent. They block work; they do not block the architectural model. ***",
+  "PD-1": "Does the operator need an explicit 'republish (mint a new submission)' action? \u2014 blocks SLICE-03's COMPLETENESS, not its SAFETY.",
+  "PD-2": "What is the correct terminal for a real-token post the backend never resolves? \u2014 the SHAPE is decided; the semantics need the call.",
+  "PD-3": "*** Is irreversible retirement at n=3 intentional policy or oversight? \u2014 BLOCKS SLICE-10 ENTIRELY. NO recommendation is offered; the guards that exist are evidence FOR intent. ***",
+  "PD-4": "On a malformed backend at load: normalize-and-skip, or raise? \u2014 nearly not a decision; it moves set_backend's existing rule to the door that lacks it."
+ },
+ "what_cycle_5_did_NOT_establish": [
+  "*** The BEHAVIOUR of the 27 never-read modules. *** Their STRUCTURE is proven safe by whole-tree census (no ledger writer, no lock, no network call, no status client). Their LOGIC is unread.",
+  "*** Whether the 56 strictly-upward lazy imports are individually intentional. *** The COUNT is certain (107 to an equal-or-higher level; 56 strictly upward, 51 lateral). The INTENT DISTRIBUTION is NOT (UNK-C5-2).",
+  "*** Runtime call-graph reachability. *** Cycle 5 built the IMPORT graph, which is a superset of the CALL graph. A module importing another does not prove it CALLS it. Where reachability mattered (Render, intro_match) prior cycles proved it by AST writer census + live-ledger read; Cycle 5 did not re-derive a full call graph.",
+  "*** Any claim about test coverage. *** Cycle 4 proved a green test can ENCODE a defect (AR-03). Cycle 5 did not audit the 355 test modules, and NO claim here rests on a test passing.",
+  "*** Multi-process behaviour. *** Every concurrency claim was verified with THREADS in one process, except where a prior cycle executed a two-process case. SQLite locking is per-inode and CROSS-PROCESS; the mechanism carries, but a real two-process test remains outstanding for RC-4."
+ ]
+}

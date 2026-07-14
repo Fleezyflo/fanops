@@ -1,0 +1,324 @@
+{
+  "$schema": "fanops-architecture-root-causes/v1",
+  "cycle": 4,
+  "git_head": "fcffa73",
+  "generated": "2026-07-14",
+  "prose_twin": "ROOT_CAUSE_GRAPH.md",
+  "method": "Every Cycle-1/2/3 finding independently reverified against live source at fcffa73. Four controlled experiments executed against temp roots (no network, no live-ledger mutation). AST censuses re-run for every 'no writer' / 'zero caller' / 'never' claim. Where a prior cycle's classification did not survive, it is SUPERSEDED here, not preserved for continuity.",
+  "authorization_note": "Cycle 4 designed remediation only. No production source or test was modified. The live ledger was read READ-ONLY (sqlite mode=ro) to settle Render reachability.",
+
+  "operational_constraint": {
+    "id": "OPS-001",
+    "status": "STILL ENGAGED",
+    "detail": "The orchestration gate refused even a READ of .orchestration/state/ACTIVE ('REFUSED (orchestration gate): this command would modify a PROTECTED path'). Cycle 4 was executed SINGLE-THREADED, as were Cycles 1-3. Four consecutive cycles. Disengage is an operator action (orchestrate.py stop); it is the single largest throughput constraint on this audit and is NOT a code defect."
+  },
+
+  "evidence_classes": {
+    "FACT": "read directly from source at fcffa73, cited file:line",
+    "EXPERIMENT": "executed this cycle against a temp root; the transcript is reproducible",
+    "INFERENCE": "derived from FACTs; no execution",
+    "PRODUCT_DECISION": "cannot be recovered from code; requires the operator"
+  },
+
+  "root_causes": [
+    {
+      "id": "RC-1",
+      "title": "A decision that FORBIDS an action is evaluated AFTER the state change that AUTHORIZES it",
+      "class": "currently_reachable_defect",
+      "severity": "HIGH",
+      "confidence": "CERTAIN",
+      "evidence_class": "EXPERIMENT",
+      "site": ["post/run.py:264-272", "post/run.py:287-288", "post/run.py:270-271"],
+      "mechanism": "_publish_one's CLAIM (run.py:264-272) flips queued->submitting and COMMITS. The NETWORK phase THEN decides not to POST (run.py:287, is_real_submission_id -> log skip_resubmit_existing_id). Nothing un-claims. FINALIZE (run.py:355-357) persists `submitting`, and _publish_one returns the SUCCESS-SHAPED string 'submitting' having done nothing at all.",
+      "the_contradiction": "run.py:270-271 (inside the CLAIM) logs `republish_with_real_id` and PROCEEDS -- its comment says 'repost-freely OK, log it'. run.py:287 (17 lines later) refuses to POST -- its comment says 'MOL-115 idempotency: never double-POST'. TWO GUARDS ON THE SAME PREDICATE, IN ADJACENT PHASES, WITH OPPOSITE INTENTS. The claim is authorized by the first and invalidated by the second.",
+      "root_statement": "The skip-resubmit guard lives one phase too late. A guard that means 'do not publish this post' MUST be evaluated in the CLAIM, where refusing is a clean no-op, not in the NETWORK phase, where the claim has already committed.",
+      "downstream": ["C3-F1", "C3-F1a"],
+      "experiment": "EXP-C4-1"
+    },
+    {
+      "id": "RC-2",
+      "title": "reconcile's terminal machinery is conditioned on the CURRENT POLL SUCCEEDING and on the TOKEN BEING FAKE -- neither of which is a property of 'is this post stuck?'",
+      "class": "currently_reachable_defect",
+      "severity": "HIGH",
+      "confidence": "CERTAIN",
+      "evidence_class": "EXPERIMENT",
+      "site": ["reconcile.py:627-635", "reconcile.py:739", "reconcile.py:746", "reconcile.py:757", "reconcile.py:767"],
+      "mechanism": "The XC-1 escalation (:746) and the XC-2 give-up (:757) sit in the `else:` branch at :739, reachable ONLY after a SUCCESSFUL poll. A raising poll is caught at :627 and `continue`s at :635, never reaching them. BOTH terminals additionally gate on `_is_fake_token(post)` (:77), which is False for any real backend id. And :767 (`if post.error_reason: continue`) permanently suppresses any post that already carries ANY reason.",
+      "three_independent_exclusions": [
+        "poll RAISES  -> :635 continue -> ladder unreachable  (every Zernio 404; any 5xx; any timeout)",
+        "token is REAL -> :746/:757 both False -> no terminal (either backend)",
+        "error_reason set -> :767 continue -> silent forever  (and a stale reason from a PRIOR state latches it immediately)"
+      ],
+      "root_statement": "The predicate for 'give up on this post' must be a pure function of (state, age). It is currently a function of (state, age, THIS PASS's poll outcome, token provenance, whether any string was ever written to error_reason).",
+      "the_load_bearing_assumption": "reconcile.py:76 -- 'A post carrying a real id is left to its normal poll (its status WILL resolve), never escalated.' That is an ASSUMPTION stated as a guarantee. It is false whenever the platform deleted the post, the integration was removed, or the backend reports a non-terminal state forever (Postiz's own QUEUE state maps to 'scheduled').",
+      "downstream": ["C3-F1", "C3-F2", "C3-OBS-7"],
+      "experiment": "EXP-C4-1",
+      "supersedes_cycle3_on": "Cycle 3 attributed C3-F2 to 'a sibling-parity divergence between the two status clients'. VERIFIED FALSE THIS CYCLE: BOTH clients raise on >=300 (metrics.py:164-165 and :516-517 are byte-identical in shape). The divergence is the REMOTE ENDPOINT SHAPE -- Postiz's unknown id is a row absent from a 200-OK LIST page (-> {'status':'unknown'}), Zernio's is a 404 on a PER-POST GET (-> raise). FanOps code is symmetric; the APIs are not. The defect is that the ladder was placed on a branch whose reachability depends on a remote API's response shape."
+    },
+    {
+      "id": "RC-3",
+      "title": "A backend identifier is normalized at exactly ONE write boundary and consumed RAW by five resolvers with four different unknown-value behaviours",
+      "class": "currently_reachable_defect",
+      "severity": "HIGH",
+      "confidence": "CERTAIN",
+      "evidence_class": "FACT",
+      "site": ["accounts.py:412", "accounts.py:241-250", "accounts.py:91", "post/__init__.py:19", "post/__init__.py:28-29", "post/providers.py:56"],
+      "mechanism": "accounts.set_backend (accounts.py:412) is the ONLY normalizer: `.strip().lower()` + membership in _VALID_BACKENDS. It guards the Studio/CLI write path ONLY. Account.backends is dict[str,str], UNVALIDATED at load (accounts.py:91). Accounts.validate() checks the integration/backend PAIRING (accounts.py:241-250) but NEVER the backend VALUE. So a hand-edited accounts.json -- the documented operator channel (accounts.py:112-113) -- carries a raw string straight to five consumers.",
+      "the_five_resolvers_and_their_four_behaviours": [
+        {"site": "post/__init__.py:13 get_poster", "unknown_value": "SILENTLY returns DryRunPoster ON A LIVE SYSTEM (:28-29)", "why": "the live-guard at :19 is case-INSENSITIVE on the literal 'dryrun'; PROVIDERS.get() at providers.py:56 is case-SENSITIVE. They disagree."},
+        {"site": "post/__init__.py:31 get_media_uploader", "unknown_value": "SILENTLY returns the dryrun file:// uploader (:40-41)", "why": "documented as 'a defensive default'"},
+        {"site": "post/run.py:158 _post_provider", "unknown_value": "passes the raw string through verbatim", "why": "GATE-1 only checks cfg.is_live"},
+        {"site": "post/compress.py:69 publish_backend_for_post", "unknown_value": "passes through; never checks is_live (COUP-16)", "why": "a SECOND provider resolver"},
+        {"site": "config.py:241 Config.poster_backend", "unknown_value": "WARNS and falls back to dryrun", "why": "read-time validation against its own copy of _VALID_BACKENDS (COUP-05)"},
+        {"site": "settings.py:388 Settings.strict_validate", "unknown_value": "RAISES", "why": "doctor-only; never runs at runtime (INV-05)"}
+      ],
+      "root_statement": "There is no canonical normalize-and-validate function for a backend string applied at the READ boundary. Normalization exists (set_backend) but is enforceable only on one of the two doors into accounts.json.",
+      "the_load_bearing_assumption": "providers.py:53-55 -- 'no live account routes to an unknown backend (all route postiz/zernio), so this path is a defensive default.' Same shape as reconcile.py:76: an assumption stated as a fact, and it IS the defect.",
+      "worst_variant": "'postiz ' (trailing space) is visually IDENTICAL to 'postiz' in any UI, JSON dump, or diff, and resolves to a DryRunPoster on a live system.",
+      "downstream": ["F-A", "INV-03", "COUP-05", "COUP-16"]
+    },
+    {
+      "id": "RC-3b",
+      "title": "Reconcile is GATED on is_live_backend while publish is NOT -- the only reader of `submitting` can be switched off while the writer keeps producing it",
+      "class": "currently_reachable_defect",
+      "severity": "HIGH",
+      "confidence": "CERTAIN",
+      "evidence_class": "FACT",
+      "site": ["pipeline.py:318", "pipeline.py:327-338"],
+      "mechanism": "_reconcile_safe (pipeline.py:311) runs only `if cfg.is_live_backend:` (:318). _publish_safe (:327) has NO such gate. When every channel's backend is malformed (RC-3), live_ready_channels() == [] -> is_live_backend == False -> reconcile NEVER RUNS while publish still CLAIMS posts into `submitting`. The post is stranded permanently AND unlabeled.",
+      "root_statement": "A producer and the sole consumer of its output state are gated on different predicates. Either both are gated or neither is.",
+      "independence": "This is NOT caused by RC-3. RC-3 is one way to make is_live_backend False; a credential-less or provider-less deployment is another. RC-3b is an independent gating asymmetry that AMPLIFIES RC-3. Fixing RC-3 shrinks RC-3b's reachability but does not close it.",
+      "downstream": ["F-A (the 'all channels malformed' variant)"]
+    },
+    {
+      "id": "RC-4",
+      "title": "os.replace of a SQLite file is fundamentally incompatible with SQLite's inode-based locking -- and restore_snapshot takes a lock that participates in NO domain",
+      "class": "currently_reachable_defect",
+      "severity": "CRITICAL",
+      "confidence": "CERTAIN",
+      "evidence_class": "EXPERIMENT",
+      "site": ["ledger.py:546-553", "ledger.py:551", "ledger_sqlite.py:128-154", "ledger_sqlite.py:151", "ledger.py:484", "ledger.py:518-525"],
+      "mechanism": "Ledger.transaction (ledger.py:484) serializes on store.lock() = SQLite BEGIN IMMEDIATE. Ledger.restore_snapshot (ledger.py:551) serializes on _file_lock(cfg.lock_path) = fcntl.flock on 00_control/ledger.lock. The two primitives are MUTUALLY INVISIBLE. restore then os.replace()s the database file (ledger_sqlite.py:151), orphaning the inode a live writer holds open. The writer's commit() SUCCEEDS with no exception and its data is silently discarded.",
+      "the_sibling_that_gets_it_right": "*** Ledger.snapshot (ledger.py:540) uses `with store.lock():` -- THE CORRECT LOCK. Ledger.restore_snapshot, SIX LINES LATER, uses `with _file_lock(cfg.lock_path):` -- the wrong one. Two adjacent methods; one is right. ***",
+      "why_taking_the_right_lock_is_NOT_sufficient": "SQLite's write lock is held on the INODE, via an open fd. A concurrent writer that opened the db BEFORE the replace still holds that inode. NO lock acquired before an os.replace can protect it. Therefore the fix is not 'take the right lock' -- it is 'do not replace the file'.",
+      "root_statement": "The restore must write the snapshot's CONTENTS in place, inside the same BEGIN IMMEDIATE transaction every other writer uses, keeping the inode. The machinery already exists: SqliteLedgerStore.write_raw (ledger_sqlite.py:59) performs exactly this full-document replace and, when self._conn is already set, reuses the caller's locked connection.",
+      "downstream": ["F-B", "INV-07", "DEAD-005", "C4-F2a"],
+      "experiment": "EXP-C4-2, EXP-C4-3"
+    },
+    {
+      "id": "RC-5",
+      "title": "The VERIFICATION LAYER encodes the defect: a green CI test asserts the data-loss outcome and calls it correct",
+      "class": "currently_reachable_defect",
+      "severity": "CRITICAL",
+      "confidence": "CERTAIN",
+      "evidence_class": "EXPERIMENT",
+      "site": ["tests/test_ledger_sqlite_store.py:161-186", "tests/test_ledger_sqlite_store.py:183", "tests/test_ledger_sqlite_store.py:186"],
+      "mechanism": "`test_restore_snapshot_serializes_with_transaction` stages EXACTLY the F-B race. Its comment at :183 -- 'restorer blocked on flock held by writer' -- is FALSE: Ledger.transaction never takes that flock (it takes store.lock()). EXECUTED THIS CYCLE: the restorer was NOT blocked; it completed in 0.001s. The writer's commit() SUCCEEDED. Its row was DESTROYED. And the test's assertion -- `assert store.read_raw() == doc  # restore wins; no orphan srcX` (:186) -- PASSES *** BECAUSE OF *** that destruction.",
+      "root_statement": "The test does not merely fail to catch the bug. It asserts the bug's outcome as the expected behaviour, and it is named for a property that does not hold. It is a REGRESSION LOCK ON THE DEFECT. Any correct fix to RC-4 MUST break this test -- and a maintainer seeing it go red will read the FIX as the regression.",
+      "generalization": "Cycle 2's method note recorded the codebase's recurring shape: 'the doc names a mechanism that does not exist, while the property survives via a different one.' RC-5 is that shape in the TEST layer: the test NAMES a mechanism that does not exist, while its ASSERTION passes via the defect. Every other 'characterization test' proposed by this audit must be checked for the same inversion before it is trusted.",
+      "downstream": ["RC-4's remediation is BLOCKED on this test being rewritten in the same PR"],
+      "experiment": "EXP-C4-2"
+    },
+    {
+      "id": "RC-6",
+      "title": "`alive` conflates 'the process is running' with 'the work is succeeding'",
+      "class": "observability_gap",
+      "severity": "MEDIUM",
+      "confidence": "CERTAIN",
+      "evidence_class": "FACT",
+      "site": ["daemon.py:462-476", "daemon.py:467", "cli.py:1306", "cli.py:947-949", "cli.py:1311-1312"],
+      "mechanism": "daemon.status (:467) returns verdict 'alive' whenever daemon_progress reports alive_mid -- 'the newest run.log line of ANY kind is younger than the ceiling'. A pass that HALTS on a rotated key still writes run.log lines (every stage logs before the halt), so alive_mid is True. Meanwhile _heartbeat (cli.py:1306) fires only `if s is not None`, so a halted pass writes NO heartbeat. heartbeat_age_s IS in the returned dict but 'no longer governs the verdict on its own'.",
+      "root_statement": "Six distinct liveness facts are collapsed into one word: (1) process alive, (2) loop ticking, (3) pass started, (4) pass SUCCEEDED, (5) ledger state ADVANCED, (6) publishing healthy. `status` reports (1)+(2) and calls it (4).",
+      "the_design_is_not_wrong_the_vocabulary_is": "The alive_mid override is CORRECT for its stated purpose ('that heartbeat only lands after a whole pass finishes, so it must NEVER flip a fast-logging pass to stale'). The gap is that the CONSEQUENCE was never recorded and no second word was minted for (4).",
+      "downstream": ["C3-F8", "C3-F9", "C3-OBS-1"],
+      "does_not_contradict": "project memory `liveness-verdict-single-owner` -- daemon_progress remains THE mid-pass liveness owner. This adds a SECOND, orthogonal signal (last SUCCESSFUL pass), it does not move the first."
+    },
+    {
+      "id": "RC-7",
+      "title": "The one IRREVERSIBLE learning actuator has the WEAKEST gate; the reversible ones have the strongest",
+      "class": "operational_hazard",
+      "severity": "MEDIUM",
+      "confidence": "CERTAIN",
+      "evidence_class": "FACT",
+      "site": ["cli.py:155", "adjust.py:82-96", "adjust.py:47-52", "ledger.py:636-642", "validation_gate.py:52"],
+      "mechanism": "_learn_pass (cli.py:151-155) calls retire(led, r['losers']) inside its transaction, gated ONLY on cfg.is_live_backend. adjust.retire (adjust.py:95) writes MomentState.retired, and reconcile_moments REFUSES to un-retire (ledger.py:636-642) -- structurally irreversible. It fires as soon as round(n * 0.2) >= 1, i.e. n = 3 analyzed posts (adjust.py:47). The REVERSIBLE bias actuators (p4_dim_bias, variant_amplify, timing_bias) all wait for learning_validated AND p4_unlocked (>= 8 attributed posts across >= 2 values, validation_gate.py:52).",
+      "root_statement": "Gate strength is inversely correlated with blast radius. Whether this is a defect or an intentional policy CANNOT be recovered from the code.",
+      "why_it_is_a_hazard_not_a_reachable_defect": "The guards that DO exist are real: a loser must be in the bottom 20% AND below lift_floor=20.0 AND not a winner AND NOT lift_degraded (adjust.py:50-52).",
+      "product_decision_required": "PD-3",
+      "downstream": ["C3-F10"]
+    },
+    {
+      "id": "RC-8",
+      "title": "A free-text field carries four machine semantics -- and the fourth is a PERMANENT SUPPRESSION LATCH",
+      "class": "currently_reachable_defect",
+      "severity": "MEDIUM",
+      "confidence": "CERTAIN",
+      "evidence_class": "EXPERIMENT",
+      "site": ["reconcile.py:767", "post/run.py:336", "reconcile.py:85", "reconcile.py:99", "studio/actions.py:944-951"],
+      "mechanism": "Post.error_reason is written by ~14 sites and PARSED by three (retry counter `transient_daemon_retry=n/3`; the `GAVE UP:` terminal prefix; the `unverified:` quarantine sentinel). Cycle 3 found the FOURTH: reconcile.py:767 (`if post.error_reason: continue`) makes ANY non-empty value a permanent do-not-look-again latch.",
+      "the_new_finding": "*** bulk_send_to_review (actions.py:944-951) clears scheduled_time, public_url, metrics and published_at -- but NOT error_reason. *** So a reverted post carries a STALE reason from its previous life. EXP-C4-1 (executed): a post reverted from `failed` and re-approved reaches `submitting` still carrying 'reconciled: poster reports failed (IG rejected...)'. That stale string trips the :767 latch on the VERY FIRST reconcile pass -- so the post never even earns the `stuck ...` breadcrumb Cycle 3 assumed it would get. It is silent from pass one, and its reason actively LIES about its state.",
+      "root_statement": "The breadcrumb that tells the operator a post is stuck IS the same mechanism that stops the system from ever looking at it again. A status field and a suppression flag cannot be the same string.",
+      "downstream": ["C3-F1's silence", "C3-OBS-2", "C4-F1a (new)"],
+      "experiment": "EXP-C4-1"
+    },
+    {
+      "id": "RC-9",
+      "title": "Validators run at CONSTRUCTION only; every mutation API bypasses them",
+      "class": "latent_hazard",
+      "severity": "LOW-today / CRITICAL-if-reached",
+      "confidence": "CERTAIN",
+      "evidence_class": "FACT",
+      "site": ["models.py:356-376", "models.py:211", "ledger.py:444-465"],
+      "mechanism": "model_copy(update=...) bypasses EVERY validator on EVERY model (proven by Cycle-2 execution against pydantic 2.13.4). Direct setattr bypasses all EXCEPT on Moment (the only model with validate_assignment=True). The R1 published-URL invariant survives via FOUR independent MANUAL call-site guards, not via the type.",
+      "root_statement": "The failure mode is not a rejected write -- it is a LOAD-TIME POISON PILL. A fifth door added without a manual guard SAVES CLEANLY and then bricks the next Ledger.load with a ControlFileError, taking down the daemon and every Studio page at once.",
+      "not_currently_reachable": "No code path produces the row. Verified again this cycle by the AST writer census.",
+      "why_it_is_LAST_in_the_sequence": "It is the only root cause with ZERO current reachability. Fixing it first would spend the audit's credibility on a bug nobody can hit, while RC-4 silently deletes media.",
+      "downstream": ["INV-01", "INV-01b", "SC-3"]
+    },
+    {
+      "id": "RC-10",
+      "title": "A mkdtemp with no owner",
+      "class": "operational_hazard",
+      "severity": "LOW",
+      "confidence": "CERTAIN",
+      "evidence_class": "EXPERIMENT",
+      "site": ["post/compress.py:21"],
+      "mechanism": "compress.maybe_shrink_for_cap does tempfile.mkdtemp(prefix='fanops-shrink-', dir=cfg.base/'04_agent_io') and NOTHING in the tree removes it. AST census this cycle: it is the ONLY mkdtemp in src/fanops; the only rmtree calls are transcribe.py:309,311 (demucs/keyframes).",
+      "root_statement": "One directory is created per oversize (>4 MiB) TikTok/Zernio upload, forever. No log, no metric, no doctor check, no wipe path.",
+      "PROVEN_INDEPENDENT": "See CYCLE4_CORRECTIONS C4-COR-03: Cycle 3's claim that 'the fix for the leak would BREAK the pointer' is REFUTED BY EXECUTION. It ships alone.",
+      "downstream": ["C3-F4"],
+      "experiment": "EXP-C4-4"
+    }
+  ],
+
+  "cluster_verdicts": {
+    "note": "The Cycle-4 brief hypothesised six clusters (A-F) and asked whether each is one defect or several. Answers below are evidence-backed, and two of the six hypotheses are REJECTED.",
+    "A_provider_normalization": {
+      "hypothesis": "one defect or several?",
+      "verdict": "TWO INDEPENDENT ROOTS, not one.",
+      "roots": ["RC-3 (no canonical normalize-and-validate at the READ boundary)", "RC-3b (reconcile gated on is_live_backend, publish not)"],
+      "why_not_one": "RC-3b is reachable WITHOUT any malformed provider -- a credential-less or provider-less deployment yields live_ready_channels()==[] just as well. Fixing RC-3 shrinks RC-3b's reachability but does not close it. They must be separate slices."
+    },
+    "B_submission_lifecycle_ownership": {
+      "hypothesis": "which component should own the lifecycle of a remote submission?",
+      "verdict": "ONE ROOT, TWO HALVES: RC-1 (creation) and RC-2 (permanence).",
+      "the_authoritative_owner": "*** reconcile MUST own every post in {submitting, submitted, needs_reconcile}, and its terminal decision must be a pure function of (state, age). publish MUST NOT leave a post in a state it does not own. *** Today publish CREATES `submitting` posts it will never re-drive (RC-1) and reconcile REFUSES to terminate them (RC-2). Neither owns them.",
+      "collapsed_findings": ["C3-F1", "C3-F2", "C3-NF2's 'but'", "C3-OBS-7", "the 'missing recovery path' of CRASH_RECOVERY.md 6"]
+    },
+    "C_mutation_bypasses": {
+      "hypothesis": "missing mutation API / weak model config / distributed ownership / absent transition validation?",
+      "verdict": "WEAK MODEL CONFIGURATION (RC-9). NOT distributed ownership.",
+      "why": "The 'seven writers to queued' is NOT a defect -- every non-approve_post writer is guarded on a SOURCE state of failed/error/submitting, so none can leave awaiting_approval. The safety property HOLDS; only the DOC's claimed mechanism (single-writer) is false. The genuine hazard is model_copy skipping validators (RC-9), which is LATENT.",
+      "REJECTS": "the brief's implied framing that the queued-writer count is itself the problem. It is doc drift (INV-02), already correctly classified in Cycle 1."
+    },
+    "D_filesystem_and_ledger_durability": {
+      "hypothesis": "which need one unified storage contract and which remain local defects?",
+      "verdict": "*** NONE OF THEM NEED A UNIFIED CONTRACT. *** This cluster does not exist. It is FOUR unrelated bugs that are merely all 'about files'.",
+      "REJECTED_HYPOTHESIS": true,
+      "the_four": [
+        "RC-4 (snapshot/restore inode race) -- CRITICAL, own files, ships alone",
+        "RC-10 (mkdtemp leak) -- LOW, own file, ships alone. PROVEN independent by EXP-C4-4.",
+        "C3-F6 (torn attempts.json, agentstep.py:147) -- LOW, a sibling-parity gap: its two neighbours in the SAME FILE (write_request :63-66, write_response :82-87) ARE atomic",
+        "C3-F7 (torn note_stage, pipeline_run.py:64-69) -- LOW, and STRUCTURALLY MITIGATED: the flock is the authority and is kernel-released on death, so only an advisory breadcrumb is lost"
+      ],
+      "the_claimed_coupling_that_is_FALSE": "Cycle 3 asserted (C3-F5) that 'the fix for the leak would BREAK the pointer', implying cleanup and path-relocation must ship atomically. REFUTED BY EXECUTION (EXP-C4-4). See C4-COR-02 and C4-COR-03."
+    },
+    "E_liveness_and_observability": {
+      "verdict": "ONE ROOT: RC-6.",
+      "the_six_facts_that_must_be_distinguished": ["process alive", "loop ticking", "pass started", "pass SUCCEEDED", "ledger state ADVANCED", "publishing healthy"],
+      "today": "daemon.status reports facts 1+2 and names the result 'alive', which the operator reads as fact 4."
+    },
+    "F_destructive_automation_asymmetry": {
+      "verdict": "ONE ROOT: RC-7. BLOCKED ON A PRODUCT DECISION (PD-3).",
+      "cannot_be_inferred": "Whether retiring a moment lineage on 3 analyzed posts is an intentionally aggressive policy or an oversight is not recoverable from the code. The brief forbids inferring product intent. It is filed, not fixed."
+    }
+  },
+
+  "superseded_findings": [
+    {
+      "id": "C3-F5",
+      "was": "operational_hazard / MEDIUM / CERTAIN -- 'Render.path is durably rewritten INTO a mkdtemp directory'",
+      "now": "UNREACHABLE (latent mechanism hazard). Reclassified.",
+      "why": "AST census: Ledger.add_render has ZERO callers; Render(...) is constructed ONLY in the two deserializers (ledger.py:458, ledger_bridge.py:44). crosspost.py:225 hardcodes `render_id = None` on every minted Post. LIVE LEDGER (read-only): 0 renders, 0 of 347 posts carry a render_id. Therefore led.renders is always empty, every `led.renders.get(...)` returns None, and all three Render.path writes (compress.py:112, compress.py:131, run.py:367) are behind `if r is not None:` / `if post.render_id:` guards that are ALWAYS FALSE.",
+      "cycle3_error": "EXP-10 hand-constructed a Render row in its fixture. That proves the MECHANISM, not the REACHABILITY. Cycle 3 conflated 'the code does X when given a Render' with 'the system produces a Render'.",
+      "replaced_by": "C4-F5"
+    },
+    {
+      "id": "C3-F2's root cause",
+      "was": "'A SIBLING-PARITY DIVERGENCE between the two status clients'",
+      "now": "The clients are SYMMETRIC (both raise on >=300). The divergence is the REMOTE ENDPOINT SHAPE.",
+      "why": "AST/source check: metrics.py:164-165 (Postiz) and :516-517 (Zernio) are the same shape. Postiz's unknown id is a row ABSENT from a 200-OK LIST page -> {'status':'unknown'}. Zernio's is a 404 on a PER-POST GET -> RuntimeError. The finding (the ladder is dead on Zernio) STANDS; its attributed cause was wrong, and the wrong cause implies the wrong (shallow) fix."
+    },
+    {
+      "id": "C3-F1's door",
+      "was": "'bulk_send_to_review DELIBERATELY preserves submission_id' -- implied via a needs_reconcile revert",
+      "now": "needs_reconcile is BLOCKED from revert. The real door is `failed`.",
+      "why": "_REVIEW_REVERT_BLOCKED (actions.py:844-847) = {published, analyzed, needs_reconcile, submitting, submitted}. The reachable chain is: reconcile polls -> the BACKEND REPORTS FAILED -> PostState.failed WITH a real submission_id preserved (reconcile.py:735) -> bulk_send_to_review -> approve -> the strand. That is an ORDINARY operator workflow (a platform-rejected post, sent back to fix the caption, re-approved), which makes C3-F1 substantially MORE reachable than recorded."
+    }
+  ],
+
+  "new_findings": [
+    {
+      "id": "C4-F1a",
+      "title": "bulk_send_to_review does not clear error_reason -- a reverted post carries a stale reason that latches reconcile's suppression on pass ONE",
+      "class": "currently_reachable_defect",
+      "severity": "MEDIUM",
+      "site": ["studio/actions.py:944-951", "reconcile.py:767"],
+      "evidence": "EXP-C4-1 (executed): a post reverted from `failed` and re-approved reaches `submitting` still carrying 'reconciled: poster reports failed (IG rejected: unsupported aspect ratio)'. reconcile.py:767 (`if post.error_reason: continue`) then skips it on EVERY pass, so it never even receives the `stuck ...` breadcrumb.",
+      "corrects": "Cycle 3's C3-F1, which stated 'one `stuck` breadcrumb, then never updated'. On the REACHABLE path there is ZERO breadcrumb, and the post's displayed reason actively LIES about its state.",
+      "roots": ["RC-8"]
+    },
+    {
+      "id": "C4-F2a",
+      "title": "A restore racing a cascade-delete transaction DELETES REAL MEDIA FILES while restoring the rows that point at them",
+      "class": "currently_reachable_defect",
+      "severity": "CRITICAL",
+      "site": ["ledger.py:484-488", "ledger.py:518-525", "ledger_sqlite.py:151"],
+      "evidence": "EXP-C4-3 (executed). Ledger.transaction runs `led._save_unlocked()` then `led._drain_deferred_unlinks()` (ledger.py:487-488). _drain_deferred_unlinks (:518-525) calls os.remove() on real .mp4 paths. In a restore race the writer's txn COMMITS SUCCESSFULLY into the orphaned inode -- so it is NOT rolled back -- so the unlinks PROCEED. Observed: ledger rows RESTORED from the snapshot, media file GONE from disk.",
+      "why_this_is_the_severity_driver": "The deferred-unlink design is documented as 'correct: a rolled-back txn never deletes a file it did not drop'. That is TRUE against a normal rollback. Against a restore race the txn is not rolled back -- it commits into an orphan -- so the safety property INVERTS. The result is silent, unrecoverable loss of MEDIA (not just ledger rows), reached by following the DOCUMENTED wipe-rollback procedure (ledger_wipe.py:246) while the daemon runs.",
+      "roots": ["RC-4"]
+    },
+    {
+      "id": "C4-F5",
+      "title": "Post.media_urls -- NOT Render.path -- is the durable pointer into the unmanaged mkdtemp dir",
+      "class": "currently_reachable_defect",
+      "severity": "LOW",
+      "site": ["studio/actions.py:1024", "studio/actions.py:1029", "studio/actions.py:1034", "studio/actions.py:1100-1102", "post/compress.py:113"],
+      "evidence": "EXP-C4-4 (executed). retry_oversize_failures calls apply_shrink_to_post INSIDE a Ledger.transaction (actions.py:1024/1029). compress.py:113 sets post.media_urls = ['file://<mkdtemp>/...']. actions.py:1034 then filters only `http` URLs -- KEEPING the file:// one -- and the txn COMMITS.",
+      "supersedes": "C3-F5 (which named Render.path, an unreachable field)",
+      "why_it_is_LOW_not_MEDIUM": "It SELF-HEALS. EXP-C4-4: deleting the temp dir causes media_path_for_post (compress.py:41-66) to fall through its media_urls branch to the CLIP branch (:61-65) and return clip.path; the next apply_shrink_to_post then re-points media_urls at a fresh, existing file. Residual harm: a broken Studio media preview and one re-shrink per publish (disk churn). NOT a correctness break.",
+      "roots": ["RC-10"]
+    }
+  ],
+
+  "product_decisions_required": [
+    {
+      "id": "PD-1",
+      "question": "After the RC-1 fix, a post carrying a REAL submission_id that re-enters `queued` will be REFUSED at the claim and will sit visibly in `queued`, never publishing. Does the operator need an explicit 'republish (mint a new submission)' action to release it?",
+      "why_it_cannot_be_inferred": "The project's hard rule is 'fan accounts repost freely; NEVER build supersede/no-double-post' -- which argues FOR a republish action. But `submission_id` is also the anti-double-post token, and re-publishing a post the platform ALREADY accepted would duplicate live content. The code contains both intents, adjacent: run.py:270 ('repost-freely OK, log it') and run.py:287 ('never double-POST').",
+      "blocks": "C4-SLICE-03's completeness (not its safety -- the claim-refusal is safe either way)",
+      "recommendation": "Ship SLICE-03 (refuse the claim + surface the skipped count) WITHOUT the republish action. That is strictly safer than today and unblocks nothing. Then decide PD-1 separately."
+    },
+    {
+      "id": "PD-2",
+      "question": "What is the correct terminal for a post in submitting/needs_reconcile carrying a REAL submission_id that the backend never resolves? (a) the same age ladder as a fake token: escalate at 24h -> GAVE UP at 72h; (b) auto-fail; (c) park with a loud, AGE-UPDATING signal and never auto-terminate.",
+      "why_it_cannot_be_inferred": "reconcile.py:76 asserts 'its status WILL resolve' -- an assumption, now falsified. Nothing in the code states what SHOULD happen instead.",
+      "blocks": "C4-SLICE-04's exact semantics (not its shape)",
+      "recommendation": "(a). `GAVE UP:` is a LABEL written to error_reason -- it does NOT change state and therefore cannot cause a double-post. It is the safe default and reuses the machinery that already exists. (c) is strictly worse: it re-creates the alert-fatigue that XC-6 was written to remove."
+    },
+    {
+      "id": "PD-3",
+      "question": "Is adjust.retire's irreversible MomentState.retired at n=3 analyzed posts an intentionally aggressive policy, or an oversight? Should it be gated on learning_validated + p4_unlocked like every reversible actuator?",
+      "why_it_cannot_be_inferred": "The brief forbids inferring product intent, and nothing in the code declares one. The guards that exist (bottom-20% AND lift<20.0 AND not-a-winner AND not-lift_degraded) are real and considered -- which is evidence FOR intentionality.",
+      "blocks": "C4-SLICE-10 entirely",
+      "recommendation": "NONE offered. This is the operator's call. SLICE-10 is written but must not be executed until PD-3 is answered."
+    },
+    {
+      "id": "PD-4",
+      "question": "When Accounts.load encounters a malformed backend value, should it (a) normalize case/whitespace and reject only genuinely-unknown names, or (b) reject anything set_backend would have rejected?",
+      "why_it_is_nearly_not_a_decision": "set_backend ALREADY does `.strip().lower()` then rejects unknowns (accounts.py:412-415). Applying the SAME rule at the read boundary is not new policy -- it is moving an existing rule to the door that lacks it.",
+      "residual_call": "Whether a rejected row SKIPS (the account goes dark, surfaced via skipped_rows -- matching the existing MOL-79 per-row leniency) or RAISES (the whole registry fails loud).",
+      "recommendation": "Normalize case/whitespace; SKIP-and-flag an unknown name via the existing skipped_rows channel (accounts.py:141-145, 230-231), which validate() already promotes to a visible problem. This matches the established posture and needs no new surface."
+    }
+  ]
+}

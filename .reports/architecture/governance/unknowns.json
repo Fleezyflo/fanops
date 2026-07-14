@@ -1,0 +1,110 @@
+{
+  "$schema": "fanops-arch/governance/unknowns/v1",
+  "cycle": 7,
+  "purpose": "Every UNKNOWN is TRACKED ARCHITECTURAL DEBT. Recorded so no future cycle mistakes SILENCE for COVERAGE.",
+  "prime_directive": "*** DO NOT SPECULATE. An unknown stays unknown. A plausible answer recorded as fact is worse than an admitted gap, because the next reader cannot tell them apart. ***",
+
+  "approved_ceiling": 8,
+  "ceiling_policy": "CI BLOCKS growth beyond the ceiling (rule ARCH-005). Raising it is a deliberate, reviewed act with a written rationale — it is a statement that the system has become LESS understood, and that should be hard to do quietly.",
+
+  "unknowns": [
+    {
+      "id": "UNK-C5-1",
+      "question": "Is the compile-time import cycle {personas ↔ persona_store ↔ persona_research} INTENTIONAL, or an accident that Python happens to tolerate?",
+      "subsystem": "S04_registry",
+      "evidence": "The ONLY non-trivial SCC in the compile-time graph (AST, re-derived by Cycle 7 at HEAD: 1 non-trivial SCC of exactly these three). Python resolves it via partial-module binding. UNDEFENDED: no comment, no test, no ADR — unlike several of the 56 strictly-upward LAZY imports, some of which carry explicit 'break the cycle' comments.",
+      "owner": "architecture governance",
+      "risk": "MEDIUM — a compile-time cycle is LOAD-ORDER SENSITIVE. It works today; a reordering of imports inside personas.py could turn it into an ImportError at process start, and nothing would catch it before deploy.",
+      "next_investigation": "git log -S on the three files to find whether the cycle was introduced deliberately. If accidental, it is the cheapest structural fix in the tree.",
+      "status": "open",
+      "review_date": "2026-10-01",
+      "pinned_by": "ARCH-004 — the cycle is BASELINED so a SECOND one cannot appear silently. Baselining is containment, not endorsement."
+    },
+    {
+      "id": "UNK-C5-2",
+      "question": "Of the 56 STRICTLY-UPWARD lazy imports, how many are DELIBERATE cycle-breaks and how many are incidental?",
+      "subsystem": "ALL — a whole-tree property",
+      "evidence": "Cycle 7 re-derived the count at HEAD independently: 56 strictly upward + 51 lateral = 107 lazy edges to an equal-or-higher level, reproducing Cycle 5 EXACTLY. COUP-09 (Cycle 2) enumerated NINE as deliberate; the nine are a SUBSET.",
+      "owner": "architecture governance",
+      "risk": "MEDIUM-HIGH — this is the risk that makes every OTHER refactor dangerous. Module init order is load-bearing and, before Cycle 7, NOTHING enforced it.",
+      "next_investigation": "Classify the 56 by reading each import site's enclosing function. Start at the top of derived/dependencies.json → lazy_upward (sorted by jump): compose→clip (+5), doctor→pipeline_status (+5), init_flow→studio.golive (+5).",
+      "status": "open",
+      "review_date": "2026-10-01",
+      "pinned_by": "*** ARCH-007 — all 107 are now PINNED as must-stay-lazy. The INTENT of each is still unknown, but a HOIST is now CI-RED. The unknown is contained even though it is unresolved. ***"
+    },
+    {
+      "id": "UNK-C5-3",
+      "question": "Do the ~27 modules never inspected by any audit cycle contain business-logic defects?",
+      "subsystem": "S14_learning, S10_caption_hashtag, S16_studio",
+      "evidence": "PARTIALLY ANSWERED, and the STRUCTURAL answer is NO: Cycle 7's whole-tree AST census covers all 129 modules and none of the uninspected ones holds a ledger writer, a lock, a network call, or a subprocess. Their BUSINESS LOGIC remains unread.",
+      "owner": "architecture governance",
+      "risk": "LOW for STRUCTURE (proven by census). UNKNOWN for BEHAVIOUR.",
+      "next_investigation": "Read variant_*.py, digest.py, hookscore.py, persona_directives.py, and the studio/views_* modules.",
+      "status": "open",
+      "review_date": "2026-12-01"
+    },
+    {
+      "id": "UNK-C5-4",
+      "question": "Is the MUTUAL-IMPORT WIRING that produces the 7-subsystem cycle an INTENTIONAL design choice, or incidental? (NOT the same question as 'is the domain feedback loop intentional?' — that one is ANSWERED: yes, certainly, it IS the product.)",
+      "subsystem": "S04, S07, S08, S09, S10, S13, S14",
+      "evidence": "At MODULE level the domain core is ACYCLIC (126 of 129 modules are singleton SCCs). The subsystem cycle is REAL COUPLING produced by AGGREGATION — it is NOT an import cycle. No comment, ADR or test declares that the loop SHOULD be closed by direct cross-module import (adjust → moments) rather than by the ORCHESTRATOR or via a shared abstraction.",
+      "owner": "architecture governance",
+      "risk": "MEDIUM — not because the coupling is wrong, but because it is UNDOCUMENTED and its alternative (dependency inversion) was never evaluated on the record.",
+      "next_investigation": "An ADR that either endorses the wiring or schedules its inversion. This is a DESIGN DECISION TO BE MADE, not a given to be preserved.",
+      "status": "open",
+      "review_date": "2026-10-01"
+    },
+    {
+      "id": "UNK-004",
+      "question": "Who CONSUMES 00_control/context.md? Config declares context_path — is anything reading it?",
+      "subsystem": "S02_configuration",
+      "evidence": "Config.context_path is declared. No reader found by name-based search in any cycle. Cycle 7's extractor censuses WRITES and CALLS, not file READS keyed on a config property.",
+      "owner": "S02 configuration",
+      "risk": "LOW — if nothing reads it, it is a reserved surface; if something does, it is an undocumented input.",
+      "next_investigation": "AST census of Path.read_text / open() call sites resolving to cfg.context_path. Cheap; one pass. A natural extension of tools/arch/extract.py.",
+      "status": "open",
+      "review_date": "2026-09-01"
+    },
+    {
+      "id": "UNK-009",
+      "question": "What are the exact hashed INPUTS of variant_amplify._evidence_fingerprint?",
+      "subsystem": "S14_learning",
+      "evidence": "The function exists and is named as a fingerprint. Its body has never been read by any cycle.",
+      "owner": "S14 learning",
+      "risk": "LOW-MEDIUM — a fingerprint's input set IS its cache-invalidation contract. An under-specified fingerprint silently reuses stale evidence; an over-specified one thrashes. Neither is visible without reading it.",
+      "next_investigation": "Read variant_amplify.py:40-70. Trivial.",
+      "status": "open",
+      "review_date": "2026-09-01"
+    },
+    {
+      "id": "UNK-003",
+      "question": "Who calls the TikTok oEmbed verification path (post/metrics.py)?",
+      "subsystem": "S13_reconcile_metrics",
+      "evidence": "post/metrics.py contains oEmbed helpers. The call graph into them was never derived — and G3, the runtime call graph, is not derived by ANY cycle.",
+      "owner": "S13 reconcile/metrics",
+      "risk": "LOW",
+      "next_investigation": "A call-graph pass, which must handle the providers.py lambda-dispatch shape (COUP-10) or it will report six live factories as dead.",
+      "status": "open",
+      "review_date": "2026-12-01"
+    },
+    {
+      "id": "UNK-C7-1",
+      "question": "Does `reframe` belong to S18_health_diag (read-only diagnostics) or S19_maintenance (migration ops)?",
+      "subsystem": "S18_health_diag (provisional)",
+      "evidence": "NEW in Cycle 7. `reframe` is a READ-ONLY corpus classification report (its own docstring: 'READ-ONLY corpus classification for the reframe migration decision'), imported only by cli. Its closest analogue is `audit` (S18, 'read-only live/inflight/failed bucket table'). But it EXISTS to inform a MIGRATION, which is S19's remit. Assigned S18 because it MUTATES NOTHING; recorded as a judgement, not passed off as obvious.",
+      "owner": "architecture governance",
+      "risk": "LOW — a partition-class question. It affects who reviews the module, not what the module does.",
+      "next_investigation": "Decide when the reframe migration itself is designed: if `reframe` grows a mutating verb, it moves to S19 and the assignment becomes wrong.",
+      "status": "open",
+      "review_date": "2026-09-01"
+    }
+  ],
+
+  "closed_by_cycle_7": [
+    {
+      "id": "UNK-DEP-METRICS",
+      "was": "Cycle 5's headline counts (528 edges / 59 CLI verbs / 149 routes) were never DEFINED, so nobody could tell whether a mismatch was drift or a different question.",
+      "closed_by": "Cycle 7 independently reproduced 17 of 18 Cycle-5 censuses EXACTLY, and adjudicated the three divergences: (1) EDGES — Cycle 5 was RIGHT and Cycle 7's first extractor was wrong (`from P import n` depends on P itself); (2) CLI VERBS — 54 unique names vs 59 add_parser SITES; Cycle 5's headline said 59 while its own enumerated list held 54; BOTH are correct measurements of DIFFERENT things; (3) ROUTES — 149 unique PATHS vs 150 (method, path) ENDPOINTS. Every metric now ships with its DEFINITION (derived/dependencies.json → metric_definitions, derived/surfaces.json → metric_definitions)."
+    }
+  ]
+}

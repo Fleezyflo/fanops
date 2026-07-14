@@ -1,0 +1,37 @@
+{
+  "$schema": "fanops-arch/governance/exceptions/v1",
+  "cycle": 7,
+  "purpose": "The canonical exception registry. An exception is a TIME-BOXED, OWNED, JUSTIFIED suspension of a rule.",
+
+  "the_rule_that_makes_this_real": "*** AN EXPIRED EXCEPTION SUPPRESSES NOTHING. *** A suppression with no end date is not an exception — it is a repeal, and repeals go through review, not through a JSON file. `python -m tools.arch registries` reports every expiry.",
+  "undocumented_suppressions_are_forbidden": "There is no `# noqa`-equivalent for an architecture rule. A finding is either fixed, or it is here, with an owner and a removal plan.",
+
+  "required_fields": ["id", "rule", "scope", "justification", "owner", "risk", "mitigation", "expiry", "review_date", "removal_plan"],
+
+  "exceptions": [
+    {
+      "id": "EXC-001",
+      "rule": "ARCH-010",
+      "scope": "fanops.studio.actions_run",
+      "justification": "Two `__import__` call sites in studio/actions_run.py are dynamic imports the extractor cannot resolve to a static edge. They are a real construct, not a bug, and the dependency graph is therefore INCOMPLETE for this module — which is exactly what ARCH-010 exists to say out loud. The rule is INFO severity; this exception records that we have LOOKED at these two and accepted them, so they do not merely sit in a list nobody reads.",
+      "owner": "S16 studio",
+      "risk": "LOW — the module is a Studio action handler, not a load-order-critical path. But the import graph does NOT model these two edges, so any blast-radius claim about actions_run is a LOWER BOUND.",
+      "mitigation": "Recorded in derived/unsupported.json with file:line evidence on every regeneration. It cannot become invisible.",
+      "expiry": "2027-01-01",
+      "review_date": "2026-10-01",
+      "removal_plan": "Replace `__import__` with a normal in-function import (which the extractor DOES model as a lazy edge), or accept permanently with a written rationale in the module."
+    },
+    {
+      "id": "EXC-002",
+      "rule": "ARCH-010",
+      "scope": "fanops.config",
+      "justification": "One `os.getenv(<non-literal>)` in config.py. The env key is computed, so the configuration census cannot name the variable. This is a KNOWN, BOUNDED hole in the env surface: `docs/CONFIG.md` and kb/configuration.json enumerate 73 literal vars, and this site could read a 74th that no index knows about.",
+      "owner": "S02 configuration",
+      "risk": "LOW-MEDIUM — the env surface is a TRUST BOUNDARY (AR-09: the operator is a documented hand-editor). A variable no index names is a variable no reviewer checks.",
+      "mitigation": "Recorded in derived/unsupported.json on every regeneration.",
+      "expiry": "2027-01-01",
+      "review_date": "2026-10-01",
+      "removal_plan": "Read config.py at the reported line. If the computed key is a fixed prefix over a known set, enumerate it in the extractor. If it is genuinely open-ended, that is a finding about the config surface, not about the extractor."
+    }
+  ]
+}

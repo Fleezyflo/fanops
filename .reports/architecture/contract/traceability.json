@@ -1,0 +1,214 @@
+{
+  "$schema": "fanops-impl-contract/traceability/v1",
+  "cycle": 6,
+  "git_head": "fcffa73",
+  "purpose": "*** Complete traceability: Root Cause -> Slice -> Permitted Mutation Surface -> Verification -> Rollback -> Approval -> Completion -> Architectural Regeneration -> CI Enforcement (Cycle 7). NO ORPHANED ROOT CAUSES. NO SLICE WITHOUT ARCHITECTURAL JUSTIFICATION. NO VERIFICATION THAT DOES NOT TRACE TO AN INVARIANT. ***",
+
+  "THE_ORPHAN_CYCLE_4_LEFT": {
+    "finding": "*** Cycle 4 has TEN root causes (RC-1..RC-10) and TEN slices (S01..S10). It LOOKS like a bijection. IT IS NOT. ***",
+    "the_arithmetic": {
+      "RC-4 + RC-5": "-> S01 (TWO root causes COLLAPSE into one slice)",
+      "RC-9": "*** -> NOTHING. ***"
+    },
+    "cycle_4s_own_words": "'It does not fix RC-9 (the mutation/validator boundary). Zero reachability. Filed, sequenced last.'",
+    "was_cycle_4_wrong_to_defer_it": "*** NO. Deferring it was CORRECT. Fixing RC-9 means touching 8 models and ~57 model_copy sites to close a bug with ZERO CURRENT REACHABILITY, while RC-4 silently deletes media. Cycle 4's own words: 'fixing it first would spend the audit's credibility on a bug nobody can hit.' THAT JUDGEMENT STANDS. ***",
+    "but": "*** The Cycle-6 completion standard states: 'There must be no orphaned root causes.' A deferral is not a discharge. And 'we checked, it's unreachable' is a claim with a SHELF LIFE — it was true in Cycle 2, Cycle 3, Cycle 4 and Cycle 5, and NOTHING IN THE REPOSITORY PREVENTS IT FROM BECOMING FALSE IN THE NEXT PR. ***",
+    "the_resolution": "*** S11 — a GUARD slice. It does NOT fix RC-9. It PINS RC-9's unreachability in CI, so a fifth door cannot be added silently. Test-only. Zero blast radius. Self-merges on green. IT IS THE CHEAPEST DISCHARGE OF AN ORPHANED ROOT CAUSE AVAILABLE, and it is the reason the recommended landing order puts it SECOND — before S03/S04/S06, all three of which mutate `Post`. ***"
+  },
+
+  "root_cause_to_completion": [
+    {
+      "root_cause": "RC-1",
+      "statement": "A decision that FORBIDS an action is evaluated AFTER the state change that AUTHORIZES it.",
+      "severity": "HIGH",
+      "slice": "S03",
+      "mutation_surface": "src/fanops/post/run.py — `_publish_one` CLAIM (:256-292); `publish_due` tally",
+      "invariant": "INT-1",
+      "verification": ["test_claim_refuses_real_submission_id (INVARIANT, fails today)", "test_publish_due_tally_surfaces_the_refusal (INVARIANT, fails today)", "test_claim_still_publishes_a_fake_token_post (PRESERVATION)", "test_crash_into_submitting_still_possible (PRESERVATION — F11)"],
+      "rollback": "CODE_REVERSIBLE",
+      "approval": "independent_verifier (touches the publish path)",
+      "completion": "CM-S03",
+      "regeneration": ["transitions.json (P4 guard changes)", "kb/ownership.json (Post state writers -1)"],
+      "cycle_7_enforcement": "file_ownership.json -> src/fanops/post/run.py -> S03 permitted region"
+    },
+    {
+      "root_cause": "RC-2",
+      "statement": "reconcile's terminal ladder is conditioned on POLL SUCCESS and TOKEN PROVENANCE — neither of which is a property of 'is this post stuck?'",
+      "severity": "HIGH",
+      "slices": ["S04 (root)", "S05 (sibling — MUST NOT SHIP ALONE)"],
+      "mutation_surface": "src/fanops/reconcile.py :604-778 (incl. the :767 latch); src/fanops/post/metrics.py :511-531 (404 branch only)",
+      "invariant": "INT-2",
+      "verification": ["test_terminal_ladder_matrix (INVARIANT, 32 cells, fails today — 3 of 4 axes veto the terminal)", "test_giveup_is_a_label_not_a_state_change (PRESERVATION — the double-post safety the slice rests on)", "test_reconcile_never_guesses_a_fate (CONTRACT)", "test_zernio_404_is_unknown_not_an_error (INVARIANT)", "test_zernio_5xx_still_raises (PRESERVATION)", "test_zernio_401_still_halts (PRESERVATION)"],
+      "rollback": "S04: DATA_IRREVERSIBLE (residue = 0 rows today, LS-1). S05: CODE_REVERSIBLE.",
+      "approval": "independent_verifier + PD-2 (shape decided)",
+      "completion": "CM-S04, CM-S05",
+      "regeneration": ["transitions.json (P16/P17 guards)", "workflows.json (W7)", "kb/lifecycles.json (Post terminal ladder)"],
+      "cycle_7_enforcement": "file_ownership.json; and the MUST_SHIP_ATOMICALLY rule on the :767 latch"
+    },
+    {
+      "root_cause": "RC-3",
+      "statement": "A backend id is normalized at ONE write boundary and consumed RAW by five resolvers with four unknown-value behaviours.",
+      "severity": "HIGH",
+      "slice": "S02",
+      "mutation_surface": "src/fanops/accounts.py (normalize_backend, load, validate, set_backend); src/fanops/post/__init__.py (guards); src/fanops/settings.py (_VALID_BACKENDS consolidation)",
+      "invariant": "INT-3",
+      "verification": ["test_backend_normalization_matrix (INVARIANT, fails today)", "test_unknown_backend_is_surfaced_not_silent (INVARIANT)", "test_valid_accounts_json_is_unchanged (PRESERVATION)", "test_per_row_leniency_survives (PRESERVATION — pins the rejection of Option C)"],
+      "rollback": "WORLD_IRREVERSIBLE (conditional). *** Condition does NOT fire today: 0 malformed backends (LS-3). Effective class: CODE_REVERSIBLE. RE-VERIFY AT MERGE. ***",
+      "approval": "independent_verifier (changes which channels publish LIVE) + PD-4",
+      "completion": "CM-S02",
+      "regeneration": ["kb/configuration.json", "kb/ownership.json (accounts.json load boundary)", "invariants.json INV-03 -> re-classify from FALSE to VERIFIED"],
+      "cycle_7_enforcement": "file_ownership.json + GB-1 (accounts is L2; config L0 reaches UP to it lazily) + GB-2 (COUP-10) + GB-3 (no extra=forbid)"
+    },
+    {
+      "root_cause": "RC-3b",
+      "statement": "Reconcile is gated on is_live_backend; publish is NOT. The SOLE READER of `submitting` can be switched off while the WRITER keeps producing it.",
+      "severity": "HIGH",
+      "slice": "S07",
+      "mutation_surface": "src/fanops/pipeline.py :311-338 — EXACTLY ONE of the two gates",
+      "invariant": "INT-4",
+      "verification": ["test_reconcile_and_publish_gate_parity (INVARIANT, fails today)", "test_reconcile_makes_no_network_calls_when_not_live (PRESERVATION — *** the PRE-FLIGHT that DECIDES the option ***)", "test_dryrun_preview_writing_not_regressed (PRESERVATION)", "*** test_learn_pass_is_still_gated_on_is_live_backend (CONTRACT — guards the program's worst outcome) ***"],
+      "rollback": "CODE_REVERSIBLE. *** Post-rollback validation MUST confirm the _learn_pass gate survived the revert. ***",
+      "approval": "*** independent_verifier who MUST SPECIFICALLY CONFIRM `_learn_pass`'s gate is untouched. ***",
+      "completion": "CM-S07",
+      "regeneration": ["workflows.json (W7 gating)", "kb/risks.json AR-06"],
+      "cycle_7_enforcement": "file_ownership.json -> pipeline.py -> S07; AND a standing assertion that cli.py:965's gate exists"
+    },
+    {
+      "root_cause": "RC-4",
+      "statement": "os.replace of a SQLite file is fundamentally incompatible with SQLite's inode locking — and restore_snapshot takes a lock in NO domain.",
+      "severity": "*** CRITICAL ***",
+      "slice": "S01",
+      "mutation_surface": "src/fanops/ledger.py `restore_snapshot` ONLY; src/fanops/ledger_sqlite.py (read_raw_from extraction); tests/test_ledger_sqlite_store.py (REWRITE)",
+      "invariant": "INT-5",
+      "verification": ["test_restore_snapshot_serializes_with_transaction (*** REGRESSION_LOCK_REWRITE ***)", "test_restore_does_not_orphan_media_unlinks (INVARIANT — *** the severity driver ***)", "test_restore_two_process_contention (INVARIANT — *** MERGE GATE ***)", "test_restore_falls_back_on_corrupt_db (PRESERVATION — the fallback is REQUIRED, measured)"],
+      "rollback": "CODE_REVERSIBLE (snapshot format unchanged)",
+      "approval": "*** independent_verifier BRIEFED ON RC-5 — or they will reject the fix for turning a green test red. ***",
+      "completion": "CM-S01",
+      "regeneration": ["kb/persistence.json (restore verdict)", "kb/maintenance.json (recovery ops)", "invariants.json INV-07 / INV-DEFER", "kb/risks.json AR-02 + AR-03"],
+      "cycle_7_enforcement": "file_ownership.json; GB-6 (ledger.py = ZERO prints, ZERO new silent excepts)",
+      "live_reachability": "*** CONFIRMED (LS-7): 11 snapshot/backup artifacts spanning Jun 20 -> Jul 10, incl. a real `ledger.snapshot.20260705T103618Z.*.json`. The operator runs this procedure. ***"
+    },
+    {
+      "root_cause": "RC-5",
+      "statement": "*** THE VERIFICATION LAYER ENCODES THE DEFECT. A green CI test asserts the data-loss outcome and calls it correct. ***",
+      "severity": "*** CRITICAL ***",
+      "slice": "S01 (*** collapsed — the test rewrite MUST ship in the SAME PR as the source fix ***)",
+      "mutation_surface": "tests/test_ledger_sqlite_store.py :161-186",
+      "invariant": "INT-5 (it is the SAME invariant; RC-5 is the reason RC-4's fix is HARDER TO LAND THAN TO WRITE)",
+      "verification": "*** THE REWRITE IS THE VERIFICATION. ***",
+      "rollback": "CODE_REVERSIBLE",
+      "approval": "*** The verifier MUST be briefed. This is the only approval in the program that is about a HUMAN MISREADING rather than a technical risk. ***",
+      "completion": "CM-S01",
+      "regeneration": ["kb/risks.json AR-03"],
+      "cycle_7_enforcement": "*** Cycle 7 MUST NOT re-introduce a test that asserts a defect. The generalization: FOR EVERY INVARIANT CLAIMED TO BE PROTECTED BY A TEST, READ THE TEST'S ASSERTION, NOT ITS NAME. ***"
+    },
+    {
+      "root_cause": "RC-6",
+      "statement": "`alive` conflates 'the process is running' with 'the work is succeeding'.",
+      "severity": "MEDIUM",
+      "slice": "S08",
+      "mutation_surface": "src/fanops/daemon.py `status`; src/fanops/health_model.py (+last_success_age_s); src/fanops/cli.py (the success signal — S08 EXCLUSIVELY)",
+      "invariant": "INT-6",
+      "verification": ["test_daemon_status_distinguishes_alive_from_succeeding (INVARIANT, fails today)", "test_healthy_fast_pass_is_not_flipped_stale (PRESERVATION — the alive_mid property)", "test_daemon_progress_remains_the_liveness_owner (CONTRACT — project memory)"],
+      "rollback": "CODE_REVERSIBLE (additive field)",
+      "approval": "none (self-merge on green)",
+      "completion": "CM-S08",
+      "regeneration": ["OBSERVABILITY.md", "kb/risks.json AR-10"],
+      "cycle_7_enforcement": "file_ownership.json; *** GB-6: cli.py print count MUST NOT CHANGE (IR-4). ***"
+    },
+    {
+      "root_cause": "RC-7",
+      "statement": "The ONE IRREVERSIBLE learning actuator has the WEAKEST gate.",
+      "severity": "MEDIUM",
+      "slice": "S10",
+      "status": "*** BLOCKED ON PD-3 — A HUMAN APPROVAL. NOT INFERRABLE FROM CODE. ***",
+      "mutation_surface": "*** NONE PERMITTED UNTIL PD-3 IS ANSWERED IN WRITING. ***",
+      "invariant": "UNDECIDED",
+      "verification": "*** NONE MAY BE WRITTEN. ***",
+      "rollback": "n/a",
+      "approval": "*** HUMAN_APPROVAL: PD-3. ***",
+      "completion": "BLOCKED",
+      "accrued_cost": "*** ZERO. 0 moments retired on the live tree (LS-2). The actuator has never fired. ***",
+      "cycle_7_enforcement": "*** Cycle 7 MUST enforce that NO PR touches adjust.py:82-96 or cli.py:151-155 until PD-3 is recorded. AND it must enforce the S07 CONTRACT test that keeps the gate in place. ***"
+    },
+    {
+      "root_cause": "RC-8",
+      "statement": "One free-text field carries four machine semantics — the fourth is a PERMANENT SUPPRESSION LATCH.",
+      "severity": "MEDIUM",
+      "slices": ["S06 (the revert half)", "S04 (the reconcile half — the :767 key)"],
+      "co_requirement": "*** INT-7 HOLDS ONLY WHEN BOTH LAND. Neither alone achieves it. ***",
+      "mutation_surface": "src/fanops/studio/actions.py `bulk_send_to_review` (S06); src/fanops/reconcile.py :767 (S04)",
+      "invariant": "INT-7",
+      "verification": ["test_revert_clears_stale_reason (INVARIANT, S06)", "test_reconcile_visits_a_post_carrying_a_transient_reason (INVARIANT, S04)", "test_revert_preserves_lineage (PRESERVATION, S06 — pins PD-1's boundary)"],
+      "rollback": "both CODE_REVERSIBLE",
+      "approval": "S06: none. S04: independent_verifier.",
+      "completion": "CM-S06 + CM-S04 (*** INT-7 is NOT complete until both ***)",
+      "regeneration": ["kb/ownership.json OWN-2 (the overloaded channel)", "kb/risks.json AR-05"],
+      "cycle_7_enforcement": "file_ownership.json -> studio/actions.py is FUNCTION-PARTITIONED between S06 and S09"
+    },
+    {
+      "root_cause": "RC-9",
+      "statement": "Validators run at CONSTRUCTION only; every mutation API bypasses them. *** A LOAD-TIME POISON PILL. ***",
+      "severity": "LOW today / *** CRITICAL if reached ***",
+      "reachability": "*** ZERO. AST-verified across three cycles. ***",
+      "slice": "*** S11 — A GUARD, NOT A FIX. ***",
+      "cycle_4_status": "*** ORPHANED. Deferred, sequenced last, NEVER SLICED. ***",
+      "mutation_surface": "*** tests/test_mutation_boundary_policy.py — A NEW TEST FILE. NO PRODUCTION CODE IS TOUCHED. ***",
+      "invariant": "INT-9 — *** PINNED, NOT SATISFIED. The contract says so explicitly rather than implying the invariant now holds. ***",
+      "verification": ["test_no_unguarded_door_to_a_terminal_post_state (CONTRACT — baseline: the FOUR known guarded doors; a FIFTH makes CI RED)", "test_model_copy_does_not_bypass_a_raising_validator_undetected (CONTRACT — makes the real pydantic behaviour EXECUTABLE rather than folkloric)"],
+      "rollback": "CODE_REVERSIBLE (test-only)",
+      "approval": "none (self-merge on green)",
+      "completion": "CM-S11",
+      "regeneration": ["invariants.json INV-01 — enforcement class changes from CONVENTION (4 manual guards) to *** CONVENTION + MECHANICAL_TEST ***"],
+      "cycle_7_enforcement": "*** S11 IS ITSELF A CYCLE-7 ENFORCEMENT MECHANISM, LANDED EARLY. ***",
+      "why_this_discharges_the_orphan": "*** The root cause is not FIXED — and the contract does not pretend it is. It is CONTAINED: it can no longer become reachable without CI going red. That converts an inspection result with a shelf life into a mechanical invariant. It is the right-sized response to a CRITICAL-if-reached defect with ZERO reachability. ***"
+    },
+    {
+      "root_cause": "RC-10",
+      "statement": "A mkdtemp with no owner.",
+      "severity": "LOW",
+      "slice": "S09",
+      "mutation_surface": "src/fanops/post/compress.py (tempdir lifetime); src/fanops/studio/actions.py `retry_*` (stop persisting the file:// URL); src/fanops/cli.py (a clean verb — S09's region); src/fanops/doctor.py (a check)",
+      "invariant": "INT-8",
+      "verification": ["test_shrink_tempdir_is_cleaned (INVARIANT, fails today)", "test_no_persisted_media_url_points_into_a_shrink_dir (INVARIANT — *** write it to ALSO catch a Render.path regression: IF-1 ***)", "test_publish_still_works_after_the_shrink_dir_is_removed (PRESERVATION — the self-heal this slice DEPENDS on)"],
+      "rollback": "DATA_IRREVERSIBLE (residue = 41 orphaned temp dirs, 924 MB — *** GARBAGE BY CONSTRUCTION ***)",
+      "approval": "none (self-merge on green)",
+      "completion": "CM-S09",
+      "regeneration": ["kb/persistence.json (filesystem_artifacts)", "kb/ownership.json OWN-4", "kb/risks.json AR-11"],
+      "cycle_7_enforcement": "file_ownership.json (studio/actions.py FUNCTION-partition vs S06; cli.py print-count budget vs S08/S10)"
+    }
+  ],
+
+  "risks_that_are_NOT_root_causes_and_therefore_NOT_auto_approved": [
+    {
+      "risk": "AR-04",
+      "statement": "*** Import-time acyclicity is PURCHASED, not designed. 107 of 323 lazy edges point to an equal-or-higher level; 56 are STRICTLY UPWARD. Module init order is LOAD-BEARING and NOTHING ENFORCES IT. ***",
+      "discovered_by": "Cycle 5 — *** AFTER Cycle 4 designed the slices. NOT ONE OF THE TEN C4 PROMPTS FORBIDS HOISTING A LAZY IMPORT. ***",
+      "handled_as": [
+        "*** GB-1 — a MANDATORY GLOBAL PRESERVATION BOUNDARY on all 11 slices. This requires NO approval: it FORBIDS a change, it does not make one. ***",
+        "*** S12 — a PROPOSED GUARD slice that makes GB-1 mechanical. THIS REQUIRES APPROVAL (PD-5), because AR-04 is a RISK, not an approved ROOT CAUSE, and building it unbidden would be the exact hidden scope expansion this contract exists to prevent. ***"
+      ],
+      "the_distinction_that_matters": "*** A boundary that FORBIDS is free. A guard that ENFORCES is code. The first is inherited from the architecture; the second is a decision. Cycle 6 takes the first and SURFACES the second. ***"
+    },
+    {
+      "risk": "AR-13 (108 unauthenticated mutating Studio routes)",
+      "handled_as": "*** OUT OF SCOPE. A RECORDED, ACCEPTED decision (studio/CLAUDE.md: 'no auth by design ... declined as out-of-scope for localhost'). Re-raise as a PRODUCT question, not a bug. NO SLICE. ***"
+    },
+    {
+      "risk": "AR-14 (the triplicated gate-kind registry) / INV-04 (intro_match structurally unanswerable)",
+      "handled_as": "*** OUT OF SCOPE. Dormant behind FANOPS_INTRO_TEASE (DEFAULT OFF). Filed, not sliced. NOT a Cycle-4 root cause. ***"
+    },
+    {
+      "risk": "AR-15 (per-process publish throttle)",
+      "handled_as": "*** OUT OF SCOPE. Single-process by design today. Self-declared in post/CLAUDE.md. ***"
+    }
+  ],
+
+  "completeness_assertions": {
+    "every_root_cause_maps_to_at_least_one_slice": "*** TRUE — RC-1:S03 · RC-2:S04+S05 · RC-3:S02 · RC-3b:S07 · RC-4:S01 · RC-5:S01 · RC-6:S08 · RC-7:S10(BLOCKED) · RC-8:S06+S04 · RC-9:S11(GUARD) · RC-10:S09. ZERO ORPHANS. ***",
+    "every_slice_traces_to_an_approved_root_cause": "*** TRUE for S01-S11. S12 does NOT — and it is therefore marked PROPOSED and gated on PD-5 rather than smuggled into the program. ***",
+    "every_verification_traces_to_an_invariant_a_preserved_capability_or_a_forbidden_expansion": "*** TRUE. See verification_matrix.json -> coverage_check.no_orphan_verifications. ***",
+    "every_slice_has_a_rollback_class": "*** TRUE. And TWO of them are NOT simply 'revert' — S02 (WORLD_IRREVERSIBLE, conditional, condition does not fire today) and S04 (DATA_IRREVERSIBLE, residue empty today). Cycle 4 wrote 'revert' for both. ***",
+    "implementation_ordering_is_acyclic": "*** TRUE. Proven by construction: 4 ordering edges, 0 back edges. The two co-requirements (S04<->S07, S04<->S06) are modelled as CO-REQUIREMENTS, not ordering edges — which is what keeps the graph honest rather than hand-waving a cycle away. ***"
+  }
+}
