@@ -1,0 +1,143 @@
+{
+  "$schema": "fanops-impl-contract/risk/v1",
+  "cycle": 6,
+  "git_head": "fcffa73",
+  "purpose": "*** IMPLEMENTATION risks — the ways THIS PROGRAM can go wrong. Distinct from kb/risks.json, which records ARCHITECTURAL risks (the ways the SYSTEM is fragile). A slice that ships correctly and still breaks the build is an implementation risk. A slice that ships correctly and destroys data is an architectural one that the contract failed to fence. ***",
+
+  "risks": [
+    {
+      "id": "IR-1",
+      "title": "*** A SLICE HOISTS A LAZY IMPORT AND THE PROCESS STOPS STARTING ***",
+      "severity": "*** MEDIUM-HIGH — and it is the risk that makes EVERY OTHER SLICE dangerous. ***",
+      "class": "dependency_structure",
+      "mechanism": "Cycle 5 (whole-tree AST): 107 of 323 lazy edges point to an equal-or-higher level; *** 56 are STRICTLY UPWARD. *** The SCC-condensed compile graph is an 11-level DAG ONLY BECAUSE those imports are deferred to call time. `config` — LEVEL 0, FAN-IN 82, the most-depended-on module in the system — reaches UP to `accounts` (L2) and `meta_graph` (L3).",
+      "why_it_is_LIVE_for_this_program": "*** S02 TOUCHES `accounts`. S07 touches `pipeline`. S08/S09 touch `cli` and `doctor`. And NOT ONE OF CYCLE 4'S TEN PROMPTS MENTIONS IT — because Cycle 5's dependency model DID NOT EXIST when they were written. ***",
+      "the_trap": "*** Hoisting one of the 56 is a change that LOOKS LIKE A CLEANUP AND THAT A REVIEWER WOULD WAVE THROUGH. It breaks the process at start. There is no test, no lint rule, and no layer declaration that would catch it. ***",
+      "mitigation": ["GB-1 (a MANDATORY boundary on every slice)", "S12 (PROPOSED — makes it mechanical; gated on PD-5)"],
+      "residual_if_S12_is_rejected": "*** GB-1 survives as a REVIEW obligation rather than a CI gate. That is strictly weaker, and it is the state the repository has been in for its entire life. Survivable — but it is exactly the shape ('a property protected by attention, not by a mechanism') that produced INV-01, INV-02, INV-03 and AR-03. ***"
+    },
+    {
+      "id": "IR-2",
+      "title": "A slice deletes live code because a call graph says 'zero callers'",
+      "severity": "MEDIUM",
+      "class": "false_dead_code",
+      "mechanism": "*** COUP-10: `post/providers.py` dispatches SIX backend factories via lazy in-function import LAMBDAS from a dict. A NAME-BASED CALL GRAPH FLAGS ALL SIX AS UNCALLED. ALL SIX ARE LIVE. *** Same trap: `post.compress.persist_post_shrink` (lazy-imported from studio/actions.py).",
+      "slices_at_risk": ["S02 (post/__init__.py resolves through PROVIDERS)", "S09 (post/compress.py)"],
+      "mitigation": "GB-2 — *** 'zero callers' is a LEAD, NEVER a verdict. Any deletion must ship an AST census over the WHOLE tree, not a grep. ***"
+    },
+    {
+      "id": "IR-3",
+      "title": "A slice 'tightens' a ledger model to extra='forbid' and bricks a forward-rolled ledger",
+      "severity": "*** HIGH if hit ***",
+      "class": "compatibility",
+      "mechanism": "Forward-compat (INV-19 / SHIM-005) holds by pydantic's DEFAULT (`extra='ignore'`), NOT by declaration. Setting `extra='forbid'` turns a forward-rolled ledger into a hard `ControlFileError` and bricks EVERY reader.",
+      "slices_at_risk": ["*** S02 — its REJECTED Option C was EXACTLY this (a typed enum on Account.backends). ***", "S11 (it is ABOUT the validator boundary and an agent may 'strengthen' it)"],
+      "mitigation": ["GB-3", "S02's `test_per_row_leniency_survives` PRESERVATION test — *** which makes the rejection of Option C MECHANICAL rather than a paragraph in a prompt. ***"]
+    },
+    {
+      "id": "IR-4",
+      "title": "*** THE cli.py PRINT-COUNT COLLISION — three slices, one exact-equality constant ***",
+      "severity": "MEDIUM (merge friction, not correctness)",
+      "class": "shared_mechanical_budget",
+      "NOT_NAMED_BY_CYCLE_4": true,
+      "mechanism": "*** `tests/test_internal_prints_routed.py` asserts `len(print_calls(cli.py)) == 147` — EXACT EQUALITY, NOT A CEILING. S08, S09 AND S10 ALL TOUCH cli.py. If two land carrying a bumped constant, the second's rebase yields a WRONG count and CI goes RED for a reason unrelated to its change. ***",
+      "discovery": "*** DERIVED_FACT — read from the test file at fcffa73. Cycle 4 named the ratchet ('replay both AST ratchets') but never derived the PER-SLICE BUDGET and never noticed the constant is SHARED and EXACT. ***",
+      "mitigation": "*** THE RULE: NO SLICE MAY CHANGE cli.py's print() COUNT. Route new operator output through `get_logger`, or reuse an existing print. This is FREE — none of S08/S09/S10 NEEDS a new print — and it DISSOLVES the coupling rather than serializing around it. ***",
+      "escape_hatch": "If a slice PROVES it must: at most ONE open PR may modify `_CLI_PRINT_COUNT`, with a rationale comment (the file's existing convention). Cycle 7 rejects a second concurrent PR touching that constant.",
+      "sibling": "*** `ledger.py` and `pipeline.py` are in `_INTERNAL_MODULES` — they must contain ZERO print(). S01 owns ledger.py; S07 owns pipeline.py. NEITHER MAY ADD ONE. ***"
+    },
+    {
+      "id": "IR-5",
+      "title": "S06 and S09 collide textually in studio/actions.py",
+      "severity": "LOW",
+      "class": "merge_friction",
+      "mechanism": "S06 edits :944-951 (`bulk_send_to_review`). S09 edits :1029-1034 and :1100-1102 (the two retry paths). ~80 lines apart, different functions, no shared state.",
+      "mitigation": "*** file_ownership.json PARTITIONS THE FILE BY FUNCTION, not by line. A widening is detectable without reading either diff. A rebase resolves the text; the CONTRACT resolves the scope. ***"
+    },
+    {
+      "id": "IR-6",
+      "title": "*** S01's TEST REWRITE IS READ AS THE REGRESSION AND THE FIX IS REJECTED ***",
+      "severity": "*** CRITICAL — and it is a HUMAN risk, not a technical one. ***",
+      "class": "verification_layer",
+      "mechanism": "*** `test_restore_snapshot_serializes_with_transaction` currently ASSERTS THE DATA-LOSS OUTCOME and PASSES *BECAUSE OF* IT. Its comment names a mechanism that does not exist ('restorer blocked on flock' — measured: 0.001s, never blocked). ANY CORRECT FIX TURNS IT RED. A maintainer seeing a green test go red will read THE FIX AS THE REGRESSION. ***",
+      "mitigation": ["*** The rewrite MUST ship in the SAME PR as the source fix (MUST_SHIP_ATOMICALLY). ***", "*** The independent verifier MUST be briefed on RC-5 BEFORE reviewing. This is a NAMED APPROVAL PRECONDITION, not a courtesy. ***", "The PR description must say so, loudly, at the top."],
+      "note": "*** This is the only risk in the register whose failure mode is a CORRECT FIX BEING REJECTED. ***"
+    },
+    {
+      "id": "IR-7",
+      "title": "*** S07 'UNIFIES THE GATING' AND ARMS IRREVERSIBLE MOMENT RETIREMENT ***",
+      "severity": "*** CRITICAL — the worst outcome the program can produce. ***",
+      "class": "forbidden_scope_expansion",
+      "mechanism": "*** S07 removes the `is_live_backend` gate from `_reconcile_safe` (pipeline.py:318). The SAME predicate gates `_learn_pass` (cli.py:965) — which calls `adjust.retire`, which writes `MomentState.retired`, which `reconcile_moments` REFUSES TO UNDO. IT IS STRUCTURALLY IRREVERSIBLE. 'Unifying the gating' is THE MOST NATURAL-LOOKING CLEANUP IN THAT DIFF, and it would run PERMANENT MOMENT RETIREMENT on a deployment where learning was previously frozen. ***",
+      "compounding": "*** RC-7 / PD-3 IS UNRESOLVED. Nobody has even decided whether that retirement policy is CORRECT. ***",
+      "mitigation": ["*** `test_learn_pass_is_still_gated_on_is_live_backend` — a CONTRACT test. THE CHEAPEST POSSIBLE GUARD AGAINST THE PROGRAM'S WORST OUTCOME. WRITE IT. ***", "The independent verifier for S07 MUST specifically confirm the gate is untouched — it is written into the approval requirement, not left to notice.", "S07's post-rollback validation checks the gate SURVIVED THE REVERT."],
+      "live_exposure": "*** ZERO moments retired today (LS-2). The actuator has never fired. That LIMITS the damage of a mistake — it does not excuse one. ***"
+    },
+    {
+      "id": "IR-8",
+      "title": "A slice adds a FIFTH door to the R1 poison pill",
+      "severity": "LOW today / *** CRITICAL if hit ***",
+      "class": "latent_reactivation",
+      "mechanism": "*** The R1 published-URL invariant is enforced AT CONSTRUCTION ONLY. `model_copy(update=)` and `setattr` BOTH bypass every validator. The property survives via FOUR INDEPENDENT MANUAL CALL-SITE GUARDS. A FIFTH DOOR ADDED WITHOUT ONE SAVES CLEANLY AND THEN BRICKS THE NEXT `Ledger.load` — taking down the daemon and every Studio page at once. ***",
+      "why_it_is_LIVE_for_this_program": "*** S03, S04 AND S06 ALL MUTATE `Post`. THREE SLICES, EACH TOUCHING THE EXACT MODEL WITH THE POISON PILL. ***",
+      "mitigation": ["GB-4", "*** S11 — which is WHY the recommended landing order puts it SECOND, before S03/S04/S06. It is the difference between 'we told them not to' and 'CI will not let them'. ***"]
+    },
+    {
+      "id": "IR-9",
+      "title": "S04 lands and its ladder never runs, because S07 has not",
+      "severity": "MEDIUM (a silent no-op, not a break)",
+      "class": "co_requirement_not_met",
+      "mechanism": "*** If `_reconcile_safe` is gated OFF (is_live_backend False), S04's terminal ladder NEVER EXECUTES. The slice is CORRECT and UNREACHABLE. INT-2 holds only once BOTH land. ***",
+      "mitigation": "*** Modelled explicitly as a CO-REQUIREMENT (not an ordering edge — that would manufacture a DAG cycle that does not exist). The completion matrix marks INT-2 INCOMPLETE until both are merged. ***"
+    },
+    {
+      "id": "IR-10",
+      "title": "*** THIS CONTRACT BECOMES THE NEXT INV-20 ***",
+      "severity": "MEDIUM",
+      "class": "*** meta — and it is the one the codebase's own history predicts. ***",
+      "mechanism": "*** This repository's SIGNATURE DEFECT, found in every one of five cycles, is: 'THE DOC NAMES A MECHANISM THAT DOES NOT EXIST, WHILE THE PROPERTY SURVIVES VIA A DIFFERENT ONE.' It has appeared in the docs (INV-01/02/03/05/07), in the CODE COMMENTS (4 for 4), and — most dangerously — IN THE TEST LAYER (AR-03/RC-5). *** THIS CONTRACT IS A DOC. It is the next candidate. ***",
+      "the_specific_failure": "A future engineer reads 'S02 owns accounts.py' and trusts it, while a sixth slice has quietly started editing accounts.py. The contract SAYS the boundary exists. NOTHING ENFORCES IT.",
+      "mitigation": [
+        "*** EVERY boundary in this contract is expressed as a MACHINE-CHECKABLE PREDICATE — a file path, a function name, a numeric baseline, an AST assertion — and NOT as prose. That is why file_ownership.json exists and why the prose doc is the twin, not the source. ***",
+        "*** Cycle 7's ENTIRE JOB is to make these mechanical. A contract that ships without Cycle 7 is a promise, and this codebase has taught us exactly what a promise is worth. ***",
+        "*** The two AST ratchets already in CI are the PROOF that this repository CAN enforce a policy mechanically. They are the model. ***"
+      ],
+      "honest_statement": "*** Until Cycle 7 lands, this contract is enforced by ATTENTION. That is better than nothing and it is NOT a mechanism. Recorded here rather than hoped away. ***"
+    },
+    {
+      "id": "IR-11",
+      "title": "The live-state measurements go stale between contract freeze and merge",
+      "severity": "MEDIUM",
+      "class": "evidence_decay",
+      "mechanism": "*** THREE risks in this program were COLLAPSED by measuring the live tree on 2026-07-14: S04's blast radius (0 rows), PD-3's accrued cost (0 retired), and the S02<->S10 hazard (0 malformed backends). *** All three are properties of a MUTABLE tree. The operator can approve a post, hand-edit accounts.json, or run a learn pass at any time.",
+      "mitigation": "*** EVERY ONE OF THE THREE IS RE-ARMED AS A MERGE GATE. The slice's PR must RE-RUN the check and STATE the result. A collapsed risk that is not re-verified at merge is a risk that was merely NOT LOOKED AT. ***",
+      "the_probes": {
+        "S02": "parse 00_control/accounts.json; assert every backends[platform] value is in {dryrun, postiz, zernio}.",
+        "S04": "count posts in {submitting, submitted, needs_reconcile}. If > 0, run the report-only mode and paste its output.",
+        "S10": "count moments in state `retired`."
+      }
+    },
+    {
+      "id": "IR-12",
+      "title": "OPS-001: the program is designed and reviewed single-threaded",
+      "severity": "MEDIUM",
+      "class": "process",
+      "mechanism": "*** The orchestration gate has refused every subagent spawn for SIX CONSECUTIVE CYCLES. No independent agent was able to REFUTE this contract's boundaries. ***",
+      "mitigation": "*** Cycle 6 grounded every COLLAPSIBLE risk in a DIRECT MEASUREMENT of the live tree rather than in an argument. A measurement does not need a second opinion in the way an inference does. The boundaries that remain INFERRED (GB-1..GB-5) are inherited from Cycles 2-5, each independently derived. ***",
+      "residual": "*** The SYNTHESIS — this contract — has never been adversarially reviewed. Its individual claims have. ***",
+      "disengage": "`orchestrate.py stop` — AN OPERATOR ACTION, not a code change."
+    }
+  ],
+
+  "risk_ranking_by_what_it_actually_COSTS": [
+    "*** IR-7 (S07 arms irreversible retirement) — the worst OUTCOME. One CONTRACT test prevents it. ***",
+    "*** IR-6 (S01's correct fix is rejected because a green test goes red) — the worst PROCESS failure, and it blocks the only CRITICAL slice. ***",
+    "*** IR-1 (a lazy-import hoist breaks the process at start) — the risk that makes EVERY OTHER SLICE dangerous, and the one Cycle 4 could not have known about. ***",
+    "IR-8 (a fifth door to the poison pill) — LOW probability, CATASTROPHIC blast radius. S11 makes it mechanical.",
+    "IR-10 (the contract becomes doc-drift) — MEDIUM, and it is the failure this codebase's history most strongly predicts.",
+    "IR-11 (the live measurements decay) — MEDIUM. Fully mitigated by re-arming each as a merge gate.",
+    "IR-3, IR-2 — MEDIUM, both fenced by a GLOBAL BOUNDARY.",
+    "IR-4, IR-5, IR-9 — merge friction and silent no-ops. Annoying, not dangerous.",
+    "IR-12 — process. Recorded, mitigated by measurement, not resolved."
+  ]
+}

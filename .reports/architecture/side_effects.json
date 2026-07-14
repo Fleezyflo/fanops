@@ -1,0 +1,107 @@
+{
+  "cycle": 3,
+  "git_head": "fcffa73",
+  "generated": "2026-07-14",
+  "prose_twin": "SIDE_EFFECT_GRAPH.md",
+
+  "lock_domains": {
+    "L1_ledger": {"primitive": "SQLite BEGIN IMMEDIATE on a dedicated connection", "timeout_s": 30, "typed_error": "LockBusyError", "cite": "ledger_sqlite.py:92-95", "held_across_io": false},
+    "L2_control_files": {"primitive": "fcntl.flock on a per-file <name>.lock", "guards": ["accounts.json", "personas.json", "hashtag_bans.json", "hashtag_budget.json"], "cite": "accounts.py:367-369, persona_store.py:106", "held_across_io": false},
+    "L3_run_lease": {"primitive": "fcntl.flock LOCK_NB on 00_control/.run.lock", "guards": "the respond->write_request->advance converge loop", "cite": "pipeline_run.py:84-105", "held_across_io": true, "note": "held for the WHOLE pass"},
+    "L4_stage_lock": {"primitive": "fcntl.flock on <agent_io>/.locks/<stage>/<key>.lock", "guards": "one producer per (stage, source)", "cite": "stage_lock.py:37-39", "held_across_io": true, "note": "held across whisper/ffmpeg"},
+    "L5_ledger_lock_VESTIGIAL_BUT_LIVE": {"primitive": "fcntl.flock on 00_control/ledger.lock", "sole_consumer": "Ledger.restore_snapshot (ledger.py:551)", "excludes": "*** NOTHING *** — mutually invisible to L1's BEGIN IMMEDIATE", "verdict": "F-B (Cycle 2): a live writer's commit() SUCCEEDS and its data is SILENTLY DISCARDED"}
+  },
+  "cardinal_rule_honoured": "No network call and no heavy subprocess ever runs inside L1. Verified at every site.",
+  "L1_L2_exclusion": "NONE (COUP-01). Handled for the one case that matters: publish re-resolves the integration id at publish time and FINALIZE merges account_id with an explicit 'in-flight wins' policy.",
+
+  "network_call_sites": {
+    "http_library": "requests — the SOLE HTTP library in src/fanops",
+    "count": 15,
+    "sites": [
+      {"site": "post/postiz.py:392", "call": "POST /public/v1/posts", "role": "*** THE PUBLISH ***", "lock": "NONE", "ordering": "AFTER the `submitting` claim COMMITS", "idempotent": false, "idempotency_key": "NONE — the backend has none", "timeout_s": 30},
+      {"site": "post/zernio.py:235", "call": "POST /posts", "role": "*** THE PUBLISH ***", "lock": "NONE", "ordering": "AFTER the claim commits", "idempotent": false, "timeout_s": 30},
+      {"site": "post/postiz.py:152", "call": "PUT -> Cloudflare R2 (SigV4, no boto3)", "lock": "NONE", "idempotent": true, "why": "the object key is fanops/{sha256(file)[:32]}{suffix} (postiz.py:171) — CONTENT-ADDRESSED, so a re-upload overwrites the same object", "timeout_s": 120},
+      {"site": "post/postiz.py:182", "call": "POST /upload-from-url", "lock": "NONE", "timeout_s": 120},
+      {"site": "post/postiz.py:242", "call": "POST /upload (multipart)", "lock": "NONE", "idempotent": false, "why": "NOT content-addressed — a retry creates a SECOND media object. An orphaned-media leak, NOT a double-publish.", "timeout_s": 120},
+      {"site": "post/postiz.py:266", "call": "GET /integrations", "role": "Go-Live + health probe", "timeout_s": 30},
+      {"site": "post/zernio.py:141", "call": "POST /media/upload-token", "timeout_s": 30},
+      {"site": "post/zernio.py:155", "call": "POST /media/upload", "timeout_s": 120},
+      {"site": "post/zernio.py:183", "call": "GET /accounts", "timeout_s": 30},
+      {"site": "post/metrics.py:160", "call": "GET /public/v1/posts", "role": "POSTIZ STATUS (a +/-35d date window — Postiz has NO per-post status endpoint)", "lock": "NONE — pre-polled", "ordering": "BEFORE the apply txn", "unknown_id_behaviour": "returns {'status':'unknown'} — DOES NOT RAISE", "timeout_s": 30},
+      {"site": "post/metrics.py:286", "call": "GET /posts/{id}", "role": "ZERNIO STATUS (a true per-post lookup)", "lock": "NONE", "unknown_id_behaviour": "*** RAISES RuntimeError on any non-2xx, INCLUDING a 404 *** — this asymmetry with Postiz is the root of C3-F2", "timeout_s": 30},
+      {"site": "post/metrics.py:89", "call": "GET analytics", "timeout_s": 30},
+      {"site": "post/metrics.py:513", "call": "GET zernio analytics", "timeout_s": 30},
+      {"site": "meta_graph.py:156,410", "call": "Meta Graph (injectable `get` so tests never touch the network)", "role": "the SOLE IG metric reader"},
+      {"site": "health_model.py:160", "call": "GET docker/postiz health", "timeout_s": 3}
+    ]
+  },
+
+  "subprocess_call_sites": {
+    "count": 32,
+    "by_module": {
+      "clip.py": {"n": 13, "what": "ffmpeg render / crop / concat / subtitle burn", "lock": "L4"},
+      "daemon.py": {"n": 12, "what": "launchctl", "lock": null},
+      "ingest.py": {"n": 10, "what": "ffprobe", "lock": null},
+      "overlay.py": {"n": 5, "what": "ffmpeg drawtext", "lock": "L4"},
+      "llm.py": {"n": 5, "what": "claude -p — THE LLM IS A SUBPROCESS, NOT AN HTTP API. It rides the operator's existing `claude login`; ANTHROPIC_API_KEY is NOT required, and `claude --bare -p` provably FAILS because it never reads the keychain (llm.py:12-23).", "lock": null},
+      "transcribe.py": {"n": 4, "what": "whisper", "lock": "L4"},
+      "keyframes.py": {"n": 4, "what": "ffmpeg frame grid", "lock": "L4"},
+      "discover.py": {"n": 4, "what": "ffprobe", "lock": null},
+      "signals.py": {"n": 3, "what": "ffmpeg", "lock": "L4"},
+      "health.py + health_model.py": {"n": 4, "what": "docker", "lock": null},
+      "studio/actions_run.py": {"n": 3, "what": "ffprobe/ffmpeg", "lock": null},
+      "post/compress.py": {"n": 1, "what": "ffmpeg shrink (compress.py:28, timeout=600)", "lock": "*** NONE — runs in the LOCK-FREE NETWORK phase of _publish_one ***"},
+      "postiz_lifecycle.py": {"n": 1, "what": "docker — SHELLED FROM publish_due (run.py:447-449) when `due` is non-empty", "lock": null}
+    }
+  },
+
+  "publish_side_effect_ordering": [
+    {"t": "T0", "op": "Ledger.load", "lock": "none", "kind": "read"},
+    {"t": "T1", "op": "BEGIN IMMEDIATE; guard state is queued AND due; post.state = submitting", "lock": "L1 HELD"},
+    {"t": "T2", "op": "COMMIT", "lock": "released", "durability_point": true, "note": "*** F11 — the claim is persisted BEFORE any network I/O ***"},
+    {"t": "T3", "op": "Ledger.load (throwaway)", "lock": "none", "kind": "read"},
+    {"t": "T4", "op": "apply_shrink_to_post -> ffmpeg", "lock": "none", "kind": "subprocess", "defect": "C3-F4 mkdtemp leak + C3-F5 Render.path rewritten into it"},
+    {"t": "T5", "op": "ensure_clip_media -> R2 PUT / Postiz upload", "lock": "none", "kind": "network", "idempotent": "R2 yes (content-addressed key); Postiz multipart NO"},
+    {"t": "T6", "op": "_publish_throttle_wait", "lock": "none", "kind": "sleep", "hazard": "the throttle dict is per-PROCESS. N concurrent publisher processes publish N x the rate limit."},
+    {"t": "T7", "op": "poster.publish -> POST /posts", "lock": "none", "kind": "*** THE EXTERNAL EFFECT. NOT IDEMPOTENT. NO KEY. ***"},
+    {"t": "T8", "op": "BEGIN IMMEDIATE; merge ONLY _NET_POST_FIELDS into a FRESHLY LOADED ledger; clip/render media cache (first-writer-wins); renders[rid].path <- the mkdtemp path", "lock": "L1 HELD"},
+    {"t": "T9", "op": "COMMIT", "lock": "released", "durability_point": true},
+    {"t": "T10", "op": "_archive_published", "lock": "none", "kind": "fs write", "note": "OUTSIDE the txn, fail-open — a full disk must never roll back a committed publish"}
+  ],
+  "crash_critical_window": "T2 -> T8. A crash anywhere in it leaves `submitting`, which publish_due never re-drives. THAT IS CORRECT. The defect is that reconcile — the only READER of `submitting` — cannot always terminate it (C3-F1 / C3-F2).",
+
+  "filesystem_effects": [
+    {"artifact": "control JSON", "writer": "controlio.write_json_atomic", "atomic": true, "primitive": "mkstemp same-dir + os.replace", "cite": "controlio.py:31"},
+    {"artifact": "gate .request.json / .response.json", "writer": "agentstep", "atomic": true, "primitive": "tmp + os.replace", "cite": "agentstep.py:63-66, 82-87", "cleanup": "discard_gate"},
+    {"artifact": "gate .attempts.json", "writer": "agentstep.bump_attempts", "atomic": false, "primitive": "*** bare write_text ***", "cite": "agentstep.py:147", "defect": "C3-F6"},
+    {"artifact": ".run.lock body", "writer": "pipeline_run.note_stage", "atomic": false, "primitive": "*** os.ftruncate(0) + os.write ***", "cite": "pipeline_run.py:64-69", "defect": "C3-F7", "mitigation": "the FLOCK (the authority) is kernel-released on death, so the LEASE self-heals; only the advisory body is lost"},
+    {"artifact": "clip / render .mp4", "writer": "ffmpeg", "atomic": true, "primitive": "<dst>.part.mp4 + os.replace", "note": "the .mp4 SUFFIX IS REQUIRED — it picks the muxer (COUP-07 / MOL-78)", "cleanup": "cascade unlink, DEFERRED until AFTER commit (ledger.py:487-488) — a rolled-back txn never deletes a file it did not drop"},
+    {"artifact": "Studio upload", "writer": "actions_run.save_uploads", "atomic": true, "primitive": ".uploadpart + os.replace", "cleanup": "best-effort tmp.unlink() (actions_run.py:391)"},
+    {"artifact": "06_published/<day>/<pid>.json", "writer": "_archive_published", "atomic": true, "primitive": "O_CREAT|O_WRONLY|O_TRUNC, 0o600 — created 0600 ATOMICALLY, no world-readable window", "cleanup": "never (intended)"},
+    {"artifact": "studio_audit.log", "writer": "audit.write_audit", "atomic": false, "primitive": "append; chmod 0600", "swallowed": "everything (CONTRACT-CORRECT — see C3-F13)", "cleanup": "never (intended)"},
+    {"artifact": "ledger.sqlite", "writer": "SqliteLedgerStore.write_raw", "atomic": true, "primitive": "WAL + synchronous=FULL + full-document replace in one BEGIN IMMEDIATE; chmod 0o600 after every write"},
+    {"artifact": "04_agent_io/fanops-shrink-*/", "writer": "compress.maybe_shrink_for_cap", "atomic": "n/a", "primitive": "tempfile.mkdtemp", "cite": "compress.py:21", "cleanup": "*** NEVER — C3-F4. The ONLY mkdtemp in src/fanops, with NO rmtree anywhere in the tree. And the ledger's Render.path is rewritten INTO it (C3-F5). ***"},
+    {"artifact": "<agent_io>/keyframes|framing|signals", "writer": "content-addressed caches", "cleanup": "purge_source_artifacts only, on an explicit T0 reset"}
+  ],
+
+  "cache_invalidation_rules": {
+    "render_mp4": {"key": "_render_fingerprint (clip.py:619)", "invalidation": "fingerprint change", "verdict": "OK"},
+    "detect_json": {"key": "source id", "invalidation": "purge_source_artifacts", "verdict": "OK"},
+    "keyframe_grid": {"key": "content-addressed <hash>/", "invalidation": "content address", "verdict": "OK"},
+    "Clip.media_url / Render.media_url (the F44 upload cache)": {"key": "first-writer-wins (`not c.media_url`)", "invalidation": "*** NONE ***", "verdict": "C3-F11 — if the hosted URL expires, nothing invalidates the cache; a dead CDN URL is reused forever. FALSIFIES brief section 9 claim #9."},
+    "media_cache_validity_across_backends": {"key": "_media_cache_hit identifies a Postiz URL BY IT CONTAINING A LITERAL '|' (media.py:58)", "invalidation": "n/a", "verdict": "COUP-17 — an undocumented URL-shape convention"}
+  },
+
+  "environment_effects": {
+    "os_environ_writes_in_src": 2,
+    "sites": [
+      {"site": "studio/golive.py:47-66 (_dual_write)", "writes": ".env AND os.environ", "note": "SECRETS go to the OS KEYRING ONLY, never plaintext .env. The ONLY writer of FANOPS_LIVE (INV-18, upheld)."},
+      {"site": "autopilot.py:80", "writes": "FANOPS_RESPONDER"}
+    ],
+    "propagation": {
+      "daemon": "re-reads .env (override=True) AND rebuilds Config EVERY TICK (cli.py:1303-1304)",
+      "studio": "load_dotenv ONCE at process entry (cli.py:795), then blocks in app.run (cli.py:1285) — a .env change made by the CLI or the daemon NEVER reaches a running Studio (COUP-02b)",
+      "config": "properties are os.getenv PER ACCESS (74 sites, uncached), so a go_live write is visible to the WRITING process immediately"
+    }
+  }
+}

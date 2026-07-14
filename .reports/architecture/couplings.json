@@ -1,0 +1,207 @@
+{
+  "cycle": 2,
+  "git_head": "fcffa73",
+  "generated": "2026-07-14",
+  "rule": "Only PROVEN couplings. Each cites file:line for BOTH ends of the dependency. A coupling with one end cited is a hypothesis and was dropped.",
+  "retracted_from_first_pass": [
+    {
+      "id": "COUP-02",
+      "was": "os.environ is per-process; a Studio go_live cannot reach a resident daemon",
+      "verdict": "RETRACTED — FALSE",
+      "why": "cli.py:1303-1304 — the daemon loop calls load_dotenv(cfg.root/'.env', override=True) AND rebuilds Config(cfg.root) on EVERY TICK ('operator disk truth each tick'). A go_live .env write DOES reach the resident daemon within one tick.",
+      "replaced_by": "COUP-02b"
+    }
+  ],
+  "couplings": [
+    {
+      "id": "COUP-01",
+      "title": "Two lock domains that do not exclude each other — PROVEN silent data loss",
+      "class": "currently_reachable_defect",
+      "ends": [
+        {"end": "SQLite BEGIN IMMEDIATE — every ledger writer", "cite": "ledger_sqlite.py:92"},
+        {"end": "fcntl.flock on 00_control/ledger.lock — restore_snapshot ONLY", "cite": "ledger.py:551"},
+        {"end": "os.replace on the db path + unlink of -wal/-shm", "cite": "ledger_sqlite.py:148-151"}
+      ],
+      "executed_experiment": "A live writer holding BEGIN IMMEDIATE had restore_snapshot swap the database file out from under it. The writer's commit() SUCCEEDED — no exception raised — and committed to the now-orphaned inode. Its write was SILENTLY DISCARDED; the final on-disk state was the snapshot's.",
+      "exposure": "restore_snapshot has NO production caller (operator break-glass), but ledger_wipe.py:246 advertises it as THE wipe rollback path."
+    },
+    {
+      "id": "COUP-02b",
+      "title": "A running Studio never re-reads .env; the daemon does",
+      "class": "operational_hazard",
+      "ends": [
+        {"end": "daemon loop: load_dotenv(override=True) + Config rebuild EVERY tick", "cite": "cli.py:1303-1304"},
+        {"end": "Studio: load_dotenv ONCE at process entry, then blocks in app.run", "cite": "cli.py:795, cli.py:1285"}
+      ],
+      "consequence": "A .env change made by the CLI or the daemon NEVER reaches a running Studio. golive.py:11 acknowledges this outright — it is precisely why _dual_write also pokes os.environ (golive.py:66), so the WRITING Studio process reflects its own change immediately. A Studio that did not perform the write shows stale env until restarted.",
+      "direction": "OPPOSITE to what Cycle-2's first pass claimed"
+    },
+    {
+      "id": "COUP-03",
+      "title": "Post.error_reason is a structured control channel, not a message",
+      "class": "operational_hazard",
+      "ends": [
+        {"end": "retry counter 'transient_daemon_retry=n/3' written", "cite": "post/run.py:336"},
+        {"end": "…and PARSED by transient_daemon_retry_count", "cite": "post/run.py:333, run.py:405, run.py:419"},
+        {"end": "'GAVE UP:' terminal prefix written", "cite": "reconcile.py:759"},
+        {"end": "…and PARSED by _is_giveup", "cite": "reconcile.py:85, reconcile.py:605"},
+        {"end": "REST-gate quarantine sentinel", "cite": "reconcile.py:90-96"}
+      ],
+      "consequence": "Three independent parsers read machine state out of one free-text field written by ~14 sites. Any writer that overwrites error_reason with free text silently RESETS the retry budget and CLEARS the give-up marker. reconcile.py:714 does exactly this deliberately on a successful publish."
+    },
+    {
+      "id": "COUP-04",
+      "title": "Magic filename shape couples ingest's id-minting to rebuild's orphan detection",
+      "class": "operational_hazard",
+      "ends": [
+        {"end": "_SID_RE = ^src_[0-9a-f]{12}$", "cite": "ledger.py:234"},
+        {"end": "the id format it encodes: make_id('src', sha) = 'src_' + sha1[:12]", "cite": "ids.py:7"},
+        {"end": "orphan detection consumes the filename shape", "cite": "ledger.py:753-758"}
+      ],
+      "consequence": "Changing the id length or prefix in ids.py silently breaks orphan detection in ledger.py — rebuild_catalog would stop seeing real orphans, with no error."
+    },
+    {
+      "id": "COUP-05",
+      "title": "_VALID_BACKENDS is defined twice; the two homes serve different boundaries",
+      "class": "operational_hazard",
+      "ends": [
+        {"end": "config.py:72 — used by Config.poster_backend's READ-time validation", "cite": "config.py:241"},
+        {"end": "settings.py:18 — used by accounts.set_backend's WRITE-time validation", "cite": "accounts.py:13, accounts.py:414"}
+      ],
+      "consequence": "If they drift, the write boundary and the read boundary disagree about what a legal backend is — the exact class of gap INV-03 exploits. accounts.py imports _VALID_BACKENDS from settings while importing _LIVE_BACKENDS/_BACKEND_PLATFORMS/FRAMING_NAMES from config on the ADJACENT line (accounts.py:12-13)."
+    },
+    {
+      "id": "COUP-06",
+      "title": "The gate-kind registry is triplicated and unlinked; adding a kind needs 3 edits",
+      "class": "reserved_unwired_surface",
+      "ends": [
+        {"end": "the WRITE site: write_request(kind=...)", "cite": "moments.py:329, moments.py:359, caption.py:222, intro_match.py:108"},
+        {"end": "the ANSWER registry: responder._SCHEMA + _PROMPT", "cite": "responder.py:50-51, consumed at responder.py:216"},
+        {"end": "the OWNERSHIP resolver: gate_keys.gate_source_id", "cite": "gate_keys.py:9-13"}
+      ],
+      "consequence": "intro_match is the PROOF this coupling is live and unguarded: it is registered in registry #1 only, and is therefore permanently unanswerable. Nothing — no test, no type, no assertion — ties the three registries together."
+    },
+    {
+      "id": "COUP-07",
+      "title": "actions_casting is safe ONLY because Moment.validate_assignment=True",
+      "class": "operational_hazard",
+      "ends": [
+        {"end": "cast_add/cast_remove mutate affinities via direct setattr", "cite": "studio/actions_casting.py:26, actions_casting.py:44"},
+        {"end": "Moment.model_config validate_assignment=True (the ONLY model with it)", "cite": "models.py:211"},
+        {"end": "the validator it triggers: _canon_affinities", "cite": "models.py:253-256"},
+        {"end": "the consumer that requires canonical handles: affinity_admits (the crosspost gate)", "cite": "crosspost.py:172, casting.py"}
+      ],
+      "consequence": "PROVEN by execution: model_copy bypasses Moment's validators DESPITE validate_assignment=True. Converting cast_add to model_copy 'for consistency with the rest of the codebase' would silently stop canonicalizing affinities — and a non-canonical '@Foo' would never match surf.account == 'foo', so the moment would post NOWHERE, silently."
+    },
+    {
+      "id": "COUP-08",
+      "title": "The pipe-delimited composite-key format is an unenforced schema",
+      "class": "operational_hazard",
+      "ends": [
+        {"end": "surface_key = '{account}|{platform}' (post-id token AND schedule seed)", "cite": "ids.py, used crosspost.py:194"},
+        {"end": "Ledger.tag_log keyed '{account}|{clip_id}'", "cite": "ledger.py:401-404"},
+        {"end": "Ledger.variant_streaks keyed '{account}|{platform}'", "cite": "ledger.py:405"},
+        {"end": "the ONLY thing preventing corruption: _ACCOUNT_HANDLE_RE = ^[a-z0-9._-]+$", "cite": "models.py:438"}
+      ],
+      "consequence": "Three maps key on hand-built pipe-delimited strings with no shared constructor. An account handle containing '|' would corrupt all three. The handle charset — defined in a DIFFERENT module — is load-bearing to the ledger key space."
+    },
+    {
+      "id": "COUP-09",
+      "title": "Nine lazy in-function imports exist solely to break module cycles",
+      "class": "operational_hazard",
+      "ends": [
+        {"end": "config <-> accounts", "cite": "config.py:262-263, config.py:325, config.py:475"},
+        {"end": "accounts -> ledger (one-way; ledger never imports accounts)", "cite": "accounts.py:367"},
+        {"end": "accounts <-> personas", "cite": "accounts.py:297"},
+        {"end": "ledger -> router", "cite": "ledger.py:627"},
+        {"end": "ledger -> ingest (ingest imports ledger)", "cite": "ledger.py:749"},
+        {"end": "ledger -> timeutil (kept stdlib-only to stay cycle-safe)", "cite": "ledger.py:40, ledger.py:75"},
+        {"end": "hashtags/meta_graph/persona_store -> ledger._file_lock", "cite": "hashtags.py:124, meta_graph.py:516, persona_store.py:106"},
+        {"end": "post/__init__ <-> post/media", "cite": "post/media.py:76, post/media.py:91"}
+      ],
+      "consequence": "Module initialization order is load-bearing. Hoisting any one of these to a top-level import breaks the process at start."
+    },
+    {
+      "id": "COUP-10",
+      "title": "providers.py is a structural false-dead-code source",
+      "class": "operational_hazard",
+      "ends": [
+        {"end": "six lazy in-function import lambdas", "cite": "post/providers.py:19-27"},
+        {"end": "dispatched from a dict, never by name", "cite": "post/providers.py:45-49, post/providers.py:56"}
+      ],
+      "consequence": "A name-based call graph flags all six as 'zero callers'. All six are live. Same trap: post.compress.persist_post_shrink (lazy-imported at studio/actions.py:406)."
+    },
+    {
+      "id": "COUP-11",
+      "title": "_BACKEND_PLATFORMS hardcodes deployment topology inside config",
+      "class": "operational_hazard",
+      "ends": [
+        {"end": "{'postiz': {instagram, youtube}, 'zernio': {tiktok}}", "cite": "config.py:89-92"},
+        {"end": "the legacy-bridge consumer", "cite": "accounts.py:199"}
+      ],
+      "consequence": "A deployment where Postiz also serves TikTok would silently refuse to bridge that channel. The config constant, not the account registry, decides."
+    },
+    {
+      "id": "COUP-12",
+      "title": "PLATFORM_MAX_SECONDS fails open BY OMISSION",
+      "class": "operational_hazard",
+      "ends": [
+        {"end": "the cap dict — a platform ABSENT from it has no clamp", "cite": "models.py:157-167"},
+        {"end": "the enforcement site", "cite": "crosspost.py:183-187"}
+      ],
+      "consequence": "Omission is a SILENT policy decision, indistinguishable from an oversight. The comment records that the v1 version of this dict was 'declared but never enforced' — a FALSE safety contract that let a 180s pick fan out over YouTube's cap."
+    },
+    {
+      "id": "COUP-13",
+      "title": "LIFT_SCORE is one literal with many readers; a misspelled read is a silent zero",
+      "class": "operational_hazard",
+      "ends": [
+        {"end": "LIFT_SCORE = 'lift_score', written ONLY by track.record_metrics", "cite": "models.py:138"},
+        {"end": "read by adjust / digest / variant_* / studio", "cite": "models.py:134-137 (the comment states the failure mode)"}
+      ],
+      "consequence": "A key typo at any read site makes that scorer silently treat every post as 'no lift data' — indistinguishable from 'not enough data yet'. Silent-degradation coupling."
+    },
+    {
+      "id": "COUP-14",
+      "title": "01_thirdparty_inbox is a deliberate directory-naming coupling",
+      "class": "operational_hazard",
+      "ends": [
+        {"end": "declared a PEER of 01_inbox, not a child, to sit OUTSIDE the native ingest rglob", "cite": "config.py:61-63"},
+        {"end": "the consumer of the origin_kind it protects", "cite": "intro_match.py:37"}
+      ],
+      "consequence": "Moving it under 01_inbox would silently relabel every third-party asset as native, corrupting origin_kind. The directory layout IS the type system here."
+    },
+    {
+      "id": "COUP-15",
+      "title": "The Studio's path-traversal guard depends on render_path's construction, tied only by a comment",
+      "class": "security_exposure",
+      "ends": [
+        {"end": "Config.render_path — 'ALWAYS under self.base, so the Studio _bounded serve check passes'", "cite": "config.py:179-189"},
+        {"end": "the media-serving routes that rely on it", "cite": "studio/app.py:484-615"},
+        {"end": "resolve_media_path's own is_relative_to(base) checks", "cite": "post/media.py:26, media.py:33"}
+      ],
+      "consequence": "The render-path builder and the serve guard must agree, and only a comment ties them together."
+    },
+    {
+      "id": "COUP-16",
+      "title": "A SECOND provider resolver that never checks cfg.is_live",
+      "class": "operational_hazard",
+      "ends": [
+        {"end": "compress.publish_backend_for_post — effective_provider() or cfg.poster_backend or 'dryrun', with NO is_live check", "cite": "post/compress.py:69-76"},
+        {"end": "the canonical resolver that DOES gate on is_live (GATE-1)", "cite": "post/run.py:158-167"}
+      ],
+      "consequence": "On a NOT-live system this returns a live backend name (e.g. 'zernio') where _post_provider would return 'dryrun'. It is NOT a publish bypass — its three consumers (upload_cap_bytes, apply_shrink_to_post, media_path_for_post at actions.py:350, actions.py:1099, views_results.py:141) only decide whether to SHRINK a file. The consequence is a wasted ffmpeg re-encode on a dryrun system, not a publish. Recorded because it is a divergent second answer to 'which backend publishes this post'."
+    },
+    {
+      "id": "COUP-17",
+      "title": "Media-cache validity keys on a magic character in the URL",
+      "class": "operational_hazard",
+      "ends": [
+        {"end": "_media_cache_hit: a Postiz URL is IDENTIFIED by containing a literal '|'", "cite": "post/media.py:58"},
+        {"end": "…and a Zernio URL is REJECTED if it contains one", "cite": "post/media.py:49"},
+        {"end": "an UNKNOWN backend falls through to a bare startswith('http')", "cite": "post/media.py:59"}
+      ],
+      "consequence": "Cache-reuse correctness across backends rests on an undocumented URL-shape convention. A Postiz URL format change that drops the '|' would silently invalidate every cached upload and re-upload every clip."
+    }
+  ]
+}

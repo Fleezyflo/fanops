@@ -1,0 +1,126 @@
+{
+  "$schema": "fanops-impl-contract/inventory/v1",
+  "cycle": 6,
+  "git_head": "fcffa73",
+  "purpose": "*** For every approved remediation item: EVERY affected element, CLASSIFIED. This is the surface Cycle 7 diffs against. An element not listed here is, by construction, OUT OF SCOPE. ***",
+
+  "classification": {
+    "READ_ONLY": "the slice reads it; does not change it. *** Listed because a change here would be OUT OF CONTRACT. ***",
+    "ADDITIVE": "a new symbol/field/verb. Old callers unaffected.",
+    "BEHAVIORAL": "existing code, changed semantics. *** The dangerous class. ***",
+    "COMPATIBILITY": "changes what an OLD binary or an OLD on-disk shape can do.",
+    "MIGRATION": "requires a one-time data or operational step.",
+    "DESTRUCTIVE": "deletes data or code.",
+    "GENERATED": "regenerated from source; never hand-edited.",
+    "MANUAL": "hand-maintained; a human must update it."
+  },
+
+  "confidence": {"CERTAIN": "AST-verified, or measured at fcffa73.", "HIGH": "source-read, single site.", "INFERRED": "derived; no direct observation."},
+
+  "slices": {
+    "S01": {
+      "modules": [
+        {"path": "src/fanops/ledger.py", "symbol": "Ledger.restore_snapshot", "class": "BEHAVIORAL", "detail": "*** Replace `_file_lock(cfg.lock_path)` + `store.restore()` (os.replace) with `store.lock()` + `store.write_raw(snap_doc)` — IN PLACE, SAME INODE. Retain os.replace as the CORRUPT-DB fallback. ***", "confidence": "CERTAIN"},
+        {"path": "src/fanops/ledger.py", "symbol": "Ledger.transaction / _save_unlocked / _drain_deferred_unlinks / Ledger.snapshot", "class": "READ_ONLY", "detail": "*** ALREADY CORRECT. `Ledger.snapshot` (:540) is the MODEL — it already takes store.lock(). DO NOT TOUCH ANY OF THESE. ***", "confidence": "CERTAIN"},
+        {"path": "src/fanops/ledger_sqlite.py", "symbol": "read_raw_from(path)", "class": "ADDITIVE", "detail": "Extract the body of `read_raw`, parametrized on path. ~8 lines. *** ZERO behaviour change. ***", "confidence": "CERTAIN"},
+        {"path": "src/fanops/ledger_sqlite.py", "symbol": "write_raw / lock / restore", "class": "READ_ONLY", "detail": "*** `write_raw` ALREADY performs a full-document DELETE+INSERT and, when `self._conn` is set (own=False), REUSES THE CALLER'S LOCKED CONNECTION WITHOUT COMMITTING — exactly the semantics required. NOTHING IS INVENTED. ***", "confidence": "CERTAIN"}
+      ],
+      "persistence": [{"artifact": "00_control/ledger.sqlite", "class": "BEHAVIORAL", "detail": "*** HOW it is restored changes. WHAT is stored does not. NO schema change. NO on-disk format change. ***"}, {"artifact": "the snapshot .json", "class": "READ_ONLY", "detail": "*** FORMAT UNCHANGED. A post-fix snapshot restores on PRE-fix code — this is what makes the revert safe. ***"}],
+      "concurrency": [{"element": "L1 ledger lock (BEGIN IMMEDIATE)", "class": "BEHAVIORAL", "detail": "*** restore_snapshot JOINS the L1 domain. It currently participates in NO domain. ***"}, {"element": "L5 `ledger.lock`", "class": "DESTRUCTIVE (deferred)", "detail": "*** Loses its SOLE consumer and becomes GENUINELY DEAD for the first time — three cycles after being WRONGLY filed as dead (DEAD-005). DO NOT DELETE IT IN THIS PR; bundling obscures the diff. ***"}],
+      "side_effects": [{"effect": "`os.replace` on the db file", "class": "BEHAVIORAL", "detail": "*** REMOVED from the happy path. RETAINED for the corrupt-db fallback. ***"}, {"effect": "cascade deferred media unlinks", "class": "READ_ONLY", "detail": "*** UNCHANGED — but the RACE that made them delete live media is CLOSED. This is the severity driver. ***"}],
+      "tests": [{"path": "tests/test_ledger_sqlite_store.py", "class": "*** BEHAVIORAL — A REWRITE. IT CURRENTLY ASSERTS THE DATA LOSS (RC-5). ***", "confidence": "CERTAIN"}],
+      "documentation": [{"path": ".reports/architecture/kb/persistence.json", "class": "GENERATED"}, {"path": ".reports/architecture/kb/maintenance.json", "class": "GENERATED"}, {"path": ".reports/architecture/invariants.json (INV-07, INV-DEFER)", "class": "GENERATED"}],
+      "NOT_affected": ["*** ANY other ledger writer. The 74 Ledger.transaction sites. The 8 entity maps. The migration chain. ***"]
+    },
+
+    "S02": {
+      "modules": [
+        {"path": "src/fanops/accounts.py", "symbol": "normalize_backend", "class": "ADDITIVE", "detail": "*** The EXACT rule set_backend already applies: `.strip().lower()`; None if not in _VALID_BACKENDS. NOT NEW POLICY — it moves an existing rule to the door that lacks it. ***", "confidence": "CERTAIN"},
+        {"path": "src/fanops/accounts.py", "symbol": "Accounts.load", "class": "BEHAVIORAL", "detail": "Apply normalize_backend. An unknown name -> drop the channel's backend + record it in the EXISTING `skipped_rows`.", "confidence": "CERTAIN"},
+        {"path": "src/fanops/accounts.py", "symbol": "Accounts.validate", "class": "ADDITIVE", "detail": "Add the VALUE check to the existing PAIRING check.", "confidence": "CERTAIN"},
+        {"path": "src/fanops/accounts.py", "symbol": "set_backend", "class": "BEHAVIORAL", "detail": "Call normalize_backend; delete its inline copy.", "confidence": "CERTAIN"},
+        {"path": "src/fanops/post/__init__.py", "symbol": "get_poster / get_media_uploader", "class": "BEHAVIORAL", "detail": "Harden the live-guard to MEMBERSHIP as defence in depth. *** With load normalizing, this becomes UNREACHABLE — WHICH IS THE POINT. ***", "confidence": "CERTAIN"},
+        {"path": "src/fanops/settings.py", "symbol": "_VALID_BACKENDS", "class": "BEHAVIORAL (consolidation)", "detail": "*** COUP-05: it is defined TWICE (config.py:72, settings.py:18) — one guards the WRITE boundary, one the READ boundary. If they DRIFT, the two boundaries disagree about what a legal backend IS. That is the gap RC-3 exploits. ***", "confidence": "CERTAIN"},
+        {"path": "src/fanops/post/providers.py", "symbol": "PROVIDERS + the six factory lambdas", "class": "*** READ_ONLY — GB-2. A name-based call graph flags ALL SIX as uncalled. ALL SIX ARE LIVE (COUP-10). ***", "confidence": "CERTAIN"}
+      ],
+      "public_interfaces_permitted_to_change": ["`normalize_backend` (NEW)", "`Accounts.validate()`'s problem list (ADDITIVE)"],
+      "public_interfaces_FORBIDDEN_to_change": ["*** `Account.backends`'s TYPE — it stays `dict[str,str]`. Converting it to a typed enum makes pydantic REFUSE TO LOAD a legacy registry (GB-3 / SHIM-005). ***", "`effective_provider`'s signature", "*** The legacy `FANOPS_POSTER` bridge. ***"],
+      "configuration": [{"var": "FANOPS_POSTER", "class": "READ_ONLY", "detail": "*** The legacy bridge. UNTOUCHED. ***"}, {"var": "FANOPS_LIVE", "class": "READ_ONLY", "detail": "*** `golive._dual_write` is its ONLY setter (INV-18). S02 does not touch it. ***"}],
+      "persistence": [{"artifact": "00_control/accounts.json", "class": "*** READ_ONLY ON DISK. Normalization happens at LOAD, in memory. The file is NOT rewritten — which is what makes the revert clean. ***", "confidence": "CERTAIN"}],
+      "external_integrations": [{"service": "Postiz / Zernio", "class": "*** BEHAVIORAL — WHICH CHANNELS PUBLISH LIVE. The blast radius ESCAPES THE REPOSITORY. ***", "live_check": "*** LS-3 (2026-07-14): 0 malformed values on the live tree. S02 cannot flip any channel dark->live TODAY. RE-VERIFY AT MERGE. ***"}],
+      "tests": [{"path": "tests/ (new)", "class": "ADDITIVE", "detail": "the 8x5 matrix + the MOL-79 leniency PRESERVATION test"}],
+      "documentation": [{"path": "kb/configuration.json", "class": "GENERATED"}, {"path": "invariants.json INV-03", "class": "GENERATED", "detail": "*** re-classify from FALSE to VERIFIED. ***"}]
+    },
+
+    "S03": {
+      "modules": [
+        {"path": "src/fanops/post/run.py", "symbol": "_publish_one CLAIM (:264-272)", "class": "BEHAVIORAL", "detail": "*** Move the `is_real_submission_id` predicate INTO the claim; `return None` -> the txn exits with NO mutation, the post stays `queued`. ***", "confidence": "CERTAIN"},
+        {"path": "src/fanops/post/run.py", "symbol": "run.py:270-271 (`republish_with_real_id`)", "class": "*** DESTRUCTIVE (delete) — it LOGS AND PROCEEDS, authorizing what :287 then FORBIDS. TWO GUARDS, ONE PREDICATE, OPPOSITE INTENTS. ***", "confidence": "CERTAIN"},
+        {"path": "src/fanops/post/run.py", "symbol": "run.py:287-288 (the skip)", "class": "DESTRUCTIVE (delete — now dead)", "confidence": "CERTAIN"},
+        {"path": "src/fanops/post/run.py", "symbol": "publish_due tally", "class": "ADDITIVE", "detail": "a `skipped_real_sid` bucket. *** Today the post VANISHES from the tally — that silence is HALF the defect. ***", "confidence": "CERTAIN"},
+        {"path": "src/fanops/post/run.py", "symbol": "run.py:367 (Render.path write)", "class": "*** READ_ONLY — UNREACHABLE (LS-4: 0 renders, 0/347 posts with a render_id). DO NOT 'REPAIR' IT. ***", "confidence": "CERTAIN"}
+      ],
+      "ledger_structures": [{"element": "PostState.submitting", "class": "BEHAVIORAL", "detail": "*** ONE WRITER IS REMOVED. The transitions.json P4 guard tightens. NO NEW TRANSITION IS ADDED. ***"}],
+      "public_interfaces_FORBIDDEN_to_change": ["*** `_publish_one`'s crash-into-`submitting` path (F11) — LEGITIMATE and MUST REMAIN. ***", "the CLAIM's other guards (`state is queued`; the due re-check under lock)", "`_NET_POST_FIELDS` / the FINALIZE merge (the B4 lost-update fix)"],
+      "tests": [{"path": "tests/ (new)", "class": "ADDITIVE"}],
+      "documentation": [{"path": "transitions.json (P4)", "class": "GENERATED"}, {"path": "kb/ownership.json", "class": "GENERATED"}]
+    },
+
+    "S04": {
+      "modules": [
+        {"path": "src/fanops/reconcile.py", "symbol": "_apply_age_terminal", "class": "ADDITIVE", "detail": "*** A PURE function of (state, age). Called on EVERY reconcilable post, EVERY pass, BEFORE the try/poll. ***", "confidence": "CERTAIN"},
+        {"path": "src/fanops/reconcile.py", "symbol": "reconcile_posts ladder (:739-777)", "class": "BEHAVIORAL", "detail": "*** Hoist the terminal OUT of the poll-outcome branch. The poll then only ADVANCES a post; it can no longer PREVENT the terminal. ***", "confidence": "CERTAIN"},
+        {"path": "src/fanops/reconcile.py", "symbol": "reconcile.py:767 (`if post.error_reason: continue`)", "class": "*** BEHAVIORAL — the suppression key becomes the EXPLICIT `_is_giveup` marker. MUST SHIP IN THIS PR: the latch lives INSIDE the branch S04 rewrites. ***", "confidence": "CERTAIN"},
+        {"path": "src/fanops/reconcile.py", "symbol": "_STUCK_AFTER / _SUBMITTING_ESCALATE_AFTER / _RECONCILE_GIVEUP_AFTER", "class": "*** READ_ONLY. Cycle-3 PINNED these (6h / 24h / 72h, BOTH ages from scheduled_time, NOT chained). DO NOT 'FIX' THEM. The escalation is not LATE — IT IS UNREACHABLE. ***", "confidence": "CERTAIN"}
+      ],
+      "cli_commands": [{"verb": "fanops reconcile --report-terminals", "class": "*** ADDITIVE — AND IT IS AN OPERATIONAL GATE, NOT A CONVENIENCE. Ship it FIRST. ***", "confidence": "HIGH"}],
+      "ledger_structures": [{"element": "Post.error_reason", "class": "BEHAVIORAL", "detail": "*** `GAVE UP:` remains a LABEL. IT CHANGES NO STATE. A given-up post is NOT re-queueable and CANNOT double-post. THE SAFETY PROPERTY THE WHOLE SLICE RESTS ON. ***"}, {"element": "PostState.needs_reconcile", "class": "BEHAVIORAL", "detail": "reachable on ALL 32 matrix cells, not just the successful-poll branch"}],
+      "migration": [{"kind": "*** OPERATIONAL, NOT SCHEMA. ***", "class": "MIGRATION", "detail": "*** On the first pass after deploy, EVERY currently-stranded post becomes eligible for escalation AT ONCE. LS-1 (2026-07-14): THE RECONCILABLE SET IS **ZERO**. The migration is a NO-OP TODAY. RE-VERIFY AT MERGE. ***"}],
+      "external_integrations": [{"service": "Zernio", "class": "READ_ONLY", "detail": "*** S04 makes the terminal INDEPENDENT of the poll, so it works EVEN THOUGH Zernio raises on a 404. S05 then fixes the semantics. ***"}],
+      "documentation": [{"path": "transitions.json (P16/P17)", "class": "GENERATED"}, {"path": "workflows.json (W7)", "class": "GENERATED"}]
+    },
+
+    "S05": {"modules": [{"path": "src/fanops/post/metrics.py", "symbol": "ZernioStatusClient.get_status", "class": "BEHAVIORAL", "detail": "*** Handle 404 BEFORE the generic >= 300 raise. A 404 semantically IS 'the backend does not know this id' — that is `unknown`, NOT an error. ***", "confidence": "CERTAIN"}], "public_interfaces_FORBIDDEN_to_change": ["*** the 5xx -> RuntimeError path (parked, never guessed `failed`) ***", "*** the 401 -> ZernioAuthError halt (INV-11) ***", "the `{status, publicUrl, tiktokUsername?}` return shape", "`PostizStatusClient` — ALREADY CORRECT"], "unknowns": ["*** Whether Zernio returns 404 (vs 410, vs 200-with-error) for a DELETED post. `post/metrics.py`'s own docstring: the shapes are 'locked offline here; the operator verifies live at first publish.' IF YOU CANNOT VERIFY IT LIVE, SAY SO. ***"]},
+
+    "S06": {"modules": [{"path": "src/fanops/studio/actions.py", "symbol": "bulk_send_to_review (:944-951)", "class": "BEHAVIORAL", "detail": "*** ADD `p.error_reason = None` to the field-clearing block. ONE LINE. ***", "confidence": "CERTAIN"}], "ledger_structures": [{"element": "Post.error_reason", "class": "BEHAVIORAL"}, {"element": "Post.submission_id / batch_id", "class": "*** READ_ONLY — 'keep the lineage'. Clearing submission_id would let a re-approved post RE-POST. If it was actually live, THAT IS A DUPLICATE ON THE PLATFORM. PD-1, UNDECIDED. ***"}]},
+
+    "S07": {
+      "modules": [{"path": "src/fanops/pipeline.py", "symbol": "_reconcile_safe (:318)", "class": "BEHAVIORAL", "detail": "*** Option A (RECOMMENDED): REMOVE the `is_live_backend` gate. `reconcile_due` is ALREADY per-post safe — its own docstring says it 'skips dryrun/provider-less posts'. The gate is redundant defence THAT BECAME AN ACTIVE HAZARD. ***", "confidence": "CERTAIN"}, {"path": "src/fanops/cli.py", "symbol": "_learn_pass's is_live_backend gate (:965)", "class": "*** READ_ONLY — AND IT IS THE MOST IMPORTANT READ_ONLY IN THE ENTIRE PROGRAM. See IR-7. ***", "confidence": "CERTAIN"}],
+      "pre_flight_that_DECIDES_the_option": "*** Confirm `reconcile_due` makes ZERO network calls on a dryrun-only deployment. If it does NOT, take Option B (gate BOTH) instead. THIS IS AN ACCEPTANCE CRITERION. ***",
+      "public_interfaces_FORBIDDEN_to_change": ["*** `_learn_pass`'s gate. ***", "AuthError re-raise symmetry in BOTH functions", "dryrun preview writing (Option B WOULD regress this — which is WHY Option A is recommended)"]
+    },
+
+    "S08": {
+      "modules": [{"path": "src/fanops/health_model.py", "symbol": "last_success_age_s", "class": "ADDITIVE", "confidence": "CERTAIN"}, {"path": "src/fanops/daemon.py", "symbol": "status (:462-476)", "class": "BEHAVIORAL", "detail": "*** ADD a second, orthogonal verdict. KEEP `alive` keyed on daemon_progress. ***", "confidence": "CERTAIN"}, {"path": "src/fanops/cli.py", "symbol": "the daemon loop / _heartbeat (:1306)", "class": "READ_ONLY-to-ADDITIVE", "detail": "*** The heartbeat fires ONLY when a pass SUCCEEDS — IT ALREADY *IS* THE SUCCESS SIGNAL. It is simply not READ as one. THE VERDICT DISCARDS IT. ***", "confidence": "CERTAIN"}, {"path": "src/fanops/daemon.py", "symbol": "daemon_progress / _heartbeat_age_s", "class": "*** READ_ONLY. project memory `liveness-verdict-single-owner`: 'fix there, not per-surface; DON'T TOUCH `_heartbeat_age_s`.' THIS SLICE ADDS A SIGNAL; IT MOVES NONE. ***", "confidence": "CERTAIN"}],
+      "public_interfaces": [{"element": "the `status()` dict", "class": "ADDITIVE", "detail": "*** CONFIRM no consumer parses the verdict STRING for equality with 'alive'. If one does, adding a new verdict string BREAKS IT. ***"}]
+    },
+
+    "S09": {
+      "modules": [{"path": "src/fanops/post/compress.py", "symbol": "maybe_shrink_for_cap (:19-21)", "class": "BEHAVIORAL", "detail": "*** The code that CREATES the dir must OWN its lifetime. ***", "confidence": "CERTAIN"}, {"path": "src/fanops/studio/actions.py", "symbol": "retry_oversize_failures / retry_rate_limited_failures (:1029-1034, :1100-1102)", "class": "BEHAVIORAL", "detail": "STOP persisting the `file://` temp URL into `Post.media_urls`.", "confidence": "CERTAIN"}, {"path": "src/fanops/post/compress.py", "symbol": "media_path_for_post's CLIP FALLBACK (:61-65)", "class": "*** READ_ONLY — THIS SLICE DEPENDS ON IT. Do NOT 'simplify' it away. It IS the self-heal. ***", "confidence": "CERTAIN"}, {"path": "src/fanops/post/compress.py", "symbol": "the CRF ladder (28->32->36->40) + its fail-open", "class": "READ_ONLY", "confidence": "CERTAIN"}, {"path": "src/fanops/post/compress.py", "symbol": "compress.py:112, :131 (Render.path writes)", "class": "*** READ_ONLY — UNREACHABLE (LS-4, confirmed against the LIVE TREE). ***", "confidence": "CERTAIN"}],
+      "cli_commands": [{"verb": "fanops clean --shrink", "class": "ADDITIVE", "detail": "*** S09 owns this region of cli.py. cli.py's print() count MUST NOT CHANGE (IR-4). ***"}],
+      "filesystem_artifacts": [{"artifact": "04_agent_io/fanops-shrink-*/", "class": "*** DESTRUCTIVE (a one-time clean) — 41 dirs, 04_agent_io = 924 MB (LS-5). GARBAGE BY CONSTRUCTION. ***", "confidence": "CERTAIN"}],
+      "migration": [{"kind": "DATA", "class": "MIGRATION", "detail": "*** A one-time clean. PROVEN SAFE by EXP-C4-4 (the self-heal). NO path migration is needed — Cycle 3's coupling claim is REFUTED. ***"}]
+    },
+
+    "S10": {"status": "*** BLOCKED ON PD-3. NO INVENTORY MAY BE FROZEN UNTIL THE OPERATOR ANSWERS — freezing it would presuppose the answer. ***"},
+
+    "S11": {
+      "modules": [{"path": "tests/test_mutation_boundary_policy.py", "class": "ADDITIVE (NEW FILE)", "detail": "*** AST policy test. ZERO production files changed. ***", "confidence": "CERTAIN"}],
+      "public_interfaces": "*** NONE. ***",
+      "persistence": "*** NONE. ***",
+      "side_effects": "*** NONE. ***",
+      "documentation": [{"path": "invariants.json INV-01", "class": "GENERATED", "detail": "*** enforcement class: CONVENTION (4 manual guards) -> CONVENTION + MECHANICAL_TEST. ***"}],
+      "explicitly_NOT_claimed": "*** RC-9 IS NOT FIXED. `model_copy` STILL bypasses every validator. The slice PINS the unreachability; it does not remove the mechanism. ***"
+    },
+
+    "S12": {"status": "*** PROPOSED — BLOCKED ON PD-5. ***", "modules": [{"path": "tests/test_layering_policy.py", "class": "ADDITIVE (NEW FILE)", "detail": "AST policy test over kb/dependencies.json -> layering.levels. ZERO production files changed."}]}
+  },
+
+  "cross_slice_shared_elements": {
+    "note": "*** These are touched by MORE THAN ONE slice. Each needs a named owner or a named budget, or two slices will silently collide. ***",
+    "src/fanops/studio/actions.py": {"slices": ["S06", "S09"], "resolution": "*** FUNCTION-PARTITIONED. S06: `bulk_send_to_review` ONLY. S09: `retry_*` ONLY. ~80 lines apart. ***", "shared_budget": "swallow baseline 23 — NEITHER may raise it."},
+    "src/fanops/cli.py": {"slices": ["S08", "S09", "S10"], "resolution": "*** FUNCTION-PARTITIONED. S08: the daemon loop + _heartbeat. S09: a new `cmd_clean`. S10: `_learn_pass` (BLOCKED). ***", "shared_budget": "*** `_CLI_PRINT_COUNT = 147`, EXACT EQUALITY. THE RULE: NO SLICE MAY CHANGE IT. (IR-4.) *** Plus swallow baseline 3."},
+    "cfg.is_live_backend": {"slices": ["S02 (changes what FEEDS it)", "S07 (changes who READS it)", "S10 (is GATED on it)"], "resolution": "*** S02 -> S07 is an ORDERING edge. S07 <-> S10 is a FORBIDDEN EXPANSION (IR-7), guarded by a CONTRACT test. S02 <-> S10 is a LATENT semantic conflict that LS-3 proves is NOT REACHABLE today (0 malformed backends). ***"},
+    "Post.error_reason": {"slices": ["S03 (writes it)", "S04 (owns the :767 latch)", "S06 (clears it on revert)"], "resolution": "*** INT-7 holds ONLY when S04 AND S06 both land. A CO-REQUIREMENT, not an ordering edge. ***"}
+  }
+}

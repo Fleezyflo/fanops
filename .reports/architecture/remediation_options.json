@@ -1,0 +1,494 @@
+{
+  "$schema": "fanops-architecture-remediation/v1",
+  "cycle": 4,
+  "git_head": "fcffa73",
+  "generated": "2026-07-14",
+  "prose_twin": "REMEDIATION_OPTIONS.md",
+  "rule": "Every option states what it does NOT fix. A fix that hides a symptom is listed under `rejected_shallow_fixes` with the reason, not omitted.",
+  "status": "DESIGN ONLY. Nothing implemented. No PR opened.",
+
+  "intended_invariants": [
+    {
+      "id": "INT-1",
+      "root": "RC-1",
+      "statement": "A post is claimed to `submitting` ONLY when the very next action is a network POST for that post.",
+      "currently": "FALSE. _publish_one claims (run.py:272), then skips the POST (run.py:287), then persists `submitting` (run.py:355).",
+      "doc_claims": "post/CLAUDE.md describes CLAIM as 'publish ONLY if still queued ... flip queued->submitting and persist BEFORE any network'. It does not contemplate a claim with no network.",
+      "architecture_requires": "TRUE. `submitting` means 'a network POST is in flight or its outcome is unknown'. A claim with no POST makes the state a lie and hands reconcile a post it cannot interpret.",
+      "mechanically_testable_as": "For every post P and every publish invocation: if P.state transitions queued->submitting, then poster.publish was called with P.id, OR the transition was reverted before the transaction committed.",
+      "test": "test_claim_refuses_real_submission_id — a queued post carrying a real submission_id must remain `queued` after publish_due, and poster.publish must not be called."
+    },
+    {
+      "id": "INT-2",
+      "root": "RC-2",
+      "statement": "Every post in {submitting, submitted, needs_reconcile} has at least one autonomous transition to a terminal or retryable state, reachable in bounded time, REGARDLESS of poll outcome, token provenance, or the contents of error_reason.",
+      "currently": "FALSE on three independent axes (raising poll / real token / any error_reason set).",
+      "doc_claims": "reconcile.py:44-58 describes XC-1 and XC-2 as the terminal owners.",
+      "architecture_requires": "TRUE. reconcile is the SOLE reader of `submitting` (publish_due iterates `queued` only, run.py:442). If reconcile cannot terminate, nothing can.",
+      "mechanically_testable_as": "For every backend B, every poll outcome O in {published, failed, unknown, RAISES}, every token kind T in {fake, real}, and every error_reason R in {empty, non-empty}: a post in `submitting` with age > _SUBMITTING_ESCALATE_AFTER reaches needs_reconcile, and one in needs_reconcile with age > _RECONCILE_GIVEUP_AFTER receives the GAVE UP: label. 4 x 2 x 2 x 2 = 32 cells, all must terminate.",
+      "test": "test_terminal_ladder_matrix — parametrized over (backend, poll_outcome, token_kind, error_reason_preset); every cell must terminate by +72h."
+    },
+    {
+      "id": "INT-3",
+      "root": "RC-3",
+      "statement": "A live account with an unsupported provider value must FAIL BEFORE a post is claimed.",
+      "currently": "FALSE. It resolves to a DryRunPoster on a live system and the post is claimed and stranded.",
+      "doc_claims": "src/fanops/CLAUDE.md and post/CLAUDE.md: 'get_poster raises rather than build a DryRunPoster when live'. FALSE as written (INV-03).",
+      "architecture_requires": "TRUE. post/__init__.py:14-17's own ROOT FIX comment says so: 'a LIVE system asking for the dryrun poster is the bug that wrote 7 fake-published rows.'",
+      "mechanically_testable_as": "For every string S not in PROVIDERS: Accounts.load must not yield an Account whose backends contains S unnormalized; and if S survives to get_poster on a live system, get_poster must RAISE.",
+      "test": "test_backend_normalization_matrix — the executed Cycle-2 matrix ('Postiz','POSTIZ','postiz ',' postiz','blotato') must now normalize or be REJECTED, and NONE may construct a DryRunPoster while cfg.is_live."
+    },
+    {
+      "id": "INT-4",
+      "root": "RC-3b",
+      "statement": "The producer of a state and the sole consumer of that state are gated on the SAME predicate.",
+      "currently": "FALSE. _reconcile_safe gates on cfg.is_live_backend (pipeline.py:318); _publish_safe does not (pipeline.py:334).",
+      "architecture_requires": "TRUE, trivially: a state with a producer and no consumer is a leak by construction.",
+      "mechanically_testable_as": "For every config C: if _publish_safe(C) can claim a post to `submitting`, then _reconcile_safe(C) must run in the same pass.",
+      "test": "test_reconcile_and_publish_gate_parity — with is_live=True and live_ready_channels()==[], assert that either BOTH run or NEITHER does."
+    },
+    {
+      "id": "INT-5",
+      "root": "RC-4",
+      "statement": "Replacing the ledger's contents must be mutually exclusive with every active ledger writer, and must never orphan an inode a writer holds open.",
+      "currently": "FALSE. restore_snapshot's flock excludes nothing; os.replace orphans the writer's inode; the writer's commit() succeeds and its data is discarded; and its deferred file unlinks PROCEED.",
+      "doc_claims": "ledger.py:547 'Atomically restore ledger.sqlite FROM a snapshot (SQLite backup API + os.replace).' The word 'atomically' describes the FILE operation, not the concurrency property.",
+      "architecture_requires": "TRUE. Ledger.snapshot -- the sibling method SIX LINES ABOVE (ledger.py:540) -- already takes `with store.lock():`. The correct pattern is present in the same class.",
+      "mechanically_testable_as": "A writer holding BEGIN IMMEDIATE must BLOCK a concurrent restore until it commits; the writer's commit must be VISIBLE (not orphaned) before the restore supersedes it; and a cascade txn's deferred unlinks must never run against a db the restore has replaced.",
+      "test": "test_restore_blocks_on_active_writer (the REWRITTEN test_restore_snapshot_serializes_with_transaction) + test_restore_does_not_orphan_media_unlinks."
+    },
+    {
+      "id": "INT-6",
+      "root": "RC-6",
+      "statement": "A health verdict named `alive` must NOT imply successful work unless a successful-pass timestamp is independently reported.",
+      "currently": "FALSE. daemon.status returns `alive` on the newest run.log line of ANY kind, while every pass halts.",
+      "architecture_requires": "TRUE, and the existing design is nearly there: heartbeat_age_s is ALREADY in the returned dict; it is the VERDICT that discards it.",
+      "mechanically_testable_as": "status(cfg) must return a `last_success_age_s` (or None) distinct from `heartbeat_age_s`, and the verdict must be a distinguishable string when the process is alive but no pass has succeeded within N intervals.",
+      "test": "test_daemon_status_distinguishes_alive_from_succeeding — a daemon whose every pass raises must NOT return verdict 'alive'."
+    },
+    {
+      "id": "INT-7",
+      "root": "RC-8",
+      "statement": "No recovery action may leave a post carrying a status string that describes a state it is no longer in; and no status string may suppress the system's own attention.",
+      "currently": "FALSE on both halves. bulk_send_to_review preserves a stale error_reason (actions.py:944-951); reconcile.py:767 makes any error_reason a permanent suppression latch.",
+      "mechanically_testable_as": "After any state-reverting action, post.error_reason must be None or must describe the NEW state. And reconcile must visit every reconcilable post on every pass regardless of error_reason (suppression must key on an EXPLICIT terminal marker, not on the field being non-empty).",
+      "test": "test_revert_clears_stale_reason + test_reconcile_visits_post_with_a_reason."
+    },
+    {
+      "id": "INT-8",
+      "root": "RC-10",
+      "statement": "No persisted path may point into storage whose lifecycle is shorter than the ledger record.",
+      "currently": "FALSE, but SELF-HEALING. Post.media_urls is persisted into a mkdtemp dir (C4-F5); media_path_for_post's clip fallback (compress.py:61-65) recovers it.",
+      "mechanically_testable_as": "After any shrink, no persisted media_urls entry may resolve under a directory matching fanops-shrink-*.",
+      "test": "test_shrink_output_is_not_persisted_into_a_temp_dir + test_shrink_tempdir_is_cleaned."
+    },
+    {
+      "id": "INT-9",
+      "root": "RC-9",
+      "statement": "A model invariant that raises at construction must also raise on every mutation API (model_copy, setattr).",
+      "currently": "FALSE. LATENT -- no current path produces the poison row.",
+      "mechanically_testable_as": "For every model M with a raising validator V, and every door D in {ctor, setattr, model_copy}: D must raise on an invariant-violating value.",
+      "test": "test_no_door_produces_an_invalid_row (parametrized over the 3 doors x every raising validator).",
+      "sequenced": "LAST -- zero current reachability."
+    }
+  ],
+
+  "options": [
+    {
+      "finding": "RC-4 + RC-5 + C4-F2a",
+      "slice": "C4-SLICE-01",
+      "title": "restore_snapshot: in-place under the ledger lock",
+      "options": [
+        {
+          "id": "A",
+          "name": "smallest local correction -- swap the lock",
+          "change": "ledger.py:551: `with _file_lock(cfg.lock_path):` -> `with store.lock():`. store.restore() ALREADY supports being called under a held lock (ledger_sqlite.py:131 `relock = self._conn is not None`).",
+          "verdict": "*** REJECTED -- INSUFFICIENT. ***",
+          "why_rejected": "SQLite's write lock is held on the INODE via an open fd. A concurrent writer that opened the db BEFORE the replace still holds that inode. NO lock acquired before an os.replace can protect it. Taking the right lock narrows the window; it does not close it. This is the 'adding another lock that does not exclude SQLite writers' shallow fix the brief names.",
+          "ships_independently": true,
+          "rollback": "one-line revert"
+        },
+        {
+          "id": "B",
+          "name": "ROOT -- do not replace the file; write the snapshot's CONTENTS in place",
+          "change": [
+            "ledger_sqlite.py: extract `read_raw_from(path)` (the body of read_raw, parametrized on path). read_raw() becomes read_raw_from(self.db_path). ~8 lines, zero behaviour change.",
+            "ledger.py:546-553 restore_snapshot: read the snapshot's doc via read_raw_from(src); `with store.lock(): store.write_raw(snap_doc)`. Same BEGIN IMMEDIATE domain as EVERY other writer. SAME INODE. No os.replace, no -wal/-shm unlink.",
+            "KEEP store.restore() (the os.replace path) as an explicit CORRUPTION-RECOVERY fallback, taken ONLY when store.lock() cannot open the db."
+          ],
+          "verdict": "*** RECOMMENDED ***",
+          "verified": "EXP-C4-3(B): the restorer BLOCKED on BEGIN IMMEDIATE for 0.469s until the writer committed. No orphan. No lost commit. And EXP-C4-3(C) proves the fallback is REQUIRED: the in-place path raises DatabaseError('file is not a database') on a corrupt live db, while today's os.replace path succeeds.",
+          "reuses_existing_machinery": "write_raw (ledger_sqlite.py:59) ALREADY performs a full-document DELETE+INSERT and, when self._conn is set (own=False), reuses the caller's locked connection WITHOUT committing -- exactly the semantics required. Nothing new is invented.",
+          "kills": "ledger.lock (LCK-008 / DEAD-005) becomes GENUINELY dead for the first time -- its sole consumer is removed. It may then be deleted honestly.",
+          "behavioral_change": "A restore now BLOCKS (up to the 30s LockBusyError bound) while a writer holds the ledger. Today it silently wins. Blocking is correct: a restore that cannot serialize must fail loudly, not corrupt.",
+          "preserved": "Corruption recovery (via the explicit fallback). The control-file sidecar restore (_snapshot_restore_control_files) is untouched.",
+          "migration": "NONE. No schema change, no on-disk format change.",
+          "backward_compat_risk": "LOW. The snapshot FILE format is unchanged (it is still a SQLite image produced by store.snapshot).",
+          "operational_risk": "MEDIUM -- this is the ledger's write path. Mitigated by: (1) write_raw is the SAME function every commit already uses; (2) the fallback preserves the corrupt-db route; (3) a two-process contention test is a merge gate.",
+          "new_tests": [
+            "REWRITE test_restore_snapshot_serializes_with_transaction (it currently ASSERTS the data loss -- see RC-5). It must assert the restorer BLOCKS and the writer's commit is VISIBLE before being superseded.",
+            "NEW test_restore_does_not_orphan_media_unlinks (C4-F2a): a cascade txn's deferred unlinks must not delete media whose rows the restore brings back.",
+            "NEW test_restore_falls_back_on_corrupt_db.",
+            "NEW two-PROCESS contention test (not threads) -- SQLite locking is per-inode and cross-process."
+          ],
+          "coupling_removed": "COUP-01's second consequence (the restore path's lock domain). The A<->B (ledger vs control-file) domain split REMAINS -- this slice does not touch it.",
+          "does_not_fix": [
+            "COUP-01's FIRST consequence: publish reads accounts.json outside the ledger lock. (Already handled by 'in-flight wins'.)",
+            "The wipe's MOL-71 gap (no server-side check that preview ran).",
+            "Anything in the submission lifecycle."
+          ],
+          "ships_independently": true,
+          "rollback": "revert the PR. The snapshot file format is unchanged, so a snapshot taken post-fix restores fine pre-fix."
+        },
+        {
+          "id": "C",
+          "name": "broader -- a single ledger storage contract (all writers + restore + wipe behind one API)",
+          "verdict": "REJECTED -- NOT JUSTIFIED.",
+          "why_rejected": "Every other writer ALREADY goes through store.lock() + write_raw. restore_snapshot is the ONLY outlier. There is no contract to unify -- there is one method to bring INTO the existing contract. Option B does that. Building an abstraction over a one-instance divergence is the over-engineering the brief warns against."
+        }
+      ],
+      "rejected_shallow_fixes": [
+        "Adding an flock to Ledger.transaction so it and restore share ledger.lock. -> Rejected: it would serialize EVERY ledger write behind a SECOND lock for the benefit of one break-glass path, and it still does not stop the os.replace from orphaning an inode held by a writer that acquired the flock and then the sqlite lock.",
+        "Documenting 'do not run restore while the daemon is running.' -> Rejected: this is the documented recovery procedure (ledger_wipe.py:246). A doc note does not stop the media deletion.",
+        "Making restore refuse when the daemon PID is alive. -> Rejected: a PID check is not mutual exclusion; it races, and it does not protect against a Studio writer."
+      ]
+    },
+
+    {
+      "finding": "RC-3",
+      "slice": "C4-SLICE-02",
+      "title": "Canonical backend normalization at the READ boundary",
+      "options": [
+        {
+          "id": "A",
+          "name": "smallest -- make get_poster's guard case-insensitive AND membership-based",
+          "change": "post/__init__.py:19: raise when `cfg.is_live and get_provider(cfg, resolved) is None`, i.e. when the resolved backend is NOT a known live provider.",
+          "verdict": "PARTIAL -- closes the publish door, leaves four siblings divergent.",
+          "why_partial": "get_media_uploader (post/__init__.py:38-41) STILL silently falls back to the dryrun file:// uploader. compress.publish_backend_for_post STILL passes the raw string. This is the 'tightening only one provider resolver while leaving sibling resolvers divergent' shallow fix the brief explicitly forbids.",
+          "ships_independently": true
+        },
+        {
+          "id": "B",
+          "name": "ROOT -- normalize+validate at Accounts.load, so a malformed value cannot EXIST in memory",
+          "change": [
+            "accounts.py: extract `normalize_backend(s) -> str | None` -- the EXACT rule set_backend already applies (.strip().lower(); None if not in _VALID_BACKENDS). ~5 lines.",
+            "accounts.py Accounts.load: normalize each backends[platform] value. An unknown name -> drop the channel's backend AND record it in skipped_rows (the EXISTING MOL-79 channel, accounts.py:141-145), which validate() ALREADY promotes to a visible doctor/health problem (accounts.py:230-231).",
+            "accounts.py Accounts.validate(): add the VALUE check to the existing PAIRING check (accounts.py:241-250).",
+            "post/__init__.py:19: harden the live-guard to membership (Option A) as DEFENCE IN DEPTH -- with load normalizing, this becomes unreachable, which is the point."
+          ],
+          "verdict": "*** RECOMMENDED ***",
+          "why": "A malformed value can then only exist ON DISK, never in a loaded Accounts object. The five divergent resolvers all consume the LOADED object, so all five are fixed by one change at the source -- without touching five files.",
+          "single_source_of_truth": "normalize_backend becomes the ONE home for the rule. set_backend calls it (removing its inline copy). COUP-05 (_VALID_BACKENDS defined twice) is then reducible to one import.",
+          "behavioral_change": "A hand-edited 'Postiz' now NORMALIZES to 'postiz' (the channel publishes correctly -- today it silently does not). A hand-edited 'blotato' now SKIPS the channel and raises a visible doctor problem (today it silently dry-runs).",
+          "preserved": "The legacy FANOPS_POSTER bridge (accounts.py:196-201). The per-row leniency posture (MOL-79) -- one bad row never crashes the registry.",
+          "migration": "NONE. Existing valid accounts.json files normalize to themselves (set_backend already wrote them lowercase).",
+          "backward_compat_risk": "LOW-MEDIUM. A deployment currently relying on a malformed value to STAY in dryrun would start publishing. Mitigation: the normalization is logged once per load, and the channel is surfaced in validate().",
+          "operational_risk": "MEDIUM -- this changes which channels are live. The past-due-backlog gate in go_live is the existing anti-machine-gun guard and is untouched.",
+          "new_tests": [
+            "test_backend_normalization_matrix: the executed Cycle-2 matrix ('Postiz','POSTIZ','postiz ',' postiz','blotato','dryrun','DryRun') x {Accounts.load, validate, effective_provider, get_poster, get_media_uploader}. NONE may construct a DryRunPoster while cfg.is_live.",
+            "test_unknown_backend_is_surfaced_not_silent: 'blotato' must appear in validate()'s problems."
+          ],
+          "coupling_removed": "COUP-05 (the double _VALID_BACKENDS) reducible. COUP-16 (compress's second resolver) becomes harmless -- it can no longer receive a malformed value.",
+          "does_not_fix": [
+            "RC-3b (the gate asymmetry) -- a credential-less deployment still yields is_live_backend=False. SEPARATE SLICE.",
+            "The CSRF exposure on /golive/account/backend (F-C, a recorded accepted risk).",
+            "The fact that accounts.json is hand-editable at all (a deliberate operator channel)."
+          ],
+          "ships_independently": true,
+          "rollback": "revert. No persisted state changes."
+        },
+        {
+          "id": "C",
+          "name": "broader -- make Account.backends a typed enum field",
+          "verdict": "REJECTED for now.",
+          "why_rejected": "pydantic would then REFUSE to load a ledger/registry containing a legacy value, converting a soft skip into a hard ControlFileError -- the exact failure mode SHIM-005 (extra='ignore' forward-compat) exists to prevent. It also breaks the MOL-79 per-row leniency posture. Revisit only if the registry gains a migration mechanism."
+        }
+      ],
+      "rejected_shallow_fixes": [
+        "Making PROVIDERS.get() case-insensitive. -> Rejected: it fixes 'Postiz' and leaves 'blotato' silently dry-running. It treats a symptom (case) not the root (no validation).",
+        "Adding a doctor warning for malformed backends. -> Rejected: doctor is a preflight the operator must choose to run. The publish path would still silently dry-run."
+      ]
+    },
+
+    {
+      "finding": "RC-1",
+      "slice": "C4-SLICE-03",
+      "title": "The publish CLAIM refuses a post it will not POST",
+      "options": [
+        {
+          "id": "A",
+          "name": "smallest -- un-claim after the skip",
+          "change": "run.py:287-288: after logging skip_resubmit_existing_id, open a txn and revert submitting -> queued (mirroring _unclaim_no_integration, run.py:232-239, which ALREADY does exactly this for a different precondition).",
+          "verdict": "ACCEPTABLE but inferior.",
+          "why_inferior": "It writes `submitting` to disk and then writes it back -- a spurious state flap visible to any concurrent reader, and two extra transactions. The precondition is knowable BEFORE the claim.",
+          "ships_independently": true
+        },
+        {
+          "id": "B",
+          "name": "ROOT -- move the predicate INTO the claim; refusing is then a clean no-op",
+          "change": [
+            "run.py CLAIM (:264-272): add `if is_real_submission_id(post.submission_id): <log skip>; return None` BEFORE `post.state = PostState.submitting`. The txn exits with NO mutation -- the post stays `queued`.",
+            "DELETE the now-dead skip at run.py:287-288 and the contradictory `republish_with_real_id` log at :270-271 (they are two guards on one predicate with opposite intents).",
+            "publish_due: count the refusal into the tally (a `skipped_real_sid` bucket) so it is SURFACED, not silent. Today _publish_one returns the SUCCESS-SHAPED string 'submitting' and the post vanishes from the tally."
+          ],
+          "verdict": "*** RECOMMENDED ***",
+          "why": "The precondition (does this post already carry a real backend id?) is fully knowable at claim time. Refusing there is a no-op; refusing after the claim is a state mutation with no owner. This is the SAME shape as the existing pre-claim guard for a missing integration id (run.py:256-262), which the code ALREADY gets right -- so this is bringing one predicate into an established pattern, not inventing one.",
+          "sibling_parity_note": "run.py:256-262 (_missing_integration_id) is the CORRECT model: it is checked BEFORE the claim and returns None. is_real_submission_id is checked AFTER. Same file, same function, two preconditions, two different phases. This slice makes them consistent.",
+          "behavioral_change": "A real-sid post in `queued` now STAYS `queued` (visible, re-driveable, counted) instead of being stranded in `submitting` (invisible, un-re-driveable, silent).",
+          "preserved": "The no-double-POST guarantee (MOL-115) -- strengthened, not weakened: the POST is still never sent.",
+          "migration": "NONE for new posts. EXISTING posts already stranded in `submitting` are NOT healed by this slice -- SLICE-04 heals them. See the interference matrix.",
+          "backward_compat_risk": "LOW.",
+          "operational_risk": "LOW. It strictly REMOVES a state transition; it adds none.",
+          "new_tests": [
+            "test_claim_refuses_real_submission_id: a queued post with a real sid -> after publish_due, state is STILL `queued`, poster.publish was NOT called, and the tally reports it. MUST FAIL on current source (today: state becomes `submitting`).",
+            "test_claim_still_publishes_a_fake_token_post (non-regression).",
+            "test_publish_due_tally_surfaces_the_refusal."
+          ],
+          "does_not_fix": [
+            "Posts ALREADY stranded in `submitting` (SLICE-04).",
+            "The crash-during-network door into `submitting` -- which is LEGITIMATE and must remain (F11).",
+            "PD-1: whether the operator needs an explicit 'republish' action to release the now-visibly-stuck queued post."
+          ],
+          "ships_independently": true,
+          "rollback": "revert. No persisted state changes."
+        },
+        {
+          "id": "C",
+          "name": "broader -- a Post lifecycle state machine with declared legal transitions",
+          "verdict": "DEFER.",
+          "why": "Correct in the long run and it would structurally prevent RC-1's whole class. But it touches all 21 PostState writers and every Studio recovery route at once -- a very large blast radius for a defect that Option B closes in ~15 lines. Revisit AFTER slices 03/04/06 have settled the lifecycle semantics, so the state machine encodes a KNOWN-correct contract rather than the current one."
+        }
+      ],
+      "rejected_shallow_fixes": [
+        "Changing _publish_one's return value from 'submitting' to None so the tally is honest. -> Rejected: it fixes the REPORT, not the STRAND. The post is still stuck. This is the brief's 'merely changing a timeout for a structurally unreachable escalation' in a different costume."
+      ]
+    },
+
+    {
+      "finding": "RC-2",
+      "slice": "C4-SLICE-04",
+      "title": "The reconcile terminal ladder: a pure function of (state, age)",
+      "options": [
+        {
+          "id": "A",
+          "name": "smallest -- drop _is_fake_token from the two terminals",
+          "change": "reconcile.py:746 and :757: remove the `_is_fake_token(post)` conjunct.",
+          "verdict": "PARTIAL. Closes C3-F1 on Postiz. Does NOT close C3-F2 (a raising poll still `continue`s at :635 and never reaches the ladder), and does not close the error_reason latch at :767.",
+          "why_partial": "Two of the three exclusions remain. This is 'adding another special case for a real submission token without defining submission lifecycle ownership' -- explicitly forbidden by the brief.",
+          "ships_independently": true
+        },
+        {
+          "id": "B",
+          "name": "ROOT -- hoist the terminal decision OUT of the poll-outcome branch",
+          "change": [
+            "Extract `_apply_age_terminal(post, now) -> Post | None` -- a PURE function of (state, age). It owns XC-1 (submitting + age > 24h -> needs_reconcile) and XC-2 (needs_reconcile + age > 72h -> GAVE UP:). It does NOT consult the poll, the token, or error_reason.",
+            "Call it on EVERY reconcilable post, on EVERY pass, BEFORE the try/poll -- so a raising poll can no longer bypass it.",
+            "The poll then only ADVANCES a post (published / failed). A poll error stamps a reason and continues, as today -- but it can no longer prevent the terminal.",
+            "reconcile.py:767 (`if post.error_reason: continue`): change the suppression key from 'any non-empty error_reason' to the EXPLICIT terminal marker _is_giveup(post). A post with a transient reason must still be VISITED (that is what makes the strand silent -- RC-8).",
+            "PD-2 sets the semantics: recommendation is the SAME ladder for a real token (GAVE UP: is a LABEL written to error_reason -- it changes no state and therefore CANNOT cause a double-post)."
+          ],
+          "verdict": "*** RECOMMENDED *** (pending PD-2)",
+          "why": "The correct predicate for 'give up on this post' is (state, age). Everything else the current code conditions on -- this pass's poll outcome, the token's provenance, whether any string was ever written to a free-text field -- is incidental. Hoisting the decision out of the branch makes it reachable on ALL 32 cells of the (backend x poll-outcome x token-kind x reason) matrix.",
+          "subsumes": "C4-SLICE-05 (the Zernio 404 fix) for the STRAND. SLICE-05 remains independently correct (a 404 IS 'unknown', not an error) and should still ship -- but it is no longer load-bearing.",
+          "behavioral_change": "Posts that today sit in `submitting` forever now escalate at 24h and are LABELED at 72h. The `gave_up` digest bucket -- the system's best failure surface -- starts firing on Zernio for the first time.",
+          "preserved": "The prime directive: reconcile NEVER guesses a post's fate. GAVE UP: is a LABEL, not a state change to failed. A given-up post is NOT re-queueable, so no double-post is possible.",
+          "migration": "OPERATIONAL, not schema. On first run after deploy, every currently-stranded post (real-sid and Zernio) becomes eligible for escalation AT ONCE. On the live ledger that is bounded (347 posts) but the operator MUST be warned: expect a burst of escalations/give-ups on the first pass. This is the audit's single most important operational note.",
+          "backward_compat_risk": "LOW (no schema change).",
+          "operational_risk": "MEDIUM -- the escalation burst. Mitigate with a dry-run/report mode first (`fanops reconcile --report-terminals`) so the operator sees the blast radius BEFORE it writes.",
+          "new_tests": [
+            "test_terminal_ladder_matrix: parametrized over (backend in {postiz,zernio}) x (poll in {published,failed,unknown,RAISES}) x (token in {fake,real}) x (reason in {empty,stale}) = 32 cells. EVERY cell must terminate by +72h. MUST FAIL on current source (today: 3 of 4 axes can veto the terminal).",
+            "test_giveup_is_a_label_not_a_state_change (double-post safety).",
+            "test_reconcile_visits_a_post_carrying_a_transient_reason (the :767 latch)."
+          ],
+          "does_not_fix": [
+            "RC-1 (posts are still CREATED stranded until SLICE-03 lands).",
+            "RC-3b (if reconcile is gated OFF, the ladder never runs -- SLICE-07).",
+            "The absence of a Studio button to recover a `submitting` post (the requeue family accepts only failed/error)."
+          ],
+          "ships_independently": true,
+          "rollback": "revert. But NOTE: any post already escalated/given-up by the new ladder KEEPS its new state -- the rollback does not un-escalate. That is acceptable (the labels are true) but must be stated."
+        },
+        {
+          "id": "C",
+          "name": "broader -- a declarative reconcile policy table",
+          "verdict": "REJECTED. Over-engineering. The policy has two rules."
+        }
+      ],
+      "rejected_shallow_fixes": [
+        "Raising _SUBMITTING_ESCALATE_AFTER or _RECONCILE_GIVEUP_AFTER. -> The brief names this exactly: 'merely changing a timeout for a structurally unreachable escalation'. The escalation is not LATE, it is UNREACHABLE.",
+        "Making the Studio requeue family accept `submitting`. -> Rejected: it hands the operator a button to re-drive a post whose remote fate is UNKNOWN. That is a double-post vector. The post must be TERMINATED (labeled) first, then recovered."
+      ]
+    },
+
+    {
+      "finding": "RC-2 (sibling)",
+      "slice": "C4-SLICE-05",
+      "title": "Status-client parity: an unknown id is `unknown`, not an error",
+      "options": [
+        {
+          "id": "B",
+          "name": "ROOT (for this sibling) -- ZernioStatusClient returns {'status':'unknown'} on 404",
+          "change": "post/metrics.py ZernioStatusClient.get_status: handle 404 BEFORE the generic `>= 300` raise, returning {'status': 'unknown'} -- matching PostizStatusClient's semantics for the SAME condition (an id the backend does not know).",
+          "verdict": "*** RECOMMENDED, but MUST NOT SHIP ALONE. ***",
+          "why_not_alone": "Shipping this alone fixes the fake-token Zernio case and leaves BOTH the real-token case (C3-F1) and the 500-forever case unterminated. That is precisely the 'add another special case without defining lifecycle ownership' shallow fix. It must ship WITH or AFTER SLICE-04.",
+          "corrects_the_record": "Cycle 3 attributed C3-F2 to a FanOps-side sibling divergence. VERIFIED FALSE: both clients raise on >=300 identically (metrics.py:164-165 vs :516-517). The divergence is the REMOTE ENDPOINT SHAPE. This fix therefore NORMALIZES the two backends' semantics at the FanOps boundary -- which is the right place to absorb a remote-API difference.",
+          "does_not_fix": ["Anything, on its own, that SLICE-04 does not already fix. Its value is semantic correctness and defence in depth."],
+          "ships_independently": false,
+          "must_ship_with_or_after": "C4-SLICE-04"
+        }
+      ]
+    },
+
+    {
+      "finding": "RC-8 / C4-F1a",
+      "slice": "C4-SLICE-06",
+      "title": "A recovery action must not leave a post carrying a stale status string",
+      "options": [
+        {
+          "id": "B",
+          "name": "ROOT -- bulk_send_to_review clears error_reason (and the reconcile latch keys on the explicit marker)",
+          "change": [
+            "studio/actions.py:944-951: add `p.error_reason = None` to the field-clearing block. It ALREADY clears scheduled_time, public_url, metrics, published_at -- error_reason is the one omission, and it is the one that latches.",
+            "The reconcile-side half (:767 keys on _is_giveup instead of on non-emptiness) is OWNED BY SLICE-04 -- same file, same branch. Do NOT duplicate it here."
+          ],
+          "verdict": "*** RECOMMENDED ***",
+          "why": "EXP-C4-1 proved a reverted post reaches `submitting` still carrying 'reconciled: poster reports failed (IG rejected...)' -- a string that (a) LIES about its state and (b) trips the :767 latch on the FIRST pass, so the post never even earns the `stuck` breadcrumb Cycle 3 assumed. One line closes half of it.",
+          "preserved": "submission_id and batch_id are still preserved ('keep the lineage', actions.py:949-950). This slice does NOT touch them -- that is PD-1's territory, and SLICE-03 makes preserving them SAFE.",
+          "behavioral_change": "A reverted post shows no stale reason. Reconcile visits it.",
+          "new_tests": ["test_revert_clears_stale_reason: after bulk_send_to_review, error_reason is None. MUST FAIL on current source."],
+          "does_not_fix": ["error_reason's other three overloaded semantics (COUP-03). Splitting them into typed fields is a larger change with a migration; DEFERRED and filed."],
+          "ships_independently": true,
+          "same_file_as": "none of the other slices (actions.py is touched only here)"
+        }
+      ]
+    },
+
+    {
+      "finding": "RC-3b",
+      "slice": "C4-SLICE-07",
+      "title": "Reconcile and publish must be gated on the same predicate",
+      "options": [
+        {
+          "id": "A",
+          "name": "smallest -- remove the gate from _reconcile_safe",
+          "change": "pipeline.py:318: run reconcile_due unconditionally (it ALREADY resolves each post's provider internally and skips dryrun/provider-less posts -- see its own docstring at pipeline.py:315-316).",
+          "verdict": "*** RECOMMENDED ***",
+          "why": "reconcile_due is ALREADY per-post safe. The gate is redundant defence that has become an active hazard: it switches off the sole READER of a state the WRITER keeps producing. Removing it restores the invariant with the least code. The cost is a per-pass no-op when nothing is reconcilable, which is already the common case.",
+          "verify_before_shipping": "Confirm reconcile_due is a genuine no-op on a dryrun-only deployment (no network calls). If it is not, prefer Option B.",
+          "behavioral_change": "reconcile runs every pass. On a NOT-live system it must make ZERO network calls -- that is the acceptance criterion.",
+          "does_not_fix": ["RC-3 (the malformed value itself). SEPARATE SLICE."],
+          "ships_independently": true
+        },
+        {
+          "id": "B",
+          "name": "alternative -- gate BOTH on is_live_backend",
+          "change": "pipeline.py:334: gate _publish_safe on cfg.is_live_backend too.",
+          "verdict": "ACCEPTABLE, and STRICTLY SAFER, but it changes publish semantics.",
+          "why": "It would stop publish from claiming posts nobody will reconcile -- closing the leak from the producer side. But it also stops DRYRUN previews from being written on a not-live system (publish_due writes dryrun payloads), which is a real feature regression. Prefer A unless the pre-flight check fails."
+        }
+      ],
+      "rejected_shallow_fixes": [
+        "Adding a doctor warning when is_live && !is_live_backend. -> The half-live banner ALREADY exists (doctor.py:322, views.py:723) and is SUPPRESSED whenever one valid channel remains (C3-OBS-5). A second warning on the same broken predicate adds noise, not safety."
+      ]
+    },
+
+    {
+      "finding": "RC-6",
+      "slice": "C4-SLICE-08",
+      "title": "Daemon health: `alive` must not mean `succeeding`",
+      "options": [
+        {
+          "id": "B",
+          "name": "ROOT -- add a SUCCESS signal orthogonal to the liveness signal",
+          "change": [
+            "cli.py: emit a distinct run.log record on a SUCCESSFUL pass completion (the heartbeat at :1306 already fires only when `s is not None` -- i.e. it IS the success signal; it is simply not READ as one).",
+            "health_model.py: add `last_success_age_s` alongside `heartbeat_age_s`.",
+            "daemon.py status (:462-476): keep `alive` keyed on daemon_progress (DO NOT touch the mid-pass liveness owner -- project memory `liveness-verdict-single-owner`). ADD a second, orthogonal verdict field: e.g. `alive (no successful pass in {N}m)` when the process is live but last_success_age_s exceeds a multiple of the interval."
+          ],
+          "verdict": "*** RECOMMENDED ***",
+          "why": "The data ALREADY EXISTS (heartbeat_age_s is in the returned dict). The verdict simply discards it. This slice does not change WHO owns liveness -- it mints the missing SECOND word.",
+          "explicitly_preserves": "daemon_progress remains THE mid-pass liveness owner. _heartbeat_age_s's role in the verdict is UNCHANGED for the alive/stale decision. This slice ADDS a signal; it moves none.",
+          "behavioral_change": "`fanops daemon status` on a daemon whose every pass halts (rotated key) now says so, instead of `alive`.",
+          "new_tests": ["test_daemon_status_distinguishes_alive_from_succeeding: a daemon whose every pass raises must NOT return a bare `alive`. MUST FAIL on current source."],
+          "does_not_fix": [
+            "C3-F8's root (the daemon retries an unrecoverable AuthError forever). That is arguably CORRECT -- the key may be rotated back. This slice makes it VISIBLE, which is the actual gap.",
+            "The half-live banner's suppression (C3-OBS-5)."
+          ],
+          "ships_independently": true
+        }
+      ],
+      "rejected_shallow_fixes": [
+        "Changing the verdict string wording. -> The brief names this: 'changing daemon status wording without separating progress signals'. The problem is that ONE signal answers TWO questions."
+      ]
+    },
+
+    {
+      "finding": "RC-10 / C4-F5",
+      "slice": "C4-SLICE-09",
+      "title": "The shrink temp dir gets an owner",
+      "options": [
+        {
+          "id": "B",
+          "name": "ROOT -- write the shrink output to a DETERMINISTIC, content-addressed path and clean up",
+          "change": [
+            "compress.maybe_shrink_for_cap (compress.py:19-21): replace tempfile.mkdtemp with a deterministic dir under 04_agent_io (e.g. shrink/<sha of src path + crf>/), OR keep mkdtemp and register a cleanup.",
+            "SIMPLEST CORRECT FORM: after apply_shrink_to_post has UPLOADED the file (i.e. once media_urls no longer references it), remove the temp dir. Because C4-F5 SELF-HEALS (EXP-C4-4), a plain cleanup is SAFE -- no pointer is invalidated that does not recover.",
+            "Add a doctor check + a `fanops clean --shrink` verb for the ALREADY-LEAKED dirs on the live tree."
+          ],
+          "verdict": "*** RECOMMENDED ***",
+          "PROVEN_SAFE": "EXP-C4-4: deleting the temp dir causes media_path_for_post (compress.py:41-66) to fall through its media_urls branch to the CLIP branch (:61-65), and the next apply_shrink_to_post re-points media_urls at a fresh file. Cycle 3's claim that 'the fix for the leak would BREAK the pointer' is REFUTED BY EXECUTION.",
+          "coupling_KILLED": "This slice does NOT need to ship atomically with a path relocation or a migration. Cycle 3 implied it did. It does not.",
+          "behavioral_change": "Disk stops growing. A previously-leaked tree needs a one-time clean.",
+          "new_tests": [
+            "test_shrink_tempdir_is_cleaned",
+            "test_no_persisted_media_url_points_into_a_shrink_dir (guards C4-F5)",
+            "test_publish_still_works_after_the_shrink_dir_is_removed (the self-heal, pinned)"
+          ],
+          "does_not_fix": ["The Postiz multipart orphaned-media leak (R-03) -- a REMOTE leak, out of scope."],
+          "ships_independently": true
+        }
+      ],
+      "rejected_shallow_fixes": [
+        "A cron/tmpwatch that deletes fanops-shrink-* . -> The brief names this: 'deleting temp files without relocating persisted Render.path'. IT IS NOW SAFE (EXP-C4-4 proves the self-heal) -- but it is still the wrong home: the code that CREATES the dir should own its lifetime, not an external janitor."
+      ]
+    },
+
+    {
+      "finding": "RC-7",
+      "slice": "C4-SLICE-10",
+      "title": "Irreversible retirement policy",
+      "status": "*** BLOCKED ON PD-3. DO NOT EXECUTE. ***",
+      "options": [
+        {
+          "id": "A",
+          "name": "gate retire behind the same validation as the reversible actuators",
+          "change": "cli.py:155 (_learn_pass): wrap `retire(...)` in `if validation_gate.p4_unlocked(led, cfg):`.",
+          "verdict": "OFFERED, NOT RECOMMENDED -- because recommending it would be inferring product intent, which the brief forbids."
+        },
+        {
+          "id": "B",
+          "name": "make retirement REVERSIBLE (an un-retire path) instead of gating it",
+          "change": "ledger.py:636-642 currently REFUSES to un-retire. Add an explicit operator un-retire verb.",
+          "verdict": "OFFERED. Arguably better: it preserves the aggressive learning policy while removing its irreversibility -- addressing the ASYMMETRY rather than the AGGRESSION."
+        },
+        {
+          "id": "C",
+          "name": "leave it; document it",
+          "verdict": "OFFERED. If the policy is intentional, the defect is that it is UNDOCUMENTED and that INV-14 ('bias actuators are amplify-only + validation-frozen') creates a FALSE IMPRESSION by being true only as scoped."
+        }
+      ],
+      "note": "All three are legitimate. The code cannot tell us which. PD-3 must be answered by the operator before this slice is written."
+    }
+  ],
+
+  "deferred_not_sliced": [
+    {"id": "C3-F6", "why": "torn attempts.json. LOW. A 3-line fix (use tmp+os.replace like its two siblings in the SAME FILE at :63-66 and :82-87). Genuinely independent; batch it into any slice touching agentstep.py, or ship as a trivial standalone."},
+    {"id": "C3-F7", "why": "torn note_stage. LOW and STRUCTURALLY MITIGATED (the flock is the authority and is kernel-released on death; only an advisory breadcrumb is lost). Filed, not sliced."},
+    {"id": "C3-F3", "why": "_requeue_transient_failed_for_daemon's log-free swallow. Blast radius NIL today (the return value is discarded). A one-line log addition; batch it into SLICE-03 (same file)."},
+    {"id": "C3-F11", "why": "the F44 upload cache has no invalidation rule. Needs a product call on URL lifetime. Filed."},
+    {"id": "C3-F12", "why": "framing._detect_faces returns partial results. Deliberate, fail-open, and IN THE REFRAME STREAM'S FILES -- do not touch it from a Cycle-4 slice."},
+    {"id": "C3-F13", "why": "a lost audit line. CONTRACT-CORRECT. Not a defect."},
+    {"id": "RC-9", "why": "the mutation-validator boundary. LATENT (zero current reachability). Sequenced LAST, deliberately: fixing it first would spend the audit's credibility on a bug nobody can hit while RC-4 silently deletes media."},
+    {"id": "F-C", "why": "CSRF on 108 mutating routes. A RECORDED, ACCEPTED decision (studio/CLAUDE.md). Out of scope for a defect-remediation cycle; re-raise as a product question, not a bug."}
+  ]
+}

@@ -1,0 +1,474 @@
+{
+ "$schema": "fanops-arch-kb/configuration/v1",
+ "cycle": 5,
+ "git_head": "fcffa73",
+ "provenance": "AST census of os.getenv/os.environ.get literal keys across src/fanops, plus os.environ[...] assignment targets.",
+ "totals": {
+  "env_vars_read": 73,
+  "env_write_sites": 2
+ },
+ "precedence_model": {
+  "runtime_owner": "Config, EXCLUSIVELY. Every Config property is an os.getenv() evaluated PER ACCESS (uncached). There is no runtime handoff to Settings \u2014 Settings.runtime_load has zero callers (INV-05, Cycle 2).",
+  "Settings_role": "Doctor-only strict validator + docs introspection. It NEVER feeds Config. Runtime is lenient (warn+fallback); doctor is strict (raise). The split is intentional, not drift.",
+  "propagation": {
+   "daemon": "re-reads .env with override=True AND rebuilds Config EVERY TICK (cli.py:1303-1304). A go_live write reaches the daemon within one tick.",
+   "studio": "load_dotenv ONCE at process entry (cli.py:795), then blocks in app.run. A .env change made by the CLI or daemon NEVER reaches a running Studio (COUP-02b).",
+   "secrets": "keyring-first. Reads fail OPEN; writes fail CLOSED (set_secret round-trips the value back and raises OSError if it does not persist \u2014 load-bearing, because the caller then scrubs the .env fallback)."
+  },
+  "writers": {
+   "FANOPS_LIVE": "golive._dual_write ONLY (INV-18, AST-confirmed: exactly 2 os.environ[...] assignment sites in src/ \u2014 golive.py:66 (dynamic key) and autopilot.py:80 (FANOPS_RESPONDER))."
+  }
+ },
+ "env_vars": {
+  "ANTHROPIC_API_KEY": {
+   "read_at": [
+    "fanops.config:224"
+   ],
+   "reader_count": 1
+  },
+  "FANOPS_ACCOUNT_CASTING": {
+   "read_at": [
+    "fanops.config:704"
+   ],
+   "reader_count": 1
+  },
+  "FANOPS_ADJUST_PER_SURFACE": {
+   "read_at": [
+    "fanops.config:886"
+   ],
+   "reader_count": 1
+  },
+  "FANOPS_ARTIST_NAME": {
+   "read_at": [
+    "fanops.config:543"
+   ],
+   "reader_count": 1
+  },
+  "FANOPS_ASR_LANGUAGE": {
+   "read_at": [
+    "fanops.config:654"
+   ],
+   "reader_count": 1
+  },
+  "FANOPS_ASR_MODEL": {
+   "read_at": [
+    "fanops.config:627",
+    "fanops.config:637"
+   ],
+   "reader_count": 2
+  },
+  "FANOPS_AUTO_ADOPT": {
+   "read_at": [
+    "fanops.daemon:319"
+   ],
+   "reader_count": 1
+  },
+  "FANOPS_AWARE_REFRAME": {
+   "read_at": [
+    "fanops.config:685"
+   ],
+   "reader_count": 1
+  },
+  "FANOPS_BURN_SUBS": {
+   "read_at": [
+    "fanops.config:675"
+   ],
+   "reader_count": 1
+  },
+  "FANOPS_CLIP_PROFILE": {
+   "read_at": [
+    "fanops.config:552"
+   ],
+   "reader_count": 1
+  },
+  "FANOPS_CONCURRENT_SOURCES": {
+   "read_at": [
+    "fanops.config:1081"
+   ],
+   "reader_count": 1
+  },
+  "FANOPS_CONCURRENT_WORKERS": {
+   "read_at": [
+    "fanops.config:1093"
+   ],
+   "reader_count": 1
+  },
+  "FANOPS_CORPUS_AUTO": {
+   "read_at": [
+    "fanops.config:437"
+   ],
+   "reader_count": 1
+  },
+  "FANOPS_CORPUS_TARGET": {
+   "read_at": [
+    "fanops.config:444"
+   ],
+   "reader_count": 1
+  },
+  "FANOPS_GC_KEEP_DAYS": {
+   "read_at": [
+    "fanops.config:955"
+   ],
+   "reader_count": 1
+  },
+  "FANOPS_HASHTAG_TRENDS": {
+   "read_at": [
+    "fanops.config:431"
+   ],
+   "reader_count": 1
+  },
+  "FANOPS_HOOK_ROUTER": {
+   "read_at": [
+    "fanops.config:712"
+   ],
+   "reader_count": 1
+  },
+  "FANOPS_IG_RETENTION_PROOF": {
+   "read_at": [
+    "fanops.config:922"
+   ],
+   "reader_count": 1
+  },
+  "FANOPS_IMPACT_CUT": {
+   "read_at": [
+    "fanops.config:721"
+   ],
+   "reader_count": 1
+  },
+  "FANOPS_INTRO_TEASE": {
+   "read_at": [
+    "fanops.config:731"
+   ],
+   "reader_count": 1
+  },
+  "FANOPS_ISOLATE_VOCALS": {
+   "read_at": [
+    "fanops.config:665"
+   ],
+   "reader_count": 1
+  },
+  "FANOPS_LIVE": {
+   "read_at": [
+    "fanops.config:301"
+   ],
+   "reader_count": 1
+  },
+  "FANOPS_LLM_MODEL": {
+   "read_at": [
+    "fanops.config:530",
+    "fanops.llm:177"
+   ],
+   "reader_count": 2
+  },
+  "FANOPS_LLM_TRANSPORT": {
+   "read_at": [
+    "fanops.config:135"
+   ],
+   "reader_count": 1
+  },
+  "FANOPS_MEDIA_PUBLIC_BASE": {
+   "read_at": [
+    "fanops.config:358"
+   ],
+   "reader_count": 1
+  },
+  "FANOPS_MOMENT_HOOK_LEARNING": {
+   "read_at": [
+    "fanops.config:931"
+   ],
+   "reader_count": 1
+  },
+  "FANOPS_OPERATOR_TZ": {
+   "read_at": [
+    "fanops.config:992"
+   ],
+   "reader_count": 1
+  },
+  "FANOPS_P4_DIM_BIAS": {
+   "read_at": [
+    "fanops.config:897"
+   ],
+   "reader_count": 1
+  },
+  "FANOPS_P4_MIN_REACH_GAP": {
+   "read_at": [
+    "fanops.config:943"
+   ],
+   "reader_count": 1
+  },
+  "FANOPS_POSTER": {
+   "read_at": [
+    "fanops.config:1102",
+    "fanops.config:238"
+   ],
+   "reader_count": 2
+  },
+  "FANOPS_POSTIZ_AUTOSTART": {
+   "read_at": [
+    "fanops.config:1108"
+   ],
+   "reader_count": 1
+  },
+  "FANOPS_POSTIZ_COMPOSE_DIR": {
+   "read_at": [
+    "fanops.config:1114"
+   ],
+   "reader_count": 1
+  },
+  "FANOPS_POSTIZ_ONDEMAND": {
+   "read_at": [
+    "fanops.daemon:661"
+   ],
+   "reader_count": 1
+  },
+  "FANOPS_POSTIZ_PUBLISH_PER_MIN": {
+   "read_at": [
+    "fanops.config:1066"
+   ],
+   "reader_count": 1
+  },
+  "FANOPS_PUBLISH_LEAD_MINUTES": {
+   "read_at": [
+    "fanops.config:1046"
+   ],
+   "reader_count": 1
+  },
+  "FANOPS_QUEUE_GATE": {
+   "read_at": [
+    "fanops.config:595"
+   ],
+   "reader_count": 1
+  },
+  "FANOPS_REALISTIC_CADENCE": {
+   "read_at": [
+    "fanops.config:1001"
+   ],
+   "reader_count": 1
+  },
+  "FANOPS_REQUIRE_FULL_OBJECTIVE": {
+   "read_at": [
+    "fanops.config:455"
+   ],
+   "reader_count": 1
+  },
+  "FANOPS_RESPONDER": {
+   "read_at": [
+    "fanops.config:506"
+   ],
+   "reader_count": 1
+  },
+  "FANOPS_ROOT": {
+   "read_at": [
+    "fanops.config:145"
+   ],
+   "reader_count": 1
+  },
+  "FANOPS_SHOW_EXTRAS": {
+   "read_at": [
+    "fanops.config:601"
+   ],
+   "reader_count": 1
+  },
+  "FANOPS_SMART_FRAMING": {
+   "read_at": [
+    "fanops.config:611"
+   ],
+   "reader_count": 1
+  },
+  "FANOPS_SOURCE_SHARD_MIN": {
+   "read_at": [
+    "fanops.config:980"
+   ],
+   "reader_count": 1
+  },
+  "FANOPS_SUBTITLE_FONT": {
+   "read_at": [
+    "fanops.config:693"
+   ],
+   "reader_count": 1
+  },
+  "FANOPS_TIMING_BIAS": {
+   "read_at": [
+    "fanops.config:907"
+   ],
+   "reader_count": 1
+  },
+  "FANOPS_UPLOAD_MAX_MB": {
+   "read_at": [
+    "fanops.config:968"
+   ],
+   "reader_count": 1
+  },
+  "FANOPS_VARIANT_AMPLIFY": {
+   "read_at": [
+    "fanops.config:778"
+   ],
+   "reader_count": 1
+  },
+  "FANOPS_VARIANT_AMPLIFY_MIN_GAP": {
+   "read_at": [
+    "fanops.config:797"
+   ],
+   "reader_count": 1
+  },
+  "FANOPS_VARIANT_AMPLIFY_MIN_POSTS": {
+   "read_at": [
+    "fanops.config:787"
+   ],
+   "reader_count": 1
+  },
+  "FANOPS_VARIANT_AMPLIFY_MIN_STREAK": {
+   "read_at": [
+    "fanops.config:808"
+   ],
+   "reader_count": 1
+  },
+  "FANOPS_VARIANT_LEARNING": {
+   "read_at": [
+    "fanops.config:742"
+   ],
+   "reader_count": 1
+  },
+  "FANOPS_VARIANT_MIN_GAP": {
+   "read_at": [
+    "fanops.config:763"
+   ],
+   "reader_count": 1
+  },
+  "FANOPS_VARIANT_MIN_POSTS": {
+   "read_at": [
+    "fanops.config:752"
+   ],
+   "reader_count": 1
+  },
+  "FANOPS_VARIANT_TRANSFER": {
+   "read_at": [
+    "fanops.config:855"
+   ],
+   "reader_count": 1
+  },
+  "FANOPS_VARIANT_TRANSFER_MAX_HOOKS": {
+   "read_at": [
+    "fanops.config:875"
+   ],
+   "reader_count": 1
+  },
+  "FANOPS_VARIANT_TRANSFER_MIN_DONORS": {
+   "read_at": [
+    "fanops.config:865"
+   ],
+   "reader_count": 1
+  },
+  "FANOPS_VARIANT_UCB": {
+   "read_at": [
+    "fanops.config:828"
+   ],
+   "reader_count": 1
+  },
+  "FANOPS_VARIANT_UCB_C": {
+   "read_at": [
+    "fanops.config:839"
+   ],
+   "reader_count": 1
+  },
+  "FANOPS_VISUAL_START": {
+   "read_at": [
+    "fanops.config:588"
+   ],
+   "reader_count": 1
+  },
+  "FANOPS_WHISPER_MODEL": {
+   "read_at": [
+    "fanops.config:619",
+    "fanops.config:645"
+   ],
+   "reader_count": 2
+  },
+  "FANOPS_ZERNIO_MAX_UPLOAD_MB": {
+   "read_at": [
+    "fanops.config:1056"
+   ],
+   "reader_count": 1
+  },
+  "META_GRAPH_TOKEN": {
+   "read_at": [
+    "fanops.config:407"
+   ],
+   "reader_count": 1
+  },
+  "META_GRAPH_URL": {
+   "read_at": [
+    "fanops.config:420"
+   ],
+   "reader_count": 1
+  },
+  "META_IG_USER_ID": {
+   "read_at": [
+    "fanops.config:414"
+   ],
+   "reader_count": 1
+  },
+  "POSTIZ_API_KEY": {
+   "read_at": [
+    "fanops.config:348"
+   ],
+   "reader_count": 1
+  },
+  "POSTIZ_URL": {
+   "read_at": [
+    "fanops.config:339"
+   ],
+   "reader_count": 1
+  },
+  "R2_ACCESS_KEY_ID": {
+   "read_at": [
+    "fanops.config:368"
+   ],
+   "reader_count": 1
+  },
+  "R2_ACCOUNT_ID": {
+   "read_at": [
+    "fanops.config:363"
+   ],
+   "reader_count": 1
+  },
+  "R2_BUCKET": {
+   "read_at": [
+    "fanops.config:378"
+   ],
+   "reader_count": 1
+  },
+  "R2_SECRET_ACCESS_KEY": {
+   "read_at": [
+    "fanops.config:373"
+   ],
+   "reader_count": 1
+  },
+  "XDG_CACHE_HOME": {
+   "read_at": [
+    "fanops.config:1120"
+   ],
+   "reader_count": 1
+  },
+  "ZERNIO_API_KEY": {
+   "read_at": [
+    "fanops.config:396"
+   ],
+   "reader_count": 1
+  },
+  "ZERNIO_API_URL": {
+   "read_at": [
+    "fanops.config:386"
+   ],
+   "reader_count": 1
+  }
+ },
+ "env_writes": {
+  "<dynamic>": [
+   "fanops.studio.golive:66"
+  ],
+  "FANOPS_RESPONDER": [
+   "fanops.autopilot:80"
+  ]
+ }
+}

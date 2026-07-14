@@ -1,0 +1,339 @@
+{
+  "$schema": "fanops-impl-contract/verification/v1",
+  "cycle": 6,
+  "git_head": "fcffa73",
+  "purpose": "*** For every verification: WHAT IT PROVES, WHICH ARCHITECTURAL INVARIANT IT EXERCISES, and whether it must FAIL BEFORE the change. Per the brief: do not merely count tests. ***",
+
+  "verification_taxonomy": {
+    "note": "*** Cycle 4 listed 18 tests in one flat table. They are NOT one kind of thing, and conflating them is how a PRESERVATION test gets mistaken for proof that the FIX works. ***",
+    "INVARIANT": "Proves an INTENDED invariant (INT-1..INT-9) now HOLDS. *** MUST FAIL on current source. *** If it passes today, it is not testing the defect.",
+    "PRESERVATION": "Pins a CAPABILITY or BEHAVIOUR that must SURVIVE the change. *** Passes today, and must keep passing. *** It proves the fix did not break something adjacent.",
+    "CONTRACT": "*** Guards a FORBIDDEN SCOPE EXPANSION. *** Passes today. It would FAIL if a future engineer made the forbidden change. It protects the boundary, not the behaviour.",
+    "MIGRATION": "Validates the data / operational migration.",
+    "ROLLBACK": "Validates that reverting restores ARCHITECTURAL BEHAVIOUR, not merely a clean compile.",
+    "REGRESSION_LOCK_REWRITE": "*** A test that CURRENTLY ENCODES THE DEFECT and must be rewritten. There is exactly ONE in the tree (RC-5), and it is the most dangerous artifact in the program. ***"
+  },
+
+  "the_RC_5_warning": {
+    "statement": "*** `tests/test_ledger_sqlite_store.py:161-186` asserts the DATA-LOSS OUTCOME and calls it correct. It PASSES *BECAUSE* the writer's committed row was destroyed. Its comment names a mechanism that does not exist ('restorer blocked on flock' — measured: 0.001s, never blocked). ***",
+    "consequence": "*** ANY CORRECT FIX TO RC-4 TURNS THIS TEST RED. A maintainer seeing a green test go red will read THE FIX AS THE REGRESSION. ***",
+    "binding_rule": "The rewrite MUST ship in the SAME PR as the source fix, and the independent verifier MUST be briefed on RC-5 before reviewing.",
+    "generalization_for_every_future_verification": "*** For every invariant this program claims is protected by a test, READ THE TEST'S ASSERTION, NOT ITS NAME. Cycle 6 applied this check to all 18 Cycle-4 tests; only this one is inverted. ***"
+  },
+
+  "ci_lanes": {
+    "unit": "python -m pytest -q -m 'not integration'. *** THE ONLY LANE ANY SLICE NEEDS. ***",
+    "e2e": "needs real ffmpeg/ffprobe/whisper/espeak. FANOPS_REQUIRE_E2E=1 makes a skip a failure. NO SLICE REQUIRES IT.",
+    "base-install": "import-surface check.",
+    "ci-timing": "SLO budget. *** Do not auto-raise it (project memory: cv2-guard-must-not-double-build). ***",
+    "HARD_RULE": "*** NEVER RUN THE SUITE LOCALLY. It runs ONLY in GitHub CI on a PR. Replay both AST ratchets before pushing. ***"
+  },
+
+  "slices": {
+    "S01": {
+      "root_causes": ["RC-4", "RC-5"],
+      "tests": [
+        {
+          "name": "test_restore_snapshot_serializes_with_transaction",
+          "class": "REGRESSION_LOCK_REWRITE",
+          "action": "*** REWRITE ***",
+          "must_fail_before": true,
+          "proves": "A writer holding `BEGIN IMMEDIATE` BLOCKS a concurrent restore until it commits, AND the writer's commit is VISIBLE (not orphaned) before the restore supersedes it.",
+          "exercises_invariant": "INT-5 / INV-12 (ledger writes are atomic)",
+          "measurable": "*** With the writer holding for 0.4s, the restore must take > 0.3s. TODAY IT TAKES 0.001s. ***",
+          "why_it_fails_today": "*** IT PASSES TODAY — *BECAUSE OF* THE DATA LOSS. It asserts `read_raw() == doc` ('no orphan srcX') and gets it, BECAUSE srcX WAS ANNIHILATED. ***"
+        },
+        {
+          "name": "test_restore_does_not_orphan_media_unlinks",
+          "class": "INVARIANT",
+          "action": "NEW",
+          "must_fail_before": true,
+          "proves": "*** A cascade transaction's DEFERRED MEDIA UNLINKS never delete a `.mp4` whose ledger row the restore brings back. ***",
+          "exercises_invariant": "INV-DEFER — and specifically THE INVERSION: the deferred-unlink design is CORRECT against a rollback and INVERTS against a restore race (the txn COMMITS into an orphan, so it is never rolled back, so the unlinks PROCEED).",
+          "severity_note": "*** THIS IS THE SEVERITY DRIVER. C4-F2a. Without this test the fix is unverified where it matters most. ***"
+        },
+        {
+          "name": "test_restore_two_process_contention",
+          "class": "INVARIANT",
+          "action": "NEW",
+          "must_fail_before": true,
+          "proves": "The serialization holds ACROSS PROCESSES, not merely across threads.",
+          "exercises_invariant": "INT-5",
+          "MERGE_GATE": "*** SQLite locking is per-INODE and CROSS-PROCESS. Every prior experiment in this audit used THREADS IN ONE PROCESS and is therefore INDICATIVE, NOT SUFFICIENT. This test is a MERGE GATE, not a nicety. ***"
+        },
+        {
+          "name": "test_restore_falls_back_on_corrupt_db",
+          "class": "PRESERVATION",
+          "action": "NEW",
+          "must_fail_before": false,
+          "proves": "A restore against a CORRUPT live db STILL SUCCEEDS via the explicit os.replace fallback.",
+          "preserves_capability": "*** store.restore()'s contract: 'must work even when live db is corrupt.' MEASURED: the in-place path RAISES `DatabaseError: file is not a database` on a corrupt db, while today's os.replace path SUCCEEDS. THE FALLBACK IS REQUIRED, NOT DECORATION. ***"
+        }
+      ],
+      "required_manual_verification": "*** Report, read-only, whether any operator has ALREADY run a restore against a live daemon. LS-7: 11 snapshot/backup artifacts exist; a `ledger.snapshot.20260705T103618Z.*.json` is present. IF A RESTORE WAS RUN WITH THE DAEMON UP, MEDIA MAY ALREADY BE MISSING — AND THE LEDGER WILL NOT SAY SO. ***"
+    },
+
+    "S02": {
+      "root_causes": ["RC-3"],
+      "tests": [
+        {
+          "name": "test_backend_normalization_matrix",
+          "class": "INVARIANT",
+          "action": "NEW",
+          "must_fail_before": true,
+          "proves": "*** NO CELL of the matrix constructs a `DryRunPoster` while `cfg.is_live`. *** Matrix: {'postiz','Postiz','POSTIZ','postiz ',' postiz','blotato','dryrun','DryRun'} x {Accounts.load, validate, effective_provider, get_poster, get_media_uploader}.",
+          "exercises_invariant": "INT-3 / INV-03 (which is FALSE as written)",
+          "why_it_fails_today": "*** EXECUTED (Cycle 2): 'Postiz', 'POSTIZ', 'postiz ', ' postiz' and 'blotato' ALL return a DryRunPoster ON A LIVE SYSTEM, and `Accounts.validate()` reports CLEAN — NO FLAG — for every one. ***"
+        },
+        {
+          "name": "test_unknown_backend_is_surfaced_not_silent",
+          "class": "INVARIANT",
+          "action": "NEW",
+          "must_fail_before": true,
+          "proves": "'blotato' SKIPS the channel and APPEARS in `Accounts.validate()`'s problems (via the existing `skipped_rows` channel).",
+          "exercises_invariant": "INT-3"
+        },
+        {
+          "name": "test_valid_accounts_json_is_unchanged",
+          "class": "PRESERVATION",
+          "action": "NEW",
+          "must_fail_before": false,
+          "proves": "*** Existing VALID registries normalize to THEMSELVES — byte-identical behaviour. ***",
+          "preserves_capability": "No migration. LS-3 makes this the ONLY case on the live tree (0 malformed values, 5 canonical channels)."
+        },
+        {
+          "name": "test_per_row_leniency_survives",
+          "class": "PRESERVATION",
+          "action": "NEW",
+          "must_fail_before": false,
+          "proves": "*** ONE malformed row is SKIPPED into `skipped_rows` and NEVER crashes the registry (MOL-79). A wrong TOP-LEVEL shape still fails loud. ***",
+          "preserves_capability": "The MOL-79 posture. *** S02's REJECTED Option C (a typed enum) would have BROKEN this — pydantic would refuse to LOAD a legacy registry, converting a soft skip into a hard ControlFileError. That is the exact failure mode SHIM-005 exists to prevent. This test makes the rejection MECHANICAL. ***"
+        }
+      ],
+      "required_read_only_evidence": "*** RE-RUN the live accounts.json check. Cycle 6 measured 0 malformed values (LS-3), which DISARMS the S02<->S10 hazard. If a malformed value has appeared since, the Cycle-4 mitigation (loud is_live_backend transition log + operator briefing) RE-ARMS and MUST ship with the slice. ***"
+    },
+
+    "S03": {
+      "root_causes": ["RC-1"],
+      "tests": [
+        {
+          "name": "test_claim_refuses_real_submission_id",
+          "class": "INVARIANT",
+          "action": "NEW",
+          "must_fail_before": true,
+          "proves": "A `queued` post carrying a REAL `submission_id` is NOT claimed: after `publish_due` it is STILL `queued`, `poster.publish` was NOT called, and the transaction committed NO mutation.",
+          "exercises_invariant": "INT-1",
+          "why_it_fails_today": "*** TODAY THE POST BECOMES `submitting` AND IS STRANDED FOREVER. This test IS EXP-C4-1, encoded. Executed: still `submitting` at +100,000h. ***"
+        },
+        {
+          "name": "test_publish_due_tally_surfaces_the_refusal",
+          "class": "INVARIANT",
+          "action": "NEW",
+          "must_fail_before": true,
+          "proves": "The refusal is COUNTED.",
+          "exercises_invariant": "INT-1",
+          "why_it_matters": "*** Today `_publish_one` returns the SUCCESS-SHAPED string 'submitting' after doing nothing, and the post VANISHES FROM THE TALLY ENTIRELY. That silence is half the defect. ***"
+        },
+        {
+          "name": "test_claim_still_publishes_a_fake_token_post",
+          "class": "PRESERVATION",
+          "action": "NEW",
+          "must_fail_before": false,
+          "proves": "A fake-token (`fanops_`) post still publishes normally.",
+          "preserves_capability": "The happy path."
+        },
+        {
+          "name": "test_crash_into_submitting_still_possible",
+          "class": "PRESERVATION",
+          "action": "NEW",
+          "must_fail_before": false,
+          "proves": "*** The CRASH-DURING-NETWORK path into `submitting` REMAINS. ***",
+          "preserves_capability": "*** F11. A crash between the claim-commit and the network is EXACTLY WHY `submitting` is persisted before I/O. Removing it would re-open the double-publish hole this whole design exists to close. An implementing agent 'cleaning up' the submitting-writers could delete it. THIS TEST STOPS THEM. ***"
+        }
+      ]
+    },
+
+    "S04": {
+      "root_causes": ["RC-2", "RC-8 (reconcile half)"],
+      "tests": [
+        {
+          "name": "test_terminal_ladder_matrix",
+          "class": "INVARIANT",
+          "action": "NEW (parametrized, *** 32 cells ***)",
+          "must_fail_before": true,
+          "proves": "*** EVERY cell of backend{postiz,zernio} x poll{published,failed,unknown,RAISES} x token{fake,real} x error_reason{empty,stale} reaches a terminal or retryable state by +72h. ***",
+          "exercises_invariant": "INT-2",
+          "why_it_fails_today": "*** THREE OF THE FOUR AXES CAN VETO THE TERMINAL TODAY: (1) a RAISING poll `continue`s at :635 before the ladder; (2) a REAL token is excluded from BOTH terminals by `_is_fake_token`; (3) ANY non-empty error_reason is a permanent suppression latch at :767. ***"
+        },
+        {
+          "name": "test_reconcile_visits_a_post_carrying_a_transient_reason",
+          "class": "INVARIANT",
+          "action": "NEW",
+          "must_fail_before": true,
+          "proves": "The :767 suppression key is the EXPLICIT terminal marker (`_is_giveup`), not 'error_reason is non-empty'. A post with a TRANSIENT reason is still VISITED.",
+          "exercises_invariant": "INT-7"
+        },
+        {
+          "name": "test_giveup_is_a_label_not_a_state_change",
+          "class": "PRESERVATION",
+          "action": "NEW",
+          "must_fail_before": false,
+          "proves": "*** `GAVE UP:` is a LABEL written to error_reason. It changes NO state. A given-up post is NOT re-queueable, therefore it CANNOT double-post. ***",
+          "preserves_capability": "*** THE SAFETY PROPERTY THE WHOLE SLICE DEPENDS ON — and the reason PD-2's recommendation (the same ladder for a real token) is SAFE. If an implementing agent makes `GAVE UP:` a state change, this slice becomes a DOUBLE-POST VECTOR. THIS TEST IS THE ONLY THING STOPPING THAT. ***"
+        },
+        {
+          "name": "test_reconcile_never_guesses_a_fate",
+          "class": "CONTRACT",
+          "action": "NEW",
+          "must_fail_before": false,
+          "proves": "reconcile does NOT transition a post to `failed` on a poll it could not complete.",
+          "guards_forbidden_expansion": "*** The prime directive. An agent 'simplifying' the ladder could make an unresolved post `failed` — which is RE-QUEUEABLE — turning an ambiguous park into a double-publish. ***"
+        }
+      ],
+      "required_migration_validation": {
+        "class": "MIGRATION",
+        "gate": "*** SHIP A REPORT-ONLY MODE FIRST: `fanops reconcile --report-terminals`. ***",
+        "why_it_is_STILL_required_even_though_the_count_is_zero": "*** LS-1 measured 0 reconcilable posts, so the migration is a NO-OP TODAY. The report-only mode is NOT a one-time warning about today's count — it is a PERMANENT GATE. The moment the operator approves any of the 347 `awaiting_approval` posts and it publishes, the ladder acquires a real blast radius, and the operator must be able to SEE it before it is WRITTEN. ***",
+        "evidence_required_in_the_PR": "Re-run the live count. State it. If it is no longer 0, the burst is real."
+      }
+    },
+
+    "S05": {
+      "root_causes": ["RC-2 (sibling)"],
+      "tests": [
+        {"name": "test_zernio_404_is_unknown_not_an_error", "class": "INVARIANT", "action": "NEW", "must_fail_before": true, "proves": "`ZernioStatusClient.get_status` returns `{'status':'unknown'}` on a 404, matching Postiz's semantics for the SAME condition (an id the backend does not know).", "exercises_invariant": "INT-2"},
+        {"name": "test_zernio_5xx_still_raises", "class": "PRESERVATION", "action": "NEW", "must_fail_before": false, "proves": "A 5xx STILL raises -> per-post-isolated -> parked, never GUESSED `failed`.", "preserves_capability": "*** The ambiguity park. ONLY THE 404 CHANGES. ***"},
+        {"name": "test_zernio_401_still_halts", "class": "PRESERVATION", "action": "NEW", "must_fail_before": false, "proves": "A 401 STILL raises `ZernioAuthError`.", "preserves_capability": "INV-11 — the halt path. Never burn the queue."}
+      ],
+      "integration_checkpoint": "*** UNKNOWN: whether Zernio returns 404 (vs 410, vs 200-with-error) for a DELETED post. `post/metrics.py`'s own docstring says the response shapes are 'locked offline here; the operator verifies live at first publish'. IF YOU CANNOT VERIFY IT LIVE, SAY SO. Do not run a live verb to find out. ***"
+    },
+
+    "S06": {
+      "root_causes": ["RC-8 (revert half)"],
+      "tests": [
+        {"name": "test_revert_clears_stale_reason", "class": "INVARIANT", "action": "NEW", "must_fail_before": true, "proves": "After `bulk_send_to_review`, `post.error_reason` IS `None`.", "exercises_invariant": "INT-7", "why_it_fails_today": "*** EXECUTED (EXP-C4-1): a post reverted from `failed` and re-approved reaches `submitting` STILL CARRYING 'reconciled: poster reports failed (IG rejected: unsupported aspect ratio)' — a string that (a) LIES about its state and (b) trips the :767 latch ON PASS ONE, so the post never even earns the `stuck` breadcrumb. ***"},
+        {"name": "test_revert_preserves_lineage", "class": "PRESERVATION", "action": "NEW", "must_fail_before": false, "proves": "`submission_id` and `batch_id` are STILL preserved.", "preserves_capability": "*** 'Keep the lineage.' Clearing submission_id would let a re-approved post RE-POST — and if it was actually live, THAT IS A DUPLICATE ON THE PLATFORM. That is PD-1, UNDECIDED. This test makes the boundary MECHANICAL. ***"}
+      ],
+      "required_enumeration": "*** The four requeue paths DO clear error_reason (actions.py:1033, :1105). `bulk_send_to_review` does not. THAT ASYMMETRY IS THE EVIDENCE THE OMISSION IS A BUG, NOT A POLICY. State it in the PR. ***"
+    },
+
+    "S07": {
+      "root_causes": ["RC-3b"],
+      "tests": [
+        {"name": "test_reconcile_and_publish_gate_parity", "class": "INVARIANT", "action": "NEW", "must_fail_before": true, "proves": "With `is_live=True` and `live_ready_channels()==[]`: EITHER both `_reconcile_safe` and `_publish_safe` run, OR NEITHER does.", "exercises_invariant": "INT-4"},
+        {"name": "test_reconcile_makes_no_network_calls_when_not_live", "class": "PRESERVATION", "action": "NEW", "must_fail_before": false, "proves": "`reconcile_due` makes ZERO network calls on a dryrun-only deployment.", "preserves_capability": "*** THIS IS THE PRE-FLIGHT THAT DECIDES THE OPTION. If it does NOT hold, take Option B (gate BOTH) instead of Option A (gate NEITHER). IT IS AN ACCEPTANCE CRITERION, NOT A NICETY. ***"},
+        {"name": "test_dryrun_preview_writing_not_regressed", "class": "PRESERVATION", "action": "NEW", "must_fail_before": false, "proves": "Dryrun previews are still written on a not-live system.", "preserves_capability": "*** The feature Option B would REGRESS. This is WHY Option A is recommended. ***"},
+        {
+          "name": "test_learn_pass_is_still_gated_on_is_live_backend",
+          "class": "CONTRACT",
+          "action": "NEW",
+          "must_fail_before": false,
+          "proves": "`_learn_pass` (cli.py:965) STILL carries its `is_live_backend` gate.",
+          "guards_forbidden_expansion": "*** IR-7 — THE SINGLE MOST DANGEROUS SCOPE EXPANSION IN THE ENTIRE PROGRAM. That gate is the ONLY thing standing between a not-live-backend deployment and `adjust.retire`, which writes `MomentState.retired` — a state `reconcile_moments` REFUSES TO UNDO. IT IS STRUCTURALLY IRREVERSIBLE. 'Unifying the gating' — THE MOST NATURAL-LOOKING CLEANUP IN THIS DIFF — would run PERMANENT MOMENT RETIREMENT on a deployment where learning was previously frozen. ***",
+          "cost_of_failure": "*** IRREVERSIBLE DATA LOSS. And RC-7/PD-3 is UNRESOLVED, so nobody has even decided whether that policy is CORRECT. ***",
+          "note": "*** THIS IS THE CHEAPEST POSSIBLE GUARD AGAINST THE PROGRAM'S WORST OUTCOME. WRITE IT. ***"
+        }
+      ]
+    },
+
+    "S08": {
+      "root_causes": ["RC-6"],
+      "tests": [
+        {"name": "test_daemon_status_distinguishes_alive_from_succeeding", "class": "INVARIANT", "action": "NEW", "must_fail_before": true, "proves": "A daemon whose EVERY pass raises does NOT return a bare verdict `alive`.", "exercises_invariant": "INT-6", "why_it_fails_today": "*** A pass that HALTS still writes run.log stage lines, so `daemon_progress` reports `alive_mid` and the verdict is `alive` — while NO heartbeat has been written in hours and nothing has published. `heartbeat_age_s` IS ALREADY IN THE RETURNED DICT. THE VERDICT DISCARDS IT. ***"},
+        {"name": "test_healthy_fast_pass_is_not_flipped_stale", "class": "PRESERVATION", "action": "NEW", "must_fail_before": false, "proves": "A healthy FAST-LOGGING pass is still NOT flipped to `stale`.", "preserves_capability": "*** The EXACT property the `alive_mid` override exists to protect ('that heartbeat only lands after a whole pass finishes, so it must NEVER flip a fast-logging pass to stale'). ***"},
+        {"name": "test_daemon_progress_remains_the_liveness_owner", "class": "CONTRACT", "action": "NEW", "must_fail_before": false, "proves": "`daemon_progress` is STILL the mid-pass liveness owner and `_heartbeat_age_s`'s role in the alive/stale decision is UNCHANGED.", "guards_forbidden_expansion": "*** project memory `liveness-verdict-single-owner`: 'fix there, not per-surface; DON'T TOUCH `_heartbeat_age_s`.' THIS SLICE ADDS A SIGNAL. IT MOVES NONE. ***"}
+      ],
+      "required_enumeration": "*** Confirm NO consumer parses the verdict STRING for equality with 'alive'. If one does, adding a new verdict string BREAKS IT — and you must say so. Readers: the CLI `daemon status`, the Studio Home banner, /healthz, /home/daemon-health. ***"
+    },
+
+    "S09": {
+      "root_causes": ["RC-10"],
+      "tests": [
+        {"name": "test_shrink_tempdir_is_cleaned", "class": "INVARIANT", "action": "NEW", "must_fail_before": true, "proves": "The shrink temp dir is REMOVED once its output has been uploaded.", "exercises_invariant": "INT-8"},
+        {
+          "name": "test_no_persisted_media_url_points_into_a_shrink_dir",
+          "class": "INVARIANT",
+          "action": "NEW",
+          "must_fail_before": true,
+          "proves": "No persisted `Post.media_urls` entry resolves under a directory matching `fanops-shrink-*`.",
+          "exercises_invariant": "INT-8",
+          "WRITE_IT_TO_ALSO_CATCH_A_RENDER_PATH_REGRESSION": "*** IF-1. The `Render.path` writes are dormant BECAUSE NOTHING MINTS A RENDER (LS-4: 0 renders, 0/347 posts with a render_id) — NOT BECAUSE THEY ARE SAFE. If a future REFRAME slice gives `Ledger.add_render` its first caller, C3-F5 REACTIVATES. Writing this test to ALSO assert no `Render.path` points into a shrink dir is THE CHEAPEST POSSIBLE GUARD, and it costs the reframe stream NOTHING. ***"
+        },
+        {"name": "test_publish_still_works_after_the_shrink_dir_is_removed", "class": "PRESERVATION", "action": "NEW", "must_fail_before": false, "proves": "The publish path STILL WORKS after the shrink dir is removed.", "preserves_capability": "*** THE SELF-HEAL (EXP-C4-4): `media_path_for_post` falls through its `media_urls` branch to the CLIP branch and returns `clip.path`; the next shrink re-points `media_urls` at a fresh file. *** THIS SLICE DEPENDS ON THAT FALLBACK. Pin it, so a future change cannot silently break the thing that makes this cleanup safe."}
+      ],
+      "required_migration_validation": {
+        "class": "MIGRATION",
+        "size_on_the_live_tree": "*** 41 `fanops-shrink-*` dirs; `04_agent_io` = 924 MB (LS-5). ***",
+        "gate": "A one-time clean via `fanops clean --shrink`. Report the count in the PR.",
+        "safety": "*** PROVEN SAFE BY EXECUTION (EXP-C4-4). Cycle 3's claim that 'the fix for the leak would BREAK the pointer' is REFUTED. NO migration of persisted paths is needed. If you find yourself designing one, STOP — you are solving a refuted problem. ***"
+      }
+    },
+
+    "S10": {
+      "root_causes": ["RC-7"],
+      "status": "*** BLOCKED ON PD-3. NO TESTS MAY BE WRITTEN UNTIL THE OPERATOR ANSWERS. ***",
+      "required_read_only_evidence_when_unblocked": "*** How many moments are ALREADY `retired`, and were any retired on fewer than 8 attributed posts? CYCLE 6 MEASURED IT: **ZERO** (LS-2). The actuator has NEVER FIRED on this ledger. That is the honest measure of what this gate has cost: NOTHING. ***"
+    },
+
+    "S11": {
+      "root_causes": ["RC-9"],
+      "class": "GUARD — *** the tests ARE the slice. ***",
+      "tests": [
+        {
+          "name": "test_no_unguarded_door_to_a_terminal_post_state",
+          "class": "CONTRACT",
+          "action": "NEW (AST policy test)",
+          "must_fail_before": false,
+          "proves": "*** EVERY write site that can set `PostState.published` or `PostState.analyzed` is accompanied by an explicit non-empty `public_url` guard at the call site. ***",
+          "guards_forbidden_expansion": "*** GB-4 / RC-9. The R1 invariant is enforced AT CONSTRUCTION ONLY. `model_copy(update=)` and `setattr` BOTH bypass every validator. The property survives via FOUR INDEPENDENT MANUAL CALL-SITE GUARDS (run.py:305, actions.py:268, cli.py:384, dryrun.py:39). *** A FIFTH DOOR ADDED WITHOUT ONE SAVES CLEANLY AND THEN BRICKS THE NEXT `Ledger.load` — TAKING DOWN THE DAEMON AND EVERY STUDIO PAGE AT ONCE. *** ***",
+          "why_a_test_and_not_a_fix": "*** RC-9 has ZERO current reachability (AST-verified across three cycles). Fixing it means touching 8 models and ~57 `model_copy` sites to close a bug NOBODY CAN HIT — while RC-4 silently deletes media. Cycle 4 was RIGHT to defer it. But 'we checked, it's unreachable' ROTS. A CI POLICY TEST DOES NOT. ***",
+          "baseline": "*** The four known doors are the BASELINE (like the swallow ratchet). A FIFTH makes CI RED. ***",
+          "protects_slices": "*** S03, S04 and S06 ALL MUTATE `Post`. This test should land BEFORE them — which is why the recommended landing order puts S11 SECOND. ***"
+        },
+        {
+          "name": "test_model_copy_does_not_bypass_a_raising_validator_undetected",
+          "class": "CONTRACT",
+          "action": "NEW",
+          "must_fail_before": false,
+          "proves": "The `model_copy` bypass is DOCUMENTED AND PINNED: for every model with a raising validator, the test asserts the CURRENT (bypassing) behaviour and names it, so a pydantic upgrade that CHANGES it is caught rather than silently relied upon.",
+          "guards_forbidden_expansion": "INV-01b. *** Executed against pydantic 2.13.4: `model_copy` bypasses EVERY validator on EVERY model — INCLUDING `Moment`'s, DESPITE `validate_assignment=True`. Two in-code comments assert 'Pydantic re-validates on serialization'. IT DOES NOT. This test makes the real behaviour EXECUTABLE rather than folkloric. ***"
+        }
+      ]
+    },
+
+    "S12": {
+      "root_causes": [],
+      "traces_to": "AR-04",
+      "status": "*** PROPOSED — NOT APPROVED (PD-5). ***",
+      "class": "GUARD",
+      "tests": [
+        {
+          "name": "test_no_module_level_import_inverts_the_layering",
+          "class": "CONTRACT",
+          "action": "NEW (AST policy test)",
+          "must_fail_before": false,
+          "proves": "*** No module-level `fanops` import points to an equal-or-higher layer level. The 56 STRICTLY-UPWARD lazy edges STAY lazy. ***",
+          "guards_forbidden_expansion": "*** GB-1 / AR-04. Module init order is LOAD-BEARING and NOTHING ENFORCES IT: no test, no lint rule, no layer declaration. Hoisting ANY ONE of the 56 — A CHANGE THAT LOOKS LIKE A CLEANUP AND THAT A REVIEWER WOULD WAVE THROUGH — BREAKS THE PROCESS AT START. ***",
+          "baseline": "kb/dependencies.json -> layering.levels (the SCC-condensed compile-time graph). The 56 upward edges are the ALLOWED-LAZY set; a module-level edge to an equal-or-higher level is REJECTED.",
+          "protects": "*** ALL 11 OTHER SLICES. S02 touches `accounts` (L2) — and `config` (L0, fan-in 82) reaches UP to it lazily. ***"
+        }
+      ]
+    }
+  },
+
+  "coverage_check": {
+    "intended_invariants": ["INT-1", "INT-2", "INT-3", "INT-4", "INT-5", "INT-6", "INT-7", "INT-8", "INT-9"],
+    "each_has_at_least_one_INVARIANT_test": {
+      "INT-1": "S03 test_claim_refuses_real_submission_id",
+      "INT-2": "S04 test_terminal_ladder_matrix (32 cells)",
+      "INT-3": "S02 test_backend_normalization_matrix",
+      "INT-4": "S07 test_reconcile_and_publish_gate_parity",
+      "INT-5": "S01 test_restore_snapshot_serializes_with_transaction (REWRITE) + two-process contention",
+      "INT-6": "S08 test_daemon_status_distinguishes_alive_from_succeeding",
+      "INT-7": "S06 test_revert_clears_stale_reason + S04 test_reconcile_visits_a_post_carrying_a_transient_reason (*** BOTH REQUIRED — two halves of RC-8 ***)",
+      "INT-8": "S09 test_no_persisted_media_url_points_into_a_shrink_dir",
+      "INT-9": "*** S11 test_no_unguarded_door_to_a_terminal_post_state — PINNED, NOT FIXED. This is the one INT with a GUARD rather than a REMEDIATION, and the contract says so explicitly. ***"
+    },
+    "no_orphan_verifications": "*** Every test in this matrix traces to an INT invariant, a named PRESERVED CAPABILITY, or a named FORBIDDEN EXPANSION. There is no test here that exists only because 'more tests are better'. ***"
+  }
+}

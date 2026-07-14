@@ -1,0 +1,119 @@
+{
+ "$schema": "fanops-arch-kb/persistence/v1",
+ "cycle": 5,
+ "git_head": "fcffa73",
+ "generated": "2026-07-14",
+ "purpose": "Every persistent artifact: owner, mechanism, schema, lifecycle, serialization, migration, backup, restore, mutation authority, readers, writers.",
+ "provenance": "Cycle-1 inventory + Cycle-2 mutation matrix + Cycle-3 side-effect graph + Cycle-5 AST census (74 Ledger.transaction sites, 1 mkdtemp, 2 rmtree, lock sites). Cross-validated: the Cycle-5 AST pass independently reproduced Cycle-3's counts exactly.",
+
+ "the_five_mutable_surfaces": {
+  "A_ledger_entities": {"store": "00_control/ledger.sqlite", "concurrency": "SQLite BEGIN IMMEDIATE", "atomicity": "per-transaction, full-document replace"},
+  "B_control_files": {"store": "00_control/*.json", "concurrency": "fcntl.flock per file", "atomicity": "os.replace"},
+  "C_process_env": {"store": ".env + OS keyring", "concurrency": "NONE"},
+  "D_module_globals": {"store": "in-process only", "concurrency": "NONE (single-process by design)"},
+  "E_filesystem_artifacts": {"store": "stage dirs 01_..07_", "concurrency": "os.replace / stage_lock"},
+  "A_B_exclusion": "NONE (COUP-01). This is the single most important concurrency fact in the system."
+ },
+
+ "datastores": [
+  {
+   "id": "DST-LEDGER",
+   "artifact": "00_control/ledger.sqlite",
+   "owner": "fanops.ledger (facade) + fanops.ledger_sqlite (store)",
+   "mechanism": "SQLite, WAL, synchronous=FULL, chmod 0o600 after every write",
+   "schema": {"tables": ["ledger_meta (schema_version)", "ledger_rows (map_name, row_id, payload)"],
+              "entity_maps": ["sources", "moments", "clips", "posts", "renders", "stitch_plans", "batches", "imported_media"],
+              "auxiliary_maps": ["tag_log ('{account}|{clip_id}')", "variant_streaks ('{account}|{platform}')"],
+              "SCHEMA_VERSION": 11},
+   "write_granularity": "FULL-DOCUMENT REPLACE — every row of every map, every save (ledger_sqlite.py:64-71). There is no per-row update.",
+   "serialization": "pydantic model_dump; validators run at CONSTRUCTION ONLY (Ledger.load). model_copy(update=) and setattr BOTH bypass every validator on every model (INV-01b, executed against pydantic 2.13.4).",
+   "mutation_authority": "74 Ledger.transaction sites (AST). Top: studio/actions.py (25), cli.py (17), studio/actions_approve.py (7), studio/actions_run.py (7), post/run.py (5).",
+   "migration": {"chain": "11 steps, forward-only", "newer_on_disk": "REFUSED, never downgraded (ledger.py:436-440, INV-13)",
+                 "legible_history": "v7 ADDS selection_facts; v11 DROPS selections — the P11 casting teardown is readable in the migration chain itself"},
+   "forward_compat": "every ledger model is pydantic extra='ignore' (INV-19, SHIM-005) — an OLDER binary parsing a NEWER ledger drops unknown keys rather than crashing. Switching any ledger model to extra='forbid' turns a forward-rolled ledger into a hard ControlFileError.",
+   "backup": "Ledger.snapshot (ledger.py:540) — takes store.lock() (the CORRECT lock)",
+   "restore": "Ledger.restore_snapshot (ledger.py:551) — takes _file_lock(ledger.lock), which EXCLUDES NOTHING, then os.replace's the db file",
+   "restore_verdict": "*** RC-4 / C4-F2a — CRITICAL. A concurrent writer's commit() SUCCEEDS and its data is silently discarded, AND its deferred media unlinks PROCEED, deleting real .mp4 files whose rows the restore brings back. PROVEN BY EXECUTION (Cycles 2 and 4). The correct pattern sits SIX LINES ABOVE in the same class. ***",
+   "crash_recovery": "WAL rolls back an open transaction; the flock is kernel-released on process death. kill -9 self-heals with no manual rm.",
+   "silent_corruption_class": "ONE — a terminal-state write with no public_url SAVES CLEANLY and BRICKS THE NEXT Ledger.load with a ControlFileError, taking down the daemon and every Studio page at once. Currently LATENT (no path produces the row); the property survives via FOUR independent manual call-site guards, NOT via the type (INV-01).",
+   "confidence": "CERTAIN"
+  },
+  {
+   "id": "DST-LEGACY-JSON",
+   "artifact": "00_control/ledger.json",
+   "owner": "fanops.ledger_bridge",
+   "mechanism": "break-glass IMPORT ONLY (SHIM-003)",
+   "confidence": "CERTAIN"
+  }
+ ],
+
+ "control_files": [
+  {"artifact": "accounts.json", "owner": "fanops.accounts", "lock": "accounts.lock", "atomic": true, "primitive": "controlio.write_json_atomic (mkstemp same-dir + os.replace)",
+   "load_leniency": "PER-ROW (MOL-79) — one malformed row is SKIPPED into skipped_rows, never crashes the registry. A wrong TOP-LEVEL shape still fails loud.",
+   "validation_gap": "backends[platform] is dict[str,str], UNVALIDATED at load. Accounts.validate() checks the integration/backend PAIRING, never the VALUE. RC-3.",
+   "confidence": "CERTAIN"},
+  {"artifact": "personas.json", "owner": "fanops.persona_store", "lock": "personas.lock", "atomic": true},
+  {"artifact": "hashtag_bans.json", "owner": "fanops.hashtags", "lock": "hashtag_bans.lock", "atomic": true},
+  {"artifact": "hashtag_budget.json", "owner": "fanops.meta_graph", "lock": "hashtag_budget.lock", "atomic": true},
+  {"artifact": "hashtags.json", "owner": "fanops.fanops_hashtags", "lock": "NONE", "atomic": true},
+  {"artifact": "cutover.json", "owner": "fanops.track", "lock": "NONE", "role": "gates learning_validated"},
+  {"artifact": "timing_bias.json", "owner": "fanops.timing_bias", "lock": "NONE", "role": "an hour prior crosspost.surface_time consumes"},
+  {"artifact": "tuning.json", "owner": "THE OPERATOR", "lock": "NONE", "validation": "warn+drop, never raise"},
+  {"artifact": "account_stats.json / insights_blocked.json / learn_doctor.json", "owner": "fanops_account_stats / reconcile / learn_doctor", "lock": "NONE"},
+  {"artifact": "context.md", "owner": "UNKNOWN — see UNK-004", "confidence": "UNKNOWN"}
+ ],
+
+ "gate_queue": {
+  "id": "QUE-001",
+  "artifact": "04_agent_io/requests/{kind}__{key}.request.json + .response.json",
+  "owner": "fanops.agentstep",
+  "mechanism": "*** THE ONLY QUEUE IN THE SYSTEM IS A FILESYSTEM QUEUE. *** No broker, no in-process queue. Correlated by a stamped request_id.",
+  "atomic_writes": ["write_request (agentstep.py:63-66) tmp+os.replace", "write_response (agentstep.py:82-87) tmp+os.replace"],
+  "NON_atomic_write": "*** bump_attempts (agentstep.py:147) uses a bare write_text. *** Its TWO SIBLINGS IN THE SAME FILE are atomic. A torn attempts.json hits `except: n=0` and SILENTLY RESETS the 3-attempt ceiling, making the bounded escalation UNBOUNDED. C3-F6.",
+  "kinds": {"moments": "answerable", "moment_hooks": "answerable", "captions": "answerable",
+            "intro_match": "*** STRUCTURALLY UNANSWERABLE *** — written (intro_match.py:108) but ABSENT from responder._SCHEMA, which answer_pending iterates. INV-04. Dormant behind FANOPS_INTRO_TEASE (DEFAULT OFF)."},
+  "confidence": "CERTAIN"
+ },
+
+ "filesystem_artifacts": [
+  {"artifact": "clip / render .mp4", "owner": "fanops.clip", "atomic": true, "primitive": "<dst>.part.mp4 + os.replace",
+   "constraint": "*** the .mp4 SUFFIX IS REQUIRED — ffmpeg picks the muxer by EXTENSION (COUP-07 / MOL-78) ***",
+   "cleanup": "cascade unlink, DEFERRED until AFTER commit (ledger.py:487-488) — a rolled-back txn never deletes a file it did not drop. *** This safety property INVERTS in a restore race: the txn commits into an ORPHANED inode, so it is never rolled back, so the unlinks PROCEED. C4-F2a. ***"},
+  {"artifact": "06_published/<day>/<pid>.json", "owner": "post.run._archive_published", "atomic": true, "primitive": "O_CREAT|O_WRONLY|O_TRUNC 0o600 — created 0600 ATOMICALLY, no world-readable window", "cleanup": "never (intended)"},
+  {"artifact": "05_scheduled/<pid>.json (dryrun preview)", "owner": "post.dryrun", "atomic": false, "primitive": "write_text then chmod"},
+  {"artifact": "studio_audit.log", "owner": "fanops.audit", "atomic": false, "primitive": "append; chmod 0600",
+   "contract": "NEVER raises (audit.py:46). CONTRACT-CORRECT: 'the log is a tail-and-grep surface, not load-bearing for correctness.' But it is written AFTER the txn commits, so a crash between commit and audit LOSES THE AUDIT LINE WHILE KEEPING THE STATE CHANGE. Audit is a RECORD, not a JOURNAL. C3-F13."},
+  {"artifact": ".run.lock body", "owner": "fanops.pipeline_run", "atomic": false, "primitive": "os.ftruncate(0)+os.write",
+   "mitigation": "STRUCTURAL — the FLOCK is the authority and is kernel-released on death, so the LEASE self-heals; only an advisory breadcrumb is lost. C3-F7."},
+  {"artifact": "04_agent_io/fanops-shrink-*/", "owner": "*** NONE ***", "atomic": "n/a", "primitive": "tempfile.mkdtemp (compress.py:21)",
+   "cleanup": "*** NEVER. The ONLY mkdtemp in src/fanops (AST-confirmed), with NO rmtree anywhere in the tree. RC-10. ***",
+   "durable_pointer_into_it": "Post.media_urls (C4-F5) — written by the Studio oversize-retry path INSIDE a committed transaction. SELF-HEALS: media_path_for_post falls through to clip.path and the next shrink re-points it (PROVEN, EXP-C4-4)."}
+ ],
+
+ "caches": [
+  {"cache": "render .mp4", "key": "clip._render_fingerprint (clip.py:619)", "invalidation": "fingerprint change", "verdict": "OK"},
+  {"cache": "<src>.detect.json (face detection)", "key": "source id", "invalidation": "purge_source_artifacts", "verdict": "OK"},
+  {"cache": "keyframe grid", "key": "content-addressed <hash>/ (keyframes._window_cache_key)", "invalidation": "content address", "verdict": "OK"},
+  {"cache": "Clip.media_url / Render.media_url (the F44 UPLOAD cache)", "key": "first-writer-wins (`not c.media_url`)",
+   "invalidation": "*** NONE. *** If the hosted URL expires, the dead CDN URL is reused FOREVER. C3-F11. This FALSIFIES the claim that every cache has an invalidation rule.", "verdict": "GAP"},
+  {"cache": "media-cache validity across backends", "key": "post/media.py:58 — a Postiz URL is identified BY IT CONTAINING A LITERAL '|'",
+   "verdict": "COUP-17 — an undocumented URL-shape convention. A Postiz URL format change that drops the '|' silently re-uploads every clip."}
+ ],
+
+ "fingerprints": [
+  {"id": "FPR-RENDER", "fn": "clip._render_fingerprint (clip.py:619)", "owner": "fanops.clip",
+   "rule": "geom = bool(track) or (focus is not None and len(focus) > 2) (clip.py:633). content_type + _REFRAME_GEOM_V (=4) are hashed ONLY when geom is TRUE — so centred clips keep their historic fingerprint and never needlessly re-render.",
+   "load_bearing": true},
+  {"id": "FPR-COMPOSE", "fn": "compose._compose_fingerprint (compose.py:26)"},
+  {"id": "FPR-STITCH", "fn": "stitch_render._read_fingerprint (stitch_render.py:39)"},
+  {"id": "FPR-EVIDENCE", "fn": "variant_amplify._evidence_fingerprint (variant_amplify.py:49)", "inputs": "UNKNOWN — see UNK-009"},
+  {"id": "FPR-KEYFRAME", "fn": "keyframes._window_cache_key (keyframes.py:51)"},
+  {"id": "FPR-ID", "fn": "ids._hash (ids.py:7)", "rule": "SHA-1, usedforsecurity=False, \\x00-joined, [:12]. Builtin hash() BANNED (PEP 456). INV-16.", "load_bearing": true}
+ ],
+
+ "consistency_mechanisms": {
+  "two_phase_commit": "NONE ANYWHERE, and none is needed — except across the publish boundary, where claim-before-network + needs_reconcile is the (correct) substitute.",
+  "the_publish_durability_point": "the CLAIM (queued->submitting) is COMMITTED BEFORE ANY NETWORK I/O (run.py:264-272). A crash mid-network leaves `submitting`, which publish_due NEVER re-drives. That is CORRECT (F11). The defect is that reconcile — the only READER of `submitting` — cannot always terminate it.",
+  "deferred_unlink": "cascade .mp4 unlinks drain AFTER _save_unlocked (ledger.py:487-488). Correct against a rollback; INVERTS against a restore race (C4-F2a)."
+ }
+}

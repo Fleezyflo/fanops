@@ -1,0 +1,177 @@
+{
+  "$schema": "fanops-arch/governance/field-authority/v1",
+  "cycle": 7,
+  "purpose": "*** THE DECLARATION OF CANONICAL AUTHORITY. For every canonical artifact, and every field class within it: who owns it, what regenerates it, what validates it, which manual edits are permitted, and — when two sources disagree — WHICH ONE WINS. ***",
+
+  "the_conflict_resolution_rule": {
+    "rule": "*** IMPLEMENTATION WINS OVER PROSE. *** For any field classified DERIVED_FROM_CODE, the code is authoritative and the declared artifact is WRONG when they disagree. There is no case in which a document overrides a measurement, unless an executable policy explicitly says so (and none does).",
+    "why_this_rule_and_not_a_softer_one": "This repository's signature defect — found in EVERY ONE of five audit cycles — is: 'THE DOC NAMES A MECHANISM THAT DOES NOT EXIST, WHILE THE PROPERTY SURVIVES VIA A DIFFERENT ONE.' It has appeared in the docs (INV-01/02/03/05/07), in the CODE COMMENTS (four for four), and — most dangerously — IN THE TEST LAYER (AR-03/RC-5, where a GREEN test asserted a data-loss outcome and called it correct). A governance system that let prose win would institutionalise that defect.",
+    "the_proof_it_was_needed": "Cycle 7's first run found the Cycle-6 contract pinning `_CLI_PRINT_COUNT = 147` as a load-bearing, exact-equality boundary. The test file says 158. The contract's copy went stale in ONE COMMIT."
+  },
+
+  "field_classes": {
+    "DERIVED_FROM_CODE": "Mechanically extracted from src/. NEVER hand-written. Regenerated; byte-compared; the code wins.",
+    "DERIVED_FROM_CONTRACT": "Mechanically extracted from a DECLARED artifact or a CI test file. Regenerated; the SOURCE artifact wins.",
+    "DECLARED_AND_ENFORCED": "Human-authored, and a policy rule mechanically enforces it. Changing it is a reviewed act.",
+    "GENERATED_FROM_SCHEMA": "Structure fixed by a schema; contents derived.",
+    "HUMAN_DECISION": "A judgement no extractor can make. Cannot be regenerated. Its CONSISTENCY with derived facts is still checked.",
+    "UNKNOWN": "Cannot be established. Recorded in governance/unknowns.json. NEVER speculated."
+  },
+
+  "artifacts": [
+    {
+      "artifact": ".reports/architecture/derived/*.json",
+      "status": "GENERATED — hand edits FORBIDDEN",
+      "owner": "tools/arch (the generator)",
+      "regeneration_command": "python -m tools.arch regen",
+      "validation_mechanism": "python -m tools.arch drift — regenerates into a temp dir and BYTE-COMPARES against the committed files. Rule ARCH-006.",
+      "permitted_manual_edits": "NONE. Not one field.",
+      "conflict_resolution": "The generator wins, always. A hand-edit is destroyed by the next regen — which is the point.",
+      "fields": {
+        "*": "DERIVED_FROM_CODE",
+        "declared_by_the_ci_tests (ratchets.json)": "DERIVED_FROM_CONTRACT — parsed from tests/test_swallow_ratchet.py and tests/test_internal_prints_routed.py, which are the CANONICAL enforcement.",
+        "contract_surface.json": "DERIVED_FROM_CONTRACT — the Cycle-6 contract RESOLVED against the real AST. A declared boundary naming a function that does not exist is not a boundary, it is a wish."
+      }
+    },
+
+    {
+      "artifact": ".reports/architecture/kb/subsystems.json",
+      "status": "CANONICAL DECLARED (Cycle 5)",
+      "owner": "architecture governance",
+      "regeneration_command": "NOT regenerable — the partition is a HUMAN_DECISION. Its TOTALITY is checked.",
+      "validation_mechanism": "Rules ARCH-001 (partition is total over the derived module set) + ARCH-002 (no ghosts) + ARCH-009 (its totality block matches the derived module count).",
+      "permitted_manual_edits": "Assign a module to a subsystem; add/rename a subsystem. Each is a reviewed change.",
+      "conflict_resolution": "The MODULE SET is derived and wins. The GROUPING is declared and stands. A module absent from the partition is a BLOCKING finding, not an inference.",
+      "fields": {
+        "subsystems.<id>.modules": "HUMAN_DECISION (the grouping) — but the DOMAIN of the map is DERIVED_FROM_CODE and enforced total.",
+        "totality.*": "DERIVED_FROM_CODE — a cached count. It rots. Rule ARCH-009 catches it. MIGRATION TARGET: delete these fields and point at derived/modules.json.",
+        "subsystems.<id>.compile_depends_on": "DERIVED_FROM_CODE — a cached projection of the import graph. MIGRATION TARGET.",
+        "DEFINITION.*": "HUMAN_DECISION — the definition of what a subsystem IS. Stands."
+      }
+    },
+
+    {
+      "artifact": ".reports/architecture/kb/dependencies.json",
+      "status": "CANONICAL DECLARED (Cycle 5) — but almost ENTIRELY derivable",
+      "owner": "architecture governance",
+      "regeneration_command": "python -m tools.arch regen  (the derived twin is derived/dependencies.json)",
+      "validation_mechanism": "Rule ARCH-009 cross-checks every numeric claim against derived/dependencies.json.",
+      "permitted_manual_edits": "The PROSE only (THE_THREE_GRAPHS, intentionality_SPLIT, the notes). Not one number.",
+      "conflict_resolution": "The derived graph WINS on every number.",
+      "fields": {
+        "totals.*": "DERIVED_FROM_CODE. MIGRATION TARGET — these numbers exist in two places and one of them will rot.",
+        "graph.compile_edges / runtime_lazy_edges": "DERIVED_FROM_CODE. MIGRATION TARGET.",
+        "layering.levels": "DERIVED_FROM_CODE. MIGRATION TARGET.",
+        "THE_THREE_GRAPHS.*": "HUMAN_DECISION — the semantic distinction between G1/G1c/G2/G3. This is the most valuable content in the file and it is NOT derivable. It stands.",
+        "intentionality_SPLIT.*": "HUMAN_DECISION + UNKNOWN — whether the mutual-import wiring is intentional is UNK-C5-4 and is NOT guessed."
+      }
+    },
+
+    {
+      "artifact": ".reports/architecture/kb/configuration.json",
+      "status": "CANONICAL DECLARED (Cycle 5)",
+      "owner": "S02 configuration",
+      "regeneration_command": "python -m tools.arch regen (derived/configuration.json)",
+      "validation_mechanism": "Rule ARCH-003 — every env var READ by the code must be declared here. An undeclared var is an undocumented input to a live system, and the operator is a DOCUMENTED hand-editor of .env (AR-09).",
+      "permitted_manual_edits": "Add a variable's SEMANTICS (what it does, its default, whether Studio-settable). Not its read sites.",
+      "conflict_resolution": "The code wins on WHICH vars exist and WHERE they are read. The doc wins on WHAT THEY MEAN.",
+      "fields": {
+        "env_vars.<KEY>.read_at": "DERIVED_FROM_CODE. MIGRATION TARGET.",
+        "env_vars.<KEY>.reader_count": "DERIVED_FROM_CODE. MIGRATION TARGET.",
+        "precedence_model.*": "HUMAN_DECISION — Config vs Settings, the propagation asymmetry. Not derivable. Stands."
+      }
+    },
+
+    {
+      "artifact": ".reports/architecture/kb/side_effects.json",
+      "status": "CANONICAL DECLARED (Cycle 5)",
+      "owner": "architecture governance",
+      "validation_mechanism": "Rule ARCH-008 cross-checks counts_AST_verified against derived/side_effects.json.",
+      "permitted_manual_edits": "The DECISION TABLE (the network-ambiguity table) and the ordering narrative. Not the counts.",
+      "conflict_resolution": "The code wins on counts. The doc wins on SEMANTICS (what a 5xx MEANS for a publish).",
+      "fields": {
+        "counts_AST_verified.*": "DERIVED_FROM_CODE. MIGRATION TARGET.",
+        "the_network_ambiguity_decision_table.*": "HUMAN_DECISION — the system's best engineering, and entirely non-derivable. Stands.",
+        "the_publish_side_effect_ordering.*": "HUMAN_DECISION — the T0..T10 ordering and the crash-critical window."
+      }
+    },
+
+    {
+      "artifact": ".reports/architecture/kb/invariants.json",
+      "status": "CANONICAL DECLARED (Cycle 5)",
+      "owner": "architecture governance",
+      "validation_mechanism": "PARTIAL. IMPL-009 (GB-4) and IMPL-010 (GB-3) mechanize two. The rest are prose.",
+      "permitted_manual_edits": "All of it — but a claim that an invariant is MECHANICALLY enforced must name the mechanism, and the mechanism must exist.",
+      "conflict_resolution": "The code wins. SEVEN invariants in this file are already recorded as FALSE AS WRITTEN, which is the file working as intended.",
+      "fields": {
+        "invariants[].enforcement": "DECLARED_AND_ENFORCED — the enforcement CLASS is the load-bearing field. 'MECHANICAL_TEST' is a checkable claim: the test must exist and its ASSERTION must be read, not its name (AR-03).",
+        "invariants[].statement": "HUMAN_DECISION.",
+        "invariants_that_are_FALSE_as_written": "HUMAN_DECISION — and the most valuable section in the KB."
+      }
+    },
+
+    {
+      "artifact": ".reports/architecture/contract/file_ownership.json",
+      "status": "CANONICAL DECLARED (Cycle 6) — THE mechanical partition",
+      "owner": "implementation governance",
+      "validation_mechanism": "Rules IMPL-001 (every owned file exists) + IMPL-002 (every permitted_functions entry resolves to a real function). derived/contract_surface.json is its resolved twin.",
+      "permitted_manual_edits": "Ownership and boundaries — each a REVIEWED scope change.",
+      "conflict_resolution": "The FILE SET is checked against disk. A boundary naming a function that does not exist is a BLOCKING finding.",
+      "fields": {
+        "ownership.<file>.owner": "DECLARED_AND_ENFORCED.",
+        "ownership.<file>.partition.<slice>.permitted_functions": "*** DECLARED_AND_ENFORCED — BUT CURRENTLY PARTLY PROSE. *** Entries like 'the daemon tick loop (:1300-1313)' are NOT machine-checkable. Rule IMPL-002 reports them. MIGRATION TARGET: rewrite as bare function identifiers.",
+        "ownership.<file>.ratchets": "DERIVED_FROM_CONTRACT — a COPY of the CI test baselines. Rule IMPL-007 checks the copy against the original. It has ALREADY rotted once."
+      }
+    },
+
+    {
+      "artifact": ".reports/architecture/contract/implementation_contract.json",
+      "status": "CANONICAL DECLARED (Cycle 6)",
+      "owner": "implementation governance",
+      "validation_mechanism": "Rules IMPL-003 (DAG acyclic, PROVEN by Tarjan not asserted), IMPL-007 (ratchet copies), IMPL-008 (every slice traces to a root cause).",
+      "permitted_manual_edits": "Slices, boundaries, ordering. Reviewed.",
+      "conflict_resolution": "Derived facts win over the contract's copies of them.",
+      "fields": {
+        "slices[].id / class / root_causes / prerequisites": "DECLARED_AND_ENFORCED.",
+        "implementation_dag.acyclic": "DERIVED_FROM_CONTRACT — this is an ASSERTION in the file and a PROOF in derived/contract_surface.json. The proof wins.",
+        "GLOBAL_BOUNDARIES.GB-6_ast_ratchet_budgets.*": "*** DERIVED_FROM_CONTRACT — a COPY of the CI test files. IT IS STALE TODAY (contract says _CLI_PRINT_COUNT=147; the test says 158). Rule IMPL-007. MIGRATION TARGET: delete the copy, point at derived/ratchets.json. ***",
+        "live_state_at_contract_freeze.*": "*** HUMAN_DECISION + EVIDENCE_DECAY. These are measurements of a MUTABLE live tree (LS-1..LS-7). They are TRUE AS OF 2026-07-14 and they are NOT re-derivable from the repository at all — the live ledger is not in git. They MUST be re-run at merge (IR-11), and this system CANNOT do it for you. ***",
+        "product_decisions.PD-*": "HUMAN_DECISION. PD-3 and PD-5 BLOCK slices. No extractor can answer them and none tries."
+      }
+    },
+
+    {
+      "artifact": ".reports/architecture/governance/baselines.json",
+      "status": "DECLARED RATCHET — the pinned baselines",
+      "owner": "architecture governance",
+      "regeneration_command": "python -m tools.arch baseline --accept  (a DELIBERATE, REVIEWED act — never a side effect of regen)",
+      "validation_mechanism": "Rules ARCH-004 (no new compile cycle), ARCH-007 (no lazy import hoisted), IMPL-009 (no fifth door to a terminal Post state).",
+      "permitted_manual_edits": "None directly — accept a new baseline via the command, and EXPLAIN WHY in the PR.",
+      "conflict_resolution": "The baseline is the RATCHET. Code that violates it is the thing that is wrong, until a human deliberately re-accepts.",
+      "fields": {
+        "must_stay_lazy": "DECLARED_AND_ENFORCED — mechanizes GB-1, which NOTHING enforced before Cycle 7.",
+        "approved_compile_cycles": "DECLARED_AND_ENFORCED — baselined because it EXISTS, not because it is endorsed (UNK-C5-1).",
+        "approved_terminal_post_writers": "DECLARED_AND_ENFORCED — mechanizes GB-4."
+      }
+    },
+
+    {
+      "artifact": "docs/ARCHITECTURE_GOVERNANCE.md",
+      "status": "GENERATED — hand edits FORBIDDEN",
+      "owner": "tools/arch/render.py",
+      "regeneration_command": "python -m tools.arch docs",
+      "validation_mechanism": "Regenerated in CI; a diff means the doc is stale.",
+      "permitted_manual_edits": "NONE. It is a VIEW of the machine artifacts, never a source.",
+      "conflict_resolution": "The artifacts win. Editing this file is pointless — the next `docs` run overwrites it.",
+      "fields": {"*": "GENERATED_FROM_SCHEMA"}
+    }
+  ],
+
+  "what_this_system_CANNOT_authorize": {
+    "note": "*** Stated plainly, so no future agent mistakes silence for coverage. ***",
+    "live_state": "The Cycle-6 contract's LS-1..LS-7 measurements (0 stranded posts, 0 retired moments, 0 malformed backends, 41 shrink dirs, 73 published records, 11 snapshot artifacts) are properties of the OPERATOR'S LIVE TREE. They are NOT IN GIT. This system cannot re-derive them, cannot detect their decay, and does not pretend to. They are re-armed as MERGE GATES (IR-11) and a human must re-run them.",
+    "product_decisions": "PD-1..PD-5. Not recoverable from code. Not guessed.",
+    "intent": "UNK-C5-1 (is the persona import cycle intentional?) and UNK-C5-2 (how many of the 56 strictly-upward lazy imports are deliberate?) are UNKNOWN. Cycle 7 PINS them so they cannot get worse. It does not resolve them.",
+    "the_runtime_call_graph": "G3 was never derived by any cycle. G2 is a strict SUPERSET of it. Every SCC claim in this KB BOUNDS blast radius; it does not ESTABLISH it."
+  }
+}

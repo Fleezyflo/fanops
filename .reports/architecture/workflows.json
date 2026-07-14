@@ -1,0 +1,235 @@
+{
+  "cycle": 3,
+  "git_head": "fcffa73",
+  "generated": "2026-07-14",
+  "schema": "per Cycle-3 brief section 3: workflow_id, step_id, trigger, caller, callee, site, preconditions, ledger/control/artifact/env reads+writes, subprocess, network, lock, durability_point, failure_exceptions, swallowed, retry_owner, retry_limit, idempotency_key, crash_result, recovery_path, operator_signal, terminal_stuck_possible",
+  "prose_twin": "EXECUTION_PATHS.md",
+
+  "the_five_phase_shape": {
+    "note": "advance() (pipeline.py:466-546) is the whole engine; every entry point funnels into it.",
+    "phases": [
+      {"phase": 1, "name": "LOCK-FREE stage", "site": "pipeline.py:478", "work": "stage_inbox_candidates — sha256 + copy + ffprobe"},
+      {"phase": 2, "name": "TXN #1 (short)", "site": "pipeline.py:479-480", "work": "ingest_staged — mint Source rows", "durability_point": true},
+      {"phase": 3, "name": "LOCK-FREE producer", "site": "pipeline.py:486", "work": "produce.run_all — whisper / ffmpeg / renders. WARMS artifacts, SAVES NOTHING."},
+      {"phase": 4, "name": "TXN #2 (the main reduce)", "site": "pipeline.py:504-541", "work": "heal_corrupt_gates -> reconcile_source_progress -> source_to_moments -> ingest_moments -> moment_hooks -> hookscore -> [router] -> render_and_caption -> structural_hooks -> refresh_caption_requests -> ingest_captions -> crosspost", "durability_point": true, "rollback": "an UNCAUGHT raise rolls back the ENTIRE pass, BY DESIGN (pipeline.py:495-503). Safe because the heavy artifacts were warmed lock-free in phase 3, so the next pass fingerprint-SKIPS onto them."},
+      {"phase": 5, "name": "OUT OF LOCK", "site": "pipeline.py:542-546", "work": "_reconcile_safe (GATED on cfg.is_live_backend, pipeline.py:318) -> _publish_safe (NOT GATED, pipeline.py:334) -> _build_summary + write_digest"}
+    ],
+    "structural_consequence": "Step 5's gate asymmetry is the mechanism behind Cycle-2 F-A: reconcile — the ONLY reader of `submitting` — can be switched off while publish keeps CLAIMING posts into `submitting`. Proven by EXP-11."
+  },
+
+  "workflows": [
+    {
+      "workflow_id": "W1",
+      "name": "Daemon tick",
+      "trigger": "launchd com.fanops.run (RunAtLoad + KeepAlive; interval rides EnvironmentVariables.FANOPS_DAEMON_INTERVAL, daemon.py:151). There is NO StartInterval. Sibling keeper polls every 120s.",
+      "steps": [
+        {"step_id": "W1.1", "callee": "load_dotenv(root/.env, override=True)", "site": "cli.py:795", "env_writes": true, "lock": null},
+        {"step_id": "W1.2", "callee": "Config(root)", "site": "config.py:144", "note": "side-effect-free; 74 UNCACHED os.getenv calls, re-read per attribute access"},
+        {"step_id": "W1.3", "callee": "loop top: load_dotenv(override=True) + Config(cfg.root)", "site": "cli.py:1303-1304", "env_writes": true, "note": "RE-READ EVERY TICK — a Studio go_live reaches the daemon within one tick (confirms Cycle-2 SC-2)"},
+        {"step_id": "W1.4", "callee": "_cmd_run_pass", "site": "cli.py:931", "lock": "L3 run_lease (fcntl.flock LOCK_NB on 00_control/.run.lock)", "failure_exceptions": ["RunBusyError -> skip this tick"]},
+        {"step_id": "W1.5", "callee": "for _ in range(10): converge loop", "site": "cli.py:943", "lock": "L3 held"},
+        {"step_id": "W1.6", "callee": "responder.answer_pending", "site": "cli.py:945", "subprocess": "claude -p", "artifact_writes": "04_agent_io/requests/*.response.json (ATOMIC)"},
+        {"step_id": "W1.7", "callee": "advance(cfg, base_time)", "site": "cli.py:946", "lock": "L3 + ledger txns"},
+        {"step_id": "W1.8", "callee": "except Exception -> print('run halted: ...'); return None", "site": "cli.py:947-949", "swallowed": "EVERYTHING, including AuthError", "operator_signal": "stderr only"},
+        {"step_id": "W1.9", "callee": "_learn_pass", "site": "cli.py:965", "preconditions": "cfg.is_live_backend", "network": true, "ledger_writes": "metrics, analyzed, MomentState.retired (IRREVERSIBLE — C3-F10)"},
+        {"step_id": "W1.10", "callee": "_heartbeat(cfg, s, origin='loop')", "site": "cli.py:1306", "preconditions": "s is not None — a HALTED pass writes NO HEARTBEAT"},
+        {"step_id": "W1.11", "callee": "except Exception -> print; loop continues", "site": "cli.py:1311-1312", "retry_limit": "UNBOUNDED", "terminal_stuck_possible": true},
+        {"step_id": "W1.12", "callee": "time.sleep(interval)", "site": "cli.py:1313", "note": "no jitter, no backoff on repeated failure"}
+      ],
+      "config_refreshed_every_tick": [".env -> os.environ", "a NEW Config object"],
+      "process_local_state_that_stays_stale": ["run._publish_throttle_last (run.py:123) — per-PROCESS only", "pipeline_run._note_stage_warned (pipeline_run.py:17) — a warn-once latch"],
+      "shutdown": "NO signal handler. kill -9 is safe by construction: the run_lease flock and every ledger flock are kernel-released on process death; the SQLite WAL rolls back an open transaction.",
+      "crash_result": "self-healing",
+      "terminal_stuck_possible": "C3-F8: a persistent AuthError is re-driven every tick forever, writes no heartbeat, changes no ledger state — and daemon.status still reports `alive` (C3-F9)."
+    },
+
+    {
+      "workflow_id": "W2",
+      "name": "Source ingestion -> catalogued Source",
+      "trigger": "advance() phase 1; Studio /run/ingest; Studio /run/upload",
+      "steps": [
+        {"step_id": "W2.1", "callee": "stage_inbox_candidates", "site": "pipeline.py:478", "lock": null, "artifact_reads": "01_inbox rglob"},
+        {"step_id": "W2.2", "callee": "sha256 -> make_id('src', sha)", "site": "ids.py:7", "idempotency_key": "src_<sha1[:12]>"},
+        {"step_id": "W2.3", "callee": "ffprobe", "subprocess": true, "lock": null},
+        {"step_id": "W2.4", "callee": "copy/stage into the pipeline dir", "artifact_writes": true, "lock": null},
+        {"step_id": "W2.5", "callee": "ingest_staged -> add_source (setdefault)", "site": "pipeline.py:480, ledger.py:559", "lock": "L1", "durability_point": true, "idempotency_key": "content-addressed src id"},
+        {"step_id": "W2.6", "callee": "_archive_staged", "site": "pipeline.py:481", "lock": null, "note": "AFTER commit"}
+      ],
+      "birth_state": "pending when cfg.queue_gate is ON (DEFAULT ON), else catalogued (ingest.py:321-323). A `pending` source is INVISIBLE to every pipeline reducer — this is the U4 queue gate, BY DESIGN, not a stall.",
+      "idempotency": "TRUE, by content address. add_source is setdefault; Ledger.already_seen(sha256=) is the explicit dedup read. A replay is a NO-OP.",
+      "crash_result": {
+        "after_W2.4_before_W2.5": "a staged file with NO ledger row -> rebuild_catalog (ledger.py:746-758) adopts it as SourceState.discovered (matching _SID_RE = ^src_[0-9a-f]{12}$), INERT until an operator promotes it",
+        "after_W2.5_before_W2.6": "the row exists, the inbox copy is not archived -> the next stage_inbox_candidates re-stages it, add_source no-ops. SAFE."
+      },
+      "recovery_path": "rebuild_catalog (adds orphans ONLY — never retires a source whose file is missing, ledger.py:746-748)",
+      "terminal_stuck_possible": false
+    },
+
+    {
+      "workflow_id": "W3",
+      "name": "Source analysis -> moments (the agent-gate machine)",
+      "queue": "THE ONLY QUEUE IS A FILESYSTEM QUEUE: 04_agent_io/requests/{kind}__{key}.request.json + .response.json, correlated by a stamped request_id. No broker, no in-process queue.",
+      "steps": [
+        {"step_id": "W3.1", "callee": "transcribe_source(in_lock=True)", "site": "pipeline.py:162", "lock": "L1 HELD", "note": "ADOPT-OR-DEFER — NEVER shells whisper under the flock (H10). A cold cache costs ONE TICK of latency, never a held lock."},
+        {"step_id": "W3.2", "callee": "detect_signals(in_lock=True)", "site": "pipeline.py:164", "lock": "L1 HELD", "note": "same adopt-or-defer contract (MOL-122)"},
+        {"step_id": "W3.3", "callee": "request_moments", "site": "pipeline.py:166", "control_writes": "gate moments__<sid> (ATOMIC: tmp + os.replace, agentstep.py:63-66)"},
+        {"step_id": "W3.4", "callee": "responder.answer_pending", "subprocess": "claude -p", "retry_owner": "responder._on_deterministic_fail", "retry_limit": "_GATE_DETERMINISTIC_MAX = 3 (responder.py:53)"},
+        {"step_id": "W3.5", "callee": "ingest_moments", "site": "pipeline.py:177", "ledger_writes": "picks_decided; Moment born `picked`"},
+        {"step_id": "W3.6", "callee": "request_moment_hooks + ingest_moment_hooks", "site": "pipeline.py:192-193", "note": "ATOMIC-PER-SOURCE: `if dec is None: return led` — NOT independent per-persona gates"}
+      ],
+      "gate_escalation": {
+        "moments": "at 3/3 -> SourceState.error (FAIL-CLOSED) then discard_gate (responder.py:182-190)",
+        "moment_hooks / captions": "at 3/3 -> a SYNTHESISED clean fail-open response so ingest proceeds (responder.py:159-174)"
+      },
+      "stale_answer_guard": "_answer_one re-reads latest_request_id after the model call and DROPS the answer if the gate re-seeded mid-call (responder.py:115-119). read_response also compares request_id (agentstep.py:101-102).",
+      "quarantine": "every per-unit stage is wrapped; _quarantine flips the unit to its error state via an IMMUTABLE model_copy (pipeline.py:150-152), so one bad source never wedges the pass (F03).",
+      "unanswerable_gate": "intro_match is live-wired (intro_match.py:108) but ABSENT from responder._SCHEMA, and answer_pending iterates _SCHEMA only -> it can NEVER be answered. Dormant behind FANOPS_INTRO_TEASE (DEFAULT OFF). Cycle-2 INV-04, UPHELD.",
+      "terminal_stuck_possible": "C3-F6 — a torn attempts.json resets the 3-attempt ceiling, making the bounded escalation UNBOUNDED."
+    },
+
+    {
+      "workflow_id": "W4",
+      "name": "Moment decision -> rendered Clip",
+      "eligibility": "MomentState.decided (pipeline.py:214)",
+      "steps": [
+        {"step_id": "W4.1", "callee": "produce.run_all (LOCK-FREE)", "site": "pipeline.py:486", "subprocess": "ffmpeg", "lock": "L4 stage_lock"},
+        {"step_id": "W4.2", "callee": "render_aspects_for (in-lock)", "site": "pipeline.py:216", "lock": "L1", "note": "ADOPTS the warm mp4 by fingerprint"},
+        {"step_id": "W4.3", "callee": "_render_fingerprint", "site": "clip.py:619", "idempotency_key": "geom = bool(track) or (focus is not None and len(focus) > 2) (clip.py:633); content_type + _REFRAME_GEOM_V (=4) hashed ONLY when geom is true -> centred clips keep their historic fingerprint and never needlessly re-render"},
+        {"step_id": "W4.4", "callee": "ffmpeg -> <dst>.part.mp4 -> os.replace", "note": "the .mp4 SUFFIX IS REQUIRED — it picks the muxer (COUP-07 / MOL-78)", "durability_point": true}
+      ],
+      "cv2_fail_closed": "NEW at fcffa73. With smart_framing ON (the DEFAULT) and the [framing] extra absent, framing.require_cv2 raises ToolchainMissingError -> EXIT 2. This is the ONLY fail-CLOSED optional dependency; every other extra fails open. FANOPS_SMART_FRAMING=0 restores the centre-crop.",
+      "failure_state": "a clip that fails to render is BORN ClipState.error (clip.py:830-860) — never laundered into a captioned post with a dangling mp4 (pipeline.py:218)",
+      "known_defect": "C3-F12 — framing._detect_faces returns PARTIAL results on an exception (framing.py:151); a crash after 3 of 5 faces is indistinguishable from 'there were 3 faces'.",
+      "terminal_stuck_possible": false
+    },
+
+    {
+      "workflow_id": "W5",
+      "name": "Caption -> Post minting",
+      "steps": [
+        {"step_id": "W5.1", "callee": "request_captions", "site": "pipeline.py:224", "control_writes": "gate captions__<clip_id>"},
+        {"step_id": "W5.2", "callee": "ingest_captions", "site": "pipeline.py:290", "ledger_writes": "Clip.meta_captions; captioned | held"},
+        {"step_id": "W5.3", "callee": "crosspost_clips -> _mint_surface_post", "site": "crosspost.py:234-252", "ledger_writes": "Post(state=awaiting_approval) x owner surfaces; clip -> queued"}
+      ],
+      "caption_scope": "the moment OWNER x its platforms, gated by affinity_admits — THE SAME predicate crosspost enforces (pipeline.py:199-206), so caption scope can never drift from post minting.",
+      "post_identity": "content-addressed off surface_key = '{account}|{platform}'. add_post is setdefault -> REPLAY IS A NO-OP.",
+      "one_deliberate_exception": "_mint_surface_post DELETES and re-mints a post whose prior state is `rejected` or `failed` (crosspost.py:229-231) — so a re-run CAN resurrect a rejected post.",
+      "approval_boundary": "every post is born awaiting_approval (models.py:298); publish_due iterates `queued` ONLY (run.py:442); only approve_post — guarded on awaiting_approval (ledger.py:579) — promotes. INV-08 UPHELD.",
+      "note": "crosspost.py:286 sets the clip to `queued` UNCONDITIONALLY after the surface loop, EVEN WHEN ZERO POSTS WERE BORN (logged no_post_born).",
+      "terminal_stuck_possible": false
+    },
+
+    {
+      "workflow_id": "W6",
+      "name": "Approval -> network publication",
+      "note": "_publish_one (run.py:242) is the SOLE network-POST caller (INV-09, upheld).",
+      "steps": [
+        {"step_id": "W6.CLAIM", "callee": "Ledger.transaction", "site": "run.py:264-272", "lock": "L1 HELD", "preconditions": "state is queued (run.py:266) AND due re-checked UNDER LOCK (run.py:268)", "ledger_writes": "state = submitting", "durability_point": "TXN EXIT — PERSISTED BEFORE ANY NETWORK I/O (F11)", "idempotency_key": "the claim itself: a lost race is a clean no-op", "crash_result": "state = submitting; publish_due NEVER re-drives it"},
+        {"step_id": "W6.SKIP", "callee": "is_real_submission_id -> skip the POST", "site": "run.py:287-288", "note": "*** C3-F1 *** — the post was ALREADY claimed to `submitting` and FINALIZE persists that. _publish_one returns the SUCCESS-SHAPED string 'submitting' after doing NOTHING.", "terminal_stuck_possible": true},
+        {"step_id": "W6.NET", "callee": "for attempt in range(_PUBLISH_TRANSIENT_MAX=3)", "site": "run.py:292-342", "lock": "NONE — on a THROWAWAY Ledger.load (run.py:274)", "retry_limit": 3, "retry_cadence": "delay=0.5; _sleep(delay + uniform(0, delay*0.5)); delay = min(delay*2, 8.0)", "what_it_retries": "ONLY _ensure_media (the media UPLOAD). It CANNOT retry the publish POST — see C3-NF1."},
+        {"step_id": "W6.MEDIA", "callee": "_ensure_media -> apply_shrink_to_post -> ensure_clip_media", "site": "run.py:294", "subprocess": "ffmpeg (compress.py:28)", "network": "R2 PUT / Postiz upload / Zernio upload", "known_defect": "C3-F4 (mkdtemp leak) + C3-F5 (Render.path rewritten INTO the temp dir)"},
+        {"step_id": "W6.POST", "callee": "poster.publish", "site": "run.py:296 -> postiz.py:392 / zernio.py:235", "network": "POST /posts", "idempotency_key": "*** NONE — the backend has NO idempotency key ***", "note": "this is why needs_reconcile exists as a distinct state"},
+        {"step_id": "W6.GATE", "callee": "the promotion gate", "site": "run.py:305-317", "preconditions": "submitted AND non-empty public_url -> published (+published_at, publish_hour, publish_dow). EMPTY url -> needs_reconcile."},
+        {"step_id": "W6.FINALIZE", "callee": "Ledger.transaction", "site": "run.py:351-367", "lock": "L1 HELD", "ledger_writes": "merges ONLY _NET_POST_FIELDS (run.py:120) into a FRESHLY LOADED ledger — the B4 lost-update fix. account_id written ONLY when changed ('in-flight wins', run.py:356).", "durability_point": true},
+        {"step_id": "W6.ARCHIVE", "callee": "_archive_published", "site": "run.py:371-372", "lock": "NONE — OUTSIDE the txn", "swallowed": "everything (fail-open) — a full disk must NEVER roll back a committed live publish"}
+      ],
+      "postiz_permalink_trap": "_postiz_permalink ALWAYS returns None BY DESIGN (postiz.py:78-90), so a fresh Postiz publish CANNOT self-promote to `published` — it lands `submitted` with no URL, the promotion gate fails, and it parks in needs_reconcile. THE STEADY-STATE POSTIZ HAPPY PATH IS submitting -> submitted -> needs_reconcile -> published.",
+      "subprocess_in_the_publish_path": "publish_due calls postiz_lifecycle.ensure_up(cfg) when `due` is non-empty (run.py:447-449) — it SHELLS DOCKER.",
+      "other_entry_points": ["publish_post (run.py:477) — no due-gate, one post", "actions.mark_published (actions.py:280) — operator force, rejects a blank url, WRITES studio_audit.log", "cli.cmd_resolve (cli.py:394-398) — the UNGUARDED force-anything escape hatch; SOLE writer of PostState.retired"],
+      "terminal_stuck_possible": "C3-F1 (the skip-resubmit strand)"
+    },
+
+    {
+      "workflow_id": "W7",
+      "name": "Reconciliation and metrics",
+      "eligibility": "_RECONCILABLE = (submitting, submitted, needs_reconcile) — reconcile.py:433",
+      "gating": "*** _reconcile_safe is GATED on cfg.is_live_backend (pipeline.py:318) while _publish_safe is NOT (pipeline.py:334). *** When every channel's backend is malformed, live_ready_channels()==[] -> is_live_backend=False -> RECONCILE NEVER RUNS while PUBLISH STILL DOES. Proven by EXP-11.",
+      "steps": [
+        {"step_id": "W7.1", "callee": "Ledger.load (snapshot)", "site": "reconcile.py:544", "lock": null},
+        {"step_id": "W7.2", "callee": "heal_stranded_submitting", "site": "reconcile.py:512-531", "lock": "L1 (own txn)", "preconditions": "state is submitting AND NO submission_id AND age > _SUBMITTING_HEAL_AFTER (15 min)", "ledger_writes": "-> needs_reconcile"},
+        {"step_id": "W7.3", "callee": "poll(p.submission_id) for each reconcilable", "site": "reconcile.py:569-579", "lock": "NONE — pre-polled out of lock", "network": true, "note": "exceptions are CAPTURED into `results` and re-raised inside the apply, preserving per-post containment"},
+        {"step_id": "W7.4", "callee": "reconcile_posts (apply)", "site": "reconcile.py:584-585", "lock": "L1 HELD", "note": "polled_as is a STALE-POLL GUARD: a post whose submission_id changed between poll and apply is skipped (reconcile.py:610-612)"}
+      ],
+      "the_terminal_ladder": {
+        "site": "reconcile.py:620-777",
+        "shape": "try: poll() / except AuthError: raise / except Exception: stamp error_reason + CONTINUE (:635) <-- BAILS OUT / then: if published -> promote (:637) / elif failed -> fail (:734) / else (:739): escalation (:746), give-up (:757), `if post.error_reason: continue` (:767), stuck breadcrumb (:772)",
+        "DEFECT_1": "C3-F2 — the escalation and give-up sit on the SUCCESSFUL-POLL branch. ZernioStatusClient.get_status RAISES RuntimeError on a 404; PostizStatusClient.get_status RETURNS {'status':'unknown'}. A raising poll continues out at :635 and NEVER reaches :746/:757. THE TERMINAL MACHINERY IS DEAD CODE ON ZERNIO.",
+        "DEFECT_2": "C3-F1 — _is_fake_token (reconcile.py:77) gates BOTH :746 AND :757, so a REAL submission_id is structurally excluded from both terminals ON EITHER BACKEND. It gets ONE `stuck ...` breadcrumb, then :767 silently skips it every later pass."
+      },
+      "timers_PINNED_correcting_cycle_2": {
+        "_STUCK_AFTER": "6h (reconcile.py:43)",
+        "_SUBMITTING_HEAL_AFTER": "15min (reconcile.py:50)",
+        "_SUBMITTING_ESCALATE_AFTER": "24h (reconcile.py:48) — Cycle 2 said 72h. WRONG.",
+        "_RECONCILE_GIVEUP_AFTER": "72h (reconcile.py:54)",
+        "note": "BOTH ages are measured from scheduled_time (_parked_age, reconcile.py:61-69), NOT chained. Total time-to-terminal is 72h, NOT 144h as Cycle 2 claimed."
+      },
+      "metrics": "track.pull_metrics is the SOLE writer of published -> analyzed (track.py:193). metrics_series is APPEND-ONLY, idempotent per cadence offset. IG reach is read from the Meta Graph (the sole IG metric reader).",
+      "terminal_stuck_possible": "C3-F1, C3-F2 — BOTH"
+    },
+
+    {
+      "workflow_id": "W8",
+      "name": "Studio mutation",
+      "note": "Route->handler->action attribution is DONE (Cycle-2 FIND-013, all 149). This records the DURABILITY semantics of the mutation families.",
+      "cross_cutting": {
+        "authorization": "NONE — 0/149 authenticated; all 108 mutating routes CSRF-exposed. Boundary = the network interface (app.run(host=...), default 127.0.0.1:8787). RECORDED DECISION.",
+        "ledger_writes": "ALWAYS via Ledger.transaction inside the ACTION, NEVER in the handler",
+        "error_contract": "actions return ActionResult(ok, error, detail); handlers render a partial",
+        "browser_sees_success_before_persistence": "NO — every mutating action commits its transaction BEFORE constructing its ActionResult",
+        "the_real_ordering_gap": "write_audit runs AFTER the transaction commits (actions.py:1008/1040/1070), so a crash between commit and audit LOSES THE AUDIT LINE WHILE KEEPING THE STATE CHANGE. Audit is a RECORD, not a JOURNAL. (C3-F13)",
+        "htmx": "an oversize upload re-renders at HTTP 200 with a 'too large' message — htmx 2.x drops non-2xx swaps"
+      },
+      "idempotency_by_family": {
+        "approve / reject / unapprove": "in-lock source-state guard (ledger.py:579/594/598) -> 2nd call no-ops",
+        "requeue x4": "state in (failed,error) re-checked under lock; ALL CLEAR submission_id -> safe",
+        "publish_now": "the CLAIM (state is queued) -> 2nd call is a clean no-op",
+        "publish_due_bucket": "per-post CLAIM",
+        "repost / crosspost": "epoch-suffixed id -> a NEW id every click. NOT IDEMPOTENT BY DESIGN ('fan accounts repost freely'). Both mints are awaiting_approval, so no auto-publish risk.",
+        "mark_published": "rejects a blank url; refuses an already-terminal post (actions.py:274)",
+        "bulk_send_to_review": "state not in _REVIEW_REVERT_BLOCKED. *** PRESERVES submission_id DELIBERATELY *** -> feeds C3-F1",
+        "save_uploads": "video-ext check, traversal-safe secure_filename, inbox-bound resolve, ATOMIC .uploadpart -> os.replace, 2 GiB cap",
+        "wipe": "typed word REMOVE -> MANDATORY verified snapshot -> execute_wipe's own re-check. KNOWN GAP MOL-71: no server-side check that PREVIEW ran."
+      },
+      "execute_wipe": "FULLY inside ONE Ledger.transaction (ledger_wipe.py:252-275) -> a raise halfway rolls back ENTIRELY. Gated in code: WipeNotConfirmed unless confirmed; SnapshotRequired unless snapshot_is_restorable — which ACTUALLY OPENS the SQLite file and reads schema_version (ledger_wipe.py:218-235). It writes a .files.txt manifest of media paths but DOES NOT UNLINK MEDIA.",
+      "terminal_stuck_possible": false
+    },
+
+    {
+      "workflow_id": "W9",
+      "name": "Break-glass and recovery",
+      "operations": [
+        {"op": "Ledger.snapshot", "caller": "actions_wipe.confirm_wipe (actions_wipe.py:61)", "exclusion": "n/a (read)", "verdict": "MANDATORY before a wipe"},
+        {"op": "Ledger.restore_snapshot", "caller": "*** NO PRODUCTION CALLER *** — advertised by ledger_wipe.py:246 as THE wipe rollback path", "exclusion": "fcntl.flock on ledger.lock — MUTUALLY INVISIBLE to the SQLite BEGIN IMMEDIATE every other writer uses", "verdict": "F-B (Cycle 2) — PROVEN silent data loss: a concurrent writer's commit() SUCCEEDS and its data is DISCARDED. Cycle 3 did NOT re-run this destructive path."},
+        {"op": "rebuild_catalog", "site": "ledger.py:746", "exclusion": "L1", "verdict": "SAFE — adds orphans ONLY; never retires a missing-file source"},
+        {"op": "resume_source", "site": "pipeline.py:77", "exclusion": "caller's txn", "verdict": "SAFE — the single owner of the recovery transition; refuses a healthy source"},
+        {"op": "_force_reset_to_catalogued", "site": "pipeline.py:63", "verdict": "T0 reset — purges disk caches, discards gates, reconcile_moments(sid, {})"},
+        {"op": "heal_stranded_submitting", "site": "reconcile.py:512", "verdict": "AUTONOMOUS — but ONLY for posts with NO submission_id"},
+        {"op": "fanops resolve <id> <state>", "site": "cli.py:394", "verdict": "FORCE-ANYTHING; --url required for terminal states; the SOLE writer of PostState.retired"},
+        {"op": "Studio recover_posts / retry x4", "verdict": "accepts ONLY failed/error — a `submitting` post is NOT OFFERED"},
+        {"op": "paths_rebase", "site": "paths_rebase.py:75", "verdict": "rewrites Render.path after a root move"}
+      ],
+      "the_missing_recovery_path": "*** There is NO recovery — autonomous or manual — for a post stranded in submitting/needs_reconcile with a REAL submission_id, and NO signal that tells the operator it happened. *** The Studio requeue family accepts only failed/error. The only escape is `fanops resolve <id> failed` then Studio recover — a two-step CLI break-glass requiring the operator to ALREADY KNOW."
+    },
+
+    {
+      "workflow_id": "W10",
+      "name": "Learning, variants, personas, selection",
+      "data_origin": "track.pull_metrics is the SOLE writer of Post.metrics / metrics_series / published->analyzed. IG reach: Meta Graph (GraphInsightsClient), the SOLE IG metric reader. Lift = track._W {saves 4.0, shares 4.0, retention 3.0, reach 0.001, likes 0.05}; any weight >= 1.0 is PRIMARY, and a missing primary stamps lift_degraded rather than trusting a partial scalar.",
+      "actuators": [
+        {"name": "adjust.amplify", "reversible": true, "gate": "_learn_pass -> cfg.is_live_backend", "validation_frozen": false, "cap": "MAX_AMPLIFY_PER_SOURCE = 3", "verdict": "safe"},
+        {"name": "p4_dim_bias", "reversible": true, "gate": "DEFAULT-OFF + learning_validated + p4_unlocked", "validation_frozen": true},
+        {"name": "variant_amplify", "reversible": true, "gate": "DEFAULT-OFF + learning_validated", "validation_frozen": true},
+        {"name": "timing_bias", "reversible": true, "gate": "DEFAULT-OFF + learning_validated", "validation_frozen": true, "note": "writes an ISOLATED control file; a schedule-slot bias, never a publish"},
+        {"name": "variant_ucb", "reversible": true, "gate": "statistics only", "validation_frozen": false, "note": "SELF-DECLARED exception (config.py:821-827) — a scorer swap on the safe caption-bias READ path"},
+        {"name": "adjust.retire", "reversible": false, "gate": "*** cfg.is_live_backend ONLY ***", "validation_frozen": false, "site": "adjust.py:82, adjust.py:95", "irreversibility": "reconcile_moments REFUSES to un-retire (ledger.py:636-642)", "fires_at": "round(n*0.2) >= 1 => n = 3 analyzed posts", "verdict": "*** C3-F10 — THE DESTRUCTIVE ACTUATOR HAS THE WEAKEST GATE. *** The REVERSIBLE bias actuators wait for learning_validated AND >=8 attributed posts x >=2 values (validation_gate.py:52). The guards that DO exist are real: bottom-20% AND lift < lift_floor(20.0) AND not a winner AND NOT lift_degraded (adjust.py:50-52) — which is why this is a HAZARD, not a reachable defect."}
+      ],
+      "inert_reserved_unreachable": [
+        {"item": "intro_match", "verdict": "live-wired but structurally UNANSWERABLE (INV-04, upheld)"},
+        {"item": "Ledger.set_post_state (ledger.py:572)", "verdict": "ZERO CALLERS"},
+        {"item": "_LIVE_CLIP_STATES (ledger.py:649)", "verdict": "a DEAD GUARD — nothing writes ClipState.published/analyzed, so clip_live is always False"},
+        {"item": "RenderState.* beyond `rendered`", "verdict": "DRIVERLESS (Cycle-1 FIND-001, upheld)"},
+        {"item": "_materialize_variant_media (run.py:178-180)", "verdict": "a `return` with NO BODY — the P9 teardown left the call site in place. A live call to a no-op. Harmless."}
+      ]
+    }
+  ]
+}

@@ -1,0 +1,114 @@
+{
+  "$schema": "fanops-impl-contract/rollback/v1",
+  "cycle": 6,
+  "git_head": "fcffa73",
+  "purpose": "*** Rollback must restore ARCHITECTURAL BEHAVIOUR, not merely a successful compile. Cycle 4 wrote 'revert' for nine of ten slices. FOR TWO OF THEM THAT IS INSUFFICIENT — and the live-state measurement is what tells us which two, and that BOTH are currently harmless. ***",
+
+  "rollback_taxonomy": {
+    "note": "*** 'git revert' is not one thing. It restores CODE. Whether it restores BEHAVIOUR depends on what the slice already WROTE — to the ledger, to disk, or TO THE INTERNET. ***",
+    "CODE_REVERSIBLE": "`git revert` fully restores prior architectural behaviour. Nothing durable was written that the revert cannot undo.",
+    "DATA_IRREVERSIBLE": "Revert restores the CODE. *** Ledger rows or disk state the slice already wrote PERSIST. *** A data-repair procedure must be named, or the residue must be shown to be harmless.",
+    "WORLD_IRREVERSIBLE": "*** Revert restores the CODE. External side effects — POSTS ON THE INTERNET — PERSIST. No revert can unpublish. ***"
+  },
+
+  "slices": {
+    "S01": {
+      "class": "CODE_REVERSIBLE",
+      "trigger": "The two-process contention test is flaky in CI; or a restore blocks longer than the 30s LockBusyError bound in a real operator run.",
+      "owner": "the landing engineer",
+      "mechanism": "`git revert` the PR.",
+      "verification": "*** The snapshot FILE FORMAT is UNCHANGED — a snapshot taken POST-fix restores correctly on PRE-fix code. Assert this explicitly; it is what makes the revert safe. ***",
+      "limitations": "*** Reverting RE-OPENS THE RACE. *** Any restore performed WHILE the fix was live produced a CORRECT outcome; the revert does not retroactively corrupt it.",
+      "preserved_data": "Everything. No schema change, no on-disk format change, no migration.",
+      "restored_behavior": "The pre-fix `os.replace` restore path — including its silent-data-loss race.",
+      "post_rollback_validation": "*** Re-assert that `Ledger.snapshot` (:540) still takes `store.lock()`. It was never touched, but if the revert is dirty it is the first thing to check — it is the MODEL the fix copies. ***",
+      "behavioural_note": "*** A restore now BLOCKS (up to the 30s bound) while a writer holds the ledger. Today it SILENTLY WINS. Blocking is CORRECT: a restore that cannot serialize must FAIL LOUDLY, not corrupt. If an operator reports 'the restore got slower', that is the fix WORKING. ***"
+    },
+
+    "S02": {
+      "class": "*** WORLD_IRREVERSIBLE (CONDITIONAL) — and the condition DOES NOT FIRE TODAY. ***",
+      "the_condition": "*** IF S02 normalizes a malformed backend, a previously-dark channel goes LIVE and PUBLISHES. Those posts are ON THE INTERNET. `git revert` cannot unpublish them. ***",
+      "does_it_fire_today": "*** NO. LS-3: the live accounts.json has ZERO malformed backend values (5 channels, all canonical: 3 postiz/instagram, 2 zernio/tiktok). S02 CANNOT flip any channel from dark to live, BECAUSE THERE IS NO TYPO TO NORMALIZE. ***",
+      "effective_class_on_the_current_tree": "*** CODE_REVERSIBLE. ***",
+      "MERGE_GATE": "*** RE-RUN THE LIVE accounts.json CHECK AT MERGE TIME. If a malformed value has appeared since 2026-07-14, this slice REVERTS TO WORLD_IRREVERSIBLE and the Cycle-4 mitigation RE-ARMS (loud is_live_backend transition log + explicit operator briefing that fixing a malformed backend CAN UNFREEZE THE LEARNING PASS, including the IRREVERSIBLE retire()). ***",
+      "trigger": "A channel starts publishing that the operator did not expect.",
+      "owner": "the operator (only they can judge an unexpected publish).",
+      "mechanism": "`git revert`. *** THEN: the operator must decide what to do about anything already published. The code cannot help. ***",
+      "limitations": "*** No revert unpublishes. This is the ONE slice whose blast radius escapes the repository. ***",
+      "preserved_data": "accounts.json is NOT rewritten by this slice — normalization happens at LOAD, in memory. *** The file on disk is untouched, so the revert is clean w.r.t. the registry. ***",
+      "post_rollback_validation": "Confirm `live_ready_channels()` returns to its pre-fix set."
+    },
+
+    "S03": {
+      "class": "CODE_REVERSIBLE",
+      "trigger": "A fake-token post stops publishing (a regression in the happy path).",
+      "owner": "the landing engineer",
+      "mechanism": "`git revert`.",
+      "verification": "*** No persisted state changes. The slice STRICTLY REMOVES a state transition; it adds none. ***",
+      "limitations": "Posts ALREADY stranded in `submitting` are NOT healed by this slice and are NOT re-stranded by its revert. *** S04 heals them. ***",
+      "preserved_data": "All.",
+      "restored_behavior": "The pre-fix CLAIM, which strands a real-sid post."
+    },
+
+    "S04": {
+      "class": "*** DATA_IRREVERSIBLE — and the residue is EMPTY today. ***",
+      "the_residue": "*** `git revert` does NOT UN-LABEL posts the new ladder already stamped `GAVE UP:` or escalated to `needs_reconcile`. Those ledger rows PERSIST. ***",
+      "how_many_rows_today": "*** ZERO. LS-1: posts in {submitting, submitted, needs_reconcile} = 0. THE LADDER HAS NOTHING TO TOUCH ON PASS ONE. ***",
+      "effective_class_on_the_current_tree": "*** CODE_REVERSIBLE. ***",
+      "is_the_residue_HARMFUL_if_it_ever_exists": "*** NO — and this is the load-bearing point. `GAVE UP:` is a LABEL written to error_reason. IT CHANGES NO STATE. A given-up post is NOT re-queueable, so it CANNOT double-post. The labels are TRUE. Leaving them after a revert is ACCEPTABLE — but it MUST BE STATED, because the operator will see reasons the reverted code did not write. ***",
+      "MERGE_GATE": "*** RE-RUN THE LIVE RECONCILABLE COUNT AT MERGE TIME. If it is no longer 0, the report-only dry run (`fanops reconcile --report-terminals`) MUST be executed and its output pasted into the PR BEFORE the ladder is allowed to write. ***",
+      "trigger": "The first live pass escalates more posts than the report-only run predicted.",
+      "owner": "the operator",
+      "mechanism": "`git revert`. *** The labels persist. ***",
+      "data_repair_procedure": "*** None required (the labels are true and inert). If the operator wants them gone: `fanops resolve <id> <state>` is the force-anything escape hatch. ***",
+      "post_rollback_validation": "Confirm no post moved to `failed` or `published` as a result of the ladder — *** it must only ever have written a LABEL. If a state changed, the `GAVE UP: is a label` safety property was broken and the revert is NOT sufficient. ***"
+    },
+
+    "S05": {
+      "class": "CODE_REVERSIBLE",
+      "trigger": "Zernio returns 404 for a condition that is NOT 'unknown id' (e.g. a transient routing failure), and posts start being treated as unknown when they should have raised.",
+      "owner": "the landing engineer",
+      "mechanism": "`git revert`.",
+      "limitations": "*** If S04 is already merged, reverting S05 does NOT re-strand anything — S04's ladder no longer depends on the poll succeeding. That is precisely WHY S05 must ship WITH or AFTER S04 and never alone. ***",
+      "preserved_data": "All."
+    },
+
+    "S06": {"class": "CODE_REVERSIBLE", "trigger": "n/a (one line).", "owner": "the landing engineer", "mechanism": "`git revert`.", "limitations": "Posts already reverted with a cleared error_reason keep the cleared field. *** Harmless — a cleared reason is the CORRECT state for a post in Review. ***", "preserved_data": "All."},
+
+    "S07": {
+      "class": "CODE_REVERSIBLE",
+      "trigger": "reconcile makes a network call on a dryrun-only deployment (the pre-flight failed and Option A was taken anyway).",
+      "owner": "the landing engineer",
+      "mechanism": "`git revert`.",
+      "limitations": "None.",
+      "preserved_data": "All.",
+      "post_rollback_validation": "*** CONFIRM `_learn_pass`'s `is_live_backend` gate (cli.py:965) IS STILL PRESENT. If the revert is dirty and takes that gate with it, the rollback has ARMED THE IRREVERSIBLE RETIRE PATH. This is the single highest-consequence post-rollback check in the program. ***"
+    },
+
+    "S08": {"class": "CODE_REVERSIBLE", "trigger": "A consumer parses the verdict string and breaks on the new value.", "owner": "the landing engineer", "mechanism": "`git revert`.", "limitations": "None. The new field is ADDITIVE.", "preserved_data": "All.", "post_rollback_validation": "Confirm `daemon_progress` is still the mid-pass liveness owner and `heartbeat_age_s` is still in the returned dict."},
+
+    "S09": {
+      "class": "*** DATA_IRREVERSIBLE — and the residue is GARBAGE BY CONSTRUCTION. ***",
+      "the_residue": "*** The one-time clean DELETES the 41 leaked `fanops-shrink-*` dirs (924 MB). `git revert` does not restore them. ***",
+      "is_the_residue_HARMFUL": "*** NO. They are ORPHANED TEMP DIRS WITH NO OWNER (RC-10). Deleting them is the POINT. And EXP-C4-4 PROVED the self-heal: `media_path_for_post` falls through to `clip.path`, and the next shrink re-points `media_urls` at a fresh file. *** Recorded as DATA_IRREVERSIBLE for HONESTY, not because it carries risk.",
+      "trigger": "The publish path breaks after the clean (i.e. the self-heal did NOT hold).",
+      "owner": "the landing engineer",
+      "mechanism": "`git revert` the CODE. *** The deleted dirs stay deleted — and the next publish RE-SHRINKS, which is the self-heal working. ***",
+      "post_rollback_validation": "*** Publish one post end-to-end in DRYRUN and confirm `media_path_for_post` resolves. If it does not, the clip fallback was broken by the slice and the revert is NOT sufficient. ***",
+      "preserved_data": "*** Every `.mp4` under 03_clips. The shrink dirs held only RE-DERIVABLE re-encodes. ***"
+    },
+
+    "S10": {"class": "*** BLOCKED ON PD-3. ***", "note": "*** If Option B (make retirement REVERSIBLE) is chosen, the ROLLBACK of the slice and the FEATURE of the slice are the same mechanism — which is an argument FOR Option B that the operator should weigh. Cycle 6 OFFERS this observation and makes NO recommendation. ***"},
+
+    "S11": {"class": "CODE_REVERSIBLE", "trigger": "The policy test is flaky or its baseline is wrong.", "owner": "the landing engineer", "mechanism": "`git revert`.", "limitations": "*** Reverting REMOVES THE GUARD. RC-9 returns to being unreachable-by-inspection rather than unreachable-by-CI. That is exactly the state Cycles 1-5 were in — survivable, but it ROTS. ***", "preserved_data": "All. TEST-ONLY, zero runtime behaviour change."},
+
+    "S12": {"class": "CODE_REVERSIBLE", "status": "PROPOSED (PD-5).", "mechanism": "`git revert`.", "limitations": "*** Reverting removes the ONLY mechanical enforcement of GB-1. The 56 strictly-upward lazy imports go back to being protected by nothing but a reviewer's attention. ***", "preserved_data": "All. TEST-ONLY."}
+  },
+
+  "program_level_rollback": {
+    "question": "*** If the whole Cycle-6 program must be abandoned mid-flight, what is the state? ***",
+    "answer": "*** Every slice is INDEPENDENTLY REVERTIBLE and NONE leaves the system worse than fcffa73 — with two named exceptions whose residue is currently EMPTY (S04: 0 rows) or GARBAGE (S09: orphaned temp dirs). ***",
+    "the_one_ordering_constraint_on_rollback": "*** If S03 and S04 are both merged, REVERT S04 FIRST. *** Reverting S03 alone re-opens the strand CREATION path while S04's ladder is still draining — which is safe but produces churn. Reverting S04 alone leaves S03's refusal in place, which is strictly safer than today. *** Either single revert is safe; the pair has a preferred order. ***",
+    "the_one_rollback_that_can_HARM": "*** A DIRTY revert of S07 that also takes `_learn_pass`'s `is_live_backend` gate with it. That would arm IRREVERSIBLE MOMENT RETIREMENT on a deployment where learning was frozen. The post-rollback validation for S07 exists ENTIRELY for this. ***"
+  }
+}

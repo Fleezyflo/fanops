@@ -1,0 +1,562 @@
+{
+  "$schema": "fanops-arch/derived/entities",
+  "confidence": "CERTAIN",
+  "enums": {
+    "fanops.accounts": [
+      {
+        "line": 19,
+        "members": [
+          "active",
+          "planned",
+          "retired",
+          "warming"
+        ],
+        "name": "AccountStatus"
+      }
+    ],
+    "fanops.framing_outcomes": [
+      {
+        "line": 45,
+        "members": [
+          "CV2_UNAVAILABLE",
+          "DETECTION_RAISED",
+          "DETECTOR_INIT_FAILED",
+          "DETECTOR_RUNTIME_FAILED",
+          "FACES_DETECTED",
+          "FFMPEG_UNAVAILABLE",
+          "FOCUS_PLACED",
+          "FRAME_EXTRACTION_FAILED",
+          "INVALID_WINDOW",
+          "MODEL_MISSING",
+          "MOTION_PLACED",
+          "NO_FACE",
+          "NO_FRAMES",
+          "NO_MOTION",
+          "NO_PEOPLE",
+          "NO_TRACK",
+          "STAGE_LOCK_BUSY",
+          "STRATEGY_RAISED",
+          "TRACK_ASSEMBLED",
+          "UNKNOWN"
+        ],
+        "name": "FramingEventType"
+      },
+      {
+        "line": 87,
+        "members": [
+          "CENTERED_NO_SUBJECT",
+          "DETECTED_MULTI",
+          "DETECTED_SINGLE",
+          "MOTION_FOCUS",
+          "MUSIC_FOCUS",
+          "UNRESOLVED"
+        ],
+        "name": "FramingOutcome"
+      },
+      {
+        "line": 103,
+        "members": [
+          "CENTERED",
+          "MOTION_SALIENCY",
+          "SPEAKER_TRACK",
+          "SUBJECT_FOCUS"
+        ],
+        "name": "FramingStrategy"
+      },
+      {
+        "line": 110,
+        "members": [
+          "COMPLETED",
+          "FAILED",
+          "NOT_APPLICABLE",
+          "SKIPPED"
+        ],
+        "name": "StrategyState"
+      }
+    ],
+    "fanops.models": [
+      {
+        "line": 61,
+        "members": [
+          "catalogued",
+          "discovered",
+          "error",
+          "moments_decided",
+          "moments_empty",
+          "moments_requested",
+          "pending",
+          "picks_decided",
+          "retired",
+          "signalled",
+          "transcribed"
+        ],
+        "name": "SourceState"
+      },
+      {
+        "line": 77,
+        "members": [
+          "clipped",
+          "decided",
+          "error",
+          "picked",
+          "retired"
+        ],
+        "name": "MomentState"
+      },
+      {
+        "line": 84,
+        "members": [
+          "analyzed",
+          "captioned",
+          "captions_requested",
+          "error",
+          "held",
+          "published",
+          "queued",
+          "rendered",
+          "retired",
+          "stitch_draft"
+        ],
+        "name": "ClipState"
+      },
+      {
+        "line": 92,
+        "members": [
+          "analyzed",
+          "published",
+          "queued",
+          "rendered",
+          "retired"
+        ],
+        "name": "RenderState"
+      },
+      {
+        "line": 104,
+        "members": [
+          "analyzed",
+          "awaiting_approval",
+          "error",
+          "failed",
+          "needs_reconcile",
+          "published",
+          "queued",
+          "rejected",
+          "retired",
+          "submitted",
+          "submitting"
+        ],
+        "name": "PostState"
+      },
+      {
+        "line": 130,
+        "members": [
+          "facebook",
+          "instagram",
+          "tiktok",
+          "twitter",
+          "youtube"
+        ],
+        "name": "Platform"
+      },
+      {
+        "line": 140,
+        "members": [
+          "r16x9",
+          "r1x1",
+          "r9x16"
+        ],
+        "name": "Fmt"
+      },
+      {
+        "line": 396,
+        "members": [
+          "none",
+          "per_account",
+          "shared_fallback"
+        ],
+        "name": "HookSource"
+      },
+      {
+        "line": 458,
+        "members": [
+          "approved",
+          "dismissed",
+          "error",
+          "in_use",
+          "suggested"
+        ],
+        "name": "StitchState"
+      },
+      {
+        "line": 487,
+        "members": [
+          "closed",
+          "error",
+          "open"
+        ],
+        "name": "BatchState"
+      }
+    ],
+    "fanops.reframe": [
+      {
+        "line": 61,
+        "members": [
+          "ALREADY_REFRAMED",
+          "DRIFT",
+          "ELIGIBLE",
+          "ERROR",
+          "FRAMING_UNRESOLVED",
+          "LEGITIMATE_CENTER",
+          "MISSING_INPUT",
+          "RECONSTRUCTION_AMBIGUOUS",
+          "REMOTE_ASSET_PRESENT",
+          "STITCH_EXCLUDED",
+          "SUPERCUT_EXCLUDED",
+          "UNRECONSTRUCTABLE"
+        ],
+        "name": "ReframeClass"
+      }
+    ]
+  },
+  "generated_by": "tools/arch",
+  "generator_version": "arch/1.0.0",
+  "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",
+  "models": {
+    "fanops.accounts": [
+      {
+        "fields": [
+          "access",
+          "account_id",
+          "backends",
+          "clip_profile",
+          "content_focus",
+          "framing",
+          "handle",
+          "hashtag_corpus",
+          "hook_angle",
+          "ig_user_id",
+          "integrations",
+          "persona",
+          "persona_id",
+          "persona_owns_profile",
+          "platforms",
+          "selection_scope",
+          "status"
+        ],
+        "line": 36,
+        "name": "Account"
+      }
+    ],
+    "fanops.models": [
+      {
+        "fields": [
+          "batch_id",
+          "created_at",
+          "degraded_reason",
+          "duration",
+          "error_reason",
+          "height",
+          "id",
+          "language",
+          "meta",
+          "origin_kind",
+          "sha256",
+          "signal_peaks",
+          "source_origin",
+          "source_path",
+          "state",
+          "title",
+          "transcript",
+          "width"
+        ],
+        "line": 177,
+        "name": "Source"
+      },
+      {
+        "fields": [
+          "affinities",
+          "clip_profile",
+          "content_token",
+          "end",
+          "error_reason",
+          "framing",
+          "hook",
+          "hook_frames_unread",
+          "hook_removed",
+          "hook_strategy",
+          "id",
+          "intro_matches",
+          "parent_id",
+          "reason",
+          "segments",
+          "signal_score",
+          "start",
+          "state",
+          "transcript_excerpt"
+        ],
+        "line": 210,
+        "name": "Moment"
+      },
+      {
+        "fields": [
+          "aspect",
+          "cut_seconds",
+          "error_reason",
+          "first_frame_kind",
+          "held",
+          "held_reason",
+          "hook_burn_failed",
+          "id",
+          "media_url",
+          "meta_captions",
+          "parent_id",
+          "path",
+          "state",
+          "tagged_artist"
+        ],
+        "line": 274,
+        "name": "Clip"
+      },
+      {
+        "fields": [
+          "account",
+          "account_id",
+          "aspect",
+          "batch_id",
+          "caption",
+          "clip_profile",
+          "created_at",
+          "cut_seconds",
+          "edited_at",
+          "error_reason",
+          "first_frame_kind",
+          "hashtags",
+          "id",
+          "media_id",
+          "media_urls",
+          "metrics",
+          "metrics_series",
+          "parent_id",
+          "platform",
+          "product_type",
+          "public_url",
+          "publish_dow",
+          "publish_hour",
+          "published_at",
+          "render_id",
+          "scheduled_time",
+          "state",
+          "submission_id",
+          "top_bias",
+          "variation_axis"
+        ],
+        "line": 295,
+        "name": "Post"
+      },
+      {
+        "fields": [
+          "account",
+          "batch_id",
+          "clip_id",
+          "cut_seconds",
+          "hook_source",
+          "hook_text",
+          "id",
+          "is_account_cut",
+          "media_url",
+          "path",
+          "source_id",
+          "state",
+          "surface_key"
+        ],
+        "line": 402,
+        "name": "Render"
+      },
+      {
+        "fields": [
+          "asset_ids",
+          "base_fingerprint",
+          "clip_id",
+          "error_reason",
+          "id",
+          "plan_params",
+          "rank_score",
+          "rationale",
+          "render_attempts",
+          "state",
+          "strategy_key"
+        ],
+        "line": 462,
+        "name": "StitchPlan"
+      },
+      {
+        "fields": [
+          "burn_subs",
+          "created_at",
+          "error_reason",
+          "id",
+          "name",
+          "state",
+          "target_accounts"
+        ],
+        "line": 490,
+        "name": "Batch"
+      },
+      {
+        "fields": [
+          "account",
+          "caption",
+          "error_reason",
+          "imported_at",
+          "media_id",
+          "metrics",
+          "metrics_series",
+          "permalink",
+          "product_type",
+          "timestamp"
+        ],
+        "line": 508,
+        "name": "ImportedMedia"
+      },
+      {
+        "fields": [
+          "clip_profile",
+          "duration",
+          "frames",
+          "guidance",
+          "language",
+          "personas",
+          "request_id",
+          "signal_peaks",
+          "source_id",
+          "transcript",
+          "transcript_total"
+        ],
+        "line": 536,
+        "name": "MomentRequest"
+      },
+      {
+        "fields": [
+          "end",
+          "personas",
+          "reason",
+          "segments",
+          "signal_score",
+          "start",
+          "transcript_excerpt"
+        ],
+        "line": 554,
+        "name": "MomentPick"
+      },
+      {
+        "fields": [
+          "picks",
+          "request_id",
+          "source_id",
+          "source_title"
+        ],
+        "line": 595,
+        "name": "MomentDecision"
+      },
+      {
+        "fields": [
+          "clip_profile",
+          "end",
+          "frames",
+          "guidance",
+          "language",
+          "moment_id",
+          "personas",
+          "reason",
+          "request_id",
+          "signal_peaks",
+          "signal_score",
+          "source_id",
+          "start",
+          "token",
+          "transcript_excerpt"
+        ],
+        "line": 606,
+        "name": "MomentHookRequest"
+      },
+      {
+        "fields": [
+          "hook",
+          "hook_frames_unread",
+          "request_id"
+        ],
+        "line": 623,
+        "name": "MomentHookDecision"
+      },
+      {
+        "fields": [
+          "clip_id",
+          "guidance",
+          "language",
+          "request_id",
+          "surfaces",
+          "transcript_excerpt"
+        ],
+        "line": 630,
+        "name": "CaptionRequest"
+      },
+      {
+        "fields": [
+          "caption",
+          "hashtags",
+          "language",
+          "surface"
+        ],
+        "line": 638,
+        "name": "CaptionItem"
+      },
+      {
+        "fields": [
+          "items",
+          "request_id"
+        ],
+        "line": 649,
+        "name": "CaptionSet"
+      },
+      {
+        "fields": [
+          "asset_id",
+          "fit_score",
+          "moment_id",
+          "rationale",
+          "tease_text"
+        ],
+        "line": 658,
+        "name": "IntroMatchItem"
+      },
+      {
+        "fields": [
+          "items",
+          "request_id"
+        ],
+        "line": 665,
+        "name": "IntroMatchDecision"
+      }
+    ],
+    "fanops.personas": [
+      {
+        "fields": [
+          "content_focus",
+          "hashtag_corpus",
+          "hook_angle",
+          "id",
+          "intake",
+          "name",
+          "selection_scope",
+          "voice"
+        ],
+        "line": 37,
+        "name": "Persona"
+      }
+    ]
+  },
+  "regeneration_command": "python -m tools.arch regen",
+  "source_inputs": [
+    "src/fanops/**/*.py"
+  ]
+}

@@ -1,0 +1,592 @@
+{
+  "$schema": "fanops-arch/derived/contract_surface",
+  "available": true,
+  "confidence": "CERTAIN",
+  "dag": {
+    "acyclic": true,
+    "co_requirements": [
+      [
+        "S04",
+        "S06"
+      ],
+      [
+        "S04",
+        "S07"
+      ]
+    ],
+    "cycles": [],
+    "declared_acyclic": true,
+    "ordering_edges": [
+      [
+        "S02",
+        "S07"
+      ],
+      [
+        "S03",
+        "S04"
+      ],
+      [
+        "S03",
+        "S06"
+      ],
+      [
+        "S04",
+        "S05"
+      ]
+    ]
+  },
+  "files": {
+    "src/fanops/accounts.py": {
+      "declared_ratchets": {
+        "print": "not scoped",
+        "swallow": "baseline 3 — MUST NOT EXCEED."
+      },
+      "exists": true,
+      "function_count": 25,
+      "is_partitioned": false,
+      "missing": false,
+      "owners": [
+        "S02"
+      ],
+      "planned_new": false,
+      "regions": {}
+    },
+    "src/fanops/adjust.py": {
+      "declared_ratchets": {
+        "print": "not scoped",
+        "swallow": "*** NOT IN BASELINE -> 0 allowed. ***"
+      },
+      "exists": true,
+      "function_count": 3,
+      "is_partitioned": false,
+      "missing": false,
+      "owners": [
+        "S10"
+      ],
+      "planned_new": false,
+      "regions": {}
+    },
+    "src/fanops/cli.py": {
+      "declared_ratchets": {
+        "print": "*** 147, EXACT. SEE ABOVE. ***",
+        "swallow": "baseline 3 — SHARED across S08/S09/S10. NONE may raise it."
+      },
+      "exists": true,
+      "function_count": 41,
+      "is_partitioned": true,
+      "missing": false,
+      "owners": [
+        "S08",
+        "S09",
+        "S10"
+      ],
+      "planned_new": false,
+      "regions": {
+        "S08": {
+          "functions": [
+            "_heartbeat"
+          ],
+          "unresolved_entries": [
+            "the daemon tick loop (:1300-1313)"
+          ]
+        },
+        "S09": {
+          "functions": [],
+          "unresolved_entries": [
+            "a NEW `cmd_clean` + its argparse registration"
+          ]
+        },
+        "S10": {
+          "functions": [
+            "_learn_pass"
+          ],
+          "unresolved_entries": []
+        }
+      }
+    },
+    "src/fanops/daemon.py": {
+      "declared_ratchets": {
+        "print": "not scoped",
+        "swallow": "baseline 5 — MUST NOT EXCEED."
+      },
+      "exists": true,
+      "function_count": 53,
+      "is_partitioned": false,
+      "missing": false,
+      "owners": [
+        "S08"
+      ],
+      "planned_new": false,
+      "regions": {}
+    },
+    "src/fanops/doctor.py": {
+      "declared_ratchets": {
+        "print": "not scoped",
+        "swallow": "baseline 8 — MUST NOT EXCEED."
+      },
+      "exists": true,
+      "function_count": 17,
+      "is_partitioned": false,
+      "missing": false,
+      "owners": [
+        "S09"
+      ],
+      "planned_new": false,
+      "regions": {}
+    },
+    "src/fanops/health_model.py": {
+      "declared_ratchets": {
+        "print": "not scoped",
+        "swallow": "baseline 5 — MUST NOT EXCEED."
+      },
+      "exists": true,
+      "function_count": 18,
+      "is_partitioned": false,
+      "missing": false,
+      "owners": [
+        "S08"
+      ],
+      "planned_new": false,
+      "regions": {}
+    },
+    "src/fanops/ledger.py": {
+      "declared_ratchets": {
+        "print": "*** ledger.py IS IN `_INTERNAL_MODULES`. ZERO print() PERMITTED. Assertion: `offenders == []`. ***",
+        "swallow": "*** NOT IN THE BASELINE -> 0 allowed. ANY new silent broad `except` here FAILS CI IMMEDIATELY (`new_files != []`). ***"
+      },
+      "exists": true,
+      "function_count": 70,
+      "is_partitioned": false,
+      "missing": false,
+      "owners": [
+        "S01"
+      ],
+      "planned_new": false,
+      "regions": {}
+    },
+    "src/fanops/ledger_sqlite.py": {
+      "declared_ratchets": {
+        "print": "not scoped",
+        "swallow": "NOT IN BASELINE -> 0 allowed."
+      },
+      "exists": true,
+      "function_count": 8,
+      "is_partitioned": false,
+      "missing": false,
+      "owners": [
+        "S01"
+      ],
+      "planned_new": false,
+      "regions": {}
+    },
+    "src/fanops/pipeline.py": {
+      "declared_ratchets": {
+        "print": "*** pipeline.py IS IN `_INTERNAL_MODULES`. ZERO print() PERMITTED. ***",
+        "swallow": "baseline 13 — MUST NOT EXCEED."
+      },
+      "exists": true,
+      "function_count": 22,
+      "is_partitioned": false,
+      "missing": false,
+      "owners": [
+        "S07"
+      ],
+      "planned_new": false,
+      "regions": {}
+    },
+    "src/fanops/post/__init__.py": {
+      "declared_ratchets": {
+        "print": "not scoped",
+        "swallow": "NOT IN BASELINE -> 0 allowed."
+      },
+      "exists": true,
+      "function_count": 3,
+      "is_partitioned": false,
+      "missing": false,
+      "owners": [
+        "S02"
+      ],
+      "planned_new": false,
+      "regions": {}
+    },
+    "src/fanops/post/compress.py": {
+      "declared_ratchets": {
+        "print": "not scoped",
+        "swallow": "baseline 1 — MUST NOT EXCEED."
+      },
+      "exists": true,
+      "function_count": 6,
+      "is_partitioned": false,
+      "missing": false,
+      "owners": [
+        "S09"
+      ],
+      "planned_new": false,
+      "regions": {}
+    },
+    "src/fanops/post/metrics.py": {
+      "declared_ratchets": {
+        "print": "not scoped",
+        "swallow": "*** NOT IN BASELINE -> 0 allowed. ***"
+      },
+      "exists": true,
+      "function_count": 26,
+      "is_partitioned": false,
+      "missing": false,
+      "owners": [
+        "S05"
+      ],
+      "planned_new": false,
+      "regions": {}
+    },
+    "src/fanops/post/run.py": {
+      "declared_ratchets": {
+        "print": "not scoped",
+        "swallow": "baseline 4 — MUST NOT EXCEED."
+      },
+      "exists": true,
+      "function_count": 19,
+      "is_partitioned": false,
+      "missing": false,
+      "owners": [
+        "S03"
+      ],
+      "planned_new": false,
+      "regions": {}
+    },
+    "src/fanops/reconcile.py": {
+      "declared_ratchets": {
+        "print": "not scoped",
+        "swallow": "baseline 9 — MUST NOT EXCEED."
+      },
+      "exists": true,
+      "function_count": 25,
+      "is_partitioned": false,
+      "missing": false,
+      "owners": [
+        "S04"
+      ],
+      "planned_new": false,
+      "regions": {}
+    },
+    "src/fanops/settings.py": {
+      "declared_ratchets": {
+        "print": "not scoped",
+        "swallow": "NOT IN BASELINE -> 0 allowed."
+      },
+      "exists": true,
+      "function_count": 50,
+      "is_partitioned": false,
+      "missing": false,
+      "owners": [
+        "S02"
+      ],
+      "planned_new": false,
+      "regions": {}
+    },
+    "src/fanops/studio/actions.py": {
+      "declared_ratchets": {
+        "print": "not scoped",
+        "swallow": "baseline 23 — SHARED between S06 and S09. *** NEITHER may raise it. ***"
+      },
+      "exists": true,
+      "function_count": 42,
+      "is_partitioned": true,
+      "missing": false,
+      "owners": [
+        "S06",
+        "S09"
+      ],
+      "planned_new": false,
+      "regions": {
+        "S06": {
+          "functions": [
+            "bulk_send_to_review"
+          ],
+          "unresolved_entries": []
+        },
+        "S09": {
+          "functions": [
+            "retry_oversize_failures",
+            "retry_rate_limited_failures"
+          ],
+          "unresolved_entries": []
+        }
+      }
+    },
+    "tests/test_layering_policy.py": {
+      "declared_ratchets": {},
+      "exists": false,
+      "function_count": 0,
+      "is_partitioned": false,
+      "missing": false,
+      "owners": [
+        "S12"
+      ],
+      "planned_new": true,
+      "regions": {}
+    },
+    "tests/test_ledger_sqlite_store.py": {
+      "declared_ratchets": {},
+      "exists": true,
+      "function_count": 12,
+      "is_partitioned": false,
+      "missing": false,
+      "owners": [
+        "S01"
+      ],
+      "planned_new": false,
+      "regions": {}
+    },
+    "tests/test_mutation_boundary_policy.py": {
+      "declared_ratchets": {},
+      "exists": false,
+      "function_count": 0,
+      "is_partitioned": false,
+      "missing": false,
+      "owners": [
+        "S11"
+      ],
+      "planned_new": true,
+      "regions": {}
+    }
+  },
+  "generated_by": "tools/arch",
+  "generator_version": "arch/1.0.0",
+  "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",
+  "regeneration_command": "python -m tools.arch regen",
+  "slices": {
+    "S01": {
+      "approvals_required": [
+        "independent_verifier_BRIEFED_ON_RC-5"
+      ],
+      "class": "REMEDIATION",
+      "co_required_with": [],
+      "owned_files": [
+        "src/fanops/ledger.py",
+        "src/fanops/ledger_sqlite.py",
+        "tests/test_ledger_sqlite_store.py"
+      ],
+      "prerequisites": [],
+      "root_causes": [
+        "RC-4",
+        "RC-5"
+      ],
+      "self_merge_on_green": false,
+      "status": null
+    },
+    "S02": {
+      "approvals_required": [
+        "PD-4 (recommendation given; near-mechanical)",
+        "independent_verifier"
+      ],
+      "class": "REMEDIATION",
+      "co_required_with": [],
+      "owned_files": [
+        "src/fanops/accounts.py",
+        "src/fanops/post/__init__.py",
+        "src/fanops/settings.py"
+      ],
+      "prerequisites": [],
+      "root_causes": [
+        "RC-3"
+      ],
+      "self_merge_on_green": false,
+      "status": null
+    },
+    "S03": {
+      "approvals_required": [
+        "independent_verifier"
+      ],
+      "class": "REMEDIATION",
+      "co_required_with": [],
+      "owned_files": [
+        "src/fanops/post/run.py"
+      ],
+      "prerequisites": [],
+      "root_causes": [
+        "RC-1"
+      ],
+      "self_merge_on_green": false,
+      "status": null
+    },
+    "S04": {
+      "approvals_required": [
+        "PD-2 (shape decided; recommendation: the same age ladder)",
+        "independent_verifier"
+      ],
+      "class": "REMEDIATION",
+      "co_required_with": [
+        "S06 (two halves of RC-8)",
+        "S07 (S07 makes S04's ladder REACHABLE)"
+      ],
+      "owned_files": [
+        "src/fanops/reconcile.py"
+      ],
+      "prerequisites": [
+        "S03"
+      ],
+      "root_causes": [
+        "RC-2",
+        "RC-8 (the reconcile half)"
+      ],
+      "self_merge_on_green": false,
+      "status": null
+    },
+    "S05": {
+      "approvals_required": [],
+      "class": "REMEDIATION",
+      "co_required_with": [],
+      "owned_files": [
+        "src/fanops/post/metrics.py"
+      ],
+      "prerequisites": [
+        "S04"
+      ],
+      "root_causes": [
+        "RC-2 (sibling)"
+      ],
+      "self_merge_on_green": true,
+      "status": null
+    },
+    "S06": {
+      "approvals_required": [],
+      "class": "REMEDIATION",
+      "co_required_with": [
+        "S04 (which owns the reconcile-side half, reconcile.py:767)"
+      ],
+      "owned_files": [
+        "src/fanops/studio/actions.py"
+      ],
+      "prerequisites": [
+        "S03"
+      ],
+      "root_causes": [
+        "RC-8 (the revert half)"
+      ],
+      "self_merge_on_green": true,
+      "status": null
+    },
+    "S07": {
+      "approvals_required": [
+        "independent_verifier_who_MUST_confirm_the_learn_pass_gate_is_untouched"
+      ],
+      "class": "REMEDIATION",
+      "co_required_with": [
+        "S04"
+      ],
+      "owned_files": [
+        "src/fanops/pipeline.py"
+      ],
+      "prerequisites": [
+        "S02"
+      ],
+      "root_causes": [
+        "RC-3b"
+      ],
+      "self_merge_on_green": false,
+      "status": null
+    },
+    "S08": {
+      "approvals_required": [],
+      "class": "REMEDIATION",
+      "co_required_with": [],
+      "owned_files": [
+        "src/fanops/cli.py",
+        "src/fanops/daemon.py",
+        "src/fanops/health_model.py"
+      ],
+      "prerequisites": [],
+      "root_causes": [
+        "RC-6"
+      ],
+      "self_merge_on_green": true,
+      "status": null
+    },
+    "S09": {
+      "approvals_required": [],
+      "class": "REMEDIATION",
+      "co_required_with": [],
+      "owned_files": [
+        "src/fanops/cli.py",
+        "src/fanops/doctor.py",
+        "src/fanops/post/compress.py",
+        "src/fanops/studio/actions.py"
+      ],
+      "prerequisites": [],
+      "root_causes": [
+        "RC-10"
+      ],
+      "self_merge_on_green": true,
+      "status": null
+    },
+    "S10": {
+      "approvals_required": [
+        "HUMAN_APPROVAL: PD-3"
+      ],
+      "class": "REMEDIATION",
+      "co_required_with": [],
+      "owned_files": [
+        "src/fanops/adjust.py",
+        "src/fanops/cli.py"
+      ],
+      "prerequisites": [
+        "PD-3 answered in writing by the operator"
+      ],
+      "root_causes": [
+        "RC-7"
+      ],
+      "self_merge_on_green": false,
+      "status": "*** BLOCKED ON PD-3. DO NOT EXECUTE. ***"
+    },
+    "S11": {
+      "approvals_required": [],
+      "class": "GUARD",
+      "co_required_with": [],
+      "owned_files": [
+        "tests/test_mutation_boundary_policy.py"
+      ],
+      "prerequisites": [],
+      "root_causes": [
+        "RC-9"
+      ],
+      "self_merge_on_green": true,
+      "status": null
+    },
+    "S12": {
+      "approvals_required": [
+        "HUMAN_APPROVAL: AR-04 scope"
+      ],
+      "class": "GUARD",
+      "co_required_with": [],
+      "owned_files": [
+        "tests/test_layering_policy.py"
+      ],
+      "prerequisites": [
+        "HUMAN_APPROVAL: promote AR-04 to an approved root cause, OR reject S12"
+      ],
+      "root_causes": [],
+      "self_merge_on_green": true,
+      "status": "*** PROPOSED — NOT APPROVED. REQUIRES AN EXPLICIT ARCHITECTURAL APPROVAL BEFORE EXECUTION. ***"
+    }
+  },
+  "source_inputs": [
+    ".reports/architecture/contract/file_ownership.json",
+    ".reports/architecture/contract/implementation_contract.json",
+    "src/fanops/**/*.py"
+  ],
+  "unresolved_boundaries": [
+    {
+      "entry": "the daemon tick loop (:1300-1313)",
+      "file": "src/fanops/cli.py",
+      "slice": "S08",
+      "why": "no identifier in this entry names a function that exists in the file; the boundary is PROSE, not a machine-checkable predicate"
+    },
+    {
+      "entry": "a NEW `cmd_clean` + its argparse registration",
+      "file": "src/fanops/cli.py",
+      "slice": "S09",
+      "why": "no identifier in this entry names a function that exists in the file; the boundary is PROSE, not a machine-checkable predicate"
+    }
+  ]
+}

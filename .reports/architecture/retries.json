@@ -1,0 +1,214 @@
+{
+  "cycle": 3,
+  "git_head": "fcffa73",
+  "generated": "2026-07-14",
+  "schema": "one record per retried or replayable operation, per Cycle-3 brief section 6",
+  "idempotency_taxonomy": {
+    "true_idempotent": "replay produces the identical durable state AND the identical external state",
+    "content_addressed_dedup": "the id is a hash of the content, so a replay collides and no-ops",
+    "first_write_wins": "setdefault semantics — the first writer's value survives",
+    "last_write_wins": "upsert semantics — a later writer overwrites",
+    "retry_suppressed": "deliberately NOT retried because the remote result is ambiguous",
+    "accidental_repeatability": "repeatable only by luck of the current code shape, not by contract",
+    "not_idempotent": "a replay produces a second external effect"
+  },
+  "core_property": "Every entity id is content-addressed (ids.py:7, SHA-1 truncated to 12 hex, \\x00-joined, usedforsecurity=False; builtin hash() is BANNED because PEP 456 salts it per-interpreter). Combined with setdefault in the add_* family, a WHOLE-PIPELINE REPLAY IS A NO-OP for entity creation. This is the system's central idempotency property and it holds.",
+  "retry_loops_total": 10,
+  "operations": [
+    {
+      "id": "R-01",
+      "operation": "poster.publish — the network POST (Postiz)",
+      "trigger": "publish_due / publish_now -> _publish_one",
+      "site": "post/postiz.py:390-429",
+      "idempotency_id": "NONE — the backend has NO idempotency key (models.py:118-121)",
+      "retry_owner": "PostizPoster.publish (its OWN inner loop)",
+      "retry_cadence": "jittered exponential, delay=1.0 then *2",
+      "max_attempts": 4,
+      "retryable": ["ConnectTimeout (connection NEVER established => body never sent)", "429 (body REJECTED)"],
+      "non_retryable": ["any other RequestException -> needs_reconcile", "5xx -> needs_reconcile", "2xx-with-no-id -> needs_reconcile", "401 -> AuthError, HALT", "other 4xx -> failed"],
+      "classification": "retry_suppressed",
+      "duplicate_side_effect_risk": "NONE. The two retried classes are both PRE-SEND. Every possibly-sent class parks in needs_reconcile and is NEVER re-POSTed.",
+      "terminal_state": "submitted | needs_reconcile | failed | (AuthError propagates)",
+      "manual_recovery": "fanops resolve <id> <state> --url <url>",
+      "verdict": "SOUND. This is the system's best-engineered failure surface."
+    },
+    {
+      "id": "R-02",
+      "operation": "poster.publish — the network POST (Zernio)",
+      "site": "post/zernio.py:233-273",
+      "classification": "retry_suppressed",
+      "sibling_parity": "VERIFIED BYTE-FOR-BYTE SYMMETRIC with R-01. Checked specifically because src/fanops/CLAUDE.md warns that sibling parity is where the bugs live. It holds here.",
+      "max_attempts": 4,
+      "duplicate_side_effect_risk": "NONE",
+      "verdict": "SOUND"
+    },
+    {
+      "id": "R-03",
+      "operation": "_publish_one outer transient retry",
+      "site": "post/run.py:292-342",
+      "max_attempts": "_PUBLISH_TRANSIENT_MAX = 3 (run.py:67)",
+      "retry_cadence": "delay=0.5; _sleep(delay + uniform(0, delay*0.5)); delay = min(delay*2, 8.0)",
+      "what_it_actually_retries": "ONLY _ensure_media (the media UPLOAD). It CANNOT retry the publish POST, because poster.publish never lets a transient escape — it converts every one to a returned ledger. The ONLY exception that escapes poster.publish is AuthError, and _is_fatal_auth_error re-raises it FIRST (run.py:320).",
+      "classification": "true_idempotent (R2) | not_idempotent (Postiz multipart)",
+      "duplicate_side_effect_risk": {
+        "r2": "NONE — the object key is fanops/{sha256(file)[:32]}{suffix} (postiz.py:171), CONTENT-ADDRESSED, so a re-upload overwrites the same object.",
+        "postiz_multipart": "A retry creates a SECOND media object in Postiz storage (postiz.py:242 is not content-addressed). An orphaned-media leak, NOT a double-publish."
+      },
+      "terminal_state": "submitted | needs_reconcile | failed",
+      "verdict": "SOUND for double-publish. Minor media leak on the non-R2 path."
+    },
+    {
+      "id": "R-04",
+      "operation": "daemon transient re-queue (failed -> queued)",
+      "site": "post/run.py:395-430 (_requeue_transient_failed_for_daemon)",
+      "trigger": "publish_due, every pass (run.py:440)",
+      "idempotency_id": "the counter lives INSIDE Post.error_reason as 'transient_daemon_retry=n/3' (COUP-03)",
+      "retry_owner": "the daemon",
+      "max_attempts": "_DAEMON_TRANSIENT_MAX = 3 (run.py:68)",
+      "guards": ["state is failed (re-checked under lock)", "NOT is_real_submission_id", "is_transient_failure_reason", "n < 3"],
+      "clears": "submission_id = None (run.py:423) — so a re-queued post can never hit the skip-resubmit strand",
+      "classification": "first_write_wins",
+      "terminal_state": "after 3 cycles the post stays terminal `failed`",
+      "known_defect": "C3-F3 — `except Exception: return requeued` (run.py:428-429) is the ONLY handler in post/run.py with NO log line, and `requeued` is incremented INSIDE the txn, so a commit failure returns a NON-ZERO count while nothing persisted. Blast radius NIL today: publish_due discards the return value.",
+      "verdict": "BOUNDED and correct. Observability gap only."
+    },
+    {
+      "id": "R-05",
+      "operation": "reconcile poll",
+      "site": "reconcile.py:604-777",
+      "trigger": "advance() -> _reconcile_safe (GATED on cfg.is_live_backend, pipeline.py:318)",
+      "idempotency_id": "Post.submission_id; `polled_as` is a stale-poll guard (reconcile.py:610-612)",
+      "retry_owner": "the daemon — EVERY TICK, FOREVER",
+      "retry_cadence": "once per daemon tick",
+      "max_attempts": "UNBOUNDED",
+      "terminal_state": {
+        "fake_fanops_token_on_POSTIZ": "submitting --24h--> needs_reconcile --72h--> 'GAVE UP:' (both ages measured from scheduled_time, NOT chained)",
+        "fake_token_on_ZERNIO": "*** NONE *** — C3-F2. ZernioStatusClient.get_status RAISES RuntimeError on a 404; the escalation (reconcile.py:746) and give-up (reconcile.py:757) sit on the SUCCESSFUL-POLL branch (reconcile.py:739). A raising poll is caught at :627 and `continue`s at :635 — it can NEVER reach them. PostizStatusClient returns {'status':'unknown'} instead of raising, which is the ONLY reason the machinery works at all.",
+        "REAL_submission_id_on_EITHER_backend": "*** NONE *** — C3-F1. _is_fake_token (reconcile.py:77) gates BOTH terminals. A real-token post gets ONE 'stuck ...' breadcrumb, then reconcile.py:767 (`if post.error_reason: continue`) silently skips it on every later pass. FOREVER."
+      },
+      "executed_proof": "EXP-4: a fanops_ post on the Zernio shape held `submitting` at +6h, +25h, +73h, +1000h and +100000h. A real-token post on the WORKING (Postiz) shape did the same.",
+      "classification": "accidental_repeatability",
+      "manual_recovery": "TWO-STEP and undiscoverable: `fanops resolve <id> failed` (clears the marker) then Studio recover_posts (failed->queued). The Studio requeue family accepts ONLY failed/error, so a `submitting` post is not offered at all.",
+      "verdict": "*** FALSIFIES brief section 9 claims #1 AND #2. ***"
+    },
+    {
+      "id": "R-06",
+      "operation": "the skip-resubmit path",
+      "site": "post/run.py:287-288",
+      "trigger": "a queued post that already carries a REAL submission_id",
+      "behaviour": "CLAIM flips it queued->submitting and COMMITS (run.py:272). The NETWORK phase then SKIPS the POST entirely (logs `skip_resubmit_existing_id`). FINALIZE persists `submitting` (run.py:355-357). _publish_one returns the string 'submitting' — a SUCCESS-SHAPED value for an operation that did nothing.",
+      "how_a_real_sid_re_enters_queued": "bulk_send_to_review (studio/actions.py) DELIBERATELY preserves submission_id ('Don't touch submission_id / batch_id — keep the lineage'), and Ledger.approve_post (ledger.py:591) does not clear it either. HYPOTHESIS TESTED AND DISCONFIRMED: all five requeue paths (run.py:423, actions.py:1001/1032/1063/1104) DO clear it.",
+      "classification": "not_idempotent (it is a no-op that LOOKS like a publish)",
+      "terminal_state": "NONE — feeds directly into R-05's C3-F1 hole",
+      "verdict": "C3-F1. The intent (MOL-115: never double-POST) is correct; the CLAIM should not have happened."
+    },
+    {
+      "id": "R-07",
+      "operation": "post creation (crosspost mint)",
+      "site": "crosspost.py:234-252 -> ledger.add_post (setdefault, ledger.py:559)",
+      "idempotency_id": "content-addressed pid from surface_key = '{account}|{platform}'",
+      "classification": "content_addressed_dedup / first_write_wins",
+      "duplicate_side_effect_risk": "none",
+      "one_deliberate_exception": "_mint_surface_post DELETES and re-mints a post whose prior state is `rejected` or `failed` (crosspost.py:229-231) — so a re-run CAN resurrect a rejected post.",
+      "verdict": "SOUND"
+    },
+    {
+      "id": "R-08",
+      "operation": "Studio repost / crosspost",
+      "site": "studio/actions.py:491 (repost_post), :570 (crosspost_to_account)",
+      "idempotency_id": "an EPOCH-SUFFIXED id — a NEW id on every click",
+      "classification": "not_idempotent — BY DESIGN",
+      "rationale": "Project hard rule: 'fan accounts repost freely; NEVER build supersede/no-double-post.' Double-clicking Repost mints TWO awaiting_approval posts. Both require approval before they can publish, so no auto-publish risk.",
+      "verdict": "INTENTIONAL. Not a defect."
+    },
+    {
+      "id": "R-09",
+      "operation": "source ingestion",
+      "site": "ingest.py -> ledger.add_source (setdefault)",
+      "idempotency_id": "src_<sha1(file bytes)[:12]>",
+      "classification": "content_addressed_dedup",
+      "replay_rule": "Ledger.already_seen(sha256=...) is the explicit dedup read. Re-ingesting the same bytes is a NO-OP.",
+      "verdict": "SOUND — TRUE idempotency"
+    },
+    {
+      "id": "R-10",
+      "operation": "clip render",
+      "site": "clip.py -> _render_fingerprint (clip.py:619)",
+      "idempotency_id": "the render fingerprint. geom = bool(track) or (focus is not None and len(focus) > 2) (clip.py:633); content_type + _REFRAME_GEOM_V (=4) are hashed ONLY when geom is true, so centred clips keep their historic fingerprint and never needlessly re-render.",
+      "classification": "content_addressed_dedup",
+      "atomicity": "ffmpeg -> <dst>.part.mp4 -> os.replace. The .mp4 SUFFIX IS REQUIRED (it picks the muxer, MOL-78).",
+      "verdict": "SOUND"
+    },
+    {
+      "id": "R-11",
+      "operation": "responder gate answer",
+      "site": "responder.py; agentstep.py",
+      "idempotency_id": "request_id, stamped into the request and echoed by the response",
+      "retry_owner": "responder._on_deterministic_fail",
+      "max_attempts": "_GATE_DETERMINISTIC_MAX = 3 (responder.py:53)",
+      "terminal_state": {
+        "moments": "SourceState.error (fail-CLOSED) then discard_gate",
+        "moment_hooks / captions": "a SYNTHESISED clean fail-open response so ingest proceeds"
+      },
+      "stale_answer_guard": "_answer_one re-reads latest_request_id after the model call and DROPS the answer if the gate re-seeded mid-call (responder.py:115-119). read_response also compares request_id (agentstep.py:101).",
+      "classification": "first_write_wins",
+      "known_defect": "C3-F6 — the attempt COUNTER (agentstep.bump_attempts, agentstep.py:147) uses a bare write_text, NOT the tmp+os.replace its two siblings in the same file use. A torn attempts.json hits `except Exception: n = 0` (:144-145) and SILENTLY RESETS THE CEILING, making the bounded 3-attempt escalation UNBOUNDED. Proven by EXP-7.",
+      "verdict": "BOUNDED in the happy path; the bound is defeated by a torn control file."
+    },
+    {
+      "id": "R-12",
+      "operation": "LLM call (claude -p)",
+      "site": "llm.py:223 (_claude_json_meta), llm.py:359 (_cursor_json_meta)",
+      "max_attempts": "_MAX_RL_RETRIES + 1",
+      "retryable": "rate-limit",
+      "classification": "true_idempotent (a pure read; the gate response is written once, atomically)",
+      "verdict": "SOUND"
+    },
+    {
+      "id": "R-13",
+      "operation": "ledger flock acquisition",
+      "site": "ledger.py:280 (_file_lock)",
+      "retry_cadence": "0.1 s poll",
+      "max_attempts": "bounded by _DEFAULT_LOCK_TIMEOUT = 30.0 s -> typed LockBusyError",
+      "crash_recovery": "the flock is KERNEL-RELEASED on process death — kill -9 self-heals with no manual rm",
+      "verdict": "SOUND"
+    },
+    {
+      "id": "R-14",
+      "operation": "the daemon tick loop",
+      "site": "cli.py:1300-1313",
+      "max_attempts": "UNBOUNDED — `while True`",
+      "retry_cadence": "time.sleep(interval). NO jitter. NO backoff on repeated failure.",
+      "behaviour_on_failure": "`except Exception as e: print(f'run halted: ...', file=sys.stderr)` then sleep and RE-DRIVE. _cmd_run_pass already catches everything and returns None (cli.py:947-949).",
+      "consequence": "A persistent AuthError (a rotated Postiz key) is re-driven EVERY TICK, FOREVER, with NO heartbeat written (the heartbeat is emitted only when s is not None, cli.py:1306) and NO ledger state change.",
+      "classification": "accidental_repeatability",
+      "known_defect": "C3-F8 (observability) + C3-F9 — daemon.status still reports verdict `alive`, because daemon_progress treats 'the newest run.log line of ANY kind' as liveness and a failing pass still writes stage lines.",
+      "verdict": "The INV-11 property (never burn the queue) HOLDS. What does NOT hold is any implication that the run STOPS."
+    },
+    {
+      "id": "R-15",
+      "operation": "media upload cache (F44)",
+      "site": "post/run.py:359 (Clip.media_url), :362 (Render.media_url)",
+      "guard": "written ONLY when currently unset (`not c.media_url`) — first-writer-wins, no clobber",
+      "classification": "first_write_wins",
+      "invalidation_rule": "*** NONE ***. If the hosted URL expires, nothing invalidates the cache — a dead CDN URL is reused forever. FALSIFIES brief section 9 claim #9 ('every filesystem cache has an invalidation rule').",
+      "verdict": "idempotency_gap"
+    },
+    {
+      "id": "R-16",
+      "operation": "restore_snapshot",
+      "site": "ledger.py:551 -> ledger_sqlite.py:148-151",
+      "exclusion": "fcntl.flock on 00_control/ledger.lock — MUTUALLY INVISIBLE to the SQLite BEGIN IMMEDIATE every other writer uses",
+      "classification": "not_idempotent",
+      "duplicate_side_effect_risk": "SILENT DATA LOSS. Cycle 2 PROVED by execution that a live writer holding BEGIN IMMEDIATE had the db file os.replace'd out from under it; its commit() SUCCEEDED with no exception and its data was silently discarded.",
+      "exposure": "NO production caller (operator break-glass), but ledger_wipe.py:246 advertises it as THE wipe rollback path — so an operator following the DOCUMENTED recovery procedure while the daemon is running hits this.",
+      "verdict": "F-B (Cycle 2), upheld. Cycle 3 did NOT re-run this destructive path."
+    }
+  ],
+  "adversarial_verdicts": {
+    "claim_1_every_retry_has_a_finite_terminal": "FALSIFIED — R-05 (C3-F1, C3-F2)",
+    "claim_2_every_submitting_post_can_leave_submitting": "FALSIFIED — R-05/R-06",
+    "claim_5_every_external_side_effect_is_idempotent_or_protected": "UPHELD for the publish POST (claim-before-network + park-never-re-POST). PARTIAL for uploads (R2 yes, Postiz multipart no).",
+    "claim_9_every_filesystem_cache_has_an_invalidation_rule": "FALSIFIED — R-15 (the F44 upload cache)"
+  }
+}

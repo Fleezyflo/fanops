@@ -1,0 +1,5353 @@
+{
+ "$schema": "fanops-architecture-inventory/v1",
+ "meta": {
+  "cycle": 1,
+  "title": "FanOps canonical ground-truth inventory",
+  "generated": "2026-07-14",
+  "git_head": "fcffa73",
+  "method": "direct read + grep of src/fanops at working-tree HEAD. Docs used as leads only, never as proof.",
+  "evidence_standard": "every item carries >=1 {file,line} citation into source. Items without one are typed 'unknown' and listed under unknowns[].",
+  "supersedes": ".reports/ground-truth-inventory-2026-07-14.md",
+  "id_stability": "IDs are permanent. Never renumber. New items append. Retired items keep their ID with status='retired'."
+ },
+ "taxonomy": {
+  "canonical": [
+   "entity",
+   "artifact",
+   "cache",
+   "state",
+   "command",
+   "worker",
+   "configuration",
+   "external_service",
+   "datastore",
+   "sidecar",
+   "scheduler",
+   "queue"
+  ],
+  "extensions": [
+   {
+    "type": "fingerprint",
+    "prefix": "FPR",
+    "rationale": "Cycle-1 required fingerprints. A fingerprint is a derivation RULE, not a cache; folding it into 'cache' would lose the hashed-input list, which is the load-bearing fact."
+   },
+   {
+    "type": "location",
+    "prefix": "LOC",
+    "rationale": "Cycle-1 required filesystem locations. A pipeline stage directory is not an artifact (it holds them) nor a datastore."
+   },
+   {
+    "type": "lock",
+    "prefix": "LCK",
+    "rationale": "Concurrency primitives are load-bearing and have no home in the 12. Not a 'worker'."
+   },
+   {
+    "type": "identity",
+    "prefix": "IDN",
+    "rationale": "ID-minting functions determine every entity key. Distinct from fingerprint (which addresses content, not identity)."
+   }
+  ],
+  "prefixes": {
+   "entity": "ENT",
+   "artifact": "ART",
+   "cache": "CAC",
+   "state": "STA",
+   "command": "CMD",
+   "worker": "WRK",
+   "configuration": "CFG",
+   "external_service": "EXT",
+   "datastore": "DST",
+   "sidecar": "SID",
+   "scheduler": "SCH",
+   "queue": "QUE",
+   "fingerprint": "FPR",
+   "location": "LOC",
+   "lock": "LCK",
+   "identity": "IDN"
+  }
+ },
+ "completeness": {
+  "modules_total": 127,
+  "modules_fully_read": 5,
+  "modules_structurally_scanned": 91,
+  "modules_uninspected": 31,
+  "coverage_any_fact_pct": 75.6,
+  "coverage_full_read_pct": 3.9,
+  "unknowns_open": 11,
+  "unknowns_closed_this_cycle": 6,
+  "fully_read": [
+   "models.py",
+   "config.py",
+   "ids.py",
+   "secret_provider.py",
+   "gate_keys.py"
+  ],
+  "uninspected": [
+   "__init__.py",
+   "_fwrun.py",
+   "audio_energy.py",
+   "bands.py",
+   "frames.py",
+   "hookcheck.py",
+   "hookscore.py",
+   "persona_directives.py",
+   "persona_levers.py",
+   "persona_research.py",
+   "text.py",
+   "cutover_postiz.py",
+   "post/__init__.py",
+   "post/media.py",
+   "post/metrics.py",
+   "post/providers.py",
+   "studio/__init__.py",
+   "studio/actions_approve.py",
+   "studio/actions_casting.py",
+   "studio/actions_common.py",
+   "studio/actions_run.py",
+   "studio/actions_segments.py",
+   "studio/actions_wipe.py",
+   "studio/hashtags.py",
+   "studio/personas.py",
+   "studio/thumb_media.py",
+   "studio/views.py",
+   "studio/views_common.py",
+   "studio/views_hashtags.py",
+   "studio/views_library.py",
+   "studio/views_live.py"
+  ],
+  "uninspected_note": "studio/app_routes_*.py are counted as structurally scanned for their ROUTE SURFACE only (decorators extracted); their handler bodies are unread."
+ },
+ "items": [
+  {
+   "id": "ENT-001",
+   "type": "entity",
+   "name": "Source",
+   "identity": "id",
+   "id_minter": "IDN-001",
+   "parent": null,
+   "state_enum": "STA-001",
+   "evidence": [
+    {
+     "file": "src/fanops/models.py",
+     "line": 177
+    }
+   ],
+   "notes": "id shape pinned by _SID_RE ^src_[0-9a-f]{12}$ at ledger.py:233"
+  },
+  {
+   "id": "ENT-002",
+   "type": "entity",
+   "name": "Moment",
+   "identity": "id",
+   "id_minter": "IDN-002",
+   "parent": "parent_id -> Source",
+   "state_enum": "STA-002",
+   "evidence": [
+    {
+     "file": "src/fanops/models.py",
+     "line": 210
+    }
+   ]
+  },
+  {
+   "id": "ENT-003",
+   "type": "entity",
+   "name": "Clip",
+   "identity": "id",
+   "id_minter": "IDN-002",
+   "parent": "parent_id -> Moment",
+   "state_enum": "STA-003",
+   "evidence": [
+    {
+     "file": "src/fanops/models.py",
+     "line": 274
+    }
+   ]
+  },
+  {
+   "id": "ENT-004",
+   "type": "entity",
+   "name": "Post",
+   "identity": "id",
+   "id_minter": "IDN-002",
+   "parent": "parent_id -> Clip",
+   "state_enum": "STA-005",
+   "evidence": [
+    {
+     "file": "src/fanops/models.py",
+     "line": 295
+    }
+   ],
+   "notes": "model_validator at models.py:356 RAISES if state in {published,analyzed} and public_url empty"
+  },
+  {
+   "id": "ENT-005",
+   "type": "entity",
+   "name": "Render",
+   "identity": "id",
+   "id_minter": "IDN-002",
+   "parent": "clip_id -> Clip",
+   "state_enum": "STA-004",
+   "evidence": [
+    {
+     "file": "src/fanops/models.py",
+     "line": 402
+    }
+   ],
+   "notes": "content-addressed on (clip, hook, band, framing); state has NO driver - see FIND-001"
+  },
+  {
+   "id": "ENT-006",
+   "type": "entity",
+   "name": "StitchPlan",
+   "identity": "id",
+   "id_minter": "IDN-004",
+   "parent": "clip_id -> Clip",
+   "state_enum": "STA-008",
+   "evidence": [
+    {
+     "file": "src/fanops/models.py",
+     "line": 462
+    }
+   ]
+  },
+  {
+   "id": "ENT-007",
+   "type": "entity",
+   "name": "Batch",
+   "identity": "id",
+   "id_minter": "IDN-005",
+   "parent": null,
+   "state_enum": "STA-009",
+   "evidence": [
+    {
+     "file": "src/fanops/models.py",
+     "line": 490
+    }
+   ]
+  },
+  {
+   "id": "ENT-008",
+   "type": "entity",
+   "name": "ImportedMedia",
+   "identity": "media_id (NATURAL key - the platform's own Graph id)",
+   "id_minter": null,
+   "parent": "NONE BY CONSTRUCTION",
+   "state_enum": null,
+   "evidence": [
+    {
+     "file": "src/fanops/models.py",
+     "line": 508
+    }
+   ],
+   "notes": "the only entity with no content-addressed id and no lineage; models.py:508-519 states lineage readers can never be handed one"
+  },
+  {
+   "id": "ENT-009",
+   "type": "entity",
+   "name": "Account",
+   "identity": "handle",
+   "id_minter": null,
+   "parent": "persona_id -> Persona",
+   "state_enum": "STA-010",
+   "evidence": [
+    {
+     "file": "src/fanops/accounts.py",
+     "line": 36
+    }
+   ],
+   "notes": "handle canonicalized by models.validate_account_handle (models.py:446); charset [a-z0-9._-]"
+  },
+  {
+   "id": "ENT-010",
+   "type": "entity",
+   "name": "Persona",
+   "identity": "UNKNOWN",
+   "id_minter": "UNKNOWN",
+   "parent": null,
+   "state_enum": null,
+   "evidence": [
+    {
+     "file": "src/fanops/personas.py",
+     "line": 37
+    }
+   ],
+   "unknown_ref": "UNK-001"
+  },
+  {
+   "id": "ENT-020",
+   "type": "entity",
+   "name": "MomentRequest (agent DTO)",
+   "identity": "request_id",
+   "evidence": [
+    {
+     "file": "src/fanops/models.py",
+     "line": 536
+    }
+   ],
+   "persisted": false
+  },
+  {
+   "id": "ENT-021",
+   "type": "entity",
+   "name": "MomentPick (agent DTO)",
+   "identity": null,
+   "evidence": [
+    {
+     "file": "src/fanops/models.py",
+     "line": 554
+    }
+   ],
+   "persisted": false,
+   "notes": "validator _single_owner enforces len(personas)<=1 at models.py:575"
+  },
+  {
+   "id": "ENT-022",
+   "type": "entity",
+   "name": "MomentDecision (agent DTO)",
+   "identity": "request_id",
+   "evidence": [
+    {
+     "file": "src/fanops/models.py",
+     "line": 595
+    }
+   ],
+   "persisted": false
+  },
+  {
+   "id": "ENT-023",
+   "type": "entity",
+   "name": "MomentHookRequest (agent DTO)",
+   "identity": "request_id",
+   "evidence": [
+    {
+     "file": "src/fanops/models.py",
+     "line": 606
+    }
+   ],
+   "persisted": false
+  },
+  {
+   "id": "ENT-024",
+   "type": "entity",
+   "name": "MomentHookDecision (agent DTO)",
+   "identity": "request_id",
+   "evidence": [
+    {
+     "file": "src/fanops/models.py",
+     "line": 623
+    }
+   ],
+   "persisted": false
+  },
+  {
+   "id": "ENT-025",
+   "type": "entity",
+   "name": "CaptionRequest (agent DTO)",
+   "identity": "request_id",
+   "evidence": [
+    {
+     "file": "src/fanops/models.py",
+     "line": 630
+    }
+   ],
+   "persisted": false
+  },
+  {
+   "id": "ENT-026",
+   "type": "entity",
+   "name": "CaptionItem (agent DTO)",
+   "identity": null,
+   "evidence": [
+    {
+     "file": "src/fanops/models.py",
+     "line": 638
+    }
+   ],
+   "persisted": false
+  },
+  {
+   "id": "ENT-027",
+   "type": "entity",
+   "name": "CaptionSet (agent DTO)",
+   "identity": "request_id",
+   "evidence": [
+    {
+     "file": "src/fanops/models.py",
+     "line": 649
+    }
+   ],
+   "persisted": false
+  },
+  {
+   "id": "ENT-028",
+   "type": "entity",
+   "name": "IntroMatchItem (agent DTO)",
+   "identity": null,
+   "evidence": [
+    {
+     "file": "src/fanops/models.py",
+     "line": 658
+    }
+   ],
+   "persisted": false
+  },
+  {
+   "id": "ENT-029",
+   "type": "entity",
+   "name": "IntroMatchDecision (agent DTO)",
+   "identity": "request_id",
+   "evidence": [
+    {
+     "file": "src/fanops/models.py",
+     "line": 665
+    }
+   ],
+   "persisted": false
+  },
+  {
+   "id": "DST-001",
+   "type": "datastore",
+   "name": "SQLite ledger",
+   "path": "00_control/ledger.sqlite",
+   "schema_version": 11,
+   "evidence": [
+    {
+     "file": "src/fanops/config.py",
+     "line": 157
+    },
+    {
+     "file": "src/fanops/ledger.py",
+     "line": 190
+    },
+    {
+     "file": "src/fanops/ledger_sqlite.py",
+     "line": 26
+    }
+   ],
+   "engine": {
+    "journal_mode": "WAL",
+    "synchronous": "FULL",
+    "tables": [
+     "ledger_meta(key TEXT PK, value TEXT NOT NULL)",
+     "ledger_rows(map_name TEXT, row_id TEXT, ...)"
+    ],
+    "checkpoint": "PRAGMA wal_checkpoint(TRUNCATE)"
+   },
+   "maps": [
+    "sources",
+    "moments",
+    "clips",
+    "posts",
+    "stitch_plans",
+    "batches",
+    "renders",
+    "imported_media"
+   ],
+   "write_model": "BEGIN IMMEDIATE txn + FULL REPLACE of ledger_meta/ledger_rows",
+   "lock": "LCK-001"
+  },
+  {
+   "id": "DST-002",
+   "type": "datastore",
+   "name": "Legacy JSON ledger (break-glass import only)",
+   "path": "00_control/ledger.json",
+   "evidence": [
+    {
+     "file": "src/fanops/config.py",
+     "line": 158
+    },
+    {
+     "file": "src/fanops/ledger_bridge.py",
+     "line": 44
+    }
+   ],
+   "status": "compat_shim"
+  },
+  {
+   "id": "DST-003",
+   "type": "datastore",
+   "name": "accounts.json registry",
+   "path": "00_control/accounts.json",
+   "evidence": [
+    {
+     "file": "src/fanops/config.py",
+     "line": 161
+    },
+    {
+     "file": "src/fanops/accounts.py",
+     "line": 119
+    }
+   ],
+   "lock": "LCK-003"
+  },
+  {
+   "id": "DST-004",
+   "type": "datastore",
+   "name": "personas.json registry",
+   "path": "00_control/personas.json",
+   "evidence": [
+    {
+     "file": "src/fanops/config.py",
+     "line": 163
+    }
+   ],
+   "lock": "LCK-004"
+  },
+  {
+   "id": "DST-005",
+   "type": "datastore",
+   "name": "hashtags.json reach-ranked tag store",
+   "path": "00_control/hashtags.json",
+   "schema": "{\"tags\": [str], \"reach\": {tag: number}}",
+   "evidence": [
+    {
+     "file": "src/fanops/config.py",
+     "line": 167
+    },
+    {
+     "file": "src/fanops/fanops_hashtags.py",
+     "line": 58
+    },
+    {
+     "file": "src/fanops/fanops_hashtags.py",
+     "line": 78
+    }
+   ],
+   "writer": "fanops_hashtags.refresh_store",
+   "readers": [
+    {
+     "file": "src/fanops/hashtags.py",
+     "line": 61
+    },
+    {
+     "file": "src/fanops/hashtags.py",
+     "line": 77
+    }
+   ],
+   "refresh_throttle_s": 43200,
+   "cache_ref": "CAC-006"
+  },
+  {
+   "id": "SCHEMA-MIG",
+   "type": "state",
+   "name": "Ledger migration chain (v1..v11)",
+   "evidence": [
+    {
+     "file": "src/fanops/ledger.py",
+     "line": 219
+    }
+   ],
+   "steps": {
+    "1": "identity",
+    "2": "add stitch_plans",
+    "3": "_migrate_v3_created_at",
+    "4": "_migrate_v4_metrics_series",
+    "5": "add batches",
+    "6": "add renders",
+    "7": "add selection_facts",
+    "8": "identity",
+    "9": "_migrate_v8_account_selections",
+    "10": "add imported_media",
+    "11": "_migrate_v10_drop_selections"
+   },
+   "notes": "v7 ADDS selection_facts, v11 DROPS selections - the durable-casting teardown is visible in the chain. A NEWER on-disk version is REFUSED (ledger.py:243), never downgraded."
+  },
+  {
+   "id": "STA-001",
+   "type": "state",
+   "name": "SourceState",
+   "evidence": [
+    {
+     "file": "src/fanops/models.py",
+     "line": 61
+    }
+   ],
+   "members": [
+    "pending",
+    "catalogued",
+    "transcribed",
+    "signalled",
+    "moments_requested",
+    "picks_decided",
+    "moments_decided",
+    "moments_empty",
+    "retired",
+    "discovered",
+    "error"
+   ]
+  },
+  {
+   "id": "STA-002",
+   "type": "state",
+   "name": "MomentState",
+   "evidence": [
+    {
+     "file": "src/fanops/models.py",
+     "line": 77
+    }
+   ],
+   "members": [
+    "picked",
+    "decided",
+    "clipped",
+    "retired",
+    "error"
+   ]
+  },
+  {
+   "id": "STA-003",
+   "type": "state",
+   "name": "ClipState",
+   "evidence": [
+    {
+     "file": "src/fanops/models.py",
+     "line": 84
+    }
+   ],
+   "members": [
+    "rendered",
+    "captions_requested",
+    "captioned",
+    "queued",
+    "published",
+    "analyzed",
+    "held",
+    "retired",
+    "error",
+    "stitch_draft"
+   ]
+  },
+  {
+   "id": "STA-004",
+   "type": "state",
+   "name": "RenderState",
+   "evidence": [
+    {
+     "file": "src/fanops/models.py",
+     "line": 92
+    }
+   ],
+   "members": [
+    "rendered",
+    "queued",
+    "published",
+    "analyzed",
+    "retired"
+   ],
+   "driver": "NONE",
+   "finding_ref": "FIND-001"
+  },
+  {
+   "id": "STA-005",
+   "type": "state",
+   "name": "PostState",
+   "evidence": [
+    {
+     "file": "src/fanops/models.py",
+     "line": 104
+    }
+   ],
+   "members": [
+    "awaiting_approval",
+    "queued",
+    "submitting",
+    "submitted",
+    "published",
+    "analyzed",
+    "failed",
+    "error",
+    "rejected",
+    "needs_reconcile",
+    "retired"
+   ],
+   "transition_owners": {
+    "awaiting_approval": [
+     {
+      "file": "src/fanops/crosspost.py",
+      "line": 238,
+      "role": "mint"
+     },
+     {
+      "file": "src/fanops/studio/actions.py",
+      "line": 506,
+      "role": "repost mint"
+     },
+     {
+      "file": "src/fanops/studio/actions.py",
+      "line": 630,
+      "role": "crosspost_to_account mint"
+     },
+     {
+      "file": "src/fanops/studio/actions.py",
+      "line": 944,
+      "role": "send back to review"
+     }
+    ],
+    "queued": [
+     {
+      "file": "src/fanops/ledger.py",
+      "line": 575,
+      "role": "approve_post - THE ONLY awaiting_approval->queued promoter; guard at :579"
+     },
+     {
+      "file": "src/fanops/studio/actions.py",
+      "line": 1000,
+      "role": "requeue; guarded state in (failed,error)"
+     },
+     {
+      "file": "src/fanops/studio/actions.py",
+      "line": 1031,
+      "role": "requeue+shrink; guarded state in (failed,error)"
+     },
+     {
+      "file": "src/fanops/studio/actions.py",
+      "line": 1062,
+      "role": "requeue transient; guarded state in (failed,error)"
+     },
+     {
+      "file": "src/fanops/studio/actions.py",
+      "line": 1103,
+      "role": "requeue oversize; guarded classify_failure==oversize"
+     },
+     {
+      "file": "src/fanops/post/run.py",
+      "line": 238,
+      "role": "_unclaim_no_integration submitting->queued; guarded state is submitting"
+     },
+     {
+      "file": "src/fanops/post/run.py",
+      "line": 422,
+      "role": "_requeue_transient_failed_for_daemon; bounded by _DAEMON_TRANSIENT_MAX"
+     }
+    ],
+    "submitting": [
+     {
+      "file": "src/fanops/post/run.py",
+      "line": 272
+     }
+    ],
+    "submitted": [
+     {
+      "file": "src/fanops/post/zernio.py",
+      "line": 256
+     }
+    ],
+    "published": [
+     {
+      "file": "src/fanops/post/run.py",
+      "line": 306
+     },
+     {
+      "file": "src/fanops/studio/actions.py",
+      "line": 280
+     },
+     {
+      "file": "src/fanops/cli.py",
+      "line": 398
+     }
+    ],
+    "needs_reconcile": [
+     {
+      "file": "src/fanops/post/run.py",
+      "line": 313
+     },
+     {
+      "file": "src/fanops/post/run.py",
+      "line": 329
+     },
+     {
+      "file": "src/fanops/post/zernio.py",
+      "line": 242
+     },
+     {
+      "file": "src/fanops/post/zernio.py",
+      "line": 253
+     },
+     {
+      "file": "src/fanops/post/zernio.py",
+      "line": 264
+     },
+     {
+      "file": "src/fanops/post/postiz.py",
+      "line": 398
+     }
+    ],
+    "failed": [
+     {
+      "file": "src/fanops/post/run.py",
+      "line": 334
+     },
+     {
+      "file": "src/fanops/post/run.py",
+      "line": 339
+     },
+     {
+      "file": "src/fanops/post/run.py",
+      "line": 389
+     },
+     {
+      "file": "src/fanops/post/zernio.py",
+      "line": 272
+     },
+     {
+      "file": "src/fanops/studio/actions.py",
+      "line": 401
+     },
+     {
+      "file": "src/fanops/cli.py",
+      "line": 398
+     }
+    ],
+    "analyzed": [
+     {
+      "file": "src/fanops/track.py",
+      "line": 193
+     }
+    ],
+    "rejected": [
+     {
+      "file": "src/fanops/ledger.py",
+      "line": 592,
+      "role": "reject_post; guard :594 awaiting_approval only"
+     },
+     {
+      "file": "src/fanops/studio/actions.py",
+      "line": 1110
+     }
+    ],
+    "retired": "UNKNOWN - no assignment site located",
+    "error": "UNKNOWN - no assignment site located"
+   },
+   "finding_ref": "FIND-002"
+  },
+  {
+   "id": "STA-006",
+   "type": "state",
+   "name": "Platform",
+   "evidence": [
+    {
+     "file": "src/fanops/models.py",
+     "line": 130
+    }
+   ],
+   "members": [
+    "instagram",
+    "tiktok",
+    "youtube",
+    "facebook",
+    "twitter"
+   ]
+  },
+  {
+   "id": "STA-007",
+   "type": "state",
+   "name": "Fmt (aspect)",
+   "evidence": [
+    {
+     "file": "src/fanops/models.py",
+     "line": 140
+    }
+   ],
+   "members": [
+    "9:16",
+    "1:1",
+    "16:9"
+   ]
+  },
+  {
+   "id": "STA-008",
+   "type": "state",
+   "name": "StitchState",
+   "evidence": [
+    {
+     "file": "src/fanops/models.py",
+     "line": 458
+    }
+   ],
+   "members": [
+    "suggested",
+    "approved",
+    "in_use",
+    "dismissed",
+    "error"
+   ]
+  },
+  {
+   "id": "STA-009",
+   "type": "state",
+   "name": "BatchState",
+   "evidence": [
+    {
+     "file": "src/fanops/models.py",
+     "line": 487
+    }
+   ],
+   "members": [
+    "open",
+    "closed",
+    "error"
+   ],
+   "notes": "code comment states this build only ever sets 'open'"
+  },
+  {
+   "id": "STA-010",
+   "type": "state",
+   "name": "AccountStatus",
+   "evidence": [
+    {
+     "file": "src/fanops/accounts.py",
+     "line": 19
+    }
+   ],
+   "members": [
+    "planned",
+    "warming",
+    "active",
+    "retired"
+   ]
+  },
+  {
+   "id": "STA-011",
+   "type": "state",
+   "name": "HookSource",
+   "evidence": [
+    {
+     "file": "src/fanops/models.py",
+     "line": 396
+    }
+   ],
+   "members": [
+    "per_account",
+    "shared_fallback",
+    "none"
+   ],
+   "notes": "per_account is a legacy provenance label retained for old Render rows"
+  },
+  {
+   "id": "STA-012",
+   "type": "state",
+   "name": "_POST_TERMINAL_REQUIRES_URL",
+   "evidence": [
+    {
+     "file": "src/fanops/models.py",
+     "line": 381
+    }
+   ],
+   "members": [
+    "published",
+    "analyzed"
+   ],
+   "enforcement": "model_validator raises ValueError at models.py:356-376"
+  },
+  {
+   "id": "STA-013",
+   "type": "state",
+   "name": "_PROTECTED_POST_STATES (cascade-delete guard)",
+   "evidence": [
+    {
+     "file": "src/fanops/ledger.py",
+     "line": 660
+    }
+   ],
+   "definition": "_LIVE_POST_STATES + (awaiting_approval, queued, retired)",
+   "consumer": "_delete_moment_cascade at ledger.py:662"
+  },
+  {
+   "id": "IDN-001",
+   "type": "identity",
+   "name": "ids.make_id(kind, source)",
+   "evidence": [
+    {
+     "file": "src/fanops/ids.py",
+     "line": 10
+    }
+   ],
+   "algorithm": "sha1(parts joined by \\x00, usedforsecurity=False).hexdigest()[:12]",
+   "format": "{kind}_{hash12}"
+  },
+  {
+   "id": "IDN-002",
+   "type": "identity",
+   "name": "ids.child_id / ids.content_id",
+   "evidence": [
+    {
+     "file": "src/fanops/ids.py",
+     "line": 14
+    },
+    {
+     "file": "src/fanops/ids.py",
+     "line": 19
+    }
+   ],
+   "algorithm": "sha1(kind,parent_id,content_token)[:12]",
+   "notes": "content_id is an explicit alias of child_id"
+  },
+  {
+   "id": "IDN-003",
+   "type": "identity",
+   "name": "ids.surface_key(account, platform)",
+   "evidence": [
+    {
+     "file": "src/fanops/ids.py",
+     "line": 23
+    }
+   ],
+   "format": "{account}|{platform}",
+   "notes": "the content token for post ids AND the per-surface schedule seed"
+  },
+  {
+   "id": "IDN-004",
+   "type": "identity",
+   "name": "models.stitch_plan_id",
+   "evidence": [
+    {
+     "file": "src/fanops/models.py",
+     "line": 477
+    }
+   ],
+   "inputs": [
+    "clip_id",
+    "sorted(asset_ids)",
+    "strategy_key",
+    "plan_params"
+   ],
+   "notes": "deliberately NOT keyed on the render fingerprint"
+  },
+  {
+   "id": "IDN-005",
+   "type": "identity",
+   "name": "models.batch_id",
+   "evidence": [
+    {
+     "file": "src/fanops/models.py",
+     "line": 500
+    }
+   ],
+   "inputs": [
+    "name",
+    "microsecond-precision created_at"
+   ]
+  },
+  {
+   "id": "IDN-006",
+   "type": "identity",
+   "name": "models.validate_account_handle (strict write boundary)",
+   "evidence": [
+    {
+     "file": "src/fanops/models.py",
+     "line": 446
+    }
+   ],
+   "charset": "^[a-z0-9._-]+$",
+   "raises": "ValueError on blank or illegal chars"
+  },
+  {
+   "id": "IDN-007",
+   "type": "identity",
+   "name": "crosspost idempotency token",
+   "evidence": [
+    {
+     "file": "src/fanops/crosspost.py",
+     "line": 37
+    }
+   ],
+   "algorithm": "sha1(account|platform|date_str|clip_id)",
+   "format": "fanops_<hash>",
+   "notes": "models.is_real_submission_id (models.py:384) treats a 'fanops_' prefix as NOT a real backend id"
+  },
+  {
+   "id": "FPR-001",
+   "type": "fingerprint",
+   "name": "clip._render_fingerprint",
+   "evidence": [
+    {
+     "file": "src/fanops/clip.py",
+     "line": 619
+    }
+   ],
+   "always_hashed": [
+    "src",
+    "cs (3dp)",
+    "ce (3dp)",
+    "aspect",
+    "w",
+    "h",
+    "ass"
+   ],
+   "conditionally_hashed": [
+    {
+     "key": "top_bias",
+     "condition": "only when true",
+     "line": 627
+    },
+    {
+     "key": "focus",
+     "condition": "when not None; a 4-tuple adds fh,ey",
+     "line": 629
+    },
+    {
+     "key": "track",
+     "condition": "when truthy; full 6-tuple",
+     "line": 631
+    },
+    {
+     "key": "ct (content_type)",
+     "condition": "ONLY when geom is true",
+     "line": 634
+    },
+    {
+     "key": "geom",
+     "condition": "ONLY when geom is true",
+     "line": 636
+    },
+    {
+     "key": "supercut / sc_spans",
+     "condition": "when segments present",
+     "line": 638
+    }
+   ],
+   "geom_predicate": "bool(track) or (focus is not None and len(focus) > 2)",
+   "geom_predicate_line": 633,
+   "version_constant": {
+    "name": "_REFRAME_GEOM_V",
+    "value": 4,
+    "line": 616
+   },
+   "consequence": "centred clips keep their historic fingerprint and do NOT needlessly re-render"
+  },
+  {
+   "id": "FPR-002",
+   "type": "fingerprint",
+   "name": "compose._compose_fingerprint",
+   "evidence": [
+    {
+     "file": "src/fanops/compose.py",
+     "line": 26
+    }
+   ],
+   "algorithm": "sha256",
+   "inputs": [
+    "base_path",
+    "intro_path",
+    "params",
+    "base_w",
+    "base_h"
+   ]
+  },
+  {
+   "id": "FPR-003",
+   "type": "fingerprint",
+   "name": "keyframes cache key",
+   "evidence": [
+    {
+     "file": "src/fanops/keyframes.py",
+     "line": 58
+    }
+   ],
+   "algorithm": "sha256 hexdigest used as dir name",
+   "inputs": [
+    "source_id",
+    "start",
+    "end",
+    "fps",
+    "width"
+   ]
+  },
+  {
+   "id": "FPR-004",
+   "type": "fingerprint",
+   "name": "control digest",
+   "evidence": [
+    {
+     "file": "src/fanops/control.py",
+     "line": 55
+    }
+   ],
+   "algorithm": "sha256[:12]",
+   "inputs": [
+    "text"
+   ]
+  },
+  {
+   "id": "FPR-005",
+   "type": "fingerprint",
+   "name": "variant_amplify._evidence_fingerprint",
+   "evidence": [
+    {
+     "file": "src/fanops/variant_amplify.py",
+     "line": 49
+    }
+   ],
+   "inputs": "UNKNOWN",
+   "unknown_ref": "UNK-009"
+  },
+  {
+   "id": "FPR-006",
+   "type": "fingerprint",
+   "name": "ledger_wipe snapshot digest",
+   "evidence": [
+    {
+     "file": "src/fanops/ledger_wipe.py",
+     "line": 176
+    }
+   ],
+   "algorithm": "sha256[:32]"
+  },
+  {
+   "id": "FPR-007",
+   "type": "fingerprint",
+   "name": "StitchPlan.base_fingerprint (pinned at approval)",
+   "evidence": [
+    {
+     "file": "src/fanops/models.py",
+     "line": 469
+    },
+    {
+     "file": "src/fanops/stitch_render.py",
+     "line": 317
+    }
+   ],
+   "notes": "a stale base fingerprint dismisses the plan"
+  },
+  {
+   "id": "LOC-001",
+   "type": "location",
+   "name": "root",
+   "resolution_order": [
+    "constructor arg",
+    "FANOPS_ROOT env",
+    "Path.cwd()"
+   ],
+   "evidence": [
+    {
+     "file": "src/fanops/config.py",
+     "line": 145
+    }
+   ],
+   "records_origin_in": "Config.root_source ('arg'|'env'|'cwd')"
+  },
+  {
+   "id": "LOC-002",
+   "type": "location",
+   "name": "base",
+   "path": "{root}/MohFlow-FanOps",
+   "evidence": [
+    {
+     "file": "src/fanops/config.py",
+     "line": 154
+    }
+   ]
+  },
+  {
+   "id": "LOC-003",
+   "type": "location",
+   "name": "control",
+   "path": "00_control",
+   "evidence": [
+    {
+     "file": "src/fanops/config.py",
+     "line": 60
+    }
+   ]
+  },
+  {
+   "id": "LOC-004",
+   "type": "location",
+   "name": "review",
+   "path": "00_review",
+   "evidence": [
+    {
+     "file": "src/fanops/config.py",
+     "line": 60
+    }
+   ]
+  },
+  {
+   "id": "LOC-005",
+   "type": "location",
+   "name": "inbox",
+   "path": "01_inbox",
+   "evidence": [
+    {
+     "file": "src/fanops/config.py",
+     "line": 60
+    }
+   ]
+  },
+  {
+   "id": "LOC-006",
+   "type": "location",
+   "name": "thirdparty_inbox",
+   "path": "01_thirdparty_inbox",
+   "evidence": [
+    {
+     "file": "src/fanops/config.py",
+     "line": 61
+    }
+   ],
+   "notes": "PEER of 01_inbox, deliberately outside the native ingest rglob"
+  },
+  {
+   "id": "LOC-007",
+   "type": "location",
+   "name": "sources",
+   "path": "02_sources",
+   "evidence": [
+    {
+     "file": "src/fanops/config.py",
+     "line": 64
+    }
+   ]
+  },
+  {
+   "id": "LOC-008",
+   "type": "location",
+   "name": "clips",
+   "path": "03_clips",
+   "evidence": [
+    {
+     "file": "src/fanops/config.py",
+     "line": 65
+    }
+   ]
+  },
+  {
+   "id": "LOC-009",
+   "type": "location",
+   "name": "agent_io",
+   "path": "04_agent_io",
+   "evidence": [
+    {
+     "file": "src/fanops/config.py",
+     "line": 65
+    }
+   ]
+  },
+  {
+   "id": "LOC-010",
+   "type": "location",
+   "name": "scheduled",
+   "path": "05_scheduled",
+   "evidence": [
+    {
+     "file": "src/fanops/config.py",
+     "line": 65
+    }
+   ]
+  },
+  {
+   "id": "LOC-011",
+   "type": "location",
+   "name": "published",
+   "path": "06_published",
+   "evidence": [
+    {
+     "file": "src/fanops/config.py",
+     "line": 66
+    }
+   ]
+  },
+  {
+   "id": "LOC-012",
+   "type": "location",
+   "name": "reports",
+   "path": "07_reports",
+   "evidence": [
+    {
+     "file": "src/fanops/config.py",
+     "line": 66
+    }
+   ]
+  },
+  {
+   "id": "LOC-013",
+   "type": "location",
+   "name": "render path template",
+   "path": "03_clips/{batch_id|unbatched}/{source_id|nosrc}/{render_id}.{aspect}.mp4",
+   "evidence": [
+    {
+     "file": "src/fanops/config.py",
+     "line": 179
+    }
+   ]
+  },
+  {
+   "id": "LOC-014",
+   "type": "location",
+   "name": "agent gate request dir",
+   "path": "04_agent_io/requests/",
+   "evidence": [
+    {
+     "file": "src/fanops/agentstep.py",
+     "line": 23
+    }
+   ],
+   "queue_ref": "QUE-001"
+  },
+  {
+   "id": "LOC-015",
+   "type": "location",
+   "name": "whisper checkpoint cache root",
+   "path": "$XDG_CACHE_HOME/whisper else ~/.cache/whisper",
+   "evidence": [
+    {
+     "file": "src/fanops/config.py",
+     "line": 1118
+    }
+   ],
+   "notes": "the ONLY cache rooted outside the FanOps tree"
+  },
+  {
+   "id": "LOC-016",
+   "type": "location",
+   "name": "launchd agent dir",
+   "path": "~/Library/LaunchAgents/",
+   "evidence": [
+    {
+     "file": "src/fanops/daemon.py",
+     "line": 37
+    }
+   ]
+  },
+  {
+   "id": "LOC-017",
+   "type": "location",
+   "name": "Postiz self-host stack dir",
+   "path": "~/postiz-selfhost/",
+   "evidence": [
+    {
+     "file": "src/fanops/daemon.py",
+     "line": 651
+    },
+    {
+     "file": "src/fanops/postiz_lifecycle.py",
+     "line": 23
+    }
+   ]
+  },
+  {
+   "id": "QUE-001",
+   "type": "queue",
+   "name": "Agent-gate filesystem queue",
+   "evidence": [
+    {
+     "file": "src/fanops/agentstep.py",
+     "line": 23
+    }
+   ],
+   "request_file": "{kind}__{key}.request.json",
+   "request_file_line": 33,
+   "response_file": "{kind}__{key}.response.json",
+   "response_file_line": 36,
+   "correlation": "fresh request_id stamped into request; response must echo it (agentstep.py:3)",
+   "pending_definition": "a *.request.json with no valid matching response (agentstep.py:153)",
+   "retry_accounting": {
+    "path_fn": "_attempts_path",
+    "line": 138,
+    "bump": 141,
+    "clear": 150
+   },
+   "api": [
+    "request_path",
+    "response_path",
+    "latest_request_id",
+    "write_request",
+    "write_response",
+    "read_response",
+    "discard_gate",
+    "gate_keys_for",
+    "discard_gates_for",
+    "bump_attempts",
+    "clear_attempts",
+    "pending"
+   ],
+   "kinds": [
+    {
+     "kind": "moments",
+     "key_grammar": "source_id first dot-segment",
+     "resolver_line": 10,
+     "model": "opus"
+    },
+    {
+     "kind": "moment_hooks",
+     "key_grammar": "{source_id}.{owner}.{token}",
+     "resolver_line": 10,
+     "model": "opus"
+    },
+    {
+     "kind": "captions",
+     "key_grammar": "clip_id (walks clip->moment->source)",
+     "resolver_line": 11,
+     "model": "sonnet"
+    },
+    {
+     "kind": "intro_match",
+     "key_grammar": "UNKNOWN - NO branch in gate_keys.gate_source_id",
+     "unknown_ref": "UNK-002"
+    }
+   ],
+   "notes": "This is the ONLY work queue in the system, and it is filesystem-based. No broker, no in-process queue."
+  },
+  {
+   "id": "SCH-001",
+   "type": "scheduler",
+   "name": "launchd agent: main run daemon",
+   "label": "com.fanops.run",
+   "evidence": [
+    {
+     "file": "src/fanops/daemon.py",
+     "line": 25
+    }
+   ],
+   "plist": "~/Library/LaunchAgents/com.fanops.run.plist",
+   "mechanism": "RunAtLoad + KeepAlive (restart on crash). NO StartInterval - the interval rides EnvironmentVariables.FANOPS_DAEMON_INTERVAL",
+   "plist_builder_line": 132,
+   "interval_floor_s": 60,
+   "interval_floor_const": "_MIN_INTERVAL",
+   "working_directory": "cfg.root",
+   "bakes_full_path": true,
+   "path_rationale_line": 72
+  },
+  {
+   "id": "SCH-002",
+   "type": "scheduler",
+   "name": "launchd agent: keeper",
+   "label": "com.fanops.keeper",
+   "evidence": [
+    {
+     "file": "src/fanops/daemon.py",
+     "line": 26
+    }
+   ],
+   "poll_interval_s": 120,
+   "poll_const": "KEEPER_POLL_INTERVAL_S",
+   "role": "re-asserts main daemon load if absent"
+  },
+  {
+   "id": "SCH-003",
+   "type": "scheduler",
+   "name": "launchd agent: studio",
+   "label": "com.fanops.studio",
+   "evidence": [
+    {
+     "file": "src/fanops/daemon.py",
+     "line": 27
+    }
+   ],
+   "launch_cmd": "fanops studio --host 127.0.0.1 --port 8787",
+   "cmd_line": 655
+  },
+  {
+   "id": "SCH-004",
+   "type": "scheduler",
+   "name": "Metrics capture cadence (data-driven, not a scheduler process)",
+   "evidence": [
+    {
+     "file": "src/fanops/metrics_schedule.py",
+     "line": 12
+    }
+   ],
+   "offsets": [
+    "4h",
+    "12h",
+    "24h",
+    "72h",
+    "1w",
+    "2w",
+    "3w",
+    "4w"
+   ],
+   "unit_seconds": {
+    "h": 3600,
+    "w": 604800
+   },
+   "selector": "due_offset (metrics_schedule.py:38)",
+   "notes": "consumed on each daemon tick; not an independent scheduler"
+  },
+  {
+   "id": "SCH-005",
+   "type": "scheduler",
+   "name": "GitHub Actions nightly cron",
+   "evidence": [
+    {
+     "file": ".github/workflows/nightly.yml",
+     "line": 10
+    }
+   ],
+   "cron": "0 3 * * *",
+   "timezone": "UTC",
+   "jobs": [
+    "dependency-audit",
+    "asr-smoke"
+   ]
+  },
+  {
+   "id": "SCH-006",
+   "type": "scheduler",
+   "name": "Hashtag store refresh throttle (12h, in-tick)",
+   "evidence": [
+    {
+     "file": "src/fanops/fanops_hashtags.py",
+     "line": 82
+    }
+   ],
+   "max_age_s": 43200,
+   "notes": "refresh_store_if_due re-runs inside `fanops run` on each daemon tick"
+  },
+  {
+   "id": "SCH-007",
+   "type": "scheduler",
+   "name": "Daemon sibling poll",
+   "evidence": [
+    {
+     "file": "src/fanops/daemon.py",
+     "line": 357
+    }
+   ],
+   "interval_s": 300,
+   "const": "SIBLING_POLL_INTERVAL_S"
+  },
+  {
+   "id": "WRK-001",
+   "type": "worker",
+   "name": "fanops run (the daemon tick / pipeline advance)",
+   "evidence": [
+    {
+     "file": "src/fanops/cli.py",
+     "line": 775
+    },
+    {
+     "file": "src/fanops/pipeline.py",
+     "line": 1
+    }
+   ],
+   "driven_by": "SCH-001",
+   "lease": "LCK-005"
+  },
+  {
+   "id": "WRK-002",
+   "type": "worker",
+   "name": "responder (autonomous agent-gate answerer)",
+   "evidence": [
+    {
+     "file": "src/fanops/responder.py",
+     "line": 1
+    }
+   ],
+   "gate": "FANOPS_RESPONDER=llm (CFG-004)",
+   "transport": "EXT-006"
+  },
+  {
+   "id": "WRK-003",
+   "type": "worker",
+   "name": "Studio Flask web cockpit",
+   "evidence": [
+    {
+     "file": "src/fanops/studio/app.py",
+     "line": 274
+    }
+   ],
+   "bind": "127.0.0.1:8787",
+   "extra": "[studio] (Flask, lazy-imported)",
+   "threaded": true
+  },
+  {
+   "id": "WRK-004",
+   "type": "worker",
+   "name": "concurrent source pre-warm pool",
+   "evidence": [
+    {
+     "file": "src/fanops/config.py",
+     "line": 1071
+    }
+   ],
+   "gate": "FANOPS_CONCURRENT_SOURCES (default OFF)",
+   "pool_size_cfg": "FANOPS_CONCURRENT_WORKERS (default 4, clamped >=1)",
+   "notes": "map-parallel / reduce-serial; the single main transaction remains the only ledger writer"
+  },
+  {
+   "id": "WRK-005",
+   "type": "worker",
+   "name": "keeper (daemon liveness re-assertion)",
+   "evidence": [
+    {
+     "file": "src/fanops/daemon.py",
+     "line": 289
+    }
+   ],
+   "driven_by": "SCH-002"
+  },
+  {
+   "id": "LCK-001",
+   "type": "lock",
+   "name": "ledger write lock (fcntl.flock)",
+   "evidence": [
+    {
+     "file": "src/fanops/ledger.py",
+     "line": 264
+    }
+   ],
+   "rationale": "kernel RELEASES an flock when the holder dies, so a killed writer self-heals (chosen over an O_EXCL sentinel)"
+  },
+  {
+   "id": "LCK-002",
+   "type": "lock",
+   "name": "stage lock",
+   "evidence": [
+    {
+     "file": "src/fanops/stage_lock.py",
+     "line": 45
+    }
+   ],
+   "error": "StageBusyError",
+   "notes": "mirrors ledger._file_lock; self-heals an orphaned lockfile"
+  },
+  {
+   "id": "LCK-003",
+   "type": "lock",
+   "name": "accounts.lock",
+   "path": "00_control/accounts.lock",
+   "evidence": [
+    {
+     "file": "src/fanops/config.py",
+     "line": 162
+    },
+    {
+     "file": "src/fanops/accounts.py",
+     "line": 362
+    }
+   ],
+   "guards": "accounts.json read-modify-write"
+  },
+  {
+   "id": "LCK-004",
+   "type": "lock",
+   "name": "personas.lock",
+   "path": "00_control/personas.lock",
+   "evidence": [
+    {
+     "file": "src/fanops/config.py",
+     "line": 164
+    }
+   ]
+  },
+  {
+   "id": "LCK-005",
+   "type": "lock",
+   "name": "run lease (.run.lock)",
+   "path": "00_control/.run.lock",
+   "evidence": [
+    {
+     "file": "src/fanops/pipeline_run.py",
+     "line": 15
+    }
+   ],
+   "mechanism": "fcntl.flock LOCK_NB; lockfile body (pid + started ISO) is ADVISORY for status only",
+   "guards": "the respond->write_request->advance converge loop",
+   "declared_in_config": false,
+   "finding_ref": "FIND-004"
+  },
+  {
+   "id": "LCK-006",
+   "type": "lock",
+   "name": "hashtag_budget.lock",
+   "path": "00_control/hashtag_budget.lock",
+   "evidence": [
+    {
+     "file": "src/fanops/config.py",
+     "line": 170
+    }
+   ],
+   "guards": "record_query RMW (concurrent Studio calls lost writes -> quota over-spend)"
+  },
+  {
+   "id": "LCK-007",
+   "type": "lock",
+   "name": "hashtag_bans.lock",
+   "path": "00_control/hashtag_bans.lock",
+   "evidence": [
+    {
+     "file": "src/fanops/config.py",
+     "line": 172
+    }
+   ]
+  },
+  {
+   "id": "LCK-008",
+   "type": "lock",
+   "name": "ledger.lock",
+   "path": "00_control/ledger.lock",
+   "evidence": [
+    {
+     "file": "src/fanops/config.py",
+     "line": 159
+    }
+   ],
+   "status": "VESTIGIAL - explicitly so labelled in code",
+   "classification": "dead_artifact"
+  },
+  {
+   "id": "EXT-001",
+   "type": "external_service",
+   "name": "Postiz (self-hosted publisher)",
+   "evidence": [
+    {
+     "file": "src/fanops/post/postiz.py",
+     "line": 392
+    }
+   ],
+   "base_url_cfg": "POSTIZ_URL",
+   "api_prefix": "/public/v1",
+   "auth": "POSTIZ_API_KEY (Authorization header)",
+   "serves_platforms": [
+    "instagram",
+    "youtube"
+   ],
+   "timeouts_s": {
+    "posts": 30,
+    "integrations": 30,
+    "upload": 120,
+    "r2_put": 120
+   },
+   "rate_limit": {
+    "429_backoff": "time.sleep(delay + random.uniform(0, delay)); delay *= 2",
+    "lines": [
+     395,
+     427
+    ],
+    "publish_cap_cfg": "FANOPS_POSTIZ_PUBLISH_PER_MIN (default 4, 0=off)"
+   }
+  },
+  {
+   "id": "EXT-002",
+   "type": "external_service",
+   "name": "Zernio (hosted TikTok publisher)",
+   "evidence": [
+    {
+     "file": "src/fanops/post/zernio.py",
+     "line": 256
+    },
+    {
+     "file": "src/fanops/config.py",
+     "line": 387
+    }
+   ],
+   "base_url_default": "https://zernio.com/api/v1",
+   "base_url_cfg": "ZERNIO_API_URL",
+   "auth": "ZERNIO_API_KEY (Bearer)",
+   "serves_platforms": [
+    "tiktok"
+   ],
+   "upload_cap_cfg": "FANOPS_ZERNIO_MAX_UPLOAD_MB (default 4 MB - live-discovered 413 ceiling)"
+  },
+  {
+   "id": "EXT-003",
+   "type": "external_service",
+   "name": "Meta Graph API",
+   "evidence": [
+    {
+     "file": "src/fanops/meta_graph.py",
+     "line": 152
+    },
+    {
+     "file": "src/fanops/config.py",
+     "line": 421
+    }
+   ],
+   "base_url_default": "https://graph.facebook.com/v21.0",
+   "auth": "META_GRAPH_TOKEN + per-handle META_GRAPH_TOKEN__<SLUG>",
+   "endpoints": [
+    {
+     "name": "ig_hashtag_search",
+     "line": 177
+    },
+    {
+     "name": "{hashtag_id}/top_media",
+     "line": 192
+    },
+    {
+     "name": "list_user_media",
+     "line": 210
+    },
+    {
+     "name": "resolve_ig_media",
+     "line": 251
+    },
+    {
+     "name": "confirm_post_live",
+     "line": 274
+    },
+    {
+     "name": "enumerate_scoped_media",
+     "line": 311
+    },
+    {
+     "name": "account_overview",
+     "line": 134
+    },
+    {
+     "name": "debug_token_expiry",
+     "line": 88
+    },
+    {
+     "name": "insights_metrics_for",
+     "line": 347
+    }
+   ],
+   "hard_limit": {
+    "rule": "30 unique hashtags per rolling 7 days for ig_hashtag_search",
+    "line": 11,
+    "enforced_by": "ART-010 (hashtag_budget.json) + LCK-006"
+   },
+   "harvest_cap": {
+    "const": "_HARVEST_CAP",
+    "value": 5000,
+    "line": 129
+   },
+   "role": "THE sole IG metric reader (PostizMetricsClient-for-IG is dead)"
+  },
+  {
+   "id": "EXT-004",
+   "type": "external_service",
+   "name": "Cloudflare R2 (media mirror)",
+   "evidence": [
+    {
+     "file": "src/fanops/post/postiz.py",
+     "line": 154
+    }
+   ],
+   "auth": "R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET",
+   "purpose": "mirror clip bytes to a public HTTPS origin so Postiz/IG pull-from-URL can reach them (localhost is SSRF-blocked)",
+   "gate_cfg": "FANOPS_MEDIA_PUBLIC_BASE",
+   "timeout_s": 120
+  },
+  {
+   "id": "EXT-005",
+   "type": "external_service",
+   "name": "TikTok oEmbed",
+   "url": "https://www.tiktok.com/oembed",
+   "evidence": [
+    {
+     "file": "src/fanops",
+     "line": 0,
+     "note": "URL literal present in src; CALLER NOT LOCATED"
+    }
+   ],
+   "unknown_ref": "UNK-003"
+  },
+  {
+   "id": "EXT-006",
+   "type": "external_service",
+   "name": "Claude Code CLI (`claude -p` headless)",
+   "evidence": [
+    {
+     "file": "src/fanops/llm.py",
+     "line": 2
+    }
+   ],
+   "transport": "subprocess, NOT the Anthropic HTTP API",
+   "auth": "the operator's EXISTING `claude login` session (OAuth/keychain). ANTHROPIC_API_KEY is NOT required.",
+   "auth_note": "llm.py:12-23 records that `claude --bare -p` NEVER reads OAuth/keychain and fails 'Not logged in'; plain `claude -p` works",
+   "alt_binary": "cursor-agent when FANOPS_LLM_TRANSPORT=cursor",
+   "retry": "a `--json-schema` unknown-option failure gets ONE flagless retry with the schema carried in the prompt (llm.py:7)",
+   "backoff_stub": "_sleep indirection at llm.py:30"
+  },
+  {
+   "id": "EXT-007",
+   "type": "external_service",
+   "name": "Docker (Postiz stack bring-up)",
+   "evidence": [
+    {
+     "file": "src/fanops/postiz_lifecycle.py",
+     "line": 59
+    }
+   ],
+   "script": "~/postiz-selfhost/postiz-ondemand.sh",
+   "wait_s": 150,
+   "wait_const": "_WAIT_S",
+   "gate_cfg": "FANOPS_POSTIZ_AUTOSTART (default ON)",
+   "guard": "never shells docker during the test suite (postiz_lifecycle.py:9)"
+  },
+  {
+   "id": "EXT-008",
+   "type": "external_service",
+   "name": "GitHub (gh CLI) - land/CI surface",
+   "evidence": [
+    {
+     "file": ".github/workflows/ci.yml",
+     "line": 27
+    }
+   ],
+   "ci_jobs": [
+    "unit",
+    "base-install",
+    "e2e",
+    "ci-timing"
+   ],
+   "notes": "not called from src/; used by the orchestration + land tooling"
+  },
+  {
+   "id": "EXT-B01",
+   "type": "external_service",
+   "name": "external binary: ffmpeg",
+   "evidence": [
+    {
+     "file": "src/fanops/clip.py",
+     "line": 25
+    }
+   ],
+   "timeout_s": 600,
+   "timeout_const": "_FFMPEG_TIMEOUT",
+   "other_timeouts": [
+    {
+     "file": "src/fanops/signals.py",
+     "line": 121,
+     "value": 600
+    },
+    {
+     "file": "src/fanops/overlay.py",
+     "line": 342,
+     "value": 600
+    },
+    {
+     "file": "src/fanops/keyframes.py",
+     "line": 23,
+     "value": 30,
+     "note": "_KF_TIMEOUT per-frame"
+    },
+    {
+     "file": "src/fanops/keyframes.py",
+     "line": 48,
+     "value": 60,
+     "note": "_GRID_TIMEOUT whole-window"
+    }
+   ]
+  },
+  {
+   "id": "EXT-B02",
+   "type": "external_service",
+   "name": "external binary: ffprobe",
+   "evidence": [
+    {
+     "file": "src/fanops/ingest.py",
+     "line": 130
+    }
+   ],
+   "timeout_s": 30,
+   "timeout_const": "_FFPROBE_TIMEOUT"
+  },
+  {
+   "id": "EXT-B03",
+   "type": "external_service",
+   "name": "external binary: whisper (legacy CLI)",
+   "evidence": [
+    {
+     "file": "src/fanops/transcribe.py",
+     "line": 41
+    }
+   ],
+   "timeout_s": 2700,
+   "timeout_const": "_WHISPER_TIMEOUT",
+   "prewarm_factor": 1.5,
+   "used_when": "the [asr] extra (faster-whisper) is ABSENT"
+  },
+  {
+   "id": "EXT-B04",
+   "type": "external_service",
+   "name": "external binary: demucs (vocal isolation)",
+   "evidence": [
+    {
+     "file": "src/fanops/vocals.py",
+     "line": 27
+    }
+   ],
+   "timeout_s": 1800,
+   "timeout_const": "_DEMUCS_TIMEOUT",
+   "gate_cfg": "FANOPS_ISOLATE_VOCALS (default ON)",
+   "fail_mode": "FAIL-OPEN to raw audio when demucs/[asr] absent"
+  },
+  {
+   "id": "EXT-B05",
+   "type": "external_service",
+   "name": "external binary: yt-dlp",
+   "evidence": [
+    {
+     "file": "src/fanops/ingest.py",
+     "line": 463
+    }
+   ],
+   "used_by": "fanops pull <url>"
+  },
+  {
+   "id": "EXT-B06",
+   "type": "external_service",
+   "name": "external binary: launchctl",
+   "evidence": [
+    {
+     "file": "src/fanops/daemon.py",
+     "line": 31
+    }
+   ],
+   "timeout_s": 30,
+   "timeout_const": "_LAUNCHCTL_TIMEOUT"
+  },
+  {
+   "id": "EXT-B07",
+   "type": "external_service",
+   "name": "external binary: git",
+   "evidence": [
+    {
+     "file": "src/fanops/daemon.py",
+     "line": 0,
+     "note": "3 call sites located by grep; exact lines not pinned"
+    }
+   ],
+   "confidence": "low"
+  },
+  {
+   "id": "EXT-B08",
+   "type": "external_service",
+   "name": "external binary: open (macOS)",
+   "evidence": [
+    {
+     "file": "src/fanops/discover.py",
+     "line": 0,
+     "note": "shutil.which('open') located by grep; exact line not pinned"
+    }
+   ],
+   "confidence": "low"
+  },
+  {
+   "id": "EXT-L01",
+   "type": "external_service",
+   "name": "python lib: opencv (cv2) via [framing] extra",
+   "evidence": [
+    {
+     "file": "pyproject.toml",
+     "line": 0,
+     "note": "framing extra"
+    },
+    {
+     "file": "src/fanops/framing.py",
+     "line": 23
+    }
+   ],
+   "fail_mode": "FAIL-CLOSED (the ONLY one): with smart_framing ON (default) and cv2 absent, framing.require_cv2 raises ToolchainMissingError -> exit 2. FANOPS_SMART_FRAMING=0 restores centre-crop.",
+   "model_asset": "ART-020"
+  },
+  {
+   "id": "EXT-L02",
+   "type": "external_service",
+   "name": "python lib: MoviePy via [compose] extra",
+   "evidence": [
+    {
+     "file": "src/fanops/compose.py",
+     "line": 10
+    }
+   ],
+   "fail_mode": "FAIL-OPEN (copies the base clip)"
+  },
+  {
+   "id": "EXT-L03",
+   "type": "external_service",
+   "name": "python lib: Flask via [studio] extra",
+   "evidence": [
+    {
+     "file": "src/fanops/studio/app.py",
+     "line": 274
+    }
+   ],
+   "fail_mode": "lazy-imported; a no-[studio] install runs the CLI"
+  },
+  {
+   "id": "EXT-L04",
+   "type": "external_service",
+   "name": "python lib: keyring via [keyring] extra",
+   "evidence": [
+    {
+     "file": "src/fanops/secret_provider.py",
+     "line": 21
+    }
+   ],
+   "fail_mode": "READ fail-open (silent None on ImportError; warn-ONCE on broken backend). WRITE fail-CLOSED (verified read-back, raises OSError).",
+   "service_name": "fanops"
+  },
+  {
+   "id": "EXT-L05",
+   "type": "external_service",
+   "name": "python lib: faster-whisper + demucs via [asr] extra",
+   "evidence": [
+    {
+     "file": "pyproject.toml",
+     "line": 0
+    }
+   ],
+   "fail_mode": "FAIL-OPEN to the legacy whisper CLI"
+  },
+  {
+   "id": "ART-001",
+   "type": "artifact",
+   "name": "run log",
+   "path": "07_reports/run.log",
+   "evidence": [
+    {
+     "file": "src/fanops/config.py",
+     "line": 177
+    },
+    {
+     "file": "src/fanops/log.py",
+     "line": 1
+    }
+   ],
+   "format": "JSON lines (one per stage event)",
+   "writer": "log.get_logger",
+   "perms": "owner-only at rest (log.py:13)",
+   "also_writes": "stderr",
+   "authoritative": false
+  },
+  {
+   "id": "ART-002",
+   "type": "artifact",
+   "name": "studio audit trail",
+   "path": "00_control/studio_audit.log",
+   "evidence": [
+    {
+     "file": "src/fanops/audit.py",
+     "line": 39
+    },
+    {
+     "file": "src/fanops/audit.py",
+     "line": 53
+    }
+   ],
+   "format": "one JSON line per state-changing action",
+   "writer": "audit.write_audit (audit.py:19)",
+   "reader": "audit.read_audit_tail (audit.py:50)",
+   "cli": "fanops audit tail (cli.py:732)",
+   "perms": "0o600 (audit.py:43)",
+   "declared_in_config": false,
+   "finding_ref": "FIND-003"
+  },
+  {
+   "id": "ART-003",
+   "type": "artifact",
+   "name": "ledger digest",
+   "path": "00_control/ledger_digest.md",
+   "evidence": [
+    {
+     "file": "src/fanops/config.py",
+     "line": 160
+    }
+   ],
+   "writer": "digest.py"
+  },
+  {
+   "id": "ART-004",
+   "type": "artifact",
+   "name": "tuning overrides (OPTIONAL)",
+   "path": "00_control/tuning.json",
+   "evidence": [
+    {
+     "file": "src/fanops/config.py",
+     "line": 166
+    },
+    {
+     "file": "src/fanops/config.py",
+     "line": 191
+    }
+   ],
+   "schema": "{offbrand_en:[regex], offbrand_ar:[regex], lift_weights:{key:number}}",
+   "fail_mode": "FAIL-OPEN: corrupt file warns + returns {}; INVALID ENTRIES DROPPED INDIVIDUALLY by _sanitize_tuning (config.py:32) rather than discarding the whole file",
+   "cached": false,
+   "cache_note": "re-read on every call so an operator edit takes effect without a restart"
+  },
+  {
+   "id": "ART-005",
+   "type": "artifact",
+   "name": "context.md",
+   "path": "00_control/context.md",
+   "evidence": [
+    {
+     "file": "src/fanops/config.py",
+     "line": 165
+    }
+   ],
+   "reader": "UNKNOWN",
+   "writer": "UNKNOWN",
+   "unknown_ref": "UNK-004"
+  },
+  {
+   "id": "ART-006",
+   "type": "artifact",
+   "name": "account stats snapshot",
+   "path": "00_control/account_stats.json",
+   "evidence": [
+    {
+     "file": "src/fanops/config.py",
+     "line": 168
+    },
+    {
+     "file": "src/fanops/fanops_account_stats.py",
+     "line": 1
+    }
+   ],
+   "purpose": "throttled per-handle IG follower snapshot"
+  },
+  {
+   "id": "ART-007",
+   "type": "artifact",
+   "name": "cutover state",
+   "path": "00_control/cutover.json",
+   "evidence": [
+    {
+     "file": "src/fanops/config.py",
+     "line": 173
+    }
+   ],
+   "notes": "explicitly NEVER the ledger; carries metrics_confirmed which gates learning (see CFG-GATE-001)"
+  },
+  {
+   "id": "ART-008",
+   "type": "artifact",
+   "name": "insights blocked breadcrumb",
+   "path": "00_control/insights_blocked.json",
+   "evidence": [
+    {
+     "file": "src/fanops/config.py",
+     "line": 174
+    }
+   ],
+   "purpose": "LOUD fail-closed marker when Graph media-insights is refused for lack of instagram_manage_insights; cleared by a clean pull"
+  },
+  {
+   "id": "ART-009",
+   "type": "artifact",
+   "name": "timing bias prior",
+   "path": "00_control/timing_bias.json",
+   "evidence": [
+    {
+     "file": "src/fanops/config.py",
+     "line": 175
+    },
+    {
+     "file": "src/fanops/timing_bias.py",
+     "line": 80
+    }
+   ],
+   "written_by": "apply_timing_bias",
+   "read_by": "crosspost.surface_time (hour_hint, window-clamped)"
+  },
+  {
+   "id": "ART-010",
+   "type": "artifact",
+   "name": "hashtag Graph budget counter",
+   "path": "00_control/hashtag_budget.json",
+   "evidence": [
+    {
+     "file": "src/fanops/config.py",
+     "line": 169
+    }
+   ],
+   "enforces": "Meta's 30-unique-hashtags / rolling-7-day ig_hashtag_search cap",
+   "lock": "LCK-006"
+  },
+  {
+   "id": "ART-011",
+   "type": "artifact",
+   "name": "hashtag ban list",
+   "path": "00_control/hashtag_bans.json",
+   "evidence": [
+    {
+     "file": "src/fanops/config.py",
+     "line": 171
+    }
+   ],
+   "schema": "{\"bans\": [str]}",
+   "consumed_at": "vet_hashtags final strip (hashtags.py:310)"
+  },
+  {
+   "id": "ART-012",
+   "type": "artifact",
+   "name": "learning field-shape verdict",
+   "path": "00_control/learn_doctor.json",
+   "evidence": [
+    {
+     "file": "src/fanops/config.py",
+     "line": 176
+    },
+    {
+     "file": "src/fanops/learn_doctor.py",
+     "line": 1
+    }
+   ],
+   "read_only_verdict": true
+  },
+  {
+   "id": "ART-013",
+   "type": "artifact",
+   "name": "generated lever docs",
+   "path": "docs/LEVERS.md + docs/LEVER-THRESHOLDS.md",
+   "evidence": [
+    {
+     "file": "src/fanops/lever_docs.py",
+     "line": 173
+    }
+   ],
+   "generated": true,
+   "cli": "fanops lever docs / fanops threshold docs",
+   "notes": "these docs are BUILD OUTPUTS, not hand-authored sources"
+  },
+  {
+   "id": "ART-014",
+   "type": "artifact",
+   "name": "launchd plists",
+   "path": "~/Library/LaunchAgents/com.fanops.{run,keeper,studio}.plist",
+   "evidence": [
+    {
+     "file": "src/fanops/daemon.py",
+     "line": 132
+    }
+   ],
+   "generated": true,
+   "generator": "plistlib"
+  },
+  {
+   "id": "ART-015",
+   "type": "artifact",
+   "name": "dryrun payload sidecars",
+   "path": "05_scheduled/{post.id}.json",
+   "evidence": [
+    {
+     "file": "src/fanops/post/dryrun.py",
+     "line": 0,
+     "note": "writer module confirmed; exact line not pinned"
+    }
+   ],
+   "confidence": "medium"
+  },
+  {
+   "id": "ART-020",
+   "type": "artifact",
+   "name": "vendored YuNet face-detection model",
+   "path": "src/fanops/data/yunet_2023mar.onnx",
+   "evidence": [
+    {
+     "file": "src/fanops/framing.py",
+     "line": 23
+    },
+    {
+     "file": "pyproject.toml",
+     "line": 0,
+     "note": "[tool.setuptools.package-data]"
+    }
+   ],
+   "size_note": "~232KB per code comment",
+   "shipped_in_package": true,
+   "downloaded_at_runtime": false
+  },
+  {
+   "id": "ART-021",
+   "type": "artifact",
+   "name": "baked personas",
+   "path": "src/fanops/data/baked_personas.json",
+   "evidence": [
+    {
+     "file": "pyproject.toml",
+     "line": 0,
+     "note": "[tool.setuptools.package-data]"
+    }
+   ],
+   "confidence": "medium"
+  },
+  {
+   "id": "SID-001",
+   "type": "sidecar",
+   "name": "face-detection cache",
+   "pattern": "{source_id}.detect.json",
+   "evidence": [
+    {
+     "file": "src/fanops/framing.py",
+     "line": 124
+    }
+   ],
+   "version_const": {
+    "name": "_DETECT_V",
+    "value": 2
+   },
+   "cache_ref": "CAC-002"
+  },
+  {
+   "id": "SID-002",
+   "type": "sidecar",
+   "name": "active-speaker track",
+   "pattern": "{source_id}.track.json",
+   "evidence": [
+    {
+     "file": "src/fanops/framing.py",
+     "line": 17
+    }
+   ],
+   "version_const": {
+    "name": "_SIDECAR_V",
+    "value": 5
+   },
+   "cache_ref": "CAC-003"
+  },
+  {
+   "id": "SID-003",
+   "type": "sidecar",
+   "name": "motion saliency",
+   "pattern": "{source_id}.saliency.json",
+   "evidence": [
+    {
+     "file": "src/fanops/framing.py",
+     "line": 0,
+     "note": "pattern extracted by grep"
+    }
+   ],
+   "confidence": "medium"
+  },
+  {
+   "id": "SID-004",
+   "type": "sidecar",
+   "name": "render fingerprint",
+   "pattern": "{clip_id}.render.json",
+   "evidence": [
+    {
+     "file": "src/fanops/stitch_render.py",
+     "line": 39
+    }
+   ],
+   "reader": "_read_fingerprint",
+   "cache_ref": "CAC-001"
+  },
+  {
+   "id": "SID-005",
+   "type": "sidecar",
+   "name": "burned subtitle/hook script",
+   "pattern": "{clip_id}.ass",
+   "evidence": [
+    {
+     "file": "src/fanops/clip.py",
+     "line": 0,
+     "note": "with_suffix('.ass')"
+    }
+   ],
+   "confidence": "medium"
+  },
+  {
+   "id": "SID-006",
+   "type": "sidecar",
+   "name": "intro-tease failure breadcrumb",
+   "pattern": "{clip_id}.introfail.json",
+   "evidence": [
+    {
+     "file": "src/fanops/stitch_render.py",
+     "line": 0
+    }
+   ],
+   "confidence": "medium"
+  },
+  {
+   "id": "SID-007",
+   "type": "sidecar",
+   "name": "agent gate request",
+   "pattern": "{kind}__{key}.request.json",
+   "evidence": [
+    {
+     "file": "src/fanops/agentstep.py",
+     "line": 33
+    }
+   ],
+   "queue_ref": "QUE-001"
+  },
+  {
+   "id": "SID-008",
+   "type": "sidecar",
+   "name": "agent gate response",
+   "pattern": "{kind}__{key}.response.json",
+   "evidence": [
+    {
+     "file": "src/fanops/agentstep.py",
+     "line": 36
+    }
+   ],
+   "queue_ref": "QUE-001"
+  },
+  {
+   "id": "SID-009",
+   "type": "sidecar",
+   "name": "agent gate attempt counter",
+   "pattern": "(via _attempts_path)",
+   "evidence": [
+    {
+     "file": "src/fanops/agentstep.py",
+     "line": 138
+    }
+   ]
+  },
+  {
+   "id": "SID-010",
+   "type": "sidecar",
+   "name": "ffmpeg atomic temp",
+   "pattern": "*.part.mp4",
+   "evidence": [
+    {
+     "file": "src/fanops/clip.py",
+     "line": 0
+    }
+   ],
+   "critical_note": "the .mp4 suffix is LOAD-BEARING - the extension selects the ffmpeg muxer (MOL-78)"
+  },
+  {
+   "id": "SID-011",
+   "type": "sidecar",
+   "name": "Studio chunked-upload staging",
+   "pattern": "{name}.uploadpart + *.uploadmeta.json",
+   "evidence": [
+    {
+     "file": "src/fanops/studio/actions_run.py",
+     "line": 0
+    }
+   ],
+   "confidence": "medium"
+  },
+  {
+   "id": "SID-012",
+   "type": "sidecar",
+   "name": "atomic control-file temps",
+   "pattern": "*.json.tmp, *.sqlite.tmp, *.sqlite.importing",
+   "evidence": [
+    {
+     "file": "src/fanops/controlio.py",
+     "line": 1
+    }
+   ],
+   "mechanism": "mkstemp same-dir + os.replace"
+  },
+  {
+   "id": "SID-013",
+   "type": "sidecar",
+   "name": "source metadata + thumbnail",
+   "pattern": "{source_id}.json / {source_id}.jpg",
+   "evidence": [
+    {
+     "file": "src/fanops/discover.py",
+     "line": 0
+    }
+   ],
+   "confidence": "medium"
+  },
+  {
+   "id": "SID-014",
+   "type": "sidecar",
+   "name": "persona corpus refresh marker",
+   "pattern": ".corpora_refresh.json",
+   "evidence": [
+    {
+     "file": "src/fanops/persona_research.py",
+     "line": 0
+    }
+   ],
+   "confidence": "medium"
+  },
+  {
+   "id": "CAC-001",
+   "type": "cache",
+   "name": "content-addressed render cache",
+   "key": "FPR-001",
+   "evidence": [
+    {
+     "file": "src/fanops/stitch_render.py",
+     "line": 269
+    },
+    {
+     "file": "src/fanops/stitch_render.py",
+     "line": 347
+    }
+   ],
+   "hit_condition": "out_path exists AND st_size > 0 AND _read_fingerprint(cfg, cid) == fp",
+   "storage": "SID-004"
+  },
+  {
+   "id": "CAC-002",
+   "type": "cache",
+   "name": "face-detection grid cache",
+   "key": "source_id + _DETECT_V",
+   "evidence": [
+    {
+     "file": "src/fanops/framing.py",
+     "line": 124
+    }
+   ],
+   "invalidation": "bump _DETECT_V",
+   "storage": "SID-001"
+  },
+  {
+   "id": "CAC-003",
+   "type": "cache",
+   "name": "speaker-track cache",
+   "key": "source_id + _SIDECAR_V",
+   "evidence": [
+    {
+     "file": "src/fanops/framing.py",
+     "line": 17
+    }
+   ],
+   "invalidation": "bump _SIDECAR_V",
+   "storage": "SID-002"
+  },
+  {
+   "id": "CAC-004",
+   "type": "cache",
+   "name": "keyframe extraction cache",
+   "key": "FPR-003",
+   "evidence": [
+    {
+     "file": "src/fanops/keyframes.py",
+     "line": 63
+    }
+   ],
+   "storage": "content-addressed dir under 04_agent_io"
+  },
+  {
+   "id": "CAC-005",
+   "type": "cache",
+   "name": "whisper checkpoint cache",
+   "location": "LOC-015",
+   "evidence": [
+    {
+     "file": "src/fanops/config.py",
+     "line": 1118
+    }
+   ],
+   "notes": "the only cache outside the FanOps tree"
+  },
+  {
+   "id": "CAC-006",
+   "type": "cache",
+   "name": "hashtag store refresh throttle",
+   "ttl_s": 43200,
+   "evidence": [
+    {
+     "file": "src/fanops/fanops_hashtags.py",
+     "line": 82
+    }
+   ],
+   "storage": "DST-005"
+  },
+  {
+   "id": "CAC-007",
+   "type": "cache",
+   "name": "media upload cache (Clip.media_url / Render.media_url)",
+   "evidence": [
+    {
+     "file": "src/fanops/models.py",
+     "line": 287
+    },
+    {
+     "file": "src/fanops/models.py",
+     "line": 419
+    }
+   ],
+   "semantics": "uploaded once, URL cached on the entity"
+  },
+  {
+   "id": "CAC-008",
+   "type": "cache",
+   "name": "keyring backend warn-once flag",
+   "scope": "process-global, NOT persisted",
+   "evidence": [
+    {
+     "file": "src/fanops/secret_provider.py",
+     "line": 9
+    }
+   ],
+   "rationale": "a per-read warning historically flooded studio.err with 64k identical lines"
+  },
+  {
+   "id": "CAC-009",
+   "type": "cache",
+   "name": "visual-start decision cache",
+   "version_const": {
+    "name": "_VSTART_V",
+    "value": 2
+   },
+   "evidence": [
+    {
+     "file": "src/fanops/clip.py",
+     "line": 101
+    }
+   ],
+   "rationale": "the in-lock commit pass re-spawns no frame-probe ffmpeg"
+  },
+  {
+   "id": "CMD-001",
+   "type": "command",
+   "surface": "cli",
+   "name": "fanops (console script)",
+   "entrypoint": "fanops.cli:main",
+   "evidence": [
+    {
+     "file": "src/fanops/cli.py",
+     "line": 683
+    },
+    {
+     "file": "pyproject.toml",
+     "line": 0,
+     "note": "[project.scripts]"
+    }
+   ]
+  },
+  {
+   "id": "CMD-002",
+   "type": "command",
+   "surface": "cli",
+   "name": "verbs (top-level)",
+   "evidence": [
+    {
+     "file": "src/fanops/cli.py",
+     "line": 686
+    }
+   ],
+   "verbs": [
+    "status",
+    "ingest",
+    "digest",
+    "respond",
+    "reconcile",
+    "recover",
+    "advance",
+    "pull",
+    "track",
+    "map-media",
+    "verify-live",
+    "adjust",
+    "gc",
+    "amplify-variants",
+    "p4-bias",
+    "resolve",
+    "unhold",
+    "retry-source",
+    "retire-source",
+    "promote-source",
+    "retry-metrics",
+    "discover",
+    "intake",
+    "compose",
+    "doctor",
+    "config",
+    "init",
+    "health",
+    "publish-queue",
+    "audit",
+    "bulk-send-to-review",
+    "studio",
+    "cutover",
+    "wipe",
+    "paths-rebase",
+    "learn",
+    "hashtags",
+    "lever",
+    "threshold",
+    "run",
+    "daemon",
+    "autopilot",
+    "up"
+   ],
+   "verb_count": 43,
+   "subcommands": {
+    "recover": [
+     "audit"
+    ],
+    "audit": [
+     "tail"
+    ],
+    "cutover": [
+     "auth",
+     "post",
+     "metrics",
+     "lift"
+    ],
+    "learn": [
+     "doctor"
+    ],
+    "hashtags": [
+     "refresh",
+     "discover"
+    ],
+    "lever": [
+     "docs"
+    ],
+    "threshold": [
+     "docs"
+    ],
+    "daemon": [
+     "install",
+     "status",
+     "ensure",
+     "stop",
+     "logs"
+    ]
+   },
+   "live_hitting_verbs": [
+    "advance",
+    "run",
+    "reconcile",
+    "track",
+    "retry-metrics",
+    "map-media",
+    "verify-live",
+    "pull",
+    "cutover",
+    "hashtags",
+    "publish-queue"
+   ],
+   "live_hitting_confidence": "medium - derived from the external-service map, not proven per verb"
+  },
+  {
+   "id": "CMD-003",
+   "type": "command",
+   "surface": "http",
+   "name": "Studio HTTP routes",
+   "evidence": [
+    {
+     "file": "src/fanops/studio/app.py",
+     "line": 274
+    }
+   ],
+   "decorator_count": 149,
+   "unique_path_count": 130,
+   "files": {
+    "app.py": 32,
+    "app_routes_golive.py": 31,
+    "app_routes_review.py": 28,
+    "app_routes_run.py": 21,
+    "app_routes_schedule.py": 19,
+    "app_routes_personas.py": 12,
+    "app_routes_hashtags.py": 3,
+    "app_routes_live.py": 3
+   },
+   "prefixes": [
+    "/",
+    "/run",
+    "/review",
+    "/schedule",
+    "/posted",
+    "/golive",
+    "/personas",
+    "/hashtags",
+    "/library",
+    "/posts",
+    "/publish",
+    "/stitches",
+    "/live-library",
+    "/gates",
+    "/home",
+    "/segments",
+    "/cast",
+    "/candidates"
+   ],
+   "media_routes": [
+    "/media/<post_id>",
+    "/media-preview/<post_id>",
+    "/clips/<clip_id>",
+    "/source-media/<source_id>",
+    "/thumb/clip/<clip_id>",
+    "/thumb/source/<source_id>",
+    "/clip-thumb/<clip_id>",
+    "/review-thumb/<eid>",
+    "/keyframe/<source_id>/<name>",
+    "/keyframe/<source_id>/<whash>/<name>"
+   ],
+   "health_route": "/healthz",
+   "per_route_ownership": "NOT TRACED",
+   "unknown_ref": "UNK-010"
+  },
+  {
+   "id": "CFG-GATE-001",
+   "type": "configuration",
+   "name": "validation_gate.learning_validated",
+   "evidence": [
+    {
+     "file": "src/fanops/validation_gate.py",
+     "line": 22
+    }
+   ],
+   "source": "cutover.json metrics_confirmed",
+   "auto_stamped_by": "track._auto_validate_metrics_shape on the first real NON-DEGRADED live metric",
+   "gates": [
+    "variant_amplify (variant_amplify.py:166)",
+    "p4_dim_bias (p4_dim_bias.py:65)",
+    "timing_bias (via p4_unlocked)",
+    "variant_transfer"
+   ],
+   "not_gating": "variant_ucb (config.py:822-827 states the UCB scorer swap rides the SAFE caption-bias read path, gated by statistics + the variant_learning master flag, NOT learning_validated)"
+  },
+  {
+   "id": "CFG-GATE-002",
+   "type": "configuration",
+   "name": "validation_gate.p4_unlocked",
+   "evidence": [
+    {
+     "file": "src/fanops/validation_gate.py",
+     "line": 52
+    }
+   ],
+   "definition": "learning_validated(cfg) AND enough_attributed_signal(led, dim)",
+   "thresholds": {
+    "_MIN_ATTRIBUTED_N": 8,
+    "_MIN_VALUES": 2
+   },
+   "threshold_lines": [
+    18,
+    19
+   ]
+  },
+  {
+   "id": "CFG-DIMS-001",
+   "type": "configuration",
+   "name": "_P4_DIMS (biasable creative dims)",
+   "evidence": [
+    {
+     "file": "src/fanops/p4_dim_bias.py",
+     "line": 27
+    }
+   ],
+   "value": [
+    "first_frame_kind",
+    "clip_profile",
+    "top_bias"
+   ]
+  },
+  {
+   "id": "CFG-DIMS-002",
+   "type": "configuration",
+   "name": "timing_bias dim",
+   "evidence": [
+    {
+     "file": "src/fanops/timing_bias.py",
+     "line": 28
+    }
+   ],
+   "value": "publish_hour"
+  },
+  {
+   "id": "CFG-AMP-001",
+   "type": "configuration",
+   "name": "MAX_AMPLIFY_PER_SOURCE",
+   "evidence": [
+    {
+     "file": "src/fanops/adjust.py",
+     "line": 16
+    }
+   ],
+   "value": 3,
+   "notes": "the single source of truth for the per-source amplification budget"
+  },
+  {
+   "id": "CFG-LIFT-001",
+   "type": "configuration",
+   "name": "track._W (lift-score weights)",
+   "evidence": [
+    {
+     "file": "src/fanops/track.py",
+     "line": 30
+    }
+   ],
+   "value": {
+    "saves": 4.0,
+    "shares": 4.0,
+    "retention": 3.0,
+    "reach": 0.001,
+    "likes": 0.05
+   },
+   "high_weight_threshold": {
+    "const": "_HIGH_WEIGHT",
+    "value": 1.0,
+    "line": 35
+   },
+   "degradation": "a missing PRIMARY key (weight >= 1.0) stamps lift_degraded rather than trusting a partial scalar",
+   "key_literal": {
+    "name": "LIFT_SCORE",
+    "value": "lift_score",
+    "file": "src/fanops/models.py",
+    "line": 138,
+    "note": "written in exactly ONE place (track.record_metrics)"
+   }
+  },
+  {
+   "id": "CFG-PLAT-001",
+   "type": "configuration",
+   "name": "PLATFORM_MAX_SECONDS",
+   "evidence": [
+    {
+     "file": "src/fanops/models.py",
+     "line": 161
+    }
+   ],
+   "value": {
+    "instagram": 90,
+    "tiktok": 600,
+    "youtube": 180,
+    "twitter": 140,
+    "facebook": 90
+   },
+   "enforcement": "per-surface SKIP at crosspost; FAIL-OPEN on unknown duration (models.py:158)"
+  },
+  {
+   "id": "CFG-PLAT-002",
+   "type": "configuration",
+   "name": "PLATFORM_ASPECT",
+   "evidence": [
+    {
+     "file": "src/fanops/models.py",
+     "line": 144
+    }
+   ],
+   "value": {
+    "tiktok": "9:16",
+    "instagram": "9:16",
+    "youtube": "9:16",
+    "facebook": "1:1",
+    "twitter": "16:9"
+   }
+  },
+  {
+   "id": "CFG-BACK-001",
+   "type": "configuration",
+   "name": "poster backends",
+   "evidence": [
+    {
+     "file": "src/fanops/config.py",
+     "line": 71
+    }
+   ],
+   "valid": [
+    "dryrun",
+    "postiz",
+    "zernio"
+   ],
+   "live": [
+    "postiz",
+    "zernio"
+   ],
+   "platform_map": {
+    "postiz": [
+     "instagram",
+     "youtube"
+    ],
+    "zernio": [
+     "tiktok"
+    ]
+   },
+   "unknown_value_behavior": "resolves to dryrun + warn (config.py:241) so a typo can never show a false LIVE banner"
+  },
+  {
+   "id": "CFG-MODEL-001",
+   "type": "configuration",
+   "name": "_GATE_MODEL_DEFAULTS (per-gate LLM tier)",
+   "evidence": [
+    {
+     "file": "src/fanops/config.py",
+     "line": 99
+    }
+   ],
+   "value": {
+    "moments": "opus",
+    "moment_hooks": "opus",
+    "captions": "sonnet"
+   },
+   "override": "FANOPS_LLM_MODEL forces one model for ALL gates"
+  },
+  {
+   "id": "CFG-ASR-001",
+   "type": "configuration",
+   "name": "ASR model chains + realtime factors",
+   "evidence": [
+    {
+     "file": "src/fanops/config.py",
+     "line": 102
+    }
+   ],
+   "asr_rtf": {
+    "large-v3": 2.5,
+    "medium": 1.6,
+    "small": 1.0,
+    "base": 0.5
+   },
+   "whisper_rtf": {
+    "large-v3": 2.5,
+    "turbo": 0.8,
+    "small": 0.6,
+    "base": 0.4,
+    "tiny": 0.2
+   },
+   "asr_chain": [
+    "large-v3",
+    "medium",
+    "small",
+    "base"
+   ],
+   "whisper_chain": [
+    "large-v3",
+    "turbo",
+    "small",
+    "base",
+    "tiny"
+   ],
+   "timeout_s": 2700,
+   "prewarm_factor": 1.5,
+   "margin_s": 60,
+   "selector": "_pick_timeout_aware_model (config.py:119)",
+   "note": "an explicit env pin ALWAYS wins verbatim (config.py:637, :645)"
+  },
+  {
+   "id": "CFG-HASH-001",
+   "type": "configuration",
+   "name": "hashtag selection cap",
+   "evidence": [
+    {
+     "file": "src/fanops/hashtags.py",
+     "line": 232
+    },
+    {
+     "file": "src/fanops/hashtags.py",
+     "line": 310
+    }
+   ],
+   "value": 4,
+   "form": "max_tags: int = 4 (keyword default)",
+   "enforcement": "hard truncation at return: _strip_banned(kept, bans)[:max_tags]",
+   "reserve_slots": [
+    {
+     "purpose": "language floor",
+     "line": 291
+    },
+    {
+     "purpose": "content tag",
+     "line": 293
+    }
+   ],
+   "method_note": "INVISIBLE to greps for MAX_HASHTAGS/[:4]/_CAP - it is a keyword-argument default. This search blind-spot will recur."
+  },
+  {
+   "id": "CFG-HASH-002",
+   "type": "configuration",
+   "name": "VETTED frozen floor",
+   "evidence": [
+    {
+     "file": "src/fanops/hashtags.py",
+     "line": 52
+    }
+   ],
+   "definition": "set(niche_floor('rap')) | set(niche_floor('gossip')) | set(_ARABIC) | ...",
+   "niche_pools": [
+    "rap",
+    "gossip"
+   ],
+   "niche_pools_line": 28,
+   "arabic_count": 3,
+   "arabic_line": 23,
+   "cardinality": "UNKNOWN - not computed",
+   "unknown_ref": "UNK-005",
+   "role": "cold-start FLOOR, not canonical"
+  },
+  {
+   "id": "CFG-HASH-003",
+   "type": "configuration",
+   "name": "hashtag provenance ladder",
+   "evidence": [
+    {
+     "file": "src/fanops/hashtags.py",
+     "line": 317
+    }
+   ],
+   "order": [
+    "content",
+    "corpus",
+    "region",
+    "graph-reach",
+    "discovery",
+    "genre-floor"
+   ],
+   "invariant": "never empty (genre-floor is the catch-all), so a sourceless tag cannot ship"
+  },
+  {
+   "id": "CFG-FRAME-001",
+   "type": "configuration",
+   "name": "framing/clip geometry tunables",
+   "evidence": [
+    {
+     "file": "src/fanops/clip.py",
+     "line": 212
+    },
+    {
+     "file": "src/fanops/framing.py",
+     "line": 17
+    }
+   ],
+   "clip_py": {
+    "_TARGETS": {
+     "9:16": [
+      1080,
+      1920
+     ],
+     "1:1": [
+      1080,
+      1080
+     ],
+     "16:9": [
+      1920,
+      1080
+     ],
+     "line": 20
+    },
+    "_FFMPEG_TIMEOUT": {
+     "value": 600.0,
+     "line": 25
+    },
+    "_SNAP_MAX_SHIFT_S": {
+     "value": 1.5,
+     "line": 43
+    },
+    "_VSTART_MAX_SHIFT_S": {
+     "value": 1.5,
+     "line": 95
+    },
+    "_VSTART_CANDIDATES": {
+     "value": 5,
+     "line": 96
+    },
+    "_VSTART_PROBE_TIMEOUT": {
+     "value": 30.0,
+     "line": 97
+    },
+    "_VSTART_MIN_MOVE_S": {
+     "value": 0.05,
+     "line": 98
+    },
+    "_VSTART_V": {
+     "value": 2,
+     "line": 101
+    },
+    "_SCENE_NEAR_S": {
+     "value": 0.3,
+     "line": 102
+    },
+    "_FACE_FRAC_TALK": {
+     "value": 0.42,
+     "line": 212
+    },
+    "_FACE_FRAC_MUSIC": {
+     "value": 0.26,
+     "line": 214
+    },
+    "_EYELINE_FRAC": {
+     "value": 0.4,
+     "line": 215
+    },
+    "_ZOOM_MAX": {
+     "value": 1.6,
+     "line": 216
+    },
+    "_ZOOM_MAX_TRACK": {
+     "value": 1.7,
+     "line": 217
+    },
+    "_GENTLE_MIN_FACE_FRAC": {
+     "value": 0.12,
+     "line": 219
+    },
+    "_GENTLE_ZOOM_MAX": {
+     "value": 1.15,
+     "line": 220
+    },
+    "_SMALL_FACE_FRAC": {
+     "value": 0.18,
+     "line": 488
+    },
+    "_ZOOM_MAX_FAR": {
+     "value": 1.25,
+     "line": 490
+    },
+    "_REFRAME_GEOM_V": {
+     "value": 4,
+     "line": 616
+    }
+   },
+   "framing_py": {
+    "_SIDECAR_V": {
+     "value": 5,
+     "line": 17
+    },
+    "_KF_COUNT": {
+     "value": 5,
+     "line": 18
+    },
+    "_KF_WIDTH": {
+     "value": 960,
+     "line": 19
+    },
+    "_MIN_CONF": {
+     "value": 0.34,
+     "line": 21
+    },
+    "_SCORE_THRESH": {
+     "value": 0.6,
+     "line": 22
+    },
+    "_MODEL": {
+     "value": "yunet_2023mar.onnx",
+     "line": 23
+    },
+    "_DETECT_V": {
+     "value": 2,
+     "line": 124
+    },
+    "_DETECT_FPS": {
+     "value": 4.0,
+     "line": 125
+    },
+    "_PHANTOM_QUALITY_RATIO": {
+     "value": 0.3,
+     "line": 256
+    },
+    "_ASD_FPS": {
+     "value": 9.0,
+     "line": 293
+    },
+    "_ASD_HOLD_S": {
+     "value": 0.35,
+     "line": 295
+    },
+    "_ASD_RATIO": {
+     "value": 1.2,
+     "line": 297
+    },
+    "_ASD_SAME_TOL": {
+     "value": 0.08,
+     "line": 298
+    },
+    "_ASD_SIDE_SPLIT": {
+     "value": 0.5,
+     "line": 299
+    },
+    "_ASD_MIN_SEG_S": {
+     "value": 1.5,
+     "line": 300
+    }
+   },
+   "correction": "CYCLE-1 wrongly reported _FACE_FRAC_*/_EYELINE_FRAC/_ZOOM_*/_TARGETS/_REFRAME_GEOM_V as UNKNOWN. They live in clip.py, not framing.py. Now resolved."
+  },
+  {
+   "id": "CFG-RETRY-001",
+   "type": "configuration",
+   "name": "publish retry/backoff bounds",
+   "evidence": [
+    {
+     "file": "src/fanops/post/run.py",
+     "line": 67
+    }
+   ],
+   "_PUBLISH_TRANSIENT_MAX": 3,
+   "_DAEMON_TRANSIENT_MAX": {
+    "value": "UNKNOWN - const referenced at run.py:336/:405, value not read",
+    "unknown_ref": "UNK-011"
+   },
+   "publish_backoff": {
+    "expr": "_sleep(delay + random.uniform(0, delay*0.5)); delay = min(delay*2, 8.0)",
+    "line": 323,
+    "cap_s": 8.0
+   },
+   "postiz_429_backoff": {
+    "expr": "time.sleep(delay + random.uniform(0, delay)); delay *= 2",
+    "lines": [
+     395,
+     427
+    ],
+    "cap": "NONE FOUND"
+   },
+   "transient_predicate": "network/timeout/5xx -> retry or park needs_reconcile; permanent 4xx/auth/validation -> terminal failed. AuthError is NEVER transient (run.py:72)"
+  },
+  {
+   "id": "CFG-SECRET-001",
+   "type": "configuration",
+   "name": "operator secrets (keyring-first)",
+   "evidence": [
+    {
+     "file": "src/fanops/secret_provider.py",
+     "line": 11
+    }
+   ],
+   "keys": [
+    "POSTIZ_API_KEY",
+    "ZERNIO_API_KEY",
+    "META_GRAPH_TOKEN"
+   ],
+   "dynamic_family": "META_GRAPH_TOKEN__<SLUG>",
+   "dynamic_family_line": 12,
+   "keyring_service": "fanops",
+   "read_ladder": "keyring -> os.environ (.env) -> None",
+   "read_fail_mode": "FAIL-OPEN (silent on missing extra; warn-ONCE on broken backend)",
+   "write_target": "keyring ONLY (never plaintext .env)",
+   "write_fail_mode": "FAIL-CLOSED - set_secret writes then READS BACK and raises OSError if it does not round-trip (secret_provider.py:72-90)",
+   "write_rationale": "golive._dual_write SCRUBS the plaintext .env fallback on success; an accepted-but-dropped write would erase the secret from BOTH stores",
+   "sole_writer": "studio/golive._dual_write (golive.py:46)"
+  },
+  {
+   "id": "CFG-LIVE-001",
+   "type": "configuration",
+   "name": "FANOPS_LIVE sole setter",
+   "evidence": [
+    {
+     "file": "src/fanops/studio/golive.py",
+     "line": 14
+    }
+   ],
+   "rule": "go_live is the ONLY setter of FANOPS_LIVE=1",
+   "gates": [
+    "accounts-valid",
+    ">=1 live-ready channel",
+    "past-due-backlog gate",
+    "explicit confirm"
+   ],
+   "never_writes": "FANOPS_POSTER",
+   "dual_gate": [
+    "_post_provider returns dryrun whenever not cfg.is_live (post/run.py:120)",
+    "get_poster RAISES rather than build a DryRunPoster when live (post/__init__.py:19)"
+   ],
+   "dual_gate_confidence": "cited from src/fanops/CLAUDE.md; post/__init__.py:19 NOT independently verified",
+   "unknown_ref": "UNK-006"
+  },
+  {
+   "id": "CFG-PREC-001",
+   "type": "configuration",
+   "name": "configuration precedence",
+   "evidence": [
+    {
+     "file": "src/fanops/config.py",
+     "line": 2
+    }
+   ],
+   "layers_in_order": [
+    "Config constructor arg (root only)",
+    "OS keyring (the 3 secret keys only)",
+    "os.environ",
+    ".env file (loaded ONCE at cli.main, NOT in Config.__init__ - it populates os.environ)",
+    "in-code property defaults",
+    "00_control/tuning.json (SEPARATE narrow channel: HOLD-gate regexes + lift weights only)"
+   ],
+   "settings_vs_config": "UNPROVEN. Settings (settings.py:141, a pydantic BaseSettings) and Config (direct os.getenv) BOTH read the same env keys. Which wins where, and whether they can disagree, is not established.",
+   "unknown_ref": "UNK-007"
+  }
+ ],
+ "environment_variables": {
+  "note": "63 FANOPS_* + 12 external keys are read by src/. Defaults cited from the read site. FANOPS_CFG is EXCLUDED - it is a Flask app.config key (studio/app.py:274), NOT an env var.",
+  "default_on_only_offwords_disable": [
+   {
+    "id": "CFG-001",
+    "name": "FANOPS_HASHTAG_TRENDS",
+    "file": "src/fanops/config.py",
+    "line": 431
+   },
+   {
+    "id": "CFG-002",
+    "name": "FANOPS_CORPUS_AUTO",
+    "file": "src/fanops/config.py",
+    "line": 437
+   },
+   {
+    "id": "CFG-003",
+    "name": "FANOPS_VISUAL_START",
+    "file": "src/fanops/config.py",
+    "line": 588
+   },
+   {
+    "id": "CFG-005",
+    "name": "FANOPS_QUEUE_GATE",
+    "file": "src/fanops/config.py",
+    "line": 595
+   },
+   {
+    "id": "CFG-006",
+    "name": "FANOPS_SMART_FRAMING",
+    "file": "src/fanops/config.py",
+    "line": 611,
+    "note": "FAIL-CLOSED when [framing] absent"
+   },
+   {
+    "id": "CFG-007",
+    "name": "FANOPS_ISOLATE_VOCALS",
+    "file": "src/fanops/config.py",
+    "line": 665
+   },
+   {
+    "id": "CFG-008",
+    "name": "FANOPS_BURN_SUBS",
+    "file": "src/fanops/config.py",
+    "line": 675
+   },
+   {
+    "id": "CFG-009",
+    "name": "FANOPS_ACCOUNT_CASTING",
+    "file": "src/fanops/config.py",
+    "line": 704
+   },
+   {
+    "id": "CFG-010",
+    "name": "FANOPS_POSTIZ_AUTOSTART",
+    "file": "src/fanops/config.py",
+    "line": 1108
+   },
+   {
+    "id": "CFG-011",
+    "name": "FANOPS_AUTO_ADOPT",
+    "file": "src/fanops/daemon.py",
+    "line": 319,
+    "note": "default '1' via os.getenv(..., '1') != '0'"
+   }
+  ],
+  "default_off_only_onwords_enable": [
+   {
+    "id": "CFG-012",
+    "name": "FANOPS_REQUIRE_FULL_OBJECTIVE",
+    "file": "src/fanops/config.py",
+    "line": 455
+   },
+   {
+    "id": "CFG-013",
+    "name": "FANOPS_SHOW_EXTRAS",
+    "file": "src/fanops/config.py",
+    "line": 601
+   },
+   {
+    "id": "CFG-014",
+    "name": "FANOPS_AWARE_REFRAME",
+    "file": "src/fanops/config.py",
+    "line": 685
+   },
+   {
+    "id": "CFG-015",
+    "name": "FANOPS_HOOK_ROUTER",
+    "file": "src/fanops/config.py",
+    "line": 712
+   },
+   {
+    "id": "CFG-016",
+    "name": "FANOPS_IMPACT_CUT",
+    "file": "src/fanops/config.py",
+    "line": 721
+   },
+   {
+    "id": "CFG-017",
+    "name": "FANOPS_INTRO_TEASE",
+    "file": "src/fanops/config.py",
+    "line": 731
+   },
+   {
+    "id": "CFG-018",
+    "name": "FANOPS_VARIANT_LEARNING",
+    "file": "src/fanops/config.py",
+    "line": 742
+   },
+   {
+    "id": "CFG-019",
+    "name": "FANOPS_VARIANT_AMPLIFY",
+    "file": "src/fanops/config.py",
+    "line": 778,
+    "frozen_by": "CFG-GATE-001"
+   },
+   {
+    "id": "CFG-020",
+    "name": "FANOPS_VARIANT_UCB",
+    "file": "src/fanops/config.py",
+    "line": 828,
+    "frozen_by": null
+   },
+   {
+    "id": "CFG-021",
+    "name": "FANOPS_VARIANT_TRANSFER",
+    "file": "src/fanops/config.py",
+    "line": 855,
+    "frozen_by": "CFG-GATE-001"
+   },
+   {
+    "id": "CFG-022",
+    "name": "FANOPS_ADJUST_PER_SURFACE",
+    "file": "src/fanops/config.py",
+    "line": 886
+   },
+   {
+    "id": "CFG-023",
+    "name": "FANOPS_P4_DIM_BIAS",
+    "file": "src/fanops/config.py",
+    "line": 897,
+    "frozen_by": "CFG-GATE-001"
+   },
+   {
+    "id": "CFG-024",
+    "name": "FANOPS_TIMING_BIAS",
+    "file": "src/fanops/config.py",
+    "line": 907,
+    "frozen_by": "CFG-GATE-001"
+   },
+   {
+    "id": "CFG-025",
+    "name": "FANOPS_IG_RETENTION_PROOF",
+    "file": "src/fanops/config.py",
+    "line": 922
+   },
+   {
+    "id": "CFG-026",
+    "name": "FANOPS_MOMENT_HOOK_LEARNING",
+    "file": "src/fanops/config.py",
+    "line": 931
+   },
+   {
+    "id": "CFG-027",
+    "name": "FANOPS_REALISTIC_CADENCE",
+    "file": "src/fanops/config.py",
+    "line": 1001
+   },
+   {
+    "id": "CFG-028",
+    "name": "FANOPS_CONCURRENT_SOURCES",
+    "file": "src/fanops/config.py",
+    "line": 1081
+   }
+  ],
+  "valued": [
+   {
+    "id": "CFG-029",
+    "name": "FANOPS_ROOT",
+    "default": "cwd",
+    "file": "src/fanops/config.py",
+    "line": 145,
+    "scope": "shell-only BY DESIGN"
+   },
+   {
+    "id": "CFG-030",
+    "name": "FANOPS_POSTER",
+    "default": "dryrun",
+    "file": "src/fanops/config.py",
+    "line": 238,
+    "unknown_behavior": "dryrun + warn"
+   },
+   {
+    "id": "CFG-031",
+    "name": "FANOPS_LIVE",
+    "default": "derived from FANOPS_POSTER",
+    "file": "src/fanops/config.py",
+    "line": 301,
+    "unknown_behavior": "NOT live",
+    "sole_setter": "CFG-LIVE-001"
+   },
+   {
+    "id": "CFG-004",
+    "name": "FANOPS_RESPONDER",
+    "default": "manual",
+    "file": "src/fanops/config.py",
+    "line": 506,
+    "unknown_behavior": "manual + warn"
+   },
+   {
+    "id": "CFG-032",
+    "name": "FANOPS_LLM_TRANSPORT",
+    "default": "claude",
+    "file": "src/fanops/config.py",
+    "line": 135,
+    "valid": [
+     "claude",
+     "cursor"
+    ]
+   },
+   {
+    "id": "CFG-033",
+    "name": "FANOPS_LLM_MODEL",
+    "default": "per-gate (CFG-MODEL-001)",
+    "file": "src/fanops/config.py",
+    "line": 530
+   },
+   {
+    "id": "CFG-034",
+    "name": "FANOPS_ARTIST_NAME",
+    "default": "Moh Flow",
+    "file": "src/fanops/config.py",
+    "line": 543
+   },
+   {
+    "id": "CFG-035",
+    "name": "FANOPS_CLIP_PROFILE",
+    "default": "talk",
+    "file": "src/fanops/config.py",
+    "line": 552
+   },
+   {
+    "id": "CFG-036",
+    "name": "FANOPS_WHISPER_MODEL",
+    "default": "turbo",
+    "file": "src/fanops/config.py",
+    "line": 619
+   },
+   {
+    "id": "CFG-037",
+    "name": "FANOPS_ASR_MODEL",
+    "default": "medium",
+    "file": "src/fanops/config.py",
+    "line": 627
+   },
+   {
+    "id": "CFG-038",
+    "name": "FANOPS_ASR_LANGUAGE",
+    "default": "en,ar",
+    "file": "src/fanops/config.py",
+    "line": 654
+   },
+   {
+    "id": "CFG-039",
+    "name": "FANOPS_SUBTITLE_FONT",
+    "default": "Arial Unicode MS",
+    "file": "src/fanops/config.py",
+    "line": 693
+   },
+   {
+    "id": "CFG-040",
+    "name": "FANOPS_OPERATOR_TZ",
+    "default": "UTC",
+    "file": "src/fanops/config.py",
+    "line": 992,
+    "note": "fails CLOSED to UTC, never the server's silent local tz"
+   },
+   {
+    "id": "CFG-041",
+    "name": "FANOPS_CORPUS_TARGET",
+    "default": 12,
+    "file": "src/fanops/config.py",
+    "line": 444
+   },
+   {
+    "id": "CFG-042",
+    "name": "FANOPS_VARIANT_MIN_POSTS",
+    "default": 3,
+    "file": "src/fanops/config.py",
+    "line": 752
+   },
+   {
+    "id": "CFG-043",
+    "name": "FANOPS_VARIANT_MIN_GAP",
+    "default": 10.0,
+    "file": "src/fanops/config.py",
+    "line": 763
+   },
+   {
+    "id": "CFG-044",
+    "name": "FANOPS_VARIANT_AMPLIFY_MIN_POSTS",
+    "default": 8,
+    "file": "src/fanops/config.py",
+    "line": 787
+   },
+   {
+    "id": "CFG-045",
+    "name": "FANOPS_VARIANT_AMPLIFY_MIN_GAP",
+    "default": 25.0,
+    "file": "src/fanops/config.py",
+    "line": 797
+   },
+   {
+    "id": "CFG-046",
+    "name": "FANOPS_VARIANT_AMPLIFY_MIN_STREAK",
+    "default": 3,
+    "file": "src/fanops/config.py",
+    "line": 808
+   },
+   {
+    "id": "CFG-047",
+    "name": "FANOPS_VARIANT_UCB_C",
+    "default": "sqrt(2)",
+    "file": "src/fanops/config.py",
+    "line": 839,
+    "clamp": "negative -> default"
+   },
+   {
+    "id": "CFG-048",
+    "name": "FANOPS_VARIANT_TRANSFER_MIN_DONORS",
+    "default": 2,
+    "file": "src/fanops/config.py",
+    "line": 865
+   },
+   {
+    "id": "CFG-049",
+    "name": "FANOPS_VARIANT_TRANSFER_MAX_HOOKS",
+    "default": 2,
+    "file": "src/fanops/config.py",
+    "line": 875
+   },
+   {
+    "id": "CFG-050",
+    "name": "FANOPS_P4_MIN_REACH_GAP",
+    "default": 0.0,
+    "file": "src/fanops/config.py",
+    "line": 943,
+    "clamp": "negative -> default"
+   },
+   {
+    "id": "CFG-051",
+    "name": "FANOPS_GC_KEEP_DAYS",
+    "default": 30,
+    "file": "src/fanops/config.py",
+    "line": 955,
+    "clamp": ">=1"
+   },
+   {
+    "id": "CFG-052",
+    "name": "FANOPS_UPLOAD_MAX_MB",
+    "default": 2048,
+    "file": "src/fanops/config.py",
+    "line": 968,
+    "clamp": ">=1 MB"
+   },
+   {
+    "id": "CFG-053",
+    "name": "FANOPS_SOURCE_SHARD_MIN",
+    "default": 45,
+    "file": "src/fanops/config.py",
+    "line": 980,
+    "note": "0 = OFF"
+   },
+   {
+    "id": "CFG-054",
+    "name": "FANOPS_PUBLISH_LEAD_MINUTES",
+    "default": 0,
+    "file": "src/fanops/config.py",
+    "line": 1046,
+    "clamp": ">=0"
+   },
+   {
+    "id": "CFG-055",
+    "name": "FANOPS_ZERNIO_MAX_UPLOAD_MB",
+    "default": 4,
+    "file": "src/fanops/config.py",
+    "line": 1056
+   },
+   {
+    "id": "CFG-056",
+    "name": "FANOPS_POSTIZ_PUBLISH_PER_MIN",
+    "default": 4,
+    "file": "src/fanops/config.py",
+    "line": 1066,
+    "note": "0 disables the throttle"
+   },
+   {
+    "id": "CFG-057",
+    "name": "FANOPS_CONCURRENT_WORKERS",
+    "default": 4,
+    "file": "src/fanops/config.py",
+    "line": 1093,
+    "clamp": ">=1"
+   },
+   {
+    "id": "CFG-058",
+    "name": "FANOPS_MEDIA_PUBLIC_BASE",
+    "default": null,
+    "file": "src/fanops/config.py",
+    "line": 358
+   },
+   {
+    "id": "CFG-059",
+    "name": "FANOPS_POSTIZ_COMPOSE_DIR",
+    "default": null,
+    "file": "src/fanops/config.py",
+    "line": 1114
+   },
+   {
+    "id": "CFG-060",
+    "name": "FANOPS_DAEMON_INTERVAL",
+    "default": "written into the plist at install",
+    "file": "src/fanops/daemon.py",
+    "line": 151,
+    "read_back": 172
+   },
+   {
+    "id": "CFG-061",
+    "name": "FANOPS_POSTIZ_ONDEMAND",
+    "default": "~/postiz-selfhost/postiz-ondemand.sh",
+    "file": "src/fanops/daemon.py",
+    "line": 661
+   }
+  ],
+  "external_keys": [
+   {
+    "id": "CFG-070",
+    "name": "POSTIZ_URL",
+    "file": "src/fanops/config.py",
+    "line": 339
+   },
+   {
+    "id": "CFG-071",
+    "name": "POSTIZ_API_KEY",
+    "file": "src/fanops/config.py",
+    "line": 348,
+    "secret": true
+   },
+   {
+    "id": "CFG-072",
+    "name": "ZERNIO_API_URL",
+    "file": "src/fanops/config.py",
+    "line": 386
+   },
+   {
+    "id": "CFG-073",
+    "name": "ZERNIO_API_KEY",
+    "file": "src/fanops/config.py",
+    "line": 396,
+    "secret": true
+   },
+   {
+    "id": "CFG-074",
+    "name": "META_GRAPH_TOKEN",
+    "file": "src/fanops/config.py",
+    "line": 407,
+    "secret": true
+   },
+   {
+    "id": "CFG-075",
+    "name": "META_GRAPH_TOKEN__<SLUG>",
+    "file": "src/fanops/config.py",
+    "line": 1124,
+    "secret": true,
+    "dynamic": true
+   },
+   {
+    "id": "CFG-076",
+    "name": "META_GRAPH_URL",
+    "default": "https://graph.facebook.com/v21.0",
+    "file": "src/fanops/config.py",
+    "line": 420
+   },
+   {
+    "id": "CFG-077",
+    "name": "META_IG_USER_ID",
+    "file": "src/fanops/config.py",
+    "line": 413
+   },
+   {
+    "id": "CFG-078",
+    "name": "R2_ACCOUNT_ID",
+    "file": "src/fanops/config.py",
+    "line": 363
+   },
+   {
+    "id": "CFG-079",
+    "name": "R2_ACCESS_KEY_ID",
+    "file": "src/fanops/config.py",
+    "line": 367
+   },
+   {
+    "id": "CFG-080",
+    "name": "R2_SECRET_ACCESS_KEY",
+    "file": "src/fanops/config.py",
+    "line": 372
+   },
+   {
+    "id": "CFG-081",
+    "name": "R2_BUCKET",
+    "file": "src/fanops/config.py",
+    "line": 377
+   },
+   {
+    "id": "CFG-082",
+    "name": "XDG_CACHE_HOME",
+    "file": "src/fanops/config.py",
+    "line": 1120
+   },
+   {
+    "id": "CFG-083",
+    "name": "ANTHROPIC_API_KEY",
+    "file": "src/fanops/config.py",
+    "line": 224,
+    "status": "VESTIGIAL - config.py:217-225 states the responder rides the `claude login` session, not this key"
+   }
+  ],
+  "infra_only_not_read_by_src": [
+   {
+    "id": "CFG-090",
+    "name": "FANOPS_ALLOW_MAIN_PUSH",
+    "file": ".githooks/pre-push",
+    "line": 22,
+    "purpose": "human-only override to permit a direct push to main",
+    "classification": "infra"
+   },
+   {
+    "id": "CFG-091",
+    "name": "FANOPS_ORCHESTRATED",
+    "file": ".orchestration/SPEC.md",
+    "line": 0,
+    "purpose": "engages the orchestration gate (alongside the ACTIVE marker)",
+    "classification": "infra"
+   },
+   {
+    "id": "CFG-092",
+    "name": "FANOPS_LOCAL_TESTS",
+    "purpose": "operator-only override to run the suite from a human terminal",
+    "classification": "infra"
+   },
+   {
+    "id": "CFG-093",
+    "name": "FANOPS_REQUIRE_E2E",
+    "purpose": "CI: makes an integration SKIP a failure",
+    "classification": "infra"
+   },
+   {
+    "id": "CFG-094",
+    "name": "FANOPS_REQUIRE_STUDIO",
+    "classification": "infra"
+   },
+   {
+    "id": "CFG-095",
+    "name": "FANOPS_CHECK_ALLOW_NO_TESTS",
+    "classification": "infra"
+   },
+   {
+    "id": "CFG-096",
+    "name": "FANOPS_REDUCE_TXN_BUDGET_S",
+    "classification": "test_fixture"
+   }
+  ]
+ },
+ "taxonomy_changelog": [
+  {
+   "id": "TXC-001",
+   "change": "NEW PERMANENT CATEGORY: configuration_classification.reserved_surfaces",
+   "reason": "SHIM-007 (RenderState.{queued,published,analyzed,retired}) was filed under historical_compatibility_shims while its OWN verdict field read 'RESERVED SURFACE - not dead config, not a shim'. A category must follow the item's description, never its ID prefix. A reserved surface is a declared-but-unwired lifecycle: not dead, not a shim, not a fixture.",
+   "id_policy": "SHIM-007 RETAINS its permanent ID. Per meta.id_stability, IDs are never renumbered - only the category and an explicit `classification` field changed. Cycles 2-7 may continue to cite SHIM-007 unambiguously."
+  },
+  {
+   "id": "TXC-002",
+   "change": "RENAMED: dead_configuration -> configuration_classification",
+   "reason": "The parent key asserted DEADNESS over all its children, but only 1 of its 5 sub-buckets (confirmed_dead, 5 items) is actually dead. The other 13 of 18 items - phantoms, test fixtures, compat shims, reserved surfaces - are NOT dead. A machine consumer reading dead_configuration.* would have mis-typed 13 items. This is the same class of error as TXC-001, one level up.",
+   "breaking": true,
+   "consumers_at_time_of_change": "none (Cycle 1 closed the same day this file was created)"
+  },
+  {
+   "id": "TXC-003",
+   "change": "RENAMED: historical_compatibility_shims -> compatibility_shims; added per-item `direction` field",
+   "reason": "SHIM-005 (pydantic extra='ignore') is FORWARD-compat - an OLDER binary parsing a NEWER ledger. 'Historical' is false for it. It IS a compatibility shim, so it stays in the bucket; the adjective was the wrong part. `direction` (backward|forward) now carries the fact the category name was overloading. Exactly 1 of 6 is forward, which is why the misnomer went unnoticed."
+  }
+ ],
+ "configuration_classification": {
+  "note": "Item 5 of the Cycle-2 brief. Dead config, phantoms, test fixtures, compatibility shims, and reserved surfaces are FIVE DIFFERENT THINGS. Only `confirmed_dead` is dead. Parent key renamed from 'dead_configuration' (TXC-002) because it asserted deadness over 13 items that are alive.",
+  "counts": {
+   "confirmed_dead": 5,
+   "phantom_never_existed": 1,
+   "test_fixtures_not_product_config": 5,
+   "compatibility_shims": 6,
+   "reserved_surfaces": 1,
+   "total": 18
+  },
+  "confirmed_dead": [
+   {
+    "id": "DEAD-001",
+    "name": "FANOPS_CASTING_BIAS",
+    "evidence_absent_from": "src/fanops (0 files)",
+    "referenced_in": [
+     "tests/"
+    ],
+    "reason": "the P11 LLM-casting stage (moment_casting, durable AccountSelection, casting_bias) was REMOVED. Ledger migration v11 (_migrate_v10_drop_selections, ledger.py:229) is the teardown's on-disk half.",
+    "verdict": "DEAD - a removed feature's flag, still named in tests"
+   },
+   {
+    "id": "DEAD-002",
+    "name": "FANOPS_CREATIVE_VARIATION",
+    "evidence_absent_from": "src/fanops (0 files)",
+    "referenced_in": [
+     "tests/"
+    ],
+    "reason": "the per-account render FORK (variant_hook, per-handle hook maps) was DELETED; one owner-moment hook now burns at crosspost",
+    "verdict": "DEAD"
+   },
+   {
+    "id": "DEAD-003",
+    "name": "FANOPS_HOOK_EDITOR",
+    "evidence_absent_from": "src/fanops (0 files)",
+    "referenced_in": [
+     "tests/"
+    ],
+    "reason": "the hook editor/critic/taxonomy was DELETED; is_weak_hook is the sole gate",
+    "verdict": "DEAD"
+   },
+   {
+    "id": "DEAD-004",
+    "name": "FANOPS_HOOK_JUDGE",
+    "evidence_absent_from": "src/fanops (0 files)",
+    "referenced_in": [
+     "tests/"
+    ],
+    "reason": "same teardown as DEAD-003",
+    "verdict": "DEAD"
+   },
+   {
+    "id": "DEAD-005",
+    "name": "00_control/ledger.lock",
+    "evidence": [
+     {
+      "file": "src/fanops/config.py",
+      "line": 159
+     }
+    ],
+    "reason": "declared and labelled VESTIGIAL in code; accounts/personas use their own flocks",
+    "verdict": "DEAD - a declared path with no live consumer"
+   }
+  ],
+  "phantom_never_existed": [
+   {
+    "id": "PHANTOM-001",
+    "name": "FANOPS_SKIP_PREPUSH",
+    "verdict": "NOT A CONFIG VAR AT ALL",
+    "evidence": [
+     {
+      "file": ".githooks/pre-push",
+      "line": 8,
+      "text": "There is deliberately NO FANOPS_SKIP_PREPUSH / test-skip bypass"
+     },
+     {
+      "file": "tests/test_check_scripts.py",
+      "line": 239,
+      "text": "assert 'FANOPS_SKIP_PREPUSH' not in code"
+     }
+    ],
+    "reason": "it exists ONLY in prose asserting its non-existence, plus a test PROVING its absence. Cycle 1 wrongly bucketed it as a 'test/CI-only env var', implying it was a real knob.",
+    "correction_of": "cycle-1 \u00a71.15"
+   }
+  ],
+  "test_fixtures_not_product_config": [
+   {
+    "id": "FIXTURE-001",
+    "name": "FANOPS_REDUCE_TXN_BUDGET_S",
+    "purpose": "test-side transaction budget shim"
+   },
+   {
+    "id": "FIXTURE-002",
+    "name": "FANOPS_REQUIRE_E2E",
+    "purpose": "CI gate: turns an integration SKIP into a FAIL"
+   },
+   {
+    "id": "FIXTURE-003",
+    "name": "FANOPS_REQUIRE_STUDIO",
+    "purpose": "CI gate"
+   },
+   {
+    "id": "FIXTURE-004",
+    "name": "FANOPS_CHECK_ALLOW_NO_TESTS",
+    "purpose": "scoped-check escape"
+   },
+   {
+    "id": "FIXTURE-005",
+    "name": "FANOPS_LOCAL_TESTS",
+    "purpose": "operator-only local-suite override"
+   }
+  ],
+  "compatibility_shims": [
+   {
+    "id": "SHIM-001",
+    "classification": "compatibility_shim",
+    "direction": "backward",
+    "name": "FANOPS_POSTER (the legacy global poster bridge)",
+    "evidence": [
+     {
+      "file": "src/fanops/config.py",
+      "line": 228
+     }
+    ],
+    "status": "LIVE BUT LEGACY",
+    "reason": "per-channel routing in accounts.json is the truth (Accounts.effective_provider); FANOPS_POSTER only narrows the back-compat fallback for a provider-less channel. go_live NEVER writes it.",
+    "verdict": "COMPAT SHIM - deliberately retained, not dead"
+   },
+   {
+    "id": "SHIM-002",
+    "classification": "compatibility_shim",
+    "direction": "backward",
+    "name": "ANTHROPIC_API_KEY",
+    "evidence": [
+     {
+      "file": "src/fanops/config.py",
+      "line": 224
+     }
+    ],
+    "status": "VESTIGIAL BUT READ",
+    "reason": "the responder uses the operator's `claude login` session. Kept harmless for a third-party/Bedrock setup that exports it.",
+    "verdict": "COMPAT SHIM"
+   },
+   {
+    "id": "SHIM-003",
+    "classification": "compatibility_shim",
+    "direction": "backward",
+    "name": "00_control/ledger.json (legacy JSON ledger)",
+    "evidence": [
+     {
+      "file": "src/fanops/config.py",
+      "line": 158
+     },
+     {
+      "file": "src/fanops/ledger_bridge.py",
+      "line": 44
+     }
+    ],
+    "status": "BREAK-GLASS IMPORT ONLY",
+    "verdict": "COMPAT SHIM"
+   },
+   {
+    "id": "SHIM-004",
+    "classification": "compatibility_shim",
+    "direction": "backward",
+    "name": "HookSource.per_account",
+    "evidence": [
+     {
+      "file": "src/fanops/models.py",
+      "line": 397
+     }
+    ],
+    "status": "legacy provenance label retained for OLD Render rows (pre-P9 per-handle map)",
+    "verdict": "COMPAT SHIM - enum member kept for deserialization"
+   },
+   {
+    "id": "SHIM-005",
+    "classification": "compatibility_shim",
+    "direction": "forward",
+    "direction_note": "THE reason TXC-003 renamed this category: an OLDER binary parsing a NEWER ledger is not 'historical' compat. Exactly 1 of 6 shims is forward, which is why the misnomer survived the first write.",
+    "name": "pydantic extra='ignore' on every ledger model",
+    "evidence": [
+     {
+      "file": "src/fanops/models.py",
+      "line": 172
+     }
+    ],
+    "status": "LOAD-BEARING FORWARD-COMPAT",
+    "reason": "an OLDER binary loading a ledger written by a NEWER schema must parse it, dropping unknown keys, never crash. Switching any ledger model to extra='forbid' would turn a forward-rolled ledger into a hard ControlFileError.",
+    "verdict": "COMPAT SHIM - do not remove"
+   },
+   {
+    "id": "SHIM-006",
+    "classification": "compatibility_shim",
+    "direction": "backward",
+    "name": "legacy StartInterval plists",
+    "evidence": [
+     {
+      "file": "src/fanops/daemon.py",
+      "line": 173
+     }
+    ],
+    "status": "still round-trip; current installs use KeepAlive + env-carried interval",
+    "verdict": "COMPAT SHIM"
+   }
+  ],
+  "reserved_surfaces": [
+   {
+    "id": "SHIM-007",
+    "classification": "reserved_surface",
+    "id_note": "ID RETAINED (TXC-001). The 'SHIM-' prefix is now a historical artifact of this item's original mis-filing, NOT a claim about its type. Per meta.id_stability, IDs are permanent and are never renumbered when a classification is corrected. Cite SHIM-007 with classification='reserved_surface'.",
+    "name": "RenderState.{queued,published,analyzed,retired}",
+    "evidence": [
+     {
+      "file": "src/fanops/models.py",
+      "line": 92
+     },
+     {
+      "file": "src/fanops/models.py",
+      "line": 420
+     },
+     {
+      "file": "src/fanops/studio/views_results.py",
+      "line": 112
+     }
+    ],
+    "status": "DECLARED, NOT DRIVEN",
+    "definition": "A lifecycle that exists in the type system with no code path that advances it. Distinct from dead config (which a removed feature left behind), from a compat shim (which serves an older or newer peer), and from a test fixture (which serves CI).",
+    "reason": "No code writes any RenderState value other than the birth default 'rendered' - verified exhaustively across deserialization, serialization, migrations, the ledger API, Studio actions, reconciliation, and publishing. See FIND-001.",
+    "why_the_members_are_kept": "views_results._SHIPPABLE_RENDER (views_results.py:112) reads the enum BY NAME. The members cannot be dropped without changing that reader.",
+    "live_consequence": "Because a Render is always 'rendered', the _SHIPPABLE_RENDER guard (rendered|queued|published|analyzed) is ALWAYS satisfied and is therefore a no-op. Only 'retired' would gate it, and nothing sets 'retired'.",
+    "finding_ref": "FIND-001",
+    "state_ref": "STA-004",
+    "not_dead_because": "a driver could be wired without changing the type; no feature was removed that used to drive it",
+    "not_a_shim_because": "it serves no older or newer peer, no legacy on-disk shape, and no external contract"
+   }
+  ]
+ },
+ "findings": [
+  {
+   "id": "FIND-001",
+   "title": "RenderState has no driver - CONFIRMED across all five surfaces, with two refinements",
+   "severity": "informational",
+   "claim_under_test": "Cycle 1 asserted 'RenderState has no driver' on the strength of a code COMMENT (models.py:93-101). Cycle 2 was asked to verify it independently.",
+   "verdict": "CONFIRMED",
+   "method": "exhaustive grep for RenderState.* references, Render( construction sites, and '.state =' assignments on render variables across all 127 modules, then targeted reads of each surface.",
+   "surfaces_checked": {
+    "deserialization": {
+     "result": "state IS parsed from the stored row",
+     "evidence": [
+      {
+       "file": "src/fanops/ledger.py",
+       "line": 458
+      },
+      {
+       "file": "src/fanops/ledger_bridge.py",
+       "line": 44
+      }
+     ],
+     "detail": "Render(**v) - so a persisted non-'rendered' state WOULD round-trip back into memory"
+    },
+    "serialization": {
+     "result": "state IS persisted",
+     "evidence": [
+      {
+       "file": "src/fanops/ledger.py",
+       "line": 501
+      }
+     ],
+     "detail": "v.model_dump()"
+    },
+    "migrations": {
+     "result": "NO migration touches Render.state",
+     "evidence": [
+      {
+       "file": "src/fanops/ledger.py",
+       "line": 224
+      }
+     ],
+     "detail": "v6 is a pure additive injection: {**raw, 'renders': raw.get('renders', {})}"
+    },
+    "ledger_api": {
+     "result": "NO state setter exists",
+     "evidence": [
+      {
+       "file": "src/fanops/ledger.py",
+       "line": 560
+      },
+      {
+       "file": "src/fanops/ledger.py",
+       "line": 561
+      }
+     ],
+     "detail": "add_render is setdefault (first-write-wins); get_render is a read. A renders_of_account helper was REMOVED for having zero callers (ledger.py:620)."
+    },
+    "studio_actions": {
+     "result": "READ-ONLY",
+     "evidence": [
+      {
+       "file": "src/fanops/studio/app.py",
+       "line": 68
+      },
+      {
+       "file": "src/fanops/studio/preview_media.py",
+       "line": 13
+      },
+      {
+       "file": "src/fanops/studio/views_review.py",
+       "line": 220
+      },
+      {
+       "file": "src/fanops/studio/views_results.py",
+       "line": 121
+      }
+     ],
+     "detail": "every site is led.renders.get(...)"
+    },
+    "reconciliation": {
+     "result": "ZERO render references in reconcile.py",
+     "evidence": [
+      {
+       "file": "src/fanops/reconcile.py",
+       "line": 0,
+       "note": "grep for 'render' returns nothing"
+      }
+     ]
+    },
+    "publishing": {
+     "result": "the renders MAP is mutated - but state is NOT",
+     "evidence": [
+      {
+       "file": "src/fanops/post/compress.py",
+       "line": 112
+      },
+      {
+       "file": "src/fanops/post/compress.py",
+       "line": 130
+      }
+     ],
+     "detail": "led.renders[post.render_id] = r.model_copy(update={'path': str(shrunk)}) - a path rewrite after compression. model_copy carries every other field through unchanged, INCLUDING state."
+    }
+   },
+   "refinements": [
+    "REFINEMENT 1 (missed by Cycle 1): the renders map IS written on the publish path (post/compress.py:112 and :130), so 'Renders are never mutated' would be FALSE. Only Render.state is never mutated.",
+    "REFINEMENT 2: the invariant is 'no CODE writes RenderState', NOT 'the field cannot hold another value'. Deserialization (ledger.py:458) faithfully restores whatever state is on disk, so a hand-edited or externally-written ledger row could carry a non-'rendered' state and it would load and persist."
+   ],
+   "consequence": "Only two RenderState references exist outside the model default: the birth default (models.py:420) and the _SHIPPABLE_RENDER read (views_results.py:112). Since a Render is always 'rendered' in practice, the _SHIPPABLE_RENDER guard (rendered|queued|published|analyzed) is ALWAYS satisfied and is therefore a no-op. Only 'retired' would gate, and nothing sets it.",
+   "status": "SETTLED - safe to treat as ground truth for Cycles 3-7"
+  },
+  {
+   "id": "FIND-002",
+   "title": "The 'single writer of queued' invariant in src/fanops/CLAUDE.md is FALSE as written; the safety property it protects nevertheless HOLDS",
+   "severity": "documentation_drift",
+   "claim_under_test": "src/fanops/CLAUDE.md: 'do NOT set a post's state to queued anywhere except Ledger.approve_post (ledger.py:503, promotes at :519)'",
+   "verdict": "CLAIM FALSE, SAFETY PROPERTY INTACT",
+   "evidence": {
+    "actual_queued_writers": 7,
+    "sites": [
+     {
+      "file": "src/fanops/ledger.py",
+      "line": 575,
+      "role": "approve_post - THE approval promoter",
+      "guard": "returns unless state is awaiting_approval (line 579)"
+     },
+     {
+      "file": "src/fanops/studio/actions.py",
+      "line": 1000,
+      "role": "requeue",
+      "guard": "state in (failed, error)"
+     },
+     {
+      "file": "src/fanops/studio/actions.py",
+      "line": 1031,
+      "role": "requeue + shrink",
+      "guard": "state in (failed, error)"
+     },
+     {
+      "file": "src/fanops/studio/actions.py",
+      "line": 1062,
+      "role": "requeue transient",
+      "guard": "state in (failed, error) AND is_transient_failure_reason"
+     },
+     {
+      "file": "src/fanops/studio/actions.py",
+      "line": 1103,
+      "role": "requeue oversize",
+      "guard": "classify_failure(p) == 'oversize'"
+     },
+     {
+      "file": "src/fanops/post/run.py",
+      "line": 238,
+      "role": "_unclaim_no_integration",
+      "guard": "state is submitting"
+     },
+     {
+      "file": "src/fanops/post/run.py",
+      "line": 422,
+      "role": "_requeue_transient_failed_for_daemon",
+      "guard": "transient AND n <= _DAEMON_TRANSIENT_MAX"
+     }
+    ]
+   },
+   "why_safety_holds": "EVERY non-approve_post writer of 'queued' is guarded on a SOURCE state of failed, error, or submitting. None of them can move a post out of awaiting_approval. So 'an unapproved post is structurally unpublishable' survives intact - it is approve_post's guard at ledger.py:579 that enforces it, not a single-writer property.",
+   "secondary": "CLAUDE.md's line references are STALE: it cites ledger.py:503/:519 for approve_post; the real location is ledger.py:575 (guard at :579). ledger.py:503-519 is now _save_unlocked/save.",
+   "also_found": [
+    {
+     "fn": "reject_post",
+     "file": "src/fanops/ledger.py",
+     "line": 592,
+     "guard": "awaiting_approval only (line 594)"
+    },
+    {
+     "fn": "unapprove_post",
+     "file": "src/fanops/ledger.py",
+     "line": 596,
+     "guard": "queued only (line 598)"
+    }
+   ],
+   "status": "SETTLED"
+  },
+  {
+   "id": "FIND-003",
+   "title": "studio_audit.log ownership RESOLVED - it is the one control file whose path is built inline rather than declared in Config",
+   "severity": "informational",
+   "verdict": "OWNERSHIP RESOLVED",
+   "owner": "src/fanops/audit.py",
+   "path": "00_control/studio_audit.log",
+   "writer": {
+    "fn": "write_audit",
+    "file": "src/fanops/audit.py",
+    "line": 19,
+    "path_built_at": 39,
+    "mode": "append, one JSON line per state-changing action",
+    "perms": "os.chmod(path, 0o600) at audit.py:43"
+   },
+   "reader": {
+    "fn": "read_audit_tail",
+    "file": "src/fanops/audit.py",
+    "line": 50,
+    "path_built_at": 53
+   },
+   "cli": {
+    "verb": "fanops audit tail",
+    "file": "src/fanops/cli.py",
+    "line": 732
+   },
+   "structural_note": "Every other control file is declared as a Config attribute (config.py:157-177). This one is constructed inline at BOTH the write and read site (`cfg.control / \"studio_audit.log\"`), duplicating the literal. Recorded as a fact; no recommendation per the fact-only brief.",
+   "status": "SETTLED"
+  },
+  {
+   "id": "FIND-004",
+   "title": "A SECOND undeclared control file: the run lease .run.lock",
+   "severity": "informational",
+   "verdict": "NEW - not present in Cycle 1",
+   "path": "00_control/.run.lock",
+   "evidence": [
+    {
+     "file": "src/fanops/pipeline_run.py",
+     "line": 15
+    }
+   ],
+   "detail": "_LOCK_NAME = '.run.lock'. Like studio_audit.log (FIND-003), it lives under 00_control but is NOT declared in Config.__init__. fcntl.flock LOCK_NB is the authority; the lockfile BODY (pid + started ISO) is advisory for status/diagnostics only. Kernel releases on process death, so kill -9 self-heals.",
+   "guards": "the respond->write_request->advance converge loop (mutual exclusion per workspace)",
+   "status": "SETTLED"
+  },
+  {
+   "id": "FIND-005",
+   "title": "Cycle-1 error: the framing tunables are in clip.py, not framing.py",
+   "severity": "self_correction",
+   "verdict": "CYCLE-1 WAS WRONG",
+   "detail": "Cycle 1 marked _FACE_FRAC_TALK, _FACE_FRAC_MUSIC, _EYELINE_FRAC, _ZOOM_MAX, _ZOOM_MAX_TRACK, _ZOOM_MAX_FAR, _SMALL_FACE_FRAC, _TARGETS and _REFRAME_GEOM_V as UNKNOWN because it grepped framing.py. They are all in clip.py. _REFRAME_GEOM_V = 4 (clip.py:616), matching the CLAUDE.md claim.",
+   "all_values": "see CFG-FRAME-001",
+   "status": "RESOLVED"
+  },
+  {
+   "id": "FIND-006",
+   "title": "Cycle-1 error: FANOPS_SKIP_PREPUSH is a phantom, not a test-only env var",
+   "severity": "self_correction",
+   "verdict": "CYCLE-1 WAS WRONG",
+   "detail": "Cycle 1 listed it under 'test/CI-only env vars', implying a real knob. It is the opposite: the pre-push hook explicitly documents that NO such bypass exists (.githooks/pre-push:8) and a test ASSERTS its absence (tests/test_check_scripts.py:239).",
+   "see": "PHANTOM-001",
+   "status": "RESOLVED"
+  },
+  {
+   "id": "FIND-007",
+   "title": "Search blind-spot: constants expressed as keyword-argument defaults are invisible to constant-shaped greps",
+   "severity": "method",
+   "detail": "The hashtag cap (max_tags: int = 4, hashtags.py:232) was nearly recorded as unproven because greps for MAX_HASHTAGS / [:4] / _CAP returned nothing. The absence was an artifact of the search pattern, not of the code. Any future cycle enumerating 'tunable constants' must also scan default parameter values, not just module-level assignments.",
+   "status": "RECORDED - applies to Cycles 3-7"
+  }
+ ],
+ "unknowns": [
+  {
+   "id": "UNK-001",
+   "type": "identity",
+   "subject": "Persona identity field + minting function",
+   "evidence_so_far": [
+    {
+     "file": "src/fanops/personas.py",
+     "line": 37
+    }
+   ],
+   "blocked_on": "personas.py not read",
+   "priority": "high - Persona is a first-class entity and Account.persona_id joins to it"
+  },
+  {
+   "id": "UNK-002",
+   "type": "queue",
+   "subject": "intro_match gate-key -> source resolution",
+   "detail": "gate_keys.gate_source_id (gate_keys.py:9-13) branches on 'moments'/'moment_hooks' and falls through to a CLIP-keyed lookup for everything else. An intro_match gate exists (models.py:653-667, config.py:725-732) but has no branch. Whether it is clip-keyed by design or is an unhandled kind is UNPROVEN.",
+   "priority": "high - a mis-resolved gate key silently orphans a gate"
+  },
+  {
+   "id": "UNK-003",
+   "type": "external_service",
+   "subject": "TikTok oEmbed caller",
+   "detail": "the URL literal https://www.tiktok.com/oembed exists in src/ but the calling module and purpose were not located",
+   "priority": "low"
+  },
+  {
+   "id": "UNK-004",
+   "type": "artifact",
+   "subject": "00_control/context.md reader/writer",
+   "evidence_so_far": [
+    {
+     "file": "src/fanops/config.py",
+     "line": 165
+    }
+   ],
+   "detail": "declared in Config; no consumer located",
+   "priority": "medium"
+  },
+  {
+   "id": "UNK-005",
+   "type": "configuration",
+   "subject": "VETTED frozen-floor cardinality",
+   "detail": "VETTED = set(niche_floor('rap')) | set(niche_floor('gossip')) | set(_ARABIC) | ... (hashtags.py:52). The pool GENRES are known (rap, gossip) and _ARABIC has 3 members, but the total count was not computed.",
+   "priority": "low"
+  },
+  {
+   "id": "UNK-006",
+   "type": "configuration",
+   "subject": "post/__init__.py:19 get_poster live-guard",
+   "detail": "src/fanops/CLAUDE.md claims get_poster RAISES rather than build a DryRunPoster when live. This is one half of the two-gate dryrun/live invariant. NOT independently verified against code this cycle - post/__init__.py is uninspected.",
+   "priority": "HIGH - this is a publish-safety invariant"
+  },
+  {
+   "id": "UNK-007",
+   "type": "configuration",
+   "subject": "Settings vs Config precedence",
+   "detail": "settings.py:141 (pydantic BaseSettings) and config.py (direct os.getenv) BOTH read the same env keys. settings.py carries its own validators (_validate_poster, _validate_responder, _strict_validate_*). Which layer wins at which callsite, and whether they can disagree, is UNPROVEN.",
+   "priority": "HIGH - two config readers that can disagree is a correctness hazard"
+  },
+  {
+   "id": "UNK-008",
+   "type": "entity",
+   "subject": "Clip.meta_captions key format",
+   "detail": "an untyped dict keyed by 'surface' (models.py:288). surface_key() yields '{account}|{platform}' (ids.py:23), but that the dict actually uses this shape was not proven at the WRITE site.",
+   "priority": "medium"
+  },
+  {
+   "id": "UNK-009",
+   "type": "fingerprint",
+   "subject": "variant_amplify._evidence_fingerprint inputs",
+   "evidence_so_far": [
+    {
+     "file": "src/fanops/variant_amplify.py",
+     "line": 49
+    }
+   ],
+   "priority": "low"
+  },
+  {
+   "id": "UNK-010",
+   "type": "command",
+   "subject": "Studio per-route handler/action/view ownership",
+   "detail": "149 route decorators across 8 files were enumerated by path, but no route was traced to its handler, its action, or its ledger effect.",
+   "priority": "HIGH - the Studio is the operator's primary mutation surface"
+  },
+  {
+   "id": "UNK-011",
+   "type": "configuration",
+   "subject": "_DAEMON_TRANSIENT_MAX value",
+   "detail": "referenced at post/run.py:336 and :405 (bounds the daemon requeue loop) but the literal was not read",
+   "priority": "medium"
+  }
+ ],
+ "operational_findings": {
+  "note": "Item 8 of the Cycle-2 brief: these are facts about the WORKING TREE / operator environment, NOT about the architecture. They must not be read as codebase properties.",
+  "items": [
+   {
+    "id": "OPS-001",
+    "title": "A stale orchestration wave marker is engaged",
+    "class": "operational",
+    "not_an_architectural_fact": true,
+    "evidence": [
+     {
+      "file": ".orchestration/state/ACTIVE",
+      "content": "engaged"
+     },
+     {
+      "file": ".orchestration/SPEC.md",
+      "line": 0
+     }
+    ],
+    "effect": "The gate hook denies every subagent spawn outside {fanops-worker, fanops-lander} and refuses any shell command naming .orchestration/state/, .cursor/hooks*, or .githooks/ - including read-only ls/cat.",
+    "consequence_for_this_work": "Cycles 1 and 2 were executed SINGLE-THREADED. No parallel subsystem tracing was possible.",
+    "disengage_path": "orchestrate.py done (measured, auto-disengages on a pristine sweep) or orchestrate.py stop (OPERATOR-ONLY, denied from inside a run)",
+    "owner": "operator",
+    "state_dir_mtime": "2026-07-13",
+    "observed": "2026-07-14"
+   },
+   {
+    "id": "OPS-002",
+    "title": "Untracked build/ directory and git worktrees present in the tree",
+    "class": "operational",
+    "not_an_architectural_fact": true,
+    "evidence": [
+     {
+      "path": "build/",
+      "note": "untracked, present at HEAD"
+     },
+     {
+      "path": ".claude/worktrees/upbeat-bassi-46a6ae/"
+     },
+     {
+      "path": ".claude/worktrees/relaxed-golick-df075e/"
+     }
+    ],
+    "effect": "The worktrees contain FULL repo copies. A naive repo-wide grep double-counts every hit (this was observed while resolving PHANTOM-001). Any future cycle must scope greps to src/, tests/, docs/ and exclude .claude/worktrees/.",
+    "owner": "operator"
+   }
+  ]
+ },
+ "cycle2": {
+  "cycle": 2,
+  "title": "Architecture, Mutation & Invariant Verification",
+  "generated": "2026-07-14",
+  "git_head": "fcffa73",
+  "note": "APPEND-ONLY. Cycle 1 sections stand except where corrections[] says otherwise. IDs are never renumbered.",
+  "documents": {
+   "STATE_MACHINE.md": "per-entity states/writers/guards/transitions/atomicity/idempotency/recoverability",
+   "MUTATION_MATRIX.md": "every mutable field + full concurrency audit",
+   "INVARIANT_AUDIT.md": "21 invariants: Verified/Refined/False/Unknown",
+   "COUPLINGS.md": "15 proven hidden couplings + all 149 Studio routes attributed"
+  },
+  "unknowns_resolved": [
+   {
+    "id": "UNK-006",
+    "verdict": "FALSE invariant",
+    "finding": "FIND-008",
+    "evidence": "src/fanops/post/__init__.py:19"
+   },
+   {
+    "id": "UNK-007",
+    "verdict": "no precedence exists; Settings never feeds Config",
+    "finding": "FIND-009",
+    "evidence": "src/fanops/config.py:144"
+   },
+   {
+    "id": "UNK-002",
+    "verdict": "gate structurally unanswerable (unfinished)",
+    "finding": "FIND-010",
+    "evidence": "src/fanops/responder.py:50"
+   },
+   {
+    "id": "UNK-010",
+    "verdict": "149/149 routes attributed; 0 authenticated",
+    "finding": "FIND-013",
+    "evidence": "src/fanops/studio/app.py"
+   },
+   {
+    "id": "UNK-001",
+    "verdict": "Persona has no state field and no minted id; key is the personas.json record key",
+    "evidence": "src/fanops/personas.py"
+   },
+   {
+    "id": "UNK-011",
+    "verdict": "_DAEMON_TRANSIENT_MAX = 3",
+    "evidence": "src/fanops/post/run.py:68"
+   }
+  ],
+  "unknowns_open": [
+   "UNK-003",
+   "UNK-004",
+   "UNK-005",
+   "UNK-008",
+   "UNK-009"
+  ],
+  "corrections": [
+   {
+    "id": "DEAD-005",
+    "was": "confirmed_dead",
+    "now": "live_lock_no_mutual_exclusion",
+    "why": "one live consumer: Ledger.restore_snapshot takes fcntl.flock on 00_control/ledger.lock while EVERY other ledger writer serializes on SQLite BEGIN IMMEDIATE. The two locks are mutually invisible; restore then os.replace()s the db file.",
+    "evidence": [
+     "src/fanops/ledger.py:551",
+     "src/fanops/ledger_sqlite.py:92",
+     "src/fanops/ledger_sqlite.py:151"
+    ],
+    "exposure": "nil today - restore_snapshot has no production caller",
+    "meta": "Cycle 1 classified this on the strength of a code comment (config.py:159 'vestigial'), violating its own method note #2."
+   },
+   {
+    "id": "SHIM-007",
+    "was": "reserved_surface (RenderState only)",
+    "now": "reserved_surface (class of 7 members across 4 enums)",
+    "members_added": [
+     "ClipState.published",
+     "ClipState.analyzed",
+     "PostState.error",
+     "PostState.retired",
+     "BatchState.closed",
+     "BatchState.error"
+    ],
+    "consequence": "ledger._LIVE_CLIP_STATES is a DEAD GUARD - clip_live is always False at ledger.py:665; cascade protection rests entirely on _PROTECTED_POST_STATES",
+    "finding": "FIND-011",
+    "evidence": [
+     "src/fanops/ledger.py:649",
+     "src/fanops/ledger.py:665"
+    ]
+   },
+   {
+    "id": "FIND-001",
+    "status": "re-verified unchanged",
+    "refinement": "the two Render writes on the publish path are now pinned: run.py:363 (media_url) and run.py:367 (path). Render.state remains unwritten."
+   }
+  ],
+  "findings": [
+   {
+    "id": "FIND-008",
+    "class": "doc_drift+latent_defect",
+    "summary": "get_poster live-guard raises only on the literal string 'dryrun'; an UNRECOGNIZED backend falls through to DryRunPoster on a LIVE system. Guard is case-insensitive, PROVIDERS lookup is case-sensitive.",
+    "evidence": [
+     "src/fanops/post/__init__.py:19",
+     "src/fanops/post/__init__.py:29",
+     "src/fanops/post/providers.py:56",
+     "src/fanops/accounts.py:91",
+     "src/fanops/accounts.py:414"
+    ],
+    "blast_radius": "post stranded in `submitting` (NOT a phantom published row - DryRunPoster sets no state post-M2); escalated to needs_reconcile at 72h then GAVE UP:"
+   },
+   {
+    "id": "FIND-009",
+    "class": "doc_drift",
+    "summary": "Settings is never constructed by Config. Settings.runtime_load has ZERO callers. Config reads os.getenv directly (74 calls, uncached). No runtime precedence conflict because there is no runtime handoff.",
+    "evidence": [
+     "src/fanops/config.py:144",
+     "src/fanops/settings.py:374",
+     "src/fanops/doctor.py:27",
+     "src/fanops/config_introspect.py:11",
+     "src/fanops/accounts.py:13"
+    ]
+   },
+   {
+    "id": "FIND-010",
+    "class": "unfinished",
+    "summary": "intro_match is live-wired (pipeline.py:242-244) but absent from responder._SCHEMA/_PROMPT AND gate_keys.gate_source_id - the responder can never answer it.",
+    "evidence": [
+     "src/fanops/pipeline.py:243",
+     "src/fanops/intro_match.py:108",
+     "src/fanops/responder.py:50",
+     "src/fanops/gate_keys.py:9"
+    ],
+    "default_state": "inert (FANOPS_INTRO_TEASE default OFF, config.py:731)"
+   },
+   {
+    "id": "FIND-011",
+    "class": "doc_drift+latent_poison_pill",
+    "summary": "R1 published-URL invariant enforced at CONSTRUCTION only. Proven vs pydantic 2.13.4: model_copy + setattr bypass it, the bad row serializes, and the NEXT Ledger.load raises -> ControlFileError -> whole ledger unloadable. Two code comments claim 'Pydantic re-validates on serialization' - FALSE.",
+    "evidence": [
+     "src/fanops/models.py:356",
+     "src/fanops/ledger.py:572",
+     "src/fanops/post/run.py:306",
+     "src/fanops/studio/actions.py:281",
+     "src/fanops/cli.py:392"
+    ],
+    "property_holds_via": "four independent MANUAL call-site guards (run.py:305, actions.py:268, cli.py:384, dryrun.py:39)"
+   },
+   {
+    "id": "FIND-012",
+    "class": "reserved_surface",
+    "summary": "Seven more never-written state-enum members; RenderState was not a one-off. Ledger.set_post_state has zero callers.",
+    "evidence": [
+     "src/fanops/ledger.py:572",
+     "src/fanops/ledger.py:649"
+    ]
+   },
+   {
+    "id": "FIND-013",
+    "class": "resolved+recorded_risk",
+    "summary": "149 Studio routes: 108 mutating, 41 GET, ZERO authenticated (no auth/session/CSRF/before_request). Security boundary is the network interface only.",
+    "evidence": [
+     "src/fanops/studio/app.py",
+     "src/fanops/cli.py:1285"
+    ]
+   },
+   {
+    "id": "FIND-014",
+    "class": "doc_drift",
+    "summary": "Every CLAUDE.md safety-claim line reference is stale (10 checked, 10 wrong). Names and semantics correct; citations rotted.",
+    "evidence": [
+     "src/fanops/CLAUDE.md",
+     "src/fanops/post/CLAUDE.md"
+    ]
+   }
+  ],
+  "invariants": {
+   "total": 21,
+   "verified": 11,
+   "refined": 4,
+   "false": 5,
+   "verified_absent": 1,
+   "false_ids": [
+    "INV-02 single-writer-of-queued",
+    "INV-03 get_poster-raises-when-live",
+    "INV-04 intro_match-live",
+    "INV-05 Settings-constructed-per-Config",
+    "INV-07 ledger.lock-vestigial"
+   ],
+   "refined_ids": [
+    "INV-01 R1-type-level",
+    "INV-06 cascade-gates-on-clip-states",
+    "INV-20 doc-line-refs",
+    "INV-21 route-authorization"
+   ]
+  },
+  "couplings_proven": 15,
+  "completeness": {
+   "modules_fully_read": 13,
+   "unknowns_open": 6,
+   "high_unknowns_open": 0,
+   "routes_attributed": "149/149",
+   "invariants_classified": 21
+  },
+  "operational": {
+   "OPS-001": "STILL ENGAGED - an Explore subagent spawn was REFUSED by the orchestration gate during this cycle. Cycle 2 ran single-threaded."
+  }
+ },
+ "cycle3": {
+  "cycle": 3,
+  "title": "Runtime execution, failure propagation, recovery, side-effect boundaries",
+  "generated": "2026-07-14",
+  "git_head": "fcffa73",
+  "closed": true,
+  "method": "AST census over all 127 modules (exception handlers, network/subprocess/env/txn/retry sites) + full manual read of the publish, reconcile, gate, daemon and recovery paths + 11 CONTROLLED EXECUTION EXPERIMENTS against temporary FanOps roots with fake providers and an injected clock. NO live ledger, NO network, NO destructive command was run.",
+  "authority_note": "Where Cycle-2 JSON and executable code disagreed, code won and the contradiction is recorded in CYCLE3_CORRECTIONS.md by stable ID. Historical findings are NOT rewritten.",
+  "deliverables": [
+   "EXECUTION_PATHS.md",
+   "workflows.json",
+   "FAILURE_SEMANTICS.md",
+   "failures.json",
+   "CRASH_RECOVERY.md",
+   "retries.json",
+   "OBSERVABILITY.md",
+   "SIDE_EFFECT_GRAPH.md",
+   "side_effects.json",
+   "CYCLE3_CORRECTIONS.md"
+  ],
+  "census": {
+   "modules_ast_scanned": 127,
+   "exception_handlers": 721,
+   "bare_except": 0,
+   "broad_except_Exception": 331,
+   "typed_handlers": 390,
+   "handlers_that_escalate": 62,
+   "broad_and_silent_failure_shaped": 49,
+   "retry_loops": 10,
+   "network_call_sites": 15,
+   "subprocess_call_sites": 32,
+   "ledger_transaction_sites": 74,
+   "os_environ_writes": 2,
+   "experiments_run": 11
+  },
+  "corrections_to_prior_cycles": [
+   {
+    "id": "C3-COR-01",
+    "supersedes": [
+     "transitions.json P16",
+     "STATE_MACHINE.md P16",
+     "CYCLE2_EXTENSION.md 2.3",
+     "invariants.json INV-03.terminal_state"
+    ],
+    "was": "submitting -> needs_reconcile escalates at 72h; total to GAVE UP = 72h + 72h",
+    "now": "escalation is at 24h (_SUBMITTING_ESCALATE_AFTER, reconcile.py:48). Cycle 2 cited reconcile.py:54, which is the DIFFERENT constant _RECONCILE_GIVEUP_AFTER (72h). Both ages are measured from scheduled_time (_parked_age), NOT chained. Total time-to-terminal is 72h, NOT 144h.",
+    "evidence": "EXP-3/H4 (executed)"
+   },
+   {
+    "id": "C3-COR-02",
+    "supersedes": [
+     "invariants.json INV-03.terminal_state.at_least_one_valid_channel_remains",
+     "INVARIANT_AUDIT.md INV-03",
+     "CYCLE2_EXTENSION.md 2.3"
+    ],
+    "was": "the malformed-provider post is 'eventually labeled' (escalate then GAVE UP)",
+    "now": "TRUE on Postiz, FALSE on Zernio. The escalation and give-up sit on the SUCCESSFUL-POLL branch (reconcile.py:739); ZernioStatusClient RAISES on a 404 while PostizStatusClient returns {'status':'unknown'}. New finding C3-F2.",
+    "evidence": "EXP-4/H5 (executed)"
+   },
+   {
+    "id": "C3-COR-03",
+    "supersedes": [
+     "transitions.json P16/P17 (implicitly)"
+    ],
+    "was": "_is_fake_token listed as part of the escalation guard, with no analysis of the inverse",
+    "now": "It is a GATE on the terminal path. A REAL submission_id is structurally excluded from BOTH terminals, on BOTH backends. New finding C3-F1. FALSIFIES brief claims #1 and #2.",
+    "evidence": "EXP-4/H6 (executed)"
+   },
+   {
+    "id": "C3-COR-04",
+    "supersedes": [
+     "MUTATION_MATRIX.md A.3",
+     "mutation_writers.json Render.path"
+    ],
+    "was": "'Render.path \u2014 a post-compression path rewrite'",
+    "now": "It is rewritten INTO a tempfile.mkdtemp directory (compress.py:112 <- compress.py:21) and FINALIZE PERSISTS it. The ledger's durable canonical media pointer for a shrunk render is a temp path, and NOTHING cleans those dirs. New findings C3-F4 + C3-F5.",
+    "evidence": "EXP-10 (executed)"
+   },
+   {
+    "id": "C3-COR-05",
+    "supersedes": [
+     "MUTATION_MATRIX.md E (Control JSON row)",
+     "src/fanops/CLAUDE.md 'Atomic control-file writes'"
+    ],
+    "was": "control-file writes are atomic (controlio.write_json_atomic)",
+    "now": "TWO live control-file writers bypass controlio and are NOT atomic: agentstep.bump_attempts (agentstep.py:147, bare write_text) and pipeline_run.note_stage (pipeline_run.py:64-69, ftruncate+write). FALSIFIES brief claim #8. New findings C3-F6 + C3-F7.",
+    "evidence": "EXP-7, EXP-8 (executed)"
+   },
+   {
+    "id": "C3-COR-06",
+    "supersedes": [],
+    "refines": "invariants.json INV-11",
+    "now": "INV-11's PROPERTY (never burn the queue) holds for one pass. But the DAEMON re-drives a persistent AuthError every tick forever (cli.py:1311-1312), writes NO heartbeat, and changes no ledger state. New finding C3-F8."
+   },
+   {
+    "id": "C3-COR-07",
+    "supersedes": [],
+    "now": "daemon.status reports verdict `alive` while EVERY pass halts, because daemon_progress treats 'the newest run.log line of ANY kind' as liveness and a failing pass still writes stage lines. Misleading success. New finding C3-F9. Does NOT contradict project memory `liveness-verdict-single-owner` \u2014 it qualifies it."
+   },
+   {
+    "id": "C3-COR-08",
+    "supersedes": [],
+    "refines": "invariants.json INV-14",
+    "now": "INV-14 is TRUE as scoped (p4_dim_bias / variant_amplify / timing_bias) and is NOT retracted. But its scope hides the destructive path: adjust.retire \u2014 the ONLY IRREVERSIBLE learning actuator (adjust.py:95; reconcile_moments refuses to un-retire, ledger.py:636-642) \u2014 is gated on cfg.is_live_backend ONLY, not on learning_validated, and fires at n=3 analyzed posts. The reversible bias actuators wait for >=8. New finding C3-F10."
+   },
+   {
+    "id": "C3-COR-09",
+    "supersedes": [],
+    "extends": "OPS-001",
+    "now": "The orchestration gate refused an Explore subagent spawn AND denied the Write tool for a scratchpad script. THREE CONSECUTIVE CYCLES (1, 2, 3) have been executed single-threaded because a stale wave marker has never been disengaged. Operator action; clear before Cycle 4."
+   }
+  ],
+  "findings": [
+   {
+    "id": "C3-F1",
+    "class": "currently_reachable_defect",
+    "severity": "HIGH",
+    "title": "A post with a REAL submission_id has NO terminal path in reconcile",
+    "confidence": "CERTAIN"
+   },
+   {
+    "id": "C3-F2",
+    "class": "currently_reachable_defect",
+    "severity": "HIGH",
+    "title": "The XC-1 escalation and XC-2 give-up are DEAD CODE on the Zernio backend",
+    "confidence": "CERTAIN"
+   },
+   {
+    "id": "C3-F3",
+    "class": "observability_gap",
+    "severity": "LOW",
+    "title": "_requeue_transient_failed_for_daemon: the only log-free swallow in post/run.py",
+    "confidence": "CERTAIN"
+   },
+   {
+    "id": "C3-F4",
+    "class": "operational_hazard",
+    "severity": "MEDIUM",
+    "title": "Unbounded temp-dir leak \u2014 fanops-shrink-* is never cleaned",
+    "confidence": "CERTAIN"
+   },
+   {
+    "id": "C3-F5",
+    "class": "operational_hazard",
+    "severity": "MEDIUM",
+    "title": "Render.path is durably rewritten INTO a mkdtemp directory",
+    "confidence": "CERTAIN"
+   },
+   {
+    "id": "C3-F6",
+    "class": "currently_reachable_defect",
+    "severity": "LOW",
+    "title": "A torn attempts.json silently resets the gate-retry ceiling",
+    "confidence": "CERTAIN"
+   },
+   {
+    "id": "C3-F7",
+    "class": "observability_gap",
+    "severity": "LOW",
+    "title": "note_stage is a torn-write window on .run.lock",
+    "confidence": "CERTAIN"
+   },
+   {
+    "id": "C3-F8",
+    "class": "observability_gap",
+    "severity": "MEDIUM",
+    "title": "The daemon re-drives an unrecoverable AuthError every tick, forever, with no heartbeat",
+    "confidence": "CERTAIN"
+   },
+   {
+    "id": "C3-F9",
+    "class": "observability_gap",
+    "severity": "MEDIUM",
+    "title": "daemon.status reports `alive` while every pass halts",
+    "confidence": "CERTAIN"
+   },
+   {
+    "id": "C3-F10",
+    "class": "operational_hazard",
+    "severity": "MEDIUM",
+    "title": "adjust.retire \u2014 the only IRREVERSIBLE learning actuator \u2014 has the WEAKEST gate",
+    "confidence": "CERTAIN"
+   },
+   {
+    "id": "C3-F11",
+    "class": "idempotency_gap",
+    "severity": "LOW",
+    "title": "The F44 upload cache has no invalidation rule",
+    "confidence": "HIGH"
+   },
+   {
+    "id": "C3-F12",
+    "class": "operational_hazard",
+    "severity": "LOW",
+    "title": "framing._detect_faces returns PARTIAL results on an exception",
+    "confidence": "CERTAIN"
+   },
+   {
+    "id": "C3-F13",
+    "class": "observability_gap",
+    "severity": "LOW",
+    "title": "A lost audit line is silent and unrecoverable (contract-correct)",
+    "confidence": "CERTAIN"
+   },
+   {
+    "id": "C3-NF1",
+    "class": "false_positive_or_non_defect",
+    "severity": "n/a",
+    "title": "The publish retry loop CANNOT double-POST \u2014 hypothesis tested and DISCONFIRMED",
+    "confidence": "CERTAIN"
+   },
+   {
+    "id": "C3-NF2",
+    "class": "false_positive_or_non_defect",
+    "severity": "n/a",
+    "title": "The requeue family cannot strand a real-sid post \u2014 hypothesis tested and DISCONFIRMED (all 5 clear submission_id). The strand arrives via bulk_send_to_review instead.",
+    "confidence": "CERTAIN"
+   }
+  ],
+  "adversarial_checks": {
+   "1_every_retry_has_a_finite_terminal": "FALSIFIED (C3-F1, C3-F2)",
+   "2_every_submitting_post_can_leave_submitting": "FALSIFIED (C3-F1, C3-F2)",
+   "3_every_gate_type_can_be_answered_or_dismissed": "FALSIFIED \u2014 intro_match (Cycle-2 INV-04), UPHELD",
+   "4_every_success_shaped_return_means_the_effect_occurred": "FALSIFIED \u2014 4 sites: get_poster (F-A), _publish_one skip-resubmit (C3-F1), _requeue_transient_failed_for_daemon (C3-F3), _detect_faces (C3-F12)",
+   "5_every_external_side_effect_is_idempotent_or_protected": "UPHELD for the publish POST (claim-before-network + park-never-re-POST, both backends). PARTIAL for uploads (R2 content-addressed = yes; Postiz multipart = no).",
+   "6_every_dynamically_written_state_is_in_the_inventory": "UPHELD \u2014 the Cycle-2 AST census (transitions.json) stands; no new dynamic writer found",
+   "7_every_operator_recovery_command_excludes_concurrent_writers": "FALSIFIED \u2014 restore_snapshot (F-B, Cycle 2). NOT re-run (destructive).",
+   "8_every_control_file_write_is_crash_safe": "FALSIFIED (C3-F6, C3-F7)",
+   "9_every_filesystem_cache_has_an_invalidation_rule": "FALSIFIED (C3-F11 \u2014 the F44 upload cache)",
+   "10_every_swallowed_exception_is_distinguishable_from_an_empty_result": "FALSIFIED (C3-F3, C3-F12); mostly upheld elsewhere \u2014 the house norm (fail-open WITH a logged breadcrumb) is real and CI-enforced by test_swallow_ratchet.py",
+   "11_every_background_task_has_an_observable_failure_signal": "FALSIFIED (C3-F4 has NO signal of any kind; C3-F9 is a MISLEADING one)",
+   "12_every_atomic_claim_names_its_primitive_and_boundary": "FALSIFIED (C3-COR-05 \u2014 two writers claim the controlio contract and do not use it)"
+  },
+  "completeness": {
+   "modules_total": 127,
+   "modules_read_fully_this_cycle": 14,
+   "modules_read_fully_cumulative": 27,
+   "modules_structurally_scanned_by_AST": 127,
+   "modules_still_uninspected_by_a_human_read": 41,
+   "workflows_fully_traced": [
+    "W1",
+    "W2",
+    "W3",
+    "W4",
+    "W5",
+    "W6",
+    "W7",
+    "W9"
+   ],
+   "workflows_partially_traced": [
+    "W8 (action-layer durability traced; the 108 mutating routes were NOT individually re-driven)",
+    "W10 (actuator gating + reversibility traced; meta_graph.py / variant_ucb / digest internals structurally scanned only)"
+   ],
+   "experiments_run": 11,
+   "open_unknowns": 6,
+   "honest_statement": "Cycle 3 is NOT exhaustive. It is exhaustive for the PUBLISH, RECONCILE, GATE, DAEMON and RECOVERY paths \u2014 the ones that reach the network and the ones that strand. It is NOT exhaustive for the Studio view layer (38 broad handlers in views.py alone were counted but not individually traced) or for the Meta Graph / hashtag subsystem."
+  },
+  "cycle4_inputs_prioritised": [
+   "1. C3-F1 + C3-F2 \u2014 the terminal-path hole. This is the single highest-value reconciliation target: two HIGH defects, one root (the escalation lives on the wrong branch and is gated on the wrong predicate).",
+   "2. Cycle-2 F-A (malformed provider -> DryRunPoster when live) \u2014 now compounded by C3-F2, because on Zernio the resulting strand is never labeled AT ALL.",
+   "3. C3-F4 + C3-F5 \u2014 the shrink temp leak and the durable temp pointer. These are COUPLED: naively fixing the leak would dangle every shrunk render's path.",
+   "4. C3-F9 + C3-F8 \u2014 the daemon liveness verdict conflates 'process running' with 'work succeeding'.",
+   "5. INV-01 (the load-time poison pill) \u2014 still latent, still the highest-leverage invariant to enforce STRUCTURALLY rather than by four manual call-site guards.",
+   "6. C3-F10 \u2014 the irreversible learning actuator's gate.",
+   "7. OPS-001 \u2014 disengage the stale orchestration wave marker so Cycle 4 can parallelise."
+  ]
+ },
+ "cycle4": {
+  "cycle": 4,
+  "title": "Root-cause defect model, remediation design, and change sequencing",
+  "generated": "2026-07-14",
+  "git_head": "fcffa73",
+  "status": "DESIGN ONLY \u2014 no production source or test was modified; no PR opened. The live ledger was read READ-ONLY (sqlite mode=ro) to settle one reachability question.",
+  "deliverables": [
+   "ROOT_CAUSE_GRAPH.md",
+   "root_causes.json",
+   "REMEDIATION_OPTIONS.md",
+   "remediation_options.json",
+   "CHANGE_INTERFERENCE_MATRIX.md",
+   "change_interference.json",
+   "IMPLEMENTATION_SEQUENCE.md",
+   "implementation_sequence.json",
+   "CYCLE4_CORRECTIONS.md",
+   "prompts/C4-SLICE-01.md .. prompts/C4-SLICE-10.md"
+  ],
+  "root_causes": {
+   "RC-1": "A decision that FORBIDS an action is evaluated AFTER the state change that AUTHORIZES it (run.py:272 claims; run.py:287 then skips). HIGH.",
+   "RC-2": "reconcile's terminal ladder is conditioned on poll success AND token provenance \u2014 neither is a property of 'is this post stuck?'. HIGH.",
+   "RC-3": "A backend id is normalized at ONE write boundary and consumed RAW by five resolvers with four unknown-value behaviours. HIGH.",
+   "RC-3b": "Reconcile is gated on is_live_backend; publish is not. The sole READER of `submitting` can be switched off while the WRITER keeps producing it. HIGH.",
+   "RC-4": "os.replace of a SQLite file is incompatible with SQLite's inode locking \u2014 and restore_snapshot takes a lock in NO domain. CRITICAL.",
+   "RC-5": "THE VERIFICATION LAYER ENCODES THE DEFECT \u2014 a green CI test asserts the data-loss outcome and calls it correct. CRITICAL.",
+   "RC-6": "`alive` conflates 'the process is running' with 'the work is succeeding'. MEDIUM.",
+   "RC-7": "The one IRREVERSIBLE learning actuator has the WEAKEST gate. MEDIUM. BLOCKED ON PD-3.",
+   "RC-8": "Post.error_reason carries four machine semantics; the fourth is a PERMANENT SUPPRESSION LATCH. MEDIUM.",
+   "RC-9": "Validators run at construction only; every mutation API bypasses them. LATENT (zero current reachability).",
+   "RC-10": "A mkdtemp with no owner. LOW."
+  },
+  "new_findings": {
+   "C4-F1a": "bulk_send_to_review does not clear error_reason -> the stale reason latches reconcile.py:767 on pass ONE, so a reverted post goes silent IMMEDIATELY. Cycle 3 said 'one breadcrumb then silence'; on the reachable path there is ZERO breadcrumb, and the displayed reason LIES about the post's state. MEDIUM.",
+   "C4-F2a": "A restore racing a cascade-delete txn COMMITS into the orphaned inode -> the txn is NOT rolled back -> _drain_deferred_unlinks() PROCEEDS -> os.remove() DELETES REAL MEDIA while the restore brings the rows back. CRITICAL. Reached via the DOCUMENTED wipe-rollback procedure.",
+   "C4-F5": "Post.media_urls \u2014 NOT Render.path \u2014 is the durable pointer into the unmanaged mkdtemp dir (Studio oversize-retry, inside a committed txn). LOW: it SELF-HEALS via media_path_for_post's clip fallback."
+  },
+  "superseded": {
+   "C3-F5": "RECLASSIFIED to UNREACHABLE. AST: Ledger.add_render has ZERO callers; Render(...) is constructed only in the two deserializers; crosspost.py:225 hardcodes render_id=None; LIVE LEDGER (read-only): 0 renders, 0/347 posts with a render_id. Cycle 3's EXP-10 hand-built a Render row \u2014 that proves the MECHANISM, not the REACHABILITY. Replaced by C4-F5.",
+   "C3-F2_root_cause": "Cycle 3 blamed 'a sibling-parity divergence between the two status clients'. FALSE: both raise on >=300 identically (metrics.py:164-165 vs :516-517). The divergence is the REMOTE ENDPOINT SHAPE (Postiz: row absent from a 200-OK LIST page -> 'unknown'; Zernio: 404 on a PER-POST GET -> raise). The FINDING stands; the wrong cause implies the wrong (shallow) fix.",
+   "C3-F1_door": "Cycle 3 named bulk_send_to_review on a needs_reconcile post. _REVIEW_REVERT_BLOCKED (actions.py:844-847) BLOCKS needs_reconcile. The real door is `failed`: reconcile polls, THE BACKEND REPORTS FAILED, the real sid is preserved (reconcile.py:735) -> revert -> approve -> strand. An ORDINARY operator workflow, which makes C3-F1 substantially MORE reachable than recorded.",
+   "C3-F4_C3-F5_coupling": "Cycle 3's 'the fix for the leak would BREAK the pointer' is REFUTED BY EXECUTION (EXP-C4-4). media_path_for_post (compress.py:61-65) falls back to clip.path and the next shrink re-points media_urls at a fresh file. The cleanup is a SAFE, INDEPENDENT slice \u2014 no migration, no relocation, no atomicity requirement."
+  },
+  "experiments_executed": {
+   "EXP-C4-1": "The FULL C3-F1 chain end-to-end through real code, via the CORRECTED `failed` door. Result: stranded in `submitting` at +100000h. Every assertion passed. Also surfaced C4-F1a.",
+   "EXP-C4-2": "The restore race re-proven (restorer NOT blocked; completed in 0.001s; writer's commit SUCCEEDED; row DESTROYED) \u2014 AND proved the existing test passes BECAUSE OF the loss (RC-5).",
+   "EXP-C4-3": "(A) C4-F2a: the restore race DELETES REAL MEDIA. (B) The proposed in-place fix VERIFIED: the restorer BLOCKED for 0.469s until the writer committed. (C) The corrupt-db fallback is REQUIRED (the in-place path raises DatabaseError; the os.replace path succeeds).",
+   "EXP-C4-4": "The claimed C3-F4 <-> C3-F5 coupling REFUTED. Render.path unreachable; media_urls is the real pointer; deleting the temp dir SELF-HEALS."
+  },
+  "clusters_rejected": {
+   "D_filesystem_and_ledger_durability": "*** THIS CLUSTER DOES NOT EXIST. *** It is FOUR unrelated bugs that are merely all 'about files' (RC-4 / RC-10 / C3-F6 / C3-F7). None needs a 'unified storage contract'. The coupling that would have justified the abstraction is REFUTED by execution.",
+   "C_mutation_bypasses": "The brief's framing is wrong. The seven writers of `queued` are NOT the problem \u2014 every non-approve_post writer is guarded on a source state of failed/error/submitting, so none can leave awaiting_approval. The property HOLDS; only the doc's claimed mechanism is false (INV-02, doc drift). The genuine root is RC-9, and it is LATENT."
+  },
+  "sequence": [
+   "S01 restore_snapshot in-place (CRITICAL, ships first)",
+   "S02 backend normalization at the read boundary",
+   "S07 reconcile/publish gate parity",
+   "S03 claim refuses a post it will not POST",
+   "S04 terminal ladder = f(state, age)",
+   "S05 zernio 404 -> unknown (never alone)",
+   "S06 revert clears the stale reason",
+   "S08 daemon health: alive != succeeding",
+   "S09 shrink tempdir lifetime",
+   "S10 irreversible retirement (BLOCKED on PD-3)"
+  ],
+  "parallelism": {
+   "safe_parallel": [
+    "S01",
+    "S02",
+    "S08",
+    "S09"
+   ],
+   "must_be_sequential": [
+    "S03 -> S04 -> S05"
+   ],
+   "design_together_implement_apart": [
+    "S02",
+    "S07"
+   ],
+   "reframe_stream": "VERIFIED PARALLEL-SAFE \u2014 zero file overlap AND zero state overlap (framing.py/keyframes.py have ZERO ledger references; clip.py's only three `Render` tokens are docstrings). One forward-looking hazard IF-1: a future reframe slice MINTING Render rows would reactivate the currently-unreachable C3-F5."
+  },
+  "product_decisions_required": {
+   "PD-1": "Does the operator need an explicit 'republish' action? BLOCKS NOTHING \u2014 ship S03 anyway.",
+   "PD-2": "Terminal for a real-token post that never resolves. Recommendation: the same age ladder (GAVE UP: is a LABEL, changes no state, cannot double-post).",
+   "PD-3": "Is irreversible retirement at n=3 intentional? BLOCKS S10 ENTIRELY. No recommendation offered \u2014 not recoverable from code, and the guards that exist are evidence FOR intent.",
+   "PD-4": "Malformed backend at load: normalize-and-skip, or raise? Recommendation: normalize case/whitespace; skip-and-flag an unknown name via the existing skipped_rows channel."
+  },
+  "quality_gates_run": {
+   "ast_mutation_census": "RE-RUN. PostState writers by kind (literal / dynamic PostState(...) / setattr-dynamic-field / model_copy-literal / model_copy-dynamic-dict / ctor / enum keyword-default). PostState.error: 0 literal writers (still reserved). PostState.retired: 0 literal, but cli.py:395's dynamic PostState(args.status) DOES write it (confirms Cycle-2 SC-1).",
+   "exception_census": "RE-RUN over the 15 files the proposed fixes touch: 194 handlers, 0 bare, 88 broad, 106 typed, 27 re-raise, 22 broad+silent.",
+   "sibling_parity": "CONFIRMED: both status clients raise on >=300. The divergence is the ENDPOINT SHAPE, not the code.",
+   "render_census": "AST: add_render callers = 0; Render(...) ctor sites = 2 (both deserializers); led.renders[...] stores = 4 (ALL model_copy UPDATES of an existing row). Live ledger: 0 renders / 0 of 347 posts with a render_id.",
+   "no_grep_only_claims": "Every 'no writer' / 'zero caller' / 'never' / 'only' claim in the Cycle-4 deliverables is backed by an AST pass or full call-site tracing, per the Cycle-2 method note.",
+   "cleanup_cannot_invalidate_a_persisted_path": "PROVEN by EXP-C4-4 (the self-heal).",
+   "no_state_machine_change_creates_a_duplicate_publication": "S04's GAVE UP: is a LABEL (no state change, not re-queueable). S03 strictly REMOVES a transition, adds none. Pinned by test_giveup_is_a_label_not_a_state_change."
+  },
+  "operational_constraint": "OPS-001 STILL ENGAGED. The orchestration gate refused even a READ of the .orchestration/state/ACTIVE marker. FOUR consecutive cycles (1, 2, 3, 4) have now been executed SINGLE-THREADED. Disengaging the stale wave marker is an operator action from a human terminal; it is NOT a code defect, and it remains the single largest throughput constraint on this audit.",
+  "uninspected_modules_no_conclusion_depends_on": {
+   "modules": [
+    "variant_*.py",
+    "digest.py",
+    "persona_*.py",
+    "hookscore.py",
+    "meta_graph.py",
+    "most views_*.py"
+   ],
+   "why_no_conclusion_depends_on_them": "The AST censuses cover the FULL 127-module tree. None of these modules contains a ledger writer, a publish path, a lock primitive, or a status client. No root cause and no implementation slice depends on them."
+  }
+ }
+}

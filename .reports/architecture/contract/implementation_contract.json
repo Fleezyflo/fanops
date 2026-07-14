@@ -1,0 +1,441 @@
+{
+  "$schema": "fanops-impl-contract/v1",
+  "cycle": 6,
+  "git_head": "fcffa73",
+  "generated": "2026-07-14",
+  "status": "CANONICAL. This is the implementation contract. No code modification may exceed it without an explicit, recorded architectural approval.",
+  "prose_twin": "../IMPLEMENTATION_CONTRACT.md",
+
+  "epistemic_categories": {
+    "note": "*** EVERY statement in this contract carries exactly one of these. They are NEVER merged. ***",
+    "DERIVED_FACT": "measured from the repository or the live tree at fcffa73. Reproducible.",
+    "ARCHITECTURAL_DECISION": "a Cycle 1-5 finding, accepted as authoritative input to Cycle 6.",
+    "IMPLEMENTATION_DECISION": "a Cycle-6 choice about HOW to build. Reversible; reasons stated.",
+    "HUMAN_APPROVAL": "requires a named person to say yes in writing. NOT inferrable from code.",
+    "UNKNOWN": "cannot be established. Never speculated."
+  },
+
+  "frozen_inputs": {
+    "note": "Cycles 1-5 are AUTHORITATIVE. Cycle 6 designed no architecture and discovered no defects. Where Cycle 6 contradicts an earlier cycle it is because the LIVE TREE was measured and the earlier cycle had not measured it — recorded in ../CYCLE6_CORRECTIONS.md.",
+    "architecture": "../ARCHITECTURE_MANIFEST.md + ../kb/*.json (Cycle 5)",
+    "dependency_model": "../DEPENDENCY_MODEL.md + ../kb/dependencies.json (Cycle 5)",
+    "root_causes": "../root_causes.json (Cycle 4) — RC-1..RC-10",
+    "remediation": "../REMEDIATION_OPTIONS.md (Cycle 4)",
+    "interference": "../change_interference.json (Cycle 4)",
+    "sequence": "../implementation_sequence.json (Cycle 4)",
+    "invariants": "../kb/invariants.json + ../invariants.json",
+    "transitions": "../transitions.json (Cycle 2, CANONICAL)",
+    "unknowns": "../kb/unknowns.json",
+    "citation_integrity": {
+      "claim": "*** All 16 load-bearing Cycle-4 file:line citations were RE-RESOLVED at fcffa73 and every one is CORRECT. ***",
+      "evidence_class": "DERIVED_FACT",
+      "why_it_matters": "INV-20 established that 10 of 10 CLAUDE.md citations are STALE. Cycle 4's are NOT. The contract may therefore inherit them. A future cycle need not re-check.",
+      "verified": ["ledger.py:551", "ledger.py:540", "ledger.py:484", "ledger_sqlite.py:151", "accounts.py:412", "post/__init__.py:19", "post/__init__.py:29", "post/run.py:272", "post/run.py:287", "reconcile.py:746", "reconcile.py:767", "studio/actions.py:944", "pipeline.py:318", "pipeline.py:334", "post/compress.py:21", "adjust.py:95"]
+    }
+  },
+
+  "live_state_at_contract_freeze": {
+    "note": "*** Cycle 4 named five read-only checks as merge gates and ran NONE of them. Cycle 6 ran all five. Three of them COLLAPSE a risk Cycle 4 rated as blocking. ***",
+    "evidence_class": "DERIVED_FACT",
+    "method": "sqlite snapshot of the live ledger read from a scratch copy (live tree never opened for write); accounts.json parsed read-only; filesystem counted with ls/du.",
+    "live_root": "/Users/molhamhomsi/FanOps/MohFlow-FanOps",
+    "schema_version": 11,
+    "entities": {
+      "sources": 7,
+      "moments": {"total": 347, "by_state": {"clipped": 347}},
+      "clips": {"total": 347, "by_state": {"queued": 347}},
+      "posts": {"total": 347, "by_state": {"awaiting_approval": 347}},
+      "renders": 0,
+      "stitch_plans": 0,
+      "batches": 5,
+      "imported_media": 0
+    },
+    "consequences_that_change_the_program": [
+      {
+        "id": "LS-1",
+        "measurement": "posts in {submitting, submitted, needs_reconcile} = *** 0 ***",
+        "collapses": "S04's operational migration — Cycle 4 called the escalation burst 'THE MOST IMPORTANT NOTE IN THIS AUDIT' and assumed 347 posts were at risk. The ACTUAL reconcilable set is ZERO.",
+        "verdict": "S04's blast radius on the CURRENT ledger is 0 rows. The report-only mode is STILL REQUIRED — as a PERMANENT gate, not a one-time warning — but the migration is a NO-OP today.",
+        "revalidate_at_merge": true
+      },
+      {
+        "id": "LS-2",
+        "measurement": "moments in state `retired` = *** 0 ***",
+        "collapses": "PD-3's accrued cost. Cycle 4's S10 prompt asked: 'how many moments are ALREADY retired ... that number is the honest measure of what this gate has already cost.'",
+        "verdict": "*** ZERO. The irreversible actuator has never fired on this ledger. *** PD-3 remains UNANSWERED and S10 remains BLOCKED — but it has cost nothing, and there is no cleanup burden.",
+        "revalidate_at_merge": true
+      },
+      {
+        "id": "LS-3",
+        "measurement": "malformed backend values in accounts.json = *** 0 *** (5 channels: 3 postiz/instagram, 2 zernio/tiktok, all canonical)",
+        "collapses": "*** THE S02 <-> S10 SEMANTIC CONFLICT — which Cycle 4 called 'the single most dangerous scope expansion in the sequence' and which forced S02 to carry a mandatory loud-log mitigation. ***",
+        "verdict": "S02 CANNOT flip is_live_backend False->True by normalizing a typo, BECAUSE THERE IS NO TYPO TO NORMALIZE. The hazard is NOT REACHABLE on this deployment today. RC-3 remains a REAL DEFECT (the load boundary has no validation, and the operator is a documented hand-editor — AR-09), but S02 is DECOUPLED FROM PD-3 on the current tree.",
+        "revalidate_at_merge": true,
+        "gate": "S02's PR MUST re-run this check and state the result. If a malformed value has appeared, the Cycle-4 mitigation (loud is_live_backend transition log + operator briefing) RE-ARMS."
+      },
+      {
+        "id": "LS-4",
+        "measurement": "renders = 0; posts carrying a render_id = 0 / 347",
+        "confirms": "IF-1 / C4-COR-02. The Render entity is never minted. `Render.path` is UNREACHABLE.",
+        "verdict": "S09's forbidden-scope-expansion (do NOT 'defensively' repair the Render.path writes) is CONFIRMED against the live tree, not merely by AST."
+      },
+      {
+        "id": "LS-5",
+        "measurement": "fanops-shrink-* directories = *** 41 ***; 04_agent_io total = *** 924 MB ***",
+        "confirms": "RC-10 / C3-F4. The leak is real, unbounded, and has been accumulating.",
+        "verdict": "S09's one-time clean has a KNOWN, BOUNDED size. It is a DATA migration, and it is safe (EXP-C4-4 proved the self-heal)."
+      },
+      {
+        "id": "LS-6",
+        "measurement": "06_published archive = *** 73 records across 4 day-buckets *** (2026-06-29, 06-30, 07-04, 07-05)",
+        "verdict": "*** The publish lifecycle HAS been exercised 73 times. *** RC-1 and RC-2 are not hypothetical paths — they sit on a road this system has driven. The current ledger shows 0 published ONLY because it was WIPED (see LS-7).",
+        "self_correction": "C6-SC-1 — an earlier Cycle-6 draft concluded from the 0-published ledger that 'nothing has ever published on this tree'. THAT WAS FALSE and the archive refutes it."
+      },
+      {
+        "id": "LS-7",
+        "measurement": "*** 11 ledger snapshot/backup artifacts in 00_control/, spanning 2026-06-20 -> 2026-07-10 *** — including a genuine `ledger.snapshot.20260705T103618Z.1d5a6ffe.json` (the Ledger.snapshot naming convention) and `ledger.json.prewipe-20260629-000912`.",
+        "verdict": "*** THIS IS THE SHARPEST FINDING OF CYCLE 6. *** The operator is a HEAVY, HABITUAL user of the snapshot / wipe / restore machinery — roughly monthly — with a launchd daemon installed. `ledger_wipe.py:246` advertises `restore_snapshot` as THE rollback path. *** S01's race (RC-4 / C4-F2a: SILENT MEDIA DELETION) is therefore not an exotic break-glass hazard. It is ON THE PROCEDURE THIS OPERATOR ACTUALLY RUNS. *** Cycle 4 rated it CRITICAL from the mechanism alone; the live tree confirms its reachability independently.",
+        "consequence": "S01 is not merely FIRST by severity. It is first by DEMONSTRATED OPERATOR BEHAVIOUR."
+      }
+    ]
+  },
+
+  "GLOBAL_BOUNDARIES": {
+    "note": "*** These bind EVERY slice, including any slice a future cycle adds. They are the part of the contract Cycle 4 COULD NOT HAVE WRITTEN, because they derive from Cycle 5's dependency model — which did not exist when the slices were designed. ***",
+
+    "GB-1_no_lazy_import_hoist": {
+      "evidence_class": "ARCHITECTURAL_DECISION (Cycle 5 AR-04) -> IMPLEMENTATION_DECISION (the boundary)",
+      "boundary": "*** NO SLICE MAY HOIST AN IN-FUNCTION (lazy) `fanops` IMPORT TO MODULE LEVEL. NO SLICE MAY ADD A MODULE-LEVEL `fanops` IMPORT THAT POINTS TO AN EQUAL-OR-HIGHER LAYER LEVEL. ***",
+      "why": "Cycle 5 (AST, whole-tree): 107 of 323 lazy edges point to an equal-or-higher level; *** 56 are STRICTLY UPWARD — true layering inversions. *** The SCC-condensed compile-time graph is an 11-level DAG ONLY BECAUSE those imports are deferred to call time. Module init order is LOAD-BEARING and *** NOTHING ENFORCES IT: no test, no lint rule, no layer declaration. ***",
+      "the_trap": "Hoisting one of the 56 is a change that *** LOOKS LIKE A CLEANUP AND THAT A REVIEWER WOULD WAVE THROUGH. *** It breaks the process at start.",
+      "sharpest_instance": "`config` — level 0, fan-in 82, THE most-depended-on module in the system — lazily reaches UP to `accounts` (L2) and `meta_graph` (L3). *** S02 TOUCHES `accounts`. ***",
+      "slices_at_risk": ["S02 (accounts.py, post/__init__.py, settings.py)", "S07 (pipeline.py)", "S09 (cli.py, doctor.py)", "S08 (cli.py, daemon.py, health_model.py)"],
+      "enforceable_by_cycle_7": "AST diff: for every added module-level `from fanops.X import` / `import fanops.X`, assert level(X) < level(current_module) using kb/dependencies.json -> layering.levels. Reject otherwise.",
+      "not_in_any_cycle_4_prompt": true
+    },
+
+    "GB-2_no_dead_code_deletion_without_an_ast_writer_census": {
+      "evidence_class": "ARCHITECTURAL_DECISION (COUP-10, Cycle 5) -> IMPLEMENTATION_DECISION",
+      "boundary": "*** NO SLICE MAY DELETE A SYMBOL ON THE STRENGTH OF 'ZERO CALLERS'. *** 'Zero callers' is a LEAD, never a verdict.",
+      "why": "`post/providers.py` dispatches SIX backend factories via lazy in-function import LAMBDAS from a dict. *** A name-based call graph flags ALL SIX as 'zero callers'. ALL SIX ARE LIVE. *** Same trap: `post.compress.persist_post_shrink` (lazy-imported from studio/actions.py).",
+      "slices_at_risk": ["S02 — touches post/__init__.py, which resolves through PROVIDERS", "S09 — touches post/compress.py"],
+      "required_evidence": "any deletion must ship an AST writer/caller census over the WHOLE tree (not a grep), per the Cycle-2 method note."
+    },
+
+    "GB-3_no_extra_forbid_on_a_ledger_model": {
+      "evidence_class": "ARCHITECTURAL_DECISION (SHIM-005 / INV-19)",
+      "boundary": "*** NO SLICE MAY SET `extra=\"forbid\"` ON ANY LEDGER MODEL. ***",
+      "why": "Forward-compat holds by pydantic's DEFAULT (`extra='ignore'`), NOT by declaration. Setting `extra='forbid'` — a change that LOOKS LIKE TIGHTENING — turns a forward-rolled ledger into a hard `ControlFileError` and bricks every reader.",
+      "slices_at_risk": ["S02 (its REJECTED Option C was exactly this)", "S11 (it is ABOUT the validator boundary)"]
+    },
+
+    "GB-4_no_new_door_to_the_R1_poison_pill": {
+      "evidence_class": "ARCHITECTURAL_DECISION (RC-9 / INV-01 / INV-01b)",
+      "boundary": "*** NO SLICE MAY CREATE A NEW WRITE PATH TO `PostState.published` OR `PostState.analyzed` WITHOUT AN EXPLICIT NON-EMPTY `public_url` GUARD AT THE CALL SITE. ***",
+      "why": "The R1 invariant is enforced at CONSTRUCTION only. `model_copy(update=)` and `setattr` BOTH bypass every validator. The property survives via FOUR INDEPENDENT MANUAL CALL-SITE GUARDS. *** A FIFTH DOOR ADDED WITHOUT ONE SAVES CLEANLY AND THEN BRICKS THE NEXT `Ledger.load` — taking down the daemon and every Studio page at once. ***",
+      "slices_at_risk": ["S03 (mutates Post in the CLAIM)", "S04 (model_copy on Post in the ladder)", "S06 (mutates Post on revert)"],
+      "pinned_by": "S11 — which exists precisely to make this boundary MECHANICAL rather than a promise."
+    },
+
+    "GB-5_no_moment_setattr_to_model_copy_conversion": {
+      "evidence_class": "ARCHITECTURAL_DECISION (COUP-07 / INV-01b, executed)",
+      "boundary": "*** NO SLICE MAY CONVERT A `setattr` ON A `Moment` TO `model_copy` — not even 'for consistency with the other 57 sites'. ***",
+      "why": "`Moment` is the ONLY model with `validate_assignment=True`. `model_copy` bypasses it ANYWAY. `actions_casting.cast_add/cast_remove` are correct ONLY because of that setattr. Converting them would silently stop canonicalizing affinities — and a non-canonical '@Foo' would make that moment post NOWHERE, silently.",
+      "slices_at_risk": ["S10 (adjust.py mutates Moment)", "any slice touching studio/actions*.py"]
+    },
+
+    "GB-6_ast_ratchet_budgets": {
+      "evidence_class": "DERIVED_FACT (read from the test files at fcffa73)",
+      "note": "*** These are MECHANICALLY ENFORCED IN CI TODAY. Cycle 4 named the ratchets but never derived the PER-SLICE BUDGET, and never noticed that ONE OF THEM IS A SHARED, EXACT-EQUALITY BUDGET ACROSS THREE SLICES. ***",
+
+      "swallow_ratchet": {
+        "test": "tests/test_swallow_ratchet.py",
+        "mechanism": "a PER-FILE baseline dict (49 files). It fails on (a) a file NOT in the baseline gaining ANY silent broad `except`, or (b) a baselined file EXCEEDING its count.",
+        "budget_zero__any_new_silent_broad_except_fails_ci_immediately": {
+          "src/fanops/ledger.py": "S01",
+          "src/fanops/ledger_sqlite.py": "S01",
+          "src/fanops/settings.py": "S02",
+          "src/fanops/post/__init__.py": "S02",
+          "src/fanops/post/metrics.py": "S05",
+          "src/fanops/adjust.py": "S10"
+        },
+        "budget_ceiling__must_not_exceed": {
+          "src/fanops/accounts.py": {"owner": "S02", "baseline": 3},
+          "src/fanops/post/run.py": {"owner": "S03", "baseline": 4},
+          "src/fanops/reconcile.py": {"owner": "S04", "baseline": 9},
+          "src/fanops/studio/actions.py": {"owner": "S06 + S09 (SHARED)", "baseline": 23},
+          "src/fanops/pipeline.py": {"owner": "S07", "baseline": 13},
+          "src/fanops/daemon.py": {"owner": "S08", "baseline": 5},
+          "src/fanops/health_model.py": {"owner": "S08", "baseline": 5},
+          "src/fanops/cli.py": {"owner": "S08 + S09 + S10 (SHARED)", "baseline": 3},
+          "src/fanops/post/compress.py": {"owner": "S09", "baseline": 1},
+          "src/fanops/doctor.py": {"owner": "S09", "baseline": 8}
+        },
+        "rule": "Every new `except` a slice adds MUST log or fail-open. This is the house norm and it is already enforced. NO slice may raise a baseline."
+      },
+
+      "print_ratchet": {
+        "test": "tests/test_internal_prints_routed.py",
+        "mechanism_A": "`_INTERNAL_MODULES` — nine modules that must contain ZERO `print()`. Assertion: `offenders == []`.",
+        "zero_print_modules_owned_by_a_slice": {
+          "src/fanops/ledger.py": "*** S01 MAY ADD NO print() TO ledger.py. ***",
+          "src/fanops/pipeline.py": "*** S07 MAY ADD NO print() TO pipeline.py. ***"
+        },
+        "mechanism_B": "`_CLI_PRINT_COUNT = 158`, asserted with *** EXACT EQUALITY *** (`assert len(_print_call_nodes(cli.py)) == 158`). Not a ceiling — an EQUALITY.",
+        "CYCLE_7_CORRECTION": "*** THIS NUMBER WAS 147 AND IT WAS WRONG. *** The contract froze it at fcffa73 as a DERIVED_FACT 'read from the test files'. ONE COMMIT LATER (#634) the test file said 158, and the contract still said 147. A boundary pinned to a wrong constant is not a boundary — a slice obeying GB-6 as written would have been told the budget was 147 when CI enforces 158. It is now DERIVED_FROM_CONTRACT: regenerated into derived/ratchets.json and enforced by rule IMPL-007, which FAILS CI when this copy disagrees with the test that enforces it. *** MIGRATION TARGET: delete this copy entirely and point at derived/ratchets.json. A copied number is a number that rots, and this one rotted in a single commit. ***",
+        "THE_CROSS_SLICE_HAZARD": {
+          "id": "IR-4",
+          "statement": "*** S08, S09 AND S10 ALL TOUCH cli.py. If two of them land carrying a bumped `_CLI_PRINT_COUNT`, the second one's rebase produces a WRONG constant and CI goes RED for a reason unrelated to its change. ***",
+          "not_named_by_cycle_4": true,
+          "THE_RULE_THAT_DISSOLVES_IT": "*** NO SLICE MAY CHANGE cli.py's print() COUNT. *** New operator output routes through the existing logger, or reuses an existing print. This is free — none of S08/S09/S10 NEEDS a new print — and it removes the coupling entirely rather than serializing around it.",
+          "escape_hatch": "If a slice PROVES it must add one: it becomes a SERIALIZING constraint. At most ONE open PR may modify `_CLI_PRINT_COUNT`, and it must carry a rationale comment (the existing file convention). Cycle 7 enforces: reject a second concurrent PR touching that constant."
+        }
+      }
+    },
+
+    "GB-7_repo_policy_inherited": {
+      "evidence_class": "ARCHITECTURAL_DECISION (project CLAUDE.md + project memory)",
+      "rules": [
+        "*** NEVER run the test suite locally. *** pytest runs ONLY in GitHub CI on a PR. Parallel workers running the suite crash the machine. `./scripts/check.sh` is lint-only.",
+        "*** NEVER mass-reformat. *** No black, no `ruff format`. The compact one-liner house style (E701/E702/E401/E501 ignored) is deliberate.",
+        "A non-MOL PR title MUST carry `(Unit: <slug>)`; the lowercased slug must match the verifier record filename.",
+        "ONE orchestrator landing session at a time. `git fetch` + `gh pr view` the target before merge.",
+        "The 60s pytest timeout is a DEADLOCK GUARDRAIL. A hanging test is the bug — do not raise the timeout to make it pass.",
+        "Do NOT run live CLI verbs (publish, reconcile, pull, track, up, verify-live, cutover) speculatively."
+      ]
+    }
+  },
+
+  "slice_classes": {
+    "REMEDIATION": "changes runtime behaviour to close an approved root cause.",
+    "GUARD": "*** changes NO runtime behaviour. *** Adds mechanical enforcement so a closed (or unreachable) hazard cannot silently re-open. A GUARD slice is how an UNREACHABLE root cause is discharged WITHOUT over-engineering a fix for a bug nobody can hit."
+  },
+
+  "slices": [
+    {
+      "id": "S01",
+      "class": "REMEDIATION",
+      "title": "restore_snapshot writes the snapshot IN PLACE, under the ledger's own lock",
+      "root_causes": ["RC-4", "RC-5"],
+      "architectural_objective": "INT-5 — replacing the ledger's contents is mutually exclusive with every active writer, and never orphans an inode a writer holds open.",
+      "severity": "CRITICAL",
+      "prerequisites": [],
+      "blast_radius": "THE LEDGER WRITE PATH. The highest-consequence code in the persistence layer.",
+      "reachability_on_the_live_tree": "*** CONFIRMED (LS-7). 11 snapshot/backup artifacts; the operator runs this procedure ~monthly with a daemon installed. ***",
+      "prompt": "prompts/C6-S01.md",
+      "approvals_required": ["independent_verifier_BRIEFED_ON_RC-5"],
+      "self_merge_on_green": false
+    },
+    {
+      "id": "S02",
+      "class": "REMEDIATION",
+      "title": "Canonical backend normalization at the READ boundary",
+      "root_causes": ["RC-3"],
+      "architectural_objective": "INT-3 — a live account with an unsupported provider value must fail BEFORE a post is claimed.",
+      "severity": "HIGH",
+      "prerequisites": [],
+      "blast_radius": "WHICH CHANNELS PUBLISH LIVE. A real, external side effect.",
+      "reachability_on_the_live_tree": "*** THE DEFECT IS REACHABLE (the load boundary has no validation, and hand-editing is the DOCUMENTED operator channel — AR-09). THE S02<->S10 HAZARD IS NOT: 0 malformed values exist today (LS-3). ***",
+      "prompt": "prompts/C6-S02.md",
+      "approvals_required": ["independent_verifier", "PD-4 (recommendation given; near-mechanical)"],
+      "self_merge_on_green": false
+    },
+    {
+      "id": "S03",
+      "class": "REMEDIATION",
+      "title": "The publish CLAIM refuses a post it will not POST",
+      "root_causes": ["RC-1"],
+      "architectural_objective": "INT-1 — a post is claimed to `submitting` ONLY when the very next action is a network POST for that post.",
+      "severity": "HIGH",
+      "prerequisites": [],
+      "blast_radius": "THE PUBLISH PATH. Strictly REMOVES a state transition; adds none.",
+      "prompt": "prompts/C6-S03.md",
+      "approvals_required": ["independent_verifier"],
+      "self_merge_on_green": false
+    },
+    {
+      "id": "S04",
+      "class": "REMEDIATION",
+      "title": "The reconcile terminal ladder is a pure function of (state, age)",
+      "root_causes": ["RC-2", "RC-8 (the reconcile half)"],
+      "architectural_objective": "INT-2 — every post in {submitting, submitted, needs_reconcile} reaches a terminal or retryable state in bounded time, REGARDLESS of poll outcome, token provenance, or error_reason.",
+      "severity": "HIGH",
+      "prerequisites": ["S03"],
+      "co_required_with": ["S07 (S07 makes S04's ladder REACHABLE)", "S06 (two halves of RC-8)"],
+      "blast_radius": "THE TERMINAL SEMANTICS OF THE PUBLISH LIFECYCLE.",
+      "migration_size_on_the_live_tree": "*** 0 ROWS (LS-1). Cycle 4 assumed 347. The reconcilable set is EMPTY. ***",
+      "prompt": "prompts/C6-S04.md",
+      "approvals_required": ["independent_verifier", "PD-2 (shape decided; recommendation: the same age ladder)"],
+      "self_merge_on_green": false
+    },
+    {
+      "id": "S05",
+      "class": "REMEDIATION",
+      "title": "Status-client parity: an unknown id is `unknown`, not an error",
+      "root_causes": ["RC-2 (sibling)"],
+      "architectural_objective": "INT-2 (defence in depth). Absorb a REMOTE-API shape difference at the FanOps boundary.",
+      "severity": "MEDIUM",
+      "prerequisites": ["S04"],
+      "MUST_NOT_SHIP_ALONE": true,
+      "why": "*** Alone it fixes the fake-token Zernio case and leaves BOTH the real-token case AND the 500-forever case unterminated — the brief's explicitly-forbidden shallow fix. ***",
+      "blast_radius": "one return branch of one client.",
+      "prompt": "prompts/C6-S05.md",
+      "approvals_required": [],
+      "self_merge_on_green": true,
+      "self_merge_condition": "ONLY if S04 is already merged."
+    },
+    {
+      "id": "S06",
+      "class": "REMEDIATION",
+      "title": "A recovery action must not leave a post carrying a stale status string",
+      "root_causes": ["RC-8 (the revert half)"],
+      "architectural_objective": "INT-7 — no recovery action leaves a post carrying a status string describing a state it is no longer in.",
+      "severity": "MEDIUM",
+      "prerequisites": ["S03"],
+      "co_required_with": ["S04 (which owns the reconcile-side half, reconcile.py:767)"],
+      "blast_radius": "ONE FIELD on ONE revert path. One line.",
+      "prompt": "prompts/C6-S06.md",
+      "approvals_required": [],
+      "self_merge_on_green": true
+    },
+    {
+      "id": "S07",
+      "class": "REMEDIATION",
+      "title": "Reconcile and publish are gated on the same predicate",
+      "root_causes": ["RC-3b"],
+      "architectural_objective": "INT-4 — the producer of a state and its SOLE consumer are gated on the SAME predicate.",
+      "severity": "HIGH",
+      "prerequisites": ["S02"],
+      "co_required_with": ["S04"],
+      "blast_radius": "WHETHER RECONCILE RUNS AT ALL.",
+      "prompt": "prompts/C6-S07.md",
+      "approvals_required": ["independent_verifier_who_MUST_confirm_the_learn_pass_gate_is_untouched"],
+      "self_merge_on_green": false
+    },
+    {
+      "id": "S08",
+      "class": "REMEDIATION",
+      "title": "Daemon health: `alive` must not mean `succeeding`",
+      "root_causes": ["RC-6"],
+      "architectural_objective": "INT-6 — a verdict named `alive` must not imply successful work unless a successful-pass timestamp is independently reported.",
+      "severity": "MEDIUM",
+      "prerequisites": [],
+      "blast_radius": "AN OBSERVABILITY SURFACE. Adds a signal; moves none.",
+      "prompt": "prompts/C6-S08.md",
+      "approvals_required": [],
+      "self_merge_on_green": true
+    },
+    {
+      "id": "S09",
+      "class": "REMEDIATION",
+      "title": "The shrink temp dir gets an owner",
+      "root_causes": ["RC-10"],
+      "architectural_objective": "INT-8 — no persisted path may point into storage whose lifetime is shorter than the ledger record.",
+      "severity": "LOW",
+      "prerequisites": [],
+      "blast_radius": "DISK. Plus a one-time clean.",
+      "migration_size_on_the_live_tree": "*** 41 fanops-shrink-* dirs; 04_agent_io = 924 MB (LS-5). ***",
+      "prompt": "prompts/C6-S09.md",
+      "approvals_required": [],
+      "self_merge_on_green": true
+    },
+    {
+      "id": "S10",
+      "class": "REMEDIATION",
+      "title": "Irreversible retirement policy",
+      "root_causes": ["RC-7"],
+      "architectural_objective": "UNDECIDED — see PD-3.",
+      "severity": "MEDIUM",
+      "status": "*** BLOCKED ON PD-3. DO NOT EXECUTE. ***",
+      "prerequisites": ["PD-3 answered in writing by the operator"],
+      "accrued_cost_on_the_live_tree": "*** ZERO moments retired (LS-2). The actuator has never fired. ***",
+      "prompt": "prompts/C6-S10.md",
+      "approvals_required": ["HUMAN_APPROVAL: PD-3"],
+      "self_merge_on_green": false
+    },
+    {
+      "id": "S11",
+      "class": "GUARD",
+      "title": "Pin the mutation/validator boundary — RC-9 cannot silently become reachable",
+      "root_causes": ["RC-9"],
+      "architectural_objective": "INT-9 (PINNED, not FIXED) — a validator that raises at construction must raise on every mutation API. *** RC-9 has ZERO current reachability. This slice does NOT fix it. It makes its unreachability MECHANICAL. ***",
+      "severity": "LOW-effort / CRITICAL-if-reached",
+      "prerequisites": [],
+      "blast_radius": "*** NONE. Test-only. Zero runtime behaviour change. ***",
+      "why_this_slice_exists": "*** Cycle 4 has TEN root causes and TEN slices — but the mapping is NOT a bijection. RC-4+RC-5 collapse into S01, and RC-9 MAPS TO NOTHING. It was deferred ('zero reachability, sequenced last') and never sliced. The Cycle-6 completion standard FORBIDS an orphaned root cause. ***",
+      "why_a_GUARD_and_not_a_FIX": "*** Fixing RC-9 means adding validate_assignment / a validated-mutation API across 8 models and ~57 model_copy sites, to close a bug WITH ZERO CURRENT REACHABILITY — while RC-4 silently deletes media. That is textbook over-engineering, and Cycle 4 was RIGHT to defer it. But 'we checked, it's unreachable' ROTS. A CI policy test does not. ***",
+      "prompt": "prompts/C6-S11.md",
+      "approvals_required": [],
+      "self_merge_on_green": true
+    },
+    {
+      "id": "S12",
+      "class": "GUARD",
+      "title": "Pin the layering — a lazy import cannot be hoisted without CI going red",
+      "root_causes": [],
+      "traces_to": "AR-04 (Cycle 5 architectural RISK, *** NOT an approved Cycle-4 root cause ***)",
+      "architectural_objective": "GB-1, made mechanical.",
+      "severity": "MEDIUM",
+      "status": "*** PROPOSED — NOT APPROVED. REQUIRES AN EXPLICIT ARCHITECTURAL APPROVAL BEFORE EXECUTION. ***",
+      "why_it_needs_approval": "*** The Cycle-6 brief requires that every code modification be traceable to an APPROVED ROOT CAUSE. AR-04 is a Cycle-5 RISK. It is not in the RC set. Slipping S12 into the program without saying so would be exactly the hidden scope expansion this contract exists to prevent. It is surfaced as a DECISION, not smuggled in as a fix. ***",
+      "prerequisites": ["HUMAN_APPROVAL: promote AR-04 to an approved root cause, OR reject S12"],
+      "blast_radius": "*** NONE. Test-only. ***",
+      "prompt": "prompts/C6-S12.md",
+      "approvals_required": ["HUMAN_APPROVAL: AR-04 scope"],
+      "self_merge_on_green": true
+    }
+  ],
+
+  "implementation_dag": {
+    "acyclic": true,
+    "proof": "Edges: S03->S04, S04->S05, S03->S06, S02->S07. Roots: S01, S02, S03, S08, S09, S11, (S12). No back edge exists. Tarjan over this edge set returns 12 singleton SCCs.",
+    "ordering_edges": [
+      {"from": "S03", "to": "S04", "why": "S03 stops the strand being CREATED; S04 drains those ALREADY stranded. S04-first would escalate a churn of posts publish immediately re-strands. Noisy, not dangerous — but avoidable. *** Stop the bleeding, then drain. ***"},
+      {"from": "S04", "to": "S05", "why": "SUPERSEDES. Once S04 hoists the terminal out of the poll-outcome branch, S05 is no longer load-bearing. S05 ALONE is a forbidden shallow fix."},
+      {"from": "S03", "to": "S06", "why": "S06 keeps preserving submission_id ('keep the lineage'). That is SAFE ONLY BECAUSE S03 makes the claim refuse a real-sid post. S06 without S03 is not harmful — merely incomplete."},
+      {"from": "S02", "to": "S07", "why": "S02 SHRINKS S07's reachability. Landing S07 first is not wrong, but its fixtures would encode a malformed-backend world S02 then eliminates."}
+    ],
+    "co_requirements_NOT_ordering_edges": {
+      "note": "*** A co-requirement is NOT a cycle. Both slices are required for the INVARIANT to hold; NEITHER must precede the other. Modelling these as ordering edges would MANUFACTURE a cycle that does not exist — exactly the C5-SC-2 error, applied to the implementation graph. ***",
+      "pairs": [
+        {"a": "S04", "b": "S07", "invariant": "INT-2", "why": "If _reconcile_safe is gated OFF, S04's ladder NEVER RUNS. S04 is correct but UNREACHABLE until S07 lands. Neither breaks the other."},
+        {"a": "S04", "b": "S06", "invariant": "INT-7", "why": "S04 owns reconcile.py:767 (the suppression key). S06 owns actions.py:944-951 (the stale reason). No file conflict. INT-7 holds only when BOTH land."}
+      ]
+    },
+    "parallel_safe": ["S01", "S02", "S08", "S09", "S11"],
+    "must_be_sequential": ["S03 -> S04 -> S05"],
+    "design_together_implement_apart": ["S02", "S07"],
+    "blocked": ["S10 (PD-3)", "S12 (AR-04 scope approval)"],
+    "reframe_stream": "*** VERIFIED DISJOINT by STATE OWNERSHIP, not by filename (Cycle 4). framing.py and keyframes.py have ZERO ledger references; clip.py's only three `Render` tokens are docstrings. LS-4 re-confirms IF-1 against the LIVE TREE: 0 renders, 0/347 posts with a render_id. Cycle-6 implementation may proceed alongside reframe work. ***"
+  },
+
+  "recommended_landing_order": {
+    "evidence_class": "IMPLEMENTATION_DECISION",
+    "note": "*** This CHANGES Cycle 4's phasing, and the change is driven by MEASUREMENT, not taste. ***",
+    "order": [
+      {"n": 1, "slices": ["S01"], "why": "*** The only CRITICAL, and LS-7 proves it sits on the procedure the operator actually runs. Nothing should land ahead of it. ***"},
+      {"n": 2, "slices": ["S11"], "why": "*** FREE and it PROTECTS every slice that follows. S03/S04/S06 all mutate Post; S11 makes GB-4 mechanical BEFORE they land, not after. Test-only, zero blast radius, self-merges on green. Landing it second is the cheapest risk reduction in the program. ***"},
+      {"n": 3, "slices": ["S03", "S04", "S05", "S06"], "why": "*** THE WINDOW IS NOW. LS-1: the reconcilable set is EMPTY (0 rows). S04's migration is a NO-OP TODAY. The moment the operator approves any of the 347 awaiting_approval posts and it publishes, S04 acquires a real blast radius. *** Close the submission lifecycle BEFORE it is next exercised. Sequential within.", "operational_gate": "S04 still ships report-only mode FIRST — as a PERMANENT gate, not because of today's count."},
+      {"n": 4, "slices": ["S02", "S07"], "why": "S02 before S07. LS-3 decouples S02 from PD-3 on the current tree — re-verify at merge."},
+      {"n": 5, "slices": ["S08", "S09"], "why": "Independent; buildable any time. Placed here only by severity."},
+      {"n": 6, "slices": ["S10", "S12"], "why": "BLOCKED on human decisions."}
+    ],
+    "supersedes": "Cycle 4's Phase 2 (S02+S07) ran BEFORE Phase 3 (the submission lifecycle). Cycle 6 REVERSES that, because (a) LS-1 makes the lifecycle chain a zero-migration change TODAY and that window closes on first publish, and (b) LS-3 removes the urgency that put S02 early (it was early partly to de-risk the malformed-backend blast radius — which does not exist)."
+  },
+
+  "product_decisions": {
+    "PD-1": {"question": "Does the operator need an explicit 'republish (mint a new submission)' action?", "blocks": "S03's COMPLETENESS, not its SAFETY.", "recommendation": "SHIP S03 ANYWAY.", "status": "OPEN, NON-BLOCKING"},
+    "PD-2": {"question": "What is the correct terminal for a real-token post the backend never resolves?", "blocks": "S04's SEMANTICS, not its SHAPE.", "recommendation": "The SAME age ladder. `GAVE UP:` is a LABEL written to error_reason — it changes NO state, so a given-up post is NOT re-queueable and CANNOT double-post.", "status": "OPEN, RECOMMENDATION GIVEN"},
+    "PD-3": {"question": "Is `adjust.retire`'s irreversible MomentState.retired at n=3 analyzed posts intentional policy, or an oversight?", "blocks": "*** S10 ENTIRELY. ***", "recommendation": "*** NONE OFFERED. *** Not recoverable from code. The guards that exist (bottom-20% AND lift<20.0 AND not-a-winner AND not-lift_degraded) are real and considered — which is EVIDENCE FOR INTENT.", "status": "OPEN, BLOCKING S10", "new_evidence_from_cycle_6": "*** It has cost NOTHING so far: 0 moments retired (LS-2). And S02 cannot unfreeze it: 0 malformed backends (LS-3). The decision is no less REQUIRED — but it is no longer URGENT, and Cycle 4's mandatory S02 mitigation is DISARMED on the current tree. ***"},
+    "PD-4": {"question": "On a malformed backend at load: normalize-and-skip, or raise?", "blocks": "S02's EDGE.", "recommendation": "Normalize case/whitespace; SKIP-and-flag an unknown name via the EXISTING `skipped_rows` channel. *** This is not new policy — it moves set_backend's existing rule to the door that lacks it. ***", "status": "OPEN, NEARLY NOT A DECISION"},
+    "PD-5_NEW": {"question": "*** Is S12 (the AR-04 layering guard) in scope? *** AR-04 is a Cycle-5 architectural RISK, not an approved Cycle-4 root cause. Building it without approval would be a hidden scope expansion.", "blocks": "S12 ENTIRELY.", "recommendation": "*** APPROVE. *** GB-1 is already a MANDATORY boundary on all 11 other slices; S12 merely makes it mechanical instead of a promise. It is test-only, zero blast radius, and it protects every future change. But it is the OPERATOR's call, and it is surfaced rather than smuggled.", "status": "OPEN, BLOCKING S12", "evidence_class": "HUMAN_APPROVAL"}
+  },
+
+  "operational_constraint": {
+    "id": "OPS-001",
+    "status": "*** STILL ENGAGED — SIX CONSECUTIVE CYCLES. ***",
+    "cost_to_cycle_6": "Cycle 6 was executed SINGLE-THREADED, like Cycles 1-5. No independent verifier could be spawned to REFUTE this contract's boundaries.",
+    "mitigation_applied": "Cycle 6 grounded every collapsible risk in a DIRECT MEASUREMENT of the live tree rather than in an argument. A measurement does not need a second opinion in the way an inference does.",
+    "disengage": "`orchestrate.py stop` — AN OPERATOR ACTION, not a code change."
+  }
+}

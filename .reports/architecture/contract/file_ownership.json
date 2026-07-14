@@ -1,0 +1,229 @@
+{
+  "$schema": "fanops-impl-contract/file-ownership/v1",
+  "cycle": 6,
+  "git_head": "fcffa73",
+  "purpose": "*** THE MECHANICAL PARTITION. This is the single artifact Cycle 7 needs most: a total map from file -> owning slice -> PERMITTED REGION. A diff touching a file outside its slice's allowance is REJECTED, mechanically, with no judgement call. ***",
+
+  "why_function_level_and_not_file_level": {
+    "evidence_class": "IMPLEMENTATION_DECISION",
+    "statement": "Cycle 4 classified three pairs as `same_file_conflict_only` and said 'a rebase resolves it'. *** That is true of the TEXT and false of the CONTRACT. *** Two slices editing one file with no declared partition is how one silently widens into the other's scope. Cycle 6 partitions THREE contested files BY FUNCTION, so the boundary is checkable without reading either diff.",
+    "contested_files": ["src/fanops/studio/actions.py (S06 + S09)", "src/fanops/cli.py (S08 + S09 + S10)", "src/fanops/post/run.py (S03 owns it; S09 must NOT touch its Render.path write)"]
+  },
+
+  "ownership": {
+    "src/fanops/ledger.py": {
+      "owner": "S01",
+      "permitted_region": "`Ledger.restore_snapshot` ONLY (approx :546-553).",
+      "forbidden_within_the_file": [
+        "*** `Ledger.transaction` (:483-488) — ALREADY CORRECT. DO NOT TOUCH. ***",
+        "`_save_unlocked`, `_drain_deferred_unlinks` — ALREADY CORRECT.",
+        "`Ledger.snapshot` (:540) — ALREADY takes the RIGHT lock. It is the MODEL, not the target.",
+        "Deleting `cfg.lock_path` / `ledger.lock` — it becomes genuinely dead for the first time, but bundling that cleanup OBSCURES THE DIFF. Separate PR."
+      ],
+      "ratchets": {
+        "swallow": "*** NOT IN THE BASELINE -> 0 allowed. ANY new silent broad `except` here FAILS CI IMMEDIATELY (`new_files != []`). ***",
+        "print": "*** ledger.py IS IN `_INTERNAL_MODULES`. ZERO print() PERMITTED. Assertion: `offenders == []`. ***"
+      }
+    },
+    "src/fanops/ledger_sqlite.py": {
+      "owner": "S01",
+      "permitted_region": "Extract `read_raw_from(path)` from `read_raw` (~8 lines, zero behaviour change). `restore()` retained as the CORRUPT-DB FALLBACK.",
+      "forbidden_within_the_file": ["`write_raw`'s existing semantics", "the lock/nesting-refusal machinery", "WAL / synchronous=FULL / chmod 0600"],
+      "ratchets": {"swallow": "NOT IN BASELINE -> 0 allowed.", "print": "not scoped"}
+    },
+    "tests/test_ledger_sqlite_store.py": {
+      "owner": "S01",
+      "permitted_region": "`test_restore_snapshot_serializes_with_transaction` (:161-186) — *** REWRITE. IT CURRENTLY ASSERTS THE DATA LOSS. *** Plus three NEW tests.",
+      "note": "*** This is the ONLY test file a slice is permitted to REWRITE rather than extend. RC-5. ***"
+    },
+
+    "src/fanops/accounts.py": {
+      "owner": "S02",
+      "permitted_region": "NEW `normalize_backend(s) -> str | None`; `Accounts.load` (apply it); `Accounts.validate` (add the VALUE check to the existing PAIRING check); `set_backend` (call the extracted fn, delete its inline copy).",
+      "forbidden_within_the_file": [
+        "The legacy `FANOPS_POSTER` bridge (:196-201).",
+        "The MOL-79 per-row leniency posture — *** one bad row must NEVER crash the registry. ***",
+        "The other 9 mutators.",
+        "*** GB-1: accounts.py is LEVEL 2. `config` (LEVEL 0, fan-in 82) reaches UP to it via a LAZY import. DO NOT add a module-level import that would invert this. ***"
+      ],
+      "ratchets": {"swallow": "baseline 3 — MUST NOT EXCEED.", "print": "not scoped"}
+    },
+    "src/fanops/post/__init__.py": {
+      "owner": "S02",
+      "permitted_region": "`get_poster` live-guard (:19) and `get_media_uploader` guard (:38-41) — harden to MEMBERSHIP as defence in depth.",
+      "forbidden_within_the_file": ["*** GB-2: do NOT delete anything in the PROVIDERS resolution chain on the strength of 'zero callers'. COUP-10: six lazy in-function import LAMBDAS. A name-based call graph flags ALL SIX as uncalled. ALL SIX ARE LIVE. ***"],
+      "ratchets": {"swallow": "NOT IN BASELINE -> 0 allowed.", "print": "not scoped"}
+    },
+    "src/fanops/settings.py": {
+      "owner": "S02",
+      "permitted_region": "`_VALID_BACKENDS` CONSOLIDATION ONLY (COUP-05 — it is defined TWICE: config.py:72 and settings.py:18).",
+      "forbidden_within_the_file": ["*** Everything else. `Settings` is a DOCTOR-ONLY strict validator; its strict/lenient split from `Config` is INTENTIONAL, not drift (INV-05). Do NOT 'unify' them. ***"],
+      "ratchets": {"swallow": "NOT IN BASELINE -> 0 allowed.", "print": "not scoped"}
+    },
+
+    "src/fanops/post/run.py": {
+      "owner": "S03",
+      "permitted_region": "`_publish_one` CLAIM (:256-292); `publish_due`'s tally; OPTIONALLY `_requeue_transient_failed_for_daemon`'s missing log (:428).",
+      "forbidden_within_the_file": [
+        "*** The crash-during-network path into `submitting` — LEGITIMATE (F11) and MUST REMAIN. ***",
+        "The CLAIM's other guards (`state is queued`; the due re-check under lock). BOTH CORRECT.",
+        "`_NET_POST_FIELDS` / the FINALIZE merge (the B4 lost-update fix).",
+        "*** run.py:367 — the `Render.path` write. UNREACHABLE (LS-4: 0 renders, 0/347 posts with a render_id). S09 is FORBIDDEN from 'repairing' it and so is S03. ***"
+      ],
+      "ratchets": {"swallow": "baseline 4 — MUST NOT EXCEED.", "print": "not scoped"}
+    },
+
+    "src/fanops/reconcile.py": {
+      "owner": "S04",
+      "permitted_region": "`reconcile_posts` — the ladder (:604-778), *** INCLUDING the :767 suppression-key change. ***",
+      "MUST_SHIP_ATOMICALLY": "*** The :767 latch lives INSIDE the branch S04 rewrites. Splitting it into another PR leaves the ladder REACHABLE but its outcome still SUPPRESSED. ***",
+      "forbidden_within_the_file": [
+        "*** The prime directive: reconcile NEVER guesses a post's fate. `GAVE UP:` is a LABEL, not a transition to `failed`. ***",
+        "`AuthError` -> re-raise (the halt path, :622).",
+        "The `polled_as` stale-poll guard (:610-612).",
+        "Per-post containment (one post's poll error must never abort the pass).",
+        "*** `_STUCK_AFTER` (6h), `_SUBMITTING_ESCALATE_AFTER` (24h), `_RECONCILE_GIVEUP_AFTER` (72h) — Cycle-3 PINNED these. DO NOT 'fix' them. The escalation is not LATE; it is UNREACHABLE. ***"
+      ],
+      "ratchets": {"swallow": "baseline 9 — MUST NOT EXCEED.", "print": "not scoped"}
+    },
+
+    "src/fanops/post/metrics.py": {
+      "owner": "S05",
+      "permitted_region": "`ZernioStatusClient.get_status` (:511-531) — the *** 404 branch ONLY. ***",
+      "forbidden_within_the_file": [
+        "*** The 5xx -> RuntimeError path (parked, never guessed `failed`). ***",
+        "*** The 401 -> ZernioAuthError halt. ***",
+        "`PostizStatusClient` — it is ALREADY CORRECT.",
+        "The `{status, publicUrl, tiktokUsername?}` return shape."
+      ],
+      "ratchets": {"swallow": "*** NOT IN BASELINE -> 0 allowed. ***", "print": "not scoped"}
+    },
+
+    "src/fanops/studio/actions.py": {
+      "owner": "*** SPLIT — PARTITIONED BY FUNCTION ***",
+      "partition": {
+        "S06": {
+          "permitted_functions": ["bulk_send_to_review"],
+          "permitted_region": ":944-951 — the field-clearing block. ADD `p.error_reason = None`.",
+          "forbidden": [
+            "*** `submission_id` and `batch_id` STAY PRESERVED ('keep the lineage'). Clearing submission_id would let a re-approved post RE-POST — and if it was actually live, that is a DUPLICATE ON THE PLATFORM. That is PD-1, and it is UNDECIDED. ***",
+            "*** `reconcile.py:767` — S04 OWNS IT. Duplicating the fix here creates a merge conflict and splits one change across two PRs. ***",
+            "Splitting error_reason's four semantics into typed fields (needs a migration; DEFERRED and filed).",
+            "*** actions.py:1029-1034 and :1100-1102 — THAT IS S09's REGION. ~80 lines away, different functions. ***"
+          ]
+        },
+        "S09": {
+          "permitted_functions": ["retry_oversize_failures", "retry_rate_limited_failures"],
+          "permitted_region": ":1029-1034 and :1100-1102 — *** STOP PERSISTING THE `file://` TEMP URL into Post.media_urls. ***",
+          "forbidden": ["*** actions.py:944-951 — THAT IS S06's REGION. ***"]
+        }
+      },
+      "conflict_class": "TEXTUAL ONLY (~80 lines apart, different functions, no shared state). A rebase resolves it. *** But the CONTRACT boundary is the FUNCTION, not the line — so a widening is detectable without reading the diff. ***",
+      "ratchets": {"swallow": "baseline 23 — SHARED between S06 and S09. *** NEITHER may raise it. ***", "print": "not scoped"}
+    },
+
+    "src/fanops/pipeline.py": {
+      "owner": "S07",
+      "permitted_region": "`_reconcile_safe` / `_publish_safe` (:311-338) — *** EXACTLY ONE of the two gates. ***",
+      "forbidden_within_the_file": [
+        "`AuthError` re-raise symmetry in BOTH functions.",
+        "The swallow-with-log for any other hiccup (a status-API hiccup must not wedge the pass).",
+        "Dryrun preview writing.",
+        "The five-phase `advance()` shape.",
+        "*** `_quarantine` — it is the failure MECHANISM, not a swallow. ***"
+      ],
+      "ratchets": {
+        "swallow": "baseline 13 — MUST NOT EXCEED.",
+        "print": "*** pipeline.py IS IN `_INTERNAL_MODULES`. ZERO print() PERMITTED. ***"
+      }
+    },
+
+    "src/fanops/daemon.py": {
+      "owner": "S08",
+      "permitted_region": "`status` (:437-479) — ADD a second, orthogonal verdict.",
+      "forbidden_within_the_file": [
+        "*** `daemon_progress` REMAINS THE MID-PASS LIVENESS OWNER. This slice ADDS a signal; it MOVES none. (project memory: liveness-verdict-single-owner) ***",
+        "*** `_heartbeat_age_s`'s role in the alive/stale decision. DO NOT TOUCH. ***",
+        "The `alive_mid` override's protective property (a fast-logging pass is never flipped to `stale`).",
+        "The `not loaded` -> ALARM, `stage stuck`, and `not running` verdicts.",
+        "The launchd plist's BAKED FULL PATH (a stale one killed every gate for 3 days)."
+      ],
+      "ratchets": {"swallow": "baseline 5 — MUST NOT EXCEED.", "print": "not scoped"}
+    },
+    "src/fanops/health_model.py": {
+      "owner": "S08",
+      "permitted_region": "ADD `last_success_age_s` alongside the existing `heartbeat_age_s`.",
+      "forbidden_within_the_file": ["`heartbeat_age_s` must REMAIN in the returned dict."],
+      "ratchets": {"swallow": "baseline 5 — MUST NOT EXCEED.", "print": "not scoped"}
+    },
+
+    "src/fanops/cli.py": {
+      "owner": "*** SPLIT — PARTITIONED BY FUNCTION. AND IT CARRIES A SHARED, EXACT-EQUALITY BUDGET. ***",
+      "partition": {
+        "S08": {"permitted_functions": ["the daemon tick loop (:1300-1313)", "_heartbeat (:1306)"], "note": "the SUCCESS SIGNAL."},
+        "S09": {"permitted_functions": ["a NEW `cmd_clean` + its argparse registration"], "note": "the `fanops clean --shrink` verb."},
+        "S10": {"permitted_functions": ["_learn_pass (:151-155)"], "note": "*** BLOCKED ON PD-3. ***"}
+      },
+      "THE_SHARED_BUDGET": {
+        "id": "IR-4",
+        "constraint": "*** `tests/test_internal_prints_routed.py` asserts `len(print_calls(cli.py)) == 147` — EXACT EQUALITY, NOT A CEILING. ***",
+        "hazard": "*** THREE slices touch cli.py. If two land carrying a bumped constant, the second's rebase yields a WRONG count and CI goes RED for a reason unrelated to its change. Cycle 4 did not name this. ***",
+        "THE_RULE": "*** NO SLICE MAY CHANGE cli.py's print() COUNT. *** Route new operator output through `get_logger`, or reuse an existing print. This is FREE — none of S08/S09/S10 needs a new print — and it DISSOLVES the coupling rather than serializing around it.",
+        "escape_hatch": "If a slice PROVES it must: at most ONE open PR may modify `_CLI_PRINT_COUNT`, with a rationale comment (the existing file convention). Cycle 7 rejects a second concurrent PR touching that constant."
+      },
+      "forbidden_within_the_file": ["*** S07 MUST NOT REMOVE `_learn_pass`'s `is_live_backend` GATE (:965). See IR-7 — the single most dangerous scope expansion in the program. ***"],
+      "ratchets": {"swallow": "baseline 3 — SHARED across S08/S09/S10. NONE may raise it.", "print": "*** 147, EXACT. SEE ABOVE. ***"}
+    },
+
+    "src/fanops/post/compress.py": {
+      "owner": "S09",
+      "permitted_region": "`maybe_shrink_for_cap` (:19-35) — the TEMP-DIR LIFETIME.",
+      "forbidden_within_the_file": [
+        "The CRF ladder (28->32->36->40) and its FAIL-OPEN contract (returns the ORIGINAL path if all fail).",
+        "*** The `.mp4` suffix requirement on any temp file — ffmpeg SELECTS ITS MUXER BY EXTENSION (COUP-07 / MOL-78). ***",
+        "*** `media_path_for_post`'s CLIP FALLBACK (:61-65) — S09 DEPENDS ON IT. Do NOT 'simplify' it away. ***",
+        "*** compress.py:112 and :131 — the `Render.path` writes. UNREACHABLE (LS-4). Repairing unreachable code is over-engineering AND would conflict with whatever the reframe stream decides `Render` should mean. ***"
+      ],
+      "ratchets": {"swallow": "baseline 1 — MUST NOT EXCEED.", "print": "not scoped"}
+    },
+    "src/fanops/doctor.py": {
+      "owner": "S09",
+      "permitted_region": "ADD a shrink-leak check.",
+      "forbidden_within_the_file": ["*** Do NOT add a second half-live warning. It ALREADY EXISTS (:322) and is SUPPRESSED whenever one valid channel remains (C3-OBS-5). A second warning on the same broken predicate adds NOISE, not safety. ***"],
+      "ratchets": {"swallow": "baseline 8 — MUST NOT EXCEED.", "print": "not scoped"}
+    },
+
+    "src/fanops/adjust.py": {
+      "owner": "S10",
+      "status": "*** BLOCKED ON PD-3. ***",
+      "permitted_region": "`retire` (:82-96) — ONLY once PD-3 is answered.",
+      "forbidden_within_the_file": [
+        "*** `classify_outcomes`' guards (bottom-20% AND lift<20.0 AND not-a-winner AND not lift_degraded). They are the REAL, CONSIDERED guards — and they are the EVIDENCE that this policy was DELIBERATE. ***",
+        "`amplify` / `MAX_AMPLIFY_PER_SOURCE`.",
+        "*** GB-5: adjust.py mutates `Moment`. Do NOT convert a setattr to model_copy. ***"
+      ],
+      "ratchets": {"swallow": "*** NOT IN BASELINE -> 0 allowed. ***", "print": "not scoped"}
+    },
+
+    "tests/test_mutation_boundary_policy.py": {
+      "owner": "S11",
+      "status": "NEW FILE",
+      "permitted_region": "*** ENTIRE FILE. Test-only. Zero runtime behaviour change. ***"
+    },
+    "tests/test_layering_policy.py": {
+      "owner": "S12",
+      "status": "*** NEW FILE — PROPOSED, NOT APPROVED (PD-5). ***",
+      "permitted_region": "ENTIRE FILE. Test-only."
+    }
+  },
+
+  "files_no_slice_may_touch": {
+    "note": "*** Not an exhaustive denylist — a NAMED one. These are load-bearing, ALREADY CORRECT, and are the ones an implementing agent is most likely to 'improve'. ***",
+    "src/fanops/ids.py": "Content-addressing. `hash()` is BANNED (PEP 456 salts it per interpreter). Changing the id length SILENTLY breaks orphan detection in ledger._SID_RE (COUP-04).",
+    "src/fanops/models.py": "*** GB-3: no `extra=\"forbid\"`. GB-5: `Moment.validate_assignment=True` is LOAD-BEARING. ***",
+    "src/fanops/crosspost.py": "*** INV-15 — `_JITTER_MAX < _STEP_MIN` is enforced by the ONLY IMPORT-TIME ASSERT IN THE TREE. The schedule cannot even be IMPORTED in a violating state. Leave it. ***",
+    "src/fanops/framing.py, keyframes.py, clip.py": "*** THE REFRAME STREAM. Verified disjoint by STATE OWNERSHIP (zero ledger references). Do not touch from a Cycle-6 slice. ***",
+    "src/fanops/post/providers.py": "*** COUP-10. Six lazy import lambdas that a call graph reports as dead. ALL SIX ARE LIVE. ***",
+    ".claude/workflows/*.js": "TRACKED, LOAD-BEARING build workflows. Never delete (project CLAUDE.md)."
+  }
+}

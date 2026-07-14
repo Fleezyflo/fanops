@@ -57,7 +57,20 @@ tiktok-submission/
 
 # session/tooling scratch at repo root — machine-local, never committed
 .agents/skills/
-.reports/
+# `.reports/*` (not `.reports/`) — git CANNOT re-include a path under an EXCLUDED DIRECTORY, so the
+# directory itself must stay walkable for the negation below to work at all.
+.reports/*
+# ── Cycle 7: `.reports/architecture/` IS TRACKED. ───────────────────────────────────────────────
+# It was ignored as "session scratch", which meant the ENTIRE architectural knowledge base — the
+# manifest, the KB, the implementation contract, every canonical artifact of Cycles 1-6 — WAS NOT
+# IN THE REPOSITORY. Consequences, all of them fatal to governance:
+#   * CI never saw it, so an architecture gate would have found no inputs and PASSED VACUOUSLY —
+#     a green check that checks nothing, which is worse than no check at all;
+#   * "regenerate and byte-compare against the committed artifacts" compares against NOTHING;
+#   * the "architectural authority" lived on ONE developer's disk and died with the machine.
+# It is text (~1.9 MB of .md + .json) and it is now load-bearing: `python -m tools.arch ci` reads it,
+# and rule GOV-001 FAILS LOUDLY if it is absent rather than skipping the checks that need it.
+!.reports/architecture/
 .codemap-cache/
 .codemap-cache-test/
 skills-lock.json

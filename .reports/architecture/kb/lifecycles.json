@@ -1,0 +1,90 @@
+{
+ "$schema": "fanops-arch-kb/lifecycles/v1",
+ "cycle": 5,
+ "git_head": "fcffa73",
+ "generated": "2026-07-14",
+ "purpose": "For every major entity: creation, initialization, validation, mutation, persistence, synchronization, publication, retirement, deletion, recovery — with the authorized mutators, validation points, persistence boundaries and rollback behaviour of each transition.",
+
+ "canonical_transition_table": {
+  "file": "../transitions.json",
+  "status": "CANONICAL AND UNCHANGED BY CYCLE 5. Produced by an AST census over all 127 modules (Cycle-2 extension). Cycle 5 re-derived the writer counts and CONFIRMS them. Do not duplicate that table here; cite it.",
+  "why_it_is_trustworthy": "It catches the five GENERIC/DYNAMIC writer shapes a literal grep cannot see: PostState(<str>), p.state=<var>, setattr(p,<var>,v), model_copy(update=<var>), and enum-valued KEYWORD DEFAULTS. Cycle 2's own first-pass grep produced two FALSE 'zero writers' claims that the AST pass caught."
+ },
+
+ "universal_lifecycle_properties": {
+  "creation": "Every entity id is CONTENT-ADDRESSED (ids.py:7). The whole add_* family is `setdefault` (first-write-wins) — EXCEPT add_imported_media, which is a true UPSERT so a re-pull's fresher metrics win. Consequence: A WHOLE-PIPELINE REPLAY IS A NO-OP for entity creation. This is the system's central idempotency property and it holds.",
+  "validation": "pydantic, AT CONSTRUCTION ONLY (Ledger.load). model_copy(update=) bypasses EVERY validator on EVERY model. Direct setattr bypasses all EXCEPT on Moment (the only model with validate_assignment=True). Proven by execution against pydantic 2.13.4.",
+  "persistence": "Durable ONLY at Ledger.transaction exit. In-memory state is not persisted until _save_unlocked. Atomicity is PER-TRANSACTION, never per-field.",
+  "rollback": "save runs ONLY on clean exit. An uncaught raise inside a transaction leaves the last committed snapshot.",
+  "guards": "Every state-promoting method re-reads the entity UNDER THE LOCK and no-ops on the wrong source state. THIS — not a single-writer property — is what makes contended/duplicate calls safe (INV-02)."
+ },
+
+ "entity_lifecycles": {
+  "Source": {
+   "creation": "ingest (content-addressed src_<sha1[:12]>) OR ledger.rebuild_catalog (adopts an orphan file as `discovered`, INERT until an operator promotes)",
+   "birth_state": "pending when cfg.queue_gate is ON (DEFAULT ON) — INVISIBLE to every pipeline reducer. This is the U4 queue gate, BY DESIGN, not a stall.",
+   "happy_path": "pending -> catalogued -> transcribed -> signalled -> moments_requested -> picks_decided -> moments_decided",
+   "retirement": "ledger.retire_source (operator only). Cascades moments. *** The FILE is left on disk, and rebuild_catalog will NOT resurrect it. ***",
+   "recovery": "resume_source (refuses a HEALTHY source) | _force_reset_to_catalogued (T0 reset: purges caches, discards gates)",
+   "wipe_safety_invariant": "rebuild_catalog ADDS orphans ONLY — it NEVER retires a source whose file is missing (ledger.py:746-748). VERIFIED.",
+   "confidence": "CERTAIN"
+  },
+  "Moment": {
+   "creation": "moments pass-1 ingest -> `picked` (window chosen, hook NOT yet authored — NOT renderable; the render loop keys on `decided`)",
+   "promotion": "picked -> decided when the per-pick moment_hooks gate lands (a hook, OR a valid clean null)",
+   "atomicity": "*** ATOMIC-PER-SOURCE: `if dec is None: return led`. NOT independent per-persona gates and NOT bounded-skip machinery. ***",
+   "retirement": "adjust.retire -> MomentState.retired. *** IRREVERSIBLE: ledger.reconcile_moments REFUSES to un-retire (ledger.py:636-642). *** Fires at round(n*0.2)>=1, i.e. n=3 analyzed posts.",
+   "the_asymmetry": "RC-7 — the ONE irreversible learning actuator has the WEAKEST gate (cfg.is_live_backend only), while every REVERSIBLE bias actuator waits for learning_validated AND p4_unlocked (>=8 posts x >=2 values). BLOCKED ON PD-3 (product intent, not recoverable from code).",
+   "gc_preservation": "a moment whose hook_strategy starts with CLEAN_AWAITING is EXEMPT from cascade delete (ledger.py:630-632)",
+   "confidence": "CERTAIN"
+  },
+  "Clip": {
+   "creation": "clip.render_moment. A clip that FAILS to render is BORN ClipState.error (clip.py:830-860) — never laundered into a captioned post with a dangling mp4.",
+   "unreachable_states": ["published", "analyzed"],
+   "consequence": "ledger._LIVE_CLIP_STATES is a DEAD GUARD (always False). Cascade protection holds entirely via _PROTECTED_POST_STATES, and is SOUND: when no protected post hangs off a clip, the cascade deletes THE POSTS TOO, so nothing is orphaned.",
+   "confidence": "CERTAIN"
+  },
+  "Post": {
+   "creation": "crosspost._mint_surface_post — content-addressed off surface_key '{account}|{platform}'. BORN awaiting_approval (models.py:298), so even a bare Post(...) is unpublishable.",
+   "one_deliberate_exception": "_mint_surface_post DELETES and re-mints a post whose prior state is `rejected` or `failed` (crosspost.py:229-231) — a re-run CAN resurrect a rejected post.",
+   "approval_gate": "publish_due iterates `queued` ONLY (run.py:442); only Ledger.approve_post — guarded on awaiting_approval (ledger.py:579) — promotes. INV-08 UPHELD.",
+   "publication": {
+    "claim": "queued -> submitting, COMMITTED BEFORE ANY NETWORK I/O (run.py:264-272). THE durability point (F11).",
+    "network": "lock-free, on a throwaway Ledger.load. _publish_one (run.py:296) is the SOLE network-POST caller (INV-09).",
+    "finalize": "merges ONLY _NET_POST_FIELDS into a FRESHLY LOADED ledger (the B4 lost-update fix). account_id written only when changed ('in-flight wins').",
+    "the_postiz_permalink_trap": "*** _postiz_permalink ALWAYS returns None BY DESIGN. So the steady-state Postiz happy path is submitting -> submitted -> needs_reconcile -> published, NEVER -> published directly. ***"
+   },
+   "terminal_ladder": "reconcile owns submitting/submitted/needs_reconcile. Escalate at 24h past SCHEDULE; GAVE UP: at 72h past SCHEDULE. *** Both ages measured from scheduled_time, NOT chained — total time-to-terminal is 72h, not 144h. ***",
+   "THE_HOLE": "*** THREE INDEPENDENT EXCLUSIONS each strand a post forever: (1) a RAISING poll continues out before the ladder; (2) a REAL submission_id is excluded from both terminals by _is_fake_token; (3) ANY non-empty error_reason is a permanent suppression latch (reconcile.py:767). PROVEN: still `submitting` at +100,000h. RC-1 + RC-2. ***",
+   "recovery": "NONE, autonomous or manual, for a post stranded with a REAL submission_id. The Studio requeue family accepts ONLY failed/error. The only escape is `fanops resolve <id> failed` -> Studio recover — a two-step CLI break-glass requiring the operator to ALREADY KNOW, and nothing tells them.",
+   "confidence": "CERTAIN (executed, Cycles 3+4)"
+  },
+  "Render": {
+   "creation": "*** NONE. The entity is NEVER MINTED. *** Ledger.add_render has ZERO callers (AST). crosspost.py:225 hardcodes render_id=None. Live ledger: 0 renders, 0/347 posts with a render_id.",
+   "status": "RESERVED SURFACE. RenderState is driverless (FIND-001, upheld across 5 cycles). The map is mutated (path, media_url) but the STATE never is — and the map is always empty anyway.",
+   "confidence": "CERTAIN"
+  },
+  "StitchPlan": {
+   "note": "The ONLY fully-driven auxiliary state machine — every declared state has a writer and a guard.",
+   "guards": "approve: state is suggested. dismiss: state in (suggested, approved) — an in_use plan is FORWARD-ONLY.",
+   "confidence": "CERTAIN"
+  },
+  "Batch": {"note": "Born `open`. `closed` and `error` have NO writer AND NO reader. models.py:488 concedes it.", "confidence": "CERTAIN"},
+  "Persona": {"note": "NO state field, no minted id. Identity is the RECORD KEY in 00_control/personas.json. There is no state machine. (Resolves UNK-001.)", "confidence": "CERTAIN"},
+  "Account": {"note": "NOT a ledger entity. Lives in accounts.json, serialized by an fcntl flock, NOT the SQLite lock. Only `active` participates in surfaces().", "confidence": "CERTAIN"}
+ },
+
+ "the_five_phase_pass": {
+  "engine": "pipeline.advance() (pipeline.py:466-546) is the WHOLE ENGINE. Every entry point funnels into it.",
+  "phases": [
+   {"n": 1, "name": "LOCK-FREE stage", "work": "stage_inbox_candidates — sha256 + copy + ffprobe"},
+   {"n": 2, "name": "TXN #1 (short)", "work": "ingest_staged — mint Source rows", "durability_point": true},
+   {"n": 3, "name": "LOCK-FREE producer", "work": "produce.run_all — whisper/ffmpeg/renders. WARMS artifacts, SAVES NOTHING."},
+   {"n": 4, "name": "TXN #2 (the main reduce)", "work": "heal_gates -> moments -> hooks -> render -> captions -> crosspost", "durability_point": true,
+    "rollback": "an UNCAUGHT raise rolls back the ENTIRE pass, BY DESIGN. SAFE because the heavy artifacts were warmed lock-free in phase 3, so the next pass fingerprint-SKIPS onto them and RECOVERS the work rather than redoing it."},
+   {"n": 5, "name": "OUT OF LOCK", "work": "_reconcile_safe (GATED on cfg.is_live_backend) -> _publish_safe (NOT GATED) -> digest",
+    "the_asymmetry": "*** RC-3b — the SOLE READER of `submitting` can be switched off while the WRITER keeps producing it. ***"}
+  ],
+  "the_cardinal_rule_the_codebase_honours": "No network call and no heavy subprocess EVER runs inside the ledger lock. Verified at every site."
+ }
+}

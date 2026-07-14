@@ -1,0 +1,115 @@
+{
+ "$schema": "fanops-arch-kb/maintenance/v1",
+ "cycle": 5,
+ "git_head": "fcffa73",
+ "generated": "2026-07-14",
+ "purpose": "Every maintenance / recovery / break-glass operation: what it does, what it excludes, whether it is safe, and what it CANNOT do.",
+ "provenance": "AST census of CLI verbs (59, argparse add_parser) + Cycle-3 recovery inventory (W9) + Cycle-5 lock census.",
+
+ "cli_surface": {
+  "verbs_total": 59,
+  "verbs": ["adjust","advance","amplify-variants","audit","auth","autopilot","bulk-send-to-review","compose","config","cutover","daemon","digest","discover","docs","doctor","ensure","gc","hashtags","health","ingest","init","install","intake","learn","lever","lift","logs","map-media","metrics","p4-bias","paths-rebase","post","promote-source","publish-queue","pull","reconcile","recover","refresh","resolve","respond","retire-source","retry-metrics","retry-source","run","status","stop","studio","tail","threshold","track","unhold","up","verify-live","wipe"],
+  "live_verbs_that_hit_external_services": ["post","publish-queue","reconcile","pull","track","metrics","learn","up","verify-live","cutover","hashtags"],
+  "policy": "*** Do NOT run these speculatively. Tests and read-only verbs only unless the operator asks (project CLAUDE.md). ***"
+ },
+
+ "recovery_operations": [
+  {
+   "op": "Ledger.snapshot",
+   "site": "ledger.py:540",
+   "caller": "studio.actions_wipe.confirm_wipe",
+   "exclusion": "*** store.lock() — THE CORRECT LOCK (SQLite BEGIN IMMEDIATE) ***",
+   "verdict": "SAFE. MANDATORY before a wipe.",
+   "confidence": "CERTAIN"
+  },
+  {
+   "op": "Ledger.restore_snapshot",
+   "site": "ledger.py:551",
+   "caller": "*** NO PRODUCTION CALLER *** — but ledger_wipe.py:246 ADVERTISES it as THE wipe-rollback path",
+   "exclusion": "fcntl.flock on ledger.lock — *** EXCLUDES NOTHING. Mutually invisible to the BEGIN IMMEDIATE every other writer takes. ***",
+   "verdict": "*** CRITICAL — RC-4 / C4-F2a. PROVEN BY EXECUTION: a concurrent writer's commit() SUCCEEDS, its data is SILENTLY DISCARDED, AND its deferred media unlinks PROCEED — deleting real .mp4 files whose ledger rows the restore brings back. The ledger comes back claiming the media exists; the .mp4 is gone. ***",
+   "the_damning_detail": "the sibling SIX LINES ABOVE (Ledger.snapshot) takes the RIGHT lock. This is not a missing concept — it is one method that did not use the concept its own sibling uses. Three cycles examined this method and none looked six lines up.",
+   "why_the_right_lock_is_still_insufficient": "SQLite's write lock is held on the INODE via an open fd. A writer that opened the db BEFORE the os.replace still holds that inode. NO lock acquired beforehand can prevent it. The root fix is to NOT REPLACE THE FILE.",
+   "reachability": "an operator following the DOCUMENTED wipe-rollback procedure while the daemon is running",
+   "confidence": "CERTAIN (executed, Cycles 2 and 4)"
+  },
+  {
+   "op": "rebuild_catalog",
+   "site": "ledger.py:746",
+   "exclusion": "L1 ledger txn",
+   "verdict": "SAFE — ADDS orphans ONLY (as SourceState.discovered, INERT until an operator promotes). *** It NEVER retires a source whose file is missing (ledger.py:746-748). *** That is the wipe-safety invariant.",
+   "coupling": "COUP-04 — it detects orphans BY FILENAME SHAPE (_SID_RE = ^src_[0-9a-f]{12}$), which hardcodes the format ids.py mints. Changing the id length silently breaks orphan detection with no error.",
+   "confidence": "CERTAIN"
+  },
+  {
+   "op": "resume_source",
+   "site": "pipeline.py:77",
+   "verdict": "SAFE — the single owner of the recovery transition. REFUSES a healthy source.",
+   "confidence": "CERTAIN"
+  },
+  {
+   "op": "_force_reset_to_catalogued",
+   "site": "pipeline.py:63",
+   "verdict": "T0 RESET — purges disk caches, discards gates, reconcile_moments(sid, {}). Destructive but scoped.",
+   "confidence": "CERTAIN"
+  },
+  {
+   "op": "heal_stranded_submitting",
+   "site": "reconcile.py:512",
+   "verdict": "AUTONOMOUS — but *** ONLY for posts with NO submission_id. *** A post with a REAL submission_id is NOT healed by it.",
+   "confidence": "CERTAIN"
+  },
+  {
+   "op": "fanops resolve <id> <state>",
+   "site": "cli.py:394",
+   "verdict": "*** THE UNGUARDED FORCE-ANYTHING ESCAPE HATCH. *** --url REQUIRED for terminal states. The SOLE writer of PostState.retired.",
+   "confidence": "CERTAIN"
+  },
+  {
+   "op": "Studio recover_posts / retry x4",
+   "verdict": "accepts ONLY failed/error. *** A `submitting` post is NOT OFFERED. *** All five requeue paths DO clear submission_id.",
+   "confidence": "CERTAIN"
+  },
+  {
+   "op": "execute_wipe",
+   "site": "ledger_wipe.py:252-275",
+   "verdict": "SAFE-BY-CONSTRUCTION — FULLY inside ONE Ledger.transaction, so a raise halfway rolls back ENTIRELY. Gated: WipeNotConfirmed unless confirmed; SnapshotRequired unless snapshot_is_restorable ACTUALLY OPENS the SQLite file and reads schema_version. *** It writes a .files.txt manifest of media paths but DOES NOT UNLINK MEDIA. ***",
+   "known_gap": "MOL-71 — do_wipe_confirm has NO server-side check that do_wipe_preview ran. 'Preview before confirm' is a UI CONVENTION ONLY.",
+   "confidence": "CERTAIN"
+  },
+  {
+   "op": "paths_rebase",
+   "site": "paths_rebase.py:75",
+   "verdict": "rewrites Render.path after a root move. *** Currently a NO-OP in practice: led.renders is always empty. ***",
+   "confidence": "CERTAIN"
+  },
+  {
+   "op": "daemon install/uninstall/stop/ensure",
+   "site": "daemon.py",
+   "verdict": "shells launchctl. Boots the KEEPER FIRST on stop so it cannot re-bootstrap the pump.",
+   "critical": "the plist BAKES A FULL PATH at install — launchd supplies a bare one.",
+   "confidence": "CERTAIN"
+  }
+ ],
+
+ "THE_MISSING_RECOVERY_PATH": {
+  "statement": "*** There is NO recovery — autonomous OR manual — for a post stranded in submitting/needs_reconcile with a REAL submission_id, and NO signal that tells the operator it happened. ***",
+  "why": [
+   "reconcile's escalation and give-up BOTH gate on _is_fake_token, which excludes a real id",
+   "a RAISING poll (every Zernio 404) bails out before the ladder is reached",
+   "ANY non-empty error_reason permanently suppresses further attention (reconcile.py:767)",
+   "the Studio requeue family accepts ONLY failed/error — `submitting` is not offered",
+   "the Studio Review revert BLOCKS needs_reconcile/submitting/submitted"
+  ],
+  "the_only_escape": "`fanops resolve <id> failed` then Studio Recover — a two-step CLI break-glass that requires the operator to ALREADY KNOW the post is stranded. Nothing tells them.",
+  "reachability": "AN ORDINARY OPERATOR WORKFLOW: a platform rejects a post (IG rejects the aspect ratio) -> PostState.failed with the real sid PRESERVED -> operator sends it back to Review to fix the caption -> re-approves -> the CLAIM commits `submitting` -> the POST is skipped -> stranded forever, with ZERO breadcrumbs (the stale error_reason trips the suppression latch on pass one).",
+  "confidence": "CERTAIN (executed, EXP-C4-1)"
+ },
+
+ "operational_constraints_on_maintenance": {
+  "OPS-001": "*** THE ORCHESTRATION GATE IS STILL ENGAGED — FIVE CONSECUTIVE CYCLES. *** .orchestration/state/ACTIVE = engaged (last touched 2026-07-13). It refuses every subagent spawn outside {fanops-worker, fanops-lander} and refuses any shell command NAMING .orchestration/state/, .cursor/hooks*, or .githooks/ — including a read-only `ls`. Cycles 1, 2, 3, 4 AND 5 were all executed SINGLE-THREADED. Disengage is `orchestrate.py stop` — AN OPERATOR ACTION, not a code change. It remains the single largest constraint on this audit's throughput.",
+  "never_run_tests_locally": "pytest / check-full.sh execute ONLY in GitHub CI on a PR. Parallel wave workers each running the suite crash the machine.",
+  "never_mass_reformat": "no black, no ruff format. The compact one-liner house style is deliberate.",
+  "one_orchestrator_at_a_time": "git fetch + gh pr view the target before merge — parallel orchestrators caused double-merges."
+ }
+}

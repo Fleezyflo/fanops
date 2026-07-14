@@ -1,0 +1,79 @@
+{
+  "cycle": 2,
+  "git_head": "fcffa73",
+  "generated": "2026-07-14",
+  "mutable_surfaces": {
+    "A_ledger_entities": {"persistence": "00_control/ledger.sqlite", "lock": "SQLite BEGIN IMMEDIATE (ledger_sqlite.py:92)"},
+    "B_control_files": {"persistence": "00_control/*.json (9 files)", "lock": "fcntl.flock, per-file"},
+    "C_process_env": {"persistence": ".env + OS keyring", "lock": "NONE"},
+    "D_module_globals": {"persistence": "in-process only", "lock": "NONE"},
+    "E_filesystem_artifacts": {"persistence": "stage dirs", "lock": "os.replace / stage_lock"}
+  },
+  "universal_properties": {
+    "write_granularity": "FULL-DOCUMENT REPLACE — every row of every map, every save (ledger_sqlite.py:64-71)",
+    "validation": "pydantic, at CONSTRUCTION ONLY (Ledger.load, ledger.py:444-459)",
+    "not_validated": "model_copy(update=...) bypasses ALL validators on ALL models. Direct setattr bypasses all validators EXCEPT on Moment (the only model with validate_assignment=True, models.py:211).",
+    "atomicity": "per-transaction, never per-field",
+    "stale_reads": "Ledger.load() outside a transaction is a lock-free snapshot (run.py:274, run.py:441)",
+    "silent_corruption": "ONE class — a terminal-state write with no public_url saves fine and BRICKS THE NEXT LOAD (invariants.json INV-01)"
+  },
+  "Post": {
+    "state": {"writers": 21, "writer_sites": ["crosspost.py:238", "studio/actions.py:506", "studio/actions.py:630", "ledger.py:591", "ledger.py:595", "ledger.py:599", "studio/actions.py:944", "post/run.py:238", "post/run.py:272", "post/run.py:306", "post/run.py:313", "post/run.py:329", "post/run.py:334", "post/run.py:339", "post/run.py:389", "post/run.py:422", "post/run.py:357 (DYNAMIC setattr)", "post/postiz.py:398,409,412,424,434", "post/zernio.py:242,253,256,264,272", "reconcile.py:527,643,665,687,708,725,735,748", "track.py:193", "studio/actions.py:280,401,870,1000,1031,1062,1103,1110", "cli.py:395,398", "ledger.py:572 (set_post_state — ZERO CALLERS)"], "validated_by": "in-lock source-state guards ONLY", "multi_writer": true, "ordering_matters": true, "note": "CLAIM must precede network. See transitions.json for the full edge list."},
+    "public_url": {"writers": 4, "writer_sites": ["postiz.py:414", "reconcile.py:713", "studio/actions.py:279", "cli.py:396"], "validated_by": "safe_public_url (https-only)", "ordering_matters": true, "ordering_rule": "MUST be set BEFORE the state flip — the four call-site guards depend on it"},
+    "submission_id": {"writers": 3, "writer_sites": ["crosspost.py:246 (birth token fanops_<hash>)", "postiz.py:413 (real backend id)", "post/run.py:423 (daemon retry CLEARS it)"], "validated_by": "is_real_submission_id (models.py:384)", "replay_safe": true},
+    "account_id": {"writers": 2, "writer_sites": ["crosspost.py:239 (frozen at mint)", "post/run.py:280 (re-resolved at publish)"], "conflict_policy": "IN-FLIGHT WINS — FINALIZE writes it ONLY when changed (run.py:356), so a concurrent Go-Live remap to a DIFFERENT channel is not churn-clobbered", "stale_possible": true},
+    "error_reason": {"writers": 14, "validated_by": "redact(..., postiz_api_key, zernio_api_key) — run.py:327,340", "replay_safe": false, "note": "CARRIES MACHINE STATE — see couplings.json COUP-03. Three parsers read structure out of it."},
+    "metrics / metrics_series": {"writers": 1, "writer_sites": ["track.record_metrics"], "note": "metrics_series is APPEND-ONLY, never rewritten (track.py:191); idempotent per cadence offset"},
+    "media_id / product_type": {"writers": 1, "writer_sites": ["reconcile.py:295 (resolve_media_ids)"], "idempotent": true},
+    "scheduled_time": {"writers": 5, "writer_sites": ["crosspost.py:241", "ledger.py:591 (approve_post)", "studio/actions.py (reschedule/clear)", "post/run.py:426 (daemon retry)"], "validated_by": "schedule_utc — unparseable => post FAILED (run.py:385-391)", "ordering_matters": true, "ordering_rule": "clear_time MUST un-approve BEFORE clearing, else a queued-and-timeless post exists. Defence-in-depth: a timeless queued post PARKS (run.py:381)."},
+    "publish_hour / publish_dow": {"writers": 2, "writer_sites": ["post/run.py:311", "reconcile.py:722"], "validated_by": "publish_buckets — FAILS CLOSED to UTC"},
+    "media_urls": {"writers": 2, "writer_sites": ["post/run.py:206,224 (_ensure_media)", "compress.py:113 (post-shrink)"]}
+  },
+  "Clip": {
+    "media_url": {"writers": 1, "writer_sites": ["post/run.py:359 (FINALIZE, guarded on `not c.media_url`)"], "concurrent_write_safe": true, "why": "first-writer-wins via the not-set guard — no clobber", "stale_possible": true, "stale_why": "nothing invalidates the cache if the hosted URL expires"},
+    "meta_captions": {"writers": ["caption.py", "studio/actions.py:221", "studio/actions_approve.py:129"], "key_format": "'{account}/{platform}' with a legacy '@{account}/{platform}' fallback (crosspost.py:196-198)"},
+    "held / held_reason": {"writers": ["caption.py:297,316,356"]}
+  },
+  "Render": {
+    "media_url": {"writers": 1, "writer_sites": ["post/run.py:362 (FINALIZE, guarded on `not r.media_url`)"]},
+    "path": {"writers": 3, "writer_sites": ["post/run.py:367 (post-shrink rewrite, guarded on r2.path != render_path)", "compress.py:112", "compress.py:131", "paths_rebase.py:75"]},
+    "state": {"writers": 0, "note": "DRIVERLESS — Cycle-1 FIND-001, AST-CONFIRMED"}
+  },
+  "add_family_idempotency": {
+    "setdefault_first_write_wins": ["add_source", "add_moment", "add_clip", "add_post", "add_render", "add_stitch_plan", "add_batch"],
+    "upsert_last_write_wins": ["add_imported_media (ledger.py:562 — DELIBERATE: a re-pull's fresher metrics must win)"],
+    "core_property": "every id is content-addressed (ids.py:7), so setdefault makes a whole-pipeline REPLAY a no-op for entity creation",
+    "one_deliberate_exception": "crosspost._mint_surface_post DELETES and re-mints a post whose prior state is `rejected` or `failed` (crosspost.py:229-231) — so a re-run CAN resurrect a rejected post"
+  },
+  "control_files": {
+    "accounts.json": {"mutators": 10, "sites": ["accounts.py:372 write_integration", "accounts.py:400 set_backend", "accounts.py:438 add_account", "accounts.py:474 ensure_channel", "accounts.py:513 set_status", "accounts.py:536 set_clip_profile", "accounts.py:561 set_ig_user_id", "accounts.py:585 set_persona", "accounts.py:605 remove_account", "accounts.py:320 link_persona"], "lock": "accounts.lock (accounts.py:362-369)", "pattern": "ALL 10 VERIFIED: load INSIDE the lock, mutate the RAW dict (never Account.model_dump()) — preserves siblings + unknown/future fields", "validation_gap": {"field": "backends[platform]", "write_boundary": "SOUND — set_backend strips+lowercases and rejects unknowns (accounts.py:412-415)", "load_boundary": "NONE — dict[str,str], unvalidated (accounts.py:91)", "validate()_boundary": "NONE — checks only the integration/backend PAIRING (accounts.py:241-250), never the VALUE", "consequence": "invariants.json INV-03"}},
+    "personas.json": {"lock": "personas.lock (persona_store.py:106)"},
+    "hashtag_budget.json": {"lock": "hashtag_budget.lock (meta_graph.py:519)"},
+    "hashtag_bans.json": {"lock": "hashtag_bans.lock (hashtags.py:125,137)"},
+    "hashtags.json": {"lock": "NONE"},
+    "cutover.json": {"lock": "NONE", "writers": ["track._auto_validate_metrics_shape", "cutover probe"]},
+    "timing_bias.json": {"lock": "NONE", "writers": ["apply_timing_bias"]},
+    "tuning.json": {"lock": "NONE", "validation": "_sanitize_tuning — warn+drop invalid entries, NEVER raise (config.py:32-57)"},
+    ".env": {"lock": "NONE", "writers": ["golive._dual_write (golive.py:47-66)"], "note": "secrets go to the OS KEYRING ONLY, never plaintext .env (MOL-360)"}
+  },
+  "module_globals": {
+    "run._publish_throttle_last": {"cite": "post/run.py:123,155", "scope": "in-process ONLY, by design", "hazard": "if fanops ever runs as multiple concurrent publisher processes, the Postiz per-minute throttle becomes silently per-process, so N processes publish N× the rate limit. Self-declared in post/CLAUDE.md."},
+    "run._sleep": {"cite": "post/run.py:128", "scope": "test hook"},
+    "ledger._DEFAULT_LOCK_TIMEOUT": {"cite": "ledger.py:26", "note": "read at CALL time, not bound as a default arg (ledger.py:274-275) — tunable without re-import"}
+  },
+  "concurrency": {
+    "WAL": {"present": true, "cite": "ledger_sqlite.py:27"},
+    "BEGIN_IMMEDIATE": {"present": true, "cite": "ledger_sqlite.py:92"},
+    "synchronous_FULL": {"present": true, "cite": "ledger_sqlite.py:28"},
+    "typed_busy_error": {"present": true, "cite": "ledger_sqlite.py:94", "timeout_s": 30},
+    "nested_lock_refusal": {"present": true, "cite": "ledger_sqlite.py:86-87"},
+    "crash_recovery": {"present": true, "note": "flock is kernel-released on process death (kill -9 self-heals, ledger.py:265-272); WAL rollback for SQLite"},
+    "retry_loops": {"present": true, "sites": ["post/run.py:292-323 (3 attempts, jittered exp-backoff)", "postiz.py:427 (429/ConnectTimeout)", "ledger.py:288 (flock 0.1s poll)"]},
+    "duplicate_suppression": {"present": true, "note": "content-addressed ids + setdefault"},
+    "double_publish_protection": {"layers": 3, "detail": ["approval gate (run.py:442 + ledger.py:579)", "claim-before-network (run.py:264-272)", "ambiguity park -> needs_reconcile, never failed (postiz.py:424, run.py:325)"]},
+    "worker_races_responder_pool": {"safe": true, "why": "every guard is per-key LOCAL state (rid_before/rid_after, a unique response_path); no shared mutable state (responder.py:99-101, 227-230)"},
+    "deferred_unlinks": {"safe": true, "why": "cascade .mp4 unlink happens AFTER commit (ledger.py:487-488) — a rolled-back txn never deletes a file it did not drop"},
+    "cross_surface_A_to_B_exclusion": {"present": false, "consequence": "couplings.json COUP-01 — PROVEN silent data loss"},
+    "throttle_across_processes": {"present": false}
+  }
+}

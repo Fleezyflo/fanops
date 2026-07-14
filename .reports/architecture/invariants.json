@@ -1,0 +1,177 @@
+{
+  "cycle": 2,
+  "git_head": "fcffa73",
+  "generated": "2026-07-14",
+  "totals": {"total": 23, "verified": 11, "refined": 3, "false": 6, "verified_absent": 1, "retracted": 2},
+  "classification_scheme": [
+    "currently_reachable_defect",
+    "dormant_defect_behind_disabled_flag",
+    "reserved_unwired_surface",
+    "documentation_error",
+    "security_exposure",
+    "operational_hazard"
+  ],
+  "invariants": [
+    {
+      "id": "INV-03",
+      "claim": "get_poster RAISES rather than build a DryRunPoster when live",
+      "source": "src/fanops/CLAUDE.md, src/fanops/post/CLAUDE.md",
+      "verdict": "FALSE",
+      "class": "currently_reachable_defect",
+      "accurate_statement": "The malformed-provider path does not currently create a false published row, but it violates the live-mode fail-closed contract and causes a delayed operational failure.",
+      "evidence": ["post/__init__.py:19", "post/__init__.py:29", "post/providers.py:56", "accounts.py:91", "accounts.py:412", "accounts.py:241"],
+      "root_cause": "The guard at post/__init__.py:19 is case-INSENSITIVE and matches only the literal string 'dryrun'. The PROVIDERS lookup at providers.py:56 is case-SENSITIVE with lowercase keys. Any backend string absent from PROVIDERS falls through to `return DryRunPoster(cfg)` at post/__init__.py:29 with no live check.",
+      "executed_matrix": {
+        "guard_fires_for": ["dryrun", "DryRun"],
+        "constructs_DryRunPoster_on_LIVE_system_for": ["Postiz", "POSTIZ", "postiz<trailing-space>", "<leading-space>postiz", "blotato"],
+        "Accounts.validate()": "clean — NO FLAG for ANY malformed value, including 'blotato'",
+        "effective_provider()": "returns the raw malformed string verbatim",
+        "get_media_uploader()": "returns the dryrun file:// uploader for every malformed value",
+        "live_ready_channels()": "[] for every malformed value"
+      },
+      "write_boundary": "SOUND. set_backend (accounts.py:412) strips + lowercases and rejects unknowns — 'Postiz'/'POSTIZ'/'postiz '/' postiz' all STORE as 'postiz'; 'blotato' raises ValueError. Malformed values are therefore HAND-EDIT ONLY (accounts.json is documented as operator-hand-edited at accounts.py:112).",
+      "validation_gap": "Account.backends is dict[str,str] — unvalidated at load (accounts.py:91). Accounts.validate() checks only the integration/backend PAIRING (accounts.py:241-250), never the backend VALUE.",
+      "terminal_state": {
+        "at_least_one_valid_channel_remains": "live_ready_channels() is non-empty -> cfg.is_live_backend=True -> the reconcile pass runs (pipeline.py:318) -> post: submitting -> (72h) needs_reconcile (reconcile.py:748) -> (72h) 'GAVE UP:' marker (reconcile.py:759). NO half-live warning fires, because a valid route exists — the operator sees a healthy system while one channel silently publishes nothing. DELAYED OPERATIONAL FAILURE.",
+        "all_channels_malformed": "live_ready_channels()=[] -> cfg.is_live_backend=False -> the reconcile pass NEVER RUNS (pipeline.py:318) -> the post is stranded in `submitting` PERMANENTLY: no escalation, no error_reason, no terminal state. The half-live banner DOES fire at system level (doctor.py:322, views.py:723), but nothing marks the post. Reachable only if the operator went live with a valid config and hand-edited it broken afterwards (go_live gates on >=1 live-ready channel)."
+      },
+      "worst_property": "Whitespace variants ('postiz ' / ' postiz') are visually IDENTICAL to the correct value in any UI, JSON dump, or diff."
+    },
+    {
+      "id": "INV-07",
+      "claim": "00_control/ledger.lock is vestigial (Cycle-1 DEAD-005)",
+      "source": "config.py:159 code comment",
+      "verdict": "FALSE",
+      "class": "currently_reachable_defect",
+      "evidence": ["config.py:159", "ledger.py:551", "ledger_sqlite.py:92", "ledger_sqlite.py:151"],
+      "executed_race": "PROVEN by experiment. A live ledger writer holding BEGIN IMMEDIATE had restore_snapshot os.replace() the database file out from under it. The writer's commit() SUCCEEDED — no exception — and committed to the now-orphaned inode. Its data was SILENTLY DISCARDED. Final on-disk state was the snapshot's, not the writer's.",
+      "why": "restore_snapshot takes fcntl.flock on 00_control/ledger.lock (ledger.py:551). EVERY other ledger writer serializes on the SQLite BEGIN IMMEDIATE transaction (ledger_sqlite.py:92). The two primitives are mutually invisible. restore then calls os.replace on the db path (ledger_sqlite.py:151) and unlinks the -wal/-shm sidecars (ledger_sqlite.py:148-150) while another connection may hold them open.",
+      "exposure": "restore_snapshot has NO production caller — it is an operator break-glass classmethod. But ledger_wipe.py:246 advertises it as THE wipe rollback path, so an operator following the documented recovery procedure while the daemon is running hits this.",
+      "reclassification": "DEAD-005 was filed 'confirmed dead' on the strength of the word 'vestigial' in a comment. It is a LIVE single-holder lock that provides no mutual exclusion. New classification: live_lock_no_mutual_exclusion."
+    },
+    {
+      "id": "INV-01",
+      "claim": "The R1 published-URL invariant is bound at the type level so no door can produce the ghost row Post(state=published, public_url='')",
+      "source": "models.py:356-375",
+      "verdict": "REFINED",
+      "class": "documentation_error",
+      "evidence": ["models.py:356", "ledger.py:572", "post/run.py:306", "post/run.py:357", "studio/actions.py:281", "cli.py:392"],
+      "proof": "Executed against pydantic 2.13.4. Construction RAISES. model_copy(update=...) does NOT. Direct setattr does NOT (Post has no validate_assignment). The bad row model_dump()s cleanly, and the NEXT Ledger.load raises ValidationError -> ControlFileError (ledger.py:465), making the ENTIRE ledger unloadable.",
+      "false_subclaim": "actions.py:281 and cli.py:392 both assert 'Pydantic re-validates the modified instance on serialization'. It does not. The mechanism named in the comments does not exist.",
+      "property_holds_via": "Four independent MANUAL call-site guards: run.py:305 (public_url non-empty check), actions.py:268 (mark_published rejects blank url), cli.py:384 (--url required for terminal states), dryrun.py:39 (DryRunPoster sets no state post-M2). track.py:192 is guarded transitively (published->analyzed).",
+      "failure_mode": "Not a rejected write — a LOAD-TIME POISON PILL. A 6th door without a manual guard would save successfully and brick the ledger on next process start."
+    },
+    {
+      "id": "INV-01b",
+      "claim": "model_copy is a safe immutable setter (the project's stated immutability rule; used at 57 sites)",
+      "verdict": "FALSE",
+      "class": "operational_hazard",
+      "proof": "Executed. model_copy bypasses EVERY validator on EVERY model — including Moment's, DESPITE validate_assignment=True. validate_assignment protects setattr ONLY; it has no effect on model_copy.",
+      "validator_inventory": {
+        "Moment": {"validate_assignment": true, "validators": ["_canon_affinities", "_apply_segments_envelope"]},
+        "Post": {"validate_assignment": false, "validators": ["_canon_post_account", "_enforce_published_url_invariant"]},
+        "Source": {"validate_assignment": false, "validators": []},
+        "Clip": {"validate_assignment": false, "validators": []},
+        "Render": {"validate_assignment": false, "validators": []},
+        "StitchPlan": {"validate_assignment": false, "validators": []},
+        "Batch": {"validate_assignment": false, "validators": []},
+        "ImportedMedia": {"validate_assignment": false, "validators": []}
+      },
+      "bypass_matrix": {
+        "Post.published-requires-public_url": {"ctor": "raise", "setattr": "BYPASS", "model_copy": "BYPASS"},
+        "Post.account-canonicalization": {"ctor": "raise", "setattr": "BYPASS", "model_copy": "BYPASS"},
+        "Moment.affinities-canonicalization": {"ctor": "raise", "setattr": "enforced", "model_copy": "BYPASS"},
+        "Moment.segments-validity-and-envelope": {"ctor": "raise", "setattr": "enforced", "model_copy": "BYPASS"}
+      },
+      "reachable_today": false,
+      "why_not_reachable": "set_segments (actions_segments.py:19) deliberately round-trips through Moment.model_validate, which DOES run validators, and uses model_copy only for content_token (no validator). clear_segments sets segments=[], where the envelope validator is a no-op. No code path model_copy's Post.account or a non-empty Moment.segments.",
+      "latent_hazard": "PROVEN: model_copy(update={'segments': [(2.0,4.0)]}) leaves start=0.0, end=5.0 — a STALE ENVELOPE. The Moment's declared window and its segments disagree, and the clip would render the wrong span.",
+      "coupling": "actions_casting.cast_add/cast_remove (actions_casting.py:26,44) are safe ONLY because Moment.validate_assignment=True. Converting them to model_copy 'for consistency' would silently stop canonicalizing affinities — and affinity_admits (the crosspost gate) matches canonical handles, so a non-canonical '@Foo' would make the moment post NOWHERE."
+    },
+    {
+      "id": "INV-02",
+      "claim": "do NOT set a post's state to queued anywhere except Ledger.approve_post",
+      "source": "src/fanops/CLAUDE.md",
+      "verdict": "FALSE",
+      "class": "documentation_error",
+      "writers": 7,
+      "property_holds_via": "Every non-approve_post writer is guarded on a SOURCE state of failed/error/submitting. None can move a post out of awaiting_approval. Enforced by approve_post's guard at ledger.py:579, not by a single-writer property."
+    },
+    {
+      "id": "INV-04",
+      "claim": "the intro_match gate is live",
+      "verdict": "FALSE",
+      "class": "reserved_unwired_surface",
+      "also": "dormant_defect_behind_disabled_flag",
+      "evidence": ["pipeline.py:243", "intro_match.py:108", "responder.py:50", "responder.py:216", "gate_keys.py:9"],
+      "note": "Wired into the pipeline and writes real gate files, but absent from responder._SCHEMA/_PROMPT and from gate_keys.gate_source_id. answer_pending iterates _SCHEMA only, so the autonomous responder can NEVER answer it. Moment.intro_matches is never written; no intro-tease plan can be produced.",
+      "dormant_behind_flag": "FANOPS_INTRO_TEASE (config.py:731, DEFAULT OFF). With it ON + FANOPS_RESPONDER=llm, unanswerable .request.json files accumulate in 04_agent_io/requests/ forever, invisible to the by-source status view (gate_source_id returns None -> pipeline_status omits them)."
+    },
+    {
+      "id": "INV-05",
+      "claim": "Settings is a typed env boundary constructed per Config()",
+      "source": "settings.py:1, settings.py:142",
+      "verdict": "FALSE",
+      "class": "documentation_error",
+      "evidence": ["config.py:144", "settings.py:374", "doctor.py:27", "config_introspect.py:11", "accounts.py:13"],
+      "note": "Config.__init__ never constructs a Settings. All 74 os.getenv calls in config.py read the env directly, uncached, per access. Settings.runtime_load — whose docstring makes the claim — has ZERO callers. Settings' only consumers: doctor (strict validation), config_introspect (docs), accounts (a constant import).",
+      "no_runtime_conflict": "There is no precedence to adjudicate, because there is no runtime handoff.",
+      "real_hazard": "Two hand-maintained parsers for one env surface; _VALID_BACKENDS defined twice (config.py:72 and settings.py:18); FANOPS_ROOT read by Config but absent from Settings (so invisible to config_introspect).",
+      "executed_divergence": {
+        "FANOPS_POSTER=postiz": {"Settings.strict_validate": "accepts", "Config.poster_backend": "postiz"},
+        "FANOPS_POSTER=Postiz": {"Settings.strict_validate": "RAISES ValidationError", "Config.poster_backend": "dryrun (warns)"},
+        "FANOPS_POSTER=postiz<space>": {"Settings.strict_validate": "accepts (strips first)", "Config.poster_backend": "postiz (strips)"},
+        "FANOPS_POSTER=blotato": {"Settings.strict_validate": "RAISES ValidationError", "Config.poster_backend": "dryrun (warns)"}
+      },
+      "divergence_verdict": "Intentional strict/lenient split — doctor is fatal, runtime is fail-open. Not drift."
+    },
+    {
+      "id": "INV-06",
+      "claim": "cascade protection gates deletes on live CLIP states",
+      "source": "ledger.py:645-648",
+      "verdict": "REFINED",
+      "class": "reserved_unwired_surface",
+      "evidence": ["ledger.py:649", "ledger.py:665"],
+      "note": "_LIVE_CLIP_STATES = (published, analyzed). Nothing writes either, so clip_live at ledger.py:665 is ALWAYS False and every branch it gates is unreachable. The protection property holds entirely via _PROTECTED_POST_STATES (ledger.py:667,675), and is sound: when no protected post hangs off a clip, the cascade deletes the posts too (ledger.py:670), so nothing is orphaned. The clip half of the guard is dead defensive code."
+    },
+    {
+      "id": "INV-08", "claim": "no-auto-publish: an unapproved post is structurally unpublishable", "verdict": "VERIFIED",
+      "evidence": ["models.py:298", "crosspost.py:238", "run.py:442", "ledger.py:579"],
+      "note": "Three mint sites, all born awaiting_approval; the model DEFAULT is awaiting_approval, so even a bare Post(...) is unpublishable. Both publish entry points iterate queued only. Defence-in-depth: a timeless queued post PARKS rather than auto-publishing (run.py:381)."
+    },
+    {"id": "INV-09", "claim": "_publish_one is the SOLE network-POST caller", "verdict": "VERIFIED", "evidence": ["run.py:296", "run.py:470", "run.py:502"]},
+    {"id": "INV-10", "claim": "needs_reconcile is never downgraded to failed", "verdict": "VERIFIED", "evidence": ["run.py:325", "postiz.py:432", "zernio.py:270"]},
+    {"id": "INV-11", "claim": "AuthError halts the run, never burns the queue", "verdict": "VERIFIED", "evidence": ["run.py:102-110", "run.py:320"], "note": "Matched by TYPE, not substring — the H8 fix."},
+    {"id": "INV-12", "claim": "ledger writes are atomic (BEGIN IMMEDIATE + full replace)", "verdict": "VERIFIED", "evidence": ["ledger_sqlite.py:92", "ledger_sqlite.py:64-71", "ledger.py:487"]},
+    {"id": "INV-13", "claim": "a newer on-disk schema is refused, never downgraded", "verdict": "VERIFIED", "evidence": ["ledger.py:436-440"]},
+    {"id": "INV-14", "claim": "bias actuators are amplify-only + validation-frozen", "verdict": "VERIFIED", "evidence": ["config.py:778", "config.py:897", "config.py:907"], "note": "The documented exception is honest and self-declared: variant_ucb is NOT validation-frozen (config.py:821-827)."},
+    {"id": "INV-15", "claim": "_JITTER_MAX < _STEP_MIN => schedule monotonic in index", "verdict": "VERIFIED", "evidence": ["crosspost.py:28-30"], "note": "The ONLY import-time assert in the codebase."},
+    {"id": "INV-16", "claim": "builtin hash() is banned (PEP 456 per-interpreter salt)", "verdict": "VERIFIED", "evidence": ["ids.py:2", "ids.py:7", "crosspost.py:36"]},
+    {"id": "INV-17", "claim": "[framing] is the only fail-CLOSED optional dependency", "verdict": "VERIFIED", "evidence": ["config.py:611"]},
+    {"id": "INV-18", "claim": "go_live is the ONLY setter of FANOPS_LIVE=1", "verdict": "VERIFIED", "evidence": ["golive.py:66", "autopilot.py:80"], "note": "os.environ[...] is written in exactly 2 places in src/; only golive writes FANOPS_LIVE."},
+    {"id": "INV-19", "claim": "every ledger model is forward-compatible (pydantic extra=ignore)", "verdict": "VERIFIED", "evidence": ["models.py:171-176"]},
+    {"id": "INV-20", "claim": "CLAUDE.md safety-claim line references", "verdict": "FALSE", "class": "documentation_error", "note": "10 of 10 checked are stale. Function names and semantics are correct; only the citations rotted — which matters because they are how a future editor finds the guard they are told not to break."},
+    {
+      "id": "INV-21", "claim": "Studio route authorization", "verdict": "VERIFIED-ABSENT", "class": "security_exposure",
+      "evidence": ["studio/app.py", "cli.py:1285", "studio/CLAUDE.md"],
+      "note": "149 routes, 108 mutating, 0 authenticated, 0 CSRF-protected. No before_request hook, no session, no token. Recorded decision: studio/CLAUDE.md says 'no auth by design — don't add CSRF/rate-limit tickets; declined as out-of-scope for localhost'. The boundary is the network interface (default 127.0.0.1:8787). Any page the operator visits while the Studio runs can forge a POST to /golive/live, /schedule/publish-due, or /live-library/wipe/confirm.",
+      "known_gap": "MOL-71 (studio/CLAUDE.md): do_wipe_confirm has NO server-side check that do_wipe_preview ran first — 'preview before confirm' is a UI convention only. The typed-word + snapshot gates are unaffected."
+    },
+    {
+      "id": "INV-22",
+      "claim": "PostState.retired and PostState.error have zero writers (Cycle-2's own initial claim)",
+      "verdict": "FALSE — SELF-RETRACTED",
+      "class": "documentation_error",
+      "correction": "PostState.retired HAS a writer: cli.py:395 (p.state = PostState(args.status)), reachable via `fanops resolve <id> retired` — argparse choices=[published, failed, analyzed, retired] at cli.py:702. PostState.analyzed likewise has TWO writers (track.py:193 AND cli.py:395), not one. PostState.error SURVIVES as reserved (not in the argparse choices; the Studio twin actions.resolve_post explicitly refuses anything but published/failed at actions.py:858).",
+      "root_cause": "The original census grepped for LITERAL enum references ('\\.state = PostState\\.'). It missed generic and dynamic writers: PostState(<string>), p.state = <variable>, setattr(p, <variable>, v), model_copy(update=<variable>), and enum-valued KEYWORD DEFAULTS. An AST census over the full executable tree found five such writers."
+    },
+    {
+      "id": "INV-23",
+      "claim": "os.environ has no cross-process propagation; a Studio go_live cannot reach a resident daemon (Cycle-2's own COUP-02)",
+      "verdict": "RETRACTED — FALSE",
+      "class": "documentation_error",
+      "correction": "The daemon loop calls load_dotenv(cfg.root/'.env', override=True) AND rebuilds Config(cfg.root) on EVERY TICK (cli.py:1303-1304, commented 'operator disk truth each tick'). A go_live .env write DOES reach the resident daemon within one tick.",
+      "real_coupling_opposite_direction": "A RUNNING Studio calls load_dotenv exactly ONCE, at process entry (cli.py:795), then blocks in app.run (cli.py:1285). So a .env change made by the CLI or the daemon NEVER reaches a running Studio. golive.py:11 acknowledges this outright — it is precisely why _dual_write also pokes os.environ, to make the writing Studio process reflect its own change immediately."
+    }
+  ]
+}

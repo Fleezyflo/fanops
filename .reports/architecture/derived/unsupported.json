@@ -1,0 +1,53 @@
+{
+  "$schema": "fanops-arch/derived/unsupported",
+  "confidence": "CERTAIN",
+  "constructs": [
+    {
+      "evidence": "os.getenv",
+      "kind": "computed_env_key",
+      "line": 1130,
+      "module": "fanops.config",
+      "why": "env key is not a string literal; the variable name is not statically known"
+    },
+    {
+      "evidence": "__import__",
+      "kind": "dynamic_import",
+      "line": 243,
+      "module": "fanops.studio.actions_run",
+      "why": "the import target is computed at runtime; no static edge is derivable"
+    },
+    {
+      "evidence": "__import__",
+      "kind": "dynamic_import",
+      "line": 263,
+      "module": "fanops.studio.actions_run",
+      "why": "the import target is computed at runtime; no static edge is derivable"
+    }
+  ],
+  "contract_boundaries_that_are_prose_not_predicates": [
+    {
+      "entry": "the daemon tick loop (:1300-1313)",
+      "file": "src/fanops/cli.py",
+      "slice": "S08",
+      "why": "no identifier in this entry names a function that exists in the file; the boundary is PROSE, not a machine-checkable predicate"
+    },
+    {
+      "entry": "a NEW `cmd_clean` + its argparse registration",
+      "file": "src/fanops/cli.py",
+      "slice": "S09",
+      "why": "no identifier in this entry names a function that exists in the file; the boundary is PROSE, not a machine-checkable predicate"
+    }
+  ],
+  "generated_by": "tools/arch",
+  "generator_version": "arch/1.0.0",
+  "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",
+  "note": "A construct this extractor cannot resolve is recorded, never dropped. An omitted construct is indistinguishable from an absent one.",
+  "regeneration_command": "python -m tools.arch regen",
+  "source_inputs": [
+    ".reports/architecture/contract/file_ownership.json",
+    "src/fanops/**/*.py"
+  ],
+  "totals": {
+    "unsupported_constructs": 3
+  }
+}
