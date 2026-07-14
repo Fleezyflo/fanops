@@ -1,0 +1,2158 @@
+{
+  "excluded_argument": "_trace (the new instrumentation channel; comparing it would be circular)",
+  "fixture_checksum": "68e3f4ed924261eee48b3171c53a7ac1be741d025a839499db9401f36a56d20e",
+  "generator_commit_sha": "ff8e5641d0a598e12b091f1db884b6d351c288ca",
+  "generator_file_sha256": "91c6d696631b4d35fa7d69d74105fb0051476d6275c887e62dbac7fdbc023871",
+  "layer": 1,
+  "legacy_function_qualname": "clip._resolve_framing",
+  "legacy_source_commit_sha": "fcffa7324f09f2c91ad9cdfdb25fda22cd5f9660",
+  "python_version": "3.12",
+  "scenarios": [
+    {
+      "id": "smart_framing_off",
+      "observed": {
+        "calls": [],
+        "id": "smart_framing_off",
+        "result": {
+          "kind": "return",
+          "value": [
+            null,
+            null,
+            null
+          ]
+        }
+      },
+      "smart_framing": false,
+      "src": {
+        "height": 1080,
+        "id": "src_fixture",
+        "width": 1920
+      },
+      "stubs": {
+        "_framing_runtime_or_raise": {
+          "kind": "return",
+          "value": "<rt>"
+        },
+        "classify_window": {
+          "kind": "return",
+          "value": "single-speaker-talk"
+        },
+        "detect_window": {
+          "kind": "return",
+          "value": {
+            "fps": 4.0,
+            "frames": [
+              [
+                [
+                  0.5,
+                  0.5,
+                  0.3,
+                  0.42,
+                  0.9
+                ]
+              ]
+            ]
+          }
+        },
+        "motion_saliency": {
+          "kind": "return",
+          "value": null
+        },
+        "speaker_track": {
+          "kind": "return",
+          "value": null
+        },
+        "subject_focus": {
+          "kind": "return",
+          "value": [
+            0.61,
+            0.44,
+            0.3,
+            0.38
+          ]
+        }
+      },
+      "window": [
+        1.0,
+        11.0
+      ]
+    },
+    {
+      "id": "preflight_refuses",
+      "observed": {
+        "calls": [
+          {
+            "args": {},
+            "fn": "_framing_runtime_or_raise"
+          }
+        ],
+        "id": "preflight_refuses",
+        "result": {
+          "exc_type": "ToolchainMissingError",
+          "kind": "raise"
+        }
+      },
+      "smart_framing": true,
+      "src": {
+        "height": 1080,
+        "id": "src_fixture",
+        "width": 1920
+      },
+      "stubs": {
+        "_framing_runtime_or_raise": {
+          "exc_type": "ToolchainMissingError",
+          "kind": "raise"
+        },
+        "classify_window": {
+          "kind": "return",
+          "value": "single-speaker-talk"
+        },
+        "detect_window": {
+          "kind": "return",
+          "value": {
+            "fps": 4.0,
+            "frames": [
+              [
+                [
+                  0.5,
+                  0.5,
+                  0.3,
+                  0.42,
+                  0.9
+                ]
+              ]
+            ]
+          }
+        },
+        "motion_saliency": {
+          "kind": "return",
+          "value": null
+        },
+        "speaker_track": {
+          "kind": "return",
+          "value": null
+        },
+        "subject_focus": {
+          "kind": "return",
+          "value": null
+        }
+      },
+      "window": [
+        1.0,
+        11.0
+      ]
+    },
+    {
+      "id": "ct_multi_track",
+      "observed": {
+        "calls": [
+          {
+            "args": {},
+            "fn": "_framing_runtime_or_raise"
+          },
+          {
+            "args": {
+              "_rt": "<rt>",
+              "end": 11.0,
+              "start": 1.0
+            },
+            "fn": "detect_window"
+          },
+          {
+            "args": {
+              "end": 11.0,
+              "start": 1.0,
+              "stats": {
+                "fps": 4.0,
+                "frames": [
+                  [
+                    [
+                      0.5,
+                      0.5,
+                      0.3,
+                      0.42,
+                      0.9
+                    ]
+                  ]
+                ]
+              }
+            },
+            "fn": "classify_window"
+          },
+          {
+            "args": {
+              "_rt": "<rt>",
+              "end": 11.0,
+              "src_h": 1080,
+              "src_w": 1920,
+              "start": 1.0
+            },
+            "fn": "speaker_track"
+          }
+        ],
+        "id": "ct_multi_track",
+        "result": {
+          "kind": "return",
+          "value": [
+            null,
+            [
+              [
+                0.0,
+                5.0,
+                0.3,
+                0.5,
+                0.28,
+                0.4
+              ],
+              [
+                5.0,
+                10.0,
+                0.7,
+                0.5,
+                0.28,
+                0.4
+              ]
+            ],
+            "multi-speaker-talk"
+          ]
+        }
+      },
+      "smart_framing": true,
+      "src": {
+        "height": 1080,
+        "id": "src_fixture",
+        "width": 1920
+      },
+      "stubs": {
+        "_framing_runtime_or_raise": {
+          "kind": "return",
+          "value": "<rt>"
+        },
+        "classify_window": {
+          "kind": "return",
+          "value": "multi-speaker-talk"
+        },
+        "detect_window": {
+          "kind": "return",
+          "value": {
+            "fps": 4.0,
+            "frames": [
+              [
+                [
+                  0.5,
+                  0.5,
+                  0.3,
+                  0.42,
+                  0.9
+                ]
+              ]
+            ]
+          }
+        },
+        "motion_saliency": {
+          "kind": "return",
+          "value": null
+        },
+        "speaker_track": {
+          "kind": "return",
+          "value": [
+            [
+              0.0,
+              5.0,
+              0.3,
+              0.5,
+              0.28,
+              0.4
+            ],
+            [
+              5.0,
+              10.0,
+              0.7,
+              0.5,
+              0.28,
+              0.4
+            ]
+          ]
+        },
+        "subject_focus": {
+          "kind": "return",
+          "value": null
+        }
+      },
+      "window": [
+        1.0,
+        11.0
+      ]
+    },
+    {
+      "id": "ct_multi_no_track_then_focus",
+      "observed": {
+        "calls": [
+          {
+            "args": {},
+            "fn": "_framing_runtime_or_raise"
+          },
+          {
+            "args": {
+              "_rt": "<rt>",
+              "end": 11.0,
+              "start": 1.0
+            },
+            "fn": "detect_window"
+          },
+          {
+            "args": {
+              "end": 11.0,
+              "start": 1.0,
+              "stats": {
+                "fps": 4.0,
+                "frames": [
+                  [
+                    [
+                      0.5,
+                      0.5,
+                      0.3,
+                      0.42,
+                      0.9
+                    ]
+                  ]
+                ]
+              }
+            },
+            "fn": "classify_window"
+          },
+          {
+            "args": {
+              "_rt": "<rt>",
+              "end": 11.0,
+              "src_h": 1080,
+              "src_w": 1920,
+              "start": 1.0
+            },
+            "fn": "speaker_track"
+          },
+          {
+            "args": {
+              "_rt": "<rt>",
+              "end": 11.0,
+              "start": 1.0
+            },
+            "fn": "subject_focus"
+          }
+        ],
+        "id": "ct_multi_no_track_then_focus",
+        "result": {
+          "kind": "return",
+          "value": [
+            [
+              0.61,
+              0.44,
+              0.3,
+              0.38
+            ],
+            null,
+            "single-speaker-talk"
+          ]
+        }
+      },
+      "smart_framing": true,
+      "src": {
+        "height": 1080,
+        "id": "src_fixture",
+        "width": 1920
+      },
+      "stubs": {
+        "_framing_runtime_or_raise": {
+          "kind": "return",
+          "value": "<rt>"
+        },
+        "classify_window": {
+          "kind": "return",
+          "value": "multi-speaker-talk"
+        },
+        "detect_window": {
+          "kind": "return",
+          "value": {
+            "fps": 4.0,
+            "frames": [
+              [
+                [
+                  0.5,
+                  0.5,
+                  0.3,
+                  0.42,
+                  0.9
+                ]
+              ]
+            ]
+          }
+        },
+        "motion_saliency": {
+          "kind": "return",
+          "value": null
+        },
+        "speaker_track": {
+          "kind": "return",
+          "value": null
+        },
+        "subject_focus": {
+          "kind": "return",
+          "value": [
+            0.61,
+            0.44,
+            0.3,
+            0.38
+          ]
+        }
+      },
+      "window": [
+        1.0,
+        11.0
+      ]
+    },
+    {
+      "id": "ct_multi_no_track_no_focus",
+      "observed": {
+        "calls": [
+          {
+            "args": {},
+            "fn": "_framing_runtime_or_raise"
+          },
+          {
+            "args": {
+              "_rt": "<rt>",
+              "end": 11.0,
+              "start": 1.0
+            },
+            "fn": "detect_window"
+          },
+          {
+            "args": {
+              "end": 11.0,
+              "start": 1.0,
+              "stats": {
+                "fps": 4.0,
+                "frames": [
+                  [
+                    [
+                      0.5,
+                      0.5,
+                      0.3,
+                      0.42,
+                      0.9
+                    ]
+                  ]
+                ]
+              }
+            },
+            "fn": "classify_window"
+          },
+          {
+            "args": {
+              "_rt": "<rt>",
+              "end": 11.0,
+              "src_h": 1080,
+              "src_w": 1920,
+              "start": 1.0
+            },
+            "fn": "speaker_track"
+          },
+          {
+            "args": {
+              "_rt": "<rt>",
+              "end": 11.0,
+              "start": 1.0
+            },
+            "fn": "subject_focus"
+          }
+        ],
+        "id": "ct_multi_no_track_no_focus",
+        "result": {
+          "kind": "return",
+          "value": [
+            null,
+            null,
+            null
+          ]
+        }
+      },
+      "smart_framing": true,
+      "src": {
+        "height": 1080,
+        "id": "src_fixture",
+        "width": 1920
+      },
+      "stubs": {
+        "_framing_runtime_or_raise": {
+          "kind": "return",
+          "value": "<rt>"
+        },
+        "classify_window": {
+          "kind": "return",
+          "value": "multi-speaker-talk"
+        },
+        "detect_window": {
+          "kind": "return",
+          "value": {
+            "fps": 4.0,
+            "frames": [
+              [
+                [
+                  0.5,
+                  0.5,
+                  0.3,
+                  0.42,
+                  0.9
+                ]
+              ]
+            ]
+          }
+        },
+        "motion_saliency": {
+          "kind": "return",
+          "value": [
+            0.61,
+            0.44
+          ]
+        },
+        "speaker_track": {
+          "kind": "return",
+          "value": null
+        },
+        "subject_focus": {
+          "kind": "return",
+          "value": null
+        }
+      },
+      "window": [
+        1.0,
+        11.0
+      ]
+    },
+    {
+      "id": "ct_single_focus",
+      "observed": {
+        "calls": [
+          {
+            "args": {},
+            "fn": "_framing_runtime_or_raise"
+          },
+          {
+            "args": {
+              "_rt": "<rt>",
+              "end": 11.0,
+              "start": 1.0
+            },
+            "fn": "detect_window"
+          },
+          {
+            "args": {
+              "end": 11.0,
+              "start": 1.0,
+              "stats": {
+                "fps": 4.0,
+                "frames": [
+                  [
+                    [
+                      0.5,
+                      0.5,
+                      0.3,
+                      0.42,
+                      0.9
+                    ]
+                  ]
+                ]
+              }
+            },
+            "fn": "classify_window"
+          },
+          {
+            "args": {
+              "_rt": "<rt>",
+              "end": 11.0,
+              "start": 1.0
+            },
+            "fn": "subject_focus"
+          }
+        ],
+        "id": "ct_single_focus",
+        "result": {
+          "kind": "return",
+          "value": [
+            [
+              0.61,
+              0.44,
+              0.3,
+              0.38
+            ],
+            null,
+            "single-speaker-talk"
+          ]
+        }
+      },
+      "smart_framing": true,
+      "src": {
+        "height": 1080,
+        "id": "src_fixture",
+        "width": 1920
+      },
+      "stubs": {
+        "_framing_runtime_or_raise": {
+          "kind": "return",
+          "value": "<rt>"
+        },
+        "classify_window": {
+          "kind": "return",
+          "value": "single-speaker-talk"
+        },
+        "detect_window": {
+          "kind": "return",
+          "value": {
+            "fps": 4.0,
+            "frames": [
+              [
+                [
+                  0.5,
+                  0.5,
+                  0.3,
+                  0.42,
+                  0.9
+                ]
+              ]
+            ]
+          }
+        },
+        "motion_saliency": {
+          "kind": "return",
+          "value": null
+        },
+        "speaker_track": {
+          "kind": "return",
+          "value": null
+        },
+        "subject_focus": {
+          "kind": "return",
+          "value": [
+            0.61,
+            0.44,
+            0.3,
+            0.38
+          ]
+        }
+      },
+      "window": [
+        1.0,
+        11.0
+      ]
+    },
+    {
+      "id": "ct_single_no_focus",
+      "observed": {
+        "calls": [
+          {
+            "args": {},
+            "fn": "_framing_runtime_or_raise"
+          },
+          {
+            "args": {
+              "_rt": "<rt>",
+              "end": 11.0,
+              "start": 1.0
+            },
+            "fn": "detect_window"
+          },
+          {
+            "args": {
+              "end": 11.0,
+              "start": 1.0,
+              "stats": {
+                "fps": 4.0,
+                "frames": [
+                  [
+                    [
+                      0.5,
+                      0.5,
+                      0.3,
+                      0.42,
+                      0.9
+                    ]
+                  ]
+                ]
+              }
+            },
+            "fn": "classify_window"
+          },
+          {
+            "args": {
+              "_rt": "<rt>",
+              "end": 11.0,
+              "start": 1.0
+            },
+            "fn": "subject_focus"
+          }
+        ],
+        "id": "ct_single_no_focus",
+        "result": {
+          "kind": "return",
+          "value": [
+            null,
+            null,
+            null
+          ]
+        }
+      },
+      "smart_framing": true,
+      "src": {
+        "height": 1080,
+        "id": "src_fixture",
+        "width": 1920
+      },
+      "stubs": {
+        "_framing_runtime_or_raise": {
+          "kind": "return",
+          "value": "<rt>"
+        },
+        "classify_window": {
+          "kind": "return",
+          "value": "single-speaker-talk"
+        },
+        "detect_window": {
+          "kind": "return",
+          "value": {
+            "fps": 4.0,
+            "frames": [
+              [
+                [
+                  0.5,
+                  0.5,
+                  0.3,
+                  0.42,
+                  0.9
+                ]
+              ]
+            ]
+          }
+        },
+        "motion_saliency": {
+          "kind": "return",
+          "value": [
+            0.61,
+            0.44
+          ]
+        },
+        "speaker_track": {
+          "kind": "return",
+          "value": null
+        },
+        "subject_focus": {
+          "kind": "return",
+          "value": null
+        }
+      },
+      "window": [
+        1.0,
+        11.0
+      ]
+    },
+    {
+      "id": "ct_music_focus",
+      "observed": {
+        "calls": [
+          {
+            "args": {},
+            "fn": "_framing_runtime_or_raise"
+          },
+          {
+            "args": {
+              "_rt": "<rt>",
+              "end": 11.0,
+              "start": 1.0
+            },
+            "fn": "detect_window"
+          },
+          {
+            "args": {
+              "end": 11.0,
+              "start": 1.0,
+              "stats": {
+                "fps": 4.0,
+                "frames": [
+                  [
+                    [
+                      0.5,
+                      0.5,
+                      0.3,
+                      0.42,
+                      0.9
+                    ]
+                  ]
+                ]
+              }
+            },
+            "fn": "classify_window"
+          },
+          {
+            "args": {
+              "_rt": "<rt>",
+              "end": 11.0,
+              "start": 1.0
+            },
+            "fn": "subject_focus"
+          }
+        ],
+        "id": "ct_music_focus",
+        "result": {
+          "kind": "return",
+          "value": [
+            [
+              0.61,
+              0.44,
+              0.3,
+              0.38
+            ],
+            null,
+            "music"
+          ]
+        }
+      },
+      "smart_framing": true,
+      "src": {
+        "height": 1080,
+        "id": "src_fixture",
+        "width": 1920
+      },
+      "stubs": {
+        "_framing_runtime_or_raise": {
+          "kind": "return",
+          "value": "<rt>"
+        },
+        "classify_window": {
+          "kind": "return",
+          "value": "music"
+        },
+        "detect_window": {
+          "kind": "return",
+          "value": {
+            "fps": 4.0,
+            "frames": [
+              [
+                [
+                  0.5,
+                  0.5,
+                  0.3,
+                  0.42,
+                  0.9
+                ]
+              ]
+            ]
+          }
+        },
+        "motion_saliency": {
+          "kind": "return",
+          "value": null
+        },
+        "speaker_track": {
+          "kind": "return",
+          "value": null
+        },
+        "subject_focus": {
+          "kind": "return",
+          "value": [
+            0.61,
+            0.44,
+            0.3,
+            0.38
+          ]
+        }
+      },
+      "window": [
+        1.0,
+        11.0
+      ]
+    },
+    {
+      "id": "ct_music_saliency",
+      "observed": {
+        "calls": [
+          {
+            "args": {},
+            "fn": "_framing_runtime_or_raise"
+          },
+          {
+            "args": {
+              "_rt": "<rt>",
+              "end": 11.0,
+              "start": 1.0
+            },
+            "fn": "detect_window"
+          },
+          {
+            "args": {
+              "end": 11.0,
+              "start": 1.0,
+              "stats": {
+                "fps": 4.0,
+                "frames": [
+                  [
+                    [
+                      0.5,
+                      0.5,
+                      0.3,
+                      0.42,
+                      0.9
+                    ]
+                  ]
+                ]
+              }
+            },
+            "fn": "classify_window"
+          },
+          {
+            "args": {
+              "_rt": "<rt>",
+              "end": 11.0,
+              "start": 1.0
+            },
+            "fn": "subject_focus"
+          },
+          {
+            "args": {
+              "_rt": "<rt>",
+              "end": 11.0,
+              "start": 1.0
+            },
+            "fn": "motion_saliency"
+          }
+        ],
+        "id": "ct_music_saliency",
+        "result": {
+          "kind": "return",
+          "value": [
+            [
+              0.61,
+              0.44
+            ],
+            null,
+            null
+          ]
+        }
+      },
+      "smart_framing": true,
+      "src": {
+        "height": 1080,
+        "id": "src_fixture",
+        "width": 1920
+      },
+      "stubs": {
+        "_framing_runtime_or_raise": {
+          "kind": "return",
+          "value": "<rt>"
+        },
+        "classify_window": {
+          "kind": "return",
+          "value": "music"
+        },
+        "detect_window": {
+          "kind": "return",
+          "value": {
+            "fps": 4.0,
+            "frames": [
+              [
+                [
+                  0.5,
+                  0.5,
+                  0.3,
+                  0.42,
+                  0.9
+                ]
+              ]
+            ]
+          }
+        },
+        "motion_saliency": {
+          "kind": "return",
+          "value": [
+            0.61,
+            0.44
+          ]
+        },
+        "speaker_track": {
+          "kind": "return",
+          "value": null
+        },
+        "subject_focus": {
+          "kind": "return",
+          "value": null
+        }
+      },
+      "window": [
+        1.0,
+        11.0
+      ]
+    },
+    {
+      "id": "ct_music_centered",
+      "observed": {
+        "calls": [
+          {
+            "args": {},
+            "fn": "_framing_runtime_or_raise"
+          },
+          {
+            "args": {
+              "_rt": "<rt>",
+              "end": 11.0,
+              "start": 1.0
+            },
+            "fn": "detect_window"
+          },
+          {
+            "args": {
+              "end": 11.0,
+              "start": 1.0,
+              "stats": {
+                "fps": 4.0,
+                "frames": [
+                  [
+                    [
+                      0.5,
+                      0.5,
+                      0.3,
+                      0.42,
+                      0.9
+                    ]
+                  ]
+                ]
+              }
+            },
+            "fn": "classify_window"
+          },
+          {
+            "args": {
+              "_rt": "<rt>",
+              "end": 11.0,
+              "start": 1.0
+            },
+            "fn": "subject_focus"
+          },
+          {
+            "args": {
+              "_rt": "<rt>",
+              "end": 11.0,
+              "start": 1.0
+            },
+            "fn": "motion_saliency"
+          }
+        ],
+        "id": "ct_music_centered",
+        "result": {
+          "kind": "return",
+          "value": [
+            null,
+            null,
+            null
+          ]
+        }
+      },
+      "smart_framing": true,
+      "src": {
+        "height": 1080,
+        "id": "src_fixture",
+        "width": 1920
+      },
+      "stubs": {
+        "_framing_runtime_or_raise": {
+          "kind": "return",
+          "value": "<rt>"
+        },
+        "classify_window": {
+          "kind": "return",
+          "value": "music"
+        },
+        "detect_window": {
+          "kind": "return",
+          "value": {
+            "fps": 4.0,
+            "frames": [
+              [
+                [
+                  0.5,
+                  0.5,
+                  0.3,
+                  0.42,
+                  0.9
+                ]
+              ]
+            ]
+          }
+        },
+        "motion_saliency": {
+          "kind": "return",
+          "value": null
+        },
+        "speaker_track": {
+          "kind": "return",
+          "value": null
+        },
+        "subject_focus": {
+          "kind": "return",
+          "value": null
+        }
+      },
+      "window": [
+        1.0,
+        11.0
+      ]
+    },
+    {
+      "id": "ct_silent_focus",
+      "observed": {
+        "calls": [
+          {
+            "args": {},
+            "fn": "_framing_runtime_or_raise"
+          },
+          {
+            "args": {
+              "_rt": "<rt>",
+              "end": 11.0,
+              "start": 1.0
+            },
+            "fn": "detect_window"
+          },
+          {
+            "args": {
+              "end": 11.0,
+              "start": 1.0,
+              "stats": {
+                "fps": 4.0,
+                "frames": [
+                  [
+                    [
+                      0.5,
+                      0.5,
+                      0.3,
+                      0.42,
+                      0.9
+                    ]
+                  ]
+                ]
+              }
+            },
+            "fn": "classify_window"
+          },
+          {
+            "args": {
+              "_rt": "<rt>",
+              "end": 11.0,
+              "start": 1.0
+            },
+            "fn": "subject_focus"
+          }
+        ],
+        "id": "ct_silent_focus",
+        "result": {
+          "kind": "return",
+          "value": [
+            [
+              0.61,
+              0.44,
+              0.3,
+              0.38
+            ],
+            null,
+            "silent"
+          ]
+        }
+      },
+      "smart_framing": true,
+      "src": {
+        "height": 1080,
+        "id": "src_fixture",
+        "width": 1920
+      },
+      "stubs": {
+        "_framing_runtime_or_raise": {
+          "kind": "return",
+          "value": "<rt>"
+        },
+        "classify_window": {
+          "kind": "return",
+          "value": "silent"
+        },
+        "detect_window": {
+          "kind": "return",
+          "value": {
+            "fps": 4.0,
+            "frames": [
+              [
+                [
+                  0.5,
+                  0.5,
+                  0.3,
+                  0.42,
+                  0.9
+                ]
+              ]
+            ]
+          }
+        },
+        "motion_saliency": {
+          "kind": "return",
+          "value": null
+        },
+        "speaker_track": {
+          "kind": "return",
+          "value": null
+        },
+        "subject_focus": {
+          "kind": "return",
+          "value": [
+            0.61,
+            0.44,
+            0.3,
+            0.38
+          ]
+        }
+      },
+      "window": [
+        1.0,
+        11.0
+      ]
+    },
+    {
+      "id": "ct_silent_saliency",
+      "observed": {
+        "calls": [
+          {
+            "args": {},
+            "fn": "_framing_runtime_or_raise"
+          },
+          {
+            "args": {
+              "_rt": "<rt>",
+              "end": 11.0,
+              "start": 1.0
+            },
+            "fn": "detect_window"
+          },
+          {
+            "args": {
+              "end": 11.0,
+              "start": 1.0,
+              "stats": {
+                "fps": 4.0,
+                "frames": [
+                  [
+                    [
+                      0.5,
+                      0.5,
+                      0.3,
+                      0.42,
+                      0.9
+                    ]
+                  ]
+                ]
+              }
+            },
+            "fn": "classify_window"
+          },
+          {
+            "args": {
+              "_rt": "<rt>",
+              "end": 11.0,
+              "start": 1.0
+            },
+            "fn": "subject_focus"
+          },
+          {
+            "args": {
+              "_rt": "<rt>",
+              "end": 11.0,
+              "start": 1.0
+            },
+            "fn": "motion_saliency"
+          }
+        ],
+        "id": "ct_silent_saliency",
+        "result": {
+          "kind": "return",
+          "value": [
+            [
+              0.61,
+              0.44
+            ],
+            null,
+            null
+          ]
+        }
+      },
+      "smart_framing": true,
+      "src": {
+        "height": 1080,
+        "id": "src_fixture",
+        "width": 1920
+      },
+      "stubs": {
+        "_framing_runtime_or_raise": {
+          "kind": "return",
+          "value": "<rt>"
+        },
+        "classify_window": {
+          "kind": "return",
+          "value": "silent"
+        },
+        "detect_window": {
+          "kind": "return",
+          "value": {
+            "fps": 4.0,
+            "frames": [
+              [
+                [
+                  0.5,
+                  0.5,
+                  0.3,
+                  0.42,
+                  0.9
+                ]
+              ]
+            ]
+          }
+        },
+        "motion_saliency": {
+          "kind": "return",
+          "value": [
+            0.61,
+            0.44
+          ]
+        },
+        "speaker_track": {
+          "kind": "return",
+          "value": null
+        },
+        "subject_focus": {
+          "kind": "return",
+          "value": null
+        }
+      },
+      "window": [
+        1.0,
+        11.0
+      ]
+    },
+    {
+      "id": "ct_nopeople_saliency",
+      "observed": {
+        "calls": [
+          {
+            "args": {},
+            "fn": "_framing_runtime_or_raise"
+          },
+          {
+            "args": {
+              "_rt": "<rt>",
+              "end": 11.0,
+              "start": 1.0
+            },
+            "fn": "detect_window"
+          },
+          {
+            "args": {
+              "end": 11.0,
+              "start": 1.0,
+              "stats": {
+                "fps": 4.0,
+                "frames": [
+                  [
+                    [
+                      0.5,
+                      0.5,
+                      0.3,
+                      0.42,
+                      0.9
+                    ]
+                  ]
+                ]
+              }
+            },
+            "fn": "classify_window"
+          },
+          {
+            "args": {
+              "_rt": "<rt>",
+              "end": 11.0,
+              "start": 1.0
+            },
+            "fn": "motion_saliency"
+          }
+        ],
+        "id": "ct_nopeople_saliency",
+        "result": {
+          "kind": "return",
+          "value": [
+            [
+              0.61,
+              0.44
+            ],
+            null,
+            null
+          ]
+        }
+      },
+      "smart_framing": true,
+      "src": {
+        "height": 1080,
+        "id": "src_fixture",
+        "width": 1920
+      },
+      "stubs": {
+        "_framing_runtime_or_raise": {
+          "kind": "return",
+          "value": "<rt>"
+        },
+        "classify_window": {
+          "kind": "return",
+          "value": "no-people"
+        },
+        "detect_window": {
+          "kind": "return",
+          "value": {
+            "fps": 4.0,
+            "frames": [
+              [
+                [
+                  0.5,
+                  0.5,
+                  0.3,
+                  0.42,
+                  0.9
+                ]
+              ]
+            ]
+          }
+        },
+        "motion_saliency": {
+          "kind": "return",
+          "value": [
+            0.61,
+            0.44
+          ]
+        },
+        "speaker_track": {
+          "kind": "return",
+          "value": null
+        },
+        "subject_focus": {
+          "kind": "return",
+          "value": null
+        }
+      },
+      "window": [
+        1.0,
+        11.0
+      ]
+    },
+    {
+      "id": "ct_nopeople_centered",
+      "observed": {
+        "calls": [
+          {
+            "args": {},
+            "fn": "_framing_runtime_or_raise"
+          },
+          {
+            "args": {
+              "_rt": "<rt>",
+              "end": 11.0,
+              "start": 1.0
+            },
+            "fn": "detect_window"
+          },
+          {
+            "args": {
+              "end": 11.0,
+              "start": 1.0,
+              "stats": {
+                "fps": 4.0,
+                "frames": [
+                  [
+                    [
+                      0.5,
+                      0.5,
+                      0.3,
+                      0.42,
+                      0.9
+                    ]
+                  ]
+                ]
+              }
+            },
+            "fn": "classify_window"
+          },
+          {
+            "args": {
+              "_rt": "<rt>",
+              "end": 11.0,
+              "start": 1.0
+            },
+            "fn": "motion_saliency"
+          }
+        ],
+        "id": "ct_nopeople_centered",
+        "result": {
+          "kind": "return",
+          "value": [
+            null,
+            null,
+            null
+          ]
+        }
+      },
+      "smart_framing": true,
+      "src": {
+        "height": 1080,
+        "id": "src_fixture",
+        "width": 1920
+      },
+      "stubs": {
+        "_framing_runtime_or_raise": {
+          "kind": "return",
+          "value": "<rt>"
+        },
+        "classify_window": {
+          "kind": "return",
+          "value": "no-people"
+        },
+        "detect_window": {
+          "kind": "return",
+          "value": {
+            "fps": 4.0,
+            "frames": [
+              [
+                [
+                  0.5,
+                  0.5,
+                  0.3,
+                  0.42,
+                  0.9
+                ]
+              ]
+            ]
+          }
+        },
+        "motion_saliency": {
+          "kind": "return",
+          "value": null
+        },
+        "speaker_track": {
+          "kind": "return",
+          "value": null
+        },
+        "subject_focus": {
+          "kind": "return",
+          "value": null
+        }
+      },
+      "window": [
+        1.0,
+        11.0
+      ]
+    },
+    {
+      "id": "detect_failed_saliency",
+      "observed": {
+        "calls": [
+          {
+            "args": {},
+            "fn": "_framing_runtime_or_raise"
+          },
+          {
+            "args": {
+              "_rt": "<rt>",
+              "end": 11.0,
+              "start": 1.0
+            },
+            "fn": "detect_window"
+          },
+          {
+            "args": {
+              "end": 11.0,
+              "start": 1.0,
+              "stats": null
+            },
+            "fn": "classify_window"
+          },
+          {
+            "args": {
+              "_rt": "<rt>",
+              "end": 11.0,
+              "start": 1.0
+            },
+            "fn": "motion_saliency"
+          }
+        ],
+        "id": "detect_failed_saliency",
+        "result": {
+          "kind": "return",
+          "value": [
+            [
+              0.61,
+              0.44
+            ],
+            null,
+            null
+          ]
+        }
+      },
+      "smart_framing": true,
+      "src": {
+        "height": 1080,
+        "id": "src_fixture",
+        "width": 1920
+      },
+      "stubs": {
+        "_framing_runtime_or_raise": {
+          "kind": "return",
+          "value": "<rt>"
+        },
+        "classify_window": {
+          "kind": "return",
+          "value": "no-people"
+        },
+        "detect_window": {
+          "kind": "return",
+          "value": null
+        },
+        "motion_saliency": {
+          "kind": "return",
+          "value": [
+            0.61,
+            0.44
+          ]
+        },
+        "speaker_track": {
+          "kind": "return",
+          "value": null
+        },
+        "subject_focus": {
+          "kind": "return",
+          "value": null
+        }
+      },
+      "window": [
+        1.0,
+        11.0
+      ]
+    },
+    {
+      "id": "detect_failed_centered",
+      "observed": {
+        "calls": [
+          {
+            "args": {},
+            "fn": "_framing_runtime_or_raise"
+          },
+          {
+            "args": {
+              "_rt": "<rt>",
+              "end": 11.0,
+              "start": 1.0
+            },
+            "fn": "detect_window"
+          },
+          {
+            "args": {
+              "end": 11.0,
+              "start": 1.0,
+              "stats": null
+            },
+            "fn": "classify_window"
+          },
+          {
+            "args": {
+              "_rt": "<rt>",
+              "end": 11.0,
+              "start": 1.0
+            },
+            "fn": "motion_saliency"
+          }
+        ],
+        "id": "detect_failed_centered",
+        "result": {
+          "kind": "return",
+          "value": [
+            null,
+            null,
+            null
+          ]
+        }
+      },
+      "smart_framing": true,
+      "src": {
+        "height": 1080,
+        "id": "src_fixture",
+        "width": 1920
+      },
+      "stubs": {
+        "_framing_runtime_or_raise": {
+          "kind": "return",
+          "value": "<rt>"
+        },
+        "classify_window": {
+          "kind": "return",
+          "value": "no-people"
+        },
+        "detect_window": {
+          "kind": "return",
+          "value": null
+        },
+        "motion_saliency": {
+          "kind": "return",
+          "value": null
+        },
+        "speaker_track": {
+          "kind": "return",
+          "value": null
+        },
+        "subject_focus": {
+          "kind": "return",
+          "value": null
+        }
+      },
+      "window": [
+        1.0,
+        11.0
+      ]
+    },
+    {
+      "id": "detect_window_stage_busy",
+      "observed": {
+        "calls": [
+          {
+            "args": {},
+            "fn": "_framing_runtime_or_raise"
+          },
+          {
+            "args": {
+              "_rt": "<rt>",
+              "end": 11.0,
+              "start": 1.0
+            },
+            "fn": "detect_window"
+          }
+        ],
+        "id": "detect_window_stage_busy",
+        "result": {
+          "exc_type": "StageBusyError",
+          "kind": "raise"
+        }
+      },
+      "smart_framing": true,
+      "src": {
+        "height": 1080,
+        "id": "src_fixture",
+        "width": 1920
+      },
+      "stubs": {
+        "_framing_runtime_or_raise": {
+          "kind": "return",
+          "value": "<rt>"
+        },
+        "classify_window": {
+          "kind": "return",
+          "value": "single-speaker-talk"
+        },
+        "detect_window": {
+          "exc_type": "StageBusyError",
+          "kind": "raise"
+        },
+        "motion_saliency": {
+          "kind": "return",
+          "value": null
+        },
+        "speaker_track": {
+          "kind": "return",
+          "value": null
+        },
+        "subject_focus": {
+          "kind": "return",
+          "value": null
+        }
+      },
+      "window": [
+        1.0,
+        11.0
+      ]
+    },
+    {
+      "id": "detect_window_oserror",
+      "observed": {
+        "calls": [
+          {
+            "args": {},
+            "fn": "_framing_runtime_or_raise"
+          },
+          {
+            "args": {
+              "_rt": "<rt>",
+              "end": 11.0,
+              "start": 1.0
+            },
+            "fn": "detect_window"
+          }
+        ],
+        "id": "detect_window_oserror",
+        "result": {
+          "exc_type": "OSError",
+          "kind": "raise"
+        }
+      },
+      "smart_framing": true,
+      "src": {
+        "height": 1080,
+        "id": "src_fixture",
+        "width": 1920
+      },
+      "stubs": {
+        "_framing_runtime_or_raise": {
+          "kind": "return",
+          "value": "<rt>"
+        },
+        "classify_window": {
+          "kind": "return",
+          "value": "single-speaker-talk"
+        },
+        "detect_window": {
+          "exc_type": "OSError",
+          "kind": "raise"
+        },
+        "motion_saliency": {
+          "kind": "return",
+          "value": null
+        },
+        "speaker_track": {
+          "kind": "return",
+          "value": null
+        },
+        "subject_focus": {
+          "kind": "return",
+          "value": null
+        }
+      },
+      "window": [
+        1.0,
+        11.0
+      ]
+    },
+    {
+      "id": "speaker_track_raises",
+      "observed": {
+        "calls": [
+          {
+            "args": {},
+            "fn": "_framing_runtime_or_raise"
+          },
+          {
+            "args": {
+              "_rt": "<rt>",
+              "end": 11.0,
+              "start": 1.0
+            },
+            "fn": "detect_window"
+          },
+          {
+            "args": {
+              "end": 11.0,
+              "start": 1.0,
+              "stats": {
+                "fps": 4.0,
+                "frames": [
+                  [
+                    [
+                      0.5,
+                      0.5,
+                      0.3,
+                      0.42,
+                      0.9
+                    ]
+                  ]
+                ]
+              }
+            },
+            "fn": "classify_window"
+          },
+          {
+            "args": {
+              "_rt": "<rt>",
+              "end": 11.0,
+              "src_h": 1080,
+              "src_w": 1920,
+              "start": 1.0
+            },
+            "fn": "speaker_track"
+          }
+        ],
+        "id": "speaker_track_raises",
+        "result": {
+          "exc_type": "RuntimeError",
+          "kind": "raise"
+        }
+      },
+      "smart_framing": true,
+      "src": {
+        "height": 1080,
+        "id": "src_fixture",
+        "width": 1920
+      },
+      "stubs": {
+        "_framing_runtime_or_raise": {
+          "kind": "return",
+          "value": "<rt>"
+        },
+        "classify_window": {
+          "kind": "return",
+          "value": "multi-speaker-talk"
+        },
+        "detect_window": {
+          "kind": "return",
+          "value": {
+            "fps": 4.0,
+            "frames": [
+              [
+                [
+                  0.5,
+                  0.5,
+                  0.3,
+                  0.42,
+                  0.9
+                ]
+              ]
+            ]
+          }
+        },
+        "motion_saliency": {
+          "kind": "return",
+          "value": null
+        },
+        "speaker_track": {
+          "exc_type": "RuntimeError",
+          "kind": "raise"
+        },
+        "subject_focus": {
+          "kind": "return",
+          "value": null
+        }
+      },
+      "window": [
+        1.0,
+        11.0
+      ]
+    },
+    {
+      "id": "subject_focus_raises",
+      "observed": {
+        "calls": [
+          {
+            "args": {},
+            "fn": "_framing_runtime_or_raise"
+          },
+          {
+            "args": {
+              "_rt": "<rt>",
+              "end": 11.0,
+              "start": 1.0
+            },
+            "fn": "detect_window"
+          },
+          {
+            "args": {
+              "end": 11.0,
+              "start": 1.0,
+              "stats": {
+                "fps": 4.0,
+                "frames": [
+                  [
+                    [
+                      0.5,
+                      0.5,
+                      0.3,
+                      0.42,
+                      0.9
+                    ]
+                  ]
+                ]
+              }
+            },
+            "fn": "classify_window"
+          },
+          {
+            "args": {
+              "_rt": "<rt>",
+              "end": 11.0,
+              "start": 1.0
+            },
+            "fn": "subject_focus"
+          }
+        ],
+        "id": "subject_focus_raises",
+        "result": {
+          "exc_type": "RuntimeError",
+          "kind": "raise"
+        }
+      },
+      "smart_framing": true,
+      "src": {
+        "height": 1080,
+        "id": "src_fixture",
+        "width": 1920
+      },
+      "stubs": {
+        "_framing_runtime_or_raise": {
+          "kind": "return",
+          "value": "<rt>"
+        },
+        "classify_window": {
+          "kind": "return",
+          "value": "single-speaker-talk"
+        },
+        "detect_window": {
+          "kind": "return",
+          "value": {
+            "fps": 4.0,
+            "frames": [
+              [
+                [
+                  0.5,
+                  0.5,
+                  0.3,
+                  0.42,
+                  0.9
+                ]
+              ]
+            ]
+          }
+        },
+        "motion_saliency": {
+          "kind": "return",
+          "value": null
+        },
+        "speaker_track": {
+          "kind": "return",
+          "value": null
+        },
+        "subject_focus": {
+          "exc_type": "RuntimeError",
+          "kind": "raise"
+        }
+      },
+      "window": [
+        1.0,
+        11.0
+      ]
+    },
+    {
+      "id": "motion_saliency_raises",
+      "observed": {
+        "calls": [
+          {
+            "args": {},
+            "fn": "_framing_runtime_or_raise"
+          },
+          {
+            "args": {
+              "_rt": "<rt>",
+              "end": 11.0,
+              "start": 1.0
+            },
+            "fn": "detect_window"
+          },
+          {
+            "args": {
+              "end": 11.0,
+              "start": 1.0,
+              "stats": {
+                "fps": 4.0,
+                "frames": [
+                  [
+                    [
+                      0.5,
+                      0.5,
+                      0.3,
+                      0.42,
+                      0.9
+                    ]
+                  ]
+                ]
+              }
+            },
+            "fn": "classify_window"
+          },
+          {
+            "args": {
+              "_rt": "<rt>",
+              "end": 11.0,
+              "start": 1.0
+            },
+            "fn": "motion_saliency"
+          }
+        ],
+        "id": "motion_saliency_raises",
+        "result": {
+          "exc_type": "RuntimeError",
+          "kind": "raise"
+        }
+      },
+      "smart_framing": true,
+      "src": {
+        "height": 1080,
+        "id": "src_fixture",
+        "width": 1920
+      },
+      "stubs": {
+        "_framing_runtime_or_raise": {
+          "kind": "return",
+          "value": "<rt>"
+        },
+        "classify_window": {
+          "kind": "return",
+          "value": "no-people"
+        },
+        "detect_window": {
+          "kind": "return",
+          "value": {
+            "fps": 4.0,
+            "frames": [
+              [
+                [
+                  0.5,
+                  0.5,
+                  0.3,
+                  0.42,
+                  0.9
+                ]
+              ]
+            ]
+          }
+        },
+        "motion_saliency": {
+          "exc_type": "RuntimeError",
+          "kind": "raise"
+        },
+        "speaker_track": {
+          "kind": "return",
+          "value": null
+        },
+        "subject_focus": {
+          "kind": "return",
+          "value": null
+        }
+      },
+      "window": [
+        1.0,
+        11.0
+      ]
+    }
+  ],
+  "vector_schema_version": 1,
+  "what_this_is": "OBSERVED legacy behaviour ONLY: invoked functions, their order, their arguments, the stub outcomes, the returned 3-tuple, and the exceptions that actually escaped. No attempt states, no applicability, no failure/negative events, no degraded lists, no event chains — those are inventions of the new design and live in Layer 2."
+}
