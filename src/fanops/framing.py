@@ -50,24 +50,29 @@ def _detector(cv2):
 
 def require_cv2(cfg) -> None:
     """HARD gate for the smart-framing render path: raise ToolchainMissingError when OpenCV (the [framing]
-    extra) is absent, or present-but-too-old to build the YuNet detector — so `fanops run` refuses LOUDLY
-    (cli.main -> one line + exit 2) instead of silently centre-cropping every clip while the operator believes
-    subject-tracking happened. Called ONLY when cfg.smart_framing is ON (clip._resolve_framing); the OFF path
-    and the hermetic unit stubs never reach it. Distinct from the fail-open _cv2()/_detector() seams, which
-    stay None-returning for defence-in-depth. NEVER degrades — it refuses. (No bare except here: it must
-    propagate; test_swallow_ratchet.py polices new silent handlers and this has none.)
-    `cfg` is currently unused in the body but is RETAINED deliberately: callers pass a Config
-    (clip._resolve_framing and the e2e tests call `require_cv2(Config(...))`), and a future per-config
-    framing policy (e.g. per-account) may consult it. Documented compatibility, not vague reservation."""
+    extra) is absent, or present-but-too-old for the YuNet detector, or the vendored model is missing — so
+    `fanops run` refuses LOUDLY (cli.main -> one line + exit 2) instead of silently centre-cropping every clip
+    while the operator believes subject-tracking happened. Called ONLY when cfg.smart_framing is ON
+    (clip._resolve_framing); the OFF path never reaches it. Distinct from the fail-open _cv2()/_detector()
+    seams, which stay None-returning for defence-in-depth. NEVER degrades — it refuses. (No bare except here:
+    it must propagate; test_swallow_ratchet.py polices new silent handlers and this has none.)
+
+    This is a PREREQUISITE check, NOT a detector build: it verifies the module imports, exposes
+    FaceDetectorYN.create, and the ONNX asset is on disk — it does NOT call .create(). detect_window
+    already constructs the sole detector for the render; a probe-build here would be a strict SECOND
+    construction per window (measured 2 vs 1), so we check the preconditions instead. The one residual
+    case a non-constructing check can't catch — a present-but-corrupt ONNX that imports + has the attr but
+    fails inside .create() — still fails open safely via detect_window's `_detector -> None` centered crop,
+    exactly as it did before this guard existed."""
     cv2 = _cv2()
     if cv2 is None:
         raise ToolchainMissingError(
             "smart framing is ON but OpenCV (cv2) is not installed — "
             "run: pip install -e '.[framing]'  (or set FANOPS_SMART_FRAMING=0 to centre-crop)")
-    if _detector(cv2) is None:
+    if getattr(getattr(cv2, "FaceDetectorYN", None), "create", None) is None or not _model_path().exists():
         raise ToolchainMissingError(
-            "smart framing is ON but the YuNet face detector could not be built "
-            "(OpenCV too old, or the vendored model is missing) — "
+            "smart framing is ON but the YuNet face detector is unavailable "
+            "(OpenCV too old for FaceDetectorYN, or the vendored model is missing) — "
             "reinstall the [framing] extra, or set FANOPS_SMART_FRAMING=0 to centre-crop")
 
 def _wkey(start: float, end: float) -> str:

@@ -84,6 +84,28 @@ jobs:
           python -m pytest -q tests/test_ci_require_e2e.py
           test $? -eq 1
 
+  base-install:
+    # The unit job now installs the [framing] extra (opencv) because smart_framing defaults ON and the
+    # render path HARD-REQUIRES cv2. This job restores the coverage the unit lane thereby loses: a CLEAN
+    # base install (no extras) must still import fanops, and the smart-framing render path must REFUSE
+    # loudly (ToolchainMissingError) rather than silently centre-crop — while smart_framing=0 centers.
+    # A dedicated clean-venv job so the base packaging contract can never rot unnoticed. Seconds; base
+    # deps only (pydantic/requests/yt-dlp), no toolchain, no lock.
+    name: base install (no extras) refuses smart-framing
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+      - name: Clean base install (no [framing]/[studio]/[transcribe] extras — cv2 genuinely absent)
+        run: |
+          python -m pip install --upgrade pip
+          pip install .
+      - name: Base-install smoke — imports, cv2 absent, ON refuses, OFF centers
+        run: python scripts/base_install_smoke.py
+
   e2e:
     name: real-tooling E2E (must run, not skip)
     timeout-minutes: 25
