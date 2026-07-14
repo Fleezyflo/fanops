@@ -672,6 +672,15 @@ class Ledger:
             return True
         return post.state in (self._LIVE_POST_STATES + (PostState.queued,))
 
+    def post_is_remote_or_publishable_any(self, clip_id: str) -> bool:
+        """The same guard, asked of EVERY post over one clip. The reframe migration re-asserts this in its
+        preimage check, immediately before it swaps a clip's bytes: a post that went live/queued — or that
+        acquired a hosted asset — BETWEEN planning and apply means those bytes are already spoken for, and
+        replacing them would change what a scheduled or published post points at. Any one such post vetoes
+        the clip, which is then SKIPPED (never migrated), not silently reframed."""
+        return any(self.post_is_remote_or_publishable(p)
+                   for p in self.posts.values() if getattr(p, "parent_id", None) == clip_id)
+
     def _delete_moment_cascade(self, moment_id: str) -> None:
         survived = False
         for c in self.clips_of(moment_id):
