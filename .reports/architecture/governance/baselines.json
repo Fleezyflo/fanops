@@ -9,7 +9,7 @@
   ],
   "approved_compile_cycles_note": "The ONLY compile-time import cycle in the tree. Load-order sensitive and UNDEFENDED (no comment, no test, no ADR). Its intentionality is UNKNOWN (UNK-C5-1). It is baselined because it EXISTS, not because it is endorsed.",
   "approved_terminal_post_writers": [
-    "src/fanops/post/run.py:306",
+    "src/fanops/post/run.py:324",
     "src/fanops/reconcile.py:712",
     "src/fanops/studio/actions.py:280",
     "src/fanops/track.py:193"

@@ -176,25 +176,31 @@ def test_variant_render_uploaded_once_across_two_publishes(tmp_path, monkeypatch
     assert calls["n"] == 1                                            # uploaded ONCE total, not per cycle
 
 
-def test_republish_of_real_id_post_warns(tmp_path, monkeypatch):
-    # XC-7: re-publishing a post that already carries a REAL submission_id may double-post (repost-freely
-    # OK, but the claim must breadcrumb it). LIVE — the claim breadcrumb is inside _publish_one, which a
-    # dryrun system no longer reaches (M2 boundary-skips before the claim).
+def test_real_id_post_is_refused_at_the_claim_never_stranded(tmp_path, monkeypatch):
+    # RC-1 / S03 INVARIANT. A post that ALREADY carries a real submission_id has been POSTed; re-POSTing
+    # the SAME post id is the double-POST we forbid (MOL-115). The refusal MUST happen in the CLAIM, where
+    # declining is a clean no-op that leaves the post `queued`. Before S03 the refusal lived one phase
+    # LATER (the network phase), so the claim had already committed `submitting` and NOTHING un-claimed it
+    # — the post stranded `submitting`, claimed-but-never-published. This test pins the outcome, not the
+    # phrasing: the poster is NEVER called (no double-POST), and the post is left `queued` (not stranded,
+    # not published). (Reposting CONTENT freely is `repost_post`, which mints a NEW id — a different path.)
     monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_API_KEY", "k"); monkeypatch.setenv("POSTIZ_URL", "https://x")
     monkeypatch.setattr("fanops.postiz_lifecycle.ensure_up", lambda cfg: None)
     import fanops.post.run as run
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _queued(led, cfg, pid="p1", cid="c1", when="2000-01-01T00:00:00Z")
     with Ledger.transaction(cfg) as lg: lg.posts["p1"].submission_id = "blotato_1"
-    class _OkPoster:
+    posted = {"n": 0}
+    class _SpyPoster:
         def publish(self, led, post_id):
-            led.posts[post_id].state = PostState.submitted
-            led.posts[post_id].public_url = "https://www.instagram.com/reel/AAA/"
+            posted["n"] += 1                              # MUST NOT be reached — that would be the double-POST
             return led
-    monkeypatch.setattr(run, "get_poster", lambda cfg, backend=None: _OkPoster())
+    monkeypatch.setattr(run, "get_poster", lambda cfg, backend=None: _SpyPoster())
     monkeypatch.setattr(run, "_ensure_media", lambda *a, **kw: None, raising=False)
-    publish_post(cfg, "p1")
-    assert "republish_with_real_id" in cfg.log_path.read_text()
+    assert publish_post(cfg, "p1") is None                # refused at the claim — nothing published
+    assert posted["n"] == 0                               # the network POST was NEVER attempted
+    assert Ledger.load(cfg).posts["p1"].state is PostState.queued   # left queued, NOT stranded `submitting`
+    assert "skip_resubmit_existing_id" in cfg.log_path.read_text()
 
 def test_publish_records_the_integration_id_it_used(tmp_path, monkeypatch):
     # XC-5 (characterization): the post carries the integration id it is addressed to. On a dryrun
