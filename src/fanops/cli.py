@@ -685,12 +685,24 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser("status"); sub.add_parser("ingest"); sub.add_parser("digest"); sub.add_parser("respond")
     sub.add_parser("reconcile")
-    p_reframe = sub.add_parser("reframe", help="READ-ONLY: classify the clip corpus for the reframe migration")
+    p_reframe = sub.add_parser("reframe", help="classify (--dry-run) or migrate (--apply) the clip corpus framing")
     p_reframe.add_argument("--dry-run", action="store_true",
-                           help="required — there is no mutation mode; this command writes only to a scratch root")
+                           help="READ-ONLY classification; writes only to a scratch root")
     p_reframe.add_argument("--limit", type=int, help="classify at most N clips (a PARTIAL run: go/no-go is suppressed)")
     p_reframe.add_argument("--scratch", help="scratch root (default: a fresh temp dir). ALL writes land here.")
     p_reframe.add_argument("--json", action="store_true", help="emit the full manifest as JSON")
+    # ---- MUTATION. Never the default; mutually exclusive with --dry-run; every verb needs an explicit run id.
+    p_reframe.add_argument("--apply", action="store_true",
+                           help="MUTATE: reframe the ELIGIBLE clips of a reviewed full-corpus manifest (needs --manifest)")
+    p_reframe.add_argument("--manifest", help="path to the REVIEWED full-corpus dry-run manifest (--apply plans from it)")
+    p_reframe.add_argument("--run-id", help="the migration run id (immutable; names 07_reports/reframe/<run_id>/)")
+    p_reframe.add_argument("--source", help="restrict --apply to ONE source id (the pilot)")
+    p_reframe.add_argument("--plan-only", action="store_true", help="--apply: write the plan and stop before mutating")
+    p_reframe.add_argument("--status", metavar="RUN_ID", help="what a run actually did, re-read from disk")
+    p_reframe.add_argument("--resume", metavar="RUN_ID", help="resume a run from its immutable plan + journal")
+    p_reframe.add_argument("--rollback", metavar="RUN_ID", help="restore the original bytes (whole run, or --clip)")
+    p_reframe.add_argument("--clip", metavar="CLIP_ID", help="--rollback: restore just this clip")
+    p_reframe.add_argument("--cleanup", metavar="RUN_ID", help="delete a terminal run's backups (explicit, refused otherwise)")
     p_rec = sub.add_parser("recover", help="delivery recovery read-models")
     rec_sub = p_rec.add_subparsers(dest="recover_cmd", required=True)
     rec_sub.add_parser("audit", help="read-only live/inflight/failed bucket table")
@@ -1101,20 +1113,64 @@ def _studio_port_busy(host: str, port: int) -> bool:
         return False
 
 
-def cmd_reframe(cfg: Config, args) -> int:
-    """READ-ONLY corpus classification for the reframe migration decision.
+def _reframe_mutation(paths, args) -> int:
+    """The MUTATION verbs. Split out so cmd_reframe's read-only path stays exactly what it was."""
+    import json as _json, time as _time
+    from fanops import reframe_apply as ra
+    if args.status:
+        print(_json.dumps(ra.run_status(paths, args.status), indent=2, sort_keys=True, default=str)); return 0
+    if args.rollback:
+        r = ra.rollback_run(paths, args.rollback, clip_id=args.clip)
+        print(_json.dumps({k: v for k, v in r.items() if k != "clips"}, indent=2, sort_keys=True)); return 0
+    if args.cleanup:
+        r = ra.cleanup_run(paths, args.cleanup)
+        print(_json.dumps(r, indent=2, sort_keys=True))
+        return 1 if r.get("refused") else 0
+    # --apply / --resume: both drive apply_run over the SAME immutable plan. Resume simply re-enters a run
+    # whose plan already exists on disk; it never re-derives one from live state that may have moved.
+    run_id = args.resume or args.run_id or ra.new_run_id(_time.time())
+    man = None
+    if not args.resume:
+        if not args.manifest:
+            print("--apply needs --manifest <reviewed full-corpus dry-run manifest>", file=sys.stderr); return 2
+        man = _json.loads(open(args.manifest, encoding="utf-8").read())
+        if man.get("partial"):
+            print("REFUSED: that manifest is PARTIAL. A corpus mutation may not rest on a corpus-wide claim "
+                  "the dry-run itself declined to make.", file=sys.stderr)
+            return 2
+    out = ra.apply_run(paths, manifest=man or {"clips": []}, run_id=run_id, source_id=args.source,
+                       limit=args.limit, dry_plan_only=bool(args.plan_only))
+    print(_json.dumps({k: v for k, v in out.items() if k != "clips"}, indent=2, sort_keys=True, default=str))
+    if out.get("clean") is False:
+        print("*** THE MIGRATION IS NOT CLEAN — see ledger_changed / undeclared_writes ***", file=sys.stderr)
+        return 1
+    return 0
 
-    --dry-run is MANDATORY because there is no other mode: this command mutates nothing, ever. It reads
-    the production tree, writes every byte it produces into a scratch root, and PROVES it did so with a
-    before/after scan of the protected root. It re-renders nothing and it touches no ledger."""
+
+def cmd_reframe(cfg: Config, args) -> int:
+    """Classify (--dry-run) or migrate (--apply) the corpus framing.
+
+    --dry-run mutates NOTHING, ever: it reads the production tree, writes every byte it produces into a
+    scratch root, and PROVES it did so with a before/after scan of the protected root.
+
+    --apply is the MUTATION, and it is never the default. It plans from a REVIEWED full-corpus manifest,
+    holds a real inter-process migration lock (so no daemon/Studio render can race it), backs up every file
+    before touching it, renders to staging, validates, and only then atomically replaces the two files it
+    declared. The two modes are MUTUALLY EXCLUSIVE — a command that could read or write depending on a flag
+    it also accepted is a command whose blast radius you cannot see at the call site."""
     import tempfile
     from pathlib import Path
     from fanops.reframe import ReframePaths, run_dry_run
-    if not args.dry_run:
-        print("fanops reframe is READ-ONLY: pass --dry-run. No mutation mode exists.", file=sys.stderr)
+    verbs = [bool(args.dry_run), bool(args.apply), bool(args.status), bool(args.resume),
+             bool(args.rollback), bool(args.cleanup)]
+    if sum(verbs) != 1:
+        print("fanops reframe needs EXACTLY ONE of: --dry-run | --apply | --status | --resume | --rollback | "
+              "--cleanup. Mutation is never implied.", file=sys.stderr)
         return 2
     scratch = Path(args.scratch) if args.scratch else Path(tempfile.mkdtemp(prefix="fanops_reframe_"))
     paths = ReframePaths.build(cfg.root, scratch)
+    if not args.dry_run:
+        return _reframe_mutation(paths, args)
     man = run_dry_run(paths, limit=args.limit, argv=sys.argv[1:])
     if args.json:
         print(json.dumps(man, indent=2, sort_keys=True))
