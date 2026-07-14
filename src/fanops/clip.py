@@ -13,6 +13,7 @@ from fanops.ids import child_id
 from fanops.bands import band_for, TALK
 from fanops import overlay, frames, framing
 from fanops.log import get_logger
+from fanops.errors import ToolchainMissingError
 
 # Target render size per aspect. The subtitle .ass PlayResX/Y must match the rendered frame so
 # libass scales the caption to the clip — so render_moment reads this same table the reframe uses.
@@ -648,25 +649,28 @@ def _resolve_framing(cfg: Config, src, cs: float, ce: float):
     then route — active-speaker TRACK only for real multi-speaker talk; subject-lock FOCUS (zoomed) for a
     single/music/silent subject; motion-SALIENCY (a no-zoom 2-tuple) for music/silent/no-people with no face;
     else centered (None,None,None). Gated entirely by cfg.smart_framing so OFF is byte-identical to today.
-    When smart_framing is ON, cv2 (the [framing] extra) is REQUIRED — require_cv2 raises ToolchainMissingError
-    if it's absent/unbuildable, so the operator never silently ships blind-centred clips they believe were
-    subject-tracked. The per-strategy calls below stay fail-open (a detection MISS degrades to centered)."""
+    When smart_framing is ON, cv2 (the [framing] extra) is REQUIRED and the YuNet detector is CONSTRUCTED
+    ONCE here (framing._framing_runtime_or_raise): a missing/too-old/corrupt OpenCV or a create() failure
+    raises ToolchainMissingError BEFORE any centered output, so the operator never silently ships blind-centred
+    clips they believe were subject-tracked. That one detector is threaded (`_rt`) into every detection call
+    below — no function re-constructs it. The per-strategy calls stay fail-open ONLY for a genuine detection
+    MISS after successful construction (no face found -> centered); a broken prerequisite never reaches them."""
     if not cfg.smart_framing:
         return None, None, None
-    framing.require_cv2(cfg)          # smart framing ON but cv2 absent -> REFUSE (never a silent centre-crop)
-    stats = framing.detect_window(cfg, src, start=cs, end=ce)
+    rt = framing._framing_runtime_or_raise(cfg)   # constructs the ONE detector, or REFUSES (never a silent centre-crop)
+    stats = framing.detect_window(cfg, src, start=cs, end=ce, _rt=rt)
     ct = framing.classify_window(cfg, src, start=cs, end=ce, stats=stats)
     if ct == framing.CT_MULTI:
-        track = framing.speaker_track(cfg, src, start=cs, end=ce, src_w=src.width or 0, src_h=src.height or 0)
+        track = framing.speaker_track(cfg, src, start=cs, end=ce, src_w=src.width or 0, src_h=src.height or 0, _rt=rt)
         if track:
             return None, track, ct
         ct = framing.CT_SINGLE                            # classed multi but not a real 2-shot -> single lock
     if ct in (framing.CT_SINGLE, framing.CT_MUSIC, framing.CT_SILENT):
-        focus = framing.subject_focus(cfg, src, start=cs, end=ce)
+        focus = framing.subject_focus(cfg, src, start=cs, end=ce, _rt=rt)
         if focus is not None:
             return focus, None, ct
     if ct in (framing.CT_MUSIC, framing.CT_SILENT, framing.CT_NOPEOPLE):
-        sal = framing.motion_saliency(cfg, src, start=cs, end=ce)   # follow the action when there's no face
+        sal = framing.motion_saliency(cfg, src, start=cs, end=ce, _rt=rt)   # follow the action when there's no face
         if sal is not None:
             return sal, None, None                       # 2-tuple -> pan only, NO zoom (no subject to size to)
     return None, None, None                              # centered crop (today)
@@ -959,6 +963,11 @@ def render_account_cut(led: Ledger, cfg: Config, moment_id: str, *, aspect: Fmt,
             Path(out_path).parent.mkdir(parents=True, exist_ok=True)
             os.replace(tmp, out_path)                             # atomic publish — never a half-written per-account file
         return True, realized
+    except ToolchainMissingError:
+        # A BROKEN PREREQUISITE (smart_framing ON + cv2/detector unavailable) is NOT a per-variant fail-open
+        # case — it must propagate LOUDLY so the render refuses instead of silently emitting a centered cut.
+        # (The caller does NOT fall back to burn_hook_only on this; the pipeline halts on the missing toolchain.)
+        raise
     except Exception:
         return False, None                                    # fail-open by contract: a clip is never blocked on its variant
     finally:

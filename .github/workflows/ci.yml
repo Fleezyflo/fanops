@@ -48,6 +48,8 @@ jobs:
           python -m pip install --upgrade pip
           pip install --require-hashes -r requirements/ci-unit.txt
           pip install -e . --no-deps
+      - name: CI env probe (unit lane — MEASURE ffmpeg/cv2, do not infer from YAML)
+        run: python scripts/ci_env_probe.py
       - name: Lint (ruff — pyflakes F + pycodestyle E, the house ruleset in pyproject)
         run: ruff check .          # was configured in pyproject but never enforced in CI (Phase 4b)
       - name: Unit tests
@@ -85,12 +87,13 @@ jobs:
           test $? -eq 1
 
   base-install:
-    # The unit job now installs the [framing] extra (opencv) because smart_framing defaults ON and the
-    # render path HARD-REQUIRES cv2. This job restores the coverage the unit lane thereby loses: a CLEAN
-    # base install (no extras) must still import fanops, and the smart-framing render path must REFUSE
-    # loudly (ToolchainMissingError) rather than silently centre-crop — while smart_framing=0 centers.
-    # A dedicated clean-venv job so the base packaging contract can never rot unnoticed. Seconds; base
-    # deps only (pydantic/requests/yt-dlp), no toolchain, no lock.
+    # The unit job installs the [framing] extra (opencv) because smart_framing defaults ON and the render
+    # path HARD-REQUIRES cv2. This job restores the coverage the unit lane thereby loses: a CLEAN base
+    # install (no extras, LITERAL fresh venv) must still import fanops + its CLI, run a representative
+    # non-render op (`fanops --help`), and REFUSE loudly (ToolchainMissingError) on the missing render
+    # prerequisite — never a silent centre-crop. It asserts NOTHING about smart_framing OFF (that is the
+    # separate F3 off-switch decision). A dedicated clean-venv job so the base packaging contract cannot
+    # rot unnoticed. Seconds; base deps only (pydantic/requests/yt-dlp), no toolchain, no lock.
     name: base install (no extras) refuses smart-framing
     timeout-minutes: 10
     runs-on: ubuntu-latest
@@ -99,12 +102,16 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.12"
-      - name: Clean base install (no [framing]/[studio]/[transcribe] extras — cv2 genuinely absent)
+      - name: Clean base install in a LITERAL fresh venv (no extras — cv2 genuinely absent)
         run: |
+          python -m venv .venv-base
+          . .venv-base/bin/activate
           python -m pip install --upgrade pip
-          pip install .
-      - name: Base-install smoke — imports, cv2 absent, ON refuses, OFF centers
-        run: python scripts/base_install_smoke.py
+          python -m pip install .
+      - name: Base-install smoke — cv2 absent, fanops+CLI import, representative op, render prereq refuses
+        run: |
+          . .venv-base/bin/activate
+          python scripts/base_install_smoke.py
 
   e2e:
     name: real-tooling E2E (must run, not skip)

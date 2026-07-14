@@ -48,32 +48,63 @@ def _detector(cv2):
     except Exception:
         return None                                           # old cv2 without FaceDetectorYN, or any build error
 
-def require_cv2(cfg) -> None:
-    """HARD gate for the smart-framing render path: raise ToolchainMissingError when OpenCV (the [framing]
-    extra) is absent, or present-but-too-old for the YuNet detector, or the vendored model is missing — so
-    `fanops run` refuses LOUDLY (cli.main -> one line + exit 2) instead of silently centre-cropping every clip
-    while the operator believes subject-tracking happened. Called ONLY when cfg.smart_framing is ON
-    (clip._resolve_framing); the OFF path never reaches it. Distinct from the fail-open _cv2()/_detector()
-    seams, which stay None-returning for defence-in-depth. NEVER degrades — it refuses. (No bare except here:
-    it must propagate; test_swallow_ratchet.py polices new silent handlers and this has none.)
+class _FramingRuntime:
+    """A per-resolution framing runtime: the imported cv2 module + a REAL, already-constructed YuNet detector.
+    Built ONCE per _resolve_framing by _framing_runtime_or_raise and threaded into detect_window /
+    speaker_track / subject_focus / motion_saliency so they reuse this one detector instead of each
+    constructing their own. NOT a process-global: a fresh runtime per resolution, so the detector's mutable
+    input-size state (det.setInputSize, reset per frame in _track_observe / _detect_faces) is only ever
+    touched sequentially within a single resolution — no cross-thread sharing, no concurrency hazard."""
+    __slots__ = ("cv2", "detector")
+    def __init__(self, cv2, detector):
+        self.cv2 = cv2
+        self.detector = detector
 
-    This is a PREREQUISITE check, NOT a detector build: it verifies the module imports, exposes
-    FaceDetectorYN.create, and the ONNX asset is on disk — it does NOT call .create(). detect_window
-    already constructs the sole detector for the render; a probe-build here would be a strict SECOND
-    construction per window (measured 2 vs 1), so we check the preconditions instead. The one residual
-    case a non-constructing check can't catch — a present-but-corrupt ONNX that imports + has the attr but
-    fails inside .create() — still fails open safely via detect_window's `_detector -> None` centered crop,
-    exactly as it did before this guard existed."""
+def _framing_runtime_or_raise(cfg) -> "_FramingRuntime":
+    """Construct the ONE YuNet detector for a framing resolution, or raise ToolchainMissingError LOUDLY.
+
+    This is the smart-framing prerequisite gate AND the sole constructor for the resolution. It proves the
+    detector can ACTUALLY be built — not merely that cv2 imports and the attr/file exist — so a corrupt or
+    incompatible ONNX, an OpenCV ABI mismatch, or any failure inside FaceDetectorYN.create() REFUSES here,
+    before a single centered frame can be produced. A broken prerequisite is NOT a detection miss.
+
+    Called ONLY when cfg.smart_framing is ON (clip._resolve_framing); the OFF path never reaches it. NEVER
+    degrades to centered — it refuses. (No bare except that swallows: the create() failure is caught only to
+    RE-RAISE as ToolchainMissingError with a remediation message; test_swallow_ratchet.py has no quarrel.)"""
     cv2 = _cv2()
     if cv2 is None:
         raise ToolchainMissingError(
             "smart framing is ON but OpenCV (cv2) is not installed — "
             "run: pip install -e '.[framing]'  (or set FANOPS_SMART_FRAMING=0 to centre-crop)")
-    if getattr(getattr(cv2, "FaceDetectorYN", None), "create", None) is None or not _model_path().exists():
+    if getattr(getattr(cv2, "FaceDetectorYN", None), "create", None) is None:
         raise ToolchainMissingError(
-            "smart framing is ON but the YuNet face detector is unavailable "
-            "(OpenCV too old for FaceDetectorYN, or the vendored model is missing) — "
+            "smart framing is ON but this OpenCV is too old for the YuNet face detector "
+            "(no cv2.FaceDetectorYN.create) — reinstall the [framing] extra, "
+            "or set FANOPS_SMART_FRAMING=0 to centre-crop")
+    if not _model_path().exists():
+        raise ToolchainMissingError(
+            f"smart framing is ON but the vendored YuNet model is missing ({_MODEL}) — "
             "reinstall the [framing] extra, or set FANOPS_SMART_FRAMING=0 to centre-crop")
+    try:
+        detector = _detector(cv2)                              # the REAL construction — proves it builds
+    except Exception as e:                                     # any create() error -> loud refusal, NOT centered
+        raise ToolchainMissingError(
+            "smart framing is ON but the YuNet face detector failed to construct "
+            f"(OpenCV/model incompatible: {type(e).__name__}: {e}) — "
+            "reinstall the [framing] extra, or set FANOPS_SMART_FRAMING=0 to centre-crop") from e
+    if detector is None:                                       # _detector swallowed a build failure -> still refuse
+        raise ToolchainMissingError(
+            "smart framing is ON but the YuNet face detector could not be built "
+            "(OpenCV/model incompatible, or the vendored model is unreadable) — "
+            "reinstall the [framing] extra, or set FANOPS_SMART_FRAMING=0 to centre-crop")
+    return _FramingRuntime(cv2, detector)
+
+def require_cv2(cfg) -> None:
+    """Thin gate wrapper: build the framing runtime and discard it, so callers that only want the
+    refusal (not the detector) still get the FULL construction-backed check. The production path
+    (clip._resolve_framing) uses _framing_runtime_or_raise directly and REUSES the detector, so the
+    guard costs zero EXTRA construction there. NEVER degrades — it refuses."""
+    _framing_runtime_or_raise(cfg)
 
 def _wkey(start: float, end: float) -> str:
     return f"{round(start, 2)}-{round(end, 2)}"
@@ -133,12 +164,17 @@ def _load_detect_cache(path: Path) -> dict:
     except (OSError, json.JSONDecodeError, TypeError):
         return {}
 
-def detect_window(cfg, src, *, start: float, end: float) -> dict | None:
+def detect_window(cfg, src, *, start: float, end: float, _rt=None) -> dict | None:
     """ONE grid pass over [start,end) -> {fps, frames:[[ [cx,cy,fh,ey], ... per face ], ... per frame ]},
     cached per (source, window) in a `<source_id>.detect.json` sidecar. This is the SINGLE detection that
     feeds classify_window + subject_focus + speaker_track + motion_saliency. Returns None on every fail-open
     path (no [framing] extra, no detector, no frames, any error) -> callers fall back to the centered crop.
     NEVER raises.
+
+    `_rt` (internal): a _FramingRuntime carrying the ALREADY-constructed detector. When _resolve_framing
+    passes it, this function REUSES `_rt.detector` instead of building its own — so a resolution constructs
+    the YuNet detector exactly once. When _rt is None (legacy/direct callers, detection-stubbed tests), the
+    historical fail-open self-build path runs unchanged (cv2/detector None -> None -> centered).
 
     M2 — bracketed by a per-(framing, source_id) stage_lock so two concurrent callers don't both
     spawn the OpenCV detection pass and racingly clobber the sidecar (last-writer-wins lost work).
@@ -155,12 +191,15 @@ def detect_window(cfg, src, *, start: float, end: float) -> dict | None:
     cache = _load_detect_cache(path)
     if key in cache:
         return cache[key]
-    cv2 = _cv2()
-    if cv2 is None:
-        return None
-    det = _detector(cv2)
-    if det is None:
-        return None
+    if _rt is not None:                                        # reuse the resolution's one constructed detector
+        cv2, det = _rt.cv2, _rt.detector
+    else:
+        cv2 = _cv2()
+        if cv2 is None:
+            return None
+        det = _detector(cv2)
+        if det is None:
+            return None
     # Slow path: per-(framing, source_id) lock so the detection runs ONCE for this source. Re-check
     # the sidecar inside the lock — the first acquirer wrote it during its critical section.
     from fanops.stage_lock import stage_lock
@@ -403,13 +442,14 @@ def _assemble_track(obs: list[dict], fps: float):
         return None                                           # one position the whole clip -> static focus identical
     return [tuple(s) for s in merged]
 
-def speaker_track(cfg, src, *, start: float, end: float, src_w: int, src_h: int):
+def speaker_track(cfg, src, *, start: float, end: float, src_w: int, src_h: int, _rt=None):
     """Follow the ACTIVE speaker across a 2-shot: a time-ordered list of (t0,t1,fx,fy,fh,ey) segments (times
     RELATIVE to the clip start) — fx/fy the talker's centroid, fh the face height (drives per-segment zoom),
     ey the eye-line (drives composition). Returns None — the fail-open signal to use the STATIC subject_focus —
     whenever there's nothing dynamic to do: no [framing] extra, a single-camera window (one face throughout),
     one position, or any error. So a single-subject clip is byte-identical to before; only a real two-person
-    2-shot gets a speaker-following cut. NEVER raises. Cached per (source, window)."""
+    2-shot gets a speaker-following cut. NEVER raises. Cached per (source, window).
+    `_rt` (internal): reuse the resolution's ALREADY-constructed detector instead of building another."""
     if not (end > start):
         return None
     path = _track_sidecar(cfg, getattr(src, "id", "nosrc"))
@@ -418,10 +458,13 @@ def speaker_track(cfg, src, *, start: float, end: float, src_w: int, src_h: int)
     if key in cache:
         e = cache[key]
         return [tuple(seg) for seg in e] if e else None
-    cv2 = _cv2()
     result = None
     try:
-        det = _detector(cv2) if cv2 is not None else None
+        if _rt is not None:                                   # reuse the resolution's one constructed detector
+            cv2, det = _rt.cv2, _rt.detector
+        else:
+            cv2 = _cv2()
+            det = _detector(cv2) if cv2 is not None else None
         if det is not None:
             result = _compute_track(cv2, det, cfg, src, start, end)
     except Exception:
@@ -471,14 +514,15 @@ def _median_face(stats: dict | None):
     return (round(median(p[0] for p in picks), 4), round(median(p[1] for p in picks), 4),
             round(median(p[2] for p in picks), 4), round(median(p[3] for p in picks), 4), conf)
 
-def subject_focus(cfg, src, *, start: float, end: float):
+def subject_focus(cfg, src, *, start: float, end: float, _rt=None):
     """The dominant subject as (fx, fy, fh, ey) in [0,1] across this window — centroid + face HEIGHT (for
     zoom-to-consistent-size) + eye-line (for composition) — reduced from the SINGLE detect_window grid pass
     (so no separate keyframe probe). None when smart framing can't place it (no [framing] extra, fewer than
-    _MIN_CONF frames with a face, or any failure) -> the render falls back to the centered crop. NEVER raises."""
+    _MIN_CONF frames with a face, or any failure) -> the render falls back to the centered crop. NEVER raises.
+    `_rt` (internal): reuse the resolution's constructed detector via detect_window (one construction)."""
     if not (end > start):
         return None
-    m = _median_face(detect_window(cfg, src, start=start, end=end))
+    m = _median_face(detect_window(cfg, src, start=start, end=end, _rt=_rt))
     if m is None or m[4] < _MIN_CONF:
         return None                                           # too few detections -> fail-open to centered crop
     return (m[0], m[1], m[2], m[3])
@@ -512,11 +556,12 @@ def _saliency_centroid(cv2, frames: list[str]):
 def _saliency_sidecar(cfg, source_id: str) -> Path:
     return cfg.agent_io / "framing" / f"{source_id}.saliency.json"
 
-def motion_saliency(cfg, src, *, start: float, end: float):
+def motion_saliency(cfg, src, *, start: float, end: float, _rt=None):
     """For music / silent / no-people windows with NO face to lock: the centroid of inter-frame motion, so
     the crop drifts toward where the action is instead of a blind center. ONE grid pass; (fx,fy) or None
     (fail-open -> centered). CACHED per (source, window) — like detect_window/speaker_track — so the in-lock
-    commit re-probes nothing and the warm-artifact skip never re-spawns ffmpeg. NEVER raises."""
+    commit re-probes nothing and the warm-artifact skip never re-spawns ffmpeg. NEVER raises.
+    `_rt` (internal): reuse the resolution's cv2 module (saliency needs cv2 for pixel diffs, not the detector)."""
     if not (end > start):
         return None
     path = _saliency_sidecar(cfg, getattr(src, "id", "nosrc"))
@@ -525,7 +570,7 @@ def motion_saliency(cfg, src, *, start: float, end: float):
     if key in cache:
         e = cache[key]
         return tuple(e) if e else None
-    cv2 = _cv2()
+    cv2 = _rt.cv2 if _rt is not None else _cv2()
     if cv2 is None:
         return None                                           # extra absent -> don't cache (may install later)
     from fanops import keyframes

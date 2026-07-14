@@ -17,7 +17,7 @@ turns green** (Go-Live tab → "4 · Readiness", which mirrors `fanops doctor`).
 
 ```bash
 python3.12 -m venv .venv && source .venv/bin/activate
-pip install -e '.[studio,asr]'             # studio = the web cockpit; asr = faster-whisper + Demucs
+pip install -e '.[studio,asr,framing]'      # studio = the web cockpit; asr = faster-whisper + Demucs; framing = OpenCV reframe (REQUIRED: smart framing defaults ON and refuses without it)
 fanops doctor                              # read-only health screen — fix anything it flags
 fanops studio                              # open http://127.0.0.1:8787
 ```

@@ -15,7 +15,10 @@ set -euo pipefail
 #   ([asr] is nightly-only (MOL-197), intentionally NOT locked here.)
 #
 # Regenerate whenever pyproject.toml dependencies change (the `lockfile drift` CI guard enforces this).
-# Run on linux/py3.12 to match CI (locks are CI-authoritative; local macOS wheels differ). Idempotent.
+# Run on linux/x86_64 + py3.12 to match the CI runner (ubuntu-latest is amd64). From a non-linux host use
+# `docker run --platform linux/amd64 python:3.12-slim ...`; a macOS or ARM64 run cannot be called CI-faithful
+# even if `--require-hashes` happens to install (verified 2026-07-14: --generate-hashes enumerates ALL
+# platform wheels, so the amd64 and arm64 resolutions were byte-identical here — but PROVE it, don't assume).
 ROOT="$(git rev-parse --show-toplevel)"; cd "$ROOT"
 python -m pip install --quiet --upgrade pip-tools
 mkdir -p requirements
