@@ -164,3 +164,30 @@ def test_config_no_keyring_backend_byte_identical_to_env(monkeypatch, tmp_path, 
     with caplog.at_level(logging.WARNING):
         cfg = Config(root=tmp_path)
         assert cfg.postiz_api_key == "only-env"
+
+
+class _BrokenKr:
+    @staticmethod
+    def get_password(service, username):
+        raise RuntimeError("Keychain locked")  # installed backend, but genuinely down
+
+
+def test_broken_backend_warns_once(monkeypatch, caplog):
+    """A present-but-broken keyring backend must log ONE breadcrumb per process, not one per read —
+    get_secret runs on every secret-property read; the per-read warning once flooded studio.err 64k lines."""
+    sp = _reload_secret_provider(monkeypatch, _BrokenKr())   # fresh reload -> _backend_warned = False
+    with caplog.at_level(logging.WARNING, logger="fanops.secret_provider"):
+        assert sp.get_secret("POSTIZ_API_KEY") is None
+        assert sp.get_secret("POSTIZ_API_KEY") is None
+        assert sp.get_secret("ZERNIO_API_KEY") is None
+    warnings = [r for r in caplog.records if "keyring read unavailable" in r.getMessage()]
+    assert len(warnings) == 1                                # exactly ONE across 3 broken reads
+
+
+def test_broken_backend_quiet_never_warns(monkeypatch, caplog):
+    """quiet=True suppresses the breadcrumb entirely, even on a broken backend."""
+    sp = _reload_secret_provider(monkeypatch, _BrokenKr())
+    with caplog.at_level(logging.WARNING, logger="fanops.secret_provider"):
+        assert sp.get_secret("POSTIZ_API_KEY", quiet=True) is None
+        assert sp.get_secret("META_GRAPH_TOKEN", quiet=True) is None
+    assert not [r for r in caplog.records if "keyring read unavailable" in r.getMessage()]

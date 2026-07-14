@@ -603,3 +603,38 @@ def test_install_written_plist_prohibits_multiple_instances(tmp_path, monkeypatc
     daemon.install(cfg, interval=600, responder="inherit")
     pl = plistlib.loads(daemon.plist_path().read_bytes())
     assert pl.get("LSMultipleInstancesProhibited") is True
+
+
+def _write_pinned_plist(pinned):
+    # A minimal installed plist pinned to `pinned` (HOME is already repointed at tmp_path by the caller,
+    # so plist_path() lands in the sandboxed ~/Library/LaunchAgents).
+    p = daemon.plist_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_bytes(plistlib.dumps({"WorkingDirectory": str(pinned)}))
+
+
+def test_root_divergence(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    pinned = tmp_path / "pinned"; other = tmp_path / "repo"
+    pinned.mkdir(); other.mkdir()
+    _write_pinned_plist(pinned)
+    # cwd fallback (FANOPS_ROOT unset) landing somewhere the daemon is NOT pinned -> divergence surfaced
+    monkeypatch.delenv("FANOPS_ROOT", raising=False)
+    monkeypatch.chdir(other)
+    assert daemon.root_divergence(Config()) == pinned.resolve()
+    # aligned (cwd == pinned) -> silent
+    monkeypatch.chdir(pinned)
+    assert daemon.root_divergence(Config()) is None
+    # explicit FANOPS_ROOT (root_source != 'cwd') -> never nag, even when it differs from the pin
+    monkeypatch.setenv("FANOPS_ROOT", str(other))
+    assert daemon.root_divergence(Config()) is None
+    assert daemon.root_divergence(Config(root=other)) is None
+
+
+def test_root_divergence_no_daemon_is_silent(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))            # no plist written under this HOME
+    other = tmp_path / "repo"; other.mkdir()
+    monkeypatch.delenv("FANOPS_ROOT", raising=False)
+    monkeypatch.chdir(other)
+    assert daemon.installed_root() is None
+    assert daemon.root_divergence(Config()) is None     # cwd fallback but no daemon installed -> no false alarm
