@@ -145,19 +145,33 @@ Validated in `docker --platform linux/amd64 python:3.12-slim` (exit 0) and **pas
 - lock drift guard: pyproject deps unchanged ⇒ not triggered. `--require-hashes` install: PROVEN on x86_64 CI
   (`opencv-python-headless==5.0.0.93`, `numpy==2.5.1` installed from the lock).
 
-## 9. Timing — observed, not causally isolated
+## 9. Timing — observed, not causally isolated, and inside the noise
 
 **Observed unit duration improved from 78.29s to 72.04s across two different commits. The one-construction
 change is the leading explanation, but causal attribution was not isolated.** `22f3380 → 273bef9` changed
 production code, tests, CI diagnostics, docs, smoke behavior, and the test count (4820 → 4825), so the delta
 cannot be attributed to the guard alone.
 
-Prior baseline for reference: `main` `6061c16c` = 4814 tests / 72.17s. The v3 claim that "+6.12s was caused by
-83 detector constructions" is **WITHDRAWN** — construction is one per *resolution*, not per test, and the
-suite-wide resolution count was never measured.
+**A subsequent run makes even the "leading explanation" framing unsafe.** Run 29330823058 (`8071405` — the same
+production code as `273bef9`, plus two added tests) measured **79.33s**, against `273bef9`'s **72.04s**. That is
+**+7.3s of run-to-run variance on essentially identical code — the same magnitude as the entire observed
+delta.** So the timing series does not establish that the one-construction change made the suite faster; it
+establishes only that the candidate stays comfortably inside budget. Any real performance claim would require
+repeated runs of controlled variants (same tests, same code, only the guard implementation differing), which was
+not done.
 
-SLO: `unit pytest SLO ok: 72.04s <= 135s budget`. An SLO failure would reject the candidate pending profiling;
-the budget is not an automatic fallback and was not raised.
+| run | commit | tests | unit pytest |
+|---|---|---|---|
+| 29312364865 | `6061c16c` (main baseline) | 4814 | 72.17s |
+| 29324715957 | `22f3380` (double-build guard) | 4820 | 78.29s |
+| 29328162939 | `273bef9` (one-construction) | 4825 | 72.04s |
+| 29330823058 | `8071405` (same code + 2 tests) | 4827 | 79.33s |
+
+The v3 claim that "+6.12s was caused by 83 detector constructions" is **WITHDRAWN** — construction is one per
+*resolution*, not per test, and the suite-wide resolution count was never measured.
+
+SLO: every run passed (`79.33s <= 135s budget` on the latest). An SLO failure would reject the candidate pending
+profiling; the budget is not an automatic fallback and was not raised.
 
 ## 10. Documentation and deployment findings
 
