@@ -55,7 +55,10 @@ def require_cv2(cfg) -> None:
     subject-tracking happened. Called ONLY when cfg.smart_framing is ON (clip._resolve_framing); the OFF path
     and the hermetic unit stubs never reach it. Distinct from the fail-open _cv2()/_detector() seams, which
     stay None-returning for defence-in-depth. NEVER degrades — it refuses. (No bare except here: it must
-    propagate; test_swallow_ratchet.py polices new silent handlers and this has none.)"""
+    propagate; test_swallow_ratchet.py polices new silent handlers and this has none.)
+    `cfg` is currently unused in the body but is RETAINED deliberately: callers pass a Config
+    (clip._resolve_framing and the e2e tests call `require_cv2(Config(...))`), and a future per-config
+    framing policy (e.g. per-account) may consult it. Documented compatibility, not vague reservation."""
     cv2 = _cv2()
     if cv2 is None:
         raise ToolchainMissingError(

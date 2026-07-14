@@ -5,7 +5,10 @@
 # None -> focus=None -> today's centered crop, byte-identical. But the cv2 DEPENDENCY is now REQUIRED when
 # smart_framing is ON: with the extra ABSENT + smart_framing ON, _resolve_framing REFUSES (ToolchainMissingError)
 # rather than silently centre-crop (see the require_cv2 raise-tests below). cv2 is absent in the hermetic unit
-# job, so router tests stub framing.require_cv2 -> no-op; the detection path is exercised with stubs.
+# job, so the conftest autouse `_hermetic_framing_guard` no-ops framing.require_cv2 suite-wide (smart_framing
+# stays ON, production-faithful — only the absent cv2 dependency is neutralized); the detection path is
+# exercised with stubs. The raise-tests below re-install the REAL require_cv2 (via _REAL_REQUIRE_CV2) to prove
+# the refusal itself fires.
 import json, re, types
 from pathlib import Path
 import pytest
@@ -16,6 +19,8 @@ from fanops import framing
 from fanops.clip import (reframe_filter, _render_fingerprint, render_account_cut,
                          _segments_filter_complex, ffmpeg_segments_cmd, render_reframed, _ch0_for)
 import fanops.clip as clipmod
+
+_REAL_REQUIRE_CV2 = framing.require_cv2   # captured before the conftest fixture patches it -> raise-tests re-install this
 from fanops import overlay
 
 
@@ -593,7 +598,6 @@ def test_classify_degraded_legacy_not_talk():
 def test_resolve_multi_uses_track(tmp_path, monkeypatch):
     from fanops.clip import _resolve_framing
     cfg = Config(root=tmp_path); src = _talk_src()
-    monkeypatch.setattr(framing, "require_cv2", lambda cfg: None)   # cv2 absent in unit job; guard is exercised by its own tests below
     monkeypatch.setattr(framing, "detect_window", lambda *a, **k: {"frames": [[[0.2, 0.5, 0.2, 0.45]]]})
     monkeypatch.setattr(framing, "classify_window", lambda *a, **k: framing.CT_MULTI)
     monkeypatch.setattr(framing, "speaker_track", lambda *a, **k: [(0.0, 5.0, 0.22, 0.5, 0.2, 0.45), (5.0, 10.0, 0.8, 0.45, 0.2, 0.4)])
@@ -603,7 +607,6 @@ def test_resolve_multi_uses_track(tmp_path, monkeypatch):
 def test_resolve_multi_falls_to_single_when_track_refuses(tmp_path, monkeypatch):
     from fanops.clip import _resolve_framing
     cfg = Config(root=tmp_path); src = _talk_src()
-    monkeypatch.setattr(framing, "require_cv2", lambda cfg: None)   # cv2 absent in unit job; guard is exercised by its own tests below
     monkeypatch.setattr(framing, "detect_window", lambda *a, **k: {"frames": []})
     monkeypatch.setattr(framing, "classify_window", lambda *a, **k: framing.CT_MULTI)
     monkeypatch.setattr(framing, "speaker_track", lambda *a, **k: None)        # not a real 2-shot
@@ -614,7 +617,6 @@ def test_resolve_multi_falls_to_single_when_track_refuses(tmp_path, monkeypatch)
 def test_resolve_single_uses_focus(tmp_path, monkeypatch):
     from fanops.clip import _resolve_framing
     cfg = Config(root=tmp_path); src = _talk_src()
-    monkeypatch.setattr(framing, "require_cv2", lambda cfg: None)   # cv2 absent in unit job; guard is exercised by its own tests below
     monkeypatch.setattr(framing, "detect_window", lambda *a, **k: {"frames": []})
     monkeypatch.setattr(framing, "classify_window", lambda *a, **k: framing.CT_SINGLE)
     monkeypatch.setattr(framing, "subject_focus", lambda *a, **k: (0.6, 0.45, 0.25, 0.4))
@@ -624,7 +626,6 @@ def test_resolve_single_uses_focus(tmp_path, monkeypatch):
 def test_resolve_music_no_face_uses_saliency(tmp_path, monkeypatch):
     from fanops.clip import _resolve_framing
     cfg = Config(root=tmp_path); src = _talk_src()
-    monkeypatch.setattr(framing, "require_cv2", lambda cfg: None)   # cv2 absent in unit job; guard is exercised by its own tests below
     monkeypatch.setattr(framing, "detect_window", lambda *a, **k: {"frames": [[]]})
     monkeypatch.setattr(framing, "classify_window", lambda *a, **k: framing.CT_MUSIC)
     monkeypatch.setattr(framing, "subject_focus", lambda *a, **k: None)        # no face
@@ -635,7 +636,6 @@ def test_resolve_music_no_face_uses_saliency(tmp_path, monkeypatch):
 def test_resolve_no_people_centers_when_no_motion(tmp_path, monkeypatch):
     from fanops.clip import _resolve_framing
     cfg = Config(root=tmp_path); src = _talk_src()
-    monkeypatch.setattr(framing, "require_cv2", lambda cfg: None)   # cv2 absent in unit job; guard is exercised by its own tests below
     monkeypatch.setattr(framing, "detect_window", lambda *a, **k: None)
     monkeypatch.setattr(framing, "classify_window", lambda *a, **k: framing.CT_NOPEOPLE)
     monkeypatch.setattr(framing, "motion_saliency", lambda *a, **k: None)
@@ -657,6 +657,7 @@ def test_resolve_smart_framing_off_is_none(tmp_path, monkeypatch):
 def test_resolve_raises_when_smart_framing_on_and_cv2_absent(tmp_path, monkeypatch):
     from fanops.clip import _resolve_framing
     from fanops.errors import ToolchainMissingError
+    monkeypatch.setattr(framing, "require_cv2", _REAL_REQUIRE_CV2)   # override the autouse no-op: exercise the REAL guard
     cfg = Config(root=tmp_path); src = _talk_src()           # smart_framing default ON
     monkeypatch.setattr(framing, "_cv2", lambda: None)        # extra absent (the CI-unit reality)
     with pytest.raises(ToolchainMissingError):
@@ -665,6 +666,7 @@ def test_resolve_raises_when_smart_framing_on_and_cv2_absent(tmp_path, monkeypat
 def test_resolve_raises_when_cv2_present_but_detector_unbuildable(tmp_path, monkeypatch):
     from fanops.clip import _resolve_framing
     from fanops.errors import ToolchainMissingError
+    monkeypatch.setattr(framing, "require_cv2", _REAL_REQUIRE_CV2)   # override the autouse no-op: exercise the REAL guard
     cfg = Config(root=tmp_path); src = _talk_src()
     monkeypatch.setattr(framing, "_cv2", lambda: object())    # cv2 "there" but no FaceDetectorYN
     monkeypatch.setattr(framing, "_detector", lambda cv2: None)
@@ -680,6 +682,7 @@ def test_resolve_off_never_touches_cv2(tmp_path, monkeypatch):
     assert _resolve_framing(cfg, src, 0.0, 10.0) == (None, None, None)
 
 def test_require_cv2_passes_when_stubbed_present(tmp_path, monkeypatch):
+    monkeypatch.setattr(framing, "require_cv2", _REAL_REQUIRE_CV2)   # override the autouse no-op: exercise the REAL guard
     cfg = Config(root=tmp_path)
     monkeypatch.setattr(framing, "_cv2", lambda: object())
     monkeypatch.setattr(framing, "_detector", lambda cv2: object())
@@ -690,6 +693,7 @@ def test_supercut_span_entries_raises_when_smart_framing_on_and_cv2_absent(tmp_p
     # raise on the FIRST span (never partially render). Two spans make "raises before finishing" observable.
     from fanops.clip import _supercut_span_entries
     from fanops.errors import ToolchainMissingError
+    monkeypatch.setattr(framing, "require_cv2", _REAL_REQUIRE_CV2)   # override the autouse no-op: exercise the REAL guard
     cfg = Config(root=tmp_path); src = _talk_src()           # smart_framing default ON
     monkeypatch.setattr(framing, "_cv2", lambda: None)        # extra absent
     with pytest.raises(ToolchainMissingError):

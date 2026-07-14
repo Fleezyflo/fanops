@@ -104,6 +104,18 @@ def pytest_runtest_makereport(item, call):
 
 
 @pytest.fixture(autouse=True)
+def _hermetic_framing_guard(monkeypatch):
+    """The unit job installs no OpenCV (ci-unit.txt has no opencv) AND no ffmpeg, so cv2 detection cannot run
+    here regardless (keyframes.extract_frames_grid shells real ffmpeg and fails open). smart_framing stays ON
+    (production-faithful — we do NOT flip a product default off); we neutralize ONLY require_cv2 so the ON path
+    runs up to detection, which then centers (the only outcome an ffmpeg-less job can produce) via the
+    _cv2()/_detector() seams. The 4 guard tests in test_smart_framing.py re-install the real require_cv2 to
+    prove the refusal fires; the e2e job (real cv2 + ffmpeg + fixtures) is where the guard's live behavior is
+    proven. This targets a dependency the unit job cannot satisfy — it does NOT disable a product default."""
+    monkeypatch.setattr("fanops.framing.require_cv2", lambda cfg: None)
+
+
+@pytest.fixture(autouse=True)
 def _no_real_publish_sleep(monkeypatch):
     """The publish throttle (post/run.py `_publish_throttle_wait`, ~60/postiz_publish_per_min s between posts)
     and the publish retry-backoff call a REAL time.sleep. Any test that drives the live publish path without
