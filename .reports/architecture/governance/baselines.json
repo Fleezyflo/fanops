@@ -46,6 +46,10 @@
       "fanops.studio.app"
     ],
     [
+      "fanops.clip",
+      "fanops.reframe_apply"
+    ],
+    [
       "fanops.compose",
       "fanops.clip"
     ],
@@ -442,10 +446,13 @@
       "fanops.digest"
     ]
   ],
-  "must_stay_lazy_note": "56 strictly-upward + 51 lateral in-function imports. The SCC-condensed compile graph is an 11-level DAG ONLY because these are deferred to call time. Hoisting any one to module level LOOKS LIKE A CLEANUP and can break the process at start. This is GB-1, mechanized (rule ARCH-007).",
+  "must_stay_lazy_note": "57 strictly-upward + 51 lateral in-function imports. The SCC-condensed compile graph is an 11-level DAG ONLY because these are deferred to call time. Hoisting any one to module level LOOKS LIKE A CLEANUP and can break the process at start. This is GB-1, mechanized (rule ARCH-007).",
   "owner": "architecture governance (see governance/field_authority.json)",
   "required_verifications_note": "The tests the Cycle-6 verification matrix requires AND which currently EXIST. *** THIS IS EMPTY TODAY: no slice in the program has been implemented, so none of its ~25 required tests exists yet, and rule IMPL-006 is therefore ARMED ON NOTHING. *** Stated out loud rather than hidden. It ARMS ITSELF: the moment a slice lands and its tests appear, re-accept this baseline and their removal becomes CI-red.",
   "required_verifications_present": [
-    "test_restore_snapshot_serializes_with_transaction"
+    "test_giveup_is_a_label_not_a_state_change",
+    "test_reconcile_visits_a_post_carrying_a_transient_reason",
+    "test_restore_snapshot_serializes_with_transaction",
+    "test_terminal_ladder_matrix"
   ]
 }

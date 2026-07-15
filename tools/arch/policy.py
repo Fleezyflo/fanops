@@ -127,10 +127,12 @@ RULES: dict[str, Rule] = {r.id: r for r in [
          "derived/ or the generated doc by hand."),
 
     Rule("ARCH-007", "A lazy import may not be hoisted to module level (GB-1)",
-         "107 of 324 lazy edges point to an equal-or-higher layer level; 56 are STRICTLY UPWARD. "
-         "The 11-level DAG exists ONLY because those imports are deferred to call time. `config` "
-         "(level 0, fan-in 82) reaches UP to `accounts` (level 2). Hoisting any one LOOKS LIKE A "
-         "CLEANUP and breaks the process at start. Nothing in the repo enforces this today.",
+         "Many lazy (in-function) import edges point to an equal-or-higher layer level, and dozens are "
+         "STRICTLY UPWARD. The layered DAG holds ONLY because those imports are deferred to call time — "
+         "a low, heavily-depended-on module like `config` reaches UP to `accounts`. Hoisting any one "
+         "LOOKS LIKE A CLEANUP and can break the process at start. (The exact counts live in "
+         "derived/dependencies.json; a number copied into this prose is the very defect this system "
+         "exists to catch, so none is written here.)",
          "governance/layering_baseline.json vs derived/dependencies.json", BLOCKING,
          "no edge pinned as must-stay-lazy may appear in the COMPILE graph",
          "Keep the import inside the function body. If the hoist is genuinely correct, accept a new "
@@ -205,9 +207,10 @@ RULES: dict[str, Rule] = {r.id: r for r in [
          "Restore the test, or record its removal as an explicit contract change."),
 
     Rule("IMPL-007", "The ratchet budgets the contract COPIES must match the tests that ENFORCE them",
-         "The contract pins `_CLI_PRINT_COUNT = 147` as a load-bearing, exact-equality, shared "
-         "budget across three slices. The test file says 158. The contract's copy went stale in a "
-         "single commit — which is the whole reason this system exists.",
+         "The contract pins the cli.py print budget as a load-bearing, exact-equality budget shared "
+         "across three slices. Its copy once went stale in a single commit while the enforcing test "
+         "moved on — which is the whole reason this rule exists. The authoritative number lives in the "
+         "CI test and in derived/ratchets.json; it is deliberately NOT written here as an assignment.",
          "contract/implementation_contract.json GB-6 vs derived/ratchets.json", BLOCKING,
          "contract's declared ratchet numbers == the numbers in the CI test files",
          "Update the contract's GB-6 block from derived/ratchets.json. The TEST is authoritative."),
@@ -302,8 +305,8 @@ def check(derived_dir: Path | None = None) -> list[Finding]:
     if mods["unassigned_modules"]:
         out.append(_f("ARCH-001",
                       f"{len(mods['unassigned_modules'])} module(s) belong to NO subsystem. "
-                      f"kb/subsystems.json still asserts a total partition of 127/127; the tree has "
-                      f"{mods['totals']['modules']}.",
+                      f"kb/subsystems.json asserts a TOTAL partition, but the tree has "
+                      f"{mods['totals']['modules']} module(s), {len(mods['unassigned_modules'])} unowned.",
                       [f"unassigned: {m}" for m in mods["unassigned_modules"]]))
     if mods["ghost_modules"]:
         out.append(_f("ARCH-002", f"{len(mods['ghost_modules'])} declared module(s) do not exist.",
@@ -593,10 +596,10 @@ def _ratchet_drift(rat: dict) -> list[Finding]:
 
     # *** READ THIS BEFORE YOU "SIMPLIFY" IT. ***
     # The first version of this parser split the sentence on '=' and took the first token where
-    # `.isdigit()` was true. In the real contract the number is written `_CLI_PRINT_COUNT = 158`
-    # — INSIDE BACKTICKS — so the token is "158`", `.isdigit()` is False, and the parser extracted
-    # NOTHING. The rule silently no-opped. It would NEVER have caught the 147-vs-158 drift that
-    # motivated this entire cycle; that was found by hand.
+    # `.isdigit()` was true. In the real contract the number is written as a `_CLI_PRINT_COUNT`
+    # assignment INSIDE BACKTICKS — so the token carried a trailing backtick, `.isdigit()` was False,
+    # and the parser extracted NOTHING. The rule silently no-opped. It would NEVER have caught the
+    # stale-copy drift that motivated this entire cycle; that was found by hand.
     #
     # A negative control (NC-15) is the only reason anybody knows. This is `AR-03` — "a check whose
     # name promises what its assertion does not deliver" — occurring INSIDE THE GOVERNANCE SYSTEM.
@@ -615,11 +618,11 @@ def _ratchet_drift(rat: dict) -> list[Finding]:
     # *** EVERY LIVE COPY, not just the one this rule happened to know about. ***
     #
     # The rule originally read ONLY contract/implementation_contract.json. The number turned out to
-    # exist in NINE places across the KB, holding FOUR DIFFERENT VALUES (147 / 158 / 165) — and the
-    # two worst were `contract/prompts/C6-S08.md` and `C6-S09.md`, the LIVE IMPLEMENTATION PROMPTS
-    # handed to whoever builds those slices. They said "`_CLI_PRINT_COUNT = 147` … DO NOT CHANGE THE
-    # COUNT." An implementer obeying that prompt writes the wrong constant and CI goes red for a
-    # reason unrelated to their change — which is the precise failure GB-6/IR-4 exists to prevent.
+    # exist in NINE places across the KB, holding FOUR DIFFERENT VALUES — and the two worst were
+    # `contract/prompts/C6-S08.md` and `C6-S09.md`, the LIVE IMPLEMENTATION PROMPTS handed to whoever
+    # builds those slices. They pinned a `_CLI_PRINT_COUNT` assignment to a now-stale value and told the
+    # implementer NOT to change the count. An implementer obeying that prompt writes the wrong constant
+    # and CI goes red for a reason unrelated to their change — the precise failure GB-6/IR-4 prevents.
     # A rule named "the ratchet budgets the contract COPIES must match the tests that ENFORCE them"
     # was reporting green throughout. Checking ONE copy of a duplicated number is not enforcement;
     # it is a rule scoped to the place its author happened to remember.
@@ -631,27 +634,42 @@ def _ratchet_drift(rat: dict) -> list[Finding]:
     # _HISTORY is excluded because a corrections record MUST keep saying what was true when it was
     # written; retroactively editing an erratum to match today destroys the only account of what
     # went wrong. It is a small, named list, not a wildcard, so it cannot become a loophole.
-    for path in sorted(ARCH.rglob("*")):
-        if path.suffix not in (".json", ".md") or not path.is_file():
-            continue
-        if path.name in _HISTORY or DERIVED in path.parents:
-            continue
-        try:
-            blob = path.read_text(encoding="utf-8")
-        except OSError:
-            continue
-        for found in sorted({int(x) for x in re.findall(r"_CLI_PRINT_COUNT\s*=\s*(\d+)", blob)}):
-            if declared_cli is None or found == declared_cli:
+    #
+    # G1: the scan was `.reports/architecture/`-ONLY, so the engine COULD NOT SEE ITSELF — a stale
+    # `_CLI_PRINT_COUNT = <n>` assignment in tools/arch/'s own rationales, or in docs/, went unwatched
+    # (the very thing the rule checks for, in the file that does the checking). Widened to tools/arch/
+    # and docs/, and to .py, so every live copy is held to the test. `selftest.py` is EXCLUDED because
+    # it INJECTS a deliberately-wrong assignment as the NC-15 fixture — scanning it would fire the rule
+    # on the negative control's own payload. The generated doc (docs/ARCHITECTURE_GOVERNANCE.md) is
+    # scanned too: if a rule rationale ever states a stale number, it lands there via `docs` and this
+    # rule catches it — the same faithfulness-vs-truth gap ARCH-006 cannot see.
+    _scan_exclude = _HISTORY | {"selftest.py"}
+    _scanned: set = set()
+    for root in (ARCH, REPO / "tools" / "arch", REPO / "docs"):
+        if not root.exists():
+            continue                                  # a fixture may copy only a subset of the roots
+        for path in sorted(root.rglob("*")):
+            if path in _scanned or path.suffix not in (".json", ".md", ".py") or not path.is_file():
                 continue
-            out.append(_f("IMPL-007",
-                          "A DECLARED artifact's copy of the cli.py print budget is STALE. It is "
-                          "pinned as a load-bearing, exact-equality budget shared by three slices "
-                          "(GB-6 / IR-4) — a wrong value makes the boundary unenforceable and would "
-                          "fail a slice for a reason unrelated to its change.",
-                          [f"{path.relative_to(ARCH).as_posix()} says _CLI_PRINT_COUNT = {found}",
-                           f"tests/test_internal_prints_routed.py says {declared_cli}",
-                           f"measured in src/fanops/cli.py: {declared_cli}",
-                           "the TEST is authoritative; the declared copy rotted"]))
+            _scanned.add(path)
+            if path.name in _scan_exclude or DERIVED in path.parents:
+                continue
+            try:
+                blob = path.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            for found in sorted({int(x) for x in re.findall(r"_CLI_PRINT_COUNT\s*=\s*(\d+)", blob)}):
+                if declared_cli is None or found == declared_cli:
+                    continue
+                out.append(_f("IMPL-007",
+                              "A copy of the cli.py print budget is STALE. It is pinned as a "
+                              "load-bearing, exact-equality budget shared by three slices (GB-6 / IR-4) "
+                              "— a wrong value makes the boundary unenforceable and would fail a slice "
+                              "for a reason unrelated to its change.",
+                              [f"{path.relative_to(REPO).as_posix()} says _CLI_PRINT_COUNT = {found}",
+                               f"tests/test_internal_prints_routed.py says {declared_cli}",
+                               f"measured in src/fanops/cli.py: {declared_cli}",
+                               "the TEST is authoritative; the declared copy rotted"]))
 
     # the per-file swallow ceilings the contract restates
     ceilings = gb6.get("swallow_ratchet", {}).get("budget_ceiling__must_not_exceed", {})

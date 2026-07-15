@@ -186,7 +186,7 @@ Every rule is a predicate a machine evaluates. `python -m tools.arch check`.
 
 #### `ARCH-007` — A lazy import may not be hoisted to module level (GB-1)
 
-**Rationale.** 107 of 324 lazy edges point to an equal-or-higher layer level; 56 are STRICTLY UPWARD. The 11-level DAG exists ONLY because those imports are deferred to call time. `config` (level 0, fan-in 82) reaches UP to `accounts` (level 2). Hoisting any one LOOKS LIKE A CLEANUP and breaks the process at start. Nothing in the repo enforces this today.
+**Rationale.** Many lazy (in-function) import edges point to an equal-or-higher layer level, and dozens are STRICTLY UPWARD. The layered DAG holds ONLY because those imports are deferred to call time — a low, heavily-depended-on module like `config` reaches UP to `accounts`. Hoisting any one LOOKS LIKE A CLEANUP and can break the process at start. (The exact counts live in derived/dependencies.json; a number copied into this prose is the very defect this system exists to catch, so none is written here.)
 
 - **Scope:** `governance/layering_baseline.json vs derived/dependencies.json`
 - **Severity:** BLOCKING
@@ -296,7 +296,7 @@ Every rule is a predicate a machine evaluates. `python -m tools.arch check`.
 
 #### `IMPL-007` — The ratchet budgets the contract COPIES must match the tests that ENFORCE them
 
-**Rationale.** The contract pins `_CLI_PRINT_COUNT = 147` as a load-bearing, exact-equality, shared budget across three slices. The test file says 158. The contract's copy went stale in a single commit — which is the whole reason this system exists.
+**Rationale.** The contract pins the cli.py print budget as a load-bearing, exact-equality budget shared across three slices. Its copy once went stale in a single commit while the enforcing test moved on — which is the whole reason this rule exists. The authoritative number lives in the CI test and in derived/ratchets.json; it is deliberately NOT written here as an assignment.
 
 - **Scope:** `contract/implementation_contract.json GB-6 vs derived/ratchets.json`
 - **Severity:** BLOCKING

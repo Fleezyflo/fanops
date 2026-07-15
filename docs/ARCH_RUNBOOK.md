@@ -69,9 +69,9 @@ no owner, no risk profile, and no reviewer — it is invisible to every claim th
 
 **Do not ‘fix’ it by re-accepting the baseline.** Read this first.
 
-The compile-time graph is an 11-level DAG **only because 106 imports are deferred to call time**.
-`config` — level 0, fan-in 82, the most-depended-on module in the system — reaches **up** to
-`accounts` (level 2) and `meta_graph` (level 3). Moving one of those imports to module level
+The compile-time graph is a layered DAG **only because the upward imports are deferred to call time**
+(exact counts: `derived/dependencies.json`, never restated here). `config` — a low, most-depended-on
+module — reaches **up** to `accounts` and `meta_graph`. Moving one of those imports to module level
 
 - looks like a cleanup,
 - would be waved through by any reviewer,
@@ -149,7 +149,7 @@ prediction, it is the record.
 | `kb/subsystems.json` | `totality.*`, `subsystems.*.module_count`, `subsystems.*.compile_depends_on` | a pointer to `derived/modules.json` | Asserted a *total* partition of 127/127 while 2 modules had no owner. |
 | `kb/configuration.json` | `env_vars.*.read_at`, `env_vars.*.reader_count` | a pointer to `derived/configuration.json` | Read sites are pure AST facts. |
 | `kb/side_effects.json` | `counts_AST_verified.*` | a pointer to `derived/side_effects.json` | Said `mkdtemp_sites: 1`. **It is 2** — see below. |
-| `contract/implementation_contract.json` | `GLOBAL_BOUNDARIES.GB-6_ast_ratchet_budgets.*` | a pointer to `derived/ratchets.json` | Pinned `_CLI_PRINT_COUNT = 147` as a *load-bearing, exact-equality* boundary. **The test said 158.** |
+| `contract/implementation_contract.json` | `GLOBAL_BOUNDARIES.GB-6_ast_ratchet_budgets.*` | a pointer to `derived/ratchets.json` | Pinned the `_CLI_PRINT_COUNT` budget as a *load-bearing, exact-equality* boundary at a value the enforcing test had already moved past. |
 
 **What stays.** All the prose, and it is the most valuable content in the KB: the three-graph
 distinction (G1/G1c/G2/G3), the network-ambiguity decision table, the publish side-effect ordering,
@@ -173,7 +173,7 @@ This is the root cause of the worst bug Cycle 7 found **in its own code**. `IMPL
 budget out of an English sentence:
 
 ```
-"`_CLI_PRINT_COUNT = 158`, asserted with *** EXACT EQUALITY *** …"
+"`_CLI_PRINT_COUNT = <N>`, asserted with *** EXACT EQUALITY *** …"
 ```
 
 The number is glued to a backtick, so the first parser extracted **nothing** and the rule **silently
