@@ -639,17 +639,6 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
     for post in [p for p in led.posts.values() if p.state in _RECONCILABLE]:
         if _is_giveup(post):
             continue                       # XC-2/XC-6: a labeled-terminal post is no longer polled or re-logged
-        # RC-2/S04: the terminal ladder is a PURE FUNCTION OF (state, age), evaluated HERE — BEFORE the
-        # poll — so that neither a raising poll (which used to `continue` out at the except below and never
-        # reach the ladder), nor a real backend id (the old `_is_fake_token` gate), nor a transient
-        # error_reason can veto it. The poll then only ADVANCES a post to published/failed; it can no
-        # longer PREVENT the terminal. This is what makes INT-2 hold: every {submitting, needs_reconcile}
-        # post reaches a terminal or retryable state in bounded time, on every axis.
-        term = _apply_age_terminal(post, now)
-        if term is not None:
-            led.posts[post.id] = post.model_copy(update=term["update"])
-            log("reconcile", post.id, term["log"])
-            continue
         if not post.submission_id:
             log("reconcile", post.id, "skipped: no submission_id")
             continue                       # no id -> cannot poll (API needs it) -> human reconcile
@@ -676,6 +665,15 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
             # Leave it parked (state untouched, NOT failed) and surface the reason for the digest;
             # a later pass retries. Then move on so the next post still gets reconciled. Immutable
             # update (model_copy + dict reassignment), mirroring the ledger's own set_*_state pattern.
+            # RC-2/S04 (exclusion 1): but a raise must NOT exempt the post from the (state, age) terminal —
+            # a backend that 404s/5xx's forever would otherwise poll-error every pass and never escalate/
+            # give up (the old bare fall-through bailed out of the ladder). Apply the terminal FIRST; only
+            # if it does not fire do we park with the transient poll-error reason (never guessed failed).
+            term = _apply_age_terminal(post, now)
+            if term is not None:
+                led.posts[post.id] = post.model_copy(update=term["update"])
+                log("reconcile", post.id, term["log"])
+                continue
             led.posts[post.id] = post.model_copy(update={"error_reason": f"reconcile poll error: {str(exc)[:200]}"})
             log("reconcile", post.id, "poll-error", err=str(exc)[:200])   # detail rides the log stream, not only the ledger
             continue
@@ -783,16 +781,24 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
                 "error_reason": f"reconciled: poster reports failed ({info.get('errorMessage', 'no detail')})"})
             log("reconcile", post.id, "failed")
         else:
-            # in-progress / scheduled / unknown -> not auto-resolved this pass; never guess the fate.
-            # The (state, age) terminal already ran ABOVE, before the poll — so the XC-1 escalation and the
-            # XC-2 give-up no longer live here (and no longer gate on _is_fake_token). A post reaching this
-            # branch is NOT past a deadline; the branch only breadcrumbs + audit-logs the still-parked visit.
+            # in-progress / scheduled / unknown -> the poll could NOT advance the post this pass.
             age = _parked_age(post, now)
-            # ❸ (S04): the suppression key is NO LONGER 'any non-empty error_reason'. That old latch made a
-            # post carrying a TRANSIENT reason (a contained `reconcile poll error:`) silent from pass one —
-            # never breadcrumbed, never re-visited. Skip ONLY a post that is already a give-up (labeled
-            # terminal) OR already carries THIS `stuck …` breadcrumb (the XC-6 dedup: no re-stamp, no
-            # re-logged "left:" every pass). A transient-reason post falls through and IS visited.
+            # RC-2/S04 (exclusion 2): the (state, age) terminal, UNGATED by token provenance (the old
+            # `_is_fake_token` exclusion — a real backend id the platform can no longer resolve is just as
+            # stuck as a fake one). It runs AFTER the poll, so a published/failed poll always resolves the
+            # post FIRST; the terminal fires ONLY when the poll cannot (an unknown status here, or a raise in
+            # the except above). No incidental axis (a raise, a real token, a stale reason) can veto it, and
+            # a genuine resolution is never discarded.
+            term = _apply_age_terminal(post, now)
+            if term is not None:
+                led.posts[post.id] = post.model_copy(update=term["update"])
+                log("reconcile", post.id, term["log"])
+                continue
+            # exclusion 3 (S04): the suppression key is NO LONGER 'any non-empty error_reason'. That old
+            # latch made a post carrying a TRANSIENT reason (a contained `reconcile poll error:`) silent from
+            # pass one — never breadcrumbed, never re-visited. Skip ONLY a post that is already a give-up
+            # (labeled terminal) OR already carries THIS `stuck …` breadcrumb (the XC-6 dedup: no re-stamp,
+            # no re-logged "left:" every pass). A transient-reason post falls through and IS visited.
             if _is_giveup(post) or (post.error_reason or "").startswith("stuck "):
                 continue
             # Stamp the stuck breadcrumb once it is well past schedule, then log the visit. A scheduleless

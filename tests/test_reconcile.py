@@ -496,11 +496,12 @@ def test_needs_reconcile_real_token_ALSO_gives_up_past_long_bound(tmp_path):
     ["", "stuck 9h past schedule — check the channel"])))
 def test_terminal_ladder_matrix(tmp_path, backend, poll, token, reason):
     # RC-2/S04 INVARIANT — the 32-cell matrix. A needs_reconcile post >72h past schedule reaches a terminal-
-    # or-retryable state (the GAVE UP label) for EVERY (backend × poll × token × error_reason). Before S04,
-    # THREE of these four axes could VETO the terminal: a raising poll bypassed the ladder (❶), a real token
-    # was excluded by _is_fake_token (❷), and a stale error_reason suppressed the post (❸). The (state, age)
-    # terminal now fires BEFORE the poll, so none of them can. The poll value is IMMATERIAL past the bound BY
-    # DESIGN — that immateriality IS the fix (the axes can no longer prevent termination).
+    # or-retryable state for EVERY (backend × poll × token × error_reason) — it is NEVER left stranded.
+    # Before S04, THREE of these four axes could VETO the terminal: a raising poll bypassed the ladder
+    # (excl.1), a real token was excluded by _is_fake_token (excl.2), and a stale error_reason suppressed the
+    # post (excl.3). Now the poll is given its chance to RESOLVE the post (published/failed); when it cannot
+    # (unknown status, or a raise), the (state, age) give-up fires — UNGATED by token, reason, or backend.
+    # So the outcome depends ONLY on the poll (the legitimate resolver); the other three axes never veto.
     from datetime import datetime, timezone, timedelta
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="m", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
@@ -515,8 +516,14 @@ def test_terminal_ladder_matrix(tmp_path, backend, poll, token, reason):
         return {"status": "unknown"}
     led = reconcile_posts(led, cfg, get_status=get_status)
     p = led.posts["m"]
-    assert p.state is PostState.needs_reconcile              # never GUESSED into `failed` (a double-post vector)
-    assert (p.error_reason or "").startswith("GAVE UP:")     # the terminal is reachable on every axis
+    assert p.state is not PostState.submitting              # NEVER stranded — the point of the fix, in every cell
+    if poll == "published":
+        assert p.state is PostState.published               # the poll RESOLVES it first — resolution is never discarded
+    elif poll == "failed":
+        assert p.state is PostState.failed
+    else:                                                    # unknown / raises -> the (state, age) give-up fires...
+        assert p.state is PostState.needs_reconcile          # ...never GUESSED into `failed` (a double-post vector)
+        assert (p.error_reason or "").startswith("GAVE UP:")  # ...reachable regardless of token / reason / backend
 
 
 def test_needs_reconcile_poll_promotes_within_the_window_before_giveup(tmp_path):
