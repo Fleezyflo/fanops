@@ -33,6 +33,28 @@ def _canonicalize_accounts_raw(raw: dict) -> bool:
             a["handle"] = canon; changed = True
     return changed
 
+def _normalize_row_backends(row: dict, i: int, skipped: list[str]) -> None:
+    """RC-3: accounts.json is operator-hand-editable, so a per-channel backend VALUE arrives at load
+    UNVALIDATED — set_backend (the sole normalizer) guards only the Studio/CLI write path. Apply the
+    same normalization here (strip+lower) so a case/whitespace variant is REPAIRED, and DROP+FLAG any
+    value still outside _VALID_BACKENDS, so a typo ('postis') can never reach the downstream resolvers
+    that each mishandle an unknown differently (get_poster silently builds a DryRunPoster on a LIVE
+    system; get_media_uploader silently returns the file:// uploader). A dropped channel then has no
+    backend -> effective_provider returns None -> the publish layer SKIPS it (the existing fail-safe),
+    never a silent mis-route; the flag surfaces through validate() -> doctor, like a skipped row."""
+    bk = row.get("backends")
+    if not isinstance(bk, dict):
+        return                                   # a non-dict backends is a row-shape error -> Account(**row) surfaces it
+    cleaned: dict = {}
+    for plat, val in bk.items():
+        norm = val.strip().lower() if isinstance(val, str) else val
+        if norm in _VALID_BACKENDS:
+            cleaned[plat] = norm
+        else:
+            skipped.append(f"row {i}: backend {plat}={val!r} unknown "
+                           f"(valid: {', '.join(sorted(_VALID_BACKENDS))}) — channel skipped")
+    row["backends"] = cleaned
+
 class Account(BaseModel):
     handle: str
     account_id: str = ""                   # shared/legacy id (a Postiz integration id, or legacy numeric);
@@ -140,6 +162,8 @@ class Accounts:
             # over a single hand-edit typo. Skips surface via validate() -> doctor (never silent).
             for i, x in enumerate(raw.get("accounts", [])):
                 try:
+                    if isinstance(x, dict):
+                        _normalize_row_backends(x, i, a.skipped_rows)   # RC-3: repair / drop+flag bad backend VALUES pre-build
                     a.accounts.append(Account(**x))
                 except Exception as e:
                     a.skipped_rows.append(f"row {i}: {_reason(e)}")
