@@ -66,6 +66,7 @@ CONTROLS: list[Control] = [
     Control("NC-21", "a required verification DISAPPEARS", "IMPL-006", "implementation"),
     Control("NC-22", "a canonical artifact is MISSING (the gate must FAIL, not pass vacuously)", "GOV-001", "architecture"),
     Control("NC-23", "a GENERATED doc is hand-edited (docs must not drift from the artifacts)", "ARCH-006", "architecture"),
+    Control("NC-24", "a stale _CLI_PRINT_COUNT assignment in tools/arch/ — the engine's OWN rationale (G1 widened scope)", "IMPL-007", "implementation"),
 ]
 
 
@@ -84,6 +85,11 @@ def fixture():
             if (ARCH / sub).exists():
                 shutil.copytree(ARCH / sub, arch / sub,
                                 ignore=shutil.ignore_patterns("prompts", ".DS_Store"))
+        # tools/arch is copied so IMPL-007's WIDENED scan (which reads REPO/tools/arch, G1) has a real
+        # target the patched REPO reaches — NC-24 injects a stale budget there. Without this the widened
+        # scope would be inert in the fixture and its control could not fire.
+        shutil.copytree(REPO / "tools" / "arch", root / "tools" / "arch",
+                        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
         saved = {m: {k: getattr(m, k) for k in
                      ("REPO", "SRC", "TESTS", "ARCH", "KB", "CONTRACT", "DERIVED", "GOVERNANCE")
                      if hasattr(m, k)} for m in _PATCHED}
@@ -259,6 +265,17 @@ def _inject(cid: str, root: Path, p: dict) -> None:
         base = json.loads((gov / "baselines.json").read_text())
         base["required_verifications_present"] = ["test_nc_vanished_invariant"]
         (gov / "baselines.json").write_text(dumps(base))
+
+    elif cid == "NC-24":
+        # G1: a stale `_CLI_PRINT_COUNT = <n>` assignment in tools/arch/ — the engine's OWN rationale
+        # surface. Before the widened scan, IMPL-007 read only .reports/architecture/, so it COULD NOT
+        # SEE ITSELF: a wrong budget in the very files that do the checking went unwatched. Inject a
+        # fresh tools/arch file carrying a wrong assignment; the widened scan must fire IMPL-007 on it.
+        # (selftest.py is EXCLUDED from the scan — it injects wrong assignments by design — so a NEW
+        # file is used, proving the widened .py scan works, not the exclusion.)
+        (root / "tools" / "arch" / "nc_stale_budget.py").write_text(
+            "# INJECTED (NC-24): a stale copy of the cli.py print budget.\n"
+            "_CLI_PRINT_COUNT = 999  # wrong on purpose\n", encoding="utf-8")
 
     else:
         raise AssertionError(f"no injection defined for {cid}")
