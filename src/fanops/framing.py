@@ -18,7 +18,7 @@ from fanops.framing_outcomes import (HARD_FAILURE_EVENTS, NEGATIVE_RESULT_EVENTS
                                      ResolverInvariantError, StrategyAttempt, StrategyState, record as _rec)
 from fanops.transcribe import window_has_trusted_speech as _window_has_speech
 
-_SIDECAR_V = 5               # track-sidecar schema (v5: + min-shot-duration merge — no rapid cut-away-and-back)
+_SIDECAR_V = 6               # track-sidecar schema (v6: + per-observation face WIDTH for the horizontal safe-area; v5: min-shot-duration merge)
 _KF_COUNT = 5                # frames sampled across the window — enough for a stable median, cheap to probe
 _KF_WIDTH = 960              # detection sampling width: Haar/YuNet need real pixels — a 480px face (~37px on a
                              # 1080p source) is undetectable; 960 lands a 1080p face at ~74px, reliably found.
@@ -125,16 +125,17 @@ def _load_cache(path: Path) -> dict:
 # ---- Single detection pass (T2): ONE grid of frames per (source,window), every face's normalized box +
 # eye-line, persisted so classify_window / subject_focus / speaker_track / motion_saliency all read the SAME
 # stats — not four ffmpeg passes. The grid sidecar is versioned independently of the focus/track sidecar. ----
-_DETECT_V = 2               # bump to invalidate cached grid stats when the detection SHAPE changes
+_DETECT_V = 3               # bump to invalidate cached grid stats when the detection SHAPE changes (v3: + face WIDTH)
 _DETECT_FPS = 4.0           # grid sampling rate: 4 frames/s is fine for ~1s active-speaker decisions, cheap in one pass
 
-def _detect_faces(cv2, det, img_path: str) -> list[tuple[float, float, float, float, float]]:
-    """Every face in one frame as (cx, cy, fh, ey, score) normalized to [0,1]: center x/y, face-box
-    HEIGHT (drives zoom-to-consistent-size), EYE-LINE y (drives eyeline composition), and YuNet
-    CONFIDENCE SCORE (used by _pick_dominant_face to filter phantom wall-art detections). YuNet rows are
-    [x,y,w,h, rEye(4,5), lEye(6,7), nose(8,9), rMouth(10,11), lMouth(12,13), score]. Fail-open: an
-    unreadable frame / missing landmark -> [] or ey=cy, never raises."""
-    out: list[tuple[float, float, float, float, float]] = []
+def _detect_faces(cv2, det, img_path: str) -> list[tuple[float, float, float, float, float, float]]:
+    """Every face in one frame as (cx, cy, fh, ey, score, fw) normalized to [0,1]: center x/y, face-box
+    HEIGHT (drives zoom-to-consistent-size), EYE-LINE y (drives eyeline composition), YuNet CONFIDENCE
+    SCORE (used by _pick_dominant_face to filter phantom wall-art detections), and face-box WIDTH (drives
+    the horizontal safe-area — E1). fw is APPENDED so score stays at index 4: _pick_dominant_face/_face_count
+    read [4]/[2] unchanged. YuNet rows are [x,y,w,h, rEye(4,5), lEye(6,7), nose(8,9), rMouth(10,11),
+    lMouth(12,13), score]. Fail-open: an unreadable frame / missing landmark -> [] or ey=cy, never raises."""
+    out: list[tuple[float, float, float, float, float, float]] = []
     try:
         img = cv2.imread(img_path)
         if img is None: return out
@@ -147,11 +148,12 @@ def _detect_faces(cv2, det, img_path: str) -> list[tuple[float, float, float, fl
             cx = min(1.0, max(0.0, (float(f[0]) + float(f[2]) / 2) / w))
             cy = min(1.0, max(0.0, (float(f[1]) + float(f[3]) / 2) / h))
             fh = min(1.0, max(0.0, float(f[3]) / h))
+            fw = min(1.0, max(0.0, float(f[2]) / w))                              # face-box WIDTH -> horizontal safe-area (E1)
             try: ey = min(1.0, max(0.0, ((float(f[5]) + float(f[7])) / 2) / h))   # eye-line from rEye/lEye y
             except (IndexError, ValueError, TypeError): ey = cy                    # no landmark -> face center
             try: sc = round(min(1.0, max(0.0, float(f[14]))), 4)                  # YuNet score at index 14
             except (IndexError, ValueError, TypeError): sc = 0.0                  # missing score -> 0 (fail-open)
-            out.append((round(cx, 4), round(cy, 4), round(fh, 4), round(ey, 4), sc))
+            out.append((round(cx, 4), round(cy, 4), round(fh, 4), round(ey, 4), sc, round(fw, 4)))
     except Exception:
         return out                                            # a single bad frame never sinks the window
     return out
@@ -343,7 +345,7 @@ def _track_sidecar(cfg, source_id: str) -> Path:
     return cfg.agent_io / "framing" / f"{source_id}.track.json"
 
 def _track_observe(cv2, det, frames: list[str]) -> list[dict]:
-    """PER FRAME of the grid, observe each 2-shot side (L/R of _ASD_SIDE_SPLIT): {side: ((fx,fy,fh,ey), motion)}
+    """PER FRAME of the grid, observe each 2-shot side (L/R of _ASD_SIDE_SPLIT): {side: ((fx,fy,fh,ey,fw), motion)}
     where motion = mean abs diff of that side's mouth ROI vs its PREVIOUS frame (lip movement -> high). The
     dominant (largest box) face per side wins the frame. A frame that can't be read contributes an empty dict
     (fail-open). This is the pixel layer the pure _assemble_track reduces — kept separate so the hysteresis/
@@ -371,13 +373,14 @@ def _track_observe(cv2, det, frames: list[str]) -> list[dict]:
                     cx = min(1.0, max(0.0, (float(f[0]) + float(f[2]) / 2) / w))
                     cy = min(1.0, max(0.0, (float(f[1]) + float(f[3]) / 2) / h))
                     fh = min(1.0, max(0.0, float(f[3]) / h))
+                    fw = min(1.0, max(0.0, float(f[2]) / w))                       # face-box WIDTH -> horizontal safe-area (E1)
                     try: ey = min(1.0, max(0.0, ((float(f[5]) + float(f[7])) / 2) / h))
                     except (IndexError, ValueError, TypeError): ey = cy
                     roi = _mouth_roi(cv2, img, f); motion = 0.0
                     if roi is not None and prev_roi[side] is not None and prev_roi[side].shape == roi.shape:
                         motion = float(np.mean(np.abs(roi.astype(int) - prev_roi[side].astype(int))))
                     if roi is not None: prev_roi[side] = roi
-                    per[side] = ((round(cx, 4), round(cy, 4), round(fh, 4), round(ey, 4)), motion)
+                    per[side] = ((round(cx, 4), round(cy, 4), round(fh, 4), round(ey, 4), round(fw, 4)), motion)
         except Exception:
             per = {}                                          # a single bad frame never sinks the window (fail-open)
         obs.append(per)

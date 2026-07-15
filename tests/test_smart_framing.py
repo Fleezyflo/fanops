@@ -987,7 +987,8 @@ def test_detect_v_bumped():
     assert framing._DETECT_V >= 2
 
 def test_detect_faces_includes_score(monkeypatch, tmp_path):
-    # _detect_faces now returns 5-tuples (cx,cy,fh,ey,score) — score is the YuNet confidence at f[14].
+    # _detect_faces now returns 6-tuples (cx,cy,fh,ey,score,fw) — score is the YuNet confidence at f[14],
+    # fw is the face-box WIDTH (E1, appended so score stays at [4]).
     # YuNet row: [x,y,w,h, rEyeX,rEyeY, lEyeX,lEyeY, noseX,noseY, rMX,rMY, lMX,lMY, score]
     _face_row = [10.0, 10.0, 80.0, 60.0,    # x,y,w,h
                  40.0, 20.0, 60.0, 20.0,     # rEye, lEye
@@ -1004,8 +1005,9 @@ def test_detect_faces_includes_score(monkeypatch, tmp_path):
     faces = framing._detect_faces(_CV2(), _FakeDet(), str(tmp_path / "f.png"))
     assert len(faces) == 1
     face = faces[0]
-    assert len(face) == 5, f"expected 5-tuple (cx,cy,fh,ey,score), got {face}"
+    assert len(face) == 6, f"expected 6-tuple (cx,cy,fh,ey,score,fw), got {face}"
     assert face[4] > 0.0, "score must be >0 for a high-confidence face"
+    assert abs(face[5] - 0.5) < 1e-6, f"fw = box width / frame width = 80/160 = 0.5, got {face[5]}"  # E1 face WIDTH
 
 def test_pick_dominant_face_prefers_high_score():
     # score-first: a smaller but higher-confidence face beats a larger lower-confidence face.
@@ -1067,20 +1069,21 @@ def test_subject_focus_picks_real_speaker_over_phantom(tmp_path, monkeypatch):
     assert abs(fx - 0.30) < 0.01, f"real speaker at x=0.30 must win; got fx={fx}"
 
 def test_detect_window_stores_score_in_sidecar(tmp_path, monkeypatch):
-    # the detect sidecar must store 5-element faces so _pick_dominant_face can use the score on cache hit.
+    # the detect sidecar must store 6-element faces (cx,cy,fh,ey,score,fw) so _pick_dominant_face uses the
+    # score AND the geometry can use the width on a cache hit (E1).
     cfg = Config(root=tmp_path)
     src = Source(id="s1", source_path="x.mp4", width=1920, height=1080, duration=60.0)
     monkeypatch.setattr(framing, "_cv2", lambda: object())
     monkeypatch.setattr(framing, "_detector", lambda cv2: object())
     monkeypatch.setattr("fanops.keyframes.extract_frames_grid", lambda *a, **k: ["g0"])
-    monkeypatch.setattr(framing, "_detect_faces", lambda cv2, det, fp: [(0.5, 0.5, 0.2, 0.45, 0.88)])
+    monkeypatch.setattr(framing, "_detect_faces", lambda cv2, det, fp: [(0.5, 0.5, 0.2, 0.45, 0.88, 0.15)])
     st = framing.detect_window(cfg, src, start=10.0, end=14.0)
     assert st is not None
-    assert len(st["frames"][0][0]) == 5, "detect sidecar must persist 5-element faces (including score)"
+    assert len(st["frames"][0][0]) == 6, "detect sidecar must persist 6-element faces (score + width)"
     sidecar = cfg.agent_io / "framing" / "s1.detect.json"
     cached = json.loads(sidecar.read_text())
     assert cached["v"] == framing._DETECT_V
-    assert len(cached["windows"]["10.0-14.0"]["frames"][0][0]) == 5
+    assert len(cached["windows"]["10.0-14.0"]["frames"][0][0]) == 6
 
 
 # ---- E4 real-tooling proof: the concat render path under REAL ffmpeg (a command-construction test is blind
