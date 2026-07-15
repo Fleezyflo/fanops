@@ -106,6 +106,29 @@ def test_bulk_send_to_review_skips_needs_reconcile(tmp_path):
     assert res.ok and res.detail["skipped"] == 1 and res.detail["moved"] == 0
     assert Ledger.load(cfg).posts["p1"].state is PostState.needs_reconcile
 
+
+def test_bulk_send_to_review_clears_error_reason_latch(tmp_path):
+    # RC-8 FAILS BEFORE / PASSES AFTER: a failed post carries error_reason (a status/suppression field,
+    # NOT lineage). Reverting it to Review must yield a CLEAN awaiting_approval post — error_reason
+    # cleared — while PRESERVING submission_id / batch_id (PD-1: keep the lineage, never re-post).
+    cfg = Config(root=tmp_path)
+    cdir = cfg.clips; cdir.mkdir(parents=True, exist_ok=True)
+    (cdir / "c0.mp4").write_bytes(b"V")
+    led = Ledger.load(cfg)
+    led.add_source(Source(id="s1", source_path="/v.mp4", language="en"))
+    led.add_moment(Moment(id="m1", parent_id="s1", content_token="0-7", start=0, end=7, reason="r", state=MomentState.clipped))
+    led.add_clip(Clip(id="c0", parent_id="m1", path=str(cdir / "c0.mp4"), aspect=Fmt.r9x16, state=ClipState.queued))
+    led.add_post(Post(id="p1", parent_id="c0", account="a", account_id="ig1", platform=Platform.instagram,
+                      caption="c", state=PostState.failed, error_reason="429 rate limited",
+                      submission_id="sub_x", batch_id="batch_y"))
+    led.save()
+    res = actions.bulk_send_to_review(cfg, ["p1"], reason="revert")
+    assert res.ok and res.detail["moved"] == 1
+    p = Ledger.load(cfg).posts["p1"]
+    assert p.state is PostState.awaiting_approval
+    assert p.error_reason is None                            # RC-8: the latch is cleared on revert
+    assert p.submission_id == "sub_x" and p.batch_id == "batch_y"   # lineage PRESERVED (PD-1)
+
 def test_studio_publish_guard_blocks_unmapped_channel(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_LIVE", "1")
     monkeypatch.delenv("FANOPS_POSTER", raising=False)
