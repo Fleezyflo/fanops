@@ -1,21 +1,15 @@
-{# U6: per-account continuous feed — source-grouped cards with lazy-load sentinel. #}
+{# U6: per-account continuous feed — ONE 3-up grid (cards stay source-clustered), lazy-load sentinel INSIDE the grid so appended pages join the same 3-up flow. #}
 <div class="review-feed" aria-label="{{ feed_account|default(active) }} feed">
   {% if not feed %}
     <div class="empty">No work for {{ feed_account|default(active) }} — <a href="{{ url_for('review') }}">pick another account</a>.</div>
   {% else %}
-  {% for source_name, rows in feed | group_review_by_source %}
-  <section class="feed-source-group" data-source-key="{{ rows[0].source_key or '' }}">
-    <header class="feed-source-head meta">
-      <strong>{{ source_name }}</strong>
-      <button type="button" class="ghost" data-review-action="select-source" data-source-key="{{ rows[0].source_key or '' }}">Select source</button>
-    </header>
-    <div class="review-feed-cards">
+  <div class="review-feed-cards">
+    {% for source_name, rows in feed | group_review_by_source %}
       {% for s in rows %}{% include "_review_feed_card.html" %}{% endfor %}
-    </div>
-  </section>
-  {% endfor %}
-  {% if feed_page and feed_page.next_offset is not none %}
-  <div id="feed-sentinel" hx-get="{{ url_for('review_feed_slice', account=feed_account|default(active), offset=feed_page.next_offset) }}" hx-trigger="revealed" hx-swap="outerHTML"></div>
-  {% endif %}
+    {% endfor %}
+    {% if feed_page and feed_page.next_offset is not none %}
+    <div id="feed-sentinel" class="feed-sentinel" hx-get="{{ url_for('review_feed_slice', account=feed_account|default(active), offset=feed_page.next_offset) }}" hx-trigger="revealed" hx-swap="outerHTML"></div>
+    {% endif %}
+  </div>
   {% endif %}
 </div>
