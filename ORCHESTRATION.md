@@ -29,20 +29,15 @@ python scripts/orchestrate.py done     # exits 0 only when everything is landed 
 
 `done` is also the orchestrator's own completion gate — it cannot claim finished until this exits 0.
 
-## Guarantees while a wave runs
+## What holds the line (enforcement hooks are DISABLED — operator decision, 2026-07-15)
 
-Nothing lands unless the PR's CI is green (gate-enforced); risky changes — lane hot files or broad
-diffs — additionally require a *different* sub-agent's verification record pinned to the PR's current
-head (small non-hot changes land on green CI alone, no verifier spend); every spawn and land is
-ledgered (`.orchestration/state/ledger.jsonl`); spawn types and models are locked; no destructive
-git; the gate and its state are tamper-protected. Scope is the whole repo — open PRs, conflicts,
-stale branches included. Details: [`.orchestration/SPEC.md`](.orchestration/SPEC.md).
+GitHub branch protection with required checks (nothing red merges), the lint-only `check.sh`
+(no local test or dependency storms), and the conventions in the orchestrator/worker files
+(delegate-everything, spawn only `fanops-worker`, verifier only for hot-file/broad units). The
+hook-gate machinery is dormant on disk — details and re-enable path:
+[`.orchestration/SPEC.md`](.orchestration/SPEC.md).
 
 ## Notes
-
-- Enforcement is OFF outside a wave: `start` engages it, `done` (exit 0) disengages it. If a crashed
-  wave left it on, run `python scripts/orchestrate.py stop` from your own terminal — operator-only,
-  refused from inside a run.
 - The orchestrator merges, never you. A 403 on merge means the Cursor GitHub App lacks write/merge
   rights on this repo — grant them and re-run the wave.
 - One orchestrator at a time.

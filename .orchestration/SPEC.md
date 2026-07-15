@@ -1,7 +1,15 @@
 # Delegation-only orchestration protocol
 
+> **STATUS: enforcement hooks are DISABLED (operator decision, 2026-07-15) — the gate cost more in
+> blocked work than it protected.** `.cursor/hooks.json` and `.claude/settings.json` carry no gate
+> wiring; everything under "Enforcement" below describes DORMANT machinery kept on disk (gate,
+> adapter, and their tests still pass in CI). The live safety rails are: GitHub branch protection
+> with required checks, the lint-only `check.sh`, the pytest permission denies, and the agent
+> conventions in the orchestrator/worker files. Re-enable by restoring the hook wiring from git
+> history (`git log -- .cursor/hooks.json .claude/settings.json`).
+
 > Quickstart: [`ORCHESTRATION.md`](../ORCHESTRATION.md). One command:
-> `python scripts/orchestrate.py start | status | done | stop`. This file is the enforcement reference.
+> `python scripts/orchestrate.py start | status | done | stop`.
 
 The orchestrator coordinates; sub-agents execute every unit of work (scope, implement, validate,
 verify, fix, cleanup, conflict-resolution). Its only hands-on action is the land (`gh pr merge`);
