@@ -1143,15 +1143,20 @@ def test_segments_concat_real_ffmpeg_holds_fps_duration_audiosync_no_gap_and_sub
                     "-f", "lavfi", "-i", f"sine=frequency=440:sample_rate=44100:duration={dur}",
                     "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-ac", "2", "-t", str(dur), str(src)],
                    check=True, capture_output=True, text=True)
-    # A minimal .ass burning a large white line ONLY in [4.50, 5.00] — entirely AFTER the final join at 4.0s.
+    # A FONT-INDEPENDENT white band burned ONLY in [4.50, 5.00] — entirely AFTER the final join at 4.0s.
+    # It is an ASS VECTOR DRAWING (\p1): libass rasterizes the polygon from the style's PrimaryColour with
+    # NO glyph/font lookup, so the timing check cannot flake on a headless runner's font set (a glyph-based
+    # subtitle renders nothing when fontconfig has no match). \an7\pos(0,0) makes the drawing coords absolute
+    # screen pixels at PlayRes; the band spans the full width, y 800..1200 of 1920 -> a large luma lift.
     sub_on, sub_off = 4.50, 5.00
     ass = tmp_path / "sub.ass"
     ass.write_text(
         "[Script Info]\nScriptType: v4.00+\nPlayResX: 1080\nPlayResY: 1920\n\n"
-        "[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, Alignment, MarginV\n"
-        "Style: B,Arial,300,&H00FFFFFF,5,0\n\n"
+        "[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, Alignment\n"
+        "Style: Box,Arial,40,&H00FFFFFF,7\n\n"
         "[Events]\nFormat: Layer, Start, End, Style, Text\n"
-        f"Dialogue: 0,{_e4_ass_ts(sub_on)},{_e4_ass_ts(sub_off)},B,,WWWWWWWWWWWW\n")
+        f"Dialogue: 0,{_e4_ass_ts(sub_on)},{_e4_ass_ts(sub_off)},Box,"
+        "{\\an7\\pos(0,0)\\p1}m 0 800 l 1080 800 1080 1200 0 1200{\\p0}\n")
     # 3 segments -> 2 joins. Centered static crops (fh=None -> no zoom) keep the frame black outside the sub.
     track = [(0.0, 2.0, 0.5, 0.5, None, None),
              (2.0, 4.0, 0.5, 0.5, None, None),
