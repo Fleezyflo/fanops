@@ -34,7 +34,6 @@ FIVE INVARIANTS, structural rather than conventional:
 """
 from __future__ import annotations
 
-import contextlib
 import errno
 import fcntl
 import hashlib
@@ -51,6 +50,7 @@ from fanops import framing
 from fanops import overlay
 from fanops.bands import band_for
 from fanops.config import Config
+from fanops.controlio import write_json_atomic
 from fanops.ledger import Ledger
 from fanops.log import get_logger
 from fanops.reframe import APPROVED_FRAMING_KEYS, ReframeClass, ReframePaths, snapshot_ledger
@@ -522,22 +522,16 @@ def _stored_fp(sidecar: Path) -> str | None:
 
 
 def _write_sidecar_atomic(sidecar_path: str, fp: str) -> None:
-    """Atomically replace a render sidecar via write -> flush -> fsync -> rename (a tmp `.part`, then
-    os.replace), so a crash mid-write can never tear the final file — it only ever appears complete.
-    INVARIANT: ALL sidecar mutations MUST go through this helper, so the crash semantics stay identical
-    across the commit and the recovery (heal) paths. A bare Path.write_text anywhere else reintroduces the
-    partial-write window this exists to close (a torn sidecar reads as None on the next resume, downgrading
-    an auto-healable TORN state to a manual-repair AMBIGUOUS one). The `.part` is swept on every exit, so a
-    failed rename leaves no orphan temp."""
-    tmp = Path(str(sidecar_path) + ".part")
-    try:
-        tmp.write_text(json.dumps({"fp": fp}))
-        with open(tmp, "r+", encoding="utf-8") as fh:
-            os.fsync(fh.fileno())
-        os.replace(str(tmp), str(sidecar_path))
-    finally:
-        with contextlib.suppress(OSError):
-            os.unlink(tmp)                       # os.replace consumes tmp on success; a failed rename leaves it -> sweep
+    """Atomically replace a render sidecar so a crash mid-write can never tear it — it only ever appears
+    complete. A thin wrapper over the repo's SHARED control-file boundary (controlio.write_json_atomic:
+    unique mkstemp temp -> os.replace -> cleanup-on-failure), so this correctness-critical write stays
+    identical to accounts.json/personas.json and cannot drift from their guarantees — the coding guideline
+    mandates routing atomic control-file writes through controlio rather than hand-rolling a copy. ATOMICITY
+    (never a torn file) is the load-bearing property: a torn sidecar reads as None on the next resume and
+    downgrades an auto-healable TORN state to a manual-repair AMBIGUOUS one; a fully-LOST sidecar is instead
+    recovered by the TORN-heal. INVARIANT: ALL sidecar mutations go through here. NB the ffmpeg/mpeg outputs
+    keep their OWN muxer-inferable `.part` discipline (MOL-78) — this JSON boundary is deliberately separate."""
+    write_json_atomic(Path(sidecar_path), {"fp": fp})
 
 
 def inspect_clip(dirs: RunDirs, row: dict) -> str:

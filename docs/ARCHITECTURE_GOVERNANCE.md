@@ -4,7 +4,7 @@
 
 # FanOps — Architecture & Implementation Governance
 
-**Source fingerprint `62a9321478864154` · generator `arch/1.0.0`**
+**Source fingerprint `ae22cbf79333e908` · generator `arch/1.0.0`**
 
 Regenerate: `python -m tools.arch regen`
 
@@ -17,7 +17,7 @@ Regenerate: `python -m tools.arch regen`
 | | |
 |---|---|
 | Modules | **130** |
-| Compile-time import edges (G1) | **548** |
+| Compile-time import edges (G1) | **549** |
 | Lazy (in-function) edges | **327** |
 | Typing-only edges | 6 |
 | Non-trivial compile-time SCCs | **1** |

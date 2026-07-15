@@ -278,10 +278,11 @@ def test_torn_state_is_DETECTED_and_healed_not_guessed(tmp_path, monkeypatch):
 
 
 def test_torn_heal_write_is_ATOMIC_a_crash_leaves_the_sidecar_valid_and_still_healable(tmp_path, monkeypatch):
-    """CID-2: the heal writes the sidecar via tmp .part -> fsync -> os.replace (exactly like the commit), so
-    a crash at the rename leaves the stale-but-VALID sidecar — the next resume still reads TORN (auto-healable),
-    never a partial JSON that reads as None and downgrades to a manual-repair AMBIGUOUS. Mutation-proof: revert
-    the heal to a bare write_text and it never calls os.replace, so pytest.raises(OSError) fails."""
+    """CID-2: the heal writes the sidecar via the shared controlio.write_json_atomic boundary (mkstemp temp
+    -> os.replace, exactly like the commit), so a crash at the rename leaves the stale-but-VALID sidecar — the
+    next resume still reads TORN (auto-healable), never a partial JSON that reads as None and downgrades to a
+    manual-repair AMBIGUOUS. Mutation-proof: revert the heal to a bare write_text and it never calls os.replace,
+    so pytest.raises(OSError) fails. (ra.os.replace is the shared os module, so the patch reaches controlio.)"""
     cfg, paths, src = _corpus(tmp_path); row = _row(cfg, src); d = _dirs(cfg)
     ra.backup_clip(d, row)
     Path(row["media_path"]).write_bytes(b"NEW-PIXELS")           # simulate: crashed after os.replace(mp4) -> TORN
@@ -292,23 +293,25 @@ def test_torn_heal_write_is_ATOMIC_a_crash_leaves_the_sidecar_valid_and_still_he
         ra.apply_clip(paths, d, _FakeLed(), row, run_id="rf_th")
     assert ra._stored_fp(Path(row["sidecar_path"])) == "fpold"   # final sidecar VALID (stale), not torn
     assert ra.inspect_clip(d, row) == ra.TORN                    # still auto-healable on the next resume
-    assert not Path(str(row["sidecar_path"]) + ".part").exists()  # no orphan temp left by the failed rename
+    sp = Path(row["sidecar_path"])
+    assert not list(sp.parent.glob(sp.name + ".*.tmp"))          # controlio's mkstemp temp cleaned on the failed rename
 
 
-def test_write_sidecar_atomic_fsyncs_BEFORE_replace_and_leaves_no_temp(tmp_path, monkeypatch):
-    """The shared helper's durability contract: flush + fsync the temp, THEN rename — and the rename (not a
-    copy) consumes the temp, so no `.part` orphan survives a SUCCESSFUL write either. Guards against a future
-    copy-instead-of-rename that would leak temps while still passing the crash test."""
+def test_write_sidecar_atomic_delegates_to_controlio_and_leaves_no_orphan_temp(tmp_path, monkeypatch):
+    """Post-review (CID-2): the sidecar write ROUTES THROUGH the repo's shared atomic-write boundary
+    (controlio.write_json_atomic — unique mkstemp temp -> os.replace -> cleanup) rather than a hand-rolled
+    copy, per the coding guideline, so it can't drift from the accounts.json/personas.json guarantees.
+    ATOMICITY (never a torn file) is the load-bearing property; a lost sidecar is recovered by the TORN-heal,
+    which is why the fsync the old hand-rolled copy did is not required. Assert it DELEGATES with the right
+    payload, writes the fp, and a SUCCESSFUL write leaves no orphan temp."""
     side = tmp_path / "clip_a.render.json"
-    order = []
-    real_replace = ra.os.replace
-    monkeypatch.setattr(ra.os, "fsync", lambda *_a: order.append("fsync"))
-    def _rec_replace(*a): order.append("replace"); return real_replace(*a)
-    monkeypatch.setattr(ra.os, "replace", _rec_replace)
+    calls = []
+    real = ra.write_json_atomic
+    monkeypatch.setattr(ra, "write_json_atomic", lambda p, raw: (calls.append((Path(p), raw)) or real(p, raw)))
     ra._write_sidecar_atomic(str(side), "fpnew")
-    assert order == ["fsync", "replace"]                         # fsync BEFORE the rename, not merely invoked
+    assert calls == [(side, {"fp": "fpnew"})]                    # delegated to the shared boundary, not hand-rolled
     assert ra._stored_fp(side) == "fpnew"
-    assert not Path(str(side) + ".part").exists()                # rename consumed the temp — no orphan
+    assert not list(side.parent.glob(side.name + ".*.tmp"))      # mkstemp temp consumed by os.replace — no orphan
 
 
 def test_ambiguous_state_STOPS_never_guesses(tmp_path, monkeypatch):
