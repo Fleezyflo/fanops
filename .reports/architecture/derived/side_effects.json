@@ -51,43 +51,43 @@
       },
       {
         "call": "Ledger.transaction",
-        "line": 1015
+        "line": 1031
       },
       {
         "call": "Ledger.transaction",
-        "line": 1027
+        "line": 1043
       },
       {
         "call": "Ledger.transaction",
-        "line": 1038
+        "line": 1054
       },
       {
         "call": "Ledger.transaction",
-        "line": 1231
+        "line": 1247
       },
       {
         "call": "Ledger.transaction",
-        "line": 1244
+        "line": 1260
       },
       {
         "call": "Ledger.transaction",
-        "line": 1318
+        "line": 1335
       },
       {
         "call": "Ledger.transaction",
-        "line": 1326
+        "line": 1343
       },
       {
         "call": "Ledger.transaction",
-        "line": 1334
+        "line": 1351
       },
       {
         "call": "Ledger.transaction",
-        "line": 1341
+        "line": 1358
       },
       {
         "call": "Ledger.transaction",
-        "line": 1350
+        "line": 1367
       }
     ],
     "fanops.ledger_wipe": [
@@ -347,7 +347,7 @@
     "fanops.accounts": [
       {
         "call": "_file_lock",
-        "line": 380
+        "line": 404
       }
     ],
     "fanops.hashtags": [
@@ -382,8 +382,12 @@
         "line": 540
       },
       {
+        "call": "store.lock",
+        "line": 559
+      },
+      {
         "call": "_file_lock",
-        "line": 551
+        "line": 562
       }
     ],
     "fanops.ledger_bridge": [
@@ -455,7 +459,7 @@
     "fanops.cli": [
       {
         "call": "tempfile.mkdtemp",
-        "line": 1185
+        "line": 1201
       }
     ],
     "fanops.post.compress": [
@@ -542,7 +546,7 @@
     "fanops.cli": [
       {
         "call": "shutil.rmtree",
-        "line": 1217
+        "line": 1233
       }
     ],
     "fanops.post.compress": [
@@ -750,7 +754,7 @@
   "totals": {
     "env_write_sites": 2,
     "ledger_transaction_sites": 74,
-    "lock_sites": 22,
+    "lock_sites": 23,
     "mkdtemp_sites": 2,
     "network_sites_literal_requests": 15,
     "rmtree_sites": 5,

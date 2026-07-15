@@ -42,7 +42,7 @@
         "swallow": "baseline 3 — MUST NOT EXCEED."
       },
       "exists": true,
-      "function_count": 26,
+      "function_count": 27,
       "is_partitioned": false,
       "missing": false,
       "owners": [
@@ -72,7 +72,7 @@
         "swallow": "baseline 3 — SHARED across S08/S09/S10. NONE may raise it."
       },
       "exists": true,
-      "function_count": 42,
+      "function_count": 43,
       "is_partitioned": true,
       "missing": false,
       "owners": [
@@ -170,7 +170,7 @@
         "swallow": "NOT IN BASELINE -> 0 allowed."
       },
       "exists": true,
-      "function_count": 8,
+      "function_count": 10,
       "is_partitioned": false,
       "missing": false,
       "owners": [
@@ -329,7 +329,7 @@
     "tests/test_ledger_sqlite_store.py": {
       "declared_ratchets": {},
       "exists": true,
-      "function_count": 12,
+      "function_count": 15,
       "is_partitioned": false,
       "missing": false,
       "owners": [
