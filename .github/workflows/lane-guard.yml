@@ -14,6 +14,12 @@ on:
   pull_request:
     branches: [main]
 
+# SLICE-LANEGUARD-HARDEN: overlapping runs on the same ref waste a runner and can leave a stale
+# verdict; cancel the in-flight one (matches ci/architecture/nightly).
+concurrency:
+  group: lane-guard-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
   pull-requests: read
@@ -21,12 +27,15 @@ permissions:
 jobs:
   lane-guard:
     name: lane file-ownership + cross-PR collision
+    # Measured runtime ~7-12 s; 10-minute ceiling (matches the sibling stdlib jobs gate/impact) is a
+    # generous hang-guard for the git fetch-depth-0 + the best-effort Linear lookup, not a tight bound.
+    timeout-minutes: 10
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0          # full history so the base-vs-head diff resolves
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.12"
       - name: Lane hot-file ownership (branch-prefix or MOL-id -> Linear label; best-effort)
