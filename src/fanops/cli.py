@@ -488,6 +488,20 @@ def cmd_wipe(cfg: Config, args) -> int:
     except (ledger_wipe.WipeNotConfirmed, ledger_wipe.SnapshotRequired) as e:
         print(str(e), file=sys.stderr); return 2
 
+def cmd_restore(cfg: Config, args) -> int:
+    # Wave 3 / S01c: the operator half of the wipe's reversibility promise. `fanops wipe` prints its
+    # pre-wipe snapshot path (the "snapshot" field of its result JSON); `fanops restore <that path>`
+    # calls Ledger.restore_snapshot to bring those rows back. Before this verb that promise — pinned in
+    # execute_wipe's docstring ("Reversible: Ledger.restore_snapshot(...)") — reached NO CLI or Studio
+    # path (RC-4: restore_snapshot had zero production callers). A missing / unreadable snapshot raises
+    # ControlFileError, which main()'s handler renders as a one-line exit-2 (no traceback), so no
+    # bespoke not-found branch is needed here. The success line routes through get_logger (-> run.log +
+    # stderr), NOT a new print(), so the load-bearing exact-equality _CLI_PRINT_COUNT budget stays
+    # intact (IR-4 / GB-6: "no slice may change it" — the contract's prescribed route for new verb output).
+    Ledger.restore_snapshot(cfg, args.snapshot_path)
+    get_logger(cfg)("restore", str(args.snapshot_path), "restored")
+    return 0
+
 def cmd_compose(cfg: Config, args) -> int:
     # Produced-clip compositing (operator verb; runs OUTSIDE any ledger lock — a long MoviePy render
     # must never sit inside advance()'s flock). Composes ONE rendered clip into <clip>_composed.mp4:
@@ -789,6 +803,8 @@ def main(argv: list[str] | None = None) -> int:
                         help="total wipe mode — remove shipped history too (requires both total confirm flags)")
     p_wipe.add_argument("--i-understand-this-erases-shipped-history", dest="i_understand_this_erases_shipped_history", action="store_true",
                         help="confirm total wipe — must be paired with --include-shipped-history")
+    p_restore = sub.add_parser("restore", help="restore the ledger from a pre-wipe snapshot (the reversible half of `fanops wipe`)")
+    p_restore.add_argument("snapshot_path", help="path to a ledger.snapshot.*.sqlite (the 'snapshot' path printed by `fanops wipe`)")
     p_prb = sub.add_parser("paths-rebase", help="(R1) rebase stale absolute media paths after FANOPS_ROOT move")
     p_prb.add_argument("--apply", action="store_true", help="snapshot + rewrite ledger/manifests (default: dry-run counts only)")
     p_learn = sub.add_parser("learn", help="learning-loop diagnostics (read-only)")
@@ -1272,6 +1288,7 @@ def _dispatch(cfg: Config, args) -> int:
     if args.cmd == "p4-bias": return cmd_p4_bias(cfg)
     if args.cmd == "cutover":  return cmd_cutover(cfg, args)
     if args.cmd == "wipe":     return cmd_wipe(cfg, args)
+    if args.cmd == "restore":  return cmd_restore(cfg, args)
     if args.cmd == "paths-rebase":
         from fanops.paths_rebase import cmd_paths_rebase
         return cmd_paths_rebase(cfg, args)

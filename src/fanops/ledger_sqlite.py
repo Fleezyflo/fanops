@@ -4,7 +4,7 @@ import json, os, sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 from fanops.config import Config
-from fanops.errors import ControlFileError, LockBusyError, reason as _reason
+from fanops.errors import ControlFileError, LockBusyError
 
 _DEFAULT_LOCK_TIMEOUT = 30.0
 # kv(map_name, row_id) — one table for all 10 top-level maps (_save_unlocked doc shape).
@@ -147,7 +147,7 @@ class SqliteLedgerStore:
 
     def restore(self, src: Path) -> None:
         if not src.exists():
-            raise ControlFileError(_reason("ledger snapshot not found", str(src)))
+            raise ControlFileError(f"ledger snapshot not found: {src}")
         relock = self._conn is not None
         if relock:
             self._conn.commit()
