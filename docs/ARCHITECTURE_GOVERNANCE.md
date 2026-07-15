@@ -4,7 +4,7 @@
 
 # FanOps — Architecture & Implementation Governance
 
-**Source fingerprint `af0fdbe35adecaf1` · generator `arch/1.0.0`**
+**Source fingerprint `d1d08c8cb568ce85` · generator `arch/1.0.0`**
 
 Regenerate: `python -m tools.arch regen`
 
