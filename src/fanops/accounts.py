@@ -200,20 +200,32 @@ class Accounts:
             return self.cfg.poster_backend                       # legacy bridge: keep the running channels live
         return None
 
+    def channel_provider_if_ready(self, handle: str, platform: Optional[Platform] = None) -> Optional[str]:
+        """*** THE ONE per-channel capability the publish PRODUCER and the reconcile CONSUMER share (RC-3b). ***
+
+        The provider that will BOTH publish AND be reconciled for this (handle, platform): its
+        effective_provider (M3) resolves to a LIVE backend AND that backend's creds are present. None
+        otherwise — no provider, a non-live `dryrun` route, or a live provider with no key.
+
+        This is a CONTRACT, not a convenience: a post may enter `submitting` ONLY on a channel this admits,
+        because reconcile — the SOLE resolver of `submitting`, gated on `cfg.is_live_backend` — runs ONLY
+        for channels this admits. `_publish_one`'s claim (the producer) and `live_ready_channels()`→
+        `is_live_backend` (the consumer) BOTH gate on this method, so the two can never drift into the
+        state where publishing mints a `submitting` post that reconciliation will never touch. The creds
+        decision (`backend_has_creds`) lives HERE, once — duplicating it at the producer is exactly the
+        divergence RC-3b was."""
+        prov = self.effective_provider(handle, platform)
+        return prov if prov and self.cfg.backend_has_creds(prov) else None
+
     def live_ready_channels(self) -> list[tuple[str, str, str]]:
         """Active (handle, platform, provider) channels that would ACTUALLY publish once the system is live —
-        each one's effective provider (M3) resolves AND that provider's creds are present. This is the
-        readiness primitive go_live gates on (flipping live with zero publishable channels would post
-        nothing) and the status banner derives its mode label from. Excludes: inactive accounts, channels
-        with no provider (no explicit + no live legacy bridge), and providers whose API key is absent.
-        Pure reads (no I/O); never raises — a torn registry surfaces upstream via load_accounts_safe."""
-        out = []
-        for a in self.active():
-            for p in a.platforms:
-                prov = self.effective_provider(a.handle, p)
-                if prov and self.cfg.backend_has_creds(prov):
-                    out.append((a.handle, p.value, prov))
-        return out
+        exactly those `channel_provider_if_ready` admits. This is the readiness primitive go_live gates on
+        (flipping live with zero publishable channels would post nothing), the aggregate `is_live_backend`
+        reads, and the source the status banner derives its mode label from. Excludes: inactive accounts,
+        channels with no provider (no explicit + no live legacy bridge), and providers whose API key is
+        absent. Pure reads (no I/O); never raises — a torn registry surfaces via load_accounts_safe."""
+        return [(a.handle, p.value, prov) for a in self.active() for p in a.platforms
+                if (prov := self.channel_provider_if_ready(a.handle, p))]
 
     def validate(self) -> list[str]:
         """Config problems to surface before a run. Per-platform: each active account's every platform

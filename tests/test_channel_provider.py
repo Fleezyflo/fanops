@@ -109,7 +109,7 @@ def test_publish_due_skips_live_channel_with_no_provider(tmp_path, monkeypatch, 
     # LIVE channel with no provider -> the no_provider skip (unchanged); not_distributed stays 0 (this post
     # is live-but-provider-less, NOT dryrun). The key exists in the summary since the dryrun-boundary landed.
     assert res == {"due": 1, "published": 0, "no_provider": 1, "no_integration_id": 0, "not_distributed": 0,
-                   "skipped_existing_id": 0}
+                   "skipped_existing_id": 0, "not_live_ready": 0}
     assert Ledger.load(cfg).posts["p1"].state is PostState.queued   # left queued (not failed) — waits for a provider
 
 
