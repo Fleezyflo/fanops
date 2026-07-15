@@ -10,6 +10,8 @@ human reconcile (the digest surfaces them). reconcile_posts:
   - 'in-progress'/'scheduled' -> leave as-is (not yet resolved)
   - no submission_id      -> skipped (cannot poll; human reconcile)
 """
+import itertools
+
 import pytest
 from fanops.config import Config
 from fanops.errors import PostizAuthError
@@ -423,15 +425,20 @@ def test_submitting_not_escalated_when_fresh(tmp_path):
     assert led.posts["pf"].state is PostState.submitting
 
 
-def test_submitting_not_escalated_with_real_token(tmp_path):
-    # A submitting post >24h past schedule but carrying a REAL backend id is NOT escalated — its poll resolves.
+def test_submitting_real_token_ALSO_escalates_past_deadline(tmp_path):
+    # RC-2/S04: a submitting post >24h past schedule escalates REGARDLESS of token provenance. The old code
+    # left a REAL-token post submitting forever on the false assumption 'its status WILL resolve'
+    # (reconcile.py:76) — false when the platform deleted the post or the integration was removed. PD-2 (a):
+    # the SAME age ladder applies to a real id. (Escalation moves it to needs_reconcile — still polled, NOT
+    # a re-queueable state, so it cannot double-post.) This INVERTS the pre-S04 characterization test.
     from datetime import datetime, timezone, timedelta
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="pr", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.submitting, submission_id="blotato_REAL_1",
                       scheduled_time=(datetime.now(timezone.utc) - timedelta(hours=30)).isoformat()))
     led = reconcile_posts(led, cfg, get_status=lambda sid: {"status": "in-progress"})
-    assert led.posts["pr"].state is PostState.submitting     # real token -> left to poll, never escalated
+    assert led.posts["pr"].state is PostState.needs_reconcile     # real token -> ALSO escalates (RC-2)
+    assert "escalated" in (led.posts["pr"].error_reason or "")
 
 
 def test_needs_reconcile_terminal_giveup_past_long_bound(tmp_path):
@@ -465,15 +472,144 @@ def test_giveup_post_is_not_polled_again(tmp_path):
     assert led.posts["pg"].state is PostState.needs_reconcile
 
 
-def test_needs_reconcile_real_token_keeps_polling_past_long_bound(tmp_path):
-    # A REAL-token needs_reconcile post is NEVER given up — a real id can still resolve at a later pass.
+def test_needs_reconcile_real_token_ALSO_gives_up_past_long_bound(tmp_path):
+    # RC-2/S04: a needs_reconcile post >72h past schedule reaches the GAVE UP: label REGARDLESS of token
+    # provenance. The old code never abandoned a real-token post ('it will still resolve'); a real id for a
+    # DELETED post never resolves. GAVE UP: is a LABEL (no state change) -> not re-queueable -> cannot
+    # double-post. This INVERTS the pre-S04 characterization test.
     from datetime import datetime, timezone, timedelta
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="pr", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.needs_reconcile, submission_id="blotato_REAL_1",
                       scheduled_time=(datetime.now(timezone.utc) - timedelta(hours=80)).isoformat()))
     led = reconcile_posts(led, cfg, get_status=lambda sid: {"status": "in-progress"})
-    assert not (led.posts["pr"].error_reason or "").startswith("GAVE UP:")   # real token -> never abandoned
+    p = led.posts["pr"]
+    assert p.state is PostState.needs_reconcile              # NOT failed (never guessed) — a label only
+    assert (p.error_reason or "").startswith("GAVE UP:")     # real token -> ALSO given up (RC-2)
+
+
+# ── S04 / RC-2: the terminal ladder is a pure function of (state, age) ───────────────────────────
+@pytest.mark.parametrize("backend,poll,token,reason", list(itertools.product(
+    ["postiz", "zernio"],
+    ["published", "failed", "unknown", "raises"],
+    ["fanops_FAKE", "blotato_REAL"],
+    ["", "stuck 9h past schedule — check the channel"])))
+def test_terminal_ladder_matrix(tmp_path, backend, poll, token, reason):
+    # RC-2/S04 INVARIANT — the 32-cell matrix. A needs_reconcile post >72h past schedule reaches a terminal-
+    # or-retryable state for EVERY (backend × poll × token × error_reason) — it is NEVER left stranded.
+    # Before S04, THREE of these four axes could VETO the terminal: a raising poll bypassed the ladder
+    # (excl.1), a real token was excluded by _is_fake_token (excl.2), and a stale error_reason suppressed the
+    # post (excl.3). Now the poll is given its chance to RESOLVE the post (published/failed); when it cannot
+    # (unknown status, or a raise), the (state, age) give-up fires — UNGATED by token, reason, or backend.
+    # So the outcome depends ONLY on the poll (the legitimate resolver); the other three axes never veto.
+    from datetime import datetime, timezone, timedelta
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_post(Post(id="m", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
+                      caption="x", state=PostState.needs_reconcile, submission_id=token,
+                      error_reason=(reason or None),
+                      scheduled_time=(datetime.now(timezone.utc) - timedelta(hours=73)).isoformat()))
+
+    def get_status(sid):
+        if poll == "raises": raise RuntimeError(f"{backend} 404")
+        if poll == "published": return {"status": "published", "publicUrl": "https://x/p/1", "postSubmissionId": "blotato_REAL"}
+        if poll == "failed": return {"status": "failed", "errorMessage": "rejected"}
+        return {"status": "unknown"}
+    led = reconcile_posts(led, cfg, get_status=get_status)
+    p = led.posts["m"]
+    assert p.state is not PostState.submitting              # NEVER stranded — the point of the fix, in every cell
+    if poll == "published":
+        assert p.state is PostState.published               # the poll RESOLVES it first — resolution is never discarded
+    elif poll == "failed":
+        assert p.state is PostState.failed
+    else:                                                    # unknown / raises -> the (state, age) give-up fires...
+        assert p.state is PostState.needs_reconcile          # ...never GUESSED into `failed` (a double-post vector)
+        assert (p.error_reason or "").startswith("GAVE UP:")  # ...reachable regardless of token / reason / backend
+
+
+def test_needs_reconcile_poll_promotes_within_the_window_before_giveup(tmp_path):
+    # Ladder does not blind the reconciler: a needs_reconcile post WITHIN the give-up window (age < 72h) is
+    # still POLLED, and a published poll promotes it. The terminal only pre-empts the poll ONCE past 72h — so
+    # a genuine resolution before the deadline is never discarded (this is why escalation at 24h -> the still-
+    # polled needs_reconcile column recovers a real post in the 24h..72h window).
+    from datetime import datetime, timezone, timedelta
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_post(Post(id="pw", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
+                      caption="x", state=PostState.needs_reconcile, submission_id="blotato_REAL",
+                      scheduled_time=(datetime.now(timezone.utc) - timedelta(hours=48)).isoformat()))
+    led = reconcile_posts(led, cfg, get_status=lambda sid: {
+        "postSubmissionId": "blotato_REAL", "status": "published", "publicUrl": "https://ig.com/p/x"})
+    assert led.posts["pw"].state is PostState.published
+
+
+def test_giveup_is_a_label_not_a_state_change(tmp_path):
+    # PRESERVATION — the double-post safety the whole slice rests on. `GAVE UP:` is written to error_reason
+    # and changes NO state. A given-up post stays needs_reconcile (NOT `failed`), so it is not re-queueable
+    # and therefore CANNOT double-post. If this ever becomes a state change, the slice is a double-post vector.
+    from datetime import datetime, timezone, timedelta
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_post(Post(id="pl", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
+                      caption="x", state=PostState.needs_reconcile, submission_id="blotato_REAL",
+                      scheduled_time=(datetime.now(timezone.utc) - timedelta(hours=80)).isoformat()))
+    led = reconcile_posts(led, cfg, get_status=lambda sid: {"status": "unknown"})
+    p = led.posts["pl"]
+    assert p.state is PostState.needs_reconcile              # state UNCHANGED — a label only
+    assert p.state is not PostState.failed                   # explicitly NOT re-queueable
+    assert (p.error_reason or "").startswith("GAVE UP:")
+
+
+def test_reconcile_visits_a_post_carrying_a_transient_reason(tmp_path, mocker):
+    # RC-2/S04 (❸): a post carrying a TRANSIENT reason (a contained `reconcile poll error:`) must STILL be
+    # visited — the old any-non-empty-error_reason latch made it silent from pass one. A submitting post
+    # within the escalation window (past _STUCK_AFTER, under 24h) carrying such a reason is breadcrumbed +
+    # logged, not skipped.
+    from datetime import datetime, timezone, timedelta
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_post(Post(id="pt", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
+                      caption="x", state=PostState.submitting, submission_id="fanops_x",
+                      error_reason="reconcile poll error: transient boom",
+                      scheduled_time=(datetime.now(timezone.utc) - timedelta(hours=10)).isoformat()))
+    spy = []
+    def fake_logger(cfg):
+        def log(*a, **k): spy.append(a)
+        return log
+    mocker.patch("fanops.reconcile.get_logger", fake_logger)
+    led = reconcile_posts(led, cfg, get_status=lambda sid: {"status": "scheduled"})
+    assert [a for a in spy if len(a) >= 3 and "left:" in str(a[2])], "a transient-reason post was NOT visited"
+    assert "stuck" in (led.posts["pt"].error_reason or "").lower()   # visited -> breadcrumbed (reason replaced)
+
+
+def test_reconcile_never_guesses_a_fate_on_error(tmp_path):
+    # CONTRACT — the prime directive. A RAISING poll is not evidence a post failed/published. Within the
+    # deadlines, such a post is PARKED (state untouched), never guessed into a terminal.
+    from datetime import datetime, timezone, timedelta
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_post(Post(id="pu", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
+                      caption="x", state=PostState.needs_reconcile, submission_id="blotato_REAL",
+                      scheduled_time=(datetime.now(timezone.utc) - timedelta(hours=10)).isoformat()))
+    def raises(sid): raise RuntimeError("boom")
+    led = reconcile_posts(led, cfg, get_status=raises)
+    assert led.posts["pu"].state is PostState.needs_reconcile          # parked, NOT guessed
+    assert led.posts["pu"].state not in (PostState.failed, PostState.published)
+
+
+def test_report_terminals_previews_without_writing(tmp_path):
+    # S04 report-only (ships FIRST): report_terminals returns what the ladder WOULD stamp, and WRITES
+    # NOTHING. A needs_reconcile post >72h is reported as a would-give-up; a fresh post below the deadline
+    # is not reported; the ledger rows are UNCHANGED after the call (the permanent pre-write gate).
+    from datetime import datetime, timezone, timedelta
+    from fanops.reconcile import report_terminals
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_post(Post(id="rp", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
+                      caption="x", state=PostState.needs_reconcile, submission_id="blotato_REAL",
+                      scheduled_time=(datetime.now(timezone.utc) - timedelta(hours=80)).isoformat()))
+    led.add_post(Post(id="fresh", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
+                      caption="x", state=PostState.submitting, submission_id="fanops_y",
+                      scheduled_time=(datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()))
+    rows = report_terminals(led)
+    assert [r["post_id"] for r in rows] == ["rp"]              # only the past-deadline post; fresh excluded
+    assert rows[0]["reason"].startswith("GAVE UP:")           # previews the give-up label
+    assert led.posts["rp"].error_reason is None               # WROTE NOTHING — pure preview
+    assert led.posts["rp"].state is PostState.needs_reconcile
 
 
 def test_breadcrumb_dedup_logged_once_not_every_pass(tmp_path, mocker):
