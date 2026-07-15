@@ -924,7 +924,9 @@ def pull_metrics_studio(cfg: Config, *, window: str = "30d") -> ActionResult:
 def bulk_send_to_review(cfg: Config, post_ids: list[str], *, reason: str) -> ActionResult:
     """R3/D7: the operator's wipe-and-revert flow as a first-class API. For each id move
     state -> awaiting_approval and clear the post-publish telemetry (scheduled_time,
-    public_url, metrics, published_at). The session's hand-edited 67-post revert becomes
+    public_url, metrics, published_at) AND the failure latch (error_reason — RC-8: it is a
+    status/suppression field, not lineage, so a reverted post never carries a stale one into
+    Review). The session's hand-edited 67-post revert becomes
     one atomic call. Best-effort: known ids are moved; unknown ids surface in the result
     (operator typo never passes for success). Atomic per id (one transaction holding the
     flock for the whole batch). The reason field is the operator's intent — pinned in the
@@ -946,6 +948,7 @@ def bulk_send_to_review(cfg: Config, post_ids: list[str], *, reason: str) -> Act
                 p.public_url = ""
                 p.metrics = {}
                 p.published_at = None
+                p.error_reason = None                       # RC-8: the failure latch is status, not lineage — clear it on revert
                 # Don't touch submission_id / batch_id — keep the lineage so the operator can
                 # see "this post was once part of batch X" in the audit / Posted history.
                 moved.append(pid)
