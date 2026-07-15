@@ -250,12 +250,25 @@ def _pr_changed_files(pr_number: str) -> list:
 
 
 def _pr_checks_green(pr_number: str) -> tuple:
-    """(ok, why): every reported check on the PR is green (best-effort via gh; fail closed)."""
+    """(ok, why): the PR's REQUIRED checks are green (best-effort via gh; fail closed). The gate
+    mirrors branch protection, never stricter — optional/advisory checks (e.g. CodeRabbit) must
+    NEVER block a land. Repos with no required checks configured fall back to ALL checks (fail
+    closed beats landing blind) with a pointer to the durable fix."""
+    def _tail(o):
+        lines = [ln.strip() for ln in ((o.stdout or "") + (o.stderr or "")).strip().splitlines() if ln.strip()]
+        return "; ".join(lines[-3:]) if lines else f"gh exit {o.returncode}"
     try:
-        out = subprocess.run(["gh", "pr", "checks", pr_number], capture_output=True, text=True, timeout=45)
-        if out.returncode == 0: return True, "checks green"
-        tail = [ln.strip() for ln in (out.stdout or out.stderr).strip().splitlines() if ln.strip()]
-        return False, "PR checks are not green (" + ("; ".join(tail[-3:]) if tail else f"gh exit {out.returncode}") + ")"
+        out = subprocess.run(["gh", "pr", "checks", pr_number, "--required"],
+                             capture_output=True, text=True, timeout=45)
+        if out.returncode == 0: return True, "required checks green"
+        if "no required checks" in ((out.stdout or "") + (out.stderr or "")).lower():
+            out = subprocess.run(["gh", "pr", "checks", pr_number],
+                                 capture_output=True, text=True, timeout=45)
+            if out.returncode == 0: return True, "checks green (no required checks configured)"
+            return False, ("PR checks are not green and the repo has NO required checks configured ("
+                           + _tail(out) + ") — mark the real gates (unit/e2e/lane-guard) as required "
+                           "in branch protection so advisory bots can never block a land")
+        return False, "required PR checks are not green (" + _tail(out) + ")"
     except Exception:
         return False, "PR checks unverifiable (gh unavailable) — fail closed"
 
