@@ -53,13 +53,20 @@ duplicate_groups:
   arch-drift-policy:
     reason: >-
       One architecture-governance implementation (tools/arch policy + drift + registries). Model A
-      (ADR-0101) makes ARCH-GATE the authoritative REQUIRED merge-gate for it; the unit-lane arch tests
-      are scoped to DISTINCT invariants so the two required contexts do not duplicate.
+      (ADR-0101) makes ARCH-GATE the authoritative REQUIRED merge-gate for it. But ARCH-GATE is NOT a
+      required context until Phase E (mutation M1); until then the unit lane is the ONLY required line
+      enforcing arch drift/policy/registries, so the overlap is deliberately RETAINED here as intentional,
+      justified redundancy — not silent duplication. De-dup is deferred to a post-M1 follow-up.
     members: [ARCH-GATE, CI-UNIT-ARCHGOV]
     distinct_boundaries:
-      ARCH-GATE: "REQUIRED — the authoritative merge-gate for arch drift + policy + registries (runs `tools.arch ci` on every PR)."
-      CI-UNIT-ARCHGOV: "scoped by SLICE-ARCH-MODEL to invariants gate does NOT run — regeneration determinism, generated-artifacts-are-a-pure-function-of-source, rule reachability, field-authority; NOT a second block of drift/policy/registries."
-    remediation: "RESOLVED = Model A. SLICE-ARCH-MODEL (Phase D) scopes the unit-lane arch tests to the distinct invariants above; if clean separation proves impractical, the residual overlap stays here as explicit, justified redundancy."
+      ARCH-GATE: "REQUIRED at Phase E — the authoritative merge-gate for arch drift + policy + registries (runs `tools.arch ci` on every PR)."
+      CI-UNIT-ARCHGOV: "carries the invariants gate does NOT run (regeneration determinism, generated-artifacts-are-a-pure-function-of-source, rule reachability, field-authority) AND, RETAINED through Phase E, the drift/policy/registries checks — the sole REQUIRED arch enforcement until ARCH-GATE becomes a required context."
+    remediation: >-
+      Model A is the DECIDED end-state; the overlap is a KNOWN, retained redundancy, NOT resolved-away.
+      SLICE-ARCH-MODEL (Phase D) records it here truthfully. De-duplication — scoping the unit lane down
+      to only the four distinct invariants — is DEFERRED to a post-M1 follow-up: removing the overlap
+      before ARCH-GATE is a proven-required, stable context would leave arch drift/policy/registries with
+      NO required enforcement (an enforcement gap). Accepted residual until then.
   negative-controls:
     reason: "One selftest.detect implementation invoked via two harnesses (pytest test case + CLI verb)."
     members: [CI-E2E-NEGCONTROLS, ARCH-CONTROLS]
@@ -262,8 +269,8 @@ controls:
     trigger: [pull_request, push]
     classification: required
     runtime_class: fast
-    justification: "the unit-lane arch tests. Under Model A (ADR-0101) the AUTHORITATIVE arch merge-gate is ARCH-GATE (required); SLICE-ARCH-MODEL scopes this collection to the DISTINCT invariants gate does not run (determinism, pure-function-of-source, reachability, field-authority)."
-    deletion_consequence: "the distinct unit-lane invariants (determinism, pure-function-of-source, reachability, field-authority) lose their check; arch drift/policy/registries remain covered by the required ARCH-GATE."
+    justification: "the unit-lane arch tests. Model A (ADR-0101) names ARCH-GATE the AUTHORITATIVE arch merge-gate, but ARCH-GATE is not a required context until Phase E (M1) — so TODAY this collection is the sole REQUIRED enforcement of arch drift/policy/registries, AND it carries the distinct invariants gate does not run (determinism, pure-function-of-source, reachability, field-authority). The overlap is retained (duplicate_group arch-drift-policy), not scoped away; de-dup is a post-M1 follow-up."
+    deletion_consequence: "TODAY (ARCH-GATE not yet required): arch drift/policy/registries lose their ONLY required enforcement AND the distinct invariants (determinism, pure-function-of-source, reachability, field-authority) lose their check. Post-Phase-E, once ARCH-GATE is a required context, deletion would drop only the four distinct invariants — which is why de-dup is deferred to then."
     duplicate_group: arch-drift-policy
     adr: [ADR-0100, ADR-0101]
     failure_evidence: "test_no_blocking_policy_findings / test_derived_artifacts_are_not_stale fail on an injected defect; the negative-control suite proves the validators discriminate."

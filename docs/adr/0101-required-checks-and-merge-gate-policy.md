@@ -50,17 +50,21 @@ audit) — stays advisory until its failure policy is separately approved** (a d
 promoted here). **Local-only:** `LOCAL-RUFF-PRECOMMIT`, `LOCAL-CHECK-SH`, `LOCAL-SECRETSCAN`.
 
 **2 · No duplicate sub-gate is required merely because it runs separately.** Sub-gates block
-*transitively* through their parent required job and are never their own GitHub context. With
-`gate` now required, **architecture-governance enforcement is owned by `gate` (Model A)** — the
-authoritative merge-blocking path. `SLICE-ARCH-MODEL` (Phase D) ensures the unit-lane arch tests do not
-constitute a *second required* enforcement of the same drift/policy/registries invariant: the
-unit-collected `test_arch_governance.py` is scoped to the invariants `gate` does **not** run
-(regeneration determinism, generated-artifacts-are-a-pure-function-of-source, rule reachability,
-field-authority), which are **distinct** invariants — or, if clean separation proves impractical, the
-overlap is recorded as an explicit `duplicate_group` with a stated distinct boundary. The negative
-controls (validator-effectiveness) remain a distinct invariant carried by `CI-E2E`; the advisory
-`ARCH-CONTROLS` reduces to a reachability assertion (`SLICE-NEGCTRL-DEDUP`). Net: five required
-contexts, five distinct invariants, no required duplicate.
+*transitively* through their parent required job and are never their own GitHub context. Under Model A,
+**architecture-governance enforcement is owned by `gate`** — the authoritative merge-blocking path —
+**once `gate` is a required context (Phase E, mutation M1)**. Until then, the unit-collected
+`test_arch_governance.py` is the *only* required line enforcing arch drift/policy/registries, so its
+overlap with `gate` is deliberately **retained** — recorded as the `arch-drift-policy` `duplicate_group`
+with a stated distinct boundary, not silent duplication. `test_arch_governance.py` also carries the
+invariants `gate` does **not** run (regeneration determinism, generated-artifacts-are-a-pure-function-of-source,
+rule reachability, field-authority), which are **distinct**. `SLICE-ARCH-MODEL` (Phase D) records this
+truthfully; **de-duplication** — scoping the unit lane down to only those distinct invariants — is a
+**post-M1 follow-up**, because removing the overlap before `gate` is a proven-required, stable context
+would leave arch drift/policy/registries with **no required enforcement** (an enforcement gap). The
+negative controls (validator-effectiveness) remain a distinct invariant carried by `CI-E2E`; the advisory
+`ARCH-CONTROLS` reduces to a reachability assertion (`SLICE-NEGCTRL-DEDUP`). Net at Phase-E completion:
+five required contexts, five distinct invariants, no required duplicate — the transitional overlap is a
+tracked, accepted residual until the post-M1 de-dup.
 
 **3 · Reconciliation** (`intended_required_contexts` == live) is proven by **DC-3** (authenticated,
 scheduled). **Anti-detach** by **DC-1** (static, per-PR): a rename not mirrored in branch protection +
