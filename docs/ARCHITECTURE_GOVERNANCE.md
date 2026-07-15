@@ -4,7 +4,7 @@
 
 # FanOps — Architecture & Implementation Governance
 
-**Source fingerprint `93ae68c36762a46e` · generator `arch/1.0.0`**
+**Source fingerprint `9034762b83f0c6e4` · generator `arch/1.0.0`**
 
 Regenerate: `python -m tools.arch regen`
 
@@ -61,7 +61,7 @@ Regenerate: `python -m tools.arch regen`
 | lock sites | **22** |
 | mkdtemp sites | **2** |
 | network sites literal requests | **15** |
-| rmtree sites | **3** |
+| rmtree sites | **5** |
 | subprocess sites | **35** |
 
 > meta_graph uses an INJECTABLE `get` (so tests never touch the network). It is a real network seam and a literal `requests.*` census does NOT see it. Recorded here so the census is not mistaken for the whole truth.

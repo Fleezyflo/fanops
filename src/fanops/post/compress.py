@@ -1,5 +1,6 @@
 """Fail-open video shrink for upload caps (Zernio TikTok 413)."""
 from __future__ import annotations
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -8,7 +9,12 @@ from fanops.log import get_logger
 
 
 def maybe_shrink_for_cap(cfg: Config, path: Path, cap: int, *, label: str = "upload") -> Path:
-    """Return `path` if within cap, else a re-encoded temp file under cap. Fail-open to `path` on error."""
+    """Return `path` if within cap, else a re-encoded file under cap. Fail-open to `path` on error.
+
+    RC-10: the per-call scratch dir lives in a try/finally so it NEVER outlives the call (it used to
+    leak a `fanops-shrink-*` dir into 04_agent_io on every over-cap attempt). The winning encode is
+    promoted OUT of the scratch — an atomic same-fs `replace` to a DETERMINISTIC 04_agent_io path, so a
+    retry OVERWRITES rather than proliferating — before the scratch is removed."""
     try:
         size = path.stat().st_size
     except OSError:
@@ -19,23 +25,28 @@ def maybe_shrink_for_cap(cfg: Config, path: Path, cap: int, *, label: str = "upl
     shrink_root = cfg.base / "04_agent_io"
     shrink_root.mkdir(parents=True, exist_ok=True)
     tmp = Path(tempfile.mkdtemp(prefix="fanops-shrink-", dir=str(shrink_root)))
-    for crf in (28, 32, 36, 40):
-        out = tmp / f"{path.stem}.crf{crf}.mp4"
-        cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", str(path),
-               "-c:v", "libx264", "-preset", "fast", "-crf", str(crf),
-               "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", str(out)]
-        try:
-            r = subprocess.run(cmd, capture_output=True, timeout=600)
-        except Exception as exc:
-            log(label, path.stem, "shrink_failed", err=str(exc)[:120])
-            return path
-        if r.returncode != 0 or not out.exists() or out.stat().st_size == 0:
-            continue
-        if out.stat().st_size <= cap:
-            log(label, path.stem, "shrink_ok", was=size, now=out.stat().st_size, crf=crf)
-            return out
-    log(label, path.stem, "shrink_still_oversize", was=size, cap=cap)
-    return path
+    try:
+        for crf in (28, 32, 36, 40):
+            out = tmp / f"{path.stem}.crf{crf}.mp4"
+            cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", str(path),
+                   "-c:v", "libx264", "-preset", "fast", "-crf", str(crf),
+                   "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", str(out)]
+            try:
+                r = subprocess.run(cmd, capture_output=True, timeout=600)
+            except Exception as exc:
+                log(label, path.stem, "shrink_failed", err=str(exc)[:120])
+                return path
+            if r.returncode != 0 or not out.exists() or out.stat().st_size == 0:
+                continue
+            if out.stat().st_size <= cap:
+                dest = shrink_root / out.name                # promote the winner OUT of the per-call scratch
+                out.replace(dest)                            # atomic same-fs move; deterministic name (retry overwrites)
+                log(label, path.stem, "shrink_ok", was=size, now=dest.stat().st_size, crf=crf)
+                return dest
+        log(label, path.stem, "shrink_still_oversize", was=size, cap=cap)
+        return path
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)               # the scratch NEVER outlives the call (RC-10)
 
 
 def media_path_for_post(cfg: Config, led, post) -> Path | None:

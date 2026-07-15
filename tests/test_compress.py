@@ -1,9 +1,10 @@
 """Oversize shrink helpers — cap gate, path resolution, ledger persist (no live ffmpeg required)."""
+from pathlib import Path
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Post, PostState, Platform, Render, RenderState
 from fanops.post.compress import (media_path_for_post, upload_cap_bytes, apply_shrink_to_post,
-                                  persist_post_shrink, publish_backend_for_post)
+                                  persist_post_shrink, publish_backend_for_post, maybe_shrink_for_cap)
 from fanops.accounts import add_account, set_backend
 
 
@@ -161,3 +162,63 @@ def test_publish_due_persists_shrunk_render_path(tmp_path, monkeypatch, mocker):
     led2 = Ledger.load(cfg)
     assert led2.renders["r1"].path == str(shrunk)  # shrink persisted to ledger
     assert led2.posts["p"].media_urls == ["https://media.zernio.com/v.mp4"]  # upload replaced file://
+
+
+# ── RC-10 (S09): maybe_shrink_for_cap's per-call scratch dir must never outlive the call ──────────
+# The helper mkdtemp'd a `fanops-shrink-*` dir under 04_agent_io on every over-cap attempt and NEVER
+# removed it. These mock ffmpeg (no live encoder) and assert the scratch is gone on every exit path.
+
+def _shrink_dirs(cfg):
+    root = cfg.base / "04_agent_io"
+    return sorted(root.glob("fanops-shrink-*")) if root.exists() else []
+
+
+def test_shrink_failure_removes_scratch_dir(tmp_path, mocker):
+    # FAILS BEFORE / PASSES AFTER: ffmpeg can't get under cap -> fail-open to the original path AND the
+    # per-call scratch dir is removed (it used to leak forever).
+    cfg = Config(root=tmp_path)
+    src = tmp_path / "big.mp4"; src.write_bytes(b"X" * 5000)
+    mocker.patch("fanops.post.compress.subprocess.run", return_value=mocker.Mock(returncode=1))
+    out = maybe_shrink_for_cap(cfg, src, cap=1000, label="t")
+    assert out == src                                            # fail-open contract preserved
+    assert _shrink_dirs(cfg) == []                              # RC-10: no leaked scratch dir
+
+
+def test_shrink_exception_removes_scratch_dir(tmp_path, mocker):
+    # fail-open on a raised encoder AND the scratch is still removed (finally, not a happy-path cleanup).
+    cfg = Config(root=tmp_path)
+    src = tmp_path / "big.mp4"; src.write_bytes(b"X" * 5000)
+    mocker.patch("fanops.post.compress.subprocess.run", side_effect=OSError("boom"))
+    out = maybe_shrink_for_cap(cfg, src, cap=1000, label="t")
+    assert out == src
+    assert _shrink_dirs(cfg) == []
+
+
+def test_shrink_success_promotes_winner_and_removes_scratch(tmp_path, mocker):
+    # On success the returned file lives OUTSIDE any per-call scratch (a deterministic 04_agent_io path)
+    # and no fanops-shrink-* dir remains.
+    cfg = Config(root=tmp_path)
+    src = tmp_path / "big.mp4"; src.write_bytes(b"X" * 5000)
+    def _ffmpeg(cmd, **kw):
+        Path(cmd[-1]).write_bytes(b"s" * 100)                   # the encoder writes a small file under cap
+        return mocker.Mock(returncode=0)
+    mocker.patch("fanops.post.compress.subprocess.run", side_effect=_ffmpeg)
+    out = maybe_shrink_for_cap(cfg, src, cap=1000, label="t")
+    assert out.exists() and out.stat().st_size <= 1000          # a real shrunk file, under cap
+    assert "fanops-shrink-" not in str(out)                     # promoted OUT of the per-call scratch
+    assert out.parent == (cfg.base / "04_agent_io")             # deterministic home
+    assert _shrink_dirs(cfg) == []                              # RC-10: scratch removed
+
+
+def test_shrink_success_deterministic_no_proliferation(tmp_path, mocker):
+    # Re-shrinking the SAME source returns the SAME path (overwrite) — the leak cannot re-accumulate.
+    cfg = Config(root=tmp_path)
+    src = tmp_path / "big.mp4"; src.write_bytes(b"X" * 5000)
+    def _ffmpeg(cmd, **kw):
+        Path(cmd[-1]).write_bytes(b"s" * 100)
+        return mocker.Mock(returncode=0)
+    mocker.patch("fanops.post.compress.subprocess.run", side_effect=_ffmpeg)
+    a = maybe_shrink_for_cap(cfg, src, cap=1000, label="t")
+    b = maybe_shrink_for_cap(cfg, src, cap=1000, label="t")
+    assert a == b                                               # deterministic dest — no new dir on retry
+    assert _shrink_dirs(cfg) == []
