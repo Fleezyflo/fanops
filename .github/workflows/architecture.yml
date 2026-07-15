@@ -137,7 +137,9 @@ jobs:
       - name: Why
         run: echo "deep gate = ${{ steps.select.outputs.run }} — ${{ steps.select.outputs.why }}"
 
-      # 21 injected defects, each asserting its rule fires with evidence that was ABSENT before.
+      # Each negative control injects one defect and asserts its rule fires on evidence that was
+      # ABSENT before. The authoritative COUNT lives in tools/arch/selftest.py::CONTROLS — a bare
+      # number here would rot (this file's own AR-03 / lines 12-13), so it is deliberately absent.
       # A MISSED control means the rule it names is DECORATIVE — claimed in the policy set but not
       # actually firing. That is worse than no rule: it manufactures confidence. (This gate caught
       # exactly that in its own IMPL-007 on the first run.)
