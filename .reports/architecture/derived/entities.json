@@ -16,7 +16,7 @@
     ],
     "fanops.framing_outcomes": [
       {
-        "line": 45,
+        "line": 47,
         "members": [
           "CV2_UNAVAILABLE",
           "DETECTION_RAISED",
@@ -42,8 +42,9 @@
         "name": "FramingEventType"
       },
       {
-        "line": 87,
+        "line": 89,
         "members": [
+          "CENTERED_MULTI_UNTRACKED",
           "CENTERED_NO_SUBJECT",
           "DETECTED_MULTI",
           "DETECTED_SINGLE",
@@ -54,7 +55,7 @@
         "name": "FramingOutcome"
       },
       {
-        "line": 103,
+        "line": 106,
         "members": [
           "CENTERED",
           "MOTION_SALIENCY",
@@ -64,7 +65,7 @@
         "name": "FramingStrategy"
       },
       {
-        "line": 110,
+        "line": 113,
         "members": [
           "COMPLETED",
           "FAILED",

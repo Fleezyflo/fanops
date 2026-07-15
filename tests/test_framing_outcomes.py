@@ -195,20 +195,29 @@ def test_ct_multi_track_FAILED_plus_no_face_is_unresolved_not_centred(cfg, monke
     assert r.final_outcome is _FO.UNRESOLVED and r.root_cause is _FE.STRATEGY_RAISED
 
 
-def test_ct_multi_track_COMPLETED_no_track_plus_no_face_IS_centred(cfg, monkeypatch):
-    """COMPLETED-with-a-negative is NOT failure. This distinction is the whole design."""
+def test_ct_multi_track_COMPLETED_no_track_is_conservative_centre(cfg, monkeypatch):
+    """E3: a real 2-shot with no clean track is CONSERVATIVELY CENTRED (both seats), never a one-person
+    static lock that would crop the other speaker out. subject_focus is not part of the MULTI route, so
+    exactly ONE attempt runs (speaker_track, COMPLETED with a conclusive no_track). Still a LEGITIMATE
+    centre — a completed negative, not a failure."""
     _stub(monkeypatch, detect_window=_STATS, classify_window=CT_MULTI,
           speaker_track=([_FE.NO_TRACK], None), subject_focus=([_FE.NO_FACE], None))
     r = framing._resolve(cfg, _Src(), 0.0, 10.0, capture_failures=True)
-    assert r.final_outcome is _FO.CENTERED_NO_SUBJECT
-    assert [a.state for a in r.attempts] == [StrategyState.COMPLETED, StrategyState.COMPLETED]
+    assert r.final_outcome is _FO.CENTERED_MULTI_UNTRACKED and r.root_cause is None
+    assert r.final_outcome in LEGITIMATE_CENTER_OUTCOMES
+    assert r.as_tuple() == (None, None, None)
+    assert [a.state for a in r.attempts] == [StrategyState.COMPLETED]     # ONLY speaker_track — no subject_focus
 
 
-def test_earlier_required_failure_then_success_is_resolved_but_degraded(cfg, monkeypatch):
+def test_ct_multi_track_hard_fail_is_unresolved_never_degraded_single(cfg, monkeypatch):
+    """E3: a MULTI whose track HARD-FAILS is UNRESOLVED — it no longer falls to a degraded one-person lock
+    (the pilot's 'empty seat'). subject_focus is not run; the failed required track pins the outcome, and
+    the centre we return is NOT a defensible one (a broken toolchain never licenses a centre)."""
     _stub(monkeypatch, detect_window=_STATS, classify_window=CT_MULTI,
           speaker_track=([_FE.STRATEGY_RAISED], None), subject_focus=([_FE.FOCUS_PLACED], _FOCUS))
     r = framing._resolve(cfg, _Src(), 0.0, 10.0, capture_failures=True)
-    assert r.final_outcome is _FO.DETECTED_SINGLE
+    assert r.final_outcome is _FO.UNRESOLVED and r.root_cause is _FE.STRATEGY_RAISED
+    assert r.as_tuple() == (None, None, None)                 # NOT the _FOCUS single lock the old routing produced
     assert r.degraded_strategies == (_FS.SPEAKER_TRACK,)
 
 
@@ -341,10 +350,19 @@ def test_layer1_distinguishes_return_from_raise():
     assert results == {"return", "raise"}, "the fixture must record BOTH escapes and returns"
 
 
-@pytest.mark.parametrize("sid", [s["id"] for s in _layer1()["scenarios"]])
+# E3 is the FIRST deliberate behaviour change since the legacy characterization: a CT_MULTI window with no
+# clean active-speaker track now CENTRES (both seats) instead of falling to a one-person subject_focus lock.
+# These two legacy scenarios therefore MUST diverge; every OTHER scenario is still reproduced exactly. The
+# legacy fixture is left BYTE-IDENTICAL — its checksum + provenance still attest the old behaviour truthfully;
+# we do not relabel history, we enumerate exactly where we departed from it.
+_E3_DIVERGED = {"ct_multi_no_track_then_focus", "ct_multi_no_track_no_focus"}
+
+
+@pytest.mark.parametrize("sid", [s["id"] for s in _layer1()["scenarios"] if s["id"] not in _E3_DIVERGED])
 def test_layer1_new_routing_reproduces_legacy_exactly(sid, tmp_path, monkeypatch):
-    """FOR THE COMMITTED CHARACTERIZATION SCENARIOS the new routing reproduces the legacy resolver's
-    directly observed tuple, call sequence, call arguments and escaped-exception behaviour.
+    """FOR THE COMMITTED CHARACTERIZATION SCENARIOS (except the E3-diverged two, pinned separately below) the
+    new routing reproduces the legacy resolver's directly observed tuple, call sequence, call arguments and
+    escaped-exception behaviour.
 
     Scenario-scoped by construction — this is not a claim of universal equivalence."""
     sys.path.insert(0, str(_ROOT / "scripts"))
@@ -354,6 +372,25 @@ def test_layer1_new_routing_reproduces_legacy_exactly(sid, tmp_path, monkeypatch
     now = run_scenario(scenario, resolve=clipmod._resolve_framing, framing_mod=framing, cfg_cls=Config)
     assert now["result"] == scenario["observed"]["result"], "the returned 3-tuple / escaped exception changed"
     assert now["calls"] == scenario["observed"]["calls"], "the call sequence or its arguments changed"
+
+
+@pytest.mark.parametrize("sid", sorted(_E3_DIVERGED))
+def test_layer1_E3_intentionally_diverges_from_legacy(sid, tmp_path, monkeypatch):
+    """The E3 carve-out, pinned explicitly. For each diverged legacy scenario: the legacy resolver CALLED
+    subject_focus (and, for ..._then_focus, returned its one-person lock); the new resolver stops after
+    speaker_track and returns the conservative centre (None, None, None) — no subject_focus call, no
+    one-person crop. This documents the departure without touching the frozen legacy evidence."""
+    sys.path.insert(0, str(_ROOT / "scripts"))
+    from gen_framing_vectors import run_scenario
+    monkeypatch.setenv("FANOPS_FIXTURE_ROOT", str(tmp_path))
+    scenario = next(s for s in _layer1()["scenarios"] if s["id"] == sid)
+    legacy = scenario["observed"]
+    now = run_scenario(scenario, resolve=clipmod._resolve_framing, framing_mod=framing, cfg_cls=Config)
+    assert any(c["fn"] == "subject_focus" for c in legacy["calls"]), "the legacy behaviour we departed from"
+    assert [c["fn"] for c in now["calls"]] == ["_framing_runtime_or_raise", "detect_window",
+                                               "classify_window", "speaker_track"]   # no subject_focus under E3
+    assert now["result"] == {"kind": "return", "value": [None, None, None]}          # conservative centre, both seats
+    assert (now["result"] != legacy["result"]) or (now["calls"] != legacy["calls"]), "must be a real divergence"
 
 
 def test_layer2_is_labelled_as_authored_not_observed():

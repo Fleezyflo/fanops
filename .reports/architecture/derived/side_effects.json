@@ -583,15 +583,15 @@
       },
       {
         "call": "subprocess.run",
-        "line": 481
+        "line": 534
       },
       {
         "call": "subprocess.run",
-        "line": 538
+        "line": 591
       },
       {
         "call": "subprocess.run",
-        "line": 546
+        "line": 599
       }
     ],
     "fanops.daemon": [

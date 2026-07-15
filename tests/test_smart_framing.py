@@ -165,12 +165,13 @@ def test_subject_focus_non_positive_window_is_none(tmp_path):
     assert framing.subject_focus(cfg, src, start=5.0, end=5.0) is None
 
 def test_subject_focus_returns_median_quad(tmp_path, monkeypatch):
-    # NEW shape (fx,fy,fh,ey): the dominant (largest-fh) face's median over the window, read from detect stats.
+    # shape (fx,fy,fh,ey,fw): the dominant (largest-fh) face's median over the window. Legacy 4-tuple stats
+    # carry no width, so fw is None (the clip geometry then falls back to today's centering on that axis).
     cfg = Config(root=tmp_path)
     src = Source(id="s1", source_path="x.mp4", width=1920, height=1080, duration=60.0)
     stats = {"fps": 4.0, "frames": [[[0.8, 0.4, 0.2, 0.36]]] * 4 + [[]]}        # 4 of 5 frames have a face
     monkeypatch.setattr(framing, "detect_window", lambda *a, **k: stats)
-    assert framing.subject_focus(cfg, src, start=10.0, end=14.0) == (0.8, 0.4, 0.2, 0.36)
+    assert framing.subject_focus(cfg, src, start=10.0, end=14.0) == (0.8, 0.4, 0.2, 0.36, None)
 
 def test_subject_focus_picks_dominant_largest_face(tmp_path, monkeypatch):
     # two faces per frame -> the LARGER (fh) one is the subject for the static lock.
@@ -178,7 +179,7 @@ def test_subject_focus_picks_dominant_largest_face(tmp_path, monkeypatch):
     src = Source(id="s1", source_path="x.mp4", width=1920, height=1080, duration=60.0)
     stats = {"fps": 4.0, "frames": [[[0.2, 0.5, 0.10, 0.45], [0.8, 0.5, 0.30, 0.40]]] * 4}
     monkeypatch.setattr(framing, "detect_window", lambda *a, **k: stats)
-    fx, fy, fh, ey = framing.subject_focus(cfg, src, start=10.0, end=14.0)
+    fx, fy, fh, ey, fw = framing.subject_focus(cfg, src, start=10.0, end=14.0)
     assert fx == 0.8 and fh == 0.30                                             # the bigger face wins
 
 def test_subject_focus_low_confidence_is_none(tmp_path, monkeypatch):
@@ -610,15 +611,20 @@ def test_resolve_multi_uses_track(tmp_path, monkeypatch):
     focus, track, ct = _resolve_framing(cfg, src, 0.0, 10.0)
     assert track and focus is None and ct == framing.CT_MULTI
 
-def test_resolve_multi_falls_to_single_when_track_refuses(tmp_path, monkeypatch):
+def test_resolve_multi_no_track_centres_conservatively(tmp_path, monkeypatch):
+    # E3: classified MULTI but no clean 2-shot track -> conservative CENTRE (both seats), NOT a one-person
+    # subject lock that would crop the other speaker out. subject_focus must NOT be called for a MULTI window.
     from fanops.clip import _resolve_framing
     cfg = Config(root=tmp_path); src = _talk_src()
-    monkeypatch.setattr(framing, "detect_window", lambda *a, **k: {"frames": []})
+    called = {"focus": False}
+    monkeypatch.setattr(framing, "detect_window", lambda *a, **k: {"frames": [[[0.2, 0.5, 0.2, 0.45]]]})
     monkeypatch.setattr(framing, "classify_window", lambda *a, **k: framing.CT_MULTI)
     monkeypatch.setattr(framing, "speaker_track", lambda *a, **k: None)        # not a real 2-shot
-    monkeypatch.setattr(framing, "subject_focus", lambda *a, **k: (0.5, 0.5, 0.22, 0.4))
-    focus, track, ct = _resolve_framing(cfg, src, 0.0, 10.0)
-    assert track is None and focus == (0.5, 0.5, 0.22, 0.4) and ct == framing.CT_SINGLE
+    def _focus(*a, **k):
+        called["focus"] = True; return (0.5, 0.5, 0.22, 0.4)
+    monkeypatch.setattr(framing, "subject_focus", _focus)
+    assert _resolve_framing(cfg, src, 0.0, 10.0) == (None, None, None)         # centred, both seats
+    assert called["focus"] is False                                           # E3: subject_focus not run for MULTI
 
 def test_resolve_single_uses_focus(tmp_path, monkeypatch):
     from fanops.clip import _resolve_framing
@@ -1065,7 +1071,7 @@ def test_subject_focus_picks_real_speaker_over_phantom(tmp_path, monkeypatch):
     phantom   = [0.75, 0.48, 0.06, 0.43, 0.64]   # phantom near right edge
     stats = {"fps": 4.0, "frames": [[real_face, phantom]] * 4}
     monkeypatch.setattr(framing, "detect_window", lambda *a, **k: stats)
-    fx, fy, fh, ey = framing.subject_focus(cfg, src, start=10.0, end=14.0)
+    fx, fy, fh, ey, fw = framing.subject_focus(cfg, src, start=10.0, end=14.0)
     assert abs(fx - 0.30) < 0.01, f"real speaker at x=0.30 must win; got fx={fx}"
 
 def test_detect_window_stores_score_in_sidecar(tmp_path, monkeypatch):
@@ -1084,6 +1090,70 @@ def test_detect_window_stores_score_in_sidecar(tmp_path, monkeypatch):
     cached = json.loads(sidecar.read_text())
     assert cached["v"] == framing._DETECT_V
     assert len(cached["windows"]["10.0-14.0"]["frames"][0][0]) == 6
+
+
+# ---- E1b + E2 mechanical invariants (crop coordinates + classification; no ffmpeg) — contract §6 ----
+def test_e1b_safe_area_keeps_face_box_inside_with_margin():
+    # SAFE-AREA: the emitted crop contains the FULL detected face box with >= margin M on every edge (fails-
+    # before: the origin was clamped only to source bounds, so an off-centre cheek reached the frame edge).
+    sw, sh, tw, th = 1920, 1080, 1080, 1920
+    fx, fy, fh, ey, fw = 0.66, 0.46, 0.30, 0.42, 0.18
+    cw, ch, x, y = clipmod._crop_box(fx, fy, fh, ey, sw, sh, tw, th, sh, clipmod._FACE_FRAC_TALK, clipmod._ZOOM_MAX, fw)
+    mw, mv = clipmod._SAFE_MARGIN_FRAC * sw, clipmod._SAFE_MARGIN_FRAC * sh
+    fl, fr, ft, fb = (fx - fw / 2) * sw, (fx + fw / 2) * sw, (fy - fh / 2) * sh, (fy + fh / 2) * sh
+    assert x + mw <= fl + 1 and fr <= x + cw - mw + 1          # L/R face edges inside with the horizontal margin
+    assert y + mv <= ft + 1 and fb <= y + ch - mv + 1          # head-top / chin inside with the vertical margin
+
+def test_e1b_zoom_backoff_widens_never_cuts():
+    # ZOOM-BACKOFF: a face too WIDE to fit at the target zoom -> the crop widens (ch grows past the target-
+    # fraction zoom), never a face-cutting crop; still bounded by the source baseline.
+    sw, sh, tw, th = 1920, 1080, 1080, 1920
+    fx, fy, fh, ey, fw = 0.5, 0.46, 0.24, 0.42, 0.30          # a wide face (fw=0.30)
+    target_ch = clipmod._zoom_h(sh, sh, fh, clipmod._FACE_FRAC_TALK,
+                                zoom_max=clipmod._adaptive_zoom_max(fh, clipmod._ZOOM_MAX))
+    cw, ch, x, y = clipmod._crop_box(fx, fy, fh, ey, sw, sh, tw, th, sh, clipmod._FACE_FRAC_TALK, clipmod._ZOOM_MAX, fw)
+    assert ch > target_ch                                      # backed off (widened) to fit the wide face
+    assert ch <= sh and cw <= sw                              # never beyond the source
+    fl, fr = (fx - fw / 2) * sw, (fx + fw / 2) * sw
+    assert fl >= x - 1 and fr <= x + cw + 1                   # the face is fully inside the crop (never cut)
+
+def test_e1b_headroom_clamp_protects_the_head():
+    # HEADROOM: crop_top <= head_top - headroom. A naive eyeline placement that would clip the head is pulled
+    # UP by the safe-area clamp (fails-before: headroom was a fixed eyeline fraction, so a tall head clipped).
+    sw, sh, cw, ch = 1920, 1080, 380, 675
+    fx, fy, fh, ey, fw = 0.5, 0.5, 0.22, 0.611, 0.08
+    mv = clipmod._SAFE_MARGIN_FRAC * sh
+    head_top = (fy - fh / 2) * sh
+    _, y_safe = clipmod._safe_origin(sw, sh, cw, ch, fx, fy, fh, ey, fw, clipmod._EYELINE_FRAC)
+    _, y_naive = clipmod._place(sw, sh, cw, ch, fx, ey, clipmod._EYELINE_FRAC)
+    assert y_safe <= head_top - mv + 1                        # headroom preserved
+    assert y_safe < y_naive                                   # the clamp actively moved the crop up off the head
+
+def test_e1b_no_regression_centered_and_2tuple_byte_identical():
+    # NO-REGRESSION: centered (focus=None) and a 2-tuple focus (no face size) render byte-identical to the
+    # pre-E1b crop, so their stored fingerprints stay valid and nothing needlessly re-renders.
+    assert reframe_filter("9:16", 1920, 1080) == "crop=ih*1080/1920:ih,scale=1080:1920,setsar=1"
+    assert reframe_filter("9:16", 1920, 1080, focus=(0.8, 0.5)) == "crop=ih*1080/1920:ih:1232:0,scale=1080:1920,setsar=1"
+    assert reframe_filter("9:16", 1080, 2400, top_bias=True) == \
+        "crop=iw:iw*1920/1080:0:(ih-iw*1920/1080)/4,scale=1080:1920,setsar=1"
+
+def test_e2_two_cluster_recall_promotes_intermittent_two_shot():
+    # RECALL: a two-shot where the 2nd host is dominant only INTERMITTENTLY -> median face count is 1 (the old
+    # undercount -> CT_SINGLE), but the L/R clustering recalls it as CT_MULTI when speech is present.
+    from tests.fixtures.speech_segments import talk_seg
+    L = [0.24, 0.50, 0.24, 0.45, 0.88]
+    R_big = [0.78, 0.46, 0.22, 0.42, 0.85]                    # 2nd host clearly present
+    R_small = [0.79, 0.47, 0.09, 0.42, 0.62]                  # 2nd host turned/distant (below the RELATIVE phantom gate)
+    st = _stats([[L, R_big], [L, R_small], [L, R_small], [L, R_big], [L, R_small]])
+    assert framing._face_count(st) == 1                       # median-count undercounts the 2nd host
+    assert framing._two_cluster(st) is True                   # but the L/R clustering recalls the two-shot
+    src = _talk_src(transcript=[talk_seg("so tell me about the record", start=10.0, end=13.5)])
+    assert framing.classify_window(None, src, start=10.0, end=14.0, stats=st) == framing.CT_MULTI
+
+def test_e2_two_cluster_rejects_centered_single_face_jitter():
+    # a single near-centre face whose cx jitters across the split must NOT become two clusters (the dead zone).
+    st = _stats([[[0.48, 0.5, 0.24, 0.45, 0.9]], [[0.52, 0.5, 0.24, 0.45, 0.9]]] * 3)
+    assert framing._two_cluster(st) is False
 
 
 # ---- E4 real-tooling proof: the concat render path under REAL ffmpeg (a command-construction test is blind

@@ -19,8 +19,10 @@ Two vocabularies, deliberately distinct:
   * `FramingEventType` — DIAGNOSTIC. Appended by the lower layers (keyframes, the detector, each
     strategy) as they run. Authorizes nothing. Many per resolution.
   * `FramingOutcome` — FINAL. Set ONCE by the resolver, after routing completes. Exactly one per
-    resolution. `CENTERED_NO_SUBJECT` is the ONLY legitimate centre; everything a hard failure
-    touched is `UNRESOLVED` and carries its `root_cause`.
+    resolution. There are TWO legitimate centres — `CENTERED_NO_SUBJECT` (the detector completed and
+    found no subject) and `CENTERED_MULTI_UNTRACKED` (E3: a real two-shot we could not cleanly track,
+    conservatively centred so neither speaker is cropped out); everything a hard failure touched is
+    `UNRESOLVED` and carries its `root_cause`.
 
 DEPENDENCY-NEUTRAL BY CONTRACT: stdlib only. This module must NEVER import `framing`, `keyframes`,
 or `clip` — they import IT. That keeps the graph acyclic even through the lazy in-function imports
@@ -90,13 +92,14 @@ class FramingOutcome(str, Enum):
     DETECTED_SINGLE = "detected_single"           # a single subject -> static lock
     MUSIC_FOCUS = "music_focus"                   # a subject in a music/performance window
     MOTION_FOCUS = "motion_focus"                 # no face -> follow the action
-    CENTERED_NO_SUBJECT = "centered_no_subject"   # the ONLY legitimate centre
+    CENTERED_NO_SUBJECT = "centered_no_subject"   # a legitimate centre: the detector found no subject
+    CENTERED_MULTI_UNTRACKED = "centered_multi_untracked"  # E3: a real 2-shot with no clean track -> conservative centre
     UNRESOLVED = "unresolved"                     # carries root_cause: FramingEventType
 
 
 _FO = FramingOutcome
 RESOLVED_OUTCOMES = frozenset({_FO.DETECTED_MULTI, _FO.DETECTED_SINGLE, _FO.MUSIC_FOCUS, _FO.MOTION_FOCUS})
-LEGITIMATE_CENTER_OUTCOMES = frozenset({_FO.CENTERED_NO_SUBJECT})
+LEGITIMATE_CENTER_OUTCOMES = frozenset({_FO.CENTERED_NO_SUBJECT, _FO.CENTERED_MULTI_UNTRACKED})
 UNRESOLVED_OUTCOMES = frozenset({_FO.UNRESOLVED})
 
 

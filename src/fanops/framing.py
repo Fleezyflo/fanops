@@ -272,6 +272,7 @@ CT_SILENT = "silent"               # face, no speech, no vocal stem -> subject l
 CT_NOPEOPLE = "no-people"          # no face -> safe center / motion-saliency follow
 
 _PHANTOM_QUALITY_RATIO = 0.3  # min (score×fh) of a secondary face relative to the dominant to count as real
+_CLUSTER_MIN_FH = 0.06        # a face smaller than this is background/wall speck, not a seated host (E2 recall)
 
 def _pick_dominant_face(faces: list) -> list | None:
     """The single most-prominent face from a list: YuNet confidence score desc, face-height (area proxy)
@@ -295,6 +296,44 @@ def _face_count(stats: dict | None) -> int:
     counts = sorted(_real_n(fr) for fr in frames)
     return counts[len(counts) // 2]                           # median per-frame real-face count
 
+def _two_cluster(stats: dict | None) -> bool:
+    """E2 multi-person RECALL: True when two DISTINCT left/right face clusters persist across the sampled
+    frames — a real two-shot even when each host is only INTERMITTENTLY the dominant face (the undercount
+    the median-based _face_count suffers: a turned/distant 2nd host drops below the relative phantom gate in
+    ≥half the frames -> median 1 -> CT_SINGLE, cropping the other speaker out). A cluster on each side of the
+    split (dead zone ± _ASD_SAME_TOL to reject a single near-centre face whose cx jitters across 0.5) must be
+    (a) STRUCTURALLY present — a face ≥ _CLUSTER_MIN_FH in ≥ K occupied frames, with ≥1 frame where BOTH sides
+    co-occur (two SIMULTANEOUS faces, not one crossing the frame over time) — AND (b) a GENUINE face at its
+    PEAK: its best (score×fh) over the window must clear the phantom-quality gate relative to the window's
+    dominant. (b) is the RELAXATION of the phantom gate the recall needs (a real host clears it in even ONE
+    camera-facing frame, not the ≥half-frames the median demanded) WITHOUT admitting wall-art: a persistent
+    low-score/tiny decoy beside one speaker never peaks above the gate, so it stays a single-speaker phantom
+    (CT_SINGLE). Deterministic for a fixed window (no sampling, no randomness) — the stability the
+    requalification pins."""
+    frames = (stats or {}).get("frames") or []
+    occ = [fr for fr in frames if fr]
+    if len(occ) < 2:
+        return False
+    def _q(f):
+        return (f[4] if len(f) > 4 else 1.0) * f[2]           # score×fh (legacy no-score -> area only), like _face_count
+    dom_q = max((_q(f) for fr in occ for f in fr), default=0.0)
+    if dom_q <= 0:
+        return False
+    lo, hi = _ASD_SIDE_SPLIT - _ASD_SAME_TOL, _ASD_SIDE_SPLIT + _ASD_SAME_TOL
+    nL = nR = both = 0
+    peak_l = peak_r = 0.0
+    for fr in occ:
+        lf = [f for f in fr if f[0] < lo and f[2] >= _CLUSTER_MIN_FH]
+        rf = [f for f in fr if f[0] > hi and f[2] >= _CLUSTER_MIN_FH]
+        nL += bool(lf); nR += bool(rf); both += (bool(lf) and bool(rf))
+        if lf: peak_l = max(peak_l, max(_q(f) for f in lf))
+        if rf: peak_r = max(peak_r, max(_q(f) for f in rf))
+    k = max(2, round(_MIN_CONF * len(occ)))
+    gate = _PHANTOM_QUALITY_RATIO * dom_q
+    real_l = nL >= k and peak_l >= gate                       # present AND a genuine face at its peak (not wall-art)
+    real_r = nR >= k and peak_r >= gate
+    return real_l and real_r and both >= 1
+
 def classify_window(cfg, src, *, start: float, end: float, stats: dict | None, _trace=None) -> str:
     """Pure routing over the cached detect stats + trusted transcript: one of the five CT_* strings. No
     ffmpeg, no cv2. faces==0 -> no-people; faces>=2 + trusted speech -> multi-speaker-talk; 1 face +
@@ -307,11 +346,12 @@ def classify_window(cfg, src, *, start: float, end: float, stats: dict | None, _
     failed into: it pins final_outcome=UNRESOLVED with the real root_cause, so an empty room and a broken
     toolchain stop being the same answer."""
     faces = _face_count(stats)
-    if faces <= 0:
+    two = _two_cluster(stats)                                  # E2: recall a persistent L/R two-shot the median misses
+    if faces <= 0 and not two:
         _rec(_trace, _FE.NO_PEOPLE, faces=0)
         return CT_NOPEOPLE
     if _window_has_speech(src, start, end):
-        return CT_MULTI if faces >= 2 else CT_SINGLE
+        return CT_MULTI if (faces >= 2 or two) else CT_SINGLE
     vocals = bool((getattr(src, "meta", None) or {}).get("vocals_isolated"))
     return CT_MUSIC if vocals else CT_SILENT
 
@@ -417,7 +457,8 @@ def _merge_brief_segments(segs):
     return coal
 
 def _assemble_track(obs: list[dict], fps: float):
-    """PURE reduction of per-frame observations -> active-speaker segments [t0,t1,fx,fy,fh,ey] (relative s),
+    """PURE reduction of per-frame observations -> active-speaker segments [t0,t1,fx,fy,fh,ey(,fw)] (relative s;
+    fw appended per E1b when the observations carry a face WIDTH, for the horizontal safe-area),
     or None when there's only one position (the static path is identical + cheaper). Per frame the louder
     mouth (by _ASD_RATIO) is the instantaneous talker; a HYSTERESIS dwell (_ASD_HOLD_S) must elapse before
     the committed speaker actually switches, so a one-frame blip never cuts. Times come from the frame index
@@ -453,9 +494,12 @@ def _assemble_track(obs: list[dict], fps: float):
         if s is not None:
             vis = [obs[k][s][0] for k in range(i, j) if s in obs[k]]
             if vis:
-                segments.append([round(i / fps, 2), round(j / fps, 2),
-                                 round(median(v[0] for v in vis), 4), round(median(v[1] for v in vis), 4),
-                                 round(_pctl([v[2] for v in vis], 0.75), 4), round(median(v[3] for v in vis), 4)])
+                seg = [round(i / fps, 2), round(j / fps, 2),
+                       round(median(v[0] for v in vis), 4), round(median(v[1] for v in vis), 4),
+                       round(_pctl([v[2] for v in vis], 0.75), 4), round(median(v[3] for v in vis), 4)]
+                if all(len(v) > 4 for v in vis):              # E1b: per-segment face WIDTH (median), for the safe-area
+                    seg.append(round(median(v[4] for v in vis), 4))
+                segments.append(seg)
         i = j
     if not segments:
         return None
@@ -469,9 +513,10 @@ def _assemble_track(obs: list[dict], fps: float):
     return [tuple(s) for s in merged]
 
 def speaker_track(cfg, src, *, start: float, end: float, src_w: int, src_h: int, _rt=None, _trace=None):
-    """Follow the ACTIVE speaker across a 2-shot: a time-ordered list of (t0,t1,fx,fy,fh,ey) segments (times
+    """Follow the ACTIVE speaker across a 2-shot: a time-ordered list of (t0,t1,fx,fy,fh,ey(,fw)) segments (times
     RELATIVE to the clip start) — fx/fy the talker's centroid, fh the face height (drives per-segment zoom),
-    ey the eye-line (drives composition). Returns None — the fail-open signal to use the STATIC subject_focus —
+    ey the eye-line (drives composition), fw the face width (E1b — the horizontal safe-area, when observed).
+    Returns None — the fail-open signal to use the STATIC subject_focus —
     whenever there's nothing dynamic to do: no [framing] extra, a single-camera window (one face throughout),
     one position, or any error. So a single-subject clip is byte-identical to before; only a real two-person
     2-shot gets a speaker-following cut. Cached per (source, window).
@@ -551,7 +596,9 @@ def _compute_track(cv2, det, cfg, src, start: float, end: float, _trace=None):
 
 def _median_face(stats: dict | None):
     """The DOMINANT face per frame (score desc, fh tie-break via _pick_dominant_face), reduced to the
-    median (fx,fy,fh,ey) over the window plus detection confidence = fraction of frames with a face.
+    median (fx,fy,fh,ey) over the window plus detection confidence = fraction of frames with a face, plus
+    the median face-box WIDTH fw (E1b — drives the horizontal safe-area) when the stats carry it. fw is
+    None for legacy 4-tuple stats (no width), so a caller can still fall back to today's behaviour.
     None when no frames/faces."""
     frames = (stats or {}).get("frames") or []
     if not frames:
@@ -560,14 +607,18 @@ def _median_face(stats: dict | None):
     if not picks:
         return None
     conf = len(picks) / len(frames)
+    fws = [p[5] for p in picks if len(p) > 5]                  # E1b: face WIDTH, only when the 6-tuple carries it
+    fw = round(median(fws), 4) if len(fws) == len(picks) else None
     return (round(median(p[0] for p in picks), 4), round(median(p[1] for p in picks), 4),
-            round(median(p[2] for p in picks), 4), round(median(p[3] for p in picks), 4), conf)
+            round(median(p[2] for p in picks), 4), round(median(p[3] for p in picks), 4), conf, fw)
 
 def subject_focus(cfg, src, *, start: float, end: float, _rt=None, _trace=None):
-    """The dominant subject as (fx, fy, fh, ey) in [0,1] across this window — centroid + face HEIGHT (for
-    zoom-to-consistent-size) + eye-line (for composition) — reduced from the SINGLE detect_window grid pass
-    (so no separate keyframe probe). None when smart framing can't place it (fewer than _MIN_CONF frames
-    with a face) -> the render falls back to the centered crop.
+    """The dominant subject as (fx, fy, fh, ey, fw) in [0,1] across this window — centroid + face HEIGHT (for
+    zoom-to-consistent-size) + eye-line (for composition) + face WIDTH (E1b — for the horizontal safe-area) —
+    reduced from the SINGLE detect_window grid pass (so no separate keyframe probe). fw is None when the
+    detect stats are the legacy 4-tuple shape (the clip geometry then falls back to today's centering).
+    None when smart framing can't place it (fewer than _MIN_CONF frames with a face) -> the render falls
+    back to the centered crop.
 
     This function has NO try/except and RE-ENTERS detect_window, so a stage_lock StageBusyError or an
     mkdir OSError raised down there PROPAGATES straight out of it — the "NEVER raises" this docstring
@@ -584,7 +635,7 @@ def subject_focus(cfg, src, *, start: float, end: float, _rt=None, _trace=None):
         _rec(_trace, _FE.NO_FACE, conf=(m[4] if m is not None else 0.0))
         return None                                           # too few detections -> fail-open to centered crop
     _rec(_trace, _FE.FOCUS_PLACED, conf=m[4])
-    return (m[0], m[1], m[2], m[3])
+    return (m[0], m[1], m[2], m[3], m[5])                     # (fx,fy,fh,ey,fw); m[4] is conf, m[5] is the width
 
 def _saliency_centroid(cv2, frames: list[str]):
     """The normalized centroid of inter-frame CHANGE across the grid (where the motion is) — for music /
@@ -772,7 +823,7 @@ class _AttemptSpan:
 # for a defensible centre — no optional strategy exists today. The two stay distinct because they MEAN
 # different things: a future optional strategy must consciously set required_for_center=False.
 _ROUTE: dict = {
-    CT_MULTI:    (_FS.SPEAKER_TRACK, _FS.SUBJECT_FOCUS),   # a failed track falls to SINGLE -> no saliency
+    CT_MULTI:    (_FS.SPEAKER_TRACK,),                    # E3: a failed track CENTRES (never a 1-person lock)
     CT_SINGLE:   (_FS.SUBJECT_FOCUS,),
     CT_MUSIC:    (_FS.SUBJECT_FOCUS, _FS.MOTION_SALIENCY),
     CT_SILENT:   (_FS.SUBJECT_FOCUS, _FS.MOTION_SALIENCY),
@@ -863,7 +914,15 @@ def _resolve(cfg, src, cs: float, ce: float, *, _trace=None, capture_failures: b
             out_ct, strategy, outcome = ct_eff, _FS.SPEAKER_TRACK, _FO.DETECTED_MULTI
         else:
             track = None                                      # a falsy track is not a track
-            ct_eff = CT_SINGLE                                # classed multi but not a real 2-shot -> single lock
+            # E3: classified MULTI (>=2 speakers likely) but NO clean active-speaker track. A one-person
+            # static lock would crop the other speaker out (the pilot's "empty seat"); fall back to the blind
+            # CENTRE-CROP (both seats) — the acceptance floor, never a regression. subject_focus is NOT run.
+            # Only a COMPLETED conclusion (a real "no 2-shot") earns the conservative centre; a HARD-FAILED
+            # track leaves outcome unset so the terminal logic pins UNRESOLVED (a broken toolchain is not a
+            # defensible centre). In production a hard failure has already RAISED out of _run, so this branch
+            # only ever sees the conclusive-negative case there.
+            if attempts and attempts[-1].state is StrategyState.COMPLETED:
+                out_ct, strategy, outcome = None, _FS.CENTERED, _FO.CENTERED_MULTI_UNTRACKED
 
     if outcome is None and ct_eff in (CT_SINGLE, CT_MUSIC, CT_SILENT):
         focus = _run(_FS.SUBJECT_FOCUS, lambda: subject_focus(cfg, src, start=cs, end=ce, _rt=rt, _trace=trace))
