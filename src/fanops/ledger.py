@@ -554,7 +554,7 @@ class Ledger:
         store = _resolve_store(cfg)
         src = Path(snapshot_path)
         doc = store.read_raw_from(src)                          # the snapshot's rows (None if missing / not a ledger db)
-        live_readable = store.read_raw() is not None           # can we lock+write the live db, or is it corrupt/absent?
+        live_readable = store.read_raw_from(store.db_path) is not None   # probe (None-not-raise): corrupt/absent live db -> file replace
         if doc is not None and live_readable:
             with store.lock(timeout=timeout):                  # serialize with Ledger.transaction (RC-5)
                 store.write_raw(doc)

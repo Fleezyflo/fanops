@@ -41,30 +41,40 @@ class SqliteLedgerStore:
         return rows
 
     def read_raw(self) -> dict | None:
-        return self.read_raw_from(self.db_path)
+        """The LIVE ledger. RAISES sqlite3.DatabaseError on a corrupt db so Ledger.load wraps it as a
+        ControlFileError — a corrupt live ledger MUST surface, never read silently as an empty one."""
+        if not self.db_path.exists(): return None
+        conn = self._open()
+        try:
+            return self._read_doc(conn)
+        finally:
+            conn.close()
 
     def read_raw_from(self, db_path: Path) -> dict | None:
-        """Read a ledger doc from ANY sqlite ledger file — the live db OR a snapshot. Read-only and
-        side-effect-free (no WAL switch, no table creation, safe on a backup file). None when the path
-        is missing OR is not a readable ledger db; restore_snapshot uses that None to decide whether it
-        can restore in place (serialized) or must fall back to a whole-file replace."""
+        """Read a ledger doc from an ARBITRARY sqlite file — a snapshot, or a readability PROBE of the
+        live db. Read-only and side-effect-free (no WAL switch / no table creation, safe on a backup).
+        Unlike read_raw this returns None (never raises) on a missing / corrupt / non-ledger file, so
+        restore_snapshot can choose between an in-place serialized restore and the whole-file fallback."""
         db_path = Path(db_path)
         if not db_path.exists(): return None
         conn = sqlite3.connect(str(db_path))
         try:
-            row = conn.execute("SELECT value FROM ledger_meta WHERE key='schema_version'").fetchone()
-            if row is None: return None
-            doc: dict = {"schema_version": int(row[0])}
-            for map_name in _MAP_NAMES:
-                fetched = conn.execute(
-                    "SELECT row_id, payload FROM ledger_rows WHERE map_name=? ORDER BY row_id", (map_name,)
-                ).fetchall()
-                doc[map_name] = {rid: json.loads(payload) for rid, payload in fetched}
-            return doc
+            return self._read_doc(conn)
         except sqlite3.DatabaseError:
             return None                                    # corrupt / not a ledger db -> "unreadable", never a crash
         finally:
             conn.close()
+
+    def _read_doc(self, conn: sqlite3.Connection) -> dict | None:
+        row = conn.execute("SELECT value FROM ledger_meta WHERE key='schema_version'").fetchone()
+        if row is None: return None
+        doc: dict = {"schema_version": int(row[0])}
+        for map_name in _MAP_NAMES:
+            fetched = conn.execute(
+                "SELECT row_id, payload FROM ledger_rows WHERE map_name=? ORDER BY row_id", (map_name,)
+            ).fetchall()
+            doc[map_name] = {rid: json.loads(payload) for rid, payload in fetched}
+        return doc
 
     def write_raw(self, doc: dict) -> None:
         own = self._conn is None
