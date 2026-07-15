@@ -1,7 +1,7 @@
 ---
-status: proposed
+status: accepted
 date: 2026-07-15
-accepted_in_principle: pending
+accepted: 2026-07-16
 supersedes: []
 references: [C3, "docs/design/reframe/RCDR-centered-multi-untracked.md", "docs/design/reframe/framing-spec.md", "docs/design/reframe/remediation-roadmap.md"]
 deciders: [operator]
@@ -9,15 +9,27 @@ deciders: [operator]
 
 # ADR-0103 — Reframe framing is subject-aware and layout-aware
 
-> **Proposed 2026-07-15**, submitted for approval with the reframe remediation roadmap. Records the
+> **Accepted 2026-07-16** (proposed 2026-07-15, with the reframe remediation roadmap). Records the
 > architectural principle only; no algorithm, threshold, fingerprint, or version change is decided here.
-> Implementation is gated on this ADR + the roadmap being accepted.
+> Implementation (Track A) is authorized under this ADR + the roadmap; Track B stays deferred.
 
 ## Status
 
-**Proposed.** No prior catalogue slug — the reframe framing path had an *implicit, unrecorded* design
-(content-blind centre fallback + face-count-only treatment routing) that the `centered_multi_untracked`
-investigation showed to be wrong for real content. This ADR makes the corrected principle explicit.
+**Accepted 2026-07-16.** No prior catalogue slug — the reframe framing path had an *implicit, unrecorded*
+design (content-blind centre fallback + face-count-only treatment routing) that the
+`centered_multi_untracked` investigation showed to be wrong for real content. This ADR makes the corrected
+principle explicit. The operator accepted it for implementation on the permanent evidence package (PR #660),
+recording:
+
+- **Track A is authorized from the existing visual evidence** — the composition + routing failures are
+  provable from the detector output and the scene-by-scene visual audit alone, without speaker attribution.
+- **Track B remains blocked on speaker attribution.** Active-speaker *selection* (who to show when
+  participants alternate) waits for diarization and must not be guessed from visual signal.
+- **Mild framing and minimal zoom are binding product requirements** (spec F6), not preferences.
+- **Empty-gap outputs are prohibited** — a produced clip may not resolve to a region containing no
+  participant when detected subjects exist outside it.
+- **A content-blind centre crop is not an acceptable fallback when the detected subject positions prove it
+  excludes or materially misframes people.** The fallback must be derived from those positions.
 
 ## Context
 
