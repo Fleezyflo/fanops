@@ -1,15 +1,9 @@
-{# U6: htmx lazy-load slice — next page of feed cards + sentinel. #}
+{# U6: htmx lazy-load slice — next page of feed cards + sentinel. Bare cards (no wrapping grid): the
+   outerHTML swap replaces the in-grid #feed-sentinel, so these cards join the existing .review-feed-cards
+   grid and the 3-up flow continues across pages. #}
 {% for source_name, rows in feed | group_review_by_source %}
-<section class="feed-source-group" data-source-key="{{ rows[0].source_key or '' }}">
-  <header class="feed-source-head meta">
-    <strong>{{ source_name }}</strong>
-    <button type="button" class="ghost" data-review-action="select-source" data-source-key="{{ rows[0].source_key or '' }}">Select source</button>
-  </header>
-  <div class="review-feed-cards">
-    {% for s in rows %}{% include "_review_feed_card.html" %}{% endfor %}
-  </div>
-</section>
+  {% for s in rows %}{% include "_review_feed_card.html" %}{% endfor %}
 {% endfor %}
 {% if feed_page and feed_page.next_offset is not none %}
-<div id="feed-sentinel" hx-get="{{ url_for('review_feed_slice', account=feed_account|default(active), offset=feed_page.next_offset) }}" hx-trigger="revealed" hx-swap="outerHTML"></div>
+<div id="feed-sentinel" class="feed-sentinel" hx-get="{{ url_for('review_feed_slice', account=feed_account|default(active), offset=feed_page.next_offset) }}" hx-trigger="revealed" hx-swap="outerHTML"></div>
 {% endif %}

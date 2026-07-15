@@ -108,6 +108,22 @@ h3::before { content:""; width:.4rem; height:.4rem; border-radius:50%; backgroun
    wide screen. min(100%,…) keeps it from overflowing narrow viewports. The
    .compact grid re-overrides this to a dense single column (line ~124). ──── */
 .clip-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(min(100%,34rem),1fr)); gap:var(--s-4); margin:var(--s-3) 0 var(--s-5); align-items:start; }
+/* ── Review per-account feed: ONE continuous 3-up grid (was one grid PER SOURCE
+   → ragged 1–2-card rows). Equal-height cards, each a portrait video with its
+   controls beneath; steps 3 → 2 → 1 as the viewport narrows. Scoped to
+   .review-feed-card* so no other view is affected. ──────────────────────── */
+.review-feed-cards { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:var(--s-4); align-items:stretch; margin:var(--s-2) 0 var(--s-4); }
+.review-feed-card { display:flex; flex-direction:column; gap:var(--s-2); min-width:0; height:100%; padding:var(--s-3); border:1px solid var(--line); border-radius:var(--r-md); }
+.review-feed-card .feed-card-head { display:flex; align-items:center; gap:var(--s-2); min-width:0; }
+.review-feed-card .feed-source-tag { cursor:pointer; min-width:0; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:var(--t-eyebrow); padding:.1rem .5rem; }
+.review-feed-card .feed-preview { width:100%; max-width:18rem; margin-inline:auto; }   /* true 9:16 portrait, centered, full frame — no crop */
+.review-feed-card .feed-reason { margin:0; display:-webkit-box; -webkit-line-clamp:1; -webkit-box-orient:vertical; overflow:hidden; }   /* one line keeps cards uniform */
+.review-feed-card .feed-edit { display:grid; gap:.5rem; margin:0; }
+.review-feed-card .feed-edit textarea, .review-feed-card .feed-edit input[type=text] { width:100%; box-sizing:border-box; }
+.review-feed-card .feed-actions { display:flex; gap:var(--s-2); }
+.feed-sentinel { grid-column:1/-1; min-height:1px; }
+@media (max-width:980px) { .review-feed-cards { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+@media (max-width:680px) { .review-feed-cards { grid-template-columns:1fr; } }
 .clip-card { display:flex; flex-direction:column; padding:0; overflow:hidden; margin:0; }
 .clip-frame { position:relative; aspect-ratio:9/16; background:#000; max-height:62vh; }
 .clip-frame video, .clip-frame img { width:100%; height:100%; object-fit:cover; border:none; border-radius:0; }

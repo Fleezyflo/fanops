@@ -1,7 +1,11 @@
 {# U6: one feed card — composite approve-with-edits, per-card reject. #}
 <article class="review-feed-card" id="feed-{{ s.post_id }}">
-  <label class="surface-pick"><input type="checkbox" name="ids" value="{{ s.post_id }}"
-    data-source="{{ s.source_key or '' }}" aria-label="select {{ s.account }} {{ s.platform }}"></label>
+  <div class="feed-card-head">
+    <label class="surface-pick"><input type="checkbox" name="ids" value="{{ s.post_id }}"
+      data-source="{{ s.source_key or '' }}" aria-label="select {{ s.account }} {{ s.platform }}"></label>
+    {% if s.source_name or s.source_key %}<button type="button" class="chip feed-source-tag" data-review-action="select-source"
+      data-source-key="{{ s.source_key or '' }}" title="select every clip from {{ s.source_name or s.source_key }}">{{ s.source_name or s.source_key }}</button>{% endif %}
+  </div>
   <div class="feed-preview clip-frame thumb">
     <video controls preload="none" poster="{{ url_for('clip_thumb', clip_id=s.clip_id) }}" src="{{ s.media_url }}" aria-label="preview {{ s.account }}"></video>
   </div>
