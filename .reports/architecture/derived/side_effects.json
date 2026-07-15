@@ -382,8 +382,12 @@
         "line": 540
       },
       {
+        "call": "store.lock",
+        "line": 559
+      },
+      {
         "call": "_file_lock",
-        "line": 551
+        "line": 562
       }
     ],
     "fanops.ledger_bridge": [
@@ -750,7 +754,7 @@
   "totals": {
     "env_write_sites": 2,
     "ledger_transaction_sites": 74,
-    "lock_sites": 22,
+    "lock_sites": 23,
     "mkdtemp_sites": 2,
     "network_sites_literal_requests": 15,
     "rmtree_sites": 5,

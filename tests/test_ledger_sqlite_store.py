@@ -1,7 +1,9 @@
 # tests/test_ledger_sqlite_store.py — MOL-347: SqliteLedgerStore parity + WAL properties.
 from __future__ import annotations
 import sqlite3, threading
+import pytest
 from fanops.config import Config
+from fanops.errors import LockBusyError
 from fanops.ledger import Ledger, LedgerStore, SCHEMA_VERSION
 from fanops.ledger_sqlite import SqliteLedgerStore
 from fanops.models import (
@@ -159,8 +161,11 @@ def test_restore_clears_wal_sidecars(tmp_path):
 
 
 def test_restore_snapshot_serializes_with_transaction(tmp_path):
-    """Concurrent restore + transaction: fresh read matches snapshot (no orphan commit visible)."""
-    import time
+    """RC-5: restore_snapshot serializes on the SAME ledger lock as Ledger.transaction — it writes the
+    snapshot IN PLACE under BEGIN IMMEDIATE, so it can never swap the db out from under an open
+    transaction. While a transaction holds the lock a bounded restore is REFUSED (LockBusyError), and
+    the committed write SURVIVES — it is not silently destroyed. (The old test asserted the opposite:
+    it named a flock Ledger.transaction never takes and blessed the data loss.)"""
     cfg = Config(root=tmp_path)
     store = SqliteLedgerStore(cfg)
     doc = _populated_ledger(cfg)._to_doc()
@@ -168,19 +173,55 @@ def test_restore_snapshot_serializes_with_transaction(tmp_path):
     with store.lock():
         store.write_raw(doc)
         store.snapshot(snap)
-    txn_inside = threading.Event()
-    txn_release = threading.Event()
+    txn_inside = threading.Event(); txn_release = threading.Event()
     def writer():
-        with Ledger.transaction(cfg, timeout=0.5) as led:
-                txn_inside.set()
-                txn_release.wait(5)
-                led.add_source(Source(id="srcX", source_path="/race.mp4", state=SourceState.catalogued))
-    tw = threading.Thread(target=writer)
-    tw.start()
+        with Ledger.transaction(cfg) as led:
+            txn_inside.set(); txn_release.wait(5)
+            led.add_source(Source(id="srcX", source_path="/race.mp4", state=SourceState.catalogued))
+    tw = threading.Thread(target=writer); tw.start()
     assert txn_inside.wait(5)
-    tr = threading.Thread(target=lambda: Ledger.restore_snapshot(cfg, snap))
-    tr.start()
-    time.sleep(0.1)                                            # restorer blocked on flock held by writer
-    txn_release.set()                                          # writer commits, releases flock; restore proceeds
-    tr.join(5); tw.join(5)
-    assert store.read_raw() == doc                               # restore wins; no orphan srcX
+    with pytest.raises(LockBusyError):                          # contends on the SAME lock the txn holds
+        Ledger.restore_snapshot(cfg, snap, timeout=0.3)         # bounded -> fails fast, never the 60s deadlock guard
+    txn_release.set(); tw.join(5)
+    assert "srcX" in Ledger.load(cfg).sources                   # the committed txn SURVIVED (RC-5: not destroyed)
+
+
+def test_restore_snapshot_writes_in_place_uncontended(tmp_path):
+    """Uncontended: restore reverts the LIVE ledger to the snapshot via an in-place write_raw."""
+    cfg = Config(root=tmp_path)
+    store = SqliteLedgerStore(cfg)
+    with store.lock():
+        store.write_raw(_populated_ledger(cfg)._to_doc())
+        snap = cfg.control / "ledger.snapshot.ip.sqlite"; store.snapshot(snap)
+    with Ledger.transaction(cfg) as led:                        # mutate the live db AFTER the snapshot
+        led.add_source(Source(id="later", source_path="/x.mp4", state=SourceState.catalogued))
+    assert "later" in store.read_raw()["sources"]
+    Ledger.restore_snapshot(cfg, snap)
+    restored = store.read_raw()["sources"]
+    assert "later" not in restored and "src1" in restored       # reverted to the snapshot's rows
+
+
+def test_restore_snapshot_falls_back_on_corrupt_live_db(tmp_path):
+    """The corrupt-db fallback is retained: when the LIVE db can't be opened, restore uses the
+    whole-file os.replace path and still recovers the snapshot."""
+    cfg = Config(root=tmp_path)
+    store = SqliteLedgerStore(cfg)
+    with store.lock():
+        store.write_raw(_populated_ledger(cfg)._to_doc())
+        snap = cfg.control / "ledger.snapshot.corrupt.sqlite"; store.snapshot(snap)
+    cfg.ledger_path.write_bytes(b"this is not a sqlite database")   # corrupt the LIVE db
+    Ledger.restore_snapshot(cfg, snap)                          # store.read_raw() -> None -> os.replace fallback
+    assert set(store.read_raw()["sources"]) == {"src1"}         # recovered from the snapshot
+
+
+def test_read_raw_from_reads_arbitrary_db_and_rejects_non_ledger(tmp_path):
+    """The extracted reader: reads any ledger db file; None for missing / non-ledger files."""
+    cfg = Config(root=tmp_path)
+    store = SqliteLedgerStore(cfg)
+    with store.lock():
+        store.write_raw(_populated_ledger(cfg)._to_doc())
+        snap = cfg.control / "ledger.snap.read.sqlite"; store.snapshot(snap)
+    assert set(store.read_raw_from(snap)["sources"]) == {"src1"}          # an arbitrary ledger db
+    assert store.read_raw_from(cfg.control / "nope.sqlite") is None       # missing -> None
+    junk = cfg.control / "junk.sqlite"; junk.write_bytes(b"xxxx")
+    assert store.read_raw_from(junk) is None                              # not a ledger db -> None

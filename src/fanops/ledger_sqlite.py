@@ -41,8 +41,16 @@ class SqliteLedgerStore:
         return rows
 
     def read_raw(self) -> dict | None:
-        if not self.db_path.exists(): return None
-        conn = self._open()
+        return self.read_raw_from(self.db_path)
+
+    def read_raw_from(self, db_path: Path) -> dict | None:
+        """Read a ledger doc from ANY sqlite ledger file — the live db OR a snapshot. Read-only and
+        side-effect-free (no WAL switch, no table creation, safe on a backup file). None when the path
+        is missing OR is not a readable ledger db; restore_snapshot uses that None to decide whether it
+        can restore in place (serialized) or must fall back to a whole-file replace."""
+        db_path = Path(db_path)
+        if not db_path.exists(): return None
+        conn = sqlite3.connect(str(db_path))
         try:
             row = conn.execute("SELECT value FROM ledger_meta WHERE key='schema_version'").fetchone()
             if row is None: return None
@@ -53,6 +61,8 @@ class SqliteLedgerStore:
                 ).fetchall()
                 doc[map_name] = {rid: json.loads(payload) for rid, payload in fetched}
             return doc
+        except sqlite3.DatabaseError:
+            return None                                    # corrupt / not a ledger db -> "unreadable", never a crash
         finally:
             conn.close()
 

@@ -543,13 +543,24 @@ class Ledger:
         return dest
 
     @classmethod
-    def restore_snapshot(cls, cfg: Config, snapshot_path: "Path | str") -> None:
-        """Atomically restore ledger.sqlite FROM a snapshot (SQLite backup API + os.replace).
-        Also restores accounts.json / personas.json sidecars when present in the bundle."""
+    def restore_snapshot(cls, cfg: Config, snapshot_path: "Path | str", *, timeout: "float | None" = None) -> None:
+        """Restore ledger.sqlite FROM a snapshot. RC-5: the normal path writes the snapshot's rows IN
+        PLACE under the SAME ledger lock Ledger.transaction takes (store.lock() -> BEGIN IMMEDIATE), so a
+        restore can NEVER swap the db file out from under an open transaction — the race that let a
+        just-committed write vanish with no error (and that the old test asserted was correct). The
+        whole-file replace (store.restore -> os.replace) is retained ONLY as the fallback for a snapshot
+        that is not a readable ledger db, or a LIVE db too corrupt to open — the one case a logical
+        in-place write cannot recover. Also restores accounts.json / personas.json sidecars when present."""
         store = _resolve_store(cfg)
         src = Path(snapshot_path)
-        with _file_lock(cfg.lock_path):
-            store.restore(src)   # standalone — must work even when live db is corrupt
+        doc = store.read_raw_from(src)                          # the snapshot's rows (None if missing / not a ledger db)
+        live_readable = store.read_raw() is not None           # can we lock+write the live db, or is it corrupt/absent?
+        if doc is not None and live_readable:
+            with store.lock(timeout=timeout):                  # serialize with Ledger.transaction (RC-5)
+                store.write_raw(doc)
+        else:
+            with _file_lock(cfg.lock_path, timeout=timeout):   # unreadable snapshot OR corrupt/absent live db -> file replace
+                store.restore(src)
         _snapshot_restore_control_files(cfg, src)
 
     # ---- idempotent adds (by id) ----

@@ -4,7 +4,7 @@
 
 # FanOps — Architecture & Implementation Governance
 
-**Source fingerprint `1d28aa50fd78925d` · generator `arch/1.0.0`**
+**Source fingerprint `a310a9d81bd3e4bd` · generator `arch/1.0.0`**
 
 Regenerate: `python -m tools.arch regen`
 
@@ -58,7 +58,7 @@ Regenerate: `python -m tools.arch regen`
 |---|---|
 | env write sites | **2** |
 | ledger transaction sites | **74** |
-| lock sites | **22** |
+| lock sites | **23** |
 | mkdtemp sites | **2** |
 | network sites literal requests | **15** |
 | rmtree sites | **5** |
