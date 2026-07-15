@@ -275,6 +275,25 @@ controls:
     adr: [ADR-0100, ADR-0101]
     failure_evidence: "test_no_blocking_policy_findings / test_derived_artifacts_are_not_stale fail on an injected defect; the negative-control suite proves the validators discriminate."
     evidence_status: verified-this-session
+
+  - id: CI-UNIT-CIVALIDATOR
+    name: "CI control-registry validator (collected in the unit suite)"
+    parent: CI-UNIT
+    invariant: "the CI planes agree statically: the committed registry conforms to shape, and the registry<->workflow static checks (DC-1/2/4/5/6) produce no BLOCKING divergence"
+    owner: ci-lane
+    workflow: .github/workflows/ci.yml
+    job: unit
+    step: "collected: tests/test_ci_registry_validator.py (runs within the unit suite)"
+    command: 'pytest -m "not integration and not slow" (collects test_ci_registry_validator.py)'
+    trigger: [pull_request, push]
+    classification: required
+    runtime_class: fast
+    justification: "the tools/ci static validator run as a unit test, so DC-1/2/4/5/6 block a PR that diverges the registry from the workflow implementation. It delegates to tools.ci.checks.run_static + shape_findings — the SAME code the CLI `static` verb runs — so the pytest gate and the CLI can never disagree on a commit. DC-3 (deployed-state vs live GitHub) is NOT here: it needs an authenticated admin probe and is a scheduled / Phase-E concern (ADR-0100, ADR-0101)."
+    deletion_consequence: "registry<->workflow drift stops blocking PRs — a renamed required context (DC-1), an untracked job or phantom control (DC-2), prose calling a required context advisory (DC-4), a duplicate_group naming an unknown control (DC-5), or a job that drops its timeout / SHA-pin (DC-6) would merge unchallenged. The exact divergence class the control registry exists to prevent."
+    duplicate_group: null
+    adr: [ADR-0100, ADR-0101]
+    failure_evidence: "test_static_planes_have_no_blocking_divergence fails when checks.run_static returns a blocking finding; test_negative_control_fires proves each DC discriminates on an injected defect."
+    evidence_status: verified-this-session
     status: active
 
   # ===== ci.yml · base-install (ADVISORY, unique) ===================================================
