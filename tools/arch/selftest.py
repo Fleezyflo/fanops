@@ -67,6 +67,7 @@ CONTROLS: list[Control] = [
     Control("NC-22", "a canonical artifact is MISSING (the gate must FAIL, not pass vacuously)", "GOV-001", "architecture"),
     Control("NC-23", "a GENERATED doc is hand-edited (docs must not drift from the artifacts)", "ARCH-006", "architecture"),
     Control("NC-24", "a stale _CLI_PRINT_COUNT assignment in tools/arch/ — the engine's OWN rationale (G1 widened scope)", "IMPL-007", "implementation"),
+    Control("NC-25", "a stale FANOPS_ var named in docs/CONFIG.md but read nowhere (G2 operator-doc rot)", "ARCH-003", "architecture"),
 ]
 
 
@@ -90,6 +91,12 @@ def fixture():
         # scope would be inert in the fixture and its control could not fire.
         shutil.copytree(REPO / "tools" / "arch", root / "tools" / "arch",
                         ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+        # G2: docs/CONFIG.md is read by ARCH-003's operator-doc check; copy it so NC-25 can inject a stale
+        # FANOPS_ mention and prove that half of ARCH-003 fires. Without it the doc-check would be inert in
+        # the fixture (config_md.exists() False) and its control could not fire.
+        if (REPO / "docs" / "CONFIG.md").exists():
+            (root / "docs").mkdir(exist_ok=True)
+            shutil.copy(REPO / "docs" / "CONFIG.md", root / "docs" / "CONFIG.md")
         saved = {m: {k: getattr(m, k) for k in
                      ("REPO", "SRC", "TESTS", "ARCH", "KB", "CONTRACT", "DERIVED", "GOVERNANCE")
                      if hasattr(m, k)} for m in _PATCHED}
@@ -276,6 +283,15 @@ def _inject(cid: str, root: Path, p: dict) -> None:
         (root / "tools" / "arch" / "nc_stale_budget.py").write_text(
             "# INJECTED (NC-24): a stale copy of the cli.py print budget.\n"
             "_CLI_PRINT_COUNT = 999  # wrong on purpose\n", encoding="utf-8")
+
+    elif cid == "NC-25":
+        # G2: the operator doc (docs/CONFIG.md) names a FANOPS_ var the code does not read — the exact rot
+        # G2 catches (a switch whose reader was deleted, or a doc naming a var that never existed). APPEND a
+        # stale mention (like NC-23/NC-24, an append cannot fail to change the bytes) and the doc-half of
+        # ARCH-003 must fire on it.
+        md = root / "docs" / "CONFIG.md"
+        md.write_text(md.read_text()
+                      + "\n| `FANOPS_NC_STALE_DOC` | off | INJECTED (NC-25): named here, read nowhere | .env |\n")
 
     else:
         raise AssertionError(f"no injection defined for {cid}")
