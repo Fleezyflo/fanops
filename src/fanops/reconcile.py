@@ -69,20 +69,55 @@ def _parked_age(post, now: datetime):
         return None
 
 
-def _is_fake_token(post) -> bool:
-    """True iff the post still carries its BIRTH client idempotency token (crosspost.py: `fanops_…`), i.e. a
-    real backend postSubmissionId never overwrote it. Such a token 404s on every poll forever, so a
-    post that ONLY ever poll-errors on it can never auto-resolve — the precondition for escalation. A post
-    carrying a real id is left to its normal poll (its status WILL resolve), never escalated."""
-    return bool(post.submission_id) and post.submission_id.startswith("fanops_")
-
-
 def _is_giveup(post) -> bool:
     """True iff this post already carries the gave-up terminal marker. A give-up post is a LABELED terminal
     (we stopped auto-reconciling it); the poll loop skips it so it never re-polls a dead token or re-stamps an
     identical line (XC-6). Gave-up recovery is deliberately two-step (MOL-441 deferred one-click re-drive):
     `fanops resolve <id> failed` to clear the marker, then Studio `recover_posts` retry (failed→queued)."""
     return bool(post.error_reason) and post.error_reason.startswith(_GIVEUP_PREFIX)
+
+
+def _apply_age_terminal(post, now) -> dict | None:
+    """RC-2 (S04): the 'this post is stuck' terminal, as a PURE FUNCTION OF (state, age).
+
+    It consults NEITHER this pass's poll outcome, NOR the token's provenance (fake vs real), NOR
+    error_reason — the three incidental conditions the old ladder gated on, each of which could veto
+    the terminal on its own: a raising poll `continue`d before ever reaching it; `_is_fake_token`
+    excluded every real backend id; a stale `error_reason` suppressed the visit from pass one.
+    reconcile is the SOLE reader of `submitting` (publish_due iterates `queued` only), so if it cannot
+    terminate a post, nothing can.
+
+    Returns {"update": <model_copy update>, "log": <event>} to apply+log, or None if the post is not
+    yet past a deadline. The predicate is the WHOLE of it — (state, age), nothing else:
+
+      submitting      + age > _SUBMITTING_ESCALATE_AFTER (24h) -> needs_reconcile (a retryable state:
+                                                                  still polled, the digest's reconcile
+                                                                  column owns it, never re-queueable)
+      needs_reconcile + age > _RECONCILE_GIVEUP_AFTER    (72h) -> stamp `GAVE UP:` — a LABEL, NO state
+                                                                  change. A given-up post is NOT
+                                                                  re-queueable and therefore CANNOT
+                                                                  double-post. That is the safety
+                                                                  property the whole slice rests on.
+
+    PD-2 (a): the SAME ladder applies to a REAL backend id. reconcile.py's old `_is_fake_token` gate
+    encoded 'a post carrying a real id … its status WILL resolve' — an assumption stated as a
+    guarantee, false whenever the platform deleted the post, the integration was removed, or the
+    backend reports a non-terminal state forever (Postiz's QUEUE maps to `scheduled`)."""
+    age = _parked_age(post, now)
+    if age is None:
+        return None                                       # no measurable deadline -> never a false terminal
+    hrs = int(age.total_seconds() // 3600)
+    if post.state is PostState.submitting and age > _SUBMITTING_ESCALATE_AFTER:
+        return {"update": {"state": PostState.needs_reconcile,
+                           "error_reason": (f"escalated submitting->needs_reconcile after {hrs}h "
+                                            "(submit unresolved past deadline) — verify on the channel "
+                                            "before any resubmit")},
+                "log": "escalated: submitting->needs_reconcile"}
+    if post.state is PostState.needs_reconcile and age > _RECONCILE_GIVEUP_AFTER:
+        return {"update": {"error_reason": (f"{_GIVEUP_PREFIX} unresolved {hrs}h past schedule — gave up "
+                                            "auto-reconcile; verify on the channel manually")},
+                "log": "gave-up: needs_reconcile terminal"}
+    return None
 
 
 # ---- Leg 2 (Insight) identify: resolve each live IG post's Graph media_id from its permalink ----------
@@ -604,6 +639,17 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
     for post in [p for p in led.posts.values() if p.state in _RECONCILABLE]:
         if _is_giveup(post):
             continue                       # XC-2/XC-6: a labeled-terminal post is no longer polled or re-logged
+        # RC-2/S04: the terminal ladder is a PURE FUNCTION OF (state, age), evaluated HERE — BEFORE the
+        # poll — so that neither a raising poll (which used to `continue` out at the except below and never
+        # reach the ladder), nor a real backend id (the old `_is_fake_token` gate), nor a transient
+        # error_reason can veto it. The poll then only ADVANCES a post to published/failed; it can no
+        # longer PREVENT the terminal. This is what makes INT-2 hold: every {submitting, needs_reconcile}
+        # post reaches a terminal or retryable state in bounded time, on every axis.
+        term = _apply_age_terminal(post, now)
+        if term is not None:
+            led.posts[post.id] = post.model_copy(update=term["update"])
+            log("reconcile", post.id, term["log"])
+            continue
         if not post.submission_id:
             log("reconcile", post.id, "skipped: no submission_id")
             continue                       # no id -> cannot poll (API needs it) -> human reconcile
@@ -738,37 +784,19 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
             log("reconcile", post.id, "failed")
         else:
             # in-progress / scheduled / unknown -> not auto-resolved this pass; never guess the fate.
+            # The (state, age) terminal already ran ABOVE, before the poll — so the XC-1 escalation and the
+            # XC-2 give-up no longer live here (and no longer gate on _is_fake_token). A post reaching this
+            # branch is NOT past a deadline; the branch only breadcrumbs + audit-logs the still-parked visit.
             age = _parked_age(post, now)
-            # XC-1: a crash-stranded `submitting` on a never-real token, past the escalation deadline, hands off
-            # to the reconcile-column owner (needs_reconcile). Checked BEFORE the dedup guard below so it fires
-            # even when an earlier pass already stamped a `stuck …` breadcrumb. State change is logged once
-            # (the post stops being submitting, so it never re-takes this branch). Never -> a re-queueable state.
-            if age is not None and _is_fake_token(post) and post.state is PostState.submitting \
-                    and age > _SUBMITTING_ESCALATE_AFTER:
-                led.posts[post.id] = post.model_copy(update={
-                    "state": PostState.needs_reconcile,
-                    "error_reason": (f"escalated submitting->needs_reconcile after "
-                                     f"{int(age.total_seconds() // 3600)}h (crash-stranded submit, token "
-                                     "never resolved) — verify on the channel before any resubmit")})
-                log("reconcile", post.id, "escalated: submitting->needs_reconcile")
+            # ❸ (S04): the suppression key is NO LONGER 'any non-empty error_reason'. That old latch made a
+            # post carrying a TRANSIENT reason (a contained `reconcile poll error:`) silent from pass one —
+            # never breadcrumbed, never re-visited. Skip ONLY a post that is already a give-up (labeled
+            # terminal) OR already carries THIS `stuck …` breadcrumb (the XC-6 dedup: no re-stamp, no
+            # re-logged "left:" every pass). A transient-reason post falls through and IS visited.
+            if _is_giveup(post) or (post.error_reason or "").startswith("stuck "):
                 continue
-            # XC-2: a needs_reconcile post on a never-real token past the long bound -> labeled GIVE-UP terminal.
-            # Logged once (the loop-head _is_giveup skip means this post is never re-reached on the next pass).
-            if age is not None and _is_fake_token(post) and post.state is PostState.needs_reconcile \
-                    and age > _RECONCILE_GIVEUP_AFTER:
-                led.posts[post.id] = post.model_copy(update={"error_reason": (
-                    f"{_GIVEUP_PREFIX} unresolved {int(age.total_seconds() // 3600)}h past schedule on a "
-                    "never-real token — gave up auto-reconcile; verify on the channel manually")})
-                log("reconcile", post.id, "gave-up: needs_reconcile terminal")
-                continue
-            # XC-6: a post that already carries a surfaced reason (a prior `stuck …` breadcrumb or a contained
-            # `reconcile poll error:`) is NOT re-stamped or re-logged — that per-pass repeat was the alert
-            # fatigue. It stays parked, silently, until it resolves / escalates / is given up.
-            if post.error_reason:
-                continue
-            # First un-reasoned visit: stamp the stuck breadcrumb if it's now well past schedule, then log the
-            # visit ONCE. A scheduleless post (age None) is never breadcrumbed (deadline unmeasurable) but the
-            # visit is still audit-logged so a monitor sees it was reconciled.
+            # Stamp the stuck breadcrumb once it is well past schedule, then log the visit. A scheduleless
+            # post (age None) is never breadcrumbed (deadline unmeasurable) but the visit is still logged.
             if age is not None and age > _STUCK_AFTER:
                 hrs = int(age.total_seconds() // 3600)
                 led.posts[post.id] = post.model_copy(update={"error_reason": (
@@ -776,3 +804,26 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
                     "(publish may have silently failed)")})
             log("reconcile", post.id, f"left: {status or 'unknown'}")
     return led
+
+
+def report_terminals(led: Ledger, now: Optional[datetime] = None) -> list[dict]:
+    """REPORT-ONLY: for every reconcilable post, what the (state, age) ladder WOULD stamp THIS pass —
+    consulting the SAME `_apply_age_terminal` the live pass uses, but WRITING NOTHING.
+
+    This is the permanent gate S04 ships first. The ladder acquires a real blast radius the moment an
+    approved post publishes and can strand; before it WRITES, the operator must be able to SEE which rows
+    it would escalate (submitting->needs_reconcile) or give up (the `GAVE UP:` label). One row per post
+    the ladder would touch; an empty list means the ladder would stamp nothing (the live state today)."""
+    now = now or datetime.now(timezone.utc)
+    out: list[dict] = []
+    for post in led.posts.values():
+        if post.state not in _RECONCILABLE or _is_giveup(post):
+            continue
+        term = _apply_age_terminal(post, now)
+        if term is None:
+            continue
+        upd = term["update"]
+        new_state = upd["state"].value if upd.get("state") is not None else post.state.value
+        out.append({"post_id": post.id, "state": post.state.value, "event": term["log"],
+                    "would_set_state": new_state, "reason": upd.get("error_reason", "")})
+    return out

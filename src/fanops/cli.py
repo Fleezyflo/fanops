@@ -154,13 +154,24 @@ def _learn_pass(cfg: Config, *, window: str = "30d") -> None:
         led = amplify(led, cfg, r["winners"])
         led = retire(led, r["losers"])
 
-def cmd_reconcile(cfg: Config) -> int:
+def cmd_reconcile(cfg: Config, *, report_terminals: bool = False) -> int:
     # AUDIT H4 + M1: resolve posts stranded in submitting/needs_reconcile by polling the backend status.
     # reconcile_due pre-polls each status (network) OUTSIDE the lock against a lock-free snapshot, then
     # applies the cached results in ONE tight transaction (a single poll error is contained per-post —
     # parked, never guessed failed). Needs a key (dryrun has no live status source) — skip cleanly if
     # absent, like track: _default_get_status raises RuntimeError (non-postiz) / PostizAuthError (postiz)
     # when not configured, and a mid-poll fatal AuthError likewise = "can't reconcile, skip".
+    if report_terminals:
+        # S04 report-only (ships FIRST): preview what the (state, age) terminal ladder WOULD escalate or
+        # give up, WITHOUT writing or polling. Routed through get_logger — NOT print — so cli.py's shared
+        # print budget is UNCHANGED (GB-6/IR-4: no slice may move _CLI_PRINT_COUNT).
+        from fanops.reconcile import report_terminals as _report
+        rows = _report(Ledger.load(cfg))
+        log = get_logger(cfg)
+        for r in rows:
+            log("reconcile", r["post_id"], f"WOULD {r['event']}", state=r["state"], reason=r["reason"][:80])
+        log("reconcile", "-", "report-terminals", would_touch=len(rows))
+        return 0
     try:
         r = reconcile_due(cfg)
     except (RuntimeError, AuthError) as e:
@@ -684,7 +695,10 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="fanops")
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser("status"); sub.add_parser("ingest"); sub.add_parser("digest"); sub.add_parser("respond")
-    sub.add_parser("reconcile")
+    p_reconcile = sub.add_parser("reconcile")
+    p_reconcile.add_argument("--report-terminals", action="store_true",
+                             help="S04: preview which parked posts the (state, age) ladder WOULD escalate/"
+                                  "give up — reads only, writes nothing (routed to the log)")
     p_reframe = sub.add_parser("reframe", help="classify (--dry-run) or migrate (--apply) the clip corpus framing")
     p_reframe.add_argument("--dry-run", action="store_true",
                            help="READ-ONLY classification; writes only to a scratch root")
@@ -1245,7 +1259,7 @@ def _dispatch(cfg: Config, args) -> int:
     if args.cmd == "track":    return cmd_track(cfg, args.window)
     if args.cmd == "map-media": return cmd_map_media(cfg)
     if args.cmd == "verify-live": return cmd_verify_live(cfg)
-    if args.cmd == "reconcile": return cmd_reconcile(cfg)
+    if args.cmd == "reconcile": return cmd_reconcile(cfg, report_terminals=getattr(args, "report_terminals", False))
     if args.cmd == "adjust":   return cmd_adjust(cfg, args.winner_pct, args.retire_pct, args.lift_floor)
     if args.cmd == "amplify-variants": return cmd_amplify_variants(cfg)
     if args.cmd == "p4-bias": return cmd_p4_bias(cfg)
