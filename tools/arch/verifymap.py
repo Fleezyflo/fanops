@@ -31,16 +31,16 @@ REQUIREMENTS: list[Requirement] = [
 
     Requirement("changed_state_machines",
                 "transition tests",
-                "21 writer sites move PostState, five of them GENERIC/DYNAMIC (model_copy, setattr, "
+                "Many writer sites move PostState, several of them GENERIC/DYNAMIC (model_copy, setattr, "
                 "PostState(<str>)) that a literal grep cannot see. A new transition added without a "
-                "guard is a new door.",
+                "guard is a new door. (Exact site counts: derived/side_effects.json + the IMPL-009 run.)",
                 "a test that asserts the illegal source states are REFUSED, not just that the legal "
                 "one works"),
 
     Requirement("changed_dependencies",
                 "import-order tests",
-                "The 11-level DAG holds ONLY because 107 imports are deferred to call time. Hoisting "
-                "one LOOKS LIKE A CLEANUP and breaks the process at start. Nothing else catches it.",
+                "The layered DAG holds ONLY because the upward imports are deferred to call time. "
+                "Hoisting one LOOKS LIKE A CLEANUP and breaks the process at start. Nothing else catches it.",
                 "`python -c 'import fanops.<module>'` for the module at the TOP of the new edge, "
                 "in a clean interpreter"),
 
