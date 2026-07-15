@@ -10,9 +10,7 @@ runtime-neutral process contract — and follow it exactly, with this Claude Cod
 
 - Spawn every worker with the Task tool: `subagent_type: "fanops-worker"`, run in background, the
   brief naming the unit (`MOL-xxx`), the role, and the protocol file. Never `general-purpose`,
-  never any other type, never a `model` parameter (the gate denies these; worker model is pinned
-  `inherit` in `.claude/agents/fanops-worker.md`).
-- The same enforcement binds this runtime via `.claude/settings.json` hooks: spawn allowlist,
-  land-gate, protected-path and verification-record write protection.
+  never any other type, never a `model` parameter (worker model is pinned `inherit` in
+  `.claude/agents/fanops-worker.md`).
 
 The user's tasks/plan: $ARGUMENTS
