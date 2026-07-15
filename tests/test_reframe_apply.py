@@ -277,6 +277,40 @@ def test_torn_state_is_DETECTED_and_healed_not_guessed(tmp_path, monkeypatch):
     assert ra.inspect_clip(d, row) == ra.COMMITTED
 
 
+def test_torn_heal_write_is_ATOMIC_a_crash_leaves_the_sidecar_valid_and_still_healable(tmp_path, monkeypatch):
+    """CID-2: the heal writes the sidecar via tmp .part -> fsync -> os.replace (exactly like the commit), so
+    a crash at the rename leaves the stale-but-VALID sidecar — the next resume still reads TORN (auto-healable),
+    never a partial JSON that reads as None and downgrades to a manual-repair AMBIGUOUS. Mutation-proof: revert
+    the heal to a bare write_text and it never calls os.replace, so pytest.raises(OSError) fails."""
+    cfg, paths, src = _corpus(tmp_path); row = _row(cfg, src); d = _dirs(cfg)
+    ra.backup_clip(d, row)
+    Path(row["media_path"]).write_bytes(b"NEW-PIXELS")           # simulate: crashed after os.replace(mp4) -> TORN
+    assert ra.inspect_clip(d, row) == ra.TORN
+    def _boom(*_a, **_k): raise OSError("crash at the atomic rename")
+    monkeypatch.setattr(ra.os, "replace", _boom)
+    with pytest.raises(OSError):
+        ra.apply_clip(paths, d, _FakeLed(), row, run_id="rf_th")
+    assert ra._stored_fp(Path(row["sidecar_path"])) == "fpold"   # final sidecar VALID (stale), not torn
+    assert ra.inspect_clip(d, row) == ra.TORN                    # still auto-healable on the next resume
+    assert not Path(str(row["sidecar_path"]) + ".part").exists()  # no orphan temp left by the failed rename
+
+
+def test_write_sidecar_atomic_fsyncs_BEFORE_replace_and_leaves_no_temp(tmp_path, monkeypatch):
+    """The shared helper's durability contract: flush + fsync the temp, THEN rename — and the rename (not a
+    copy) consumes the temp, so no `.part` orphan survives a SUCCESSFUL write either. Guards against a future
+    copy-instead-of-rename that would leak temps while still passing the crash test."""
+    side = tmp_path / "clip_a.render.json"
+    order = []
+    real_replace = ra.os.replace
+    monkeypatch.setattr(ra.os, "fsync", lambda *_a: order.append("fsync"))
+    def _rec_replace(*a): order.append("replace"); return real_replace(*a)
+    monkeypatch.setattr(ra.os, "replace", _rec_replace)
+    ra._write_sidecar_atomic(str(side), "fpnew")
+    assert order == ["fsync", "replace"]                         # fsync BEFORE the rename, not merely invoked
+    assert ra._stored_fp(side) == "fpnew"
+    assert not Path(str(side) + ".part").exists()                # rename consumed the temp — no orphan
+
+
 def test_ambiguous_state_STOPS_never_guesses(tmp_path, monkeypatch):
     cfg, paths, src = _corpus(tmp_path); row = _row(cfg, src); d = _dirs(cfg)
     Path(row["media_path"]).write_bytes(b"WHO-KNOWS")            # not preimage, not staged, sidecar unknown

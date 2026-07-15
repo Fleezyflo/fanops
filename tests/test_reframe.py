@@ -337,6 +337,19 @@ def test_partial_run_suppresses_the_go_no_go(tmp_path, monkeypatch):
     assert man["partial"] is True and man["summary"]["go_no_go"] is None
 
 
+def test_manifest_marks_eligibility_as_STRUCTURAL_not_visually_reviewed(tmp_path, monkeypatch):
+    """E6: nothing in the manifest may read as a visual-quality verdict. The summary flags the whole run
+    UNREVIEWED, and a non-partial go_no_go — even with ZERO blockers — states that eligibility is structural
+    and a visual pass is still required, so a green go_no_go cannot be misread as 'safe to ship'."""
+    paths, cid = _corpus(tmp_path, monkeypatch)
+    _stub_framing(monkeypatch, ct=framing.CT_SINGLE, focus=_FOCUS, events={"subject_focus": [_FE.FOCUS_PLACED]})
+    man = reframe.run_dry_run(paths, argv=["x"])
+    assert man["summary"]["visual_review_status"] == "unreviewed"
+    gng = man["summary"]["go_no_go"]
+    assert gng is not None and gng["blockers"] == []             # structurally clear...
+    assert "REQUIRED" in gng["visual_review"]                    # ...but explicitly NOT visually cleared
+
+
 def test_one_bad_clip_does_not_abort_the_corpus_scan(tmp_path, monkeypatch):
     """C-1's operational half: a per-clip boundary yields ERROR and the scan continues."""
     paths, cid = _corpus(tmp_path, monkeypatch)

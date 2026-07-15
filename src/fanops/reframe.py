@@ -65,7 +65,7 @@ class ReframeClass(str, Enum):
     REMOTE_ASSET_PRESENT = "remote_asset_present"
     MISSING_INPUT = "missing_input"
     # The classification proper.
-    ELIGIBLE = "eligible"                          # proven-centred, and a reframe changes ONLY framing keys
+    ELIGIBLE = "eligible"                          # STRUCTURALLY reframable (proven-centred, framing-key-only delta) — NOT a visual verdict
     ALREADY_REFRAMED = "already_reframed"
     LEGITIMATE_CENTER = "legitimate_center"        # centred because the room really was empty
     FRAMING_UNRESOLVED = "framing_unresolved"      # we do not know why it is centred -> never reframe blind
@@ -518,6 +518,9 @@ def run_dry_run(paths: ReframePaths, *, limit: int | None = None, argv=None, now
             "unreconstructable": totals.get(ReframeClass.UNRECONSTRUCTABLE.value, 0),
             "reconstruction_ambiguous": totals.get(ReframeClass.RECONSTRUCTION_AMBIGUOUS.value, 0),
             "degraded": degraded,
+            # ELIGIBLE / go_no_go are STRUCTURAL verdicts only. No clip in this run has been visually
+            # reviewed, so nothing here asserts a reframe would LOOK good — that is a separate required gate.
+            "visual_review_status": "unreviewed",
             # A PARTIAL run cannot support a corpus-wide claim, so it does not get to make one.
             "go_no_go": None if partial else _go_no_go(totals, clean),
         },
@@ -531,7 +534,10 @@ def _go_no_go(totals: dict, clean: bool) -> dict:
     for k in (ReframeClass.UNRECONSTRUCTABLE, ReframeClass.RECONSTRUCTION_AMBIGUOUS, ReframeClass.ERROR):
         if totals.get(k.value):
             blockers.append(f"{totals[k.value]} × {k.value}")
-    return {"eligible": totals.get(ReframeClass.ELIGIBLE.value, 0), "blockers": blockers}
+    # An empty `blockers` means "reframing this corpus cannot corrupt non-framing state" — a STRUCTURAL
+    # clearance, NOT "the reframes look good". Visual review is a separate gate this scan never performs.
+    return {"eligible": totals.get(ReframeClass.ELIGIBLE.value, 0), "blockers": blockers,
+            "visual_review": "REQUIRED — eligibility is structural, not a visual-quality verdict"}
 
 
 def attribution(cfg: Config) -> dict:

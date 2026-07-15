@@ -413,13 +413,22 @@ def ffmpeg_segments_cmd(src: str, dst: str, cs: float, ce: float, aspect_value: 
                         sub_token: str | None = None) -> list[str]:
     """ffmpeg command for the per-segment concat render: one seeked input per segment (`-ss`/`-t` before each
     `-i` = fast + accurate), a single -filter_complex (per-segment crop -> concat -> subtitles), one encode.
-    Segment times are RELATIVE to the clip; each input window is (cs+t0) for (t1-t0) seconds."""
+    Segment times are RELATIVE to the clip; each input window is (cs+t0) for (t1-t0) seconds.
+
+    `-fps_mode cfr` is REQUIRED, not cosmetic: the concat filter offsets each joined segment's PTS by that
+    segment's duration rounded UP to a whole frame interval, leaving a 1-frame gap at every join. Without a
+    constant-rate resample that stretches the output ~1 frame per join — inflating the duration, dropping
+    avg_frame_rate below the source (measured 29.835 vs 29.97 on a 3-segment clip), and drifting the burned
+    .ass subtitles against the video (the _segments_filter_complex 'timeline aligns' claim only holds once the
+    gaps are filled). cfr resamples to a continuous grid: avg_frame_rate == r_frame_rate, subtitles realign.
+    This is an ffmpeg flag, NOT a fingerprint input, so it changes NO render fingerprint (no re-render churn)."""
     cmd = ["ffmpeg", "-y"]
     for seg in track:
         seg_cs = cs + float(seg[0]); seg_dur = float(seg[1]) - float(seg[0])
         cmd += ["-ss", f"{seg_cs:.3f}", "-t", f"{seg_dur:.3f}", "-i", src]
     fc = _segments_filter_complex(track, src_w, src_h, aspect_value, content_type, sub_token=sub_token)
     cmd += ["-filter_complex", fc, "-map", "[vout]", "-map", "[aout]",
+            "-fps_mode", "cfr",                       # fill concat's per-join PTS gaps -> CFR, no subtitle drift
             "-c:v", "libx264", "-c:a", "aac", "-movflags", "+faststart", dst]
     return cmd
 
