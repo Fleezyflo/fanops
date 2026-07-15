@@ -239,7 +239,8 @@ def _unclaim_no_integration(cfg: Config, post_id: str, post: Post, *, unclaim: b
     get_logger(cfg)("publish", post_id, "no_integration_id", account=post.account, platform=post.platform.value)
 
 
-def _publish_one(cfg: Config, post_id: str, backend: str, *, account_id: str | None = None,
+def _publish_one(cfg: Config, post_id: str, backend: str, *, accounts: "Accounts | None" = None,
+                 account_id: str | None = None,
                  _tally: dict | None = None, due_cutoff: datetime | None = None) -> str | None:
     """Publish ONE post via claim -> network -> finalize, with the network OUTSIDE the ledger flock.
 
@@ -267,6 +268,20 @@ def _publish_one(cfg: Config, post_id: str, backend: str, *, account_id: str | N
             return None                                # lost the race / not eligible — no-op (F11)
         if due_cutoff is not None and not is_scheduled_due(post, due_cutoff):   # M08: re-check dueness under lock
             return None
+        # RC-3b (S07): the producer and the SOLE consumer of `submitting` must agree on backend capability.
+        # A post may enter `submitting` ONLY on a channel `channel_provider_if_ready` ADMITS — the exact
+        # per-channel predicate `is_live_backend`/`live_ready_channels` gate reconcile (the sole resolver of
+        # `submitting`) on. Before S07 the producer claimed whenever a provider merely RESOLVED, while the
+        # consumer additionally required CREDS — so a cred-less live channel minted a `submitting` post that
+        # reconcile, disabled by that very same missing creds, would never touch (stranded forever, the
+        # producer/consumer gating asymmetry). Refuse the claim HERE, cleanly: leave it `queued` and visible.
+        # (`accounts is None` only for the direct-internal test callers that exercise the network path; the
+        # two production producers — publish_due, publish_post — always pass it.)
+        if accounts is not None and accounts.channel_provider_if_ready(post.account, post.platform) is None:
+            get_logger(cfg)("publish", post_id, "skip_not_live_ready", account=post.account, platform=post.platform.value)
+            if _tally is not None:
+                _tally["not_live_ready"] = _tally.get("not_live_ready", 0) + 1
+            return None                                # leave it `queued` — reconcile is not available for this channel
         # RC-1 (S03): refuse the claim HERE for a post that ALREADY carries a real submission_id — it has
         # been POSTed, and re-POSTing the SAME post id is the double-POST we forbid (MOL-115). Declining
         # INSIDE the claim is a clean no-op: the post stays `queued` and visible. The bug this fixes was
@@ -466,7 +481,7 @@ def publish_due(cfg: Config, *, now: str | None = None, account: str | None = No
         from fanops.postiz_lifecycle import ensure_up
         ensure_up(cfg)
     log = get_logger(cfg)
-    published = no_provider = no_integration_id = not_distributed = skipped_existing_id = 0
+    published = no_provider = no_integration_id = not_distributed = skipped_existing_id = not_live_ready = 0
     for post in due:
         provider = _post_provider(cfg, accounts, post)
         if provider is None:                           # live but the channel has no provider -> skip, leave queued
@@ -485,13 +500,15 @@ def publish_due(cfg: Config, *, now: str | None = None, account: str | None = No
             continue                                   # phantom-published row. A live-flip re-derives this each pass.
         acct_id = _resolve_publish_account_id(accounts, post, cfg=cfg)   # #10: cfg breadcrumbs a frozen-id fallback
         tally: dict = {}
-        if _publish_one(cfg, post.id, provider, account_id=acct_id, _tally=tally, due_cutoff=cutoff) == PostState.published.value:
+        if _publish_one(cfg, post.id, provider, accounts=accounts, account_id=acct_id,
+                        _tally=tally, due_cutoff=cutoff) == PostState.published.value:
             published += 1
         no_integration_id += tally.get("no_integration_id", 0)
         skipped_existing_id += tally.get("skip_resubmit_existing_id", 0)   # RC-1/S03: refused-at-claim, left queued
+        not_live_ready += tally.get("not_live_ready", 0)                   # RC-3b/S07: cred-less channel, left queued
     return {"due": len(due), "published": published, "no_provider": no_provider,
             "no_integration_id": no_integration_id, "not_distributed": not_distributed,
-            "skipped_existing_id": skipped_existing_id}
+            "skipped_existing_id": skipped_existing_id, "not_live_ready": not_live_ready}
 
 
 def publish_post(cfg: Config, post_id: str) -> str | None:
@@ -519,4 +536,5 @@ def publish_post(cfg: Config, post_id: str) -> str | None:
         get_logger(cfg)("publish", post_id, "dryrun_not_distributed",
                         account=post.account, platform=post.platform.value)
         return PostState.queued.value
-    return _publish_one(cfg, post_id, provider, account_id=_resolve_publish_account_id(accounts, post, cfg=cfg))   # #10: cfg breadcrumbs a frozen-id fallback
+    return _publish_one(cfg, post_id, provider, accounts=accounts,   # RC-3b/S07: share the readiness gate
+                        account_id=_resolve_publish_account_id(accounts, post, cfg=cfg))   # #10: cfg breadcrumbs a frozen-id fallback

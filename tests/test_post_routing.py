@@ -103,7 +103,8 @@ def test_publish_due_routes_per_account(tmp_path, monkeypatch, mocker):
     # global = postiz; @tk/tiktok overridden to zernio. One run must send the IG post through 'postiz'
     # and the TikTok post through 'zernio' — proving simultaneous mixed-backend publishing.
     monkeypatch.setenv("FANOPS_POSTER", "postiz")
-    cfg = Config(root=tmp_path)
+    monkeypatch.setenv("POSTIZ_API_KEY", "k"); monkeypatch.setenv("ZERNIO_API_KEY", "k")   # RC-3b: publishing needs
+    cfg = Config(root=tmp_path)                                                            # a live-READY channel (creds)
     _accounts_json(tmp_path, [
         {"handle": "@ig", "account_id": "ig_1", "platforms": ["instagram"], "status": "active"},
         {"handle": "@tk", "account_id": "acc_abc", "platforms": ["tiktok"], "status": "active",
@@ -134,6 +135,7 @@ def test_publish_due_routes_per_account(tmp_path, monkeypatch, mocker):
 def test_publish_due_no_overrides_uses_global(tmp_path, monkeypatch, mocker):
     # byte-identical: with no backends override, every post uses the global backend
     monkeypatch.setenv("FANOPS_POSTER", "postiz")
+    monkeypatch.setenv("POSTIZ_API_KEY", "k")   # RC-3b: publishing requires the channel to be live-READY (creds)
     cfg = Config(root=tmp_path)
     _accounts_json(tmp_path, [{"handle": "@ig", "account_id": "ig_1", "platforms": ["instagram"], "status": "active"}])
     with Ledger.transaction(cfg) as led:
