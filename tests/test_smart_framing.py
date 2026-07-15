@@ -7,7 +7,7 @@
 # rather than silently centre-crop (see the require_cv2 raise-tests below). cv2 is absent in the hermetic unit
 # job, so router tests stub the DETECTION functions (detect_window/speaker_track/subject_focus); the real
 # require_cv2 runtime builds a real detector (cv2 is installed in the unit lane) and the stubbed detection drives the router.
-import json, re, types
+import json, re, shutil, subprocess, types
 from pathlib import Path
 import pytest
 from fanops.config import Config
@@ -299,6 +299,16 @@ def test_ffmpeg_segments_cmd_one_seeked_input_per_segment():
     assert ts == ["2.000", "3.000", "3.000"]                # each input limited to its segment duration
     assert cmd.count("-i") == 3 and "-filter_complex" in cmd
     assert [cmd[i + 1] for i, a in enumerate(cmd) if a == "-map"] == ["[vout]", "[aout]"]
+
+
+def test_ffmpeg_segments_cmd_forces_cfr_so_concat_gaps_dont_drop_fps():
+    # E4: the concat filter leaves a 1-frame PTS gap per join -> VFR output whose avg_frame_rate sags below
+    # the source (29.835 vs 29.97) and whose burned subtitles drift. `-fps_mode cfr` resamples to a constant
+    # grid. It MUST sit in the OUTPUT options (after the maps), not among the per-input `-ss/-t/-i` flags.
+    track = [(0.0, 2.0, 0.3, 0.4, 0.2, 0.4), (2.0, 5.0, 0.7, 0.4, 0.2, 0.4), (5.0, 8.0, 0.3, 0.4, 0.2, 0.4)]
+    cmd = ffmpeg_segments_cmd("src.mp4", "out.mp4", 100.0, 108.0, "9:16", track, src_w=1920, src_h=1080)
+    assert "-fps_mode" in cmd and cmd[cmd.index("-fps_mode") + 1] == "cfr"
+    assert cmd.index("-fps_mode") > cmd.index("-filter_complex")   # an output option, after the last input
 
 def test_ch0_for_routes_by_aspect():
     assert _ch0_for("9:16", 1920, 1080) == 1080             # wide source -> width-crop -> full height baseline
@@ -1071,3 +1081,110 @@ def test_detect_window_stores_score_in_sidecar(tmp_path, monkeypatch):
     cached = json.loads(sidecar.read_text())
     assert cached["v"] == framing._DETECT_V
     assert len(cached["windows"]["10.0-14.0"]["frames"][0][0]) == 5
+
+
+# ---- E4 real-tooling proof: the concat render path under REAL ffmpeg (a command-construction test is blind
+# to the muxed timeline). Helpers are `_e4_`-prefixed so they cannot collide with anything above. ----
+def _e4_ass_ts(t: float) -> str:
+    """seconds -> ASS timestamp H:MM:SS.cs (centiseconds)."""
+    cs = int(round(t * 100)); h, cs = divmod(cs, 360000); m, cs = divmod(cs, 6000); s, cs = divmod(cs, 100)
+    return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
+
+def _e4_ratio(r: str) -> float:
+    n, _, d = str(r).partition("/"); return float(n) / float(d or 1)
+
+def _e4_probe(entries: list, path) -> dict:
+    out = subprocess.run(["ffprobe", "-v", "error", *entries, "-of", "json", str(path)],
+                         check=True, capture_output=True, text=True)
+    return json.loads(out.stdout)
+
+def _e4_frame_pts(path) -> list:
+    out = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0",
+                          "-show_entries", "frame=pts_time", "-of", "csv=p=0", str(path)],
+                         check=True, capture_output=True, text=True)
+    # numeric-only guard (a stray N/A row is skipped without an except-swallow)
+    return sorted(float(ln) for ln in out.stdout.splitlines() if re.fullmatch(r"[0-9.]+", ln.strip()))
+
+def _e4_bright_frame_times(path, work) -> list:
+    """pts_time of every OUTPUT frame whose mean luma rises clearly above the source's black baseline — i.e.
+    the frames on which the burned white subtitle is actually visible. signalstats.YAVG per frame via a
+    metadata=print sidecar; the threshold auto-calibrates off the minimum (black) frame so it is range-agnostic."""
+    stats = Path(work) / "e4_stats.txt"
+    subprocess.run(["ffmpeg", "-y", "-i", str(path), "-vf", f"signalstats,metadata=print:file={stats}",
+                    "-an", "-f", "null", "-"], check=True, capture_output=True, text=True)
+    pairs, cur = [], None
+    for ln in stats.read_text().splitlines():
+        mt = re.search(r"pts_time:([\d.]+)", ln)
+        if mt: cur = float(mt.group(1))
+        my = re.search(r"signalstats\.YAVG=([\d.]+)", ln)
+        if my and cur is not None: pairs.append((cur, float(my.group(1))))
+    if not pairs: return []
+    base = min(y for _, y in pairs)
+    return [t for t, y in pairs if y > base + 8.0]
+
+@pytest.mark.integration
+@pytest.mark.skipif(not (shutil.which("ffmpeg") and shutil.which("ffprobe")),
+                    reason="real ffmpeg/ffprobe required")
+def test_segments_concat_real_ffmpeg_holds_fps_duration_audiosync_no_gap_and_subtitle_timing(tmp_path):
+    """E4 real-tooling proof (the command-construction test above cannot see this): render the 3-SEGMENT
+    concat path through REAL ffmpeg and measure the muxed output. `-fps_mode cfr` must have filled the
+    concat filter's per-join PTS gaps, so ALL of: avg_frame_rate matches the source within the validator's
+    _FPS_TOL; duration is exact within _DUR_TOL_S; audio is present, full-length, and coterminous with the
+    video (sync); NO join leaves a >1-frame PTS gap; and a burned .ass subtitle authored ENTIRELY AFTER the
+    final join displays at its authored timestamps. On the pre-fix command (no cfr) the concat leaves 2-frame
+    gaps -> avg_frame_rate sags (~29.83) and max frame delta ~2/fps; this pins the post-fix invariants."""
+    from fanops.clip import render_reframed
+    from fanops.reframe_apply import _FPS_TOL, _DUR_TOL_S
+    fps, dur = 30, 6.0
+    # SOLID-BLACK source: the ONLY luminance in the output is the burned white subtitle -> a clean, decodable
+    # signal for the subtitle-timing assertion. 30fps CFR + a stereo tone so audio sync is measurable.
+    src = tmp_path / "src.mp4"
+    subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i", f"color=c=black:size=1280x720:rate={fps}:duration={dur}",
+                    "-f", "lavfi", "-i", f"sine=frequency=440:sample_rate=44100:duration={dur}",
+                    "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-ac", "2", "-t", str(dur), str(src)],
+                   check=True, capture_output=True, text=True)
+    # A FONT-INDEPENDENT white band burned ONLY in [4.50, 5.00] — entirely AFTER the final join at 4.0s.
+    # It is an ASS VECTOR DRAWING (\p1): libass rasterizes the polygon from the style's PrimaryColour with
+    # NO glyph/font lookup, so the timing check cannot flake on a headless runner's font set (a glyph-based
+    # subtitle renders nothing when fontconfig has no match). \an7\pos(0,0) makes the drawing coords absolute
+    # screen pixels at PlayRes; the band spans the full width, y 800..1200 of 1920 -> a large luma lift.
+    sub_on, sub_off = 4.50, 5.00
+    ass = tmp_path / "sub.ass"
+    ass.write_text(
+        "[Script Info]\nScriptType: v4.00+\nPlayResX: 1080\nPlayResY: 1920\n\n"
+        "[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, Alignment\n"
+        "Style: Box,Arial,40,&H00FFFFFF,7\n\n"
+        "[Events]\nFormat: Layer, Start, End, Style, Text\n"
+        f"Dialogue: 0,{_e4_ass_ts(sub_on)},{_e4_ass_ts(sub_off)},Box,"
+        "{\\an7\\pos(0,0)\\p1}m 0 800 l 1080 800 1080 1200 0 1200{\\p0}\n")
+    # 3 segments -> 2 joins. Centered static crops (fh=None -> no zoom) keep the frame black outside the sub.
+    track = [(0.0, 2.0, 0.5, 0.5, None, None),
+             (2.0, 4.0, 0.5, 0.5, None, None),
+             (4.0, 6.0, 0.5, 0.5, None, None)]
+    dst = tmp_path / "out.mp4"
+    r = render_reframed(str(src), str(dst), 0.0, dur, "9:16", src_w=1280, src_h=720,
+                        track=track, extra_vf=f"subtitles='{ass}'", content_type="multi-speaker-talk")
+    assert r.returncode == 0 and dst.exists() and dst.stat().st_size > 0
+
+    # (1) avg_frame_rate within the validator's _FPS_TOL of the source rate — the direct concat-gap symptom.
+    v = _e4_probe(["-select_streams", "v:0", "-show_entries", "stream=avg_frame_rate,r_frame_rate"], dst)["streams"][0]
+    avg = _e4_ratio(v["avg_frame_rate"])
+    assert abs(avg - fps) <= _FPS_TOL, f"avg_frame_rate {avg} != source {fps} (tol {_FPS_TOL}); concat PTS gaps unfilled"
+    # (2) duration within the validator's _DUR_TOL_S of the exact clip length.
+    vdur = float(_e4_probe(["-show_entries", "format=duration"], dst)["format"]["duration"])
+    assert abs(vdur - dur) <= _DUR_TOL_S, f"duration {vdur} vs {dur} (tol {_DUR_TOL_S}s)"
+    # (3) audio present, ~full-length, and coterminous with the video (A/V sync holds after the joins).
+    astreams = _e4_probe(["-select_streams", "a:0", "-show_entries", "stream=duration,codec_type"], dst)["streams"]
+    assert astreams and astreams[0]["codec_type"] == "audio", "output lost its audio stream"
+    adur = float(astreams[0]["duration"])
+    assert abs(adur - dur) <= _DUR_TOL_S and abs(adur - vdur) <= 0.10, f"A/V desync: audio={adur} video={vdur}"
+    # (4) NO PTS gap at any join: every consecutive video frame delta is ~1 frame; none exceeds 1.5 frames.
+    pts = _e4_frame_pts(dst)
+    assert len(pts) >= int(dur * fps) - 1, f"only {len(pts)} frames for a {dur}s/{fps}fps clip"
+    max_delta = max(b - a for a, b in zip(pts, pts[1:]))
+    assert max_delta <= 1.5 / fps, f"a join left a PTS gap: max frame delta {max_delta:.4f}s > {1.5/fps:.4f}s"
+    # (5) the burned subtitle displays at its authored window, AFTER the final join (timeline did not drift).
+    lit = _e4_bright_frame_times(dst, tmp_path)
+    assert lit, "no burned subtitle detected in the output — the .ass burn did not reach the pixels"
+    assert abs(min(lit) - sub_on) <= 2.5 / fps and abs(max(lit) - sub_off) <= 2.5 / fps, \
+        f"subtitle window {min(lit):.3f}..{max(lit):.3f}s drifted from authored {sub_on}..{sub_off}s after the join"

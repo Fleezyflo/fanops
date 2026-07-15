@@ -63,31 +63,31 @@
       },
       {
         "call": "Ledger.transaction",
-        "line": 1224
+        "line": 1225
       },
       {
         "call": "Ledger.transaction",
-        "line": 1237
+        "line": 1238
       },
       {
         "call": "Ledger.transaction",
-        "line": 1311
+        "line": 1312
       },
       {
         "call": "Ledger.transaction",
-        "line": 1319
+        "line": 1320
       },
       {
         "call": "Ledger.transaction",
-        "line": 1327
+        "line": 1328
       },
       {
         "call": "Ledger.transaction",
-        "line": 1334
+        "line": 1335
       },
       {
         "call": "Ledger.transaction",
-        "line": 1343
+        "line": 1344
       }
     ],
     "fanops.ledger_wipe": [
@@ -433,11 +433,11 @@
     "fanops.reframe_apply": [
       {
         "call": "fcntl.flock",
-        "line": 169
+        "line": 170
       },
       {
         "call": "fcntl.flock",
-        "line": 182
+        "line": 183
       }
     ],
     "fanops.stage_lock": [
@@ -542,7 +542,7 @@
     "fanops.reframe_apply": [
       {
         "call": "shutil.rmtree",
-        "line": 932
+        "line": 942
       }
     ],
     "fanops.transcribe": [
@@ -571,15 +571,15 @@
       },
       {
         "call": "subprocess.run",
-        "line": 472
+        "line": 481
       },
       {
         "call": "subprocess.run",
-        "line": 529
+        "line": 538
       },
       {
         "call": "subprocess.run",
-        "line": 537
+        "line": 546
       }
     ],
     "fanops.daemon": [
@@ -697,17 +697,17 @@
     "fanops.reframe": [
       {
         "call": "subprocess.run",
-        "line": 545
+        "line": 551
       }
     ],
     "fanops.reframe_apply": [
       {
         "call": "subprocess.run",
-        "line": 220
+        "line": 221
       },
       {
         "call": "subprocess.run",
-        "line": 313
+        "line": 314
       }
     ],
     "fanops.signals": [

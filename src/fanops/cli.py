@@ -1206,7 +1206,8 @@ def cmd_reframe(cfg: Config, args) -> int:
         print("  go/no-go: SUPPRESSED (a partial run cannot support a corpus-wide claim)")
     else:
         b = s["go_no_go"]["blockers"]
-        print(f"  go/no-go: {b and 'BLOCKED: ' + '; '.join(b) or 'no blockers'} ({s['go_no_go']['eligible']} eligible)")
+        print(f"  go/no-go: {b and 'BLOCKED: ' + '; '.join(b) or 'no blockers'} ({s['go_no_go']['eligible']} eligible"
+              f" — STRUCTURAL only; a visual pass is still required before any reframe)")
     return 0
 
 

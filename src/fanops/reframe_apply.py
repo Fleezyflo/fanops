@@ -50,6 +50,7 @@ from fanops import framing
 from fanops import overlay
 from fanops.bands import band_for
 from fanops.config import Config
+from fanops.controlio import write_json_atomic
 from fanops.ledger import Ledger
 from fanops.log import get_logger
 from fanops.reframe import APPROVED_FRAMING_KEYS, ReframeClass, ReframePaths, snapshot_ledger
@@ -520,6 +521,19 @@ def _stored_fp(sidecar: Path) -> str | None:
         return None
 
 
+def _write_sidecar_atomic(sidecar_path: str, fp: str) -> None:
+    """Atomically replace a render sidecar so a crash mid-write can never tear it — it only ever appears
+    complete. A thin wrapper over the repo's SHARED control-file boundary (controlio.write_json_atomic:
+    unique mkstemp temp -> os.replace -> cleanup-on-failure), so this correctness-critical write stays
+    identical to accounts.json/personas.json and cannot drift from their guarantees — the coding guideline
+    mandates routing atomic control-file writes through controlio rather than hand-rolling a copy. ATOMICITY
+    (never a torn file) is the load-bearing property: a torn sidecar reads as None on the next resume and
+    downgrades an auto-healable TORN state to a manual-repair AMBIGUOUS one; a fully-LOST sidecar is instead
+    recovered by the TORN-heal. INVARIANT: ALL sidecar mutations go through here. NB the ffmpeg/mpeg outputs
+    keep their OWN muxer-inferable `.part` discipline (MOL-78) — this JSON boundary is deliberately separate."""
+    write_json_atomic(Path(sidecar_path), {"fp": fp})
+
+
 def inspect_clip(dirs: RunDirs, row: dict) -> str:
     """Resume's eyes. Reads ACTUAL disk state and classifies it. Ambiguity is a first-class answer: a
     resume that guesses is worse than one that stops."""
@@ -621,7 +635,7 @@ def apply_clip(paths: ReframePaths, dirs: RunDirs, led: Ledger, row: dict, *, ru
     if state == TORN:
         # New pixels, stale fingerprint. HEAL it: the staged render already won, only the sidecar is
         # missing. We do not re-render (that would waste the proven output); we finish the commit.
-        Path(row["sidecar_path"]).write_text(json.dumps({"fp": row["fp_new"]}))
+        _write_sidecar_atomic(row["sidecar_path"], row["fp_new"])   # atomic: a crash mid-heal never tears the sidecar
         return {**rec, "phase": "heal", "status": "healed_sidecar",
                 "final": {"media_sha256": sha256_file(row["media_path"]), "fp": _stored_fp(Path(row["sidecar_path"]))}}
 
@@ -679,11 +693,7 @@ def apply_clip(paths: ReframePaths, dirs: RunDirs, led: Ledger, row: dict, *, ru
 
     # ---- COMMIT. Two writes, both declared, mp4 first so the TORN state is detectable and healable. ----
     os.replace(str(staged), row["media_path"])
-    tmp_side = Path(str(row["sidecar_path"]) + ".part")
-    tmp_side.write_text(json.dumps({"fp": row["fp_new"]}))
-    with open(tmp_side, "r+", encoding="utf-8") as fh:
-        os.fsync(fh.fileno())
-    os.replace(str(tmp_side), row["sidecar_path"])
+    _write_sidecar_atomic(row["sidecar_path"], row["fp_new"])   # same tmp->fsync->replace as before (now shared)
 
     final_mp4 = sha256_file(row["media_path"])
     final_fp = _stored_fp(Path(row["sidecar_path"]))
