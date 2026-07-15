@@ -597,7 +597,7 @@ def cmd_daemon(cfg: Config, args) -> int:
             dr = rep.get("daemon_root") or "(none installed)"
             match = "" if (not rep.get("daemon_root") or rep["daemon_root"] == rep["root"]) else "  ⚠ DIFFERS"
             print(f"  this cmd root {rep['root']}  |  daemon root {dr}{match}")
-            print(f"  -> {rep['verdict']}")
+            print(f"  -> {rep['verdict']}  |  pass: {rep['pass_verdict']}")
             return 0
         if act == "stop":
             res = daemon.stop(cfg, remove=args.remove)

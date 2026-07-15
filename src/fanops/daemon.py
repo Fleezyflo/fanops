@@ -442,7 +442,10 @@ def status(cfg: Config, *, interval: int = 600) -> dict:
     finishes, so it must NEVER flip a fast-logging pass to stale). `heartbeat_age_s` stays in the
     dict for telemetry but no longer governs the verdict on its own. Not-loaded is an ALARM (should
     be running); a stage held with the log SILENT past the ceiling is stage-stuck; genuinely dead
-    (no PID) is the ONLY 'not running' verdict. `interval` is the installed cadence."""
+    (no PID) is the ONLY 'not running' verdict. `interval` is the installed cadence. Also returns a
+    SECOND, ORTHOGONAL verdict — `pass_verdict` / `last_success_age_s` (RC-6): is the pump COMPLETING
+    passes? — which NEVER alters the liveness verdict above (a process can be `alive` on fresh activity
+    yet be completing no passes)."""
     from fanops.health_model import heartbeat_stale, daemon_progress
     installed = plist_path().exists()
     r = _launchctl("list", LABEL)
@@ -450,6 +453,19 @@ def status(cfg: Config, *, interval: int = 600) -> dict:
     pid = _grep_int(r.stdout, "PID") if loaded else None
     last_exit = _grep_int(r.stdout, "LastExitStatus") if loaded else None
     age, stale, iv = heartbeat_stale(cfg, interval=installed_interval(cfg) or interval)
+    # RC-6 (S08): the loop-origin heartbeat lands ONLY after a pass COMPLETES without halting
+    # (cli._cmd_run_pass returns non-None -> _heartbeat(origin='loop')), so `age` IS the age of the last
+    # SUCCESSFUL pass. Report it as a SECOND, ORTHOGONAL verdict — is the pump COMPLETING passes? — so a
+    # bare `alive` (fresh log activity, via the alive_mid override below) can no longer HIDE a pump that
+    # logs but never finishes a pass. Reuses the authoritative `stale` window (heartbeat_stale); invents
+    # no new threshold and does NOT touch the alive/stale liveness decision.
+    last_success_age_s = age
+    if age is None:
+        pass_verdict = "no completed pass yet"
+    elif stale:
+        pass_verdict = f"no successful pass in {int(age)}s"
+    else:
+        pass_verdict = "passes completing"
     run_line = None
     exec_fail = None
     target = _installed_program(cfg)
@@ -475,7 +491,8 @@ def status(cfg: Config, *, interval: int = 600) -> dict:
         else:
             verdict = f"loaded but stale (last heartbeat {int(age)}s ago)"
     return {"installed": installed, "loaded": loaded, "pid": pid, "last_exit": last_exit,
-            "heartbeat_age_s": age, "verdict": verdict, "exec_fail": exec_fail, "run_line": run_line,
+            "heartbeat_age_s": age, "last_success_age_s": last_success_age_s, "verdict": verdict,
+            "pass_verdict": pass_verdict, "exec_fail": exec_fail, "run_line": run_line,
             "root": str(cfg.root), "daemon_root": str(installed_root() or "")}
 
 def stop(cfg: Config, *, remove: bool = False) -> dict:
