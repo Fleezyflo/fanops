@@ -1172,6 +1172,7 @@ def cmd_reframe(cfg: Config, args) -> int:
     before touching it, renders to staging, validates, and only then atomically replaces the two files it
     declared. The two modes are MUTUALLY EXCLUSIVE — a command that could read or write depending on a flag
     it also accepted is a command whose blast radius you cannot see at the call site."""
+    import shutil
     import tempfile
     from pathlib import Path
     from fanops.reframe import ReframePaths, run_dry_run
@@ -1182,33 +1183,38 @@ def cmd_reframe(cfg: Config, args) -> int:
               "--cleanup. Mutation is never implied.", file=sys.stderr)
         return 2
     scratch = Path(args.scratch) if args.scratch else Path(tempfile.mkdtemp(prefix="fanops_reframe_"))
+    owned = not args.scratch                                    # RC-10: WE minted it -> WE remove it (operator --scratch is theirs)
     paths = ReframePaths.build(cfg.root, scratch)
     if not args.dry_run:
-        return _reframe_mutation(paths, args)
-    man = run_dry_run(paths, limit=args.limit, argv=sys.argv[1:])
-    if args.json:
-        print(json.dumps(man, indent=2, sort_keys=True))
-        return 0 if man["analysis_phase_clean"] else 1
-    s = man["summary"]
-    print(f"reframe dry-run — scratch: {paths.scratch_root}")
-    print(f"  clips classified: {len(man['clips'])}" + ("  (PARTIAL — --limit)" if man["partial"] else ""))
-    for k, v in sorted(s["totals"].items(), key=lambda kv: -kv[1]):
-        print(f"    {v:6d}  {k}")
-    if s["framing_unresolved_by_root_cause"]:
-        print("  framing_unresolved by root cause:")
-        for k, v in sorted(s["framing_unresolved_by_root_cause"].items(), key=lambda kv: -kv[1]):
+        return _reframe_mutation(paths, args)                   # mutation verbs OWN their scratch (backups/resume/--cleanup)
+    try:
+        man = run_dry_run(paths, limit=args.limit, argv=sys.argv[1:])
+        if args.json:
+            print(json.dumps(man, indent=2, sort_keys=True))
+            return 0 if man["analysis_phase_clean"] else 1
+        s = man["summary"]
+        print(f"reframe dry-run — scratch: {paths.scratch_root}")
+        print(f"  clips classified: {len(man['clips'])}" + ("  (PARTIAL — --limit)" if man["partial"] else ""))
+        for k, v in sorted(s["totals"].items(), key=lambda kv: -kv[1]):
             print(f"    {v:6d}  {k}")
-    if not man["analysis_phase_clean"]:
-        print("  *** THE ANALYSIS PHASE MUTATED THE PROTECTED ROOT — this run is void ***", file=sys.stderr)
-        return 1
-    print("  protected root unchanged (existence/type/size/mode/mtime/inode/content verified)")
-    if s["go_no_go"] is None:
-        print("  go/no-go: SUPPRESSED (a partial run cannot support a corpus-wide claim)")
-    else:
-        b = s["go_no_go"]["blockers"]
-        print(f"  go/no-go: {b and 'BLOCKED: ' + '; '.join(b) or 'no blockers'} ({s['go_no_go']['eligible']} eligible"
-              f" — STRUCTURAL only; a visual pass is still required before any reframe)")
-    return 0
+        if s["framing_unresolved_by_root_cause"]:
+            print("  framing_unresolved by root cause:")
+            for k, v in sorted(s["framing_unresolved_by_root_cause"].items(), key=lambda kv: -kv[1]):
+                print(f"    {v:6d}  {k}")
+        if not man["analysis_phase_clean"]:
+            print("  *** THE ANALYSIS PHASE MUTATED THE PROTECTED ROOT — this run is void ***", file=sys.stderr)
+            return 1
+        print("  protected root unchanged (existence/type/size/mode/mtime/inode/content verified)")
+        if s["go_no_go"] is None:
+            print("  go/no-go: SUPPRESSED (a partial run cannot support a corpus-wide claim)")
+        else:
+            b = s["go_no_go"]["blockers"]
+            print(f"  go/no-go: {b and 'BLOCKED: ' + '; '.join(b) or 'no blockers'} ({s['go_no_go']['eligible']} eligible"
+                  f" — STRUCTURAL only; a visual pass is still required before any reframe)")
+        return 0
+    finally:
+        if owned:
+            shutil.rmtree(scratch, ignore_errors=True)          # RC-10: the auto dry-run scratch NEVER leaks to /tmp
 
 
 def _dispatch(cfg: Config, args) -> int:

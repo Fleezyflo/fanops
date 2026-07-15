@@ -63,31 +63,31 @@
       },
       {
         "call": "Ledger.transaction",
-        "line": 1225
+        "line": 1231
       },
       {
         "call": "Ledger.transaction",
-        "line": 1238
+        "line": 1244
       },
       {
         "call": "Ledger.transaction",
-        "line": 1312
+        "line": 1318
       },
       {
         "call": "Ledger.transaction",
-        "line": 1320
+        "line": 1326
       },
       {
         "call": "Ledger.transaction",
-        "line": 1328
+        "line": 1334
       },
       {
         "call": "Ledger.transaction",
-        "line": 1335
+        "line": 1341
       },
       {
         "call": "Ledger.transaction",
-        "line": 1344
+        "line": 1350
       }
     ],
     "fanops.ledger_wipe": [
@@ -115,7 +115,7 @@
     "fanops.post.compress": [
       {
         "call": "Ledger.transaction",
-        "line": 123
+        "line": 134
       }
     ],
     "fanops.post.run": [
@@ -455,13 +455,13 @@
     "fanops.cli": [
       {
         "call": "tempfile.mkdtemp",
-        "line": 1184
+        "line": 1185
       }
     ],
     "fanops.post.compress": [
       {
         "call": "tempfile.mkdtemp",
-        "line": 21
+        "line": 27
       }
     ]
   },
@@ -539,6 +539,18 @@
   },
   "regeneration_command": "python -m tools.arch regen",
   "rmtree": {
+    "fanops.cli": [
+      {
+        "call": "shutil.rmtree",
+        "line": 1217
+      }
+    ],
+    "fanops.post.compress": [
+      {
+        "call": "shutil.rmtree",
+        "line": 49
+      }
+    ],
     "fanops.reframe_apply": [
       {
         "call": "shutil.rmtree",
@@ -685,7 +697,7 @@
     "fanops.post.compress": [
       {
         "call": "subprocess.run",
-        "line": 28
+        "line": 35
       }
     ],
     "fanops.postiz_lifecycle": [
@@ -741,7 +753,7 @@
     "lock_sites": 22,
     "mkdtemp_sites": 2,
     "network_sites_literal_requests": 15,
-    "rmtree_sites": 3,
+    "rmtree_sites": 5,
     "subprocess_sites": 35
   }
 }

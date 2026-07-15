@@ -384,3 +384,39 @@ def test_attribution_stamps_everything_that_could_change_a_fingerprint(tmp_path,
               "visual_start", "burn_subs", "clip_profile", "fingerprint_last_changed_commit"):
         assert k in a, f"attribution is missing {k}"
     assert a["reframe_geom_v"] == clipmod._REFRAME_GEOM_V
+
+
+# ── RC-10 (S09): cmd_reframe must not leak the /tmp scratch it mints for a dry-run ────────────────
+
+def test_cmd_reframe_dry_run_removes_owned_scratch(tmp_path, monkeypatch):
+    # RC-10 fails-before/passes-after: a `--dry-run` with no --scratch mkdtemp'd a `fanops_reframe_*`
+    # dir and never removed it. It is now cleaned in a finally once WE own it.
+    import tempfile as _tf, types
+    from fanops import cli
+    cfg = Config(root=tmp_path)
+    created = {}
+    real = _tf.mkdtemp
+    monkeypatch.setattr(_tf, "mkdtemp", lambda *a, **k: created.setdefault("p", real(*a, **k)))
+    monkeypatch.setattr(reframe.ReframePaths, "build",
+                        classmethod(lambda cls, root, scratch: types.SimpleNamespace(scratch_root=scratch)))
+    monkeypatch.setattr(reframe, "run_dry_run", lambda paths, **k: {"analysis_phase_clean": True})
+    args = types.SimpleNamespace(scratch=None, dry_run=True, apply=False, status=False, resume=False,
+                                 rollback=False, cleanup=False, json=True, limit=None)
+    assert cli.cmd_reframe(cfg, args) == 0
+    from pathlib import Path
+    assert not Path(created["p"]).exists()                      # RC-10: the auto scratch is gone
+
+
+def test_cmd_reframe_preserves_operator_scratch(tmp_path, monkeypatch):
+    # PRESERVED: an operator-supplied --scratch is THEIRS — never deleted.
+    import types
+    from fanops import cli
+    cfg = Config(root=tmp_path)
+    op = tmp_path / "mine"; op.mkdir()
+    monkeypatch.setattr(reframe.ReframePaths, "build",
+                        classmethod(lambda cls, root, scratch: types.SimpleNamespace(scratch_root=scratch)))
+    monkeypatch.setattr(reframe, "run_dry_run", lambda paths, **k: {"analysis_phase_clean": True})
+    args = types.SimpleNamespace(scratch=str(op), dry_run=True, apply=False, status=False, resume=False,
+                                 rollback=False, cleanup=False, json=True, limit=None)
+    assert cli.cmd_reframe(cfg, args) == 0
+    assert op.exists()                                          # operator --scratch preserved
