@@ -1702,12 +1702,13 @@ validator + repository-remediation PRs are green.
 | 0100 | [`0100-ci-governance-authority-and-control-registry.md`](0100-ci-governance-authority-and-control-registry.md) | defines the mechanism for **0099 `GOV-CI-CONTROL-PLANE-GAP`** (PROP); refs 0090, 0098 | **accepted (in principle)** | registry `.github/`; **dedicated `tools/ci` validator** (not `tools/arch`); three-plane divergence model |
 | 0101 | [`0101-required-checks-and-merge-gate-policy.md`](0101-required-checks-and-merge-gate-policy.md) | formalizes **0089 `GOV-TWO-REQUIRED-GATES`** + **0097 `GOV-CI-ONLY-APPROVAL`**; does **not** revive **0096** | **accepted (in principle)** | **5 required contexts**; `enforce_admins` on **last** + governed break-glass; conv-resolution on |
 | 0102 | [`0102-merge-strategy-and-repository-history-policy.md`](0102-merge-strategy-and-repository-history-policy.md) | fills the **absent** merge-strategy decision (no catalogue slug); refs 0088, 0095 | **accepted (in principle)** | squash-only + `required_linear_history`; auto-delete branch; **no `Unit:` folklore** |
-| 0103 | [`0103-reframe-subject-and-layout-aware-framing.md`](0103-reframe-subject-and-layout-aware-framing.md) | records the previously-implicit reframe framing-fallback + treatment-routing design (no catalogue slug); refs subsystem trace C3 | **proposed** | subject-aware fallback (F1/F2/F3/F5); layout-aware routing (F4 — PIP ≠ live two-shot); zoom restraint (F6); active-speaker selection deferred to audio |
+| 0103 | [`0103-reframe-subject-and-layout-aware-framing.md`](0103-reframe-subject-and-layout-aware-framing.md) | records the previously-implicit reframe framing-fallback + treatment-routing design (no catalogue slug); refs subsystem trace C3 | **accepted** (2026-07-16) | subject-aware fallback (F1/F2/F3/F5); layout-aware routing (F4 — PIP ≠ live two-shot); zoom restraint (F6); active-speaker selection deferred to audio |
 
 > **0103** is the first ADR from outside the CI-reconciliation program — it formalizes the previously
 > implicit reframe framing design surfaced by the `centered_multi_untracked` investigation
-> ([`docs/design/reframe/`](../design/reframe/README.md)) and is **proposed**, gated on roadmap approval.
-> The CI-specific notes below do not apply to it.
+> ([`docs/design/reframe/`](../design/reframe/README.md)) and is **accepted** (2026-07-16) for Track A
+> implementation on the permanent evidence package (PR #660); Track B stays deferred. The CI-specific notes
+> below do not apply to it.
 
 Machine-readable companions: [`.github/ci-control-registry.yml`](../../.github/ci-control-registry.yml)
 (the CI Control Registry, ADR-0100) and its schema; the generated ownership view
