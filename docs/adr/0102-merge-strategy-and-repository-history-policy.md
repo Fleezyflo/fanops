@@ -13,6 +13,11 @@ deciders: [operator]
 > (`required_linear_history` + squash-only) is a live branch-protection / repo-setting change, deferred
 > to Phase E with an approval gate and an explicit break-glass. It deliberately does **not** revive the
 > dormant commit-message land-gate, and **the policy does not depend on any `Unit:` tag folklore**.
+>
+> **Reclassification (2026-07-16).** The engineering that produced this policy is complete; the one
+> live change (`required_linear_history` + squash-only + auto-delete) is part of **Operational
+> Governance Deployment (OGD)** — deployment of repository security policy, a governance-operations
+> activity, not engineering. Wherever this ADR says "Phase E," read "OGD."
 
 ## Status
 

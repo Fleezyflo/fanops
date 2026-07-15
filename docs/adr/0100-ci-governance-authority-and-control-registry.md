@@ -12,7 +12,7 @@ deciders: [operator]
 > **Accepted in principle 2026-07-15**, with the operator amendments folded into this revision.
 > Declares authority and structure only; modifies no workflow and mutates no branch protection.
 > Implementation is gated: the `tools/ci` validator and the repository-remediation PRs must be green
-> before any live branch-protection mutation (ADR-0101 / Phase E).
+> before any live branch-protection mutation (ADR-0101 / Operational Governance Deployment).
 
 ## Status
 
