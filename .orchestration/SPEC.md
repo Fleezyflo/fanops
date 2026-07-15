@@ -25,7 +25,7 @@ changes nothing for normal sessions. While active:
 
 | Guarantee | Mechanism |
 |---|---|
-| Nothing red lands | every land (`gh pr merge` and raw `gh api …/merge`) runs `gh pr checks` — non-green or unverifiable → refused. |
+| Nothing red lands | every land (`gh pr merge` and raw `gh api …/merge`) runs `gh pr checks --required` — the gate mirrors branch protection, never stricter, so advisory checks (e.g. CodeRabbit) can never block a land; non-green or unverifiable → refused. |
 | Verification is priced to risk | an independent verification record is demanded ONLY where wrongness is expensive: the PR touches a `lanes.json` hot file, is broad (>5 files), or its file list is unverifiable (`records_required`, fail closed). Small non-hot changes land on green CI alone — no verifier is spawned for them. Rationale: CI cannot catch an implementer grading their own homework (tests asserting the misread behavior), so an independent diff-vs-acceptance read is bought only where that failure costs the most. |
 | A record covers exactly the commits it saw | where a record is demanded, its `head_sha` must equal the PR's current `headRefOid`; stale → land refused (the ONLY re-verify trigger). |
 | Only named wave agents spawn; models stay pinned | `subagentStart` denies any type outside {`fanops-worker`, `fanops-lander`}: ad-hoc types (`general-purpose`, `shell`) are where spawn-time models take effect, and a second `fanops-orchestrator` mid-wave is the double-merge incident. Allowed agents' frontmatter pins `model: inherit`. |

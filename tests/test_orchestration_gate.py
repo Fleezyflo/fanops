@@ -266,6 +266,36 @@ def test_land_decision_skips_records_when_not_required(tmp_path):
     assert ok is False
 
 
+class _FakeProc:
+    def __init__(self, rc, out="", err=""):
+        self.returncode, self.stdout, self.stderr = rc, out, err
+
+
+def test_pr_checks_green_gates_on_required_only(monkeypatch):
+    """Advisory checks (e.g. CodeRabbit) never block a land: only --required gates it."""
+    def fake_run(cmd, **kw):
+        assert "--required" in cmd, "must query REQUIRED checks, not all checks"
+        return _FakeProc(0)
+    monkeypatch.setattr(og.subprocess, "run", fake_run)
+    ok, why = og._pr_checks_green("42")
+    assert ok is True and "required" in why
+
+
+def test_pr_checks_green_falls_back_when_none_required(monkeypatch):
+    responses = [_FakeProc(1, err="no required checks reported on this pull request"),
+                 _FakeProc(1, out="coderabbit\tfail\t0")]
+    monkeypatch.setattr(og.subprocess, "run", lambda cmd, **kw: responses.pop(0))
+    ok, why = og._pr_checks_green("42")
+    assert ok is False and "required checks configured" in why
+
+
+def test_pr_checks_green_denies_on_red_required(monkeypatch):
+    monkeypatch.setattr(og.subprocess, "run",
+                        lambda cmd, **kw: _FakeProc(1, out="unit\tfail\t1m30s"))
+    ok, why = og._pr_checks_green("42")
+    assert ok is False and "unit" in why
+
+
 def test_hot_files_reads_lanes_guard(tmp_path):
     (tmp_path / ".agents").mkdir()
     (tmp_path / ".agents" / "lanes.json").write_text(json.dumps(
