@@ -979,3 +979,106 @@ def _unresolved(trace: FramingTrace, root: _FE, attempts: tuple, ct: str | None)
     return FramingResolution(focus=None, track=None, content_type=None, final_outcome=_FO.UNRESOLVED,
                              final_strategy=_FS.CENTERED, root_cause=root, classified_content_type=ct,
                              attempts=attempts, events=trace.events, degraded_strategies=())
+
+
+# ---- S1: shared subject-aware fallback primitive (Track A / ADR-0103 / spec F5) -----------------------
+# The EXPLICIT structured alternative to the implicit blind-centre fallback. A PURE reducer over the cached
+# detect stats (the SAME per-frame face tuples classify_window / subject_focus / _two_cluster already read)
+# that decides, from the detected subject POSITIONS alone: is this ONE stable dominant subject, TWO
+# persistent wide-separated subjects, or too little evidence to say? It renders NOTHING and is wired into NO
+# route here — S2/S3/S4/S5 consume it per defect population — so every existing framing path stays
+# byte-identical and no clip's render fingerprint changes in this slice.
+FB_DOMINANT = "dominant"          # one stable dominant subject -> anchor + span on THAT subject
+FB_WIDE_PAIR = "wide-pair"        # two persistent wide-separated subjects -> span covers BOTH (retain both)
+FB_INSUFFICIENT = "insufficient"  # evidence below the floor -> EXPLICIT no-op (caller keeps its safe default)
+
+@dataclass(frozen=True)
+class FallbackComposition:
+    """An explicit, subject-derived fallback composition (spec F5, ADR-0103 decision 1) — the structured
+    alternative to the implicit blind centre.
+
+    `kind` classifies the evidence. `x_min`/`x_max` is the horizontal interval (normalized [0,1]) the crop
+    MUST retain: a later slice picks the WIDEST crop containing it, so a narrow span barely zooms and a wide
+    span stays wide — the mild-framing / minimize-zoom requirement (spec F6). `cx,cy,ey,fh,fw` anchor and
+    size the dominant subject (fh/fw drive zoom + the horizontal safe-area). `confidence` is the fraction of
+    sampled frames carrying a face. FB_INSUFFICIENT carries NO geometry (all None): the caller keeps its
+    current safe default, but the choice is now EXPLICIT and inspectable, never a silent blind centre.
+    Deterministic — a pure function of the stats: no cv2, no I/O, never raises."""
+    kind: str
+    x_min: float | None
+    x_max: float | None
+    cx: float | None
+    cy: float | None
+    ey: float | None
+    fh: float | None
+    fw: float | None
+    confidence: float
+
+    @property
+    def is_actionable(self) -> bool:
+        """True when the evidence yielded a subject-derived region (DOMINANT / WIDE_PAIR); False for the
+        explicit INSUFFICIENT no-op — so a caller branches on 'did we get a subject?' without string-matching."""
+        return self.kind in (FB_DOMINANT, FB_WIDE_PAIR)
+
+def _c01(v: float) -> float:
+    return min(1.0, max(0.0, v))                              # clamp to [0,1] — the module's inline idiom
+
+def _fb_insufficient(conf: float) -> "FallbackComposition":
+    return FallbackComposition(FB_INSUFFICIENT, None, None, None, None, None, None, None, round(conf, 4))
+
+def _cluster_side_face(occ: list, *, left: bool):
+    """Median (cx, fw) of the DOMINANT face on ONE side of the 2-shot split across the occupied frames, or
+    None when that side is never genuinely present. Mirrors _two_cluster's split (dead-zone ±_ASD_SAME_TOL,
+    _CLUSTER_MIN_FH floor) so a WIDE_PAIR span is built from the SAME two clusters the classifier found — not
+    from every stray detection, so a PIP tile column never widens it."""
+    lo, hi = _ASD_SIDE_SPLIT - _ASD_SAME_TOL, _ASD_SIDE_SPLIT + _ASD_SAME_TOL
+    cxs: list[float] = []; fws: list[float] = []
+    for fr in occ:
+        cand = [f for f in fr if (f[0] < lo if left else f[0] > hi) and f[2] >= _CLUSTER_MIN_FH]
+        pick = _pick_dominant_face(cand)
+        if pick is None: continue
+        cxs.append(pick[0]); fws.append(pick[5] if len(pick) > 5 else 0.0)
+    if not cxs: return None
+    return (median(cxs), median(fws))
+
+def subject_aware_fallback(stats: dict | None) -> FallbackComposition:
+    """From the detected face positions of a no-track window, return the EXPLICIT fallback composition
+    (spec F5, ADR-0103 decision 1). PURE: same stats -> same result; no cv2, no I/O; never raises.
+
+    - No frames, or too few carry a face (< _MIN_CONF) -> FB_INSUFFICIENT (fail-safe; the caller keeps its
+      current safe default, but the no-op is now explicit and recorded).
+    - Two persistent wide-separated subjects (the E2 `_two_cluster` recall) -> FB_WIDE_PAIR whose span covers
+      BOTH clusters, so a later slice retains both at the widest crop.
+    - Otherwise the single stable dominant subject -> FB_DOMINANT whose span is that subject's OWN face box —
+      NEVER widened to a sub-threshold PIP tile or an intermittent second face.
+
+    The span is a function of the subject positions (it moves when they move); there is no fixed
+    content-blind region. `stats` is detect_window's dict — `{fps, frames:[[ (cx,cy,fh,ey,score,fw), .. ], ..]}`
+    (or a legacy 4-tuple shape, where the width-derived span degenerates to the centroid, fw=None)."""
+    frames = (stats or {}).get("frames") or []
+    if not frames:
+        return _fb_insufficient(0.0)
+    occ = [fr for fr in frames if fr]
+    conf = len(occ) / len(frames)
+    picks = [p for p in (_pick_dominant_face(fr) for fr in occ) if p is not None]
+    if not picks or conf < _MIN_CONF:
+        return _fb_insufficient(conf)
+    dcx = median(p[0] for p in picks); dcy = median(p[1] for p in picks)
+    dfh = median(p[2] for p in picks); dey = median(p[3] for p in picks)
+    fws = [p[5] for p in picks if len(p) > 5]
+    dfw = median(fws) if len(fws) == len(picks) else None     # None on the legacy 4-tuple shape (no width)
+    if _two_cluster(stats):                                    # E2 recall: a real, persistent L/R two-shot
+        left = _cluster_side_face(occ, left=True)
+        right = _cluster_side_face(occ, left=False)
+        if left is not None and right is not None:             # (both sides present — _two_cluster guarantees it)
+            lcx, lfw = left; rcx, rfw = right
+            x_min = _c01(min(lcx - lfw / 2, rcx - rfw / 2))
+            x_max = _c01(max(lcx + lfw / 2, rcx + rfw / 2))
+            return FallbackComposition(FB_WIDE_PAIR, round(x_min, 4), round(x_max, 4),
+                                       round((lcx + rcx) / 2, 4), round(dcy, 4), round(dey, 4), round(dfh, 4),
+                                       (round(dfw, 4) if dfw is not None else None), round(conf, 4))
+    # DOMINANT: span is the dominant subject's OWN box — a PIP tile / intermittent second face never widens it.
+    half = (dfw / 2) if dfw is not None else 0.0
+    return FallbackComposition(FB_DOMINANT, round(_c01(dcx - half), 4), round(_c01(dcx + half), 4),
+                               round(dcx, 4), round(dcy, 4), round(dey, 4), round(dfh, 4),
+                               (round(dfw, 4) if dfw is not None else None), round(conf, 4))
