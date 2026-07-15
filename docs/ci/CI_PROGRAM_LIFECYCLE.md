@@ -1,0 +1,49 @@
+# FanOps — CI Governance Program Lifecycle
+
+> **This document replaces the binary "engineering complete" framing** with an explicit six-phase
+> lifecycle and the current status of each phase. It is the single source of truth for *where the
+> program is*. It is part of the governance system, not commentary — the phase statuses below are the
+> program's authoritative state. (Operator directive, 2026-07-16.)
+
+The CI-governance program has **six phases**. The first four ("engineering") produce the policy and the
+machinery that enforces it; the fifth **deploys** that policy to live repository security settings; the
+sixth **closes and freezes** the program. Each phase has one deliverable class and one completion test.
+
+| # | Phase | What it produces | Completion test | **Status** |
+|---|-------|------------------|-----------------|------------|
+| 1 | **Investigation** | The CI Architecture Review — a mechanical, cited audit of every check (9 phases), surfacing the intent-vs-configuration gap. | The review exists and is evidence-backed (`docs/CI_ARCHITECTURE_REVIEW.md`). | ✅ **COMPLETE** |
+| 2 | **Architecture** | The decision records: three reconciled planes (registry = intent, workflows = implementation, live protection = deployed), required-checks policy, merge-strategy policy. | ADRs 0100 / 0101 / 0102 accepted (in principle). | ✅ **COMPLETE** |
+| 3 | **Governance** | The machine-readable control registry + schema, the control classification/lifecycle model, the duplicate-group model, the dedicated-validator mandate. | `ci-control-registry.yml` + `.schema.json` exist and are shape-valid; every control has one owner/invariant/classification. | ✅ **COMPLETE** |
+| 4 | **Implementation** | The `tools/ci` validator (DC-1..DC-6, three modes, negative controls), every repository-remediation slice, the validator wired into the required unit lane, and the OGD reclassification. | All implementation PRs merged; `tools.ci static` rc=0, `selftest` rc=0 on `main`; the five intended contexts green on one SHA. | ✅ **COMPLETE** |
+| 5 | **Operational Governance Deployment (OGD)** | Deployment of repository **security policy** to live branch protection: the six mutations M1–M6 (add `gate` → `base-install` → `lane-guard` → conversation-resolution → linear-history/squash-only → `enforce_admins` last). | Live branch protection == `intended_required_contexts` (5) + `enforce_admins=true` + conv-resolution + linear-history; `tools.ci deployed` reconciles with no planned-transition gap. | ⏳ **NOT STARTED** (operator-gated; runbook + rollback staged in `CI_BRANCH_PROTECTION_MUTATIONS.md`) |
+| 6 | **Program Closeout** | The two permanent, immutable records — `CI_PROGRAM_CLOSEOUT.md` (historical closeout of the whole program) and `CI_GOVERNANCE_DNA.md` (the principles, mechanisms, non-negotiable rules, and amendment process) — then the **freeze**. | Both documents exist; the program is declared frozen. | ⏳ **NOT STARTED** (produced after OGD, before freeze) |
+
+## What "engineering complete" now means precisely
+
+Phases 1–4 are the engineering. They are **complete and merged** on `main` and independently
+re-provable at any time:
+
+```
+python -m tools.ci reconcile     # static rc=0 (no findings) · deployed = planned-transition (expected pre-OGD)
+python -m tools.ci selftest      # rc=0 — all 8 negative controls fire (the DCs discriminate)
+```
+
+Phases 5–6 are **not** engineering. Phase 5 (OGD) is a governance-**operations** activity that changes
+live repository access-control settings; it is applied by the operator, one mutation at a time, with a
+captured pre-image and a re-probe between each. Phase 6 produces the immutable records and freezes the
+program. Neither is "remaining work on the code" — the code is done.
+
+## Freeze semantics (end of Phase 6)
+
+When `CI_PROGRAM_CLOSEOUT.md` and `CI_GOVERNANCE_DNA.md` both exist, **this CI-governance program is
+frozen**. The closeout and the DNA document are immutable. **Any future CI-governance change begins as a
+NEW governance program** — a new ADR and a new registry revision under the amendment process defined in
+`CI_GOVERNANCE_DNA.md` — never as an extension of this one. Extending a frozen program is itself a
+governance violation.
+
+## Related governed artifacts
+
+- `docs/ci/CI_VALIDATOR_SPEC.md` — the permanent specification of the `tools/ci` validator (a governed subsystem).
+- `docs/ci/CI_BRANCH_PROTECTION_MUTATIONS.md` — the OGD runbook (Phase 5) + the closeout spec.
+- `docs/adr/0100–0102` — the Architecture-phase decision records.
+- `.github/ci-control-registry.yml` (+ `.schema.json`) — the Governance-phase control registry.
