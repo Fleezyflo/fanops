@@ -23,6 +23,17 @@ status: accepted
 generated_view: docs/ci/CI_CONTROL_INVENTORY.md
 # Validators live in a dedicated tools/ci module (ADR-0100, operator amendment) — NOT tools/arch.
 
+# Rollout model (ADR-0101, operator amendment) — so DC-3 never self-deadlocks. `current_required_contexts`
+# is what SHOULD be live RIGHT NOW; each Phase-E mutation adds one context and updates `current` in the
+# SAME PR. DC-3 requires live == current (blocking) and reports the current->intended gap as a PLANNED
+# TRANSITION (informational) while phase != "enforced". When current == intended and admin enforcement
+# is on, flip phase to "enforced" and any remaining gap becomes blocking.
+rollout:
+  phase: transitioning            # transitioning | enforced
+current_required_contexts:        # matches LIVE GitHub as of 2026-07-15 (Phase-A freeze)
+  - "unit (fast, no toolchain)"
+  - "real-tooling E2E (must run, not skip)"
+
 # Plane 1 — the merge policy the repository INTENDS (ADR-0101, accepted in principle 2026-07-15).
 # DC-3 reconciles this against LIVE GitHub. Today LIVE = the first two only; the remaining three are
 # added one at a time in Phase E (add gate -> base-install -> lane-guard), gated on the tools/ci

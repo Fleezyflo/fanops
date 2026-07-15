@@ -5,7 +5,7 @@
   "description": "Validation schema for .github/ci-control-registry.yml — the machine-readable bridge between ADR policy, workflow implementation, and live GitHub branch protection. Proposed by ADR-0100. This schema is validated deterministically by the Phase-C reconciliation checks (DC-1..DC-6); it is not executed by any workflow until those land.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["version", "status", "generated_view", "intended_required_contexts", "controls"],
+  "required": ["version", "status", "generated_view", "rollout", "current_required_contexts", "intended_required_contexts", "controls"],
   "properties": {
     "version": { "type": "integer", "minimum": 1 },
     "status": {
@@ -20,6 +20,22 @@
     "intended_required_contexts": {
       "type": "array",
       "description": "Plane 1 — the merge policy the repo INTENDS. Reconciled against live GitHub required contexts by DC-3. Every string here must equal a control's branch_protection_context whose classification is 'required'.",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    },
+    "rollout": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["phase"],
+      "description": "Rollout state so DC-3 does not self-deadlock while the intended required set is promoted one context at a time in Phase E.",
+      "properties": {
+        "phase": { "type": "string", "enum": ["transitioning", "enforced"] },
+        "note": { "type": "string" }
+      }
+    },
+    "current_required_contexts": {
+      "type": "array",
+      "description": "What SHOULD be live in branch protection RIGHT NOW (== live GitHub). DC-3 requires live == this; updated in the SAME PR as each Phase-E mutation.",
       "items": { "type": "string", "minLength": 1 },
       "uniqueItems": true
     },
