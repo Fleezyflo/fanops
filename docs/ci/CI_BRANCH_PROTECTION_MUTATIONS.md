@@ -9,9 +9,11 @@
 > *(Historically these steps were tracked as "Phase E / Step 6"; that label is retained only as an
 > alias for continuity with the merged commit history.)*
 
-> **ENGINEERING GATE: MET.** The precondition for OGD — the `tools/ci` validator merged, all
-> repository-remediation PRs merged, and all five proposed required jobs green on one final SHA
-> (`26bca12`, the tree now on `main`) — is satisfied and independently re-provable (`python -m tools.ci
+> **LIFECYCLE STATUS** (authoritative: `docs/ci/CI_PROGRAM_LIFECYCLE.md`). Phases **1–4**
+> (Investigation → Architecture → Governance → Implementation) are **COMPLETE**; this runbook is
+> **Phase 5 — Operational Governance Deployment**. The Phase-4 exit criterion — the `tools/ci` validator
+> merged, all repository-remediation PRs merged, and all five proposed required jobs green on one final
+> SHA (`26bca12`, the tree now on `main`) — is satisfied and independently re-provable (`python -m tools.ci
 > reconcile`). **DEPLOYMENT GATE: operator.** Nothing below has been executed. Because each mutation
 > changes live repository security settings, every step is applied **only on explicit operator action**,
 > **one at a time**, with the **Phase-A pre-image** captured (`freeze/2026-07-15/branch-protection.json`)
@@ -163,13 +165,16 @@ classic protection is itself a governance decision, surfaced here, not chosen.
   registry in the same PR. Final state == `intended_required_contexts` (5) + `enforce_admins=true` +
   `required_conversation_resolution=true` + `required_linear_history=true`.
 
-## Program closeout (the FINAL step of OGD — produced only at completion)
+## Program closeout — Phase 6 (produced only after OGD, before the freeze)
 
 When OGD is complete — all six mutations applied, the live surface re-probed, and the registry's
-`current_required_contexts` reconciled to `intended_required_contexts` (5) — the program's last act is
-to produce **`docs/ci/CI_PROGRAM_CLOSEOUT.md`**: the single immutable historical record of the entire
-CI-governance program. It is **not** written before OGD completes, because it documents the *deployed*
-state as historical fact. Required sections (operator directive, 2026-07-16):
+`current_required_contexts` reconciled to `intended_required_contexts` (5) — the program's last act is to
+produce **two permanent, immutable records**, then freeze. Neither is written before OGD completes,
+because both document the *deployed* state as historical fact.
+
+### 6a · `docs/ci/CI_PROGRAM_CLOSEOUT.md` — the historical closeout
+The single immutable record of the entire CI-governance program. Required sections (operator directive,
+2026-07-16):
 
 1. **Final architecture** — the reconciled three-plane model (registry = intent, workflows =
    implementation, live branch protection = deployed) as actually realized.
@@ -186,6 +191,24 @@ state as historical fact. Required sections (operator directive, 2026-07-16):
 9. **Cancelled work** — anything proposed and dropped, with the reason.
 10. **Future amendment process** — how a change is made *after* the freeze.
 
-**Freeze semantics.** Once `CI_PROGRAM_CLOSEOUT.md` exists, **this CI-governance program is frozen.**
-The closeout is immutable. Any subsequent change to CI governance begins as a **new** governance program
-(new ADR + new registry revision under the amendment process), never as an extension of this one.
+### 6b · `docs/ci/CI_GOVERNANCE_DNA.md` — the principles of record
+A permanent, immutable statement of what this program *established* — so a future engineer inherits the
+reasoning, not just the artifacts. Required content (operator directive, 2026-07-16):
+
+- **Principles** — the governing ideas this program proved (three-plane reconciliation; a control has one
+  invariant / owner / classification / reason / deletion test; intent must be machine-verified against
+  implementation and deployment; a skip is never a pass; every blocking check has a negative control).
+- **Governance mechanisms introduced** — the control registry + schema, the `tools/ci` validator
+  (DC-1..DC-6), the rollout model, the duplicate-group model, the classification/lifecycle model.
+- **Non-negotiable architectural rules** — the invariants no future change may violate without a new
+  program (e.g. `tools/ci` ≠ `tools/arch`; required contexts mirror workflow job names; derived artifacts
+  are pure functions of source; no required duplicate without a declared distinct boundary).
+- **Amendment process** — exactly how a future CI-governance change is proposed, decided (ADR), and
+  deployed, and the rule that it starts a **new** program rather than extending this frozen one.
+
+### Freeze semantics
+Once **both** `CI_PROGRAM_CLOSEOUT.md` **and** `CI_GOVERNANCE_DNA.md` exist, **this CI-governance program
+is frozen.** Both records are immutable. Any subsequent change to CI governance — including to the
+`tools/ci` validator itself — begins as a **new** governance program (new ADR + new registry revision
+under the DNA document's amendment process), **never** as an extension of this one. Extending a frozen
+program is itself a governance violation.
