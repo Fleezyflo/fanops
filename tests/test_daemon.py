@@ -294,6 +294,62 @@ def test_status_stale_without_lease_unchanged(tmp_path, monkeypatch):
     rep = daemon.status(cfg, interval=600)
     assert "loaded but stale" in rep["verdict"]
     assert rep.get("run_line") is None
+    # RC-6 (S08): the successful-pass signal is first-class and honest even here (silent daemon).
+    assert rep["last_success_age_s"] == rep["heartbeat_age_s"]       # loop-heartbeat age IS last-success
+    assert rep["pass_verdict"].startswith("no successful pass in")   # stale -> NAMED, not hidden
+
+
+# ── RC-6 (S08): last-successful-pass as a SECOND, ORTHOGONAL verdict ────────────────────────────
+# The loop-origin heartbeat lands ONLY after cli._cmd_run_pass completes without halting, so its age
+# IS the last-successful-pass age. daemon.status now reports `last_success_age_s` + an orthogonal
+# `pass_verdict` so a bare `alive` (fresh log activity via the alive_mid override) can no longer HIDE a
+# pump that logs every tick but never FINISHES a pass. The primary `verdict` is UNCHANGED — the three
+# `verdict == "alive"` consumers (studio views + two templates) and the long-pass tolerance are kept.
+
+def test_status_rc6_noisy_failure_loop_is_no_longer_hidden(tmp_path, monkeypatch):
+    # FAILS BEFORE / PASSES AFTER. A live PID logging FRESH activity every tick but whose last COMPLETED
+    # pass (loop heartbeat) is hours old — a crash-loop producing nothing. The process IS up, so the
+    # primary verdict stays `alive`; `pass_verdict` now NAMES the prolonged non-completion.
+    cfg = Config(root=tmp_path); cfg.reports.mkdir(parents=True, exist_ok=True)
+    old = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+    cfg.log_path.write_text(_heartbeat_line(old))           # last SUCCESSFUL pass: 2h ago
+    _append_log_line(cfg, stage="llm")                      # but fresh activity THIS tick (the noise)
+    monkeypatch.setattr(daemon.subprocess, "run", _fake_launchctl(list=(0, '\t"PID" = 7;\n')))
+    rep = daemon.status(cfg, interval=600)
+    assert rep["verdict"] == "alive"                        # process up + activity fresh — UNCHANGED
+    assert rep["pass_verdict"].startswith("no successful pass in")   # the lie is now VISIBLE
+    assert rep["last_success_age_s"] is not None and rep["last_success_age_s"] > 3600
+
+def test_status_rc6_newly_started_long_pass_not_flagged(tmp_path, monkeypatch):
+    # PRESERVED (no false-flag): fresh activity, NO completed pass yet (first/long pass still running).
+    # Still `alive`; pass_verdict is honest ("no completed pass yet"), NOT a failure signal.
+    cfg = Config(root=tmp_path)
+    _append_log_line(cfg, stage="llm")                      # activity, but no loop heartbeat ever
+    monkeypatch.setattr(daemon.subprocess, "run", _fake_launchctl(list=(0, '\t"PID" = 7;\n')))
+    rep = daemon.status(cfg, interval=600)
+    assert rep["verdict"] == "alive"
+    assert rep["pass_verdict"] == "no completed pass yet"
+    assert rep["last_success_age_s"] is None
+
+def test_status_rc6_healthy_completing_passes(tmp_path, monkeypatch):
+    # PRESERVED: a FRESH loop heartbeat (a pass just completed) -> `alive` + "passes completing".
+    cfg = Config(root=tmp_path); cfg.reports.mkdir(parents=True, exist_ok=True)
+    now = datetime.now(timezone.utc).isoformat()
+    cfg.log_path.write_text(_heartbeat_line(now))
+    monkeypatch.setattr(daemon.subprocess, "run", _fake_launchctl(list=(0, '\t"PID" = 7;\n')))
+    rep = daemon.status(cfg, interval=600)
+    assert rep["verdict"] == "alive"
+    assert rep["pass_verdict"] == "passes completing"
+    assert rep["last_success_age_s"] is not None and rep["last_success_age_s"] < 600
+
+def test_status_rc6_dead_daemon_verdict_unchanged(tmp_path, monkeypatch):
+    # PRESERVED: not loaded -> the ALARM verdict is UNCHANGED; the orthogonal field merely coexists.
+    cfg = Config(root=tmp_path); cfg.reports.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(daemon.subprocess, "run", _fake_launchctl(list=(1, "")))    # not loaded
+    rep = daemon.status(cfg, interval=600)
+    assert rep["loaded"] is False
+    assert rep["verdict"] in (daemon._VERDICT_UNLOADED_ALARM, "not installed")
+    assert "pass_verdict" in rep                            # present, never crashes the readout
 
 
 def _status_alive(rep) -> bool:
