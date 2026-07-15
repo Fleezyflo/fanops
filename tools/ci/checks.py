@@ -81,7 +81,7 @@ def dc3_deployed_state(reg: dict, live_contexts, live_error: str | None = None) 
     if phase != "enforced":
         if gap:
             out.append(Finding("DC-3", "-",
-                f"PLANNED TRANSITION — {len(gap)} context(s) pending Phase E: {sorted(gap)}",
+                f"PLANNED TRANSITION — {len(gap)} context(s) pending Operational Governance Deployment: {sorted(gap)}",
                 blocking=False))
     elif current != intended:
         out.append(Finding("DC-3", "-",
