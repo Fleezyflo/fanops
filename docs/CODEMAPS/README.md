@@ -18,6 +18,7 @@ Older narrative docs live in [archive/](archive/) and may be stale.
 | [hashtag-lifecycle.md](hashtag-lifecycle.md) | You are touching hashtags: persona corpus → vet → post → live Graph reach → surfaced. |
 | [insights-culmination.md](insights-culmination.md) | You are touching the reach-loop bias actuators (framing/timing/dim) — stamp → aggregate → actuator, all gated + amplify-only. (Casting reach prior removed P11.) |
 | [account-connection.md](account-connection.md) | You are wiring an account to a publisher (Postiz integration ids, per-platform channels). |
+| [../design/reframe/README.md](../design/reframe/README.md) | You are touching the reframe framing path (`framing.py` / `clip.py`): the `centered_multi_untracked` root-cause record, framing spec (F1–F6), remediation roadmap, and ADR-0103. Start here before changing the fallback composition or treatment routing. |
 
 **Archive** ([archive/](archive/)): `architecture.md`, `data.md`, `dependencies.md`, `fresh-ingestion-trace.md`,
 `lifecycle-full-picture.md`, `persona-levers.md` — frozen snapshots, may be stale.

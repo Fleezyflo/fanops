@@ -2,6 +2,12 @@
 
 # C3: Clip Production & Framing
 
+> **Known framing defect + remediation (2026-07-15):** the reframe fallback for wide, off-centre subjects is
+> content-blind and mis-frames 19.3 % of the classified corpus (empty-gap / edge-pinned / dead-space). Root
+> cause, framing spec (F1–F6), and remediation roadmap: [`docs/design/reframe/`](../../design/reframe/README.md);
+> architectural decision [ADR-0103](../../adr/0103-reframe-subject-and-layout-aware-framing.md). Read that
+> set before changing the fallback composition or treatment routing.
+
 ## Files covered (all 8 read in full)
 
 1. `src/fanops/clip.py` (762 lines) — read
