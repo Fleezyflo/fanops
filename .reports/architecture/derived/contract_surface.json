@@ -170,7 +170,7 @@
         "swallow": "NOT IN BASELINE -> 0 allowed."
       },
       "exists": true,
-      "function_count": 8,
+      "function_count": 10,
       "is_partitioned": false,
       "missing": false,
       "owners": [
@@ -329,7 +329,7 @@
     "tests/test_ledger_sqlite_store.py": {
       "declared_ratchets": {},
       "exists": true,
-      "function_count": 12,
+      "function_count": 15,
       "is_partitioned": false,
       "missing": false,
       "owners": [
