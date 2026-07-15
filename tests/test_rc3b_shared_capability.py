@@ -82,27 +82,36 @@ def test_explicit_dryrun_channel_while_live_previews_never_claims(tmp_path, monk
     assert Accounts.load(cfg).channel_provider_if_ready("h", Platform.instagram) is None
 
 
-# ── 4. unknown backend → refused by BOTH ────────────────────────────────────────────────────
+# ── 4. unknown backend → dropped at load (S02) → refused by BOTH ─────────────────────────────
 def test_unknown_backend_refused_by_both(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_LIVE", "1"); monkeypatch.setenv("POSTIZ_API_KEY", "k")
-    _accounts(tmp_path, "bogus"); cfg = Config(root=tmp_path); _queued(cfg)      # unknown provider, loaded unvalidated
+    _accounts(tmp_path, "bogus"); cfg = Config(root=tmp_path); _queued(cfg)      # unknown provider (hand-edit)
+    accts = Accounts.load(cfg)
+    assert accts.accounts[0].backends == {}                                  # S02: unrecoverable value DROPPED at load...
+    assert any("bogus" in s for s in accts.skipped_rows)                     # ...loudly (surfaced via validate() -> doctor)
     res = publish_due(cfg)
-    assert res["not_live_ready"] == 1                                         # producer refuses at the claim
+    assert res["no_provider"] == 1                                           # dropped -> no provider -> producer refuses
     assert Ledger.load(cfg).posts["p1"].state is PostState.queued            # never submitting
-    assert Accounts.load(cfg).channel_provider_if_ready("h", Platform.instagram) is None   # consumer excludes it
+    assert accts.channel_provider_if_ready("h", Platform.instagram) is None  # consumer excludes it too — symmetric
 
 
-# ── 5. malformed backend value (trailing space) → refused SYMMETRICALLY ──────────────────────
-def test_malformed_backend_value_refused_symmetrically(tmp_path, monkeypatch):
-    # NOT normalized here (that is S02) — the shared predicate simply makes producer and consumer treat the
-    # malformed value IDENTICALLY: 'postiz ' has no creds, so BOTH refuse. No divergence, no strand.
+# ── 5. recoverable backend value (trailing space) → NORMALIZED at load (S02) → admitted SYMMETRICALLY ──
+def test_normalized_backend_value_admitted_symmetrically(tmp_path, monkeypatch):
+    # S02 now normalizes a RECOVERABLE hand-edit at load ('postiz ' -> 'postiz', the same strip+lower
+    # set_backend applies on the write path), so the typo becomes a WORKING channel — and the shared
+    # predicate admits it SYMMETRICALLY (producer claims IFF consumer reconciles), exactly as for a clean
+    # 'postiz'. (Pre-S02 the value stayed malformed and BOTH refused; the RC-3b parity holds either way —
+    # that is the point. An UNRECOVERABLE typo is instead dropped + refused: see test 4.)
     monkeypatch.setenv("FANOPS_LIVE", "1"); monkeypatch.setenv("POSTIZ_API_KEY", "k")
     _accounts(tmp_path, "postiz "); cfg = Config(root=tmp_path); _queued(cfg)
+    _park_poster(monkeypatch)                                                 # once admitted, avoid a real network call
+    accts = Accounts.load(cfg)
+    assert accts.accounts[0].backends == {"instagram": "postiz"}             # S02 repaired the trailing space at load
+    assert accts.channel_provider_if_ready("h", Platform.instagram) == "postiz"   # consumer admits
     res = publish_due(cfg)
-    assert res["not_live_ready"] == 1
-    assert Ledger.load(cfg).posts["p1"].state is PostState.queued
-    assert Accounts.load(cfg).channel_provider_if_ready("h", Platform.instagram) is None
-    assert cfg.is_live_backend is False                                       # consumer OFF too — symmetric
+    assert res["not_live_ready"] == 0
+    assert Ledger.load(cfg).posts["p1"].state is not PostState.queued        # producer claimed -> symmetric admit
+    assert cfg.is_live_backend is True                                        # consumer ON too — symmetric
 
 
 # ── 6. THE REGRESSION: a cred-less live provider disabled reconcile but previously allowed publishing ──
@@ -203,7 +212,7 @@ def test_exhaustive_producer_consumer_parity(tmp_path, monkeypatch, is_live, bac
     if zernio_key:
         monkeypatch.setenv("ZERNIO_API_KEY", "k")
     plat = Platform(platform)
-    _accounts(tmp_path, backend, platform=platform)          # single channel; loaded UNVALIDATED (bogus/malformed persist)
+    _accounts(tmp_path, backend, platform=platform)          # single channel — S02 normalizes at load ('postiz '->'postiz', 'bogus' dropped), so producer + consumer read the SAME resolved backend; parity holds across the resulting states
     cfg = Config(root=tmp_path)
 
     # CONSUMER permission — the EXACT predicate `_reconcile_safe` gates reconcile on.

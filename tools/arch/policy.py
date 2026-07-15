@@ -324,6 +324,28 @@ def check(derived_dir: Path | None = None) -> list[Finding]:
                           f"declared in kb/configuration.json.",
                           [f"{v}  read at {', '.join(cfg['env_vars'][v]['read_at'][:2])}" for v in undeclared]))
 
+    # ARCH-003 (G2) — the OPERATOR doc's env surface must ALSO match the reads. kb/configuration.json is the
+    # machine-declared surface (above); docs/CONFIG.md is the hand-maintained operator reference and it rots
+    # INDEPENDENTLY — a FANOPS_ var whose reader was deleted lingers as a stale row; a new read is never
+    # documented. Compare the FANOPS_ names the doc MENTIONS to the FANOPS_ names actually read. A prose
+    # mention IS a claim (a reader greps the doc by name), so the doc must name only REAL, read vars — this
+    # also forbids narrating a nonexistent switch ("there is no FANOPS_X"), which still reads as real.
+    config_md = REPO / "docs" / "CONFIG.md"
+    if config_md.exists():
+        read_fanops = {v for v in cfg["env_vars"] if v.startswith("FANOPS_")}
+        doc_fanops = set(re.findall(r"FANOPS_[A-Z0-9_]+", config_md.read_text()))
+        undocumented = sorted(read_fanops - doc_fanops)
+        stale_doc = sorted(doc_fanops - read_fanops)
+        if undocumented:
+            out.append(_f("ARCH-003",
+                          f"{len(undocumented)} FANOPS_* var(s) are READ but never named in docs/CONFIG.md.",
+                          [f"{v}  read at {', '.join(cfg['env_vars'][v]['read_at'][:2])}" for v in undocumented]))
+        if stale_doc:
+            out.append(_f("ARCH-003",
+                          f"{len(stale_doc)} FANOPS_* var(s) are named in docs/CONFIG.md but READ nowhere "
+                          f"(stale doc: the reader was removed, or the doc names a var that never existed).",
+                          [f"{v}  named in docs/CONFIG.md, no os.getenv in the tree" for v in stale_doc]))
+
     # ARCH-004 — no new compile-time cycle
     approved_cycles = _approved("approved_compile_cycles",
                                 default=[["fanops.persona_research", "fanops.persona_store", "fanops.personas"]])

@@ -4,7 +4,7 @@ import json, os, sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 from fanops.config import Config
-from fanops.errors import ControlFileError, LockBusyError, reason as _reason
+from fanops.errors import ControlFileError, LockBusyError
 
 _DEFAULT_LOCK_TIMEOUT = 30.0
 # kv(map_name, row_id) — one table for all 10 top-level maps (_save_unlocked doc shape).
@@ -41,20 +41,40 @@ class SqliteLedgerStore:
         return rows
 
     def read_raw(self) -> dict | None:
+        """The LIVE ledger. RAISES sqlite3.DatabaseError on a corrupt db so Ledger.load wraps it as a
+        ControlFileError — a corrupt live ledger MUST surface, never read silently as an empty one."""
         if not self.db_path.exists(): return None
         conn = self._open()
         try:
-            row = conn.execute("SELECT value FROM ledger_meta WHERE key='schema_version'").fetchone()
-            if row is None: return None
-            doc: dict = {"schema_version": int(row[0])}
-            for map_name in _MAP_NAMES:
-                fetched = conn.execute(
-                    "SELECT row_id, payload FROM ledger_rows WHERE map_name=? ORDER BY row_id", (map_name,)
-                ).fetchall()
-                doc[map_name] = {rid: json.loads(payload) for rid, payload in fetched}
-            return doc
+            return self._read_doc(conn)
         finally:
             conn.close()
+
+    def read_raw_from(self, db_path: Path) -> dict | None:
+        """Read a ledger doc from an ARBITRARY sqlite file — a snapshot, or a readability PROBE of the
+        live db. Read-only and side-effect-free (no WAL switch / no table creation, safe on a backup).
+        Unlike read_raw this returns None (never raises) on a missing / corrupt / non-ledger file, so
+        restore_snapshot can choose between an in-place serialized restore and the whole-file fallback."""
+        db_path = Path(db_path)
+        if not db_path.exists(): return None
+        conn = sqlite3.connect(str(db_path))
+        try:
+            return self._read_doc(conn)
+        except sqlite3.DatabaseError:
+            return None                                    # corrupt / not a ledger db -> "unreadable", never a crash
+        finally:
+            conn.close()
+
+    def _read_doc(self, conn: sqlite3.Connection) -> dict | None:
+        row = conn.execute("SELECT value FROM ledger_meta WHERE key='schema_version'").fetchone()
+        if row is None: return None
+        doc: dict = {"schema_version": int(row[0])}
+        for map_name in _MAP_NAMES:
+            fetched = conn.execute(
+                "SELECT row_id, payload FROM ledger_rows WHERE map_name=? ORDER BY row_id", (map_name,)
+            ).fetchall()
+            doc[map_name] = {rid: json.loads(payload) for rid, payload in fetched}
+        return doc
 
     def write_raw(self, doc: dict) -> None:
         own = self._conn is None
@@ -127,7 +147,7 @@ class SqliteLedgerStore:
 
     def restore(self, src: Path) -> None:
         if not src.exists():
-            raise ControlFileError(_reason("ledger snapshot not found", str(src)))
+            raise ControlFileError(f"ledger snapshot not found: {src}")
         relock = self._conn is not None
         if relock:
             self._conn.commit()

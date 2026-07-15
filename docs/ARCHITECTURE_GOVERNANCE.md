@@ -4,7 +4,7 @@
 
 # FanOps — Architecture & Implementation Governance
 
-**Source fingerprint `1d28aa50fd78925d` · generator `arch/1.0.0`**
+**Source fingerprint `af0fdbe35adecaf1` · generator `arch/1.0.0`**
 
 Regenerate: `python -m tools.arch regen`
 
@@ -27,7 +27,7 @@ Regenerate: `python -m tools.arch regen`
 | Largest G2 potential-dependency SCC | 47 modules |
 | Environment variables read | **73** |
 | Route endpoints (method × path) | **150** (109 mutating) |
-| CLI verbs | 55 unique (60 `add_parser` sites) |
+| CLI verbs | 56 unique (61 `add_parser` sites) |
 
 ### Metric definitions — because a derived number inherits the soundness of its definition
 
@@ -58,7 +58,7 @@ Regenerate: `python -m tools.arch regen`
 |---|---|
 | env write sites | **2** |
 | ledger transaction sites | **74** |
-| lock sites | **22** |
+| lock sites | **23** |
 | mkdtemp sites | **2** |
 | network sites literal requests | **15** |
 | rmtree sites | **5** |
