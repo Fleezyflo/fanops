@@ -42,7 +42,7 @@
         "swallow": "baseline 3 — MUST NOT EXCEED."
       },
       "exists": true,
-      "function_count": 26,
+      "function_count": 27,
       "is_partitioned": false,
       "missing": false,
       "owners": [
