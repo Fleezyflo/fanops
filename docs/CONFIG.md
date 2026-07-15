@@ -133,7 +133,10 @@ Speech-trust filtering is **invariant always-on** — there is no env switch for
 | `FANOPS_UPLOAD_MAX_MB` | 2048 | Studio upload body ceiling per request — legacy single-shot POST and each chunked PUT (clamped ≥1) | .env |
 | `FANOPS_SOURCE_SHARD_MIN` | 45 | Native inbox videos longer than this (minutes) split once at catalogue into stream-copy parts; 0 = off (clamped ≥0) | .env |
 | `FANOPS_SHOW_EXTRAS` | off | Show Footage + Stitches in the Studio Library rail group (U13); default OFF hides the power-user extras | .env |
-| `FANOPS_AUTO_ADOPT` | `1` (on) | Daemon code-drift self-heal: kickstart the pump when its running SHA differs from the SHA on disk (`0` = off) | .env |
+
+Set **`FANOPS_AUTO_ADOPT=0`** to disable the daemon's code-drift self-heal (default on): the keeper kickstarts
+the pump when the SHA it reports in its heartbeat differs from the SHA on disk (`daemon.ensure`). Read via a raw
+`os.getenv` (not a `Settings` field — like `FANOPS_POSTIZ_ONDEMAND`), so it lives here in prose, not the table.
 
 **Coverage note:** every trust-gate numeric and every Phase-2 reach-loop bias kill switch is `.env`/shell-only —
 an operator-only (Studio-only) deployment cannot turn on the bias actuators or tune their thresholds without
