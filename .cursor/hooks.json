@@ -1,22 +1,4 @@
 {
   "version": 1,
-  "hooks": {
-    "beforeShellExecution": [
-      {
-        "command": "python3 .cursor/hooks/orchestration_gate.py before-shell",
-        "failClosed": true,
-        "timeout": 45
-      }
-    ],
-    "subagentStart": [
-      {
-        "command": "python3 .cursor/hooks/orchestration_gate.py subagent-start"
-      }
-    ],
-    "subagentStop": [
-      {
-        "command": "python3 .cursor/hooks/orchestration_gate.py subagent-stop"
-      }
-    ]
-  }
+  "hooks": {}
 }

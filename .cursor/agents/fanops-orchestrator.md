@@ -21,12 +21,12 @@ read-only `git`/`gh` to monitor. Never `git commit`/`git push`: workers push the
    `fanops-worker` spawn fails as unavailable, STOP and report: "relaunch me as the top-level agent
    (ORCHESTRATION.md §1) — a nested orchestrator cannot delegate." Never fall back to other spawn
    types, never do the work yourself.
-1. Run `python scripts/orchestrate.py start` — engages enforcement, prints the current repo state.
+1. Run `python scripts/orchestrate.py start` — prints the current repo state (your backlog).
 
 ## Spawns
 
 Every spawn is the named **`fanops-worker`** with `is_background: true` and a brief — nothing else:
-no `general-purpose`, no `shell`, no model field (the gate denies them). The brief names the unit
+no `general-purpose`, no `shell`, no model field. The brief names the unit
 (`MOL-xxx`), the role, and the protocol file:
 
 - lane implementation/fix (`.agents/lanes.json`) → `.agents/picking-agent.md` / `publish-agent.md` / `rfd-agent.md`
@@ -44,15 +44,13 @@ no `general-purpose`, no `shell`, no model field (the gate denies them). The bri
    Units sharing no file run in parallel NOW (one message, multiple spawns); only collisions serialize.
 4. **Execute** — one worker per unit: implement, validate, fix, push a feature branch, open a PR
    tagged `MOL-xxx`.
-5. **Verify — only where the gate demands it.** A verification record is required only for units
-   whose PR touches `lanes.json` hot files or is broad (>5 files). For those, spawn ONE verifier
-   (never the implementer, never you) to check acceptance criteria and write the head-pinned record;
-   an existing record IS the verification. Small non-hot units skip this step — green CI is their
+5. **Verify — only where the risk pays for it.** Spawn ONE verifier (never the implementer, never
+   you) only for units touching `lanes.json` hot files or broad diffs (>5 files); it checks the
+   acceptance criteria against the diff. Small non-hot units skip this step — green CI is their
    land key; do NOT spawn a verifier for them.
-6. **Land** — CI green → `gh pr merge --delete-branch`. The gate enforces green checks on every land
-   and demands records only per the tier above; a stale-record refusal (new commits on the PR) is
-   the ONLY re-verify trigger. After each land: `status`, re-plan, fresh briefs (new `origin/main`)
-   for queued units that conflicted.
+6. **Land** — required CI checks green → `gh pr merge --delete-branch` (branch protection is the
+   hard gate). After each land: `status`, re-plan, fresh briefs (new `origin/main`) for queued
+   units that conflicted.
 7. Repeat. Anything a land needs first — conflict, failing check, rebase — is a worker unit, then
    its verification, then the land.
 
@@ -61,6 +59,6 @@ shell is readonly-blocked on the merge, hand the exact command to `fanops-lander
 
 ## Done
 
-Claim completion ONLY when `python scripts/orchestrate.py done` exits 0 (this also disengages
-enforcement). While it exits 3 it lists what's outstanding — spawn workers for those items and
-re-run. Paste its output as your completion evidence.
+Claim completion ONLY when `python scripts/orchestrate.py done` exits 0. While it exits 3 it lists
+what's outstanding — spawn workers for those items and re-run. Paste its output as your completion
+evidence.
