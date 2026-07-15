@@ -13,6 +13,13 @@ deciders: [operator]
 > it mutates no live branch protection. Every implied change is deferred to Phase E, applied one at a
 > time with a captured pre-image and an explicit gate — **no live mutation until the `tools/ci`
 > validator and the repository-remediation PRs are green** (`docs/ci/CI_BRANCH_PROTECTION_MUTATIONS.md`).
+>
+> **Reclassification (2026-07-16).** The engineering implementation of this ADR is **complete and
+> merged** — the required-context set, the `tools/ci` validator, and its wiring. The remaining
+> "Phase E" is reclassified as **Operational Governance Deployment (OGD)**: the deployment of
+> repository **security policy** to the live branch-protection surface. It is a **governance-operations**
+> activity, **not remaining engineering work**; wherever this ADR says "Phase E," read "OGD." The two
+> concepts are kept distinct — engineering produced the policy; OGD deploys it.
 
 ## Status
 

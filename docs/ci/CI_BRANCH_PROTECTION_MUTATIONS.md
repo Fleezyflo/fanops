@@ -1,10 +1,22 @@
-# FanOps — Live GitHub Mutations (Phase E / Step 6)
+# FanOps — Operational Governance Deployment (repository security policy)
 
-> **NONE EXECUTED.** These are applied **only after Steps 2–5 are green** (the `tools/ci` validator +
-> repository-remediation PRs merged, all five proposed required jobs green on the final SHA) — the
-> operator gate. Each is applied **one at a time**, with the **Phase-A pre-image** captured
-> (`freeze/2026-07-15/branch-protection.json`) and a **re-probe after every mutation**. Order is the
-> operator directive (2026-07-15). Commands are shown for review.
+> **This is NOT engineering work.** The CI-governance **engineering implementation is complete and
+> merged** — the ADRs (0100–0102), the control registry, the `tools/ci` validator (DC-1..DC-6), every
+> repository-remediation slice, and the validator's wiring into the required unit lane. What follows is
+> **Operational Governance Deployment (OGD)**: the deployment of repository **security policy** to the
+> live GitHub branch-protection surface. It is a **governance-operations** activity — distinct in kind
+> from the engineering that produced it — and it changes repository access-control settings, not code.
+> *(Historically these steps were tracked as "Phase E / Step 6"; that label is retained only as an
+> alias for continuity with the merged commit history.)*
+
+> **ENGINEERING GATE: MET.** The precondition for OGD — the `tools/ci` validator merged, all
+> repository-remediation PRs merged, and all five proposed required jobs green on one final SHA
+> (`26bca12`, the tree now on `main`) — is satisfied and independently re-provable (`python -m tools.ci
+> reconcile`). **DEPLOYMENT GATE: operator.** Nothing below has been executed. Because each mutation
+> changes live repository security settings, every step is applied **only on explicit operator action**,
+> **one at a time**, with the **Phase-A pre-image** captured (`freeze/2026-07-15/branch-protection.json`)
+> and a **read-only re-probe after every mutation**. Order is the operator directive (2026-07-15).
+> Commands are shown for review — the operator applies them.
 
 **Repo:** `Fleezyflo/fanops` · **Branch:** `main` · **Pre-image:** Phase-A freeze (re-verified
 2026-07-15: live required = `["unit (fast, no toolchain)","real-tooling E2E (must run, not skip)"]`;
@@ -143,9 +155,37 @@ classic protection is itself a governance decision, surfaced here, not chosen.
 
 ## Guarantees
 
-- Nothing executed here. Each mutation waits for explicit, per-step approval **after Steps 2–5 are green**.
+- Nothing executed here. The engineering gate is **met** (validator + remediation + wiring merged, 5/5
+  green on the final SHA); each mutation now waits only for explicit, per-step **operator** action.
 - Every mutation has a captured pre-image and a tested rollback.
 - DC-1 + DC-3 live before M1–M3 so promotions are reconciled and cannot silently detach.
 - After each applied mutation: re-probe, confirm the intended delta and nothing else, update the
   registry in the same PR. Final state == `intended_required_contexts` (5) + `enforce_admins=true` +
   `required_conversation_resolution=true` + `required_linear_history=true`.
+
+## Program closeout (the FINAL step of OGD — produced only at completion)
+
+When OGD is complete — all six mutations applied, the live surface re-probed, and the registry's
+`current_required_contexts` reconciled to `intended_required_contexts` (5) — the program's last act is
+to produce **`docs/ci/CI_PROGRAM_CLOSEOUT.md`**: the single immutable historical record of the entire
+CI-governance program. It is **not** written before OGD completes, because it documents the *deployed*
+state as historical fact. Required sections (operator directive, 2026-07-16):
+
+1. **Final architecture** — the reconciled three-plane model (registry = intent, workflows =
+   implementation, live branch protection = deployed) as actually realized.
+2. **Final control registry** — the frozen `ci-control-registry.yml` state, with `current` == `intended`.
+3. **Deployed branch protection** — the post-OGD live surface (the M1–M6 end state), captured verbatim.
+4. **ADRs** — 0100/0101/0102 (and any superseding notes), as the decision record.
+5. **Validators** — `tools/ci` (DC-1..DC-6), its three modes, and where each is enforced.
+6. **Implementation summary** — the PR ledger (#658, #661–#668, #670, the OGD-reclassification PR, and
+   the OGD mutation PRs) mapped to what each delivered.
+7. **Accepted residuals** — knowingly-retained items (e.g. the unit-lane arch overlap retained until
+   `gate` is required; convention-only commit-message rules).
+8. **Deferred items** — work consciously postponed (e.g. `SLICE-NEGCTRL-DEDUP`, `SLICE-DOC-INTEGRITY`,
+   the post-M1 arch de-duplication, the scheduled DC-3 job + its admin token).
+9. **Cancelled work** — anything proposed and dropped, with the reason.
+10. **Future amendment process** — how a change is made *after* the freeze.
+
+**Freeze semantics.** Once `CI_PROGRAM_CLOSEOUT.md` exists, **this CI-governance program is frozen.**
+The closeout is immutable. Any subsequent change to CI governance begins as a **new** governance program
+(new ADR + new registry revision under the amendment process), never as an extension of this one.

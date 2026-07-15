@@ -15,7 +15,7 @@ strings verified char-for-char). **Provisional generated view** — the Phase-C 
 - **4 workflows · 11 jobs.** **Live required today: 2** (`unit …`, `real-tooling E2E …`), strict on.
 - **Intended required (ADR-0101): 5** — `unit`, `real-tooling E2E`, `base install (no extras) refuses
   smart-framing`, `gate (drift + policy + registries)`, `lane file-ownership + cross-PR collision`.
-  The three new ones are added **one at a time in Phase E** (order: gate → base-install → lane-guard),
+  The three new ones are added **one at a time during Operational Governance Deployment (OGD)** (order: gate → base-install → lane-guard),
   gated on the `tools/ci` validator + remediation PRs being green.
 - **Controls inventoried:** 5 required top-level jobs (+ required sub-gates that block transitively),
   2 advisory (`ARCH-IMPACT`, `CI-TIMING`), 3 scheduled/advisory (`ARCH-RECONCILE`, `NIGHTLY-ASR`,
@@ -23,7 +23,7 @@ strings verified char-for-char). **Provisional generated view** — the Phase-C 
   3 local. Every control maps to a real workflow job, scheduled process, or local hook — no orphans.
 - **4 duplicate groups**; `arch-drift-policy` is **resolved to Model A** (gate authoritative).
 
-**Req? legend:** ✅ = live-required now · ⬦ = intended-required, added in Phase E · ↳ = blocks
+**Req? legend:** ✅ = live-required now · ⬦ = intended-required, added during OGD · ↳ = blocks
 transitively through its parent required job (never its own context).
 
 ## Ownership matrix

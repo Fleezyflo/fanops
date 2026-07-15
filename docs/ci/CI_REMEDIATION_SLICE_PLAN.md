@@ -4,7 +4,8 @@
 slice; small, reviewable, no unrelated changes bundled. **Isolation:** parallel slices touching
 different files run in separate git worktrees; same-file slices land sequentially. **No live GitHub
 mutation until the `tools/ci` validator + repository-remediation PRs are green** (operator gate); all
-branch-protection / repo-setting changes are Phase E, applied one at a time
+branch-protection / repo-setting changes are Operational Governance Deployment (OGD) — repository
+security policy, NOT engineering — applied one at a time
 (`CI_BRANCH_PROTECTION_MUTATIONS.md`). **Tests are CI-only** (ADR 0088); "failing-before" proofs are CI
 checks / negative controls, never run locally.
 

@@ -23,8 +23,15 @@ status: accepted
 generated_view: docs/ci/CI_CONTROL_INVENTORY.md
 # Validators live in a dedicated tools/ci module (ADR-0100, operator amendment) — NOT tools/arch.
 
+# Term (reclassification 2026-07-16): OGD = Operational Governance Deployment — the deployment of
+# repository SECURITY POLICY to the live branch-protection surface (adding required contexts, enabling
+# admin enforcement / linear-history / conversation-resolution). The CI-governance ENGINEERING is
+# complete and merged; OGD is the distinct governance-OPERATIONS activity that deploys it, applied by
+# the operator one mutation at a time. "OGD" was formerly labeled "Phase E" — an alias kept only for
+# continuity with the merged history. Runbook: docs/ci/CI_BRANCH_PROTECTION_MUTATIONS.md.
+
 # Rollout model (ADR-0101, operator amendment) — so DC-3 never self-deadlocks. `current_required_contexts`
-# is what SHOULD be live RIGHT NOW; each Phase-E mutation adds one context and updates `current` in the
+# is what SHOULD be live RIGHT NOW; each OGD mutation adds one context and updates `current` in the
 # SAME PR. DC-3 requires live == current (blocking) and reports the current->intended gap as a PLANNED
 # TRANSITION (informational) while phase != "enforced". When current == intended and admin enforcement
 # is on, flip phase to "enforced" and any remaining gap becomes blocking.
@@ -36,7 +43,7 @@ current_required_contexts:        # matches LIVE GitHub as of 2026-07-15 (Phase-
 
 # Plane 1 — the merge policy the repository INTENDS (ADR-0101, accepted in principle 2026-07-15).
 # DC-3 reconciles this against LIVE GitHub. Today LIVE = the first two only; the remaining three are
-# added one at a time in Phase E (add gate -> base-install -> lane-guard), gated on the tools/ci
+# added one at a time in OGD (add gate -> base-install -> lane-guard), gated on the tools/ci
 # validator + remediation PRs being green. Exact name: strings verified 2026-07-15.
 intended_required_contexts:
   - "unit (fast, no toolchain)"
@@ -54,13 +61,13 @@ duplicate_groups:
     reason: >-
       One architecture-governance implementation (tools/arch policy + drift + registries). Model A
       (ADR-0101) makes ARCH-GATE the authoritative REQUIRED merge-gate for it. But ARCH-GATE is NOT a
-      required context until Phase E (mutation M1); until then the unit lane is the ONLY required line
+      required context until OGD (mutation M1); until then the unit lane is the ONLY required line
       enforcing arch drift/policy/registries, so the overlap is deliberately RETAINED here as intentional,
       justified redundancy — not silent duplication. De-dup is deferred to a post-M1 follow-up.
     members: [ARCH-GATE, CI-UNIT-ARCHGOV]
     distinct_boundaries:
-      ARCH-GATE: "REQUIRED at Phase E — the authoritative merge-gate for arch drift + policy + registries (runs `tools.arch ci` on every PR)."
-      CI-UNIT-ARCHGOV: "carries the invariants gate does NOT run (regeneration determinism, generated-artifacts-are-a-pure-function-of-source, rule reachability, field-authority) AND, RETAINED through Phase E, the drift/policy/registries checks — the sole REQUIRED arch enforcement until ARCH-GATE becomes a required context."
+      ARCH-GATE: "REQUIRED at OGD — the authoritative merge-gate for arch drift + policy + registries (runs `tools.arch ci` on every PR)."
+      CI-UNIT-ARCHGOV: "carries the invariants gate does NOT run (regeneration determinism, generated-artifacts-are-a-pure-function-of-source, rule reachability, field-authority) AND, RETAINED through OGD, the drift/policy/registries checks — the sole REQUIRED arch enforcement until ARCH-GATE becomes a required context."
     remediation: >-
       Model A is the DECIDED end-state; the overlap is a KNOWN, retained redundancy, NOT resolved-away.
       SLICE-ARCH-MODEL (Phase D) records it here truthfully. De-duplication — scoping the unit lane down
@@ -269,8 +276,8 @@ controls:
     trigger: [pull_request, push]
     classification: required
     runtime_class: fast
-    justification: "the unit-lane arch tests. Model A (ADR-0101) names ARCH-GATE the AUTHORITATIVE arch merge-gate, but ARCH-GATE is not a required context until Phase E (M1) — so TODAY this collection is the sole REQUIRED enforcement of arch drift/policy/registries, AND it carries the distinct invariants gate does not run (determinism, pure-function-of-source, reachability, field-authority). The overlap is retained (duplicate_group arch-drift-policy), not scoped away; de-dup is a post-M1 follow-up."
-    deletion_consequence: "TODAY (ARCH-GATE not yet required): arch drift/policy/registries lose their ONLY required enforcement AND the distinct invariants (determinism, pure-function-of-source, reachability, field-authority) lose their check. Post-Phase-E, once ARCH-GATE is a required context, deletion would drop only the four distinct invariants — which is why de-dup is deferred to then."
+    justification: "the unit-lane arch tests. Model A (ADR-0101) names ARCH-GATE the AUTHORITATIVE arch merge-gate, but ARCH-GATE is not a required context until OGD (M1) — so TODAY this collection is the sole REQUIRED enforcement of arch drift/policy/registries, AND it carries the distinct invariants gate does not run (determinism, pure-function-of-source, reachability, field-authority). The overlap is retained (duplicate_group arch-drift-policy), not scoped away; de-dup is a post-M1 follow-up."
+    deletion_consequence: "TODAY (ARCH-GATE not yet required): arch drift/policy/registries lose their ONLY required enforcement AND the distinct invariants (determinism, pure-function-of-source, reachability, field-authority) lose their check. Post-OGD, once ARCH-GATE is a required context, deletion would drop only the four distinct invariants — which is why de-dup is deferred to then."
     duplicate_group: arch-drift-policy
     adr: [ADR-0100, ADR-0101]
     failure_evidence: "test_no_blocking_policy_findings / test_derived_artifacts_are_not_stale fail on an injected defect; the negative-control suite proves the validators discriminate."
@@ -289,7 +296,7 @@ controls:
     trigger: [pull_request, push]
     classification: required
     runtime_class: fast
-    justification: "the tools/ci static validator run as a unit test, so DC-1/2/4/5/6 block a PR that diverges the registry from the workflow implementation. It delegates to tools.ci.checks.run_static + shape_findings — the SAME code the CLI `static` verb runs — so the pytest gate and the CLI can never disagree on a commit. DC-3 (deployed-state vs live GitHub) is NOT here: it needs an authenticated admin probe and is a scheduled / Phase-E concern (ADR-0100, ADR-0101)."
+    justification: "the tools/ci static validator run as a unit test, so DC-1/2/4/5/6 block a PR that diverges the registry from the workflow implementation. It delegates to tools.ci.checks.run_static + shape_findings — the SAME code the CLI `static` verb runs — so the pytest gate and the CLI can never disagree on a commit. DC-3 (deployed-state vs live GitHub) is NOT here: it needs an authenticated admin probe and is a scheduled / OGD concern (ADR-0100, ADR-0101)."
     deletion_consequence: "registry<->workflow drift stops blocking PRs — a renamed required context (DC-1), an untracked job or phantom control (DC-2), prose calling a required context advisory (DC-4), a duplicate_group naming an unknown control (DC-5), or a job that drops its timeout / SHA-pin (DC-6) would merge unchallenged. The exact divergence class the control registry exists to prevent."
     duplicate_group: null
     adr: [ADR-0100, ADR-0101]
@@ -321,7 +328,7 @@ controls:
     failure_evidence: "base_install_smoke.py exits non-zero if import / CLI / refuse-loudly contract breaks."
     evidence_status: verified-this-session
     status: active
-    notes: "REQUIRED (ADR-0101). Phase-E promotion order = 2nd (after gate). Unique invariant, no blocking backup."
+    notes: "REQUIRED (ADR-0101). OGD promotion order = 2nd (after gate). Unique invariant, no blocking backup."
 
   # ===== ci.yml · e2e (composite, REQUIRED) =========================================================
   - id: CI-E2E
@@ -472,7 +479,7 @@ controls:
     failure_evidence: "tools.arch ci exits non-zero on drift/policy/registry failure; SLICE-ARCH-MODEL adds a negative control proving this context blocks."
     evidence_status: verified-this-session
     status: active
-    notes: "REQUIRED (ADR-0101). Phase-E promotion order = 1st. Owns arch drift/policy/registries; unit-lane arch tests scoped to distinct invariants (SLICE-ARCH-MODEL)."
+    notes: "REQUIRED (ADR-0101). OGD promotion order = 1st. Owns arch drift/policy/registries; unit-lane arch tests scoped to distinct invariants (SLICE-ARCH-MODEL)."
 
   - id: ARCH-IMPACT
     name: "impact report"
@@ -562,7 +569,7 @@ controls:
     failure_evidence: "lane_guard.py / pr_collision_guard.py exit non-zero on a cross-lane or cross-PR hot-file clash."
     evidence_status: verified-this-session
     status: transitional
-    notes: "REQUIRED (ADR-0101) but MUST be hardened FIRST: SLICE-LANEGUARD-HARDEN pins checkout@v7 + setup-python@v6 to SHAs and adds timeout-minutes + concurrency. Phase-E promotion order = 3rd, after an observation window characterizes the best-effort LINEAR lookup failure mode."
+    notes: "REQUIRED (ADR-0101) but MUST be hardened FIRST: SLICE-LANEGUARD-HARDEN pins checkout@v7 + setup-python@v6 to SHAs and adds timeout-minutes + concurrency. OGD promotion order = 3rd, after an observation window characterizes the best-effort LINEAR lookup failure mode."
 
   # ===== nightly.yml ================================================================================
   - id: NIGHTLY-PIPAUDIT
@@ -586,7 +593,7 @@ controls:
     failure_evidence: "n/a — advisory (continue-on-error); the report artifact is the deliverable."
     evidence_status: verified-this-session
     status: active
-    notes: "6.12: keep advisory OR promote is a risk/product decision. ADR-0101 defines owner + response + escalation threshold; promotion (if any) is Phase E."
+    notes: "6.12: keep advisory OR promote is a risk/product decision. ADR-0101 defines owner + response + escalation threshold; promotion (if any) is OGD."
 
   - id: NIGHTLY-ASR
     name: "[asr] toolchain smoke (nightly)"

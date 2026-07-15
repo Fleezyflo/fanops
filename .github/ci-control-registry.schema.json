@@ -27,7 +27,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["phase"],
-      "description": "Rollout state so DC-3 does not self-deadlock while the intended required set is promoted one context at a time in Phase E.",
+      "description": "Rollout state so DC-3 does not self-deadlock while the intended required set is promoted one context at a time during Operational Governance Deployment (OGD).",
       "properties": {
         "phase": { "type": "string", "enum": ["transitioning", "enforced"] },
         "note": { "type": "string" }
@@ -35,7 +35,7 @@
     },
     "current_required_contexts": {
       "type": "array",
-      "description": "What SHOULD be live in branch protection RIGHT NOW (== live GitHub). DC-3 requires live == this; updated in the SAME PR as each Phase-E mutation.",
+      "description": "What SHOULD be live in branch protection RIGHT NOW (== live GitHub). DC-3 requires live == this; updated in the SAME PR as each Operational Governance Deployment (OGD) mutation.",
       "items": { "type": "string", "minLength": 1 },
       "uniqueItems": true
     },
