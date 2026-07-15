@@ -58,6 +58,21 @@ Full CLI surface: `fanops --help`. Environment variables and defaults: [docs/CON
 | [CLAUDE.md](CLAUDE.md) | Architecture notes for contributors |
 | [AGENTS.md](AGENTS.md) | Agent / PR workflow |
 
+## Governance & Constitution
+
+The authoritative account of how the system is intended to be engineered, reconciled against the current
+tree. Start with the Constitution; see the Laws for what is mechanically enforced.
+
+| Doc | What it covers |
+|-----|----------------|
+| [docs/REPOSITORY_CONSTITUTION.md](docs/REPOSITORY_CONSTITUTION.md) | The rules (18 sections), each with its **true enforcement status** |
+| [docs/ENGINEERING_PHILOSOPHY.md](docs/ENGINEERING_PHILOSOPHY.md) | The design instincts — the *why* behind the rules |
+| [docs/ARCHITECTURAL_LAWS.md](docs/ARCHITECTURAL_LAWS.md) | The enforceable subset, with stable IDs + mechanisms (cross-refs the CI registry) |
+| [docs/adr/](docs/adr/) | Decision records (0100–0103) + the catalogue; formalization order in [FORMALIZATION_ROADMAP.md](docs/adr/FORMALIZATION_ROADMAP.md) |
+| [docs/governance/](docs/governance/) | Evidence reconciliation, maintenance-automation design, and the implementation roadmap |
+| [.github/ci-control-registry.yml](.github/ci-control-registry.yml) | The CI control plane (single owner of control rows) |
+| [docs/ARCHITECTURE_GOVERNANCE.md](docs/ARCHITECTURE_GOVERNANCE.md) | Generated architecture view (`tools/arch`) |
+
 ## Development
 
 ```bash
