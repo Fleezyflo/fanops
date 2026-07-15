@@ -1,0 +1,36 @@
+## ci.yml
+1:name: CI
+18:concurrency:
+28:    name: unit (fast, no toolchain)
+29:    timeout-minutes: 15
+78:          name: ci-timing-part-unit
+97:    name: base install (no extras) refuses smart-framing
+98:    timeout-minutes: 10
+117:    name: real-tooling E2E (must run, not skip)
+118:    timeout-minutes: 25
+190:          name: ci-timing-part-e2e
+195:    name: ci-timing artifact (main only)
+214:          name: ci-timing
+## architecture.yml
+1:name: architecture
+32:concurrency:
+41:    name: gate (drift + policy + registries)
+43:    timeout-minutes: 10
+68:    name: impact report
+70:    timeout-minutes: 10
+102:    name: negative controls (validator effectiveness)
+104:    timeout-minutes: 15
+149:    name: scheduled reconciliation
+151:    timeout-minutes: 20
+## lane-guard.yml
+1:name: lane-guard
+23:    name: lane file-ownership + cross-PR collision
+## nightly.yml
+1:name: nightly
+13:concurrency:
+22:    name: dependency audit (pip-audit)
+23:    timeout-minutes: 15
+46:          name: nightly-pip-audit-report
+51:    name: "[asr] toolchain smoke (nightly)"
+52:    timeout-minutes: 45
+84:          name: nightly-asr-logs

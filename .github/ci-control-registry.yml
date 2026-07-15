@@ -1,0 +1,624 @@
+# .github/ci-control-registry.yml
+# =====================================================================================================
+# FanOps CI Control Registry — the machine-readable bridge between ADR policy, workflow implementation,
+# and live GitHub branch protection. Proposed by ADR-0100.
+#
+# THIS IS NOT AN INDEPENDENT SOURCE OF TRUTH. It is the reconciling middle plane:
+#   ADRs (docs/adr/) own policy/rationale  ->  THIS registry owns the intended executable inventory
+#   ->  workflows (.github/workflows/) implement  ->  GitHub branch protection enforces the required set
+#   ->  validators (Phase C, DC-1..DC-6) prove all planes agree  ->  generated docs present the state.
+#
+# Authority order when planes disagree (ADR-0100): executable source & tests > live GitHub config >
+# accepted ADRs & this registry > generated docs > historical prose.
+#
+# STATUS: proposed — inert until ADR-0100 is accepted and the Phase-C validators land. No workflow
+# reads this file yet. Validated against ci-control-registry.schema.json.
+#
+# Identity rule: `id` is STABLE. A job's display `name:` may change; the id never does. Renaming a job
+# that backs a required context is caught by DC-1 (the anti-silent-detach mechanism, ADR-0101).
+# Line anchors are evidence, not identity, and rot (INV-20) — controls key on id + job + step.
+# =====================================================================================================
+version: 1
+status: accepted
+generated_view: docs/ci/CI_CONTROL_INVENTORY.md
+# Validators live in a dedicated tools/ci module (ADR-0100, operator amendment) — NOT tools/arch.
+
+# Plane 1 — the merge policy the repository INTENDS (ADR-0101, accepted in principle 2026-07-15).
+# DC-3 reconciles this against LIVE GitHub. Today LIVE = the first two only; the remaining three are
+# added one at a time in Phase E (add gate -> base-install -> lane-guard), gated on the tools/ci
+# validator + remediation PRs being green. Exact name: strings verified 2026-07-15.
+intended_required_contexts:
+  - "unit (fast, no toolchain)"
+  - "real-tooling E2E (must run, not skip)"
+  - "base install (no extras) refuses smart-framing"
+  - "gate (drift + policy + registries)"
+  - "lane file-ownership + cross-PR collision"
+
+# ---------------------------------------------------------------------------------------------------
+# Registered intentional redundancy. A control may share an invariant with another ONLY via a group
+# here, which must state the DISTINCT boundary each member protects. Silent duplication = validator red.
+# ---------------------------------------------------------------------------------------------------
+duplicate_groups:
+  arch-drift-policy:
+    reason: >-
+      One architecture-governance implementation (tools/arch policy + drift + registries). Model A
+      (ADR-0101) makes ARCH-GATE the authoritative REQUIRED merge-gate for it; the unit-lane arch tests
+      are scoped to DISTINCT invariants so the two required contexts do not duplicate.
+    members: [ARCH-GATE, CI-UNIT-ARCHGOV]
+    distinct_boundaries:
+      ARCH-GATE: "REQUIRED — the authoritative merge-gate for arch drift + policy + registries (runs `tools.arch ci` on every PR)."
+      CI-UNIT-ARCHGOV: "scoped by SLICE-ARCH-MODEL to invariants gate does NOT run — regeneration determinism, generated-artifacts-are-a-pure-function-of-source, rule reachability, field-authority; NOT a second block of drift/policy/registries."
+    remediation: "RESOLVED = Model A. SLICE-ARCH-MODEL (Phase D) scopes the unit-lane arch tests to the distinct invariants above; if clean separation proves impractical, the residual overlap stays here as explicit, justified redundancy."
+  negative-controls:
+    reason: "One selftest.detect implementation invoked via two harnesses (pytest test case + CLI verb)."
+    members: [CI-E2E-NEGCONTROLS, ARCH-CONTROLS]
+    distinct_boundaries:
+      CI-E2E-NEGCONTROLS: "the MERGE-BLOCKING path — collected in the required `e2e` slow step."
+      ARCH-CONTROLS: "standalone CLI selftest visibility + the push-to-main and path-selected dimension; advisory."
+    remediation: "SLICE-NEGCTRL-DEDUP (6.3) — on an arch-relevant PR BOTH run the full ~170s suite. Keep ONE authoritative full run; reduce the other to a lightweight reachability/registry assertion WITHOUT weakening the every-rule-has-a-firing-control guarantee."
+  ruff-scopes:
+    reason: "ruff runs at deliberately-tiered scopes; each protects a different feedback boundary (not duplication)."
+    members: [CI-UNIT-LINT, LOCAL-RUFF-PRECOMMIT, LOCAL-CHECK-SH]
+    distinct_boundaries:
+      CI-UNIT-LINT: "the authoritative FULL-tree, merge-blocking lint."
+      LOCAL-RUFF-PRECOMMIT: "staged-file pre-commit fast feedback."
+      LOCAL-CHECK-SH: "scoped pre-push accelerator (lint + test-mapping)."
+    remediation: "keep all — deliberate scope-tiering (6.4). Document each; remove none."
+  secret-scan:
+    reason: "One shared scripts/scan-secrets.sh with two callers protecting different moments."
+    members: [CI-UNIT-SECRETSCAN, LOCAL-SECRETSCAN]
+    distinct_boundaries:
+      CI-UNIT-SECRETSCAN: "the merge-blocking PR-diff scan (authoritative)."
+      LOCAL-SECRETSCAN: "pre-commit staged-diff scan (early local catch)."
+    remediation: "keep both — shared implementation, not duplicated code (6.12)."
+
+# ---------------------------------------------------------------------------------------------------
+controls:
+
+  # ===== ci.yml · unit (composite, REQUIRED) ========================================================
+  - id: CI-UNIT
+    name: "unit (fast, no toolchain)"
+    invariant: "the hermetic logic suite + lint + SLO + secret-scan + lock-drift + skip->fail hook all pass on the PR head"
+    owner: ci-lane
+    workflow: .github/workflows/ci.yml
+    job: unit
+    trigger: [pull_request, push]
+    classification: required
+    runtime_class: medium
+    timeout_minutes: 15
+    concurrency: "ci-<workflow>-<ref>, cancel-in-progress"
+    dependencies: []
+    artifacts: ["ci-timing.partial.json (main push only)"]
+    consumers: [CI-TIMING]
+    justification: "the fast, toolchain-free gate that carries the bulk of the merge-blocking logic guarantees; one of the two live required contexts."
+    deletion_consequence: "the entire hermetic merge gate disappears; logic/lint/secret/lock regressions and the arch-invariant blocking path all merge unchecked."
+    duplicate_group: null
+    adr: [ADR-0101]
+    branch_protection_context: "unit (fast, no toolchain)"
+    failure_evidence: "any red step fails the job; the job is a LIVE required context (Phase-A freeze branch-protection.json)."
+    evidence_status: verified-this-session
+    status: active
+
+  - id: CI-UNIT-SECRETSCAN
+    name: "Secret scan (PR diff) — MOL-193"
+    parent: CI-UNIT
+    invariant: "no secret is introduced in the PR diff"
+    owner: ci-lane
+    workflow: .github/workflows/ci.yml
+    job: unit
+    step: "Secret scan (PR diff) — MOL-193"
+    command: './scripts/scan-secrets.sh diff-base "<base.sha>"'
+    trigger: [pull_request]
+    classification: required
+    runtime_class: fast
+    justification: "blocks credential leakage at the PR boundary."
+    deletion_consequence: "a committed secret in a PR diff merges undetected."
+    duplicate_group: secret-scan
+    adr: [ADR-0101]
+    failure_evidence: "scan-secrets.sh exits non-zero on a planted secret (shared script; also LOCAL-SECRETSCAN)."
+    evidence_status: verified-this-session
+    status: active
+
+  - id: CI-UNIT-LOCKDRIFT
+    name: "Lockfile drift guard — MOL-195"
+    parent: CI-UNIT
+    invariant: "requirements locks are regenerated whenever pyproject deps change"
+    owner: ci-lane
+    workflow: .github/workflows/ci.yml
+    job: unit
+    step: "Lockfile drift guard (pyproject deps must not change without regen — MOL-195)"
+    command: './scripts/check-locks.sh "<base.sha>"'
+    trigger: [pull_request]
+    classification: required
+    runtime_class: fast
+    justification: "keeps the hashed, reproducible install honest — a dep change without a lock regen is caught."
+    deletion_consequence: "a dependency change ships without a matching hashed lock -> non-reproducible / unverified install."
+    duplicate_group: null
+    adr: [ADR-0101]
+    failure_evidence: "check-locks.sh exits non-zero when pyproject deps change without lock regen."
+    evidence_status: verified-this-session
+    status: active
+
+  - id: CI-UNIT-ENVPROBE
+    name: "CI env probe (unit lane)"
+    parent: CI-UNIT
+    invariant: "the unit lane's ffmpeg/cv2 availability is MEASURED, not inferred from YAML"
+    owner: ci-lane
+    workflow: .github/workflows/ci.yml
+    job: unit
+    step: "CI env probe (unit lane — MEASURE ffmpeg/cv2, do not infer from YAML)"
+    command: "python scripts/ci_env_probe.py"
+    trigger: [pull_request, push]
+    classification: required
+    runtime_class: fast
+    justification: "the unit lane installs [framing]; the probe proves the toolchain state rather than assuming it."
+    deletion_consequence: "a wrong assumption about toolchain presence in the unit lane goes unnoticed."
+    duplicate_group: null
+    adr: [ADR-0101]
+    failure_evidence: "ci_env_probe.py asserts measured availability and exits non-zero on mismatch."
+    evidence_status: verified-this-session
+    status: active
+
+  - id: CI-UNIT-LINT
+    name: "Lint (ruff — pyflakes F + pycodestyle E)"
+    parent: CI-UNIT
+    invariant: "no pyflakes-F / pycodestyle-E defect under the house ruleset (E701/E702/E401/E501 ignored — pyproject)"
+    owner: ci-lane
+    workflow: .github/workflows/ci.yml
+    job: unit
+    step: "Lint (ruff — pyflakes F + pycodestyle E, the house ruleset in pyproject)"
+    command: "ruff check ."
+    trigger: [pull_request, push]
+    classification: required
+    runtime_class: fast
+    justification: "the authoritative full-tree lint; the compact one-liner house style is deliberate (ADR 0092)."
+    deletion_consequence: "lint regressions merge; the house ruleset stops being enforced in CI."
+    duplicate_group: ruff-scopes
+    adr: [ADR-0101]
+    failure_evidence: "ruff exits non-zero on an F/E defect."
+    evidence_status: verified-this-session
+    status: active
+
+  - id: CI-UNIT-PYTEST
+    name: "Unit tests"
+    parent: CI-UNIT
+    invariant: "the hermetic logic suite (no integration, no slow) is green"
+    owner: ci-lane
+    workflow: .github/workflows/ci.yml
+    job: unit
+    step: "Unit tests"
+    command: 'python -m pytest -q -n auto -m "not integration and not slow"'
+    trigger: [pull_request, push]
+    classification: required
+    runtime_class: medium
+    justification: "the core logic regression gate; CI is the sole test authority (ADR 0088; local pytest denied)."
+    deletion_consequence: "logic regressions merge undetected."
+    duplicate_group: null
+    adr: [ADR-0101]
+    failure_evidence: "any failing unit test reddens the required job."
+    evidence_status: verified-this-session
+    status: active
+
+  - id: CI-UNIT-SLO
+    name: "Unit pytest SLO gate (blocking — MOL-460)"
+    parent: CI-UNIT
+    invariant: "unit pytest wall-time <= budget (135 s PR / 140 s main)"
+    owner: ci-lane
+    workflow: .github/workflows/ci.yml
+    job: unit
+    step: "Unit pytest SLO gate (blocking — MOL-460)"
+    command: "python scripts/ci_slo_gate.py --log pytest-unit.log"
+    trigger: [pull_request, push]
+    classification: required
+    runtime_class: fast
+    justification: "keeps the fast lane fast — an unbounded unit-suite slowdown is a real regression (ADR 0094)."
+    deletion_consequence: "the unit suite can slow without bound; the fast-feedback contract silently erodes."
+    duplicate_group: null
+    adr: [ADR-0101]
+    failure_evidence: "ci_slo_gate.py exits non-zero when measured wall-time exceeds CI_UNIT_PYTEST_BUDGET_S."
+    evidence_status: verified-this-session
+    status: active
+
+  - id: CI-UNIT-HOOKVERIFY
+    name: "Verify FANOPS_REQUIRE_E2E skip->fail hook (must fail, not skip)"
+    parent: CI-UNIT
+    invariant: "the conftest skip->fail hook converts an integration skip into a FAILURE (so the e2e job can never silently skip)"
+    owner: ci-lane
+    workflow: .github/workflows/ci.yml
+    job: unit
+    step: "Verify FANOPS_REQUIRE_E2E skip->fail hook (must fail, not skip)"
+    command: "python -m pytest -q tests/test_ci_require_e2e.py ; test $? -eq 1"
+    trigger: [pull_request, push]
+    classification: required
+    runtime_class: fast
+    justification: "guards the guard — proves the fail-loud mechanism that makes CI-E2E's must-run guarantee real."
+    deletion_consequence: "the e2e must-run guarantee becomes unprovable; a silently-skipping e2e suite could report green."
+    duplicate_group: null
+    adr: [ADR-0101]
+    failure_evidence: "the step asserts pytest exits EXACTLY 1 (a skip or a pass both fail the assertion)."
+    evidence_status: verified-this-session
+    status: active
+
+  - id: CI-UNIT-ARCHGOV
+    name: "architecture governance (collected in the unit suite)"
+    parent: CI-UNIT
+    invariant: "architecture governance holds: no BLOCKING policy finding; derived artifacts byte-match source; registries valid; every rule reachable"
+    owner: arch-engine
+    workflow: .github/workflows/ci.yml
+    job: unit
+    step: "collected: tests/test_arch_governance.py (runs within the unit suite)"
+    command: 'pytest -m "not integration and not slow" (collects test_arch_governance.py)'
+    trigger: [pull_request, push]
+    classification: required
+    runtime_class: fast
+    justification: "the unit-lane arch tests. Under Model A (ADR-0101) the AUTHORITATIVE arch merge-gate is ARCH-GATE (required); SLICE-ARCH-MODEL scopes this collection to the DISTINCT invariants gate does not run (determinism, pure-function-of-source, reachability, field-authority)."
+    deletion_consequence: "the distinct unit-lane invariants (determinism, pure-function-of-source, reachability, field-authority) lose their check; arch drift/policy/registries remain covered by the required ARCH-GATE."
+    duplicate_group: arch-drift-policy
+    adr: [ADR-0100, ADR-0101]
+    failure_evidence: "test_no_blocking_policy_findings / test_derived_artifacts_are_not_stale fail on an injected defect; the negative-control suite proves the validators discriminate."
+    evidence_status: verified-this-session
+    status: active
+
+  # ===== ci.yml · base-install (ADVISORY, unique) ===================================================
+  - id: CI-BASEINSTALL
+    name: "base install (no extras) refuses smart-framing"
+    invariant: "the base package (no extras) imports, the CLI runs, and the render prerequisite REFUSES loudly (never a silent centre-crop)"
+    owner: ci-lane
+    workflow: .github/workflows/ci.yml
+    job: base-install
+    step: "Base-install smoke — cv2 absent, fanops+CLI import, representative op, render prereq refuses"
+    command: "python scripts/base_install_smoke.py"
+    trigger: [pull_request, push]
+    classification: required
+    runtime_class: fast
+    timeout_minutes: 10
+    dependencies: []
+    artifacts: []
+    consumers: []
+    justification: "the ONLY control exercising the clean, extras-absent packaging path and the cv2 fail-closed contract (ADR 0034)."
+    deletion_consequence: "a packaging regression that breaks a clean no-extras install, or a silent centre-crop instead of a loud refusal, merges undetected — no other control covers this."
+    duplicate_group: null
+    adr: [ADR-0101]
+    branch_protection_context: "base install (no extras) refuses smart-framing"
+    failure_evidence: "base_install_smoke.py exits non-zero if import / CLI / refuse-loudly contract breaks."
+    evidence_status: verified-this-session
+    status: active
+    notes: "REQUIRED (ADR-0101). Phase-E promotion order = 2nd (after gate). Unique invariant, no blocking backup."
+
+  # ===== ci.yml · e2e (composite, REQUIRED) =========================================================
+  - id: CI-E2E
+    name: "real-tooling E2E (must run, not skip)"
+    invariant: "the real ffmpeg/whisper/espeak pipeline actually runs (not mocks) and never silently skips; @slow cross-face proofs pass; cv2 present"
+    owner: ci-lane
+    workflow: .github/workflows/ci.yml
+    job: e2e
+    trigger: [pull_request, push]
+    classification: required
+    runtime_class: slow
+    timeout_minutes: 25
+    dependencies: []
+    artifacts: ["ci-timing.partial.json (main push only)"]
+    consumers: [CI-TIMING]
+    justification: "proves the pipeline is real, not mocked — the second live required context."
+    deletion_consequence: "the real-tooling proof disappears; a broken render could be masked by mocks and merge."
+    duplicate_group: null
+    adr: [ADR-0101]
+    branch_protection_context: "real-tooling E2E (must run, not skip)"
+    failure_evidence: "FANOPS_REQUIRE_E2E=1 turns an integration skip into a failure; the job is a LIVE required context."
+    evidence_status: verified-this-session
+    status: active
+
+  - id: CI-E2E-TOOLCHAIN
+    name: "Verify toolchain on PATH"
+    parent: CI-E2E
+    invariant: "ffmpeg + ffprobe + whisper + espeak are all present before the suite runs"
+    owner: ci-lane
+    workflow: .github/workflows/ci.yml
+    job: e2e
+    step: "Verify toolchain on PATH"
+    command: 'for b in ffmpeg ffprobe whisper espeak; do command -v "$b" || exit 1; done'
+    trigger: [pull_request, push]
+    classification: required
+    runtime_class: fast
+    justification: "fails clearly and early on a missing tool instead of mid-test."
+    deletion_consequence: "a missing binary surfaces as a confusing deep failure rather than an obvious one."
+    duplicate_group: null
+    adr: [ADR-0101]
+    failure_evidence: "the loop exits 1 on any missing binary."
+    evidence_status: verified-this-session
+    status: active
+
+  - id: CI-E2E-INTEGRATION
+    name: "Integration suite — E2E MUST run"
+    parent: CI-E2E
+    invariant: "the real-toolchain integration suite is green AND actually executed (never skipped)"
+    owner: ci-lane
+    workflow: .github/workflows/ci.yml
+    job: e2e
+    step: "Integration suite — E2E MUST run (FANOPS_REQUIRE_E2E=1 fails on skip)"
+    command: 'python -m pytest -q -m "integration and not ci_hook_regression and not asr" -rs'
+    trigger: [pull_request, push]
+    classification: required
+    runtime_class: slow
+    justification: "the executed proof that the pipeline works against real ffmpeg/whisper."
+    deletion_consequence: "the pipeline's real-tooling proof disappears; a mock could mask a broken render."
+    duplicate_group: null
+    adr: [ADR-0101]
+    failure_evidence: "FANOPS_REQUIRE_E2E=1 fails on skip; any failing integration test reddens the job."
+    evidence_status: verified-this-session
+    status: active
+
+  - id: CI-E2E-SLOW
+    name: "Slow cross-face proofs"
+    parent: CI-E2E
+    invariant: "the hermetic cross-face @slow proofs (account-first, per-persona, hashtag-lifecycle, review-lanes) pass; run serially (no -n auto)"
+    owner: ci-lane
+    workflow: .github/workflows/ci.yml
+    job: e2e
+    step: "Slow cross-face proofs (hermetic — no real toolchain required)"
+    command: "python -m pytest -q -m slow"
+    trigger: [pull_request, push]
+    classification: required
+    runtime_class: slow
+    justification: "catches cross-cutting regressions across the account/persona/hashtag faces the unit lane deselects."
+    deletion_consequence: "cross-cutting closed-loop regressions merge; also the negative-control blocking path (collected here) disappears."
+    duplicate_group: null
+    adr: [ADR-0101]
+    failure_evidence: "any failing @slow test reddens the required job."
+    evidence_status: verified-this-session
+    status: active
+
+  - id: CI-E2E-NEGCONTROLS
+    name: "negative controls (collected via @slow test_negative_control_is_detected)"
+    parent: CI-E2E
+    invariant: "every arch policy rule has a negative control that FIRES on an injected defect (validators are not decorative)"
+    owner: arch-engine
+    workflow: .github/workflows/ci.yml
+    job: e2e
+    step: "collected: test_negative_control_is_detected (@slow) in the e2e slow step"
+    command: "python -m pytest -q -m slow (collects the parametrized negative controls)"
+    trigger: [pull_request, push]
+    classification: required
+    runtime_class: slow
+    justification: "THE merge-blocking proof that the arch validators discriminate (delegates to selftest.detect)."
+    deletion_consequence: "arch validators could silently become decorative with no blocking detector; ARCH-CONTROLS is only advisory."
+    duplicate_group: negative-controls
+    adr: [ADR-0100, ADR-0101]
+    failure_evidence: "each parametrized control asserts NEW evidence absent before injection; a non-firing rule fails the case."
+    evidence_status: verified-this-session
+    status: active
+
+  # ===== ci.yml · ci-timing (observability, main-push only) =========================================
+  - id: CI-TIMING
+    name: "ci-timing artifact (main only)"
+    invariant: "the merged SLO timing artifact is produced on main-push for trend observability"
+    owner: ci-lane
+    workflow: .github/workflows/ci.yml
+    job: ci-timing
+    trigger: [push]
+    classification: advisory
+    runtime_class: fast
+    timeout_minutes: null
+    dependencies: [CI-UNIT, CI-E2E]
+    artifacts: ["ci-timing.json"]
+    consumers: ["SLO trend (docs/CI_SLO.md)"]
+    justification: "merges the unit/e2e timing partials into one artifact for SLO-trend observability."
+    deletion_consequence: "SLO trend visibility is lost — no correctness impact."
+    duplicate_group: null
+    adr: [ADR-0101]
+    branch_protection_context: null
+    failure_evidence: "n/a — observability; the timing reports are continue-on-error."
+    evidence_status: verified-this-session
+    status: active
+    notes: "main-push only, needs [unit, e2e]; NEVER a PR check."
+
+  # ===== architecture.yml ===========================================================================
+  - id: ARCH-GATE
+    name: "gate (drift + policy + registries)"
+    invariant: "derived artifacts byte-match source + no BLOCKING policy finding + registries valid — rendered to the job summary for VISIBILITY"
+    owner: arch-engine
+    workflow: .github/workflows/architecture.yml
+    job: gate
+    step: "Regenerate + byte-compare + policy + registries"
+    command: "python -m tools.arch ci"
+    trigger: [pull_request, push]
+    classification: required
+    runtime_class: fast
+    timeout_minutes: 10
+    concurrency: "arch-<workflow>-<ref>, cancel-in-progress"
+    justification: "REQUIRED (Model A) — the AUTHORITATIVE merge-gate for architecture governance (drift + policy + registries) via `tools.arch ci`; stdlib-only, zero installs, runs every PR."
+    deletion_consequence: "arch-governance loses its authoritative merge-blocking owner; drift/policy/registry regressions could merge."
+    duplicate_group: arch-drift-policy
+    adr: [ADR-0100, ADR-0101]
+    branch_protection_context: "gate (drift + policy + registries)"
+    failure_evidence: "tools.arch ci exits non-zero on drift/policy/registry failure; SLICE-ARCH-MODEL adds a negative control proving this context blocks."
+    evidence_status: verified-this-session
+    status: active
+    notes: "REQUIRED (ADR-0101). Phase-E promotion order = 1st. Owns arch drift/policy/registries; unit-lane arch tests scoped to distinct invariants (SLICE-ARCH-MODEL)."
+
+  - id: ARCH-IMPACT
+    name: "impact report"
+    invariant: "a PR's architectural blast radius is COMPUTABLE and not BREAKING / UNKNOWN_IMPACT"
+    owner: arch-engine
+    workflow: .github/workflows/architecture.yml
+    job: impact
+    step: "Fail on BREAKING / UNKNOWN_IMPACT"
+    command: 'python -m tools.arch impact --base "<base.sha>" --strict'
+    trigger: [pull_request]
+    classification: advisory
+    runtime_class: fast
+    timeout_minutes: 10
+    justification: "the ONLY detector of an uncomputable / breaking architectural blast radius on a PR."
+    deletion_consequence: "UNKNOWN_IMPACT / BREAKING diffs lose their only detector — UNIQUE, no blocking backup."
+    duplicate_group: null
+    adr: [ADR-0101]
+    branch_protection_context: null
+    failure_evidence: "impact --strict exits non-zero on BREAKING/UNKNOWN_IMPACT."
+    evidence_status: verified-this-session
+    status: active
+    notes: "PROMOTION CANDIDATE — but ONLY after an advisory observation period quantifies its UNKNOWN_IMPACT / false-positive rate (ADR-0101 promotion criterion 2)."
+
+  - id: ARCH-CONTROLS
+    name: "negative controls (validator effectiveness)"
+    invariant: "the negative-control suite proves every validator discriminates (fires on an injected defect)"
+    owner: arch-engine
+    workflow: .github/workflows/architecture.yml
+    job: controls
+    step: "Negative controls"
+    command: "python -m tools.arch selftest"
+    trigger: [pull_request, push]
+    classification: advisory
+    runtime_class: slow
+    timeout_minutes: 15
+    justification: "standalone selftest visibility + the push-to-main and path-selected dimension; fails OPEN on an unreadable diff (tested)."
+    deletion_consequence: "the standalone selftest surface + push-to-main run disappears; the merge-blocking neg-control path rides CI-E2E-NEGCONTROLS."
+    duplicate_group: negative-controls
+    adr: [ADR-0100]
+    branch_protection_context: null
+    failure_evidence: "tools.arch selftest exits non-zero if any control fails to fire."
+    evidence_status: verified-this-session
+    status: transitional
+    notes: "SLICE-NEGCTRL-DEDUP (6.3): on an arch-relevant PR this runs the SAME selftest.detect as CI-E2E-NEGCONTROLS. Reduce to a lightweight reachability assertion; keep the full run in exactly one authoritative place."
+
+  - id: ARCH-RECONCILE
+    name: "scheduled reconciliation"
+    invariant: "weekly: canonical artifacts still match code — INCLUDING newly-created untracked artifacts; never a silent rewrite (reviewable diff, exits 1 on drift)"
+    owner: arch-engine
+    workflow: .github/workflows/architecture.yml
+    job: reconcile
+    step: "Regenerate and detect drift (produces a reviewable diff, never a silent rewrite)"
+    command: "python -m tools.arch regen && python -m tools.arch docs && drift-check(untracked-aware)"
+    trigger: [schedule]
+    classification: scheduled
+    runtime_class: slow
+    timeout_minutes: 20
+    justification: "the only control that catches an 11th, brand-new untracked derived artifact the per-PR gate is structurally blind to."
+    deletion_consequence: "slow-accumulating drift (esp. a newly-generated untracked artifact) goes undetected."
+    duplicate_group: null
+    adr: [ADR-0100]
+    branch_protection_context: null
+    failure_evidence: "the job exits 1 if `git diff` is non-empty OR untracked output exists."
+    evidence_status: verified-this-session
+    status: active
+    notes: "cron 17 5 * * 1 (Mondays 05:17 UTC); NEVER a PR check."
+
+  # ===== lane-guard.yml =============================================================================
+  - id: LANE-GUARD
+    name: "lane file-ownership + cross-PR collision"
+    invariant: "no branch edits a hot file owned by a different lane; no two OPEN PRs edit the same hot file"
+    owner: ci-lane
+    workflow: .github/workflows/lane-guard.yml
+    job: lane-guard
+    step: "Lane hot-file ownership + Cross-open-PR hot-file collision guard"
+    command: "python scripts/lane_guard.py ... && python scripts/pr_collision_guard.py ..."
+    trigger: [pull_request]
+    classification: required
+    runtime_class: fast
+    timeout_minutes: null
+    concurrency: null
+    justification: "REQUIRED (ADR-0101) — mechanical enforcement of the AGENTS.md parallelism rules for multi-agent waves (ADR 0095)."
+    deletion_consequence: "concurrent multi-agent work can silently collide on a hot file (merge-drift) with no blocking owner."
+    duplicate_group: null
+    adr: [ADR-0101]
+    branch_protection_context: "lane file-ownership + cross-PR collision"
+    failure_evidence: "lane_guard.py / pr_collision_guard.py exit non-zero on a cross-lane or cross-PR hot-file clash."
+    evidence_status: verified-this-session
+    status: transitional
+    notes: "REQUIRED (ADR-0101) but MUST be hardened FIRST: SLICE-LANEGUARD-HARDEN pins checkout@v7 + setup-python@v6 to SHAs and adds timeout-minutes + concurrency. Phase-E promotion order = 3rd, after an observation window characterizes the best-effort LINEAR lookup failure mode."
+
+  # ===== nightly.yml ================================================================================
+  - id: NIGHTLY-PIPAUDIT
+    name: "dependency audit (pip-audit)"
+    invariant: "dependency CVEs on the locked deps are made VISIBLE (report artifact), not gated"
+    owner: ci-lane
+    workflow: .github/workflows/nightly.yml
+    job: dependency-audit
+    step: "pip-audit (advisory — MOL-194)"
+    command: "pip-audit --desc | tee pip-audit-report.txt"
+    trigger: [schedule, workflow_dispatch]
+    classification: scheduled
+    runtime_class: medium
+    timeout_minutes: 15
+    artifacts: ["nightly-pip-audit-report"]
+    justification: "periodic CVE visibility without imposing a noisy blocking gate on a single-operator tool."
+    deletion_consequence: "no periodic CVE visibility on the locked dependency set."
+    duplicate_group: null
+    adr: [ADR-0101]
+    branch_protection_context: null
+    failure_evidence: "n/a — advisory (continue-on-error); the report artifact is the deliverable."
+    evidence_status: verified-this-session
+    status: active
+    notes: "6.12: keep advisory OR promote is a risk/product decision. ADR-0101 defines owner + response + escalation threshold; promotion (if any) is Phase E."
+
+  - id: NIGHTLY-ASR
+    name: "[asr] toolchain smoke (nightly)"
+    invariant: "the heavy [asr] toolchain (demucs / faster-whisper / torch) actually works end-to-end"
+    owner: ci-lane
+    workflow: .github/workflows/nightly.yml
+    job: asr-smoke
+    step: "ASR smoke (must run, not skip)"
+    command: 'python -m pytest -q -m "integration and asr" -rs'
+    trigger: [schedule, workflow_dispatch]
+    classification: scheduled
+    runtime_class: slow
+    timeout_minutes: 45
+    justification: "proves the [asr] extra's real toolchain, which is too slow to install on the PR path (ADR 0088 boundary)."
+    deletion_consequence: "the [asr] real toolchain is never proven; an asr regression ships silently."
+    duplicate_group: null
+    adr: [ADR-0101]
+    branch_protection_context: null
+    failure_evidence: "FANOPS_REQUIRE_E2E=1 fails on skip; a broken asr toolchain reddens the nightly."
+    evidence_status: verified-this-session
+    status: active
+
+  # ===== local hooks (dev-time accelerators; NOT CI jobs) ===========================================
+  - id: LOCAL-RUFF-PRECOMMIT
+    name: "ruff (staged, pre-commit)"
+    invariant: "staged files pass the F/E ruleset before a commit is created (fast local feedback)"
+    owner: ci-lane
+    step: ".githooks/pre-commit ruff (staged scope)"
+    command: "ruff check <staged>"
+    trigger: [local]
+    classification: local
+    runtime_class: fast
+    justification: "catches lint defects at commit time, before CI."
+    deletion_consequence: "local commits can introduce lint defects caught only later in CI (slower loop)."
+    duplicate_group: ruff-scopes
+    adr: [ADR-0100]
+    failure_evidence: "pre-commit ruff exits non-zero on a staged F/E defect."
+    evidence_status: to-verify-phase-C
+    status: active
+
+  - id: LOCAL-CHECK-SH
+    name: "scripts/check.sh (scoped)"
+    invariant: "a scoped lint + test-mapping accelerator for local dev (NOT the full suite)"
+    owner: ci-lane
+    step: "scripts/check.sh"
+    command: "./scripts/check.sh"
+    trigger: [local]
+    classification: local
+    runtime_class: fast
+    justification: "fast pre-push scoped check; the full suite is CI-only (ADR 0088)."
+    deletion_consequence: "developers lose the fast scoped pre-push check."
+    duplicate_group: ruff-scopes
+    adr: [ADR-0100]
+    failure_evidence: "check.sh exits non-zero on a scoped lint failure."
+    evidence_status: to-verify-phase-C
+    status: active
+
+  - id: LOCAL-SECRETSCAN
+    name: "scan-secrets.sh (staged, pre-commit)"
+    invariant: "the staged diff has no secret before a commit is created (SAME shared script as CI-UNIT-SECRETSCAN)"
+    owner: ci-lane
+    step: ".githooks/pre-commit scan-secrets.sh (staged scope)"
+    command: "./scripts/scan-secrets.sh <staged>"
+    trigger: [local]
+    classification: local
+    runtime_class: fast
+    justification: "early local catch of a credential before it is even committed."
+    deletion_consequence: "a secret can be committed locally, relying solely on the CI diff scan to catch it."
+    duplicate_group: secret-scan
+    adr: [ADR-0101]
+    failure_evidence: "scan-secrets.sh exits non-zero on a planted secret."
+    evidence_status: to-verify-phase-C
+    status: active
