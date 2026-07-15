@@ -30,7 +30,7 @@ def _accounts(tmp_path, backend, platform="instagram"):
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps({"accounts": [
         {"handle": "@h", "account_id": "h1", "platforms": [platform], "status": "active",
-         "backends": {platform: backend}}]}))
+         "backends": ({platform: backend} if backend is not None else {})}]}))   # None -> no explicit provider
 
 
 def _queued(cfg, platform=Platform.instagram):
@@ -179,3 +179,43 @@ def test_producer_consumer_share_one_capability(tmp_path, monkeypatch, backend, 
     publish_due(cfg)
     claimed = Ledger.load(cfg).posts["p1"].state is not PostState.queued
     assert claimed is ready
+
+
+# ── EXHAUSTIVE PARITY — THE permanent RC-3b regression: producer-claim == consumer-reconcile ──────────
+# The invariant PROVEN, not assumed. For EVERY (is_live × backend × postiz-key × zernio-key × platform)
+# the producer's ACTUAL claim decision — does a queued post enter `submitting`? (run the real publish_due) —
+# equals the consumer's ACTUAL gate — `cfg.is_live_backend`, exactly what `_reconcile_safe` reads. Not
+# "looks equivalent": both sides are executed, on all 96 backend states. A future edit that lets publishing
+# claim a channel reconcile will not run for — OR that disables reconcile for a channel publishing still
+# claims — turns exactly one cell red. FANOPS_POSTER is left UNSET so a single channel's readiness (not a
+# legacy global bridge) is the sole determinant, making the per-channel producer and the aggregate
+# `is_live_backend` coincide.
+@pytest.mark.parametrize("is_live", [False, True])
+@pytest.mark.parametrize("backend", ["postiz", "zernio", "dryrun", "bogus", "postiz ", None])
+@pytest.mark.parametrize("postiz_key", [False, True])
+@pytest.mark.parametrize("zernio_key", [False, True])
+@pytest.mark.parametrize("platform", ["instagram", "tiktok"])
+def test_exhaustive_producer_consumer_parity(tmp_path, monkeypatch, is_live, backend, postiz_key, zernio_key, platform):
+    if is_live:
+        monkeypatch.setenv("FANOPS_LIVE", "1")
+    if postiz_key:
+        monkeypatch.setenv("POSTIZ_API_KEY", "k")
+    if zernio_key:
+        monkeypatch.setenv("ZERNIO_API_KEY", "k")
+    plat = Platform(platform)
+    _accounts(tmp_path, backend, platform=platform)          # single channel; loaded UNVALIDATED (bogus/malformed persist)
+    cfg = Config(root=tmp_path)
+
+    # CONSUMER permission — the EXACT predicate `_reconcile_safe` gates reconcile on.
+    consumer_reconcile = cfg.is_live_backend
+
+    # PRODUCER permission — run the REAL producer; did the queued post enter `submitting` (leave queued)?
+    _queued(cfg, platform=plat)
+    _park_poster(monkeypatch)                                # a live-ready channel claims -> parks needs_reconcile
+    publish_due(cfg)
+    producer_claim = Ledger.load(cfg).posts["p1"].state is not PostState.queued
+
+    assert producer_claim == consumer_reconcile, (
+        f"RC-3b PARITY BROKEN: is_live={is_live} backend={backend!r} postiz_key={postiz_key} "
+        f"zernio_key={zernio_key} platform={platform} -> producer_claim={producer_claim}, "
+        f"consumer_reconcile={consumer_reconcile}. A post may enter `submitting` IFF reconcile will run.")
