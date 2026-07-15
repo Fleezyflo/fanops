@@ -238,6 +238,48 @@ def _place(src_w: int, src_h: int, cw: int, ch: int, fx: float, ay: float, eyeli
     y = _clamp(round(ay * src_h - eyeline * ch), 0, max(0, src_h - ch))
     return x, y
 
+# ---- E1b safe-area: the crop must CONTAIN the full detected face box with a margin on every edge and
+# headroom above the head; when the box can't fit at the target zoom the crop WIDENS (reduce zoom), never
+# cuts the face, bounded by the source. One implementation, shared by all four crop paths (_focus_crop,
+# _track_crop, _already_aspect, _crop_box). A focus/segment with NO face height (a 2-tuple or saliency)
+# leaves size + origin exactly as _place produced them -> byte-identical to the pre-E1b behaviour. ----
+_SAFE_MARGIN_FRAC = 0.05     # min gap from the detected face box to every crop edge, as a fraction of the source dim
+
+def _safe_dims(cw: int, ch: int, ch0: int, src_w: int, src_h: int, tw: int, th: int, fh, fw):
+    """Widen the crop (reduce zoom) until the face box + a margin on every edge fits, bounded by the source
+    baseline ch0 (never wider than the blind crop) and the source dims. fh/fw falsy on an axis -> that axis
+    is unconstrained (a 2-tuple/legacy focus keeps today's size)."""
+    if not fh and not fw:
+        return cw, ch
+    need = float(ch)
+    if fh:
+        need = max(need, (fh + 2 * _SAFE_MARGIN_FRAC) * src_h)
+    if fw:
+        need = max(need, ((fw + 2 * _SAFE_MARGIN_FRAC) * src_w) * th / tw)   # width need -> implied crop height
+    ch = min(ch0, src_h, round(need))
+    cw = min(round(ch * tw / th), src_w)
+    return cw, ch
+
+def _safe_origin(src_w: int, src_h: int, cw: int, ch: int, fx: float, fy: float, fh, ey, fw, eyeline: float):
+    """Crop origin (x,y) that keeps the full face box inside with a margin (where the source allows) and
+    protects the head-top, then clamps to source bounds. Reduces to _place when there is no face box."""
+    if not fh:
+        return _place(src_w, src_h, cw, ch, fx, ey if ey is not None else fy, eyeline if ey is not None else 0.5)
+    mv, mw = _SAFE_MARGIN_FRAC * src_h, _SAFE_MARGIN_FRAC * src_w
+    x = round(fx * src_w - cw / 2)                             # centre horizontally on the face
+    if fw:                                                     # keep the face box's L/R edges inside with a margin
+        lo, hi = round((fx + fw / 2) * src_w + mw - cw), round((fx - fw / 2) * src_w - mw)
+        if lo <= hi:
+            x = _clamp(x, lo, hi)
+    x = _clamp(x, 0, max(0, src_w - cw))
+    y = round((ey if ey is not None else fy) * src_h - eyeline * ch)   # eye-line composition
+    lo = round((fy + fh / 2) * src_h + mv - ch)               # chin inside
+    hi = round((fy - fh / 2) * src_h - mv)                    # head-top inside (headroom)
+    if lo <= hi:
+        y = _clamp(y, lo, hi)
+    y = _clamp(y, 0, max(0, src_h - ch))
+    return x, y
+
 def _step_expr(bounds: list[float], vals: list[int]) -> str:
     """A per-frame ffmpeg crop-offset expression that HARD-CUTS through `vals` at the `bounds` switch times
     (instant reframe to the active speaker — the short-form standard, vs panning across the dead space
@@ -257,13 +299,18 @@ def _track_crop(track: list, src_w: int, src_h: int, tw: int, th: int, ch0: int,
     of the crop origin between per-segment anchors. crop w/h constant (ffmpeg evals them once); x/y are the
     t-expressions. `axis` is just documentation — both x and y are emitted; a constant axis collapses to an int."""
     fhs = [s[4] for s in track if len(s) > 4 and s[4]]
+    fws = [s[6] for s in track if len(s) > 6 and s[6]]
     ch = _zoom_h(src_h, ch0, median(fhs) if fhs else None, frac)
     cw = min(round(ch * tw / th), src_w); ch = min(ch, src_h)
+    # E1b: ONE window crop that fits the WIDEST/TALLEST speaker across segments; each origin keeps ITS face safe.
+    cw, ch = _safe_dims(cw, ch, ch0, src_w, src_h, tw, th, max(fhs) if fhs else None, max(fws) if fws else None)
     bounds = [round(s[1], 2) for s in track[:-1]]
     xs, ys = [], []
     for s in track:
+        fh = s[4] if len(s) > 4 else None
         ey = s[5] if len(s) > 5 else s[3]
-        x, y = _place(src_w, src_h, cw, ch, s[2], ey, _EYELINE_FRAC if len(s) > 5 else 0.5)
+        fw = s[6] if len(s) > 6 else None
+        x, y = _safe_origin(src_w, src_h, cw, ch, s[2], s[3], fh, ey, fw, _EYELINE_FRAC if len(s) > 5 else 0.5)
         xs.append(x); ys.append(y)
     xexpr = _step_expr(bounds, xs)
     yexpr = _step_expr(bounds, ys)
@@ -276,10 +323,11 @@ def _focus_crop(focus: tuple, src_w: int, src_h: int, tw: int, th: int, ch0: int
     (no needless re-render); otherwise a numeric zoomed crop."""
     fh = focus[2] if len(focus) > 2 else None
     ey = focus[3] if len(focus) > 3 else None
+    fw = focus[4] if len(focus) > 4 else None
     ch = _zoom_h(src_h, ch0, fh, frac, zoom_max=_adaptive_zoom_max(fh, _ZOOM_MAX))
     cw = min(round(ch * tw / th), src_w); ch = min(ch, src_h)
-    eyeline = _EYELINE_FRAC if ey is not None else 0.5
-    x, y = _place(src_w, src_h, cw, ch, focus[0], ey if ey is not None else focus[1], eyeline)
+    cw, ch = _safe_dims(cw, ch, ch0, src_w, src_h, tw, th, fh, fw)   # E1b: widen if the face box won't fit
+    x, y = _safe_origin(src_w, src_h, cw, ch, focus[0], focus[1], fh, ey, fw, _EYELINE_FRAC)
     if symbolic_full and ch == ch0 and cw == round(ch0 * tw / th):
         # no zoom -> keep the exact pre-zoom string (byte-identical): width-crop "ih*tw/th:ih:x:y", height-crop "iw:iw*th/tw:x:y"
         return symbolic_w.format(x=x, y=y) + f",scale={tw}:{th},setsar=1"
@@ -330,10 +378,12 @@ def _already_aspect(tw: int, th: int, src_w: int, src_h: int, focus: tuple | Non
     fh = focus[2] if (focus is not None and len(focus) > 2) else None
     if not fh or fh >= _GENTLE_MIN_FACE_FRAC:
         return f"scale={tw}:{th},setsar=1"
+    ey = focus[3] if len(focus) > 3 else focus[1]
+    fw = focus[4] if len(focus) > 4 else None
     ch = _zoom_h(src_h, src_h, fh, frac, zoom_max=_GENTLE_ZOOM_MAX)
     cw = min(round(ch * tw / th), src_w); ch = min(ch, src_h)
-    ey = focus[3] if len(focus) > 3 else focus[1]
-    x, y = _place(src_w, src_h, cw, ch, focus[0], ey, _EYELINE_FRAC)
+    cw, ch = _safe_dims(cw, ch, src_h, src_w, src_h, tw, th, fh, fw)   # E1b (ch0 = src_h for an already-aspect source)
+    x, y = _safe_origin(src_w, src_h, cw, ch, focus[0], focus[1], fh, ey, fw, _EYELINE_FRAC)
     return f"crop={cw}:{ch}:{x}:{y},scale={tw}:{th},setsar=1"
 
 def ffmpeg_clip_cmd(src: str, dst: str, start: float, end: float, aspect: str,
@@ -359,16 +409,16 @@ def ffmpeg_clip_cmd(src: str, dst: str, start: float, end: float, aspect: str,
 # in a SINGLE pass: N seeked inputs -> per-segment crop chains -> concat (sample-accurate, no container seams)
 # -> optional subtitle burn -> one encode. Each speaker now lands at a consistent on-screen face size.
 def _crop_box(fx: float, fy: float, fh, ey, src_w: int, src_h: int, tw: int, th: int,
-              ch0: int, frac: float, zoom_max: float):
+              ch0: int, frac: float, zoom_max: float, fw=None):
     """Numeric crop (cw, ch, x, y) that zooms a subject of normalized face-height fh to `frac` of the output
     (bounded by zoom_max) and anchors its eye-line ey at _EYELINE_FRAC. Shared sizing math so the static focus
     crop and the per-segment active-speaker crops are consistent. fh falsy -> no zoom (full ch0 extent).
-    The zoom cap is face-size-adaptive: a far/small subject is held wide (context, not a tight mic crop)."""
+    The zoom cap is face-size-adaptive: a far/small subject is held wide (context, not a tight mic crop).
+    E1b: `fw` (face width, when known) drives the horizontal safe-area — the crop widens rather than cut it."""
     ch = _zoom_h(src_h, ch0, fh, frac, zoom_max=_adaptive_zoom_max(fh, zoom_max))
     cw = min(round(ch * tw / th), src_w); ch = min(ch, src_h)
-    eyeline = _EYELINE_FRAC if (ey is not None and fh) else 0.5
-    anchor = ey if (ey is not None and fh) else fy
-    x, y = _place(src_w, src_h, cw, ch, fx, anchor, eyeline)
+    cw, ch = _safe_dims(cw, ch, ch0, src_w, src_h, tw, th, fh, fw)
+    x, y = _safe_origin(src_w, src_h, cw, ch, fx, fy, fh, ey, fw, _EYELINE_FRAC)
     return cw, ch, x, y
 
 def _ch0_for(aspect_value: str, src_w: int, src_h: int):
@@ -389,7 +439,8 @@ def _segment_chain(idx: int, seg, src_w: int, src_h: int, tw: int, th: int, ch0,
         return f"[{idx}:v]scale={tw}:{th},setsar=1[v{idx}]"
     fh = seg[4] if len(seg) > 4 else None
     ey = seg[5] if len(seg) > 5 else None
-    cw, ch, x, y = _crop_box(seg[2], seg[3], fh, ey, src_w, src_h, tw, th, ch0, frac, _ZOOM_MAX_TRACK)
+    fw = seg[6] if len(seg) > 6 else None
+    cw, ch, x, y = _crop_box(seg[2], seg[3], fh, ey, src_w, src_h, tw, th, ch0, frac, _ZOOM_MAX_TRACK, fw)
     return f"[{idx}:v]crop={cw}:{ch}:{x}:{y},scale={tw}:{th},setsar=1[v{idx}]"
 
 def _segments_filter_complex(track: list, src_w: int, src_h: int, aspect_value: str,
@@ -444,13 +495,15 @@ def _supercut_span_entries(cfg: Config, src, spans: list[tuple[float, float]]):
             fx, fy = focus[0], focus[1]
             fh = focus[2] if len(focus) > 2 else None
             ey = focus[3] if len(focus) > 3 else None
+            fw = focus[4] if len(focus) > 4 else None
         elif track:
             fx, fy = track[0][2], track[0][3]
             fh = track[0][4] if len(track[0]) > 4 else None
             ey = track[0][5] if len(track[0]) > 5 else None
+            fw = track[0][6] if len(track[0]) > 6 else None
         else:
-            fx, fy, fh, ey = 0.5, 0.5, None, None
-        entries.append((0.0, dur, fx, fy, fh, ey))
+            fx, fy, fh, ey, fw = 0.5, 0.5, None, None, None
+        entries.append((0.0, dur, fx, fy, fh, ey, fw))   # E1b: carry fw so the safe-area + fingerprint see it
     return entries, ct_out
 
 def ffmpeg_supercut_cmd(src: str, dst: str, spans: list[tuple[float, float]], aspect_value: str,
@@ -643,8 +696,9 @@ def _subtitles_vf(led: Ledger, cfg: Config, moment_id: str, cid: str, aspect: Fm
 # determines the rendered bytes (source, window, aspect, source dims, the burned .ass text), so the
 # lock-free pre-warm and the in-lock commit agree on when an existing mp4 may be reused. This is what
 # lets the heavy ffmpeg run OUTSIDE the ledger lock and the commit pass skip it.
-_REFRAME_GEOM_V = 4          # bump to force re-render of ZOOM/eyeline/dynamic clips after a geometry-math change
-                             # (v4: STATIC locked-off crop per shot — no jitter; adaptive far-speaker zoom + min-shot merge)
+_REFRAME_GEOM_V = 5          # bump to force re-render of ZOOM/eyeline/dynamic clips after a geometry-math change
+                             # (v5: E1b face-box safe-area — margin on every edge, headroom, zoom-backoff, face width
+                             #  in focus/track; v4: STATIC locked-off crop per shot — adaptive far-speaker zoom + min-shot merge)
 
 def _render_fingerprint_payload(src_path: str, cs: float, ce: float, aspect_value: str,
                                 src_w: int, src_h: int, ass_text: str, *, top_bias: bool = False,

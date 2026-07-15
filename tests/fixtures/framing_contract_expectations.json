@@ -56,21 +56,22 @@
       "root_cause": "strategy_raised"
     },
     {
-      "id": "ct_multi_track_COMPLETED_no_track_plus_no_face_is_a_legitimate_centre",
-      "why": "The distinction that carries this whole design: COMPLETED-with-a-negative is NOT failure. Both required strategies ran to a conclusion and found nothing.",
+      "id": "ct_multi_track_COMPLETED_no_track_is_a_conservative_centre",
+      "why": "E3. A real 2-shot with no clean track is CONSERVATIVELY CENTRED (both seats), never a one-person static lock that crops the other speaker out. A COMPLETED-with-a-negative is NOT failure, so this is a LEGITIMATE centre — but a distinct one (centered_multi_untracked), and subject_focus is not part of the MULTI route so only speaker_track runs.",
       "content_type": "multi-speaker-talk",
-      "stub_events": {"speaker_track": "no_track", "subject_focus": "no_face"},
-      "final_outcome": "centered_no_subject",
+      "stub_events": {"speaker_track": "no_track"},
+      "final_outcome": "centered_multi_untracked",
       "root_cause": null,
+      "attempts": [{"strategy": "speaker_track", "state": "completed", "required_for_center": true}],
       "degraded_strategies": []
     },
     {
-      "id": "earlier_required_failure_plus_later_success_is_resolved_but_degraded",
-      "why": "Trusted, but WORSE than a healthy pass would have produced: the speaker cuts are lost. A non-zero degraded count is a go/no-go input.",
+      "id": "ct_multi_track_hard_fail_is_unresolved_never_degraded_single",
+      "why": "E3. A MULTI whose track HARD-FAILS is UNRESOLVED — it no longer falls to a degraded one-person lock (the pilot's 'empty seat'). subject_focus is not run; the failed required track pins the outcome, and the centre we return is not defensible (a broken toolchain never licenses a centre).",
       "content_type": "multi-speaker-talk",
       "stub_events": {"speaker_track": "strategy_raised"},
-      "subject_focus_returns": [0.61, 0.44, 0.3, 0.38],
-      "final_outcome": "detected_single",
+      "final_outcome": "unresolved",
+      "root_cause": "strategy_raised",
       "degraded_strategies": ["speaker_track"]
     },
     {
