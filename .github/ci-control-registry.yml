@@ -275,6 +275,7 @@ controls:
     adr: [ADR-0100, ADR-0101]
     failure_evidence: "test_no_blocking_policy_findings / test_derived_artifacts_are_not_stale fail on an injected defect; the negative-control suite proves the validators discriminate."
     evidence_status: verified-this-session
+    status: active
 
   - id: CI-UNIT-CIVALIDATOR
     name: "CI control-registry validator (collected in the unit suite)"
