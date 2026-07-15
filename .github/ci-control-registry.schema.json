@@ -1,0 +1,140 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://fanops/ci-control-registry.schema.json",
+  "title": "FanOps CI Control Registry",
+  "description": "Validation schema for .github/ci-control-registry.yml — the machine-readable bridge between ADR policy, workflow implementation, and live GitHub branch protection. Proposed by ADR-0100. This schema is validated deterministically by the Phase-C reconciliation checks (DC-1..DC-6); it is not executed by any workflow until those land.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "status", "generated_view", "intended_required_contexts", "controls"],
+  "properties": {
+    "version": { "type": "integer", "minimum": 1 },
+    "status": {
+      "type": "string",
+      "enum": ["proposed", "accepted", "superseded"],
+      "description": "Lifecycle of the registry document itself. 'proposed' until ADR-0100 is accepted."
+    },
+    "generated_view": {
+      "type": "string",
+      "description": "Path to the human-readable ownership table generated FROM this file. That view must never be hand-maintained (it would become a second source of truth that rots)."
+    },
+    "intended_required_contexts": {
+      "type": "array",
+      "description": "Plane 1 — the merge policy the repo INTENDS. Reconciled against live GitHub required contexts by DC-3. Every string here must equal a control's branch_protection_context whose classification is 'required'.",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    },
+    "duplicate_groups": {
+      "type": "object",
+      "description": "Registered intentional redundancy. A control may share an invariant with another ONLY via a named group here, which must state the DISTINCT boundary each member protects (ADR-0100). Silent duplication is a validator failure.",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["reason", "members", "distinct_boundaries"],
+        "properties": {
+          "reason": { "type": "string" },
+          "members": { "type": "array", "items": { "type": "string" }, "minItems": 2 },
+          "distinct_boundaries": {
+            "type": "object",
+            "description": "member-id -> the boundary THIS member uniquely protects",
+            "additionalProperties": { "type": "string" }
+          },
+          "remediation": { "type": "string", "description": "slice id if the duplication is transitional / being reduced" }
+        }
+      }
+    },
+    "controls": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/definitions/control" }
+    }
+  },
+  "definitions": {
+    "control": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "name", "invariant", "owner", "classification",
+        "trigger", "justification", "deletion_consequence", "adr",
+        "failure_evidence", "status"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9-]+$",
+          "description": "STABLE identity — never a mutable job display name. Renaming a job MUST NOT change this id."
+        },
+        "name": {
+          "type": "string",
+          "description": "Human name. For a workflow-backed control this equals the job's `name:` string; it is descriptive, not the identity."
+        },
+        "invariant": {
+          "type": "string",
+          "description": "The ONE property this control protects. If two controls share an invariant they must be in a duplicate_group."
+        },
+        "owner": {
+          "type": "string",
+          "description": "The single accountable governance owner (a lane or subsystem, e.g. 'ci-lane', 'arch-engine')."
+        },
+        "workflow": {
+          "type": "string",
+          "description": "Path to the workflow file, when workflow-backed. Absent for local/scheduled-external controls."
+        },
+        "job": { "type": "string", "description": "Workflow job id (stable within the file)." },
+        "parent": { "type": "string", "description": "Parent control id when this is a sub-gate of a composite job." },
+        "step": { "type": "string", "description": "The step `name:` or logical step this control is." },
+        "command": { "type": "string", "description": "The exact command/entry point, when one exists." },
+        "trigger": {
+          "type": "array",
+          "items": { "type": "string", "enum": ["pull_request", "push", "schedule", "workflow_dispatch", "local"] },
+          "minItems": 1
+        },
+        "classification": {
+          "type": "string",
+          "enum": ["required", "advisory", "scheduled", "local"],
+          "description": "required = in live branch protection; advisory = runs on PR but does not block; scheduled = cron/dispatch only; local = pre-commit/dev hook only."
+        },
+        "runtime_class": { "type": "string", "enum": ["fast", "medium", "slow", "unknown"] },
+        "timeout_minutes": { "type": ["integer", "null"], "minimum": 1 },
+        "concurrency": { "type": ["string", "null"] },
+        "dependencies": { "type": "array", "items": { "type": "string" } },
+        "artifacts": { "type": "array", "items": { "type": "string" } },
+        "consumers": { "type": "array", "items": { "type": "string" } },
+        "justification": { "type": "string", "minLength": 1 },
+        "deletion_consequence": {
+          "type": "string",
+          "minLength": 1,
+          "description": "What protection disappears if this control is removed. The deletion test (ADR-0100 / rule R6)."
+        },
+        "duplicate_group": { "type": ["string", "null"], "description": "key into top-level duplicate_groups, or null" },
+        "adr": { "type": "array", "items": { "type": "string", "pattern": "^ADR-[0-9]{4}$" }, "minItems": 1 },
+        "branch_protection_context": {
+          "type": ["string", "null"],
+          "description": "The exact required-context string in branch protection. MUST be present iff classification == 'required'."
+        },
+        "failure_evidence": {
+          "type": "string",
+          "description": "The test / negative control / proof that this control CAN fail (so it is not decorative). For blocking validators this is a named negative control."
+        },
+        "evidence_status": {
+          "type": "string",
+          "enum": ["verified-this-session", "verified-review", "to-verify-phase-C"],
+          "description": "Provenance of the line/anchor evidence, per INV-20 (anchors rot; symbols do not)."
+        },
+        "status": { "type": "string", "enum": ["active", "transitional", "deprecated", "dormant"] },
+        "notes": { "type": "string" }
+      },
+      "allOf": [
+        {
+          "$comment": "A TOP-LEVEL required control (a real GitHub check, not a sub-gate) MUST declare its branch-protection context — the anti-silent-detach mechanism (ADR-0101). Sub-gates carry `parent` and inherit blocking through it, so they are exempt.",
+          "if": { "properties": { "classification": { "const": "required" } }, "required": ["classification"], "not": { "required": ["parent"] } },
+          "then": { "required": ["branch_protection_context"], "properties": { "branch_protection_context": { "type": "string", "minLength": 1 } } }
+        },
+        {
+          "$comment": "A workflow-backed control names its workflow and job.",
+          "if": { "required": ["workflow"] },
+          "then": { "required": ["job"] }
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,151 @@
+# FanOps — Live GitHub Mutations (Phase E / Step 6)
+
+> **NONE EXECUTED.** These are applied **only after Steps 2–5 are green** (the `tools/ci` validator +
+> repository-remediation PRs merged, all five proposed required jobs green on the final SHA) — the
+> operator gate. Each is applied **one at a time**, with the **Phase-A pre-image** captured
+> (`freeze/2026-07-15/branch-protection.json`) and a **re-probe after every mutation**. Order is the
+> operator directive (2026-07-15). Commands are shown for review.
+
+**Repo:** `Fleezyflo/fanops` · **Branch:** `main` · **Pre-image:** Phase-A freeze (re-verified
+2026-07-15: live required = `["unit (fast, no toolchain)","real-tooling E2E (must run, not skip)"]`;
+`enforce_admins=false`; conv-resolution=false; linear-history=false; repo squash+merge+rebase all on,
+delete-branch-on-merge off).
+
+**Pre-flight (before ANY mutation):** confirm live still equals the pre-image; if it drifted, stop and re-baseline.
+```bash
+gh api repos/Fleezyflo/fanops/branches/main/protection > /tmp/live-now.json
+diff <(jq -S . docs/ci/freeze/2026-07-15/branch-protection.json) <(jq -S . /tmp/live-now.json) && echo "MATCHES pre-image"
+```
+
+**Endpoint note.** `required_status_checks` (M1–M3) and `enforce_admins` (M6) have dedicated
+sub-endpoints (safe, additive). `required_conversation_resolution` (M4) and `required_linear_history`
+(M5) have **no sub-endpoint** — they are only settable via the **full** `PUT …/protection` object,
+where a missing field **resets** protection. For M4/M5, build the payload from the live pre-image with
+exactly one field flipped (script below), or use a **repository ruleset** (additive; see end).
+
+---
+
+## M1 · Add `gate (drift + policy + registries)` to required contexts  *(FIRST)*
+
+- **Before:** `["unit (fast, no toolchain)","real-tooling E2E (must run, not skip)"]`; strict=true.
+- **After:** the two **plus** `"gate (drift + policy + registries)"`; strict unchanged.
+- **Reason:** Model A — `gate` is the authoritative merge-gate for architecture governance (ADR-0101).
+- **Affected ADR:** 0100/0101. **Registry:** `ARCH-GATE.classification=required` already set; DC-3 stays green.
+- **Risk:** *(estimate)* low — `gate` already runs on every PR, stdlib-only, fast. `SLICE-ARCH-MODEL` must
+  land first so `gate` (not the unit arch tests) is the sole required arch owner.
+- **Command (DO NOT RUN — approval required):**
+```bash
+gh api -X PATCH repos/Fleezyflo/fanops/branches/main/protection/required_status_checks \
+  -f strict=true \
+  -f 'contexts[]=unit (fast, no toolchain)' \
+  -f 'contexts[]=real-tooling E2E (must run, not skip)' \
+  -f 'contexts[]=gate (drift + policy + registries)'
+```
+- **Rollback:** re-PATCH with the original two contexts. **Post:** re-probe → 3 contexts.
+
+## M2 · Add `base install (no extras) refuses smart-framing`  *(SECOND)*
+
+- **Before:** the 3 from M1. **After:** + `"base install (no extras) refuses smart-framing"`.
+- **Reason:** unique packaging + cv2 fail-closed invariant, no blocking backup (ADR-0101).
+- **Risk:** *(estimate)* low — runs every PR, green today.
+- **Command (DO NOT RUN):**
+```bash
+gh api -X PATCH repos/Fleezyflo/fanops/branches/main/protection/required_status_checks \
+  -f strict=true \
+  -f 'contexts[]=unit (fast, no toolchain)' \
+  -f 'contexts[]=real-tooling E2E (must run, not skip)' \
+  -f 'contexts[]=gate (drift + policy + registries)' \
+  -f 'contexts[]=base install (no extras) refuses smart-framing'
+```
+- **Rollback:** re-PATCH with the 3 from M1. **Post:** re-probe → 4 contexts.
+
+## M3 · Add `lane file-ownership + cross-PR collision`  *(THIRD)*
+
+- **Before:** the 4 from M2. **After:** + `"lane file-ownership + cross-PR collision"`.
+- **Prereq:** `SLICE-LANEGUARD-PIN` + `SLICE-LANEGUARD-TIMEOUT-CONCURRENCY` landed, and an observation
+  window characterizing the best-effort `LINEAR_API_KEY` failure mode (ADR-0101 criterion 2).
+- **Risk:** *(estimate)* medium — the Linear lookup is best-effort; a token hiccup could red a PR. Third
+  on purpose.
+- **Command (DO NOT RUN):**
+```bash
+gh api -X PATCH repos/Fleezyflo/fanops/branches/main/protection/required_status_checks \
+  -f strict=true \
+  -f 'contexts[]=unit (fast, no toolchain)' \
+  -f 'contexts[]=real-tooling E2E (must run, not skip)' \
+  -f 'contexts[]=gate (drift + policy + registries)' \
+  -f 'contexts[]=base install (no extras) refuses smart-framing' \
+  -f 'contexts[]=lane file-ownership + cross-PR collision'
+```
+- **Rollback:** re-PATCH with the 4 from M2. **Post:** re-probe → 5 contexts (== `intended_required_contexts`).
+
+## M4 · Enable `required_conversation_resolution`  *(FOURTH — full-PUT)*
+
+- **Before:** `false`. **After:** `true` (unresolved review threads block a merge).
+- **Mechanism:** no sub-endpoint — full `PUT …/protection` with only this field flipped, built from the
+  **current** live object (which by now has the 5 required contexts from M1–M3).
+- **Command (DO NOT RUN — build payload from live, flip one field):**
+```bash
+gh api repos/Fleezyflo/fanops/branches/main/protection > /tmp/prot.json
+# edit /tmp/prot.json into the PUT shape, setting required_conversation_resolution=true,
+# preserving required_status_checks(5 contexts,strict), enforce_admins, reviews, restrictions,
+# allow_force_pushes=false, allow_deletions=false, required_linear_history(current).
+gh api -X PUT repos/Fleezyflo/fanops/branches/main/protection --input /tmp/prot-put.json
+```
+- **Rollback:** re-PUT with `required_conversation_resolution=false`. **Post:** re-probe → true.
+
+## M5 · `required_linear_history=true` + squash-only + auto-delete-branch  *(FIFTH — ADR-0102)*
+
+- **Before:** linear=false; repo squash+merge+rebase on; delete-branch off. **After:** linear=true; repo
+  squash-only; delete-branch on.
+- **Mechanism:** branch protection full-PUT (linear-history) + repo-settings PATCH.
+- **Commands (DO NOT RUN):**
+```bash
+# (a) branch protection — full PUT with required_linear_history=true (preserve all else, incl. 5 contexts + conv-res=true)
+gh api -X PUT repos/Fleezyflo/fanops/branches/main/protection --input /tmp/prot-linear.json
+# (b) repo settings — squash-only + auto-delete branch
+gh api -X PATCH repos/Fleezyflo/fanops \
+  -F allow_squash_merge=true -F allow_merge_commit=false -F allow_rebase_merge=false \
+  -F delete_branch_on_merge=true
+```
+- **Rollback:**
+```bash
+gh api -X PUT repos/Fleezyflo/fanops/branches/main/protection --input docs/ci/freeze/2026-07-15/branch-protection.json  # linear=false (NB: also resets contexts — re-apply M1-M3 after)
+gh api -X PATCH repos/Fleezyflo/fanops -F allow_merge_commit=true -F allow_rebase_merge=true -F delete_branch_on_merge=false
+```
+- **Note:** the pre-image PUT rollback resets required contexts too — after a linear-history rollback,
+  re-apply M1–M3. Prefer flipping only linear-history back via a fresh full-PUT built from live.
+- **Break-glass (ADR-0102 §9):** to land an emergency non-linear merge, temporarily `PUT` linear=false
+  (audit-logged), merge, then **immediately restore** linear=true from live. No standing exception.
+
+## M6 · Enable `enforce_admins`  *(LAST — only after all 5 required checks proven stable)*
+
+- **Before:** `false` (admins bypass — the accepted-residual being closed). **After:** `true` (gates bind
+  admins too).
+- **Prereq:** M1–M5 applied AND all five required checks observed green/stable on the remediation PR.
+- **Reason:** ADR-0101 §4 — no standing undocumented bypass; a governed break-glass replaces it.
+- **Command (DO NOT RUN):**
+```bash
+gh api -X POST repos/Fleezyflo/fanops/branches/main/protection/enforce_admins    # enable (dedicated sub-endpoint, safe)
+```
+- **Break-glass (ADR-0101 §4):** admin records reason → `DELETE …/protection/enforce_admins`
+  (audit-logged) → merge emergency fix → **immediately** `POST …/protection/enforce_admins` to restore →
+  file follow-up. The only sanctioned bypass; explicit, auditable, temporary, restored.
+- **Rollback:** `gh api -X DELETE repos/Fleezyflo/fanops/branches/main/protection/enforce_admins`.
+
+---
+
+## Repository-ruleset alternative (operator note)
+
+M4/M5's full-object PUT is error-prone (a missing field resets protection). The same guarantees
+(`required_linear_history`, required checks, conversation-resolution, squash-only) can be expressed as
+an **additive GitHub repository ruleset** — diffable, no whole-object resend. Choosing rulesets vs
+classic protection is itself a governance decision, surfaced here, not chosen.
+
+## Guarantees
+
+- Nothing executed here. Each mutation waits for explicit, per-step approval **after Steps 2–5 are green**.
+- Every mutation has a captured pre-image and a tested rollback.
+- DC-1 + DC-3 live before M1–M3 so promotions are reconciled and cannot silently detach.
+- After each applied mutation: re-probe, confirm the intended delta and nothing else, update the
+  registry in the same PR. Final state == `intended_required_contexts` (5) + `enforce_admins=true` +
+  `required_conversation_resolution=true` + `required_linear_history=true`.
