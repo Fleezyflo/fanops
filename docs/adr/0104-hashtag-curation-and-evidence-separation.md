@@ -3,7 +3,7 @@ status: accepted
 date: 2026-07-16
 accepted: 2026-07-16
 supersedes: []
-references: [C5, "docs/CODEMAPS/hashtag-lifecycle.md", "PR #679", ".reports/hashtag-generic-identical-diagnosis-2026-07-16.md"]
+references: [C5, "docs/CODEMAPS/hashtag-lifecycle.md", "docs/CODEMAPS/r4-migration-record.md", "docs/design/briefs/17-hashtag-model-diversity.md", "PR #679", "PR #681", "PR #687", ".reports/hashtag-generic-identical-diagnosis-2026-07-16.md"]
 deciders: [operator]
 ---
 
@@ -87,7 +87,11 @@ this artist" is the operator's judgement. That is *why* the corpus is human-gove
   those two strings would have left the class open. FAIL-OPEN: unreadable/absent `accounts.json`, or no active
   account carrying a persona, falls back to every persona — a missing control file must not shrink the menu.
 
-## Residuals (accepted, recorded, not fixed here)
+## Residuals — ACCEPTED, not unfinished work
+
+The decision above is **implemented, migrated onto live data, and frozen** (operational record:
+[`docs/CODEMAPS/r4-migration-record.md`](../CODEMAPS/r4-migration-record.md); terminal `main` `caa3427`).
+What follows was measured, recorded, and accepted as residue. **None of it reopens this ADR.**
 
 1. **The model repeats itself.** Replaying the real per-surface picks (`meta_captions.hashtags_raw`) across
    all 347 live posts: the model produced only **6–15 distinct pick-sets per handle over 66–76 surfaces, with
@@ -95,6 +99,14 @@ this artist" is the operator's judgement. That is *why* the corpus is human-gove
    It is upstream of both #679 and this ADR — partly caused by the polluted corpus itself (the prompt tells
    the model to *prefer* the corpus, and the corpus was junk), so it should improve once clean corpora are
    live, but that is unproven until captions are regenerated.
+
+   **Handed to a separate program**, briefed and deliberately not started:
+   [`docs/design/briefs/17-hashtag-model-diversity.md`](../design/briefs/17-hashtag-model-diversity.md). That
+   brief gates all work behind regenerating captions against the clean menu, and excludes this ADR's
+   territory by name. It also records the trap that protects this decision: **post-#679 a share of the
+   repetition is correct** — the curated lead is 2 of 4 slots by design, so a whole-line diversity metric is
+   maximised by deleting the brand identity this ADR exists to guarantee. Diversity is therefore measured on
+   the clip-derived slots only.
 2. ~~Dormant personas pollute the store via `intake.genre`.~~ **CLOSED by R4b** — the seed set is now scoped
    to personas linked to an active account, so a dormant persona cannot reach the menu at all. Their
    `intake.genre` values are still catalogue-wrong (`science`, `gossip`) and would drive the wrong niche floor

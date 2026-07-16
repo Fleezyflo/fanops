@@ -27,6 +27,19 @@ a *different artist* — on 93% of two handles' posts.
 | [#687](https://github.com/Fleezyflo/fanops/pull/687) | `cb3df5f` | only personas linked to an **active account** seed the store |
 | [#688](https://github.com/Fleezyflo/fanops/pull/688) | `6186431` | keeper could never adopt new code — `etimes` is not a BSD ps keyword |
 | [#689](https://github.com/Fleezyflo/fanops/pull/689) | `073a37e` | storm guard must outlast a pass, not the keeper's own tick |
+| [#690](https://github.com/Fleezyflo/fanops/pull/690) | `caa3427` | this record |
+
+## Terminal state (frozen 2026-07-16 — R4 is closed)
+
+| | |
+|---|---|
+| `main` | **`caa3427`**, CI `success`, architecture `success`, arch gate 0 stale / 0 blocking |
+| PRs | **six**, all merged normally — no admin bypass |
+| Live pump | **one** instance, on **`caa3427`** by its own heartbeat |
+| Curated corpora | **22** tags across 8 personas, all `pinned`, `reach: null` |
+| Discovery store | 18 tags, **`reach: {}`** |
+| Rollback snapshot | `personas.json.r4-bak-20260716T130424Z`, **5369 bytes**, intact |
+| Working tree | clean, except the operator's known-untracked `docs/constitution/` work |
 
 ## Live files changed
 
@@ -92,13 +105,35 @@ function of the corpora + frozen floor — restoring personas.json and refreshin
 ## Daemon
 
 Stopped with `fanops daemon stop` (boots the **keeper first**, so it cannot re-bootstrap the pump), confirmed
-by `launchctl list` + PID 35278 gone + `.run.lock` PID dead. Restarted with `fanops daemon install --interval
-600`. Final: **pid 59299, on `073a37e`** (the pump's own heartbeat reports the SHA), one instance, keeper
-loaded, `alive | passes completing`, lock owned by 59299, first tick logged `corpora_refresh_skipped` and left
-the corpora byte-identical.
+by `launchctl list` + PID 35278 gone + `.run.lock` PID dead. Never forced; no `kill -9`. Restarted with
+`fanops daemon install --interval 600` — the repository's own mechanism, not an improvised command. Post-restart:
+**pid 59299, on `073a37e`** (the pump's own heartbeat reports the SHA), one instance, keeper loaded,
+`alive | passes completing`, lock owned by 59299, first tick logged `corpora_refresh_skipped` and left the
+corpora byte-identical.
 
 `FANOPS_RESPONDER=llm` was **already** the operator's `.env` setting; `daemon install` read it and disclosed
 the recurring cost. It was not changed.
+
+### The keeper's adopt, proven in production
+
+Then #690 landed and the pump **adopted it by itself** — the first time that path has ever worked. From the
+live `run.log` (UTC; the machine is UTC+4):
+
+```
+14:00:58  heartbeat  code=073a37e…   pid 59299
+14:11:00  heartbeat  code=073a37e…   pid 59299      three clean 600s ticks
+14:21:01  heartbeat  code=073a37e…   pid 59299
+          ── caa3427 merged; disk SHA now differs from the heartbeat ──
+14:23:03  heartbeat  code=caa3427…   pid 66174      ONE kickstart, and the new pump reports the new SHA
+```
+
+Then **held pid 66174 past four keeper cycles** with no further kickstart. That is the shape the design wants
+and the shape #689 exists to produce: **one adopt per merge, then settle.** Before #688 this path had been
+inert through 18 merges (§ *Two defects*, below); the fix is therefore validated on live data, not merely
+merged. Trust it — do not restart by hand to force adoption.
+
+The adopted pump's own first tick logged `corpora_refresh_skipped reason=fresh` and left the corpora
+byte-identical, so the *terminal* SHA — not just the one restarted onto — is proven not to refill curated data.
 
 ## Two defects found by DOING this, not by reading
 
@@ -112,12 +147,19 @@ the recurring cost. It was not changed.
    the pump needs a 600s pass to report its new SHA. Fixing (1) removed the mask and it stormed immediately
    (pids 49425→51695→52493→52886→53266 in ~8 min, `last_exit -15`). Now `settle = interval + one keeper tick`.
 
-## Residuals (accepted — see ADR-0104)
+## Residuals — ACCEPTED, not unfinished R4 work
+
+These were measured, recorded, and **accepted by the operator as closed-out residue**. R4 is frozen; none of
+these reopens it. Residual 1 is handed to a separate program, briefed and not started.
 
 1. **The model repeats itself.** Replaying its real picks: only **6–15 distinct pick-sets per handle over
    66–76 surfaces, 54–76% on one set**. Now the *dominant* cause of near-identical lines, upstream of every
    change here. Partly caused by the polluted corpus (the prompt tells the model to *prefer* the corpus), so
-   it should improve on clean corpora — **unproven until captions regenerate**. Explicitly out of scope.
+   it should improve on clean corpora — **unproven until captions regenerate**. Handed off to
+   [`design/briefs/17-hashtag-model-diversity.md`](../design/briefs/17-hashtag-model-diversity.md), which is a
+   **brief only**: it gates all work on regenerating captions against the clean menu first, and it may not
+   touch corpus hygiene, reach persistence, or daemon adoption. Note the trap it records — a whole-line
+   diversity metric is maximised by **deleting the curated lead**, i.e. by undoing R4.
 2. Dormant personas' `intake.genre` is still catalogue-wrong (`science`, `gossip`). They cannot reach the
    store any more (#687), but would drive the wrong niche floor **if activated**. Persona configuration, not
    architecture.
