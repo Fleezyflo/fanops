@@ -278,6 +278,29 @@
 - Enforcement: **enforced** — the reconcile jobs never auto-commit; DC-3 is authenticated + scheduled, never per-PR auto-mutation. · CI/validator: `ARCH-RECONCILE`; `DC-3` (proposed, report-only).
 - Bypass: none. · Residual: none. · Remediation: n/a.
 
+### LAW-CI-09 — The harness enforcement layer is declared; a wired hook is governance, and an unwired one is dormant
+- Scope: `.claude/settings.json` (`permissions.deny` + `hooks`), `.claude/hooks/**`. · Owner: operator + governance planes. · ADR: — (0088 catalogue covers the deny-list half).
+- Evidence: `.claude/settings.json` `hooks` wires **4** entries — `block-hedge-on-stop.py` (`Stop`, **blocks** turn-end on hedging/half-measure tells), `decide_dont_ask.py` (`PreToolUse:AskUserQuestion`, **blocks** a question already settled by the turn's context), `anti-divert-contract.py` (`UserPromptSubmit`, advisory — silent unless the turn shows a divert signal, then injects one line), `hookify-run.py` (`PreToolUse:Bash|Edit|Write|MultiEdit|AskUserQuestion`, evaluates `.claude/hookify.*.local.md`, **fails open** by design). `LAW-CI-01` already cites this same file for `permissions.deny` (`pytest`, `black`, `ruff format`, `git push --force`, `rm -rf`, `sudo`).
+- Enforcement: **enforced** (the hooks execute — two of them block) / **documented-only** for the *declaration* itself (this row is the declaration; no validator asserts the census). · CI/validator: none — `CM-4` (designed) is the natural owner, widened per the note below.
+- Bypass: a hook edited or unwired without a governance change; `hookify-run.py`'s fail-open means a runner bug silently disables the rule set (deliberate — a runner bug must never block a tool call). · Residual: the census below is hand-maintained (`LAW-SOT-03` hazard) until `CM-4` measures it. · Remediation: `SLICE-CM-CONTRADICTION` / `CM-4` — see the widening note.
+
+> **Why this law exists — the signature defect, inverted.** This repo's named defect is *"the doc names a
+> mechanism that does not exist"* (`C2.2`). Here the inverse was live and unrecorded: **a mechanism that
+> executes — and blocks — that no governance document named.** `CM-4` is specified to detect
+> *declared-but-unexecuted*; nothing detects *executed-but-undeclared*. An enforcing layer nobody declared
+> cannot be reviewed, reasoned about, or safely removed. Recording it is the fix; widening `CM-4` to run
+> the census in both directions is the remediation.
+>
+> **Honest census (2026-07-16, hand-measured — 7 tracked files in `.claude/hooks/`):**
+> **4 wired** (above) · **1 library, correctly unwired** — `completion_evidence.py` (imported by
+> `block-hedge-on-stop.py`/`decide_dont_ask.py`; not a hook) · **1 wired outside `settings.json`** —
+> `orchestration_gate_claude.py` (owned by `.orchestration/SPEC.md`, covered by
+> `tests/test_orchestration_gate_claude.py`) · **1 DORMANT** — `stop-completion-gate.py`: **tracked,
+> referenced by nothing, wired nowhere** (no `settings.json` entry, no spec, no test, no import). That is
+> `CM-4`'s exact class — a declared mechanism nothing executes — and the first recorded instance of it.
+> Its fate (wire it or delete it, per `C15.3` "deletion is the fix") is a follow-up; **this row does not
+> resolve it, it names it.**
+
 ## J · Evolution & documentation
 
 ### LAW-EVO-01 — "Dead / zero-caller" is a lead, never a verdict; a deletion ships a whole-tree AST census and is revalidated at execution (GB-2)
