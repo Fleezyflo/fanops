@@ -80,8 +80,12 @@ this artist" is the operator's judgement. That is *why* the corpus is human-gove
 - Legacy bare `reach` numbers read back as `source: "unknown"`, `measured_at: None`, and therefore **cannot
   curate**. We do not know their provenance; refusing to act on them is the correct consequence of not
   knowing, and back-dating them would manufacture exactly the false confidence this ADR exists to prevent.
-- Dormant personas (no linked account) still seed the store, which is how `#science` and `#celebritygossip`
-  reached a rap artist's menu. Their corpora are cleaned; their `intake.genre` is **not** — see Residuals.
+- **Only personas linked to an ACTIVE account seed the store** (R4b, `_seed_tags` / `_posting_persona_ids`).
+  The store is the discovery menu for the accounts that actually post; seeding it from personas that post
+  nothing is wrong by construction. This was found *during* the live migration: the corpora came out clean but
+  the rebuilt store still carried `#science` and `#gossip` from five dormant personas' `intake.genre`. Fixing
+  those two strings would have left the class open. FAIL-OPEN: unreadable/absent `accounts.json`, or no active
+  account carrying a persona, falls back to every persona — a missing control file must not shrink the menu.
 
 ## Residuals (accepted, recorded, not fixed here)
 
@@ -91,7 +95,14 @@ this artist" is the operator's judgement. That is *why* the corpus is human-gove
    It is upstream of both #679 and this ADR — partly caused by the polluted corpus itself (the prompt tells
    the model to *prefer* the corpus, and the corpus was junk), so it should improve once clean corpora are
    live, but that is unproven until captions are regenerated.
-2. **Dormant personas carry catalogue-wrong `intake.genre`** (`science`, `gossip`). They ship nothing today;
-   activating one would backfill its genre's niche floor. Deliberately out of scope.
+2. ~~Dormant personas pollute the store via `intake.genre`.~~ **CLOSED by R4b** — the seed set is now scoped
+   to personas linked to an active account, so a dormant persona cannot reach the menu at all. Their
+   `intake.genre` values are still catalogue-wrong (`science`, `gossip`) and would drive the wrong niche floor
+   **if one were activated**; that is a persona-configuration decision for the operator, not architecture.
 3. **The 12h refresh vs the 7-day budget window** is now harmless (evidence accrues) but still wasteful:
    ~13 of every 14 refreshes measure nothing.
+4. **No measured evidence survives.** The live store carried `reach: {}` at migration time — the 30
+   measurements bought on 2026-07-12 had already been destroyed by the pre-#679 overwrite. So the migration
+   preserved nothing, because there was nothing left to preserve, and it did not invent a substitute. The
+   store cannot re-measure until the Meta budget window rolls (~2026-07-19). Until then `research_corpus`
+   correctly proposes nothing.
