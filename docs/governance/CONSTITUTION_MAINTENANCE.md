@@ -52,6 +52,17 @@ to `tools/arch`'s symbol/derived tables and `tools/ci`'s registry parse — it r
   control). Dormant-governance detection is the same predicate applied to *governance documents*: a
   mechanism declared in prose with no executor. Reuse DC-2's engine; add a doc-scoped input. This is how
   the land-gate (`0096`) and an untracked `ADR-FORMAT.md` surface automatically instead of by memory.
+  **CM-4 must run in BOTH directions (added 2026-07-16, `LAW-CI-09`).** As specified above it detects
+  *declared-but-unexecuted*. The **inverse — executed-but-undeclared — was live and unrecorded**: the
+  `.claude/settings.json` `hooks` block wires four hooks, two of which **block** (`block-hedge-on-stop.py`,
+  `decide_dont_ask.py`), and no governance document named them until `LAW-CI-09`. That is this repo's
+  signature defect inverted, and it is the more dangerous direction: a *declared-but-dead* mechanism
+  merely misleads, whereas an *undeclared-but-live* one changes behavior with no reviewable record.
+  The predicate is symmetric and cheap — enumerate executors (`settings.json` hooks, workflow jobs,
+  registry controls, wired gates), enumerate declarations (`LAW-*`, registry rows, specs), and **report
+  both set differences**, not just one. Two known instances seed the negative controls: `stop-completion-gate.py`
+  (tracked, referenced/wired/tested nowhere → the dormant side) and the four wired hooks (→ the undeclared
+  side, now declared).
 - **CM-2/CM-6 reuse `DC-5`'s generated-view discipline and `tools/arch`'s symbol table.** The ADR index
   and the layer's citations are checked the same way a generated doc is byte-compared and a derived
   number is scanned — no new truth store, just new readers of the existing ones.
