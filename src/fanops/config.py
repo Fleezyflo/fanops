@@ -696,8 +696,8 @@ class Config:
 
     @property
     def account_casting(self) -> bool:
-        # Account-First Studio: per-account MOMENT casting (Face 3). ON -> each active account is cast its OWN
-        # LLM-selected moments (RF1 AccountSelection); crosspost then fans a cast moment ONLY to its accounts.
+        # Account-First Studio: per-account MOMENT casting (Face 3). ON -> crosspost mints a post ONLY on the
+        # OWNING persona's surfaces, via casting.affinity_admits reading Moment.affinities (single-owner at pick).
         # DEFAULT ON (per-account selection is the system's purpose) — set
         # FANOPS_ACCOUNT_CASTING=0 to restore the legacy fan-to-all path. NB the wired LLM path is UNCAPPED by
         # design (the operator does not want output capped for cost); there is no per-account moment budget.

@@ -15,19 +15,23 @@ for what each flag does, how to disable it, and which test guards its OFF contra
 
 | Flag | Env var (OFF) | Default | What ON does | What OFF restores |
 |---|---|---|---|---|
-| `creative_variation` | `FANOPS_CREATIVE_VARIATION=0` | **ON** | each active account gets its own caption + burned-in on-screen hook per clip (+ its own length/framing cut under M2) | legacy fan-to-all **single shared clip + moment hook**; the Review approve-with-hook restore flow becomes available (it's an OFF-mode feature) |
-| `account_casting` | `FANOPS_ACCOUNT_CASTING=0` | **ON** | each active account is cast its **own LLM-selected moments** (RF1 `AccountSelection`); crosspost fans a cast moment **only** to its accounts | legacy fan-to-all — every moment reaches every account; no per-account selection gate |
+| `account_casting` | `FANOPS_ACCOUNT_CASTING=0` | **ON** | crosspost mints a post **only** on the owning persona's surfaces — the gate is `casting.affinity_admits` reading `Moment.affinities` (stamped single-owner at pick, operator-overridable in the Studio) | legacy fan-to-all — every moment reaches every account; no per-account selection gate |
 | `hashtag_trends` | `FANOPS_HASHTAG_TRENDS=0` | **ON** | `hashtags refresh` builds the store from **live Meta Graph** reach (harvest→measure→rank) | frozen reach floor only, no Graph harvest/measure (also the automatic behavior when `META_GRAPH_TOKEN`/`META_IG_USER_ID` are absent — fail-open) |
 | `corpus_auto` | `FANOPS_CORPUS_AUTO=0` | **ON** | `fanops run` auto-refreshes each persona's hashtag corpus on a 12h throttle (Graph discovery when creds+budget allow; offline store re-rank when under target without creds) | no automatic corpus writes — operator curation only |
 
 Disable semantics are uniform: the env var disables the flag **only** on the explicit off-words `0`/`false`/`no`/`off`;
 unset, empty, or anything else → **ON**.
 
-### `creative_variation`
-- **Code:** [config.py:455](../src/fanops/config.py) (`def creative_variation`). Read at the per-account hook/caption/cut sites in `crosspost.py` and `clip.py`.
-- **OFF contract:** no per-account `Render` is minted; surfaces carry no provenance/cause chips; render/post media falls back to the shared clip + moment hook.
-- **Firewall tests:** `test_cv_off_mints_no_renders` ([test_render_mint.py:87](../tests/test_render_mint.py)), `test_off_firewall_no_cause_chips` ([test_studio_review_legibility.py:130](../tests/test_studio_review_legibility.py)), `test_off_firewall_mints_no_render` ([test_shipped_provenance.py:106](../tests/test_shipped_provenance.py)).
-- **Note:** ON vs OFF produce intentionally **different media** (per-account vs shared) — that *is* the feature. The OFF path is the legacy single-copy behavior, not a byte-identical no-op.
+> **Removed 2026-07-16 — `creative_variation` is gone, not disabled.** This registry documented it as a
+> live Default-ON flag long after the per-account render fork (`variant_hook`, per-handle hook maps) was
+> **deleted**. `Config.creative_variation` does not exist — `tests/test_config.py`
+> `test_no_creative_variation_property` asserts `not hasattr(...)`, and `tests/test_no_ghosts.py` lists
+> `creative_variation`/`FANOPS_CREATIVE_VARIATION` among the names that must **never** reappear. Its entry
+> here cited `config.py:455 (def creative_variation)` — a line that now defines an unrelated flag — and
+> two firewall tests (`test_cv_off_mints_no_renders`, `test_off_firewall_mints_no_render`) that no longer
+> exist. **Setting `FANOPS_CREATIVE_VARIATION=0` does nothing; nothing reads it.** Today one owner-moment
+> hook burns onto the clip at crosspost. The per-account **cut** (length/framing) survives — it is
+> `Account.clip_profile`/`framing` → `Config.resolve_clip_profile`/`resolve_top_bias`, never this flag.
 
 ### `account_casting`
 - **Code:** [config.py:467](../src/fanops/config.py) (`def account_casting`). Gate predicate: `account_selection_admits` in [casting.py](../src/fanops/casting.py) — `if not cfg.account_casting: return True` (admit-all firewall).
