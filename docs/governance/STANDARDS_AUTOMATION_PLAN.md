@@ -36,7 +36,7 @@ rather than compete.)
 | Generated-view byte-gating | `tools/ci` **`DC-5`**; arch `ARCH-006` | — |
 | Workflow SHA-pin/timeout hygiene | `tools/ci` **`DC-6`** (**LAW-CI-07**) | — |
 | `AGENTS.md` advertises the dormant land-gate | `SLICE-DOC-AGENTS` (constitution roadmap) | — |
-| `anomalies.md` stale "all HOLD" banner | `SLICE-DOC-ANOMALIES` (constitution roadmap) | — |
+| `anomalies.md` stale "all HOLD" banner | `SLICE-DOC-ANOMALIES` (constitution roadmap) — ✅ **done** 2026-07-16 | — |
 | ADR numbering collision; Tier-1 formalization | `SLICE-ADR-NUMBERING` → `SLICE-ADR-FORMALIZE-T1` | this layer cuts **no** ADR |
 
 ---
