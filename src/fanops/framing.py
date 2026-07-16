@@ -934,6 +934,21 @@ def _resolve(cfg, src, cs: float, ce: float, *, _trace=None, capture_failures: b
                         and comp.left[4] is not None and comp.right[4] is not None):
                     focus = tuple(float(v) for v in comp.left) + tuple(float(v) for v in comp.right)
                     out_ct, strategy, outcome = RENDER_STACK_PAIR, _FS.SUBJECT_PAIR, _FO.STACKED_PAIR
+                elif (comp.kind == FB_DOMINANT and comp.fw is not None
+                        and _face_count(stats) <= _LOCK_MAX_FACES):
+                    # S3/D1-B: ONE persistently dominant host, the second participant intermittent/peripheral.
+                    # The blind centre crop starts at x=0.342 while these hosts sit at cx 0.317-0.381, so the
+                    # centre pins the host's face against its LEFT edge (25/25 clips) or excludes it outright
+                    # (6/25) — spec F5. RE-ANCHOR the SAME-WIDTH crop onto the host; the defect is POSITIONAL,
+                    # so no zoom is required to fix it and none is applied for emphasis (F6 / ADR-0103 minimal
+                    # zoom — clip.reframe_filter caps this content_type at _GENTLE_ZOOM_MAX). The _LOCK_MAX_FACES
+                    # gate keeps D2's PIP grid out: it also yields FB_DOMINANT but its tile materiality is a
+                    # Track-B product question (P1), so it stays centred here for S4/S5.
+                    # NOT active-speaker following (Track B): one fixed anchor for the window, so an
+                    # intermittent second face can never induce a pan. AR-1 (the host speaks off-frame) is an
+                    # accepted residual of framing the dominant subject without audio.
+                    focus = (float(comp.cx), float(comp.cy), float(comp.fh), float(comp.ey), float(comp.fw))
+                    out_ct, strategy, outcome = RENDER_SUBJECT_LOCK, _FS.SUBJECT_LOCK, _FO.SUBJECT_LOCKED
                 else:
                     out_ct, strategy, outcome = None, _FS.CENTERED, _FO.CENTERED_MULTI_UNTRACKED
 
@@ -1012,6 +1027,14 @@ FB_INSUFFICIENT = "insufficient"  # evidence below the floor -> EXPLICIT no-op (
 _PAIR_COPRESENCE = 0.65    # both/max(nL,nR): the two hosts co-occur in most occupied frames (D1-B: ~0.52-0.55)
 _PAIR_PROMINENCE = 0.6     # min(peak)/max(peak): comparable face sizes (rejects a big presenter + small tile, D2)
 RENDER_STACK_PAIR = "stack-pair"  # content_type render-hint: compose BOTH hosts into a vertical stack (clip.render_reframed)
+
+# S3: FB_DOMINANT is returned by BOTH D1-B (one dominant host + an intermittent second) and D2 (a presenter +
+# a PIP tile column) — so kind alone cannot wire the D1-B re-anchor without also capturing D2, whose tile
+# materiality is an OPEN product question (P1, Track B). The median per-frame face count separates them with
+# no overlap (evidence: docs/design/reframe/evidence/raw-detections.json + defect-map.json, all 67 clips —
+# D1-B median is 1 (21 clips) or 2 (4); D2 is 4 for all 36; D1-A is 2 but returns FB_WIDE_PAIR before here).
+_LOCK_MAX_FACES = 2        # gate the subject-lock to <=2 faces: captures D1-B 25/25, captures D2 0/36
+RENDER_SUBJECT_LOCK = "subject-lock"  # content_type render-hint: mild re-anchor onto the dominant host (clip.reframe_filter)
 
 @dataclass(frozen=True)
 class FallbackComposition:

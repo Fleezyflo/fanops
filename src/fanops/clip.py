@@ -317,14 +317,16 @@ def _track_crop(track: list, src_w: int, src_h: int, tw: int, th: int, ch0: int,
     return f"crop=w={cw}:h={ch}:x={xexpr}:y={yexpr},scale={tw}:{th},setsar=1"
 
 def _focus_crop(focus: tuple, src_w: int, src_h: int, tw: int, th: int, ch0: int, frac: float,
-                *, symbolic_w: str, symbolic_full: bool) -> str:
+                *, symbolic_w: str, symbolic_full: bool, zoom_base: float = _ZOOM_MAX) -> str:
     """Static subject-lock crop: zoom to the target face fraction + eye-line. When a 2-tuple focus produces
     NO zoom (full baseline extent), emit the legacy SYMBOLIC form so a pre-zoom focus clip is byte-identical
-    (no needless re-render); otherwise a numeric zoomed crop."""
+    (no needless re-render); otherwise a numeric zoomed crop. `zoom_base` is the magnification ceiling before
+    the far-subject adaptation; it defaults to _ZOOM_MAX so every pre-S3 caller is byte-identical, and S3's
+    subject-lock passes _GENTLE_ZOOM_MAX to re-anchor a dominant host without punching in (F6/ADR-0103)."""
     fh = focus[2] if len(focus) > 2 else None
     ey = focus[3] if len(focus) > 3 else None
     fw = focus[4] if len(focus) > 4 else None
-    ch = _zoom_h(src_h, ch0, fh, frac, zoom_max=_adaptive_zoom_max(fh, _ZOOM_MAX))
+    ch = _zoom_h(src_h, ch0, fh, frac, zoom_max=_adaptive_zoom_max(fh, zoom_base))
     cw = min(round(ch * tw / th), src_w); ch = min(ch, src_h)
     cw, ch = _safe_dims(cw, ch, ch0, src_w, src_h, tw, th, fh, fw)   # E1b: widen if the face box won't fit
     x, y = _safe_origin(src_w, src_h, cw, ch, focus[0], focus[1], fh, ey, fw, _EYELINE_FRAC)
@@ -351,6 +353,11 @@ def reframe_filter(aspect: str, src_w: int, src_h: int, *, top_bias: bool = Fals
     src_ar = src_w / src_h
     tgt_ar = tw / th
     frac = _target_frac(content_type)
+    # S3/D1-B: the subject-lock re-anchors the crop onto the ONE dominant host. Its defect is POSITIONAL, so it
+    # is capped at the GENTLE magnification — the crop moves onto the host rather than punching in on him (spec
+    # F6 "widest crop that satisfies F1-F3; zoom only to remove dead space, never for emphasis"; ADR-0103's
+    # binding minimal-zoom requirement). Any other content_type keeps _ZOOM_MAX -> byte-identical.
+    zoom_base = _GENTLE_ZOOM_MAX if content_type == framing.RENDER_SUBJECT_LOCK else _ZOOM_MAX
     if abs(src_ar - tgt_ar) < 0.01:
         return _already_aspect(tw, th, src_w, src_h, focus, frac)   # passthrough or a bounded gentle zoom
     if src_ar > tgt_ar:
@@ -359,7 +366,7 @@ def reframe_filter(aspect: str, src_w: int, src_h: int, *, top_bias: bool = Fals
         if track:
             return _track_crop(track, src_w, src_h, tw, th, ch0, frac, axis="x")
         if focus is not None:
-            return _focus_crop(focus, src_w, src_h, tw, th, ch0, frac,
+            return _focus_crop(focus, src_w, src_h, tw, th, ch0, frac, zoom_base=zoom_base,
                                symbolic_w=f"crop=ih*{tw}/{th}:ih:{{x}}:{{y}}", symbolic_full=True)
         return f"crop=ih*{tw}/{th}:ih,scale={tw}:{th},setsar=1"
     # source taller/narrower than target -> crop height.
@@ -367,7 +374,7 @@ def reframe_filter(aspect: str, src_w: int, src_h: int, *, top_bias: bool = Fals
     if track:
         return _track_crop(track, src_w, src_h, tw, th, ch0, frac, axis="y")
     if focus is not None:
-        return _focus_crop(focus, src_w, src_h, tw, th, ch0, frac,
+        return _focus_crop(focus, src_w, src_h, tw, th, ch0, frac, zoom_base=zoom_base,
                            symbolic_w=f"crop=iw:iw*{th}/{tw}:{{x}}:{{y}}", symbolic_full=True)
     if top_bias:
         return f"crop=iw:iw*{th}/{tw}:0:(ih-iw*{th}/{tw})/4,scale={tw}:{th},setsar=1"
@@ -557,8 +564,11 @@ _ZOOM_MAX_FAR = 1.25         # the far-subject zoom cap: a wide, contextual shot
 def _adaptive_zoom_max(fh, base: float) -> float:
     """Face-size-adaptive zoom cap: a FAR/small subject (fh < _SMALL_FACE_FRAC, typically profile + mic-occluded)
     is held WIDE (_ZOOM_MAX_FAR) so its crop shows context, not a tight frame of the foreground mic; a near/well-
-    sized subject keeps the `base` cap (punch-in). fh falsy -> base (no zoom applies anyway)."""
-    return _ZOOM_MAX_FAR if (fh and 0 < fh < _SMALL_FACE_FRAC) else base
+    sized subject keeps the `base` cap (punch-in). fh falsy -> base (no zoom applies anyway). The far cap only ever
+    TIGHTENS: `min` keeps it from LOOSENING a base that is already gentler than _ZOOM_MAX_FAR (S3 passes
+    _GENTLE_ZOOM_MAX 1.15, and a far subject must not zoom MORE than a near one). base=_ZOOM_MAX (1.6, the only
+    pre-S3 caller) -> min(1.25, 1.6) == 1.25 -> byte-identical."""
+    return min(_ZOOM_MAX_FAR, base) if (fh and 0 < fh < _SMALL_FACE_FRAC) else base
 
 # ---- S2 / D1-A: vertical STACK for a genuine wide two-shot (retain BOTH hosts, no empty gap) ----
 # A wide two-shot's hosts sit ~0.6+ apart in x; a single upright 9:16 crop is only ~0.316 of the source width,
