@@ -906,17 +906,34 @@ def _resolve(cfg, src, cs: float, ce: float, *, _trace=None, capture_failures: b
     strategy = _FS.CENTERED; outcome = None
     ct_eff = ct
 
-    if ct_eff == CT_MULTI and subject_aware_fallback(stats).kind == FB_PIP:
+    if ct_eff == CT_MULTI and (_pip := subject_aware_fallback(stats)).kind == FB_PIP:
         # S4/D2 (spec F4, AC-D1): a presenter-dominant PIP layout is a UI grid — one large presenter plus a
         # column of small, inert remote tiles. Inert tiles are not co-speakers to cut between, so this must
         # not enter the active-speaker path AT ALL: speaker_track never runs (that is the routing fix; a
         # conclusive no-track afterwards would be the same centre for the wrong reason).
-        # COMPOSITION IS S5's SLICE. focus/track/content_type stay None here, so the render and the
-        # fingerprint are byte-identical and NOTHING re-renders — this slice only makes the layout, and the
-        # decision not to chase speakers across it, observable. The dry-run keeps classifying these clips
-        # FRAMING_UNRESOLVED (reframe.py:367 wants CENTERED_NO_SUBJECT), which stays true: recognised, not
-        # yet composed.
-        strategy, outcome = _FS.PIP_LAYOUT, _FO.CENTERED_PIP_LAYOUT
+        #
+        # S5/D2 (spec F3, F2 — AC-D2/AC-D3): the blind centre lands on the WALL between the presenter and the
+        # tile column: it edge-pins the presenter in 33/36 clips and excludes him outright in 3/36, while
+        # weighting the frame onto empty background. RE-ANCHOR onto the presenter — the SAME mild subject-lock
+        # S3 uses (RENDER_SUBJECT_LOCK -> _GENTLE_ZOOM_MAX). It barely zooms at all here: the presenter's face
+        # is already at/above _FACE_FRAC_TALK (L_fh 0.396-0.491), so the crop clamps to full source height and
+        # this is a near-pure HORIZONTAL shift (1.00-1.06x) — F6's "widest crop", "show more, not less".
+        #
+        # AC-D4 (tile retention, P1/Track B) IS NOT ENGAGED — it gates a CHOICE between preserving and
+        # dropping the tiles, and no such choice exists here. Preserving is geometrically impossible in a
+        # single 9:16 crop (presenter->tile centre separation is 0.351-0.508 of width vs a 0.316-wide crop, in
+        # 36/36 — before either face box), and the CURRENT output already drops them (every tile centre sits
+        # outside the centre crop's right edge, R_cx 0.716-0.873 vs 0.658, in 36/36 — no tile is ever >=50%
+        # visible today). This re-anchor therefore takes tile retention from zero to zero; it does not become
+        # the "presenter-only composition" AC-D4 reserves for P1.
+        if _pip.fw is not None:
+            focus = (float(_pip.cx), float(_pip.cy), float(_pip.fh), float(_pip.ey), float(_pip.fw))
+            out_ct, strategy, outcome = RENDER_SUBJECT_LOCK, _FS.PIP_LAYOUT, _FO.PIP_PRESENTER_FRAMED
+        else:
+            # legacy 4-tuple detections carry no face WIDTH, so E1b's horizontal safe-area cannot be honoured.
+            # Recognised as a PIP layout (still kept out of the ASD path), but centred rather than re-anchored
+            # on geometry we cannot verify.
+            strategy, outcome = _FS.PIP_LAYOUT, _FO.CENTERED_PIP_LAYOUT
     elif ct_eff == CT_MULTI:
         track = _run(_FS.SPEAKER_TRACK, lambda: speaker_track(cfg, src, start=cs, end=ce,
                                                               src_w=src.width or 0, src_h=src.height or 0,
