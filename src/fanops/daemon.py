@@ -211,22 +211,55 @@ def _require_darwin() -> None:
     if sys.platform != "darwin":
         raise RuntimeError("fanops daemon is macOS-only (launchd); no systemd --user port yet")
 
+def _parse_etime(s: str) -> int | None:
+    """BSD `ps -o etime=` elapsed time -> seconds. Formats: `MM:SS`, `HH:MM:SS`, `DD-HH:MM:SS`.
+    Unparseable -> None."""
+    s = (s or "").strip()
+    if not s:
+        return None
+    days = 0
+    if "-" in s:
+        d, _, s = s.partition("-")
+        try: days = int(d)
+        except ValueError: return None
+    parts = s.split(":")
+    if not (2 <= len(parts) <= 3):
+        return None
+    try: nums = [int(p) for p in parts]
+    except ValueError: return None
+    h, m, sec = ([0] + nums) if len(nums) == 2 else nums
+    return days * 86400 + h * 3600 + m * 60 + sec
+
+
 def _pump_pid_age_s() -> tuple[int | None, int | None]:
-    """(pid, age_s) of the resident pump from launchd + `ps -o etimes=`, or (None, None) when the pump
-    has no PID (not loaded / not running). age_s is None when a PID exists but its start-age is
-    unreadable/unparseable — the caller MUST treat that as 'do not storm' (skip), never as 'settled'.
-    Used only by the keeper's code-drift storm guard: a freshly-kickstarted pump has a young PID, so
-    its stale heartbeat (still the OLD SHA until the fresh pass finishes) must not trigger a re-kickstart."""
+    """(pid, age_s) of the resident pump from launchd + `ps`, or (None, None) when the pump has no PID
+    (not loaded / not running). age_s is None when a PID exists but its start-age is unreadable — the
+    caller MUST treat that as 'do not storm' (skip), never as 'settled'. Used only by the keeper's
+    code-drift storm guard: a freshly-kickstarted pump has a young PID, so its stale heartbeat (still the
+    OLD SHA until the fresh pass finishes) must not trigger a re-kickstart.
+
+    PORTABILITY (the bug this fixes): `etimes` (seconds) is a GNU/procps keyword and does NOT exist in BSD
+    ps, so on macOS — the only platform this launchd path ever runs on — `ps -o etimes=` printed
+    "ps: etimes: keyword not found" to stderr, exited 0, and left stdout EMPTY. age was therefore ALWAYS
+    None, the storm guard's `age is None -> skip` always fired, and the keeper's code-drift self-heal could
+    never adopt new code. Not a delay: permanently inert. Observed live 2026-07-16 — the pump sat on a
+    day-old SHA through 18 merges while the keeper logged "skipping to avoid a restart storm" every 120s.
+    Prefer BSD `etime` (always present here) and keep `etimes` as the Linux fallback."""
     r = _launchctl("list", LABEL)
     pid = _grep_int(r.stdout, "PID") if r.returncode == 0 else None
     if pid is None:
         return None, None
     age = None
     try:
-        ps = subprocess.run(["ps", "-o", "etimes=", "-p", str(pid)],
+        ps = subprocess.run(["ps", "-o", "etime=", "-p", str(pid)],
                             capture_output=True, text=True, timeout=10)
-        if ps.returncode == 0 and ps.stdout.strip():
-            age = int(ps.stdout.strip())
+        if ps.returncode == 0:
+            age = _parse_etime(ps.stdout)
+        if age is None:                                   # GNU/procps fallback (etimes = seconds)
+            ps = subprocess.run(["ps", "-o", "etimes=", "-p", str(pid)],
+                                capture_output=True, text=True, timeout=10)
+            if ps.returncode == 0 and ps.stdout.strip():
+                age = int(ps.stdout.strip())
     except (OSError, subprocess.TimeoutExpired, ValueError):
         age = None                                        # unreadable -> caller skips (never storm)
     return pid, age
