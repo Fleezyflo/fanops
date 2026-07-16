@@ -44,6 +44,9 @@ MOH FLOW FAN OPS: intelligent clip + cross-post engine. Pure-Python `src/` layou
 - Fixing any MOL-numbered issue → `.reports/issue-register-2026-07-03.md` FIRST (exact file:line + sibling-parity
   note per issue); it saves re-deriving the location.
 - Before declaring code dead → the alias/lazy-import sweep rule in `src/fanops/CLAUDE.md` ("zero callers" is a lead).
+- How code is written here (naming / layout / module boundaries / flags / logging channel / test craft) →
+  `docs/ENGINEERING_STANDARDS.md` (the `STD-*` craft layer). The enforceable architecture is
+  `docs/ARCHITECTURAL_LAWS.md`; the rules + their honest enforcement status are `docs/REPOSITORY_CONSTITUTION.md`.
 - Any env-var question (default / effect / Studio-settable vs shell-only) → `docs/CONFIG.md`.
 - Full 108-module map, cluster split, safety verdicts → `docs/CODEMAPS/full-trace-index.md`; index of all
   codemaps → `docs/CODEMAPS/README.md`.
