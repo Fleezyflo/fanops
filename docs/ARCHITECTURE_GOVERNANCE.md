@@ -4,7 +4,7 @@
 
 # FanOps — Architecture & Implementation Governance
 
-**Source fingerprint `f4bb0e3844f9fcd8` · generator `arch/1.0.0`**
+**Source fingerprint `72dbe0e1cc79651a` · generator `arch/1.0.0`**
 
 Regenerate: `python -m tools.arch regen`
 
@@ -18,7 +18,7 @@ Regenerate: `python -m tools.arch regen`
 |---|---|
 | Modules | **132** |
 | Compile-time import edges (G1) | **555** |
-| Lazy (in-function) edges | **330** |
+| Lazy (in-function) edges | **331** |
 | Typing-only edges | 6 |
 | Non-trivial compile-time SCCs | **1** |
 | Layer levels (G1c, the SCC-condensation) | **11** |

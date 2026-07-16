@@ -20,16 +20,42 @@ from fanops.hashtags import _norm, vetted_menu, load_store_evidence
 from fanops.controlio import write_json_atomic
 
 
+def _posting_persona_ids(cfg: Config) -> set[str]:
+    """The persona ids linked to an ACTIVE account — i.e. the personas that actually post. Empty set means
+    "unknown, do not narrow" (absent/corrupt accounts.json, or no active account carries a persona), so the
+    caller falls back to every persona. Never raises: the store must not depend on accounts.json being
+    readable, and a torn control file must not shrink the discovery menu."""
+    try:
+        from fanops.accounts import Accounts
+        return {pid for a in Accounts.load(cfg).active() if (pid := (a.persona_id or "").strip())}
+    except Exception as e:                                 # noqa: BLE001 — fail-open by design, but say so once
+        get_logger(cfg)("hashtags", "seeds", "accounts_unreadable", err=str(e)[:120])
+        return set()
+
+
 def _seed_tags(cfg: Config) -> list[str]:
-    """The niche anchor seeds the Graph harvest reads from: every persona's curated corpus + its intake
+    """The niche anchor seeds the Graph harvest reads from: each POSTING persona's curated corpus + its intake
     `genre` words, normalized + deduped. An ABSENT/empty personas.json is a legitimate no-seeds -> [] (the
     frozen seed still drives the store). A CORRUPT one is NOT: the ControlFileError Personas.load raises
     PROPAGATES (it is no longer swallowed to [], which was indistinguishable from "no personas" and let a bad
     hand-edit clobber the curated store) — refresh_store catches it and ABORTS instead of overwriting. These
-    are the categories whose currently-winning posts we mine for co-occurring tags."""
+    are the categories whose currently-winning posts we mine for co-occurring tags.
+
+    R4b: seeds come only from personas linked to an ACTIVE account. The store is the discovery menu for the
+    accounts that actually POST; seeding it from personas that post nothing is wrong by construction, and it
+    was not theoretical — five DORMANT personas (no linked account) put `#science`, `#gossip`,
+    `#celebritygossip` and `#drama` into a Syrian rapper's menu via their `intake.genre`, and post-#679 a
+    model pick from that menu reaches the shipped line. Fixing the two offending genre strings would have
+    left the class open; this closes it. FAIL-OPEN: no readable accounts.json, or no active account carrying
+    a persona -> fall back to every persona (today's behaviour) rather than emit an empty, store-narrowing
+    seed set — a missing control file must not silently shrink the menu."""
     from fanops.personas import Personas
+    personas = Personas.load(cfg).all()                    # corrupt personas.json -> ControlFileError propagates
+    live = _posting_persona_ids(cfg)
+    if live:
+        personas = [p for p in personas if p.id in live] or personas   # `or personas`: never seed from nothing
     seeds: list[str] = []
-    for per in Personas.load(cfg).all():                   # corrupt personas.json -> ControlFileError propagates
+    for per in personas:
         seeds += [t for t in (per.hashtag_corpus or []) if isinstance(t, str)]
         seeds += ["#" + w for w in (per.intake.get("genre") or "").split() if w.strip()]
     out: list[str] = []; seen: set[str] = set()

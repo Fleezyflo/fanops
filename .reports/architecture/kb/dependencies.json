@@ -52,7 +52,7 @@
   "totals": {
     "modules": 132,
     "compile_edges_G1": 555,
-    "runtime_lazy_edges": 330,
+    "runtime_lazy_edges": 331,
     "typing_only_edges": 6,
     "lazy_edges_to_equal_or_higher_level": 108,
     "___of_which_STRICTLY_UPWARD": 58,
