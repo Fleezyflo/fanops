@@ -1,4 +1,7 @@
-> Frozen 2026-07-11 — invariants map, not auto-synced. When prose and code disagree, the code is right.
+> 🧊 **Frozen 2026-07-11 snapshot — historical, NOT current invariant state.** Invariants map, not auto-synced. When prose and code disagree, the code is right.
+> **This file does not own the invariant verdict.** Current invariant state is carried by `tools/arch` (policy + `ARCH-GATE`), `.reports/architecture/INVARIANT_AUDIT.md`, and the tests — never by this snapshot. See `docs/ARCHITECTURAL_LAWS.md` and `docs/governance/EVIDENCE_RECONCILIATION.md` R8.
+> **Superseded on the wipe/restore path (RC-4/RC-5).** The §Summary "all HOLD / none CRITICAL" verdict below was **false when frozen**: `restore_snapshot` took no ledger lock, so a live writer's commit could be silently discarded — a real CRITICAL data-loss defect on the very wipe-confirmation invariant this file recorded as holding. Found after the freeze; **fixed** by #653 (restore serializes on the ledger lock) + #654 (`fanops restore` exposed). Authority: `docs/ARCHITECTURAL_LAWS.md` `LAW-PERSIST-02` — "Residual: none (defect discharged)."
+> **C1 re-verified against live source 2026-07-14** (4/6 entries were stale — see the C1 note); other clusters remain at the 2026-07-11 snapshot and likely carry similar rot until re-verified.
 
 <!-- Generated: 2026-07-03 | Source: 10 exhaustive Sonnet-agent subsystem traces (docs/CODEMAPS/subsystem-traces/C1-C10) cross-referenced against deterministic AST/call-graph analysis (.reports/) | Token estimate: ~1400 -->
 # FanOps Anomaly Ledger
@@ -12,7 +15,17 @@ None of the entries below are CRITICAL/blocking findings — the codebase's core
 (no-auto-publish, wipe-confirmation, dryrun/live boundary, ledger cascade protection, bias-scope
 isolation) all independently HOLD, verified per-cluster (see the verdict table in
 full-trace-index.md). These are code-quality/legibility findings: dead code, unlogged swallows,
-one wiring bug, one docs-staleness item. **Taxonomy note (added by W5e / trace-remediation,
+one wiring bug, one docs-staleness item.
+**⚠ CORRECTION (2026-07-16) — the paragraph above was FALSE for `wipe-confirmation` when written.**
+Recorded, not rewritten, per this repo's "correct the record, don't quietly patch" rule. The trace
+checked that a wipe *asks* (snapshot + typed confirm) but never that its **restore** was safe under
+concurrency: `restore_snapshot` took no ledger lock and `os.replace`d the DB, so a live writer's
+committed transaction could be silently discarded — a CRITICAL data-loss defect on this very
+invariant. It was invisible to a per-cluster read because the defect lives in the *interaction*
+between two correct-looking units. Fixed by #653/#654. **Method lesson:** "the invariant HOLDS"
+here meant "the guard exists," not "the guard is sufficient under concurrent access" — an
+invariant is only as strong as the axis the trace thought to test. Current verdict authority:
+`tools/arch` + `INVARIANT_AUDIT.md` + `LAW-PERSIST-02`, never this file. **Taxonomy note (added by W5e / trace-remediation,
 MOL-254):** the invariants above measure *doesn't-publish-wrong / doesn't-crash / doesn't-cascade*;
 they had **no axis for fail-silently-and-forever** (a gate that fails deterministically, logs, and
 re-requests every tick with no operator-visible terminal). That class is now named below under C6.
@@ -20,12 +33,14 @@ re-requests every tick with no operator-visible terminal). That class is now nam
 
 ## C1 — Core data model & persistence
 
-- `log.py:15` `get_logger` — `except OSError: pass` around best-effort file-creation/chmod. Intentional fail-open, inconsequential.
-- `ledger.py:404` `_save_unlocked` — `except OSError: pass` around `os.chmod(tmp, 0o600)`. Intentional; atomic replace unaffected.
-- `ledger_wipe.py:188` `snapshot_is_restorable` — `except Exception: return False`. Broad but correct fail-closed for a destructive-wipe gate; **swallows the error reason with no logging** — diagnosability gap, not a correctness bug.
-- `ledger.py:2` — stale module docstring ("SQLite WAL ledger") — schema now has 10+ maps. Documentation drift only.
-- `models.py:42-52` — `RenderState` enum members `queued`/`published`/`analyzed`/`retired` — self-documented reservation, no writer, dead-by-design.
-- `models.py:484-485` — `BatchState.closed`/`BatchState.error` — same reservation pattern, no writer found.
+> **Re-verified against live source 2026-07-14.** 4 of the 6 original entries were stale: 1 docstring genuinely fixed (`ledger.py:2`), 1 flatly false (`RenderState` is live at `views_results.py:112`), 1 anchor moved + only PARTIALLY fixed (`ledger_wipe` — silent→logged but mis-surfaced / wrong-level / over-broad catch; see its entry), 2 unchanged-and-correct. Re-verification judged not just whether a swallow now logs, but whether it logs to the SURFACED channel (`get_logger`→`run.log`, not stdlib logging), at a level alerting sees, catching only the real failure — **"it logs now" ≠ "fixed the least-defective way."** Corrections + evidence inline.
+
+- `log.py:15` `get_logger` — `except OSError: pass` around best-effort file-creation/chmod. Intentional fail-open, inconsequential. *(Re-verified 2026-07-14: unchanged, still correct.)*
+- `ledger.py:404` `_save_unlocked` — `except OSError: pass` around `os.chmod(tmp, 0o600)`. Intentional; atomic replace unaffected. *(Re-verified 2026-07-14: unchanged, still correct.)*
+- `ledger_wipe.py:218` `snapshot_is_restorable` (was `:188`) — **PARTIALLY fixed, not least-defective.** The `except Exception` at `:233` now logs before `return False` (`:234`), so it is no longer *silent* — but the fix is weak on the system's most safety-critical path (the pre-wipe restorability gate that guards against irreversible loss), for three reasons: **(1) mis-surfaced** — it logs via stdlib `logging.getLogger(__name__)` (`:44`), NOT the house `get_logger` that writes the surfaced `07_reports/run.log`+stderr stream; per this file's own `logging ≠ surfacing` note, a run-tooling-invisible breadcrumb on the wipe path is a weak breadcrumb. `cfg` is one frame up in the sole caller `execute_wipe(cfg, …)` (`:238`, calls at `:249`), so threading it to emit a structured `("wipe","-","snapshot_unrestorable",level="error",err=…)` record is ~2 lines. **(2) level too low** — `warning` understates "your rollback point failed to verify"; the degradation-honesty standard is `error` for a production-halting/refusing condition so alerting keys on it. **(3) over-broad catch** — the real failures are `sqlite3.Error` (corrupt/non-SQLite image) + `OSError` (unreadable path); bare `Exception` launders an unexpected programming error into "unrestorable" and silently refuses the wipe for the wrong reason. Narrow to `(sqlite3.Error, OSError)` and let the unexpected propagate. (Sibling manifest-write swallow at `:261`/`:262` shares residual issues 1–2 but is lower-stakes — the wipe proceeds regardless.)
+- ~~`ledger.py:2` — stale module docstring ("SQLite WAL ledger") — schema now has 10+ maps.~~ **FIXED.** The docstring now reads "Persists 8 id->unit (model) maps … plus 2 non-unit scalar/plain-dict maps" — accurate to the current schema. No drift remains.
+- `models.py:42-52` — `RenderState` members — **original "no writer, dead-by-design" is FALSE for 3 of 4.** `RenderState.queued`/`published`/`analyzed` ARE read: `studio/views_results.py:112` `_SHIPPABLE_RENDER = (RenderState.rendered, RenderState.queued, RenderState.published, RenderState.analyzed)`. Only `RenderState.retired` remains writerless (genuinely reserved). Correction: not dead — consumed by the render-shippability gate.
+- `models.py:484-485` — `BatchState.closed`/`BatchState.error` — reserved, no writer found. *(Re-verified 2026-07-14: still writerless — accurate. Reserved-by-design surface per `src/fanops/CLAUDE.md` "'zero callers' is a LEAD"; do NOT delete without checking for old serialized ledger rows in these states.)*
 
 ## C2 — Ingest & source acquisition
 
@@ -133,7 +148,11 @@ after an alias-and-lazy-import sweep — see the note below the table).
 | Real logic/wiring bugs | 1 (`views.zero_post_clips`) |
 | Documentation staleness items | 1 (Go-Live `FANOPS_POSTER` claim in CLAUDE.md) |
 | Design notes flagged for visibility (not bugs) | 3 (hashtag cap-window floor logic, `_JITTER_MAX` comment-only invariant, `_postiz_permalink` two-phase-commit dependency) |
-| Safety-critical invariants checked | 10 — **all HOLD** (see full-trace-index.md verdict table) |
+| Safety-critical invariants checked | 10 — **"all HOLD" as of 2026-07-11; SUPERSEDED** — wipe-confirmation did *not* hold (RC-4/RC-5 restore race, fixed #653/#654). See the correction above; current verdict lives in `tools/arch` + `INVARIANT_AUDIT.md` |
+
+**C1 re-verification deltas (2026-07-14), not yet propagated into the whole-doc totals above (C2–C10 unverified):** the "Unlogged silent exception swallows: 9" total counted `ledger_wipe.py:188` — it now logs (`:234`), but via **stdlib `logging`, not the surfaced `get_logger`/`run.log` stream**, so by this file's own `logging ≠ surfacing` axis it is not truly "0" — reclassify as **logged-but-mis-surfaced**, not resolved. The "dead code" and "documentation staleness" rows each counted a C1 entry that is now false/fixed (`RenderState.queued/published/analyzed` are live at `views_results.py:112`; `ledger.py:2` docstring is accurate). Treat the table as a 2026-07-11 snapshot; only C1 has been re-verified.
+
+**Cross-cluster fix-QUALITY spot-check (2026-07-14) — separate from staleness: does a "now logs" fix log the LEAST-DEFECTIVE way?** Four previously-flagged silent sites were re-read against a 3-part bar (surfaced channel? catch only the real failure? level alerting sees?). Result is uneven, and inversely to risk: **`build_system_strip` (C10 `views.py:733`) — well-fixed** (all 5 sub-reads log via `get_logger`, documented MOL-123). **`meta_graph._read_queries` (C7 `:485`) — best** (surfaced + NARROW catch `(OSError, JSONDecodeError, ValueError, TypeError)`). **`persona_directives.persona_facts` (C4 `:309`) — adequate** (surfaced; broad catch, low stakes). **`ledger_wipe.snapshot_is_restorable` (C1 `:234`) — WEAKEST, on the most dangerous path** (stdlib not surfaced; bare `except Exception`; `warning` on a wipe-guard). The pattern: cosmetic paths got the cleanest fixes, the destructive-wipe path got the sloppiest. C2/C3/C5/C6/C8/C9 fix-quality NOT yet audited.
 
 **Validation correction (2026-07-03):** the deterministic call graph is name-based and cannot
 resolve aliased imports (`from x import f as _y` then `_y(...)`) or lazy in-function imports. The
