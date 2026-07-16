@@ -57,10 +57,19 @@ shows each is **already closed**. Recording them so they are not re-attempted (`
 - Evidence: `.agents/skills/domain-modeling/ADR-FORMAT.md` exists but is **untracked**.
 - Owner: operator. · Gap: the ADR convention is untracked. · Fix: `git add` the file (verify content first; it is a real Nygard convention). · Deps: none. · Blast: adds one tracked file. · Proof: before — `git ls-files` empty; after — tracked. · Rollback: `git rm --cached`. · CI/gov: CM-4 (dormant/untracked governance) would flag it. · Product decision: **No**.
 
-### SLICE-DOSSIER-RETIRE — `doc-correction`
+### SLICE-DOSSIER-RETIRE — `doc-correction` — ✅ **DONE** (2026-07-16)
 - Invariant: superseded evidence is not left as a live-looking authority (C18.3, R11).
 - Evidence: `docs/CONSTITUTION-EVIDENCE-DOSSIER.md` (untracked, shared checkout, authored @ #652) has five superseded rows.
 - Owner: this layer's author. · Gap: a partly-stale dossier sits untracked. · Fix: either add a "superseded by `docs/governance/EVIDENCE_RECONCILIATION.md`" banner and leave it as historical evidence, or remove it (it is mine — no rule-3 concern). · Deps: none. · Blast: one untracked file. · Proof: before — reads as current; after — clearly historical or gone. · Rollback: restore from git history if it was ever tracked (it was not) / re-create. · CI/gov: none. · Product decision: **No**.
+- **Landed (option 1 — banner + retain, and *track*):** the dossier now carries a frozen/superseded
+  banner naming its five known-false claims + their discharging PRs, and is **tracked**. Tracking was
+  chosen over deletion because the dossier is register **E1** in `EVIDENCE_RECONCILIATION.md` — an
+  untracked citation target resolves on one machine and dangles in every fresh clone, the exact
+  `arch-kb-was-never-in-git` defect R7 names. Same reasoning tracked `docs/CI_ARCHITECTURE_REVIEW.md`
+  (#674). Errors left uncorrected in place: a superseded register is evidence of what was believed and
+  when. **The same PR closes R7's other deferred fate** — `docs/constitution/` is adjudicated
+  **superseded, not landed, not absorbed** (see `EVIDENCE_RECONCILIATION.md` R7·resolution). R7's
+  untracked residual drops from three artifacts to one (`ADR-FORMAT.md`, `SLICE-ADRFORMAT-TRACK`).
 
 ## 2 · ADR formalization
 
