@@ -76,8 +76,12 @@ def test_primitive_rejects_d1b_dominant_even_though_two_cluster_fires():
     assert framing.subject_aware_fallback(_D1B).kind == framing.FB_DOMINANT   # ...but a dominant host is not a pair (S3)
 
 def test_primitive_rejects_d2_pip_even_though_two_cluster_fires():
+    """The enduring S2 invariant: a 4-face PIP grid is NEVER a wide pair, even though _two_cluster fires on it.
+    S2 pinned that as `kind == FB_DOMINANT` because FB_DOMINANT was then the only other kind; S4 gave the layout
+    its own FB_PIP. Stated as the durable negative — never a pair — so it survives whatever owns D2 next."""
     assert framing._two_cluster(_D2) is True                 # tiles clear the gate -> recall fires...
-    assert framing.subject_aware_fallback(_D2).kind == framing.FB_DOMINANT    # ...but a 4-face grid is not a pair (S4/S5)
+    assert framing.subject_aware_fallback(_D2).kind != framing.FB_WIDE_PAIR   # ...but a 4-face grid is not a pair
+    assert framing.subject_aware_fallback(_D2).kind == framing.FB_PIP         # S4 owns it
 
 
 # ---- the resolver wiring: D1-A no-track -> STACKED_PAIR; D1-B / D2 stay the conservative centre ----
@@ -111,12 +115,17 @@ def test_d1b_no_track_is_never_reclassified_as_a_pair(cfg, monkeypatch):
     assert r.content_type != framing.RENDER_STACK_PAIR
     assert r.final_outcome is _FO.SUBJECT_LOCKED                             # S3 owns D1-B's positive routing
 
-def test_d2_no_track_stays_centred_not_stacked(cfg, monkeypatch):
+def test_d2_no_track_is_never_stacked(cfg, monkeypatch):
+    """A PIP grid is not a live two-shot to stack — the enduring S2 invariant. S2 pinned it as
+    CENTERED_MULTI_UNTRACKED (then D2's only destination); S4 routes it to CENTERED_PIP_LAYOUT instead, and it
+    is still not stacked and still renders the same centre. D2's positive routing is owned by
+    tests/test_reframe_s4_d2.py."""
     _stub(monkeypatch, detect_window=_D2, classify_window=framing.CT_MULTI,
           speaker_track=([_FE.NO_TRACK], None), subject_focus=([_FE.NO_FACE], None))
     r = framing._resolve(cfg, _Src(), 0.0, 10.0, capture_failures=True)
-    assert r.final_outcome is _FO.CENTERED_MULTI_UNTRACKED     # a PIP grid is not a live two-shot to stack
-    assert r.as_tuple() == (None, None, None)
+    assert r.final_outcome is not _FO.STACKED_PAIR
+    assert r.content_type != framing.RENDER_STACK_PAIR
+    assert r.as_tuple() == (None, None, None)                 # and the render is untouched either way
 
 
 # ---- the stack render graph: both hosts retained (AC-A1/A2) ----

@@ -13,7 +13,7 @@
 # evidence is below the confidence floor.
 import pytest
 from fanops.framing import (subject_aware_fallback, FallbackComposition,
-                            FB_DOMINANT, FB_WIDE_PAIR, FB_INSUFFICIENT)
+                            FB_DOMINANT, FB_WIDE_PAIR, FB_PIP, FB_INSUFFICIENT)
 
 # the blind 16:9 -> 9:16 centre crop retains only x in [0.342, 0.658] — width 0.316. A subject-aware
 # composition that "preserves wider framing" must demand a span the blind centre could not have produced.
@@ -70,12 +70,18 @@ def test_pip_tile_grid_anchors_presenter_not_a_pair():
     # REAL PIP tiles (raw-detections.json) are NOT sub-threshold — they CLEAR the phantom gate, so _two_cluster
     # fires. What keeps a PIP grid from being mistaken for a wide two-shot is the median face-count (4, not 2):
     # the S2 discriminator. A too-easy below-gate fixture would have masked exactly that.
+    #
+    # S4 gave the layout its OWN kind (FB_PIP) and anchors it by SIZE. This fixture's presenter out-scores the
+    # tiles (0.95 vs 0.90), which the real evidence does NOT — there the tiles win the score max in 36/36. The
+    # adversarial version (tiles out-scoring the presenter) lives in tests/test_reframe_s4_d2.py; this one stays
+    # as the primitive's own contract check.
     tiles = [_face(0.85, cy=0.20, fh=0.24, fw=0.14, score=0.90),
              _face(0.85, cy=0.50, fh=0.24, fw=0.14, score=0.90),
              _face(0.85, cy=0.80, fh=0.24, fw=0.14, score=0.90)]
     frames = [[_face(0.30, cy=0.50, fh=0.42, fw=0.24, score=0.95)] + tiles for _ in range(8)]
     comp = subject_aware_fallback(_stats(frames))
-    assert comp.kind == FB_DOMINANT                          # a 4-face grid is NOT a wide pair (face-count gate)
+    assert comp.kind == FB_PIP                               # a 4-face grid is its own layout — never a wide pair
+    assert comp.kind != FB_WIDE_PAIR
     assert comp.cx == pytest.approx(0.30)                    # anchored on the presenter, not a remote tile
     assert comp.x_max < 0.50                                 # span is the presenter's box, NOT stretched to the tiles
 
