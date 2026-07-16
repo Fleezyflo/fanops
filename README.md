@@ -68,8 +68,9 @@ tree. Start with the Constitution; see the Laws for what is mechanically enforce
 | [docs/REPOSITORY_CONSTITUTION.md](docs/REPOSITORY_CONSTITUTION.md) | The rules (18 sections), each with its **true enforcement status** |
 | [docs/ENGINEERING_PHILOSOPHY.md](docs/ENGINEERING_PHILOSOPHY.md) | The design instincts — the *why* behind the rules |
 | [docs/ARCHITECTURAL_LAWS.md](docs/ARCHITECTURAL_LAWS.md) | The enforceable subset, with stable IDs + mechanisms (cross-refs the CI registry) |
+| [docs/ENGINEERING_STANDARDS.md](docs/ENGINEERING_STANDARDS.md) | The **code-craft layer** (`STD-*`): naming, layout, boundaries, versioning, flags, test craft, observability — references the Laws/ADRs/registry, never restates them |
 | [docs/adr/](docs/adr/) | Decision records (0100–0103) + the catalogue; formalization order in [FORMALIZATION_ROADMAP.md](docs/adr/FORMALIZATION_ROADMAP.md) |
-| [docs/governance/](docs/governance/) | Evidence reconciliation, maintenance-automation design, and the implementation roadmap |
+| [docs/governance/](docs/governance/) | Evidence reconciliation, maintenance-automation design, implementation + standards roadmaps, and the [engineering scorecard](docs/governance/ENGINEERING_SCORECARD.md) |
 | [.github/ci-control-registry.yml](.github/ci-control-registry.yml) | The CI control plane (single owner of control rows) |
 | [docs/ARCHITECTURE_GOVERNANCE.md](docs/ARCHITECTURE_GOVERNANCE.md) | Generated architecture view (`tools/arch`) |
 
