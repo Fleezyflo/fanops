@@ -247,9 +247,16 @@ def test_post_add_persona_route(tmp_path):
 def test_corpus_tag_with_quote_is_json_escaped_in_attribute(tmp_path):
     # _norm keeps a double-quote (a hand-edit could land one); the hx-vals attribute must JSON-escape it
     # via tojson so a crafted tag can NEVER break out of the attribute (defense-in-depth — ecc:python-review).
+    # R4: `add_corpus_tag` now REFUSES this tag structurally (hashtag_hygiene), so that route is closed — but
+    # the threat this test names is a HAND-EDIT of personas.json, which bypasses the write boundary entirely.
+    # The escaping defense therefore still matters; seed the file directly, i.e. via the vector that remains.
+    import json as _json
     cfg = Config(root=tmp_path)
     pid = core.add_persona(cfg, name="P1")
-    core.add_corpus_tag(cfg, pid, '#a"b')
+    _raw = _json.loads(cfg.personas_path.read_text())
+    for _d in _raw["personas"]:
+        if _d["id"] == pid: _d["hashtag_corpus"] = ['#a"b']
+    cfg.personas_path.write_text(_json.dumps(_raw))
     r = _client(cfg).get("/personas")
     assert r.status_code == 200
     assert b'#a\\"b' in r.data                  # tojson escaped the inner quote

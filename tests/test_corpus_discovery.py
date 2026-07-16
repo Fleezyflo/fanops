@@ -68,12 +68,29 @@ def test_discover_corpus_threads_measure_k(tmp_path, monkeypatch):
 
 
 def test_discover_corpus_offline_falls_back(tmp_path, monkeypatch):
+    # R4: the offline fallback is still research_corpus — but research_corpus is now EVIDENCE-ONLY, so the
+    # fallback surfaces measured tags rather than re-ranking the store (which is built from the corpora, so
+    # re-ranking it closed the corpus -> store -> corpus loop). See ADR-0104.
+    import json as _json
+    from datetime import datetime, timezone
     monkeypatch.delenv("META_GRAPH_TOKEN", raising=False); monkeypatch.delenv("META_IG_USER_ID", raising=False)
     cfg = Config(root=tmp_path)
     pid = core.add_persona(cfg, name="P1")
+    cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.hashtags_path.write_text(_json.dumps({"tags": ["#bars"], "reach": {"#bars": {
+        "reach": 900, "measured_at": datetime.now(timezone.utc).isoformat(),
+        "source": "graph-reach", "confidence": 1.0}}}))
     out = core.discover_corpus(cfg, pid)
     assert out and all(isinstance(c, dict) and c["tag"].startswith("#") for c in out)
-    assert all("count" not in c for c in out)                      # offline = research_corpus re-rank wrapped as dicts
+    assert all("count" not in c for c in out)                      # offline = research_corpus wrapped as dicts
+
+
+def test_discover_corpus_offline_without_evidence_proposes_nothing(tmp_path, monkeypatch):
+    # No creds AND no measurement -> nothing. Pre-R4 this re-ranked the store and returned our own corpus.
+    monkeypatch.delenv("META_GRAPH_TOKEN", raising=False); monkeypatch.delenv("META_IG_USER_ID", raising=False)
+    cfg = Config(root=tmp_path)
+    pid = core.add_persona(cfg, name="P1")
+    assert core.discover_corpus(cfg, pid) == []
 
 
 def test_discover_corpus_unknown_persona_raises(tmp_path):

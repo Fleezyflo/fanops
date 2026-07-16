@@ -49,14 +49,17 @@ def tag_defect(tag: str) -> str | None:
     body = h[1:]
     if len(body) < _MIN_LEN:
         return f"too short (<{_MIN_LEN} chars)"
+    # Keysmash is checked BEFORE length: `#fypppppppppp…` is both over-long and a keysmash, and "keysmash" is
+    # the more specific, more actionable diagnosis. The reason string is operator-facing (the migration prints
+    # it), so the most precise true statement wins.
+    if _RUN.search(body):
+        return "malformed (4+ repeated characters — keysmash)"
     if len(body) > _MAX_LEN:
         return f"too long (>{_MAX_LEN} chars) — a tag, not a sentence"
     if not _SHAPE.match(h):
         return "malformed (only a-z, 0-9 and _ survive normalization)"
     if body.isdigit():
         return "digits only — cannot describe content"
-    if _RUN.search(body):
-        return "malformed (4+ repeated characters — keysmash)"
     if h in _GENERIC_ENGAGEMENT:
         return "generic engagement bait — describes no clip, only pads the line"
     if h in _DISCOVERY_OWNED:
