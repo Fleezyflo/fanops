@@ -4,7 +4,7 @@
 
 # FanOps — Architecture & Implementation Governance
 
-**Source fingerprint `cad4f06394655747` · generator `arch/1.0.0`**
+**Source fingerprint `443c5bf5512e63bb` · generator `arch/1.0.0`**
 
 Regenerate: `python -m tools.arch regen`
 
@@ -16,18 +16,18 @@ Regenerate: `python -m tools.arch regen`
 
 | | |
 |---|---|
-| Modules | **130** |
-| Compile-time import edges (G1) | **549** |
-| Lazy (in-function) edges | **327** |
+| Modules | **132** |
+| Compile-time import edges (G1) | **555** |
+| Lazy (in-function) edges | **330** |
 | Typing-only edges | 6 |
 | Non-trivial compile-time SCCs | **1** |
 | Layer levels (G1c, the SCC-condensation) | **11** |
-| Lazy edges strictly UPWARD (layering inversions) | **57** |
+| Lazy edges strictly UPWARD (layering inversions) | **58** |
 | Lazy edges lateral (same level — *not* inversions) | 51 |
-| Largest G2 potential-dependency SCC | 47 modules |
+| Largest G2 potential-dependency SCC | 48 modules |
 | Environment variables read | **73** |
 | Route endpoints (method × path) | **150** (109 mutating) |
-| CLI verbs | 56 unique (61 `add_parser` sites) |
+| CLI verbs | 57 unique (62 `add_parser` sites) |
 
 ### Metric definitions — because a derived number inherits the soundness of its definition
 
@@ -46,7 +46,7 @@ Regenerate: `python -m tools.arch regen`
 
 ## 2. The subsystem partition
 
-**Totality: ✅ TOTAL** — 130/130 modules assigned, 0 unassigned, 0 ghosts.
+**Totality: ✅ TOTAL** — 132/132 modules assigned, 0 unassigned, 0 ghosts.
 
 > The partition is an **analytic overlay** (Cycle 5). Nothing in the code enforces it. The module set is a **fact**; the grouping is a **model**. Totality is therefore a checkable property, and rule `ARCH-001` checks it.
 

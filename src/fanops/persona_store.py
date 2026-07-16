@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Optional
 from fanops.config import Config
 from fanops.hashtags import _norm, _strip_banned, load_bans
+from fanops.hashtag_hygiene import tag_defect
 from fanops.controlio import load_raw_list, write_json_atomic   # shared atomic control-file IO
 from fanops.personas import (CONTENT_FOCUS, SELECTION_SCOPE_LEVELS, HOOK_ANGLES, Personas, _slug)
 
@@ -227,6 +228,14 @@ def add_corpus_tag(cfg: Config, pid: str, tag: str) -> str:
     h = _norm(tag)
     if not h:
         raise ValueError("empty hashtag")
+    # R4: the curated corpus is BRAND data — structural junk must be unable to enter it, at the boundary,
+    # rather than be cleaned up downstream forever. A corpus tag seeds the discovery store, joins the vetted
+    # membership, and leads the shipped line, so junk here is load-bearing junk everywhere. Refuse with the
+    # reason (`#fypppppppppp…` was live and shipping). Semantic fit stays the operator's call — see
+    # hashtag_hygiene's module docstring for why that is deliberately not machine-decided.
+    defect = tag_defect(h)
+    if defect:
+        raise ValueError(f"refusing {h}: {defect}")
     p = cfg.personas_path
     with _personas_txn(cfg):
         raw, plist = _load_raw(p)

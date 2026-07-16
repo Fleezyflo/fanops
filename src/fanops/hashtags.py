@@ -78,11 +78,23 @@ def load_store(cfg) -> list[str] | None:
     except (OSError, json.JSONDecodeError, ValueError, TypeError):
         return None                                  # corrupt store -> frozen pools, never crash a run
 
-def load_store_reach(cfg) -> dict[str, float]:
-    """The per-tag LIVE Graph reach map persisted alongside the store (00_control/hashtags.json `{"reach":
-    {tag: score}}`, written by refresh_store). The Studio shows this number next to each curated tag — the
-    honest 'why this tag' signal (its measured platform reach), NOT own-post reach. Absent / corrupt / no
-    `reach` key -> {} (the number simply doesn't render). Never raises."""
+def _reach_value(v):
+    """One `reach` entry -> a float, or None. Accepts BOTH shapes: a bare number (legacy v1) and the R4
+    evidence record `{"reach": n, "measured_at": iso, "source": ..., "confidence": f}`. Keeping the legacy
+    read is what lets the store upgrade in place with no flag day and no fabricated timestamps."""
+    if isinstance(v, dict):
+        v = v.get("reach")
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return None
+    return float(v)
+
+def load_store_evidence(cfg) -> dict[str, dict]:
+    """R4 — the per-tag EVIDENCE record behind the store: `{tag: {reach, measured_at, source, confidence}}`.
+    This is the canonical form; `load_store_reach` is the flat projection of it. A legacy bare-number entry
+    reads back as `{"reach": n, "measured_at": None, "source": "unknown", "confidence": 0.0}` — HONEST about
+    what we cannot know rather than back-dating a measurement we never recorded (a fabricated `measured_at`
+    would make an unprovenanced number look like fresh evidence, which is the exact failure this layer
+    exists to prevent). Absent / corrupt -> {}. Never raises."""
     p = cfg.hashtags_path
     if not p.exists():
         return {}
@@ -91,6 +103,43 @@ def load_store_reach(cfg) -> dict[str, float]:
         r = d.get("reach") if isinstance(d, dict) else None
         if not isinstance(r, dict):
             return {}
+        out: dict[str, dict] = {}
+        for k, v in r.items():
+            if not isinstance(k, str) or not _norm(k):
+                continue
+            val = _reach_value(v)
+            if val is None:
+                continue
+            rec = v if isinstance(v, dict) else {}
+            src = rec.get("source")
+            out[_norm(k)] = {
+                "reach": val,
+                "measured_at": rec.get("measured_at") if isinstance(rec.get("measured_at"), str) else None,
+                "source": src if isinstance(src, str) and src else "unknown",
+                "confidence": float(rec["confidence"]) if isinstance(rec.get("confidence"), (int, float))
+                              and not isinstance(rec.get("confidence"), bool) else 0.0,
+            }
+        return out
+    except (OSError, json.JSONDecodeError, ValueError, TypeError):
+        return {}
+
+def load_store_reach(cfg) -> dict[str, float]:
+    """The per-tag LIVE Graph reach map persisted alongside the store (00_control/hashtags.json `{"reach":
+    {tag: score}}`, written by refresh_store). The Studio shows this number next to each curated tag — the
+    honest 'why this tag' signal (its measured platform reach), NOT own-post reach. Absent / corrupt / no
+    `reach` key -> {} (the number simply doesn't render). Never raises. R4: an entry may be a bare number
+    (legacy) or an evidence record; both project to the same float here, so every existing caller is
+    unchanged."""
+    p = cfg.hashtags_path
+    if not p.exists():
+        return {}
+    try:
+        d = json.loads(p.read_text())
+        r = d.get("reach") if isinstance(d, dict) else None
+        if not isinstance(r, dict):
+            return {}
+        if any(isinstance(v, dict) for v in r.values()):     # R4 evidence shape -> project to the flat view
+            return {k: v["reach"] for k, v in load_store_evidence(cfg).items()}
         return {_norm(k): float(v) for k, v in r.items()
                 if isinstance(k, str) and _norm(k) and isinstance(v, (int, float)) and not isinstance(v, bool)}
     except (OSError, json.JSONDecodeError, ValueError, TypeError):

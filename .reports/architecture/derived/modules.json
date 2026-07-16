@@ -40,6 +40,8 @@
     "fanops.framing",
     "fanops.framing_outcomes",
     "fanops.gate_keys",
+    "fanops.hashtag_hygiene",
+    "fanops.hashtag_migrate",
     "fanops.hashtags",
     "fanops.health",
     "fanops.health_model",
@@ -179,6 +181,8 @@
     "fanops.framing": "S06_media_analysis",
     "fanops.framing_outcomes": "S06_media_analysis",
     "fanops.gate_keys": "S01_foundation",
+    "fanops.hashtag_hygiene": "S10_caption_hashtag",
+    "fanops.hashtag_migrate": "S10_caption_hashtag",
     "fanops.hashtags": "S10_caption_hashtag",
     "fanops.health": "S18_health_diag",
     "fanops.health_model": "S18_health_diag",
@@ -277,9 +281,9 @@
     "fanops.vocals": "S06_media_analysis"
   },
   "totals": {
-    "assigned": 130,
+    "assigned": 132,
     "ghosts": 0,
-    "modules": 130,
+    "modules": 132,
     "unassigned": 0
   },
   "unassigned_modules": []

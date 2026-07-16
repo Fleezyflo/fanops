@@ -19,6 +19,7 @@
       "fanops.control",
       "fanops.digest",
       "fanops.framing",
+      "fanops.hashtag_hygiene",
       "fanops.hashtags",
       "fanops.hookscore",
       "fanops.ingest",
@@ -267,6 +268,7 @@
         "fanops.doctor",
         "fanops.fanops_account_stats",
         "fanops.fanops_hashtags",
+        "fanops.hashtag_migrate",
         "fanops.health",
         "fanops.health_model",
         "fanops.ingest",
@@ -553,6 +555,27 @@
     "fanops.gate_keys": {
       "compile": [],
       "lazy": [],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.hashtag_hygiene": {
+      "compile": [],
+      "lazy": [
+        "fanops.hashtags"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.hashtag_migrate": {
+      "compile": [
+        "fanops.config",
+        "fanops.controlio",
+        "fanops.hashtag_hygiene",
+        "fanops.hashtags"
+      ],
+      "lazy": [
+        "fanops.log"
+      ],
       "optional": [],
       "typing": []
     },
@@ -925,6 +948,7 @@
     "fanops.persona_research": {
       "compile": [
         "fanops.config",
+        "fanops.hashtag_hygiene",
         "fanops.hashtags",
         "fanops.personas"
       ],
@@ -943,6 +967,7 @@
       "compile": [
         "fanops.config",
         "fanops.controlio",
+        "fanops.hashtag_hygiene",
         "fanops.hashtags",
         "fanops.personas"
       ],
@@ -2043,10 +2068,10 @@
     "fanops.cli": 0,
     "fanops.clip": 6,
     "fanops.compose": 1,
-    "fanops.config": 84,
+    "fanops.config": 85,
     "fanops.config_introspect": 0,
     "fanops.control": 4,
-    "fanops.controlio": 9,
+    "fanops.controlio": 10,
     "fanops.crosspost": 1,
     "fanops.cutover": 1,
     "fanops.cutover_postiz": 0,
@@ -2061,7 +2086,9 @@
     "fanops.framing": 3,
     "fanops.framing_outcomes": 3,
     "fanops.gate_keys": 2,
-    "fanops.hashtags": 8,
+    "fanops.hashtag_hygiene": 3,
+    "fanops.hashtag_migrate": 0,
+    "fanops.hashtags": 9,
     "fanops.health": 0,
     "fanops.health_model": 1,
     "fanops.hookcheck": 1,
@@ -2193,6 +2220,8 @@
     "fanops.framing": 3,
     "fanops.framing_outcomes": 0,
     "fanops.gate_keys": 0,
+    "fanops.hashtag_hygiene": 0,
+    "fanops.hashtag_migrate": 4,
     "fanops.hashtags": 1,
     "fanops.health": 2,
     "fanops.health_model": 1,
@@ -2222,8 +2251,8 @@
     "fanops.paths_rebase": 3,
     "fanops.persona_directives": 3,
     "fanops.persona_levers": 0,
-    "fanops.persona_research": 3,
-    "fanops.persona_store": 4,
+    "fanops.persona_research": 4,
+    "fanops.persona_store": 5,
     "fanops.personas": 6,
     "fanops.pipeline": 27,
     "fanops.pipeline_run": 2,
@@ -2293,7 +2322,7 @@
   "generated_by": "tools/arch",
   "generator_version": "arch/1.0.0",
   "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",
-  "lazy_downward_count": 219,
+  "lazy_downward_count": 221,
   "lazy_lateral": [
     {
       "from": "fanops.accounts",
@@ -2850,6 +2879,14 @@
       "to_level": 2
     },
     {
+      "from": "fanops.hashtag_hygiene",
+      "from_level": 0,
+      "jump": 2,
+      "same_scc": false,
+      "to": "fanops.hashtags",
+      "to_level": 2
+    },
+    {
       "from": "fanops.hashtags",
       "from_level": 2,
       "jump": 2,
@@ -3197,6 +3234,8 @@
     "fanops.framing": 4,
     "fanops.framing_outcomes": 0,
     "fanops.gate_keys": 0,
+    "fanops.hashtag_hygiene": 0,
+    "fanops.hashtag_migrate": 3,
     "fanops.hashtags": 2,
     "fanops.health": 2,
     "fanops.health_model": 1,
@@ -3306,6 +3345,7 @@
       "fanops.frames",
       "fanops.framing_outcomes",
       "fanops.gate_keys",
+      "fanops.hashtag_hygiene",
       "fanops.hookcheck",
       "fanops.ids",
       "fanops.metrics_schedule",
@@ -3364,6 +3404,7 @@
       "fanops.artifacts",
       "fanops.doctor",
       "fanops.fanops_hashtags",
+      "fanops.hashtag_migrate",
       "fanops.ingest",
       "fanops.intro_match",
       "fanops.ledger_bridge",
@@ -3461,17 +3502,17 @@
   ],
   "totals": {
     "G1_non_trivial_sccs": 1,
-    "G1_sccs_total": 128,
+    "G1_sccs_total": 130,
     "G1c_levels": 11,
-    "G2_largest_scc_size": 47,
-    "G2_module_sccs_total": 68,
+    "G2_largest_scc_size": 48,
+    "G2_module_sccs_total": 69,
     "G2_non_trivial_sccs": 8,
-    "compile_edges_G1": 549,
-    "lazy_edges": 327,
+    "compile_edges_G1": 555,
+    "lazy_edges": 330,
     "lazy_edges_lateral": 51,
-    "lazy_edges_strictly_upward": 57,
-    "lazy_edges_to_equal_or_higher_level": 108,
-    "modules": 130,
+    "lazy_edges_strictly_upward": 58,
+    "lazy_edges_to_equal_or_higher_level": 109,
+    "modules": 132,
     "optional_edges": 0,
     "typing_only_edges": 6
   }
