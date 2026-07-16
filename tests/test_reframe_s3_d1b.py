@@ -141,18 +141,23 @@ def test_subject_lock_is_a_fixed_anchor_never_a_track(monkeypatch, cfg):
 # ---- the guard: the other two defect classes must NOT be captured ----------------------------------
 
 def test_d2_pip_grid_is_not_captured_by_the_subject_lock(monkeypatch, cfg):
-    """The D2 PIP grid ALSO yields FB_DOMINANT. Framing its presenter presenter-only would pre-empt P1
-    (tile materiality, Track B), so the _LOCK_MAX_FACES gate must keep it centred for S4/S5."""
+    """The enduring S3 invariant: D2 must never take D1-B's subject-lock. Framing its presenter presenter-only
+    would pre-empt P1 (tile materiality, Track B). When S3 shipped, D2 also yielded FB_DOMINANT and the
+    _LOCK_MAX_FACES gate was the only thing keeping it out; S4 then routed it to CENTERED_PIP_LAYOUT. Stated as
+    the durable negative — never subject-locked, render untouched — so it holds under either owner."""
     r = _resolve(monkeypatch, cfg, _D2)
-    assert r.final_outcome is _FO.CENTERED_MULTI_UNTRACKED
-    assert r.as_tuple() == (None, None, None)
+    assert r.final_outcome is not _FO.SUBJECT_LOCKED
+    assert r.content_type != framing.RENDER_SUBJECT_LOCK
+    assert r.as_tuple() == (None, None, None)                 # composition of D2 is S5's slice, not S3's
 
-def test_the_face_count_gate_is_what_saves_d2_not_the_kind(monkeypatch, cfg):
-    """Pins WHY the guard exists: the primitive really does classify D2 as FB_DOMINANT, so a naive
-    `kind == FB_DOMINANT` wiring would have captured all 36 D2 clips."""
-    assert framing.subject_aware_fallback(_D2).kind == framing.FB_DOMINANT
-    assert framing._face_count(_D2) > framing._LOCK_MAX_FACES
+def test_d2_is_kept_out_of_the_subject_lock_by_the_face_count_gate(monkeypatch, cfg):
+    """Pins WHY the guard exists. When S3 shipped, the primitive classified D2 as FB_DOMINANT too, so a naive
+    `kind == FB_DOMINANT` wiring would have captured all 36 D2 clips — the _LOCK_MAX_FACES gate was the only
+    thing keeping them out. S4 then gave the PIP layout its own FB_PIP kind, so D2 is now excluded TWICE over.
+    The face-count gate is asserted directly (not via the kind) so it keeps failing if it is ever removed."""
+    assert framing._face_count(_D2) > framing._LOCK_MAX_FACES      # the gate itself — the durable guard
     assert framing._face_count(_D1B) <= framing._LOCK_MAX_FACES
+    assert framing.subject_aware_fallback(_D2).kind != framing.FB_DOMINANT   # S4: its own layout kind
 
 def test_d1a_wide_two_shot_still_stacks(monkeypatch, cfg):
     """S2 regression: D1-A resolves BEFORE the FB_DOMINANT branch and is unaffected."""

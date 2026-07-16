@@ -906,7 +906,18 @@ def _resolve(cfg, src, cs: float, ce: float, *, _trace=None, capture_failures: b
     strategy = _FS.CENTERED; outcome = None
     ct_eff = ct
 
-    if ct_eff == CT_MULTI:
+    if ct_eff == CT_MULTI and subject_aware_fallback(stats).kind == FB_PIP:
+        # S4/D2 (spec F4, AC-D1): a presenter-dominant PIP layout is a UI grid — one large presenter plus a
+        # column of small, inert remote tiles. Inert tiles are not co-speakers to cut between, so this must
+        # not enter the active-speaker path AT ALL: speaker_track never runs (that is the routing fix; a
+        # conclusive no-track afterwards would be the same centre for the wrong reason).
+        # COMPOSITION IS S5's SLICE. focus/track/content_type stay None here, so the render and the
+        # fingerprint are byte-identical and NOTHING re-renders — this slice only makes the layout, and the
+        # decision not to chase speakers across it, observable. The dry-run keeps classifying these clips
+        # FRAMING_UNRESOLVED (reframe.py:367 wants CENTERED_NO_SUBJECT), which stays true: recognised, not
+        # yet composed.
+        strategy, outcome = _FS.PIP_LAYOUT, _FO.CENTERED_PIP_LAYOUT
+    elif ct_eff == CT_MULTI:
         track = _run(_FS.SPEAKER_TRACK, lambda: speaker_track(cfg, src, start=cs, end=ce,
                                                               src_w=src.width or 0, src_h=src.height or 0,
                                                               _rt=rt, _trace=trace))
@@ -1018,6 +1029,7 @@ def _unresolved(trace: FramingTrace, root: _FE, attempts: tuple, ct: str | None)
 # byte-identical and no clip's render fingerprint changes in this slice.
 FB_DOMINANT = "dominant"          # one stable dominant subject -> anchor + span on THAT subject
 FB_WIDE_PAIR = "wide-pair"        # two persistent wide-separated subjects -> span covers BOTH (retain both)
+FB_PIP = "pip"                    # S4/D2: presenter-dominant PIP grid -> anchor on the PRESENTER, tiles are inert UI
 FB_INSUFFICIENT = "insufficient"  # evidence below the floor -> EXPLICIT no-op (caller keeps its safe default)
 
 # S2: a genuine wide TWO-SHOT (D1-A) is separated from a dominant-host clip (D1-B) and a PIP grid (D2) by
@@ -1035,6 +1047,22 @@ RENDER_STACK_PAIR = "stack-pair"  # content_type render-hint: compose BOTH hosts
 # D1-B median is 1 (21 clips) or 2 (4); D2 is 4 for all 36; D1-A is 2 but returns FB_WIDE_PAIR before here).
 _LOCK_MAX_FACES = 2        # gate the subject-lock to <=2 faces: captures D1-B 25/25, captures D2 0/36
 RENDER_SUBJECT_LOCK = "subject-lock"  # content_type render-hint: mild re-anchor onto the dominant host (clip.reframe_filter)
+
+# S4 / spec F4 + AC-D1: "one large face + a column of small faces — no audio". The layout signal is GEOMETRY,
+# and specifically SIZE. It must never be _pick_dominant_face: that ranks by YuNet SCORE (height is only a
+# tie-break), and on a PIP grid the 3-tile column draws the score maximum against the presenter's single draw —
+# so the "dominant" face lands on a TILE in 36/36 D2 clips, and on the SMALLEST tile in 36/36 (evidence:
+# raw-detections.json — dom_cx 0.775-0.832 at dom_fh 0.134-0.192, while the presenter is L_cx~0.367 @ L_fh~0.435).
+# Score cannot separate them at all (presenter out-scores the tiles in only 25/36, by margins of -0.010..+0.064);
+# SIZE separates them cleanly, presenter/tiles = 1.60-2.07x in 36/36.
+# BOTH gates are required and each is load-bearing:
+#   _PIP_MIN_FACES  — a GRID. D2 median face-count is 4; D1-A is 2; D1-B is 1-2. Without it the size gate alone
+#                     captures 7/25 D1-B (whose ratio reaches 1.53).
+#   _PIP_SIZE_RATIO — PRESENTER-DOMINANT. Below it the layout is an equal-size panel (4 real co-speakers), which
+#                     is NOT presenter+tiles -> FB_INSUFFICIENT, an explicit safe no-op rather than a guess.
+#                     D2 measures 1.60-2.07; D1-B tops out at 1.53 and D1-A at 1.27, so 1.4 sits in the gap.
+_PIP_MIN_FACES = 3
+_PIP_SIZE_RATIO = 1.4
 
 @dataclass(frozen=True)
 class FallbackComposition:
@@ -1062,9 +1090,9 @@ class FallbackComposition:
 
     @property
     def is_actionable(self) -> bool:
-        """True when the evidence yielded a subject-derived region (DOMINANT / WIDE_PAIR); False for the
+        """True when the evidence yielded a subject-derived region (DOMINANT / WIDE_PAIR / PIP); False for the
         explicit INSUFFICIENT no-op — so a caller branches on 'did we get a subject?' without string-matching."""
-        return self.kind in (FB_DOMINANT, FB_WIDE_PAIR)
+        return self.kind in (FB_DOMINANT, FB_WIDE_PAIR, FB_PIP)
 
 def _c01(v: float) -> float:
     return min(1.0, max(0.0, v))                              # clamp to [0,1] — the module's inline idiom
@@ -1097,6 +1125,34 @@ def _pair_clusters(occ: list):
                 round(median(p[2] for p in picks), 4), round(median(p[3] for p in picks), 4), fw)
     return (nL, nR, both, round(peak_l, 4), round(peak_r, 4), _anchor(L), _anchor(R))
 
+def _pip_layout(stats: dict | None, occ: list):
+    """The presenter anchor for a presenter-dominant PIP grid, or None when the layout is not one.
+
+    Returns (anchor, tile_fh) where anchor = median (cx,cy,fh,ey,fw) of the LARGEST face per frame and tile_fh
+    is the median height of every other face. The presenter is picked BY HEIGHT — never `_pick_dominant_face`,
+    whose score-first ranking lands on the smallest remote tile (see the _PIP_* note above).
+
+    None (-> the caller falls through to the pair/dominant branches, unchanged) when: the grid gate fails, no
+    frame carries enough faces, or the size hierarchy is too flat to call one face the presenter (an equal-size
+    panel of real co-speakers is NOT presenter+tiles). Pure; never raises."""
+    if _face_count(stats) < _PIP_MIN_FACES:
+        return None                                           # not a grid (D1-A is 2, D1-B is 1-2)
+    pres: list = []; tile_fhs: list = []
+    for fr in occ:
+        if len(fr) < _PIP_MIN_FACES: continue
+        ranked = sorted(fr, key=lambda f: f[2], reverse=True)  # by HEIGHT. NEVER by score.
+        pres.append(ranked[0]); tile_fhs += [f[2] for f in ranked[1:]]
+    if not pres or not tile_fhs:
+        return None
+    p_fh = median(p[2] for p in pres); t_fh = median(tile_fhs)
+    if t_fh <= 0 or p_fh < _PIP_SIZE_RATIO * t_fh:
+        return None                                           # too flat to name a presenter -> ambiguous
+    fws = [p[5] for p in pres if len(p) > 5]
+    fw = round(median(fws), 4) if len(fws) == len(pres) else None    # None on the legacy 4-tuple shape
+    anchor = (round(median(p[0] for p in pres), 4), round(median(p[1] for p in pres), 4),
+              round(p_fh, 4), round(median(p[3] for p in pres), 4), fw)
+    return anchor, round(t_fh, 4)
+
 def subject_aware_fallback(stats: dict | None) -> FallbackComposition:
     """From the detected face positions of a no-track window, return the EXPLICIT fallback composition
     (spec F5, ADR-0103 decision 1). PURE: same stats -> same result; no cv2, no I/O; never raises.
@@ -1123,6 +1179,12 @@ def subject_aware_fallback(stats: dict | None) -> FallbackComposition:
     dfh = median(p[2] for p in picks); dey = median(p[3] for p in picks)
     fws = [p[5] for p in picks if len(p) > 5]
     dfw = median(fws) if len(fws) == len(picks) else None     # None on the legacy 4-tuple shape (no width)
+    pip = _pip_layout(stats, occ)                              # S4/D2: a UI grid, not a live two-shot (F4/AC-D1)
+    if pip is not None:
+        pa, _t_fh = pip
+        half = (pa[4] / 2) if pa[4] is not None else 0.0
+        return FallbackComposition(FB_PIP, round(_c01(pa[0] - half), 4), round(_c01(pa[0] + half), 4),
+                                   pa[0], pa[1], pa[3], pa[2], pa[4], round(conf, 4))
     if _two_cluster(stats):                                    # E2 recall fires on ALL of D1-A/D1-B/D2 — refine:
         pc = _pair_clusters(occ)
         if pc is not None:

@@ -46,6 +46,7 @@
         "members": [
           "CENTERED_MULTI_UNTRACKED",
           "CENTERED_NO_SUBJECT",
+          "CENTERED_PIP_LAYOUT",
           "DETECTED_MULTI",
           "DETECTED_SINGLE",
           "MOTION_FOCUS",
@@ -57,10 +58,11 @@
         "name": "FramingOutcome"
       },
       {
-        "line": 109,
+        "line": 114,
         "members": [
           "CENTERED",
           "MOTION_SALIENCY",
+          "PIP_LAYOUT",
           "SPEAKER_TRACK",
           "SUBJECT_FOCUS",
           "SUBJECT_LOCK",
@@ -69,7 +71,7 @@
         "name": "FramingStrategy"
       },
       {
-        "line": 118,
+        "line": 124,
         "members": [
           "COMPLETED",
           "FAILED",
