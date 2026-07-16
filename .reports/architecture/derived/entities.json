@@ -51,23 +51,25 @@
           "MOTION_FOCUS",
           "MUSIC_FOCUS",
           "STACKED_PAIR",
+          "SUBJECT_LOCKED",
           "UNRESOLVED"
         ],
         "name": "FramingOutcome"
       },
       {
-        "line": 107,
+        "line": 109,
         "members": [
           "CENTERED",
           "MOTION_SALIENCY",
           "SPEAKER_TRACK",
           "SUBJECT_FOCUS",
+          "SUBJECT_LOCK",
           "SUBJECT_PAIR"
         ],
         "name": "FramingStrategy"
       },
       {
-        "line": 115,
+        "line": 118,
         "members": [
           "COMPLETED",
           "FAILED",

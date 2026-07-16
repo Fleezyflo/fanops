@@ -95,11 +95,13 @@ class FramingOutcome(str, Enum):
     CENTERED_NO_SUBJECT = "centered_no_subject"   # a legitimate centre: the detector found no subject
     CENTERED_MULTI_UNTRACKED = "centered_multi_untracked"  # E3: a real 2-shot with no clean track -> conservative centre
     STACKED_PAIR = "stacked_pair"                 # S2/D1-A: a genuine wide two-shot, no track -> subject-derived vertical stack (both retained)
+    SUBJECT_LOCKED = "subject_locked"             # S3/D1-B: one persistently dominant host, no track -> mild re-anchor onto THAT host
     UNRESOLVED = "unresolved"                     # carries root_cause: FramingEventType
 
 
 _FO = FramingOutcome
-RESOLVED_OUTCOMES = frozenset({_FO.DETECTED_MULTI, _FO.DETECTED_SINGLE, _FO.MUSIC_FOCUS, _FO.MOTION_FOCUS, _FO.STACKED_PAIR})
+RESOLVED_OUTCOMES = frozenset({_FO.DETECTED_MULTI, _FO.DETECTED_SINGLE, _FO.MUSIC_FOCUS, _FO.MOTION_FOCUS,
+                               _FO.STACKED_PAIR, _FO.SUBJECT_LOCKED})
 LEGITIMATE_CENTER_OUTCOMES = frozenset({_FO.CENTERED_NO_SUBJECT, _FO.CENTERED_MULTI_UNTRACKED})
 UNRESOLVED_OUTCOMES = frozenset({_FO.UNRESOLVED})
 
@@ -108,6 +110,7 @@ class FramingStrategy(str, Enum):
     SPEAKER_TRACK = "speaker_track"
     SUBJECT_FOCUS = "subject_focus"
     SUBJECT_PAIR = "subject_pair"                 # S2/D1-A: compose BOTH persistent hosts into a vertical stack (no track needed)
+    SUBJECT_LOCK = "subject_lock"                 # S3/D1-B: re-anchor the crop onto the ONE dominant host (no track needed)
     MOTION_SALIENCY = "motion_saliency"
     CENTERED = "centered"                         # not a strategy that runs — the terminal fallback
 
