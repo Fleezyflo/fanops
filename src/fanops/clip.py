@@ -341,6 +341,8 @@ def reframe_filter(aspect: str, src_w: int, src_h: int, *, top_bias: bool = Fals
     eye-line) follows the active speaker with a smooth pan; `content_type` tunes the zoom (music wider). A
     focus with no face height never zooms -> byte-identical to before; focus=None AND track=None AND
     top_bias=False is the exact centered crop of old. Every branch clamps in-bounds and falls open safely."""
+    if content_type == framing.RENDER_STACK_PAIR:
+        focus, content_type = None, None     # the stack renders via render_reframed's filter_complex, not here — centre defensively
     tw, th = _TARGETS[aspect]
     if not src_w or not src_h:
         # unknown source: scale to fit + pad to exact target (never an impossible crop)
@@ -558,6 +560,50 @@ def _adaptive_zoom_max(fh, base: float) -> float:
     sized subject keeps the `base` cap (punch-in). fh falsy -> base (no zoom applies anyway)."""
     return _ZOOM_MAX_FAR if (fh and 0 < fh < _SMALL_FACE_FRAC) else base
 
+# ---- S2 / D1-A: vertical STACK for a genuine wide two-shot (retain BOTH hosts, no empty gap) ----
+# A wide two-shot's hosts sit ~0.6+ apart in x; a single upright 9:16 crop is only ~0.316 of the source width,
+# so it can hold at most ONE host and the blind centre lands on the empty table between them (the D1-A defect).
+# framing._resolve instead emits a subject-derived STACK (content_type=RENDER_STACK_PAIR, focus = the two host
+# anchors) and this renders it: each host cropped into its OWN half of the frame and vstacked. Both hosts are
+# retained and reasonably large, and the dead centre is REMOVED — spec F6 permits zoom-in only to remove dead
+# space, and a gentle zoom cap (_GENTLE_ZOOM_MAX) honours the operator's minimal-zoom directive.
+def _stack_filter_complex(focus: tuple, src_w: int, src_h: int, aspect_value: str,
+                          *, sub_token: str | None = None) -> str:
+    """filter_complex for the vertical stack: the LEFT host anchor (focus[0:5] = cx,cy,fh,ey,fw) cropped into
+    the TOP half and the RIGHT host anchor (focus[5:10]) into the BOTTOM half, each scaled to tw×(th//2), then
+    vstacked; an optional subtitle burn runs on the stacked frame. Each half reuses the proven _crop_box sizing
+    at a GENTLE zoom cap (minimal punch-in). ch0 None (unknown dims) -> scale-only halves (fail-open, no crop)."""
+    tw, th = _TARGETS[aspect_value]
+    half = th // 2
+    frac = _target_frac(None)
+    ch0 = None
+    if src_w and src_h:
+        ch0 = src_h if (src_w / src_h) > (tw / half) else round(src_w * half / tw)
+    def _half(anchor: tuple, label: str) -> str:
+        if ch0 is None:
+            return f"[0:v]scale={tw}:{half},setsar=1[{label}]"
+        cx, cy, fh, ey = anchor[0], anchor[1], anchor[2], anchor[3]
+        fw = anchor[4] if len(anchor) > 4 else None
+        cw, ch, x, y = _crop_box(cx, cy, fh, ey, src_w, src_h, tw, half, ch0, frac, _GENTLE_ZOOM_MAX, fw)
+        return f"[0:v]crop={cw}:{ch}:{x}:{y},scale={tw}:{half},setsar=1[{label}]"
+    parts = [_half(tuple(focus[0:5]), "sptop"), _half(tuple(focus[5:10]), "spbot")]
+    vlabel = "[vc]" if sub_token else "[vout]"
+    parts.append(f"[sptop][spbot]vstack=inputs=2{vlabel}")
+    if sub_token:
+        parts.append(f"[vc]{sub_token}[vout]")
+    return ";".join(parts)
+
+def ffmpeg_stack_cmd(src: str, dst: str, cs: float, ce: float, aspect_value: str, focus: tuple,
+                     *, src_w: int, src_h: int, content_type: str | None = None,
+                     sub_token: str | None = None) -> list[str]:
+    """ffmpeg command for the vertical-stack render: ONE seeked input split into two host crops + a vstack, one
+    encode. `-ss` before `-i` (fast seek) makes `-to` a DURATION (== ce-cs), mirroring ffmpeg_clip_cmd. The
+    original audio is mapped through (`0:a?` — optional, so a video-only source never fails the map)."""
+    fc = _stack_filter_complex(focus, src_w, src_h, aspect_value, sub_token=sub_token)
+    return ["ffmpeg", "-y", "-ss", f"{cs:.3f}", "-i", src, "-to", f"{ce - cs:.3f}",
+            "-filter_complex", fc, "-map", "[vout]", "-map", "0:a?",
+            "-c:v", "libx264", "-c:a", "aac", "-movflags", "+faststart", dst]
+
 def render_reframed(src_path: str, dst: str, cs: float, ce: float, aspect_value: str, *,
                     src_w: int, src_h: int, extra_vf: str | None = None, top_bias: bool = False,
                     focus: tuple | None = None, track: list | None = None,
@@ -585,6 +631,17 @@ def render_reframed(src_path: str, dst: str, cs: float, ce: float, aspect_value:
     atomic+os.replace pattern in this same file (and overlay.burn_hook_only)."""
     tmp = str(dst) + ".part.mp4"                              # keep a muxer-inferable .mp4 suffix (see ATOMIC WRITE)
     try:
+        if content_type == framing.RENDER_STACK_PAIR and focus and len(focus) >= 10:
+            # S2/D1-A: a genuine wide two-shot -> both hosts vertically stacked (no empty gap). One input,
+            # two host crops, vstack, one encode. Fail-open: a working ffmpeg that rejects the stack graph
+            # falls through to the centred single-pass (the acceptance floor — never worse than the blind centre).
+            stack_cmd = ffmpeg_stack_cmd(src_path, tmp, cs, ce, aspect_value, focus,
+                                         src_w=src_w, src_h=src_h, content_type=content_type, sub_token=extra_vf)
+            r = subprocess.run(stack_cmd, check=False, capture_output=True, text=True, timeout=timeout)
+            if r.returncode == 0 and Path(tmp).exists() and Path(tmp).stat().st_size > 0:
+                os.replace(tmp, dst)                          # atomic publish — never a half-written clip at dst
+                return r
+            focus, track, content_type = None, None, None    # stack graph rejected -> centre (fail-open)
         if track and len(track) > 1:
             seg_cmd = ffmpeg_segments_cmd(src_path, tmp, cs, ce, aspect_value, track,
                                           src_w=src_w, src_h=src_h, content_type=content_type, sub_token=extra_vf)
