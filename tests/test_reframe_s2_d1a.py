@@ -96,12 +96,20 @@ def test_d1a_no_track_resolves_to_stacked_pair(cfg, monkeypatch):
     assert r.classified_content_type == framing.CT_MULTI     # the classifier verdict is UNCHANGED (diagnostic only)
     assert [a.state for a in r.attempts] == [StrategyState.COMPLETED]
 
-def test_d1b_no_track_stays_centred_not_reclassified(cfg, monkeypatch):
+def test_d1b_no_track_is_never_reclassified_as_a_pair(cfg, monkeypatch):
+    """D1-B (ONE dominant host + an intermittent 2nd) must never take D1-A's PAIR treatment — that is what the
+    co-presence/prominence discriminators buy, and it is the enduring S2 invariant.
+
+    S2 originally pinned it as "stays centred" because centred was then D1-B's only alternative. S3 gave D1-B
+    its own subject-lock, so the assertion is stated in its DURABLE form: never a stack. The positive half of
+    D1-B's routing is owned by tests/test_reframe_s3_d1b.py."""
     _stub(monkeypatch, detect_window=_D1B, classify_window=framing.CT_MULTI,
           speaker_track=([_FE.NO_TRACK], None), subject_focus=([_FE.NO_FACE], None))
     r = framing._resolve(cfg, _Src(), 0.0, 10.0, capture_failures=True)
-    assert r.final_outcome is _FO.CENTERED_MULTI_UNTRACKED     # D1-A is NOT reclassified into D1-B, nor vice-versa
-    assert r.as_tuple() == (None, None, None)
+    assert framing.subject_aware_fallback(_D1B).kind == framing.FB_DOMINANT   # the primitive still refuses to pair it
+    assert r.final_outcome is not _FO.STACKED_PAIR
+    assert r.content_type != framing.RENDER_STACK_PAIR
+    assert r.final_outcome is _FO.SUBJECT_LOCKED                             # S3 owns D1-B's positive routing
 
 def test_d2_no_track_stays_centred_not_stacked(cfg, monkeypatch):
     _stub(monkeypatch, detect_window=_D2, classify_window=framing.CT_MULTI,
