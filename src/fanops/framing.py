@@ -922,7 +922,20 @@ def _resolve(cfg, src, cs: float, ce: float, *, _trace=None, capture_failures: b
             # defensible centre). In production a hard failure has already RAISED out of _run, so this branch
             # only ever sees the conclusive-negative case there.
             if attempts and attempts[-1].state is StrategyState.COMPLETED:
-                out_ct, strategy, outcome = None, _FS.CENTERED, _FO.CENTERED_MULTI_UNTRACKED
+                # S2/D1-A: a CONCLUSIVE no-track. Is this a genuine wide TWO-SHOT (both hosts persistent)? If
+                # so, compose BOTH into a vertical STACK (subject-derived, no empty gap) instead of the blind
+                # centre. subject_aware_fallback returns FB_WIDE_PAIR ONLY for D1-A — D1-B (dominant host) and
+                # D2 (PIP grid) get FB_DOMINANT and stay centred here (their slices are S3, S4/S5). The pair
+                # anchors ride in `focus` (a 10-tuple of floats) + content_type=RENDER_STACK_PAIR — BOTH are
+                # already hashed by _render_fingerprint, so exactly these clips (focus was None) re-render and
+                # every other clip's fingerprint is byte-identical (no _REFRAME_GEOM_V bump).
+                comp = subject_aware_fallback(stats)
+                if (comp.kind == FB_WIDE_PAIR and comp.left is not None and comp.right is not None
+                        and comp.left[4] is not None and comp.right[4] is not None):
+                    focus = tuple(float(v) for v in comp.left) + tuple(float(v) for v in comp.right)
+                    out_ct, strategy, outcome = RENDER_STACK_PAIR, _FS.SUBJECT_PAIR, _FO.STACKED_PAIR
+                else:
+                    out_ct, strategy, outcome = None, _FS.CENTERED, _FO.CENTERED_MULTI_UNTRACKED
 
     if outcome is None and ct_eff in (CT_SINGLE, CT_MUSIC, CT_SILENT):
         focus = _run(_FS.SUBJECT_FOCUS, lambda: subject_focus(cfg, src, start=cs, end=ce, _rt=rt, _trace=trace))
@@ -992,6 +1005,14 @@ FB_DOMINANT = "dominant"          # one stable dominant subject -> anchor + span
 FB_WIDE_PAIR = "wide-pair"        # two persistent wide-separated subjects -> span covers BOTH (retain both)
 FB_INSUFFICIENT = "insufficient"  # evidence below the floor -> EXPLICIT no-op (caller keeps its safe default)
 
+# S2: a genuine wide TWO-SHOT (D1-A) is separated from a dominant-host clip (D1-B) and a PIP grid (D2) by
+# MORE than _two_cluster, which fires on ALL of them (evidence: docs/design/reframe/evidence/raw-detections.json
+# — every one of the 67 has two=True). The discriminators that isolate D1-A: the median face-count is EXACTLY
+# 2 (D1-B is 1, D2 is 4), both hosts are co-present across the window, and their faces are of comparable size.
+_PAIR_COPRESENCE = 0.65    # both/max(nL,nR): the two hosts co-occur in most occupied frames (D1-B: ~0.52-0.55)
+_PAIR_PROMINENCE = 0.6     # min(peak)/max(peak): comparable face sizes (rejects a big presenter + small tile, D2)
+RENDER_STACK_PAIR = "stack-pair"  # content_type render-hint: compose BOTH hosts into a vertical stack (clip.render_reframed)
+
 @dataclass(frozen=True)
 class FallbackComposition:
     """An explicit, subject-derived fallback composition (spec F5, ADR-0103 decision 1) — the structured
@@ -1013,6 +1034,8 @@ class FallbackComposition:
     fh: float | None
     fw: float | None
     confidence: float
+    left: tuple | None = None    # S2 FB_WIDE_PAIR: the LEFT host anchor (cx,cy,fh,ey,fw) for the vertical stack
+    right: tuple | None = None   # S2 FB_WIDE_PAIR: the RIGHT host anchor (cx,cy,fh,ey,fw)
 
     @property
     def is_actionable(self) -> bool:
@@ -1026,20 +1049,30 @@ def _c01(v: float) -> float:
 def _fb_insufficient(conf: float) -> "FallbackComposition":
     return FallbackComposition(FB_INSUFFICIENT, None, None, None, None, None, None, None, round(conf, 4))
 
-def _cluster_side_face(occ: list, *, left: bool):
-    """Median (cx, fw) of the DOMINANT face on ONE side of the 2-shot split across the occupied frames, or
-    None when that side is never genuinely present. Mirrors _two_cluster's split (dead-zone ±_ASD_SAME_TOL,
-    _CLUSTER_MIN_FH floor) so a WIDE_PAIR span is built from the SAME two clusters the classifier found — not
-    from every stray detection, so a PIP tile column never widens it."""
+def _pair_clusters(occ: list):
+    """Per-side cluster stats for the two-shot split across the occupied frames, or None when either side is
+    never present. Returns (nL, nR, both, peak_l, peak_r, left_anchor, right_anchor) where nL/nR = frames the
+    side's dominant face appears, both = frames BOTH appear, peak = best score×fh on that side, and each
+    anchor = median (cx,cy,fh,ey,fw) of that side's dominant face (fw None on the legacy 4-tuple shape).
+    Mirrors _two_cluster's split (dead-zone ±_ASD_SAME_TOL, _CLUSTER_MIN_FH floor) so the pair is built from
+    the SAME two clusters the classifier found. The counts drive the D1-A vs D1-B/D2 discriminators; the
+    anchors drive the vertical-stack crop (each host in its own half)."""
     lo, hi = _ASD_SIDE_SPLIT - _ASD_SAME_TOL, _ASD_SIDE_SPLIT + _ASD_SAME_TOL
-    cxs: list[float] = []; fws: list[float] = []
+    def _q(f): return (f[4] if len(f) > 4 else 1.0) * f[2]
+    L: list = []; R: list = []; nL = nR = both = 0; peak_l = peak_r = 0.0
     for fr in occ:
-        cand = [f for f in fr if (f[0] < lo if left else f[0] > hi) and f[2] >= _CLUSTER_MIN_FH]
-        pick = _pick_dominant_face(cand)
-        if pick is None: continue
-        cxs.append(pick[0]); fws.append(pick[5] if len(pick) > 5 else 0.0)
-    if not cxs: return None
-    return (median(cxs), median(fws))
+        lp = _pick_dominant_face([f for f in fr if f[0] < lo and f[2] >= _CLUSTER_MIN_FH])
+        rp = _pick_dominant_face([f for f in fr if f[0] > hi and f[2] >= _CLUSTER_MIN_FH])
+        if lp is not None: nL += 1; L.append(lp); peak_l = max(peak_l, _q(lp))
+        if rp is not None: nR += 1; R.append(rp); peak_r = max(peak_r, _q(rp))
+        if lp is not None and rp is not None: both += 1
+    if not L or not R: return None
+    def _anchor(picks):
+        fws = [p[5] for p in picks if len(p) > 5]
+        fw = round(median(fws), 4) if len(fws) == len(picks) else None
+        return (round(median(p[0] for p in picks), 4), round(median(p[1] for p in picks), 4),
+                round(median(p[2] for p in picks), 4), round(median(p[3] for p in picks), 4), fw)
+    return (nL, nR, both, round(peak_l, 4), round(peak_r, 4), _anchor(L), _anchor(R))
 
 def subject_aware_fallback(stats: dict | None) -> FallbackComposition:
     """From the detected face positions of a no-track window, return the EXPLICIT fallback composition
@@ -1067,16 +1100,24 @@ def subject_aware_fallback(stats: dict | None) -> FallbackComposition:
     dfh = median(p[2] for p in picks); dey = median(p[3] for p in picks)
     fws = [p[5] for p in picks if len(p) > 5]
     dfw = median(fws) if len(fws) == len(picks) else None     # None on the legacy 4-tuple shape (no width)
-    if _two_cluster(stats):                                    # E2 recall: a real, persistent L/R two-shot
-        left = _cluster_side_face(occ, left=True)
-        right = _cluster_side_face(occ, left=False)
-        if left is not None and right is not None:             # (both sides present — _two_cluster guarantees it)
-            lcx, lfw = left; rcx, rfw = right
-            x_min = _c01(min(lcx - lfw / 2, rcx - rfw / 2))
-            x_max = _c01(max(lcx + lfw / 2, rcx + rfw / 2))
-            return FallbackComposition(FB_WIDE_PAIR, round(x_min, 4), round(x_max, 4),
-                                       round((lcx + rcx) / 2, 4), round(dcy, 4), round(dey, 4), round(dfh, 4),
-                                       (round(dfw, 4) if dfw is not None else None), round(conf, 4))
+    if _two_cluster(stats):                                    # E2 recall fires on ALL of D1-A/D1-B/D2 — refine:
+        pc = _pair_clusters(occ)
+        if pc is not None:
+            nL, nR, both, peak_l, peak_r, la, ra = pc
+            copres = both / max(nL, nR)
+            hi_peak = max(peak_l, peak_r)
+            promin = (min(peak_l, peak_r) / hi_peak) if hi_peak > 0 else 0.0
+            # D1-A ONLY: median face-count == 2 (D1-B is 1, D2 is 4) AND both hosts co-present AND comparable
+            # sizes. D1-B (dominant host + intermittent 2nd) and D2 (presenter + tile column) fail a gate and
+            # fall through to FB_DOMINANT, where they stay UNWIRED (centred) until their slices (S3, S4/S5).
+            if _face_count(stats) == 2 and copres >= _PAIR_COPRESENCE and promin >= _PAIR_PROMINENCE:
+                lcx, lfw = la[0], (la[4] or 0.0); rcx, rfw = ra[0], (ra[4] or 0.0)
+                x_min = _c01(min(lcx - lfw / 2, rcx - rfw / 2))
+                x_max = _c01(max(lcx + lfw / 2, rcx + rfw / 2))
+                return FallbackComposition(FB_WIDE_PAIR, round(x_min, 4), round(x_max, 4),
+                                           round((lcx + rcx) / 2, 4), round(dcy, 4), round(dey, 4), round(dfh, 4),
+                                           (round(dfw, 4) if dfw is not None else None), round(conf, 4),
+                                           left=la, right=ra)
     # DOMINANT: span is the dominant subject's OWN box — a PIP tile / intermittent second face never widens it.
     half = (dfw / 2) if dfw is not None else 0.0
     return FallbackComposition(FB_DOMINANT, round(_c01(dcx - half), 4), round(_c01(dcx + half), 4),

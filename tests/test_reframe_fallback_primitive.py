@@ -65,15 +65,18 @@ def test_persistent_wide_two_shot_retains_both():
     assert (comp.x_max - comp.x_min) > _BLIND_CENTRE_WIDTH   # a wider crop than the blind centre -> both fit
 
 
-# ---- 4. PIP tile grid: anchor the presenter, exclude the sub-threshold tiles (D2 shape) ------------------
-def test_pip_tile_grid_anchors_presenter_excludes_tiles():
-    tiles = [_face(0.85, cy=0.20, fh=0.08, fw=0.06, score=0.80),
-             _face(0.85, cy=0.45, fh=0.08, fw=0.06, score=0.80),
-             _face(0.85, cy=0.70, fh=0.08, fw=0.06, score=0.80)]
-    frames = [[_face(0.32, fh=0.30, fw=0.18, score=0.95)] + tiles for _ in range(8)]
+# ---- 4. PIP tile grid: anchor the presenter, do NOT treat the tile column as a co-speaker (D2 shape) -----
+def test_pip_tile_grid_anchors_presenter_not_a_pair():
+    # REAL PIP tiles (raw-detections.json) are NOT sub-threshold — they CLEAR the phantom gate, so _two_cluster
+    # fires. What keeps a PIP grid from being mistaken for a wide two-shot is the median face-count (4, not 2):
+    # the S2 discriminator. A too-easy below-gate fixture would have masked exactly that.
+    tiles = [_face(0.85, cy=0.20, fh=0.24, fw=0.14, score=0.90),
+             _face(0.85, cy=0.50, fh=0.24, fw=0.14, score=0.90),
+             _face(0.85, cy=0.80, fh=0.24, fw=0.14, score=0.90)]
+    frames = [[_face(0.30, cy=0.50, fh=0.42, fw=0.24, score=0.95)] + tiles for _ in range(8)]
     comp = subject_aware_fallback(_stats(frames))
-    assert comp.kind == FB_DOMINANT                          # a tile column is NOT a co-speaker -> not a wide pair
-    assert comp.cx == pytest.approx(0.32)                    # anchored on the presenter
+    assert comp.kind == FB_DOMINANT                          # a 4-face grid is NOT a wide pair (face-count gate)
+    assert comp.cx == pytest.approx(0.30)                    # anchored on the presenter, not a remote tile
     assert comp.x_max < 0.50                                 # span is the presenter's box, NOT stretched to the tiles
 
 

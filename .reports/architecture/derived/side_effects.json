@@ -587,15 +587,19 @@
       },
       {
         "call": "subprocess.run",
-        "line": 534
+        "line": 536
       },
       {
         "call": "subprocess.run",
-        "line": 591
+        "line": 640
       },
       {
         "call": "subprocess.run",
-        "line": 599
+        "line": 648
+      },
+      {
+        "call": "subprocess.run",
+        "line": 656
       }
     ],
     "fanops.daemon": [
@@ -758,6 +762,6 @@
     "mkdtemp_sites": 2,
     "network_sites_literal_requests": 15,
     "rmtree_sites": 5,
-    "subprocess_sites": 35
+    "subprocess_sites": 36
   }
 }
