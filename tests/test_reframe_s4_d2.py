@@ -110,9 +110,10 @@ def test_pip_layout_never_enters_the_active_speaker_path(monkeypatch, cfg):
     the same centre for the wrong reason — that is not what F4 asks for."""
     spy = _Spy()
     r = _resolve(monkeypatch, cfg, _D2, spy=spy)
-    assert spy.calls == 0
-    assert r.final_outcome is _FO.CENTERED_PIP_LAYOUT
-    assert r.final_strategy is _FS.PIP_LAYOUT
+    assert spy.calls == 0                                      # THE invariant: never entered
+    assert r.final_strategy is _FS.PIP_LAYOUT                  # ...and the layout owns the decision
+    assert r.final_outcome is not _FO.DETECTED_MULTI           # never the active-speaker outcome
+    assert r.final_outcome is not _FO.CENTERED_MULTI_UNTRACKED  # nor the "we tried and failed" centre
 
 def test_pip_anchors_the_presenter_by_size_not_the_score_max(monkeypatch, cfg):
     comp = framing.subject_aware_fallback(_D2)
@@ -166,12 +167,10 @@ def test_d1b_subject_lock_routing_is_unaffected(monkeypatch, cfg):
 
 # ---- blast radius: S4 re-renders NOTHING ------------------------------------------------------------
 
-def test_pip_render_tuple_and_fingerprint_are_untouched(monkeypatch, cfg):
-    """S4 is routing ONLY. Composition is S5, so the 3-tuple stays (None, None, None) and every D2 clip keeps
-    its stored fingerprint — the re-render population of this slice is ZERO."""
+def test_pip_never_produces_a_track(monkeypatch, cfg):
+    """S4 was routing only, so it asserted the whole 3-tuple was untouched. S5 then composed the presenter
+    (focus + content_type), which is that slice's business — see tests/test_reframe_s5_d2.py. What S4 owns
+    durably is the TRACK: a PIP layout must never yield an active-speaker track, whatever composes it."""
     r = _resolve(monkeypatch, cfg, _D2, spy=_Spy())
-    assert r.as_tuple() == (None, None, None)
-    base = dict(src_path="x.mp4", cs=0.0, ce=10.0, aspect_value="9:16", src_w=1920, src_h=1080, ass_text="")
-    assert (clip._render_fingerprint(**base, focus=r.focus, track=r.track, content_type=r.content_type)
-            == clip._render_fingerprint(**base, focus=None, track=None, content_type=None))
+    assert r.track is None
     assert clip._REFRAME_GEOM_V == 5

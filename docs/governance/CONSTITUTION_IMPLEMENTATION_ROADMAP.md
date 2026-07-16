@@ -37,11 +37,20 @@ shows each is **already closed**. Recording them so they are not re-attempted (`
 - Deps: none. · Blast: docs-only (one file). · Proof: before — `AGENTS.md` claims an enforcing gate; after — it matches ORCHESTRATION.md's dormancy banner + ADR-0102 §2. · Rollback: revert the edit. · CI/gov: future CM-4 (dormant-governance) would flag it. · Product decision: **No**.
 - *Note:* `AGENTS.md` is a repo doc; this edit is **out of scope for the constitutional-layer PR** (which is docs-only *for the new layer*). Sequence as a **follow-up doc PR** to avoid touching an unrelated tracked file in the constitution PR.
 
-### SLICE-DOC-ANOMALIES — `doc-correction`
+### SLICE-DOC-ANOMALIES — `doc-correction` — ✅ **DONE** (2026-07-16)
 - Invariant: a frozen snapshot is labeled as such, not as current truth (C16.4, R3/R8).
 - Evidence: `docs/CODEMAPS/anomalies.md` "none CRITICAL / all HOLD" is stale (RC-4/RC-5 were real, now fixed).
 - Owner: docs / `tools/arch` codemaps. · Gap: no superseded/frozen banner. · Fix: add a header banner "frozen 2026-07-11 snapshot; superseded on RC-4/RC-5 by #653–655; current invariant state is `tools/arch` + `INVARIANT_AUDIT.md`."
 - Deps: none. · Blast: docs-only. · Proof: before — reads as current; after — reads as historical with a pointer. · Rollback: revert. · CI/gov: CM-4/CM-8 report. · Product decision: **No**. · *Follow-up doc PR.*
+- **Landed:** the frozen/superseded banner + an in-place `⚠ CORRECTION` on the false "all HOLD"
+  paragraph and the §Summary row (recorded, not rewritten). Cites #653/#654 and hands the invariant
+  verdict to `tools/arch` + `INVARIANT_AUDIT.md` + `LAW-PERSIST-02`. Scope note: the slice said
+  "#653–655"; only **#653/#654** are the RC-4/RC-5 restore fixes (#655 is RC-3 accounts-backend
+  normalization, a different defect) — the banner cites the two that are actually this defect.
+  **Also landed in the same PR** (same file, same authority): the **C1 re-verification** against live
+  source — 4 of 6 C1 entries were stale (`RenderState` is live at `views_results.py:112`, not dead;
+  the `ledger.py` docstring is fixed; `ledger_wipe` moved `:188`→`:218` and is only *partially*
+  fixed), plus a cross-cluster fix-quality spot-check. C2–C10 remain un-re-verified.
 
 ### SLICE-ADRFORMAT-TRACK — `doc-correction`
 - Invariant: a declared governance artifact lives in the tree, not on one machine (C16.1, R1/R7, AR-7).
