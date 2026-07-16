@@ -78,6 +78,43 @@ def test_refresh_store_ranks_by_live_graph_reach(tmp_path, monkeypatch):
     assert out["measured"] >= 2
 
 
+def test_zero_budget_refresh_preserves_prior_reach(tmp_path, monkeypatch):
+    # H3: refresh_store wrote `reach` from THIS call's measurements only, with no merge — so a refresh that
+    # measured nothing ERASED every prior measurement. That is not hypothetical: the 30-unique/rolling-7-DAY
+    # ig_hashtag_search cap vs refresh_store_if_due's 12h throttle means ~13 of every 14 refreshes measure
+    # nothing, so a reach datum could never outlive 12h. The live store proved it — `reach: {}` while
+    # hashtag_budget.json showed all 30 slots spent 4 days earlier.
+    monkeypatch.setenv("META_GRAPH_TOKEN", "tok"); monkeypatch.setenv("META_IG_USER_ID", "ig")
+    cfg = Config(root=tmp_path)
+    from fanops import personas as P
+    P.add_persona(cfg, name="Curator", id="curator")
+    P.add_corpus_tag(cfg, "curator", "#seed")
+    out = refresh_store(cfg, get=_graph_router({"#beta": 900, "#alpha": 100}, cooccur="#alpha #beta"))
+    assert out["measured"] >= 2
+    earned = json.loads(cfg.hashtags_path.read_text())["reach"]
+    assert earned, "precondition: the funded refresh must persist reach"
+
+    monkeypatch.delenv("META_GRAPH_TOKEN", raising=False)   # the next tick measures nothing (budget/creds)
+    refresh_store(cfg)
+    kept = json.loads(cfg.hashtags_path.read_text())["reach"]
+    assert kept == earned, "a refresh that measured nothing destroyed the accrued reach"
+
+
+def test_reach_accrues_across_refreshes(tmp_path, monkeypatch):
+    # A later refresh that measures a DIFFERENT slice must add to the evidence, not replace it — the budget
+    # window rolls, so candidates rotate across ticks and the store must accumulate what each tick bought.
+    monkeypatch.setenv("META_GRAPH_TOKEN", "tok"); monkeypatch.setenv("META_IG_USER_ID", "ig")
+    cfg = Config(root=tmp_path)
+    from fanops import personas as P
+    P.add_persona(cfg, name="Curator", id="curator")
+    P.add_corpus_tag(cfg, "curator", "#seed")
+    refresh_store(cfg, get=_graph_router({"#alpha": 100}, cooccur="#alpha"))
+    refresh_store(cfg, get=_graph_router({"#beta": 900}, cooccur="#beta"))
+    d = json.loads(cfg.hashtags_path.read_text())
+    assert "#alpha" in d["reach"] and "#beta" in d["reach"]      # both slices survive
+    assert d["tags"].index("#beta") < d["tags"].index("#alpha")  # ranked by ACCRUED reach, not just this call's
+
+
 def test_refresh_store_fail_open_without_creds_writes_frozen_floor(tmp_path, monkeypatch):
     # No Meta creds -> harvest/measure no-op -> the frozen reach-ranked seed stands (never empty, never raises).
     monkeypatch.delenv("META_GRAPH_TOKEN", raising=False); monkeypatch.delenv("META_IG_USER_ID", raising=False)

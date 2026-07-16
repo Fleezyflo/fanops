@@ -15,7 +15,7 @@ gated in the Studio)."""
 from __future__ import annotations
 from fanops.config import Config
 from fanops.log import get_logger
-from fanops.hashtags import _norm, vetted_menu
+from fanops.hashtags import _norm, vetted_menu, load_store_reach
 from fanops.controlio import write_json_atomic
 
 
@@ -68,13 +68,27 @@ def refresh_store(cfg: Config, *, get=None, now=None) -> dict:
     for t in by_count + seeds + seed:
         if t not in useen: useen.add(t); universe.append(t)
     measured = sample_trends(cfg, universe, get=get, now=now)   # {tag: live Graph reach}, budget-bounded, fail-open
+    # ACCRUE reach across refreshes — never clobber. `measured` is bounded by the 30-unique-per-rolling-7-DAY
+    # ig_hashtag_search cap (meta_graph._BUDGET_LIMIT) while refresh_store_if_due runs every 12h, so ~13 of every
+    # 14 refreshes measure NOTHING. Writing `measured` verbatim made each of those ERASE the evidence the one
+    # funded refresh bought: reach could never outlive 12h, which is why the live store carried `reach: {}` while
+    # the budget showed 30 spent queries. Merge over what is on disk and rank by the ACCRUED reach (ranking on
+    # `measured` alone also re-ordered the whole store back to raw seed order on every zero-budget tick). Pruned
+    # to `merged` so a tag dropped from the universe does not linger. No prior reach -> identical to before.
+    accrued = {**load_store_reach(cfg), **{t: round(measured[t]) for t in measured}}
+    for t in accrued:                                     # a tag we already MEASURED stays in the universe even when
+        if t not in useen: useen.add(t); universe.append(t)   # this tick's harvest does not re-surface it. `universe` is
+    # rebuilt per call from the harvest + seeds, so without this a discovered high-reach tag silently leaves BOTH the
+    # menu and the evidence on the very next tick — the same erasure, one level down. Appended AFTER sample_trends, so
+    # it can never widen the measured set or spend a budget slot.
     merged: list[str] = []; seen: set[str] = set()
-    for t in sorted(measured, key=lambda k: measured[k], reverse=True):   # PRIMARY: live Graph reach
+    for t in sorted([t for t in universe if t in accrued],
+                    key=lambda k: accrued[k], reverse=True):   # PRIMARY: live Graph reach, accrued across refreshes
         if t not in seen: seen.add(t); merged.append(t)
     for t in universe:                                    # unmeasured tags keep relevance order so the store stays broad
         if t not in seen: seen.add(t); merged.append(t)
     cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
-    reach = {t: round(measured[t]) for t in measured}     # the per-tag LIVE Graph reach, persisted for the Studio surface
+    reach = {t: accrued[t] for t in merged if t in accrued}   # the per-tag LIVE Graph reach, persisted for the Studio surface
     write_json_atomic(cfg.hashtags_path, {"tags": merged, "reach": reach})
     return {"written": True, "measured": len(measured), "harvested": len(harvested), "total": len(merged)}
 

@@ -24,6 +24,11 @@ _ARABIC = ["#arabicmusic", "#arabtiktok", "#arabicmusiclovers"]        # AR lang
 _DISCOVERY = {Platform.tiktok: ["#fyp", "#foryou", "#viral"],
               Platform.instagram: ["#reels", "#foryou", "#viral"]}
 _DISCOVERY_DEFAULT = ["#foryou", "#viral"]                   # youtube/other -> platform-neutral
+# Max slots the curated corpus may LEAD in one line. The corpus is tier 0 and is seeded whole, so without this
+# a corpus of >= max_tags takes every slot and the model's per-clip picks can never ship (the line becomes a
+# pure function of the persona). 2-of-4 keeps the curated lead on every post while guaranteeing the clip always
+# influences half the line. NOT a cap on how many corpus tags may ship: the surplus still backfills.
+_CORPUS_LEAD_MAX = 2
 
 _NICHE_POOLS: dict[str, tuple[list[str], list[str]]] = {
     "rap": (_MEGA, _RELEVANCE),
@@ -242,6 +247,13 @@ def vet_hashtags(tags: list[str] | None, platform: Platform, language: str | Non
     SURVIVES) and floats AHEAD of the frozen rank; the corpus order is the curation order. A corpus-led
     account keeps a region tag (Arabic clips) + one platform discovery tag as reach FLOORS so its curated
     pool can't strip reach. corpus=None/empty -> byte-identical (no membership change, no float, no floor).
+    The corpus LEADS at most `_CORPUS_LEAD_MAX` slots. It is tier 0 AND seeded whole, so an unbounded lead let
+    any corpus of >= max_tags occupy every slot: the model's per-clip picks became unreachable and the shipped
+    line a pure function of the persona (the video not an input). The surplus corpus keeps its order behind the
+    picks and still BACKFILLS, so a clip with no vetted picks is byte-identical. A tag the model PICKED leads
+    its tier — including a picked CORPUS tag, which is the common case since caption_prompt shows the model the
+    corpus as its menu. `recent` demotes by GRADED LRU (oldest-first input; never-used leads, then least-
+    recently-used); as a boolean flag it went constant once a pass saturated the corpus and LOCKED the line.
     `content` (per-clip content-derived tags, content_tag_candidates) ALSO joins the membership so a
     clip-specific tag the model picked SURVIVES, floats just behind the corpus (clip info ahead of reach),
     and RESERVES one slot so the clip's own information always reaches the line when present.
@@ -273,13 +285,42 @@ def vet_hashtags(tags: list[str] | None, platform: Platform, language: str | Non
         h = _norm(t)
         if h in vetted and h not in seen:
             seen.add(h); kept.append(h)
-    recent_set = set(_dedupe_norm(recent or []))
+    # S06 recency is a GRADED LRU rank, not a membership flag. `recent` arrives oldest-first (the ledger's last
+    # post, then this pass's tags in clip order — caption._recent_tags + pipeline's pass_recent), so a tag's LAST
+    # occurrence is its most-recent use: never-used (-1) leads, then least-recently-used. As a BOOLEAN the
+    # tiebreak went CONSTANT once `recent` covered the corpus (pass_recent accumulates every tag shipped in a
+    # pass), collapsing the sort to corpus rank and LOCKING the line on corpus[:max_tags] from clip 3 onward.
+    # Graded, saturation keeps ORDERING -> real rotation. recent=[] -> all -1 -> constant -> falls through to
+    # `rank` = today's order (byte-identical).
+    recent_pos: dict[str, int] = {}
+    for i, t in enumerate(recent or []):
+        h = _norm(t) if isinstance(t, str) else ""
+        if h: recent_pos[h] = i                      # last write wins == the tag's most-recent use
+    # The model's VETTED picks, INCLUDING corpus ones. The seed loop above cannot report these: it appends only
+    # `h not in seen`, and the whole corpus is already seeded, so a pick that IS a curated tag leaves no trace
+    # there. Recomputing here is what lets the clip signal order tier 0 — and that is the common case, because
+    # caption_prompt SHOWS the model the corpus as its menu, so most picks are corpus tags. Without this the
+    # lead cap below only helps when the model reaches outside the corpus, and a per-clip pick of a curated tag
+    # still ships the same persona-constant line. No picks / all junk -> empty -> the term is constant -> the
+    # order falls through to LRU + rank exactly as before (byte-identical).
+    picked = {h for h in (_norm(t) for t in (tags or []) if isinstance(t, str)) if h and h in vetted}
     def _tier(h):
         if h in corpus_norm: return 0
         if h in content_norm: return 1
         if store and h in base_rank: return 2
         return 3
-    kept.sort(key=lambda h: (_tier(h), 1 if h in recent_set else 0, rank.get(h, 999)))       # reach order (corpus, content, Graph-reach store, or frozen rank)
+    kept.sort(key=lambda h: (_tier(h), 0 if h in picked else 1, recent_pos.get(h, -1), rank.get(h, 999)))   # reach order (corpus, content, Graph-reach store, or frozen rank); clip-picked leads, then LRU, within a tier
+    # The curated corpus may not occupy EVERY slot. Tier 0 + the whole-corpus seed above means a corpus of
+    # >= max_tags monopolises the line: the model's clip picks (already membership-gated by `vetted` above, so it
+    # can only choose tags that PASSED the gate — it never invents) are tier 2/3 and can NEVER reach the cap,
+    # making the shipped line a pure function of the persona with the video not an input. Cap the corpus LEAD so
+    # >= (max_tags - _CORPUS_LEAD_MAX) slots stay reachable by clip-derived picks; surplus corpus tags keep their
+    # order behind them and still BACKFILL below when there are no picks. No non-corpus picks (or |corpus| <=
+    # _CORPUS_LEAD_MAX) -> the concatenation reproduces the sorted order exactly -> byte-identical.
+    if len(corpus_norm) > _CORPUS_LEAD_MAX:
+        cset = set(corpus_norm)
+        c_kept = [h for h in kept if h in cset]; o_kept = [h for h in kept if h not in cset]
+        kept = c_kept[:_CORPUS_LEAD_MAX] + o_kept + c_kept[_CORPUS_LEAD_MAX:]
     # Reserved floors take the TAIL slots so the corpus/reach LEAD is preserved: region reach first
     # (non-negotiable under a corpus — a curated corpus must not strip AR reach), then ONE clip-content tag (the
     # operator's "tags based off information" ask). Each guarantees its signal reaches the <=max_tags line even
