@@ -231,6 +231,22 @@ def _parse_etime(s: str) -> int | None:
     return days * 86400 + h * 3600 + m * 60 + sec
 
 
+def _adopt_settle_s(cfg: Config) -> int:
+    """How long a freshly-kickstarted pump must be left alone before a SHA mismatch may justify ANOTHER
+    kickstart: one full pass interval + one keeper tick.
+
+    The storm guard used KEEPER_POLL_INTERVAL_S (120s) — but the keeper FIRES every 120s, so a pump's age
+    is >= 120s at the very next fire and the guard let a kickstart through every cycle. Meanwhile the pump
+    only stamps its running SHA into the heartbeat when a PASS completes (default interval 600s), so it was
+    killed (SIGTERM) long before it could ever clear the mismatch: a permanent 120s restart loop in which no
+    pass ever finished. That never fired historically only because `age` was always None (BSD ps has no
+    `etimes`), so the guard skipped for the wrong reason and masked this. Fixing the ps keyword exposed it.
+
+    The guard must therefore wait on what it is ACTUALLY waiting for — the pump's next heartbeat — not on
+    the keeper's own cadence."""
+    return (installed_interval(cfg) or 600) + KEEPER_POLL_INTERVAL_S
+
+
 def _pump_pid_age_s() -> tuple[int | None, int | None]:
     """(pid, age_s) of the resident pump from launchd + `ps`, or (None, None) when the pump has no PID
     (not loaded / not running). age_s is None when a PID exists but its start-age is unreadable — the
@@ -361,10 +377,11 @@ def ensure(cfg: Config) -> dict:
                 # the pump PID is younger than one keeper interval — err toward skip-not-storm when age is
                 # unreadable. Exactly one kickstart per drift, then quiet until the fresh heartbeat clears it.
                 pid, age = _pump_pid_age_s()
-                if pid is not None and (age is None or age < KEEPER_POLL_INTERVAL_S):
-                    _log.warning("ensure.kickstart_stale_code: pump pid=%s age=%ss < %ss (or unreadable) "
+                settle = _adopt_settle_s(cfg)
+                if pid is not None and (age is None or age < settle):
+                    _log.warning("ensure.kickstart_stale_code: pump pid=%s age=%ss < %ss settle (or unreadable) "
                                  "— skipping to avoid a restart storm (running=%s deployed=%s)",
-                                 pid, age, KEEPER_POLL_INTERVAL_S, running, deployed)
+                                 pid, age, settle, running, deployed)
                 else:
                     _launchctl("kickstart", "-k", f"gui/{os.getuid()}/{LABEL}")   # cycle the PUMP onto new code
                     _kickstart_studio_if_present(cfg)         # Studio's only adopter now (execv path deleted)
