@@ -19,7 +19,7 @@ presumed stale.* This matrix is the single reconciled reading the constitutional
 
 | Reg | Register | Location | Nature | Freshness |
 |---|---|---|---|---|
-| E1 | Constitution evidence dossier | `docs/CONSTITUTION-EVIDENCE-DOSSIER.md` (untracked, shared checkout) | principles + contradictions | snapshot @ #652 — **partly stale** |
+| E1 | Constitution evidence dossier | `docs/CONSTITUTION-EVIDENCE-DOSSIER.md` (**tracked** 2026-07-16; frozen + superseded — R7·resolution) | principles + contradictions | snapshot @ #652 — **partly stale**; five known-false claims named in its banner |
 | E2 | ADR decision catalogue | `docs/adr/README.md` (tracked, 1722 lines) | 99 back-filled decision records | current |
 | E3 | CI governance program | ADR-0100/0101/0102 + `.github/ci-control-registry.yml` (+ schema) + `tools/ci` (#661) | control-plane authority + registry | current, **accepted-in-principle / rollout transitioning** |
 | E4 | Architecture governance | `docs/ARCHITECTURE_GOVERNANCE.md` (generated) + `tools/arch` + `.reports/architecture/**` | 21 executable rules, DERIVED/DECLARED | current |
@@ -86,6 +86,49 @@ Each: **Claim A** vs **Claim B** · current-tree evidence · **authoritative con
 - **Current evidence:** the Cycle 1–6 arch KB is **now tracked** (`.reports/architecture/governance/*.json`, `IMPLEMENTATION_GOVERNANCE.md` all in `origin/main`) — the historical GOV-001 gitignore hole is **closed**. Still untracked: `.agents/skills/domain-modeling/ADR-FORMAT.md` (the ADR convention), `docs/CONSTITUTION-EVIDENCE-DOSSIER.md` (E1, shared checkout), `docs/constitution/` (a parallel-agent artifact, shared checkout), and — until this PR — the constitutional layer itself.
 - **Authoritative conclusion:** the meta-defect is **mostly remediated** (arch KB tracked); the residual is a short, named list of untracked governance docs.
 - **Action:** **Record-as-remediation:** track `ADR-FORMAT.md`; decide the fate of `docs/CONSTITUTION-EVIDENCE-DOSSIER.md` (superseded by this layer — update or retire) and the parallel `docs/constitution/` (owned by another agent — do **not** absorb; leave for its owner). This PR persists the authoritative layer into the tree, closing the largest instance.
+
+#### R7 · resolution (2026-07-16) — the deferred fates, decided by the owner
+
+R7 deferred two decisions to the artifacts' owner rather than absorbing them unilaterally (correctly —
+`ENGINEERING_PHILOSOPHY.md` §12). The owner has now ruled. Both are hereby closed.
+
+- **`docs/CONSTITUTION-EVIDENCE-DOSSIER.md` (E1) → RETIRED AS TRACKED HISTORICAL EVIDENCE.** Executes
+  `SLICE-DOSSIER-RETIRE` (option 1: banner + retain). It is **now tracked**, carrying a
+  frozen/superseded banner that names its five known-false claims and their discharging PRs
+  (RC-4/RC-5 → #653/#654; the "21" count → #665; the env-var count → #656; the
+  `system-lens-map.md` claim → **false when written**; P30 → superseded by the live ADR system).
+  Tracked rather than deleted because **this file is E1** — an untracked citation target resolves on
+  one machine and dangles in every fresh clone, which is the very `arch-kb-was-never-in-git` defect R7
+  names. Its errors are left uncorrected in place: a superseded register is evidence of what was
+  believed and when.
+
+- **`docs/constitution/` (the parallel 11-doc layer) → SUPERSEDED; NOT LANDED; NOT ABSORBED.** Adjudicated
+  2026-07-16 against this layer, the catalogue, and the live tree. Verdict: **wholly superseded, zero
+  genuinely-missing knowledge.** It is a re-projection of registers this repo already tracks (its own
+  section headers say so — its dependency graphs are redrawn from catalogue §7/§5/§6, its per-ADR
+  registry from catalogue §2/§3), and landing it would have created the second constitution
+  `ENGINEERING_PHILOSOPHY.md` §12 exists to prevent. Three findings settled it:
+  1. **It would import falsified claims.** It asserts the RC-4/RC-5 restore race as a *live* CRITICAL
+     defect in three places; #653/#654 discharged it (`LAW-PERSIST-02`: "Residual: none").
+  2. **One of its laws is actively dangerous.** Its §4.2 mandates *"a transition MUST replace, not
+     mutate (`model_copy(update=…)`)"* and cites **GB-5** as support. GB-5 says the **opposite**: *"No
+     slice may convert a `setattr` on a `Moment` to `model_copy`"* — `Moment` is the only model with
+     `validate_assignment=True`, which `model_copy` **bypasses**, and `cast_add`/`cast_remove` are
+     correct *only* because of that setattr (`COUP-07`). An engineer following it would silently break
+     the per-persona ownership gate. `LAW-STATE-03` states the rule correctly and narrowly.
+  3. **Its traceability layer is a second registry**, restating CI-control rows, validator ids and
+     owners that `ARCHITECTURAL_LAWS.md` already carries inline — banned by `ARCHITECTURAL_LAWS.md:6`
+     ("the registry remains the single owner of control rows"), by `STANDARDS_ENFORCEMENT_MATRIX.md:14`
+     ("No second registry"), and by its own LAW-1.1. Its hand-drawn subsystem graph embeds **DERIVED**
+     module counts (127) that had already rotted against the measured 130 before it was ever committed.
+
+  **Disposition:** the files were never tracked and are **not** landed; the working copy is retained
+  locally by its owner, carrying a local superseded marker. Nothing is deleted from the tree, no
+  history is rewritten, and this row is the permanent record of why. Any future re-proposal must
+  re-derive against the **live tree**, not that snapshot.
+
+- **`.agents/skills/domain-modeling/ADR-FORMAT.md` → still open** (`SLICE-ADRFORMAT-TRACK`). R7's
+  residual is now **one** artifact, not three.
 
 ### R8 — The anomaly ledger's method and freshness
 - **A** (E5 `anomalies.md`): a frozen (2026-07-11) trace with an "all invariants HOLD" summary; self-declares C2–C10 "likely carry similar rot."
