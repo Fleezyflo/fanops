@@ -5,9 +5,10 @@
 The closed loop that lets **analyzed reach bias the creative dimensions it doesn't yet reach**. Every clip
 varies along several axes (length, opening frame, framing, casting, timing); this map traces, per axis, where
 the axis is **stamped** onto a `Post`, how it is **aggregated** by reach, and which **actuator** feeds the
-winner back into generation/scheduling. Built by Legs 2–3 of the insights rebuild
-(`.claude/plans/insights-culmination-MASTER.plan.md`); Leg 2 makes the reach authoritative, Leg 3 closes the
-three uncovered dims (framing/timing/casting).
+winner back into generation/scheduling. Built by Legs 2–3 of the insights rebuild; Leg 2 makes the reach
+authoritative, Leg 3 closes the three uncovered dims (framing/timing/casting). (The Leg 2–3 plan file is
+gone and its former path sat under the gitignored `.claude/plans/`, so it was never citable from a fresh
+clone — **this codemap is the tracked record of that design**, not a pointer to it.)
 
 ## The signal it ranks on (Leg 2)
 

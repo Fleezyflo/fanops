@@ -1,6 +1,6 @@
 # HANDOFF — MOH FLOW FAN OPS
 
-This file is the cross-session source of truth. It is **rewritten each session** (the §Now block is point-in-time, not an append-only log). Frozen provenance lives in `docs/archive/handoff-history.md` (created on first archive). The current build plan is `.claude/plans/insights-culmination-MASTER.plan.md`. Deviations from plans made during the build are recorded in auto-memory (`fanops-build-deviations.md` + the per-topic memory files).
+This file is the cross-session source of truth. It is **rewritten each session** (the §Now block is point-in-time, not an append-only log). Frozen provenance lives in `docs/archive/handoff-history.md` (created on first archive). Deviations from plans made during the build are recorded in auto-memory (`fanops-build-deviations.md` + the per-topic memory files). **There is no standing "current build plan" file.** This line used to name `.claude/plans/insights-culmination-MASTER.plan.md`, which no longer exists — and `.claude/plans/` is gitignored by design ("superseded plans (kept on disk, not tracked)", `.gitignore:46`), so **no tracked doc may cite a path under it as authority**: such a citation cannot resolve in a fresh clone or in CI, by construction. Per-subsystem intent lives in the tracked codemaps (`docs/CODEMAPS/`); the work of record is the ledger of merged PRs.
 
 ## §State (re-verify the Check commands before quoting)
 

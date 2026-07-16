@@ -8,8 +8,8 @@ the author; it rejects only the three things a regex can decide without reading 
 The semantic slop-regexes (superlative templates, 'cuts'/editing, shot-description, cliches) were
 DELETED in v2: as regexes they both over-fire (kill a legible 'he names the day it changed') and
 under-fire (miss third-person narration entirely), which is exactly why prompt-only quality capped at
-~22%. Quality calls now belong to the always-on strict critic. A rejected hook becomes None -> a clean
-clip (clean beats slop). Length is NOT gated; the prompt owns brevity."""
+~22%. Quality is the AUTHOR's alone: the editor+critic cascade this line once named was DELETED (#72) —
+no judge survives it. A rejected hook becomes None -> a clean clip (clean beats slop). Length is NOT gated; the prompt owns brevity."""
 from __future__ import annotations
 import re
 
