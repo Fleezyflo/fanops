@@ -31,11 +31,14 @@ a *different artist* — on 93% of two handles' posts.
 
 ## Terminal state (frozen 2026-07-16 — R4 is closed)
 
+Two rows below name a SHA. Read them as R4's boundary, not as "what `main` says today" — `main` moves on, and
+that is not drift:
+
 | | |
 |---|---|
-| `main` | **`caa3427`**, CI `success`, architecture `success`, arch gate 0 stale / 0 blocking |
-| PRs | **six**, all merged normally — no admin bypass |
-| Live pump | **one** instance, on **`caa3427`** by its own heartbeat |
+| `main` | **`caa3427`** — R4's terminal SHA: the last commit that changed R4 **code or live data**. CI `success`, architecture `success`, arch gate 0 stale / 0 blocking. Later commits move `main` **without reopening R4** (the handoff, #691, is docs-only and does not). |
+| PRs | **six** (#679, #681, #687, #688, #689, #690), all merged normally — no admin bypass |
+| Live pump | **one** instance, on **`caa3427`** at the freeze, by its own heartbeat. It **adopts every later merge by design** — see below — so a *higher* SHA on the pump is the keeper working, not a regression. |
 | Curated corpora | **22** tags across 8 personas, all `pinned`, `reach: null` |
 | Discovery store | 18 tags, **`reach: {}`** |
 | Rollback snapshot | `personas.json.r4-bak-20260716T130424Z`, **5369 bytes**, intact |
