@@ -155,10 +155,14 @@ byte-identical, so the *terminal* SHA — not just the one restarted onto — is
 These were measured, recorded, and **accepted by the operator as closed-out residue**. R4 is frozen; none of
 these reopens it. Residual 1 is handed to a separate program, briefed and not started.
 
-1. **The model repeats itself.** Replaying its real picks: only **6–15 distinct pick-sets per handle over
-   66–76 surfaces, 54–76% on one set**. Now the *dominant* cause of near-identical lines, upstream of every
-   change here. Partly caused by the polluted corpus (the prompt tells the model to *prefer* the corpus), so
-   it should improve on clean corpora — **unproven until captions regenerate**. Handed off to
+1. **The model repeats itself — a hypothesis, not a measurement.** Replaying its real picks: **6–15 distinct
+   pick-sets per handle over 66–76 surfaces, 54–76% on one set**, against a **~4% structural floor**. Recorded
+   here originally as "the dominant cause"; that **overclaimed**. What is measured is that the **old selector
+   dominated** — it mapped raw 54–76% onto a uniform **90.9–93.0%** shipped. And the assumption that clean
+   corpora would help **may be backwards**: `burner-bold` went 12 corpus tags → 3, and the prompt tells the
+   model to prefer the corpus. Unresolvable from existing data — every recorded pick was conditioned on the
+   polluted corpus (`cisumwolfhom` picked `#explorepage #hiphop #trending #viral` 45× of 67, exactly its old
+   corpus's junk). Full correction in ADR-0104. Handed off to
    [`design/briefs/17-hashtag-model-diversity.md`](../design/briefs/17-hashtag-model-diversity.md), which is a
    **brief only**: it gates all work on regenerating captions against the clean menu first, and it may not
    touch corpus hygiene, reach persistence, or daemon adoption. Note the trap it records — a whole-line

@@ -1,113 +1,230 @@
 # Brief — Hashtag model diversity
 
 **Unit tag:** `Unit: hashtag-model-diversity`
-**Status:** brief only — no implementation in this document. **Nothing here may start before the evidence gate in §3 is satisfied.**
-**Boundary:** R4 is closed and frozen (ADR-0104, [`r4-migration-record.md`](../../CODEMAPS/r4-migration-record.md)). This brief inherits R4's residual #1 and nothing else. §7 lists what it may not touch.
+**Status:** brief only — no implementation. §4's gate must be satisfied before any code changes.
+**Boundary:** R4 is closed and frozen (ADR-0104, [`r4-migration-record.md`](../../CODEMAPS/r4-migration-record.md)). §9 lists what this program may not touch.
 
 ---
 
-## 1. The problem, as measured
+## 1. What is actually measured
 
-Replaying the model's **real recorded picks** (`meta_captions.hashtags_raw`) across all 347 live posts, per posting handle:
+All figures below are from the live ledger (`00_control/ledger.sqlite`, 347 clips × 1 surface each), replaying
+`meta_captions.hashtags_raw` — **the model's verbatim picks, recorded independently of the selector**.
 
-| Measure | Observed |
-|---|---|
-| surfaces per handle | 66–76 |
-| distinct pick-sets per handle | **6–15** |
-| share of a handle's surfaces on its single modal set | **54–76%** |
+| handle | n | model raw: sets / modal% | old selector shipped: sets / modal% | new selector (replay): sets / modal% |
+|---|---|---|---|---|
+| markmakmouly | 76 | 15 / 68.4% | 4 / 92.1% | 5 / 78.9% |
+| backlikeineverleft | 71 | 9 / 76.1% | 5 / 93.0% | 5 / 80.3% |
+| perca.late | 67 | 14 / 53.7% | 6 / 92.5% | 10 / 61.2% |
+| cisumwolfhom | 67 | 7 / 67.2% | 7 / 91.0% | 2 / 98.5% |
+| hrmny-blog | 66 | 6 / 75.8% | 6 / 90.9% | 4 / 80.3% |
 
-Handed a menu, the model converges on a modal answer. After R4 this is the **dominant** remaining cause of near-identical hashtag lines: the menu is now clean, persona-specific and non-circular, but a clean menu does not make the model choose differently *from* it.
+**Structural floor: 3.5–4.8% modal, ~140 distinct sets** — the selector run on *maximally diverse* synthetic
+picks from the live 18-tag menu. This is the concentration the design itself imposes. It is small. The
+curated lead fixes 2 of 4 slots, but the remaining 2 vary freely, so **the design is not a meaningful source
+of repetition.** Any claim that "some of this is by design" is bounded by ~4pp and must not be used to excuse
+more.
 
-Ranges, not a per-handle table, because ranges are what was measured. Do not quote a per-handle figure until §6's replay produces one.
-
-**Do not read these numbers as a defect budget.** Per §2, a large part of that repetition is now correct.
-
----
-
-## 2. The trap: some repetition is the design
-
-Post-#679 the shipped line is **4 slots**:
-
-- **2** — curated brand identity (`_CORPUS_LEAD_MAX`), drawn from a 2–4 tag corpus
-- **≤1** — platform discovery floor (`#fyp` / `#reels` / `#viral`), one per platform, **by design**
-- **the remainder** — the clip's own vetted picks
-
-With `craft-curator`'s corpus at `#bars #lyrics #hiphopmusic`, the lead has roughly three combinations — **and that is the point.** It is the brand identity R4 exists to guarantee (ADR-0104: curated identity on 100% of lines).
-
-**Therefore diversity must be measured on the clip-derived slots only, holding the lead fixed.** A whole-line diversity metric is maximised by deleting the curated lead — that is, by undoing R4. Any proposal that improves the metric by shrinking the lead is rejected by construction, not on judgement.
+`recent` does not move any of these numbers: replaying with an empty recency list and with every prior tag
+for the handle gives **byte-identical** results, because recency is the third sort key and tier/`picked`
+already break every tie. The graded-LRU term from #679 is inert on this data.
 
 ---
 
-## 3. Evidence gate — required before any change
+## 2. The confound — why none of §1's right-hand columns predict production
 
-Every number in §1 was produced against the **polluted** corpus. They cannot attribute the repetition, because the prompt told the model to *prefer* a corpus that was junk. **No mechanism may be diagnosed and no code changed until picks exist that were generated against the clean menu.**
+**The model's picks were conditioned on the prompt, and the prompt showed it the old, polluted corpus.**
+`caption_prompt` presents the corpus as the model's menu. So `hashtags_raw` is not an independent variable —
+it is a *response* to a corpus that no longer exists.
 
-Two ways to get them:
+The evidence is direct. `cisumwolfhom` (persona `burner-bold`) picked, 45 times out of 67:
 
-| Route | Cost | Latency |
-|---|---|---|
-| Force-regenerate captions across the 347-post corpus | **real LLM spend** (`FANOPS_RESPONDER=llm` is the live setting) — order 347 calls | hours |
-| Let the daemon generate naturally as clips flow | **free** — already paid for | days |
+```
+#explorepage  #hiphop  #trending  #viral
+```
 
-Prefer the free route unless the operator wants the answer sooner and accepts the spend. Minimum usable sample: **≥30 surfaces per posting handle**, or the concentration figure is noise.
+Its **pre-migration** corpus was `#viral #rapmusic #hiphop #trending #post #fypppp…(73 p's) #explore #love
+#explorepage #instagood #art #highlights`. The model was picking the junk it was shown. R4 removed that junk,
+so those picks no longer survive the vetted membership gate; `o_kept` empties, the 3-tag corpus backfills the
+line, and the replay pins at **98.5% / 2 sets**.
+
+**That 98.5% is an artifact of composing old picks × new menu — a world that will never exist.** The same
+confound applies to the four handles that appear to *improve*. Replay holds the selector honest but cannot
+fix a wrong input distribution.
+
+Two consequences, both binding on this program:
+
+- **A free "selector-only" replay is not available.** The selector is a pure function, but its behaviour
+  depends on the pick distribution, so isolating it requires picks drawn from the *current* prompt.
+- **The one free, valid measurement is the structural floor** (§1), because it uses synthetic inputs and
+  therefore has no prompt conditioning to confound.
 
 ---
 
-## 4. Differential diagnosis — four mechanisms, one decision tree
+## 3. The live hypothesis this program must test first
 
-The repetition is prompt-, sampling-, selector-, or model-behaviour-driven. These are distinguishable with data that already exists per surface; run the tree in order and stop at the first hit.
+Prior work assumed clean corpora would *reduce* repetition. **The measured data suggests the opposite is
+plausible and it must be tested, not assumed.**
 
-1. **Are two clips' prompts materially different?** Hash the `caption_prompt` output per surface.
-   - **Prompts identical across clips** → the model cannot be blamed. The defect is **prompt construction**: the clip's own signal (transcript, entities) is not reaching the prompt. Fix upstream. Stop.
-2. **Prompts differ. Does `hashtags_raw` (the model's raw picks, pre-selector) vary?**
-   - **Raw varies, shipped line does not** → **selector**-driven. `vet_hashtags` is collapsing distinct inputs onto one output (cap 4, lead 2, floor ≤1 — see §2). Measure the free-slot headroom before touching anything else.
+`burner-bold`'s corpus went from **12 tags to 3**. The prompt instructs the model to *prefer* the corpus.
+A smaller menu gives the model less to vary over, so R4's curation may **increase** model repetition even as
+it improves relevance. Relevance and diversity may be in direct tension, and R4 bought relevance.
+
+This is the first thing §4's evidence must answer, because it determines whether the program is "make the
+model vary more" or "give the model more admissible material to vary over" — different work entirely.
+
+---
+
+## 4. Evidence gate — staged, cheapest first
+
+Nothing may be diagnosed or changed until picks exist that were generated against the **clean** menu.
+
+| Stage | What | Cost | Gate to proceed |
+|---|---|---|---|
+| **0** | Structural floor (§1) — synthetic picks, no LLM | **free**, already run: 3.5–4.8% | done |
+| **1** | **30 surfaces per posting handle** (~150 captions) regenerated against clean corpora | ~150 LLM calls | measure §5 tree + §6 criteria |
+| **2** | Expand to full corpus **only if** stage 1's interval straddles a decision boundary | ~347 total | — |
+
+**Power.** The statistic is a proportion (modal share), so `SE = sqrt(p(1-p)/n)`. At p ≈ 0.7:
+
+- **n = 30/handle** → SE ≈ 8.4pp → 95% CI ≈ **±16pp**. Detects a ≥20pp shift — the size of effect worth acting on.
+- **n = 70/handle** → SE ≈ 5.5pp → 95% CI ≈ **±11pp**. Buys ~5pp of precision for 2.3× the spend.
+
+So stage 1 resolves any large effect, and stage 2 is justified only near a boundary. **Do not open with 347
+generations.**
+
+**Methodological trap — do not compare distinct-set counts across different n.** Distinct-set count grows
+with sample size, so §1's "15 sets over 76 surfaces" is *not* comparable to "8 sets over 30 surfaces". Modal
+share is n-robust in expectation; use it as the primary statistic, and rarefy to a common n before ever
+quoting a count.
+
+Waiting for the daemon to regenerate naturally is free but delivers an uncontrolled, slowly-arriving sample;
+prefer it only if no one needs the answer this week.
+
+---
+
+## 5. Differential diagnosis — one decision tree
+
+Run in order; stop at the first hit.
+
+1. **Are two clips' prompts materially different?** Hash `caption_prompt` output per surface.
+   - **Identical across clips** → the model cannot be blamed. Defect is **prompt construction**: clip signal
+     is not reaching the prompt. Fix upstream. Stop.
+2. **Prompts differ. Does `hashtags_raw` vary?**
+   - **Raw varies, shipped does not** → **selector**-driven. Measure membership-survival (§7) before anything else.
    - **Raw does not vary** → model or sampling. Go to 3.
 3. **Does raw vary when temperature / top-p are raised on identical prompts?**
-   - **Yes** → **sampling**-driven. Responder configuration, not a prompt problem.
-   - **No** → **model behaviour** — mode collapse toward genre-typical tags. Needs prompt-level intervention (e.g. requiring the model to justify each pick from the transcript). This is the expensive branch; do not assume it.
+   - **Yes** → **sampling**-driven: responder configuration.
+   - **No** → **model behaviour** (mode collapse toward genre-typical tags). The expensive branch.
 
-**Prior, stated up front so it can be falsified:** per §2 the free-slot count is small, so even a perfectly diverse model would still produce a mostly-repeating *line*. Expect the **selector** branch to carry more of the explanation than model behaviour. Measure it; do not assume it.
-
----
-
-## 5. Success metrics — joint, never single
-
-Diversity alone is trivially gamed by shipping irrelevant tags. All five must hold **simultaneously**, on the same replay:
-
-| Axis | Metric | Direction | Guard |
-|---|---|---|---|
-| Diversity | distinct **clip-derived** pick-sets per handle | ↑ | clip slots only — never whole-line (§2) |
-| Concentration | share of a handle's surfaces on its modal **clip-derived** set | ↓ | per-handle, never pooled |
-| Relevance | every shipped non-floor tag traceable to the clip's transcript/entities **or** the curated corpus | **100%** | no regression; 0 tags without provenance |
-| Persona consistency | curated identity present on the line | **100%** | no regression — ADR-0104's guarantee |
-| Safety | off-catalogue / malformed / generic-engagement tags shipped | **0** | no regression — R4's proof |
-
-**No numeric diversity target is set here.** Setting one before §3's evidence exists would be inventing a threshold to hit — the same class of failure R4 removed. Derive the target from the first clean-menu measurement.
+**Prior, held loosely:** given the limited number of free slots and the membership gate, selector effects are
+expected to contribute materially — but this remains a hypothesis to be tested, and §1 shows the structural
+floor is only ~4pp, so the selector has less room to explain than it first appears.
 
 ---
 
-## 6. Required before/after replay
+## 6. Root-cause acceptance criteria
 
-Same harness, same surfaces, same corpora — otherwise it is not a comparison. **Two baselines, because there are two axes:**
+A mechanism is accepted as **the dominant cause** only if it clears all of the following. Without this, every
+experiment explains *some* variance and the program never terminates.
 
-- **Selector baseline — exists now.** The R4 proof: clean corpora × *old* picks. Isolates selector behaviour with the model held fixed.
-- **Model baseline — does not exist yet.** Clean corpora × *fresh* picks from §3. This is the real "before", and §3 is the only way to get it.
-- **After.** Clean corpora × fresh picks × the change.
+**Denominator.** Concentration is not measured against zero — it is measured against the structural floor:
 
-Corpus-wide (**all 347 surfaces**, not a sample) and reported **per handle** — the concentration is a per-handle property and a pooled number hides it. Publish §1's table plus every §5 guard, before and after, in one place.
+```
+excess = observed_modal_share − structural_floor        (floor ≈ 4%, §1, re-derive per handle)
+```
+
+**Acceptance:** neutralising the mechanism must collapse **≥80% of `excess`**, per handle, on ≥4 of 5 handles,
+measured on the same replay — **while regressing none of:**
+
+| Guard | Bound |
+|---|---|
+| persona consistency (curated identity present) | 100%, no regression |
+| transcript/corpus relevance (every non-floor tag traceable) | 100%, no regression |
+| malformed rate | 0, no regression |
+| off-catalogue rate | 0, no regression |
+| determinism where required (`_render_fingerprint`-style purity) | unchanged |
+
+A mechanism explaining <80% of excess is a **contributor**, recorded and not acted on further. If two
+mechanisms each clear 80%, they interact — report the interaction rather than picking a winner.
 
 ---
 
-## 7. Explicitly out of scope — closed, do not reopen
+## 7. Intervention ladder — with stop conditions
+
+Cheapest first. **Stop at the first rung that clears §6.** Do not proceed to the next rung to chase a better
+number.
+
+| # | Rung | Stop condition |
+|---|---|---|
+| 1 | **Membership headroom** — measure what fraction of model picks survive the vetted gate. If <2 survive per surface, the corpus backfills and the line pins regardless of the model (§2). Widening admissible material is data work, not code. | diversity clears §6 with relevance intact → **stop** |
+| 2 | **Prompt** — does the prompt carry clip-distinguishing signal at all (§5.1)? | clears §6 → **stop** |
+| 3 | **Sampling** — responder temperature / top-p. | clears §6 → **stop** |
+| 4 | **Selector** — slot allocation, `_CORPUS_LEAD_MAX`, cap. **Changing these touches ADR-0104's guarantee; requires an ADR amendment, not a patch.** | clears §6 → **stop** |
+| 5 | **Model prompt redesign** — e.g. require the model to justify each pick from the transcript. Expensive; last. | — |
+
+Rung 1 before rung 5 is the whole point: §2 shows the currently-observed collapse is a *membership* effect,
+not a model effect.
+
+---
+
+## 8. Measurement apparatus — specified now, implementation-neutral
+
+**Source.** `00_control/ledger.sqlite` → `ledger_rows(map_name, row_id, payload)`; `map_name='clips'`;
+`payload` is clip JSON. Counts today: `clips` 347, `posts` 347, `moments` 347, `sources` 7, `batches` 5.
+
+**Per-surface record.** `payload.meta_captions["<handle>/<platform>"]`:
+
+```json
+{"caption": "...", "hashtags": [...], "hashtags_raw": [...],
+ "hook": null, "axis": null, "rationale": null,
+ "tag_sources": {"#tag": "content|corpus|region|graph-reach|discovery|genre-floor"}}
+```
+
+**Field semantics — the one thing to get right.** `tag_sources` records **where a tag was found**, not **who
+chose it** (`hashtags.py:405`, priority `content > corpus > region > graph-reach > discovery > genre-floor`).
+A model pick that is also a corpus member labels `corpus`. **Authorship lives in `hashtags_raw` alone.**
+Therefore:
+
+```
+model-honoured slots   = hashtags ∩ hashtags_raw
+selector-inserted slots = hashtags − hashtags_raw
+```
+
+Live baseline: `tag_sources` vocabulary is `{corpus: 1378, region: 10}` — exactly 4.0 tags/surface, and
+`content` **never appears**, because the caption path deliberately does not pass `content=`
+(`caption.py:328`; regression-locked by `tests/test_content_aware_hashtags.py` — "corpus-only"). Do not read
+`content: 0` as a defect and do not wire it; that is a settled decision.
+
+**Extraction query.**
+
+```sql
+SELECT payload FROM ledger_rows WHERE map_name = 'clips';
+-- then, per surface: json_extract(payload, '$.meta_captions')
+```
+
+**Statistical outputs**, per handle: `n`; modal share of `frozenset(hashtags_raw)` ± Wilson 95% CI; modal
+share of `frozenset(hashtags)` ± CI; distinct-set counts **rarefied to a common n**; mean |raw ∩ shipped|;
+membership-survival rate; `excess` vs the per-handle structural floor.
+
+**Report format.** §1's table, before and after, plus every §6 guard, in one document. Per handle, never
+pooled — concentration is a per-handle property and pooling hides it.
+
+---
+
+## 9. Out of scope — closed, do not reopen
 
 | Area | Closed by | Status |
 |---|---|---|
-| Corpus hygiene, curation, the circularity cut | ADR-0104, PR #681 | **Frozen.** The corpus is human-governed brand data. This program does not rewrite, pad, or auto-populate it. |
-| Reach persistence / evidence accrual | PR #679 (H3) | **Closed.** Evidence accrues and is never destructively overwritten. Not a diversity lever. |
-| Daemon code adoption | PRs #688, #689 | **Closed, and proven live** — one adopt per merge, then settle. |
-| Store → corpus proposal | ADR-0104 | **Frozen.** Requires `source == "graph-reach"` and unexpired evidence. Not to be relaxed to buy variety. |
+| Corpus hygiene, curation, the circularity cut | ADR-0104, PR #681 | **Frozen.** Human-governed brand data. Not rewritten, padded, or auto-populated. |
+| Reach persistence / evidence accrual | PR #679 (H3) | **Closed.** Not a diversity lever. |
+| Daemon code adoption | PRs #688, #689 | **Closed, proven live** — one adopt per merge, then settle. |
+| Store → corpus proposal | ADR-0104 | **Frozen.** Requires `source == "graph-reach"` + unexpired. Not relaxed to buy variety. |
+| `content=` wiring | `tests/test_content_aware_hashtags.py` | **Settled: corpus-only.** Not a gap. |
 
-Two temptations, named here so they are refused on sight rather than re-argued:
+Temptations refused on sight:
 
-- **Padding the corpus to a quota to manufacture variety.** This re-crowds the clip out of its own line — precisely the defect #679 fixed.
-- **Relaxing the evidence rule so more tags can be proposed.** This restores the `corpus → store → corpus` circularity ADR-0104 severed by data model.
+- **Padding the corpus to a quota to manufacture variety** — re-crowds the clip out of its own line, the
+  defect #679 fixed. Note §3: if evidence shows the 3-tag corpus is the binding constraint, the answer is an
+  **ADR-0104 amendment with the operator curating more real tags**, never an auto-pad.
+- **Relaxing the evidence rule so more tags can be proposed** — restores the circularity ADR-0104 severed.
