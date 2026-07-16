@@ -5,31 +5,61 @@ discover_corpus is the live co-occurrence harvest that finds tags we have never 
 offline re-rank. Both are re-exported from fanops.personas — and discover_corpus MUST stay patchable at
 `fanops.personas.discover_corpus` (tests monkeypatch it there; fanops_hashtags imports it lazily)."""
 from __future__ import annotations
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from fanops.config import Config
 from fanops.hashtags import _norm, _screen_content, _strip_banned, load_bans, load_store_reach
+from fanops.hashtag_hygiene import is_curatable
 from fanops.personas import Personas
 
 
-def research_corpus(cfg: Config, pid: str, *, limit: int = 8) -> list[str]:
-    """B3: propose the reach-best hashtags this persona doesn't yet carry — the bootstrap "research my
-    corpus" step. Grounded in the reach-ranked store (LIVE Meta Graph reach), minus its current corpus.
-    INSTANT + budget-free: the store already encodes the Graph signal (refresh_store built it), so no
-    per-candidate Graph call is spent here. Returns an ordered list of candidate tags (most-reach
-    first) the operator accepts into the corpus. Unknown id -> KeyError. (M3: tag_lean retired — the curated
-    corpus itself is the persona's flavor; research re-ranks the reach universe against it.)"""
-    from fanops.hashtags import vetted_menu, load_store   # _norm already imported at module scope
+_EVIDENCE_MAX_AGE_DAYS = 90       # older than this is stale, not evidence — expiry, so a dead measurement cannot curate forever
+
+
+def research_corpus(cfg: Config, pid: str, *, limit: int = 8, now: datetime | None = None) -> list[str]:
+    """B3/R4: propose hashtags this persona doesn't carry, from MEASURED EVIDENCE ONLY — never from the
+    store menu. Budget-free (it reads what refresh_store already bought). Unknown id -> KeyError.
+
+    R4 — THIS FUNCTION IS THE CUT THAT BREAKS THE CIRCULARITY, so the filter below is load-bearing, not
+    defensive dressing. It used to propose from `vetted_menu(load_store(cfg))`: the whole store, ranked.
+    But `fanops_hashtags._seed_tags` BUILDS the store out of every persona's corpus, so the store's tags
+    are mostly the corpora echoed back — and `refresh_persona_corpus` fed these proposals straight into
+    the corpus as auto entries. corpus -> store -> corpus, closed, with no external evidence anywhere in
+    it and nothing in the shape of the data to reveal that. Measured on the live control dir 2026-07-16:
+    the store was BYTE-IDENTICAL to `seeds + frozen floor` — 53 tags, 0 discovered, `reach: {}` — while
+    every proposal it made looked like ranked research.
+
+    The fix is structural, not a heuristic: a tag may be proposed ONLY if it carries real Graph evidence
+    (`source == 'graph-reach'`, a `measured_at`, a positive reach) that is not expired. A corpus tag
+    echoed into the store as an unmeasured SEED carries none, so it can never be proposed back — the edge
+    is severed by the data model, not by a rule someone must remember. No evidence -> [] (honest silence:
+    the correct answer when nothing has been measured is 'nothing', not a re-ranked mirror)."""
+    from fanops.hashtags import load_store_evidence
     per = Personas.load(cfg).get(pid)
     if per is None:
         raise KeyError(pid)
     have = {_norm(t) for t in per.hashtag_corpus if isinstance(t, str)}
-    ranked = vetted_menu(load_store(cfg))                                # store (live Graph reach) else frozen reach-order
-    out: list[str] = []; seen: set[str] = set()
-    for t in ranked:
-        n = _norm(t)
-        if n and n not in have and n not in seen:
-            seen.add(n); out.append(n)
-    return out[:limit]
+    ev = load_store_evidence(cfg)
+    ranked = sorted((t for t in ev if _is_evidence(ev[t], now=now)), key=lambda t: ev[t]["reach"], reverse=True)
+    return [t for t in ranked if t not in have and is_curatable(t)][:limit]
+
+
+def _is_evidence(rec: dict, *, now: datetime | None = None) -> bool:
+    """True when an evidence record is a real, unexpired Graph MEASUREMENT — the promotion gate's core
+    predicate. Demands provenance (`source == 'graph-reach'`), a parseable `measured_at`, a positive
+    reach, and freshness within _EVIDENCE_MAX_AGE_DAYS. `source: 'unknown'` (a legacy bare number whose
+    provenance we genuinely do not know) FAILS by design — unprovenanced data must not curate, and the
+    migration marks it honestly instead of inventing a source for it."""
+    if not isinstance(rec, dict) or rec.get("source") != "graph-reach":
+        return False
+    try:
+        if float(rec.get("reach") or 0) <= 0:
+            return False
+        ts = datetime.fromisoformat(rec["measured_at"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    return (now or datetime.now(timezone.utc)) - ts <= timedelta(days=_EVIDENCE_MAX_AGE_DAYS)
 
 
 def discover_corpus(cfg: Config, pid: str, *, limit: int = 8, measure_k: int = 0, get=None,
@@ -135,12 +165,22 @@ def refresh_persona_corpus(cfg: Config, pid: str, *, get=None, now=None) -> dict
         cands = discover_corpus(cfg, pid, limit=max(auto_slots, gap) + len(auto), measure_k=measure_k,
                                 get=get, offline_fallback=False)
     elif len(corpus) < target:
-        cands = [{"tag": t} for t in research_corpus(cfg, pid, limit=target - len(corpus))]
+        # R4: was `research_corpus(...)` -> the store, re-ranked, promoted straight into the corpus as AUTO
+        # entries. Since _seed_tags BUILDS the store from the corpora, that closed the loop and let an
+        # unmeasured echo of our own curation return as "research". research_corpus is now evidence-only, so
+        # this path yields tags that carry real Graph measurement or nothing at all. Kept (not deleted) so a
+        # persona under target still fills from GENUINE evidence bought by an earlier funded refresh.
+        cands = [{"tag": t} for t in research_corpus(cfg, pid, limit=target - len(corpus), now=now)]
     elif corpus_has_ban:
         cands = []          # nothing to ADD, but fall through so `final` (ban-stripped) is written -> the ban is purged
     else:
         return {"changed": False}
     screened = _screen_content([c["tag"] for c in cands if isinstance(c, dict) and c.get("tag")], cfg)
+    # R4 promotion gate: a discovered tag may only become CURATED data if it is structurally clean. Junk that
+    # reaches the corpus is near-permanent (it seeds the store, biases selection, and a human has to notice it
+    # to remove it) — `#fypppppppppp…` got in exactly this way and shipped live. Deterministic, so promotion is
+    # reviewable rather than a matter of taste at 3am on a daemon tick.
+    screened = [t for t in screened if is_curatable(t)]
     cand_by_tag = {_norm(c["tag"]): c for c in cands if isinstance(c, dict) and _norm(c.get("tag", ""))}
     novel = _strip_banned([t for t in screened if _norm(t) not in have], bans)   # U11: a banned discovered tag never re-enters (store refresh must not resurrect a ban)
     pool = _strip_banned(list(dict.fromkeys(auto + novel)), bans)                 # belt-and-suspenders: no banned tag reaches new_auto/final

@@ -33,8 +33,15 @@ def _router(media, *, reach=None):
 
 
 def _seed_store(cfg, reach: dict[str, float]):
+    """A store whose tags carry MEASURED Graph reach. R4: this helper means "we measured these", so it writes
+    evidence records — a bare number now reads back `source: "unknown"` and is (correctly) refused for
+    curation, because we would not know where it came from. See ADR-0104."""
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
     cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg.hashtags_path.write_text(json.dumps({"tags": list(reach.keys()), "reach": reach}))
+    cfg.hashtags_path.write_text(json.dumps({"tags": list(reach.keys()), "reach": {
+        t: {"reach": v, "measured_at": now, "source": "graph-reach", "confidence": 1.0}
+        for t, v in reach.items()}}))
 
 
 def _write_meta(cfg, pid, corpus, meta):

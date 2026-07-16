@@ -814,6 +814,8 @@ def main(argv: list[str] | None = None) -> int:
     hash_sub = p_hash.add_subparsers(dest="hashtags_cmd", required=True)
     hash_sub.add_parser("refresh", help="rebuild 00_control/hashtags.json from live Graph reach (harvest->measure->rank; needs Meta creds, fail-open)")
     hash_sub.add_parser("discover", help="report fresh per-persona hashtags from live category top_media (needs Meta creds; never writes the menu)")
+    p_mig = hash_sub.add_parser("migrate", help="R4: retire polluted persona corpora + upgrade the store's reach map to evidence records (snapshots first; idempotent)")
+    p_mig.add_argument("--apply", action="store_true", help="write the change (default: dry run — report the diff, touch nothing)")
     p_lever = sub.add_parser("lever", help="persona lever reference docs (generated from the live registry)")
     lever_sub = p_lever.add_subparsers(dest="lever_cmd", required=True)
     lever_sub.add_parser("docs", help="regenerate docs/LEVERS.md + docs/LEVER-THRESHOLDS.md")
@@ -1304,6 +1306,9 @@ def _dispatch(cfg: Config, args) -> int:
         if args.hashtags_cmd == "discover":
             from fanops.fanops_hashtags import cmd_hashtags_discover  # lazy: keeps it off the hot path
             return cmd_hashtags_discover(cfg)
+        if args.hashtags_cmd == "migrate":
+            from fanops.hashtag_migrate import cmd_hashtags_migrate   # lazy: keeps it off the hot path
+            return cmd_hashtags_migrate(cfg, apply=bool(getattr(args, "apply", False)))
         return 2
     if args.cmd in ("lever", "threshold"):
         if getattr(args, "lever_cmd", None) == "docs" or getattr(args, "thresh_cmd", None) == "docs":

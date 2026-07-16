@@ -13,9 +13,10 @@ one with a generic set (the abort is loud + distinct from a genuinely persona-le
 discover REPORTS fresh per-persona discoveries and NEVER writes the caption menu (curation stays operator-
 gated in the Studio)."""
 from __future__ import annotations
+from datetime import datetime, timezone
 from fanops.config import Config
 from fanops.log import get_logger
-from fanops.hashtags import _norm, vetted_menu, load_store_reach
+from fanops.hashtags import _norm, vetted_menu, load_store_evidence
 from fanops.controlio import write_json_atomic
 
 
@@ -75,7 +76,15 @@ def refresh_store(cfg: Config, *, get=None, now=None) -> dict:
     # the budget showed 30 spent queries. Merge over what is on disk and rank by the ACCRUED reach (ranking on
     # `measured` alone also re-ordered the whole store back to raw seed order on every zero-budget tick). Pruned
     # to `merged` so a tag dropped from the universe does not linger. No prior reach -> identical to before.
-    accrued = {**load_store_reach(cfg), **{t: round(measured[t]) for t in measured}}
+    # R4: evidence records, not bare numbers. This tick's measurements carry FULL provenance (source +
+    # measured_at + confidence); anything already on disk is preserved verbatim, so a legacy number stays
+    # honestly marked `unknown` rather than being back-dated into fake evidence. research_corpus promotes only
+    # on `source == 'graph-reach'` + freshness, so provenance is load-bearing, not decoration.
+    stamp = (now or datetime.now(timezone.utc)).isoformat()
+    accrued: dict[str, dict] = dict(load_store_evidence(cfg))
+    for t in measured:
+        accrued[t] = {"reach": float(round(measured[t])), "measured_at": stamp,
+                      "source": "graph-reach", "confidence": 1.0}
     for t in accrued:                                     # a tag we already MEASURED stays in the universe even when
         if t not in useen: useen.add(t); universe.append(t)   # this tick's harvest does not re-surface it. `universe` is
     # rebuilt per call from the harvest + seeds, so without this a discovered high-reach tag silently leaves BOTH the
@@ -83,12 +92,12 @@ def refresh_store(cfg: Config, *, get=None, now=None) -> dict:
     # it can never widen the measured set or spend a budget slot.
     merged: list[str] = []; seen: set[str] = set()
     for t in sorted([t for t in universe if t in accrued],
-                    key=lambda k: accrued[k], reverse=True):   # PRIMARY: live Graph reach, accrued across refreshes
+                    key=lambda k: accrued[k]["reach"], reverse=True):   # PRIMARY: live Graph reach, accrued across refreshes
         if t not in seen: seen.add(t); merged.append(t)
     for t in universe:                                    # unmeasured tags keep relevance order so the store stays broad
         if t not in seen: seen.add(t); merged.append(t)
     cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
-    reach = {t: accrued[t] for t in merged if t in accrued}   # the per-tag LIVE Graph reach, persisted for the Studio surface
+    reach = {t: accrued[t] for t in merged if t in accrued}   # the per-tag LIVE Graph evidence, persisted for the Studio surface
     write_json_atomic(cfg.hashtags_path, {"tags": merged, "reach": reach})
     return {"written": True, "measured": len(measured), "harvested": len(harvested), "total": len(merged)}
 

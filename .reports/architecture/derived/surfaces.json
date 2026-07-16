@@ -32,7 +32,7 @@
       "verb": "auth"
     },
     {
-      "line": 837,
+      "line": 839,
       "module": "fanops.cli",
       "verb": "autopilot"
     },
@@ -57,7 +57,7 @@
       "verb": "cutover"
     },
     {
-      "line": 826,
+      "line": 828,
       "module": "fanops.cli",
       "verb": "daemon"
     },
@@ -77,12 +77,12 @@
       "verb": "discover"
     },
     {
-      "line": 819,
+      "line": 821,
       "module": "fanops.cli",
       "verb": "docs"
     },
     {
-      "line": 822,
+      "line": 824,
       "module": "fanops.cli",
       "verb": "docs"
     },
@@ -97,7 +97,7 @@
       "verb": "doctor"
     },
     {
-      "line": 834,
+      "line": 836,
       "module": "fanops.cli",
       "verb": "ensure"
     },
@@ -127,7 +127,7 @@
       "verb": "init"
     },
     {
-      "line": 828,
+      "line": 830,
       "module": "fanops.cli",
       "verb": "install"
     },
@@ -142,7 +142,7 @@
       "verb": "learn"
     },
     {
-      "line": 817,
+      "line": 819,
       "module": "fanops.cli",
       "verb": "lever"
     },
@@ -152,7 +152,7 @@
       "verb": "lift"
     },
     {
-      "line": 836,
+      "line": 838,
       "module": "fanops.cli",
       "verb": "logs"
     },
@@ -165,6 +165,11 @@
       "line": 795,
       "module": "fanops.cli",
       "verb": "metrics"
+    },
+    {
+      "line": 817,
+      "module": "fanops.cli",
+      "verb": "migrate"
     },
     {
       "line": 746,
@@ -247,7 +252,7 @@
       "verb": "retry-source"
     },
     {
-      "line": 823,
+      "line": 825,
       "module": "fanops.cli",
       "verb": "run"
     },
@@ -257,12 +262,12 @@
       "verb": "status"
     },
     {
-      "line": 833,
+      "line": 835,
       "module": "fanops.cli",
       "verb": "status"
     },
     {
-      "line": 835,
+      "line": 837,
       "module": "fanops.cli",
       "verb": "stop"
     },
@@ -277,7 +282,7 @@
       "verb": "tail"
     },
     {
-      "line": 820,
+      "line": 822,
       "module": "fanops.cli",
       "verb": "threshold"
     },
@@ -292,7 +297,7 @@
       "verb": "unhold"
     },
     {
-      "line": 839,
+      "line": 841,
       "module": "fanops.cli",
       "verb": "up"
     },
@@ -337,6 +342,7 @@
     "logs",
     "map-media",
     "metrics",
+    "migrate",
     "p4-bias",
     "paths-rebase",
     "post",
@@ -2032,8 +2038,8 @@
     "src/fanops/**/*.py"
   ],
   "totals": {
-    "cli_add_parser_sites": 61,
-    "cli_verbs_unique": 56,
+    "cli_add_parser_sites": 62,
+    "cli_verbs_unique": 57,
     "route_endpoints": 150,
     "route_endpoints_mutating": 109,
     "route_unique_paths": 149

@@ -18,11 +18,36 @@ The end-to-end path that decides every posted hashtag. Per-persona, evidence-bac
 | Source | Function | Notes |
 |---|---|---|
 | **Live co-occurrence discovery** | `personas.discover_corpus` → `meta_graph.discover_candidates` | harvest tags currently-winning posts use; finds tags never named; FAIL-OPEN to the re-rank below |
-| Offline bootstrap re-rank | `personas.research_corpus(cfg, pid)` | reach-best tags the persona lacks (store + lean), instant + budget-free; the discovery fallback |
+| Evidence-only proposal (R4) | `personas.research_corpus(cfg, pid)` | **measured evidence ONLY** — `source == "graph-reach"` + unexpired `measured_at` + positive reach + `hashtag_hygiene` clean. Budget-free. Returns `[]` when nothing is measured |
 | Operator recommend | `meta_graph.tag_metrics(cfg, tag)` | live IG reach for ONE tag, spends 1 `ig_hashtag_search` slot (30/7-day cap), token never echoed |
 | Frozen reach-vetted set | `hashtags.VETTED` / `vetted_menu` | the cold-start FLOOR only (Part 2 of the skill) |
 
 Every source PROPOSES; the operator ACCEPTS into the corpus (the curation gate). Discovery never auto-writes a tag into a caption.
+
+## R4 (2026-07-16) — corpus and store are SEPARATE AUTHORITIES (ADR-0104)
+
+`research_corpus` used to re-rank `vetted_menu(load_store(cfg))` — the store. But `_seed_tags` **builds the
+store out of every persona's corpus**, and `refresh_persona_corpus` wrote the proposals back as `auto`
+entries: **corpus → store → corpus, closed, with no external evidence in it.** Live proof (2026-07-16): the
+store was byte-identical to `seeds + frozen floor` — 53 tags, 0 discovered, `reach: {}` — while every
+proposal looked like research. The corpora had drifted to `#taylorswift`, `#80s`, `#instagood`, a malformed
+`#fypppp…`, and the entire **Wu-Tang Clan** on a Syrian rapper's interview catalogue (93% of two handles).
+
+Three authorities now, one-way:
+
+- **Curated corpus** = brand data. Human-governed, `pinned`, never rewritten from the store. Holds the
+  `_CORPUS_LEAD_MAX = 2` lead. Small on purpose — the clip owns the other 2 slots (PR #679).
+- **Evidence store** = measurement. `{reach, measured_at, source, confidence}`; accrues, never clobbered;
+  expires at `_EVIDENCE_MAX_AGE_DAYS`. A legacy bare number reads `source: "unknown"` and **cannot curate**
+  (not back-dated — we genuinely do not know where it came from).
+- **Clip candidates** = the model's per-clip vetted picks (PR #679).
+
+**The cut:** only a tag with real unexpired Graph measurement may be proposed. A corpus tag echoed into the
+store as an unmeasured seed carries none → can never return. Severed by the data model, not by a rule.
+`hashtag_hygiene.tag_defect` then gates promotion structurally (malformed / engagement bait / discovery-owned).
+Semantic fit is **not** machine-decided — that is the operator's, which is why the corpus is human-governed.
+
+Migration: `fanops hashtags migrate [--apply]` (dry run by default; snapshots `*.r4-bak-<utc>`; idempotent).
 
 ## Selection (the deterministic gate)
 

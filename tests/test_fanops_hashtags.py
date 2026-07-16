@@ -302,12 +302,19 @@ def test_refresh_store_writes_reach_map_with_per_tag_live_scores(tmp_path, monke
     from fanops import personas as P
     P.add_persona(cfg, name="Curator", id="curator"); P.add_corpus_tag(cfg, "curator", "#seed")
     get = _graph_router({"#beta": 900, "#alpha": 100}, cooccur="#alpha #beta")
+    # R4: an entry is now an EVIDENCE RECORD {reach, measured_at, source, confidence}, not a bare number.
+    # Provenance is load-bearing — research_corpus promotes only on `source == "graph-reach"` + freshness —
+    # so the value alone is no longer enough to write. `load_store_reach` still projects both shapes to the
+    # same float, which is why every consumer (incl. the Studio tab named above) is unchanged. See ADR-0104.
+    from fanops.hashtags import load_store_reach
     out = refresh_store(cfg, get=get)
     blob = json.loads(cfg.hashtags_path.read_text())
     assert out["written"] is True
     assert "reach" in blob                                  # reach key present in written file
-    assert blob["reach"].get("#beta") == 900                # LIVE Graph engagement (mocked like_count 900)
-    assert blob["reach"].get("#alpha") == 100               # LIVE Graph engagement (mocked like_count 100)
+    assert blob["reach"]["#beta"]["reach"] == 900           # LIVE Graph engagement (mocked like_count 900)
+    assert blob["reach"]["#alpha"]["reach"] == 100          # LIVE Graph engagement (mocked like_count 100)
+    assert blob["reach"]["#beta"]["source"] == "graph-reach" and blob["reach"]["#beta"]["measured_at"]
+    assert load_store_reach(cfg)["#beta"] == 900.0          # flat projection: consumers see no change
     assert out["measured"] == len(blob["reach"])            # summary count matches the persisted map
 
 

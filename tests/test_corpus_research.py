@@ -1,36 +1,64 @@
 # tests/test_corpus_research.py
-# B3 — bootstrap research + active surfacing. research_corpus proposes the reach-best hashtags a persona
-# doesn't yet carry, grounded in the reach-ranked store (LIVE Meta Graph reach) minus the persona's current
-# corpus — instant + budget-free (the store already encodes the Graph signal); the operator
-# accepts the proposals. The Personas page then surfaces the corpus REACH-RANKED (store order, top-first)
-# with the high-reach (store-present) tags flagged.
+# B3 — bootstrap research + active surfacing. research_corpus proposes hashtags a persona doesn't yet carry,
+# the operator accepts them, and the Personas page surfaces the corpus reach-ranked.
+#
+# R4 (2026-07-16) — THIS FILE'S ORIGINAL PREMISE WAS FALSE AND IS CORRECTED HERE. It read: "grounded in the
+# reach-ranked store (LIVE Meta Graph reach) ... the store already encodes the Graph signal". The store did
+# NOT encode a Graph signal. `fanops_hashtags._seed_tags` BUILDS the store out of every persona's corpus, so
+# the store was our own curation echoed back — measured live: byte-identical to `seeds + frozen floor`,
+# 53 tags, 0 discovered, `reach: {}`. Proposing from it closed the loop corpus -> store -> corpus, and
+# `refresh_persona_corpus` wrote the echo back as auto corpus entries.
+#
+# So the tests below no longer assert that an UNMEASURED store tag is proposed — that behaviour WAS the
+# defect. research_corpus now proposes only real, unexpired Graph measurement. See ADR-0104.
 import json
 import pytest
+from datetime import datetime, timezone
 from fanops.config import Config
 from fanops import personas as core
 from fanops.studio import personas as sp
 from fanops.studio import views
 
+NOW = datetime(2026, 7, 16, tzinfo=timezone.utc)
+
+
+def _evidence(cfg, **reach):
+    """Write a store whose tags carry REAL Graph evidence — the only thing that may curate now."""
+    cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.hashtags_path.write_text(json.dumps({"tags": list(reach), "reach": {
+        t: {"reach": v, "measured_at": NOW.isoformat(), "source": "graph-reach", "confidence": 1.0}
+        for t, v in reach.items()}}))
+
 
 # --- core.research_corpus ----------------------------------------------------------------------
 
-def test_research_proposes_reach_tags_not_in_corpus(tmp_path):
+def test_research_proposes_measured_tags_not_in_corpus(tmp_path):
     cfg = Config(root=tmp_path)
     pid = core.add_persona(cfg, name="P1")
     core.add_corpus_tag(cfg, pid, "#lyrics")           # already curated
-    out = core.research_corpus(cfg, pid)
+    _evidence(cfg, **{"#lyrics": 500, "#bars": 900})
+    out = core.research_corpus(cfg, pid, now=NOW)
     assert "#lyrics" not in out                         # excludes what's already in the corpus
-    assert "#bars" in out                               # proposes the rest of the reach universe
+    assert "#bars" in out                               # measured + uncurated -> proposed
     assert all(t.startswith("#") for t in out)
 
 
-def test_research_uses_reach_store_order(tmp_path):
+def test_research_proposes_nothing_from_an_unmeasured_store(tmp_path):
+    # THE loop, pinned: the store is built from the corpora, so an unmeasured store tag is an echo of our
+    # own curation. With no measurement anywhere the honest answer is nothing — not a re-ranked mirror.
     cfg = Config(root=tmp_path)
-    pid = core.add_persona(cfg, name="P1")              # no lean -> store order leads
+    pid = core.add_persona(cfg, name="P1")
     cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg.hashtags_path.write_text(json.dumps({"tags": ["#owned", "#hiphop"]}))
-    out = core.research_corpus(cfg, pid)
-    assert out[0] == "#owned"                           # the live Graph-reach store leads the proposal
+    cfg.hashtags_path.write_text(json.dumps({"tags": ["#owned", "#hiphop"], "reach": {}}))
+    assert core.research_corpus(cfg, pid, now=NOW) == []
+
+
+def test_research_uses_measured_reach_order(tmp_path):
+    cfg = Config(root=tmp_path)
+    pid = core.add_persona(cfg, name="P1")
+    _evidence(cfg, **{"#owned": 900, "#hiphop": 10})
+    out = core.research_corpus(cfg, pid, now=NOW)
+    assert out[0] == "#owned"                           # highest MEASURED Graph reach leads the proposal
 
 
 def test_research_capped(tmp_path):
@@ -49,8 +77,17 @@ def test_research_unknown_persona_raises(tmp_path):
 def test_studio_research_returns_proposals(tmp_path):
     cfg = Config(root=tmp_path)
     pid = core.add_persona(cfg, name="P1")
+    _evidence(cfg, **{"#bars": 900})                    # R4: the button surfaces MEASURED evidence, not the menu
     r = sp.research_corpus(cfg, pid)
     assert r.ok and r.detail["persona"] == pid and len(r.detail["proposals"]) >= 1
+
+
+def test_studio_research_with_no_evidence_proposes_nothing(tmp_path):
+    # The Studio "Research corpus" button must not manufacture proposals out of the store echo.
+    cfg = Config(root=tmp_path)
+    pid = core.add_persona(cfg, name="P1")
+    r = sp.research_corpus(cfg, pid)
+    assert r.ok and r.detail["proposals"] == []
 
 
 def test_studio_research_unknown_persona_clean_error(tmp_path):

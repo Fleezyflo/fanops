@@ -77,6 +77,7 @@
   "measured": {
     "print_calls_by_module": {
       "fanops.cli": 165,
+      "fanops.hashtag_migrate": 11,
       "fanops.log": 1,
       "fanops.paths_rebase": 2
     },
