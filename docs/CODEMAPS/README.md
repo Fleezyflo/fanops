@@ -30,3 +30,4 @@ The env-var operator/dev reference distilled from the lens map is [../CONFIG.md]
 **Regenerating:** the deterministic layer (`scripts/codemap_extract/`, stdlib-only) is safe to re-run after
 any edit; the semantic layer (the C1–C10 Sonnet traces) only needs a rerun when an area's intent changes
 materially. See full-trace-index.md → "How to regenerate".
+- [`r4-migration-record.md`](r4-migration-record.md) — R4 hashtag corpus governance: the live-data migration, its rollback, and the two daemon defects it surfaced (2026-07-16)
