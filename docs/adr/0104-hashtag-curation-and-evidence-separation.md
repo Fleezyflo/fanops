@@ -93,12 +93,26 @@ The decision above is **implemented, migrated onto live data, and frozen** (oper
 [`docs/CODEMAPS/r4-migration-record.md`](../CODEMAPS/r4-migration-record.md); terminal `main` `caa3427`).
 What follows was measured, recorded, and accepted as residue. **None of it reopens this ADR.**
 
-1. **The model repeats itself.** Replaying the real per-surface picks (`meta_captions.hashtags_raw`) across
-   all 347 live posts: the model produced only **6–15 distinct pick-sets per handle over 66–76 surfaces, with
-   54–76% concentration on a single set**. This is now the *dominant* remaining cause of near-identical lines.
-   It is upstream of both #679 and this ADR — partly caused by the polluted corpus itself (the prompt tells
-   the model to *prefer* the corpus, and the corpus was junk), so it should improve once clean corpora are
-   live, but that is unproven until captions are regenerated.
+1. **The model repeats itself — a hypothesis, not a measurement.** Replaying the real per-surface picks
+   (`meta_captions.hashtags_raw`) across all 347 live posts: the model produced only **6–15 distinct pick-sets
+   per handle over 66–76 surfaces, with 54–76% concentration on a single set**, against a **structural floor
+   of ~4%** (the selector run on maximally diverse synthetic picks). So model repetition is large relative to
+   what the design imposes.
+
+   **This was originally recorded as "now the dominant cause". That overclaimed, and the correction is kept
+   visible rather than quietly edited.** Two facts constrain it:
+
+   - What *is* measured is that the **old selector dominated**: it mapped raw concentrations of 54–76% onto a
+     uniform **90.9–93.0%** shipped, across handles whose raw diversity differed widely. The model's share of
+     the old shipped line was never the binding term.
+   - The assumption that clean corpora would *improve* matters **may be backwards**. `burner-bold`'s corpus
+     went 12 tags → 3, and the prompt tells the model to *prefer* the corpus; a smaller menu gives it less to
+     vary over. Relevance and diversity may be in direct tension, and this ADR bought relevance.
+
+   Neither can be resolved from existing data, because **every recorded pick was conditioned on the polluted
+   corpus the prompt showed the model** — `cisumwolfhom` picked `#explorepage #hiphop #trending #viral` 45× of
+   67, which is precisely the junk its old corpus listed. Replaying those picks through the clean menu composes
+   a world that will never exist.
 
    **Handed to a separate program**, briefed and deliberately not started:
    [`docs/design/briefs/17-hashtag-model-diversity.md`](../design/briefs/17-hashtag-model-diversity.md). That
