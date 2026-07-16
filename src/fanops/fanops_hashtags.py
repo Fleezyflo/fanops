@@ -76,6 +76,11 @@ def refresh_store(cfg: Config, *, get=None, now=None) -> dict:
     # `measured` alone also re-ordered the whole store back to raw seed order on every zero-budget tick). Pruned
     # to `merged` so a tag dropped from the universe does not linger. No prior reach -> identical to before.
     accrued = {**load_store_reach(cfg), **{t: round(measured[t]) for t in measured}}
+    for t in accrued:                                     # a tag we already MEASURED stays in the universe even when
+        if t not in useen: useen.add(t); universe.append(t)   # this tick's harvest does not re-surface it. `universe` is
+    # rebuilt per call from the harvest + seeds, so without this a discovered high-reach tag silently leaves BOTH the
+    # menu and the evidence on the very next tick — the same erasure, one level down. Appended AFTER sample_trends, so
+    # it can never widen the measured set or spend a budget slot.
     merged: list[str] = []; seen: set[str] = set()
     for t in sorted([t for t in universe if t in accrued],
                     key=lambda k: accrued[k], reverse=True):   # PRIMARY: live Graph reach, accrued across refreshes
