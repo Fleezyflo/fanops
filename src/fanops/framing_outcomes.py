@@ -100,12 +100,13 @@ class FramingOutcome(str, Enum):
                                                   # untracked "two-shot" we failed to follow.
     STACKED_PAIR = "stacked_pair"                 # S2/D1-A: a genuine wide two-shot, no track -> subject-derived vertical stack (both retained)
     SUBJECT_LOCKED = "subject_locked"             # S3/D1-B: one persistently dominant host, no track -> mild re-anchor onto THAT host
+    PIP_PRESENTER_FRAMED = "pip_presenter_framed"  # S5/D2: a PIP grid's presenter re-anchored out of the dead space (F3/F2)
     UNRESOLVED = "unresolved"                     # carries root_cause: FramingEventType
 
 
 _FO = FramingOutcome
 RESOLVED_OUTCOMES = frozenset({_FO.DETECTED_MULTI, _FO.DETECTED_SINGLE, _FO.MUSIC_FOCUS, _FO.MOTION_FOCUS,
-                               _FO.STACKED_PAIR, _FO.SUBJECT_LOCKED})
+                               _FO.STACKED_PAIR, _FO.SUBJECT_LOCKED, _FO.PIP_PRESENTER_FRAMED})
 LEGITIMATE_CENTER_OUTCOMES = frozenset({_FO.CENTERED_NO_SUBJECT, _FO.CENTERED_MULTI_UNTRACKED,
                                         _FO.CENTERED_PIP_LAYOUT})
 UNRESOLVED_OUTCOMES = frozenset({_FO.UNRESOLVED})

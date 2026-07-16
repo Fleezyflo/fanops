@@ -146,9 +146,11 @@ def test_d2_pip_grid_is_not_captured_by_the_subject_lock(monkeypatch, cfg):
     _LOCK_MAX_FACES gate was the only thing keeping it out; S4 then routed it to CENTERED_PIP_LAYOUT. Stated as
     the durable negative — never subject-locked, render untouched — so it holds under either owner."""
     r = _resolve(monkeypatch, cfg, _D2)
-    assert r.final_outcome is not _FO.SUBJECT_LOCKED
-    assert r.content_type != framing.RENDER_SUBJECT_LOCK
-    assert r.as_tuple() == (None, None, None)                 # composition of D2 is S5's slice, not S3's
+    assert r.final_outcome is not _FO.SUBJECT_LOCKED           # never S3's outcome...
+    assert r.final_strategy is not _FS.SUBJECT_LOCK            # ...and never S3's route
+    # NB: S5 composes the D2 presenter with the SAME RENDER_SUBJECT_LOCK hint — deliberately. That token is a
+    # RENDER instruction ("mild re-anchor on one subject, gentle zoom"), not a route label; both slices want
+    # exactly that composition. The route is carried by outcome/strategy, which is what this test pins.
 
 def test_d2_is_kept_out_of_the_subject_lock_by_the_face_count_gate(monkeypatch, cfg):
     """Pins WHY the guard exists. When S3 shipped, the primitive classified D2 as FB_DOMINANT too, so a naive

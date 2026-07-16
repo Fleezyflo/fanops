@@ -116,16 +116,18 @@ def test_d1b_no_track_is_never_reclassified_as_a_pair(cfg, monkeypatch):
     assert r.final_outcome is _FO.SUBJECT_LOCKED                             # S3 owns D1-B's positive routing
 
 def test_d2_no_track_is_never_stacked(cfg, monkeypatch):
-    """A PIP grid is not a live two-shot to stack — the enduring S2 invariant. S2 pinned it as
-    CENTERED_MULTI_UNTRACKED (then D2's only destination); S4 routes it to CENTERED_PIP_LAYOUT instead, and it
-    is still not stacked and still renders the same centre. D2's positive routing is owned by
-    tests/test_reframe_s4_d2.py."""
+    """A PIP grid is not a live two-shot to stack — the enduring S2 invariant, and all this test owns.
+
+    S2 originally pinned it as CENTERED_MULTI_UNTRACKED with an untouched render tuple, because that was then
+    D2's only destination. S4 routed it to the PIP layout and S5 composed its presenter, so both of those are
+    now other slices' state; the durable claim is the negative: never stacked, never a pair focus. D2's
+    positive routing/composition is owned by test_reframe_s4_d2.py / test_reframe_s5_d2.py."""
     _stub(monkeypatch, detect_window=_D2, classify_window=framing.CT_MULTI,
           speaker_track=([_FE.NO_TRACK], None), subject_focus=([_FE.NO_FACE], None))
     r = framing._resolve(cfg, _Src(), 0.0, 10.0, capture_failures=True)
     assert r.final_outcome is not _FO.STACKED_PAIR
     assert r.content_type != framing.RENDER_STACK_PAIR
-    assert r.as_tuple() == (None, None, None)                 # and the render is untouched either way
+    assert not (r.focus and len(r.focus) == 10)               # never the two-anchor pair focus
 
 
 # ---- the stack render graph: both hosts retained (AC-A1/A2) ----
