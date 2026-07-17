@@ -15,12 +15,15 @@ that id belongs to lives in accounts.json `backends`).
 
 IDEMPOTENCY (report 11, implemented 2026-07-17 — header + parser + 409, landed together because they are
 inseparable: the header ALONE would misparse a replay as "no id" and file a SUCCESSFUL publish as ambiguous):
-  · Every POST /posts carries `x-request-id` = _request_id(post): uuid5 over
-    (post.id | created_at | platform | account_id) — STABLE per record INCARNATION x platform x RESOLVED
-    Zernio account, so every retry of one attempt reuses it and Zernio replays instead of double-creating.
-    NOT post.id alone: crosspost POPS a failed/rejected record and REMINTS it under the IDENTICAL post.id
-    with a fresh created_at, and run.py refreshes account_id at publish — so one post.id denotes several
-    distinct create operations, possibly to different Zernio accounts (report 11 §8).
+  · Every POST /posts carries `x-request-id` = _request_id(post): uuid5(_ZERNIO_REQ_NS, _request_name(post))
+    where the name is the CANONICAL JSON array
+    `json.dumps([ver, post.id, created_at, platform, account_id], ensure_ascii=False, separators=(",", ":"))`
+    — NOT a delimiter join, which would ALIAS (["a|b","c"] and ["a","b|c"] flatten identically). STABLE per
+    record INCARNATION x platform x RESOLVED Zernio account, so every retry of one attempt reuses it and
+    Zernio replays instead of double-creating. NOT post.id alone: crosspost POPS a failed/rejected record and
+    REMINTS it under the IDENTICAL post.id with a fresh created_at, and run.py refreshes account_id at
+    publish — so one post.id denotes several distinct create operations, possibly to different Zernio
+    accounts (report 11 §8).
   · A repeat inside Zernio's ~5-min window -> HTTP 200 + the original in `existingPost` -> IdempotentReplay
     -> `submitted`, the same ledger state as a first-time create (report 11 R-2).
   · Retries are bounded by _RETRY_DEADLINE_S on time.monotonic(), STRICTLY inside _IDEMPOTENCY_WINDOW_S:
@@ -40,6 +43,7 @@ The create-post RESPONSE id key stays an INTEGRATION CHECKPOINT — `existingPos
 parser is tolerant and fails to needs_reconcile (never to `failed`), and the operator verifies live at
 first publish."""
 from __future__ import annotations
+import json
 import logging
 import random
 import re
@@ -49,7 +53,7 @@ from pathlib import Path
 from typing import NamedTuple
 import requests
 from fanops.config import Config
-from fanops.errors import ZernioAuthError, redact
+from fanops.errors import ZernioAuthError, fail_open, redact
 from fanops.ledger import Ledger
 from fanops.log import get_logger
 from fanops.models import PostState
@@ -117,8 +121,25 @@ def _request_id(post) -> str:
 
     The caller MUST have passed _require_request_identity(post) first: this function never invents a
     missing component."""
-    return str(uuid.uuid5(_ZERNIO_REQ_NS, "|".join(
-        (_REQ_NAME_V, post.id, post.created_at, post.platform.value, post.account_id))))
+    return str(uuid.uuid5(_ZERNIO_REQ_NS, _request_name(post)))
+
+
+def _request_name(post) -> str:
+    """The canonical UUIDv5 name — a JSON array with fixed separators, NOT a delimiter join.
+
+    `"|".join(...)` was WRONG and is corrected here: a raw delimiter join ALIASES, because the delimiter
+    can appear inside a component. `["a|b", "c"]` and `["a", "b|c"]` both flatten to `a|b|c` — two DIFFERENT
+    identities collapsing onto ONE x-request-id, which makes Zernio replay the wrong post. That is not
+    theoretical: `account_id` is an operator-supplied Zernio integration id from accounts.json and is
+    unconstrained, and `post.id` is only conventionally `post_<hex>`.
+
+    JSON quotes and escapes every component, so the encoding is INJECTIVE: distinct tuples cannot produce
+    the same name (a `"` or `|` inside a value is escaped/quoted, never confused with structure).
+    `separators=(",", ":")` pins the bytes (no whitespace drift); `ensure_ascii=False` keeps Unicode literal,
+    which `uuid.uuid5` then encodes as UTF-8 — deterministic either way, but fixed so it cannot drift.
+    A list (not a dict) so ORDER is the schema and no key-sorting question exists."""
+    return json.dumps([_REQ_NAME_V, post.id, post.created_at, post.platform.value, post.account_id],
+                      ensure_ascii=False, separators=(",", ":"))
 
 
 def _require_request_identity(post) -> TerminalFailure | None:
@@ -218,6 +239,21 @@ def _fits_deadline(started: float, wait: float) -> bool:
     """True when sleeping `wait` still leaves the NEXT SEND inside _RETRY_DEADLINE_S. monotonic-based, so a
     wall-clock jump can neither extend nor collapse the budget."""
     return (time.monotonic() - started) + wait < _RETRY_DEADLINE_S
+
+
+def _breadcrumb(cfg: Config, post_id: str, outcome: str):
+    """Adapt `errors.fail_open`'s printf-style `log` onto the HOUSE run.log channel.
+
+    fail_open defaults to `_log.warning`, i.e. stderr — but run.log is where the operator actually looks, so
+    a parse failure that only reaches stderr is a breadcrumb nobody reads. fail_open calls
+    `log(fmt, site, type(exc).__name__, str(exc)[:200], exc_info=True)`; we keep the exception TYPE plus a
+    bounded, redacted message and drop the traceback (run.log is single-line JSON). The message is redacted
+    even though a JSONDecodeError carries only a position, never document content — the sink is the ledger's
+    neighbour and the rule is redact-then-truncate, not "reason about whether this one can leak"."""
+    def _log(_fmt="", site="", exc_type="", exc_str="", **_kw):
+        get_logger(cfg)("publish", post_id, outcome, site=str(site)[:60],
+                        err=f"{exc_type}: {redact(str(exc_str), cfg.zernio_api_key, limit=120)}")
+    return _log
 
 
 def _tiktok_settings() -> dict:
@@ -459,11 +495,13 @@ class ZernioPoster:
                                               f"{type(exc).__name__}: {redact(str(exc), self.cfg.zernio_api_key, limit=160)}")
             sent_any = True                              # a RESPONSE proves the request reached Zernio
             if resp.status_code in (200, 201):
-                try:
-                    return _parse_create_body(resp.json())
-                except Exception as exc:                 # non-JSON / unreadable 2xx: Zernio accepted SOMETHING
-                    return ReconciliationRequired("success_unreadable_body",
-                                                  f"2xx but the body did not parse ({type(exc).__name__}) — body withheld")
+                parsed: ZernioCreateResult | None = None
+                with fail_open("zernio.create.parse", log=_breadcrumb(self.cfg, post.id, "zernio_2xx_body_unparsed")):
+                    parsed = _parse_create_body(resp.json())
+                if parsed is not None:
+                    return parsed
+                # Non-JSON / unreadable 2xx: Zernio accepted SOMETHING we cannot identify. NEVER terminal.
+                return ReconciliationRequired("success_unreadable_body", "2xx but the body did not parse — body withheld")
             if resp.status_code == 401:
                 raise ZernioAuthError("Zernio 401 unauthorized — check ZERNIO_API_KEY (response body withheld)")
             if resp.status_code == 409:
@@ -471,15 +509,16 @@ class ZernioPoster:
                 # proves only that Zernio holds a matching record within its 24h window — not platform
                 # publication, not ownership by THIS post, not completion. The candidate is evidence for the
                 # operator, never an identity (report 11 §3/§5).
-                cand, unread = None, ""
-                try:
+                # A 409 must park whatever its body looks like — but the parse failure is NOT swallowed:
+                # "Zernio named no post" and "Zernio may have named one we could not read" are DIFFERENT
+                # facts, and only the second means the operator is missing a pointer that actually exists.
+                # `read` is the sentinel that keeps them apart: fail_open swallows, so cand=None alone is
+                # ambiguous between the two.
+                cand, read = None, False
+                with fail_open("zernio.409.parse", log=_breadcrumb(self.cfg, post.id, "zernio_409_body_unparsed")):
                     cand = _extract_409_candidate(resp.json())
-                except Exception as exc:
-                    # A 409 must park whatever its body looks like — but the parse failure is NOT swallowed:
-                    # "Zernio named no post" and "Zernio may have named one we could not read" are DIFFERENT
-                    # facts, and only the second means the operator is missing a pointer that actually exists.
-                    unread = f" (409 body unreadable: {type(exc).__name__})"
-                    get_logger(self.cfg)("publish", post.id, "zernio_409_body_unparsed", err=type(exc).__name__)
+                    read = True
+                unread = "" if read else " (409 body unreadable — a candidate may exist but could not be read)"
                 return ReconciliationRequired("duplicate_content_409",
                                               "Zernio reports duplicate content in its 24h window — identity UNPROVEN, "
                                               f"reconcile by hand{unread}", candidate_post_id=cand)

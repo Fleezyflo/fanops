@@ -9,6 +9,7 @@
 # and the two operator-caught design defects: D6 (post.id alone is NOT one create operation — crosspost
 # pops a failed record and remints it under the same id) and D7 (the shared Poster protocol must not change).
 import inspect
+import json
 import uuid
 from pathlib import Path
 import pytest
@@ -174,6 +175,57 @@ def test_11_request_id_unaffected_by_submission_id(tmp_path, monkeypatch):
     a = _post(); b = _post(); b.submission_id = "fanops_deadbeef"
     assert _request_id(a) == _request_id(b)
 
+def test_11b_canonical_name_is_json_not_a_delimiter_join():
+    # The merged formula used "|".join(...) — WRONG, and corrected before any deployment or live create.
+    # A raw delimiter join is not injective: the delimiter can occur INSIDE a component.
+    p = _post()
+    name = zernio._request_name(p)
+    assert name == json.dumps(["1", p.id, p.created_at, p.platform.value, p.account_id],
+                              ensure_ascii=False, separators=(",", ":"))
+    assert name.startswith('["1"') and '","' in name        # JSON array, fixed separators, no whitespace
+    assert json.loads(name) == ["1", p.id, p.created_at, p.platform.value, p.account_id]   # round-trips
+
+def test_11c_delimiter_bearing_values_cannot_alias():
+    # The defect the merged formula carried. A pipe join is injective only while NO component contains the
+    # delimiter; when the pipe SHIFTS across a boundary between two free fields, two DIFFERENT identities
+    # flatten to ONE string — one x-request-id for two posts, so Zernio replays the WRONG one.
+    #
+    # Honest severity: with TODAY's values the merged join happened to be safe — ver is fixed, post.id is
+    # `post_<hex>`, created_at is ISO-8601 and platform is an enum, so the only unconstrained component
+    # (account_id, operator-supplied) is LAST and cannot shift anything. It was injective BY ACCIDENT, not by
+    # construction: any change to the field order, to child_id's format, or to what created_at holds would
+    # have re-opened it silently. This pair demonstrates the property on the real encoder.
+    a, b = _post(pid="a", created_at="b|2026"), _post(pid="a|b", created_at="2026")
+    assert "|".join(("1", a.id, a.created_at, a.platform.value, a.account_id)) == \
+           "|".join(("1", b.id, b.created_at, b.platform.value, b.account_id)), "this pair must alias under a pipe join"
+    assert _request_id(a) != _request_id(b), "canonical encoding must be injective BY CONSTRUCTION"
+
+def test_11d_json_significant_characters_cannot_alias():
+    # A quote/backslash/bracket inside a value must be ESCAPED, not read as structure.
+    pairs = [
+        (_post(acct_id='a","b'), _post(acct_id='a', pid='post_x","b')),
+        (_post(acct_id='a\\"b'), _post(acct_id='a\\', pid='post_x"b')),
+        (_post(acct_id='["x"]'), _post(acct_id='[\\"x\\"]')),
+        (_post(acct_id='a,b'), _post(acct_id='a', pid='post_x,b')),
+    ]
+    for x, y in pairs:
+        assert _request_id(x) != _request_id(y), f"aliased: {x.account_id!r} vs {y.account_id!r}"
+        assert json.loads(zernio._request_name(x))[4] == x.account_id      # value survives verbatim
+
+def test_11e_unicode_values_are_stable_and_distinct():
+    a, b = _post(acct_id="acct_café"), _post(acct_id="acct_cafe")
+    assert _request_id(a) != _request_id(b)
+    assert _request_id(a) == _request_id(_post(acct_id="acct_café"))        # deterministic across calls
+    assert str(uuid.UUID(_request_id(a))) == _request_id(a)
+    # ensure_ascii=False keeps it literal; uuid5 encodes UTF-8 — pin the bytes so the encoding cannot drift.
+    assert "café" in zernio._request_name(a)
+    assert zernio._request_name(a).encode("utf-8") == zernio._request_name(_post(acct_id="acct_café")).encode("utf-8")
+
+def test_11f_canonical_name_is_byte_identical_on_repeat():
+    p = _post()
+    names = {zernio._request_name(p).encode("utf-8") for _ in range(5)}
+    assert len(names) == 1, "canonical encoding must be byte-stable"
+
 def test_12_namespace_and_formula_version_are_pinned():
     # DELIBERATE change-detector (report 11 §13.3): these are PERMANENT. Changing either makes a retry derive
     # a different key than the send it is retrying — silently re-opening R-1 for every in-flight post.
@@ -296,15 +348,34 @@ def test_28_409_without_details_does_not_crash(tmp_path, monkeypatch):
 
 def test_28b_409_with_an_unreadable_body_says_so_rather_than_swallowing_it(tmp_path, monkeypatch):
     # "Zernio named no post" and "Zernio may have named one we could not read" are DIFFERENT facts — only the
-    # second means the operator is missing a pointer that exists. The swallow ratchet caught this discarding
-    # the parse error; it is now a logged, operator-visible outcome.
+    # second means the operator is missing a pointer that exists. Routed through errors.fail_open, with the
+    # breadcrumb landing on the HOUSE run.log channel (where the operator looks), not only stderr.
     cfg = _cfg(tmp_path, monkeypatch)
     p = _publish(cfg, _post(), _Rec(_R(409, ValueError("not json"))), monkeypatch)
     assert p.state is PostState.needs_reconcile and p.reconcile_candidate_id is None
-    assert "unreadable" in p.error_reason
-    assert "zernio_409_body_unparsed" in cfg.log_path.read_text()
+    assert "unreadable" in p.error_reason and "a candidate may exist" in p.error_reason
+    body = cfg.log_path.read_text()
+    assert "zernio_409_body_unparsed" in body and "zernio.409.parse" in body
     # and the new wording must not read as transient ("unreachable" IS in the classifier's substring list)
     assert is_transient_failure_reason(p.error_reason) is False
+
+def test_28c_a_readable_409_with_no_candidate_is_distinct_from_an_unreadable_one(tmp_path, monkeypatch):
+    # The distinction the sentinel preserves: both yield candidate=None, but only ONE means "a pointer may
+    # exist that we failed to read". fail_open swallows, so cand=None alone cannot tell them apart.
+    cfg = _cfg(tmp_path, monkeypatch)
+    readable = _publish(cfg, _post(pid="p_r"), _Rec(_R(409, {"details": {}})), monkeypatch)
+    unread = _publish(cfg, _post(pid="p_u"), _Rec(_R(409, ValueError("not json"))), monkeypatch)
+    assert readable.reconcile_candidate_id is unread.reconcile_candidate_id is None
+    assert "unreadable" not in readable.error_reason
+    assert "unreadable" in unread.error_reason
+
+def test_28d_unreadable_2xx_breadcrumbs_through_fail_open(tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path, monkeypatch)
+    p = _publish(cfg, _post(), _Rec(_R(200, ValueError("not json"))), monkeypatch)
+    assert p.state is PostState.needs_reconcile          # never `failed`: Zernio accepted SOMETHING
+    body = cfg.log_path.read_text()
+    assert "zernio_2xx_body_unparsed" in body and "zernio.create.parse" in body
+    assert "sk_test" not in body and "sk_test" not in (p.error_reason or "")
 
 def test_29_409_never_yields_failed(tmp_path, monkeypatch):
     # R-3 NEGATIVE CONTROL — the live defect. `failed` is RE-QUEUEABLE, so filing a duplicate-content 409 as
@@ -476,6 +547,52 @@ def test_45_reconcile_never_promotes_from_the_candidate(tmp_path, monkeypatch):
     after = out.posts[p.id]
     assert after.state is not PostState.published
     assert after.public_url != "https://tiktok.com/@x/video/999"
+
+def test_45b_a_failed_poll_never_downgrades_a_candidate_bearing_row(tmp_path, monkeypatch):
+    # CodeRabbit MAJOR (PR #696), valid: a `failed` poll of THIS row's OWN submission_id does not disprove
+    # the 409 candidate — they name DIFFERENT objects, and we never polled the candidate. Downgrading to
+    # `failed` makes the row RE-QUEUEABLE and licences a re-POST while a possibly-live duplicate stands.
+    cfg = _cfg(tmp_path, monkeypatch)
+    from fanops import reconcile as rec_mod
+    p = _post(); p.state = PostState.needs_reconcile
+    p.submission_id = "z_mine"; p.reconcile_candidate_id = "z_other"
+    out = rec_mod.reconcile_posts(_led(cfg, p), cfg,
+                                  get_status=lambda sid: {"status": "failed", "errorMessage": "rejected upstream"})
+    after = out.posts[p.id]
+    assert after.state is PostState.needs_reconcile, "a candidate-bearing row must never become re-queueable"
+    assert after.reconcile_candidate_id == "z_other"      # preserved
+    assert after.submission_id == "z_mine"                # never overwritten by the candidate
+    assert "candidate=z_other" in after.error_reason and "UNVERIFIED" in after.error_reason
+
+def test_45c_a_held_candidate_row_is_not_selected_by_the_transient_requeue(tmp_path, monkeypatch):
+    # The whole point of holding needs_reconcile: _requeue_transient_failed_for_daemon reads
+    # posts_in_state(failed) ONLY, so a held row can never be auto-re-POSTed.
+    cfg = _cfg(tmp_path, monkeypatch)
+    from fanops import reconcile as rec_mod
+    p = _post(); p.state = PostState.needs_reconcile
+    p.submission_id = "z_mine"; p.reconcile_candidate_id = "z_other"
+    out = rec_mod.reconcile_posts(_led(cfg, p), cfg,
+                                  get_status=lambda sid: {"status": "failed", "errorMessage": "read timed out"})
+    out.save()
+    assert run_mod._requeue_transient_failed_for_daemon(cfg) == 0
+    after = Ledger.load(cfg).posts[p.id]
+    assert after.state is PostState.needs_reconcile
+    # NB the errorMessage says "read timed out" — a phrase is_transient_failure_reason MATCHES. Holding the
+    # row out of `failed` is what makes that harmless; a downgrade would have re-queued it on that wording.
+    assert is_transient_failure_reason(after.error_reason) is True
+
+def test_45d_a_failed_poll_without_a_candidate_still_fails_ordinarily(tmp_path, monkeypatch):
+    # The B-case: no candidate => unchanged pre-existing behaviour. Negative control for 45b/45c.
+    cfg = _cfg(tmp_path, monkeypatch)
+    from fanops import reconcile as rec_mod
+    p = _post(); p.state = PostState.needs_reconcile
+    p.submission_id = "z_mine"                            # no reconcile_candidate_id
+    out = rec_mod.reconcile_posts(_led(cfg, p), cfg,
+                                  get_status=lambda sid: {"status": "failed", "errorMessage": "rejected upstream"})
+    after = out.posts[p.id]
+    assert after.state is PostState.failed
+    assert "poster reports failed" in after.error_reason
+    assert after.reconcile_candidate_id is None
 
 def test_46_candidate_is_mirrored_into_error_reason(tmp_path, monkeypatch):
     # extra="ignore" means an older binary drops the field; the mirror is then the only surviving copy.
