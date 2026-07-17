@@ -471,13 +471,18 @@ class ZernioPoster:
                 # proves only that Zernio holds a matching record within its 24h window — not platform
                 # publication, not ownership by THIS post, not completion. The candidate is evidence for the
                 # operator, never an identity (report 11 §3/§5).
+                cand, unread = None, ""
                 try:
                     cand = _extract_409_candidate(resp.json())
-                except Exception:
-                    cand = None                          # a 409 must park whatever its body looks like
+                except Exception as exc:
+                    # A 409 must park whatever its body looks like — but the parse failure is NOT swallowed:
+                    # "Zernio named no post" and "Zernio may have named one we could not read" are DIFFERENT
+                    # facts, and only the second means the operator is missing a pointer that actually exists.
+                    unread = f" (409 body unreadable: {type(exc).__name__})"
+                    get_logger(self.cfg)("publish", post.id, "zernio_409_body_unparsed", err=type(exc).__name__)
                 return ReconciliationRequired("duplicate_content_409",
                                               "Zernio reports duplicate content in its 24h window — identity UNPROVEN, "
-                                              "reconcile by hand", candidate_post_id=cand)
+                                              f"reconcile by hand{unread}", candidate_post_id=cand)
             if 500 <= resp.status_code < 600:
                 return ReconciliationRequired("http_5xx", f"zernio {resp.status_code}, may be live (reconcile by hand) — body withheld")
             if resp.status_code == 429:

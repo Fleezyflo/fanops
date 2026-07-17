@@ -27,8 +27,12 @@ def _cfg(tmp_path, monkeypatch):
     return Config(root=tmp_path)
 
 def _post(pid="p1", acct_id="acc_abc"):
+    # created_at is REQUIRED to publish (report 11 §8.4): it is the per-incarnation discriminator in the
+    # x-request-id, and a post without one is refused BEFORE the network rather than sent with a fabricated
+    # key. Every production mint site stamps it (crosspost / repost / crosspost_to_account) and the live
+    # ledger has 0 posts without one, so a fixture lacking it was never a shape production could produce.
     return Post(id=pid, parent_id="c1", account="tk", account_id=acct_id, platform=Platform.tiktok,
-                caption="fire", state=PostState.submitting,
+                caption="fire", state=PostState.submitting, created_at="2026-07-16T13:31:00Z",
                 media_urls=["https://media.zernio.com/x.mp4"], scheduled_time="2099-01-01T00:00:00Z", public_url="dryrun://c1")
 
 def _led(cfg, post):

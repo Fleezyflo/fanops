@@ -294,6 +294,18 @@ def test_28_409_without_details_does_not_crash(tmp_path, monkeypatch):
         p = _publish(cfg, _post(), _Rec(_R(409, body)), monkeypatch)
         assert p.state is PostState.needs_reconcile and p.reconcile_candidate_id is None
 
+def test_28b_409_with_an_unreadable_body_says_so_rather_than_swallowing_it(tmp_path, monkeypatch):
+    # "Zernio named no post" and "Zernio may have named one we could not read" are DIFFERENT facts — only the
+    # second means the operator is missing a pointer that exists. The swallow ratchet caught this discarding
+    # the parse error; it is now a logged, operator-visible outcome.
+    cfg = _cfg(tmp_path, monkeypatch)
+    p = _publish(cfg, _post(), _Rec(_R(409, ValueError("not json"))), monkeypatch)
+    assert p.state is PostState.needs_reconcile and p.reconcile_candidate_id is None
+    assert "unreadable" in p.error_reason
+    assert "zernio_409_body_unparsed" in cfg.log_path.read_text()
+    # and the new wording must not read as transient ("unreachable" IS in the classifier's substring list)
+    assert is_transient_failure_reason(p.error_reason) is False
+
 def test_29_409_never_yields_failed(tmp_path, monkeypatch):
     # R-3 NEGATIVE CONTROL — the live defect. `failed` is RE-QUEUEABLE, so filing a duplicate-content 409 as
     # failed is a licence to post it again. A 409 proves only that Zernio (a SCHEDULER) holds a matching
