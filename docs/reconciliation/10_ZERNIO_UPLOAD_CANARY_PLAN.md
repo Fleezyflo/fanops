@@ -261,7 +261,7 @@ produced a **false `UPLOAD CONTRACT VERIFIED`** from a check that *recorded* `Co
 | **Status** | must be **200 or 206** — not "any 2xx" | 204/205 carry no body; accepting them proves nothing |
 | **Declared length** | **206** → `Content-Range: bytes 0-0/<total>`, `total` **== the PUT byte count** · **200** → `Content-Length` **== the PUT byte count** | **The load-bearing invariant** — and a **declared** one. It is what the server *reports* about the object, not a measurement of it: the body is never read, so this rules out an error page (which fails on length alone) but **cannot establish byte identity**. See §10.4 |
 | **Not an error document** | `Content-Type` must not be `text/html` / `*/xml` | belt-and-braces against a 200-with-apology-page |
-| **`Content-Type` is `video/*`** | **recorded DEVIATION, not a failure** | `contentType` *is* part of the presign contract, so a mismatch is a real finding — but a length-correct object served as `octet-stream` **is still our file**. Failing the canary there would answer a different question than the one it exists to ask |
+| **`Content-Type` is `video/*`** | **recorded DEVIATION, not a failure** | `contentType` *is* part of the presign contract, so a mismatch is a real finding — but a length-correct object served as `octet-stream` **remains consistent with a successful upload and does not invalidate the routing-contract result**. Failing the canary there would answer a different question than the one it exists to ask |
 
 > **Redirects abort — they cannot be followed.** `requests` re-enters the chokepoint per redirect hop, so a
 > hop arrives as the *next stage* and fails that stage's exact-destination match (and usually its method
@@ -496,7 +496,7 @@ in the OpenAPI spec (S0) or the media guides.
 |---|---|
 | 1 | `POST /media/presign` → **2xx** returning **both** `uploadUrl` **and** `publicUrl` |
 | 2 | **Signed PUT → 2xx** |
-| 3 | **`publicUrl` serves the object** — **200/206**, and the **stored length equals the PUT byte count** (§4.5). Not "any 2xx" |
+| 3 | **`publicUrl` serves the object** — **200/206**, and the **server-declared total length equals the PUT byte count** (§4.5). Not "any 2xx" |
 | 4 | **No `Authorization` on the PUT** — asserted on the outgoing request |
 | 5 | **No secret in any sink** — no API key, no `X-Amz-Signature`/`-Credential`/`-Security-Token`, no full `uploadUrl` |
 | 6 | **`queued == 0`** at each of the four checkpoints (§6 — proven at instants, not across the interval) |
@@ -521,7 +521,7 @@ in the OpenAPI spec (S0) or the media guides.
 |---|---|
 | 1 | **Any non-2xx** on presign or PUT; **anything but 200/206** on the accessibility GET |
 | 2 | **Malformed presign response** — missing `uploadUrl`/`publicUrl`, or non-JSON |
-| 2b | **The retrievable object is not the asset** — stored length ≠ the PUT byte count, an unusable `Content-Range`/`Content-Length`, or an error document served as 2xx (§4.2) |
+| 2b | **The accessibility response does not support the expected uploaded-object metadata** — the server-declared total length differs from the PUT byte count, `Content-Range`/`Content-Length` is unusable, or an error document is served as 2xx (§4.5) |
 | 3 | **Secret exposure** in any sink |
 | 4 | **Any request to the forbidden path** |
 | 5 | **Ledger or queue mutation** — `queued != 0`, failed-set drift, or posts-digest drift |
