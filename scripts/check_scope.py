@@ -33,6 +33,9 @@ _OVERRIDES: dict[str, tuple[str, ...]] = {
     "src/fanops/timing_bias.py": ("tests/test_culmination_coverage.py",),
     "src/fanops/transcribe.py": ("tests/test_transcribe.py", "tests/test_speech_trust.py"),
     "src/fanops/post/run.py": ("tests/test_post_run.py",),
+    # zernio_outcome is the private Zernio create-result type; its behaviour is only meaningful as the
+    # thing ZernioPoster maps onto the ledger, so it is covered where that mapping is proven.
+    "src/fanops/post/zernio_outcome.py": ("tests/test_zernio_idempotency.py",),
     "src/fanops/studio/actions_approve.py": ("tests/test_studio_approval.py",),
     "src/fanops/studio/actions_common.py": ("tests/test_studio_golive.py",),
     "src/fanops/studio/actions_run.py": ("tests/test_studio_run.py", "tests/test_studio_upload.py", "tests/test_upload_chunked.py"),

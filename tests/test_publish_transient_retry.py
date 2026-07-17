@@ -18,8 +18,11 @@ def _queued(cfg, pid="p1", cid="c1", *, sub=None):
     f = cfg.clips / f"{cid}.mp4"; f.parent.mkdir(parents=True, exist_ok=True); f.write_bytes(b"V")
     with Ledger.transaction(cfg) as led:
         led.add_clip(Clip(id=cid, parent_id="mom_1", path=str(f), state=ClipState.queued))
+        # created_at: required to publish (report 11 §8.4) — the per-incarnation discriminator in the
+        # x-request-id. A post without one is refused before the network, never sent with a fabricated key.
         led.add_post(Post(id=pid, parent_id=cid, account="tk", account_id="z1", platform=Platform.tiktok,
                           caption="c", scheduled_time="2020-01-01T00:00:00Z", state=PostState.queued,
+                          created_at="2026-07-16T13:31:00Z",
                           media_urls=["https://cdn/v.mp4"], public_url="dryrun://p1",
                           submission_id=sub))
 

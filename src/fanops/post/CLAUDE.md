@@ -34,6 +34,35 @@ here in three phases:
 Postiz publish CANNOT self-promote to `published` — it parks in `needs_reconcile` and `reconcile.py` back-fills
 the URL on the next pass. See also the traps section below.
 
+## Zernio idempotency — five things that look wrong and are not (report 11)
+
+Anchored by SYMBOL, not line: these move. Full record `docs/reconciliation/11_ZERNIO_IDEMPOTENCY_DESIGN.md`;
+tests `tests/test_zernio_idempotency.py`.
+
+- **`_request_id` is NOT `uuid5(ns, post.id)` and must not be "simplified" to it.** It hashes
+  `post.id | created_at | platform | account_id`. `crosspost` **pops** a `failed`/`rejected` record and
+  **remints it under the identical `post.id`** with a fresh `created_at`, and `_publish_one` refreshes
+  `account_id` at publish — so one `post.id` denotes SEVERAL create operations. Dropping `created_at` hands a
+  new incarnation the old one's identity and Zernio replays the dead post instead of creating the new one.
+  `_ZERNIO_REQ_NS` and `_REQ_NAME_V` are **permanent**: changing either makes a retry derive a different key
+  than the send it retries, silently re-opening the double-post hole for every in-flight post.
+- **A 409 is NEVER `failed`.** It is duplicate-content, and `failed` is **re-queueable** — filing it there is a
+  licence to post it again. Zernio is a hosted *scheduler*, so a 409 proves only that Zernio holds a matching
+  record: not platform publication, not ownership by this post, not completion. It parks `needs_reconcile`.
+- **`reconcile_candidate_id` is NOT a `submission_id` and must never be copied into one.** `_RECONCILABLE`
+  includes `needs_reconcile`, so a candidate parked in `submission_id` would be polled, found live (of course —
+  that is *why* Zernio rejected us as a duplicate) and promoted to `published` with **another post's
+  permalink**. Never a poll key, never a promotion source, without an explicit operator identity decision.
+- **A 4xx `TerminalFailure` withholds the response body ON PURPOSE.** `error_reason` is substring-scanned by
+  `is_transient_failure_reason` (`"timeout"`, `"network error"`, `\((\d{3})\)`). A 4xx body echoing
+  `"upstream timeout"` would classify a terminal failure as transient and hand it to the daemon re-queue — a
+  loop. Bodies ride only `ReconciliationRequired` reasons, which are never auto-requeued.
+- **Idempotency does NOT replace the queued-only claim.** The ~5-min window cannot span the 600s daemon
+  interval. The header closes the *within-attempt* hole; the claim closes the *cross-pass* hole. Both required.
+
+`zernio_outcome.py`'s types are **private to the Zernio backend** — they must never cross the `Poster`
+protocol (`publish(led, post_id) -> Ledger`). `postiz.py` / `dryrun.py` do not import them, by design.
+
 ## Two traps that look like bugs but are by design
 
 - **`_postiz_permalink` (`postiz.py:73`) ALWAYS returns `None`** — Postiz returns no URL at publish time. So

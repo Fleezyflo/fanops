@@ -330,6 +330,11 @@ class InflightWatchRow:
     error_reason: Optional[str] = None
     age_minutes: int = 0
     since_iso: Optional[str] = None
+    # Report 11 §5: UNVERIFIED reconciliation evidence — the id a backend named when it rejected this post as
+    # a duplicate. Rendered DISTINCTLY from submission_id and never as one: submission_id means "the backend
+    # id OF this post", a candidate means "a record the backend holds that MIGHT be this post". Only the
+    # operator can close that gap, so the UI must not let the two read alike.
+    reconcile_candidate_id: Optional[str] = None
 
 
 
@@ -389,7 +394,8 @@ def inflight_watch(led: Ledger, cfg: Config, *, account: Optional[str] = None,
         out.append(InflightWatchRow(post_id=p.id, account=p.account, platform=p.platform.value,
                                     state=p.state.value, submission_id=p.submission_id,
                                     error_reason=(p.error_reason or "")[:80] or None,
-                                    age_minutes=age, since_iso=since))
+                                    age_minutes=age, since_iso=since,
+                                    reconcile_candidate_id=getattr(p, "reconcile_candidate_id", None)))
     out.sort(key=lambda r: (-r.age_minutes, r.post_id))
     return out
 

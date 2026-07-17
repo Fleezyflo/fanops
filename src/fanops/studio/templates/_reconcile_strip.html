@@ -20,6 +20,10 @@
       <span class="muted">{{ w.platform }}</span>
       {% if w.age_minutes %}<span class="reconcile-age" title="since submission">{% if w.age_minutes >= 120 %}stuck {{ (w.age_minutes // 60) }}h{% elif w.age_minutes >= 60 %}{{ (w.age_minutes // 60) }}h{% else %}{{ w.age_minutes }}m{% endif %}</span>{% endif %}
       {% if w.error_reason %}<span class="err">{{ w.error_reason | operator_error }}</span>{% endif %}
+      {# Report 11 §5: UNVERIFIED evidence, never a submission id. The backend named this post when it #}
+      {# rejected ours as a duplicate — it MIGHT be ours. Nothing polls or promotes off it; only the #}
+      {# operator can decide. Labelled + styled apart so it can never be misread as "our post id". #}
+      {% if w.reconcile_candidate_id %}<span class="reconcile-candidate" title="Unverified: the backend reports a duplicate and named this post. It is NOT confirmed to be this post — check it by hand before acting.">unverified duplicate of {{ w.reconcile_candidate_id }}</span>{% endif %}
     </li>
     {% endfor %}
     {% if inflight_watch|length > 5 %}<li class="muted">+ {{ inflight_watch|length - 5 }} more</li>{% endif %}

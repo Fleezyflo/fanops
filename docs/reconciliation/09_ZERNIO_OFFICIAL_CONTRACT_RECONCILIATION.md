@@ -802,9 +802,18 @@ the intended semantics.
 **The real duplicate guard for an intentional re-post is the 24-hour content-hash 409** (§7.7), which is
 independent of `x-request-id` and keyed on `(platform, accountId, content + media URLs)`.
 
-### 7.5 How is HTTP 200 `existingPost` parsed? — **It is not, and that is disqualifying on its own**
+### 7.5 How is HTTP 200 `existingPost` parsed? — **It was not. SHIPPED 2026-07-17 (report 11).**
 
-Current: `:246` `if resp.status_code in (200, 201):` → `_extract_zernio_id(resp.json())`, which searches
+> **STATUS — CLOSED.** Retained as the record of why the header and the parser had to ship together. Both
+> shipped in one PR (report 11 §4/§11): `_parse_create_body` classifies `200 + existingPost` as an
+> `IdempotentReplay` → `submitted`, the same ledger state a first-time create takes. This section's central
+> finding — **shipping the header alone would be strictly worse than shipping neither** — is exactly why they
+> were never split. Its second finding also stands and is not "solved" by shipping: **`existingPost` remains
+> unschematised** (prose-only; `200` still absent from the `responses` map), so the parser is deliberately
+> tolerant and fails to `needs_reconcile`, never to `failed`, and the shape stays an **integration
+> checkpoint** the operator confirms at the first live publish (report 11 §13.1).
+
+Current (pre-fix): `:246` `if resp.status_code in (200, 201):` → `_extract_zernio_id(resp.json())`, which searches
 `_id`/`id`/`postId` at top level, then nested **`post`**. **There is no `existingPost` branch.**
 
 **So an idempotent replay would be parsed as a FAILURE:**
@@ -841,18 +850,35 @@ reconcile — **a bug introduced by adding the header alone**.
 > doesn't exist") is retracted. **The feature exists; it simply does not cover the case the invariant
 > guards.**
 
-### 7.7 How is the separate 24-hour content-hash 409 handled? — **It is not**
+### 7.7 How is the separate 24-hour content-hash 409 handled? — **It was not. SHIPPED 2026-07-17 (report 11).**
 
-`409` falls through every branch to `:269` `break` → `failed` with `error_reason = "zernio 409 (body
-withheld)"`. The `details.existingPostId` — which names the post that already exists — is **discarded**.
+> **STATUS — CLOSED.** This section is the point-in-time audit that scoped the fix; it is retained as the
+> record. The defect it names (**R-3**) is fixed: a 409 now yields `ReconciliationRequired` →
+> `needs_reconcile`, never `failed`, and `details.existingPostId` is preserved as
+> `Post.reconcile_candidate_id`. See report 11 §3/§5/§9.
 
-**A 409 means the content is already live.** Marking that post `failed` is **wrong**: `failed` is
-re-queueable, so a requeue would 409 again forever, and the operator never learns the post *succeeded
-earlier*. The correct handling is closer to `needs_reconcile` (or `submitted` with the recovered
-`existingPostId`).
+`409` fell through every branch to `break` → `failed` with `error_reason = "zernio 409 (body withheld)"`.
+The `details.existingPostId` — which names the post Zernio already holds — was **discarded**.
 
-**This is a real, pre-existing defect, independent of the 405 and independent of `x-request-id`.** It is
-**not reachable today** (`queued = 0`) and is **deferred** (§8.6, row 24).
+**⛔ RETRACTED CLAIM — this section asserted, until 2026-07-17:**
+
+> *"A 409 means the content is already live."*
+
+**False, and corrected in report 11 §3.** Zernio is a hosted **scheduler**, so its duplicate check runs over
+**its own post records**. A 409 proves only that **Zernio holds a matching record** within its 24h window —
+**not** social-platform publication, **not** ownership by *this* FanOps record, **not** completion. The
+matched record may be queued, failed, or rejected downstream; the key `(platform, accountId, content-hash)`
+matches another FanOps record or an operator's manual post identically; and *our* request was **rejected**,
+so nothing of ours completed. `existingPostId` is therefore a **candidate pointer, never an identity** — which
+is why the shipped fix parks `needs_reconcile` with evidence rather than adopting the id as a
+`submission_id`, and why this section's own suggestion of *"`submitted` with the recovered `existingPostId`"*
+was **also wrong**: `submission_id` is a poll key, and `_RECONCILABLE` includes `needs_reconcile`, so
+reconcile would have polled that id, found it live (of course — that is *why* we were rejected) and promoted
+our row to `published` carrying **another post's permalink**. Silent misattribution.
+
+The rest of the section stands: `failed` **is** re-queueable, so filing a duplicate-content 409 as `failed`
+is a licence to post it again — a real, pre-existing defect independent of the 405 and of `x-request-id`. It
+was **not reachable** while `queued = 0`, which is what made deferring it safe at the time.
 
 ### 7.8 The client's H5 comment was stale — **CORRECTED in Rev 4**
 
@@ -873,6 +899,14 @@ same-attempt idempotency · **FanOps does not send it yet** · FanOps therefore 
 queued-only claim check and `needs_reconcile`** for cross-pass safety · `x-request-id` + `existingPost`
 parsing + 409 handling is a **required separate follow-up before the first production requeue**.
 
+> **⚠ SUPERSEDED 2026-07-17 — the paragraph above describes Rev 4 (a documentation-only correction) and is
+> kept as that record. FanOps DOES send `x-request-id` now** (report 11): the header, the `existingPost`
+> parser and the 409 handling landed together, as the "required separate follow-up" this paragraph names.
+> Do not quote *"FanOps does not send it yet"* as current. What still stands, unchanged: the queued-only
+> claim check and never-downgrading `needs_reconcile` **continue** to carry CROSS-PASS safety — idempotency
+> does not replace them, because a ~5-minute window cannot span the 600s daemon interval (§7.6). Both are
+> required, which is exactly what §7.6 established.
+
 > The Rev 3 reasoning for deferring the comment fix — *"editing it here without shipping the feature would
 > leave a comment describing code that doesn't exist"* — was **wrong**, and is retracted. It confused
 > *describing the code* with *describing the vendor contract*. The corrected comment describes exactly what
@@ -880,7 +914,18 @@ parsing + 409 handling is a **required separate follow-up before the first produ
 > invariant.** Leaving a knowingly false claim in active source until some future PR is not scope control;
 > the same false premise is what let Rev 1 cite it as corroboration in the first place.
 
-### 7.9 Recommendation: **B — defer to a separate, narrowly scoped follow-up**
+### 7.9 Recommendation: **B — defer to a separate, narrowly scoped follow-up** — **DISCHARGED 2026-07-17**
+
+> **STATUS — the deferral is spent.** The "separate, narrowly scoped follow-up" this section recommended is
+> report 11, designed and landed as one PR under its own operator gate. Grounds 1–4 below were the *deferral*
+> grounds; here is what became of each:
+>
+> | # | Ground | Disposition |
+> |---|---|---|
+> | 1 | `existingPost` is unspecified | **Still true — not resolved by shipping.** The parser is tolerant and fails to `needs_reconcile`; the shape is an integration checkpoint (report 11 §13.1) |
+> | 2 | Header + parser are inseparable; blast radius grows past the upload | **Accepted and paid deliberately**, in a PR of its own rather than inside the upload fix. The final surface is narrower than first designed: the typed result is **private to the Zernio backend**, so `postiz.py` / `dryrun.py` / the `Poster` protocol are untouched (report 11 §0 D7, §10) |
+> | 3 | Unverifiable here; correct behaviour is only observable live | **Still true.** 71 offline tests lock the shape; the first live publish remains an operator-gated checkpoint (report 11 §13.6) |
+> | 4 | Zero live exposure today (`queued = 0`) | **This is what expires.** It made deferral safe *while nothing could publish*. Requeueing the four burned records reopens the window, which is why report 11 was required **before** any production requeue |
 
 **Grounds — scope control and verification risk only. NOT "undocumented": it is documented, officially
 recommended for HTTP clients, and FanOps is an HTTP client.**

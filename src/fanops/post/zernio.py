@@ -13,39 +13,67 @@ schedule (a post sits `queued` until due, then publish_due fires) — we don't h
 accounts.json integrations[platform] carries the Zernio account _id for a zernio surface (which backend
 that id belongs to lives in accounts.json `backends`).
 
-IDEMPOTENCY — current bounded truth (report 09 §7):
-  · Zernio DOES document an optional `x-request-id` header on POST /posts — same-attempt idempotency for
-    ~5 minutes; a repeat returns HTTP 200 with the original post in `existingPost`. A separate 24h
-    content-hash 409 carries `details.existingPostId`.
-  · **FanOps does NOT send it yet.** `_extract_zernio_id` has no `existingPost` branch, so the header
-    ALONE would misparse an idempotent replay as "no id" -> needs_reconcile, filing a SUCCESSFUL publish
-    as ambiguous. Header and parser are inseparable.
-  · FanOps therefore continues to rely on the **queued-only claim check** + **needs_reconcile** for
-    cross-pass safety. That stays necessary regardless: x-request-id's ~5-minute window cannot cover
-    cross-pass republication (daemon interval 600s), which is exactly what the invariant guards.
-  · **REQUIRED separate follow-up before the first production requeue:** x-request-id + `existingPost`
-    parsing + 409 handling, landed together.
+IDEMPOTENCY (report 11, implemented 2026-07-17 — header + parser + 409, landed together because they are
+inseparable: the header ALONE would misparse a replay as "no id" and file a SUCCESSFUL publish as ambiguous):
+  · Every POST /posts carries `x-request-id` = _request_id(post): uuid5 over
+    (post.id | created_at | platform | account_id) — STABLE per record INCARNATION x platform x RESOLVED
+    Zernio account, so every retry of one attempt reuses it and Zernio replays instead of double-creating.
+    NOT post.id alone: crosspost POPS a failed/rejected record and REMINTS it under the IDENTICAL post.id
+    with a fresh created_at, and run.py refreshes account_id at publish — so one post.id denotes several
+    distinct create operations, possibly to different Zernio accounts (report 11 §8).
+  · A repeat inside Zernio's ~5-min window -> HTTP 200 + the original in `existingPost` -> IdempotentReplay
+    -> `submitted`, the same ledger state as a first-time create (report 11 R-2).
+  · Retries are bounded by _RETRY_DEADLINE_S on time.monotonic(), STRICTLY inside _IDEMPOTENCY_WINDOW_S:
+    past the window the header is no longer honoured, so a late retry IS the double-post it exists to
+    prevent. Past the deadline we never send again — we classify by whether anything may have landed.
+  · The separate 24h content-hash 409 -> ReconciliationRequired + reconcile_candidate_id (EVIDENCE ONLY,
+    never a submission_id). NEVER `failed`: Zernio is a SCHEDULER, so a 409 proves only that Zernio holds a
+    MATCHING record — not platform publication, not ownership by this record, not completion (report 11 §3).
+  · No request identity => NO network call. A fabricated discriminator would make two incarnations share
+    one x-request-id — the exact collision the formula exists to prevent (report 11 §8.4).
+  · The **queued-only claim check** + never downgrading **needs_reconcile** still carry CROSS-PASS safety
+    and are not replaced: a ~5-minute window cannot span the 600s daemon interval. Idempotency closes the
+    WITHIN-attempt hole; the claim invariant closes the CROSS-pass hole. Both are required.
 
 The create-post RESPONSE id key stays an INTEGRATION CHECKPOINT — `existingPost` is prose-only in the spec
-(never schematised) — so the offline tests lock the SHAPE and the operator verifies live at first publish."""
+(never schematised, and 200 is not even in its responses map) — so the offline tests lock the SHAPE, the
+parser is tolerant and fails to needs_reconcile (never to `failed`), and the operator verifies live at
+first publish."""
 from __future__ import annotations
 import logging
 import random
 import re
 import time
+import uuid
 from pathlib import Path
 from typing import NamedTuple
 import requests
 from fanops.config import Config
 from fanops.errors import ZernioAuthError, redact
 from fanops.ledger import Ledger
+from fanops.log import get_logger
 from fanops.models import PostState
 from fanops.text import safe_public_url
 from fanops.post.compress import maybe_shrink_for_cap
+from fanops.post.zernio_outcome import (Created, IdempotentReplay, ReconciliationRequired, TerminalFailure,
+                                        ZernioCreateResult)
 
 _log = logging.getLogger("fanops.post.zernio")
 _MAX_RETRIES = 4
 _PUBLISH_TRANSIENT_MAX = _MAX_RETRIES   # MOL-115: connection/timeout retries before parking needs_reconcile
+
+# Zernio's documented same-attempt idempotency window for x-request-id (~5 minutes, report 09 §7).
+_IDEMPOTENCY_WINDOW_S = 300.0
+# Our retry budget, STRICTLY inside that window: past it the header is no longer honoured, so a "retry"
+# would be a fresh create — the exact double-post x-request-id exists to prevent. Measured on
+# time.monotonic() (immune to a wall-clock step / NTP correction / DST), per publish call, and checked
+# BEFORE each sleep so the next SEND — not the sleep — lands inside the deadline.
+_RETRY_DEADLINE_S = 240.0
+# PERMANENT constants. Changing either silently re-opens the double-post hole for every in-flight post
+# (a retry would derive a DIFFERENT x-request-id than the send it is retrying, so Zernio would create a
+# second post instead of replaying the first). Chosen once, 2026-07-17. Never regenerate, never "clean up".
+_ZERNIO_REQ_NS = uuid.UUID("09105245-a8e0-4d28-ba02-c85ebab84cb3")
+_REQ_NAME_V = "1"                       # formula version — bump ONLY with a migration story for in-flight posts
 
 
 class ZernioAccount(NamedTuple):
@@ -66,6 +94,53 @@ def _key(cfg: Config) -> str:
     return k
 
 
+def _request_id(post) -> str:
+    """The x-request-id for ONE create attempt: stable per (record incarnation x platform x RESOLVED Zernio
+    account), so every retry of that attempt reuses it and Zernio replays rather than creating a second post.
+
+    uuid5(ns, post.id) ALONE is INSUFFICIENT and was a false claim in report 11 Rev 2 (§0 D6): crosspost
+    POPS a `failed`/`rejected` record and REMINTS it under the IDENTICAL post.id with a fresh created_at
+    (crosspost.py `led.posts.pop(pid)` -> `add_post(Post(id=pid, ..., created_at=now))`), so one post.id
+    denotes SEVERAL distinct create operations — a post.id-only name would hand a NEW incarnation the OLD
+    incarnation's request identity, and Zernio would replay the old post instead of creating the new one.
+    Hence the four-part name:
+      · post.id       — the logical surface (content-addressed clip x account x platform)
+      · created_at    — the per-INCARNATION discriminator: written at BIRTH only, never mutated on an
+                        existing record, and NOT in _NET_POST_FIELDS (so finalize cannot overwrite it).
+                        The remint stamps a fresh one, which is exactly what makes a remint a new identity.
+      · platform      — already hashed into post.id via surface_key(), so this is redundant-but-explicit:
+                        the name stays correct if pid's derivation ever changes.
+      · account_id    — the resolved Zernio account ACTUALLY receiving this request. A genuine addition:
+                        post.id carries the HANDLE, not the Zernio integration id, and run.py refreshes
+                        account_id at publish (a Go-Live remap) BEFORE poster.publish — the same field
+                        build_zernio_payload reads, so the id and the payload's accountId cannot disagree.
+
+    The caller MUST have passed _require_request_identity(post) first: this function never invents a
+    missing component."""
+    return str(uuid.uuid5(_ZERNIO_REQ_NS, "|".join(
+        (_REQ_NAME_V, post.id, post.created_at, post.platform.value, post.account_id))))
+
+
+def _require_request_identity(post) -> TerminalFailure | None:
+    """Refuse to POST when a request identity cannot be derived — returns TerminalFailure, or None to
+    proceed. Called BEFORE the first send, so a refusal costs ZERO network calls (invariant I-10).
+
+    Post.created_at is Optional[str] (models.py) — every row carries one in practice (all three mint sites
+    stamp it; the v3 migration backfills any older row) but the TYPE permits None, and this design does not
+    rest on an unenforced observation. Defaulting a missing component to "", to post.id, or to a fresh stamp
+    is NOT an option: the first two make two different incarnations collide on ONE x-request-id, the third
+    makes every attempt unique and silently disables idempotency altogether. Failing loudly is the only
+    correct behavior — the reason is precise, the operator sees it in Review, and it is deliberately NOT
+    phrased as a transient (is_transient_failure_reason must not match it, or the daemon would re-queue a
+    row that cannot possibly succeed until its data is repaired). Pinned by the reason-classifier test."""
+    missing = [n for n, v in (("created_at", post.created_at), ("account_id", post.account_id),
+                              ("platform", getattr(post.platform, "value", None))) if not (v or "").strip()]
+    if missing:
+        return TerminalFailure("missing_request_identity",
+                               f"cannot derive x-request-id: {','.join(missing)} absent — refusing to POST")
+    return None
+
+
 def _extract_zernio_id(body) -> str | None:
     # Zernio's create-post response id key isn't pinned (integration checkpoint). Accept the likely
     # aliases + a nested post.{_id,id}; ignore non-str/empty; None when none present.
@@ -81,6 +156,68 @@ def _extract_zernio_id(body) -> str | None:
     if isinstance(nested, dict):
         return _extract_zernio_id(nested)
     return None
+
+
+def _parse_create_body(body) -> ZernioCreateResult:
+    """Classify a 2xx create body into Created / IdempotentReplay / ReconciliationRequired. NEVER returns
+    TerminalFailure: a 2xx means Zernio accepted something, so "we can't read it" is ambiguous, never
+    provably-not-accepted. `existingPost` is prose-only in the spec (never schematised, and 200 isn't even
+    in its responses map), so every unreadable shape parks for reconcile — over-parking is free
+    (needs_reconcile is structurally never re-POSTed and reconcile heals it), under-parking double-posts.
+
+    An `existingPost` KEY present but unreadable is therefore NOT downgraded to Created off a sibling `id`:
+    the key is Zernio saying "this is a replay", and which post that direct id then denotes is exactly what
+    we cannot assume."""
+    if isinstance(body, list):
+        body = body[0] if body else None
+    if not isinstance(body, dict):
+        return ReconciliationRequired("success_no_id", "2xx body is not an object (body withheld)")
+    direct = _extract_zernio_id(body)
+    has_existing = "existingPost" in body
+    ep = body.get("existingPost")
+    replay = _extract_zernio_id(ep) if isinstance(ep, dict) else (ep if isinstance(ep, str) and ep else None)
+    if direct and replay and direct != replay:
+        # Two DIFFERENT ids means the response contract is not what we modelled. Adopt neither, and carry
+        # no candidate: a candidate is a pointer we'd hand the operator as evidence, and we cannot say which
+        # of the two it would even be.
+        return ReconciliationRequired("conflicting_ids", f"id={direct!r} != existingPost id={replay!r}")
+    if replay:
+        return IdempotentReplay(replay)
+    if has_existing:
+        return ReconciliationRequired("replay_no_id", "existingPost present but carries no usable id (body withheld)")
+    if direct:
+        return Created(direct)
+    return ReconciliationRequired("success_no_id", "2xx but no recognizable post id (body withheld)")
+
+
+def _extract_409_candidate(body) -> str | None:
+    """The 409's details.existingPostId — an UNPROVEN pointer, never an identity (report 11 §3). Absent /
+    malformed -> None, never a raise: a 409 must reach needs_reconcile whatever its body looks like."""
+    if not isinstance(body, dict):
+        return None
+    details = body.get("details")
+    if not isinstance(details, dict):
+        return None
+    v = details.get("existingPostId")
+    return v if isinstance(v, str) and v else None
+
+
+def _retry_after_s(resp) -> float | None:
+    """Retry-After in seconds, or None when absent/unparseable (the HTTP-date form is deliberately not
+    parsed — the caller falls back to bounded backoff, which the deadline gates identically)."""
+    v = (getattr(resp, "headers", None) or {}).get("Retry-After")
+    if v is None:
+        return None
+    try:
+        return max(0.0, float(str(v).strip()))
+    except (TypeError, ValueError):
+        return None
+
+
+def _fits_deadline(started: float, wait: float) -> bool:
+    """True when sleeping `wait` still leaves the NEXT SEND inside _RETRY_DEADLINE_S. monotonic-based, so a
+    wall-clock jump can neither extend nor collapse the budget."""
+    return (time.monotonic() - started) + wait < _RETRY_DEADLINE_S
 
 
 def _tiktok_settings() -> dict:
@@ -105,12 +242,15 @@ def build_zernio_payload(*, account_id: str, platform: str, content: str,
     # ONE Zernio account (a FanOps Post is one surface). mediaItems[] is the CURRENT documented media key
     # (OpenAPI v1.0.4), never the legacy `media`; it carries the presign publicUrl from zernio_upload_media.
     # TikTok surfaces also need platformSpecificData.tiktokSettings (privacy + consent flags).
-    # IDEMPOTENCY: Zernio documents an optional x-request-id (~5-min same-attempt) but FanOps does NOT send
-    # it yet, and the header without an `existingPost` parser is worse than neither (module docstring) — so
-    # a re-POST would still DOUBLE-publish. Cross-pass safety therefore rests on the queued-only claim
-    # check (run.py publish_due iterates PostState.queued + the under-lock claim re-checks `queued`) AND on
-    # never downgrading needs_reconcile — a submitting/submitted/needs_reconcile post is structurally never
-    # re-submitted. See test_needs_reconcile_post_is_never_republished (tests/test_channel_provider.py).
+    # IDEMPOTENCY: the x-request-id is a HEADER, deliberately not built here — this function returns the
+    # BODY, and the id is derived from the record's identity (post.id/created_at/platform/account_id), not
+    # from the content. Two posts with byte-identical bodies are different creates; one record retried
+    # twice is the SAME create. See _request_id + ZernioPoster._create (module docstring).
+    # CROSS-PASS safety still rests on the queued-only claim check (run.py publish_due iterates
+    # PostState.queued + the under-lock claim re-checks `queued`) AND on never downgrading needs_reconcile —
+    # a submitting/submitted/needs_reconcile post is structurally never re-submitted. The ~5-min
+    # idempotency window cannot span the 600s daemon interval, so it does NOT replace that invariant.
+    # See test_needs_reconcile_post_is_never_republished (tests/test_channel_provider.py).
     plat = {"platform": platform, "accountId": account_id}
     if platform == "tiktok":
         plat["platformSpecificData"] = {"tiktokSettings": _tiktok_settings()}
@@ -276,51 +416,122 @@ class ZernioPoster:
         self.base = _base(cfg)
         self.headers = {"Authorization": f"Bearer {_key(cfg)}", "Content-Type": "application/json"}
 
-    def publish(self, led: Ledger, post_id: str) -> Ledger:
-        post = led.posts[post_id]
+    def _create(self, post) -> ZernioCreateResult:
+        """ONE create attempt (with its bounded, in-window retries) -> a typed result. PRIVATE: the result
+        never leaves this class. Raises ONLY ZernioAuthError, which must halt the whole run rather than burn
+        one post (a bad key fails every post).
+
+        Every send carries the SAME x-request-id, so a retry after a lost response, a 429, or a crash is a
+        REPLAY (HTTP 200 + existingPost), not a second post. Every boundary where the request MAY have
+        reached Zernio returns ReconciliationRequired — never TerminalFailure, because `failed` is
+        re-queueable and re-queueing a landed post is the double-post this exists to prevent."""
+        bad = _require_request_identity(post)
+        if bad is not None:
+            return bad                                   # ZERO network calls (I-10) — never fabricate an id
+        rid = _request_id(post)
         payload = build_zernio_payload(account_id=post.account_id, platform=post.platform.value,
                                        content=post.caption, media_urls=post.media_urls,
                                        scheduled_time=post.scheduled_time)
-        delay, last = 1.0, None
+        headers = dict(self.headers); headers["x-request-id"] = rid
+        started = time.monotonic()
+        delay, sent_any = 1.0, False
         for attempt in range(_MAX_RETRIES):
             try:
-                resp = requests.post(f"{self.base}/posts", headers=self.headers, json=payload, timeout=30)
+                resp = requests.post(f"{self.base}/posts", headers=headers, json=payload, timeout=30)
             except requests.exceptions.RequestException as exc:
-                # Pre-send ConnectTimeout blips are safe to retry; ConnectionError may mean the body landed — park immediately (H01).
-                if isinstance(exc, requests.exceptions.ConnectTimeout) and attempt < _MAX_RETRIES - 1:
-                    time.sleep(delay + random.uniform(0, delay)); delay *= 2; continue
-                # Body may have landed on Zernio (the response, not the request, was lost) — ambiguous,
-                # park for reconcile, never re-POST into a possible second live post (no idempotency key).
-                post.state = PostState.needs_reconcile
-                post.error_reason = f"zernio network error, may be live: {str(exc)[:160]}"
-                return led
-            last = resp
+                if isinstance(exc, requests.exceptions.ConnectTimeout):
+                    # The connection was never established, so THIS attempt sent nothing. Retry inside the
+                    # deadline; past it the verdict depends on whether an EARLIER attempt reached Zernio.
+                    wait = delay + random.uniform(0, delay)
+                    if attempt < _MAX_RETRIES - 1 and _fits_deadline(started, wait):
+                        time.sleep(wait); delay *= 2; continue
+                    if not sent_any:
+                        return TerminalFailure("connect_timeout",
+                                               f"could not connect after {attempt + 1} attempt(s); nothing was sent")
+                    return ReconciliationRequired("connect_timeout_after_send",
+                                                  f"an earlier attempt reached Zernio and this one could not re-check "
+                                                  f"within {_RETRY_DEADLINE_S:.0f}s — may be live")
+                # The body may have landed (the response, not the request, was lost) — ambiguous. Park; do
+                # NOT re-POST. The retry that WOULD be safe is the in-deadline loop above; this exception
+                # class is no evidence that a fresh send lands inside the window.
+                sent_any = True
+                return ReconciliationRequired("network_error_may_be_live",
+                                              f"{type(exc).__name__}: {redact(str(exc), self.cfg.zernio_api_key, limit=160)}")
+            sent_any = True                              # a RESPONSE proves the request reached Zernio
             if resp.status_code in (200, 201):
-                sid = None
                 try:
-                    sid = _extract_zernio_id(resp.json())
-                except Exception:
-                    sid = None
-                if not sid:
-                    post.state = PostState.needs_reconcile
-                    post.error_reason = "zernio 2xx but no recognizable post id (body withheld)"
-                    return led
-                post.state = PostState.submitted
-                post.submission_id = sid
-                post.public_url = safe_public_url(None) or post.public_url   # permalink captured later by ZernioStatusClient (reconcile); none on the publish 2xx — placeholder mirrors postiz.py
-                return led
+                    return _parse_create_body(resp.json())
+                except Exception as exc:                 # non-JSON / unreadable 2xx: Zernio accepted SOMETHING
+                    return ReconciliationRequired("success_unreadable_body",
+                                                  f"2xx but the body did not parse ({type(exc).__name__}) — body withheld")
             if resp.status_code == 401:
                 raise ZernioAuthError("Zernio 401 unauthorized — check ZERNIO_API_KEY (response body withheld)")
+            if resp.status_code == 409:
+                # R-3: a 409 is DUPLICATE-CONTENT and is NOT `failed`. Zernio is a hosted SCHEDULER, so this
+                # proves only that Zernio holds a matching record within its 24h window — not platform
+                # publication, not ownership by THIS post, not completion. The candidate is evidence for the
+                # operator, never an identity (report 11 §3/§5).
+                cand, unread = None, ""
+                try:
+                    cand = _extract_409_candidate(resp.json())
+                except Exception as exc:
+                    # A 409 must park whatever its body looks like — but the parse failure is NOT swallowed:
+                    # "Zernio named no post" and "Zernio may have named one we could not read" are DIFFERENT
+                    # facts, and only the second means the operator is missing a pointer that actually exists.
+                    unread = f" (409 body unreadable: {type(exc).__name__})"
+                    get_logger(self.cfg)("publish", post.id, "zernio_409_body_unparsed", err=type(exc).__name__)
+                return ReconciliationRequired("duplicate_content_409",
+                                              "Zernio reports duplicate content in its 24h window — identity UNPROVEN, "
+                                              f"reconcile by hand{unread}", candidate_post_id=cand)
             if 500 <= resp.status_code < 600:
-                # Ambiguous after the body was sent (no idempotency key) — park, do NOT re-POST.
-                post.state = PostState.needs_reconcile
-                post.error_reason = f"zernio {resp.status_code}, may be live (reconcile by hand) — body withheld"
-                return led
+                return ReconciliationRequired("http_5xx", f"zernio {resp.status_code}, may be live (reconcile by hand) — body withheld")
             if resp.status_code == 429:
-                time.sleep(delay + random.uniform(0, delay)); delay *= 2; continue
-            break                                            # other 4xx -> fail
-        # Never downgrade an ambiguous-live park to `failed` (failed is re-queueable -> double-post risk).
-        if post.state is not PostState.needs_reconcile:
+                # The request REACHED Zernio, so the create may already have landed — this is exactly the
+                # R-1 branch that used to re-POST bare. Retry only if the wait still lands the next SEND
+                # inside the deadline (past the window the header is dead and a "retry" is a second post).
+                wait = _retry_after_s(resp)
+                if wait is None:
+                    wait = delay + random.uniform(0, delay)
+                if attempt < _MAX_RETRIES - 1 and _fits_deadline(started, wait):
+                    time.sleep(wait); delay *= 2; continue
+                return ReconciliationRequired("rate_limited_may_be_live",
+                                              f"429 and the retry budget ({_RETRY_DEADLINE_S:.0f}s) is spent — the create "
+                                              f"may already have landed; body withheld")
+            # Other 4xx: a verdict re-sending cannot change. The body stays WITHHELD (as before this fix) —
+            # this error_reason is scanned by is_transient_failure_reason for the daemon re-queue, and a
+            # response body echoing "timeout" or "(503)" would flip a terminal 4xx into a re-queue loop.
+            return TerminalFailure(f"http_{resp.status_code}", f"({resp.status_code}) body withheld")
+        # Unreachable: every branch returns or continues, and the last iteration cannot continue
+        # (attempt < _MAX_RETRIES - 1 is False there). Belt-and-braces, never the re-queueable direction.
+        return ReconciliationRequired("retries_exhausted", f"no verdict after {_MAX_RETRIES} attempts — may be live")
+
+    def publish(self, led: Ledger, post_id: str) -> Ledger:
+        """Poster protocol — signature UNCHANGED and shared with postiz/dryrun (invariant I-11). The SOLE
+        site mapping a Zernio create result onto the ledger, so each rule ("a 409 is never failed", "a
+        candidate is never a submission_id") has exactly one owner to review."""
+        post = led.posts[post_id]
+        result = self._create(post)                      # ZernioAuthError propagates: halts the run (run.py H8)
+        if isinstance(result, (Created, IdempotentReplay)):
+            # Both are the SAME logical submission, so both take the SAME ledger state: `submitted` + a real
+            # id. Zernio returns no permalink at create, so run.py's public_url gate parks both in
+            # needs_reconcile and reconcile back-fills the URL — identical to the pre-fix success path.
+            post.state = PostState.submitted
+            post.submission_id = result.post_id
+            post.public_url = safe_public_url(None) or post.public_url   # permalink captured later by ZernioStatusClient (reconcile); none on the publish 2xx — placeholder mirrors postiz.py
+            if isinstance(result, IdempotentReplay):
+                # The ONLY behavioral difference from Created: an audit trail. A replay means a send DID
+                # land and we recovered it instead of creating a second post — the whole point of the
+                # header, so it must be visible. Unguarded, exactly like every sibling log on this path.
+                get_logger(self.cfg)("publish", post.id, "idempotent_replay", sub=result.post_id, request_id=_request_id(post))
+        elif isinstance(result, ReconciliationRequired):
+            post.state = PostState.needs_reconcile
+            post.reconcile_candidate_id = result.candidate_post_id   # NEVER submission_id (report 11 §5)
+            # Mirror the candidate into error_reason too: models.py is extra="ignore" (deliberate, pinned
+            # forward-compat), so an OLDER binary loading this ledger drops the new key entirely — the
+            # mirror is then the only surviving copy.
+            cand = f" candidate={result.candidate_post_id}" if result.candidate_post_id else ""
+            post.error_reason = f"zernio {result.reason}:{cand} {result.evidence}"[:400]
+        else:                                            # TerminalFailure — the ONLY re-queueable verdict
             post.state = PostState.failed
-            post.error_reason = f"zernio {getattr(last, 'status_code', '?')} (body withheld)"
+            post.error_reason = f"zernio {result.reason}: {result.evidence}"[:400]
         return led
