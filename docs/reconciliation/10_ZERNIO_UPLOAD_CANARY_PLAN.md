@@ -1,8 +1,11 @@
-# 10 — Zernio Upload-Only Canary Plan
+# 10 — Zernio Upload-Only Canary — Plan and Result
 
-> **Rev 2 — 2026-07-17.** Amends Rev 1 after operator rejection of the Rev 1 gate. Rev 1's defects are
-> retracted in §0 and corrected in place below. **NOT EXECUTED. No Zernio API call has been made.**
-> Gate tokens at §10: **`APPROVE UPLOAD CANARY`** / **`DO NOT CALL ZERNIO`**.
+> **Rev 3 — 2026-07-17. EXECUTED.** Gate token `APPROVE UPLOAD CANARY` returned; the canary ran at PR head
+> `b81b4ed8…` with runner `ca31aaf1…` and returned **`UPLOAD CONTRACT VERIFIED`** — **the result is §10.**
+> §§0-9 are the plan as approved, retained verbatim as the pre-execution record.
+>
+> *(Rev 2's header read "NOT EXECUTED. No Zernio API call has been made." That was true when written and is
+> **now false** — superseded by §10. Left recorded here rather than deleted: it is what was approved.)*
 
 | Field | Value |
 |---|---|
@@ -525,19 +528,76 @@ redacted evidence, and the gate is re-presented.
 > **A 405 on the PUT would be the single most valuable failure available** — it would mean the presign
 > contract is *also* not what the spec says, invalidating report 09 §6 rather than confirming it.
 
-## 10. Gate
+## 10. RESULT — executed 2026-07-17, gate token `APPROVE UPLOAD CANARY`
 
-**Nothing in this document has been executed. No Zernio API call has been made.**
+> # ✅ UPLOAD CONTRACT VERIFIED
+>
+> Runner `ca31aaf1…` · PR head `b81b4ed8…` · exit 0 · **3 requests, no aborts, no retries.**
 
-The canary is the only remaining way to close report 09 §11.5's residual: *"contract read from the spec, never
-exercised live."* It cannot publish, cannot touch the ledger, cannot touch a parked or failed record, and
-cannot expose catalogue content.
+Report 09 §11.5's named residual — *"contract read from the spec, never exercised live"* — is **CLOSED**.
+The presign + signed PUT contract is no longer a claim about a server; it is a measurement of one.
 
-`APPROVE UPLOAD CANARY` carries the §2.1 operator hold.
+| # | Success criterion | Result |
+|---|---|---|
+| 1 | presign → 2xx with **both** `uploadUrl` and `publicUrl` | ✅ |
+| 2 | signed PUT → 2xx | ✅ |
+| 3 | `publicUrl` accessible | ✅ **206** `Content-Range: bytes 0-0/54770` |
+| 4 | no `Authorization` on the PUT | ✅ asserted on the outgoing request |
+| 5 | no secret in any sink | ✅ swept: no API key, no `X-Amz-*` value, no `uploadUrl`, no `@` |
+| 6 | `queued == 0` | ✅ at **all five** checkpoints |
+| 7 | the same four `failed` ids | ✅ unchanged |
+| 8 | no post created | ✅ the post-creation path was never requested |
 
-**Reply with exactly one:**
+**The object round-tripped byte-exactly**: `Content-Range: bytes 0-0/54770` == the 54,770-byte asset PUT.
+`Content-Type: video/mp4` was **preserved** — presign's `contentType` survives read-back, so **no deviation
+was recorded**. Asset sha256 `15987301315bd793…`, `video/mp4`, 54,770 bytes, 2.000000 s.
 
-```text
-APPROVE UPLOAD CANARY
-DO NOT CALL ZERNIO
-```
+Ledger posts digest `dd1677e62654a2aa…` — **identical at all five checkpoints** (baseline, before each of the
+three stages, after completion). `FANOPS_CORPUS_AUTO=0` at each. Credential source: **`env-fallback`**
+(keyring holds no `ZERNIO_API_KEY`), so §4.3's keyring branch was not exercised live — it is proven only by
+the offline control.
+
+### 10.1 What the canary discovered that no document said
+
+**Zernio's media storage is Cloudflare R2, and the upload host is not the serving host.**
+
+| | |
+|---|---|
+| `uploadUrl` host | `late-media.<account>.r2.cloudflarestorage.com` — Cloudflare **R2**, S3-compatible presign |
+| `publicUrl` host | `media.zernio.com` — a **different** host |
+| Signed params | `X-Amz-Algorithm, X-Amz-Content-Sha256, X-Amz-Credential, X-Amz-Date, X-Amz-Expires, X-Amz-Signature, X-Amz-SignedHeaders` |
+
+The OpenAPI spec (S0) types `uploadUrl`/`publicUrl` as opaque strings and never says they differ in host.
+**A design that assumed one host, or that derived `publicUrl` from `uploadUrl`, would be wrong** — and the
+shipped code is right for the right reason: it returns the server's `publicUrl` verbatim and never parses
+the PUT target. This also vindicates §4.2's full-string destination pin over a hostname check: a hostname
+rule keyed to `zernio.com` would have **refused the legitimate R2 PUT.**
+
+### 10.2 What this does NOT establish — unchanged
+
+**`UPLOAD CONTRACT VERIFIED` is the entire claim.** It remains a statement about one PUT of one colour-bar
+file. It does **not** establish social posting, production publishing recovered, backlog recovery ready, or
+idempotency. **`x-request-id` + `existingPost` + 409 remains MANDATORY before the first production requeue.**
+
+### 10.3 Residual
+
+One 2-second colour-bar test pattern now sits at `https://media.zernio.com/temp/1784283036590_ybk7o6je_
+zernio-canary.mp4` until Zernio's ~7-day expiry (§8.1). It is referenced by no post, so it is never made
+permanent. No private, unreleased, or catalogue content was exposed at any point.
+
+## 11. Gate — CLOSED
+
+**Executed under `APPROVE UPLOAD CANARY`, 2026-07-17. Result: `UPLOAD CONTRACT VERIFIED` (§10).**
+
+The canary was the only remaining way to close report 09 §11.5's residual: *"contract read from the spec,
+never exercised live."* It could not publish, could not touch the ledger, could not touch a parked or failed
+record, and could not expose catalogue content — and it did none of those. **Result: §10.**
+
+> ⛔ **SUPERSEDED — the gate is closed.** This section asked for one of two tokens:
+> `APPROVE UPLOAD CANARY` / `DO NOT CALL ZERNIO`. **`APPROVE UPLOAD CANARY` was returned on 2026-07-17** and
+> the canary executed once. The §2.1 operator hold it carried is **discharged** — the result has been
+> returned, so the hold no longer binds.
+
+**The next gate is not here.** It is the `x-request-id` + `existingPost` + 409 follow-up (§10.2), which
+remains **mandatory before the first production requeue**. A verified upload contract does not authorise
+re-running the four burned posts.

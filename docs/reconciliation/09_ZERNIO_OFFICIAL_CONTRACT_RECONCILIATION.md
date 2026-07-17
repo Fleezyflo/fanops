@@ -1635,5 +1635,25 @@ live tree, not a one-time event.
 call. **"Not merged" ≠ "not loaded on the operator's machine."** Report 10 §2 carries the full classification
 and the operator hold that follows from it.
 
-**The fix is not yet proven against the live 405.** That requires one real upload — report 10's canary, gated
-and **not authorized by the implementation gate**.
+### 14.7 The fix IS now proven against the live 405 — §11.5's residual is CLOSED
+
+> ⛔ **SUPERSEDED:** *"The fix is not yet proven against the live 405."* True when written; **false since
+> 2026-07-17**.
+
+The upload canary ran under the `APPROVE UPLOAD CANARY` gate (report 10 §10) and returned **`UPLOAD CONTRACT
+VERIFIED`**: presign → 2xx with `uploadUrl` + `publicUrl`; signed PUT → 2xx; `publicUrl` → **206**
+`Content-Range: bytes 0-0/54770`, byte-exactly the asset PUT, served as `video/mp4`. **§11.5's residual —
+*"contract read from the spec, never exercised live"* — is closed.** The 405 pair is replaced by a pair the
+server actually honours.
+
+**What the canary found that no source stated (report 10 §10.1):** Zernio's media storage is **Cloudflare
+R2**, and **the upload host is not the serving host** — `uploadUrl` is
+`late-media.<account>.r2.cloudflarestorage.com`, `publicUrl` is `media.zernio.com`. S0 types both as opaque
+strings and never says they differ. The shipped code is right for the right reason: it returns the server's
+`publicUrl` verbatim and **never parses the PUT target**. A design that assumed one host, or derived
+`publicUrl` from `uploadUrl`, would have been wrong.
+
+**Still not established, unchanged:** social posting · production publishing recovered · backlog recovery
+ready · **idempotency**. The upload contract is proven; `POST /posts` was never called. **`x-request-id` +
+`existingPost` parsing + 409 handling remains MANDATORY before the first production requeue** (§7.8) — a
+verified upload does not authorise re-running the four burned posts.
