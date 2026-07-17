@@ -4,7 +4,7 @@
 
 # FanOps — Architecture & Implementation Governance
 
-**Source fingerprint `b10648132395a33e` · generator `arch/1.0.0`**
+**Source fingerprint `25650a49ba8b38be` · generator `arch/1.0.0`**
 
 Regenerate: `python -m tools.arch regen`
 
@@ -77,6 +77,7 @@ Regenerate: `python -m tools.arch regen`
 > ⚠️ **The swallow ratchet carries unclaimed slack.** These files declare a higher baseline than they currently use, so a future change can re-add a silent handler without CI noticing:
 
 > - `src/fanops/pipeline.py` — baseline **13**, actual **12**
+> - `src/fanops/post/zernio.py` — baseline **3**, actual **2**
 > - `src/fanops/studio/views.py` — baseline **13**, actual **12**
 
 ---

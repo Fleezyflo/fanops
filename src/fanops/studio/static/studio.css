@@ -1026,7 +1026,7 @@ button.ghost:hover, .button.ghost:hover { color:var(--ink); background:transpare
 /* Report 11 §5: UNVERIFIED duplicate evidence. Deliberately NOT styled like .reconcile-id (a real backend
    id): dashed border + warn colour so an unproven pointer to some OTHER post can never be skim-read as
    "this post's id". The operator is the only one who can close that gap. */
-.reconcile-candidate { font-size:.85em; color:var(--warn); border:1px dashed currentColor; border-radius:var(--r-sm); padding:0 .3rem; }
+.reconcile-candidate { font-size:.85em; color:var(--warn); border:1px dashed currentcolor; border-radius:var(--r-sm); padding:0 .3rem; }
 .publish-outcome.outcome-approved_scheduled { border-color:var(--state-queued); }
 
 .reconcile-poll-msg { margin:.35rem 0; font-size:var(--t-meta); }

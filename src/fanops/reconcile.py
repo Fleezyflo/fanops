@@ -791,6 +791,25 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
                 log("reconcile", post.id, "archive_error", err=str(exc)[:120])   # fail-open: never block a recovered publish
             log("reconcile", post.id, "published")
         elif status == "failed":
+            # Report 11 §5 (I-7): a `failed` poll of THIS row's OWN submission_id does NOT disprove a
+            # reconcile_candidate_id. They name DIFFERENT objects — the candidate is the record Zernio said
+            # it already holds when it rejected us as a duplicate (409), and we never polled it (deliberately:
+            # polling it and adopting its result is the misattribution this design exists to prevent). So its
+            # disposition is untouched by this answer. Downgrading to `failed` would make the row RE-QUEUEABLE
+            # (_requeue_transient_failed_for_daemon reads posts_in_state(failed)) and licence a re-POST while a
+            # possibly-live duplicate stands — the exact double-post R-3 was about. Hold needs_reconcile until
+            # an operator identity decision; the candidate stays EVIDENCE and never becomes submission_id.
+            cand = (getattr(post, "reconcile_candidate_id", None) or "").strip()
+            if cand:
+                led.posts[post.id] = post.model_copy(update={
+                    "state": PostState.needs_reconcile,
+                    "error_reason": (
+                        f"reconciled: this row's own submission reports failed "
+                        f"({str(info.get('errorMessage', 'no detail'))[:100]}), but an UNVERIFIED duplicate "
+                        f"candidate={cand} remains unchecked — held for an operator identity decision, NOT "
+                        f"re-queueable (report 11 §5)")[:400]})
+                log("reconcile", post.id, "failed_held_unverified_candidate", candidate=cand)
+                continue
             led.posts[post.id] = post.model_copy(update={
                 "state": PostState.failed,
                 "error_reason": f"reconciled: poster reports failed ({info.get('errorMessage', 'no detail')})"})

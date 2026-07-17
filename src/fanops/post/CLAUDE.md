@@ -39,8 +39,10 @@ the URL on the next pass. See also the traps section below.
 Anchored by SYMBOL, not line: these move. Full record `docs/reconciliation/11_ZERNIO_IDEMPOTENCY_DESIGN.md`;
 tests `tests/test_zernio_idempotency.py`.
 
-- **`_request_id` is NOT `uuid5(ns, post.id)` and must not be "simplified" to it.** It hashes
-  `post.id | created_at | platform | account_id`. `crosspost` **pops** a `failed`/`rejected` record and
+- **`_request_id` is NOT `uuid5(ns, post.id)` and must not be "simplified" to it.** It hashes a **canonical
+  JSON array** `[ver, post.id, created_at, platform, account_id]` (`_request_name`, fixed separators) — NOT a
+  delimiter join, which aliases the moment a component contains the delimiter (report 11 §15 C-2). `crosspost`
+  **pops** a `failed`/`rejected` record and
   **remints it under the identical `post.id`** with a fresh `created_at`, and `_publish_one` refreshes
   `account_id` at publish — so one `post.id` denotes SEVERAL create operations. Dropping `created_at` hands a
   new incarnation the old one's identity and Zernio replays the dead post instead of creating the new one.
