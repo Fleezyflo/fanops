@@ -32,7 +32,7 @@
 > `_is_transient_publish_error` classifies `requests` exceptions by **type** but a `RuntimeError` by
 > **message substring**. Evidence and the class-preserving alternative: §8.4.1.
 >
-> **Implementation scope is UNCHANGED across all nine corrections: one function + three helpers, one file.**
+> **Implementation scope is UNCHANGED across all nine corrections: one function + four helpers, one file.**
 >
 > ---
 >
@@ -47,11 +47,17 @@
 > **two** dispositions made explicit (`x-request-id` deferred on scope-control grounds; TikTok payload
 > unchanged per the operator's own rule).
 >
-> **New serious finding (§5.4): the client's TikTok settings are schema-valid but semantically inert** —
-> almost certainly never applied. Not fixed here; flagged as its own follow-up.
+> **⛔ RETRACTED HISTORICAL QUOTATION — Rev 2 wrote, and Rev 3 retracted:** *"New serious finding (§5.4):
+> the client's TikTok settings are schema-valid but semantically inert — almost certainly never applied.
+> Not fixed here; flagged as its own follow-up."* **This claim is FALSE as stated and is preserved only so
+> the error is auditable.** It inferred runtime behaviour from schema modelling. The current official
+> Platform Settings guide (**S9**) documents the client's exact shape verbatim. Current classification:
+> **`OFFICIAL-CONTRACT CONFLICT — ACCEPTED IN PRODUCTION, SETTING APPLICATION UNVERIFIED`** (§5.4, C8).
 >
-> **State: no code changed · no Zernio call · nothing requeued · four failed records untouched ·
-> `FANOPS_CORPUS_AUTO=0` · `queued=0` · no Postiz change.**
+> **State AS OF REV 2 (historical — superseded by §14.6):** *no code changed · no Zernio call · nothing
+> requeued · four failed records untouched · `FANOPS_CORPUS_AUTO=0` · `queued=0` · no Postiz change.*
+> **"No code changed" ceased to be true at Rev 4**, when the approved implementation landed. Everything
+> else in that line still holds — re-verified at §14.6.
 
 ---
 
@@ -162,9 +168,24 @@ canary is authorised.
 | S6 | Error Handling — Guides | `https://docs.zernio.com/guides/error-handling` | 22:37:44Z |
 | S7 | `zernio-dev/zernio-api` (official repo) | `https://github.com/zernio-dev/zernio-api` | 22:37:44Z |
 | **S8** | **Create Post — API Reference** | `https://docs.zernio.com/posts/create-post` | **2026-07-16T22:5xZ** |
+| **S9** | **Platform Settings — Guides** ← **the source Rev 2 never fetched (C8)** | `https://docs.zernio.com/guides/platform-settings` | **2026-07-16T23:2xZ** |
 
-**Precedence: S0 overrides all others.** Where a guide (S1–S7) and the spec disagree, the spec governs.
-Every Rev 1 error came from treating S1/S3 as exhaustive.
+**Source-reconciliation rule (REV 4 — replaces the Rev 2/3 precedence rule).** The rule that stood here —
+*"S0 overrides all others; where a guide and the spec disagree, the spec governs"* — is **RETRACTED**. It is
+the rule that produced **C8**: applied literally, it let a schema silently nullify a current official guide,
+and turned "the spec doesn't model it" into "the server ignores it". Precedence is **scoped by question**,
+not global:
+
+| Question | Governing source | Why |
+|---|---|---|
+| **What does the machine schema require / permit?** (field names, types, enums, required-ness, status codes) | **S0 — the OpenAPI** | It is the generated, exhaustive contract. **Absence from S0 is evidence of absence** — this is what refuted all four Rev 1 claims |
+| **What representations does Zernio accept?** | **S0 *and* the current official references (S8) and guides (S1-S7) TOGETHER** | **A current official guide may document an ACCEPTED VARIANT the schema under-models.** `additionalProperties` is unset (JSON-Schema default: **allowed**), so S0 does not reject what S9 documents. Both can be true |
+| **What does the server DO with an accepted value?** | **NO document answers this.** | Application is a **runtime** fact. A schema models a contract; it does not prove what a server ignores. Only a live probe decides |
+
+**When current official sources conflict, PRESERVE the conflict.** Record what each documents, state plainly
+what remains unverified, and do **not** resolve it by fiat in favour of whichever source you most recently
+learned to trust. Rev 1 erred by treating S1/S3 as **exhaustive**; Rev 2 erred by treating S0 as **total**.
+Both are the same mistake — reasoning from one source to a conclusion it cannot support.
 
 ### 3.2 Base URL — resolved definitively
 
@@ -523,7 +544,8 @@ drift from editing prose instead of recounting the rows.**
 | Deferred follow-ups | **6** distinct items | §8.6 |
 | **Files touched** | **2** — `src/fanops/post/zernio.py`, `tests/test_zernio_presign.py` | §11.2 |
 | **Functions rewritten** | **1** — `zernio_upload_media` | §8.2 |
-| **Helpers added** | **3** — `_scrub_signed`, `_evidence`, `_put_signed` | §8.4 |
+| **Helpers added** | **4** — `_scrub_signed`, `_evidence`, `_scrubbed_transport`, `_put_signed` | §8.4 |
+| **Helpers removed** | **1** — `_extract_zernio_media_url` (dead once the PUT body is no longer parsed; **C15**) | §14.1 |
 | **Tests** | **47** | §9.11 |
 
 ### 5.4 Row 19 — the TikTok payload — **REV 3: RECLASSIFIED (C8)**
@@ -688,9 +710,12 @@ it owed us. S0 shows something more specific:
 
 1. **It changes the fix** — migrate to the published contract; never restore the legacy path.
 2. **It kills the fallback question** (§8.5).
-3. **It predicts recurrence — and the prediction has now hit twice.** Every live-discovered constant from
-   06-29 is suspect: **(i)** the **4 MB cap** (§4.5) vs a documented 5 GB; **(ii)** the **TikTok nesting**
-   (§5.4), which likely never applied a setting. Both trace to the same session.
+3. **It predicts recurrence.** Every live-discovered constant from 06-29 is suspect and must be re-checked
+   against the official contract: **(i)** the **4 MB cap** (§4.5) vs a documented 5 GB — **confirmed** a
+   second legacy artifact; **(ii)** the **TikTok nesting** (§5.4) — re-checked and **NOT** an artifact: a
+   current official guide (S9) documents that exact shape, and 21 publishes prove it accepted. **Whether
+   the platform applies the values is unverified and unverifiable from documentation.** Both trace to the
+   same session; only the first is a defect.
 4. **It reassigns responsibility.** No vendor escalation. This is ours.
 
 ### 6.5 The 405 mechanism
@@ -829,17 +854,31 @@ earlier*. The correct handling is closer to `needs_reconcile` (or `submitted` wi
 **This is a real, pre-existing defect, independent of the 405 and independent of `x-request-id`.** It is
 **not reachable today** (`queued = 0`) and is **deferred** (§8.6, row 24).
 
-### 7.8 The client's H5 comment is now stale
+### 7.8 The client's H5 comment was stale — **CORRECTED in Rev 4**
+
+**⛔ RETRACTED HISTORICAL QUOTATION — the comment `zernio.py` carried until 2026-07-17:**
 
 ```python
 # H5: Zernio carries NO client/server idempotency key on publishNow, so a re-POST would DOUBLE-publish.
 ```
 
-**False as of Zernio's 2026-05-15 changelog entry.** Rev 1 §2.8 cited this comment as *corroborated by the
-docs* — **retracted**. The comment's *conclusion* (the invariant rests on the queued-only filter) remains
-**true and necessary** (§7.6), but its *premise* is wrong. **Correcting the comment is part of the deferred
-follow-up**, not this PR — editing it here without shipping the feature would leave a comment describing
-code that doesn't exist.
+**Its premise was FALSE as of Zernio's 2026-05-15 changelog entry** — `x-request-id` is documented. Rev 1
+§2.8 cited this comment as *corroborated by the docs*; **retracted**. Its *conclusion* (a re-POST would
+double-publish, so the queued-only claim carries the invariant) remained **true and necessary** (§7.6) — the
+comment was right for the wrong reason.
+
+**Rev 4 corrects the DOCUMENTATION only; it does NOT implement idempotency.** `zernio.py`'s module docstring
+and `build_zernio_payload` comment now state the bounded truth: Zernio **documents** optional `x-request-id`
+same-attempt idempotency · **FanOps does not send it yet** · FanOps therefore **continues to rely on the
+queued-only claim check and `needs_reconcile`** for cross-pass safety · `x-request-id` + `existingPost`
+parsing + 409 handling is a **required separate follow-up before the first production requeue**.
+
+> The Rev 3 reasoning for deferring the comment fix — *"editing it here without shipping the feature would
+> leave a comment describing code that doesn't exist"* — was **wrong**, and is retracted. It confused
+> *describing the code* with *describing the vendor contract*. The corrected comment describes exactly what
+> is true today: **what Zernio offers, what FanOps does not yet do, and what therefore still carries the
+> invariant.** Leaving a knowingly false claim in active source until some future PR is not scope control;
+> the same false premise is what let Rev 1 cite it as corroboration in the first place.
 
 ### 7.9 Recommendation: **B — defer to a separate, narrowly scoped follow-up**
 
@@ -863,7 +902,9 @@ a sequencing constraint on the requeue decision, not on this PR.
 
 ## 8. (E) Revised Implementation Proposal
 
-**Scope: `zernio_upload_media` + two module-private helpers. One file. No Postiz. No requeue.**
+**Scope: `zernio_upload_media` + FOUR module-private helpers (`_scrub_signed`, `_evidence`,
+`_scrubbed_transport`, `_put_signed`), minus one dead one (`_extract_zernio_media_url`). One source file.
+No Postiz. No requeue.**
 
 ### 8.1 Change list
 
@@ -1289,20 +1330,30 @@ log stream**.
 | # | Rev 2 claim | Refuting evidence | Implementation consequence | Test consequence | Scope |
 |---|---|---|---|---|---|
 | **C7** | §8.4: *"The signed `uploadUrl` is **never** logged in full, **never written to the ledger**"* — and the proposal wrapped **only** the response | **`requests` embeds the full signed URL in `str(exc)`** (`…Max retries exceeded with url: /temp/x.mp4?X-Amz-Signature=…`) **and in `exc.request.url`**. **`run.py:360`** does `redact(str(exc), cfg.postiz_api_key, cfg.zernio_api_key)` — **only the two API keys** — then `post.error_reason = "publish failed: " + red` → **the ledger**. Leak path traced end-to-end in **§8.5** | **`_put_signed` + `_scrubbed_transport` added** (§8.4). Signed-PUT transport → **class + stage only**, `from None`, fresh instance (no `request`/`response`). Presign transport → bounded redacted. **Security claim downgraded to an intent until tests 15-20 pass** (§8.5.1) | **+6 tests (15-20)**, incl. **20**, the class-preservation regression guard | **+2 helpers, same file** |
-| **C7a** | *(operator's specified remedy)* `raise RuntimeError(…) from None` | `run.py:71-101` classifies `RequestException` **by type** but `RuntimeError` **by message substring**. `"…failed (ConnectionError)"` matches **no** substring → **`_is_transient_publish_error` → `False`** → a retryable blip becomes an **immediately-burned post**; and `"…(Timeout)"` **does** match `"timeout"` → **inconsistent** | **`raise type(exc)(msg) from None`** — same class, scrubbed message. Redaction intent adopted verbatim; only the class amended (§8.4.1) | **test 20** | **none** |
+| **C7a** | *(operator's specified remedy)* `raise RuntimeError(…) from None` | `run.py:71-99` classifies `RequestException` **by type** but `RuntimeError` **by message substring**. `"…failed (ConnectionError)"` matches **no** substring → **`_is_transient_publish_error` → `False`** → a retryable blip becomes an **immediately-burned post**; and `"…(Timeout)"` **does** match `"timeout"` → **inconsistent** | **`raise type(exc)(msg) from None`** — same class, scrubbed message. Redaction intent adopted verbatim; only the class amended (§8.4.1) | **test 20** | **none** |
 | **C8** | §5.4: *"`SCHEMA-VALID BUT SEMANTICALLY INERT`"*, *"almost certainly **NOT** conveyed"*, *"the server … reads **none** of the settings"*, *"the **wrong level**"* | **S9 — the current official Platform Settings guide** documents the client's **exact** shape verbatim, incl. snake_case fields, and states: **"TikTok settings are nested inside `platformSpecificData.tiktokSettings`"**. Rev 2 **never fetched it**, despite seeing it in a search result | **RETRACTED.** Reclassified **`OFFICIAL-CONTRACT CONFLICT — ACCEPTED IN PRODUCTION, SETTING APPLICATION UNVERIFIED`** (§5.4.3). **The conflict is preserved, not resolved.** OpenAPI does **not** nullify another current official document. **Still no TikTok change** — now on *firmer* ground | **test 39 reworded** — pins the accepted shape; labels it neither inert nor correct | **none** |
 | **C9** | §5: *"11 fixes … 8 already-correct rows, 7 deferred"* | Rows 1-10 + 27 + 28 = **12**, not 11 (it omitted **row 10**, the row **C2** had just added). Already-correct = **11**, not 8. **11+8+7 = 26 ≠ 30** | **All counts recomputed from the rows, not edited in prose** (§5.5). Every derived count in the document recomputed (§5.5 table) | test total recomputed **41 → 47** (§9.11) | **none** |
 
 ### 10.2 Net scope — **recomputed across all nine corrections (C9)**
 
-| Quantity | Rev 1 | Rev 2 | **Rev 3** |
-|---|---|---|---|
-| Files touched | 2 | 2 | **2** |
-| Functions rewritten | 1 | 1 | **1** |
-| Helpers added | 2 | 2 | **3** (`_scrub_signed`, `_evidence`, **`_put_signed`**) — plus `_scrubbed_transport`, a private factory |
-| Fixes | 11 *(wrong)* | 11 *(wrong)* | **12** |
-| Tests | 40 | 41 | **47** |
-| Postiz changes | 0 | 0 | **0** |
+| Quantity | Rev 1 | Rev 2 | Rev 3 *(planned)* | **Rev 4 — ACTUAL PR #694** |
+|---|---|---|---|---|
+| **Files touched** | 2 | 2 | 2 *(understated — **C14**)* | **9**, enumerated in §14.3: **1** source · **2** tests (1 new, 1 deleted) · **3** derived/rendered (regenerated, never hand-edited) · **3** incident records |
+| Functions rewritten | 1 | 1 | 1 | **1** — `zernio_upload_media` |
+| **Helpers added** | 2 | 2 | 3 *(miscounted)* | **4** — `_scrub_signed`, `_evidence`, `_scrubbed_transport`, `_put_signed` |
+| **Helpers removed** | 0 | 0 | 0 *(unanticipated — **C15**)* | **1** — `_extract_zernio_media_url` |
+| Fixes | 11 *(wrong)* | 11 *(wrong)* | **12** | **12** |
+| Tests | 40 | 41 | 47 | **47 rows** = **43 new** + **4 pre-existing** (**C13**); **45 functions** in the new file (43 + 2 carried survivors) |
+| **Source LOC** | — | — | — | **+203 / −0** in `zernio.py` |
+| Postiz changes | 0 | 0 | 0 | **0** |
+| `run.py` changes | 0 | 0 | 0 | **0** — C7a is solved inside `zernio.py` by preserving the exception class |
+| Ledger mutations | 0 | 0 | 0 | **0** |
+| Zernio API calls | 0 | 0 | 0 | **0** |
+
+> **Rev 3's "2 files" was wrong, not merely terse** (C14): it counted the source file and the new test
+> file, and missed the deleted test file, the two derived artifacts the line-shift invalidates, the
+> rendered doc that carries the source fingerprint, and the records themselves. **The count is now derived
+> from `git diff main --stat`, not asserted.**
 
 **Net scope change across all nine corrections: ZERO new files, ZERO new functions rewritten, ZERO Postiz.**
 C7 adds two module-private helpers **inside the function already being rewritten**; C2 adds one JSON key;
@@ -1320,7 +1371,7 @@ C1/C5/C6/C8 are dispositions; C9 is arithmetic.
 | `x-request-id` disposition explicit | ✅ **DEFERRED — option B**, on scope control (§7.9). Retraction recorded (§2.1, C1). Feature acknowledged as **documented and officially recommended** |
 | `existingPost` parsing addressed if idempotency included | ✅ **Idempotency is NOT included**, so no parser ships. §7.5 proves header-without-parser is **strictly worse than neither**, and §7.9 ground 1 makes the unspecified shape a stated deferral reason |
 | `size` disposition explicit | ✅ **SEND IT**, post-shrink, justified from the schema (§8.3) |
-| TikTok payload shape reconciled | ✅ **`SCHEMA-VALID BUT SEMANTICALLY INERT`** (§5.4). **Unchanged** per the operator's rule; flagged with its risk |
+| TikTok payload shape reconciled | ✅ **`OFFICIAL-CONTRACT CONFLICT — ACCEPTED IN PRODUCTION, SETTING APPLICATION UNVERIFIED`** (§5.4). **Unchanged** per the operator's rule — and the no-change disposition now rests on *firmer* ground than Rev 2's: an official guide (S9) affirmatively documents this shape, and 21 publishes accepted it |
 | Revised test matrix internally consistent | ✅ §9.11 — **47 tests, numbered 1-47, no gaps**. Two invariants hold: no test asserts the absence of a documented feature; no test asserts a verdict the evidence can't support |
 | **Signed-URL transport leak closed (C7)** | ✅ `_put_signed` + `_scrubbed_transport` (§8.4); leak path traced (§8.5); **security claim downgraded to an intent until tests 15-20 pass** (§8.5.1) |
 | **TikTok conclusion corrected (C8)** | ✅ *"inert"* / *"never applied"* / *"ignored"* **all retracted**. Reclassified **`OFFICIAL-CONTRACT CONFLICT — ACCEPTED IN PRODUCTION, SETTING APPLICATION UNVERIFIED`**; **conflict preserved** (§5.4) |
@@ -1413,7 +1464,7 @@ DO NOT IMPLEMENT
 | `ZOC-113` | `PlatformTarget.platformSpecificData: oneOf[…TikTokPlatformData…]`; **no `tiktokSettings` property** | S0 | §3.6, §5.4 |
 | `ZOC-114` | `TikTokPlatformData` — 17 camelCase properties; *"Both camelCase and snake_case accepted"*; **`additionalProperties` unset → ALLOWED** | S0 | §3.7, §5.4 |
 | `ZOC-115` | Root `tiktokSettings: $ref TikTokPlatformData` — *"merged into each platform's `platformSpecificData`"* | S0 | §3.5, §5.4 |
-| `ZOC-116` | All 6 client TikTok fields map to real properties — **names right, nesting wrong** | S0 + code | §5.4, **C5** |
+| `ZOC-116` | All 6 client TikTok fields map to real `TikTokPlatformData` properties. **The nesting is NOT "wrong"** — S9 documents it verbatim, S0 models it differently, `additionalProperties` is unset (JSON-Schema default: allowed) so S0 does not reject S9's form. **CONFLICT, preserved** | S0 + S9 + code | §5.4, **C8** *(supersedes C5's "nesting wrong" — RETRACTED)* |
 | `ZOC-117` | **Two re-POST branches**: `ConnectTimeout` `:239`, `429` `:268` | `zernio.py:233-269` | §7.1 |
 | `ZOC-118` | **A stable client idempotency token already exists** — `submission_id=f"fanops_{_hash('idemp', pid)}"` (AUDIT H1), **per-surface**, but **not a UUID** and **overwritten at `:258`** | `crosspost.py:243-246`, `models.py:384-393` | §7.2 |
 | `ZOC-119` | `_extract_zernio_id` has **no `existingPost` branch** → a replay would park `needs_reconcile` | `zernio.py:52-66,246-259` | §7.5 |
@@ -1469,8 +1520,9 @@ modified. Nothing requeued. Four failed records untouched. `FANOPS_CORPUS_AUTO=0
 5. **Named the recurring error.** Rev 1 over-trusted **guides**; Rev 2 over-corrected and over-trusted the
    **spec**. Both asserted conclusions a single source could not support. **The discipline is: read every
    current official source, and when they conflict, record the conflict.**
-6. **Scope is unchanged.** Nine corrections, **zero** net scope change: still one function, one file, no
-   Postiz.
+6. **Scope is unchanged.** Nine corrections, **zero** net scope change: still one function, one source file,
+   no Postiz. *(Rev 4 note: the **implementation-scope** claim held; the **file-inventory** claim did not —
+   see C14/C15 in §14.1. The PR touches 9 files, enumerated in §14.3.)*
 
 ---
 
@@ -1513,13 +1565,23 @@ The fresh instance also carries `request=None, response=None`, closing the `exc.
 
 ### 14.3 What was built
 
-| Artifact | Change |
-|---|---|
-| `src/fanops/post/zernio.py` | `zernio_upload_media` rewritten to presign + signed PUT; `+_SIGNED_Q`, `+_scrub_signed`, `+_evidence`, `+_scrubbed_transport`, `+_put_signed`; `-_extract_zernio_media_url`; legacy path deleted, no fallback |
-| `tests/test_zernio_presign.py` | **NEW** — 43 new tests + 2 carried survivors |
-| `tests/test_zernio_media.py` | **DELETED** — pinned the dead contract (C14) |
-| `.reports/architecture/derived/{MANIFEST,side_effects}.json` | **Regenerated** (`python -m tools.arch regen`) — derived, never hand-edited |
-| `docs/ARCHITECTURE_GOVERNANCE.md` | **Re-rendered** (`python -m tools.arch docs`) — carries the source fingerprint |
+**Exact changed-file inventory — 9 files, derived from `git diff main --stat`, not asserted:**
+
+| # | Artifact | Class | Change |
+|---|---|---|---|
+| 1 | `src/fanops/post/zernio.py` | **source** | `zernio_upload_media` rewritten to presign + signed PUT (**+203 / −0**); `+_SIGNED_Q`, `+_scrub_signed`, `+_evidence`, `+_scrubbed_transport`, `+_put_signed` (**4 helpers**); `−_extract_zernio_media_url`; legacy path deleted, no fallback. **Rev 4 closure:** module docstring + `build_zernio_payload` comment corrected to the bounded idempotency/`mediaItems` truth (§7.8) — **documentation only, no idempotency implemented** |
+| 2 | `tests/test_zernio_presign.py` | **test** | **NEW** — **45 functions** = 43 new + 2 carried survivors |
+| 3 | `tests/test_zernio_media.py` | **test** | **DELETED** — pinned the dead contract (**C14**) |
+| 4 | `.reports/architecture/derived/MANIFEST.json` | **derived** | **Regenerated** (`python -m tools.arch regen`) — never hand-edited |
+| 5 | `.reports/architecture/derived/side_effects.json` | **derived** | **Regenerated** — see the census note below |
+| 6 | `docs/ARCHITECTURE_GOVERNANCE.md` | **rendered** | **Re-rendered** (`python -m tools.arch docs`) — carries the source fingerprint |
+| 7 | `docs/reconciliation/07_WAVE_0A_CONTAINMENT_RECORD.md` | **record** | Newly tracked. **Rev 4 closure:** malformed `ACT-03` / `ACT-04`-`ACT-05` rows repaired (3 cells against a 4-column header) |
+| 8 | `docs/reconciliation/08_DUAL_BACKEND_INCIDENT_FRAME.md` | **record** | Newly tracked — a governing baseline this document cites |
+| 9 | `docs/reconciliation/09_ZERNIO_OFFICIAL_CONTRACT_RECONCILIATION.md` | **record** | This file — Rev 4 |
+
+**Why the records are tracked:** `zernio.py` now cites *"report 09 §8.5"* and *"§7"* in active comments. A
+**tracked source citing an untracked authority** is precisely the dangling-citation failure `CLAUDE.md`
+forbids. Reports 01-05 (a different program) and `docs/constitution/` (a superseded draft) stay untracked.
 
 **The regenerated `side_effects.json` is independent evidence of the fix.** `fanops.post.zernio`'s network
 census changed from **3×`requests.post` + 1×`requests.get`** to **1×`requests.put` + 2×`requests.post` +

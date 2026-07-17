@@ -1,17 +1,33 @@
 """Zernio poster backend — a HOSTED scheduler (FANOPS_POSTER=zernio, or a per-account override). Lets
 FanOps publish TikTok WITHOUT passing TikTok app review: Zernio owns the TikTok app/OAuth, so the
 operator connects their TikTok accounts inside Zernio's dashboard and FanOps only needs an API key + the
-resulting account _ids. Same swappable-poster slot as Postiz, SAME asymmetric-retry safety: a bad
-key halts the queue by TYPE (ZernioAuthError); a 5xx / network drop after the body was sent parks
-needs_reconcile (Zernio's create-post has no idempotency key, so we NEVER re-POST a possible live post).
+resulting account _ids. Same swappable-poster slot as Postiz, SAME asymmetric-retry safety: a bad key
+halts the queue by TYPE (ZernioAuthError); a 5xx / network drop after the body was sent parks
+needs_reconcile rather than re-POST a possible live post (idempotency note below).
 
-REST contract (operator-pasted docs, https://zernio.com/api/v1): Authorization: Bearer <sk_…>;
-POST /posts {content, publishNow:true, platforms:[{platform, accountId}], media:[url,…]}; GET /accounts
--> {accounts:[{_id, platform, name}]}. publishNow:true because FanOps already gated the schedule (a post
-sits `queued` until due, then publish_due fires) — we don't hand Zernio the schedule. The create-post
-RESPONSE id key and the media field shape are INTEGRATION CHECKPOINTS — the offline tests lock the SHAPE;
-the operator verifies live at first publish. accounts.json integrations[platform] carries the Zernio
-account _id for a zernio surface (which backend that id belongs to lives in accounts.json `backends`)."""
+REST contract (OpenAPI 3.1.0 `Zernio API v1.0.4`, retrieved 2026-07-16; base https://zernio.com/api/v1):
+Authorization: Bearer <sk_…>; POST /posts {content, publishNow:true, platforms:[{platform, accountId}],
+**mediaItems:[{type, url},…]**}; GET /accounts -> {accounts:[{_id, platform, name}]}; media upload is
+POST /media/presign + a signed PUT (zernio_upload_media). publishNow:true because FanOps already gated the
+schedule (a post sits `queued` until due, then publish_due fires) — we don't hand Zernio the schedule.
+accounts.json integrations[platform] carries the Zernio account _id for a zernio surface (which backend
+that id belongs to lives in accounts.json `backends`).
+
+IDEMPOTENCY — current bounded truth (report 09 §7):
+  · Zernio DOES document an optional `x-request-id` header on POST /posts — same-attempt idempotency for
+    ~5 minutes; a repeat returns HTTP 200 with the original post in `existingPost`. A separate 24h
+    content-hash 409 carries `details.existingPostId`.
+  · **FanOps does NOT send it yet.** `_extract_zernio_id` has no `existingPost` branch, so the header
+    ALONE would misparse an idempotent replay as "no id" -> needs_reconcile, filing a SUCCESSFUL publish
+    as ambiguous. Header and parser are inseparable.
+  · FanOps therefore continues to rely on the **queued-only claim check** + **needs_reconcile** for
+    cross-pass safety. That stays necessary regardless: x-request-id's ~5-minute window cannot cover
+    cross-pass republication (daemon interval 600s), which is exactly what the invariant guards.
+  · **REQUIRED separate follow-up before the first production requeue:** x-request-id + `existingPost`
+    parsing + 409 handling, landed together.
+
+The create-post RESPONSE id key stays an INTEGRATION CHECKPOINT — `existingPost` is prose-only in the spec
+(never schematised) — so the offline tests lock the SHAPE and the operator verifies live at first publish."""
 from __future__ import annotations
 import logging
 import random
@@ -86,13 +102,15 @@ def build_zernio_payload(*, account_id: str, platform: str, content: str,
                          media_urls: list[str], scheduled_time: str | None) -> dict:
     # publishNow:true — FanOps owns the schedule (publish_due fired this post because it's due), so we do
     # NOT pass scheduledFor/timezone (kept in the signature for parity / future use). platforms[] targets
-    # ONE Zernio account (a FanOps Post is one surface). mediaItems[] (NOT the old `media` key — verified
-    # live 2026-06-29) references already-uploaded URLs from zernio_upload_media. TikTok surfaces also
-    # need platformSpecificData.tiktokSettings (privacy + consent flags). H5: Zernio carries NO client/
-    # server idempotency key on publishNow, so a re-POST would DOUBLE-publish. The never-re-POST invariant
-    # rests ENTIRELY on the queued-only publish filter (run.py publish_due iterates PostState.queued + the
-    # under-lock claim re-checks `queued`) — a submitting/submitted/needs_reconcile post is structurally
-    # never re-submitted. See test_needs_reconcile_post_is_never_republished.
+    # ONE Zernio account (a FanOps Post is one surface). mediaItems[] is the CURRENT documented media key
+    # (OpenAPI v1.0.4), never the legacy `media`; it carries the presign publicUrl from zernio_upload_media.
+    # TikTok surfaces also need platformSpecificData.tiktokSettings (privacy + consent flags).
+    # IDEMPOTENCY: Zernio documents an optional x-request-id (~5-min same-attempt) but FanOps does NOT send
+    # it yet, and the header without an `existingPost` parser is worse than neither (module docstring) — so
+    # a re-POST would still DOUBLE-publish. Cross-pass safety therefore rests on the queued-only claim
+    # check (run.py publish_due iterates PostState.queued + the under-lock claim re-checks `queued`) AND on
+    # never downgrading needs_reconcile — a submitting/submitted/needs_reconcile post is structurally never
+    # re-submitted. See test_needs_reconcile_post_is_never_republished (tests/test_channel_provider.py).
     plat = {"platform": platform, "accountId": account_id}
     if platform == "tiktok":
         plat["platformSpecificData"] = {"tiktokSettings": _tiktok_settings()}
