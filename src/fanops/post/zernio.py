@@ -1,20 +1,37 @@
 """Zernio poster backend — a HOSTED scheduler (FANOPS_POSTER=zernio, or a per-account override). Lets
 FanOps publish TikTok WITHOUT passing TikTok app review: Zernio owns the TikTok app/OAuth, so the
 operator connects their TikTok accounts inside Zernio's dashboard and FanOps only needs an API key + the
-resulting account _ids. Same swappable-poster slot as Postiz, SAME asymmetric-retry safety: a bad
-key halts the queue by TYPE (ZernioAuthError); a 5xx / network drop after the body was sent parks
-needs_reconcile (Zernio's create-post has no idempotency key, so we NEVER re-POST a possible live post).
+resulting account _ids. Same swappable-poster slot as Postiz, SAME asymmetric-retry safety: a bad key
+halts the queue by TYPE (ZernioAuthError); a 5xx / network drop after the body was sent parks
+needs_reconcile rather than re-POST a possible live post (idempotency note below).
 
-REST contract (operator-pasted docs, https://zernio.com/api/v1): Authorization: Bearer <sk_…>;
-POST /posts {content, publishNow:true, platforms:[{platform, accountId}], media:[url,…]}; GET /accounts
--> {accounts:[{_id, platform, name}]}. publishNow:true because FanOps already gated the schedule (a post
-sits `queued` until due, then publish_due fires) — we don't hand Zernio the schedule. The create-post
-RESPONSE id key and the media field shape are INTEGRATION CHECKPOINTS — the offline tests lock the SHAPE;
-the operator verifies live at first publish. accounts.json integrations[platform] carries the Zernio
-account _id for a zernio surface (which backend that id belongs to lives in accounts.json `backends`)."""
+REST contract (OpenAPI 3.1.0 `Zernio API v1.0.4`, retrieved 2026-07-16; base https://zernio.com/api/v1):
+Authorization: Bearer <sk_…>; POST /posts {content, publishNow:true, platforms:[{platform, accountId}],
+**mediaItems:[{type, url},…]**}; GET /accounts -> {accounts:[{_id, platform, name}]}; media upload is
+POST /media/presign + a signed PUT (zernio_upload_media). publishNow:true because FanOps already gated the
+schedule (a post sits `queued` until due, then publish_due fires) — we don't hand Zernio the schedule.
+accounts.json integrations[platform] carries the Zernio account _id for a zernio surface (which backend
+that id belongs to lives in accounts.json `backends`).
+
+IDEMPOTENCY — current bounded truth (report 09 §7):
+  · Zernio DOES document an optional `x-request-id` header on POST /posts — same-attempt idempotency for
+    ~5 minutes; a repeat returns HTTP 200 with the original post in `existingPost`. A separate 24h
+    content-hash 409 carries `details.existingPostId`.
+  · **FanOps does NOT send it yet.** `_extract_zernio_id` has no `existingPost` branch, so the header
+    ALONE would misparse an idempotent replay as "no id" -> needs_reconcile, filing a SUCCESSFUL publish
+    as ambiguous. Header and parser are inseparable.
+  · FanOps therefore continues to rely on the **queued-only claim check** + **needs_reconcile** for
+    cross-pass safety. That stays necessary regardless: x-request-id's ~5-minute window cannot cover
+    cross-pass republication (daemon interval 600s), which is exactly what the invariant guards.
+  · **REQUIRED separate follow-up before the first production requeue:** x-request-id + `existingPost`
+    parsing + 409 handling, landed together.
+
+The create-post RESPONSE id key stays an INTEGRATION CHECKPOINT — `existingPost` is prose-only in the spec
+(never schematised) — so the offline tests lock the SHAPE and the operator verifies live at first publish."""
 from __future__ import annotations
 import logging
 import random
+import re
 import time
 from pathlib import Path
 from typing import NamedTuple
@@ -85,13 +102,15 @@ def build_zernio_payload(*, account_id: str, platform: str, content: str,
                          media_urls: list[str], scheduled_time: str | None) -> dict:
     # publishNow:true — FanOps owns the schedule (publish_due fired this post because it's due), so we do
     # NOT pass scheduledFor/timezone (kept in the signature for parity / future use). platforms[] targets
-    # ONE Zernio account (a FanOps Post is one surface). mediaItems[] (NOT the old `media` key — verified
-    # live 2026-06-29) references already-uploaded URLs from zernio_upload_media. TikTok surfaces also
-    # need platformSpecificData.tiktokSettings (privacy + consent flags). H5: Zernio carries NO client/
-    # server idempotency key on publishNow, so a re-POST would DOUBLE-publish. The never-re-POST invariant
-    # rests ENTIRELY on the queued-only publish filter (run.py publish_due iterates PostState.queued + the
-    # under-lock claim re-checks `queued`) — a submitting/submitted/needs_reconcile post is structurally
-    # never re-submitted. See test_needs_reconcile_post_is_never_republished.
+    # ONE Zernio account (a FanOps Post is one surface). mediaItems[] is the CURRENT documented media key
+    # (OpenAPI v1.0.4), never the legacy `media`; it carries the presign publicUrl from zernio_upload_media.
+    # TikTok surfaces also need platformSpecificData.tiktokSettings (privacy + consent flags).
+    # IDEMPOTENCY: Zernio documents an optional x-request-id (~5-min same-attempt) but FanOps does NOT send
+    # it yet, and the header without an `existingPost` parser is worse than neither (module docstring) — so
+    # a re-POST would still DOUBLE-publish. Cross-pass safety therefore rests on the queued-only claim
+    # check (run.py publish_due iterates PostState.queued + the under-lock claim re-checks `queued`) AND on
+    # never downgrading needs_reconcile — a submitting/submitted/needs_reconcile post is structurally never
+    # re-submitted. See test_needs_reconcile_post_is_never_republished (tests/test_channel_provider.py).
     plat = {"platform": platform, "accountId": account_id}
     if platform == "tiktok":
         plat["platformSpecificData"] = {"tiktokSettings": _tiktok_settings()}
@@ -102,75 +121,107 @@ def build_zernio_payload(*, account_id: str, platform: str, content: str,
     return payload
 
 
-def _extract_zernio_media_url(body) -> str | None:
-    # The media-upload response URL key isn't pinned (integration checkpoint). Accept a bare URL string,
-    # a top-level url/mediaUrl/secureUrl, or a nested {"media": {...}} / {"data": {...}}.
-    if isinstance(body, str) and body.startswith("http"):
-        return body
-    if not isinstance(body, dict):
-        return None
-    for k in ("url", "mediaUrl", "secureUrl", "secure_url"):
-        v = body.get(k)
-        if isinstance(v, str) and v:
-            return v
-    for k in ("media", "data"):
-        nested = body.get(k)
-        if isinstance(nested, dict):
-            return _extract_zernio_media_url(nested)
-    return None
+_SIGNED_Q = re.compile(r"([?&](?:X-Amz-Signature|X-Amz-Credential|X-Amz-Security-Token|Signature|sig)=)[^&\s\"']+",
+                       re.I)
+
+
+def _scrub_signed(s: str) -> str:
+    """Blank the credential VALUES in a signed-storage URL, keeping the param NAME as a breadcrumb. redact()
+    knows only the API key, but a presigned uploadUrl carries its OWN upload credential (report 09 §8.4)."""
+    return _SIGNED_Q.sub(r"\1<redacted>", s)
+
+
+def _evidence(cfg: Config, resp) -> str:
+    """Bounded, redacted RESPONSE evidence — closes the sibling-parity gap with zernio_list_accounts, which
+    has always redact()ed its body while this path withheld it entirely. Carries `Allow` on a 405: RFC 9110
+    REQUIRES the server to name the permitted methods there, so dropping it is why four burned posts yielded
+    exactly one integer (report 09 §6.5). Signatures are scrubbed BEFORE the length cap, so a value straddling
+    the cut can't survive it — the same redact-then-truncate rule redact() applies to keys."""
+    allow = (getattr(resp, "headers", None) or {}).get("Allow")
+    body = redact(_scrub_signed(resp.text or ""), cfg.zernio_api_key, limit=400)
+    return (f"Allow={allow!r} " if allow else "") + f"body={body!r}"
+
+
+def _scrubbed_transport(exc: Exception, stage: str, cfg: Config | None = None) -> BaseException:
+    """A requests exception raised off a SIGNED url is not safe to propagate: str(exc) embeds the full URL
+    ("Max retries exceeded with url: /t/v.mp4?X-Amz-Signature=…") and exc.request.url holds a second copy,
+    while run.py's publish handler redacts only the two API KEYS — so it would land verbatim in the ledger's
+    error_reason, the Studio UI, and the log (report 09 §8.5).
+
+    Re-raise the SAME CLASS, never RuntimeError: _is_transient_publish_error classifies a RequestException by
+    TYPE (ConnectionError/Timeout -> transient, retried) but a RuntimeError by MESSAGE SUBSTRING — so a
+    RuntimeError wrap would silently make a ConnectionError terminal and burn the post on the first network
+    blip, while a Timeout, whose class name happens to contain "timeout", stayed transient (report 09 §8.4.1).
+    The fresh instance also carries no request/response, so exc.request.url cannot leak either. A class that
+    won't take a bare message degrades to RequestException — non-transient, the safe direction, and only an
+    exotic non-transport error can land there."""
+    name = type(exc).__name__
+    if stage == "signed-put":
+        msg = f"Zernio signed upload transport failed ({name})"      # class + stage ONLY: no str/repr, no host, no url
+    else:
+        detail = redact(_scrub_signed(str(exc)), cfg.zernio_api_key if cfg else "", limit=200)
+        msg = f"Zernio {stage} transport failed ({name}): {detail}"  # the presign url is not a credential
+    try:
+        return type(exc)(msg)
+    except Exception:
+        return requests.exceptions.RequestException(msg)
+
+
+def _put_signed(upload_url: str, path: Path, ctype: str):
+    """The signed PUT: raw bytes, matching Content-Type, and NO Authorization header — the URL carries the
+    signature, and presenting the key would hand it to third-party storage. Transport errors are scrubbed."""
+    with open(path, "rb") as fh:
+        try:
+            return requests.put(upload_url, data=fh, headers={"Content-Type": ctype}, timeout=300)
+        except requests.exceptions.RequestException as exc:
+            raise _scrubbed_transport(exc, "signed-put") from None
 
 
 def zernio_upload_media(cfg: Config, path: Path, *, account_id: str | None = None) -> str:
-    """Upload a local file to Zernio. Two-step contract DISCOVERED LIVE 2026-06-29:
-      1) POST /media/upload-token with JSON {"accountId": <id>} -> {"token": <single-use>, "uploadUrl": ...}
-      2) POST /media/upload?token=<token> with multipart field name **`files`** (plural) ->
-         {"success": true, "files": [{"url": <hosted>}]}
-    The earlier single-step /media/upload with Bearer alone returned 400 "Upload token is required" —
-    that's the door this fix closes. Token is single-use + per-account + ~60s lifetime.
-    account_id is REQUIRED for the live path; tests / dryrun callers may omit it (returns a sentinel
-    only when no key is set, mirroring the prior contract). 401 -> typed ZernioAuthError; non-2xx -> RuntimeError."""
-    if not account_id:
-        raise RuntimeError("Zernio upload requires account_id (per-account token mint)")
-    cap = cfg.zernio_max_upload_bytes
+    """Upload a local file to Zernio via the OFFICIAL presigned flow and return the public URL to reference
+    in mediaItems[] (OpenAPI 3.1.0 `Zernio API v1.0.4`, paths./v1/media/presign, retrieved 2026-07-16):
+      1) POST {base}/media/presign {"filename","contentType","size"} -> {uploadUrl, publicUrl, key, expiresIn}
+      2) PUT <uploadUrl> raw bytes — Content-Type MUST match presign's contentType, and NO Authorization
+      3) the caller puts publicUrl in mediaItems[]; the PUT body is never parsed for it
+
+    Supersedes the reverse-engineered /media/upload-token + POST /media/upload pair ("DISCOVERED LIVE
+    2026-06-29") — an END-USER-FLOW endpoint Zernio never published a contract for, which now answers 405 and
+    burned four posts on 2026-07-16. There is deliberately NO fallback to it: it is not a published path, the
+    spec scopes it away from programmatic use, and it can now only fail (report 09 §6, §8.6).
+
+    account_id is retained for call-site compatibility (media._uploader_kwargs passes it) and is UNUSED —
+    presign is account-agnostic, unlike the per-account token mint it replaces. 401 -> typed ZernioAuthError;
+    other non-2xx -> RuntimeError carrying bounded, redacted evidence."""
+    ctype = "video/mp4"                                  # a contentType enum member (presign schema)
+    cap = cfg.zernio_max_upload_bytes                    # UNCHANGED: the 4 MB legacy cap is its own fix (report 09 §4.5)
     path = maybe_shrink_for_cap(cfg, path, cap, label="zernio")
-    size = path.stat().st_size
+    size = path.stat().st_size                           # POST-shrink — pre-validation is only meaningful for the bytes we PUT
     if size > cap:
         raise RuntimeError(f"zernio oversize: {size} bytes > {cap} — re-render short")
-    headers = {"Authorization": f"Bearer {_key(cfg)}"}
-    # Step 1 — mint per-account upload token
-    r = requests.post(f"{_base(cfg)}/media/upload-token", headers={**headers, "Content-Type": "application/json"},
-                      json={"accountId": account_id}, timeout=30)
+    # Step 1 — presign. Bearer REQUIRED here (unlike the PUT). `size` is optional but documented for
+    # pre-validation (max 5 GB), so a mismatch fails on this cheap call instead of after a multi-MB PUT.
+    try:
+        r = requests.post(f"{_base(cfg)}/media/presign",
+                          headers={"Authorization": f"Bearer {_key(cfg)}", "Content-Type": "application/json"},
+                          json={"filename": path.name, "contentType": ctype, "size": size}, timeout=30)
+    except requests.exceptions.RequestException as exc:
+        raise _scrubbed_transport(exc, "presign", cfg) from None
     if r.status_code == 401:
-        raise ZernioAuthError("Zernio 401 on upload-token mint — check ZERNIO_API_KEY (response body withheld)")
+        raise ZernioAuthError("Zernio 401 on media presign — check ZERNIO_API_KEY (response body withheld)")
     if r.status_code >= 300:
-        raise RuntimeError(f"Zernio upload-token mint failed ({r.status_code}) — body withheld")
+        raise RuntimeError(f"Zernio presign failed ({r.status_code}): {_evidence(cfg, r)}")
     try:
-        token = r.json().get("token")
+        body = r.json(); upload_url = body.get("uploadUrl"); public_url = body.get("publicUrl")
     except Exception:
-        token = None
-    if not token:
-        raise RuntimeError("Zernio upload-token 2xx but no token in body (body withheld)")
-    # Step 2 — upload bytes to /media/upload?token=<token>, multipart field 'files'
-    with open(path, "rb") as fh:
-        resp = requests.post(f"{_base(cfg)}/media/upload", headers=headers,
-                             params={"token": token},
-                             files={"files": (Path(path).name, fh, "video/mp4")}, timeout=120)
-    if resp.status_code == 401:
-        raise ZernioAuthError("Zernio 401 on media upload — check ZERNIO_API_KEY (response body withheld)")
+        upload_url = public_url = None
+    if not upload_url or not public_url:
+        raise RuntimeError("Zernio presign 2xx but no uploadUrl/publicUrl (body withheld)")
+    # Step 2 — signed PUT. A 401 HERE is an upload failure, not a key problem: the signed url carries no
+    # Bearer, so it must NOT raise ZernioAuthError (that would halt the whole run over one bad signature).
+    resp = _put_signed(upload_url, path, ctype)
     if resp.status_code >= 300:
-        raise RuntimeError(f"Zernio upload failed ({resp.status_code}) — body withheld")
-    # Response: {"success": true, "files": [{"url": "..."}]} — extract the first file's url.
-    try:
-        body = resp.json()
-        files = (body or {}).get("files") or []
-        url = files[0].get("url") if files and isinstance(files[0], dict) else None
-        if not url:
-            url = _extract_zernio_media_url(body)                 # back-compat: old shape extractor
-    except Exception:
-        url = None
-    if not url:
-        raise RuntimeError("Zernio upload 2xx but no recognizable media url (body withheld)")
-    return url
+        raise RuntimeError(f"Zernio signed upload failed ({resp.status_code}): {_evidence(cfg, resp)}")
+    return public_url
 
 
 def zernio_list_accounts(cfg: Config) -> list[ZernioAccount]:
