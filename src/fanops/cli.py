@@ -412,7 +412,9 @@ def cmd_resolve(cfg: Config, args) -> int:
 
 def _parse_segments(s: str) -> list:
     # argparse `type=` callback: a malformed value raises ArgumentTypeError, so argparse exits 2 with a clean
-    # usage message instead of letting float() throw an uncaught traceback.
+    # usage message instead of letting float() throw an uncaught traceback. Non-finite bounds (nan/inf) are
+    # rejected HERE so they can never reach the identity-bearing canonical JSON (canary Phase 8).
+    import math as _math
     out = []
     for part in (s or "").split(","):
         part = part.strip()
@@ -421,9 +423,12 @@ def _parse_segments(s: str) -> list:
         if not sep:
             raise argparse.ArgumentTypeError(f"segment {part!r} must be 't0-t1' (dash-separated seconds)")
         try:
-            out.append((float(a), float(b)))
+            a_f, b_f = float(a), float(b)
         except ValueError:
             raise argparse.ArgumentTypeError(f"segment {part!r} has non-numeric bounds")
+        if not (_math.isfinite(a_f) and _math.isfinite(b_f)):
+            raise argparse.ArgumentTypeError(f"segment {part!r} bounds must be finite (no nan/inf)")
+        out.append((a_f, b_f))
     return out
 
 
