@@ -10,7 +10,7 @@
 | **Scope** | **Upload only.** One disposable asset. **No post is created** — not by policy, structurally (§3.3) |
 | **PR under test** | #694, branch `fix/zernio-presign-upload`, **OPEN / unmerged / MERGEABLE**, 10 changed files |
 | **Code under test** | `src/fanops/post/zernio.py` — blob `acccd311effc2e441dd1b5675c3cd8b77759572c`, sha256 `7e38608d1a92e7b6de92d8ab9bc25fc3c07663bd99510911732f4523adc6a63f` (§2) |
-| **Runner** | `zernio_upload_canary.py`, sha256 `4766c0e214404c192d96e6b3490639ddcdaeb7bbe17cafac3629ff6434bdeb1b` — outside git, outside `FANOPS_ROOT` (§7) |
+| **Runner** | `zernio_upload_canary.py`, sha256 `efa51779b30e4eb2c51471963ddd1c6bd39e01c4fb431ce805c7bab4df5e32a2` — outside git, outside `FANOPS_ROOT` (§7) |
 | **Call ceiling** | **Exactly 3**: 1 `POST /media/presign` · 1 signed `PUT` · 1 streamed `GET` (§4) |
 | **Blast radius** | 1 temporary object in Zernio's media storage. **No ledger row, no corpus file, no social post, no account touched** |
 | **Reversibility** | **Partial — §8.** The object cannot be deleted by us; it expires unreferenced |
@@ -174,8 +174,22 @@ finally: r.close()          # release WITHOUT consuming the body
 
 - **`stream=True` + never iterating + `close()` in `finally`** — the body is never downloaded.
 - **`Range: bytes=0-0`** — asks for one byte. A compliant server answers **206**; one that ignores `Range`
-  answers **200** and we close before reading. **Both are 2xx → both accepted.**
-- **No retry and no fallback.** A non-2xx is a canary **failure** (§9.2), reported as-is.
+  answers **200** and we close before reading.
+- **No retry and no fallback.** A failure is a canary **failure** (§9.3), reported as-is.
+
+### 4.2 The object is validated, not just the status code
+
+**"Any 2xx" is not a proof of accessibility** — a defect in Rev 2's first draft, caught in review. A **204**
+has no body by definition, and a CDN error page is routinely served as **200 `text/html`**. Either would have
+produced a **false `UPLOAD CONTRACT VERIFIED`** from a check that *recorded* `Content-Type` and
+`Content-Range` and then asserted neither.
+
+| Check | Rule | Why this one |
+|---|---|---|
+| **Status** | must be **200 or 206** — not "any 2xx" | 204/205 carry no body; accepting them proves nothing |
+| **Stored length** | **206** → `Content-Range: bytes 0-0/<total>`, `total` **== the PUT byte count** · **200** → `Content-Length` **== the PUT byte count** | **The load-bearing invariant.** The only header that ties the retrievable object back to *the exact bytes we PUT*. An error page fails it on length alone |
+| **Not an error document** | `Content-Type` must not be `text/html` / `*/xml` | belt-and-braces against a 200-with-apology-page |
+| **`Content-Type` is `video/*`** | **recorded DEVIATION, not a failure** | `contentType` *is* part of the presign contract, so a mismatch is a real finding — but a length-correct object served as `octet-stream` **is still our file**. Failing the canary there would answer a different question than the one it exists to ask |
 
 > **Redirects consume budget, deliberately.** `requests` re-enters the chokepoint per redirect hop, so a
 > redirected PUT would abort at call 2. The ceiling counts **real HTTP requests**; a surprise redirect is a
@@ -199,11 +213,36 @@ Per request, in order, all before any network:
 **Validated with synthetic requests, no network:** post-creation url **blocked**; `PUT`+`Authorization`
 **blocked**; `HEAD` **blocked**; `DELETE` **blocked**; requests actually sent: **0**.
 
-## 6. Ledger interlock — logical, not byte-wise
+## 6. Ledger interlock — detection, logical, and honest about its limit
 
 Re-read from the **live** ledger over a `file:…?mode=ro` URI (writes are *impossible*, not merely unused), at
 **four** points: **before presign · before PUT · before the GET · after completion** (plus a baseline). The
 first three are the chokepoint's check 5, so they land at the last instruction before each request.
+
+> ### ⚠ This is DETECTION, not PREVENTION — the Rev 2 draft over-claimed
+>
+> Rev 2 first said `queued == 0` holds **"throughout"** the canary. **A read-only check cannot promise that.**
+> It is a **TOCTOU** window: an operator clicking Approve in the (resident) Studio between the read and the
+> socket write would be caught only by the *after* check — i.e. after the fact. Caught in review; the
+> guarantee is downgraded here rather than dressed up.
+>
+> **The claim, corrected:** `queued == 0` is proven **at four instants**, not across the interval.
+
+**Why no lock is taken — deliberately, not by omission.** `Ledger.approve_post` takes the ledger flock, so the
+canary *could* hold it end-to-end. That would **block the live daemon across network I/O** for the canary's
+duration — precisely the anti-pattern `_publish_one`'s three-phase claim/network/finalize shape exists to
+avoid. Trading a live-daemon stall for a tighter safety claim about a colour-bar upload is a bad trade.
+
+**What actually carries the guarantee**, since the check does not:
+
+| | |
+|---|---|
+| The **daemon cannot self-promote** | `Ledger.approve_post` is the sole promoter into `queued`, and only the Studio calls it |
+| So **only a human click can open the race** | which is exactly what the §2.1 operator hold covers — the hold *is* the mechanism, the check is the audit |
+| The canary's **own 3 requests are unaffected either way** | it never publishes; a concurrent approval changes nothing about what it sends |
+
+**The residual is a reporting one**, and it is accepted: a mid-canary approval would be reported by the next
+check, and the canary aborts before its remaining requests.
 
 | Invariant | On drift | Why |
 |---|---|---|
@@ -238,7 +277,7 @@ not imported at all" would be false. The checkable claim is that **this runner c
 
 | Property | Value |
 |---|---|
-| **sha256** | `4766c0e214404c192d96e6b3490639ddcdaeb7bbe17cafac3629ff6434bdeb1b` |
+| **sha256** | `efa51779b30e4eb2c51471963ddd1c6bd39e01c4fb431ce805c7bab4df5e32a2` |
 | **Location** | session scratchpad — **outside git**, **outside `FANOPS_ROOT`** (`/Users/molhamhomsi/FanOps`) |
 | **Subprocesses** | AST **allow-list**: `git`, `ffmpeg`, `ffprobe`, `file`, `gh` — **no `fanops` CLI**. An allow-list, because a negative scan only rules out the name you thought to forbid |
 | **Forbidden-path self-scan** | **AST over non-docstring string literals** — see below |
@@ -306,10 +345,10 @@ in the OpenAPI spec (S0) or the media guides.
 |---|---|
 | 1 | `POST /media/presign` → **2xx** returning **both** `uploadUrl` **and** `publicUrl` |
 | 2 | **Signed PUT → 2xx** |
-| 3 | **`publicUrl` accessible** — 2xx on the single streamed `GET` |
+| 3 | **`publicUrl` serves the object** — **200/206**, and the **stored length equals the PUT byte count** (§4.2). Not "any 2xx" |
 | 4 | **No `Authorization` on the PUT** — asserted on the outgoing request |
 | 5 | **No secret in any sink** — no API key, no `X-Amz-Signature`/`-Credential`/`-Security-Token`, no full `uploadUrl` |
-| 6 | **`queued == 0`** throughout and after |
+| 6 | **`queued == 0`** at each of the four checkpoints (§6 — proven at instants, not across the interval) |
 | 7 | **The same four `failed` ids**, unchanged |
 | 8 | **No post created** — the forbidden path never requested |
 
@@ -329,8 +368,9 @@ in the OpenAPI spec (S0) or the media guides.
 
 | # | Criterion |
 |---|---|
-| 1 | **Any non-2xx** on presign, PUT, or the accessibility GET |
+| 1 | **Any non-2xx** on presign or PUT; **anything but 200/206** on the accessibility GET |
 | 2 | **Malformed presign response** — missing `uploadUrl`/`publicUrl`, or non-JSON |
+| 2b | **The retrievable object is not the asset** — stored length ≠ the PUT byte count, an unusable `Content-Range`/`Content-Length`, or an error document served as 2xx (§4.2) |
 | 3 | **Secret exposure** in any sink |
 | 4 | **Any request to the forbidden path** |
 | 5 | **Ledger or queue mutation** — `queued != 0`, failed-set drift, or posts-digest drift |
@@ -354,7 +394,7 @@ cannot expose catalogue content.
 
 **Reply with exactly one:**
 
-```
+```text
 APPROVE UPLOAD CANARY
 DO NOT CALL ZERNIO
 ```
