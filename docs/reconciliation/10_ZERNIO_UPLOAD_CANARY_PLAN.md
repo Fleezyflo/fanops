@@ -10,7 +10,7 @@
 | **Scope** | **Upload only.** One disposable asset. **No post is created** — not by policy, structurally (§3.3) |
 | **PR under test** | #694, branch `fix/zernio-presign-upload`, **OPEN / unmerged / MERGEABLE**, 10 changed files |
 | **Code under test** | `src/fanops/post/zernio.py` — blob `acccd311effc2e441dd1b5675c3cd8b77759572c`, sha256 `7e38608d1a92e7b6de92d8ab9bc25fc3c07663bd99510911732f4523adc6a63f` (§2) |
-| **Runner** | `zernio_upload_canary.py`, sha256 `efa51779b30e4eb2c51471963ddd1c6bd39e01c4fb431ce805c7bab4df5e32a2` — outside git, outside `FANOPS_ROOT` (§7) |
+| **Runner** | `zernio_upload_canary.py`, sha256 `88e3ebdc9ac86724a39707ff8dce4e5f41a7d2621bcd2bece6d74219761bab98` — outside git, outside `FANOPS_ROOT` (§7) |
 | **Call ceiling** | **Exactly 3**: 1 `POST /media/presign` · 1 signed `PUT` · 1 streamed `GET` (§4) |
 | **Blast radius** | 1 temporary object in Zernio's media storage. **No ledger row, no corpus file, no social post, no account touched** |
 | **Reversibility** | **Partial — §8.** The object cannot be deleted by us; it expires unreferenced |
@@ -55,7 +55,11 @@ So this file pins what **does not move**:
 `gh pr view 694 --json headRefOid` and **aborts unless they are equal**. Equality with the live remote is a
 stronger guarantee than any transcribed constant, and it cannot go stale.
 
-### 1.2 Preflight proofs — all before any network. Abort on any mismatch.
+### 1.2 Preflight proofs — all before any **Zernio/media** request. Abort on any mismatch.
+
+> ⛔ **RETRACTED:** *"all before any network."* **False.** Proof 1 runs `gh pr view`, which **is** a network
+> request — a separate read-only GitHub metadata lookup (§3.4). Preflight is before any **Zernio/media**
+> call, which is the claim that was meant and the only one that is true.
 
 | # | Proof | Abort condition |
 |---|---|---|
@@ -144,9 +148,31 @@ would add real publish risk while proving nothing about the fix.
 
 ### 3.3 It cannot publish — structurally
 
-The runner never constructs a `ZernioPoster`, never builds a payload, and every outbound request passes
-through a single chokepoint that **raises on the forbidden path segment before the socket is written** (§5).
-Validated against a synthetic request: **blocked, 0 network requests made.**
+The runner never constructs a `ZernioPoster`, never builds a payload, and **every Zernio/media request**
+passes through a single chokepoint that **raises on the forbidden path segment before the socket is
+written** (§5). Validated against a synthetic request: **blocked, 0 sends.**
+
+> ⛔ **RETRACTED:** *"every outbound request passes through a single chokepoint."* **False** — see §3.4.
+> The scoped claim above is the true one, and it is the one the safety argument needs: the forbidden path
+> is on the Zernio data plane, which the chokepoint does cover completely.
+
+### 3.4 Network accounting — corrected
+
+`Session.send` is patched in **this interpreter's** `requests`. It cannot see another OS process.
+
+| Operation | Plane | Through `Session.send`? | In the ceiling? |
+|---|---|---|---|
+| **`gh pr view 694`** (preflight) — read-only GitHub metadata | GitHub control-plane | **NO** — `gh` is a compiled binary in a **separate process** | **NO — outside it** |
+| `POST /media/presign` · `PUT <uploadUrl>` · `GET <publicUrl>` | Zernio/media data-plane | **YES, all three** | **YES** |
+
+- **The Zernio/media data-plane ceiling is exactly 3.**
+- **`gh pr view` is one separate read-only GitHub metadata request, outside that ceiling, and does not pass
+  through `Session.send`.**
+- **All Zernio/media requests do pass through the `Session.send` chokepoint.**
+
+The `git` subprocesses are genuinely local — the runner's only subcommands are `rev-parse`, `hash-object`,
+`status`; **network-capable subcommands (`fetch`/`pull`/`push`/`ls-remote`/`clone`/`remote`): none.**
+`ffmpeg`/`ffprobe`/`file` are local.
 
 ## 4. Exact call budget — hard ceiling of 3
 
@@ -197,18 +223,24 @@ produced a **false `UPLOAD CONTRACT VERIFIED`** from a check that *recorded* `Co
 
 ## 5. The chokepoint
 
-Every outbound request — however it is constructed — funnels through `Session.send`, which receives the
-**final `PreparedRequest`**: true URL, true merged headers. Raising there happens **before the socket write**.
+**Every Zernio/media request** — however it is constructed — funnels through `Session.send`, which receives
+the **final `PreparedRequest`**: true URL, true merged headers. Raising there happens **before the socket
+write**. Scope is §3.4: this patches *this interpreter's* `requests`, so `gh` (another process) is outside it.
 
-Per request, in order, all before any network:
+> ⛔ **RETRACTED:** *"Every outbound request … funnels through `Session.send`"* and *"all before any
+> network."* Both **false**, both corrected above and in §3.4.
+
+Per request, in order, all before the socket write:
 
 | # | Check | Rationale |
 |---|---|---|
 | 1 | url carries the forbidden segment → **abort** | after-the-fact detection means it already happened |
-| 2 | per-method count ≤ budget (default **0**) → **abort** | hard ceiling; unlisted methods are refused |
-| 3 | `PUT` carries `Authorization` → **abort, not sent** | inspected on the **outgoing** request. Handing the key to third-party storage is not undoable |
-| 4 | `zernio.py` sha256 == the §1.1 pin → else **abort** | closes the gap between preflight and the first API call |
-| 5 | live-ledger interlock (§6) → **abort** | re-read at the last possible moment before each request |
+| 2 | **scheme is not `https` → abort, not sent** | plaintext would expose the Bearer key (presign) or the signed query (PUT) on the wire; a downgrade is what an intercepted endpoint looks like |
+| 3 | per-method count ≤ budget (default **0**) → **abort** | hard ceiling; unlisted methods are refused |
+| 4 | `PUT` carries `Authorization` → **abort, not sent** | inspected on the **outgoing** request. Handing the key to third-party storage is not undoable |
+| 5 | `zernio.py` sha256 == the §1.1 pin → else **abort** | closes the gap between preflight and the first API call |
+| 6 | **runner sha256 == the caller-supplied `FANOPS_CANARY_RUNNER_SHA256` → else abort** | binds execution to the **reviewed** bytes. Re-checked per request, so a mid-run edit to the guard cannot let the next request through unchecked. **The expected hash is never a constant in the file** — a file cannot hold its own sha256, and an in-file pin is edited by the same hand as the code, so it could never detect the edit it exists to detect |
+| 7 | live-ledger interlock (§6) → **abort** | re-read at the last possible moment before each request |
 
 **Validated with synthetic requests, no network:** post-creation url **blocked**; `PUT`+`Authorization`
 **blocked**; `HEAD` **blocked**; `DELETE` **blocked**; requests actually sent: **0**.
@@ -277,13 +309,16 @@ not imported at all" would be false. The checkable claim is that **this runner c
 
 | Property | Value |
 |---|---|
-| **sha256** | `efa51779b30e4eb2c51471963ddd1c6bd39e01c4fb431ce805c7bab4df5e32a2` |
+| **sha256 (reviewed)** | `88e3ebdc9ac86724a39707ff8dce4e5f41a7d2621bcd2bece6d74219761bab98` |
 | **Location** | session scratchpad — **outside git**, **outside `FANOPS_ROOT`** (`/Users/molhamhomsi/FanOps`) |
+| **Execution command** | `FANOPS_CANARY_RUNNER_SHA256=88e3ebdc9ac86724a39707ff8dce4e5f41a7d2621bcd2bece6d74219761bab98 .venv/bin/python "/private/tmp/claude-501/-Users-molhamhomsi-Moh-Flow-Fanops/87dac28b-d48c-4852-8743-08317279b259/scratchpad/zernio_upload_canary.py"` — from the repo root |
+| **Runner byte-pin** | The reviewed hash is **supplied by the caller**, checked at preflight **and again before every one of the 3 data-plane requests**. **Unset = abort.** See §7.2 |
 | **Subprocesses** | AST **allow-list**: `git`, `ffmpeg`, `ffprobe`, `file`, `gh` — **no `fanops` CLI**. An allow-list, because a negative scan only rules out the name you thought to forbid |
-| **Forbidden-path self-scan** | **AST over non-docstring string literals** — see below |
+| **Forbidden-path self-scan** | **AST over non-docstring string literals** — see §7.1 |
 | **Ledger API references** | **0** (AST-asserted) |
-| **Secrets** | `ZERNIO_API_KEY` loaded into `os.environ` **from the live `.env` by key name only**; never bound to a printed name, never logged, never written to the result file. Nothing else is read from `.env` |
-| **Never printed** | `ZERNIO_API_KEY` · `uploadUrl` · `uploadUrl` query values · signed exception request objects |
+| **Secrets** | `ZERNIO_API_KEY` read from the live `.env` **by key name, always overwriting any inherited value** (§7.3); never bound to a printed name, never logged, never written to the result file. Nothing else is read from `.env` except `FANOPS_CORPUS_AUTO` |
+| **Never printed** | `ZERNIO_API_KEY` · `uploadUrl` · `uploadUrl` query values · signed exception request objects · `repr(e)` · traceback · request/response/headers/locals |
+| **`publicUrl`** | **validated before being printed, recorded, or fetched** (§7.4) |
 
 ### 7.1 The self-scan had to be fixed to mean anything
 
@@ -304,6 +339,37 @@ whose constants are `"/"` and `"posts"` — neither matches — so the check can
 | the segment in **docstring prose** | `[]` | prose is not a request path |
 | the segment in **a comment** | `[]` | comments are not request paths |
 | **a real `requests.post("https://zernio.com/api/v1/posts")`** | **HIT at line 2** | **it catches the thing it exists to catch** |
+
+### 7.2 Why the runner's expected hash is caller-supplied, never a constant
+
+A SHA-256 in the review package **identifies** the runner; it does not **bind execution to it**. Nothing
+stopped an edited runner from being run after review.
+
+The pin is now `FANOPS_CANARY_RUNNER_SHA256`, checked at preflight and again before each of the 3
+data-plane requests. **The expected value is never stored in the file**, for two reasons: a file cannot
+hold its own sha256 (writing the constant changes the hash it claims — self-referential and unsatisfiable),
+and an in-file pin is edited by the same hand as the code, so it could never detect the edit it exists to
+detect. Only an **out-of-band** expectation — fixed at review time, passed in at run time — binds execution
+to the reviewed bytes. **Unset is an abort, never a default**: a pin that silently skips when absent is not
+a pin. Re-checking per request means a mid-run edit to the guard itself cannot let the next request through.
+
+### 7.3 No ambient-key precedence
+
+`load_key_by_name` previously began `if os.getenv("ZERNIO_API_KEY"): return`, which let the **invoking
+shell** decide which credential the canary used. The result would then describe whatever key happened to be
+exported rather than the configured one the daemon publishes with, and the two could differ silently. **A
+canary whose credential source depends on how you launched it is measuring the wrong system.** The live
+`.env` is the daemon's source, so it is now unconditionally the canary's source; an empty value aborts.
+
+### 7.4 `publicUrl` is validated before it is printed, recorded, or fetched
+
+`publicUrl` was recorded verbatim on the reasoning that it is "unsigned and intentionally public." That is
+an assumption about a **server response** — from the very server whose documented behaviour this canary
+exists to test, having already answered 405 where the docs promised otherwise. It is now checked:
+**`https` scheme · non-empty hostname · no userinfo · no query string · no fragment.** A query string on a
+"public" url would mean it carries credentials, and logging it verbatim would leak them. On violation the
+canary aborts, emits **only `safe_url()`**, records nothing raw, and never issues the GET. The chokepoint
+separately refuses any non-`https` Zernio/media request before the socket write.
 
 ## 8. The asset, and the cleanup limitation
 
