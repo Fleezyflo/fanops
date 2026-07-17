@@ -524,20 +524,20 @@
     ],
     "fanops.post.zernio": [
       {
-        "call": "requests.post",
-        "line": 141
+        "call": "requests.put",
+        "line": 157
       },
       {
         "call": "requests.post",
-        "line": 155
+        "line": 186
       },
       {
         "call": "requests.get",
-        "line": 183
+        "line": 216
       },
       {
         "call": "requests.post",
-        "line": 235
+        "line": 268
       }
     ]
   },
