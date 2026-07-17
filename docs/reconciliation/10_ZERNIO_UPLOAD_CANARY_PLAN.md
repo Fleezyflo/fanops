@@ -2,7 +2,8 @@
 
 > **Rev 4 — 2026-07-17. EXECUTED.** Gate token `APPROVE UPLOAD CANARY` returned; the canary ran once and the
 > supported claim is **`LIVE UPLOAD CONTRACT VERIFIED`** — **the result is §10, its exact boundary is
-> §10.4.** §§0-9 are the plan as approved, retained verbatim as the pre-execution record.
+> §10.4.** §§0–9 preserve the approved pre-execution plan, with subsequent factual corrections explicitly
+> identified in this revision.
 >
 > **Rev 4 corrects an overclaim in Rev 3**, which read the result as byte identity. The canary read **no
 > stored bytes** and computed **no hash**; it proved *a retrievable media object of the expected declared
@@ -312,9 +313,10 @@ result JSON; no `@` in any output.
 
 ## 6. Ledger interlock — detection, logical, and honest about its limit
 
-Re-read from the **live** ledger over a `file:…?mode=ro` URI (writes are *impossible*, not merely unused), at
-**four** points: **before presign · before PUT · before the GET · after completion** (plus a baseline). The
-first three are the chokepoint's check 5, so they land at the last instruction before each request.
+Re-read from the **live** ledger over a `file:…?mode=ro` URI (writes are *impossible*, not merely unused), as a
+**baseline plus four checkpoints**: the four checkpoints are **before presign · before PUT · before the GET ·
+after completion**. The first three are the chokepoint's check 5, so they land at the last instruction before
+each request.
 
 > ### ⚠ This is DETECTION, not PREVENTION — the Rev 2 draft over-claimed
 >
@@ -499,7 +501,7 @@ in the OpenAPI spec (S0) or the media guides.
 | 3 | **`publicUrl` serves the object** — **200/206**, and the **server-declared total length equals the PUT byte count** (§4.5). Not "any 2xx" |
 | 4 | **No `Authorization` on the PUT** — asserted on the outgoing request |
 | 5 | **No secret in any sink** — no API key, no `X-Amz-Signature`/`-Credential`/`-Security-Token`, no full `uploadUrl` |
-| 6 | **`queued == 0`** at each of the four checkpoints (§6 — proven at instants, not across the interval) |
+| 6 | **`queued == 0`** at the baseline plus four checkpoints (§6 — proven at instants, not across the interval) |
 | 7 | **The same four `failed` ids**, unchanged |
 | 8 | **No post created** — the forbidden path never requested |
 
@@ -551,7 +553,7 @@ The presign + signed PUT contract is no longer a claim about a server; it is a m
 | 3 | `publicUrl` accessible | ✅ **206**, `Content-Range` total **54770** == the asset size — **declared, not measured** (§10.4) |
 | 4 | no `Authorization` on the PUT | ✅ asserted on the outgoing request |
 | 5 | no secret in any sink | ✅ swept: no API key, no `X-Amz-*` value, no `uploadUrl`, no `@` |
-| 6 | `queued == 0` | ✅ at **all five** checkpoints |
+| 6 | `queued == 0` | ✅ at the **baseline plus four checkpoints** |
 | 7 | the same four `failed` ids | ✅ unchanged |
 | 8 | no post created | ✅ the post-creation path was never requested |
 
@@ -563,8 +565,8 @@ Asset sha256 `15987301315bd793…`, `video/mp4`, 54,770 bytes, 2.000000 s. **Thi
 
 > ⛔ **RETRACTED:** *"The object round-tripped byte-exactly."* **Overclaim.** See §10.4.
 
-Ledger posts digest `dd1677e62654a2aa…` — **identical at all five checkpoints** (baseline, before each of the
-three stages, after completion). `FANOPS_CORPUS_AUTO=0` at each. Credential source: **`env-fallback`**
+Ledger posts digest `dd1677e62654a2aa…` — **identical across all five ledger reads: the baseline plus four
+checkpoints** (before each of the three stages, after completion). `FANOPS_CORPUS_AUTO=0` at each. Credential source: **`env-fallback`**
 (keyring holds no `ZERNIO_API_KEY`), so §4.3's keyring branch was not exercised live — it is proven only by
 the offline control.
 

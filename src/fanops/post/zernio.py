@@ -184,10 +184,11 @@ def zernio_upload_media(cfg: Config, path: Path, *, account_id: str | None = Non
       2) PUT <uploadUrl> raw bytes — Content-Type MUST match presign's contentType, and NO Authorization
       3) the caller puts publicUrl in mediaItems[]; the PUT body is never parsed for it
 
-    Supersedes the reverse-engineered /media/upload-token + POST /media/upload pair ("DISCOVERED LIVE
-    2026-06-29") — an END-USER-FLOW endpoint Zernio never published a contract for, which now answers 405 and
-    burned four posts on 2026-07-16. There is deliberately NO fallback to it: it is not a published path, the
-    spec scopes it away from programmatic use, and it can now only fail (report 09 §6, §8.6).
+    Supersedes the /media/upload-token + POST /media/upload pair ("DISCOVERED LIVE 2026-06-29"): that
+    upload-token flow is documented for END-USER workflows, and FanOps used it PROGRAMMATICALLY. The supported
+    programmatic contract is /media/presign + the signed PUT above. The old route began answering 405 on
+    2026-07-16, burning four posts. There is deliberately NO fallback to it: it is the wrong contract for this
+    integration and is no longer operationally reliable (report 09 §6, §8.6).
 
     account_id is retained for call-site compatibility (media._uploader_kwargs passes it) and is UNUSED —
     presign is account-agnostic, unlike the per-account token mint it replaces. 401 -> typed ZernioAuthError;
