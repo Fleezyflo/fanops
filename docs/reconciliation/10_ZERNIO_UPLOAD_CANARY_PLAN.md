@@ -232,7 +232,7 @@ Only the **source label** (`keyring` | `env-fallback`) is recorded — derived f
 None`, the same predicate `resolve_secret` uses, so no value comparison is needed. **No prefix, no length,
 no hash, no value** of any credential is printed or recorded.
 
-### 4.1 The accessibility check — one request, replacing Rev 1's HEAD+fallback
+### 4.4 The accessibility check — one request, replacing Rev 1's HEAD+fallback
 
 Rev 1 allowed `HEAD`, then `GET` if `HEAD` returned 405 — a 4-request path under a "3 request" headline (R3).
 Rev 2 removes `HEAD` entirely:
@@ -249,7 +249,7 @@ finally: r.close()          # release WITHOUT consuming the body
   answers **200** and we close before reading.
 - **No retry and no fallback.** A failure is a canary **failure** (§9.3), reported as-is.
 
-### 4.2 The object is validated, not just the status code
+### 4.5 The object is validated, not just the status code
 
 **"Any 2xx" is not a proof of accessibility** — a defect in Rev 2's first draft, caught in review. A **204**
 has no body by definition, and a CDN error page is routinely served as **200 `text/html`**. Either would have
@@ -259,7 +259,7 @@ produced a **false `UPLOAD CONTRACT VERIFIED`** from a check that *recorded* `Co
 | Check | Rule | Why this one |
 |---|---|---|
 | **Status** | must be **200 or 206** — not "any 2xx" | 204/205 carry no body; accepting them proves nothing |
-| **Declared length** | **206** → `Content-Range: bytes 0-0/<total>`, `total` **== the PUT byte count** · **200** → `Content-Length` **== the PUT byte count** | **The load-bearing invariant** — and a **declared** one. It is what the server *reports* about the object, not a measurement of it: the body is never read, so this rules out an error page (which fails on length alone) but **cannot establish byte identity**. See §9.4 |
+| **Declared length** | **206** → `Content-Range: bytes 0-0/<total>`, `total` **== the PUT byte count** · **200** → `Content-Length` **== the PUT byte count** | **The load-bearing invariant** — and a **declared** one. It is what the server *reports* about the object, not a measurement of it: the body is never read, so this rules out an error page (which fails on length alone) but **cannot establish byte identity**. See §10.4 |
 | **Not an error document** | `Content-Type` must not be `text/html` / `*/xml` | belt-and-braces against a 200-with-apology-page |
 | **`Content-Type` is `video/*`** | **recorded DEVIATION, not a failure** | `contentType` *is* part of the presign contract, so a mismatch is a real finding — but a length-correct object served as `octet-stream` **is still our file**. Failing the canary there would answer a different question than the one it exists to ask |
 
@@ -496,7 +496,7 @@ in the OpenAPI spec (S0) or the media guides.
 |---|---|
 | 1 | `POST /media/presign` → **2xx** returning **both** `uploadUrl` **and** `publicUrl` |
 | 2 | **Signed PUT → 2xx** |
-| 3 | **`publicUrl` serves the object** — **200/206**, and the **stored length equals the PUT byte count** (§4.2). Not "any 2xx" |
+| 3 | **`publicUrl` serves the object** — **200/206**, and the **stored length equals the PUT byte count** (§4.5). Not "any 2xx" |
 | 4 | **No `Authorization` on the PUT** — asserted on the outgoing request |
 | 5 | **No secret in any sink** — no API key, no `X-Amz-Signature`/`-Credential`/`-Security-Token`, no full `uploadUrl` |
 | 6 | **`queued == 0`** at each of the four checkpoints (§6 — proven at instants, not across the interval) |
@@ -597,6 +597,19 @@ already obeys this — it returns the server's `publicUrl` verbatim and never pa
 is right regardless of who runs the storage. This also vindicates §4.2's full-string destination pin over a
 hostname check: a hostname rule keyed to `zernio.com` would have **refused the legitimate PUT**.
 
+### 10.2 What this does NOT establish — unchanged
+
+**`LIVE UPLOAD CONTRACT VERIFIED` is the entire claim**, bounded by §10.4. It remains a statement about one
+PUT of one colour-bar file, whose stored bytes were never read. It does **not** establish byte identity,
+social posting, production publishing recovered, backlog recovery ready, or idempotency. **`x-request-id` +
+`existingPost` + 409 remains MANDATORY before the first production requeue.**
+
+### 10.3 Residual
+
+One 2-second colour-bar test pattern now sits at `https://media.zernio.com/temp/1784283036590_ybk7o6je_
+zernio-canary.mp4` until Zernio's ~7-day expiry (§8.1). It is referenced by no post, so it is never made
+permanent. No private, unreleased, or catalogue content was exposed at any point.
+
 ### 10.4 What "VERIFIED" does and does not mean — the byte-identity boundary
 
 > ⛔ **RETRACTED, everywhere it appeared:** *"round-tripped byte-exactly"* · *"proves the retrievable object
@@ -616,7 +629,7 @@ hostname check: a hostname rule keyed to `zernio.com` would have **refused the l
 the server-returned URL. It did not prove byte-level identity.**
 
 **Why the overclaim was wrong, mechanically.** The request was `Range: bytes 0-0` with `stream=True`; the
-body was never iterated and the connection was closed immediately (§4.1) — **the canary did not read even
+body was never iterated and the connection was closed immediately (§4.4) — **the canary did not read even
 the one byte it asked for.** `Content-Range: bytes 0-0/54770` is a **header the server emits**, i.e. a
 *declaration* about the object, not a measurement of it. Length and media type are what the server *says*;
 nothing compared stored bytes to sent bytes, because nothing retrieved stored bytes.
@@ -626,19 +639,6 @@ routed and honoured — the 405 was a **routing** verdict, and routing is exactl
 a 206 at `publicUrl` proves. Byte identity would answer a *different* question (storage corruption), one the
 405 never raised. **The canary is not rerun to strengthen this claim**: a stronger claim is not needed, and
 a second live call would spend real risk on a question that is not blocking.
-
-### 10.2 What this does NOT establish — unchanged
-
-**`LIVE UPLOAD CONTRACT VERIFIED` is the entire claim**, bounded by §10.4. It remains a statement about one
-PUT of one colour-bar file, whose stored bytes were never read. It does **not** establish byte identity,
-social posting, production publishing recovered, backlog recovery ready, or idempotency. **`x-request-id` +
-`existingPost` + 409 remains MANDATORY before the first production requeue.**
-
-### 10.3 Residual
-
-One 2-second colour-bar test pattern now sits at `https://media.zernio.com/temp/1784283036590_ybk7o6je_
-zernio-canary.mp4` until Zernio's ~7-day expiry (§8.1). It is referenced by no post, so it is never made
-permanent. No private, unreleased, or catalogue content was exposed at any point.
 
 ## 11. Gate — CLOSED
 
