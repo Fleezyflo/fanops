@@ -10,7 +10,7 @@
 | **Scope** | **Upload only.** One disposable asset. **No post is created** — not by policy, structurally (§3.3) |
 | **PR under test** | #694, branch `fix/zernio-presign-upload`, **OPEN / unmerged / MERGEABLE**, 10 changed files |
 | **Code under test** | `src/fanops/post/zernio.py` — blob `acccd311effc2e441dd1b5675c3cd8b77759572c`, sha256 `7e38608d1a92e7b6de92d8ab9bc25fc3c07663bd99510911732f4523adc6a63f` (§2) |
-| **Runner** | `zernio_upload_canary.py`, sha256 `88e3ebdc9ac86724a39707ff8dce4e5f41a7d2621bcd2bece6d74219761bab98` — outside git, outside `FANOPS_ROOT` (§7) |
+| **Runner** | `zernio_upload_canary.py`, sha256 `ca31aaf1bfad628a9453c264e310853d4cb8594a15c9fc19c53e738eb90a1120` — outside git, outside `FANOPS_ROOT` (§7) |
 | **Call ceiling** | **Exactly 3**: 1 `POST /media/presign` · 1 signed `PUT` · 1 streamed `GET` (§4) |
 | **Blast radius** | 1 temporary object in Zernio's media storage. **No ledger row, no corpus file, no social post, no account touched** |
 | **Reversibility** | **Partial — §8.** The object cannot be deleted by us; it expires unreferenced |
@@ -174,17 +174,55 @@ The `git` subprocesses are genuinely local — the runner's only subcommands are
 `status`; **network-capable subcommands (`fetch`/`pull`/`push`/`ls-remote`/`clone`/`remote`): none.**
 `ffmpeg`/`ffprobe`/`file` are local.
 
-## 4. Exact call budget — hard ceiling of 3
+## 4. The data plane is a 3-STAGE SEQUENCE, not a call budget
 
-| # | Call | Auth | Count | Enforced by |
-|---|---|---|---|---|
-| 1 | `POST https://zernio.com/api/v1/media/presign` | **Bearer** | **exactly 1** | chokepoint (§5) raises on call 2 |
-| 2 | `PUT <uploadUrl>` | **NONE** — the url is signed | **exactly 1** | chokepoint raises on call 2 **and on any `Authorization` header** |
-| 3 | `GET <publicUrl>` · `stream=True` · `Range: bytes=0-0` · body never iterated · closed immediately | **NONE** | **exactly 1** | chokepoint raises on call 2 |
-| — | **any other method** (`HEAD`, `DELETE`, `PATCH`, …) | — | **0** | budget defaults to 0 → raises on call 1 |
-| — | **the post-creation path** | — | **0 — FORBIDDEN** | chokepoint raises on any url carrying the segment. **An assertion, not a convention** |
+| Stage | Call | Destination — matched **exactly** | Auth |
+|---|---|---|---|
+| **1** | `POST` | **exactly** `https://zernio.com/api/v1/media/presign` (§4.2) | **Bearer REQUIRED** — the token's only legitimate destination |
+| **2** | `PUT` | **exactly** the `uploadUrl` presign returned; https; **signed query required**; no userinfo/fragment | **NONE** — any `Authorization` aborts |
+| **3** | `GET` · `stream=True` · `Range: bytes=0-0` · body never iterated · closed immediately | **exactly** the **validated** `publicUrl`; https; no query/fragment/userinfo | **NONE** — any `Authorization` aborts |
+| — | **the post-creation path** | — | **0 — FORBIDDEN.** Checked first, on every request. **An assertion, not a convention** |
 
-**Total: exactly 3 HTTP requests. No retry, no fallback, no loop.**
+**Total: exactly 3 requests. No retry, no fallback, no loop.** Aborts **before the socket write** on: wrong
+order · wrong destination · a redirect · a repeated stage · an unlisted method · a 4th request.
+
+### 4.1 Why a sequence and not a permission set
+
+The Rev 2 design granted **independent per-request permissions** — *one POST is allowed, one PUT is allowed,
+one GET is allowed.* That admits **any order and any destination within those permissions**: a redirect, a
+replayed stage, or a swapped target all look legal to it, because it only ever asks *"is this method still
+under budget?"*
+
+But this canary makes exactly three calls **whose order and destinations are known in advance**. The honest
+contract is therefore a **sequence**, and everything off it is refused by default. **Method budgets are
+retained only as a secondary guard** — behind the stage machine they are unreachable, which is the point:
+the authoritative check is the one that can't be satisfied by a well-formed request to the wrong place.
+
+### 4.2 The bearer token has exactly one destination
+
+`zernio.py` builds the presign url — and thus the `Authorization` header's destination — from
+`cfg.zernio_url`, which reads the **operator-settable `ZERNIO_API_URL`**. An inherited or edited value would
+silently re-point the bearer token at another host with nothing in the output to say so. So, **before**
+`Config` is constructed: the inherited variable is dropped, the live `.env` is read and required to be
+**absent or exactly** `https://zernio.com/api/v1` (trailing-slash normalised), and the expected base is set
+explicitly rather than relying on `Config`'s default. **After** construction, `cfg.zernio_url.rstrip("/")` is
+asserted equal to it. Stage 1 then matches the **full presign url string** — not a prefix, not a hostname.
+
+### 4.3 The credential is the one production would send
+
+`Config.zernio_api_key` → `resolve_secret("ZERNIO_API_KEY", <env value>)` → *"Keyring wins when set; else
+return fallback."* **The effective key is therefore not necessarily the `.env` value.** The runner reads the
+`.env` fallback unconditionally (overwriting any inherited shell value), constructs `Config`, and resolves
+`effective_key = cfg.zernio_api_key` — the credential production actually sends — requiring it non-empty.
+
+**This is what the failure sink redacts with.** Keyed to `os.environ["ZERNIO_API_KEY"]` instead, the sink
+would sail past a keyring-sourced credential and write it to disk *while reporting itself redacted*.
+Demonstrated, not argued: with a distinct keyring value, the old expression emits the key verbatim and the
+new one emits `***`.
+
+Only the **source label** (`keyring` | `env-fallback`) is recorded — derived from `get_secret(...) is not
+None`, the same predicate `resolve_secret` uses, so no value comparison is needed. **No prefix, no length,
+no hash, no value** of any credential is printed or recorded.
 
 ### 4.1 The accessibility check — one request, replacing Rev 1's HEAD+fallback
 
@@ -217,9 +255,10 @@ produced a **false `UPLOAD CONTRACT VERIFIED`** from a check that *recorded* `Co
 | **Not an error document** | `Content-Type` must not be `text/html` / `*/xml` | belt-and-braces against a 200-with-apology-page |
 | **`Content-Type` is `video/*`** | **recorded DEVIATION, not a failure** | `contentType` *is* part of the presign contract, so a mismatch is a real finding — but a length-correct object served as `octet-stream` **is still our file**. Failing the canary there would answer a different question than the one it exists to ask |
 
-> **Redirects consume budget, deliberately.** `requests` re-enters the chokepoint per redirect hop, so a
-> redirected PUT would abort at call 2. The ceiling counts **real HTTP requests**; a surprise redirect is a
-> finding, not a free extra call.
+> **Redirects abort — they cannot be followed.** `requests` re-enters the chokepoint per redirect hop, so a
+> hop arrives as the *next stage* and fails that stage's exact-destination match (and usually its method
+> too). A surprise redirect is a **finding**, not a free extra call — and, more importantly, a redirect off
+> stage 1 can no longer carry the bearer token anywhere, because stage 1 is pinned to one full url string.
 
 ## 5. The chokepoint
 
@@ -236,14 +275,32 @@ Per request, in order, all before the socket write:
 |---|---|---|
 | 1 | url carries the forbidden segment → **abort** | after-the-fact detection means it already happened |
 | 2 | **scheme is not `https` → abort, not sent** | plaintext would expose the Bearer key (presign) or the signed query (PUT) on the wire; a downgrade is what an intercepted endpoint looks like |
-| 3 | per-method count ≤ budget (default **0**) → **abort** | hard ceiling; unlisted methods are refused |
-| 4 | `PUT` carries `Authorization` → **abort, not sent** | inspected on the **outgoing** request. Handing the key to third-party storage is not undoable |
+| 3 | **STAGE MACHINE (§4) — authoritative**: stage = `len(sent)+1`; method, **exact destination**, and per-stage auth rule all enforced → else **abort** | order *and* destination. Catches redirects, replays, swapped targets, unlisted methods, and a 4th request — none of which a permission set can see |
+| 4 | per-method count ≤ budget (default **0**) → **abort** | **secondary only.** Unreachable behind check 3; retained as defence in depth |
 | 5 | `zernio.py` sha256 == the §1.1 pin → else **abort** | closes the gap between preflight and the first API call |
-| 6 | **runner sha256 == the caller-supplied `FANOPS_CANARY_RUNNER_SHA256` → else abort** | binds execution to the **reviewed** bytes. Re-checked per request, so a mid-run edit to the guard cannot let the next request through unchecked. **The expected hash is never a constant in the file** — a file cannot hold its own sha256, and an in-file pin is edited by the same hand as the code, so it could never detect the edit it exists to detect |
+| 6 | **runner sha256 == the caller-supplied `FANOPS_CANARY_RUNNER_SHA256` → else abort** | binds execution to the **reviewed** bytes. Re-checked per stage, so a mid-run edit to the guard cannot let the next request through unchecked. **The expected hash is never a constant in the file** — a file cannot hold its own sha256, and an in-file pin is edited by the same hand as the code, so it could never detect the edit it exists to detect |
 | 7 | live-ledger interlock (§6) → **abort** | re-read at the last possible moment before each request |
 
-**Validated with synthetic requests, no network:** post-creation url **blocked**; `PUT`+`Authorization`
-**blocked**; `HEAD` **blocked**; `DELETE` **blocked**; requests actually sent: **0**.
+Stage 2's expected destination is captured from **presign's own response body**, so the match is against
+what the server actually returned rather than a shape. Stage 3's is the **validated** `publicUrl` (§7.4).
+
+**Validated with synthetic requests, 0 sends:** bearer to another host · bearer to a wrong path on the right
+host · bearer to presign+query · presign without auth · PUT/GET first · repeated POST (a stage-1 redirect) ·
+PUT to a different url · PUT unsigned · PUT with `Authorization` · GET to a different url (a redirect) · GET
+with `Authorization` · repeated PUT · a 4th request · `DELETE` · `HEAD` · plaintext presign · the
+post-creation path — **every one blocked before the socket write**.
+
+### 5.1 `safe_url` never emits `netloc`
+
+`safe_url` is what **every other redaction path calls** to make a url printable — so a leak here defeats all
+of them at once, and each caller still believes it is protected. It emitted `p.netloc`, which is
+`user:pass@host:port`: **userinfo would have been printed verbatim.**
+
+The authority is now **reconstructed** from `p.hostname` (which strips userinfo by construction) plus a
+**validated** port (`p.port` raises on a malformed one, reported as `:<invalid-port>` rather than echoed),
+with IPv6 literals re-bracketed since `.hostname` unwraps them. Never emitted: **username · password · raw
+netloc · query values · fragment.** Proven with distinct sentinels: absent from stdout, exceptions, and the
+result JSON; no `@` in any output.
 
 ## 6. Ledger interlock — detection, logical, and honest about its limit
 
@@ -309,15 +366,17 @@ not imported at all" would be false. The checkable claim is that **this runner c
 
 | Property | Value |
 |---|---|
-| **sha256 (reviewed)** | `88e3ebdc9ac86724a39707ff8dce4e5f41a7d2621bcd2bece6d74219761bab98` |
+| **sha256 (reviewed)** | `ca31aaf1bfad628a9453c264e310853d4cb8594a15c9fc19c53e738eb90a1120` |
 | **Location** | session scratchpad — **outside git**, **outside `FANOPS_ROOT`** (`/Users/molhamhomsi/FanOps`) |
-| **Execution command** | `FANOPS_CANARY_RUNNER_SHA256=88e3ebdc9ac86724a39707ff8dce4e5f41a7d2621bcd2bece6d74219761bab98 .venv/bin/python "<RUNNER_PATH>"` — from the repo root. `<RUNNER_PATH>` is **deliberately not written here**: see §7.5 |
+| **Execution command** | `FANOPS_CANARY_RUNNER_SHA256=ca31aaf1bfad628a9453c264e310853d4cb8594a15c9fc19c53e738eb90a1120 .venv/bin/python "<RUNNER_PATH>"` — from the repo root. `<RUNNER_PATH>` is **deliberately not written here**: see §7.5 |
 | **Runner byte-pin** | The reviewed hash is **supplied by the caller**, checked at preflight **and again before every one of the 3 data-plane requests**. **Unset = abort.** See §7.2 |
 | **Subprocesses** | AST **allow-list**: `git`, `ffmpeg`, `ffprobe`, `file`, `gh` — **no `fanops` CLI**. An allow-list, because a negative scan only rules out the name you thought to forbid |
 | **Forbidden-path self-scan** | **AST over non-docstring string literals** — see §7.1 |
 | **Ledger API references** | **0** (AST-asserted) |
-| **Secrets** | `ZERNIO_API_KEY` read from the live `.env` **by key name, always overwriting any inherited value** (§7.3); never bound to a printed name, never logged, never written to the result file. Nothing else is read from `.env` except `FANOPS_CORPUS_AUTO` |
-| **Never printed** | `ZERNIO_API_KEY` · `uploadUrl` · `uploadUrl` query values · signed exception request objects · `repr(e)` · traceback · request/response/headers/locals |
+| **Secrets** | `.env` fallback read **by key name, always overwriting any inherited value** (§7.3), then the **effective** credential resolved via `Config` (**keyring → `.env`**, §4.3). Only the **source label** is recorded. Nothing else is read from `.env` except `FANOPS_CORPUS_AUTO` and `ZERNIO_API_URL` |
+| **Never printed** | any credential **value, prefix, length, or hash** · `uploadUrl` · `uploadUrl` query values · **username / password / raw netloc** (§5.1) · signed exception request objects · `repr(e)` · traceback · request/response/headers/locals |
+| **Bearer destination** | pinned to **exactly** `https://zernio.com/api/v1/media/presign` — before *and* after `Config` (§4.2) |
+| **Data plane** | **3-stage sequence** (§4), authoritative over method budgets |
 | **`publicUrl`** | **validated before being printed, recorded, or fetched** (§7.4) |
 
 ### 7.1 The self-scan had to be fixed to mean anything
