@@ -899,6 +899,14 @@ same-attempt idempotency · **FanOps does not send it yet** · FanOps therefore 
 queued-only claim check and `needs_reconcile`** for cross-pass safety · `x-request-id` + `existingPost`
 parsing + 409 handling is a **required separate follow-up before the first production requeue**.
 
+> **⚠ SUPERSEDED 2026-07-17 — the paragraph above describes Rev 4 (a documentation-only correction) and is
+> kept as that record. FanOps DOES send `x-request-id` now** (report 11): the header, the `existingPost`
+> parser and the 409 handling landed together, as the "required separate follow-up" this paragraph names.
+> Do not quote *"FanOps does not send it yet"* as current. What still stands, unchanged: the queued-only
+> claim check and never-downgrading `needs_reconcile` **continue** to carry CROSS-PASS safety — idempotency
+> does not replace them, because a ~5-minute window cannot span the 600s daemon interval (§7.6). Both are
+> required, which is exactly what §7.6 established.
+
 > The Rev 3 reasoning for deferring the comment fix — *"editing it here without shipping the feature would
 > leave a comment describing code that doesn't exist"* — was **wrong**, and is retracted. It confused
 > *describing the code* with *describing the vendor contract*. The corrected comment describes exactly what
