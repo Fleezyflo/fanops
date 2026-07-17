@@ -142,6 +142,14 @@ def test_prepare_segments_use_supercut_and_set_moment_segments(tmp_path, stub_re
     assert [tuple(s) for s in m.segments] == [(0.0, 2.0), (5.0, 7.0)]
 
 
+def test_hook_is_persisted_on_the_moment(tmp_path, stub_render):
+    cfg = Config(root=tmp_path); _seed(cfg)
+    r = canary.prepare_canary_lineage(cfg, media_path=_media(tmp_path), start="0", end="4",
+                                      caption="c", hook="POV the drop hits")
+    assert r.ok, r.error
+    assert next(iter(Ledger.load(cfg).moments.values())).hook == "POV the drop hits"
+
+
 # ---------- identity ----------
 
 def test_run_identity_deterministic_and_input_sensitive(tmp_path):
@@ -208,6 +216,25 @@ def test_idempotent_refuses_tampered_clip_bytes(tmp_path, stub_render):
     clip.write_bytes(b"TAMPERED-DIFFERENT-BYTES")            # probe-valid (stub) but a different sha256
     r2 = _prep(cfg, media)
     assert not r2.ok and "MISMATCH" in r2.error and "clip" in r2.error.lower()
+
+
+def test_partial_lineage_refuses_idempotent_claim(tmp_path, stub_render):
+    cfg = Config(root=tmp_path); _seed(cfg); media = _media(tmp_path)
+    plan = _prep(cfg, media, plan_only=True)                  # derive the run's content-addressed ids
+    with Ledger.transaction(cfg) as led:                      # seed ONLY the source -> a PARTIAL lineage
+        led.add_source(Source(id=plan.detail["source_id"], state=SourceState.moments_decided, source_path="/x"))
+    r = _prep(cfg, media)
+    assert not r.ok and "PARTIAL" in r.error                 # not falsely reported as idempotent
+
+
+def test_run_record_written_after_adoption_and_recovers_if_deleted(tmp_path, stub_render):
+    cfg = Config(root=tmp_path); _seed(cfg); media = _media(tmp_path)
+    r = _prep(cfg, media); assert r.ok
+    rec = Path(r.detail["run_dir"]) / "canary-run.json"
+    assert rec.exists()                                      # record published only AFTER adoption
+    rec.unlink()                                             # simulate a crash in the commit->write gap
+    r2 = _prep(cfg, media)                                   # idempotent re-prepare recovers it
+    assert r2.ok and r2.detail["idempotent"] and rec.exists()
 
 
 def test_rerun_after_discard_is_terminal(tmp_path, stub_render):
