@@ -398,6 +398,8 @@ Recorded rather than quietly absorbed; each is a narrowing or a correction found
 | 5 | §11: 61 tests | **71 tests** | 10 added while verifying (alias shapes, `Retry-After` parsing, key-redaction on the transport path, `_extract_409_candidate` shapes, the transient-classification control for §8.4) |
 | 6 | Surface item 6: `studio/views_results.py` | + `templates/_reconcile_strip.html`, + `static/studio.css` | "Render it distinctly" is not real without the template and the style. `--state-warn` (my first choice) **does not exist** in the stylesheet; `--warn` does, and is a different hue from `--state-inflight`, so the distinction holds on colour, not only on a dashed border |
 | 7 | Surface item 8: C6 trace | + corrected the C6 block describing `_extract_zernio_media_url` / `/media/upload-token` | **Pre-existing staleness**: PR #694 deleted those, and the trace still documented them as live. Adjacent to the lines this change had to rewrite; a codemap documenting deleted code is worse than no codemap |
+| 8 | §8.4: refuse when `created_at` is absent | unchanged — but **3 test fixtures completed** (`_post`, `_queued`, `_seed_queued`) | **Found by CI, not by planning** — 13 tests built `Post(created_at=None)` and were refused. The design's surface estimate missed this because `tests/` was never grepped for the field. The refusal is CORRECT and stays; the fixtures encoded a shape production cannot produce. Proven before touching them: all 3 mint sites stamp it; the live ledger has **0/347** rows missing it; and `ledger._migrate` is `while v < SCHEMA_VERSION`, so the v3 backfill **never runs on a current v11 ledger** — it is not a safety net, which makes this refusal the only guard. Each test's intent (401 halts, ConnectionError parks, 5xx parks, 429 retries) is unchanged and still proven |
+| 9 | §4: the 409 candidate parser | + the parse failure is **logged and named in the evidence** | **The swallow ratchet caught a real defect in this change** (`zernio.py` 3 → 4 silent swallows). `except Exception: cand = None` collapsed two different facts — "Zernio named no post" vs "Zernio may have named one we could not read" — and only the second means the operator is missing a pointer that exists. Now `zernio_409_body_unparsed` + `(409 body unreadable: …)` in `error_reason`. Count back to 3, verified with the ratchet's own predicate. The new wording is pinned against `is_transient_failure_reason` (whose list contains **"unreachable"**) by test 28b |
 
 ---
 
@@ -445,7 +447,7 @@ refuses a real-id post · 55 `needs_reconcile` never downgraded · 56 `_requeue_
 · **59 `Poster` protocol signature unchanged** · **60 `postiz.py` untouched — byte-identical** · **61
 `dryrun.py` untouched — byte-identical**.
 
-**71 tests** (61 designed + 10 added while verifying, §10.1 row 5). Every §6 row, every §9 transition, and all five §8 requirements have one. R-1/R-2/R-3, D6,
+**72 tests** (61 designed + 10 added while verifying + 1 for the ratchet finding, §10.1 rows 5/9). Every §6 row, every §9 transition, and all five §8 requirements have one. R-1/R-2/R-3, D6,
 D7 and the §5 verdict each carry a negative control (#3/#4, #18, #29, **#7**, **#60/#61**, #31/#44/#45).
 
 ---
