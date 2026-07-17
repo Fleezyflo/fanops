@@ -81,13 +81,26 @@ stronger guarantee than any transcribed constant, and it cannot go stale.
 | Fact | Evidence |
 |---|---|
 | `fanops` is an **editable install** resolving into this worktree | `fanops.__file__` → `/Users/molhamhomsi/Moh Flow Fanops/src/fanops/__init__.py` |
-| The resident daemon runs that entrypoint | `.venv/bin/fanops run --loop --interval 600` |
-| It **restarted at 11:01:26**, after the last `zernio.py` write at **10:43:13** | launchd respawn; PID moved 7359 → 12773 within ~12 min |
-| Therefore it **imported the PR-head presign code** | worktree blob == HEAD blob == the §1.1 pin, and mtime < daemon start |
-| `FANOPS_LIVE=1` | live `.env` |
+| The resident daemon runs that entrypoint, live | `.venv/bin/fanops run --loop --interval 600` · `FANOPS_LIVE=1` |
+| `zernio.py` was last written at **10:43:13** and has not moved since | mtime; and worktree blob == HEAD blob == the §1.1 pin |
+| **Every daemon start after 10:43:13 therefore imports the PR-head presign code** | no `src/**/*.py` has been modified since the current instance started |
+| **Restarts are frequent** — three observed in 50 minutes | PID 7359 @ 10:49:23 → 12773 @ 11:01:26 → 30914 @ 11:39:47 |
+| The restarts are **automatic** | `com.fanops.run` plist: `KeepAlive`, `RunAtLoad`, `ThrottleInterval 60`. Last exit status `-15` (SIGTERM) — something reaps it and launchd respawns it |
+| **The Studio is also resident** | `com.fanops.studio` PID 30916, same `-15` restart pattern |
 
-**launchd respawns it, so this is continuous, not a one-off**: every restart re-imports whatever is checked
-out. "Not merged" does **not** mean "not loaded on the operator's machine."
+> **The invariant, not the snapshot.** The PIDs and timestamps above rot; the invariant does not: *`zernio.py`
+> has not changed since 10:43:13, so any start after that moment loads it, and launchd guarantees there is
+> always a start after any given moment.* **Runtime adoption is continuous, not a one-off.** "Not merged" does
+> **not** mean "not loaded on the operator's machine."
+
+**The Studio being resident is what makes §2.1 a real hold rather than a formality**: the Review tab's Approve
+button — the sole promoter into `queued`, and therefore the sole route from this un-canaried code to a live
+Zernio call — is currently one click away and reachable.
+
+> **Out of scope, recorded not chased:** the SIGTERM/respawn cycle on `com.fanops.run` and
+> `com.fanops.studio` predates this work and is not caused by it. It does not affect containment (`queued=0`
+> holds across restarts — it is ledger state, not process state). It is noted here only because it is *why*
+> adoption is continuous, and it is not investigated in this frame.
 
 **Why containment nevertheless holds — structurally, not by luck:** `publish_due` iterates `queued` only;
 `Ledger.approve_post` is the sole promoter into `queued`; it fires only from the Studio Review tab. With

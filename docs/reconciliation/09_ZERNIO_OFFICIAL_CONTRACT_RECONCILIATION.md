@@ -1621,10 +1621,11 @@ untouched** · **zero Zernio calls** — every test mocks `requests`.
 > adoption occurred**, and it is ongoing.
 
 `fanops` is an **editable install**: `fanops.__file__` resolves into this worktree, currently checked out on
-`fix/zernio-presign-upload`. The daemon (`.venv/bin/fanops run --loop --interval 600`, `FANOPS_LIVE=1`)
-restarted at **11:01:26** — after the last `zernio.py` write at **10:43:13** — so it **imported the PR-head
-presign code**. launchd respawns it, so **every restart re-imports whatever is checked out**; this is a
-standing property of working in the live tree, not a one-time event.
+`fix/zernio-presign-upload`. The daemon (`.venv/bin/fanops run --loop --interval 600`, `FANOPS_LIVE=1`) is
+respawned automatically by launchd (`KeepAlive`, `ThrottleInterval 60`) — **three restarts observed in 50
+minutes**. `zernio.py` has not changed since **10:43:13**, so **every start after that moment imports the
+PR-head presign code**, and the current resident instance does. This is a standing property of working in the
+live tree, not a one-time event.
 
 **Why this is contained anyway — structurally, not by luck:** `publish_due` iterates `queued` only;
 `Ledger.approve_post` is the sole promoter into `queued`; it fires only from the Studio Review tab. At
