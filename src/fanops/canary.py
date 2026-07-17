@@ -174,6 +174,15 @@ def _media_ext(media_path: str) -> str:
 
 # ---------- account contract (Phase 4) ----------
 
+def _is_inert_cancelled_canary_post(p) -> bool:
+    """True for a safely-cancelled canary Post: retired, on the canary handle, carrying NO provider identity
+    (no real submission_id, no reconcile_candidate_id, no public_url/published_at) — the exact post-condition
+    `cancel_canary_post` guarantees. Such a post can never publish/requeue/re-mint, so it must not block a run."""
+    return (getattr(p, "state", None) is PostState.retired and p.account == CANARY_HANDLE
+            and not is_real_submission_id(p.submission_id) and p.reconcile_candidate_id is None
+            and not (p.public_url or "").strip() and not (getattr(p, "published_at", None) or ""))
+
+
 def _validate_canary_account(cfg: Config, handle: str, led: Ledger, ids: dict) -> tuple[Optional[str], Optional[str]]:
     """Return (integration_id, None) when the reserved account passes every precondition, else (None, error)."""
     if handle != CANARY_HANDLE:
@@ -210,8 +219,12 @@ def _validate_canary_account(cfg: Config, handle: str, led: Ledger, ids: dict) -
         return None, f"persona registry error: {str(exc)[:120]}"
     if sum(1 for a in accts.accounts if (a.persona_id or "").strip() == pid) > 1:
         return None, f"canary Persona {pid!r} is shared with another account — it must be dedicated"
-    # no existing Post targets the handle or integration id
+    # no LIVE Post targets the handle or integration id. A safely-cancelled canary Post (retired + carrying NO
+    # provider identity — the exact post-condition `cancel_canary_post` guarantees) is inert and must NOT block a
+    # fresh run forever; any live / provider-identified / accepted post still blocks.
     for p in led.posts.values():
+        if _is_inert_cancelled_canary_post(p):
+            continue
         if p.account == CANARY_HANDLE or (p.account_id and str(p.account_id) == str(integ)):
             return None, f"an existing Post ({p.id}) already targets the canary handle/integration"
     # no FOREIGN, LIVE Moment affinity / Batch target uses the handle (outside this run's own entities). A
@@ -306,7 +319,14 @@ def prepare_canary_lineage(cfg: Config, *, media_path: str, handle: str = CANARY
                     (b is not None and b.state is BatchState.closed))
         if terminal:
             return _err(f"canary run {run_id} is TERMINAL (discarded) — prepare a new run with a changed input/label")
-        # intact lineage with identical inputs -> idempotent no-op
+        if not all(v is not None for v in existing.values()):
+            present = sorted(k for k, v in existing.items() if v is not None)
+            return _err(f"canary run {run_id} has a PARTIAL lineage (only {present} of source/moment/clip/batch) "
+                        f"— refusing an idempotent claim; `canary discard` it and re-prepare")
+        # intact FULL lineage with identical inputs -> idempotent no-op; ensure the post-adoption run record
+        # exists (recover a crash in the commit->record-write gap — see step 9). plan_only stays read-only.
+        if not plan_only:
+            _ensure_run_record(cfg, run_id, canonical_name, fingerprint, media_sha256, ids)
         return _ok({**plan, "idempotent": True, "created": False})
 
     if plan_only:
@@ -353,9 +373,6 @@ def prepare_canary_lineage(cfg: Config, *, media_path: str, handle: str = CANARY
     if not _probe_ok(cfg, clip_dst):
         return _err("rendered clip failed validation — no ledger adoption")
 
-    _write_json_atomic(run_json, {"run_id": run_id, "canonical_name": canonical_name,
-                                  "fingerprint": fingerprint, "media_sha256": media_sha256, **ids})
-
     # ---- 8. adopt the WHOLE lineage in ONE short transaction (add_* is setdefault = first-write-wins) ----
     now_iso = _now_iso()
     with Ledger.transaction(cfg) as led:
@@ -370,12 +387,18 @@ def prepare_canary_lineage(cfg: Config, *, media_path: str, handle: str = CANARY
                              batch_id=ids["batch_id"], created_at=now_iso, title=(run_label or "canary")))
         led.add_moment(Moment(id=ids["moment_id"], parent_id=ids["source_id"], state=MomentState.clipped,
                              start=start_f, end=(end_f if end_f is not None else (segs[-1][1] if segs else start_f)),
-                             reason="canary publish-path probe", affinities=[CANARY_HANDLE],
+                             reason="canary publish-path probe", affinities=[CANARY_HANDLE], hook=hook,
                              segments=[tuple(x) for x in (segs or [])], content_token=fingerprint))
         led.add_clip(Clip(id=ids["clip_id"], parent_id=ids["moment_id"], state=ClipState.queued,
                          path=str(clip_dst), aspect=_TARGET_ASPECT,
                          meta_captions={f"{CANARY_HANDLE}/tiktok": {"caption": caption,
                                         "hashtags": _norm_hashtags(hashtags)}}))
+
+    # ---- 9. publish the run record ONLY AFTER adoption commits. A concurrent `discard` therefore can never read
+    # the record while the ledger is still empty (which would let it delete the run dir out from under this
+    # adoption, leaving dangling media/clip refs). A crash in the tiny commit->write gap leaves entities without a
+    # record; the idempotent re-prepare path (step 5) re-writes it via the same `_ensure_run_record`. ----
+    _ensure_run_record(cfg, run_id, canonical_name, fingerprint, media_sha256, ids)
     return _ok({**plan, "created": True, "idempotent": False})
 
 
@@ -384,11 +407,42 @@ def _probe_ok(cfg: Config, path: Path) -> bool:
         _, _, dur = _do_probe(path)
         return bool(dur and dur > 0) or (path.exists() and path.stat().st_size > 0)
     except Exception as exc:
-        get_logger(cfg)("canary", "probe", "probe_fallback", err=str(exc)[:120])
-        return path.exists() and path.stat().st_size > 0
+        get_logger(cfg)("canary", "probe", "probe_failed_reject", level="warning", err=str(exc)[:120])
+        return False                               # a render we cannot probe is NOT proven valid — fail CLOSED
+
+
+def _ensure_run_record(cfg: Config, run_id: str, canonical_name: str, fingerprint: str,
+                       media_sha256: str, ids: dict) -> None:
+    """Write the run record (idempotent). Written AFTER ledger adoption so `discard` never observes it before the
+    lineage exists (closes the prepare/discard race). Realpath-contained; re-writing identical content is safe."""
+    run_dir = _run_dir(cfg, run_id)
+    run_dir.mkdir(parents=True, exist_ok=True)
+    _assert_contained(_canary_root(cfg), run_dir)
+    _write_json_atomic(run_dir / "canary-run.json", {"run_id": run_id, "canonical_name": canonical_name,
+                       "fingerprint": fingerprint, "media_sha256": media_sha256, **ids})
 
 
 # ---------- discard (pre-mint only) ----------
+
+def _authenticate_discard_target(led: Ledger, rec: dict, run_id: str, sid, mid, cid, bid) -> Optional[str]:
+    """Prove the run record genuinely names THIS run's canary-owned lineage BEFORE any retirement — the ids in the
+    record are mutable JSON and must never be trusted, on their own, to select which ledger rows get retired.
+    Verifies the record's canonical-name -> run_id -> fingerprint chain, then that every named entity present in
+    the ledger is canary-owned and correctly parent-linked. Returns an error string, or None when authentic."""
+    cn = rec.get("canonical_name")
+    if not cn or _run_id_from_name(cn) != run_id or _sha256_text(cn) != rec.get("fingerprint"):
+        return f"run record for {run_id} fails its canonical-name/fingerprint self-check — refusing (stale/tampered)"
+    src, mom, clp, bat = led.sources.get(sid), led.moments.get(mid), led.clips.get(cid), led.batches.get(bid)
+    if mom is not None and (list(mom.affinities or []) != [CANARY_HANDLE] or mom.parent_id != sid):
+        return f"record moment {mid} is not a canary-owned child of source {sid} — refusing (would retire a foreign row)"
+    if clp is not None and clp.parent_id != mid:
+        return f"record clip {cid} is not a child of moment {mid} — refusing"
+    if bat is not None and list(bat.target_accounts or []) != [CANARY_HANDLE]:
+        return f"record batch {bid} does not target only {CANARY_HANDLE} — refusing"
+    if src is not None and src.batch_id != bid:
+        return f"record source {sid} is not bound to batch {bid} — refusing"
+    return None
+
 
 def discard_canary(cfg: Config, run_id: str) -> ActionResult:
     if not _RUN_ID_RE.match(run_id or ""):
@@ -407,6 +461,10 @@ def discard_canary(cfg: Config, run_id: str) -> ActionResult:
     if acct is None or acct.status is not AccountStatus.planned:
         return _err(f"{CANARY_HANDLE} must be planned to discard (is {acct.status.value if acct else 'absent'})")
     led0 = Ledger.load(cfg)
+    # authenticate the record against the ledger BEFORE trusting sid/mid/cid/bid to select retirement targets
+    auth_err = _authenticate_discard_target(led0, rec, run_id, sid, mid, cid, bid)
+    if auth_err is not None:
+        return _err(auth_err)
     # pre-mint proof: NO Post references the canary Clip or the canary Batch
     for p in led0.posts.values():
         if p.parent_id == cid or (p.batch_id and p.batch_id == bid) or p.account == CANARY_HANDLE:
@@ -472,6 +530,8 @@ def cancel_canary_post(cfg: Config, post_id: str, *, reason: str) -> ActionResul
             return _err("post state changed under lock — refusing")
         if is_real_submission_id(cur.submission_id) or cur.reconcile_candidate_id is not None:
             return _err("post gained provider identity under lock — refusing")
+        if (cur.public_url or "").strip() or (getattr(cur, "published_at", None) or ""):
+            return _err("post gained a public_url/published_at under lock — refusing (possible acceptance)")
         led.posts[post_id] = cur.model_copy(update={"state": PostState.retired, "error_reason": bounded})
     warn = None
     try:
@@ -572,8 +632,10 @@ def compare_canary_baseline(cfg: Config, *, baseline: str) -> ActionResult:
     except Exception as exc:
         get_logger(cfg)("canary", "baseline", "compare_manifest_failed", level="error", err=str(exc)[:140])
         return _err(f"current manifest failed: {str(exc)[:140]}")
-    p_man, c_man = prior.get("per_post_manifest", {}), cur["per_post_manifest"]
-    p_lay, c_lay = prior.get("per_post_layers", {}), cur["per_post_layers"]
+    # `or {}` (not a .get default) also coerces an explicit null in a malformed baseline, so the diff below can
+    # never raise TypeError on `set(None)` / `r in None`.
+    p_man, c_man = (prior.get("per_post_manifest") or {}), cur["per_post_manifest"]
+    p_lay, c_lay = (prior.get("per_post_layers") or {}), cur["per_post_layers"]
     added = sorted(set(c_man) - set(p_man))
     removed = sorted(set(p_man) - set(c_man))
     both = set(p_man) & set(c_man)
@@ -592,7 +654,7 @@ def compare_canary_baseline(cfg: Config, *, baseline: str) -> ActionResult:
         "mismatch": mismatch, "added": added, "removed": removed, "raw_changed": raw_changed,
         "safety_critical_changed": safety_fields, "scheduling_changed": sched_changed,
         "content_changed": content_changed,
-        "digests_equal": {k: prior.get("digests", {}).get(k) == cur["digests"][k] for k in cur["digests"]},
+        "digests_equal": {k: (prior.get("digests") or {}).get(k) == cur["digests"][k] for k in cur["digests"]},
     })
 
 
@@ -632,6 +694,9 @@ def _audit_has_mint_evidence(cfg: Config, *, bid: str, cid: str, run_id: str) ->
         return False
     try:
         text = path.read_text()
-    except OSError:
-        return False
+    except OSError as exc:
+        # can't read the audit log -> cannot RULE OUT mint/publish evidence. Fail CLOSED (evidence "present")
+        # so discard refuses rather than deleting a lineage whose history we cannot inspect.
+        get_logger(cfg)("canary", run_id, "audit_unreadable_assume_evidence", level="warning", err=str(exc)[:120])
+        return True
     return any(tok and tok in text for tok in (bid, cid, run_id))

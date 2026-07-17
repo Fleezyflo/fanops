@@ -23,15 +23,15 @@
     "fanops.canary": [
       {
         "call": "Ledger.transaction",
-        "line": 361
+        "line": 378
       },
       {
         "call": "Ledger.transaction",
-        "line": 417
+        "line": 475
       },
       {
         "call": "Ledger.transaction",
-        "line": 469
+        "line": 527
       }
     ],
     "fanops.cli": [
@@ -65,35 +65,31 @@
       },
       {
         "call": "Ledger.transaction",
-        "line": 1084
+        "line": 1091
       },
       {
         "call": "Ledger.transaction",
-        "line": 1096
+        "line": 1103
       },
       {
         "call": "Ledger.transaction",
-        "line": 1107
+        "line": 1114
       },
       {
         "call": "Ledger.transaction",
-        "line": 1300
+        "line": 1307
       },
       {
         "call": "Ledger.transaction",
-        "line": 1313
+        "line": 1320
       },
       {
         "call": "Ledger.transaction",
-        "line": 1392
+        "line": 1399
       },
       {
         "call": "Ledger.transaction",
-        "line": 1400
-      },
-      {
-        "call": "Ledger.transaction",
-        "line": 1408
+        "line": 1407
       },
       {
         "call": "Ledger.transaction",
@@ -101,7 +97,11 @@
       },
       {
         "call": "Ledger.transaction",
-        "line": 1424
+        "line": 1422
+      },
+      {
+        "call": "Ledger.transaction",
+        "line": 1431
       }
     ],
     "fanops.ledger_wipe": [
@@ -473,7 +473,7 @@
     "fanops.cli": [
       {
         "call": "tempfile.mkdtemp",
-        "line": 1254
+        "line": 1261
       }
     ],
     "fanops.post.compress": [
@@ -560,13 +560,13 @@
     "fanops.canary": [
       {
         "call": "shutil.rmtree",
-        "line": 444
+        "line": 502
       }
     ],
     "fanops.cli": [
       {
         "call": "shutil.rmtree",
-        "line": 1286
+        "line": 1293
       }
     ],
     "fanops.post.compress": [
@@ -599,7 +599,7 @@
     "fanops.canary": [
       {
         "call": "subprocess.run",
-        "line": 610
+        "line": 672
       }
     ],
     "fanops.clip": [

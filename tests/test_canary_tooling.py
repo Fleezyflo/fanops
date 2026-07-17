@@ -470,3 +470,106 @@ def test_prepare_invokes_no_pipeline_publish_or_network(tmp_path, stub_render, m
     assert _prep(cfg, _media(tmp_path)).ok
     for spy in spies.values():
         spy.assert_not_called()
+
+
+# ---------- review remediation (CodeRabbit PR #698) ----------
+
+def test_inert_cancelled_post_does_not_block_account_gate_but_live_one_does(tmp_path):
+    # A safely-cancelled canary Post (retired + provider-free) must NOT block the account gate; a live/accepted
+    # one still must. (The live-lineage single-owner guard via moment/batch is separate and unchanged.)
+    cfg = Config(root=tmp_path); _seed(cfg)
+    ids = {"moment_id": "m_new", "batch_id": "b_new"}
+    with Ledger.transaction(cfg) as led:
+        led.posts["pc"] = Post(id="pc", parent_id="c", account="fanops_canary", account_id="i",
+                               platform=Platform.tiktok, caption="c", state=PostState.retired,
+                               submission_id="fanops_x", error_reason="canary_cancelled: probe done")
+    integ, err = canary._validate_canary_account(cfg, "fanops_canary", Ledger.load(cfg), ids)
+    assert err is None and integ == "tiktok-integ-999"
+    with Ledger.transaction(cfg) as led:
+        led.posts["pl"] = Post(id="pl", parent_id="c", account="fanops_canary", account_id="i",
+                               platform=Platform.tiktok, caption="c", state=PostState.published,
+                               submission_id="REAL_1", public_url="https://www.tiktok.com/@x/video/1")
+    _, err2 = canary._validate_canary_account(cfg, "fanops_canary", Ledger.load(cfg), ids)
+    assert err2 is not None and "already targets" in err2
+
+
+def test_partial_lineage_refuses_idempotent_claim(tmp_path, stub_render):
+    cfg = Config(root=tmp_path); _seed(cfg); media = _media(tmp_path)
+    plan = _prep(cfg, media, plan_only=True)                  # derive the run's content-addressed ids
+    with Ledger.transaction(cfg) as led:                      # seed ONLY the source -> a PARTIAL lineage
+        led.add_source(Source(id=plan.detail["source_id"], state=SourceState.moments_decided, source_path="/x"))
+    r = _prep(cfg, media)
+    assert not r.ok and "PARTIAL" in r.error                 # not falsely reported as idempotent
+
+
+def test_run_record_is_written_after_adoption_and_recovers_if_deleted(tmp_path, stub_render):
+    cfg = Config(root=tmp_path); _seed(cfg); media = _media(tmp_path)
+    r = _prep(cfg, media); assert r.ok
+    rec = Path(r.detail["run_dir"]) / "canary-run.json"
+    assert rec.exists()                                      # record published only AFTER adoption
+    rec.unlink()                                             # simulate a crash in the commit->write gap
+    r2 = _prep(cfg, media)                                   # idempotent re-prepare recovers it
+    assert r2.ok and r2.detail["idempotent"] and rec.exists()
+
+
+def test_hook_is_persisted_on_the_moment(tmp_path, stub_render):
+    cfg = Config(root=tmp_path); _seed(cfg)
+    r = canary.prepare_canary_lineage(cfg, media_path=_media(tmp_path), start="0", end="4",
+                                      caption="c", hook="POV the drop hits")
+    assert r.ok, r.error
+    assert next(iter(Ledger.load(cfg).moments.values())).hook == "POV the drop hits"
+
+
+def test_probe_failure_on_clip_refuses_adoption(tmp_path, stub_render, monkeypatch):
+    cfg = Config(root=tmp_path); _seed(cfg)
+    def _probe(path):                                        # media probes fine; the rendered clip does not
+        if str(path).endswith("clip.mp4"): raise RuntimeError("corrupt clip")
+        return (1080, 1920, 30.0)
+    monkeypatch.setattr(canary, "_do_probe", _probe)
+    r = _prep(cfg, _media(tmp_path))
+    assert not r.ok and "validation" in r.error             # a clip we cannot probe is NOT adopted
+    assert Ledger.load(cfg).sources == {}
+
+
+def test_discard_refuses_a_tampered_record_and_retires_nothing_foreign(tmp_path, stub_render):
+    cfg = Config(root=tmp_path); _seed(cfg)
+    with Ledger.transaction(cfg) as led:                     # a foreign production source
+        led.add_source(Source(id="src_prod", state=SourceState.moments_decided, source_path="/p"))
+    r = _prep(cfg, _media(tmp_path)); run_id = r.detail["run_id"]
+    rec_path = Path(r.detail["run_dir"]) / "canary-run.json"
+    rec = json.loads(rec_path.read_text()); rec["source_id"] = "src_prod"   # tamper: aim at the foreign row
+    rec_path.write_text(json.dumps(rec))
+    d = canary.discard_canary(cfg, run_id)
+    assert not d.ok and "refusing" in d.error
+    assert Ledger.load(cfg).sources["src_prod"].state is SourceState.moments_decided  # untouched
+
+
+def test_compare_tolerates_null_manifest_maps(tmp_path):
+    cfg = Config(root=tmp_path); _seed(cfg)
+    bad = tmp_path / "b.json"
+    bad.write_text(json.dumps({"format_version": "1", "per_post_manifest": None,
+                               "per_post_layers": None, "digests": None}))
+    c = canary.compare_canary_baseline(cfg, baseline=str(bad))
+    assert c.ok                                              # no TypeError on explicit-null maps
+
+
+def test_discard_refuses_when_audit_log_is_unreadable(tmp_path, stub_render, monkeypatch):
+    cfg = Config(root=tmp_path); _seed(cfg)
+    r = _prep(cfg, _media(tmp_path)); run_id = r.detail["run_id"]
+    (cfg.control / "studio_audit.log").write_text("x")
+    orig = Path.read_text
+    def _boom(self, *a, **k):
+        if self.name == "studio_audit.log": raise OSError("perm denied")
+        return orig(self, *a, **k)
+    monkeypatch.setattr(Path, "read_text", _boom)
+    d = canary.discard_canary(cfg, run_id)
+    assert not d.ok and "audit" in d.error.lower()          # fail CLOSED: can't rule out evidence -> refuse
+
+
+def test_parse_segments_rejects_malformed_input(tmp_path):
+    import argparse
+    from fanops.cli import _parse_segments
+    assert _parse_segments("0-2,5-7") == [(0.0, 2.0), (5.0, 7.0)]
+    for bad in ("not-a-range", "1", "a-b", "0-"):
+        with pytest.raises(argparse.ArgumentTypeError):
+            _parse_segments(bad)

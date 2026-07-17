@@ -411,12 +411,19 @@ def cmd_resolve(cfg: Config, args) -> int:
 
 
 def _parse_segments(s: str) -> list:
+    # argparse `type=` callback: a malformed value raises ArgumentTypeError, so argparse exits 2 with a clean
+    # usage message instead of letting float() throw an uncaught traceback.
     out = []
     for part in (s or "").split(","):
         part = part.strip()
         if not part: continue
-        a, _, b = part.partition("-")
-        out.append((float(a), float(b)))
+        a, sep, b = part.partition("-")
+        if not sep:
+            raise argparse.ArgumentTypeError(f"segment {part!r} must be 't0-t1' (dash-separated seconds)")
+        try:
+            out.append((float(a), float(b)))
+        except ValueError:
+            raise argparse.ArgumentTypeError(f"segment {part!r} has non-numeric bounds")
     return out
 
 
@@ -425,7 +432,7 @@ def cmd_canary(cfg: Config, args) -> int:
     from fanops import canary
     sub = args.canary_cmd
     if sub == "prepare":
-        segs = _parse_segments(args.segments) if args.segments else None
+        segs = args.segments or None            # already parsed + validated by argparse (type=_parse_segments)
         res = canary.prepare_canary_lineage(cfg, media_path=args.media, handle=args.handle,
                                             run_label=args.run_label, start=args.start, end=args.end,
                                             segments=segs, caption=args.caption, hashtags=args.hashtag or [],
@@ -883,7 +890,7 @@ def main(argv: list[str] | None = None) -> int:
     p_cprep = can_sub.add_parser("prepare", help="mint ONE isolated canary Source+Moment+Clip+Batch (0 Posts, 0 Renders)")
     p_cprep.add_argument("--media", required=True); p_cprep.add_argument("--handle", default="fanops_canary")
     p_cprep.add_argument("--run-label", default=None); p_cprep.add_argument("--start", required=True)
-    p_cprep.add_argument("--end", default=None); p_cprep.add_argument("--segments", default=None, help='"t0-t1,t2-t3"')
+    p_cprep.add_argument("--end", default=None); p_cprep.add_argument("--segments", default=None, type=_parse_segments, help='"t0-t1,t2-t3"')
     p_cprep.add_argument("--caption", required=True); p_cprep.add_argument("--hashtag", action="append", default=[])
     p_cprep.add_argument("--hook", default=None); p_cprep.add_argument("--plan-only", action="store_true")
     p_cdisc = can_sub.add_parser("discard", help="pre-mint only: retire the canary lineage, close its batch"); p_cdisc.add_argument("run_id")
