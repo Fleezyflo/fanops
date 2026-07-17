@@ -1522,7 +1522,7 @@ modified. Nothing requeued. Four failed records untouched. `FANOPS_CORPUS_AUTO=0
    current official source, and when they conflict, record the conflict.**
 6. **Scope is unchanged.** Nine corrections, **zero** net scope change: still one function, one source file,
    no Postiz. *(Rev 4 note: the **implementation-scope** claim held; the **file-inventory** claim did not —
-   see C14/C15 in §14.1. The PR touches 9 files, enumerated in §14.3.)*
+   see C14/C15 in §14.1. The PR touches **10** files, enumerated in §14.3.)*
 
 ---
 
@@ -1565,7 +1565,7 @@ The fresh instance also carries `request=None, response=None`, closing the `exc.
 
 ### 14.3 What was built
 
-**Exact changed-file inventory — 9 files, derived from `git diff main --stat`, not asserted:**
+**Exact changed-file inventory — 10 files, derived from `git diff main --stat`, not asserted:**
 
 | # | Artifact | Class | Change |
 |---|---|---|---|
@@ -1578,6 +1578,7 @@ The fresh instance also carries `request=None, response=None`, closing the `exc.
 | 7 | `docs/reconciliation/07_WAVE_0A_CONTAINMENT_RECORD.md` | **record** | Newly tracked. **Rev 4 closure:** malformed `ACT-03` / `ACT-04`-`ACT-05` rows repaired (3 cells against a 4-column header) |
 | 8 | `docs/reconciliation/08_DUAL_BACKEND_INCIDENT_FRAME.md` | **record** | Newly tracked — a governing baseline this document cites |
 | 9 | `docs/reconciliation/09_ZERNIO_OFFICIAL_CONTRACT_RECONCILIATION.md` | **record** | This file — Rev 4 |
+| 10 | `docs/reconciliation/10_ZERNIO_UPLOAD_CANARY_PLAN.md` | **record** | The upload-canary plan — **Rev 2**. **Not executed; authorises nothing.** Rev 1's file count of "9" omitted this file itself; Rev 2 §0 retracts that and three further Rev 1 defects |
 
 **Why the records are tracked:** `zernio.py` now cites *"report 09 §8.5"* and *"§7"* in active comments. A
 **tracked source citing an untracked authority** is precisely the dangling-citation failure `CLAUDE.md`
@@ -1606,12 +1607,32 @@ inside `zernio.py` by preserving the exception class.
 | `ruff check` (zernio.py, test_zernio_presign.py) | **PASS** |
 | `tests/test_swallow_ratchet.py` (zernio.py budget) | **3 = 3 baseline — PASS.** 2 silent handlers removed, 2 added |
 | `python -m tools.arch ci` | **PASS** (was FAIL on 2 stale derived artifacts + 1 stale rendered doc — regenerated, not hand-edited) |
-| `pytest` | **NOT RUN — CI-only.** The 45 tests in `test_zernio_presign.py` are unproven until CI is green |
+| `pytest` | **NOT RUN LOCALLY — CI-only.** *(Superseded: CI is now green on the PR head — every required check passes, including `unit` and the real-tooling E2E. The 45 tests are proven to RUN: main's baseline **5321** − 11 deleted + 45 added = **5355**, and CI reports exactly **5355 passed, 1 skipped**. `pytest -q` prints no filenames on success, so this arithmetic — not an eyeball — is what rules out a silent skip.)* |
 
-### 14.6 Containment — unchanged by this build
+### 14.6 Containment — and the runtime adoption this build did NOT avoid
 
-`queued = 0` · the four `failed` records **untouched** · `awaiting_approval = 343` · `FANOPS_CORPUS_AUTO=0` ·
-**Postiz untouched** · **zero Zernio calls** — every test mocks `requests`.
+**Containment holds:** `queued = 0` · the four `failed` records **untouched** (all four still carry the *old*
+405 message — proof nothing re-ran) · `awaiting_approval = 343` · `FANOPS_CORPUS_AUTO=0` · **Postiz
+untouched** · **zero Zernio calls** — every test mocks `requests`.
 
-**The fix is not yet proven against the live 405.** That requires one real upload, which is Wave 1A's
-verification step and is **not authorized by the implementation gate**.
+> ## ⚠ UNMERGED PR CODE IS ALREADY ACTIVE IN THE RESIDENT DAEMON VIA EDITABLE INSTALL
+>
+> **This must not be described as "not deployed."** No deployment *action* was performed — but **runtime
+> adoption occurred**, and it is ongoing.
+
+`fanops` is an **editable install**: `fanops.__file__` resolves into this worktree, currently checked out on
+`fix/zernio-presign-upload`. The daemon (`.venv/bin/fanops run --loop --interval 600`, `FANOPS_LIVE=1`)
+restarted at **11:01:26** — after the last `zernio.py` write at **10:43:13** — so it **imported the PR-head
+presign code**. launchd respawns it, so **every restart re-imports whatever is checked out**; this is a
+standing property of working in the live tree, not a one-time event.
+
+**Why this is contained anyway — structurally, not by luck:** `publish_due` iterates `queued` only;
+`Ledger.approve_post` is the sole promoter into `queued`; it fires only from the Studio Review tab. At
+`queued = 0`, `_publish_one` is never entered and `zernio_upload_media` is unreachable.
+
+**What it costs:** the Studio Approve button is now the only thing between un-canaried code and a live Zernio
+call. **"Not merged" ≠ "not loaded on the operator's machine."** Report 10 §2 carries the full classification
+and the operator hold that follows from it.
+
+**The fix is not yet proven against the live 405.** That requires one real upload — report 10's canary, gated
+and **not authorized by the implementation gate**.
