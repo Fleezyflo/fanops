@@ -311,7 +311,7 @@ not imported at all" would be false. The checkable claim is that **this runner c
 |---|---|
 | **sha256 (reviewed)** | `88e3ebdc9ac86724a39707ff8dce4e5f41a7d2621bcd2bece6d74219761bab98` |
 | **Location** | session scratchpad — **outside git**, **outside `FANOPS_ROOT`** (`/Users/molhamhomsi/FanOps`) |
-| **Execution command** | `FANOPS_CANARY_RUNNER_SHA256=88e3ebdc9ac86724a39707ff8dce4e5f41a7d2621bcd2bece6d74219761bab98 .venv/bin/python "/private/tmp/claude-501/-Users-molhamhomsi-Moh-Flow-Fanops/87dac28b-d48c-4852-8743-08317279b259/scratchpad/zernio_upload_canary.py"` — from the repo root |
+| **Execution command** | `FANOPS_CANARY_RUNNER_SHA256=88e3ebdc9ac86724a39707ff8dce4e5f41a7d2621bcd2bece6d74219761bab98 .venv/bin/python "<RUNNER_PATH>"` — from the repo root. `<RUNNER_PATH>` is **deliberately not written here**: see §7.5 |
 | **Runner byte-pin** | The reviewed hash is **supplied by the caller**, checked at preflight **and again before every one of the 3 data-plane requests**. **Unset = abort.** See §7.2 |
 | **Subprocesses** | AST **allow-list**: `git`, `ffmpeg`, `ffprobe`, `file`, `gh` — **no `fanops` CLI**. An allow-list, because a negative scan only rules out the name you thought to forbid |
 | **Forbidden-path self-scan** | **AST over non-docstring string literals** — see §7.1 |
@@ -370,6 +370,24 @@ exists to test, having already answered 405 where the docs promised otherwise. I
 "public" url would mean it carries credentials, and logging it verbatim would leak them. On violation the
 canary aborts, emits **only `safe_url()`**, records nothing raw, and never issues the GET. The chokepoint
 separately refuses any non-`https` Zernio/media request before the socket write.
+
+### 7.5 Why the runner path is a placeholder here
+
+The runner lives in a **session scratchpad** whose path contains a session UUID. Writing that absolute path
+into a tracked file would document a location that **ceases to exist when the session ends** — the same
+self-invalidating-stamp defect as R1's head SHA and §2's daemon PID. **Third occurrence in this program:
+anything transient, written into a tracked file, is stale on arrival.** The rule that keeps surviving:
+*record the invariant; re-derive the transient at run time.*
+
+The invariants are the ones that matter and they are all here: the runner's **reviewed sha256**, the fact
+that it sits **outside git and outside `FANOPS_ROOT`**, and the **`FANOPS_CANARY_RUNNER_SHA256`** pin the
+caller must supply. The path is operator-supplied at execution and is recorded in the run's evidence output,
+not in this file.
+
+**The ephemerality is a feature, not an inconvenience.** The runner is outside git *by design*: it is a
+one-shot instrument, not a repo artifact, so there is deliberately no checkout it can be run from and no
+committed copy to drift out of review. A tracked path would invite exactly the "just run the one in the
+repo" mistake the byte-pin exists to prevent.
 
 ## 8. The asset, and the cleanup limitation
 
