@@ -507,6 +507,8 @@ def prepare_canary_lineage(cfg: Config, *, media_path: str, handle: str = CANARY
         for s, e in segs:
             if not (_finite(s) and _finite(e)):
                 return _err("every segment boundary must be a finite number (no NaN/Infinity)")
+            if s < 0:
+                return _err(f"every segment must start at a non-negative time (got start {s})")
             if e <= s:
                 return _err(f"every segment must have end > start (got {s}->{e})")
             if (e - s) < _MIN_SEG_SECONDS:
@@ -519,6 +521,11 @@ def prepare_canary_lineage(cfg: Config, *, media_path: str, handle: str = CANARY
         if end_f <= start_f:
             return _err("--end must be greater than --start")
         realized = end_f - start_f
+    # for a segmented run the WINDOW is the segments — --start is not independently meaningful, so the effective
+    # start (used for identity + the stored Moment envelope) is segs[0][0]. This keeps the identity stable and
+    # makes the minted Moment.start == _expected_moment_window's segs[0][0] rather than relying on the model's
+    # envelope validator to silently rewrite a mismatched --start.
+    eff_start = segs[0][0] if segs is not None else start_f
     cap = PLATFORM_MAX_SECONDS.get(_TARGET_PLATFORM)
     if cap is not None and realized > cap:
         return _err(f"clip duration {realized:.1f}s exceeds tiktok cap {cap}s")
@@ -542,14 +549,14 @@ def prepare_canary_lineage(cfg: Config, *, media_path: str, handle: str = CANARY
             return _err(f"clip window ends at {hi:.1f}s but the source is only {src_dur:.1f}s")
 
     # ---- 3. identity + lineage ids ----
-    canonical_name = _canonical_run_name(media_sha256=media_sha256, start=start_f, end=end_f,
+    canonical_name = _canonical_run_name(media_sha256=media_sha256, start=eff_start, end=end_f,
                                           segments=segs, caption=caption, hashtags=hashtags,
                                           hook=hook, run_label=run_label)
     run_id = _run_id_from_name(canonical_name)
-    ids = _lineage_ids(run_id=run_id, media_sha256=media_sha256, start=start_f, end=end_f, segments=segs)
+    ids = _lineage_ids(run_id=run_id, media_sha256=media_sha256, start=eff_start, end=end_f, segments=segs)
     fingerprint = _sha256_text(canonical_name)
     identity = _identity_dict(run_id=run_id, fingerprint=fingerprint, media_sha256=media_sha256,
-                              start=start_f, end=end_f, segments=segs, ids=ids)
+                              start=eff_start, end=end_f, segments=segs, ids=ids)
     run_dir = _run_dir(cfg, run_id)
 
     # ---- 4. account contract (read-only) ----
@@ -589,8 +596,10 @@ def prepare_canary_lineage(cfg: Config, *, media_path: str, handle: str = CANARY
         if surf.get("caption") != caption or list(surf.get("hashtags") or []) != _norm_hashtags(hashtags):
             perrs.append("existing clip caption/hashtags differ from these inputs")
         clip_sha = _sha256_bytes_of(clip_final) if clip_final.exists() else ""
-        rec = _read_run_record(cfg, run_id)
-        if rec is not None:
+        rec, rec_err = _read_run_record(cfg, run_id)
+        if rec_err is not None:
+            perrs.append(rec_err)                     # a malformed record is a tamper signal — refuse, never overwrite
+        elif rec is not None:
             rec_clip = str(rec.get("clip_sha256") or "")
             if str(rec.get("fingerprint")) != fingerprint:
                 perrs.append("existing run record fingerprint differs")
@@ -616,8 +625,8 @@ def prepare_canary_lineage(cfg: Config, *, media_path: str, handle: str = CANARY
     if run_json.exists():                         # orphan/tamper guard: a pre-existing dir must match our fingerprint
         try:
             prior = json.loads(run_json.read_text())
-        except (OSError, ValueError):
-            prior = {}
+        except (OSError, ValueError) as exc:      # an unreadable/malformed orphan is a tamper signal, NOT an empty one
+            return _err(f"run dir {run_id} holds an UNREADABLE/MALFORMED record — refusing (tamper): {str(exc)[:80]}")
         if prior.get("fingerprint") not in (None, fingerprint):
             return _err(f"run dir {run_id} holds a MISMATCHED fingerprint — refusing (stale/tampered orphan)")
     media_dst = _assert_contained(root, run_dir / f"media{_media_ext(media_path)}")
@@ -668,13 +677,25 @@ def prepare_canary_lineage(cfg: Config, *, media_path: str, handle: str = CANARY
             s = led.sources.get(ids["source_id"])
             if s is not None and s.state is SourceState.retired:
                 raise _Refuse(f"canary run {run_id} became TERMINAL under lock — refusing")
+            # RE-VALIDATE the account / one-shot / foreign-affinity gates against the LOCKED ledger: a concurrent
+            # run may have minted a canary Post / Moment / Batch while we rendered (the led0 checks are now stale).
+            _i2, aerr2 = _validate_canary_account(cfg, handle, led, ids)
+            if aerr2 is not None:
+                raise _Refuse(f"account gate failed under lock — refusing (concurrent canary activity): {aerr2}")
+            # if a concurrent run already created (part of) our content-addressed lineage, require an EXACT
+            # projection match (add_* is setdefault = first-write-wins, so a mismatch would be silently kept).
+            if any(v is not None for v in (led.sources.get(ids["source_id"]), led.moments.get(ids["moment_id"]),
+                                           led.clips.get(ids["clip_id"]), led.batches.get(ids["batch_id"]))):
+                perrs = _projection_errors(led, identity, run_dir, allow_terminal=False)
+                if perrs:
+                    raise _Refuse(f"a concurrent lineage exists under lock but MISMATCHES — refusing: {'; '.join(perrs[:3])}")
             led.add_batch(Batch(id=ids["batch_id"], name=(run_label or f"canary {run_id}"),
                                 target_accounts=[CANARY_HANDLE], state=BatchState.open, created_at=now_iso))
             led.add_source(Source(id=ids["source_id"], state=SourceState.moments_decided, source_path=str(media_dst),
                                  sha256=media_sha256, duration=src_dur, width=src_w, height=src_h,
                                  batch_id=ids["batch_id"], created_at=now_iso, title=(run_label or "canary")))
             led.add_moment(Moment(id=ids["moment_id"], parent_id=ids["source_id"], state=MomentState.clipped,
-                                 start=start_f, end=(end_f if end_f is not None else (segs[-1][1] if segs else start_f)),
+                                 start=eff_start, end=(end_f if end_f is not None else (segs[-1][1] if segs else eff_start)),
                                  reason="canary publish-path probe", affinities=[CANARY_HANDLE], hook=hook,
                                  segments=[tuple(x) for x in (segs or [])], content_token=fingerprint))
             led.add_clip(Clip(id=ids["clip_id"], parent_id=ids["moment_id"], state=ClipState.queued,
@@ -692,14 +713,17 @@ def prepare_canary_lineage(cfg: Config, *, media_path: str, handle: str = CANARY
     return _ok({**plan, "created": True, "idempotent": False, "clip_sha256": clip_sha})
 
 
-def _read_run_record(cfg: Config, run_id: str) -> Optional[dict]:
+def _read_run_record(cfg: Config, run_id: str) -> tuple[Optional[dict], Optional[str]]:
+    """Return (record, error). A genuinely ABSENT record is (None, None) — recoverable. An existing but
+    unreadable/malformed record is (None, <error>) — a tamper signal that callers must REFUSE, never silently
+    overwrite as if it were a crash-recovery gap."""
     p = _run_dir(cfg, run_id) / "canary-run.json"
     if not p.exists():
-        return None
+        return None, None
     try:
-        return json.loads(p.read_text())
-    except (OSError, ValueError):
-        return None
+        return json.loads(p.read_text()), None
+    except (OSError, ValueError) as exc:
+        return None, f"unreadable/malformed run record: {str(exc)[:100]}"
 
 
 def _ensure_run_record(cfg: Config, run_id: str, canonical_name: str, fingerprint: str,
@@ -826,7 +850,8 @@ def _authenticated_run_for_post(cfg: Config, led: Ledger, post) -> tuple[Optiona
             continue
         try:
             rec = json.loads(run_json.read_text())
-        except (OSError, ValueError):
+        except (OSError, ValueError) as exc:
+            get_logger(cfg)("canary", run_dir.name, "run_record_unreadable_skip", level="warning", err=str(exc)[:120])
             continue
         identity, aerr = _recompute_identity_from_record(rec)
         if aerr is not None or identity["run_id"] != run_dir.name:
@@ -1094,13 +1119,15 @@ def compare_canary_baseline(cfg: Config, *, baseline: str) -> ActionResult:
     for r in safety_changed:
         pf, cf = json.loads(p_lay[r]["safe"]), json.loads(c_lay[r]["safe"])
         safety_fields[r] = sorted(k for k in (set(pf) | set(cf)) if pf.get(k) != cf.get(k))
-    # mismatch is TRUE for ANY divergence — raw, any layer, an added/removed id (Phase 5)
-    mismatch = bool(added or removed or raw_changed or safety_changed or sched_changed or content_changed)
+    # mismatch is TRUE for ANY divergence — raw, any layer, an added/removed id, OR an aggregate-digest
+    # inequality (a modified baseline digest must never return a clean exit) (Phase 5)
+    digests_equal = {k: prior["digests"].get(k) == cur["digests"][k] for k in cur["digests"]}
+    mismatch = bool(added or removed or raw_changed or safety_changed or sched_changed or content_changed
+                    or not all(digests_equal.values()))
     return _ok({
         "mismatch": mismatch, "added": added, "removed": removed, "raw_changed": raw_changed,
         "safety_critical_changed": safety_fields, "scheduling_changed": sched_changed,
-        "content_changed": content_changed,
-        "digests_equal": {k: prior["digests"].get(k) == cur["digests"][k] for k in cur["digests"]},
+        "content_changed": content_changed, "digests_equal": digests_equal,
     })
 
 

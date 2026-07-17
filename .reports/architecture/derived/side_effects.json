@@ -23,15 +23,15 @@
     "fanops.canary": [
       {
         "call": "Ledger.transaction",
-        "line": 666
+        "line": 675
       },
       {
         "call": "Ledger.transaction",
-        "line": 762
+        "line": 786
       },
       {
         "call": "Ledger.transaction",
-        "line": 880
+        "line": 905
       }
     ],
     "fanops.cli": [
@@ -560,7 +560,7 @@
     "fanops.canary": [
       {
         "call": "shutil.rmtree",
-        "line": 809
+        "line": 833
       }
     ],
     "fanops.cli": [
@@ -599,7 +599,7 @@
     "fanops.canary": [
       {
         "call": "subprocess.run",
-        "line": 1118
+        "line": 1145
       }
     ],
     "fanops.clip": [

@@ -349,6 +349,15 @@ def test_prepare_refuses_window_beyond_source_duration(tmp_path, stub_render):
     assert Ledger.load(cfg).sources == {}
 
 
+def test_prepare_refuses_negative_segment_start(tmp_path, stub_render):
+    # a negative first-segment start would render a DIFFERENT window that can still pass the duration tolerance
+    cfg = Config(root=tmp_path); _seed(cfg)
+    r = canary.prepare_canary_lineage(cfg, media_path=_media(tmp_path), start="0", end=None,
+                                      segments=[(-1.0, 2.0)], caption="x")
+    assert not r.ok and "non-negative" in r.error
+    assert Ledger.load(cfg).sources == {}
+
+
 # ---------- filesystem containment / run label ----------
 
 @pytest.mark.parametrize("label", ["../escape", ".", "..", "a/b", "UPPER", "with space", "x" * 65])
@@ -537,15 +546,21 @@ def test_cancel_audit_failure_leaves_post_retired_with_warning(tmp_path, stub_re
 
 
 def test_retired_canary_post_cannot_publish_requeue_or_remint(tmp_path, stub_render):
-    from fanops.crosspost import _REUSABLE_CLIP_STATES  # noqa: F401
+    # exercise the ACTUAL guarded entry points, not just state membership: the real publish path
+    # (publish_due, which also runs the daemon transient-failed requeue) and the crosspost re-mint seed predicate.
+    from fanops.post.run import publish_due
+    from fanops.crosspost import _seed_clips
     cfg = Config(root=tmp_path); _seed(cfg)
     pid = _prepare_and_mint_post(cfg, tmp_path)
+    cid = Ledger.load(cfg).posts[pid].parent_id
     canary.cancel_canary_post(cfg, pid, reason="x")
+    res = publish_due(cfg)                                    # dryrun (cfg not live) -> no network; retired post invisible
+    assert res["due"] == 0 and res["published"] == 0
     led = Ledger.load(cfg)
-    assert led.posts[pid].state is PostState.retired
-    assert led.posts_in_state(PostState.queued) == []
-    assert led.posts_in_state(PostState.failed) == []
-    assert led.posts[pid].state not in (PostState.rejected, PostState.failed)
+    assert led.posts[pid].state is PostState.retired         # untouched by publish + transient-failed requeue
+    assert led.posts[pid].submission_id == "fanops_tok"      # not re-driven
+    assert cid not in [c.id for c in _seed_clips(led)]       # the crosspost re-mint predicate never re-seeds it
+    assert led.posts_in_state(PostState.queued) == [] and led.posts_in_state(PostState.failed) == []
 
 
 # ---------- discard (Phase 1 identity binding + Phase 2 TOCTOU) ----------
