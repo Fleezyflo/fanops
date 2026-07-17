@@ -10,7 +10,7 @@
 | **Scope** | **Upload only.** One disposable asset. **No post is created** — not by policy, structurally (§3.3) |
 | **PR under test** | #694, branch `fix/zernio-presign-upload`, **OPEN / unmerged / MERGEABLE**, 10 changed files |
 | **Code under test** | `src/fanops/post/zernio.py` — blob `acccd311effc2e441dd1b5675c3cd8b77759572c`, sha256 `7e38608d1a92e7b6de92d8ab9bc25fc3c07663bd99510911732f4523adc6a63f` (§2) |
-| **Runner** | `zernio_upload_canary.py`, sha256 `18987e293e690e717777af612097997543f3a507aea767edb7606a784a51f779` — outside git, outside `FANOPS_ROOT` (§7) |
+| **Runner** | `zernio_upload_canary.py`, sha256 `4766c0e214404c192d96e6b3490639ddcdaeb7bbe17cafac3629ff6434bdeb1b` — outside git, outside `FANOPS_ROOT` (§7) |
 | **Call ceiling** | **Exactly 3**: 1 `POST /media/presign` · 1 signed `PUT` · 1 streamed `GET` (§4) |
 | **Blast radius** | 1 temporary object in Zernio's media storage. **No ledger row, no corpus file, no social post, no account touched** |
 | **Reversibility** | **Partial — §8.** The object cannot be deleted by us; it expires unreferenced |
@@ -19,7 +19,7 @@
 
 ## 0. Rev 1 defects — retracted
 
-Four, three of them found by building and validating the runner rather than by re-reading the plan.
+Five, four of them found by building and validating the runner rather than by re-reading the plan.
 
 | # | ⛔ RETRACTED Rev 1 claim | Correction | Found by |
 |---|---|---|---|
@@ -27,6 +27,7 @@ Four, three of them found by building and validating the runner rather than by r
 | R2 | *"changed files: 9"* | **10.** Rev 1 counted before its own file existed | operator |
 | R3 | *"at most 3 HTTP requests"* alongside a `HEAD` **plus** a `GET` fallback | **Contradiction — that path is 4.** Replaced by exactly one streamed `GET` (§4) | operator |
 | R4 | §5 assertion 4: *"Ledger SHA-256 identical before and after"* — *"the strongest available proof of no ledger mutation"* | **Unsound, and it would have flaked.** The live ledger is SQLite in **WAL mode** and the daemon writes every ~600s. A whole-file hash is wrong in both directions: committed rows can sit in the `-wal` while the main file is byte-identical, and a checkpoint can rewrite the main file with no logical change. Replaced by a **logical posts-map digest** (§6) | building it |
+| R5 | §5 assertion 5's `FANOPS_CORPUS_AUTO` gate | **Could only ever pass** — `os.getenv` on a variable this process never loads, defaulted to the value being asserted. Now read from the live `.env`, absent = abort (§6.1) | validating it |
 
 > **R4 is the one that mattered.** Rev 1 called a byte hash *"a digest, not a promise"* — but it was a digest
 > of the wrong thing. The live `ledger.sqlite` mtime moves on daemon ticks, so the Rev 1 gate would have
@@ -208,12 +209,25 @@ first three are the chokepoint's check 5, so they land at the last instruction b
 |---|---|---|
 | **`queued == 0`** | **ABORT** | a `queued` post is publishable by the live daemon — the one state that must never coexist with an un-canaried publish path |
 | **failed-id set == the same 4** | **ABORT** | proves no requeue and no re-burn |
-| **`FANOPS_CORPUS_AUTO == 0`** | **ABORT** | operator-pinned |
+| **`FANOPS_CORPUS_AUTO == 0`**, read **from the live `.env`** | **ABORT** (also if the key is absent) | operator-pinned. **Not `os.getenv`** — see §6.1 |
 | **posts-map logical digest** — sha256 over `(row_id, canonical-JSON payload)` for every `posts` row, ordered | **ABORT** | a post mutated mid-canary |
 | whole-file `ledger.sqlite` sha256 | **recorded, not fatal** | **WAL mode + a live daemon** — the file moves on benign writes to *other* maps (sources/moments/clips). Gating on it is the R4 defect |
 
 > The **logical** digest is the sound invariant: immune to WAL placement and checkpoint rewrites, and it
 > changes **iff a post changes** — which is the actual question.
+
+### 6.1 A fifth Rev 1 defect, found by validating the runner
+
+The `FANOPS_CORPUS_AUTO` gate was written as `os.getenv("FANOPS_CORPUS_AUTO", "0") != "0"`. **It could only
+ever pass.** The runner deliberately loads *only* `ZERNIO_API_KEY` from the live `.env`, so the variable is
+absent from its environment, `os.getenv` returns `None`, the `"0"` default is substituted, and the comparison
+is vacuously satisfied — *including in the case the gate exists to catch*, where the operator has set it to
+`1` in the `.env`. Proven: `os.getenv(...)` → `None` · live `.env` → `'0'`.
+
+**Fixed** to read the file the daemon actually reads, with an **absent key treated as an abort** rather than
+a default. Third instance in this program of a check that could not fail (after the Rev 4 phrase checker and
+§7.1's self-scan). **A gate whose passing carries no information is worse than no gate — it reports safety it
+never measured.**
 
 **The runner imports no ledger mutation method** — AST-asserted: the name `Ledger` is never bound or
 referenced, and nothing is imported from `fanops.ledger`. (The class is unavoidably in `sys.modules` because
@@ -224,7 +238,7 @@ not imported at all" would be false. The checkable claim is that **this runner c
 
 | Property | Value |
 |---|---|
-| **sha256** | `18987e293e690e717777af612097997543f3a507aea767edb7606a784a51f779` |
+| **sha256** | `4766c0e214404c192d96e6b3490639ddcdaeb7bbe17cafac3629ff6434bdeb1b` |
 | **Location** | session scratchpad — **outside git**, **outside `FANOPS_ROOT`** (`/Users/molhamhomsi/FanOps`) |
 | **Subprocesses** | AST **allow-list**: `git`, `ffmpeg`, `ffprobe`, `file`, `gh` — **no `fanops` CLI**. An allow-list, because a negative scan only rules out the name you thought to forbid |
 | **Forbidden-path self-scan** | **AST over non-docstring string literals** — see below |
