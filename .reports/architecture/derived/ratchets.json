@@ -76,7 +76,7 @@
   "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",
   "measured": {
     "print_calls_by_module": {
-      "fanops.cli": 165,
+      "fanops.cli": 168,
       "fanops.hashtag_migrate": 11,
       "fanops.log": 1,
       "fanops.paths_rebase": 2
@@ -86,6 +86,7 @@
       "src/fanops/agentstep.py": 1,
       "src/fanops/artifacts.py": 1,
       "src/fanops/audit.py": 2,
+      "src/fanops/canary.py": 12,
       "src/fanops/caption.py": 2,
       "src/fanops/cli.py": 3,
       "src/fanops/clip.py": 1,

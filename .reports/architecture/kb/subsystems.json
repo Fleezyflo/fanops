@@ -13,8 +13,8 @@
     "v1_errata": "The v1 index variously said '18 subsystems', '18 + Studio' and '19'. The correct and only number is 19."
   },
   "totality": {
-    "modules_total": 133,
-    "modules_assigned": 133,
+    "modules_total": 134,
+    "modules_assigned": 134,
     "unassigned": 0,
     "double_assigned": 0,
     "ghosts": 0,
@@ -399,11 +399,12 @@
     },
     "S17_cli_daemon": {
       "modules": [
+        "canary",
         "cli",
         "daemon",
         "init_flow"
       ],
-      "module_count": 3,
+      "module_count": 4,
       "compile_depends_on": [
         "S01_foundation",
         "S02_configuration",

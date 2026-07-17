@@ -17,6 +17,7 @@
     "fanops.autopilot",
     "fanops.bands",
     "fanops.batches",
+    "fanops.canary",
     "fanops.caption",
     "fanops.casting",
     "fanops.cli",
@@ -159,6 +160,7 @@
     "fanops.autopilot": "S07_agent_gate",
     "fanops.bands": "S01_foundation",
     "fanops.batches": "S05_ingestion",
+    "fanops.canary": "S17_cli_daemon",
     "fanops.caption": "S10_caption_hashtag",
     "fanops.casting": "S08_selection",
     "fanops.cli": "S17_cli_daemon",
@@ -283,9 +285,9 @@
     "fanops.vocals": "S06_media_analysis"
   },
   "totals": {
-    "assigned": 133,
+    "assigned": 134,
     "ghosts": 0,
-    "modules": 133,
+    "modules": 134,
     "unassigned": 0
   },
   "unassigned_modules": []

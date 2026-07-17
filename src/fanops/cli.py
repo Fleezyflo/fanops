@@ -410,6 +410,44 @@ def cmd_resolve(cfg: Config, args) -> int:
     print(f"resolved {args.post_id} -> {args.status}"); return 0
 
 
+def _parse_segments(s: str) -> list:
+    out = []
+    for part in (s or "").split(","):
+        part = part.strip()
+        if not part: continue
+        a, _, b = part.partition("-")
+        out.append((float(a), float(b)))
+    return out
+
+
+def cmd_canary(cfg: Config, args) -> int:
+    """Isolated canary tooling — never touches advance/crosspost/publish/reconcile/Zernio/Postiz/HTTP."""
+    from fanops import canary
+    sub = args.canary_cmd
+    if sub == "prepare":
+        segs = _parse_segments(args.segments) if args.segments else None
+        res = canary.prepare_canary_lineage(cfg, media_path=args.media, handle=args.handle,
+                                            run_label=args.run_label, start=args.start, end=args.end,
+                                            segments=segs, caption=args.caption, hashtags=args.hashtag or [],
+                                            hook=args.hook, plan_only=args.plan_only)
+    elif sub == "discard":
+        res = canary.discard_canary(cfg, args.run_id)
+    elif sub == "cancel":
+        res = canary.cancel_canary_post(cfg, args.post_id, reason=args.reason)
+    elif sub == "baseline":
+        res = canary.capture_canary_baseline(cfg, output=args.output)
+    elif sub == "compare":
+        res = canary.compare_canary_baseline(cfg, baseline=args.baseline)
+    else:
+        print(f"unknown canary subcommand: {sub!r}", file=sys.stderr); return 2
+    if not res.ok:
+        print(f"canary {sub}: {res.error}", file=sys.stderr); return 2
+    print(json.dumps(res.detail or {}, indent=1, default=str))
+    if sub == "compare" and (res.detail or {}).get("mismatch"):
+        return 1                                       # non-zero exit on baseline mismatch
+    return 0
+
+
 def cmd_audit(cfg: Config, args) -> int:
     """(R3/D7) `fanops audit tail [-n 20]` — print the last N lines of the operator
     audit log. Read-only; missing log -> 0 with a clear note."""
@@ -840,6 +878,19 @@ def main(argv: list[str] | None = None) -> int:
     p_auto.add_argument("--interval", default="10m"); p_auto.add_argument("--no-daemon", action="store_true")
     p_up = sub.add_parser("up", help="one-step self-healing bring-up: git/Postiz/daemon/Studio -> one READY/NOT-READY verdict")
     p_up.add_argument("--no-restart", action="store_true", help="skip the daemon freshness kickstart (leave a running daemon on its current code)")
+    p_can = sub.add_parser("canary", help="isolated single-lineage publish-path probe (prepare/discard/cancel + baseline/compare)")
+    can_sub = p_can.add_subparsers(dest="canary_cmd", required=True)
+    p_cprep = can_sub.add_parser("prepare", help="mint ONE isolated canary Source+Moment+Clip+Batch (0 Posts, 0 Renders)")
+    p_cprep.add_argument("--media", required=True); p_cprep.add_argument("--handle", default="fanops_canary")
+    p_cprep.add_argument("--run-label", default=None); p_cprep.add_argument("--start", required=True)
+    p_cprep.add_argument("--end", default=None); p_cprep.add_argument("--segments", default=None, help='"t0-t1,t2-t3"')
+    p_cprep.add_argument("--caption", required=True); p_cprep.add_argument("--hashtag", action="append", default=[])
+    p_cprep.add_argument("--hook", default=None); p_cprep.add_argument("--plan-only", action="store_true")
+    p_cdisc = can_sub.add_parser("discard", help="pre-mint only: retire the canary lineage, close its batch"); p_cdisc.add_argument("run_id")
+    p_ccanc = can_sub.add_parser("cancel", help="retire an awaiting/queued canary Post before any network acceptance")
+    p_ccanc.add_argument("post_id"); p_ccanc.add_argument("--reason", required=True)
+    p_cbase = can_sub.add_parser("baseline", help="capture a read-only CANDIDATE multilayer posts baseline"); p_cbase.add_argument("--output", required=True)
+    p_ccmp = can_sub.add_parser("compare", help="compare the live ledger against a baseline manifest (non-zero exit on mismatch)"); p_ccmp.add_argument("--baseline", required=True)
     args = parser.parse_args(argv if argv is not None else sys.argv[1:])
     cfg = Config()
     load_dotenv(cfg.root / ".env", override=True)   # .env is operator truth — beat stale shell env (Studio restart)
@@ -1323,6 +1374,7 @@ def _dispatch(cfg: Config, args) -> int:
     if args.cmd == "daemon":   return cmd_daemon(cfg, args)
     if args.cmd == "autopilot": return cmd_autopilot(cfg, args)
     if args.cmd == "up":       return cmd_up(cfg, args)
+    if args.cmd == "canary":   return cmd_canary(cfg, args)
     if args.cmd == "gc":       return cmd_gc(cfg, args.keep_days if args.keep_days is not None else cfg.gc_keep_days)
     if args.cmd == "compose":  return cmd_compose(cfg, args)
     if args.cmd == "resolve":

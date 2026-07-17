@@ -4,7 +4,7 @@
 
 # FanOps — Architecture & Implementation Governance
 
-**Source fingerprint `25650a49ba8b38be` · generator `arch/1.0.0`**
+**Source fingerprint `fb73340f7732bb43` · generator `arch/1.0.0`**
 
 Regenerate: `python -m tools.arch regen`
 
@@ -16,18 +16,18 @@ Regenerate: `python -m tools.arch regen`
 
 | | |
 |---|---|
-| Modules | **133** |
-| Compile-time import edges (G1) | **557** |
-| Lazy (in-function) edges | **331** |
-| Typing-only edges | 6 |
+| Modules | **134** |
+| Compile-time import edges (G1) | **564** |
+| Lazy (in-function) edges | **337** |
+| Typing-only edges | 7 |
 | Non-trivial compile-time SCCs | **1** |
 | Layer levels (G1c, the SCC-condensation) | **11** |
-| Lazy edges strictly UPWARD (layering inversions) | **58** |
-| Lazy edges lateral (same level — *not* inversions) | 51 |
+| Lazy edges strictly UPWARD (layering inversions) | **59** |
+| Lazy edges lateral (same level — *not* inversions) | 53 |
 | Largest G2 potential-dependency SCC | 48 modules |
 | Environment variables read | **73** |
 | Route endpoints (method × path) | **150** (109 mutating) |
-| CLI verbs | 57 unique (62 `add_parser` sites) |
+| CLI verbs | 63 unique (68 `add_parser` sites) |
 
 ### Metric definitions — because a derived number inherits the soundness of its definition
 
@@ -46,7 +46,7 @@ Regenerate: `python -m tools.arch regen`
 
 ## 2. The subsystem partition
 
-**Totality: ✅ TOTAL** — 133/133 modules assigned, 0 unassigned, 0 ghosts.
+**Totality: ✅ TOTAL** — 134/134 modules assigned, 0 unassigned, 0 ghosts.
 
 > The partition is an **analytic overlay** (Cycle 5). Nothing in the code enforces it. The module set is a **fact**; the grouping is a **model**. Totality is therefore a checkable property, and rule `ARCH-001` checks it.
 
@@ -57,12 +57,12 @@ Regenerate: `python -m tools.arch regen`
 | Effect | Sites |
 |---|---|
 | env write sites | **2** |
-| ledger transaction sites | **74** |
+| ledger transaction sites | **77** |
 | lock sites | **23** |
 | mkdtemp sites | **2** |
 | network sites literal requests | **15** |
-| rmtree sites | **5** |
-| subprocess sites | **37** |
+| rmtree sites | **6** |
+| subprocess sites | **38** |
 
 > meta_graph uses an INJECTABLE `get` (so tests never touch the network). It is a real network seam and a literal `requests.*` census does NOT see it. Recorded here so the census is not mistaken for the whole truth.
 
@@ -70,7 +70,7 @@ Regenerate: `python -m tools.arch regen`
 
 ## 4. The ratchets — mechanically enforced in CI today
 
-- `cli.py` `print()` count — **declared by the test: 165** · **measured: 165** (an *exact-equality* budget shared by three slices)
+- `cli.py` `print()` count — **declared by the test: 165** · **measured: 168** (an *exact-equality* budget shared by three slices)
 - Zero-`print()` modules: 9
 - Silent-broad-`except` baseline: 49 files
 

@@ -72,7 +72,7 @@
         "swallow": "baseline 3 — SHARED across S08/S09/S10. NONE may raise it."
       },
       "exists": true,
-      "function_count": 43,
+      "function_count": 45,
       "is_partitioned": true,
       "missing": false,
       "owners": [
