@@ -86,6 +86,7 @@
     "fanops.post.providers",
     "fanops.post.run",
     "fanops.post.zernio",
+    "fanops.post.zernio_outcome",
     "fanops.postiz_lifecycle",
     "fanops.produce",
     "fanops.prompts",
@@ -227,6 +228,7 @@
     "fanops.post.providers": "S12_publish",
     "fanops.post.run": "S12_publish",
     "fanops.post.zernio": "S12_publish",
+    "fanops.post.zernio_outcome": "S12_publish",
     "fanops.postiz_lifecycle": "S12_publish",
     "fanops.produce": "S09_render",
     "fanops.prompts": "S07_agent_gate",
@@ -281,9 +283,9 @@
     "fanops.vocals": "S06_media_analysis"
   },
   "totals": {
-    "assigned": 132,
+    "assigned": 133,
     "ghosts": 0,
-    "modules": 132,
+    "modules": 133,
     "unassigned": 0
   },
   "unassigned_modules": []

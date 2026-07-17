@@ -176,7 +176,7 @@
         "name": "Fmt"
       },
       {
-        "line": 396,
+        "line": 407,
         "members": [
           "none",
           "per_account",
@@ -185,7 +185,7 @@
         "name": "HookSource"
       },
       {
-        "line": 458,
+        "line": 469,
         "members": [
           "approved",
           "dismissed",
@@ -196,7 +196,7 @@
         "name": "StitchState"
       },
       {
-        "line": 487,
+        "line": 498,
         "members": [
           "closed",
           "error",
@@ -351,6 +351,7 @@
           "publish_dow",
           "publish_hour",
           "published_at",
+          "reconcile_candidate_id",
           "render_id",
           "scheduled_time",
           "state",
@@ -377,7 +378,7 @@
           "state",
           "surface_key"
         ],
-        "line": 402,
+        "line": 413,
         "name": "Render"
       },
       {
@@ -394,7 +395,7 @@
           "state",
           "strategy_key"
         ],
-        "line": 462,
+        "line": 473,
         "name": "StitchPlan"
       },
       {
@@ -407,7 +408,7 @@
           "state",
           "target_accounts"
         ],
-        "line": 490,
+        "line": 501,
         "name": "Batch"
       },
       {
@@ -423,7 +424,7 @@
           "product_type",
           "timestamp"
         ],
-        "line": 508,
+        "line": 519,
         "name": "ImportedMedia"
       },
       {
@@ -440,7 +441,7 @@
           "transcript",
           "transcript_total"
         ],
-        "line": 536,
+        "line": 547,
         "name": "MomentRequest"
       },
       {
@@ -453,7 +454,7 @@
           "start",
           "transcript_excerpt"
         ],
-        "line": 554,
+        "line": 565,
         "name": "MomentPick"
       },
       {
@@ -463,7 +464,7 @@
           "source_id",
           "source_title"
         ],
-        "line": 595,
+        "line": 606,
         "name": "MomentDecision"
       },
       {
@@ -484,7 +485,7 @@
           "token",
           "transcript_excerpt"
         ],
-        "line": 606,
+        "line": 617,
         "name": "MomentHookRequest"
       },
       {
@@ -493,7 +494,7 @@
           "hook_frames_unread",
           "request_id"
         ],
-        "line": 623,
+        "line": 634,
         "name": "MomentHookDecision"
       },
       {
@@ -505,7 +506,7 @@
           "surfaces",
           "transcript_excerpt"
         ],
-        "line": 630,
+        "line": 641,
         "name": "CaptionRequest"
       },
       {
@@ -515,7 +516,7 @@
           "language",
           "surface"
         ],
-        "line": 638,
+        "line": 649,
         "name": "CaptionItem"
       },
       {
@@ -523,7 +524,7 @@
           "items",
           "request_id"
         ],
-        "line": 649,
+        "line": 660,
         "name": "CaptionSet"
       },
       {
@@ -534,7 +535,7 @@
           "rationale",
           "tease_text"
         ],
-        "line": 658,
+        "line": 669,
         "name": "IntroMatchItem"
       },
       {
@@ -542,7 +543,7 @@
           "items",
           "request_id"
         ],
-        "line": 665,
+        "line": 676,
         "name": "IntroMatchDecision"
       }
     ],

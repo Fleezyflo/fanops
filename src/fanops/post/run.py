@@ -117,7 +117,11 @@ def _is_fatal_auth_error(exc: Exception) -> bool:
 # (the network-phase refresh) — "in-flight wins" is deliberate (a post must carry the id it published TO,
 # not a remap that landed after the POST). The finalize writes it ONLY when it changed, so a concurrent
 # Go-Live remap to a DIFFERENT channel is not churn-clobbered by an identical value.
-_NET_POST_FIELDS = ("state", "submission_id", "error_reason", "public_url", "media_urls", "published_at", "account_id")
+# Report 11 §5: reconcile_candidate_id rides here for ONE reason — a poster writes it on the throwaway
+# network ledger, so without it in this union the write is silently DISCARDED at finalize and the operator
+# loses the only pointer a 409 handed back. It is propagation only; run.py never reads or acts on it.
+_NET_POST_FIELDS = ("state", "submission_id", "error_reason", "public_url", "media_urls", "published_at", "account_id",
+                    "reconcile_candidate_id")
 
 # Sprint 2: per-(backend, integration) publish throttle — in-process only (daemon is single-process).
 _publish_throttle_last: dict[tuple[str, str], float] = {}

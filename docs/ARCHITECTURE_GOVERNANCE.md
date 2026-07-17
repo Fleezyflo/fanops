@@ -4,7 +4,7 @@
 
 # FanOps — Architecture & Implementation Governance
 
-**Source fingerprint `b62cf3b12d381bf3` · generator `arch/1.0.0`**
+**Source fingerprint `75bf321b94eb07ec` · generator `arch/1.0.0`**
 
 Regenerate: `python -m tools.arch regen`
 
@@ -16,8 +16,8 @@ Regenerate: `python -m tools.arch regen`
 
 | | |
 |---|---|
-| Modules | **132** |
-| Compile-time import edges (G1) | **555** |
+| Modules | **133** |
+| Compile-time import edges (G1) | **557** |
 | Lazy (in-function) edges | **331** |
 | Typing-only edges | 6 |
 | Non-trivial compile-time SCCs | **1** |
@@ -46,7 +46,7 @@ Regenerate: `python -m tools.arch regen`
 
 ## 2. The subsystem partition
 
-**Totality: ✅ TOTAL** — 132/132 modules assigned, 0 unassigned, 0 ghosts.
+**Totality: ✅ TOTAL** — 133/133 modules assigned, 0 unassigned, 0 ghosts.
 
 > The partition is an **analytic overlay** (Cycle 5). Nothing in the code enforces it. The module set is a **fact**; the grouping is a **model**. Totality is therefore a checkable property, and rule `ARCH-001` checks it.
 

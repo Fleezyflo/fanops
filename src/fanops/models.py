@@ -307,6 +307,17 @@ class Post(BaseModel):
     aspect: Fmt = Fmt.r9x16
     scheduled_time: Optional[str] = None
     submission_id: Optional[str] = None         # set BEFORE network return is confirmed (dedupe)
+    reconcile_candidate_id: Optional[str] = None  # report 11 §5: an UNPROVEN pointer handed back by a backend
+                                                # duplicate/ambiguity signal (a Zernio 409's details.existingPostId).
+                                                # EVIDENCE ONLY, never an identity: a 409 proves only that the backend
+                                                # holds a MATCHING record — not platform publication, not ownership by
+                                                # THIS post, not completion. Deliberately NOT submission_id: reconcile's
+                                                # poll set includes needs_reconcile, so a candidate parked in
+                                                # submission_id would be polled, found live (of course — that is WHY we
+                                                # got the 409) and promoted to `published` with ANOTHER post's permalink.
+                                                # Never copied into submission_id, never a poll key, never a promotion
+                                                # source, without an explicit operator identity decision. None on old
+                                                # ledgers and on every non-duplicate path.
     public_url: Optional[str] = None
     media_id: Optional[str] = None              # Leg 2 (Insight): the Instagram Graph media id of THIS live post,
                                                 # resolved from /{ig_user}/media by permalink (reconcile.resolve_media_ids).

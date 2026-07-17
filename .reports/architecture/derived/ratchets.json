@@ -107,7 +107,7 @@
       "src/fanops/post/compress.py": 1,
       "src/fanops/post/postiz.py": 1,
       "src/fanops/post/run.py": 4,
-      "src/fanops/post/zernio.py": 3,
+      "src/fanops/post/zernio.py": 4,
       "src/fanops/postiz_lifecycle.py": 2,
       "src/fanops/produce.py": 8,
       "src/fanops/reconcile.py": 9,

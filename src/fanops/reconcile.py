@@ -466,6 +466,16 @@ def project_imported_media(led: Ledger, cfg: Config, *, get=None) -> Ledger:
 
 # States whose true outcome is unknown and pollable: a publish was (or may have been) sent.
 _RECONCILABLE = (PostState.submitting, PostState.submitted, PostState.needs_reconcile)
+# INVARIANT (report 11 §5, I-7) — `Post.reconcile_candidate_id` is NEVER a poll key here, and this set is
+# exactly why. A candidate is an UNPROVEN pointer a backend handed back on a duplicate signal (a Zernio 409's
+# details.existingPostId): it names a record the BACKEND holds, which is not evidence that OUR post is that
+# record. `needs_reconcile` is deliberately IN _RECONCILABLE, so if a candidate were ever parked in
+# `submission_id` (or joined the poll keys below), this module would poll it, find it live — OF COURSE it is
+# live, that is WHY the backend rejected us as a duplicate — and promote OUR row to `published` carrying
+# ANOTHER post's permalink. Silent misattribution, indistinguishable from a real publish.
+# Therefore: poll keys are `submission_id` ONLY (_reconcilable_routing / reconcile_posts below); a candidate
+# is operator-facing evidence, cleared only when an explicit identity decision resolves the record. Pinned by
+# the never-polls / never-promotes negative controls in tests/test_zernio_idempotency.py.
 GetStatus = Callable[[str], dict]
 _LIVE_STATUS_BACKENDS = frozenset({"postiz", "zernio"})
 
@@ -755,7 +765,12 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
                     continue
             upd = {"state": PostState.published,
                    "public_url": captured_url,
-                   "error_reason": None}                  # a transient poll-error reason must not survive a successful publish
+                   "error_reason": None,                  # a transient poll-error reason must not survive a successful publish
+                   # Report 11 §5 (I-7): the identity question is now SETTLED — this row's OWN submission_id
+                   # polled `published` and passed the platform liveness gate above, on evidence that never
+                   # touched the candidate. Spent evidence must not outlive the ambiguity it described, or a
+                   # resolved row keeps showing the operator an unverified pointer to some other post.
+                   "reconcile_candidate_id": None}
             if post.platform is Platform.instagram and _rid:
                 upd["media_id"] = _rid                    # MOL-112: IG object id from Postiz row — no feed match required
             if not (post.published_at or "").strip():
