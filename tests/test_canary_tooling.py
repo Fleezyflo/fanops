@@ -28,7 +28,7 @@ def _seed(cfg, *, status="planned", integ="tiktok-integ-999", backend="zernio",
 
 
 def _media(tmp_path, data=b"canary-media-bytes"):
-    p = tmp_path / "in.mp4"; p.write_bytes(data); return str(p)
+    p = Path(tmp_path) / "in.mp4"; p.parent.mkdir(parents=True, exist_ok=True); p.write_bytes(data); return str(p)
 
 
 @pytest.fixture
@@ -114,10 +114,12 @@ def test_run_identity_deterministic_and_input_sensitive(tmp_path):
 
 def test_full_media_sha256_participates_in_identity(tmp_path, stub_render):
     cfg = Config(root=tmp_path); _seed(cfg)
-    r1 = _prep(cfg, _media(tmp_path / "a", b"AAAA"))
-    # a different media file -> different run id (full sha256, not truncated)
-    (tmp_path / "b").mkdir()
-    r2 = _prep(cfg, _media(tmp_path / "b", b"BBBB"))
+    # plan-only on each: minting BOTH would (correctly) trip the single-live-canary-lineage account guard.
+    # The full sha256 still flows through the real prepare() entry-point into the derived run id. _media
+    # makes each subdir.
+    r1 = _prep(cfg, _media(tmp_path / "a", b"AAAA"), plan_only=True)
+    r2 = _prep(cfg, _media(tmp_path / "b", b"BBBB"), plan_only=True)
+    assert r1.ok and r2.ok, (r1.error, r2.error)
     assert r1.detail["run_id"] != r2.detail["run_id"]
     assert r1.detail["media_sha256"] != r2.detail["media_sha256"]
 
@@ -277,7 +279,10 @@ def test_orphan_mismatched_fingerprint_refused(tmp_path, stub_render):
 # ---------- cancellation ----------
 
 def _mint_awaiting_post(cfg, *, state=PostState.awaiting_approval, submission_id="fanops_tok",
-                        reconcile_candidate_id=None, public_url="", batch_target="fanops_canary"):
+                        reconcile_candidate_id=None, public_url=None, batch_target="fanops_canary"):
+    # published/analyzed carry the R1 invariant (a non-empty public_url); supply one for those states only.
+    if public_url is None:
+        public_url = "https://www.tiktok.com/@x/video/1" if state in (PostState.published, PostState.analyzed) else ""
     with Ledger.transaction(cfg) as led:
         led.add_batch(Batch(id="batch_canary", name="c", target_accounts=[batch_target], state=BatchState.open))
         led.add_clip(Clip(id="clip_x", parent_id="m_x", path="/x", state=ClipState.queued))
@@ -403,7 +408,9 @@ def test_baseline_capture_is_candidate_and_deterministic(tmp_path):
     m1 = json.loads(out1.read_text()); m2 = json.loads(out2.read_text())
     assert m1["status"] == "candidate" and m1["format_version"] == "1"
     assert m1["digests"] == m2["digests"]                    # deterministic
-    assert "caption" not in json.dumps(m1["per_post_layers"])  # captions redacted through hashes
+    dump = json.dumps(m1["per_post_layers"])
+    assert "hi" not in dump                                  # the raw caption text is redacted...
+    assert "caption_sha256" in dump                          # ...and replaced by its sha256
 
 
 def test_capture_has_no_accepted_flag():

@@ -3,7 +3,7 @@
   "confidence": "CERTAIN",
   "declared_by_the_ci_tests": {
     "print": {
-      "cli_print_count": 165,
+      "cli_print_count": 168,
       "zero_print_modules": [
         "clip.py",
         "compose.py",
@@ -86,7 +86,6 @@
       "src/fanops/agentstep.py": 1,
       "src/fanops/artifacts.py": 1,
       "src/fanops/audit.py": 2,
-      "src/fanops/canary.py": 12,
       "src/fanops/caption.py": 2,
       "src/fanops/cli.py": 3,
       "src/fanops/clip.py": 1,

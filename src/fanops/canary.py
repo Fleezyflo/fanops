@@ -28,6 +28,7 @@ from fanops.models import (Source, Moment, Clip, Batch, SourceState, MomentState
                            Fmt, Platform, PostState, PLATFORM_MAX_SECONDS, is_real_submission_id)
 from fanops.accounts import Accounts, AccountStatus
 from fanops.audit import write_audit
+from fanops.log import get_logger
 
 
 # ActionResult lives under S16 (studio); import it LAZILY so canary carries no compile-time studio edge
@@ -205,6 +206,7 @@ def _validate_canary_account(cfg: Config, handle: str, led: Ledger, ids: dict) -
         if reg.get(pid) is None:
             return None, f"{CANARY_HANDLE} persona_id {pid!r} does not resolve to a Persona"
     except Exception as exc:
+        get_logger(cfg)("canary", handle, "persona_registry_error", level="error", err=str(exc)[:120])
         return None, f"persona registry error: {str(exc)[:120]}"
     if sum(1 for a in accts.accounts if (a.persona_id or "").strip() == pid) > 1:
         return None, f"canary Persona {pid!r} is shared with another account — it must be dedicated"
@@ -264,6 +266,7 @@ def prepare_canary_lineage(cfg: Config, *, media_path: str, handle: str = CANARY
         media_sha256 = _sha256_bytes_of(mp)
         src_w, src_h, src_dur = _do_probe(mp)
     except Exception as exc:
+        get_logger(cfg)("canary", Path(media_path).name, "media_inspection_failed", level="error", err=str(exc)[:140])
         return _err(f"media inspection failed: {str(exc)[:140]}")
     if not src_w or not src_h:
         return _err("could not probe media dimensions")
@@ -318,7 +321,7 @@ def prepare_canary_lineage(cfg: Config, *, media_path: str, handle: str = CANARY
     if run_json.exists():                         # orphan/tamper guard: a pre-existing dir must match our fingerprint
         try:
             prior = json.loads(run_json.read_text())
-        except Exception:
+        except (OSError, ValueError):
             prior = {}
         if prior.get("fingerprint") not in (None, fingerprint):
             return _err(f"run dir {run_id} holds a MISMATCHED fingerprint — refusing (stale/tampered orphan)")
@@ -333,7 +336,7 @@ def prepare_canary_lineage(cfg: Config, *, media_path: str, handle: str = CANARY
 
     # ---- 7. render (LEDGER-FREE, outside the lock); reuse a validated crash-orphan ----
     clip_dst = _assert_contained(root, run_dir / "clip.mp4")
-    if not (clip_dst.exists() and (_probe_ok(clip_dst))):
+    if not (clip_dst.exists() and (_probe_ok(cfg, clip_dst))):
         try:
             if segs is not None:
                 r = _do_render_supercut(str(media_dst), str(clip_dst), [tuple(x) for x in segs],
@@ -342,11 +345,12 @@ def prepare_canary_lineage(cfg: Config, *, media_path: str, handle: str = CANARY
                 r = _do_render_single(str(media_dst), str(clip_dst), start_f, end_f, _TARGET_ASPECT.value,
                                       src_w=src_w, src_h=src_h)
         except Exception as exc:
+            get_logger(cfg)("canary", run_id, "render_failed", level="error", err=str(exc)[:140])
             return _err(f"render failed (no ledger adoption): {str(exc)[:140]}")
         if not (clip_dst.exists() and clip_dst.stat().st_size > 0):
             rc = getattr(r, "returncode", "n/a")
             return _err(f"render produced no output (rc={rc}) — no ledger adoption")
-    if not _probe_ok(clip_dst):
+    if not _probe_ok(cfg, clip_dst):
         return _err("rendered clip failed validation — no ledger adoption")
 
     _write_json_atomic(run_json, {"run_id": run_id, "canonical_name": canonical_name,
@@ -375,11 +379,12 @@ def prepare_canary_lineage(cfg: Config, *, media_path: str, handle: str = CANARY
     return _ok({**plan, "created": True, "idempotent": False})
 
 
-def _probe_ok(path: Path) -> bool:
+def _probe_ok(cfg: Config, path: Path) -> bool:
     try:
         _, _, dur = _do_probe(path)
         return bool(dur and dur > 0) or (path.exists() and path.stat().st_size > 0)
-    except Exception:
+    except Exception as exc:
+        get_logger(cfg)("canary", "probe", "probe_fallback", err=str(exc)[:120])
         return path.exists() and path.stat().st_size > 0
 
 
@@ -394,7 +399,7 @@ def discard_canary(cfg: Config, run_id: str) -> ActionResult:
         return _err(f"no canary run record for {run_id}")
     try:
         rec = json.loads(run_json.read_text())
-    except Exception as exc:
+    except (OSError, ValueError) as exc:
         return _err(f"unreadable run record: {str(exc)[:120]}")
     sid, mid, cid, bid = rec.get("source_id"), rec.get("moment_id"), rec.get("clip_id"), rec.get("batch_id")
     accts = Accounts.load(cfg)
@@ -472,6 +477,7 @@ def cancel_canary_post(cfg: Config, post_id: str, *, reason: str) -> ActionResul
     try:
         write_audit(cfg, "canary_cancel", [post_id], reason="canary_cancel", canary_reason=bounded)
     except Exception as exc:
+        get_logger(cfg)("canary", post_id, "audit_write_failed", level="error", err=str(exc)[:120])
         warn = f"audit write failed (post is safely retired): {str(exc)[:120]}"
     return _ok({"post_id": post_id, "state": "retired", "reason": bounded, "audit_warning": warn})
 
@@ -546,6 +552,7 @@ def capture_canary_baseline(cfg: Config, *, output: str) -> ActionResult:
     try:
         manifest = _build_manifest(cfg)
     except Exception as exc:
+        get_logger(cfg)("canary", "baseline", "capture_failed", level="error", err=str(exc)[:140])
         return _err(f"baseline capture failed: {str(exc)[:140]}")
     out = Path(output).expanduser()
     _write_json_atomic(out, manifest)
@@ -556,13 +563,14 @@ def capture_canary_baseline(cfg: Config, *, output: str) -> ActionResult:
 def compare_canary_baseline(cfg: Config, *, baseline: str) -> ActionResult:
     try:
         prior = json.loads(Path(baseline).expanduser().read_text())
-    except Exception as exc:
+    except (OSError, ValueError) as exc:
         return _err(f"cannot read baseline: {str(exc)[:120]}")
     if prior.get("format_version") != BASELINE_FORMAT_VERSION:
         return _err(f"baseline format_version {prior.get('format_version')!r} != {BASELINE_FORMAT_VERSION!r}")
     try:
         cur = _build_manifest(cfg)
     except Exception as exc:
+        get_logger(cfg)("canary", "baseline", "compare_manifest_failed", level="error", err=str(exc)[:140])
         return _err(f"current manifest failed: {str(exc)[:140]}")
     p_man, c_man = prior.get("per_post_manifest", {}), cur["per_post_manifest"]
     p_lay, c_lay = prior.get("per_post_layers", {}), cur["per_post_layers"]
@@ -602,7 +610,7 @@ def _repo_commit() -> str:
         r = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True,
                            cwd=str(Path(__file__).resolve().parent), timeout=5)
         return r.stdout.strip() if r.returncode == 0 else "unknown"
-    except Exception:
+    except (subprocess.SubprocessError, OSError):
         return "unknown"
 
 def _map_digests(cfg: Config) -> dict:
@@ -624,6 +632,6 @@ def _audit_has_mint_evidence(cfg: Config, *, bid: str, cid: str, run_id: str) ->
         return False
     try:
         text = path.read_text()
-    except Exception:
+    except OSError:
         return False
     return any(tok and tok in text for tok in (bid, cid, run_id))

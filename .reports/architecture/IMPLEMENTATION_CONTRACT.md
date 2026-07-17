@@ -77,7 +77,7 @@ at `fcffa73`:**
 
 ```python
 # tests/test_internal_prints_routed.py
-_CLI_PRINT_COUNT = 165        # ← 147 at contract freeze, then 158, now 165. It has rotted TWICE. See below.
+_CLI_PRINT_COUNT = 168        # ← 147 at contract freeze, then 158, 165, now 168 (canary verbs). It has rotted THREE times. See below.
 assert len(_print_call_nodes(_SRC / "cli.py")) == _CLI_PRINT_COUNT   # ← EQUALITY, not a ceiling
 ```
 

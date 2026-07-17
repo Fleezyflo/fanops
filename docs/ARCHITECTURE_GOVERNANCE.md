@@ -4,7 +4,7 @@
 
 # FanOps — Architecture & Implementation Governance
 
-**Source fingerprint `fb73340f7732bb43` · generator `arch/1.0.0`**
+**Source fingerprint `9ff8e94eb7dd5d27` · generator `arch/1.0.0`**
 
 Regenerate: `python -m tools.arch regen`
 
@@ -17,7 +17,7 @@ Regenerate: `python -m tools.arch regen`
 | | |
 |---|---|
 | Modules | **134** |
-| Compile-time import edges (G1) | **564** |
+| Compile-time import edges (G1) | **565** |
 | Lazy (in-function) edges | **337** |
 | Typing-only edges | 7 |
 | Non-trivial compile-time SCCs | **1** |
@@ -70,7 +70,7 @@ Regenerate: `python -m tools.arch regen`
 
 ## 4. The ratchets — mechanically enforced in CI today
 
-- `cli.py` `print()` count — **declared by the test: 165** · **measured: 168** (an *exact-equality* budget shared by three slices)
+- `cli.py` `print()` count — **declared by the test: 168** · **measured: 168** (an *exact-equality* budget shared by three slices)
 - Zero-`print()` modules: 9
 - Silent-broad-`except` baseline: 49 files
 

@@ -1304,7 +1304,7 @@ same PR, so DC-3 stays green.
 - **Live branch protection** re-probed at `2026-07-15T14:53:38Z` — **identical** to the rev-2 probe
   (`unit`, `e2e`; strict; 0 reviews; code-owner false; admins not enforced; force-push/deletions off;
   conversation-resolution off).
-- **Anchor verification (immediately pre-delivery):** `_CLI_PRINT_COUNT=165`
+- **Anchor verification (immediately pre-delivery):** `_CLI_PRINT_COUNT=168`
   (`test_internal_prints_routed.py:21`); swallow baseline "49 files, 203 handlers"
   (`test_swallow_ratchet.py:77`); conftest `_LEAKY_ENV:46`, `_hermetic_publish_env:117`,
   `REQUIRE_STUDIO:83`, `require_e2e/rep.outcome:95-102`; arch policy severities 18/2/1 (generated
