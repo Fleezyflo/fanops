@@ -115,9 +115,12 @@ def _queued(cfg, pid="p1", cid="c1", *, public_url="dryrun://p1"):
     f = cfg.clips / f"{cid}.mp4"; f.parent.mkdir(parents=True, exist_ok=True); f.write_bytes(b"VIDEO")
     with Ledger.transaction(cfg) as led:
         led.add_clip(Clip(id=cid, parent_id="mom_1", path=str(f), state=ClipState.queued))
+        # created_at: required to publish (report 11 §8.4) — the per-incarnation discriminator in the
+        # x-request-id. Only the tests that get PAST the upload reach that refusal (the rest stub presign to
+        # fail first), but the fixture must match what production mints: every mint site stamps it.
         led.add_post(Post(id=pid, parent_id=cid, account="tk", account_id="z1", platform=Platform.tiktok,
                           caption="c", scheduled_time="2020-01-01T00:00:00Z", state=PostState.queued,
-                          public_url=public_url))
+                          created_at="2026-07-16T13:31:00Z", public_url=public_url))
     return f
 
 
