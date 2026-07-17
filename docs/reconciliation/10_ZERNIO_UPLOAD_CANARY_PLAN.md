@@ -1,11 +1,16 @@
 # 10 — Zernio Upload-Only Canary — Plan and Result
 
-> **Rev 3 — 2026-07-17. EXECUTED.** Gate token `APPROVE UPLOAD CANARY` returned; the canary ran at PR head
-> `b81b4ed8…` with runner `ca31aaf1…` and returned **`UPLOAD CONTRACT VERIFIED`** — **the result is §10.**
-> §§0-9 are the plan as approved, retained verbatim as the pre-execution record.
+> **Rev 4 — 2026-07-17. EXECUTED.** Gate token `APPROVE UPLOAD CANARY` returned; the canary ran once and the
+> supported claim is **`LIVE UPLOAD CONTRACT VERIFIED`** — **the result is §10, its exact boundary is
+> §10.4.** §§0-9 are the plan as approved, retained verbatim as the pre-execution record.
 >
-> *(Rev 2's header read "NOT EXECUTED. No Zernio API call has been made." That was true when written and is
-> **now false** — superseded by §10. Left recorded here rather than deleted: it is what was approved.)*
+> **Rev 4 corrects an overclaim in Rev 3**, which read the result as byte identity. The canary read **no
+> stored bytes** and computed **no hash**; it proved *a retrievable media object of the expected declared
+> length and media type at the server-returned URL* — **not byte-level identity** (§10.4). The canary is
+> **not** rerun to strengthen this; the existing live proof settles the upload-contract decision.
+>
+> *(Rev 2's header read "NOT EXECUTED. No Zernio API call has been made." True when written, **now false** —
+> superseded by §10. Left recorded rather than deleted: it is what was approved.)*
 
 | Field | Value |
 |---|---|
@@ -254,7 +259,7 @@ produced a **false `UPLOAD CONTRACT VERIFIED`** from a check that *recorded* `Co
 | Check | Rule | Why this one |
 |---|---|---|
 | **Status** | must be **200 or 206** — not "any 2xx" | 204/205 carry no body; accepting them proves nothing |
-| **Stored length** | **206** → `Content-Range: bytes 0-0/<total>`, `total` **== the PUT byte count** · **200** → `Content-Length` **== the PUT byte count** | **The load-bearing invariant.** The only header that ties the retrievable object back to *the exact bytes we PUT*. An error page fails it on length alone |
+| **Declared length** | **206** → `Content-Range: bytes 0-0/<total>`, `total` **== the PUT byte count** · **200** → `Content-Length` **== the PUT byte count** | **The load-bearing invariant** — and a **declared** one. It is what the server *reports* about the object, not a measurement of it: the body is never read, so this rules out an error page (which fails on length alone) but **cannot establish byte identity**. See §9.4 |
 | **Not an error document** | `Content-Type` must not be `text/html` / `*/xml` | belt-and-braces against a 200-with-apology-page |
 | **`Content-Type` is `video/*`** | **recorded DEVIATION, not a failure** | `contentType` *is* part of the presign contract, so a mismatch is a real finding — but a length-correct object served as `octet-stream` **is still our file**. Failing the canary there would answer a different question than the one it exists to ask |
 
@@ -530,9 +535,11 @@ redacted evidence, and the gate is re-presented.
 
 ## 10. RESULT — executed 2026-07-17, gate token `APPROVE UPLOAD CANARY`
 
-> # ✅ UPLOAD CONTRACT VERIFIED
+> # ✅ LIVE UPLOAD CONTRACT VERIFIED
 >
-> Runner `ca31aaf1…` · PR head `b81b4ed8…` · exit 0 · **3 requests, no aborts, no retries.**
+> Runner `ca31aaf1…` · exit 0 · **3 requests, no aborts, no retries.** Exact boundary: **§10.4** — this is
+> *not* a byte-identity claim. (The runner's own literal stdout string is `UPLOAD CONTRACT VERIFIED`; the
+> **supported claim** is the qualified one above.)
 
 Report 09 §11.5's named residual — *"contract read from the spec, never exercised live"* — is **CLOSED**.
 The presign + signed PUT contract is no longer a claim about a server; it is a measurement of one.
@@ -541,43 +548,91 @@ The presign + signed PUT contract is no longer a claim about a server; it is a m
 |---|---|---|
 | 1 | presign → 2xx with **both** `uploadUrl` and `publicUrl` | ✅ |
 | 2 | signed PUT → 2xx | ✅ |
-| 3 | `publicUrl` accessible | ✅ **206** `Content-Range: bytes 0-0/54770` |
+| 3 | `publicUrl` accessible | ✅ **206**, `Content-Range` total **54770** == the asset size — **declared, not measured** (§10.4) |
 | 4 | no `Authorization` on the PUT | ✅ asserted on the outgoing request |
 | 5 | no secret in any sink | ✅ swept: no API key, no `X-Amz-*` value, no `uploadUrl`, no `@` |
 | 6 | `queued == 0` | ✅ at **all five** checkpoints |
 | 7 | the same four `failed` ids | ✅ unchanged |
 | 8 | no post created | ✅ the post-creation path was never requested |
 
-**The object round-tripped byte-exactly**: `Content-Range: bytes 0-0/54770` == the 54,770-byte asset PUT.
-`Content-Type: video/mp4` was **preserved** — presign's `contentType` survives read-back, so **no deviation
-was recorded**. Asset sha256 `15987301315bd793…`, `video/mp4`, 54,770 bytes, 2.000000 s.
+**A retrievable media object of the expected declared length and media type exists at the server-returned
+URL.** `Content-Range: bytes 0-0/54770` reports a total equal to the 54,770-byte asset PUT, and
+`Content-Type: video/mp4` matches presign's `contentType` on read-back, so **no deviation was recorded**.
+Asset sha256 `15987301315bd793…`, `video/mp4`, 54,770 bytes, 2.000000 s. **This is not byte identity —
+§10.4.**
+
+> ⛔ **RETRACTED:** *"The object round-tripped byte-exactly."* **Overclaim.** See §10.4.
 
 Ledger posts digest `dd1677e62654a2aa…` — **identical at all five checkpoints** (baseline, before each of the
 three stages, after completion). `FANOPS_CORPUS_AUTO=0` at each. Credential source: **`env-fallback`**
 (keyring holds no `ZERNIO_API_KEY`), so §4.3's keyring branch was not exercised live — it is proven only by
 the offline control.
 
-### 10.1 What the canary discovered that no document said
+### 10.1 The upload host is not the serving host
 
-**Zernio's media storage is Cloudflare R2, and the upload host is not the serving host.**
+**`[OBS]` — what was observed, once, on 2026-07-17:**
 
 | | |
 |---|---|
-| `uploadUrl` host | `late-media.<account>.r2.cloudflarestorage.com` — Cloudflare **R2**, S3-compatible presign |
-| `publicUrl` host | `media.zernio.com` — a **different** host |
-| Signed params | `X-Amz-Algorithm, X-Amz-Content-Sha256, X-Amz-Credential, X-Amz-Date, X-Amz-Expires, X-Amz-Signature, X-Amz-SignedHeaders` |
+| `uploadUrl` hostname | ended in **`r2.cloudflarestorage.com`** (`late-media.<account>.r2.cloudflarestorage.com`) |
+| `publicUrl` hostname | **`media.zernio.com`** |
+| Relationship | **the upload and serving hosts were different** |
+| Signed params present | `X-Amz-Algorithm, X-Amz-Content-Sha256, X-Amz-Credential, X-Amz-Date, X-Amz-Expires, X-Amz-Signature, X-Amz-SignedHeaders` |
 
-The OpenAPI spec (S0) types `uploadUrl`/`publicUrl` as opaque strings and never says they differ in host.
-**A design that assumed one host, or that derived `publicUrl` from `uploadUrl`, would be wrong** — and the
-shipped code is right for the right reason: it returns the server's `publicUrl` verbatim and never parses
-the PUT target. This also vindicates §4.2's full-string destination pin over a hostname check: a hostname
-rule keyed to `zernio.com` would have **refused the legitimate R2 PUT.**
+**`[INFER]` — what that supports:** the upload hostname **strongly indicates Cloudflare R2-compatible
+storage**.
+
+> **Not claimed:** Zernio's storage architecture. One hostname from one presign response is not an
+> architecture. It does not establish what backs `media.zernio.com`, whether R2 is used for all media or all
+> tenants, whether the hostname is stable, or whether a CDN, proxy, or migration sits behind either name.
+
+**`[CONCLUSION]` — the engineering rule, which needs only the `[OBS]`:**
+
+- FanOps must treat `uploadUrl` and `publicUrl` as **opaque server-returned values**;
+- it must **not derive one from the other**;
+- it must **not require both to use the same hostname**.
+
+The OpenAPI spec (S0) types both as opaque strings and never says they differ in host. The shipped code
+already obeys this — it returns the server's `publicUrl` verbatim and never parses the PUT target — and it
+is right regardless of who runs the storage. This also vindicates §4.2's full-string destination pin over a
+hostname check: a hostname rule keyed to `zernio.com` would have **refused the legitimate PUT**.
+
+### 10.4 What "VERIFIED" does and does not mean — the byte-identity boundary
+
+> ⛔ **RETRACTED, everywhere it appeared:** *"round-tripped byte-exactly"* · *"proves the retrievable object
+> is the exact bytes sent"* · any equivalent byte-for-byte identity claim.
+
+**The precise supported claim is `LIVE UPLOAD CONTRACT VERIFIED`.** The canary established:
+
+- presign returned `uploadUrl` and `publicUrl`;
+- the signed PUT succeeded;
+- `publicUrl` returned **HTTP 206**;
+- `Content-Range` reported a **total equal to the uploaded asset size**;
+- `Content-Type` was **`video/mp4`**;
+- **no body bytes were consumed**;
+- **no content hash or byte-for-byte comparison was performed**.
+
+**Therefore it proved: a retrievable media object of the expected declared length and media type exists at
+the server-returned URL. It did not prove byte-level identity.**
+
+**Why the overclaim was wrong, mechanically.** The request was `Range: bytes 0-0` with `stream=True`; the
+body was never iterated and the connection was closed immediately (§4.1) — **the canary did not read even
+the one byte it asked for.** `Content-Range: bytes 0-0/54770` is a **header the server emits**, i.e. a
+*declaration* about the object, not a measurement of it. Length and media type are what the server *says*;
+nothing compared stored bytes to sent bytes, because nothing retrieved stored bytes.
+
+**This is sufficient for the decision it exists to inform.** The question was whether `(method, path)` is
+routed and honoured — the 405 was a **routing** verdict, and routing is exactly what presign + signed PUT +
+a 206 at `publicUrl` proves. Byte identity would answer a *different* question (storage corruption), one the
+405 never raised. **The canary is not rerun to strengthen this claim**: a stronger claim is not needed, and
+a second live call would spend real risk on a question that is not blocking.
 
 ### 10.2 What this does NOT establish — unchanged
 
-**`UPLOAD CONTRACT VERIFIED` is the entire claim.** It remains a statement about one PUT of one colour-bar
-file. It does **not** establish social posting, production publishing recovered, backlog recovery ready, or
-idempotency. **`x-request-id` + `existingPost` + 409 remains MANDATORY before the first production requeue.**
+**`LIVE UPLOAD CONTRACT VERIFIED` is the entire claim**, bounded by §10.4. It remains a statement about one
+PUT of one colour-bar file, whose stored bytes were never read. It does **not** establish byte identity,
+social posting, production publishing recovered, backlog recovery ready, or idempotency. **`x-request-id` +
+`existingPost` + 409 remains MANDATORY before the first production requeue.**
 
 ### 10.3 Residual
 
@@ -587,7 +642,8 @@ permanent. No private, unreleased, or catalogue content was exposed at any point
 
 ## 11. Gate — CLOSED
 
-**Executed under `APPROVE UPLOAD CANARY`, 2026-07-17. Result: `UPLOAD CONTRACT VERIFIED` (§10).**
+**Executed under `APPROVE UPLOAD CANARY`, 2026-07-17. Result: `LIVE UPLOAD CONTRACT VERIFIED` (§10), bounded
+by §10.4. Not to be rerun.**
 
 The canary was the only remaining way to close report 09 §11.5's residual: *"contract read from the spec,
 never exercised live."* It could not publish, could not touch the ledger, could not touch a parked or failed

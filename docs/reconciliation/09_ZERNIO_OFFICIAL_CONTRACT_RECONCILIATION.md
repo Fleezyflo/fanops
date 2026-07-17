@@ -1640,18 +1640,30 @@ and the operator hold that follows from it.
 > ⛔ **SUPERSEDED:** *"The fix is not yet proven against the live 405."* True when written; **false since
 > 2026-07-17**.
 
-The upload canary ran under the `APPROVE UPLOAD CANARY` gate (report 10 §10) and returned **`UPLOAD CONTRACT
-VERIFIED`**: presign → 2xx with `uploadUrl` + `publicUrl`; signed PUT → 2xx; `publicUrl` → **206**
-`Content-Range: bytes 0-0/54770`, byte-exactly the asset PUT, served as `video/mp4`. **§11.5's residual —
-*"contract read from the spec, never exercised live"* — is closed.** The 405 pair is replaced by a pair the
-server actually honours.
+The upload canary ran under the `APPROVE UPLOAD CANARY` gate (report 10 §10) and returned **`LIVE UPLOAD
+CONTRACT VERIFIED`**: presign → 2xx with `uploadUrl` + `publicUrl`; signed PUT → 2xx; `publicUrl` → **206**
+with a `Content-Range` total equal to the uploaded asset size, `Content-Type: video/mp4`. **§11.5's residual
+— *"contract read from the spec, never exercised live"* — is closed.** The 405 pair is replaced by a pair
+the server honours, which is precisely what a **routing** verdict required.
 
-**What the canary found that no source stated (report 10 §10.1):** Zernio's media storage is **Cloudflare
-R2**, and **the upload host is not the serving host** — `uploadUrl` is
-`late-media.<account>.r2.cloudflarestorage.com`, `publicUrl` is `media.zernio.com`. S0 types both as opaque
-strings and never says they differ. The shipped code is right for the right reason: it returns the server's
-`publicUrl` verbatim and **never parses the PUT target**. A design that assumed one host, or derived
-`publicUrl` from `uploadUrl`, would have been wrong.
+> ⛔ **RETRACTED:** this section previously read *"byte-exactly the asset PUT."* **Overclaim.** The canary
+> requested `Range: bytes 0-0`, never iterated the body, and computed no hash — **it read no stored bytes at
+> all.** `Content-Range` is a *declaration* by the server, not a measurement. **Proved: a retrievable media
+> object of the expected declared length and media type at the server-returned URL. Did NOT prove byte-level
+> identity** (report 10 §10.4). The canary is **not** rerun to strengthen this: byte identity answers a
+> storage-corruption question the 405 never raised.
+
+**What the canary found that no source stated (report 10 §10.1):**
+
+- **`[OBS]`** — the `uploadUrl` hostname ended in **`r2.cloudflarestorage.com`**; the `publicUrl` hostname
+  was **`media.zernio.com`**; **the upload and serving hosts were different**.
+- **`[INFER]`** — the upload hostname **strongly indicates Cloudflare R2-compatible storage**. *Zernio's
+  storage architecture is **not** claimed: one hostname from one presign response is not an architecture.*
+- **`[CONCLUSION]`** — needing only the `[OBS]`: FanOps must treat `uploadUrl` and `publicUrl` as **opaque
+  server-returned values**, must **not derive one from the other**, and must **not require both to use the
+  same hostname**. S0 types both as opaque strings and never says they differ. The shipped code already
+  obeys this — it returns the server's `publicUrl` verbatim and **never parses the PUT target** — and is
+  right regardless of who runs the storage.
 
 **Still not established, unchanged:** social posting · production publishing recovered · backlog recovery
 ready · **idempotency**. The upload contract is proven; `POST /posts` was never called. **`x-request-id` +
