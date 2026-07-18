@@ -63,8 +63,8 @@ Production acceptance is only met when both are proven on real work:
 ## Unresolved blockers
 
 - **B1** *(Phase 5)* — DC-3 (live-vs-declared reconciliation) is wired into no workflow and needs an
-  operator-provisioned admin token. `docs/ci/CI_BRANCH_PROTECTION_MUTATIONS.md` currently lists it as a
-  prerequisite for M1–M3.
+  operator-provisioned admin token. Until it exists, reconciliation after each mutation is the **manual
+  read-only re-probe** prescribed by `docs/ci/CI_BRANCH_PROTECTION_MUTATIONS.md`, not an automated check.
 - **B2** *(Phase 5)* — the de-duplication inventory is understated; see P5-1.
 - **B3** *(external to every phase)* — the untracked reconstruction documents
   `docs/reconciliation/01_…` … `05_…` are **not safely committable in their current state**: one carries
