@@ -182,3 +182,4 @@ re-approves. Citing the pre-amendment blob would be citing an authority that no 
 | 2026-07-18T17:05:00Z | approved | digest=sha256:d6e268108f63ccfaaa300e430a087a32cd6298b0793f0f608ff366da982cf607; token=APPROVE PHASE 3B CHANGE CONTRACT COMPILER IMPLEMENTATION; adr_0105_renewed=sha256:dd125cb18b7daf2174242a1ffad2f57fd4d19df8cdd6df9d9317db3d496955ac; operator=operator |
 | 2026-07-18T17:10:00Z | implementation_started | note=the implementation preceded this record; the event is written where the lifecycle requires it |
 | 2026-07-19T13:00:00Z | approved | digest=sha256:cbb8ed59c0db34161e78968ff0172697275ce20fd33ef655189197bfb8607542; token=APPROVE GOVERNANCE AMENDMENT; adr_0105_renewed=sha256:e757fb6e01d3e6f143f6d6af9f45bce780331562adb07149b55857baefc5875a; operator=operator |
+| 2026-07-19T13:05:00Z | merge_approved | parent_sha=f31302aaaab84a45418a488c2131eee08960cc9d; token=APPROVE GOVERNANCE AMENDMENT; route=unwitnessed; operator=operator |
