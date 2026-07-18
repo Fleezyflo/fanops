@@ -183,3 +183,5 @@ re-approves. Citing the pre-amendment blob would be citing an authority that no 
 | 2026-07-18T17:10:00Z | implementation_started | note=the implementation preceded this record; the event is written where the lifecycle requires it |
 | 2026-07-19T13:00:00Z | approved | digest=sha256:cbb8ed59c0db34161e78968ff0172697275ce20fd33ef655189197bfb8607542; token=APPROVE GOVERNANCE AMENDMENT; adr_0105_renewed=sha256:e757fb6e01d3e6f143f6d6af9f45bce780331562adb07149b55857baefc5875a; operator=operator |
 | 2026-07-19T13:05:00Z | merge_approved | parent_sha=f31302aaaab84a45418a488c2131eee08960cc9d; token=APPROVE GOVERNANCE AMENDMENT; route=unwitnessed; operator=operator |
+| 2026-07-19T13:30:00Z | merged | merge_sha=2bcb0641e0b51631ccd7916ccb79dc5283ca774f |
+| 2026-07-19T13:35:00Z | accepted | merge_sha=2bcb0641e0b51631ccd7916ccb79dc5283ca774f, decision=accepted, evidence=selftest 85/85 exit 0, verifier continue/OK at pre+head+merge, tools.arch ci exit 0 on the tracked tree with CI gate green, tools.ci static exit 0, scope 20/20 declared with 0 unauthorized and 0 undelivered, date=2026-07-19, operator=operator |
