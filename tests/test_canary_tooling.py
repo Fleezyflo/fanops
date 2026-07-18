@@ -476,6 +476,29 @@ def test_crash_after_render_rerun_reuses_valid_final_and_sweeps_orphan_temp(tmp_
     assert len(Ledger.load(cfg).clips) == 1
 
 
+def test_malformed_run_record_is_refused_not_silently_overwritten(tmp_path, stub_render):
+    # an ABSENT record is recoverable; an existing but MALFORMED one is a tamper signal -> refuse
+    cfg = Config(root=tmp_path); _seed(cfg); media = _media(tmp_path)
+    r = _prep(cfg, media); assert r.ok
+    rec_path = Path(r.detail["run_dir"]) / "canary-run.json"
+    rec_path.write_text("{not valid json")
+    r2 = _prep(cfg, media)
+    assert not r2.ok and ("malformed" in r2.error.lower() or "MISMATCH" in r2.error)
+    assert rec_path.read_text() == "{not valid json"      # NOT overwritten
+    _rec, err = canary._read_run_record(cfg, r.detail["run_id"])
+    assert err is not None                                # missing (None, None) is distinguished from malformed
+
+
+def test_malformed_orphan_record_refuses_a_fresh_prepare(tmp_path, stub_render):
+    cfg = Config(root=tmp_path); _seed(cfg); media = _media(tmp_path)
+    plan = _prep(cfg, media, plan_only=True)
+    run_dir = Path(plan.detail["run_dir"]); run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "canary-run.json").write_text("{bad json")
+    r = _prep(cfg, media)
+    assert not r.ok and "MALFORMED" in r.error.upper()
+    assert Ledger.load(cfg).sources == {}
+
+
 def test_orphan_mismatched_fingerprint_refused(tmp_path, stub_render):
     cfg = Config(root=tmp_path); _seed(cfg); media = _media(tmp_path)
     plan = _prep(cfg, media, plan_only=True)
