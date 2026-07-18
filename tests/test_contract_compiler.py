@@ -424,13 +424,32 @@ def test_the_bootstrap_contract_grants_only_design_and_implement():
     assert set(d.value("authorized_actions")) == {"design", "implement"}
 
 
+def _contract_refs(parsed, default_head="HEAD"):
+    """The two commits a contract's change actually spans, read OFF THE ARTIFACT.
+
+    A contract governs ONE change: a fixed diff between two fixed commits. Both are recorded in its
+    own lifecycle — `created.base_sha`, and once it lands, `merged`/`accepted`'s `merge_sha`. Any
+    formulation with a moving end is wrong in one direction or the other, and both were live
+    defects: `origin/main...HEAD` empties the diff the moment the change lands, and `base_sha...HEAD`
+    grows it the moment ANYTHING ELSE lands. Reading both ends from the artifact is the only version
+    that stays true for the whole life of the contract, including forever after acceptance.
+    """
+    base = next((e.get("base_sha") for e in parsed.events
+                 if e.kind == "created" and e.get("base_sha")), "origin/main")
+    head = next((e.get("merge_sha") for e in reversed(parsed.events)
+                 if e.kind in ("accepted", "merged") and e.get("merge_sha")), default_head)
+    return base, head
+
+
 def test_the_bootstrap_contract_declares_this_exact_patch():
     """AC-28 / ADR-0105 §5.3. The declared surfaces must be the surfaces, with nothing extra."""
-    declared = {r["path"] for r in parse.parse(BOOTSTRAP.read_bytes()).value("expected_surfaces")}
-    r = subprocess.run(["git", "diff", "--name-only", "origin/main...HEAD"], cwd=_ROOT,
+    parsed = parse.parse(BOOTSTRAP.read_bytes())
+    declared = {r["path"] for r in parsed.value("expected_surfaces")}
+    base, head = _contract_refs(parsed)
+    r = subprocess.run(["git", "diff", "--name-only", f"{base}...{head}"], cwd=_ROOT,
                        capture_output=True, text=True, timeout=60)
     if r.returncode != 0:
-        pytest.skip("origin/main is not resolvable in this checkout")
+        pytest.skip(f"{base}...{head} is not resolvable in this checkout")
     changed = {f for f in r.stdout.split() if f}
     if not changed:
         pytest.skip("no diff against origin/main (the change has already landed)")
@@ -463,17 +482,17 @@ def test_ac21_passes_once_the_operator_approval_is_simulated():
     parsed = parse.parse(raw)
     d = parsed.digest
 
-    # THE BASE IS THE ONE THE CONTRACT RECORDS, NOT `origin/main`. A contract governs the change
-    # from its own `created.base_sha`; `origin/main` only coincided with that while the change was
-    # un-landed. Once it merged, `origin/main...HEAD` became a one-file MONOTONE lifecycle append —
-    # which §3.6 deliberately keeps OUTSIDE `T3` — so the derived trait set was empty, the declared
-    # one was `{governance}`, and the verifier correctly answered `CL-2`. Second time this test has
-    # assumed the world would hold still (see the timestamp note below); reading the base off the
-    # artifact makes the assertion true in every phase of the contract's life instead of one.
-    base_ref = next((e.get("base_sha") for e in parsed.events
-                     if e.kind == "created" and e.get("base_sha")), "origin/main")
-    if real.resolve(base_ref) is None:
-        pytest.skip(f"the contract's recorded base {base_ref[:12]} is not in this checkout")
+    # BOTH ENDS COME OFF THE ARTIFACT — see `_contract_refs`. This test has now assumed the world
+    # would hold still three times: a hardcoded timestamp, then `origin/main` as the base (which
+    # emptied the diff once the change landed, deriving no traits and correctly answering `CL-2`),
+    # then a moving `HEAD` (which GREW the diff the moment any later change landed, correctly
+    # answering `ST-1` on files this contract never claimed). Each fix was right about its own case
+    # and wrong about the class. A contract's change is a fixed diff between two fixed commits, and
+    # both of them are written down in its lifecycle; nothing else is stable enough to assert on.
+    base_ref, head_ref = _contract_refs(parsed)
+    for ref in (base_ref, head_ref):
+        if real.resolve(ref) is None:
+            pytest.skip(f"the contract's recorded ref {ref[:12]} is not in this checkout")
 
     # Two states must both work, and the first version of this test only handled one. It appended a
     # HARDCODED timestamp, which was fine while the last event was `created` — and went red the
@@ -506,7 +525,7 @@ def test_ac21_passes_once_the_operator_approval_is_simulated():
     ports = Ports(repo=_Approved(real))
     got = {}
     for phase in ("pre-implementation", "at-head", "merge-gate"):
-        dec, _ = run_pipeline(ports, p, base=base_ref, head="HEAD", pr=None, phase=phase)
+        dec, _ = run_pipeline(ports, p, base=base_ref, head=head_ref, pr=None, phase=phase)
         got[phase] = (dec.outcome, dec.rule)
 
     assert got["pre-implementation"] == ("continue", "OK"), got
