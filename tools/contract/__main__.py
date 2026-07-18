@@ -20,10 +20,18 @@ frozen into plain data before `decide()` sees it.
     S1 load · S2 split+digest · S3 parse · S4 admit · S5 derive · S6 validate · S7 gates ·
     S8 decide · S9 report
 
-WHICH BYTES ARE AUTHORITATIVE. The gate-facing verbs (`verify`, `scope`) read the contract BLOB at
-the head — ADR-0105 §11.1 makes the blob at the approved head authoritative, and the working tree is
-never authoritative for a gate. The authoring verbs (`compile`, `digest`, `state`) read the working
-tree on purpose: they exist to help someone write a contract that does not exist at any ref yet.
+WHICH BYTES ARE AUTHORITATIVE, STATED EXACTLY. `verify` and `scope` read the contract BLOB at `--head`
+when one is given — ADR-0105 §11.1 makes the blob at the approved head authoritative for a GATE — and
+read the WORKING TREE when it is not, because `--head` defaults to `None`. Both paths are supported
+and neither is a mistake: a gate passes `--head`, an author checking their edits does not.
+
+An earlier wording of this paragraph said only the first half, and that omission was load-bearing.
+`main_blob` — the landed copy every append-only check compares against — used to be fetched only
+`if head is not None`, which read as consistent with a docstring claiming `--head` was always in play.
+It was not: the DEFAULT command took the working-tree path with the comparison silently disabled, so
+`LIFECYCLE-REWRITTEN` and `DECL-DIVERGED` could not be produced by the shipped CLI at all. The landed
+copy is now read INDEPENDENTLY of `head`, because *which artifact is under evaluation* and *whether a
+landed copy exists to compare it against* are different questions and coupling them lost one of them.
 """
 from __future__ import annotations
 
@@ -38,6 +46,10 @@ from .model import EXIT_CONTINUE, EXIT_UNTRUSTWORTHY, DecisionInput, Derived
 from .parse import BOUNDARY, digest as digest_of, parse
 
 CONTRACTS = "docs/contracts"
+
+# The landed record every append-only check compares against (ADR-0105 §3.6, §4.4). A remote-TRACKING
+# ref, so the read is git-local: no network, no `gh`, no GitHub dependence in a git integrity rule.
+MAIN_REF = "origin/main"
 
 
 class Ports:
@@ -102,6 +114,28 @@ def run(ports: Ports, path: str, *, base: str, head: str | None, pr: int | None,
     hot, hot_problems = classify.hot_files_from(REPO / ".agents" / "lanes.json")
     unverifiable += hot_problems
 
+    # The landed copy, read ONCE and read INDEPENDENTLY of `head`. Three outcomes, and the third is
+    # the one the old wiring collapsed into the second:
+    #
+    #   ref resolves, path present  → compare (the append-only check actually runs)
+    #   ref resolves, path absent   → the contract has not landed; nothing to compare; NOT a failure
+    #   ref does not resolve        → we cannot know which of the two it is → UNVERIFIABLE, fail closed
+    #
+    # `blob()` alone cannot separate rows 2 and 3 — it answers `None` to both — so `resolve()` is a
+    # second read of a DIFFERENT fact, not a duplicate of the same one. S7's `merged` then reuses this
+    # result rather than asking git a third time, so the tool cannot answer "has this landed?" two
+    # different ways in one run.
+    main_blob: bytes | None = None
+    try:
+        if ports.repo.resolve(MAIN_REF) is None:
+            unverifiable.append(f"{MAIN_REF} is unresolvable, so the landed lifecycle cannot be "
+                                f"compared — landed-record integrity is UNVERIFIABLE, which ADR-0105 "
+                                f"§10 does not treat as satisfied")
+        else:
+            main_blob = ports.repo.blob(MAIN_REF, path)
+    except PortError as exc:
+        unverifiable.append(f"the landed contract at {MAIN_REF} could not be read: {exc}")
+
     non_monotone = _non_monotone_contracts(ports, changed or [], base, head_ref)
     declared_live = "live" in decl.traits
     trigs = classify.triggers(changed, impact_classification=classification, hot_files=hot,
@@ -159,7 +193,6 @@ def run(ports: Ports, path: str, *, base: str, head: str | None, pr: int | None,
                       evidence=tuple(evidence))
 
     # ── S6 validate ─────────────────────────────────────────────────────────────────────────
-    main_blob = ports.repo.blob("origin/main", path) if head is not None else None
     diags = (validate.v_schema(decl, stem, path.startswith(CONTRACTS + "/"))
              + validate.v_semantic(decl, generated)
              + validate.v_authority(auth_problems)
@@ -178,7 +211,7 @@ def run(ports: Ports, path: str, *, base: str, head: str | None, pr: int | None,
     if review_problem:
         diags += validate.v_dependency([review_problem])
     head_sha = ports.repo.resolve(head_ref) or ""
-    merged = ports.repo.contains("origin/main", path)
+    merged = main_blob is not None                 # the S5 read; never a second, disagreeable one
     principals, principal_problem = lifecycle.read_principals(ports.reviews, pr_num)
     if principal_problem:
         diags += validate.v_dependency([principal_problem])

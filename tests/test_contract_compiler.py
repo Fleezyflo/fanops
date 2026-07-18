@@ -424,13 +424,32 @@ def test_the_bootstrap_contract_grants_only_design_and_implement():
     assert set(d.value("authorized_actions")) == {"design", "implement"}
 
 
+def _contract_refs(parsed, default_head="HEAD"):
+    """The two commits a contract's change actually spans, read OFF THE ARTIFACT.
+
+    A contract governs ONE change: a fixed diff between two fixed commits. Both are recorded in its
+    own lifecycle — `created.base_sha`, and once it lands, `merged`/`accepted`'s `merge_sha`. Any
+    formulation with a moving end is wrong in one direction or the other, and both were live
+    defects: `origin/main...HEAD` empties the diff the moment the change lands, and `base_sha...HEAD`
+    grows it the moment ANYTHING ELSE lands. Reading both ends from the artifact is the only version
+    that stays true for the whole life of the contract, including forever after acceptance.
+    """
+    base = next((e.get("base_sha") for e in parsed.events
+                 if e.kind == "created" and e.get("base_sha")), "origin/main")
+    head = next((e.get("merge_sha") for e in reversed(parsed.events)
+                 if e.kind in ("accepted", "merged") and e.get("merge_sha")), default_head)
+    return base, head
+
+
 def test_the_bootstrap_contract_declares_this_exact_patch():
     """AC-28 / ADR-0105 §5.3. The declared surfaces must be the surfaces, with nothing extra."""
-    declared = {r["path"] for r in parse.parse(BOOTSTRAP.read_bytes()).value("expected_surfaces")}
-    r = subprocess.run(["git", "diff", "--name-only", "origin/main...HEAD"], cwd=_ROOT,
+    parsed = parse.parse(BOOTSTRAP.read_bytes())
+    declared = {r["path"] for r in parsed.value("expected_surfaces")}
+    base, head = _contract_refs(parsed)
+    r = subprocess.run(["git", "diff", "--name-only", f"{base}...{head}"], cwd=_ROOT,
                        capture_output=True, text=True, timeout=60)
     if r.returncode != 0:
-        pytest.skip("origin/main is not resolvable in this checkout")
+        pytest.skip(f"{base}...{head} is not resolvable in this checkout")
     changed = {f for f in r.stdout.split() if f}
     if not changed:
         pytest.skip("no diff against origin/main (the change has already landed)")
@@ -463,17 +482,17 @@ def test_ac21_passes_once_the_operator_approval_is_simulated():
     parsed = parse.parse(raw)
     d = parsed.digest
 
-    # THE BASE IS THE ONE THE CONTRACT RECORDS, NOT `origin/main`. A contract governs the change
-    # from its own `created.base_sha`; `origin/main` only coincided with that while the change was
-    # un-landed. Once it merged, `origin/main...HEAD` became a one-file MONOTONE lifecycle append —
-    # which §3.6 deliberately keeps OUTSIDE `T3` — so the derived trait set was empty, the declared
-    # one was `{governance}`, and the verifier correctly answered `CL-2`. Second time this test has
-    # assumed the world would hold still (see the timestamp note below); reading the base off the
-    # artifact makes the assertion true in every phase of the contract's life instead of one.
-    base_ref = next((e.get("base_sha") for e in parsed.events
-                     if e.kind == "created" and e.get("base_sha")), "origin/main")
-    if real.resolve(base_ref) is None:
-        pytest.skip(f"the contract's recorded base {base_ref[:12]} is not in this checkout")
+    # BOTH ENDS COME OFF THE ARTIFACT — see `_contract_refs`. This test has now assumed the world
+    # would hold still three times: a hardcoded timestamp, then `origin/main` as the base (which
+    # emptied the diff once the change landed, deriving no traits and correctly answering `CL-2`),
+    # then a moving `HEAD` (which GREW the diff the moment any later change landed, correctly
+    # answering `ST-1` on files this contract never claimed). Each fix was right about its own case
+    # and wrong about the class. A contract's change is a fixed diff between two fixed commits, and
+    # both of them are written down in its lifecycle; nothing else is stable enough to assert on.
+    base_ref, head_ref = _contract_refs(parsed)
+    for ref in (base_ref, head_ref):
+        if real.resolve(ref) is None:
+            pytest.skip(f"the contract's recorded ref {ref[:12]} is not in this checkout")
 
     # Two states must both work, and the first version of this test only handled one. It appended a
     # HARDCODED timestamp, which was fine while the last event was `created` — and went red the
@@ -506,7 +525,7 @@ def test_ac21_passes_once_the_operator_approval_is_simulated():
     ports = Ports(repo=_Approved(real))
     got = {}
     for phase in ("pre-implementation", "at-head", "merge-gate"):
-        dec, _ = run_pipeline(ports, p, base=base_ref, head="HEAD", pr=None, phase=phase)
+        dec, _ = run_pipeline(ports, p, base=base_ref, head=head_ref, pr=None, phase=phase)
         got[phase] = (dec.outcome, dec.rule)
 
     assert got["pre-implementation"] == ("continue", "OK"), got
@@ -688,3 +707,181 @@ def test_no_verb_writes_into_the_repository():
         code = "\n".join(line for line in src.split("\n") if not line.strip().startswith("#"))
         found = [b for b in banned if b in code]
         assert found == [], f"{f.name} contains a write primitive {found} — every verb is read-only"
+
+
+# ── CC-2026-07-19 · shipped-CLI reachability for landed-lifecycle integrity ──────────────────
+#
+# `LIFECYCLE-REWRITTEN` was implemented, correct, and covered by `NC-C10b` — and the shipped command
+# could not produce it. `main_blob` was fetched only `if head is not None`, so the DEFAULT invocation
+# (the one contract success conditions name) read the working tree with the landed comparison
+# switched OFF, while `--head HEAD` switched it on but read the committed blob, where the tampering
+# is not. Neither supported invocation could see a rewritten landed row.
+#
+# A rule-level control cannot catch that BY CONSTRUCTION: it hands the rule its input directly, which
+# is exactly the step that was broken. So every case here drives `__main__.main(argv)` — argparse,
+# dispatch, the nine stages, the report and the exit-class mapping — against a real git repository.
+# Only the repository LOCATION is redirected; no port, rule or diagnostic is faked.
+_CLI_ADR = "docs/adr/0105-reusable-change-contract-architecture.md"
+_CLI_CONTRACT = "docs/contracts/CC-2026-07-18-fixture-minimal.md"
+
+
+def _git(repo, *args):
+    subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
+
+
+@pytest.fixture(scope="module")
+def cli_repo(tmp_path_factory):
+    """A real git repository with a LANDED contract on `origin/main`, carrying TWO lifecycle rows.
+
+    Two, not one, and that is load-bearing: with a single row `reversed()` is the identity and case E
+    would assert nothing while passing. `_life` refuses to run against fewer, so the fixture cannot
+    quietly regress into a vacuous one.
+
+    `origin/main` is made with `update-ref`, not a clone — the rule under test is git-local, and a
+    fixture that needed a remote would smuggle network dependence into the proof of that claim.
+    """
+    repo = tmp_path_factory.mktemp("cli_repo")
+    (repo / "docs" / "adr").mkdir(parents=True)
+    (repo / "docs" / "contracts").mkdir(parents=True)
+    (repo / ".agents").mkdir()
+    (repo / ".agents" / "lanes.json").write_text("{}", encoding="utf-8")
+    (repo / _CLI_ADR).write_text("# ADR-0105 (fixture)\n", encoding="utf-8")
+    (repo / "impact.json").write_text(json.dumps(
+        {"classification": "COMPATIBLE_CHANGE", "architecture": {}, "implementation": {},
+         "touched_src": [], "changed_files": []}), encoding="utf-8")
+    _git(repo, "init", "-q", "-b", "main")
+    _git(repo, "config", "user.email", "t@example.com")
+    _git(repo, "config", "user.name", "t")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "scaffold")
+
+    adr_blob = subprocess.run(["git", "rev-parse", f"HEAD:{_CLI_ADR}"], cwd=repo, check=True,
+                              capture_output=True, text=True).stdout.strip()
+    body = (FIXTURES / "valid_minimal.md").read_text(encoding="utf-8").replace(
+        "| ADR-0105 | docs/adr/0105-reusable-change-contract-architecture.md | fixture-not-resolved |",
+        f"| ADR-0105 | {_CLI_ADR} | {adr_blob} |")
+    (repo / _CLI_CONTRACT).write_text(body + "| 2026-07-18T09:30:00Z | binding | pr=1 |\n",
+                                      encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "land the contract")
+    _git(repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+    return repo
+
+
+def _cli(monkeypatch, capsys, repo, *extra):
+    """Drive the PRODUCTION entry point. `--phase pre` because lifecycle integrity is Stage A and
+    holds in every phase; at `head` the fixture would stop at `ST-3` (it carries no approval), which
+    would mask the very diagnostic these cases exist to observe."""
+    from tools.contract import __main__ as cli
+    from tools.contract.adapters import RepoPort
+    orig = cli.Ports
+    monkeypatch.setattr(cli, "REPO", repo)
+    monkeypatch.setattr(cli, "Ports", lambda **kw: orig(repo=RepoPort(repo), **kw))
+    code = cli.main(["verify", _CLI_CONTRACT, "--base", "origin/main", "--phase", "pre", "--json",
+                     "--impact-json", str(repo / "impact.json"), *extra])
+    return code, json.loads(capsys.readouterr().out)
+
+
+def _codes(payload):
+    return {d["code"] for d in payload["diagnostics"] if d["kind"] != "ok"}
+
+
+def _life(repo, mutate):
+    """Rewrite ONLY the lifecycle DATA ROWS of the working copy, preserving every other byte.
+
+    Non-row lines are carried through untouched so the identity mutation round-trips exactly; an
+    earlier version filtered blank lines and thereby tampered with the file it claimed to leave
+    alone, turning the clean case red for a reason that had nothing to do with the product.
+    """
+    p = repo / _CLI_CONTRACT
+    decl, _, life = p.read_bytes().partition(parse.BOUNDARY)
+    lines = life.decode().splitlines(keepends=True)
+    rows = [x for x in lines if x.startswith("| 20")]
+    assert len(rows) >= 2, f"the fixture must land >= 2 rows or C/D/E are vacuous (got {len(rows)})"
+    other = [x for x in lines if not x.startswith("| 20")]
+    p.write_bytes(decl + parse.BOUNDARY + ("".join(other) + "".join(mutate(rows))).encode())
+    return parse.parse(p.read_bytes()).digest
+
+
+def test_cli_A_valid_landed_lifecycle_passes(monkeypatch, capsys, cli_repo):
+    """A. The positive control. Without it, every case below could pass by breaking the tool."""
+    code, out = _cli(monkeypatch, capsys, cli_repo)
+    assert (code, out["decision"], out["rule"]) == (0, "continue", "OK"), out["diagnostics"]
+
+
+def test_cli_B_monotone_append_passes(monkeypatch, capsys, cli_repo):
+    """B. An APPEND is routine record-keeping, not a rewrite (§3.6). A check that could not tell the
+    two apart would make the lifecycle unwritable, so this is the case that bounds the fix."""
+    before = parse.parse((cli_repo / _CLI_CONTRACT).read_bytes()).digest
+    after = _life(cli_repo, lambda r: r + ["| 2026-07-18T10:00:00Z | binding | pr=2 |\n"])
+    try:
+        assert after == before, "an append must never move `D` (ADR-0105 §3)"
+        code, out = _cli(monkeypatch, capsys, cli_repo)
+        assert (code, out["rule"]) == (0, "OK"), out["diagnostics"]
+    finally:
+        _git(cli_repo, "checkout", "--", _CLI_CONTRACT)
+
+
+@pytest.mark.parametrize("case,mutate", [
+    ("C-rewritten", lambda r: r[:-1] + [r[-1].replace("pr=1", "pr=99")]),
+    ("D-deleted", lambda r: r[:-1]),
+    ("E-reordered", lambda r: list(reversed(r))),
+])
+def test_cli_CDE_tampered_landed_lifecycle_is_caught(monkeypatch, capsys, cli_repo, case, mutate):
+    """C/D/E. Rewrite, delete, reorder — none of which move `D`, because the lifecycle sits OUTSIDE
+    the digest by design. Before this contract all three returned `continue`/`OK` with exit 0."""
+    before = parse.parse((cli_repo / _CLI_CONTRACT).read_bytes()).digest
+    after = _life(cli_repo, mutate)
+    try:
+        assert after == before, f"{case}: the tamper must leave `D` untouched or it proves nothing"
+        code, out = _cli(monkeypatch, capsys, cli_repo)
+        assert code != 0, f"{case}: tampering must not exit 0 — {out['decision']}/{out['rule']}"
+        assert "LIFECYCLE-REWRITTEN" in _codes(out), f"{case}: got {sorted(_codes(out))}"
+        assert out["rule"] == "A5", f"{case}: expected the lifecycle-integrity row, got {out['rule']}"
+    finally:
+        _git(cli_repo, "checkout", "--", _CLI_CONTRACT)
+
+
+def test_cli_F_declaration_tampering_is_still_caught(monkeypatch, capsys, cli_repo):
+    """F. The pre-existing defence must survive. A declaration edit moves `D`, so it was already
+    caught by the digest; now the shipped CLI also names its cause instead of only its symptom."""
+    p = cli_repo / _CLI_CONTRACT
+    p.write_text(p.read_text(encoding="utf-8").replace("### objective", "### objective\n\nTAMPER.",
+                                                       1), encoding="utf-8")
+    try:
+        code, out = _cli(monkeypatch, capsys, cli_repo)
+        assert code != 0, out
+        assert "DECL-DIVERGED" in _codes(out), sorted(_codes(out))
+    finally:
+        _git(cli_repo, "checkout", "--", _CLI_CONTRACT)
+
+
+def test_cli_G_explicit_head_still_evaluates_the_committed_blob(monkeypatch, capsys, cli_repo):
+    """G. `--head` semantics are UNCHANGED. It evaluates the blob at that ref, so a working-tree-only
+    tamper is correctly invisible to it — ADR-0105 §11.1: a gate reads the blob.
+
+    This is the case that keeps the fix honest. It would have been easy to turn everything green by
+    quietly pointing `--head` at the working tree, and that would have broken the artifact contract
+    while every other assertion here still passed.
+    """
+    _life(cli_repo, lambda r: r[:-1])
+    try:
+        code, out = _cli(monkeypatch, capsys, cli_repo, "--head", "HEAD")
+        assert (code, out["rule"]) == (0, "OK"), out["diagnostics"]
+    finally:
+        _git(cli_repo, "checkout", "--", _CLI_CONTRACT)
+
+
+def test_cli_H_unresolvable_origin_main_fails_closed(monkeypatch, capsys, cli_repo):
+    """H. `origin/main` gone means we cannot know whether the contract landed, so we cannot know
+    whether its history was rewritten. That is UNVERIFIABLE, and ADR-0105 §10 does not read
+    unverifiable as satisfied. This forbids the exact failure that caused the original defect: an
+    absent input quietly standing in for a passed check."""
+    _git(cli_repo, "update-ref", "-d", "refs/remotes/origin/main")
+    try:
+        code, out = _cli(monkeypatch, capsys, cli_repo)
+        assert code != 0, f"an unreadable landed copy must not exit 0 — {out['decision']}"
+        assert "UNVERIFIABLE" in _codes(out), sorted(_codes(out))
+        assert out["rule"] == "ST-7", out["rule"]
+    finally:
+        _git(cli_repo, "update-ref", "refs/remotes/origin/main", "HEAD")
