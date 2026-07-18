@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -459,9 +460,25 @@ def test_ac21_passes_once_the_operator_approval_is_simulated():
     if raw is None:
         pytest.skip("the contract has not landed at HEAD in this checkout")
 
-    d = parse.parse(raw).digest
-    approved = raw + (f"| 2026-07-18T16:00:00Z | approved | digest={d}; token=APPROVE |\n").encode()
-    assert parse.parse(approved).digest == d, "a lifecycle append must never change `D` (ADR §3)"
+    parsed = parse.parse(raw)
+    d = parsed.digest
+
+    # Two states must both work, and the first version of this test only handled one. It appended a
+    # HARDCODED timestamp, which was fine while the last event was `created` — and went red the
+    # moment the operator's real approval landed later in the day, because the append was then
+    # non-monotone and the verifier correctly answered `A5`. The product was right; the test had
+    # assumed the lifecycle would stand still. Derive the instant, and skip the simulation entirely
+    # once the real approval is on record.
+    if any(e.kind == "approved" and e.get("digest") == d for e in parsed.events):
+        approved = raw
+    else:
+        from datetime import datetime, timedelta, timezone
+        last = max((e.timestamp for e in parsed.events if re.match(r"^\d{4}-\d\d-\d\dT", e.timestamp)),
+                   default="2026-07-18T00:00:00Z")
+        nxt = (datetime.strptime(last, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+               + timedelta(minutes=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        approved = raw + f"| {nxt} | approved | digest={d}; token=APPROVE |\n".encode()
+        assert parse.parse(approved).digest == d, "a lifecycle append must never change `D` (ADR §3)"
 
     class _Approved:
         def __init__(self, i): self.i = i
@@ -497,7 +514,6 @@ def test_the_bootstrap_contract_prohibits_what_phase_3_must_not_touch():
 
 def test_no_contract_carries_the_print_budget_assignment():
     """ADR-0105 §11.3. `IMPL-007` reads that assignment form as a LIVE CLAIM — it turns the gate red."""
-    import re
     rx = re.compile(r"_CLI_PRINT_COUNT\s*=\s*\d+")
     for p in sorted((_ROOT / "docs" / "contracts").glob("*.md")) + sorted(FIXTURES.glob("*.md")):
         assert not rx.search(p.read_text(encoding="utf-8")), f"{p.name} carries the assignment form"
