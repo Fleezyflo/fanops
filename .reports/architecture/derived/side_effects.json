@@ -20,6 +20,20 @@
   "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",
   "known_blind_spot": "meta_graph uses an INJECTABLE `get` (so tests never touch the network). It is a real network seam and a literal `requests.*` census does NOT see it. Recorded here so the census is not mistaken for the whole truth.",
   "ledger_transaction": {
+    "fanops.canary": [
+      {
+        "call": "Ledger.transaction",
+        "line": 797
+      },
+      {
+        "call": "Ledger.transaction",
+        "line": 924
+      },
+      {
+        "call": "Ledger.transaction",
+        "line": 1040
+      }
+    ],
     "fanops.cli": [
       {
         "call": "Ledger.transaction",
@@ -51,43 +65,43 @@
       },
       {
         "call": "Ledger.transaction",
-        "line": 1033
+        "line": 1096
       },
       {
         "call": "Ledger.transaction",
-        "line": 1045
+        "line": 1108
       },
       {
         "call": "Ledger.transaction",
-        "line": 1056
+        "line": 1119
       },
       {
         "call": "Ledger.transaction",
-        "line": 1249
+        "line": 1312
       },
       {
         "call": "Ledger.transaction",
-        "line": 1262
+        "line": 1325
       },
       {
         "call": "Ledger.transaction",
-        "line": 1340
+        "line": 1404
       },
       {
         "call": "Ledger.transaction",
-        "line": 1348
+        "line": 1412
       },
       {
         "call": "Ledger.transaction",
-        "line": 1356
+        "line": 1420
       },
       {
         "call": "Ledger.transaction",
-        "line": 1363
+        "line": 1427
       },
       {
         "call": "Ledger.transaction",
-        "line": 1372
+        "line": 1436
       }
     ],
     "fanops.ledger_wipe": [
@@ -459,7 +473,7 @@
     "fanops.cli": [
       {
         "call": "tempfile.mkdtemp",
-        "line": 1203
+        "line": 1266
       }
     ],
     "fanops.post.compress": [
@@ -543,10 +557,16 @@
   },
   "regeneration_command": "python -m tools.arch regen",
   "rmtree": {
+    "fanops.canary": [
+      {
+        "call": "shutil.rmtree",
+        "line": 970
+      }
+    ],
     "fanops.cli": [
       {
         "call": "shutil.rmtree",
-        "line": 1235
+        "line": 1298
       }
     ],
     "fanops.post.compress": [
@@ -576,6 +596,12 @@
     "src/fanops/**/*.py"
   ],
   "subprocess": {
+    "fanops.canary": [
+      {
+        "call": "subprocess.run",
+        "line": 1363
+      }
+    ],
     "fanops.clip": [
       {
         "call": "subprocess.run",
@@ -761,11 +787,11 @@
   },
   "totals": {
     "env_write_sites": 2,
-    "ledger_transaction_sites": 74,
+    "ledger_transaction_sites": 77,
     "lock_sites": 23,
     "mkdtemp_sites": 2,
     "network_sites_literal_requests": 15,
-    "rmtree_sites": 5,
-    "subprocess_sites": 37
+    "rmtree_sites": 6,
+    "subprocess_sites": 38
   }
 }

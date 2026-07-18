@@ -181,7 +181,7 @@
           "src/fanops/ledger.py": "*** S01 MAY ADD NO print() TO ledger.py. ***",
           "src/fanops/pipeline.py": "*** S07 MAY ADD NO print() TO pipeline.py. ***"
         },
-        "mechanism_B": "`_CLI_PRINT_COUNT = 165`, asserted with *** EXACT EQUALITY *** (`assert len(_print_call_nodes(cli.py)) == 165`). Not a ceiling — an EQUALITY.",
+        "mechanism_B": "`_CLI_PRINT_COUNT = 168`, asserted with *** EXACT EQUALITY *** (`assert len(_print_call_nodes(cli.py)) == 168`). Not a ceiling — an EQUALITY.",
         "CYCLE_7_CORRECTION": "*** THIS NUMBER WAS 147 AND IT WAS WRONG. *** The contract froze it at fcffa73 as a DERIVED_FACT 'read from the test files'. ONE COMMIT LATER (#634) the test file said 158, and the contract still said 147. A boundary pinned to a wrong constant is not a boundary — a slice obeying GB-6 as written would have been told the budget was 147 when CI enforces 158. It is now DERIVED_FROM_CONTRACT: regenerated into derived/ratchets.json and enforced by rule IMPL-007, which FAILS CI when this copy disagrees with the test that enforces it. *** MIGRATION TARGET: delete this copy entirely and point at derived/ratchets.json. A copied number is a number that rots, and this one rotted in a single commit. ***",
         "THE_CROSS_SLICE_HAZARD": {
           "id": "IR-4",

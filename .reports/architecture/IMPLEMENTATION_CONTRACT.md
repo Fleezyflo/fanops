@@ -76,10 +76,17 @@ at `fcffa73`:**
 ### The exact-equality trap
 
 ```python
-# tests/test_internal_prints_routed.py
-_CLI_PRINT_COUNT = 165        # ← 147 at contract freeze, then 158, now 165. It has rotted TWICE. See below.
+# tests/test_internal_prints_routed.py — the SINGLE SOURCE OF TRUTH for this budget
+_CLI_PRINT_COUNT = <N>        # ← N is declared THERE and nowhere else. This doc deliberately does NOT copy it:
+                              #    it rotted THREE times as a copy (147 at contract freeze, then 158, then 165).
 assert len(_print_call_nodes(_SRC / "cli.py")) == _CLI_PRINT_COUNT   # ← EQUALITY, not a ceiling
 ```
+
+> **Where the number lives:** measured in `src/fanops/cli.py` → declared once in
+> `tests/test_internal_prints_routed.py` → generated into [`derived/ratchets.json`](derived/ratchets.json) →
+> mirrored in exactly ONE declared contract copy (`contract/implementation_contract.json` `GB-6`), which
+> **`IMPL-007`** holds to the test. Every other governance document references it symbolically, and Cycle-6
+> historical snapshots keep their original value as prose. Never copy the literal into a new file.
 
 > 🔴 **CYCLE-7 CORRECTION — and it is the proof this whole governance layer was necessary.**
 > This contract froze the constant at **147** as a `DERIVED_FACT` "read from the test files at `fcffa73`."
