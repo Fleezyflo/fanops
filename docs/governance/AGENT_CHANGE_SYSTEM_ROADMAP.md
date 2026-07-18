@@ -15,8 +15,8 @@ acceptance, and freeze.
 
 | # | Phase | Status | Entry criteria | Exit criteria |
 |---|---|---|---|---|
-| 1 | Authority Repair and Program Boundaries | **APPROVED** | A verified contradiction register on a named base SHA | The six verified contradictions closed; this roadmap persisted; `tools/arch` + `tools/ci` clean; CI green on the exact PR head |
-| 2 | Reusable Change-Contract Architecture | NOT STARTED | Phase 1 `ACCEPTED` | An accepted ADR defining the change-contract model |
+| 1 | Authority Repair and Program Boundaries | **ACCEPTED** | A verified contradiction register on a named base SHA | The six verified contradictions closed; this roadmap persisted; `tools/arch` + `tools/ci` clean; CI green on the exact PR head |
+| 2 | Reusable Change-Contract Architecture | **APPROVED** | Phase 1 `ACCEPTED` | An accepted ADR defining the change-contract model |
 | 3 | Change-Contract Compiler and Verifier | NOT STARTED | Phase 2 `ACCEPTED` | Compiler + verifier merged, each rule carrying a firing negative control |
 | 4 | Cold-Start Acceptance | NOT STARTED | Phase 3 `ACCEPTED` | A fresh agent, unaided, drives three cases through the contract — see below |
 | 5 | Operational Governance Deployment | NOT STARTED | Phase 4 `ACCEPTED` + explicit operator gate | M1–M6 applied one at a time; live required set == `intended_required_contexts` |
@@ -24,11 +24,20 @@ acceptance, and freeze.
 | 7 | Production Acceptance | NOT STARTED | Phase 6 `ACCEPTED` | The system accepted against its own contract on real work — see below |
 | 8 | Closeout and Freeze | NOT STARTED | Phase 7 `ACCEPTED` | An immutable closeout record + amendment process; the program is frozen |
 
-**Status values:** `NOT STARTED` → `IN DESIGN` → `APPROVED` → `IN IMPLEMENTATION` → `MERGED` → `ACCEPTED`.
+**Status values:** `NOT STARTED` → `IN DESIGN` → `APPROVED` → `IN IMPLEMENTATION` → `ACCEPTED`.
 
 **A later phase may begin only after the preceding phase is `ACCEPTED`. A merge alone does not
-authorize progression** — `MERGED` means the code landed; `ACCEPTED` means the phase's exit criteria
-were demonstrated and signed off.
+authorize progression** — merging is an *event*, not a phase status. A phase remains
+`IN IMPLEMENTATION` after its code lands, and reaches `ACCEPTED` only when its exit criteria are
+demonstrated and explicitly signed off.
+
+### Phase 1 — outcome
+
+**ACCEPTED** 2026-07-18. Landed as PR #701, squash
+`937777d930761048d04362637cab779020bf46a2` (`main`: `b2bb5cb` → `937777d`). 21 files; none touching
+application runtime or CI workflow definitions. All six contradictions closed, with a regression guard
+landed alongside them. Residual **R8** is Phase 6 work under **D4**, and is recorded on the PR, not
+here.
 
 ### Phase 4 — acceptance intent
 
@@ -88,10 +97,11 @@ Production acceptance is only met when both are proven on real work:
 - `docs/ci/CI_BRANCH_PROTECTION_MUTATIONS.md` (Phase 5 runbook — nothing executed)
 - `.orchestration/SPEC.md` (orchestration-gate status owner)
 - `.reports/architecture/IMPLEMENTATION_CONTRACT.md` (Cycle-6 historical program record)
+- `docs/adr/0105-reusable-change-contract-architecture.md` (Phase 2 — the change-contract model)
 
 ## Current next gate
 
-**APPROVE AUTHORITY REPAIR MERGE**
+**APPROVE REUSABLE CHANGE CONTRACT MERGE**
 
 ## Program Execution Method
 

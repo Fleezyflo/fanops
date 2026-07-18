@@ -9,6 +9,7 @@ and the nested `src/fanops/CLAUDE.md`, `src/fanops/post/CLAUDE.md`, `src/fanops/
 
 | You need | Go to |
 |---|---|
+| Whether this change needs a Change Contract, and what it must contain | [`docs/adr/0105-reusable-change-contract-architecture.md`](docs/adr/0105-reusable-change-contract-architecture.md) |
 | The rules and their honest enforcement status | [`docs/REPOSITORY_CONSTITUTION.md`](docs/REPOSITORY_CONSTITUTION.md) |
 | The enforceable architecture (`LAW-*`) | [`docs/ARCHITECTURAL_LAWS.md`](docs/ARCHITECTURAL_LAWS.md) |
 | How code is written here (`STD-*`) | [`docs/ENGINEERING_STANDARDS.md`](docs/ENGINEERING_STANDARDS.md) |
