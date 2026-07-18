@@ -51,11 +51,13 @@ def main(argv=None) -> int:
 
     if args.command == "start":
         engage(root)
-        print("orchestration ENGAGED — enforcement is ON for this run:")
+        print("orchestration ENGAGED — the hook gate is DORMANT; these are CONVENTIONS, not enforcement:")
         print("  • nothing lands without a sub-agent verification record for the PR's current head")
         print("  • only named wave agents spawn (fanops-worker / fanops-lander); models are pinned")
         print("  • every sub-agent's work is logged (attribution ledger)")
-        print("  • destructive git + tampering with the gate/state are blocked")
+        print("  • destructive git + tampering with the gate/state are off-limits")
+        print("What actually blocks: GitHub required checks, .githooks pre-commit/pre-push,")
+        print("and (Claude Code only) the permissions.deny list. See .orchestration/SPEC.md.")
         print("Now hand your Linear tasks to the fanops-orchestrator agent; it drives them to done.\n")
         print("Current repo state:")
         return repo_sweep.main(["--repo", args.repo, "--root", str(root)])

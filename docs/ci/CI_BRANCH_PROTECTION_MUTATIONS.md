@@ -45,8 +45,27 @@ exactly one field flipped (script below), or use a **repository ruleset** (addit
 - **After:** the two **plus** `"gate (drift + policy + registries)"`; strict unchanged.
 - **Reason:** Model A — `gate` is the authoritative merge-gate for architecture governance (ADR-0101).
 - **Affected ADR:** 0100/0101. **Registry:** `ARCH-GATE.classification=required` already set; DC-3 stays green.
-- **Risk:** *(estimate)* low — `gate` already runs on every PR, stdlib-only, fast. `SLICE-ARCH-MODEL` must
-  land first so `gate` (not the unit arch tests) is the sole required arch owner.
+- **Risk:** *(estimate)* low — `gate` already runs on every PR, stdlib-only, fast.
+- **Sequencing — M1 is UNBLOCKED; nothing is de-duplicated first.** The authority is
+  `.github/ci-control-registry.yml` (`duplicate_groups.arch-drift-policy`) and ADR-0101 §2. The order is:
+  1. **RETAIN** the existing overlap. Until this mutation lands, the unit lane is the **only** required
+     line enforcing arch drift/policy/registries.
+  2. **M1** — make `gate` a live required context (this step).
+  3. **PROVE** it: observe it green and actually required over a real observation window, the same bar
+     M6 sets below ("observed green/stable"). A context that is required but flaky is not a gate.
+  4. **ONLY THEN** design and execute de-duplication, scoping the unit lane to the invariants `gate`
+     does not run — enumerated **from `tests/test_arch_governance.py` at execution time**, never from a
+     copied list. (A prose list of "four" already circulates and is believed to omit the path-selection
+     tests, which `.github/workflows/architecture.yml` cites by name. A copied count rots; the test file
+     does not.)
+
+  > **Corrected 2026-07-18.** This bullet previously read: *"`SLICE-ARCH-MODEL` must land first so `gate`
+  > (not the unit arch tests) is the sole required arch owner."* That was **circular** — `gate` can only
+  > become the sole required arch owner *via M1 itself* — and executing it literally would have removed
+  > the only required arch enforcement **before** its replacement was required, i.e. the enforcement gap
+  > the registry explicitly forbids. `SLICE-ARCH-MODEL` was in fact satisfied through the plan's own
+  > declared-residual branch: the overlap was **recorded as retained**, not scoped away. The runbook's own
+  > closeout section already said so (see §6a residuals and the deferred-items list).
 - **Command (DO NOT RUN — approval required):**
 ```bash
 gh api -X PATCH repos/Fleezyflo/fanops/branches/main/protection/required_status_checks \
@@ -55,7 +74,10 @@ gh api -X PATCH repos/Fleezyflo/fanops/branches/main/protection/required_status_
   -f 'contexts[]=real-tooling E2E (must run, not skip)' \
   -f 'contexts[]=gate (drift + policy + registries)'
 ```
-- **Rollback:** re-PATCH with the original two contexts. **Post:** re-probe → 3 contexts.
+- **Rollback:** re-PATCH with the original two contexts. **Post:** re-probe → 3 contexts, **and open the
+  stability observation window from step 3 above.** De-duplication (step 4) may not be designed until that
+  window closes green. Without this post-condition M1 has no stability proof, while ADR-0101 §2 makes
+  "proven-required, stable" the trigger for de-duplication.
 
 ## M2 · Add `base install (no extras) refuses smart-framing`  *(SECOND)*
 
@@ -160,7 +182,11 @@ classic protection is itself a governance decision, surfaced here, not chosen.
 - Nothing executed here. The engineering gate is **met** (validator + remediation + wiring merged, 5/5
   green on the final SHA); each mutation now waits only for explicit, per-step **operator** action.
 - Every mutation has a captured pre-image and a tested rollback.
-- DC-1 + DC-3 live before M1–M3 so promotions are reconciled and cannot silently detach.
+- DC-1 is live (it runs in the required `unit` lane via `tools/ci`), so a promoted context cannot silently
+  detach through a job rename. **DC-3 is NOT live** — no workflow invokes it and `run_static` excludes it;
+  it needs an operator-provisioned admin token that does not yet exist. Until then, live-vs-declared
+  reconciliation is the **manual** read-only re-probe prescribed after every mutation, not an automated
+  check. *(Corrected 2026-07-18; this line previously asserted "DC-1 + DC-3 live before M1–M3".)*
 - After each applied mutation: re-probe, confirm the intended delta and nothing else, update the
   registry in the same PR. Final state == `intended_required_contexts` (5) + `enforce_admins=true` +
   `required_conversation_resolution=true` + `required_linear_history=true`.
