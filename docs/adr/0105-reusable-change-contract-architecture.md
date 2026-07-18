@@ -2,7 +2,7 @@
 status: accepted
 date: 2026-07-18
 accepted_in_principle: 2026-07-18
-approved_digest: sha256:b15fbed05e3bf66e52c5f7419c5c11b632029d26a0b67a2dc1c1a1b06933c769
+approved_digest: sha256:1b1a7d55328a8dcf47954c341478ae37ab0cfd2e61ba3c455fe32c672fc1e488
 supersedes: []
 references: [0100, 0101, 0102]
 deciders: [operator]
@@ -244,7 +244,7 @@ contract field. Without this, *"the operator approved it"* becomes a universal l
 
 A contract is **one file** with **two parts**, separated by a single byte-exact boundary.
 
-```
+```text
 docs/contracts/<id>.md
 ├── DECLARATION  — file start … up to (excluding) the line "## Lifecycle"
 │                  Frozen at approval. Editing it voids approval.
@@ -388,14 +388,14 @@ Append-only. Each carries a UTC timestamp and its binding.
 | `superseded` | operator | successor `id` | yes |
 | `abandoned` | operator | reason | yes |
 
-`merged` and `accepted` are appended together in the single post-merge commit, so the file is written
-at most three times: creation-and-approval, optional pre-merge appends, and the post-merge record.
+`merged` and `accepted` are appended together in the single post-merge commit. The file is written in
+three logical stages: creation-and-approval, any pre-merge appends, and the post-merge record.
 
 #### 4.3 Derived lifecycle state
 
 State is **computed**, never declared:
 
-```
+```text
 refused | superseded | abandoned   if the corresponding terminal event is present
 accepted                           if an `accepted` event is present
 merged                             if the squash commit exists on main
@@ -415,7 +415,7 @@ already runs on. **Merge is an event, not a state that authorizes anything.** `m
 
 | Event | Content approval (`D`) | Exact-head approval |
 |---|---|---|
-| **Declaration edited** (any of §3.1) | **VOID.** `D` changes. Re-approve. | **VOID** |
+| **Declaration edited** (any of §3.1, or `supersedes`) | **VOID.** `D` changes. Re-approve. | **VOID** |
 | **Lifecycle appended** | **survives** — `D` is unchanged by construction | **VOID**, because the head moved. Re-approve at the new head. The declaration approval is untouched. |
 | **Head SHA moves** (any commit) | survives | **VOID.** Reused verbatim: a record's `head_sha` must equal the PR's current `headRefOid`; stale → refused. |
 | **Base moves** (`main` advances) | survives unless a cited authority changed | **VOID if** the rebase changes the diff; otherwise survives with required CI re-run at the new head |
@@ -497,7 +497,7 @@ Labels never alter the trait set, and traits never relabel a file. A `governance
 
 **The anti-silent-scope-expansion check, computable today with no new tooling:**
 
-```
+```text
 unauthorized = files(git diff --name-only <base>...<head>)
              − expected_surfaces
              − generated_consequences(expected_surfaces)
