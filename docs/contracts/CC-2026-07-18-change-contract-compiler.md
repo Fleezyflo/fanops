@@ -167,3 +167,6 @@ re-approves. Citing the pre-amendment blob would be citing an authority that no 
 | timestamp | event | values |
 |---|---|---|
 | 2026-07-18T14:00:00Z | created | id=CC-2026-07-18-change-contract-compiler; base_sha=ce132f61c8637f5adfaed2e3de999c6254031792 |
+| 2026-07-18T17:00:00Z | binding | branch=feat/change-contract-compiler; pr=703 |
+| 2026-07-18T17:05:00Z | approved | digest=sha256:d6e268108f63ccfaaa300e430a087a32cd6298b0793f0f608ff366da982cf607; token=APPROVE PHASE 3B CHANGE CONTRACT COMPILER IMPLEMENTATION; adr_0105_renewed=sha256:dd125cb18b7daf2174242a1ffad2f57fd4d19df8cdd6df9d9317db3d496955ac; operator=operator |
+| 2026-07-18T17:10:00Z | implementation_started | note=the implementation preceded this record; the event is written where the lifecycle requires it |
