@@ -32,7 +32,7 @@ class RepoPort:
     def __init__(self, repo: Path = REPO) -> None:
         self.repo = repo
 
-    def _git(self, *args: str, check: bool = True) -> str:
+    def _git(self, *args: str, check: bool = True) -> tuple[str, int]:
         try:
             r = subprocess.run(["git", *args], cwd=self.repo, capture_output=True, text=True,
                                timeout=_TIMEOUT)
@@ -42,7 +42,7 @@ class RepoPort:
             raise PortError(f"git {' '.join(args[:2])} timed out after {_TIMEOUT}s") from None
         if r.returncode != 0 and check:
             raise PortError(f"git {' '.join(args[:2])} failed: {r.stderr.strip()[:160]}")
-        return r.stdout
+        return r.stdout, r.returncode
 
     def blob(self, ref: str, path: str) -> bytes | None:
         try:
@@ -55,8 +55,17 @@ class RepoPort:
         return r.stdout if r.returncode == 0 else None
 
     def blob_sha(self, ref: str, path: str) -> str | None:
-        out = self._git("rev-parse", f"{ref}:{path}", check=False).strip()
-        return out or None
+        """`None` when the path does not exist at `ref`. BOTH guards below are load-bearing.
+
+        `git rev-parse` on a path that is absent from the ref exits 128 AND ECHOES ITS ARGUMENT TO
+        STDOUT. Reading that stdout without checking the exit code returns the literal string
+        `"<ref>:<path>"`, which is truthy — so `contains()` answered True for a file that does not
+        exist, and a contract that had never landed derived the state `merged`. The shape check is
+        the second guard: a blob id is 40 hex characters, and anything else is not an answer.
+        """
+        out, rc = self._git("rev-parse", f"{ref}:{path}", check=False)
+        sha = out.strip()
+        return sha if rc == 0 and _is_sha(sha) else None
 
     def diff_names(self, base: str, head: str) -> list[str]:
         """`base...head` — the three-dot form, so the diff is against the MERGE BASE.
@@ -65,15 +74,20 @@ class RepoPort:
         moved since the branch point as if this change had touched it, which would make the
         `unauthorized` set (ADR-0105 §5.3) fire on other people's commits.
         """
-        out = self._git("diff", "--name-only", f"{base}...{head}")
+        out, _ = self._git("diff", "--name-only", f"{base}...{head}")
         return sorted(f for f in out.splitlines() if f)
 
     def contains(self, ref: str, path: str) -> bool:
         return self.blob_sha(ref, path) is not None
 
     def resolve(self, ref: str) -> str | None:
-        out = self._git("rev-parse", ref, check=False).strip()
-        return out or None
+        out, rc = self._git("rev-parse", ref, check=False)
+        sha = out.strip()
+        return sha if rc == 0 and _is_sha(sha) else None
+
+
+def _is_sha(s: str) -> bool:
+    return len(s) == 40 and all(c in "0123456789abcdef" for c in s)
 
 
 # ── tools.arch ──────────────────────────────────────────────────────────────────────────────

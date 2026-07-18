@@ -147,6 +147,8 @@ CONTROLS: list[Control] = [
     Control("NC-C13b", "an unparseable contract reaches `clarification_required`", "A1", "",
             "decision"),
     Control("NC-C13p", "a required input was unavailable", "ST-7", "UNVERIFIABLE", "decision"),
+    Control("NC-C29", "a failed `git rev-parse` must never be read as a blob id", "", "",
+            "repository"),
     Control("NC-C13r", "a cited authority id in no recognised namespace", "CL-4",
             "AUTH-NAMESPACE", "decision"),
     Control("NC-C13q", "a trait-conditional mandatory field is absent", "CL-1", "TRAIT-CONDITIONAL",
@@ -670,6 +672,31 @@ def _has_key(obj, key: str) -> bool:
 def _c_nc_c07b(c):
     return _decides(c, build(decl_mutate=lambda d: d.replace("supersedes: []",
                                                              "supersedes: []\nwaives_law: C18", 1)))
+
+
+def _c_nc_c29(c):
+    """A REGRESSION CONTROL for a defect this implementation actually shipped and then fixed.
+
+    `git rev-parse <ref>:<absent-path>` exits 128 AND ECHOES ITS ARGUMENT TO STDOUT. Reading stdout
+    without checking the exit code returned the literal string `"<ref>:<path>"` — truthy — so
+    `contains()` answered True for a file that does not exist and a contract that had never landed
+    derived the state `merged`. Every gate downstream of `merged` would then have been reasoning
+    about a merge that had not happened.
+    """
+    from .adapters import RepoPort
+    repo = RepoPort()
+    absent = "docs/contracts/__definitely_absent__.md"
+    got = repo.blob_sha("origin/main", absent)
+    if got is not None:
+        return False, f"NOT DETECTED — blob_sha returned {got!r} for an absent path"
+    if repo.contains("origin/main", absent):
+        return False, "NOT DETECTED — contains() is True for an absent path"
+    if repo.resolve("definitely-not-a-ref") is not None:
+        return False, "NOT DETECTED — resolve() answered for an unresolvable ref"
+    real = repo.blob_sha("HEAD", "tools/contract/model.py")
+    if real is None or len(real) != 40:
+        return False, f"NOT DETECTED — a REAL path did not resolve to a 40-hex blob id ({real!r})"
+    return True, f"absent -> None; real -> {real[:12]}…; unresolvable ref -> None"
 
 
 def _c_nc_c16(c):
