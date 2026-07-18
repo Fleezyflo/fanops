@@ -91,11 +91,11 @@ def report(base: str = "origin/main") -> dict:
         "touched_canonical_artifacts": touched_canonical,
         "architecture": {k: [] for k in
                          ("changed_subsystems", "changed_ownership", "changed_dependencies",
-                          "changed_state_machines", "changed_persistence",
+                          "changed_enums", "changed_persistence",
                           "changed_integrations", "changed_side_effects")},
         "implementation": {k: [] for k in
                            ("changed_slices", "changed_boundaries", "changed_verification",
-                            "changed_rollback", "changed_preserved_behaviors", "changed_merge_gates")},
+                            "changed_preserved_behaviors", "changed_merge_gates")},
         "reasons": [],
         "classification": NO_CHANGE,
     }
@@ -164,6 +164,42 @@ def report(base: str = "origin/main") -> dict:
     for c in sorted(n_cyc - o_cyc):
         bump(BREAKING, f"NEW compile-time import CYCLE: {' ↔ '.join(c)}. Load-order sensitive; can "
                        f"become an ImportError at process start.")
+
+    # ── enum member sets (the state representation) ─────────────────────────────────────────
+    #
+    # This dimension replaces `changed_state_machines`, which was INITIALIZED AND NEVER WRITTEN —
+    # one of the two permanently dead requirements ADR-0105 §9 records as gap G4. Nothing new is
+    # extracted: `entities.json` already carries every enum's member set, and both derived dicts are
+    # already in scope here, so the delta is a set comparison.
+    #
+    # CEILINGED AT COMPATIBLE, DELIBERATELY. `impact --strict` fails the PR on BREAKING_CHANGE or
+    # UNKNOWN_IMPACT only (`cli.py:184`), so capping here means `--strict` fails on exactly what it
+    # failed on before this dimension existed. Arming a verification requirement must not quietly
+    # become an enforcement change: `verify` always exits 0, and this keeps that true. A removed
+    # member is the more dangerous edit and it is reported first — but it is still reported as
+    # COMPATIBLE, because deciding whether a removal is breaking is a semantic judgement about
+    # persisted values that this analyser cannot make and must not pretend to.
+    def _enums(d: dict) -> dict:
+        return {f"{mod}.{e['name']}": set(e.get("members", []))
+                for mod, lst in d.get("entities", {}).get("enums", {}).items() for e in lst}
+
+    oen, nen = _enums(base_derived), _enums(head)
+    for name in sorted(set(oen) & set(nen)):
+        added, removed = sorted(nen[name] - oen[name]), sorted(oen[name] - nen[name])
+        if not (added or removed):
+            continue
+        delta = "".join([f" +{','.join(added)}" if added else "",
+                         f" -{','.join(removed)}" if removed else ""])
+        rep["architecture"]["changed_enums"].append(f"{name}:{delta}")
+        bump(COMPATIBLE, f"enum {name} changed ({delta.strip()}) — the STATE REPRESENTATION moved. "
+                         f"A new member is a new door; prove the illegal source states are REFUSED, "
+                         f"not just that the legal one works.")
+    for name in sorted(set(nen) - set(oen)):
+        rep["architecture"]["changed_enums"].append(f"NEW enum {name}")
+        bump(COMPATIBLE, f"new enum {name} ({len(nen[name])} member(s))")
+    for name in sorted(set(oen) - set(nen)):
+        rep["architecture"]["changed_enums"].append(f"REMOVED enum {name}")
+        bump(COMPATIBLE, f"enum {name} was REMOVED")
 
     # ── configuration ───────────────────────────────────────────────────────────────────────
     oe = set(base_derived.get("configuration", {}).get("env_vars", {}))

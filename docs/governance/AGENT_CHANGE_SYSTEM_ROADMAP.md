@@ -16,8 +16,8 @@ acceptance, and freeze.
 | # | Phase | Status | Entry criteria | Exit criteria |
 |---|---|---|---|---|
 | 1 | Authority Repair and Program Boundaries | **ACCEPTED** | A verified contradiction register on a named base SHA | The six verified contradictions closed; this roadmap persisted; `tools/arch` + `tools/ci` clean; CI green on the exact PR head |
-| 2 | Reusable Change-Contract Architecture | **APPROVED** | Phase 1 `ACCEPTED` | An accepted ADR defining the change-contract model |
-| 3 | Change-Contract Compiler and Verifier | NOT STARTED | Phase 2 `ACCEPTED` | Compiler + verifier merged, each rule carrying a firing negative control |
+| 2 | Reusable Change-Contract Architecture | **ACCEPTED** | Phase 1 `ACCEPTED` | An accepted ADR defining the change-contract model |
+| 3 | Change-Contract Compiler and Verifier | **IN IMPLEMENTATION** | Phase 2 `ACCEPTED` | Compiler + verifier merged, each rule carrying a firing negative control |
 | 4 | Cold-Start Acceptance | NOT STARTED | Phase 3 `ACCEPTED` | A fresh agent, unaided, drives three cases through the contract — see below |
 | 5 | Operational Governance Deployment | NOT STARTED | Phase 4 `ACCEPTED` + explicit operator gate | M1–M6 applied one at a time; live required set == `intended_required_contexts` |
 | 6 | Orchestration Enforcement Decision | NOT STARTED | Phase 5 `ACCEPTED` | A recorded decision to re-enable, replace or retire the dormant orchestration gate |
@@ -38,6 +38,26 @@ demonstrated and explicitly signed off.
 application runtime or CI workflow definitions. All six contradictions closed, with a regression guard
 landed alongside them. Residual **R8** is Phase 6 work under **D4**, and is recorded on the PR, not
 here.
+
+### Phase 2 — outcome
+
+**ACCEPTED** 2026-07-18. Landed as PR #702, squash
+`ce132f61c8637f5adfaed2e3de999c6254031792` (`main`: `937777d` → `ce132f6`). The accepted ADR is
+`docs/adr/0105-reusable-change-contract-architecture.md`; its `approved_digest` was verified against
+the merged blob. Phase 2 shipped no executable, schema, check or workflow, as §12 of that ADR
+requires.
+
+### Phase 3 — design
+
+The implementation design was approved 2026-07-18 under the gate
+`APPROVE CHANGE CONTRACT COMPILER IMPLEMENTATION DESIGN`, and is the governing implementation
+specification for Phase 3B. It is recorded here because ADR-0102 §1 squashes each PR to one commit,
+which would otherwise collapse the `APPROVED` → `IN IMPLEMENTATION` transition into a single commit
+and erase the design-approval moment. The same device records Phase 1 above.
+
+Phase 3B amends ADR-0105 §1 `T3` to add `tools/contract/**`. That is the ADR's own rule — *"adding a
+governance surface must add it here in the same change"* — and it changes the body, hence
+`approved_digest`, hence requires renewed approval of the amended body before merge.
 
 ### Phase 4 — acceptance intent
 
@@ -98,10 +118,12 @@ Production acceptance is only met when both are proven on real work:
 - `.orchestration/SPEC.md` (orchestration-gate status owner)
 - `.reports/architecture/IMPLEMENTATION_CONTRACT.md` (Cycle-6 historical program record)
 - `docs/adr/0105-reusable-change-contract-architecture.md` (Phase 2 — the change-contract model)
+- `docs/contracts/CC-2026-07-18-change-contract-compiler.md` (Phase 3 — the contract governing its
+  own compiler; the first contract written under ADR-0105)
 
 ## Current next gate
 
-**APPROVE REUSABLE CHANGE CONTRACT MERGE**
+**APPROVE CHANGE CONTRACT COMPILER IMPLEMENTATION**
 
 ## Program Execution Method
 

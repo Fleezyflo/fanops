@@ -29,7 +29,12 @@ REQUIREMENTS: list[Requirement] = [
                 "at once — the daemon and every Studio page.",
                 "a test that loads a ledger written by the PREVIOUS schema version"),
 
-    Requirement("changed_state_machines",
+    # WAS `changed_state_machines`, which could NEVER ARM: `impact.py` initialized the dimension and
+    # never wrote it (ADR-0105 §9 records it as one of two permanently dead requirements, gap G4).
+    # The OBLIGATION was real, so it is re-homed rather than deleted — onto a predicate that is
+    # actually derivable. `entities.json` already extracts every enum's member set, and `report()`
+    # already holds both the base and head derived dicts in scope, so the delta costs no new I/O.
+    Requirement("changed_enums",
                 "transition tests",
                 "Many writer sites move PostState, several of them GENERIC/DYNAMIC (model_copy, setattr, "
                 "PostState(<str>)) that a literal grep cannot see. A new transition added without a "
@@ -69,11 +74,18 @@ REQUIREMENTS: list[Requirement] = [
                 "boundary is the contract.",
                 "contract/file_ownership.json updated as a REVIEWED scope change"),
 
-    Requirement("changed_rollback",
-                "rollback validation",
-                "'Revert' is not one thing. Two slices in this program are NOT simply revertible: "
-                "S02 can be WORLD_IRREVERSIBLE (posts on the internet) and S04 DATA_IRREVERSIBLE.",
-                "the rollback CLASS stated in the PR, and the residue MEASURED if not CODE_REVERSIBLE"),
+    # `changed_rollback` WAS here, and could never arm either (`impact.py` initialized the key at
+    # its declaration and never wrote it). It is retired WITHOUT a replacement dimension, because
+    # none would be honest: rollback is a property of the CHANGE'S DECLARATION, not of its diff, and
+    # no derivable code signal distinguishes "this change has a rehearsed rollback" from "this
+    # change has none". Inventing a proxy would produce a requirement that fires on the wrong
+    # things, which is how a checker earns a reputation for crying wolf.
+    #
+    # The obligation survives in two places that already exist and are both reachable:
+    #   * ADR-0105 §3.1 field #17 `rollback` — MANDATORY on every contract, so its absence is a
+    #     `clarification_required` (control `NC-C20b`); and
+    #   * ADR-0105 §5.1's `live` row — rollback REHEARSAL, on every live change (`NC-C20c`).
+    # That is strictly more coverage than this requirement ever provided, which was none.
 
     Requirement("changed_preserved_behaviors",
                 "merge-gate validation",

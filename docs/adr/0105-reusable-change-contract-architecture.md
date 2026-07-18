@@ -2,7 +2,7 @@
 status: accepted
 date: 2026-07-18
 accepted_in_principle: 2026-07-18
-approved_digest: sha256:1b1a7d55328a8dcf47954c341478ae37ab0cfd2e61ba3c455fe32c672fc1e488
+approved_digest: sha256:dd125cb18b7daf2174242a1ffad2f57fd4d19df8cdd6df9d9317db3d496955ac
 supersedes: []
 references: [0100, 0101, 0102]
 deciders: [operator]
@@ -122,7 +122,7 @@ design through acceptance. It is task-specific, binding, and written **before** 
 - **Predicate:** any changed path matches `docs/REPOSITORY_CONSTITUTION.md`,
   `docs/ARCHITECTURAL_LAWS.md`, `docs/ENGINEERING_STANDARDS.md`, `docs/adr/**`,
   `docs/governance/**`, `.github/ci-control-registry.yml`, `.github/workflows/**`, `tools/arch/**`,
-  `tools/ci/**`, `.agents/lanes.json`, `.orchestration/**`.
+  `tools/ci/**`, `tools/contract/**`, `.agents/lanes.json`, `.orchestration/**`.
 - **Evidence source:** the diff path list against that literal set, which lives **only here**.
 - **Derivability:** **mechanically derivable** (pure path match).
 - **Why:** these files are what every other change is judged against. Changing the ruler is not the
