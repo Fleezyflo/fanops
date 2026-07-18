@@ -313,6 +313,44 @@ def test_a_new_tools_package_outside_t3_is_detected():
     assert [f.code for f in findings] == ["GS-1"]
 
 
+def test_gs2_does_not_fire_on_tests_or_on_a_contract_file():
+    """The audit's DEF-1, pinned. GS-2 flagged four paths ADR-0105 and the design put OUTSIDE T3.
+
+    ADR-0105 §3.6 makes `docs/contracts/**` conditionally outside `T3` — creating a contract does
+    not trigger it — so flagging a governance contract's own file contradicts the ADR directly.
+    The design's §19.2 says the same of `tests/**`. GS-2 firing on either produced a `stop` on a
+    correct change, and it was invisible until an operator approval was simulated.
+    """
+    findings = classify.governance_surface_findings(
+        [], base_has=lambda p: True,
+        declared_governance_paths=("tests/test_contract_compiler.py",
+                                   "tests/fixtures/contracts/valid_full.md",
+                                   "docs/contracts/CC-2026-07-18-change-contract-compiler.md",
+                                   "docs/governance/AGENT_CHANGE_SYSTEM_ROADMAP.md",
+                                   "tools/arch/impact.py", "tools/contract/decide.py"))
+    assert findings == [], f"GS-2 false positive on {[f.path for f in findings]}"
+
+
+def test_gs2_still_catches_a_validator_location_outside_t3():
+    """The corrected GS-2 must not be dead. This is ADR-0105 §1's named false negative verbatim:
+    *"a new validator added under a path not enumerated"* — a single file that creates no package
+    and so trips no `GS-1` signal."""
+    findings = classify.governance_surface_findings(
+        [], base_has=lambda p: True, declared_governance_paths=("tools/newvalidator.py",))
+    assert [f.code for f in findings] == ["GS-2"]
+
+
+def test_every_code_a_decision_rule_reads_is_produced_by_a_control():
+    """The audit's DEF-3 — the METRIC HOLE, which is why DEF-1 shipped green.
+
+    `AC-2` measured rule ids. `ST-8` looked covered because `NC-C23` names it, while `GS-2` — the
+    other half of `ST-8`'s predicate — was never produced by any control. Rule-level coverage is
+    strictly weaker than it appears whenever a rule reads more than one code.
+    """
+    ok, detail = selftest.detect(next(c for c in selftest.CONTROLS if c.id == "NC-C31"))
+    assert ok, detail
+
+
 # ── 6. the siblings, and the dependency direction ───────────────────────────────────────────
 def test_neither_sibling_imports_tools_contract():
     """AC-24. `tools/ci/__init__.py:5` states the invariant; this is what proves it."""
@@ -397,6 +435,56 @@ def test_the_bootstrap_contract_declares_this_exact_patch():
         pytest.skip("no diff against origin/main (the change has already landed)")
     assert changed - declared == set(), (
         f"UNAUTHORIZED surface(s) — in the diff, not in the contract: {sorted(changed - declared)}")
+
+
+def test_ac21_passes_once_the_operator_approval_is_simulated():
+    """AC-21, and the guard that stops the audit's finding from recurring unnoticed.
+
+    `ST-3` (no approval naming `D`) is row 10 and was MASKING row 15, `ST-8`. Every decision the
+    verifier returned before approval was correct, and every one of them hid a live defect behind
+    it. The only way to see past an operator gate is to simulate passing it — so this test does,
+    in memory, and asserts the two things that matter: that a lifecycle append leaves `D` untouched,
+    and that with approval the contract reaches `continue` at its own head.
+
+    Nothing is written. The repository is not modified and no approval is granted.
+    """
+    from tools.contract.adapters import RepoPort
+    from tools.contract.__main__ import Ports, run as run_pipeline
+
+    p = f"docs/contracts/{BOOTSTRAP.name}"
+    real = RepoPort()
+    if real.resolve("origin/main") is None:
+        pytest.skip("origin/main is not resolvable in this checkout")
+    raw = real.blob("HEAD", p)
+    if raw is None:
+        pytest.skip("the contract has not landed at HEAD in this checkout")
+
+    d = parse.parse(raw).digest
+    approved = raw + (f"| 2026-07-18T16:00:00Z | approved | digest={d}; token=APPROVE |\n").encode()
+    assert parse.parse(approved).digest == d, "a lifecycle append must never change `D` (ADR §3)"
+
+    class _Approved:
+        def __init__(self, i): self.i = i
+        def blob(self, r, q):
+            b = self.i.blob(r, q)
+            return approved if (q == p and b is not None and r != "origin/main") else b
+        def blob_sha(self, r, q): return self.i.blob_sha(r, q)
+        def diff_names(self, b, h): return self.i.diff_names(b, h)
+        def contains(self, r, q): return self.i.contains(r, q)
+        def resolve(self, r): return self.i.resolve(r)
+
+    ports = Ports(repo=_Approved(real))
+    got = {}
+    for phase in ("pre-implementation", "at-head", "merge-gate"):
+        dec, _ = run_pipeline(ports, p, base="origin/main", head="HEAD", pr=None, phase=phase)
+        got[phase] = (dec.outcome, dec.rule)
+
+    assert got["pre-implementation"] == ("continue", "OK"), got
+    assert got["at-head"] == ("continue", "OK"), (
+        f"AC-21: with approval granted the contract must reach `continue` at its own head; got "
+        f"{got['at-head']}. If this is `ST-8`, GS-2 has regressed to the over-broad form.")
+    assert got["merge-gate"][1] == "ST-4", (
+        f"the merge gate must still require a review at the exact head; got {got['merge-gate']}")
 
 
 def test_the_bootstrap_contract_prohibits_what_phase_3_must_not_touch():

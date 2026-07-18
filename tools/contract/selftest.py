@@ -27,6 +27,7 @@ import ast
 import contextlib
 import hashlib
 import io
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -35,6 +36,8 @@ from .adapters import REPO, PortError
 from .decide import RULE_IDS
 from .model import CLARIFICATION, CONTINUE, ESCALATE, EXPANDED, REFUSE, STOP
 from .parse import BOUNDARY, digest, parse
+
+_CODE_SHAPE = re.compile(r"^[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)*$")
 
 CONTRACT_PATH = "docs/contracts/CC-2026-07-18-example.md"
 ADR_PATH = "docs/adr/0105-reusable-change-contract-architecture.md"
@@ -144,11 +147,51 @@ CONTROLS: list[Control] = [
     Control("NC-C26", "each corrupted variant fails with ITS OWN named rule", "", "", "decision"),
     Control("NC-C27", "the ADR-0105 §1 T3 pin still matches the ADR body", "", "", "repository"),
     Control("NC-C28", "neither sibling package imports `tools.contract`", "", "", "repository"),
-    Control("NC-C13b", "an unparseable contract reaches `clarification_required`", "A1", "",
+    Control("NC-C13b", "an unparseable contract reaches `clarification_required`", "A1", "BAD-KEY",
             "decision"),
     Control("NC-C13p", "a required input was unavailable", "ST-7", "UNVERIFIABLE", "decision"),
     Control("NC-C29", "a failed `git rev-parse` must never be read as a blob id", "", "",
             "repository"),
+    Control("NC-C30", "a declared validator location under `tools/` outside the T3 list", "ST-8",
+            "GS-2", "decision"),
+    Control("NC-C31", "every diagnostic code a decision rule READS must be PRODUCED by a control",
+            "", "", "repository"),
+    # ── production paths: every code a decision rule CONSUMES must be PRODUCED by a control ──
+    # `GS-2` hid because coverage was measured over rule ids, and `ST-8` looked covered via `GS-1`.
+    # These close the same class everywhere else: each names a code some rule reads, and injects the
+    # defect that produces it. `NC-C31` is what keeps the set complete as rules are added.
+    Control("NC-C32", "no `## Lifecycle` boundary", "A1", "NO-BOUNDARY", "grammar"),
+    Control("NC-C33", "two `## Lifecycle` boundaries", "A1", "MULTI-BOUNDARY", "grammar"),
+    Control("NC-C34", "no front matter at all", "A1", "NO-FRONTMATTER", "grammar"),
+    Control("NC-C35", "front matter never closed", "A1", "UNCLOSED-FRONTMATTER", "grammar"),
+    Control("NC-C36", "a front-matter line with no `key:`", "A1", "NO-COLON", "grammar"),
+    Control("NC-C37", "a table row with the wrong cell count", "A1", "BAD-ROW", "grammar"),
+    Control("NC-C38", "a reordered table column header", "A1", "BAD-COLUMNS", "grammar"),
+    Control("NC-C39", "a `###` field section carrying no table", "A1", "NO-TABLE", "grammar"),
+    Control("NC-C40", "a block-list item with no key above it", "A1", "ORPHAN-ITEM", "grammar"),
+    Control("NC-C41", "a `###` section that is not a field", "A2", "UNKNOWN-SECTION", "grammar"),
+    Control("NC-C42", "a front-matter field written as a `###` section", "A1", "WRONG-LOCATION",
+            "grammar"),
+    Control("NC-C43", "a reordered lifecycle table header", "A1", "BAD-EVENT-COLUMNS", "grammar"),
+    Control("NC-C44", "a lifecycle row with the wrong cell count", "A1", "BAD-EVENT-ROW", "grammar"),
+    Control("NC-C45", "a mandatory field present but empty", "A3", "FIELD-EMPTY", "decision"),
+    Control("NC-C46", "an `id` outside the `CC-YYYY-MM-DD-slug` grammar", "A4", "ID-FORMAT",
+            "decision"),
+    Control("NC-C47", "an unknown lifecycle event kind", "A5", "EVENT-KIND", "decision"),
+    Control("NC-C48", "a lifecycle timestamp that is not UTC ISO-8601", "A5", "EVENT-TIME",
+            "decision"),
+    Control("NC-C49", "lifecycle timestamps going backwards", "A5", "EVENT-ORDER", "decision"),
+    Control("NC-C50", "an event appended after a terminal one", "A5", "EVENT-AFTER-TERMINAL",
+            "decision"),
+    Control("NC-C51", "an `accepted` event missing the five required values", "A5",
+            "ACCEPT-INCOMPLETE", "decision"),
+    Control("NC-C52", "a landed declaration edited in place", "A5", "DECL-DIVERGED", "decision"),
+    Control("NC-C53", "a cited authority whose file does not exist", "ST-2", "AUTH-MISSING-FILE",
+            "decision"),
+    Control("NC-C54", "a cited control id in no registry row", "CL-4", "AUTH-UNKNOWN", "decision"),
+    Control("NC-C55", "an evidence record missing a required part", "ST-6", "EV-SHAPE", "decision"),
+    Control("NC-C56", "reused evidence whose bound source changed", "ST-6", "I1", "decision"),
+
     Control("NC-C13r", "a cited authority id in no recognised namespace", "CL-4",
             "AUTH-NAMESPACE", "decision"),
     Control("NC-C13q", "a trait-conditional mandatory field is absent", "CL-1", "TRAIT-CONDITIONAL",
@@ -304,8 +347,7 @@ Prove the compiler detects what it claims to detect.
 | OB-ARCH-CI | python -m tools.arch ci | regeneration byte-compare |
 """
 
-_LIFE = """## Lifecycle
-
+_LIFE = """
 | timestamp | event | values |
 |---|---|---|
 | 2026-07-18T10:00:00Z | created | id={cid}; base_sha=base |
@@ -356,6 +398,61 @@ def _run(raw: bytes, *, changed=("src/fanops/example.py",), phase="at-head", pr=
     return run(ports, path, base="base", head=head, pr=pr, phase=phase)
 
 
+
+# One injection per rule-consumed diagnostic code. Kept as a table because each is a single mutation
+# and a function apiece would bury the pattern that matters: EVERY code some rule reads is produced
+# here by something. `NC-C31` proves the table is complete.
+_EV_BAD = "| a claim | a run |  | blob:src/fanops/example.py |\n"
+_EV_I1 = "| a claim | a run | blobdeadbeef | blob:src/fanops/example.py |\n"
+
+_CODE_INJECTIONS = {
+    "NC-C32": dict(raw=lambda: build().replace(BOUNDARY, b"\n## NotLifecycle\n", 1)),
+    "NC-C33": dict(raw=lambda: build() + BOUNDARY + b"| a | b | c |\n"),
+    "NC-C34": dict(mut=lambda d: d.replace("---\n", "", 1)),
+    "NC-C35": dict(mut=lambda d: d.replace("supersedes: []\n---\n", "supersedes: []\n", 1)),
+    "NC-C36": dict(mut=lambda d: d.replace("supersedes: []", "supersedes []", 1)),
+    "NC-C37": dict(mut=lambda d: d.replace("| S01_foundation | the changed module belongs to it |",
+                                           "| S01_foundation |", 1)),
+    "NC-C38": dict(mut=lambda d: d.replace("| subsystem_id | why_touched |",
+                                           "| why_touched | subsystem_id |", 1)),
+    "NC-C39": dict(mut=lambda d: d.replace("| what | must_move_with | why |\n|---|---|---|\n", "", 1)),
+    "NC-C40": dict(mut=lambda d: d.replace("supersedes: []", "supersedes: []\n  - orphan", 1)),
+    "NC-C41": dict(mut=lambda d: d.replace("### coupling", "### bogus_section", 1)),
+    "NC-C42": dict(mut=lambda d: d.replace("### coupling", "### traits", 1)),
+    "NC-C43": dict(life=lambda x: x.replace("| timestamp | event | values |",
+                                            "| event | timestamp | values |", 1)),
+    "NC-C44": dict(life=lambda x: x + "| 2026-07-18T11:00:00Z | binding |\n"),
+    "NC-C45": dict(mut=lambda d: d.replace("invariants: [LAW-SOT-01]", "invariants: []", 1)),
+    "NC-C46": dict(kw=dict(cid="CC-not-a-date-slug")),
+    "NC-C47": dict(extra="| 2026-07-18T11:00:00Z | teleported | x=1 |\n"),
+    "NC-C48": dict(extra="| yesterday | binding | pr=1 |\n"),
+    "NC-C49": dict(extra="| 2026-07-17T09:00:00Z | binding | pr=1 |\n"),
+    "NC-C50": dict(extra="| 2026-07-18T11:00:00Z | refused | reason=x |\n"
+                         "| 2026-07-18T12:00:00Z | binding | pr=1 |\n"),
+    "NC-C51": dict(extra="| 2026-07-18T12:00:00Z | accepted | merge_sha=abc |\n"),
+    "NC-C52": dict(main=lambda: build(decl_mutate=lambda d: d.replace("Prove the", "Proved the", 1))),
+    "NC-C53": dict(mut=lambda d: d.replace(ADR_PATH, "docs/adr/does-not-exist.md", 1)),
+    "NC-C54": dict(mut=lambda d: d.replace("| ADR-0105 |", "| DC-999 |", 1)),
+    "NC-C55": dict(kw=dict(evidence=_EV_BAD)),
+    "NC-C56": dict(kw=dict(evidence=_EV_I1)),
+}
+
+
+def _code_control(c: Control) -> tuple[bool, str]:
+    spec = _CODE_INJECTIONS[c.id]
+    if "raw" in spec:
+        return _decides(c, spec["raw"]())
+    kw = dict(spec.get("kw", {}))
+    if "mut" in spec: kw["decl_mutate"] = spec["mut"]
+    if "extra" in spec: kw["extra"] = spec["extra"]
+    raw = build(**kw)
+    if "life" in spec:
+        decl, _, life = raw.partition(BOUNDARY)
+        raw = decl + BOUNDARY + spec["life"](life.decode()).encode()
+    run_kw = {"main_blob": spec["main"]()} if "main" in spec else {}
+    return _decides(c, raw, **run_kw)
+
+
 # ── the injections ──────────────────────────────────────────────────────────────────────────
 def _grammar(line: str):
     return lambda d: d.replace("supersedes: []", line, 1)
@@ -385,6 +482,8 @@ def detect(c: Control) -> tuple[bool, str]:
     """
     if c.id in _GRAMMAR_INJECTIONS:
         return _decides(c, build(decl_mutate=_GRAMMAR_INJECTIONS[c.id]))
+    if c.id in _CODE_INJECTIONS:
+        return _code_control(c)
     fn = globals().get(f"_c_{c.id.replace('-', '_').lower()}")
     if fn is None:
         raise AssertionError(f"no injection defined for {c.id}")
@@ -839,10 +938,82 @@ def _c_nc_c24(c):
     if fired.get("T3"):
         return False, "NOT DETECTED — an ordinary new package fired T3; the default path is no "\
                       "longer free"
-    codes = {d.code for d in ctx["derived"].triggers if False} or set()
-    if codes:
-        return False, "NOT DETECTED — GS-1 fired on an ordinary package"
-    return True, "an ordinary `src/fanops/` package does not fire T3"
+    # WAS: `{d.code for d in ctx["derived"].triggers if False} or set()` — `if False` made the set
+    # unconditionally empty, so the guard beneath it was UNREACHABLE. It read as a check and asserted
+    # nothing: the `IMPL-007` failure class this package exists to prevent, inside the control file.
+    # This calls the detector directly, so it can actually fail.
+    findings = classify.governance_surface_findings(["src/fanops/newfeature/__init__.py"],
+                                                    base_has=lambda p: False)
+    if findings:
+        return False, (f"NOT DETECTED — the detector fired on an ordinary package: "
+                       f"{[f.code for f in findings]}")
+    return True, "an ordinary `src/fanops/` package fires neither T3 nor GS-1"
+
+
+def _c_nc_c30(c):
+    """`GS-2`, which shipped with NO control at all and therefore hid a live false positive.
+
+    The injection is ADR-0105 §1's named false negative in its exact shape: *"a new VALIDATOR added
+    under a path not enumerated"* — a single file at `tools/newvalidator.py`, which creates no
+    package and so trips no `GS-1` `__init__.py` signal.
+
+    The second half is what keeps the corrected rule honest: a governance contract that declares
+    `tests/**` and its own `docs/contracts/` file must NOT be flagged. That is the false positive
+    the audit found, and ADR-0105 §3.6 forbids it outright.
+    """
+    ok, detail = _decides(c, build(traits="governance",
+                                   declare=("tools/contract/decide.py", "tools/newvalidator.py")),
+                          changed=("src/fanops/example.py", "tools/contract/decide.py"))
+    if not ok:
+        return ok, detail
+    clean = classify.governance_surface_findings(
+        [], base_has=lambda p: True,
+        declared_governance_paths=("tests/test_contract_compiler.py",
+                                   "tests/fixtures/contracts/valid_full.md",
+                                   "docs/contracts/CC-2026-07-18-change-contract-compiler.md",
+                                   "tools/arch/impact.py", "tools/contract/decide.py"))
+    if clean:
+        return False, (f"NOT DETECTED — GS-2 fired on paths ADR-0105 §3.6 and the design §19.2 put "
+                       f"OUTSIDE T3: {[f.path for f in clean]}")
+    return True, f"{detail}; and no false positive on tests/** or docs/contracts/**"
+
+
+def _c_nc_c31(c):
+    """THE METRIC HOLE ITSELF. `GS-2` hid because coverage was measured over RULE IDS only.
+
+    `AC-2` asked "does every rule id have a control?". `ST-8` answered yes, because `NC-C23` names
+    it — while `GS-2`, the OTHER half of `ST-8`'s predicate, had none. A rule can read several
+    diagnostic codes, so rule-level coverage is strictly weaker than it appears.
+
+    This reads the codes the decision table ACTUALLY CONSUMES straight out of `decide.py`'s AST —
+    both the inline set literals and the two named frozensets — so a future rule that reads an
+    untested code goes red here instead of shipping green.
+    """
+    src = (Path(__file__).parent / "decide.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    named: dict[str, set[str]] = {}
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name):
+            if isinstance(node.value, (ast.Set, ast.List, ast.Tuple)):
+                named[node.targets[0].id] = {e.value for e in node.value.elts
+                                             if isinstance(e, ast.Constant) and isinstance(e.value, str)}
+    read: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Lambda):
+            continue
+        for sub in ast.walk(node):
+            if isinstance(sub, ast.Constant) and isinstance(sub.value, str):
+                read.add(sub.value)
+            elif isinstance(sub, ast.Name) and sub.id in named:
+                read |= named[sub.id]
+    codes = {s for s in read if _CODE_SHAPE.match(s)}
+    covered = ({x.expect_code for x in CONTROLS if x.expect_code}
+               | {x.expect_rule for x in CONTROLS if x.expect_rule})
+    missing = sorted(codes - covered)
+    if missing:
+        return False, (f"NOT DETECTED — {len(missing)} code(s) read by a decision rule with no "
+                       f"control: {missing}")
+    return True, f"all {len(codes)} codes consumed by the decision table are covered by a control"
 
 
 def _c_nc_c25(c):

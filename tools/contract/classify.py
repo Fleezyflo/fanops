@@ -202,10 +202,33 @@ def governance_surface_findings(changed: list[str], *, base_has,
     that fires on ordinary packages would destroy the free default path ADR-0105 §1 insists on
     (`NC-C24` is the positive control that keeps it honest).
 
-    `GS-2` covers the case structure cannot see: a governance surface introduced OUTSIDE `tools/`.
-    Nothing detects that mechanically, so the ADR's own rule is the mechanism — the author adds the
-    path to `T3` in the same change — and the verifier proves the declared surface is in fact
-    covered. No new contract field is introduced; the 19-slot model is unchanged.
+    `GS-2` proves a DECLARED surface is in fact covered, and is bounded to `tools/`. It catches the
+    case `GS-1` misses: a single-file validator at `tools/newvalidator.py`, which creates no package
+    and so trips no `__init__.py` signal, but is exactly ADR-0105 §1's named false negative — *"a new
+    validator added under a path not enumerated."*
+
+    WHY `GS-2` IS BOUNDED TO `tools/` — an authority resolution, not a preference.
+
+    The approved design contradicts itself here. §8.6 says `GS-2` checks that EVERY path in
+    `expected_surfaces` on a `governance` contract matches a `T3` pattern; §19.2 of the same document
+    classifies `tests/**` and `docs/contracts/<id>.md` as explicitly NOT governance surfaces. Both
+    are rank 4, so the design cannot resolve its own conflict, and the literal §8.6 reading was
+    implemented first and produced a false `stop` on the very patch that introduced it.
+
+    ADR-0105 (rank 3) resolves it at three points, all pointing the same way:
+
+      §3.6  `docs/contracts/**` is CONDITIONALLY OUTSIDE `T3`; creating a contract does not trigger
+            it. Flagging a contract's own file therefore contradicts the ADR directly.
+      §1    the false negative to be closed is "a new VALIDATOR added under a path not enumerated" —
+            a statement about where validators live, not about every file a governance change edits.
+      §12   Phase 3 owns "mechanical completeness verification of the `T3` LIST" — that the list is
+            complete, not that a change's file set is uniformly governance.
+
+    And §8.6 concedes in its own first sentence that a governance surface outside `tools/` "cannot be
+    detected structurally". So the mechanical half is bounded to where the question is structurally
+    answerable, and outside it the ADR's own same-change rule — the human declaration route — is the
+    mechanism, exactly as the ADR intends. No semantic classifier, no filename heuristic, no second
+    registry, no new contract field: the 19-slot model is unchanged.
     """
     out: list[Diagnostic] = []
     for p in changed:
@@ -224,11 +247,15 @@ def governance_surface_findings(changed: list[str], *, base_has,
                                                   "approval — the ADR's own rule",
                                       evidence=(f"T3 patterns: {len(T3_PATTERNS)}",)))
     for p in declared_governance_paths:
+        if not p.startswith("tools/"):
+            continue                                  # outside `tools/`: the human declaration route
         if not any_match(p, T3_PATTERNS):
             out.append(Diagnostic(UNKNOWN, "GS-2",
-                                  f"`{p}` is declared on a `governance` contract but no T3 pattern "
-                                  f"matches it", path=p, expected="a T3 pattern covering it",
-                                  remediation="add it to ADR-0105 §1 T3 in this change"))
+                                  f"`{p}` is a declared surface under `tools/` that no ADR-0105 §1 "
+                                  f"T3 pattern covers — a validator location outside the list",
+                                  path=p, expected="a T3 pattern covering it",
+                                  remediation="add it to ADR-0105 §1 T3 in THIS change, recompute "
+                                              "`approved_digest`, and obtain renewed approval"))
     return out
 
 
