@@ -191,6 +191,8 @@ CONTROLS: list[Control] = [
     Control("NC-C54", "a cited control id in no registry row", "CL-4", "AUTH-UNKNOWN", "decision"),
     Control("NC-C55", "an evidence record missing a required part", "ST-6", "EV-SHAPE", "decision"),
     Control("NC-C56", "reused evidence whose bound source changed", "ST-6", "I1", "decision"),
+    Control("NC-C57", "a parent-bound event that names no `parent_sha`", "A5",
+            "PARENT-BIND-INCOMPLETE", "decision"),
 
     Control("NC-C13r", "a cited authority id in no recognised namespace", "CL-4",
             "AUTH-NAMESPACE", "decision"),
@@ -201,11 +203,12 @@ CONTROLS: list[Control] = [
 
 # ── fakes ───────────────────────────────────────────────────────────────────────────────────
 class FakeRepo:
-    def __init__(self, blobs=None, changed=(), head="h" * 40, fail=None):
+    def __init__(self, blobs=None, changed=(), head="h" * 40, fail=None, ancestry=()):
         self.blobs = dict(blobs or {})
         self.changed = list(changed)
         self.head = head
         self.fail = fail
+        self.ancestry = set(ancestry)
 
     def blob(self, ref, path):
         if self.fail == "blob": raise PortError("git unavailable (injected)")
@@ -223,6 +226,10 @@ class FakeRepo:
     def contains(self, ref, path): return (ref, path) in self.blobs
 
     def resolve(self, ref): return self.head
+
+    def is_ancestor(self, maybe_ancestor, ref):
+        if self.fail == "ancestor": raise PortError("git unavailable (injected)")
+        return maybe_ancestor == ref or (maybe_ancestor, ref) in self.ancestry
 
 
 class FakeImpact:
@@ -267,11 +274,16 @@ class FakeRegistry:
 
 
 class FakeReviews:
-    def __init__(self, rows=(), fail=False): self.rows, self.fail = list(rows), fail
+    def __init__(self, rows=(), fail=False, principals=("solo",)):
+        self.rows, self.fail, self.principals = list(rows), fail, list(principals)
 
     def approvals(self, pr):
         if self.fail: raise PortError("gh unavailable (injected)")
         return list(self.rows)
+
+    def write_principals(self):
+        if self.fail: raise PortError("gh unavailable (injected)")
+        return list(self.principals)
 
 
 # ── the fixture contract ────────────────────────────────────────────────────────────────────
@@ -435,6 +447,7 @@ _CODE_INJECTIONS = {
     "NC-C54": dict(mut=lambda d: d.replace("| ADR-0105 |", "| DC-999 |", 1)),
     "NC-C55": dict(kw=dict(evidence=_EV_BAD)),
     "NC-C56": dict(kw=dict(evidence=_EV_I1)),
+    "NC-C57": dict(extra="| 2026-07-18T12:00:00Z | merge_approved | operator=solo |\n"),
 }
 
 
@@ -1022,7 +1035,7 @@ def _c_nc_c25(c):
     from .model import Gates
     landed = build()
     d = parse(landed)
-    st = lifecycle.state(d, d.events, Gates(), merged=True, ci_green=False, head_sha="h" * 40,
+    st = lifecycle.state(d, d.events, Gates(), merged=True, ci_green=False, proposal_bound=False,
                          pr_open=False, mandatory_ok=True)
     if st != "merged":
         return False, f"NOT DETECTED — a merged contract derived state {st!r}"

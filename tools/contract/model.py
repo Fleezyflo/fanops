@@ -88,6 +88,13 @@ TERMINAL_EVENTS = ("refused", "superseded", "abandoned")
 # audit, which is the same as no acceptance at all.
 ACCEPTANCE_VALUES = ("merge_sha", "decision", "evidence", "date", "operator")
 
+# The values a PARENT-BOUND event must persist (ADR-0105 §4.1, amended). `parent_sha` is the commit
+# the event is appended ONTO, never the commit that contains it: a record cannot name the commit
+# whose hash is computed over the record. Naming the parent is the same fact, stated in the only
+# direction that can be written down.
+PARENT_BOUND_EVENTS = ("merge_approved", "head_proposed")
+PARENT_BOUND_VALUES = ("parent_sha",)
+
 # ── decisions (ADR-0105 §10) ────────────────────────────────────────────────────────────────
 CONTINUE = "continue"
 CLARIFICATION = "clarification_required"
@@ -228,6 +235,10 @@ class Gates:
     approved_digest: str = ""
     approved_head: str = ""
     detail: tuple[str, ...] = ()
+    # Which of the two §4.1 evidence routes satisfied the exact-head gate. `witnessed` carries a
+    # second principal's judgement; `unwitnessed` carries the operator's alone and says so. A gate
+    # that is satisfied by weaker evidence must REPORT that, or the weakening is a lie by omission.
+    exact_head_evidence: str = ""
 
 
 @dataclass(frozen=True)

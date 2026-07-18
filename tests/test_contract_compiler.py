@@ -403,7 +403,7 @@ def test_merged_never_implies_accepted():
     from tools.contract import lifecycle
     d = parse.parse(selftest.build())
     st = lifecycle.state(d, d.events, model.Gates(), merged=True, ci_green=False,
-                         head_sha="h" * 40, pr_open=False, mandatory_ok=True)
+                         proposal_bound=False, pr_open=False, mandatory_ok=True)
     assert st == "merged"
 
 
@@ -500,8 +500,154 @@ def test_ac21_passes_once_the_operator_approval_is_simulated():
     assert got["at-head"] == ("continue", "OK"), (
         f"AC-21: with approval granted the contract must reach `continue` at its own head; got "
         f"{got['at-head']}. If this is `ST-8`, GS-2 has regressed to the over-broad form.")
-    assert got["merge-gate"][1] == "ST-4", (
-        f"the merge gate must still require a review at the exact head; got {got['merge-gate']}")
+    # The merge gate is a SEPARATE grant and must not fall out of the content approval. With no
+    # `merge_approved` on record, NEITHER §4.1a route has evidence, so `ST-4` is the honest verdict —
+    # the amendment made the gate reachable, not automatic.
+    if not any(e.kind == "merge_approved" for e in parse.parse(approved).events):
+        assert got["merge-gate"][1] == "ST-4", (
+            f"with no merge approval recorded the gate must still stop; got {got['merge-gate']}")
+
+
+# ── ADR-0105 §4.1a — parent-binding and the two evidence routes ─────────────────────────────
+#
+# The original exact-head gate was UNSATISFIABLE here: it admitted only a non-author `APPROVED` PR
+# review, `Fleezyflo` is the sole account with push access AND the author of every PR, and GitHub
+# refuses self-approval. The same self-reference (a record cannot name the commit computed over it)
+# also made `head_proposed`, and therefore the `implemented` state, unreachable in EVERY repository.
+# These tests hold the amended gate to both halves of its claim: reachable where no second principal
+# can exist, and untouched everywhere else.
+_P = "docs/contracts/CC-2026-07-18-change-contract-compiler.md"
+_PARENT, _HEAD = "a" * 40, "b" * 40
+_APPROVAL = f"| 2026-07-19T10:00:00Z | merge_approved | parent_sha={_PARENT}; operator=solo |\n"
+
+
+class _Repo:
+    """Exactly enough git to answer the four §4.1a checks, so each one can be failed in isolation."""
+
+    def __init__(self, parent_raw, head_raw, changed=(_P,), ancestor=True):
+        self.parent_raw, self.head_raw = parent_raw, head_raw
+        self.changed, self.ancestor = list(changed), ancestor
+
+    def blob(self, ref, path): return self.parent_raw if ref == _PARENT else self.head_raw
+
+    def diff_names(self, base, head): return sorted(self.changed)
+
+    def is_ancestor(self, a, b): return self.ancestor
+
+
+def _appended(parent: bytes, row: str = _APPROVAL) -> bytes:
+    return parent + row.encode()
+
+
+def _gate(parent, head, *, principals, reviews=(), changed=(_P,), ancestor=True):
+    from tools.contract import lifecycle
+    d = parse.parse(head)
+    return lifecycle.gates(d, d.events, head_sha=_HEAD, pr=1, reviews=list(reviews),
+                           main_has_contract=False, repo=_Repo(parent, head, changed, ancestor),
+                           path=_P, raw=head, principals=principals)
+
+
+def test_single_principal_repositories_can_reach_the_exact_head_gate():
+    """DELIVERABLE 9. The gate the original model could never satisfy here binds — and discloses how.
+
+    `satisfied` alone would not be enough. An approval that carries no second principal's judgement
+    and does not SAY SO is the bypass this amendment exists not to be.
+    """
+    parent = selftest.build()
+    g = _gate(parent, _appended(parent), principals=["solo"])
+    assert g.exact_head_approval == "satisfied", g.detail
+    assert g.exact_head_evidence == "unwitnessed"
+    assert any("UNWITNESSED" in x for x in g.detail), g.detail
+
+
+def test_multi_principal_repositories_keep_the_original_guarantee_exactly():
+    """DELIVERABLE 8. Two principals ⇒ the in-file route is UNREACHABLE, however well-formed it is.
+
+    This is the whole anti-bypass argument in one assertion: a team cannot opt out of peer review by
+    writing a line, because admissibility is read from the platform and nothing in the tree can
+    reach it.
+    """
+    parent = selftest.build()
+    g = _gate(parent, _appended(parent), principals=["alice", "bob"])
+    assert g.exact_head_approval != "satisfied", g.detail
+    assert g.exact_head_evidence == ""
+    assert any("INADMISSIBLE" in x for x in g.detail), g.detail
+
+
+def test_a_witnessed_review_still_satisfies_the_gate_and_outranks_the_in_file_route():
+    parent = selftest.build()
+    head = _appended(parent)
+    for principals in (["alice", "bob"], ["solo"]):
+        g = _gate(parent, head, principals=principals, reviews=[(_HEAD, "APPROVED")])
+        assert (g.exact_head_approval, g.exact_head_evidence) == ("satisfied", "witnessed"), (
+            f"a real review must win outright for principals={principals}: {g.detail}")
+
+
+def test_an_unreadable_principal_set_leaves_the_gate_unknown_not_satisfied():
+    """Fail closed. `gh` being down must never be the reason a merge becomes authorized."""
+    parent = selftest.build()
+    g = _gate(parent, _appended(parent), principals=None)
+    assert g.exact_head_approval == "unknown", g.detail
+
+
+@pytest.mark.parametrize("mutate,why", [
+    (dict(changed=(_P, "src/fanops/publish.py")), "code rode in behind the approval"),
+    (dict(ancestor=False), "the approved commit is not an ancestor of the head"),
+])
+def test_parent_binding_rejects_a_head_that_moved_for_any_other_reason(mutate, why):
+    parent = selftest.build()
+    g = _gate(parent, _appended(parent), principals=["solo"], **mutate)
+    assert g.exact_head_approval != "satisfied", f"{why}: {g.detail}"
+
+
+def test_parent_binding_rejects_a_declaration_edited_inside_the_one_permitted_path():
+    """The check the path-level test CANNOT do. Without it the delta proof has a hole exactly the
+    size of the contract file, which is the one file the approval permits to move."""
+    parent = selftest.build()
+    head = _appended(selftest.build(decl_mutate=lambda d: d.replace("Prove the", "Proved the", 1)))
+    g = _gate(parent, head, principals=["solo"])
+    assert g.exact_head_approval != "satisfied", g.detail
+    assert any("declaration changed" in x for x in g.detail), g.detail
+
+
+def test_parent_binding_rejects_a_rewritten_lifecycle():
+    parent = selftest.build(extra="| 2026-07-18T11:00:00Z | binding | pr=1 |\n")
+    g = _gate(parent, _appended(selftest.build()), principals=["solo"])
+    assert g.exact_head_approval != "satisfied", g.detail
+
+
+def test_a_merge_approval_naming_no_commit_is_a_malformed_lifecycle():
+    """`NC-C57`'s CI face. An approval that names no commit approves nothing in particular."""
+    from tools.contract import lifecycle
+    raw = selftest.build(extra="| 2026-07-19T10:00:00Z | merge_approved | operator=solo |\n")
+    diags = lifecycle.validate_events(parse.parse(raw).events, main_blob=None, decl_bytes=b"",
+                                      life_bytes=b"")
+    assert "PARENT-BIND-INCOMPLETE" in {d.code for d in diags}
+
+
+def test_implemented_is_reachable_now_that_head_proposed_binds_to_its_parent():
+    """The SECOND instance of the same defect, and the one with no maintainer-count involvement.
+
+    §4.3 required `head_proposed` to name the CURRENT head. Appending the event is itself the commit,
+    so the event would have to carry a hash computed over its own bytes. No repository of any size
+    could satisfy that, and no control covered it — the only fixture used the placeholder `deadbeef`,
+    which can never equal a real head.
+    """
+    from tools.contract import lifecycle
+    row = f"| 2026-07-19T09:00:00Z | head_proposed | parent_sha={_PARENT}; ci=green |\n"
+    parent = selftest.build()
+    head = _appended(parent, row)
+    d = parse.parse(head)
+    proposal = [e for e in d.events if e.kind == "head_proposed"][-1]
+    bound, why = lifecycle.parent_binds(proposal, repo=_Repo(parent, head), path=_P,
+                                        head_sha=_HEAD, raw=head)
+    assert bound, why
+    assert lifecycle.state(d, d.events, model.Gates(), merged=False, ci_green=True,
+                           proposal_bound=bound, pr_open=True, mandatory_ok=True) == "implemented"
+
+    # And the original test could not have passed: the event's own commit is what moved the head.
+    assert not lifecycle.parent_binds(proposal, repo=_Repo(parent, head), path=_P,
+                                      head_sha="", raw=head)[0]
 
 
 def test_the_bootstrap_contract_prohibits_what_phase_3_must_not_touch():

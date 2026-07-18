@@ -28,6 +28,17 @@ corrupted variant failing with its OWN named rule. `NC-C26` is the third.
 three cases unaided. This contract was written by the agent that designed the system; it proves the
 artifact is writable and checkable, not that it is discoverable cold.
 
+**Implementation found the model defective, and amending it is part of this change (§4.1a).** The
+exact-head gate admitted only a non-author GitHub review; this repository has exactly one account
+with push access and it authors every PR, so no evidence of any kind could ever be produced and the
+gate was **unsatisfiable, not merely strict**. The same self-reference — a record cannot name the
+commit whose hash is computed over it — made `head_proposed`, and therefore the `implemented` state,
+unreachable in *every* repository. **The compiler discovering that its own governing model contains
+an impossible invariant is the system working, not failing:** it was found by executing the model
+rather than by reading it. The correction is parent-binding plus a platform-gated second evidence
+route, and it moves the ADR body, so **this contract's `D` moves with it and requires renewed
+approval.** Both are recorded below and neither is silent.
+
 ### objective
 
 Implement ADR-0105 as an executable compiler and verifier: `tools/contract/`, a read-only command
@@ -67,7 +78,7 @@ must be rewritten then.**
 
 | id | source_file | blob_sha |
 |---|---|---|
-| ADR-0105 | docs/adr/0105-reusable-change-contract-architecture.md | 1634f1f2daa04fab2c334c2021be2c1ea34c3378 |
+| ADR-0105 | docs/adr/0105-reusable-change-contract-architecture.md | f9fa602b501f80418d8a66eb9c6389a99ae64c8a |
 | C2.1 | docs/REPOSITORY_CONSTITUTION.md | 1f42a8ea298af39fffd56e3ce5c3542cef512df2 |
 | C18.1 | docs/REPOSITORY_CONSTITUTION.md | 1f42a8ea298af39fffd56e3ce5c3542cef512df2 |
 | LAW-SOT-01 | docs/ARCHITECTURAL_LAWS.md | 91ce5627ddc08b5f90189114bbef18c268b484a0 |
@@ -93,7 +104,7 @@ re-approves. Citing the pre-amendment blob would be citing an authority that no 
 | docs/contracts/CC-2026-07-18-change-contract-compiler.md | this contract | declared |
 | tools/arch/impact.py | the `changed_enums` dimension (ADR-0105 G4) | declared |
 | tools/arch/verifymap.py | retire two dead requirements, add one reachable (G4) | declared |
-| docs/adr/0105-reusable-change-contract-architecture.md | the T3 amendment the ADR's own rule compels | declared |
+| docs/adr/0105-reusable-change-contract-architecture.md | the T3 amendment the ADR's own rule compels, and the §4.1a amendment implementation proved necessary | declared |
 | docs/governance/AGENT_CHANGE_SYSTEM_ROADMAP.md | the phase transition | declared |
 
 ### prohibited_scope

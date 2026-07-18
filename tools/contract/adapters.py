@@ -85,6 +85,17 @@ class RepoPort:
         sha = out.strip()
         return sha if rc == 0 and _is_sha(sha) else None
 
+    def is_ancestor(self, maybe_ancestor: str, ref: str) -> bool:
+        """`git merge-base --is-ancestor` — exit 0 yes, 1 no, anything else is not an answer.
+
+        This is what makes `diff_names(parent, head)` safe to read as "what the append added": the
+        three-dot form diffs against the merge base, and the merge base IS `parent` exactly when
+        `parent` is an ancestor. Without this guard a sibling branch could present a small diff and
+        borrow an approval it was never given.
+        """
+        _, rc = self._git("merge-base", "--is-ancestor", maybe_ancestor, ref, check=False)
+        return rc == 0
+
 
 def _is_sha(s: str) -> bool:
     return len(s) == 40 and all(c in "0123456789abcdef" for c in s)
@@ -190,11 +201,10 @@ class ReviewPort:
     def __init__(self, repo_slug: str = "") -> None:
         self.repo_slug = repo_slug
 
-    def approvals(self, pr: int) -> list[tuple[str, str]]:
-        slug = self.repo_slug or _slug()
+    def _api(self, path: str) -> list:
         try:
-            r = subprocess.run(["gh", "api", f"repos/{slug}/pulls/{pr}/reviews", "--paginate"],
-                               capture_output=True, text=True, timeout=_TIMEOUT)
+            r = subprocess.run(["gh", "api", path, "--paginate"], capture_output=True, text=True,
+                               timeout=_TIMEOUT)
         except FileNotFoundError:
             raise PortError("gh CLI not found") from None
         except subprocess.TimeoutExpired:
@@ -204,9 +214,25 @@ class ReviewPort:
         try:
             data = json.loads(r.stdout)
         except json.JSONDecodeError as exc:
-            raise PortError(f"unparseable review JSON: {exc}") from None
-        return [(str(x.get("commit_id", "")), str(x.get("state", ""))) for x in data
-                if isinstance(x, dict)]
+            raise PortError(f"unparseable gh JSON: {exc}") from None
+        return [x for x in data if isinstance(x, dict)]
+
+    def approvals(self, pr: int) -> list[tuple[str, str]]:
+        slug = self.repo_slug or _slug()
+        return [(str(x.get("commit_id", "")), str(x.get("state", "")))
+                for x in self._api(f"repos/{slug}/pulls/{pr}/reviews")]
+
+    def write_principals(self) -> list[str]:
+        """Logins that can push. The ONE fact that decides whether §4.1's witnessed route exists.
+
+        It is read from the platform and never from the repository, because a fact the governed tree
+        can assert about itself is a fact an agent can arrange. `PortError` (no `gh`, no network, no
+        permission) leaves the answer UNKNOWN, and `lifecycle.gates` treats unknown as "the
+        unwitnessed route is inadmissible" — the fail-closed direction.
+        """
+        slug = self.repo_slug or _slug()
+        return sorted({str(x.get("login", "")) for x in self._api(f"repos/{slug}/collaborators")
+                       if isinstance(x.get("permissions"), dict) and x["permissions"].get("push")})
 
 
 def _slug() -> str:

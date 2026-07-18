@@ -179,10 +179,18 @@ def run(ports: Ports, path: str, *, base: str, head: str | None, pr: int | None,
         diags += validate.v_dependency([review_problem])
     head_sha = ports.repo.resolve(head_ref) or ""
     merged = ports.repo.contains("origin/main", path)
+    principals, principal_problem = lifecycle.read_principals(ports.reviews, pr_num)
+    if principal_problem:
+        diags += validate.v_dependency([principal_problem])
     gates = lifecycle.gates(decl, decl.events, head_sha=head_sha, pr=pr_num, reviews=reviews,
-                            main_has_contract=merged)
+                            main_has_contract=merged, repo=ports.repo, path=path, raw=raw,
+                            principals=principals)
+    proposals = [e for e in decl.events if e.kind == "head_proposed"]
+    proposal_bound = bool(proposals) and lifecycle.parent_binds(
+        proposals[-1], repo=ports.repo, path=path, head_sha=head_sha, raw=raw)[0]
     state = lifecycle.state(decl, decl.events, gates, merged=merged,
-                            ci_green=_ci_green(decl), head_sha=head_sha, pr_open=pr_num is not None,
+                            ci_green=_ci_green(decl), proposal_bound=proposal_bound,
+                            pr_open=pr_num is not None,
                             mandatory_ok=not any(d.code in ("FIELD-MISSING", "FIELD-EMPTY")
                                                  for d in diags))
 
