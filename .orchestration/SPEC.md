@@ -1,12 +1,18 @@
 # Delegation-only orchestration protocol
 
+> **ORCHESTRATION-GATE-STATUS: DORMANT** — no gate wiring is present in `.cursor/hooks.json` or
+> `.claude/settings.json`. **This file is the status owner**; every other document links here.
+>
 > **STATUS: enforcement hooks are DISABLED (operator decision, 2026-07-15) — the gate cost more in
-> blocked work than it protected.** `.cursor/hooks.json` and `.claude/settings.json` carry no gate
-> wiring; everything under "Enforcement" below describes DORMANT machinery kept on disk (gate,
-> adapter, and their tests still pass in CI). The live safety rails are: GitHub branch protection
-> with required checks, the lint-only `check.sh`, the pytest permission denies, and the agent
-> conventions in the orchestrator/worker files. Re-enable by restoring the hook wiring from git
-> history (`git log -- .cursor/hooks.json .claude/settings.json`).
+> blocked work than it protected.** The machinery below was wired and enforcing before that decision;
+> it is kept on disk (gate, adapter, and their tests still pass in CI) and enforces nothing today.
+> **Everything under "Enforcement" is therefore the RETAINED DESIGN, not a description of live
+> behaviour** — read every guarantee there as *"would hold, once re-wired"*. The live safety rails
+> are: GitHub branch protection with required checks, the lint-only `check.sh`, the Claude-Code-only
+> `permissions.deny` list in `.claude/settings.json` (the mechanism that actually refuses `pytest` —
+> Cursor has no equivalent), and the agent conventions in the orchestrator/worker files. Re-enable by
+> restoring the hook wiring from git history (`git log -- .cursor/hooks.json .claude/settings.json`);
+> the wiring is the ONLY thing missing.
 
 > Quickstart: [`ORCHESTRATION.md`](../ORCHESTRATION.md). One command:
 > `python scripts/orchestrate.py start | status | done | stop`.
@@ -15,7 +21,10 @@ The orchestrator coordinates; sub-agents execute every unit of work (scope, impl
 verify, fix, cleanup, conflict-resolution). Its only hands-on action is the land (`gh pr merge`);
 it never commits or pushes — workers push their own branches.
 
-## Enforcement
+## Enforcement — RETAINED DESIGN (dormant; nothing below is wired today)
+
+Written in the design's own present tense because it described live behaviour until 2026-07-15 and
+would describe it again on re-wiring. **Today the wiring is absent, so none of it fires.**
 
 One enforcement brain, two runtimes. All decision logic lives in
 `.cursor/hooks/orchestration_gate.py`; Cursor wires it via `.cursor/hooks.json` (`failClosed: true`),
@@ -27,9 +36,10 @@ records are writable ONLY by a `fanops-worker` sub-agent, and Write/Edit of orch
 enforcement machinery is denied for everyone during a wave (the un-hookable-Write residual below is
 Cursor-only).
 
-The gate is INERT unless a wave is engaged — `FANOPS_ORCHESTRATED=1` or the
+Even when wired, the gate is INERT unless a wave is engaged — `FANOPS_ORCHESTRATED=1` or the
 `.orchestration/state/ACTIVE` marker (created by `orchestrate.py start`) — so committing the hooks
-changes nothing for normal sessions. While active:
+changes nothing for normal sessions. **That wave check is a second condition, not the reason it is
+inert today: today it is unwired, so it does not run at all.** Once re-wired, while active:
 
 | Guarantee | Mechanism |
 |---|---|
@@ -45,11 +55,13 @@ changes nothing for normal sessions. While active:
 | No self-verification | a record is rejected when `verifier` equals `executor` or is the orchestrator. |
 | Done is measured, not declared | `orchestrate.py done` exits 0 only when `repo_sweep --require-pristine` is green (unmeasurable → exit 3, never a false done); exit 0 auto-disengages the wave. `stop` is operator-only — denied from inside a run. |
 
-**NOT enforced (residuals):**
+**NOT enforced (residuals — these are residuals of the DESIGN; with the gate dormant, NONE of the
+guarantees above is enforced either):**
 - CURSOR RUNTIME ONLY: Cursor's Write tool cannot be hooked, so protected files can still be WRITTEN
   by any agent there; the land-time checks make such writes un-landable, not impossible.
-  Keystroke-level prevention on Cursor requires the readonly option below. (On Claude Code this is
-  closed: Write/Edit hooks deny those writes, and records are writable only by `fanops-worker`.)
+  Keystroke-level prevention on Cursor requires the readonly option below. (On Claude Code this gap
+  *was* closed while wired: Write/Edit hooks denied those writes, and records were writable only by
+  `fanops-worker`. **Dormant today — that closure does not apply.**)
 - `executor`/`verifier` in records are self-reported strings — verifier ≠ implementer is auditable
   (ledger + record), not identity-bound. A lying record passes the gate.
 - The `subagentStart` deny and spawning the named `fanops-worker` from an orchestrator context follow

@@ -11,8 +11,16 @@
 # Authority order when planes disagree (ADR-0100): executable source & tests > live GitHub config >
 # accepted ADRs & this registry > generated docs > historical prose.
 #
-# STATUS: proposed — inert until ADR-0100 is accepted and the Phase-C validators land. No workflow
-# reads this file yet. Validated against ci-control-registry.schema.json.
+# STATUS: ACCEPTED and ACTIVELY CONSUMED (status prose corrected 2026-07-18; `status:` below has said
+# `accepted` since this file was authored). Both conditions the original line named are met: ADR-0100 is
+# accepted, and the Phase-C validators landed as `tools/ci`. No workflow STEP names this file, but the
+# LIVE REQUIRED `unit` lane reads it on every PR via tests/test_ci_registry_validator.py -> tools/ci, so a
+# registry<->workflow divergence reddens a required context. Schema validation is BEST-EFFORT, not
+# guaranteed: tools/ci/registry.py skips it when `jsonschema` is absent, and `jsonschema` is declared in
+# neither requirements/ nor pyproject.toml — the hand-rolled shape checks still run.
+#   ORIGINAL LINE, preserved (written 2026-07-15 in the same commit as `status: accepted`, i.e. stale on
+#   arrival — not drift): "STATUS: proposed — inert until ADR-0100 is accepted and the Phase-C validators
+#   land. No workflow reads this file yet. Validated against ci-control-registry.schema.json."
 #
 # Identity rule: `id` is STABLE. A job's display `name:` may change; the id never does. Renaming a job
 # that backs a required context is caught by DC-1 (the anti-silent-detach mechanism, ADR-0101).
@@ -479,7 +487,7 @@ controls:
     failure_evidence: "tools.arch ci exits non-zero on drift/policy/registry failure; SLICE-ARCH-MODEL adds a negative control proving this context blocks."
     evidence_status: verified-this-session
     status: active
-    notes: "REQUIRED (ADR-0101). OGD promotion order = 1st. Owns arch drift/policy/registries; unit-lane arch tests scoped to distinct invariants (SLICE-ARCH-MODEL)."
+    notes: "Classification REQUIRED (ADR-0101) — this is the INTENDED end-state, not the live one: this context is NOT in current_required_contexts until OGD M1. OGD promotion order = 1st. Model A gives it ownership of arch drift/policy/registries; the unit-lane arch tests are NOT yet scoped down — the overlap is deliberately RETAINED through M1 (see duplicate_groups.arch-drift-policy). SLICE-ARCH-MODEL was satisfied via the declared-residual branch (record the overlap truthfully), not by de-duplicating."
 
   - id: ARCH-IMPACT
     name: "impact report"

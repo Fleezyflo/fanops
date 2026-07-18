@@ -120,7 +120,9 @@
 
 ### LAW-STATE-03 — A `Moment` is mutated by setattr, never `model_copy` (GB-5)
 - Scope: models. · Owner: `tools/arch` + models. · ADR: —.
-- Evidence: GB-5 (`IMPLEMENTATION_CONTRACT.md`).
+- Evidence: this law is the current owner of the boundary. It was first stated as GB-5 in the Cycle-6
+  implementation contract (`.reports/architecture/IMPLEMENTATION_CONTRACT.md`), which is a **historical,
+  program-specific record** — cite it as corroborating provenance, never as the live authority.
 - Enforcement: **partially-enforced** — a Global Boundary (review + the arch impact/policy surface); not a dedicated blocking predicate. · CI/validator: `ARCH-GATE` (policy), review.
 - Bypass: a `model_copy` not caught by an existing rule. · Residual: recorded GB. · Remediation: add a dedicated predicate if a violation is attempted (roadmap, deferred).
 
@@ -291,13 +293,20 @@
 > cannot be reviewed, reasoned about, or safely removed. Recording it is the fix; widening `CM-4` to run
 > the census in both directions is the remediation.
 >
-> **Honest census (2026-07-16, hand-measured — 7 tracked files in `.claude/hooks/`):**
-> **4 wired** (above) · **1 library, correctly unwired** — `completion_evidence.py` (imported by
-> `block-hedge-on-stop.py`/`decide_dont_ask.py`; not a hook) · **1 wired outside `settings.json`** —
-> `orchestration_gate_claude.py` (owned by `.orchestration/SPEC.md`, covered by
-> `tests/test_orchestration_gate_claude.py`) · **1 DORMANT** — `stop-completion-gate.py`: **tracked,
-> referenced by nothing, wired nowhere** (no `settings.json` entry, no spec, no test, no import). That is
-> `CM-4`'s exact class — a declared mechanism nothing executes — and the first recorded instance of it.
+> **Honest census (2026-07-16, hand-measured; CORRECTED 2026-07-18 — 7 tracked files in
+> `.claude/hooks/`):** **4 wired** (above) · **1 library, correctly unwired** — `completion_evidence.py`
+> (imported by `block-hedge-on-stop.py`/`decide_dont_ask.py`; not a hook) · **2 DORMANT**:
+> `orchestration_gate_claude.py` — **tracked, spec'd (`.orchestration/SPEC.md`), tested
+> (`tests/test_orchestration_gate_claude.py`), and wired NOWHERE**: no `settings.json` entry and no
+> `.cursor/hooks.json` entry (that file is `{"version":1,"hooks":{}}`); and `stop-completion-gate.py` —
+> **tracked, referenced by nothing, wired nowhere** (no `settings.json` entry, no spec, no test, no
+> import). Both are `CM-4`'s exact class — a declared mechanism nothing executes.
+>
+> *Correction note (2026-07-18):* the 2026-07-16 census recorded `orchestration_gate_claude.py` as
+> "wired outside `settings.json`". That was wrong when written — the operator had disabled the gate
+> wiring on 2026-07-15. **Being spec'd and covered by a test is not being wired** — precisely the
+> confusion this row exists to prevent. The original count is preserved here as the error it was, not
+> silently replaced.
 > Its fate (wire it or delete it, per `C15.3` "deletion is the fix") is a follow-up; **this row does not
 > resolve it, it names it.**
 

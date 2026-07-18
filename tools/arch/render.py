@@ -109,8 +109,16 @@ def _governance_doc() -> str:
 
     # ── the implementation contract ─────────────────────────────────────────────────────────
     if cs.get("available"):
-        L += ["## 5. The implementation contract, resolved against the code", "",
-              f"- Slices: **{len(cs['slices'])}** · files under ownership: **{len(cs['files'])}**",
+        L += ["## 5. The Cycle-6 implementation contract (HISTORICAL), resolved against the code", "",
+              "> **Scope.** This section resolves the **Cycle-6 remediation program's** contract against today's "
+              "tree. It is a CLOSED, program-specific record — *not* the active implementation model for "
+              "arbitrary future changes, and not a list of work outstanding. Several of its slices have "
+              "landed. The reusable part is the Global Boundaries, each of which names its current owner in "
+              "`.reports/architecture/contract/implementation_contract.json`. For the authority governing a "
+              "NEW change see `docs/ARCHITECTURAL_LAWS.md` and `docs/ENGINEERING_STANDARDS.md`; for programme "
+              "status see `docs/governance/AGENT_CHANGE_SYSTEM_ROADMAP.md`. The numbers below are reported "
+              "because live policy rules (`IMPL-001`..`IMPL-008`) are still parameterised by them.", "",
+              f"- Slices (Cycle-6 program): **{len(cs['slices'])}** · files under ownership: **{len(cs['files'])}**",
               f"- Ordering DAG acyclic: **{'✅ PROVEN' if cs['dag']['acyclic'] else '🔴 CYCLE'}** "
               f"({len(cs['dag']['ordering_edges'])} ordering edges, "
               f"{len(cs['dag']['co_requirements'])} co-requirements)", ""]

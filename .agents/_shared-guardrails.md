@@ -26,7 +26,8 @@ git config --local core.hooksPath .githooks                            # wire th
 ```
 
 Write the ticket's tests WITH the change, but NEVER execute them locally — tests run ONLY in GitHub
-CI on your PR (operator rule: parallel wave suites crash the machine; the gate refuses `pytest`).
+CI on your PR (operator rule: parallel wave suites crash the machine. In Claude Code
+`.claude/settings.json` `permissions.deny` refuses `pytest`; in Cursor nothing does).
 Run `./scripts/check.sh` (scoped lint + test-mapping check) before EVERY commit. **Push after every
 green check** — unpushed work is the only work that can be lost. Conventional commits
 `fix(scope): … (MOL-xxx)`, one logical change each; commit only files you staged.
@@ -37,8 +38,9 @@ Land authority is centralized to avoid two lanes merging at once (a drift race).
 `./scripts/check.sh` green → push → open the PR to `main` → wait for CI green → **report to the
 orchestrator: `MOL-xxx CI green, ready to land`**. The orchestrator merges PRs one at a time in
 dependency order; when `origin/main` moves under you after a land, re-sync per **Drift** below. Do
-**not** run `gh pr merge` yourself — during a wave the orchestration land-gate refuses any merge of an
-unverified unit, and the serial landing order only exists if exactly one actor (the orchestrator) merges.
+**not** run `gh pr merge` yourself — the serial landing order only exists if exactly one actor (the
+orchestrator) merges. The hook that once refused an unverified merge is DORMANT
+(`.orchestration/SPEC.md`), so this is a rule you keep, not one that will stop you.
 
 ## Stay in your lane — mechanically enforced
 

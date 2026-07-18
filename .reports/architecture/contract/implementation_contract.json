@@ -3,7 +3,15 @@
   "cycle": 6,
   "git_head": "fcffa73",
   "generated": "2026-07-14",
-  "status": "CANONICAL. This is the implementation contract. No code modification may exceed it without an explicit, recorded architectural approval.",
+  "status": "HISTORICAL — the CANONICAL implementation contract *** OF THE CYCLE-6 REMEDIATION PROGRAM ***, frozen at git HEAD fcffa73 (2026-07-14). Within that program it was binding: no code modification could exceed it without an explicit, recorded architectural approval. *** IT IS NOT THE UNIVERSAL CONTRACT FOR ARBITRARY FUTURE CHANGES. *** Its twelve slices, ordering DAG, landing order, product decisions, approval gates and frozen live-state snapshot are a CLOSED program record; several slices have since landed, some under names this file never learned. It is RETAINED IN FULL and MUST NOT BE DELETED: live policy rules read it (tools/arch/policy.py _REQUIRED_ARTIFACTS; its absence short-circuits GOV-001 and suppresses every other rule), and IMPL-001..008 are parameterised by its slices. For the authority governing a NEW change, see docs/ARCHITECTURAL_LAWS.md, docs/ENGINEERING_STANDARDS.md and docs/REPOSITORY_CONSTITUTION.md; for where the programme stands, docs/governance/AGENT_CHANGE_SYSTEM_ROADMAP.md.",
+  "historical_classification": {
+    "classified": "2026-07-18",
+    "class": "HISTORICAL IMPLEMENTATION CONTRACT (program-specific)",
+    "program": "Cycle-6 remediation (RC-1..RC-10 -> S01..S12)",
+    "still_load_bearing": "GLOBAL_BOUNDARIES GB-1..GB-7 bound every slice of THIS program and remain true statements about the codebase; each now names its current_owner below. The slice/DAG/matrix content is historical.",
+    "why_not_deleted": "tools/arch reads this file; deletion would disable the entire policy engine, not just this program's rules.",
+    "do_not": "Do NOT add future work to this contract. A new program gets a new contract."
+  },
   "prose_twin": "../IMPLEMENTATION_CONTRACT.md",
 
   "epistemic_categories": {
@@ -102,8 +110,10 @@
 
   "GLOBAL_BOUNDARIES": {
     "note": "*** These bind EVERY slice, including any slice a future cycle adds. They are the part of the contract Cycle 4 COULD NOT HAVE WRITTEN, because they derive from Cycle 5's dependency model — which did not exist when the slices were designed. ***",
+    "current_ownership_note": "ROUTING ONLY (added 2026-07-18). These boundaries are the reusable part of this historical contract, and each is now owned by a CURRENT authority — a law, a mechanical predicate, or both. The `current_owner` field on each GB names it. This is a pointer, NOT a second copy: the boundary text below is preserved verbatim as written at Cycle 6, and where a later mechanism has changed the picture the GB says so inline rather than being rewritten. For a NEW change, obey the current owner.",
 
     "GB-1_no_lazy_import_hoist": {
+      "current_owner": "CURRENT OWNER: docs/ARCHITECTURAL_LAWS.md LAW-ARCH-03, mechanised by tools/arch policy rule ARCH-007 against governance/baselines.json must_stay_lazy. NOTE (2026-07-18): the `why` below says *** NOTHING ENFORCES IT: no test, no lint rule, no layer declaration. *** That was TRUE at Cycle 6 and is the reason the boundary was written; it is NO LONGER TRUE — ARCH-007 mechanised it afterwards. The original wording is preserved rather than rewritten.",
       "evidence_class": "ARCHITECTURAL_DECISION (Cycle 5 AR-04) -> IMPLEMENTATION_DECISION (the boundary)",
       "boundary": "*** NO SLICE MAY HOIST AN IN-FUNCTION (lazy) `fanops` IMPORT TO MODULE LEVEL. NO SLICE MAY ADD A MODULE-LEVEL `fanops` IMPORT THAT POINTS TO AN EQUAL-OR-HIGHER LAYER LEVEL. ***",
       "why": "Cycle 5 (AST, whole-tree): 107 of 323 lazy edges point to an equal-or-higher level; *** 56 are STRICTLY UPWARD — true layering inversions. *** The SCC-condensed compile-time graph is an 11-level DAG ONLY BECAUSE those imports are deferred to call time. Module init order is LOAD-BEARING and *** NOTHING ENFORCES IT: no test, no lint rule, no layer declaration. ***",
@@ -115,6 +125,7 @@
     },
 
     "GB-2_no_dead_code_deletion_without_an_ast_writer_census": {
+      "current_owner": "CURRENT OWNER: docs/ARCHITECTURAL_LAWS.md LAW-EVO-01 (partially-enforced; the arch impact surface is advisory). The enforcement gap is recorded on that law, not here.",
       "evidence_class": "ARCHITECTURAL_DECISION (COUP-10, Cycle 5) -> IMPLEMENTATION_DECISION",
       "boundary": "*** NO SLICE MAY DELETE A SYMBOL ON THE STRENGTH OF 'ZERO CALLERS'. *** 'Zero callers' is a LEAD, never a verdict.",
       "why": "`post/providers.py` dispatches SIX backend factories via lazy in-function import LAMBDAS from a dict. *** A name-based call graph flags ALL SIX as 'zero callers'. ALL SIX ARE LIVE. *** Same trap: `post.compress.persist_post_shrink` (lazy-imported from studio/actions.py).",
@@ -123,6 +134,7 @@
     },
 
     "GB-3_no_extra_forbid_on_a_ledger_model": {
+      "current_owner": "CURRENT OWNER: docs/ARCHITECTURAL_LAWS.md LAW-STATE-04, mechanised by tools/arch policy rule IMPL-010 (BLOCKING).",
       "evidence_class": "ARCHITECTURAL_DECISION (SHIM-005 / INV-19)",
       "boundary": "*** NO SLICE MAY SET `extra=\"forbid\"` ON ANY LEDGER MODEL. ***",
       "why": "Forward-compat holds by pydantic's DEFAULT (`extra='ignore'`), NOT by declaration. Setting `extra='forbid'` — a change that LOOKS LIKE TIGHTENING — turns a forward-rolled ledger into a hard `ControlFileError` and bricks every reader.",
@@ -130,6 +142,7 @@
     },
 
     "GB-4_no_new_door_to_the_R1_poison_pill": {
+      "current_owner": "CURRENT OWNER: docs/ARCHITECTURAL_LAWS.md LAW-STATE-02, mechanised by tools/arch policy rule IMPL-009 against governance/baselines.json approved_terminal_post_writers. The rule declares its own dynamic-write blind spot on every run.",
       "evidence_class": "ARCHITECTURAL_DECISION (RC-9 / INV-01 / INV-01b)",
       "boundary": "*** NO SLICE MAY CREATE A NEW WRITE PATH TO `PostState.published` OR `PostState.analyzed` WITHOUT AN EXPLICIT NON-EMPTY `public_url` GUARD AT THE CALL SITE. ***",
       "why": "The R1 invariant is enforced at CONSTRUCTION only. `model_copy(update=)` and `setattr` BOTH bypass every validator. The property survives via FOUR INDEPENDENT MANUAL CALL-SITE GUARDS. *** A FIFTH DOOR ADDED WITHOUT ONE SAVES CLEANLY AND THEN BRICKS THE NEXT `Ledger.load` — taking down the daemon and every Studio page at once. ***",
@@ -138,6 +151,7 @@
     },
 
     "GB-5_no_moment_setattr_to_model_copy_conversion": {
+      "current_owner": "CURRENT OWNER: docs/ARCHITECTURAL_LAWS.md LAW-STATE-03 (partially-enforced; no dedicated predicate). That law is the live authority; this GB is its provenance.",
       "evidence_class": "ARCHITECTURAL_DECISION (COUP-07 / INV-01b, executed)",
       "boundary": "*** NO SLICE MAY CONVERT A `setattr` ON A `Moment` TO `model_copy` — not even 'for consistency with the other 57 sites'. ***",
       "why": "`Moment` is the ONLY model with `validate_assignment=True`. `model_copy` bypasses it ANYWAY. `actions_casting.cast_add/cast_remove` are correct ONLY because of that setattr. Converting them would silently stop canonicalizing affinities — and a non-canonical '@Foo' would make that moment post NOWHERE, silently.",
@@ -145,6 +159,7 @@
     },
 
     "GB-6_ast_ratchet_budgets": {
+      "current_owner": "CURRENT OWNER: the ratchet TESTS are authoritative (tests/test_internal_prints_routed.py -> derived/ratchets.json); docs/ARCHITECTURAL_LAWS.md LAW-FAIL-01/LAW-FAIL-02 carry the laws. tools/arch policy rule IMPL-007 holds THIS contract copy to the test. The copy below is a declared MIGRATION TARGET (see mechanism_B) — the test, never this file, is the source of truth.",
       "evidence_class": "DERIVED_FACT (read from the test files at fcffa73)",
       "note": "*** These are MECHANICALLY ENFORCED IN CI TODAY. Cycle 4 named the ratchets but never derived the PER-SLICE BUDGET, and never noticed that ONE OF THEM IS A SHARED, EXACT-EQUALITY BUDGET ACROSS THREE SLICES. ***",
 
@@ -194,6 +209,7 @@
     },
 
     "GB-7_repo_policy_inherited": {
+      "current_owner": "CURRENT OWNER: CLAUDE.md (repo policy) and AGENTS.md (execution protocol). This GB restated repo policy for the Cycle-6 slices; it is not an independent authority.",
       "evidence_class": "ARCHITECTURAL_DECISION (project CLAUDE.md + project memory)",
       "rules": [
         "*** NEVER run the test suite locally. *** pytest runs ONLY in GitHub CI on a PR. Parallel workers running the suite crash the machine. `./scripts/check.sh` is lint-only.",

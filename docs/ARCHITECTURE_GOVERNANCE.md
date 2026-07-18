@@ -82,9 +82,11 @@ Regenerate: `python -m tools.arch regen`
 
 ---
 
-## 5. The implementation contract, resolved against the code
+## 5. The Cycle-6 implementation contract (HISTORICAL), resolved against the code
 
-- Slices: **12** · files under ownership: **19**
+> **Scope.** This section resolves the **Cycle-6 remediation program's** contract against today's tree. It is a CLOSED, program-specific record — *not* the active implementation model for arbitrary future changes, and not a list of work outstanding. Several of its slices have landed. The reusable part is the Global Boundaries, each of which names its current owner in `.reports/architecture/contract/implementation_contract.json`. For the authority governing a NEW change see `docs/ARCHITECTURAL_LAWS.md` and `docs/ENGINEERING_STANDARDS.md`; for programme status see `docs/governance/AGENT_CHANGE_SYSTEM_ROADMAP.md`. The numbers below are reported because live policy rules (`IMPL-001`..`IMPL-008`) are still parameterised by them.
+
+- Slices (Cycle-6 program): **12** · files under ownership: **19**
 - Ordering DAG acyclic: **✅ PROVEN** (4 ordering edges, 2 co-requirements)
 
 > A **co-requirement is not an ordering edge**. Modelling it as one would manufacture a DAG cycle that does not exist — the `C5-SC-2` error, applied to the implementation graph.

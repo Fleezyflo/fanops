@@ -5,6 +5,21 @@ For **domain invariants** (what must never break, where things live) read `CLAUD
 and the nested `src/fanops/CLAUDE.md`, `src/fanops/post/CLAUDE.md`, `src/fanops/studio/CLAUDE.md`,
 `tests/CLAUDE.md` — they are authoritative and this file does not repeat them.
 
+**Starting a change? Route yourself here first — these are the authorities, not restated below.**
+
+| You need | Go to |
+|---|---|
+| The rules and their honest enforcement status | [`docs/REPOSITORY_CONSTITUTION.md`](docs/REPOSITORY_CONSTITUTION.md) |
+| The enforceable architecture (`LAW-*`) | [`docs/ARCHITECTURAL_LAWS.md`](docs/ARCHITECTURAL_LAWS.md) |
+| How code is written here (`STD-*`) | [`docs/ENGINEERING_STANDARDS.md`](docs/ENGINEERING_STANDARDS.md) |
+| Decisions and their rationale | [`docs/adr/`](docs/adr/) (accepted ADRs) · [`docs/adr/README.md`](docs/adr/README.md) (historical evidence) |
+| Which subsystem owns a file; what a change touches | `python -m tools.arch impact --base <sha>` · [`docs/CODEMAPS/README.md`](docs/CODEMAPS/README.md) |
+| What CI actually enforces, and what is merely intended | [`.github/ci-control-registry.yml`](.github/ci-control-registry.yml) · [`docs/ci/CI_GOVERNANCE_INDEX.md`](docs/ci/CI_GOVERNANCE_INDEX.md) |
+| Where the Agent Change System program stands | [`docs/governance/AGENT_CHANGE_SYSTEM_ROADMAP.md`](docs/governance/AGENT_CHANGE_SYSTEM_ROADMAP.md) |
+
+When these disagree, the precedence is fixed (ADR-0100, restated in the Constitution): **executable
+source & tests > live GitHub config > accepted ADRs & registries > generated docs > historical prose.**
+
 One ticket at a time, in its own git worktree, TDD-first, pushed small.
 Correctness and safety beat speed. When unsure, do the safe serial thing.
 
@@ -48,8 +63,10 @@ every blocker it names (if a blocker is NOT merged to `origin/main`, STOP: "bloc
 the files it names. Anchors may have drifted ±30 lines — **trust the symbol, re-find the line.**
 
 **C. RED** — write the ticket's named tests FIRST. Do NOT execute them locally — tests are
-**CI-ONLY** (operator rule: parallel wave suites crash this machine; the orchestration gate refuses
-`pytest`/`check-full.sh`). Your PR's CI run is where they prove themselves.
+**CI-ONLY** (operator rule: parallel wave suites crash this machine). In Claude Code the block is
+real and mechanical: `.claude/settings.json` `permissions.deny` refuses `pytest` / `check-full.sh`.
+**In Cursor there is no such block — the rule is yours to keep.** Your PR's CI run is where they
+prove themselves.
 
 **D. GREEN** — smallest change that passes. No speculative scope. Honor every
 "KEEP"/"do NOT delete"/"byte-identical" clause verbatim.
@@ -152,9 +169,10 @@ work-loss. Cap concurrency so drift is rare; when it happens, use the re-sync pr
   - `scripts/pr_collision_guard.py` refuses a PR whose hot file is ALSO open in another PR to `main` —
     the real drift risk when many `cursor/mol-*` agents run at once (no lane/Linear needed).
   A PR touching no hot files (docs/tooling/tests) passes trivially. Merge authority is the
-  `fanops-orchestrator`: it lands PRs serially after sub-agent verification (the `.cursor` hook land-gate
-  refuses unverified merges). Never require code-owner review in branch protection — that would block the
-  orchestrator's autonomous merge. The orchestration that drives lanes lives in
+  `fanops-orchestrator`: it lands PRs serially after sub-agent verification. That serial-landing
+  contract is a **convention today** — the hook land-gate that once refused unverified merges is
+  DORMANT (see the status marker below). Never require code-owner review in branch protection — that
+  would block the orchestrator's autonomous merge. The orchestration that drives lanes lives in
   `.cursor/agents/fanops-*.md` + `.agents/*-agent.md` (Linear-driven queue, orchestrator-owned serial
   merges). **Remaining human toggles:** add `LINEAR_API_KEY` as an Actions secret (for MOL-id lane
   resolution) and mark the `lane-guard` check as REQUIRED in branch protection to make it blocking
@@ -175,12 +193,18 @@ CI is red for a reason you can't fix quickly, or any guardrail would be violated
 To run a wave, see the quickstart **`ORCHESTRATION.md`** (one command: `python scripts/orchestrate.py
 start | status | done`). Under the hood, the `fanops-orchestrator` agent
 (`.cursor/agents/fanops-orchestrator.md`) **delegates every unit of work to sub-agents** and personally
-runs ONLY the git land commands. The contract is machine-enforced by `.cursor/hooks.json` +
-`.cursor/hooks/orchestration_gate.py` (cloud-executed, `failClosed`): `gh pr merge` is refused unless a
-sub-agent **verification record** exists for the PR's unit(s), destructive git is denied, and every
-sub-agent start/stop is written to an attribution ledger. Full protocol + the enforced-vs-contract split:
-`.orchestration/SPEC.md`. Whole-repo scope (open PRs, conflicts, stale branches, artifacts) is surfaced
-read-only by `python scripts/repo_sweep.py`. Worker sub-agents follow `.agents/_worker-protocol.md`.
+runs ONLY the git land commands.
+
+> **ORCHESTRATION-GATE-STATUS: DORMANT** — no gate wiring is present in `.cursor/hooks.json` or
+> `.claude/settings.json`. Status owner: [`.orchestration/SPEC.md`](.orchestration/SPEC.md).
+
+The gate machinery was written to make that contract mechanical — `gh pr merge` refused without a
+sub-agent **verification record**, destructive git denied, every sub-agent start/stop ledgered. It was
+wired and enforcing until the operator disabled it (2026-07-15). It is retained on disk and still
+covered by CI, but **it enforces nothing today**; the delegation contract is a convention held by the
+agent files. Full protocol + the re-enable path: `.orchestration/SPEC.md`. Whole-repo scope (open PRs,
+conflicts, stale branches, artifacts) is surfaced read-only by `python scripts/repo_sweep.py`. Worker
+sub-agents follow `.agents/_worker-protocol.md`.
 
 ## Cursor Cloud specific instructions
 

@@ -1,7 +1,20 @@
-<!-- GENERATED VIEW (provisional). Source of truth: .github/ci-control-registry.yml (ADR-0100).
-     Hand-rendered for review; once the Phase-C tools/ci generator lands it is produced byte-for-byte
-     from the registry and DC-5 forbids hand-editing. Do not transcribe mutable counts (e.g. the
-     negative-control count) here — they live in tools/arch/selftest.py::CONTROLS. -->
+<!-- HAND-MAINTAINED (status corrected 2026-07-18). This file is NOT generated: no generator exists.
+     `tools/ci/common.py` defines GEN_VIEW pointing here, but nothing imports it, no `tools/ci` verb
+     writes it (verbs: static | deployed | reconcile | selftest), no workflow produces it, and no
+     byte-compare covers it. It is also outside DC-4's PROSE_DOCS, so no validator checks its claims.
+
+     DATA AUTHORITY: .github/ci-control-registry.yml (ADR-0100) — that file, never this one, is what
+     `tools/ci` reads. Edit the registry first, then hand-update this view to match.
+     MAINTENANCE: hand-held, by whoever changes the registry.
+     GENERATOR: a deferred slice (docs/ci/CI_REMEDIATION_SLICE_PLAN.md); until it lands, treat every
+     statement here as prose that can rot, and prefer the registry when the two disagree.
+
+     ORIGINAL BANNER, preserved: "GENERATED VIEW (provisional). Source of truth:
+     .github/ci-control-registry.yml (ADR-0100). Hand-rendered for review; once the Phase-C tools/ci
+     generator lands it is produced byte-for-byte from the registry and DC-5 forbids hand-editing."
+
+     Do not transcribe mutable counts (e.g. the negative-control count) here — they live in
+     tools/arch/selftest.py::CONTROLS. -->
 
 # FanOps — CI Control Inventory (current state)
 
@@ -71,14 +84,21 @@ evidence is `to-verify-phase-C` (re-read when the `tools/ci` validators are buil
 | `gate (drift + policy + registries)` | architecture governance (drift + policy + registries) — **Model A authoritative** |
 | `lane file-ownership + cross-PR collision` | no cross-lane / cross-open-PR hot-file collision |
 
-No required context duplicates another's invariant. `CI-UNIT-ARCHGOV` (a unit sub-gate) is scoped by
-`SLICE-ARCH-MODEL` to the invariants `gate` does **not** run (determinism, pure-function-of-source,
-reachability, field-authority), so `unit` and `gate` stay distinct.
+One required context **does** overlap another, deliberately and on the record. `CI-UNIT-ARCHGOV` (a unit
+sub-gate) carries the invariants `gate` does **not** run (determinism, pure-function-of-source,
+reachability, field-authority) **and, retained through OGD M1, the drift/policy/registries checks as
+well** — because `gate` is not a required context yet, the unit lane is today the **only** required line
+enforcing them. The overlap is registered in `duplicate_groups.arch-drift-policy`; de-duplication is a
+post-M1 follow-up. *(Corrected 2026-07-18; this paragraph previously asserted the scoping was already
+done — "is scoped by `SLICE-ARCH-MODEL` … so `unit` and `gate` stay distinct".)*
 
 ## Registered intentional redundancy
 
-- **`arch-drift-policy` — RESOLVED (Model A).** `ARCH-GATE` (required) is the authoritative merge-gate
-  for arch drift/policy/registries; `CI-UNIT-ARCHGOV` scoped to distinct invariants (`SLICE-ARCH-MODEL`).
+- **`arch-drift-policy` — DECIDED (Model A), NOT YET RESOLVED.** `ARCH-GATE` is classified `required`
+  and is the *intended* authoritative merge-gate for arch drift/policy/registries — but it is **not in
+  `current_required_contexts`** until OGD M1. `CI-UNIT-ARCHGOV` is **not** yet scoped down; the overlap
+  is retained by design until M1 lands and `gate` is proven stable. *(Corrected 2026-07-18; previously
+  "RESOLVED" with `ARCH-GATE` marked "(required)" as though live.)*
 - **`negative-controls`** — `CI-E2E-NEGCONTROLS` (required, in e2e) is the full validator-effectiveness
   run; `ARCH-CONTROLS` (advisory) reduces to a reachability assertion (`SLICE-NEGCTRL-DEDUP`).
 - **`ruff-scopes`**, **`secret-scan`** — deliberate scope/moment tiering; keep all, remove none.

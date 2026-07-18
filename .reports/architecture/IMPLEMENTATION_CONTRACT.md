@@ -1,8 +1,30 @@
-# FanOps — The Canonical Implementation Contract
+# FanOps — The Cycle-6 Implementation Contract (HISTORICAL)
+
+> 🗄️ **HISTORICAL PROGRAM RECORD — classified 2026-07-18. NOT the universal contract for future work.**
+>
+> This was the **canonical implementation contract of the Cycle-6 remediation program**, frozen at git
+> HEAD `fcffa73` on 2026-07-14. *Within that program* the sentence below was binding, and it is
+> preserved as written. It does **not** govern arbitrary future changes: the twelve slices, the ordering
+> DAG, the landing order, the product decisions, the approval gates and the frozen live-state snapshot
+> are a **closed program record**, and several slices have since landed — some under names this document
+> never learned.
+>
+> **Retained in full; must not be deleted.** `tools/arch` reads the machine twin
+> (`contract/implementation_contract.json`): its absence short-circuits `GOV-001` and suppresses every
+> other policy rule, and `IMPL-001`..`IMPL-008` are parameterised by these slices.
+>
+> **Still reusable:** the Global Boundaries **GB-1…GB-7**. Each now names its `current_owner` in the
+> machine twin — a current law and, where one exists, a mechanical predicate. Obey the current owner.
+>
+> **For a new change:** [`docs/ARCHITECTURAL_LAWS.md`](../../docs/ARCHITECTURAL_LAWS.md) ·
+> [`docs/ENGINEERING_STANDARDS.md`](../../docs/ENGINEERING_STANDARDS.md) ·
+> [`docs/REPOSITORY_CONSTITUTION.md`](../../docs/REPOSITORY_CONSTITUTION.md).
+> **For programme status:**
+> [`docs/governance/AGENT_CHANGE_SYSTEM_ROADMAP.md`](../../docs/governance/AGENT_CHANGE_SYSTEM_ROADMAP.md).
 
 **Cycle 6 · 2026-07-14 · git HEAD `fcffa73`**
 **This is the implementation contract. No code modification may exceed it without an explicit, recorded
-architectural approval.**
+architectural approval.** *(As written at Cycle 6, scoped to that program — see the banner above.)*
 
 Machine-readable (the Cycle-7 enforcement surface): [`contract/`](contract/) ·
 Corrections: [`CYCLE6_CORRECTIONS.md`](CYCLE6_CORRECTIONS.md) ·

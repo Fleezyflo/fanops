@@ -24,9 +24,10 @@ MOH FLOW FAN OPS: intelligent clip + cross-post engine. Pure-Python `src/` layou
 ## Constraints
 
 - NEVER run the test suite locally — `pytest` / `check-full.sh` execute ONLY in GitHub CI on a PR.
-  Parallel wave workers each running the suite crash this machine; the orchestration gate refuses
-  local runs during waves and `./scripts/check.sh` is lint-only. `FANOPS_LOCAL_TESTS=1` is the
-  operator-only override from a human terminal.
+  Parallel wave workers each running the suite crash this machine. In Claude Code the refusal is
+  mechanical: `.claude/settings.json` `permissions.deny`. **Cursor has no equivalent — there the rule
+  is convention.** `./scripts/check.sh` is lint-only. `FANOPS_LOCAL_TESTS=1` is the operator-only
+  override from a human terminal.
 - NEVER mass-reformat: no `black`, no `ruff format`. The compact one-liner house style
   (E701/E702/E401/E501 ignored) is deliberate — rationale in pyproject.toml comments.
 - The global 60s pytest timeout is a deadlock guardrail (ledger SQLite busy_timeout). A hanging test
