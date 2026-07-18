@@ -36,12 +36,13 @@ def _media(tmp_path, data=b"canary-media-bytes"):
 @pytest.fixture
 def stub_render(monkeypatch):
     # `realized` tracks the last requested clip window so the stubbed probe of a rendered clip returns a
-    # duration WITHIN the Phase-4 strict-probe tolerance of the window (the source probes at a fixed 30s).
-    calls = {"single": 0, "supercut": 0, "realized": 4.0}
+    # duration WITHIN the strict-probe tolerance of the window. `src_duration` is the stubbed SOURCE duration
+    # (tests set it to null/zero/NaN/... to exercise the fail-closed source probe).
+    calls = {"single": 0, "supercut": 0, "realized": 4.0, "src_duration": 30.0}
     def _probe(path):
         if "clip" in Path(str(path)).name:                  # a rendered clip or its .part temp
             return (1080, 1920, calls["realized"])
-        return (1080, 1920, 30.0)                            # the source media
+        return (1080, 1920, calls["src_duration"])           # the source media
     def _single(src, dst, cs, ce, aspect, *, src_w, src_h):
         calls["single"] += 1; calls["realized"] = round(ce - cs, 3)
         Path(dst).write_bytes(b"RENDERED-SINGLE"); return type("R", (), {"returncode": 0})()
@@ -52,6 +53,20 @@ def stub_render(monkeypatch):
     monkeypatch.setattr(canary, "_do_render_single", _single)
     monkeypatch.setattr(canary, "_do_render_supercut", _super)
     return calls
+
+
+def _prepared(cfg, tmp_path, **kw):
+    """Prepare a real lineage and return (result, run_record, recomputed identity, run_dir) for validator tests."""
+    r = _prep(cfg, _media(tmp_path), **kw)
+    assert r.ok, r.error
+    rec, err = canary._read_run_record(cfg, r.detail["run_id"]); assert err is None and rec is not None
+    ident, ierr = canary._recompute_identity_from_record(rec); assert ierr is None, ierr
+    return r, rec, ident, canary._run_dir(cfg, r.detail["run_id"])
+
+
+def _lineage_errors(cfg, ident, run_dir, rec, mode=None):
+    return canary._validate_expected_lineage(cfg, Ledger.load(cfg), ident, run_dir,
+                                             mode=mode or canary._MODE_LIVE, rec=rec)
 
 
 def _prep(cfg, media, **kw):
@@ -744,6 +759,191 @@ def test_compare_rejects_malformed_or_null_baseline(tmp_path):
                                "digests": None, "per_post_manifest": None, "per_post_layers": None, "frozen_incident": None}))
     r = canary.compare_canary_baseline(cfg, baseline=str(bad))
     assert not r.ok and "invalid baseline" in r.error
+
+
+# ---------- the ONE complete expected-lineage validator ----------
+
+def test_validator_accepts_a_clean_lineage(tmp_path, stub_render):
+    cfg = Config(root=tmp_path); _seed(cfg)
+    _r, rec, ident, rd = _prepared(cfg, tmp_path, hook="POV the drop hits")
+    assert _lineage_errors(cfg, ident, rd, rec) == []
+
+
+def test_validator_refuses_a_tampered_hook_that_kept_its_fingerprint(tmp_path, stub_render):
+    # the hook is checked BY VALUE-HASH, not merely via the content_token it contributed to
+    cfg = Config(root=tmp_path); _seed(cfg)
+    r, rec, ident, rd = _prepared(cfg, tmp_path, hook="POV the drop hits")
+    with Ledger.transaction(cfg) as led:
+        mid = r.detail["moment_id"]
+        led.moments[mid] = led.moments[mid].model_copy(update={"hook": "A DIFFERENT HOOK"})
+    assert any("hook" in e for e in _lineage_errors(cfg, ident, rd, rec))
+
+
+def test_validator_refuses_tampered_caption_or_extra_canary_surface(tmp_path, stub_render):
+    cfg = Config(root=tmp_path); _seed(cfg)
+    r, rec, ident, rd = _prepared(cfg, tmp_path)
+    cid = r.detail["clip_id"]
+    with Ledger.transaction(cfg) as led:
+        led.clips[cid] = led.clips[cid].model_copy(
+            update={"meta_captions": {"fanops_canary/tiktok": {"caption": "SOMETHING ELSE", "hashtags": []}}})
+    assert any("caption" in e for e in _lineage_errors(cfg, ident, rd, rec))
+    with Ledger.transaction(cfg) as led:
+        led.clips[cid] = led.clips[cid].model_copy(
+            update={"meta_captions": {"fanops_canary/tiktok": {"caption": "canary caption", "hashtags": []},
+                                      "fanops_canary/instagram": {"caption": "x"}}})
+    assert any("canary surfaces" in e for e in _lineage_errors(cfg, ident, rd, rec))
+
+
+def test_validator_refuses_tampered_batch_name(tmp_path, stub_render):
+    cfg = Config(root=tmp_path); _seed(cfg)
+    r, rec, ident, rd = _prepared(cfg, tmp_path)
+    with Ledger.transaction(cfg) as led:
+        bid = r.detail["batch_id"]
+        led.batches[bid] = led.batches[bid].model_copy(update={"name": "renamed-by-hand"})
+    assert any("batch.name" in e for e in _lineage_errors(cfg, ident, rd, rec))
+
+
+def test_validator_refuses_source_byte_mismatch_or_missing_file(tmp_path, stub_render):
+    cfg = Config(root=tmp_path); _seed(cfg)
+    _r, rec, ident, rd = _prepared(cfg, tmp_path)
+    (rd / "media.mp4").write_bytes(b"DIFFERENT BYTES")
+    assert any("source file bytes" in e for e in _lineage_errors(cfg, ident, rd, rec))
+    (rd / "media.mp4").unlink()
+    assert any("does not exist on disk" in e for e in _lineage_errors(cfg, ident, rd, rec))
+
+
+def test_validator_enforces_clip_bytes_against_the_run_record(tmp_path, stub_render):
+    cfg = Config(root=tmp_path); _seed(cfg)
+    _r, rec, ident, rd = _prepared(cfg, tmp_path)
+    assert any("clip bytes differ" in e for e in _lineage_errors(cfg, ident, rd, {**rec, "clip_sha256": "0" * 64}))
+
+
+def test_validator_enforces_stored_source_geometry_against_a_fresh_probe(tmp_path, stub_render):
+    cfg = Config(root=tmp_path); _seed(cfg)
+    r, rec, ident, rd = _prepared(cfg, tmp_path)
+    with Ledger.transaction(cfg) as led:
+        sid = r.detail["source_id"]
+        led.sources[sid] = led.sources[sid].model_copy(update={"duration": 999.0})
+    assert any("duration" in e for e in _lineage_errors(cfg, ident, rd, rec))
+
+
+def test_under_lock_partial_concurrent_lineage_is_refused(tmp_path, stub_render, monkeypatch):
+    # a concurrent run lands PART of the lineage while we render -> adoption must refuse, never setdefault over it
+    cfg = Config(root=tmp_path); _seed(cfg); media = _media(tmp_path)
+    plan = _prep(cfg, media, plan_only=True); sid = plan.detail["source_id"]
+    orig = canary._do_render_single
+    def _seed_partial(src, dst, cs, ce, aspect, *, src_w, src_h):
+        with Ledger.transaction(cfg) as led:
+            led.add_source(Source(id=sid, state=SourceState.moments_decided, source_path="/x"))
+        return orig(src, dst, cs, ce, aspect, src_w=src_w, src_h=src_h)
+    monkeypatch.setattr(canary, "_do_render_single", _seed_partial)
+    r = _prep(cfg, media)
+    assert not r.ok and "PARTIAL concurrent lineage" in r.error
+    assert len(Ledger.load(cfg).clips) == 0
+
+
+# ---------- canonical-input parity (prepare <-> run-record authentication) ----------
+
+_BAD_WINDOWS = [
+    {"start": -1.0, "end": 4.0, "segments": None},                       # negative start
+    {"start": 0.0, "end": None, "segments": [[-1.0, 2.0]]},              # negative segment start
+    {"start": 0.0, "end": None, "segments": [[0.0, 5.0], [3.0, 8.0]]},   # overlapping
+    {"start": 0.0, "end": None, "segments": [[5.0, 2.0]]},               # reversed
+    {"start": 0.0, "end": None, "segments": [[0.0, 0.1]]},               # under the 0.5s minimum
+    {"start": 0.0, "end": 4.0, "segments": [[0.0, 2.0]]},                # both end AND segments
+    {"start": 0.0, "end": None, "segments": None},                       # neither
+    {"start": 0.0, "end": 100000.0, "segments": None},                   # over the tiktok cap
+]
+
+
+@pytest.mark.parametrize("bw", _BAD_WINDOWS)
+def test_prepare_and_canonical_name_reject_the_same_invalid_windows(bw):
+    _w, werr = canary._normalized_window(bw["start"], bw["end"], bw["segments"])
+    assert werr is not None, bw                              # prepare's structural rule refuses...
+    cn = canary._canon({"version": "1", "handle": "fanops_canary", "platform": "tiktok",
+                        "media_sha256": "a" * 64, "start": bw["start"], "end": bw["end"],
+                        "segments": bw["segments"], "caption_sha256": "b" * 64, "hashtags": [],
+                        "hook_sha256": None, "run_label": None})
+    _obj, perr = canary._parse_canonical_name(cn)
+    assert perr is not None, bw                              # ...and so does run-record authentication
+
+
+# ---------- source-probe fail-closed ----------
+
+@pytest.mark.parametrize("dur", [None, 0.0, -5.0, float("nan"), float("inf")])
+def test_prepare_refuses_an_unusable_source_duration(tmp_path, stub_render, dur):
+    cfg = Config(root=tmp_path); _seed(cfg)
+    stub_render["src_duration"] = dur
+    r = _prep(cfg, _media(tmp_path))
+    assert not r.ok and "duration" in r.error
+    assert Ledger.load(cfg).sources == {} and not (Path(cfg.base) / "canary").exists()   # no fs mutation
+
+
+def test_every_segment_end_is_bounded_by_source_duration(tmp_path, stub_render):
+    cfg = Config(root=tmp_path); _seed(cfg)
+    stub_render["src_duration"] = 10.0
+    r = canary.prepare_canary_lineage(cfg, media_path=_media(tmp_path), start="0", end=None,
+                                      segments=[(0.0, 2.0), (8.0, 12.0)], caption="x")
+    assert not r.ok and "source is only" in r.error
+
+
+# ---------- pinned baseline schema (exact equality) ----------
+
+def _baseline(cfg, tmp_path, mutate=None):
+    _seed_posts(cfg, [Post(id="post_a", parent_id="c", account="x", account_id="i",
+                           platform=Platform.tiktok, caption="hi", state=PostState.awaiting_approval)])
+    p = tmp_path / "b.json"
+    assert canary.capture_canary_baseline(cfg, output=str(p)).ok
+    man = json.loads(p.read_text())
+    if mutate: mutate(man)
+    p.write_text(json.dumps(man))
+    return p
+
+
+def test_roundtrip_baseline_validates(tmp_path):
+    cfg = Config(root=tmp_path); _seed(cfg)
+    assert canary.compare_canary_baseline(cfg, baseline=str(_baseline(cfg, tmp_path))).ok
+
+
+_CORRUPTIONS = [
+    ("extra-top-key", lambda m: m.__setitem__("surprise", 1)),
+    ("missing-top-key", lambda m: m.pop("repo_commit")),
+    ("altered-canonicalization", lambda m: m["canonicalization"].__setitem__("hash", "sha1")),
+    ("wrong-status", lambda m: m.__setitem__("status", "accepted")),
+    ("inconsistent-post-count", lambda m: m.__setitem__("post_count", 99)),
+    ("state-distribution-sum", lambda m: m.__setitem__("state_distribution", {"awaiting_approval": 7})),
+    ("non-hash-digest", lambda m: m["digests"].__setitem__("raw_posts", "nope")),
+    ("extra-digest-key", lambda m: m["digests"].__setitem__("bonus", "a" * 64)),
+    ("tampered-safety-aggregate", lambda m: m["digests"].__setitem__("safety_critical", "a" * 64)),
+    ("tampered-manifest-aggregate", lambda m: m["digests"].__setitem__("manifest", "b" * 64)),
+    ("manifest-layers-key-skew", lambda m: m["per_post_manifest"].__setitem__("ghost", "c" * 64)),
+    ("non-hash-manifest-value", lambda m: m["per_post_manifest"].__setitem__("post_a", "short")),
+]
+
+
+@pytest.mark.parametrize("name,mutate", _CORRUPTIONS, ids=[c[0] for c in _CORRUPTIONS])
+def test_baseline_schema_rejects_every_corruption_class(tmp_path, name, mutate):
+    cfg = Config(root=tmp_path); _seed(cfg)
+    res = canary.compare_canary_baseline(cfg, baseline=str(_baseline(cfg, tmp_path, mutate)))
+    assert not res.ok and "invalid baseline" in res.error
+
+
+def test_baseline_discloses_nothing_verbatim_across_the_whole_manifest(tmp_path):
+    cfg = Config(root=tmp_path); _seed(cfg)
+    s = {"cap": "caption https://leak.example/promo", "pub": "https://www.tiktok.com/@m/video/7460SECRETID",
+         "sig": "https://r2.cloudflarestorage.com/u/a?X-Amz-Signature=SIGSECRET123",
+         "sub": "REALSUBMISSION7460", "acct": "INTEG-SECRET-9f3a", "err": "ERRREASONSECRETTEXT",
+         "cand": "CANDIDATESECRET42", "mid": "MEDIAIDSECRET77"}
+    _seed_posts(cfg, [Post(id="post_04b29c9f7f2d", parent_id="c", account="x", account_id=s["acct"],
+                           platform=Platform.tiktok, caption=s["cap"], state=PostState.published,
+                           submission_id=s["sub"], public_url=s["pub"], media_urls=[s["sig"]],
+                           reconcile_candidate_id=s["cand"], error_reason=s["err"], media_id=s["mid"])])
+    out = tmp_path / "b.json"; assert canary.capture_canary_baseline(cfg, output=str(out)).ok
+    text = out.read_text()
+    for k, v in s.items():
+        assert v not in text, k
+    for frag in ("leak.example", "SIGSECRET123", "7460SECRETID", "cloudflarestorage", "SECRET"):
+        assert frag not in text, frag
 
 
 # ---------- no forbidden calls ----------

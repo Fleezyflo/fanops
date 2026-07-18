@@ -9,26 +9,24 @@ INVARIANTS (each has a test): this module NEVER calls advance / crosspost_clips 
 publish_due / publish_post / reconcile_due / Zernio / Postiz / HTTP / an LLM / an agent gate. Every id is
 content-addressed (idempotent). Every filesystem path is realpath-contained to the run-owned directory.
 
-HARDENING (revision round):
-- IDENTITY IS THE ONLY TRUSTED RECORD FIELD. `discard`/`cancel` recompute all four entity ids FROM the
-  self-verifying `canonical_name` and require the record's stored ids to equal the recomputation — a mutable
-  record can never point retirement at a foreign lineage (Phase 1).
-- TOCTOU-CLOSED. Every ledger-dependent discard precondition is re-checked INSIDE the retirement transaction;
-  a mint that commits before discard takes the lock is seen and refuses discard, a mint after discard commits
-  sees a retired Clip and refuses (Phase 2).
-- IDEMPOTENCY IS EXACT. A re-`prepare` returns idempotent ONLY after the full expected projection (states,
-  ownership, parent-links, times, caption, clip bytes) matches; any mismatch is a field-specific refusal, never
-  a silent repair (Phase 3).
-- RENDER IS ATOMIC. The clip renders into a unique owned temp, is strictly probed (finite positive
-  dimensions + duration, size, playable-duration tolerance), then `os.replace`d into place; no partial final is
-  ever treated as complete, and an unprobe-able render fails CLOSED (Phase 4).
-- BASELINES ARE NON-DISCLOSIVE + STRICT. Per-post layers carry per-field hashes / categorical projections — no
-  raw URL / token / caption ever appears; a supplied baseline is strictly shape-validated before compare and a
-  malformed/null layer is an error, not an apparently-clean diff (Phase 5).
-- CANCEL IS RUN-AUTHENTICATED. A Post is cancellable only when it maps to exactly one authenticated canary run
-  and matches the reserved integration (Phase 6). Rendering is ledger-free + outside the lock; adoption is one
-  short transaction. A discarded run is terminal. A minted canary run is ONE-SHOT (Phase 7). Baseline capture is
-  always `candidate` — it never self-accepts.
+ONE VALIDATOR, ONE WINDOW RULE:
+- `_validate_expected_lineage` is the SINGLE complete expected-projection validator. All four consumers use
+  it: the initial idempotent path, the under-lock concurrent-lineage path, discard authentication, and
+  cancellation run authentication. It validates the whole lineage — ids, states, ownership, parent-links,
+  affinities, hook, caption + hashtags, times/segments, source bytes + probed geometry, clip artifact +
+  bytes, batch identity, and the run record — and returns FIELD-SPECIFIC refusals.
+- `_normalized_window` is the SINGLE structural time/segment rule. Both `prepare` (raw operator input) and
+  `_parse_canonical_name` (run-record authentication) call it, so a canonical identity that prepare would
+  refuse structurally cannot authenticate either.
+
+Identity is the only trusted record field: `discard`/`cancel` recompute all four entity ids FROM the
+self-verifying `canonical_name` and require the record's stored ids to equal the recomputation, so a mutable
+record can never point retirement at a foreign lineage. Every ledger-dependent discard precondition is
+re-checked INSIDE the retirement transaction. Rendering is atomic (unique owned temp → strict probe →
+os.replace) and fails CLOSED. Baselines are non-disclosive (per-field hashes / categorical projections only)
+and strictly shape-validated against a pinned contract before comparison. Rendering is ledger-free and runs
+OUTSIDE the ledger lock; adoption is one short transaction. A discarded run is terminal; a minted canary run
+is ONE-SHOT. Baseline capture is always `candidate` — it never self-accepts.
 """
 from __future__ import annotations
 import hashlib, json, math, os, re, shutil, sqlite3, subprocess, tempfile, uuid
@@ -65,7 +63,7 @@ def _err(msg):
 class _Refuse(Exception):
     """Raised INSIDE a Ledger.transaction to abort with a refusal WITHOUT persisting any partial state.
     Ledger.transaction saves only on a clean exit, so an uncaught raise rolls back to the prior snapshot —
-    this is how every under-lock precondition (Phase 2) refuses without touching the lineage."""
+    this is how every under-lock precondition refuses without touching the lineage."""
     def __init__(self, msg: str):
         super().__init__(msg); self.msg = msg
 
@@ -95,28 +93,35 @@ CANARY_RUN_NAMESPACE = uuid.UUID("a1c9e6d2-7b34-5f81-9e0a-2d6f4c8b1e73")
 
 _TARGET_PLATFORM = Platform.tiktok
 _TARGET_ASPECT = Fmt.r9x16
+_TARGET_SURFACE = f"{CANARY_HANDLE}/tiktok"
 _MEDIA_EXTS = {".mp4", ".mov", ".mkv", ".webm", ".m4v"}
 _RUN_LABEL_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 _RUN_ID_RE = re.compile(r"^canary_[0-9a-f]{32}$")
 _HEX64_RE = re.compile(r"^[0-9a-f]{64}$")
+_COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 _REASON_MAX = 180
 _CANARY_REASON_PREFIX = "canary_cancelled: "
-# the EXACT key-set of a canonical run name — any extra/missing key is a hard refusal (BC3 / Phase 1)
+# the EXACT key-set of a canonical run name — any extra/missing key is a hard refusal
 _EXPECTED_CANON_KEYS = frozenset({"version", "handle", "platform", "media_sha256", "start", "end",
                                   "segments", "caption_sha256", "hashtags", "hook_sha256", "run_label"})
 _MIN_SEG_SECONDS = 0.5                           # mirrors models._MIN_MOMENT_S — a shorter segment is noise
 _SOURCE_DUR_TOL = 0.5                            # a clip window may exceed the probed source by at most this
 _PROBE_DUR_ABS_TOL = 1.5                         # rendered-clip duration tolerance vs the requested window:
 _PROBE_DUR_REL_TOL = 0.25                        #   max(abs, rel*expected) — container/keyframe padding drift
+_SOURCE_PROBE_DUR_TOL = 1.0                      # stored Source.duration vs a fresh probe of the owned media
 _RENDER_TMP_PREFIX = "clip."                     # unique render temp: clip.<rand>.part.mp4 (never the final
 _RENDER_TMP_SUFFIX = ".part.mp4"                 #   clip.mp4; swept on entry so a crash-orphan is never final)
+
+# validation modes for the single expected-lineage validator
+_MODE_LIVE = "live"                              # the lineage must be in its exact minted pre-mint states
+_MODE_DISCARD = "discard"                        # ...or already in its permitted terminal state (re-discard)
 
 
 # ---------- canonicalization helpers ----------
 
 def _canon(obj) -> str:
-    # allow_nan=False (Phase 8): identity-bearing canonical JSON must NEVER contain NaN/Infinity. A non-finite
-    # value raises here and fails CLOSED rather than emitting non-standard JSON tokens. Byte-identical to the
+    # allow_nan=False: identity-bearing canonical JSON must NEVER contain NaN/Infinity. A non-finite value
+    # raises here and fails CLOSED rather than emitting non-standard JSON tokens. Byte-identical to the
     # prior behaviour for all valid (finite) inputs.
     return json.dumps(obj, sort_keys=True, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
 
@@ -156,7 +161,68 @@ def _canon_time(v) -> float:
     return float(v)
 
 
-# ---------- identity (BC3): canonical JSON name -> UUIDv5 run id; full-sha256 content tokens ----------
+# ---------- the SINGLE structural window rule (used by prepare AND canonical-name authentication) ----------
+
+def _normalized_window(start, end, segments) -> tuple[Optional[dict], Optional[str]]:
+    """The one structural time/segment validator. Returns (window, None) or (None, field-specific error).
+
+    window = {eff_start, end, segments, envelope_end, realized}. `eff_start` is segs[0][0] for a segmented run
+    (the segments ARE the window — a separate --start is not independently meaningful), else `start`.
+
+    Enforced: finite start ≥ 0; finite end when present; EXACTLY one of end/segments; every segment boundary
+    finite and ≥ 0; end > start; every segment ≥ _MIN_SEG_SECONDS; segments ordered by start and
+    non-overlapping; canonical normalized numeric representation; realized duration finite, positive and
+    within the TikTok cap. `_parse_canonical_name` calls this too, so a canonical identity that prepare would
+    refuse structurally cannot authenticate a run record either."""
+    try:
+        start_f = _canon_time(start)
+        end_f = _canon_time(end) if end is not None else None
+        segs = _norm_segments(segments)
+    except (TypeError, ValueError) as exc:
+        return None, f"bad time value: {str(exc)[:120]}"
+    if not _finite(start_f):
+        return None, f"start must be a finite number (got {start!r})"
+    if start_f < 0:
+        return None, f"start must be non-negative (got {start_f})"
+    if end_f is not None and not _finite(end_f):
+        return None, f"end must be a finite number (got {end!r})"
+    if segs is not None and end_f is not None:
+        return None, "pass EITHER an end OR segments, not both"
+    if segs is None and end_f is None:
+        return None, "a single-window canary needs an end (or use segments)"
+    if segs is not None:
+        prev_end = -math.inf
+        for s, e in segs:
+            if not (_finite(s) and _finite(e)):
+                return None, "every segment boundary must be a finite number (no NaN/Infinity)"
+            if s < 0:
+                return None, f"every segment must start at a non-negative time (got start {s})"
+            if e <= s:
+                return None, f"every segment must have end > start (got {s}->{e})"
+            if (e - s) < _MIN_SEG_SECONDS:
+                return None, f"segment {s}->{e} is shorter than the {_MIN_SEG_SECONDS}s minimum"
+            if s < prev_end:
+                return None, f"segments must be strictly ascending and non-overlapping ({s} < prior end {prev_end})"
+            prev_end = e
+        eff_start = segs[0][0]
+        envelope_end = segs[-1][1]
+        realized = sum(e - s for s, e in segs)
+    else:
+        if end_f <= start_f:
+            return None, "end must be greater than start"
+        eff_start = start_f
+        envelope_end = end_f
+        realized = end_f - start_f
+    if not _finite(realized) or realized <= 0:
+        return None, f"realized duration must be finite and positive (got {realized!r})"
+    cap = PLATFORM_MAX_SECONDS.get(_TARGET_PLATFORM)
+    if cap is not None and realized > cap:
+        return None, f"clip duration {realized:.1f}s exceeds tiktok cap {cap}s"
+    return {"eff_start": eff_start, "end": end_f, "segments": segs,
+            "envelope_end": envelope_end, "realized": realized}, None
+
+
+# ---------- identity: canonical JSON name -> UUIDv5 run id; full-sha256 content tokens ----------
 
 def _canonical_run_name(*, media_sha256: str, start, end, segments, caption: str,
                         hashtags, hook: Optional[str], run_label: Optional[str]) -> str:
@@ -178,7 +244,7 @@ def _run_id_from_name(name: str) -> str:
     return "canary_" + uuid.uuid5(CANARY_RUN_NAMESPACE, name).hex
 
 def _entity_token(kind: str, fields: dict) -> str:
-    """Full SHA-256 of a VERSIONED canonical JSON object — never a delimiter join (BC3)."""
+    """Full SHA-256 of a VERSIONED canonical JSON object — never a delimiter join."""
     return _sha256_text(_canon({"v": _ENTITY_TOKEN_VERSION, "kind": kind, **fields}))
 
 def _lineage_ids(*, run_id: str, media_sha256: str, start, end, segments) -> dict:
@@ -195,17 +261,24 @@ def _lineage_ids(*, run_id: str, media_sha256: str, start, end, segments) -> dic
     return {"source_id": source_id, "moment_id": moment_id, "clip_id": clip_id, "batch_id": batch_id}
 
 
-def _identity_dict(*, run_id: str, fingerprint: str, media_sha256: str, start, end, segments, ids: dict) -> dict:
-    """The single in-memory identity carried through prepare / discard / cancel projection checks."""
+def _identity_dict(*, run_id: str, fingerprint: str, media_sha256: str, start, end, segments,
+                   caption_sha256: str, hashtags, hook_sha256: Optional[str], run_label: Optional[str],
+                   ids: dict) -> dict:
+    """The single in-memory identity carried through prepare / discard / cancel validation. It carries the
+    FULL canonical content (caption/hashtags/hook/label hashes), not just the times, so the shared validator
+    can check the stored hook, caption and hashtags without ever holding their plaintext."""
     return {"run_id": run_id, "fingerprint": fingerprint, "media_sha256": media_sha256,
             "canon_start": _canon_time(start), "canon_end": (_canon_time(end) if end is not None else None),
-            "canon_segments": _norm_segments(segments), **ids}
+            "canon_segments": _norm_segments(segments), "caption_sha256": caption_sha256,
+            "hashtags": _norm_hashtags(hashtags), "hook_sha256": hook_sha256,
+            "run_label": _norm_label(run_label), **ids}
 
 
 def _parse_canonical_name(cn: str) -> tuple[Optional[dict], Optional[str]]:
-    """Strictly parse + schema-validate a canonical run name (Phase 1 items 1-2, 5). The stored string is the
-    ONLY trusted field in a run record; everything else is recomputed from it. Refuses unknown/missing/extra
-    keys, non-versioned/mis-typed/non-canonical forms — anything that could make interpretation ambiguous."""
+    """Strictly parse + schema-validate a canonical run name. The stored string is the ONLY trusted field in a
+    run record; everything else is recomputed from it. Refuses unknown/missing/extra keys, non-versioned or
+    mis-typed forms, a non-canonical serialization, and — via `_normalized_window` — ANY structural
+    time/segment shape that `prepare` itself would refuse."""
     try:
         obj = json.loads(cn)
     except (ValueError, TypeError) as exc:
@@ -221,17 +294,15 @@ def _parse_canonical_name(cn: str) -> tuple[Optional[dict], Optional[str]]:
     if not _is_hex64(obj["media_sha256"]): return None, "canonical_name media_sha256 is not a sha256"
     if not _is_hex64(obj["caption_sha256"]): return None, "canonical_name caption_sha256 is not a sha256"
     if obj["hook_sha256"] is not None and not _is_hex64(obj["hook_sha256"]): return None, "canonical_name hook_sha256 is not a sha256"
-    if not (_finite(obj["start"]) and obj["start"] >= 0): return None, "canonical_name start is not a finite, non-negative number"
-    if obj["end"] is not None and not _finite(obj["end"]): return None, "canonical_name end is not a finite number"
-    segs = obj["segments"]
-    if segs is not None:
-        if not isinstance(segs, list): return None, "canonical_name segments is not a list"
-        for pair in segs:
-            if not (isinstance(pair, list) and len(pair) == 2 and _finite(pair[0]) and _finite(pair[1])):
-                return None, "canonical_name has a malformed segment pair"
     ht = obj["hashtags"]
     if not isinstance(ht, list) or ht != _norm_hashtags(ht): return None, "canonical_name hashtags are not a normalized list"
     if obj["run_label"] is not None and not _RUN_LABEL_RE.match(str(obj["run_label"])): return None, "canonical_name run_label is malformed"
+    # the SAME structural window rule prepare uses (parity: prepare-refused shapes cannot authenticate)
+    win, werr = _normalized_window(obj["start"], obj["end"], obj["segments"])
+    if werr is not None:
+        return None, f"canonical_name window is structurally invalid: {werr}"
+    if win["eff_start"] != _canon_time(obj["start"]):
+        return None, "canonical_name start is not the segmented effective start (segs[0][0])"
     # the stored string must be EXACTLY the canonical serialization (no reordered keys / stray whitespace),
     # so run_id = uuid5(NS, cn) and fingerprint = sha256(cn) are unambiguous.
     if _canon(obj) != cn:
@@ -240,9 +311,9 @@ def _parse_canonical_name(cn: str) -> tuple[Optional[dict], Optional[str]]:
 
 
 def _recompute_identity_from_record(rec: dict) -> tuple[Optional[dict], Optional[str]]:
-    """Phase 1: derive the WHOLE identity from the record's self-verifying canonical_name, then require every
-    mutable id field stored in the record to EQUAL the recomputation. A record can therefore never select a
-    different (even valid-canary) lineage merely by swapping its four ids."""
+    """Derive the WHOLE identity from the record's self-verifying canonical_name, then require every mutable
+    id field stored in the record to EQUAL the recomputation. A record can therefore never select a different
+    (even valid-canary) lineage merely by swapping its four ids."""
     if not isinstance(rec, dict):
         return None, "run record is not a JSON object"
     cn = rec.get("canonical_name")
@@ -256,8 +327,9 @@ def _recompute_identity_from_record(rec: dict) -> tuple[Optional[dict], Optional
     ids = _lineage_ids(run_id=run_id, media_sha256=obj["media_sha256"], start=obj["start"],
                        end=obj["end"], segments=obj["segments"])
     identity = _identity_dict(run_id=run_id, fingerprint=fingerprint, media_sha256=obj["media_sha256"],
-                              start=obj["start"], end=obj["end"], segments=obj["segments"], ids=ids)
-    # bind EVERY mutable record field to the recomputation (Phase 1 items 3-4, 7)
+                              start=obj["start"], end=obj["end"], segments=obj["segments"],
+                              caption_sha256=obj["caption_sha256"], hashtags=obj["hashtags"],
+                              hook_sha256=obj["hook_sha256"], run_label=obj["run_label"], ids=ids)
     if str(rec.get("run_id")) != run_id:
         return None, "run record run_id does not match its canonical_name — refusing (stale/tampered)"
     if str(rec.get("fingerprint")) != fingerprint:
@@ -277,8 +349,18 @@ def _expected_moment_window(identity: dict):
         return segs[0][0], segs[-1][1], [list(x) for x in segs]
     return cs, (ce if ce is not None else cs), []
 
+def _realized_seconds(identity: dict) -> float:
+    segs = identity["canon_segments"]
+    if segs:
+        return sum(e - s for s, e in segs)
+    ce = identity["canon_end"]
+    return (ce - identity["canon_start"]) if ce is not None else 0.0
 
-# ---------- filesystem ownership (BC4) ----------
+def _expected_batch_name(identity: dict) -> str:
+    return identity["run_label"] or f"canary {identity['run_id']}"
+
+
+# ---------- filesystem ownership ----------
 
 def _canary_root(cfg: Config) -> Path:
     return Path(cfg.base) / "canary"
@@ -323,13 +405,13 @@ def _sweep_render_temps(cfg: Config, run_dir: Path) -> None:
             get_logger(cfg)("canary", run_dir.name, "orphan_temp_sweep_failed", level="warning", err=str(exc)[:120])
 
 
-# ---------- strict media probe (Phase 4) ----------
+# ---------- strict media probe ----------
 
 def _strict_probe(cfg: Config, path: Path, *, expect_seconds: Optional[float] = None) -> tuple[bool, Optional[str]]:
-    """Fail-CLOSED strict validation of a rendered artifact: it must exist, be non-empty, and probe to positive
+    """Fail-CLOSED strict validation of a media artifact: it must exist, be non-empty, and probe to positive
     finite dimensions AND a finite positive duration; when a window is known, the playable duration must fall
     within a documented tolerance. A probe error / zero / non-finite duration / non-positive dims / truncation
-    is a REJECTION — an unprobe-able render is never treated as valid (no fail-open nonempty fallback)."""
+    is a REJECTION — an unprobe-able artifact is never treated as valid (no fail-open nonempty fallback)."""
     try:
         if not path.exists() or path.stat().st_size <= 0:
             return False, "artifact is missing or empty"
@@ -337,8 +419,8 @@ def _strict_probe(cfg: Config, path: Path, *, expect_seconds: Optional[float] = 
     except Exception as exc:
         get_logger(cfg)("canary", path.name, "strict_probe_error_reject", level="warning", err=str(exc)[:120])
         return False, f"probe error: {str(exc)[:80]}"
-    if not w or not h or w <= 0 or h <= 0:
-        return False, f"non-positive dimensions ({w}x{h})"
+    if not _finite(w) or not _finite(h) or w <= 0 or h <= 0:
+        return False, f"non-positive / non-finite dimensions ({w!r}x{h!r})"
     if dur is None or not _finite(dur) or dur <= 0:
         return False, f"non-finite / zero duration ({dur!r})"
     if expect_seconds is not None and expect_seconds > 0:
@@ -348,26 +430,48 @@ def _strict_probe(cfg: Config, path: Path, *, expect_seconds: Optional[float] = 
     return True, None
 
 
-# ---------- shared ledger projection (Phase 1 item 6 / Phase 3) ----------
+# ---------- the SINGLE complete expected-lineage validator ----------
 
-def _projection_errors(led: Ledger, identity: dict, run_dir: Path, *, allow_terminal: bool) -> list:
-    """Validate the COMPLETE expected ledger projection of a canary lineage against the recomputed identity —
-    ids, states, ownership, parent-links, affinities, time window, segments, sha256, contained paths. Never
-    trusts a canary-shaped parent chain: every field is compared to the identity recomputed from canonical_name.
-    `allow_terminal` lets an already-retired/closed entity pass (for an idempotent re-discard); otherwise the
-    lineage must be in its exact minted pre-mint states."""
+def _validate_expected_lineage(cfg: Config, led: Ledger, identity: dict, run_dir: Path, *,
+                               mode: str, rec: Optional[dict] = None) -> list:
+    """THE complete expected-projection validator — the one used by the initial idempotent path, the
+    under-lock concurrent-lineage path, discard authentication, and cancellation run authentication.
+
+    Validates the WHOLE lineage against the identity recomputed from `canonical_name`: ids, states,
+    ownership, parent-links, affinities, hook, caption + normalized hashtags, times/segments, source bytes +
+    probed geometry, clip artifact + bytes, batch identity, and the run record. Never trusts a canary-shaped
+    parent chain — every field is compared to the recomputation. `mode=_MODE_DISCARD` additionally permits an
+    already-terminal state (so a crash-partial re-discard converges); `_MODE_LIVE` requires the exact minted
+    pre-mint states. Returns FIELD-SPECIFIC error strings (empty list == valid)."""
     errs: list = []
+    terminal_ok = (mode == _MODE_DISCARD)
     sid, mid, cid, bid = identity["source_id"], identity["moment_id"], identity["clip_id"], identity["batch_id"]
     src, mom, clp, bat = led.sources.get(sid), led.moments.get(mid), led.clips.get(cid), led.batches.get(bid)
 
     def _state_ok(actual, prepared, terminal):
-        return actual is prepared or (allow_terminal and actual is terminal)
+        return actual is prepared or (terminal_ok and actual is terminal)
 
     for label, ident_key, row in (("source", "source_id", src), ("moment", "moment_id", mom),
                                   ("clip", "clip_id", clp), ("batch", "batch_id", bat)):
         if row is None:
             errs.append(f"{label} {identity[ident_key]} missing from ledger")
 
+    # ---- run record (authenticated identity + clip byte-identity + directory binding) ----
+    clip_sha_expected = None
+    if rec is not None:
+        rid_identity, rerr = _recompute_identity_from_record(rec)
+        if rerr is not None:
+            errs.append(f"run record: {rerr}")
+        elif rid_identity["run_id"] != identity["run_id"]:
+            errs.append("run record authenticates to a DIFFERENT run_id than the one under validation")
+        elif run_dir.name != rid_identity["run_id"]:
+            errs.append(f"run record directory {run_dir.name} != authenticated run_id {rid_identity['run_id']}")
+        else:
+            clip_sha_expected = rec.get("clip_sha256")
+            if not _is_hex64(clip_sha_expected):
+                errs.append("run record clip_sha256 is missing or not a sha256")
+
+    # ---- Source ----
     if src is not None:
         if not _state_ok(src.state, SourceState.moments_decided, SourceState.retired):
             errs.append(f"source state {src.state.value} != moments_decided")
@@ -377,6 +481,28 @@ def _projection_errors(led: Ledger, identity: dict, run_dir: Path, *, allow_term
             errs.append("source.sha256 != canonical media_sha256")
         if not _path_contained(src.source_path, run_dir):
             errs.append("source.source_path is not inside the owned run dir")
+        else:
+            sp = Path(src.source_path)
+            if not sp.is_file():
+                errs.append("source.source_path does not exist on disk")
+            else:
+                if _sha256_bytes_of(sp) != identity["media_sha256"]:
+                    errs.append("source file bytes do not match the canonical media_sha256")
+                if not (_finite(src.width) and _finite(src.height) and (src.width or 0) > 0 and (src.height or 0) > 0):
+                    errs.append(f"source width/height are not positive ({src.width!r}x{src.height!r})")
+                if not (_finite(src.duration) and (src.duration or 0) > 0):
+                    errs.append(f"source.duration is not finite-positive ({src.duration!r})")
+                ok, why = _strict_probe(cfg, sp)
+                if not ok:
+                    errs.append(f"source file failed strict probe ({why})")
+                else:
+                    pw, ph, pdur = _do_probe(sp)
+                    if (src.width, src.height) != (pw, ph):
+                        errs.append(f"source dimensions {src.width}x{src.height} != probed {pw}x{ph}")
+                    if _finite(src.duration) and _finite(pdur) and abs(float(src.duration) - float(pdur)) > _SOURCE_PROBE_DUR_TOL:
+                        errs.append(f"source.duration {src.duration} != probed {pdur} (tol {_SOURCE_PROBE_DUR_TOL}s)")
+
+    # ---- Moment ----
     if mom is not None:
         if not _state_ok(mom.state, MomentState.clipped, MomentState.retired):
             errs.append(f"moment state {mom.state.value} != clipped")
@@ -393,6 +519,18 @@ def _projection_errors(led: Ledger, identity: dict, run_dir: Path, *, allow_term
             errs.append(f"moment.end {mom.end} != {exp_end}")
         if [list(x) for x in (mom.segments or [])] != exp_segs:
             errs.append("moment.segments != canonical segments")
+        # the HOOK is checked by value-hash, not merely by the fingerprint it contributed to: a tampered hook
+        # that left content_token untouched must NOT be silently accepted.
+        exp_hook_sha = identity["hook_sha256"]
+        if exp_hook_sha is None:
+            if mom.hook is not None:
+                errs.append("moment.hook is set but the canonical identity carries no hook")
+        elif mom.hook is None:
+            errs.append("moment.hook is absent but the canonical identity carries one")
+        elif _sha256_text(mom.hook) != exp_hook_sha:
+            errs.append("moment.hook does not match the canonical hook_sha256")
+
+    # ---- Clip ----
     if clp is not None:
         if not _state_ok(clp.state, ClipState.queued, ClipState.retired):
             errs.append(f"clip state {clp.state.value} != queued")
@@ -402,15 +540,41 @@ def _projection_errors(led: Ledger, identity: dict, run_dir: Path, *, allow_term
             errs.append(f"clip.aspect {clp.aspect.value} != 9x16")
         if not _path_contained(clp.path, run_dir):
             errs.append("clip.path is not inside the owned run dir")
+        else:
+            cp = Path(clp.path)
+            if not cp.is_file():
+                errs.append("clip.path does not exist on disk")
+            else:
+                ok, why = _strict_probe(cfg, cp, expect_seconds=_realized_seconds(identity))
+                if not ok:
+                    errs.append(f"clip artifact failed strict validation ({why})")
+                if clip_sha_expected is not None and _is_hex64(clip_sha_expected):
+                    if _sha256_bytes_of(cp) != clip_sha_expected:
+                        errs.append("clip bytes differ from the authenticated run record's clip_sha256")
+        # meta_captions must carry EXACTLY the expected canary surface — no unexpected canary surface metadata
+        mc = clp.meta_captions or {}
+        canary_surfaces = sorted(k for k in mc if str(k).startswith(CANARY_HANDLE + "/"))
+        if canary_surfaces != [_TARGET_SURFACE]:
+            errs.append(f"clip canary surfaces {canary_surfaces} != ['{_TARGET_SURFACE}']")
+        else:
+            surf = mc.get(_TARGET_SURFACE) or {}
+            if _sha256_text(surf.get("caption") or "") != identity["caption_sha256"]:
+                errs.append("clip caption does not match the canonical caption_sha256")
+            if list(surf.get("hashtags") or []) != identity["hashtags"]:
+                errs.append("clip hashtags do not match the canonical normalized hashtags")
+
+    # ---- Batch ----
     if bat is not None:
         if not _state_ok(bat.state, BatchState.open, BatchState.closed):
             errs.append(f"batch state {bat.state.value} != open")
         if list(bat.target_accounts or []) != [CANARY_HANDLE]:
             errs.append(f"batch.target_accounts {list(bat.target_accounts or [])} != [{CANARY_HANDLE}]")
+        if bat.name != _expected_batch_name(identity):
+            errs.append(f"batch.name {bat.name!r} != expected {_expected_batch_name(identity)!r}")
     return errs
 
 
-# ---------- account contract (Phase 7: one-shot) ----------
+# ---------- account contract (one-shot) ----------
 
 def _canary_integration_id(cfg: Config) -> tuple[Optional[str], Optional[str]]:
     accts = Accounts.load(cfg)
@@ -459,8 +623,8 @@ def _validate_canary_account(cfg: Config, handle: str, led: Ledger, ids: dict) -
         return None, f"persona registry error: {str(exc)[:120]}"
     if sum(1 for a in accts.accounts if (a.persona_id or "").strip() == pid) > 1:
         return None, f"canary Persona {pid!r} is shared with another account — it must be dedicated"
-    # ONE-SHOT (Phase 7): the reserved account carries NO history. ANY Post that targets the handle OR the
-    # integration id — even a retired/cancelled one — blocks a new run. (Cancel→new-run reuse would change the
+    # ONE-SHOT: the reserved account carries NO history. ANY Post that targets the handle OR the integration
+    # id — even a retired/cancelled one — blocks a new run. (Cancel->new-run reuse would change the
     # account-history isolation contract; it is a separate, unbuilt, separately-authorized extension.)
     for p in led.posts.values():
         if p.account == CANARY_HANDLE or (p.account_id and str(p.account_id) == str(integ)):
@@ -485,68 +649,35 @@ def prepare_canary_lineage(cfg: Config, *, media_path: str, handle: str = CANARY
                            run_label: Optional[str] = None, start: str, end: Optional[str] = None,
                            segments: Optional[list] = None, caption: str,
                            hashtags=(), hook: Optional[str] = None, plan_only: bool = False) -> ActionResult:
-    # ---- 1. argument + time validation (Phase 8), BEFORE any mutation ----
+    # ---- 1. argument + structural window validation (the SHARED rule), BEFORE any mutation ----
     if run_label is not None and not _RUN_LABEL_RE.match(str(run_label)):
         return _err(f"invalid --run-label {run_label!r} (must match {_RUN_LABEL_RE.pattern})")
-    if segments and end is not None:
-        return _err("pass EITHER --end OR --segments, not both")
-    try:
-        start_f = _canon_time(start)
-        end_f = _canon_time(end) if end is not None else None
-        segs = _norm_segments(segments)
-    except (TypeError, ValueError) as exc:
-        return _err(f"bad time value: {str(exc)[:120]}")
-    if not _finite(start_f) or start_f < 0:
-        return _err(f"--start must be a finite, non-negative number (got {start!r})")
-    if end_f is not None and not _finite(end_f):
-        return _err(f"--end must be a finite number (got {end!r})")
-    if segs is None and end_f is None:
-        return _err("a single-window canary needs --end (or use --segments)")
-    if segs is not None:
-        prev_end = -math.inf
-        for s, e in segs:
-            if not (_finite(s) and _finite(e)):
-                return _err("every segment boundary must be a finite number (no NaN/Infinity)")
-            if s < 0:
-                return _err(f"every segment must start at a non-negative time (got start {s})")
-            if e <= s:
-                return _err(f"every segment must have end > start (got {s}->{e})")
-            if (e - s) < _MIN_SEG_SECONDS:
-                return _err(f"segment {s}->{e} is shorter than the {_MIN_SEG_SECONDS}s minimum")
-            if s < prev_end:
-                return _err(f"segments must be strictly ascending and non-overlapping ({s} < prior end {prev_end})")
-            prev_end = e
-        realized = sum(e - s for s, e in segs)
-    else:
-        if end_f <= start_f:
-            return _err("--end must be greater than --start")
-        realized = end_f - start_f
-    # for a segmented run the WINDOW is the segments — --start is not independently meaningful, so the effective
-    # start (used for identity + the stored Moment envelope) is segs[0][0]. This keeps the identity stable and
-    # makes the minted Moment.start == _expected_moment_window's segs[0][0] rather than relying on the model's
-    # envelope validator to silently rewrite a mismatched --start.
-    eff_start = segs[0][0] if segs is not None else start_f
-    cap = PLATFORM_MAX_SECONDS.get(_TARGET_PLATFORM)
-    if cap is not None and realized > cap:
-        return _err(f"clip duration {realized:.1f}s exceeds tiktok cap {cap}s")
+    win, werr = _normalized_window(start, end, segments)
+    if werr is not None:
+        return _err(werr)
+    eff_start, end_f, segs = win["eff_start"], win["end"], win["segments"]
+    realized, envelope_end = win["realized"], win["envelope_end"]
     mp = Path(media_path)
     if not mp.is_file():
         return _err(f"media not found: {media_path}")
 
-    # ---- 2. media identity (full sha256) + probe, BEFORE any persistent mutation ----
+    # ---- 2. media identity (full sha256) + STRICT source probe, BEFORE any persistent mutation ----
     try:
         media_sha256 = _sha256_bytes_of(mp)
         src_w, src_h, src_dur = _do_probe(mp)
     except Exception as exc:
         get_logger(cfg)("canary", Path(media_path).name, "media_inspection_failed", level="error", err=str(exc)[:140])
         return _err(f"media inspection failed: {str(exc)[:140]}")
-    if not src_w or not src_h or src_w <= 0 or src_h <= 0:
-        return _err("could not probe media dimensions")
-    # bounded time (Phase 8): the last realized moment must fit inside the probed source duration
-    if src_dur and _finite(src_dur) and src_dur > 0:
-        hi = (segs[-1][1] if segs else end_f)
-        if hi is not None and hi > src_dur + _SOURCE_DUR_TOL:
-            return _err(f"clip window ends at {hi:.1f}s but the source is only {src_dur:.1f}s")
+    # FAIL CLOSED on the source probe: an unknown/zero/NaN/Infinite duration must NEVER silently skip the
+    # source-bound check below (that would let a window run past the end of the media).
+    if not (_finite(src_w) and _finite(src_h) and src_w > 0 and src_h > 0):
+        return _err(f"source probe returned non-positive/non-finite dimensions ({src_w!r}x{src_h!r})")
+    if not (_finite(src_dur) and src_dur > 0):
+        return _err(f"source probe returned a non-finite / non-positive duration ({src_dur!r}) — refusing")
+    # every boundary (single-window end AND every segment end) must fit inside the probed source
+    for lim in ([e for _s, e in segs] if segs is not None else [end_f]):
+        if lim > src_dur + _SOURCE_DUR_TOL:
+            return _err(f"clip window ends at {lim:.1f}s but the source is only {src_dur:.1f}s")
 
     # ---- 3. identity + lineage ids ----
     canonical_name = _canonical_run_name(media_sha256=media_sha256, start=eff_start, end=end_f,
@@ -556,7 +687,10 @@ def prepare_canary_lineage(cfg: Config, *, media_path: str, handle: str = CANARY
     ids = _lineage_ids(run_id=run_id, media_sha256=media_sha256, start=eff_start, end=end_f, segments=segs)
     fingerprint = _sha256_text(canonical_name)
     identity = _identity_dict(run_id=run_id, fingerprint=fingerprint, media_sha256=media_sha256,
-                              start=eff_start, end=end_f, segments=segs, ids=ids)
+                              start=eff_start, end=end_f, segments=segs,
+                              caption_sha256=_sha256_text(caption), hashtags=hashtags,
+                              hook_sha256=(_sha256_text(hook) if hook is not None else None),
+                              run_label=run_label, ids=ids)
     run_dir = _run_dir(cfg, run_id)
 
     # ---- 4. account contract (read-only) ----
@@ -567,6 +701,7 @@ def prepare_canary_lineage(cfg: Config, *, media_path: str, handle: str = CANARY
 
     plan = {"run_id": run_id, "fingerprint": fingerprint, "integration_id": integ,
             "run_dir": str(run_dir), "media_sha256": media_sha256, "realized_seconds": round(realized, 2),
+            "source_duration": src_dur, "envelope_end": envelope_end,
             **ids, "states": {"source": "moments_decided", "moment": "clipped", "clip": "queued",
                               "batch": "open", "posts": 0, "renders": 0}}
 
@@ -586,31 +721,19 @@ def prepare_canary_lineage(cfg: Config, *, media_path: str, handle: str = CANARY
             present = sorted(k for k, v in existing.items() if v is not None)
             return _err(f"canary run {run_id} has a PARTIAL lineage (only {present} of source/moment/clip/batch) "
                         f"— refusing an idempotent claim; `canary discard` it and re-prepare")
-        # FULL non-terminal lineage: require the EXACT expected projection before claiming idempotent (Phase 3).
-        perrs = _projection_errors(led0, identity, run_dir, allow_terminal=False)
-        clip_final = run_dir / "clip.mp4"
-        pok, preason = _strict_probe(cfg, clip_final, expect_seconds=realized)
-        if not pok:
-            perrs.append(f"existing clip failed strict validation ({preason})")
-        surf = (c.meta_captions or {}).get(f"{CANARY_HANDLE}/tiktok") or {}
-        if surf.get("caption") != caption or list(surf.get("hashtags") or []) != _norm_hashtags(hashtags):
-            perrs.append("existing clip caption/hashtags differ from these inputs")
-        clip_sha = _sha256_bytes_of(clip_final) if clip_final.exists() else ""
+        # FULL non-terminal lineage: require the EXACT expected projection (the SHARED validator) before
+        # claiming idempotent. A malformed record is a tamper signal — refuse, never overwrite.
         rec, rec_err = _read_run_record(cfg, run_id)
+        perrs = list(_validate_expected_lineage(cfg, led0, identity, run_dir, mode=_MODE_LIVE, rec=rec))
         if rec_err is not None:
-            perrs.append(rec_err)                     # a malformed record is a tamper signal — refuse, never overwrite
-        elif rec is not None:
-            rec_clip = str(rec.get("clip_sha256") or "")
-            if str(rec.get("fingerprint")) != fingerprint:
-                perrs.append("existing run record fingerprint differs")
-            elif rec_clip and rec_clip != clip_sha:
-                perrs.append("existing clip bytes differ from the recorded clip_sha256")
+            perrs.append(rec_err)
         if perrs:
             return _err(f"canary run {run_id} lineage MISMATCH — refusing idempotent claim (do NOT repair): "
                         f"{'; '.join(perrs[:4])}")
-        # clean idempotent match. Recover a crash in the commit->record-write gap (step 9). plan_only stays read-only.
-        if not plan_only:
-            _ensure_run_record(cfg, run_id, canonical_name, fingerprint, media_sha256, clip_sha, ids)
+        # clean idempotent match. Recover a crash in the commit->record-write gap (step 9); plan_only stays read-only.
+        if not plan_only and rec is None:
+            _ensure_run_record(cfg, run_id, canonical_name, fingerprint, media_sha256,
+                               _sha256_bytes_of(run_dir / "clip.mp4"), src_w, src_h, src_dur, ids)
         return _ok({**plan, "idempotent": True, "created": False})
 
     if plan_only:
@@ -651,7 +774,7 @@ def prepare_canary_lineage(cfg: Config, *, media_path: str, handle: str = CANARY
                 r = _do_render_supercut(str(media_dst), str(tmp), [tuple(x) for x in segs],
                                         _TARGET_ASPECT.value, src_w=src_w, src_h=src_h)
             else:
-                r = _do_render_single(str(media_dst), str(tmp), start_f, end_f, _TARGET_ASPECT.value,
+                r = _do_render_single(str(media_dst), str(tmp), eff_start, end_f, _TARGET_ASPECT.value,
                                       src_w=src_w, src_h=src_h)
         except Exception as exc:
             tmp.unlink(missing_ok=True)
@@ -663,53 +786,68 @@ def prepare_canary_lineage(cfg: Config, *, media_path: str, handle: str = CANARY
             tmp.unlink(missing_ok=True)
             return _err(f"rendered clip failed validation ({preason}; rc={rc}) — no ledger adoption")
         os.replace(tmp, clip_final)               # atomic promote of the strictly-validated artifact
-    # final-path strict validation before adoption (belt-and-suspenders after the replace / reuse)
     pok, preason = _strict_probe(cfg, clip_final, expect_seconds=realized)
     if not pok:
         return _err(f"final clip failed validation ({preason}) — no ledger adoption")
     clip_sha = _sha256_bytes_of(clip_final)
 
-    # ---- 8. adopt the WHOLE lineage in ONE short transaction (add_* is setdefault = first-write-wins) ----
+    # ---- 8. adopt the WHOLE lineage in ONE short transaction ----
     now_iso = _now_iso()
     try:
         with Ledger.transaction(cfg) as led:
-            # terminal re-check under the lock (a concurrent discard could have raced)
             s = led.sources.get(ids["source_id"])
             if s is not None and s.state is SourceState.retired:
                 raise _Refuse(f"canary run {run_id} became TERMINAL under lock — refusing")
-            # RE-VALIDATE the account / one-shot / foreign-affinity gates against the LOCKED ledger: a concurrent
-            # run may have minted a canary Post / Moment / Batch while we rendered (the led0 checks are now stale).
+            # RE-VALIDATE the account / one-shot / foreign-affinity gates against the LOCKED ledger: a
+            # concurrent run may have minted a canary Post / Moment / Batch while we rendered.
             _i2, aerr2 = _validate_canary_account(cfg, handle, led, ids)
             if aerr2 is not None:
                 raise _Refuse(f"account gate failed under lock — refusing (concurrent canary activity): {aerr2}")
-            # if a concurrent run already created (part of) our content-addressed lineage, require an EXACT
-            # projection match (add_* is setdefault = first-write-wins, so a mismatch would be silently kept).
-            if any(v is not None for v in (led.sources.get(ids["source_id"]), led.moments.get(ids["moment_id"]),
-                                           led.clips.get(ids["clip_id"]), led.batches.get(ids["batch_id"]))):
-                perrs = _projection_errors(led, identity, run_dir, allow_terminal=False)
-                if perrs:
-                    raise _Refuse(f"a concurrent lineage exists under lock but MISMATCHES — refusing: {'; '.join(perrs[:3])}")
-            led.add_batch(Batch(id=ids["batch_id"], name=(run_label or f"canary {run_id}"),
-                                target_accounts=[CANARY_HANDLE], state=BatchState.open, created_at=now_iso))
-            led.add_source(Source(id=ids["source_id"], state=SourceState.moments_decided, source_path=str(media_dst),
-                                 sha256=media_sha256, duration=src_dur, width=src_w, height=src_h,
-                                 batch_id=ids["batch_id"], created_at=now_iso, title=(run_label or "canary")))
-            led.add_moment(Moment(id=ids["moment_id"], parent_id=ids["source_id"], state=MomentState.clipped,
-                                 start=eff_start, end=(end_f if end_f is not None else (segs[-1][1] if segs else eff_start)),
-                                 reason="canary publish-path probe", affinities=[CANARY_HANDLE], hook=hook,
-                                 segments=[tuple(x) for x in (segs or [])], content_token=fingerprint))
-            led.add_clip(Clip(id=ids["clip_id"], parent_id=ids["moment_id"], state=ClipState.queued,
-                             path=str(clip_final), aspect=_TARGET_ASPECT,
-                             meta_captions={f"{CANARY_HANDLE}/tiktok": {"caption": caption,
-                                            "hashtags": _norm_hashtags(hashtags)}}))
+            # ALL-OR-NOTHING under the lock: either none of the four rows exists (create all four), or ALL
+            # four exist and must authenticate completely. add_* is setdefault, so it must NEVER run over a
+            # partial or semantically mismatched lineage.
+            present = {k: v for k, v in (("source", led.sources.get(ids["source_id"])),
+                                         ("moment", led.moments.get(ids["moment_id"])),
+                                         ("clip", led.clips.get(ids["clip_id"])),
+                                         ("batch", led.batches.get(ids["batch_id"]))) if v is not None}
+            if present and len(present) != 4:
+                raise _Refuse(f"a PARTIAL concurrent lineage exists under lock (only {sorted(present)}) — refusing")
+            rec_u, rec_u_err = _read_run_record(cfg, run_id)
+            if rec_u_err is not None:
+                raise _Refuse(f"run record under lock: {rec_u_err}")
+            if present:                            # a concurrent run already created the whole lineage
+                cerrs = _validate_expected_lineage(cfg, led, identity, run_dir, mode=_MODE_LIVE, rec=rec_u)
+                if cerrs:
+                    raise _Refuse(f"a concurrent lineage exists under lock but MISMATCHES — refusing: "
+                                  f"{'; '.join(cerrs[:3])}")
+            else:
+                led.add_batch(Batch(id=ids["batch_id"], name=_expected_batch_name(identity),
+                                    target_accounts=[CANARY_HANDLE], state=BatchState.open, created_at=now_iso))
+                led.add_source(Source(id=ids["source_id"], state=SourceState.moments_decided, source_path=str(media_dst),
+                                     sha256=media_sha256, duration=src_dur, width=src_w, height=src_h,
+                                     batch_id=ids["batch_id"], created_at=now_iso, title=(run_label or "canary")))
+                led.add_moment(Moment(id=ids["moment_id"], parent_id=ids["source_id"], state=MomentState.clipped,
+                                     start=eff_start, end=envelope_end,
+                                     reason="canary publish-path probe", affinities=[CANARY_HANDLE], hook=hook,
+                                     segments=[tuple(x) for x in (segs or [])], content_token=fingerprint))
+                led.add_clip(Clip(id=ids["clip_id"], parent_id=ids["moment_id"], state=ClipState.queued,
+                                 path=str(clip_final), aspect=_TARGET_ASPECT,
+                                 meta_captions={_TARGET_SURFACE: {"caption": caption,
+                                                "hashtags": _norm_hashtags(hashtags)}}))
+                # RE-READ all four rows and run the COMPLETE validator before the transaction exits cleanly.
+                # (The run record is written after commit, so it is not part of this pass — the clip bytes were
+                # strictly validated above and are hashed into the record we are about to publish.)
+                verrs = _validate_expected_lineage(cfg, led, identity, run_dir, mode=_MODE_LIVE, rec=None)
+                if verrs:
+                    raise _Refuse(f"post-creation lineage validation FAILED — rolling back: {'; '.join(verrs[:3])}")
     except _Refuse as r:
         return _err(r.msg)
 
-    # ---- 9. publish the run record ONLY AFTER adoption commits. A concurrent `discard` therefore can never read
-    # the record while the ledger is still empty (which would let it delete the run dir out from under this
-    # adoption). A crash in the tiny commit->write gap leaves entities without a record; the idempotent
-    # re-prepare path (step 5) re-writes it via the same `_ensure_run_record`. ----
-    _ensure_run_record(cfg, run_id, canonical_name, fingerprint, media_sha256, clip_sha, ids)
+    # ---- 9. publish the run record ONLY AFTER adoption commits, so a concurrent `discard` can never read the
+    # record while the ledger is still empty. A crash in the tiny commit->write gap leaves entities without a
+    # record; the idempotent re-prepare path (step 5) re-writes it via the same `_ensure_run_record`. ----
+    _ensure_run_record(cfg, run_id, canonical_name, fingerprint, media_sha256, clip_sha,
+                       src_w, src_h, src_dur, ids)
     return _ok({**plan, "created": True, "idempotent": False, "clip_sha256": clip_sha})
 
 
@@ -726,15 +864,18 @@ def _read_run_record(cfg: Config, run_id: str) -> tuple[Optional[dict], Optional
         return None, f"unreadable/malformed run record: {str(exc)[:100]}"
 
 
-def _ensure_run_record(cfg: Config, run_id: str, canonical_name: str, fingerprint: str,
-                       media_sha256: str, clip_sha256: str, ids: dict) -> None:
-    """Write the run record (idempotent). Written AFTER ledger adoption so `discard` never observes it before the
-    lineage exists (closes the prepare/discard race). Realpath-contained; re-writing identical content is safe."""
+def _ensure_run_record(cfg: Config, run_id: str, canonical_name: str, fingerprint: str, media_sha256: str,
+                       clip_sha256: str, src_w, src_h, src_dur, ids: dict) -> None:
+    """Write the run record (idempotent). Written AFTER ledger adoption so `discard` never observes it before
+    the lineage exists. The source geometry is recorded so idempotent validation has the expected values to
+    hold the ledger row to (the FILE bytes remain the tamper-proof authority — its sha256 is identity-bound)."""
     run_dir = _run_dir(cfg, run_id)
     run_dir.mkdir(parents=True, exist_ok=True)
     _assert_contained(_canary_root(cfg), run_dir)
-    _write_json_atomic(run_dir / "canary-run.json", {"run_id": run_id, "canonical_name": canonical_name,
-                       "fingerprint": fingerprint, "media_sha256": media_sha256, "clip_sha256": clip_sha256, **ids})
+    _write_json_atomic(run_dir / "canary-run.json",
+                       {"run_id": run_id, "canonical_name": canonical_name, "fingerprint": fingerprint,
+                        "media_sha256": media_sha256, "clip_sha256": clip_sha256,
+                        "source_probe": {"width": src_w, "height": src_h, "duration": src_dur}, **ids})
 
 
 # ---------- discard (pre-mint only) ----------
@@ -757,15 +898,12 @@ def discard_canary(cfg: Config, run_id: str) -> ActionResult:
     if not _RUN_ID_RE.match(run_id or ""):
         return _err(f"invalid canary run id: {run_id!r}")
     run_dir = _run_dir(cfg, run_id)
-    run_json = run_dir / "canary-run.json"
-    if not run_json.exists():
+    rec, rec_err = _read_run_record(cfg, run_id)
+    if rec_err is not None:
+        return _err(rec_err)
+    if rec is None:
         return _err(f"no canary run record for {run_id}")
-    try:
-        rec = json.loads(run_json.read_text())
-    except (OSError, ValueError) as exc:
-        return _err(f"unreadable run record: {str(exc)[:120]}")
-    # Phase 1: recompute the WHOLE identity from the record's self-verifying canonical_name, binding its mutable
-    # ids. This does NOT read the ledger — it proves the record can only name THIS run's canary lineage.
+    # recompute the WHOLE identity from the record's self-verifying canonical_name, binding its mutable ids.
     identity, aerr = _recompute_identity_from_record(rec)
     if aerr is not None:
         return _err(aerr)
@@ -784,11 +922,11 @@ def discard_canary(cfg: Config, run_id: str) -> ActionResult:
     already_terminal = False
     try:
         with Ledger.transaction(cfg) as led:
-            # Phase 2 — EVERY ledger-dependent precondition is (re-)checked HERE, under the mutation lock, so a
-            # mint that committed before we took the lock is seen and refuses discard.
-            perrs = _projection_errors(led, identity, run_dir, allow_terminal=True)
+            # EVERY ledger-dependent precondition is (re-)checked HERE, under the mutation lock, so a mint that
+            # committed before we took the lock is seen and refuses discard.
+            perrs = _validate_expected_lineage(cfg, led, identity, run_dir, mode=_MODE_DISCARD, rec=rec)
             if perrs:
-                raise _Refuse(f"canary lineage for {run_id} fails projection — refusing: {'; '.join(perrs[:4])}")
+                raise _Refuse(f"canary lineage for {run_id} fails validation — refusing: {'; '.join(perrs[:4])}")
             pblock = _discard_post_block(led, identity)
             if pblock is not None:
                 raise _Refuse(pblock)
@@ -800,10 +938,9 @@ def discard_canary(cfg: Config, run_id: str) -> ActionResult:
                                 (mom is None or mom.state is MomentState.retired) and
                                 (clp is None or clp.state is ClipState.retired) and
                                 (bat is None or bat.state is BatchState.closed))
-            # RETIRE each present, non-terminal entity IN PLACE (NOT `retire_source`, which reconcile_moments(sid,
-            # {}) CASCADE-DELETES the unprotected canary moment/clip — there is no protecting Post). set_*_state is
-            # a plain, no-cascade state flip, so the retained lineage survives + is inert. Idempotent: a re-discard
-            # of a crash-partial lineage completes the retirement; a fully-terminal one is a clean no-op.
+            # RETIRE each present, non-terminal entity IN PLACE (NOT `retire_source`, which
+            # reconcile_moments(sid, {}) CASCADE-DELETES the unprotected canary moment/clip). set_*_state is a
+            # plain, no-cascade state flip, so the retained lineage survives + is inert. Idempotent.
             if src is not None and src.state is not SourceState.retired: led.set_source_state(sid, SourceState.retired)
             if mom is not None and mom.state is not MomentState.retired: led.set_moment_state(mid, MomentState.retired)
             if clp is not None and clp.state is not ClipState.retired: led.retire_clip(cid)
@@ -837,9 +974,9 @@ def _remove_run_dir(cfg: Config, run_id: str) -> int:
 # ---------- cancel an awaiting/queued canary Post (before possible network acceptance) ----------
 
 def _authenticated_run_for_post(cfg: Config, led: Ledger, post) -> tuple[Optional[dict], Optional[Path], Optional[str]]:
-    """Phase 6: locate the ONE authenticated canary run whose recomputed identities match the Post's Clip AND
-    Batch, then project it against the ledger. A hand-inserted Post+Batch with target_accounts=[canary] but no
-    real run record matches nothing and is refused."""
+    """Locate the ONE authenticated canary run whose recomputed identities match the Post's Clip AND Batch,
+    then validate it with the shared complete validator. A hand-inserted Post+Batch with
+    target_accounts=[canary] but no real run record matches nothing and is refused."""
     root = _canary_root(cfg)
     if not root.exists():
         return None, None, f"post {post.id} maps to no authenticated canary run (no canary runs on disk) — refusing"
@@ -857,14 +994,14 @@ def _authenticated_run_for_post(cfg: Config, led: Ledger, post) -> tuple[Optiona
         if aerr is not None or identity["run_id"] != run_dir.name:
             continue
         if identity["clip_id"] == post.parent_id and identity["batch_id"] == (post.batch_id or ""):
-            matches.append((identity, run_dir))
+            matches.append((identity, run_dir, rec))
     if len(matches) != 1:
         return None, None, (f"post {post.id} does not map to exactly one authenticated canary run "
                             f"({len(matches)} matched) — refusing")
-    identity, run_dir = matches[0]
-    perrs = _projection_errors(led, identity, run_dir, allow_terminal=False)
+    identity, run_dir, rec = matches[0]
+    perrs = _validate_expected_lineage(cfg, led, identity, run_dir, mode=_MODE_LIVE, rec=rec)
     if perrs:
-        return None, None, f"the canary run for {post.id} fails projection — refusing: {'; '.join(perrs[:3])}"
+        return None, None, f"the canary run for {post.id} fails validation — refusing: {'; '.join(perrs[:3])}"
     return identity, run_dir, None
 
 
@@ -887,14 +1024,12 @@ def cancel_canary_post(cfg: Config, post_id: str, *, reason: str) -> ActionResul
         return _err(f"{post_id} is not a {CANARY_HANDLE} post (account={post.account})")
     if post.state not in (PostState.awaiting_approval, PostState.queued):
         return _err(f"cancel refuses state={post.state.value} — only awaiting_approval/queued (before network)")
-    # the Post must target the reserved account's CURRENT canary integration id (Phase 6)
     integ, ierr = _canary_integration_id(cfg)
     if ierr is not None:
         return _err(ierr)
     if str(post.account_id) != str(integ):
         return _err(f"{post_id} account_id {post.account_id!r} != the canary integration {integ!r} — refusing")
-    # authenticate the Post against exactly one real canary run (a bare canary-targeted Batch is NOT enough)
-    identity, _run_dir, ferr = _authenticated_run_for_post(cfg, led0, post)
+    identity, _run_dir_, ferr = _authenticated_run_for_post(cfg, led0, post)
     if ferr is not None:
         return _err(ferr)
     ev = _has_provider_evidence(post)
@@ -913,8 +1048,7 @@ def cancel_canary_post(cfg: Config, post_id: str, *, reason: str) -> ActionResul
             ev2 = _has_provider_evidence(cur)
             if ev2 is not None:
                 raise _Refuse(f"post gained {ev2} under lock — refusing (possible acceptance)")
-            # re-authenticate the run against the LOCKED ledger (the ledger-dependent projection)
-            _id2, _rd2, ferr2 = _authenticated_run_for_post(cfg, led, cur)
+            _id2, _rd2, ferr2 = _authenticated_run_for_post(cfg, led, cur)   # ledger-dependent re-validation
             if ferr2 is not None:
                 raise _Refuse(ferr2)
             led.posts[post_id] = cur.model_copy(update={"state": PostState.retired, "error_reason": bounded})
@@ -929,14 +1063,44 @@ def cancel_canary_post(cfg: Config, post_id: str, *, reason: str) -> ActionResul
     return _ok({"post_id": post_id, "state": "retired", "reason": bounded, "audit_warning": warn})
 
 
-# ---------- read-only, NON-DISCLOSIVE multilayer baseline capture + compare (Phase 5) ----------
+# ---------- read-only, NON-DISCLOSIVE multilayer baseline capture + compare ----------
+
+# --- the PINNED baseline contract. _validate_baseline_shape holds a supplied baseline to EXACT equality
+# against these sets, so an extra/missing/renamed field is an error rather than a silently-clean diff. ---
+_BASELINE_TOP_KEYS = frozenset({"format_version", "status", "canonicalization", "schema_version",
+                                "repo_commit", "post_count", "state_distribution", "digests",
+                                "per_post_manifest", "per_post_layers", "frozen_incident"})
+_BASELINE_STATUS = "candidate"
+_BASELINE_CANONICALIZATION = {
+    "json": "sort_keys=True,ensure_ascii=False,separators=(',',':'),allow_nan=False",
+    "row_order": "sorted by row_id",
+    "aggregate": "sha256 of concat(row_id + 0x00 + blob + 0x1e)",
+    "hash": "sha256",
+}
+_BASELINE_DIGEST_KEYS = frozenset({"raw_posts", "safety_critical", "scheduling", "content", "manifest"})
+_SAFE_LAYER_KEYS = frozenset({"state", "account", "platform", "aspect", "has_public_url", "has_media_urls",
+                              "has_submission_id", "is_real_submission_id", "has_reconcile_candidate",
+                              "has_published_at", "account_id_sha256", "parent_id_sha256",
+                              "submission_id_sha256", "reconcile_candidate_id_sha256", "public_url_sha256",
+                              "media_urls_sha256", "error_reason_sha256", "published_at_sha256",
+                              "created_at_sha256"})
+_SAFE_BOOL_KEYS = frozenset({"has_public_url", "has_media_urls", "has_submission_id", "is_real_submission_id",
+                             "has_reconcile_candidate", "has_published_at"})
+_SAFE_CATEGORICAL_KEYS = frozenset({"state", "account", "platform", "aspect"})
+_SCHED_LAYER_KEYS = frozenset({"scheduled_time_sha256", "approval"})
+_CONTENT_LAYER_KEYS = frozenset({"caption_sha256", "hashtags_sha256", "parent_id_sha256", "aspect",
+                                 "media_urls_sha256", "media_id_sha256"})
+_FROZEN_INCIDENT_IDS = ("post_04b29c9f7f2d", "post_07e45c69ac0d", "post_0943840705ce", "post_0a12cff53619")
+_FROZEN_ENTRY_KEYS = frozenset({"raw_sha256", "state", "submission_id_sha256",
+                                "reconcile_candidate_id_sha256", "public_url_sha256", "has_public_url"})
+
 
 def _read_posts_ro(cfg: Config):
     if not Path(cfg.ledger_path).exists():
         return [], None
     con = sqlite3.connect(f"file:{cfg.ledger_path}?mode=ro", uri=True)
     try:
-        rows = con.execute("SELECT row_id,payload FROM ledger_rows WHERE map_name='posts' ORDER BY row_id").fetchall()
+        rows = con.execute("SELECT row_id,payload FROM ledger_rows WHERE map_name='posts'").fetchall()
         sv = con.execute("SELECT value FROM ledger_meta WHERE key='schema_version'").fetchone()
     finally:
         con.close()
@@ -952,12 +1116,9 @@ def _field_hash(v) -> str:
     """sha256 of a value's canonical JSON — the change-detection primitive that discloses NOTHING of the value."""
     return _sha256_text(_canon(v))
 
-# categorical (non-sensitive: short enums / handle) vs the rest, which are ONLY ever emitted as per-field hashes
-_SAFE_CATEGORICALS = ["state", "account", "platform", "aspect"]
-
 def _post_layers(d: dict) -> dict:
     """Per-post comparison layers. Every URL / token / id / timestamp is a per-field HASH or a categorical
-    presence flag — NO raw public_url, media_urls, submission_id, error_reason, caption ever appears (Phase 5)."""
+    presence flag — NO raw public_url, media_urls, submission_id, error_reason, caption ever appears."""
     state = d.get("state"); sid = d.get("submission_id")
     pub = d.get("public_url")
     safe = {
@@ -965,7 +1126,7 @@ def _post_layers(d: dict) -> dict:
         "has_public_url": bool((pub or "").strip()) if isinstance(pub, str) else bool(pub),
         "has_media_urls": bool(d.get("media_urls")),
         "has_submission_id": bool(sid),
-        "is_real_submission_id": is_real_submission_id(sid),
+        "is_real_submission_id": bool(is_real_submission_id(sid)),
         "has_reconcile_candidate": d.get("reconcile_candidate_id") is not None,
         "has_published_at": bool(d.get("published_at")),
         "account_id_sha256": _field_hash(d.get("account_id")),
@@ -986,16 +1147,28 @@ def _post_layers(d: dict) -> dict:
                "media_id_sha256": _field_hash(d.get("media_id"))}
     return {"safe": _canon(safe), "sched": _canon(sched), "content": _canon(content)}
 
+def _layer_digests(manifest: dict, layers: dict) -> dict:
+    """Recompute the three per-layer aggregates + the manifest aggregate from the per-post maps alone, in a
+    stable sorted row order. Capture stores these; validation RECOMPUTES them and requires equality, so a
+    tampered aggregate (or a corrupted raw-hash manifest) is detectable without ever storing raw payloads."""
+    rids = sorted(manifest)
+    return {
+        "safety_critical": _sep_digest([(r, layers[r]["safe"]) for r in rids]),
+        "scheduling": _sep_digest([(r, layers[r]["sched"]) for r in rids]),
+        "content": _sep_digest([(r, layers[r]["content"]) for r in rids]),
+        "manifest": _sep_digest([(r, manifest[r]) for r in rids]),
+    }
+
 def _build_manifest(cfg: Config) -> dict:
     rows, sv = _read_posts_ro(cfg)
-    parsed = [(rid, blob, json.loads(blob)) for rid, blob in rows]
+    parsed = sorted(((rid, blob, json.loads(blob)) for rid, blob in rows), key=lambda t: t[0])
     manifest = {rid: hashlib.sha256(blob.encode()).hexdigest() for rid, blob, _ in parsed}
     layers = {rid: _post_layers(d) for rid, _, d in parsed}
     dist = {}
     for _, _, d in parsed:
         dist[str(d.get("state"))] = dist.get(str(d.get("state")), 0) + 1
     incident = {}
-    for i in ("post_04b29c9f7f2d", "post_07e45c69ac0d", "post_0943840705ce", "post_0a12cff53619"):
+    for i in _FROZEN_INCIDENT_IDS:
         for rid, _blob, d in parsed:
             if rid == i:
                 # non-disclosive: raw-payload sha + state (categorical) + per-field hashes; NO raw url/token
@@ -1004,20 +1177,14 @@ def _build_manifest(cfg: Config) -> dict:
                                "reconcile_candidate_id_sha256": _field_hash(d.get("reconcile_candidate_id")),
                                "public_url_sha256": _field_hash(d.get("public_url")),
                                "has_public_url": bool((d.get("public_url") or ""))}
+    digests = {"raw_posts": _sep_digest([(rid, blob) for rid, blob, _ in parsed]), **_layer_digests(manifest, layers)}
     return {
         "format_version": BASELINE_FORMAT_VERSION,
-        "status": "candidate",                    # ALWAYS candidate — capture never self-accepts (BC5)
-        "canonicalization": {"json": "sort_keys=True,ensure_ascii=False,separators=(',',':'),allow_nan=False",
-                             "row_order": "ORDER BY row_id",
-                             "aggregate": "sha256 of concat(row_id + 0x00 + blob + 0x1e)", "hash": "sha256"},
+        "status": _BASELINE_STATUS,               # ALWAYS candidate — capture never self-accepts
+        "canonicalization": dict(_BASELINE_CANONICALIZATION),
         "schema_version": sv, "repo_commit": _repo_commit(), "post_count": len(parsed),
         "state_distribution": dist,
-        "digests": {
-            "raw_posts": _sep_digest([(rid, blob) for rid, blob, _ in parsed]),
-            "safety_critical": _sep_digest([(rid, layers[rid]["safe"]) for rid, _, _ in parsed]),
-            "scheduling": _sep_digest([(rid, layers[rid]["sched"]) for rid, _, _ in parsed]),
-            "content": _sep_digest([(rid, layers[rid]["content"]) for rid, _, _ in parsed]),
-        },
+        "digests": digests,
         "per_post_manifest": manifest,            # rid -> sha256(raw payload)  (raw bytes never emitted)
         "per_post_layers": layers,                # rid -> {safe, sched, content} canon strings of per-field hashes
         "frozen_incident": incident,
@@ -1031,63 +1198,114 @@ def capture_canary_baseline(cfg: Config, *, output: str) -> ActionResult:
         return _err(f"baseline capture failed: {str(exc)[:140]}")
     out = Path(output).expanduser()
     _write_json_atomic(out, manifest)
-    return _ok({"output": str(out), "status": "candidate",
+    return _ok({"output": str(out), "status": _BASELINE_STATUS,
                                  "raw_posts": manifest["digests"]["raw_posts"],
                                  "post_count": manifest["post_count"]})
 
 
+def _validate_layer(rid: str, name: str, blob, keys: frozenset) -> Optional[str]:
+    if not isinstance(blob, str):
+        return f"per_post_layers[{rid!r}].{name} is not a string"
+    try:
+        obj = json.loads(blob)
+    except (ValueError, TypeError):
+        return f"per_post_layers[{rid!r}].{name} is not JSON"
+    if not isinstance(obj, dict):
+        return f"per_post_layers[{rid!r}].{name} is not a JSON object"
+    if set(obj) != set(keys):
+        return (f"per_post_layers[{rid!r}].{name} field-set {sorted(obj)} != pinned {sorted(keys)}")
+    if _canon(obj) != blob:
+        return f"per_post_layers[{rid!r}].{name} is not byte-canonical JSON"
+    for k, v in obj.items():
+        if k.endswith("_sha256") and not _is_hex64(v):
+            return f"per_post_layers[{rid!r}].{name}.{k} is not a lowercase sha256"
+        if name == "safe" and k in _SAFE_BOOL_KEYS and not isinstance(v, bool):
+            return f"per_post_layers[{rid!r}].safe.{k} is not a boolean"
+        if name == "safe" and k in _SAFE_CATEGORICAL_KEYS and not (v is None or isinstance(v, str)):
+            return f"per_post_layers[{rid!r}].safe.{k} is not a categorical string"
+    return None
+
+
 def _validate_baseline_shape(prior) -> Optional[str]:
-    """Strictly validate a supplied baseline BEFORE comparison (Phase 5). A null / missing / malformed / unexpected
-    key or layer is an error (nonzero CLI exit), never an apparently-clean comparison."""
+    """Hold a supplied baseline to the PINNED contract with EXACT equality (not mere field presence). A null /
+    missing / extra / renamed / mistyped key, a non-hash hash field, an inconsistent post_count, an altered
+    canonicalization block, a missing frozen incident, or a recomputed-aggregate mismatch is an ERROR — never
+    an apparently-clean comparison."""
     if not isinstance(prior, dict):
         return "baseline is not a JSON object"
-    required = {"format_version", "status", "canonicalization", "schema_version", "post_count",
-                "state_distribution", "digests", "per_post_manifest", "per_post_layers", "frozen_incident", "repo_commit"}
-    missing = required - set(prior)
-    if missing:
-        return f"baseline is missing required keys: {sorted(missing)}"
+    if set(prior) != set(_BASELINE_TOP_KEYS):
+        missing, extra = sorted(_BASELINE_TOP_KEYS - set(prior)), sorted(set(prior) - _BASELINE_TOP_KEYS)
+        return f"baseline top-level keys mismatch (missing={missing}, extra={extra})"
     if prior["format_version"] != BASELINE_FORMAT_VERSION:
         return f"baseline format_version {prior['format_version']!r} != {BASELINE_FORMAT_VERSION!r}"
-    canon = prior["canonicalization"]
-    if not isinstance(canon, dict) or canon.get("hash") != "sha256":
-        return "baseline canonicalization is missing or its hash algorithm is not sha256"
-    for k in ("json", "row_order", "aggregate", "hash"):
-        if k not in canon:
-            return f"baseline canonicalization is missing {k!r}"
-    digests = prior["digests"]
-    if not isinstance(digests, dict):
-        return "baseline digests is not a map"
-    for k in ("raw_posts", "safety_critical", "scheduling", "content"):
-        if not _is_hex64(digests.get(k)):
-            return f"baseline digest {k!r} is not a sha256"
-    man = prior["per_post_manifest"]
-    if not isinstance(man, dict):
-        return "baseline per_post_manifest is not a map"
-    for rid, hv in man.items():
-        if not isinstance(rid, str) or not _is_hex64(hv):
-            return f"baseline per_post_manifest[{rid!r}] is not a sha256"
-    lay = prior["per_post_layers"]
-    if not isinstance(lay, dict):
-        return "baseline per_post_layers is not a map"
-    if set(lay) != set(man):
+    if prior["status"] != _BASELINE_STATUS:
+        return f"baseline status {prior['status']!r} != {_BASELINE_STATUS!r}"
+    if prior["canonicalization"] != _BASELINE_CANONICALIZATION:
+        return "baseline canonicalization block does not equal the pinned metadata"
+    if not (prior["schema_version"] is None or isinstance(prior["schema_version"], (int, str))):
+        return "baseline schema_version is not an int/str/null"
+    rc = prior["repo_commit"]
+    if not (isinstance(rc, str) and (rc == "unknown" or _COMMIT_RE.match(rc))):
+        return "baseline repo_commit is not a 40-hex commit or 'unknown'"
+    digests, man, lay = prior["digests"], prior["per_post_manifest"], prior["per_post_layers"]
+    if not isinstance(digests, dict) or set(digests) != set(_BASELINE_DIGEST_KEYS):
+        return f"baseline digests key-set != pinned {sorted(_BASELINE_DIGEST_KEYS)}"
+    for k, v in digests.items():
+        if not _is_hex64(v):
+            return f"baseline digest {k!r} is not a lowercase sha256"
+    if not isinstance(man, dict) or not isinstance(lay, dict):
+        return "baseline per_post_manifest / per_post_layers is not a map"
+    if set(man) != set(lay):
         return "baseline per_post_layers keys != per_post_manifest keys"
+    pc = prior["post_count"]
+    if not (isinstance(pc, int) and not isinstance(pc, bool) and pc >= 0):
+        return "baseline post_count is not a non-negative integer"
+    if pc != len(man):
+        return f"baseline post_count {pc} != len(per_post_manifest) {len(man)}"
+    dist = prior["state_distribution"]
+    if not isinstance(dist, dict):
+        return "baseline state_distribution is not a map"
+    total = 0
+    for k, v in dist.items():
+        if not isinstance(k, str) or not (isinstance(v, int) and not isinstance(v, bool) and v >= 0):
+            return "baseline state_distribution is not a string -> non-negative-integer map"
+        total += v
+    if total != pc:
+        return f"baseline state_distribution sums to {total}, not post_count {pc}"
+    for rid, hv in man.items():
+        if not isinstance(rid, str) or not rid:
+            return "baseline per_post_manifest has a non-string/empty Post ID"
+        if not _is_hex64(hv):
+            return f"baseline per_post_manifest[{rid!r}] is not a lowercase sha256"
     for rid, entry in lay.items():
         if not isinstance(entry, dict) or set(entry) != {"safe", "sched", "content"}:
             return f"baseline per_post_layers[{rid!r}] does not have exactly {{safe, sched, content}}"
-        for lk in ("safe", "sched", "content"):
-            if not isinstance(entry[lk], str):
-                return f"baseline per_post_layers[{rid!r}].{lk} is not a string"
-            try:
-                if not isinstance(json.loads(entry[lk]), dict):
-                    return f"baseline per_post_layers[{rid!r}].{lk} is not a JSON object"
-            except (ValueError, TypeError):
-                return f"baseline per_post_layers[{rid!r}].{lk} is not canonical JSON"
+        for name, keys in (("safe", _SAFE_LAYER_KEYS), ("sched", _SCHED_LAYER_KEYS), ("content", _CONTENT_LAYER_KEYS)):
+            e = _validate_layer(rid, name, entry[name], keys)
+            if e is not None:
+                return e
     inc = prior["frozen_incident"]
     if not isinstance(inc, dict):
         return "baseline frozen_incident is not a map"
     for iid, entry in inc.items():
-        if not isinstance(entry, dict) or not _is_hex64(entry.get("raw_sha256")):
-            return f"baseline frozen_incident[{iid!r}] is missing a sha256 raw_sha256"
+        if iid not in _FROZEN_INCIDENT_IDS:
+            return f"baseline frozen_incident has an unexpected id {iid!r}"
+        if not isinstance(entry, dict) or set(entry) != set(_FROZEN_ENTRY_KEYS):
+            return f"baseline frozen_incident[{iid!r}] field-set != pinned {sorted(_FROZEN_ENTRY_KEYS)}"
+        for k, v in entry.items():
+            if k.endswith("_sha256") and not _is_hex64(v):
+                return f"baseline frozen_incident[{iid!r}].{k} is not a lowercase sha256"
+        if not isinstance(entry["has_public_url"], bool):
+            return f"baseline frozen_incident[{iid!r}].has_public_url is not a boolean"
+    present_incidents = [i for i in _FROZEN_INCIDENT_IDS if i in man]
+    if sorted(inc) != sorted(present_incidents):
+        return (f"baseline frozen_incident ids {sorted(inc)} != the incident posts present in the manifest "
+                f"{sorted(present_incidents)}")
+    # INTERNAL CONSISTENCY: the stored aggregates must equal a recomputation from the per-post maps alone.
+    recomputed = _layer_digests(man, lay)
+    for k, v in recomputed.items():
+        if digests[k] != v:
+            return f"baseline digest {k!r} does not match a recomputation from per_post_layers/manifest"
     return None
 
 
@@ -1120,7 +1338,7 @@ def compare_canary_baseline(cfg: Config, *, baseline: str) -> ActionResult:
         pf, cf = json.loads(p_lay[r]["safe"]), json.loads(c_lay[r]["safe"])
         safety_fields[r] = sorted(k for k in (set(pf) | set(cf)) if pf.get(k) != cf.get(k))
     # mismatch is TRUE for ANY divergence — raw, any layer, an added/removed id, OR an aggregate-digest
-    # inequality (a modified baseline digest must never return a clean exit) (Phase 5)
+    # inequality (a modified baseline digest must never return a clean exit).
     digests_equal = {k: prior["digests"].get(k) == cur["digests"][k] for k in cur["digests"]}
     mismatch = bool(added or removed or raw_changed or safety_changed or sched_changed or content_changed
                     or not all(digests_equal.values()))
@@ -1144,7 +1362,8 @@ def _repo_commit() -> str:
     try:
         r = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True,
                            cwd=str(Path(__file__).resolve().parent), timeout=5)
-        return r.stdout.strip() if r.returncode == 0 else "unknown"
+        out = r.stdout.strip()
+        return out if (r.returncode == 0 and _COMMIT_RE.match(out)) else "unknown"
     except (subprocess.SubprocessError, OSError):
         return "unknown"
 
@@ -1155,8 +1374,8 @@ def _map_digests(cfg: Config) -> dict:
     try:
         out = {}
         for (m,) in con.execute("SELECT DISTINCT map_name FROM ledger_rows").fetchall():
-            rows = con.execute("SELECT row_id,payload FROM ledger_rows WHERE map_name=? ORDER BY row_id", (m,)).fetchall()
-            out[m] = _sep_digest([(rid, blob) for rid, blob in rows])
+            rows = con.execute("SELECT row_id,payload FROM ledger_rows WHERE map_name=?", (m,)).fetchall()
+            out[m] = _sep_digest(sorted(((rid, blob) for rid, blob in rows), key=lambda t: t[0]))
     finally:
         con.close()
     return out

@@ -33,7 +33,14 @@ from .common import ARCH, CONTRACT, DERIVED, GOVERNANCE, KB, REPO, SRC, load
 # when it was written — retroactively editing an erratum so it matches today destroys the only
 # account of what went wrong, which is the one thing an erratum is for. Named explicitly, never a
 # wildcard, so this cannot quietly become an escape hatch for a doc that simply went stale.
-_HISTORY = frozenset({"CYCLE6_CORRECTIONS.md"})
+# NAMED historical records — files that snapshot a PAST cycle's state and must keep saying what was true when
+# they were written. Retroactively rewriting them to match today destroys the only account of what went wrong,
+# and (because only the regex-matching line gets rewritten) leaves a document contradicting its own acceptance
+# criteria — exactly the defect found in C6-S08/C6-S09, whose table row was rewritten to the current value
+# while their acceptance criterion still read the Cycle-6 value. These carry their original values as PROSE.
+# This is a small, EXPLICITLY NAMED list, never a wildcard, so it cannot become a loophole: every LIVE
+# governance surface is still scanned, and a NEW prompt that pins a current value is still held to the test.
+_HISTORY = frozenset({"CYCLE6_CORRECTIONS.md", "IMPLEMENTATION_READINESS.md", "C6-S08.md", "C6-S09.md"})
 
 BLOCKING = "BLOCKING"
 WARNING = "WARNING"
@@ -210,7 +217,13 @@ RULES: dict[str, Rule] = {r.id: r for r in [
          "The contract pins the cli.py print budget as a load-bearing, exact-equality budget shared "
          "across three slices. Its copy once went stale in a single commit while the enforcing test "
          "moved on — which is the whole reason this rule exists. The authoritative number lives in the "
-         "CI test and in derived/ratchets.json; it is deliberately NOT written here as an assignment.",
+         "CI test and in derived/ratchets.json; it is deliberately NOT written here as an assignment. "
+         "SOURCE OF TRUTH (one chain, no second opinion): measured in src/fanops/cli.py -> declared ONCE in "
+         "tests/test_internal_prints_routed.py -> generated into derived/ratchets.json -> mirrored in exactly "
+         "ONE declared contract copy (contract/implementation_contract.json GB-6) which this rule holds to the "
+         "test. Every other LIVING governance document references it symbolically and carries no literal to "
+         "rot; NAMED Cycle-6 historical snapshots (_HISTORY) keep their ORIGINAL value as prose and are never "
+         "rewritten when cli.py changes. The assignment form remains a LIVE CLAIM everywhere else.",
          "contract/implementation_contract.json GB-6 vs derived/ratchets.json", BLOCKING,
          "contract's declared ratchet numbers == the numbers in the CI test files",
          "Update the contract's GB-6 block from derived/ratchets.json. The TEST is authoritative."),

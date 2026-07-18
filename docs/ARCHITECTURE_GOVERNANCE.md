@@ -4,7 +4,7 @@
 
 # FanOps — Architecture & Implementation Governance
 
-**Source fingerprint `f123939f173ac211` · generator `arch/1.0.0`**
+**Source fingerprint `d7f9d6a000c08a9d` · generator `arch/1.0.0`**
 
 Regenerate: `python -m tools.arch regen`
 
@@ -297,7 +297,7 @@ Every rule is a predicate a machine evaluates. `python -m tools.arch check`.
 
 #### `IMPL-007` — The ratchet budgets the contract COPIES must match the tests that ENFORCE them
 
-**Rationale.** The contract pins the cli.py print budget as a load-bearing, exact-equality budget shared across three slices. Its copy once went stale in a single commit while the enforcing test moved on — which is the whole reason this rule exists. The authoritative number lives in the CI test and in derived/ratchets.json; it is deliberately NOT written here as an assignment.
+**Rationale.** The contract pins the cli.py print budget as a load-bearing, exact-equality budget shared across three slices. Its copy once went stale in a single commit while the enforcing test moved on — which is the whole reason this rule exists. The authoritative number lives in the CI test and in derived/ratchets.json; it is deliberately NOT written here as an assignment. SOURCE OF TRUTH (one chain, no second opinion): measured in src/fanops/cli.py -> declared ONCE in tests/test_internal_prints_routed.py -> generated into derived/ratchets.json -> mirrored in exactly ONE declared contract copy (contract/implementation_contract.json GB-6) which this rule holds to the test. Every other LIVING governance document references it symbolically and carries no literal to rot; NAMED Cycle-6 historical snapshots (_HISTORY) keep their ORIGINAL value as prose and are never rewritten when cli.py changes. The assignment form remains a LIVE CLAIM everywhere else.
 
 - **Scope:** `contract/implementation_contract.json GB-6 vs derived/ratchets.json`
 - **Severity:** BLOCKING
