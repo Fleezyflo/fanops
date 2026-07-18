@@ -463,6 +463,18 @@ def test_ac21_passes_once_the_operator_approval_is_simulated():
     parsed = parse.parse(raw)
     d = parsed.digest
 
+    # THE BASE IS THE ONE THE CONTRACT RECORDS, NOT `origin/main`. A contract governs the change
+    # from its own `created.base_sha`; `origin/main` only coincided with that while the change was
+    # un-landed. Once it merged, `origin/main...HEAD` became a one-file MONOTONE lifecycle append —
+    # which §3.6 deliberately keeps OUTSIDE `T3` — so the derived trait set was empty, the declared
+    # one was `{governance}`, and the verifier correctly answered `CL-2`. Second time this test has
+    # assumed the world would hold still (see the timestamp note below); reading the base off the
+    # artifact makes the assertion true in every phase of the contract's life instead of one.
+    base_ref = next((e.get("base_sha") for e in parsed.events
+                     if e.kind == "created" and e.get("base_sha")), "origin/main")
+    if real.resolve(base_ref) is None:
+        pytest.skip(f"the contract's recorded base {base_ref[:12]} is not in this checkout")
+
     # Two states must both work, and the first version of this test only handled one. It appended a
     # HARDCODED timestamp, which was fine while the last event was `created` — and went red the
     # moment the operator's real approval landed later in the day, because the append was then
@@ -489,11 +501,12 @@ def test_ac21_passes_once_the_operator_approval_is_simulated():
         def diff_names(self, b, h): return self.i.diff_names(b, h)
         def contains(self, r, q): return self.i.contains(r, q)
         def resolve(self, r): return self.i.resolve(r)
+        def is_ancestor(self, a, b): return self.i.is_ancestor(a, b)
 
     ports = Ports(repo=_Approved(real))
     got = {}
     for phase in ("pre-implementation", "at-head", "merge-gate"):
-        dec, _ = run_pipeline(ports, p, base="origin/main", head="HEAD", pr=None, phase=phase)
+        dec, _ = run_pipeline(ports, p, base=base_ref, head="HEAD", pr=None, phase=phase)
         got[phase] = (dec.outcome, dec.rule)
 
     assert got["pre-implementation"] == ("continue", "OK"), got
