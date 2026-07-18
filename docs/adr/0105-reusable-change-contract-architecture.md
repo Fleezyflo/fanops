@@ -2,7 +2,7 @@
 status: accepted
 date: 2026-07-18
 accepted_in_principle: 2026-07-18
-approved_digest: sha256:1b1a7d55328a8dcf47954c341478ae37ab0cfd2e61ba3c455fe32c672fc1e488
+approved_digest: sha256:e757fb6e01d3e6f143f6d6af9f45bce780331562adb07149b55857baefc5875a
 supersedes: []
 references: [0100, 0101, 0102]
 deciders: [operator]
@@ -18,6 +18,14 @@ deciders: [operator]
 
 **Accepted** (in principle, 2026-07-18). Phase 2 of the Agent Change System program. Entry criterion
 met: Phase 1 `ACCEPTED` (PR #701, `937777d`).
+
+**Amendment, 2026-07-19 — §4.1a and operator decision 3.** Phase 3B implementation proved that the
+exact-head gate as originally specified is **unsatisfiable in this repository**, and that the same
+self-reference defeats `head_proposed` in every repository. §4.1a replaces relocation-of-the-record
+with **parent-binding**, and adds an explicitly-bounded second evidence route for repositories with a
+single write principal. Multi-principal behaviour is unchanged. **This amendment moved the body, so it
+requires renewed approval; the `approved_digest` above names the amended body, which is
+`REQUESTED / NOT YET APPROVED` until the operator answers the Phase 3B governance-amendment gate.**
 
 **What this acceptance binds to.** `approved_digest` in the front matter is `sha256` over this file's
 **body** — every byte after the front matter's closing `---` line, including the newline that follows
@@ -122,7 +130,7 @@ design through acceptance. It is task-specific, binding, and written **before** 
 - **Predicate:** any changed path matches `docs/REPOSITORY_CONSTITUTION.md`,
   `docs/ARCHITECTURAL_LAWS.md`, `docs/ENGINEERING_STANDARDS.md`, `docs/adr/**`,
   `docs/governance/**`, `.github/ci-control-registry.yml`, `.github/workflows/**`, `tools/arch/**`,
-  `tools/ci/**`, `.agents/lanes.json`, `.orchestration/**`.
+  `tools/ci/**`, `tools/contract/**`, `.agents/lanes.json`, `.orchestration/**`.
 - **Evidence source:** the diff path list against that literal set, which lives **only here**.
 - **Derivability:** **mechanically derivable** (pure path match).
 - **Why:** these files are what every other change is judged against. Changing the ruler is not the
@@ -363,12 +371,72 @@ voids approval (§4.4), **and** it is a `T3` governance change in its own right.
 | Gate | Binds to | Recorded where | Moves the head? |
 |---|---|---|---|
 | **Content approval** (`approved`) | the **declaration digest `D`** | in-file, `## Lifecycle`, in the same commit that freezes the declaration | Yes — and it does not matter: it precedes implementation, and it is not what merge approval binds to. |
-| **Exact-head approval** (`merge_approved`) | the triple **(`D`, `head_sha`, blob SHA of the contract at `head_sha`)** | **a GitHub pull-request review**, which binds natively to `commit_id` | **No — this is why it is not a file edit.** Writing it into the file would move the head it approves. |
+| **Exact-head approval** (`merge_approved`) | the triple **(`D`, `parent_sha`, blob SHA of the contract at `parent_sha`)** | **a GitHub pull-request review** where a second principal exists; otherwise **in-file, parent-bound** (§4.1a) | **No, in either form** — a review is not a commit, and a parent-bound record names the commit it is appended *onto*. |
 | **Acceptance** (`accepted`) | the **resulting `main` SHA** plus a demonstration of `success_condition` | in-file, appended **after** the merge, in a separate commit | Yes — post-merge, so nothing downstream depends on the head it moves. |
 
 **This is the answer to the circularity.** Exact-head approval is the only gate that must not move the
-head, and it is the only gate recorded outside the tree — in a mechanism (a PR review) that already
-binds to a commit SHA and that GitHub makes immutable and auditable.
+head. Where a second principal exists it is recorded outside the tree — in a mechanism (a PR review)
+that already binds to a commit SHA and that GitHub makes immutable and auditable.
+
+#### 4.1a Parent-binding, and the two evidence routes (amends the original §4.1)
+
+**The defect this amends.** The original §4.1 solved a *self-reference* problem by *relocating* the
+record: a record written into the tree cannot name the commit that contains it, because the commit
+hash is computed over the record. Relocating it to a GitHub PR review dodged that — and silently
+imported an unstated precondition, that **a second account with write access exists and will act**.
+Where it does not, no evidence of any kind is admissible and the gate is unsatisfiable. The same
+self-reference defeats `head_proposed` (§4.2), which was never relocated and therefore made the
+`implemented` state (§4.3) **unreachable by construction**. Two instances, one root cause.
+
+**The correction.** A record binds to its **parent** — the commit it is appended onto — and the
+verifier proves the rest from git:
+
+1. `parent_sha` is an ancestor of the current head;
+2. no path other than this contract file moved between them;
+3. the declaration bytes are identical at both;
+4. the head's lifecycle byte-prefix-extends the parent's.
+
+Together these establish that head and parent differ by lifecycle appends to this contract and by
+nothing else — a delta that the §3 byte split already proves cannot change `D`, the code, or any
+cited authority. **Approving the parent and merging the head therefore approve the same change.** This
+is the §3 argument applied to the head instead of the digest; it is not a new principle, and it is
+checked, never assumed.
+
+**This document is itself the precedent.** §Status escapes exactly this self-reference by excluding
+the front matter from `approved_digest`, "so that it can live inside the file it describes without
+self-reference". §3 escapes it again by excluding the lifecycle from `D`. Both define *what the record
+covers* so the record can sit inside its own subject. §4.1a is the third application: define what the
+approval covers — the parent, plus a delta proven inert — instead of moving the record somewhere it
+cannot cover itself. **Relocation was the one escape of the three that depended on a fact outside the
+repository, and it is the one that broke.**
+
+**Two evidence routes, and which applies is not a choice.**
+
+| Route | Evidence | Admissible when |
+|---|---|---|
+| **witnessed** | a non-author `APPROVED` PR review whose `commit_id` equals the head | always; **tried first, and preferred whenever it succeeds** |
+| **unwitnessed** | an in-file `merge_approved` event satisfying the four parent-binding checks | **only** when the platform reports **exactly one** principal with push access |
+
+The admissibility test reads the platform's write-access set. It is not a field, a flag, or anything
+the governed tree can assert about itself — a repository must not be able to declare its own
+population. **Where two or more principals can push, the unwitnessed route is unreachable and
+behaviour is byte-identical to the original model.** Where the set cannot be read, the route is
+**inadmissible** (unknown is not satisfied — the same rule the gates already follow).
+
+**What the unwitnessed route does not have, stated plainly.** It carries no second principal's
+judgement, and no amount of verification can manufacture one. It is admissible only where such
+judgement is *structurally unavailable* — never as a shortcut where it is merely inconvenient. The
+verifier names the evidence class in its report and its payload, and a satisfied-but-unwitnessed gate
+is disclosed above the fold. **A governance system that degrades silently has been bypassed; one that
+degrades loudly and durably has been honest about what it can prove.**
+
+**Why this is not "the author may self-approve".** In a single-principal repository the operator's own
+word is *already* the sole evidence behind content approval (§4.1 row 1) and acceptance (row 3), both
+of which are in-file records an agent writes. The unwitnessed route does not lower the system's floor;
+it stops one gate from *appearing* to stand on stronger ground than the two beside it. The alternative
+considered and rejected was to leave the gate unsatisfiable: a governance system that can never
+authorize a merge in the repository it governs does not fail safe, it fails **inoperative**, and
+inoperative controls are removed wholesale rather than satisfied.
 
 #### 4.2 Lifecycle events
 
@@ -380,8 +448,8 @@ Append-only. Each carries a UTC timestamp and its binding.
 | `approved` | operator, recorded by agent | `D`, the approval token | yes |
 | `binding` | agent | `branch`, `pr` — re-appended whenever either changes | yes |
 | `implementation_started` | agent | — | yes |
-| `head_proposed` | agent | `head_sha`, required-CI result at that head, verifier result | yes |
-| `merge_approved` | **operator** | **not in the file** — a GitHub PR review at `commit_id` | **no** |
+| `head_proposed` | agent | **`parent_sha`**, required-CI result at that head, verifier result | yes |
+| `merge_approved` | **operator** | a GitHub PR review at `commit_id`, **or** in-file **`parent_sha`** (§4.1a) | **no** |
 | `merged` | derived | the squash SHA on `main` | n/a |
 | `accepted` | operator, recorded by agent | merged `main` SHA, evidence for `success_condition` | yes (post-merge) |
 | `refused` | agent **or** operator | reason | yes |
@@ -399,8 +467,8 @@ State is **computed**, never declared:
 refused | superseded | abandoned   if the corresponding terminal event is present
 accepted                           if an `accepted` event is present
 merged                             if the squash commit exists on main
-approved_for_merge                 if a GitHub review approval exists at the current head_sha
-implemented                        if `head_proposed` exists at the current head with CI green
+approved_for_merge                 if a `merge_approved` binds to the current head by either §4.1a route
+implemented                        if `head_proposed` binds to the current head (§4.1a) with CI green
 in_implementation                  if `approved` exists and commits follow it
 approved                           if an `approved` event names the current D
 in_review                          if a PR is open and all mandatory fields for its traits are present
@@ -416,17 +484,18 @@ already runs on. **Merge is an event, not a state that authorizes anything.** `m
 | Event | Content approval (`D`) | Exact-head approval |
 |---|---|---|
 | **Declaration edited** (any of §3.1, or `supersedes`) | **VOID.** `D` changes. Re-approve. | **VOID** |
-| **Lifecycle appended** | **survives** — `D` is unchanged by construction | **VOID**, because the head moved. Re-approve at the new head. The declaration approval is untouched. |
-| **Head SHA moves** (any commit) | survives | **VOID.** Reused verbatim: a record's `head_sha` must equal the PR's current `headRefOid`; stale → refused. |
+| **Lifecycle appended** | **survives** — `D` is unchanged by construction | **survives if the append is lifecycle-only** (§4.1a checks 2–4 prove it); **VOID** if the same range carries anything else |
+| **Head SHA moves** (any commit touching anything but this contract's lifecycle) | survives | **VOID.** §4.1a check 2 or 3 fails; stale → refused. |
 | **Base moves** (`main` advances) | survives unless a cited authority changed | **VOID if** the rebase changes the diff; otherwise survives with required CI re-run at the new head |
 | **A cited authority's file blob changed** | **FLAG — re-confirm** | **FLAG — re-confirm** |
 | **Contract `id` reused or reassigned** | **VOID** | **VOID** |
 
-**Appending a lifecycle event moves the head and therefore voids exact-head approval, but never voids
-content approval.** That asymmetry is the point: routine record-keeping costs a re-approval of the
-*merge*, which is cheap and correct, and never costs a re-approval of the *design*, which would be
-absurd. In practice, lifecycle appends happen before the merge gate is sought, so the cost is normally
-zero.
+**Appending a lifecycle event voids neither approval, and a commit carrying anything else voids the
+exact-head one.** The line is drawn at *what moved*, not at *whether the head moved* — the head always
+moves. Content approval survives an append by the §3 byte split; exact-head approval survives it by the
+§4.1a delta proof. Both rest on the same fact: a lifecycle append cannot change the declaration, the
+code, or a cited authority. **Binding to head equality instead would have voided the record in the act
+of writing it** — which is what made the original rule unsatisfiable rather than merely strict.
 
 **Authority-change detection** binds to the **git blob SHA of each cited authority file** at approval
 (field #5). A mismatch **flags for re-confirmation; it does not auto-void.** File granularity would
@@ -802,6 +871,20 @@ which remains hand-maintained in Phase 2 by accepted operator decision.
   than trusting the badge. *(estimate.)*
 - **The `T3` surface list has no completeness proof.** Hand-maintained in Phase 2 by accepted operator
   decision; mechanical verification is Phase 3 work. *(accepted, time-boxed.)*
+- **An unwitnessed merge approval (§4.1a) is forgeable by the agent that writes it.** So is `approved`,
+  and so is `accepted` — all three are in-file records of an operator act, and this route makes the
+  set consistent rather than adding a new exposure. The threat model is **agent drift and overreach,
+  not a compromised agent**: an adversary with commit access already owns every artifact this system
+  is made of. **Accepted residual.** *Mitigation, and the honest ceiling on it:* the route is
+  unreachable wherever a second principal exists, and the report discloses it every time it is used.
+  If the threat model ever widens to a compromised agent, the correct answer is a **signature over
+  `parent_sha` by a key the agent cannot reach** — deliberately not built now, because key custody is
+  an operator fact this repository cannot verify, and an unverifiable check is decoration.
+- **The witnessed route proves account-distinctness, not independence.** A single operator can hold a
+  second account and approve their own work; the gate would go green having proven nothing. This is
+  unchanged by the amendment and is called out because it bounds what the *stronger* route is worth:
+  neither route can prove that a human actually read the diff. **Accepted residual** — the same limit
+  as "contracts become box-ticking", below.
 - **Contracts become box-ticking.** *Mitigation:* derive what is derivable; require a falsifiable
   success condition. **Accepted residual** — no mechanism forces a human to think.
 - **Phase 3 slips and the model stays prose.** *Mitigation:* §5.3 ships immediately with zero
@@ -856,7 +939,14 @@ historical evidence of the Cycle-6 program (roadmap **D3**).
 2. **The documented `T1` false-negative boundary is accepted as a Phase 4 calibration risk.** The
    trigger is not broadened to cover it.
 3. **Exact-head merge approval is a GitHub pull-request review bound to the current `commit_id`**, not
-   a chat token.
+   a chat token. — **AMENDED 2026-07-19 (§4.1a).** Phase 3B proved the mechanism unavailable in this
+   repository: `Fleezyflo` is the only account with push access and is the author of every PR, and
+   GitHub refuses self-approval, so no review of any kind can ever be obtained. A decision between two
+   options, one of which does not exist, is not a decision. **What the original decision was
+   protecting is retained in full: the approval still binds to a specific commit, and the binding is
+   still checked against git rather than trusted.** What changes is only the medium of record where —
+   and *only* where — the platform proves no second principal exists. The rejected alternative was a
+   bare chat token carrying no commit at all; that remains rejected.
 4. **The `T3` governance-surface list may remain hand-maintained in Phase 2.** Its completeness
    verification is Phase 3 work.
 5. **Contracts live at `docs/contracts/<id>.md`, in the same PR as the change they govern.**
