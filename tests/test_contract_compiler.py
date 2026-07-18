@@ -110,10 +110,29 @@ def test_decide_imports_no_io():
 
 
 def test_no_failure_path_yields_continue():
-    """AC-14. Unavailable is never authorized: an unresolved input cannot produce `continue`."""
-    di = _decision_input(derived=model.Derived(unverifiable=("modules.json absent",)))
+    """AC-14. Unavailable is never authorized: an unresolved input cannot produce `continue`.
+
+    The claim is about the OUTCOME, in every phase. Pinning a specific rule id here would be a
+    stricter assertion than the property being tested, and it would fail whenever some other rule
+    legitimately matched first — which is exactly what happened: at `at-head`, `ST-3` (no approval
+    at the current `D`) precedes `ST-7`, and both correctly say `stop`. That `ST-7` is itself
+    reachable is proven separately, below and by `NC-C13p`.
+    """
+    for phase in ("pre-implementation", "at-head", "merge-gate"):
+        di = _decision_input(phase=phase,
+                             derived=model.Derived(unverifiable=("modules.json absent",)))
+        assert decide(di).outcome != model.CONTINUE, phase
+
+
+def test_st7_fires_when_nothing_higher_applies():
+    """`ST-7` must be REACHABLE, not merely present: an unresolved input is its own halt."""
+    gates = model.Gates(content_approval="satisfied", exact_head_approval="satisfied")
+    clean = _decision_input(gates=gates, derived=model.Derived())
+    assert decide(clean).rule == "OK", "the baseline must be clean, or the next assertion proves nothing"
+    di = _decision_input(gates=gates,
+                         derived=model.Derived(unverifiable=("derived/modules.json absent",)))
     out = decide(di)
-    assert out.outcome != model.CONTINUE and out.rule == "ST-7"
+    assert (out.rule, out.outcome) == ("ST-7", model.STOP)
 
 
 def test_exit_two_is_reserved_and_carries_no_decision():
