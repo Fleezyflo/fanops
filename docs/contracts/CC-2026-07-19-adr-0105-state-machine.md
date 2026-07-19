@@ -150,8 +150,10 @@ not exist, so it does not. Its readable case is covered: while no attestation so
 schema-valid census yields `claimed_unknown` (step 9) whatever count it asserts, and an absent or
 malformed one yields `claimed_unknown` too (step 7).
 
-**Only Route W reaches `verified`.** The other five values stay reachable from both routes, so the
-set does not shrink; what shrinks is Route U's ceiling.
+**Only Route W reaches `verified`.** Both values that require a route to QUALIFY — `verified` and
+`fidelity_failed`, since fidelity is tested only after a route qualifies pre-merge — are now Route
+W's alone. `claimed_stale`, `claimed_unknown`, `absent` and `unavailable` are unchanged. The set
+stays six because every value remains reachable; what shrinks is Route U's ceiling.
 
 | value | exact predicate | required reads | all reads completed | pre-merge state | post-merge state | rule | outcome |
 |---|---|---|---|---|---|---|---|
