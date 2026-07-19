@@ -1,45 +1,50 @@
-"""R13 — the three gates (§4.1), the nine derived states (§4.3), invalidation (§4.4), acceptance (D-3).
-
-ADR-0105 §4 is self-contained and this is the only module that needs `ReviewPort`, which is why it
-is its own file rather than part of `validate.py`.
+"""R13 — the three gates (§4.1), the derived states (§4.3), invalidation (§4.4), acceptance (D-3).
 
 THE CIRCULARITY, AND WHY THE SPLIT RESOLVES IT. Lifecycle state has to live somewhere. Putting it in
 an approval-bound artifact makes recording state void the approval that recording it is evidence of.
 ADR-0105 answers with a byte split: `D` covers the declaration only, so an append CANNOT change it —
 not by convention, by construction.
 
-THE SECOND CIRCULARITY, AND WHY RELOCATION DID NOT RESOLVE IT (ADR-0105 §4.1, amended). Two events
-must bind to a *commit*, and a record written into the tree cannot name the commit that contains it:
-the hash is computed over the record. The original ADR escaped this for `merge_approved` by moving
-that one record out of the tree into a GitHub PR review — which binds natively to a `commit_id`, and
-which also, unstated, requires a second account to exist. It left `head_proposed` with no escape at
-all, so the `implemented` state was unreachable by construction.
+THE SECOND CIRCULARITY, AND WHY RELOCATION DID NOT RESOLVE IT (ADR-0105 §4.1a). Two events must bind
+to a *commit*, and a record written into the tree cannot name the commit that contains it: the hash
+is computed over the record. The original ADR escaped this for `merge_approved` by moving that one
+record out of the tree into a GitHub PR review — which binds natively to a `commit_id`, and which
+also, unstated, requires a SECOND ACCOUNT TO EXIST. It left `head_proposed` with no escape at all, so
+the `implemented` state was unreachable by construction.
 
-The amendment binds to the PARENT instead of relocating the record. An event names `parent_sha`, the
+The correction binds to the PARENT instead of relocating the record. An event names `parent_sha`, the
 commit it is appended onto, and `parent_binds` proves from git that the head differs from it by
 lifecycle appends to this contract and nothing else. That delta is, by the §3 byte split above,
-incapable of changing the declaration, the code, or any authority — so approving the parent and
-merging the head approve the same change. Same guarantee, stated in the only direction writable.
+incapable of changing the declaration, the code, or any authority — so authorizing the parent and
+merging the head authorize the same change. Same guarantee, stated in the only direction writable.
 
-`review.commit_id` is compared explicitly and GitHub's `reviewDecision` badge is never read. §Risks
-directs Phase 3 to compare rather than trust the badge, whether or not `dismiss_stale_reviews` is
-enabled — the badge answers "is this PR approved", the contract asks "is THIS COMMIT approved", and
-those diverge exactly when it matters.
+SINGLE-OPERATOR AUTHORIZATION, AND WHY NO REVIEW IS READ HERE. This repository has exactly one human
+operator. A rule that requires a second person is not strict, it is UNSATISFIABLE: it can be waited
+on forever but never cleared, and ADR-0105 §4.1a already names that outcome — a governance system
+that can never authorize a merge in the repository it governs "does not fail safe, it fails
+INOPERATIVE, and inoperative controls are removed wholesale rather than satisfied."
+
+So merge authorization has ONE route: an operator-issued `merge_approved` event, parent-bound. This
+module reads NO review, NO reviewer identity, and NO principal census — not as a default that some
+flag can reverse, but because the code to read them no longer exists. A GitHub review cannot grant,
+strengthen, weaken or block authorization, and a dead review API changes no verdict.
+
+What that does NOT relax: the event must name the current `D`, the governed PR, an operator and a
+token, and it must parent-bind. Every one of those is checked against git or the declaration, never
+taken at its word. The operator can authorize; the operator cannot authorize vaguely.
 """
 from __future__ import annotations
 
-from .adapters import PortError
 from .model import (ACCEPTANCE_VALUES, EVENT_KINDS, MALFORMED, MISSING, PARENT_BOUND_EVENTS,
                     PARENT_BOUND_VALUES, TERMINAL_EVENTS, Diagnostic, Gates)
 from .parse import BOUNDARY, is_utc
 
 SATISFIED, STALE, UNKNOWN_GATE, NOT_SOUGHT = "satisfied", "stale", "unknown", "not_sought"
 
-# The two §4.1 evidence routes for the exact-head gate. `witnessed` is a second principal's review;
-# `unwitnessed` is the operator's own record, admissible ONLY where the platform proves no second
-# principal exists. The name travels into the report and the payload: governance that degrades
-# silently is a bypass, governance that degrades loudly is a disclosure.
-WITNESSED, UNWITNESSED = "witnessed", "unwitnessed"
+# Every value a `merge_approved` event must carry. `parent_sha` binds the commit, `digest` binds the
+# declaration, `pr` binds the change, `operator` and `token` bind the human act. An authorization
+# missing any one of them authorizes something less specific than a merge.
+MERGE_AUTH_VALUES = ("parent_sha", "digest", "pr", "operator", "token")
 
 
 def validate_events(events, *, main_blob: bytes | None, decl_bytes: bytes, life_bytes: bytes):
@@ -148,13 +153,13 @@ def parent_binds(event, *, repo, path: str, head_sha: str, raw: bytes) -> tuple[
     return True, f"the head is {parent[:12]} plus lifecycle appends to this contract and nothing else"
 
 
-def gates(decl, events, *, head_sha: str, pr: int | None, reviews, main_has_contract: bool,
-          repo=None, path: str = "", raw: bytes = b"", principals=None):
-    """The three §4.1 gates. AN UNKNOWN GATE IS NOT A SATISFIED GATE — see `ST-4`.
+def gates(decl, events, *, head_sha: str, pr: int | None, main_has_contract: bool,
+          repo=None, path: str = "", raw: bytes = b""):
+    """The three §4.1 gates. AN UNKNOWN GATE IS NOT A SATISFIED GATE — see `ST-9`.
 
-    `principals` is the platform's write-access set, or `None` for unreadable. It decides ADMISSIBILITY
-    of the unwitnessed route and nothing else — no field, flag or declaration can reach it, which is
-    what keeps the route from being a choice anyone makes.
+    Merge authorization has ONE route: the operator's own `merge_approved` event. No review, reviewer
+    identity or principal census is a parameter here, so none can be consulted, defaulted or flagged
+    back on. The absence is structural, not configured.
     """
     detail: list[str] = []
     approved = [e for e in events if e.kind == "approved"]
@@ -166,55 +171,53 @@ def gates(decl, events, *, head_sha: str, pr: int | None, reviews, main_has_cont
         detail.append(f"content approval names {approved_digest[:20] or '<no digest>'}…; "
                       f"D is {decl.digest[:20]}…")
 
-    exact = NOT_SOUGHT
+    auth = NOT_SOUGHT
     approved_head = ""
-    evidence = ""
     if pr is not None:
-        if reviews is None:
-            exact = UNKNOWN_GATE
-            detail.append("PR reviews could not be read; the gate is UNKNOWN, which is not satisfied")
+        ma = [e for e in events if e.kind == "merge_approved"]
+        if not ma:
+            detail.append("no operator `merge_approved` event — the merge is unauthorized")
+        elif repo is None or not path:
+            auth = UNKNOWN_GATE
+            detail.append("the repository is unreadable, so parent-binding cannot be proven — "
+                          "UNKNOWN, which is not satisfied")
         else:
-            hits = [cid for cid, state in reviews if state == "APPROVED" and cid == head_sha]
-            approved_head = hits[0] if hits else ""
-            exact = SATISFIED if hits else (STALE if reviews else NOT_SOUGHT)
-            if hits: evidence = WITNESSED
-            detail.append(f"{len(reviews)} review(s); {len(hits)} approving the exact head "
-                          f"{head_sha[:12] or '<none>'}")
-
-        # ── the unwitnessed route (§4.1, amended) — reached only when no review witnessed the head
-        if exact != SATISFIED:
-            ma = [e for e in events if e.kind == "merge_approved"]
-            if not ma:
-                detail.append("no in-file `merge_approved` event; the witnessed route is the only "
-                              "one in play")
-            elif principals is None:
-                exact = UNKNOWN_GATE
-                detail.append("the write-principal set is unreadable, so the unwitnessed route "
-                              "cannot be shown ADMISSIBLE — UNKNOWN, which is not satisfied")
-            elif len(principals) != 1:
-                detail.append(f"the unwitnessed route is INADMISSIBLE: {len(principals)} principals "
-                              f"can push ({', '.join(principals[:4])}), so a witnessed review is "
-                              f"obtainable and therefore required")
-            elif repo is None or not path:
-                exact = UNKNOWN_GATE
-                detail.append("the repository is unreadable, so parent-binding cannot be proven — "
-                              "UNKNOWN, which is not satisfied")
-            else:
-                ok, why = parent_binds(ma[-1], repo=repo, path=path, head_sha=head_sha, raw=raw)
-                if ok:
-                    exact, approved_head, evidence = SATISFIED, ma[-1].get("parent_sha"), UNWITNESSED
-                    detail.append(f"UNWITNESSED exact-head approval accepted: {why}. "
-                                  f"`{principals[0]}` is the only principal with push access, so no "
-                                  f"second reviewer exists to witness it — this approval carries the "
-                                  f"operator's judgement alone")
-                else:
-                    exact = STALE
-                    detail.append(f"the in-file `merge_approved` does not bind to the head: {why}")
+            auth, approved_head, why = _merge_authorization(ma[-1], decl, pr, repo=repo, path=path,
+                                                            head_sha=head_sha, raw=raw)
+            detail.append(why)
 
     accepted = SATISFIED if any(e.kind == "accepted" for e in events) else NOT_SOUGHT
     if main_has_contract:
         detail.append("the contract exists on `main` — the change has landed")
-    return Gates(content, exact, accepted, approved_digest, approved_head, tuple(detail), evidence)
+    return Gates(content, auth, accepted, approved_digest, approved_head, tuple(detail))
+
+
+def _merge_authorization(ev, decl, pr: int, *, repo, path: str, head_sha: str, raw: bytes):
+    """`(gate, authorized_parent, why)` for ONE operator `merge_approved` event.
+
+    Five checks, and the event is taken at its word for none of them. It supplies `parent_sha`; git
+    supplies the ancestry and the delta, the declaration supplies `D`, and the caller supplies the
+    governed PR. `operator` and `token` must be non-empty because an authorization that names no
+    human and quotes no instruction records that something was authorized without recording WHAT —
+    and the agent may transcribe an operator's token but may never author one.
+    """
+    absent = [k for k in MERGE_AUTH_VALUES if not ev.get(k)]
+    if absent:
+        return STALE, "", (f"the `merge_approved` event omits {', '.join(absent)} — an authorization "
+                           f"missing any of {', '.join(MERGE_AUTH_VALUES)} is not specific enough to "
+                           f"authorize a merge")
+    if ev.get("digest") != decl.digest:
+        return STALE, "", (f"the authorization names D {ev.get('digest')[:20]}… but the declaration "
+                           f"is {decl.digest[:20]}… — it authorized a different contract text")
+    if str(ev.get("pr")) != str(pr):
+        return STALE, "", (f"the authorization names PR #{ev.get('pr')} but the governed PR is "
+                           f"#{pr} — it authorized a different change")
+    ok, why = parent_binds(ev, repo=repo, path=path, head_sha=head_sha, raw=raw)
+    if not ok:
+        return STALE, "", f"the `merge_approved` does not bind to the head: {why}"
+    return SATISFIED, ev.get("parent_sha"), (
+        f"OPERATOR merge authorization accepted: {why}. It names D {decl.digest[:20]}…, PR #{pr}, "
+        f"operator `{ev.get('operator')}` and token `{ev.get('token')}`")
 
 
 def state(decl, events, g: Gates, *, merged: bool, ci_green: bool, proposal_bound: bool,
@@ -236,7 +239,7 @@ def state(decl, events, g: Gates, *, merged: bool, ci_green: bool, proposal_boun
             return kind
     if any(e.kind == "accepted" for e in events): return "accepted"
     if merged: return "merged"
-    if g.exact_head_approval == SATISFIED: return "approved_for_merge"
+    if g.merge_authorization == SATISFIED: return "approved_for_merge"
     if ci_green and proposal_bound: return "implemented"
     if g.content_approval == SATISFIED and any(e.kind == "implementation_started"
                                                for e in events): return "in_implementation"
@@ -259,7 +262,7 @@ def state(decl, events, g: Gates, *, merged: bool, ci_green: bool, proposal_boun
 # lifecycle-only append leaves the declaration and every other path byte-identical, so the approval
 # still covers the change; `parent_binds` proves that from git rather than assuming it. Any append
 # carrying anything else fails check 2 or 3 and voids the approval exactly as before. Without this
-# amendment the unwitnessed route would void itself the instant it was written down, which is the
+# amendment an in-file authorization would void itself the instant it was written down, which is the
 # original circularity wearing a different hat.
 INVALIDATION = (
     ("declaration_edited", "VOID", "VOID", "stops; renewed approval required"),
@@ -270,32 +273,6 @@ INVALIDATION = (
     ("authority_blob_changed", "survives — FLAGGED", "FLAGGED", "stops until re-confirmed"),
     ("id_reused", "VOID", "VOID", "stops"),
 )
-
-
-def read_reviews(port, pr: int | None):
-    """(reviews, problem). `None` reviews means UNKNOWN — never an empty list, which reads as 'no
-    approval exists' and would let a `gh` outage look like a deliberate absence of approval."""
-    if pr is None:
-        return [], None
-    try:
-        return port.approvals(pr), None
-    except PortError as exc:
-        return None, f"PR #{pr} reviews unreadable: {exc}"
-
-
-def read_principals(port, pr: int | None):
-    """(principals, problem). `None` means UNKNOWN, and unknown makes the unwitnessed route
-    inadmissible — the fail-closed direction, matching `read_reviews` above.
-
-    Skipped entirely when no PR is in play: pre-implementation verification asks nothing of the
-    exact-head gate, and paying a network round trip to learn that would be pure cost.
-    """
-    if pr is None:
-        return [], None
-    try:
-        return port.write_principals(), None
-    except PortError as exc:
-        return None, f"repository write-principals unreadable: {exc}"
 
 
 def binding_of(events, key: str, default: str = "") -> str:

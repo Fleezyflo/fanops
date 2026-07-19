@@ -87,8 +87,34 @@ CONTROLS: list[Control] = [
     # ── the digest split and the three gates ────────────────────────────────────────────────
     Control("NC-C09", "one flipped byte in the declaration voids content approval", "ST-3", "",
             "decision"),
-    Control("NC-C10", "a lifecycle append preserves `D` but voids stale exact-head approval",
-            "ST-4", "", "decision"),
+    Control("NC-C10", "a lifecycle append preserves `D` but moves the head off the authorized "
+            "parent", "ST-9", "", "decision"),
+
+    # ── single-operator merge authorization (ADR-0105 §4.1a, corrected) ──────────────────────
+    # Fourteen controls pinning ONE claim: the operator alone can authorize a merge, and nothing a
+    # second person does or fails to do moves the verdict. NC-SO-01 covers required controls 1, 3
+    # and 4 in a single run — it authorizes with zero reviews, and the review/principal ports it
+    # would have needed no longer exist to be stubbed, so their absence is what makes it pass.
+    Control("NC-SO-01", "zero reviews + a valid operator authorization AUTHORIZES the merge",
+            "OK", "", "decision"),
+    Control("NC-SO-02", "no `merge_approved` event at all stays unauthorized", "ST-9", "",
+            "decision"),
+    Control("NC-SO-03", "an authorization naming the wrong declaration digest", "ST-9", "",
+            "decision"),
+    Control("NC-SO-04", "an authorization naming the wrong PR", "ST-9", "", "decision"),
+    Control("NC-SO-05", "an authorized parent that is not an ancestor of the head", "ST-9", "",
+            "decision"),
+    Control("NC-SO-06", "a NON-CONTRACT path moved after the authorized parent", "ST-9", "",
+            "decision"),
+    Control("NC-SO-07", "the declaration edited after the authorized parent", "ST-9", "",
+            "decision"),
+    Control("NC-SO-08", "the lifecycle rewritten rather than appended after the parent", "ST-9", "",
+            "decision"),
+    Control("NC-SO-09", "a LIFECYCLE-ONLY append after the authorized parent still binds", "OK", "",
+            "decision"),
+    Control("NC-SO-10", "an authorization carrying no operator token", "ST-9", "", "decision"),
+    Control("NC-SO-11", "no authorization module reads reviews, reviewer identity or a principal "
+            "census", "", "", "structural"),
     Control("NC-C10b", "a rewritten lifecycle history", "A5", "LIFECYCLE-REWRITTEN", "decision"),
     Control("NC-C10c", "an `id` that does not match the filename stem", "A4", "ID-FILENAME",
             "decision"),
@@ -203,12 +229,16 @@ CONTROLS: list[Control] = [
 
 # ── fakes ───────────────────────────────────────────────────────────────────────────────────
 class FakeRepo:
-    def __init__(self, blobs=None, changed=(), head="h" * 40, fail=None, ancestry=()):
+    def __init__(self, blobs=None, changed=(), head="h" * 40, fail=None, ancestry=(),
+                 changed_since=None):
         self.blobs = dict(blobs or {})
         self.changed = list(changed)
         self.head = head
         self.fail = fail
         self.ancestry = set(ancestry)
+        # {base: [paths]} — what moved since ONE specific base. `parent_binds` asks this of the
+        # authorized parent, and that answer is not the same as the PR-wide base..head diff.
+        self.changed_since = dict(changed_since or {})
 
     def blob(self, ref, path):
         if self.fail == "blob": raise PortError("git unavailable (injected)")
@@ -221,6 +251,8 @@ class FakeRepo:
 
     def diff_names(self, base, head):
         if self.fail == "diff": raise PortError("the diff could not be enumerated (injected)")
+        if base in self.changed_since:
+            return sorted(self.changed_since[base])
         return sorted(self.changed)
 
     def contains(self, ref, path): return (ref, path) in self.blobs
@@ -273,17 +305,9 @@ class FakeRegistry:
         return set(self.ids)
 
 
-class FakeReviews:
-    def __init__(self, rows=(), fail=False, principals=("solo",)):
-        self.rows, self.fail, self.principals = list(rows), fail, list(principals)
-
-    def approvals(self, pr):
-        if self.fail: raise PortError("gh unavailable (injected)")
-        return list(self.rows)
-
-    def write_principals(self):
-        if self.fail: raise PortError("gh unavailable (injected)")
-        return list(self.principals)
+# There is deliberately NO FakeReviews. The authorization path reads no review and no principal
+# census, so there is nothing to fake — and a fake left standing would let a future edit re-introduce
+# the dependency without a single control going red.
 
 
 # ── the fixture contract ────────────────────────────────────────────────────────────────────
@@ -387,16 +411,15 @@ def build(*, cid="CC-2026-07-18-example", traits="", stops="", adr_sha=None,
     return decl.encode().rstrip(b"\n") + BOUNDARY + life.encode()
 
 
-def _ports(repo=None, impact=None, artifacts=None, registry=None, reviews=None):
+def _ports(repo=None, impact=None, artifacts=None, registry=None):
     from .__main__ import Ports
     return Ports(repo=repo or FakeRepo(), impact=impact or FakeImpact(),
-                 artifacts=artifacts or FakeArtifacts(), registry=registry or FakeRegistry(),
-                 reviews=reviews or FakeReviews())
+                 artifacts=artifacts or FakeArtifacts(), registry=registry or FakeRegistry())
 
 
-def _run(raw: bytes, *, changed=("src/fanops/example.py",), phase="at-head", pr=None, reviews=None,
+def _run(raw: bytes, *, changed=("src/fanops/example.py",), phase="at-head", pr=None,
          artifacts=None, registry=None, impact=None, main_blob=None, repo_fail=None,
-         extra_blobs=None, path=CONTRACT_PATH):
+         extra_blobs=None, path=CONTRACT_PATH, ancestry=(), parent_changed=None):
     from .__main__ import run
     head = "h" * 40
     blobs = {(head, path): raw, (head, ADR_PATH): ADR_BLOB,
@@ -404,9 +427,10 @@ def _run(raw: bytes, *, changed=("src/fanops/example.py",), phase="at-head", pr=
     if main_blob is not None:
         blobs[("origin/main", path)] = main_blob
     blobs.update(extra_blobs or {})
-    repo = FakeRepo(blobs=blobs, changed=changed, head=head, fail=repo_fail)
-    ports = _ports(repo=repo, impact=impact, artifacts=artifacts, registry=registry,
-                   reviews=reviews or FakeReviews([(head, "APPROVED")] if pr else []))
+    since = {PARENT: parent_changed if parent_changed is not None else [path]} if ancestry else {}
+    repo = FakeRepo(blobs=blobs, changed=changed, head=head, fail=repo_fail,
+                    ancestry=ancestry, changed_since=since)
+    ports = _ports(repo=repo, impact=impact, artifacts=artifacts, registry=registry)
     return run(ports, path, base="base", head=head, pr=pr, phase=phase)
 
 
@@ -563,13 +587,145 @@ def _c_nc_c09(c):
     return _decides(c, mutated)
 
 
+# ── the single-operator authorization fixture ───────────────────────────────────────────────
+# `PARENT` is a real prior commit of the SAME contract: the head is that blob plus one lifecycle
+# append and nothing else, which is exactly what `parent_binds` proves. Every authorization control
+# below mutates ONE field of the `merge_approved` row against this fixture.
+PARENT = "p" * 40
+
+
+def _authz(*, digest=None, pr=7, operator="operator", phrase="APPROVE THE MERGE", parent=PARENT,
+           drop=()):
+    """One `merge_approved` row. `drop` omits keys so a control can probe a single missing value."""
+    kv = [("parent_sha", parent), ("digest", digest), ("pr", pr), ("operator", operator),
+          ("token", phrase)]
+    body = "; ".join(f"{k}={v}" for k, v in kv if k not in drop)
+    return f"| 2026-07-18T11:00:00Z | merge_approved | {body} |\n"
+
+
+def _authorized(*, changed=("src/fanops/example.py",), parent_changed=None, parent_decl=None,
+                parent_life="", declare=(), **authz):
+    """(head_raw, kwargs) for a contract whose head carries an operator authorization of `PARENT`.
+
+    `parent_life` lets a control give the parent a DIFFERENT lifecycle so the head is a rewrite
+    rather than an append; `parent_decl` lets it give the parent a different declaration. `declare`
+    widens the declared scope so a control probing authorization does not ALSO trip `ST-1` — a
+    control that fails on the wrong rule proves nothing about the rule it names.
+    """
+    d = parse(build(declare=declare)).digest
+    authz.setdefault("digest", d)
+    head_raw = build(declare=declare, extra=_authz(**authz))
+    parent_raw = build(declare=declare, extra=parent_life) if parent_decl is None else parent_decl
+    head = "h" * 40
+    return head_raw, {
+        "phase": "merge-gate", "pr": 7, "changed": changed,
+        "extra_blobs": {(PARENT, CONTRACT_PATH): parent_raw},
+        "ancestry": {(PARENT, head)},
+        "parent_changed": parent_changed,
+    }
+
+
 def _c_nc_c10(c):
-    """An append preserves `D` (content approval survives) but moves the head (exact-head voids)."""
-    raw = build(extra="| 2026-07-18T11:00:00Z | binding | pr=7 |\n")
+    """An append preserves `D` (content approval survives) but moves the head off the authorized
+    parent, so the authorization no longer binds."""
+    raw = build(extra=_authz(digest=parse(build()).digest, parent="q" * 40))
     if parse(raw).digest != parse(build()).digest:
         return False, "NOT DETECTED — an append changed `D`"
-    return _decides(c, raw, phase="merge-gate", pr=7,
-                   reviews=FakeReviews([("stale" + "0" * 35, "APPROVED")]))
+    return _decides(c, raw, phase="merge-gate", pr=7)
+
+
+# ── the single-operator authorization boundary ──────────────────────────────────────────────
+def _c_nc_so_01(c):
+    """CONTROL 1 + 3 + 4: zero reviews, no review API, no principal census — and it AUTHORIZES."""
+    raw, kw = _authorized()
+    return _decides(c, raw, **kw)
+
+
+def _c_nc_so_02(c):
+    """CONTROL 5: no `merge_approved` at all stays unauthorized."""
+    return _decides(c, build(), phase="merge-gate", pr=7)
+
+
+def _c_nc_so_03(c):
+    """CONTROL 6: an authorization naming a different `D` authorized different text."""
+    raw, kw = _authorized(digest="sha256:" + "0" * 64)
+    return _decides(c, raw, **kw)
+
+
+def _c_nc_so_04(c):
+    """CONTROL 7: an authorization naming a different PR authorized a different change."""
+    raw, kw = _authorized(pr=999)
+    return _decides(c, raw, **kw)
+
+
+def _c_nc_so_05(c):
+    """CONTROL 8: a parent that is not an ancestor of the head."""
+    raw, kw = _authorized(parent="z" * 40)
+    return _decides(c, raw, **kw)
+
+
+def _c_nc_so_06(c):
+    """CONTROL 9: a NON-CONTRACT path moved after the authorized parent.
+
+    The path is DECLARED, so `ST-1` cannot fire and `ST-9` is the only rule left to catch it: the
+    authorization covered the parent, and code changed underneath it afterwards.
+    """
+    extra = "tools/contract/decide.py"
+    raw, kw = _authorized(changed=("src/fanops/example.py", extra), declare=(extra,))
+    kw["parent_changed"] = [extra]
+    return _decides(c, raw, **kw)
+
+
+def _c_nc_so_07(c):
+    """CONTROL 10: the declaration changed after the authorized parent — a new contract, not an
+    append."""
+    raw, kw = _authorized(parent_decl=build(cid="CC-2026-07-18-example", stops="T9: edited"))
+    return _decides(c, raw, **kw)
+
+
+def _c_nc_so_08(c):
+    """CONTROL 11: the head lifecycle does not byte-prefix-extend the parent's."""
+    raw, kw = _authorized(parent_life="| 2026-07-18T10:30:00Z | binding | pr=91 |\n")
+    return _decides(c, raw, **kw)
+
+
+def _c_nc_so_09(c):
+    """CONTROL 12: a LIFECYCLE-ONLY append after the authorized parent still binds."""
+    raw, kw = _authorized()
+    raw = raw + b"| 2026-07-18T12:00:00Z | binding | pr=7 |\n"
+    return _decides(c, raw, **kw)
+
+
+def _c_nc_so_10(c):
+    """CONTROL 13: an authorization with no operator token. The agent may transcribe an operator's
+    token; it may never author one, so a row that quotes nothing authorizes nothing."""
+    raw, kw = _authorized(drop=("token",))
+    return _decides(c, raw, **kw)
+
+
+def _c_nc_so_11(c):
+    """CONTROL 14: NO decision path reads second-person evidence — proven by SOURCE, not behaviour.
+
+    A behavioural probe cannot show absence: it can only show that one input did not change one
+    verdict. This asserts the authorization modules contain no review, reviewer-identity or
+    principal-census read at all, which is the property the model actually claims.
+    """
+    import pathlib as _pl
+    banned = ("approvals(", "write_principals", "read_reviews", "read_principals", "ReviewPort",
+              "reviewDecision", "collaborators", "\"APPROVED\"", "'APPROVED'")
+    here = _pl.Path(__file__).parent
+    hits = []
+    for mod in ("lifecycle.py", "decide.py", "adapters.py", "__main__.py", "report.py", "model.py"):
+        text = (here / mod).read_text(encoding="utf-8")
+        for line in text.splitlines():
+            if line.lstrip().startswith("#") or line.lstrip().startswith('"'):
+                continue          # prose may NAME what was removed; only executable code counts
+            for b in banned:
+                if b in line:
+                    hits.append(f"{mod}: {line.strip()[:70]}")
+    if hits:
+        return False, f"NOT DETECTED — second-person read still present: {hits[:3]}"
+    return True, f"no second-person read in {6} authorization modules"
 
 
 def _c_nc_c10b(c):

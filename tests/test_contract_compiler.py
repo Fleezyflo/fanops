@@ -127,7 +127,7 @@ def test_no_failure_path_yields_continue():
 
 def test_st7_fires_when_nothing_higher_applies():
     """`ST-7` must be REACHABLE, not merely present: an unresolved input is its own halt."""
-    gates = model.Gates(content_approval="satisfied", exact_head_approval="satisfied")
+    gates = model.Gates(content_approval="satisfied", merge_authorization="satisfied")
     clean = _decision_input(gates=gates, derived=model.Derived())
     assert decide(clean).rule == "OK", "the baseline must be clean, or the next assertion proves nothing"
     di = _decision_input(gates=gates,
@@ -533,24 +533,33 @@ def test_ac21_passes_once_the_operator_approval_is_simulated():
         f"AC-21: with approval granted the contract must reach `continue` at its own head; got "
         f"{got['at-head']}. If this is `ST-8`, GS-2 has regressed to the over-broad form.")
     # The merge gate is a SEPARATE grant and must not fall out of the content approval. With no
-    # `merge_approved` on record, NEITHER §4.1a route has evidence, so `ST-4` is the honest verdict —
-    # the amendment made the gate reachable, not automatic.
+    # operator `merge_approved` on record there is no authorization at all, so `ST-9` is the honest
+    # verdict — the correction made the gate REACHABLE by one operator, not automatic.
     if not any(e.kind == "merge_approved" for e in parse.parse(approved).events):
-        assert got["merge-gate"][1] == "ST-4", (
-            f"with no merge approval recorded the gate must still stop; got {got['merge-gate']}")
+        assert got["merge-gate"][1] == "ST-9", (
+            f"with no merge authorization recorded the gate must still stop; got {got['merge-gate']}")
 
 
-# ── ADR-0105 §4.1a — parent-binding and the two evidence routes ─────────────────────────────
+# ── ADR-0105 §4.1a — parent-binding and single-operator authorization ───────────────────────
 #
 # The original exact-head gate was UNSATISFIABLE here: it admitted only a non-author `APPROVED` PR
 # review, `Fleezyflo` is the sole account with push access AND the author of every PR, and GitHub
 # refuses self-approval. The same self-reference (a record cannot name the commit computed over it)
 # also made `head_proposed`, and therefore the `implemented` state, unreachable in EVERY repository.
-# These tests hold the amended gate to both halves of its claim: reachable where no second principal
-# can exist, and untouched everywhere else.
+# The correction removes the second person entirely: this repository has ONE human operator, and a
+# gate requiring a second is unsatisfiable rather than strict. These tests hold the corrected gate to
+# both halves of its claim — the operator alone can authorize, and every binding check still bites.
 _P = "docs/contracts/CC-2026-07-18-change-contract-compiler.md"
 _PARENT, _HEAD = "a" * 40, "b" * 40
-_APPROVAL = f"| 2026-07-19T10:00:00Z | merge_approved | parent_sha={_PARENT}; operator=solo |\n"
+
+
+def _approval(*, parent=None, digest=None, pr=1, operator="solo", phrase="APPROVE THE MERGE",
+              drop=()):
+    """One operator `merge_approved` row carrying every value ADR-0105 §4.1a requires."""
+    kv = [("parent_sha", parent or _PARENT), ("digest", digest), ("pr", pr), ("operator", operator),
+          ("token", phrase)]
+    body = "; ".join(f"{k}={v}" for k, v in kv if k not in drop)
+    return f"| 2026-07-19T10:00:00Z | merge_approved | {body} |\n"
 
 
 class _Repo:
@@ -567,59 +576,109 @@ class _Repo:
     def is_ancestor(self, a, b): return self.ancestor
 
 
-def _appended(parent: bytes, row: str = _APPROVAL) -> bytes:
-    return parent + row.encode()
+def _appended(parent: bytes, row: str | None = None) -> bytes:
+    """`parent` plus ONE operator authorization naming the digest `parent` actually has."""
+    return parent + (row or _approval(digest=parse.parse(parent).digest)).encode()
 
 
-def _gate(parent, head, *, principals, reviews=(), changed=(_P,), ancestor=True):
+def _gate(parent, head, *, changed=(_P,), ancestor=True, pr=1):
+    """The gate, with NO review and NO principal parameter — because none exists to pass."""
     from tools.contract import lifecycle
     d = parse.parse(head)
-    return lifecycle.gates(d, d.events, head_sha=_HEAD, pr=1, reviews=list(reviews),
-                           main_has_contract=False, repo=_Repo(parent, head, changed, ancestor),
-                           path=_P, raw=head, principals=principals)
+    return lifecycle.gates(d, d.events, head_sha=_HEAD, pr=pr, main_has_contract=False,
+                           repo=_Repo(parent, head, changed, ancestor), path=_P, raw=head)
 
 
-def test_single_principal_repositories_can_reach_the_exact_head_gate():
-    """DELIVERABLE 9. The gate the original model could never satisfy here binds — and discloses how.
+def test_a_single_operator_can_authorize_a_merge_with_zero_reviews():
+    """The whole correction in one assertion.
 
-    `satisfied` alone would not be enough. An approval that carries no second principal's judgement
-    and does not SAY SO is the bypass this amendment exists not to be.
+    The prior model required a non-author `APPROVED` PR review. This repository has one human
+    operator, so that gate could be waited on forever and never cleared — ADR-0105 §4.1a already
+    named that outcome INOPERATIVE rather than safe. The operator's own parent-bound authorization
+    now satisfies it, and no review is read to get there.
     """
     parent = selftest.build()
-    g = _gate(parent, _appended(parent), principals=["solo"])
-    assert g.exact_head_approval == "satisfied", g.detail
-    assert g.exact_head_evidence == "unwitnessed"
-    assert any("UNWITNESSED" in x for x in g.detail), g.detail
+    g = _gate(parent, _appended(parent))
+    assert g.merge_authorization == "satisfied", g.detail
+    assert g.approved_head == _PARENT, "the gate must report WHICH parent was authorized"
+    assert any("OPERATOR merge authorization accepted" in x for x in g.detail), g.detail
 
 
-def test_multi_principal_repositories_keep_the_original_guarantee_exactly():
-    """DELIVERABLE 8. Two principals ⇒ the in-file route is UNREACHABLE, however well-formed it is.
+def test_the_gate_signature_cannot_accept_review_or_principal_evidence():
+    """Absence proven STRUCTURALLY, not behaviourally.
 
-    This is the whole anti-bypass argument in one assertion: a team cannot opt out of peer review by
-    writing a line, because admissibility is read from the platform and nothing in the tree can
-    reach it.
+    A behavioural test can only show that one input did not change one verdict. This shows the
+    inputs do not exist: `gates()` has no parameter to pass them through, so no caller, flag or
+    future edit can reintroduce the dependency without changing this signature and going red.
     """
+    import inspect
+    from tools.contract import lifecycle
+    params = set(inspect.signature(lifecycle.gates).parameters)
+    assert not params & {"reviews", "principals"}, f"second-person inputs are back: {params}"
+    for gone in ("read_reviews", "read_principals", "WITNESSED", "UNWITNESSED"):
+        assert not hasattr(lifecycle, gone), f"{gone} still exists"
+    from tools.contract import adapters
+    assert not hasattr(adapters, "ReviewPort"), "ReviewPort still exists"
+
+
+def test_no_authorization_module_reads_a_review_or_a_principal_census():
+    """`NC-SO-11`'s CI face. Prose may NAME what was removed; executable code may not contain it."""
+    banned = ("approvals(", "write_principals", "read_reviews", "read_principals", "ReviewPort",
+              "reviewDecision", "collaborators")
+    root = Path(__file__).resolve().parents[1] / "tools" / "contract"
+    hits = []
+    for mod in ("lifecycle.py", "decide.py", "adapters.py", "__main__.py", "report.py", "model.py"):
+        for line in (root / mod).read_text(encoding="utf-8").splitlines():
+            st = line.lstrip()
+            if st.startswith("#") or st.startswith('"') or st.startswith("'"):
+                continue
+            hits += [f"{mod}: {st[:60]}" for b in banned if b in line]
+    assert not hits, f"second-person reads remain in the authorization path: {hits}"
+
+
+def test_st_4_is_deleted_and_not_recreated_under_another_identifier():
+    """`ST-4` required a second person. It is gone, and nothing may carry its predicate forward."""
+    from tools.contract import decide
+    ids = [r.id for r in decide.RULES]
+    assert "ST-4" not in ids, "ST-4 is still registered"
+    assert len(ids) == len(set(ids)), f"duplicate rule ids: {ids}"
+    src = Path(decide.__file__).read_text(encoding="utf-8")
+    for line in src.splitlines():
+        if line.lstrip().startswith("#"):
+            continue
+        assert "exact_head_approval" not in line, "the deleted gate field is still read"
+
+
+def test_an_authorization_for_a_different_contract_or_pr_does_not_bind():
+    """`D` and the PR number are part of the authorization, not decoration."""
     parent = selftest.build()
-    g = _gate(parent, _appended(parent), principals=["alice", "bob"])
-    assert g.exact_head_approval != "satisfied", g.detail
-    assert g.exact_head_evidence == ""
-    assert any("INADMISSIBLE" in x for x in g.detail), g.detail
+    d = parse.parse(parent).digest
+    wrong_d = _appended(parent, _approval(digest="sha256:" + "0" * 64))
+    assert _gate(parent, wrong_d).merge_authorization != "satisfied"
+    wrong_pr = _appended(parent, _approval(digest=d, pr=999))
+    assert _gate(parent, wrong_pr).merge_authorization != "satisfied"
 
 
-def test_a_witnessed_review_still_satisfies_the_gate_and_outranks_the_in_file_route():
+def test_an_authorization_naming_no_operator_or_token_does_not_bind():
+    """The agent may transcribe an operator's token; it may never author one. A row quoting nothing
+    records that something was authorized without recording WHAT."""
+    parent = selftest.build()
+    d = parse.parse(parent).digest
+    for drop in (("token",), ("operator",)):
+        head = _appended(parent, _approval(digest=d, drop=drop))
+        g = _gate(parent, head)
+        assert g.merge_authorization != "satisfied", f"dropping {drop} still authorized: {g.detail}"
+
+
+def test_an_unreadable_repository_leaves_authorization_unknown_not_satisfied():
+    """Fail closed. Git being unreadable must never be the reason a merge becomes authorized."""
+    from tools.contract import lifecycle
     parent = selftest.build()
     head = _appended(parent)
-    for principals in (["alice", "bob"], ["solo"]):
-        g = _gate(parent, head, principals=principals, reviews=[(_HEAD, "APPROVED")])
-        assert (g.exact_head_approval, g.exact_head_evidence) == ("satisfied", "witnessed"), (
-            f"a real review must win outright for principals={principals}: {g.detail}")
-
-
-def test_an_unreadable_principal_set_leaves_the_gate_unknown_not_satisfied():
-    """Fail closed. `gh` being down must never be the reason a merge becomes authorized."""
-    parent = selftest.build()
-    g = _gate(parent, _appended(parent), principals=None)
-    assert g.exact_head_approval == "unknown", g.detail
+    d = parse.parse(head)
+    g = lifecycle.gates(d, d.events, head_sha=_HEAD, pr=1, main_has_contract=False,
+                        repo=None, path=_P, raw=head)
+    assert g.merge_authorization == "unknown", g.detail
 
 
 @pytest.mark.parametrize("mutate,why", [
@@ -628,8 +687,8 @@ def test_an_unreadable_principal_set_leaves_the_gate_unknown_not_satisfied():
 ])
 def test_parent_binding_rejects_a_head_that_moved_for_any_other_reason(mutate, why):
     parent = selftest.build()
-    g = _gate(parent, _appended(parent), principals=["solo"], **mutate)
-    assert g.exact_head_approval != "satisfied", f"{why}: {g.detail}"
+    g = _gate(parent, _appended(parent), **mutate)
+    assert g.merge_authorization != "satisfied", f"{why}: {g.detail}"
 
 
 def test_parent_binding_rejects_a_declaration_edited_inside_the_one_permitted_path():
@@ -637,15 +696,15 @@ def test_parent_binding_rejects_a_declaration_edited_inside_the_one_permitted_pa
     size of the contract file, which is the one file the approval permits to move."""
     parent = selftest.build()
     head = _appended(selftest.build(decl_mutate=lambda d: d.replace("Prove the", "Proved the", 1)))
-    g = _gate(parent, head, principals=["solo"])
-    assert g.exact_head_approval != "satisfied", g.detail
+    g = _gate(parent, head)
+    assert g.merge_authorization != "satisfied", g.detail
     assert any("declaration changed" in x for x in g.detail), g.detail
 
 
 def test_parent_binding_rejects_a_rewritten_lifecycle():
     parent = selftest.build(extra="| 2026-07-18T11:00:00Z | binding | pr=1 |\n")
-    g = _gate(parent, _appended(selftest.build()), principals=["solo"])
-    assert g.exact_head_approval != "satisfied", g.detail
+    g = _gate(parent, _appended(selftest.build()))
+    assert g.merge_authorization != "satisfied", g.detail
 
 
 def test_a_merge_approval_naming_no_commit_is_a_malformed_lifecycle():

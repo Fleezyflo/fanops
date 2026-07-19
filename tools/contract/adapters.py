@@ -188,62 +188,8 @@ class RegistryPort:
         return {c["id"] for c in reg.get("controls", []) if isinstance(c, dict) and "id" in c}
 
 
-# ── gh ──────────────────────────────────────────────────────────────────────────────────────
-class ReviewPort:
-    """The only `gh` surface. Modelled on `tools/ci/live.py:15-29` — a failure is a message.
-
-    ADR-0105 §Risks directs Phase 3 to COMPARE `review.commit_id` against the head rather than trust
-    GitHub's `reviewDecision` badge, whether or not `dismiss_stale_reviews` is enabled. So this
-    returns the raw `(commit_id, state)` pairs and `lifecycle.py` does the comparison; the badge is
-    never read.
-    """
-
-    def __init__(self, repo_slug: str = "") -> None:
-        self.repo_slug = repo_slug
-
-    def _api(self, path: str) -> list:
-        try:
-            r = subprocess.run(["gh", "api", path, "--paginate"], capture_output=True, text=True,
-                               timeout=_TIMEOUT)
-        except FileNotFoundError:
-            raise PortError("gh CLI not found") from None
-        except subprocess.TimeoutExpired:
-            raise PortError(f"gh api timed out after {_TIMEOUT}s") from None
-        if r.returncode != 0:
-            raise PortError(r.stderr.strip()[:160] or f"gh api exit {r.returncode}")
-        try:
-            data = json.loads(r.stdout)
-        except json.JSONDecodeError as exc:
-            raise PortError(f"unparseable gh JSON: {exc}") from None
-        return [x for x in data if isinstance(x, dict)]
-
-    def approvals(self, pr: int) -> list[tuple[str, str]]:
-        slug = self.repo_slug or _slug()
-        return [(str(x.get("commit_id", "")), str(x.get("state", "")))
-                for x in self._api(f"repos/{slug}/pulls/{pr}/reviews")]
-
-    def write_principals(self) -> list[str]:
-        """Logins that can push. The ONE fact that decides whether §4.1's witnessed route exists.
-
-        It is read from the platform and never from the repository, because a fact the governed tree
-        can assert about itself is a fact an agent can arrange. `PortError` (no `gh`, no network, no
-        permission) leaves the answer UNKNOWN, and `lifecycle.gates` treats unknown as "the
-        unwitnessed route is inadmissible" — the fail-closed direction.
-        """
-        slug = self.repo_slug or _slug()
-        return sorted({str(x.get("login", "")) for x in self._api(f"repos/{slug}/collaborators")
-                       if isinstance(x.get("permissions"), dict) and x["permissions"].get("push")})
-
-
-def _slug() -> str:
-    """The repo slug `tools/ci` already declares. Unreachable ⇒ PortError, never a blank slug.
-
-    A blank slug would build the URL `repos//pulls/N/reviews`, which `gh` answers with a 404 — an
-    error that reads like "no such PR" rather than "the slug was never resolved". Two different
-    failures must not arrive wearing the same face.
-    """
-    try:
-        from tools.ci.common import DEFAULT_REPO
-    except Exception as exc:
-        raise PortError(f"cannot resolve the repository slug: {type(exc).__name__}: {exc}") from None
-    return DEFAULT_REPO
+# There is deliberately NO `gh` port here. Merge authorization is the operator's own parent-bound
+# lifecycle event, so no port reads reviews, reviewer identity, collaborators, App installations,
+# deploy keys or workflow tokens. `ReviewPort` and the slug helper it needed are DELETED rather than
+# left unused: a dormant adapter is an invitation to wire it back in, and the guarantee this module
+# now offers is that the code to consult a second person does not exist.
