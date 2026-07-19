@@ -93,10 +93,28 @@ prior model exactly.
 
 | glob | why | basis |
 |---|---|---|
-| docs/adr/0105-reusable-change-contract-architecture.md | the normative model being corrected | ADR-0105 §4.1a |
-| tools/contract/** | the implementation of that model | ADR-0105 §1 T3 |
-| tests/test_contract_compiler.py | the tests pinning the deleted model | ADR-0105 §9 |
-| docs/contracts/CC-2026-07-19-single-operator-authorization.md | this contract | ADR-0105 §3.6 |
+| docs/adr/0105-reusable-change-contract-architecture.md | the normative model being corrected (ADR-0105 §4.1a) | declared |
+| tools/contract/** | the implementation of that model (ADR-0105 §1 `T3`) | declared |
+| tests/test_contract_compiler.py | the tests pinning the deleted model (ADR-0105 §9) | declared |
+| docs/contracts/CC-2026-07-19-single-operator-authorization.md | this contract (ADR-0105 §3.6) | declared |
+
+### prohibited_scope
+
+| glob | why |
+|---|---|
+| .github/workflows/** | no CI job added, edited or removed |
+| .github/ci-control-registry.yml | no control added, edited or reclassified |
+| src/fanops/** | no runtime change; nothing in the application moves |
+| .claude/** | no hook change |
+| .cursor/** | no hook change |
+| .githooks/** | no hook change |
+| .orchestration/** | not this change's decision |
+| docs/governance/** | no roadmap or governance-record edit |
+| requirements/** | no dependency added — stdlib only |
+
+**Repository settings are out of scope by construction, not by declaration.** No collaborator,
+permission, branch-protection rule, reviewer or App installation is added or altered by this change;
+none of those live in the tree, so no glob can name them and none is touched.
 
 ### expected_surfaces
 
@@ -112,6 +130,7 @@ prior model exactly.
 | tools/contract/selftest.py | MODIFIED | `FakeReviews` deleted; `NC-SO-01`..`NC-SO-11` added |
 | tools/contract/classify.py | MODIFIED | `ADR_0105_DIGEST` re-pinned to the corrected body |
 | tests/test_contract_compiler.py | MODIFIED | two-route tests replaced with single-operator and structural-absence tests |
+| docs/contracts/CC-2026-07-19-single-operator-authorization.md | NEW | this contract |
 
 ### owners
 
