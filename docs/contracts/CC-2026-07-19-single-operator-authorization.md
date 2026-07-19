@@ -177,3 +177,4 @@ stays correct and no further round is generated.
 | timestamp | event | values |
 |---|---|---|
 | 2026-07-19T21:52:58Z | created | id=CC-2026-07-19-single-operator-authorization; base_sha=35cbf7fcebdd9e2b5f657a971af6c31140879123; timestamp_source=GitHub API Date response header, observed during this operation |
+| 2026-07-19T22:36:33Z | approved | digest=sha256:1ef052a530a9dd73bd4bb2e20fbe1c6577efcd0e252d05ce90b5425abc67e5ac; token=APPROVE SINGLE-OPERATOR AUTHORIZATION CORRECTION; scope=single-operator-authorization-correction; adr_0105_renewed=sha256:37db3e0ca3c7557555a1b5885bc66138949dc320699bd5c3f4e9ab03cac87eea; adr_0105_authority_blob=d971a881f4c7e58ab31f268b3a8d352b884ddec3; operator=operator; pr=707; timestamp_source=GitHub API Date response header |
