@@ -2,7 +2,7 @@
 status: accepted
 date: 2026-07-18
 accepted_in_principle: 2026-07-18
-approved_digest: sha256:e757fb6e01d3e6f143f6d6af9f45bce780331562adb07149b55857baefc5875a
+approved_digest: sha256:6db101a956dc3a8479cad2281dc0c43fe0e52a234e2c29705da63774c3826e5d
 supersedes: []
 references: [0100, 0101, 0102]
 deciders: [operator]
@@ -410,33 +410,102 @@ approval covers — the parent, plus a delta proven inert — instead of moving 
 cannot cover itself. **Relocation was the one escape of the three that depended on a fact outside the
 repository, and it is the one that broke.**
 
-**Two evidence routes, and which applies is not a choice.**
+**Two evidence routes, disjoint input sets, and which applies is not a choice.**
 
-| Route | Evidence | Admissible when |
+| Route | Evidence | Ceiling |
 |---|---|---|
-| **witnessed** | a non-author `APPROVED` PR review whose `commit_id` equals the head | always; **tried first, and preferred whenever it succeeds** |
-| **unwitnessed** | an in-file `merge_approved` event satisfying the four parent-binding checks | **only** when the platform reports **exactly one** principal with push access |
+| **W — witnessed** | a PR review whose `state` is `APPROVED` and whose `commit_id` equals the FINAL pre-merge head | `verified`; **tried first, and preferred whenever it succeeds** |
+| **U — unwitnessed** | an in-file `merge_approved` event satisfying the four parent-binding checks, plus an ATTESTED writer census | `claimed_unknown` — **dormant; see below** |
 
-The admissibility test reads the platform's write-access set. It is not a field, a flag, or anything
-the governed tree can assert about itself — a repository must not be able to declare its own
-population. **Where two or more principals can push, the unwitnessed route is unreachable and
-behaviour is byte-identical to the original model.** Where the set cannot be read, the route is
-**inadmissible** (unknown is not satisfied — the same rule the gates already follow).
+**Route W inputs, and only these:** governed PR identity; the final pre-merge PR head; the review
+list; each review's `state`; each review's `commit_id`; and, post-merge only, the tree-fidelity
+inputs. A qualifying witnessed review reaches `verified` **without reading** an in-file
+`merge_approved` event, without any writer-census evidence, and without any Route U admissibility
+evidence.
+
+**Route U inputs, and only these:** the final pre-merge PR head; the parent-bound `merge_approved`
+event; the `census_observed` event of §4.2b; the external attestation §4.2b requires; the
+parent-binding proof; and, post-merge, tree fidelity.
+
+**The ordered algorithm.** `merge_authorization` (§4.2a) is computed by evaluating **Route W first, to
+completion, before any Route U input is read**.
+
+1. Read the Route W inputs. **If any required Route W read did not complete → `unavailable`.** Stop.
+2. If some review has `state == APPROVED` and `commit_id == final_pre_merge_head`: post-merge, test
+   tree fidelity — fidelity fails → `fidelity_failed`; otherwise → `verified`. **Stop; no Route U
+   input is read.**
+3. Otherwise Route W is readable and did not qualify. Record whether any review with
+   `state == APPROVED` existed at ANY head. **`COMMENTED`, `CHANGES_REQUESTED` and `DISMISSED`
+   reviews are not authorization claims and are recorded as none.** Then continue to Route U.
+4. Read the Route U inputs, the attestation dependency of §4.2b included. If any required Route U
+   read did not complete → `unavailable`. Stop. An unretrievable attestation IS an unavailable read;
+   it never falls back to the unattested payload.
+5. No `merge_approved` event present: if step 3 recorded an APPROVED review → `claimed_stale`; if it
+   recorded none → `absent`. With no APPROVED review at any head and no `merge_approved` event,
+   neither route holds a claim, and the readable finding is `absent`, NOT `claimed_stale`.
+6. `merge_approved` present but `parent_binds` fails at the final pre-merge head → `claimed_stale`.
+7. The `census_observed` event is absent, or present and fails its §4.2b schema — any key missing,
+   any grammar violation, `principal_count` unequal to the token count, or `digest` unequal to the
+   recomputation → `claimed_unknown`.
+8. `census_observed` schema-valid but `head_sha` is not the final pre-merge head → `claimed_stale`.
+9. `census_observed` schema-valid and bound to the final pre-merge head → `claimed_unknown`, whatever
+   `principal_count` asserts. **This is the terminal step of Route U: the route has NO step that
+   returns `verified`.**
+
+**The witnessed predicate is `state` and `commit_id` ALONE.** The verifier tests
+`state == APPROVED` and `commit_id == final_pre_merge_head`, and nothing else. **Reviewer identity is
+not an input available to it** — the review port returns `(commit_id, state)` pairs and never reads a
+login. This amendment adds NO identity predicate and NO permission predicate. The non-author property
+of a qualifying review is produced by GitHub refusing an author's self-approval; it is
+platform-produced evidence, recorded as such, never a rule the verifier evaluates. The earlier
+wording "a non-author `APPROVED` PR review" described a property of the evidence as though it were a
+check, and is corrected here.
+
+**Route U is prospectively DORMANT and cannot reach `verified`.** A `census_observed` row is written
+into the contract file by the same principal whose authority it asserts. Its `digest` is recomputed
+from the `principals` string beside it, so it proves internal consistency and nothing more: it cannot
+show that every writer class was enumerated, and a census omitting a whole class is byte-perfect and
+self-consistent. `principal_count == 1` is an assertion, not a finding, and a transcribed `Date`
+header is not the header. The former rule — the platform "reports exactly one principal with push
+access", in practice satisfied by a self-written row — let a record authorize its own merge, and it
+is **DELETED rather than tightened**.
+
+**What Route U would require.** A census payload may support `verified` only when it is bound to an
+attestation that is (a) separately retrievable from the contract file, (b) produced by the platform
+rather than by any principal who can write this repository, (c) read by the verifier itself at
+verification time, and (d) validated without reference to the payload's own self-descriptive fields.
+**No source satisfying all four is defined, and this ADR names none.** An operator attestation, a
+self-written digest, check-run prose and any artifact the same principal can author fail (b) or (d)
+and are excluded BY NAME. Route U stays dormant until a LATER amendment defines a real external
+attestation source; until then `claimed_unknown` is its ceiling.
+
+**Decided: an unavailable Route W read does NOT permit Route U fallback.** If the review list cannot
+be read, whether a qualifying witnessed approval exists is unknown, and falling back would accept the
+weaker route precisely when the stronger one cannot be checked — an outage would silently lower the
+evidence standard. This holds independently of dormancy: a fallback would also report a readable
+negative where the truth is an unread input. Step 1 therefore terminates at `unavailable`, and the
+decision stops at `ST-7`.
+
+**Decided: a Route U input that is never read cannot downgrade a witnessed authorization.** Step 2
+stops before step 4, so Route U availability is irrelevant once Route W qualifies.
 
 **What the unwitnessed route does not have, stated plainly.** It carries no second principal's
-judgement, and no amount of verification can manufacture one. It is admissible only where such
-judgement is *structurally unavailable* — never as a shortcut where it is merely inconvenient. The
-verifier names the evidence class in its report and its payload, and a satisfied-but-unwitnessed gate
-is disclosed above the fold. **A governance system that degrades silently has been bypassed; one that
-degrades loudly and durably has been honest about what it can prove.**
+judgement, and no amount of verification can manufacture one. The original text made it admissible
+wherever such judgement was *structurally unavailable*; the correction above is that **the repository
+was allowed to establish that unavailability about itself**, which is not evidence. Until an external
+attestation exists the route is admissible NOWHERE, and the verifier says so by name —
+`claimed_unknown`, disclosed above the fold. **A governance system that degrades silently has been
+bypassed; one that degrades loudly and durably has been honest about what it can prove.**
 
-**Why this is not "the author may self-approve".** In a single-principal repository the operator's own
-word is *already* the sole evidence behind content approval (§4.1 row 1) and acceptance (row 3), both
-of which are in-file records an agent writes. The unwitnessed route does not lower the system's floor;
-it stops one gate from *appearing* to stand on stronger ground than the two beside it. The alternative
-considered and rejected was to leave the gate unsatisfiable: a governance system that can never
-authorize a merge in the repository it governs does not fail safe, it fails **inoperative**, and
-inoperative controls are removed wholesale rather than satisfied.
+**Why leaving Route U dormant is not "inoperative".** In a single-principal repository the operator's
+own word is *already* the sole evidence behind content approval (§4.1 row 1) and acceptance (row 3),
+both of which are in-file records an agent writes, and the original text rejected leaving the merge
+gate unsatisfiable on the grounds that a governance system which can never authorize a merge in the
+repository it governs fails **inoperative** rather than safe. That reasoning stands, and **Route W
+discharges it**: an `APPROVED` review at the final pre-merge head is reachable here today and needs no
+permission grant. The gate is operative through the route carrying real evidence, while the route
+carrying only self-assertion is held dormant rather than deleted, so a future attestation source can
+activate it without re-litigating the model.
 
 #### 4.2 Lifecycle events
 
@@ -450,8 +519,9 @@ Append-only. Each carries a UTC timestamp and its binding.
 | `implementation_started` | agent | — | yes |
 | `head_proposed` | agent | **`parent_sha`**, required-CI result at that head, verifier result | yes |
 | `merge_approved` | **operator** | a GitHub PR review at `commit_id`, **or** in-file **`parent_sha`** (§4.1a) | **no** |
+| `census_observed` | agent | `repo_id`, `observed_at`, `head_sha`, `sources`, `principals`, `principal_count`, `digest` (§4.2b) | yes |
 | `merged` | derived | the squash SHA on `main` | n/a |
-| `accepted` | operator, recorded by agent | merged `main` SHA, evidence for `success_condition` | yes (post-merge) |
+| `accepted` | operator, recorded by agent | `merge_sha`, `decision`, `date`, `operator`, `runs`, `pr` (§4.2c) | yes (post-merge) |
 | `refused` | agent **or** operator | reason | yes |
 | `superseded` | operator | successor `id` | yes |
 | `abandoned` | operator | reason | yes |
@@ -459,25 +529,210 @@ Append-only. Each carries a UTC timestamp and its binding.
 `merged` and `accepted` are appended together in the single post-merge commit. The file is written in
 three logical stages: creation-and-approval, any pre-merge appends, and the post-merge record.
 
+##### 4.2a `merge_authorization` — the closed value set
+
+The §4.1a algorithm returns `merge_authorization`. It has **exactly six values** and no others.
+
+| value | exact predicate | required reads | all reads completed | pre-merge state | post-merge state | rule | outcome |
+|---|---|---|---|---|---|---|---|
+| `verified` | Route W step 2 ONLY — Route U has no step returning this value | Route W inputs only | yes | `approved_for_merge` | `merged` | OK | continue |
+| `claimed_stale` | an APPROVED review exists but binds no final head; or `parent_binds` fails at the final head; or the census binds a head other than the final head | that route's inputs | yes | lower ladder | `merged_unverified` | ST-10 | stop |
+| `claimed_unknown` | the `census_observed` event is absent, fails its schema, or is schema-valid but carries no external attestation | Route U inputs | yes | lower ladder | `merged_unverified` | ST-10 | stop |
+| `fidelity_failed` | ROUTE W qualified pre-merge but the PR-head tree does not equal the merged-commit tree | trees at both commits | yes | n/a | `merged_unverified` | ST-10 | stop |
+| `absent` | reads completed and neither route holds a claim: no APPROVED review at any head AND no `merge_approved` event | that route's inputs | yes | lower ladder | `merged_unauthorized` | ST-9 | stop |
+| `unavailable` | a required read of the route under evaluation did NOT complete, the attestation dependency included | whichever read failed | **no** | lower ladder | `merged_unverified` | ST-7 | stop |
+
+**Only Route W reaches `verified`.** Both values that require a route to QUALIFY — `verified` and
+`fidelity_failed`, since fidelity is tested only after a route qualifies pre-merge — are Route W's
+alone. `claimed_stale`, `claimed_unknown`, `absent` and `unavailable` are reachable as shown. The set
+is six because every value remains reachable; what §4.1a shrank is Route U's ceiling.
+
+**Exhaustiveness.** The six values partition into three disjoint groups: `{verified}` → rank 6;
+`{claimed_stale, claimed_unknown, fidelity_failed, unavailable}` → rank 7; `{absent}` → rank 8. The
+groups are disjoint and their union is the whole set, so once the governed merge commit is on `main`,
+exactly one of ranks 6, 7 and 8 matches. **No value falls through to `approved_for_merge`,
+`implemented` or lower after the merge is known to exist.**
+
+**`claimed_inadmissible` is deliberately absent.** Such a value would require positive proof that two
+or more effective writers existed at the authorization instant, and no platform surface returns
+historical permission state for a user-owned repository — the organization audit log does not exist
+for one, and installation endpoints are unreadable. **A state whose predicate cannot be evaluated must
+not exist.** Its readable case is covered: while no attestation source exists, EVERY schema-valid
+census yields `claimed_unknown` (step 9) whatever count it asserts, and an absent or malformed one
+yields `claimed_unknown` too (step 7).
+
+**Readable negatives and unavailable evidence stay distinct.** `absent` means reads succeeded and
+proved nothing admissible exists — reported through `ST-9`, with `ST-7` NOT firing. `unavailable`
+means a read did not complete — reported through `ST-7`, and never recorded as `absent`, which would
+convert an outage into a proven governance failure. Under `unavailable`, derivation still runs and
+yields `merged_unverified`; it can never yield `merged` or `accepted`. The decision independently
+stops at `ST-7`, and the report carries both.
+
+##### 4.2b `census_observed` — schema, and why it is not evidence
+
+Appended immediately before the `merge_approved` it supports. It is a **GRAMMAR for a future attested
+payload, not evidence** — nothing below authorizes anything on its own.
+
+| key | grammar | binds to |
+|---|---|---|
+| `repo_id` | decimal integer, the GitHub numeric repository id | the repository identity, which survives renaming |
+| `observed_at` | `YYYY-MM-DDTHH:MM:SSZ`, transcribed from the GitHub `Date` response header of the census read | the CLAIMED observation instant — a transcription, never the header itself |
+| `head_sha` | 40 lowercase hex | the final pre-merge PR head this census accompanies |
+| `sources` | comma-separated fixed tokens drawn from `collaborators`, `installations`, `keys`, `workflow_permissions` | the platform surfaces actually read |
+| `principals` | comma-separated `type:id` tokens, `type` one of `user`, `app`, `key`, `actions`, `team`, sorted ascending by whole token | the canonical effective-writer set |
+| `principal_count` | decimal integer, equal to the token count of `principals` | the size assertion |
+| `digest` | `sha256:` plus 64 hex over the exact `principals` string in UTF-8 | INTERNAL consistency of this row only — recomputed from the string beside it, and silent about completeness |
+
+**Effective writer** means any principal able to write a ref at that instant: collaborators with
+`push` (administrators included, since admin implies push); App installations with `contents: write`;
+deploy keys with `read_only` false; and the Actions token when `default_workflow_permissions` is
+`write` or when any workflow at `head_sha` declares `contents: write`. Teams are expanded to their
+member users and additionally recorded as `team:<id>`; a user-owned repository has none.
+
+**Post-merge binding is structural, not temporal.** `census_observed.head_sha` must equal the final
+pre-merge PR head that `merge_approved` binds, and `observed_at` must not exceed the server-observed
+instant of the first commit containing the census row. Both are checkable after the fact from
+platform records, and neither trusts a local clock. Binding is a NECESSARY condition; it is not
+evidence that the enumeration is complete.
+
+**This schema is a grammar, not evidence.** Every key above is written into the contract file by the
+principal whose authority the row asserts, so a syntactically perfect row is a well-formed CLAIM. The
+`digest` detects only later editing of the `principals` string beside it; it cannot detect a writer
+class that was never enumerated, and a census omitting one entirely is byte-perfect and
+self-consistent. **No combination of these keys authorizes anything.** The attestation requirement is
+stated in §4.1a and is not restated as satisfiable here.
+
+**Classification, while dormant.** *Malformed* — any key missing, any grammar violation,
+`principal_count` unequal to the token count, or `digest` unequal to the recomputation →
+`claimed_unknown`. *Stale* — `head_sha` is not the final pre-merge head → `claimed_stale`.
+*Unattested* — every remaining case, a schema-valid row asserting `principal_count` 1 included →
+`claimed_unknown`. *Unavailable* — a read needed to verify the record, or the attestation dependency,
+did not complete → `unavailable`, hence `ST-7`. **There is no verified outcome.**
+
+**Two separate blockers, and readability is the lesser one.** The census cannot be CAPTURED today,
+because the App-installation surface returns 401 or 403 to every available credential. Making that
+surface readable would still not make Route U verify: the captured result would be transcribed into
+the contract file by its author, which is the defect this section removes. Readability is necessary;
+external attestation is what is missing. The predicate stays fully evaluable throughout — the event is
+absent, malformed, stale or unattested — so no unevaluable state is introduced.
+
+##### 4.2c `accepted` — schema
+
+| key | grammar |
+|---|---|
+| `merge_sha` | 40 lowercase hex |
+| `decision` | exactly the literal `accepted`; no other value is permitted |
+| `date` | `YYYY-MM-DD`, UTC |
+| `operator` | non-empty token containing no semicolon |
+| `runs` | ascending decimal check-run ids, comma-separated, no duplicates, non-empty |
+| `pr` | decimal integer, the governed PR |
+
+**Governed PR selection.** The governed PR is the `pr` of the LAST `binding` event. If `accepted.pr`
+is present it must equal that value; disagreement is malformed. This removes the ambiguity when
+several `binding` events exist.
+
+**Multiple acceptance claims.** The LAST `accepted` event is evaluated. Earlier ones are historical,
+retained, and never re-evaluated. **After a successfully verified acceptance no further lifecycle
+event may be appended**, except `superseded`, or a later `accepted` naming a superseding `runs` set,
+which together are the explicitly authorized correction mechanism. Anything else is
+`EVENT-AFTER-TERMINAL`, reaching rule `A5`.
+
+**Malformed handling.** Grammar violations are rejected during lifecycle validation as
+`ACCEPT-INCOMPLETE`, reaching rule `A5`, and never reach state derivation. Rows that parse but whose
+values disagree with the platform are not validation errors; they are unverified claims and derive
+`acceptance_claimed`. **Grammar failures are parse-time; semantic mismatches are state-time.**
+
 #### 4.3 Derived lifecycle state
 
-State is **computed**, never declared:
+State is **computed**, never declared. The ladder is **first match wins**, evaluated top to bottom.
+Rank is precedence: a lower rank is reached only when every rank above it fails. There are
+**fourteen** states.
 
-```text
-refused | superseded | abandoned   if the corresponding terminal event is present
-accepted                           if an `accepted` event is present
-merged                             if the squash commit exists on main
-approved_for_merge                 if a `merge_approved` binds to the current head by either §4.1a route
-implemented                        if `head_proposed` binds to the current head (§4.1a) with CI green
-in_implementation                  if `approved` exists and commits follow it
-approved                           if an `approved` event names the current D
-in_review                          if a PR is open and all mandatory fields for its traits are present
-draft                              otherwise
-```
+| # | state | complete predicate |
+|---|---|---|
+| 1 | `refused` | a `refused` event is present |
+| 2 | `superseded` | a `superseded` event is present |
+| 3 | `abandoned` | an `abandoned` event is present |
+| 4 | `accepted` | an `accepted` event is present AND the governed merge commit exists on `main` AND `accepted.merge_sha` equals that actual governed merge commit AND `merge_authorization == verified` AND `acceptance_verified` |
+| 5 | `acceptance_claimed` | an `accepted` event is present AND rank 4 does not hold — the merge is not on `main`, or `accepted.merge_sha` names a commit that is not the governed merge, or `merge_authorization != verified`, or NOT `acceptance_verified` |
+| 6 | `merged` | the governed merge commit is on `main` AND `merge_authorization == verified` |
+| 7 | `merged_unverified` | the governed merge commit is on `main` AND `merge_authorization` is one of `claimed_stale`, `claimed_unknown`, `fidelity_failed`, `unavailable` |
+| 8 | `merged_unauthorized` | the governed merge commit is on `main` AND `merge_authorization == absent` |
+| 9 | `approved_for_merge` | `merge_authorization == verified` at the current head |
+| 10 | `implemented` | a `head_proposed` event binds the current head (§4.1a) AND CI is green |
+| 11 | `in_implementation` | an `approved` event names the current `D` AND an `implementation_started` event is present |
+| 12 | `approved` | an `approved` event names the current `D` |
+| 13 | `in_review` | a PR is open AND all mandatory fields for the declared traits are present |
+| 14 | `draft` | otherwise |
+
+**The count is fourteen, and no earlier state was removed.** The previous ladder had eleven.
+`acceptance_claimed`, `merged_unverified` and `merged_unauthorized` are added, so 11 + 3 = 14.
+`merged` and `accepted` are **NARROWED by predicate, not split into replacements**: each keeps its
+name and rank and gains a stricter predicate, with the weaker cases falling to the new states beneath
+it.
+
+**Three precedence rules, stated explicitly.** Ranks 1–3 are unconditional and evaluated before any
+gate is consulted; a terminal event outranks even a verified acceptance, because terminal events are
+self-limiting and honouring one can never grant anything. Ranks 4–5 precede 6–8 because an `accepted`
+event is a claim about the whole change and must be reported as such even when the merge beneath it
+is unverified. Ranks 6–8 partition the single condition "the governed merge commit is on `main`" by
+authorization status, and that condition is derived from the platform and `main` ancestry, **never
+from a lifecycle row**.
+
+**Derivation and decision are separate.** An unavailable read still yields a merged-family state —
+`merged_unverified`, never `merged` and never `accepted` — while `ST-7` fires independently on the
+decision side. The report carries both; neither substitutes for the other.
 
 Three human gates — `approved`, `merge_approved`, `accepted` — and these are the three the program
 already runs on. **Merge is an event, not a state that authorizes anything.** `merged` never implies
-`accepted`.
+`accepted`, and **no lifecycle row can promote a record to a state that asserts an irreversible act
+was authorized.**
+
+##### 4.3a `acceptance_verified`, defined mechanically
+
+TRUE if and only if **all** of A through F hold. Nothing here consults free-form prose.
+
+**A** — the `accepted` event satisfies the §4.2c schema, and a `merged` event carries `merge_sha`.
+**B** — the actual governed merge SHA is `pullRequest.mergeCommit.oid` for the governed PR, confirmed
+an ancestor of `main`. The immutable identifier is the commit SHA. It is **never taken from a row**.
+**C** — `accepted.merge_sha` and `merged.merge_sha` both equal B.
+**D** — the `merged` row timestamp equals `pullRequest.mergedAt` exactly.
+**E** — every verification obligation resolves to evidence by the §4.3b transform, and every resolved
+evidence item is satisfied.
+**F** — `accepted.runs` equals exactly the set of qualifying check-run ids that satisfied E. After
+acceptance only those ids are verified, so a later rerun cannot revise an earlier verdict.
+
+**The `evidence=` free-text field is descriptive only and carries no verification weight.** A through
+F are the whole gate, and writing an `accepted` row cannot satisfy any of them.
+
+Readable failures of C, D, E or F derive `acceptance_claimed`. Unavailable reads of the PR record,
+the check-runs list, or the registry blob at `created.base_sha` additionally fire `ST-7`.
+
+##### 4.3b Obligation-to-evidence transform
+
+Every obligation must resolve to exactly one of: **(i)** a registered CI control id together with its
+exact workflow path and job name; **(ii)** an exact check context name; or **(iii)** an independently
+executed repository command with a machine-verifiable result artifact. **An obligation resolving to
+none of the three is UNMAPPED, and an unmapped obligation fails condition E** — it is never silently
+dropped because its prose contains no parseable context.
+
+**A control mapping resolves to the STEP, not the job, wherever the job can conclude `success` while
+the step is skipped.** A job-level mapping would accept a control that never executed, which is
+exactly the class of defect this amendment removes.
+
+##### 4.3c Negative-control inventory for this model
+
+Implementing this section requires the controls **NC-SM-01 through NC-SM-29**, enumerated in
+`docs/contracts/CC-2026-07-19-adr-0105-state-machine.md`, and the three new decision rules **`ST-9`**
+(a readable negative — no admissible claim), **`ST-10`** (a readable stale, unknown or fidelity
+failure) and **`ST-11`** (an acceptance claim that does not verify). **No other new rule identifier is
+authorized**; `ST-8` is the current maximum. `A5`, `OK`, `RF-3` and `ST-7` already exist and are
+reused unchanged.
+
+Two of those controls are **structural** — they assert a property outside the decision table and name
+the exact failure text they must produce: `NC-SM-11` (`AssertionError: state set size {n} != 14`) and
+`NC-SM-17` (`AssertionError: derived {state} is rank {n} > 8 with the merge on main`). The declared
+count of fourteen and the implemented state set cannot drift apart while `NC-SM-11` runs.
 
 #### 4.4 Invalidation
 

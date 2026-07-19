@@ -28,7 +28,7 @@ from .model import Diagnostic, Trigger, UNKNOWN
 # `ADR_0105_DIGEST` pins the exact approved body this transcription was taken from. Recomputing it
 # is how `NC-C27` proves the two have not diverged: the ADR is the only authority for `T3`, and a
 # copy of an authority that can drift from it silently is not a copy, it is a second authority.
-ADR_0105_DIGEST = "sha256:e757fb6e01d3e6f143f6d6af9f45bce780331562adb07149b55857baefc5875a"
+ADR_0105_DIGEST = "sha256:6db101a956dc3a8479cad2281dc0c43fe0e52a234e2c29705da63774c3826e5d"
 
 T3_PATTERNS = ("docs/REPOSITORY_CONSTITUTION.md", "docs/ARCHITECTURAL_LAWS.md",
                "docs/ENGINEERING_STANDARDS.md", "docs/adr/**", "docs/governance/**",
