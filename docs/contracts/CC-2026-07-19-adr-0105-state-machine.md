@@ -83,8 +83,8 @@ inputs. A qualifying witnessed review must reach `verified` **without reading** 
 evidence.
 
 **Route U inputs, and only these:** the final pre-merge PR head; the parent-bound `merge_approved`
-event; the immutable census event of the next section; the parent-binding proof; and, post-merge,
-tree fidelity.
+event; the census event of the next section; the external attestation that section requires; the
+parent-binding proof; and, post-merge, tree fidelity.
 
 **The algorithm, in order:**
 
@@ -92,23 +92,49 @@ tree fidelity.
 2. If some review has `state == APPROVED` and `commit_id == final_pre_merge_head`: post-merge, test
    tree fidelity — fidelity fails → `fidelity_failed`; otherwise → `verified`. **Stop; no Route U
    input is read.**
-3. Otherwise Route W is readable and did not qualify. Record whether any review existed at all, then
-   continue to Route U.
-4. Read the Route U inputs. If any required Route U read did not complete → `unavailable`. Stop.
-5. No `merge_approved` event present: if step 3 saw at least one review, → `claimed_stale`; if it saw
-   none, → `absent`.
+3. Otherwise Route W is readable and did not qualify. Record whether any review with
+   `state == APPROVED` existed at ANY head. **`COMMENTED`, `CHANGES_REQUESTED` and `DISMISSED`
+   reviews are not authorization claims and are recorded as none.** Then continue to Route U.
+4. Read the Route U inputs, the attestation dependency of the next section included. If any required
+   Route U read did not complete → `unavailable`. Stop. An unretrievable attestation IS an
+   unavailable read; it never falls back to the unattested payload.
+5. No `merge_approved` event present: if step 3 recorded an APPROVED review → `claimed_stale`; if it
+   recorded none → `absent`. With no APPROVED review at any head and no `merge_approved` event,
+   neither route holds a claim, and the readable finding is `absent`, NOT `claimed_stale`.
 6. `merge_approved` present but `parent_binds` fails at the final pre-merge head → `claimed_stale`.
-7. The `census_observed` event is absent, or present and fails its schema → `claimed_unknown`.
-8. Census valid and `principal_count == 1`: post-merge, test tree fidelity — fidelity fails →
-   `fidelity_failed`; otherwise → `verified`.
-9. Census valid and `principal_count != 1` → `absent`. This is a readable proof that no admissible
-   claim of either route exists: the unwitnessed route is available only under a single effective
-   writer, and a valid census showing more than one settles that question rather than leaving it open.
+7. The `census_observed` event is absent, or present and fails its schema — any key missing, any
+   grammar violation, `principal_count` unequal to the token count, or `digest` unequal to the
+   recomputation → `claimed_unknown`.
+8. `census_observed` schema-valid but `head_sha` is not the final pre-merge head → `claimed_stale`.
+9. `census_observed` schema-valid and bound to the final pre-merge head → `claimed_unknown`, whatever
+   `principal_count` asserts. **This is the terminal step of Route U: the route has NO step that
+   returns `verified`.**
+
+**Decided: Route U is prospectively DORMANT and cannot reach `verified`.** A `census_observed` row is
+written into the contract file by the same principal whose authority it asserts. Its `digest` is
+recomputed from the `principals` string beside it, so it proves internal consistency and nothing
+more: it cannot show that every writer class was enumerated, and a census omitting a whole class is
+byte-perfect and self-consistent. `principal_count == 1` is an assertion, not a finding, and a
+transcribed `Date` header is not the header. The former step — schema-valid plus
+`principal_count == 1` yielding `verified` — let a record authorize its own merge, which is the exact
+defect class this amendment exists to remove, so it is DELETED rather than tightened. `NC-SM-28`
+holds this.
+
+**What Route U would require.** A census payload may support `verified` only when it is bound to an
+attestation that is (a) separately retrievable from the contract file, (b) produced by the platform
+rather than by any principal who can write this repository, (c) read by the verifier itself at
+verification time, and (d) validated without reference to the payload's own self-descriptive fields.
+**No source satisfying all four is defined, and this contract names none.** An operator attestation,
+a self-written digest, check-run prose and any artifact the same principal can author fail (b) or (d)
+and are excluded BY NAME. Route U stays dormant until a LATER amendment defines a real external
+attestation source; until then `claimed_unknown` is its ceiling.
 
 **Decided: an unavailable Route W read does NOT permit Route U fallback.** If the review list cannot
 be read, whether a qualifying witnessed approval exists is unknown, and falling back would accept the
 weaker route precisely when the stronger one cannot be checked — an outage would silently lower the
-evidence standard. Step 1 therefore terminates at `unavailable` → `ST-7`. `NC-SM-21` holds this.
+evidence standard. This holds independently of dormancy: a fallback would also report a readable
+negative where the truth is an unread input. Step 1 therefore terminates at `unavailable` → `ST-7`.
+`NC-SM-21` holds this.
 
 **Decided: a Route U input that is never read cannot downgrade a witnessed authorization.** Step 2
 stops before step 4, so Route U availability is irrelevant once Route W qualifies. `NC-SM-20` holds
@@ -120,18 +146,21 @@ this by making every Route U-only input raise while a valid Route W review is pr
 more effective writers existed at the authorization instant, and no platform surface returns
 historical permission state for a user-owned repository — the organization audit log does not exist
 for one, and installation endpoints are unreadable. A state whose predicate cannot be evaluated must
-not exist, so it does not. Its readable case is covered: a valid census proving more than one
-principal yields `absent` (step 9), and an unobtainable or malformed census yields `claimed_unknown`
-(step 7).
+not exist, so it does not. Its readable case is covered: while no attestation source exists EVERY
+schema-valid census yields `claimed_unknown` (step 9) whatever count it asserts, and an absent or
+malformed one yields `claimed_unknown` too (step 7).
+
+**Only Route W reaches `verified`.** The other five values stay reachable from both routes, so the
+set does not shrink; what shrinks is Route U's ceiling.
 
 | value | exact predicate | required reads | all reads completed | pre-merge state | post-merge state | rule | outcome |
 |---|---|---|---|---|---|---|---|
-| verified | Route W step 2, or Route U step 8 | that route's inputs only | yes | approved_for_merge | merged | OK | continue |
-| claimed_stale | a review exists but binds no final head, or `parent_binds` fails at the final head | that route's inputs | yes | lower ladder | merged_unverified | ST-10 | stop |
-| claimed_unknown | the `census_observed` event is absent, or present and fails its schema | Route U inputs | yes | lower ladder | merged_unverified | ST-10 | stop |
-| fidelity_failed | the route qualified pre-merge but PR-head tree does not equal the merged-commit tree | trees at both commits | yes | n/a | merged_unverified | ST-10 | stop |
-| absent | reads completed and no admissible claim of either route exists, including a valid census proving more than one principal | that route's inputs | yes | lower ladder | merged_unauthorized | ST-9 | stop |
-| unavailable | a required read of the route under evaluation did NOT complete | whichever read failed | **no** | lower ladder | merged_unverified | ST-7 | stop |
+| verified | Route W step 2 ONLY — Route U has no step returning this value | Route W inputs only | yes | approved_for_merge | merged | OK | continue |
+| claimed_stale | an APPROVED review exists but binds no final head; or `parent_binds` fails at the final head; or the census binds a head other than the final head | that route's inputs | yes | lower ladder | merged_unverified | ST-10 | stop |
+| claimed_unknown | the `census_observed` event is absent, fails its schema, or is schema-valid but carries no external attestation | Route U inputs | yes | lower ladder | merged_unverified | ST-10 | stop |
+| fidelity_failed | ROUTE W qualified pre-merge but PR-head tree does not equal the merged-commit tree | trees at both commits | yes | n/a | merged_unverified | ST-10 | stop |
+| absent | reads completed and neither route holds a claim: no APPROVED review at any head AND no `merge_approved` event | that route's inputs | yes | lower ladder | merged_unauthorized | ST-9 | stop |
+| unavailable | a required read of the route under evaluation did NOT complete, the attestation dependency included | whichever read failed | **no** | lower ladder | merged_unverified | ST-7 | stop |
 
 **Exhaustiveness proof the amendment must carry.** The six values partition into three disjoint
 groups: `{verified}` → rank 6; `{claimed_stale, claimed_unknown, fidelity_failed, unavailable}` →
@@ -149,17 +178,18 @@ stops at `ST-7`, and the report carries both.
 
 ### the Route U census event, schema
 
-Event kind **`census_observed`**, appended immediately before the `merge_approved` it supports.
+Event kind **`census_observed`**, appended immediately before the `merge_approved` it supports. It is
+a GRAMMAR for a future attested payload, not evidence — nothing below authorizes anything on its own.
 
 | key | grammar | binds to |
 |---|---|---|
 | `repo_id` | decimal integer, the GitHub numeric repository id | the repository identity, which survives renaming |
-| `observed_at` | `YYYY-MM-DDTHH:MM:SSZ`, taken from the GitHub `Date` response header of the census read | the server-attested observation instant |
+| `observed_at` | `YYYY-MM-DDTHH:MM:SSZ`, transcribed from the GitHub `Date` response header of the census read | the CLAIMED observation instant — a transcription, never the header itself |
 | `head_sha` | 40 lowercase hex | the final pre-merge PR head this census accompanies |
 | `sources` | comma-separated fixed tokens drawn from `collaborators`, `installations`, `keys`, `workflow_permissions` | the platform surfaces actually read |
 | `principals` | comma-separated `type:id` tokens, `type` one of `user`, `app`, `key`, `actions`, `team`, sorted ascending by whole token | the canonical effective-writer set |
 | `principal_count` | decimal integer, equal to the token count of `principals` | the size assertion |
-| `digest` | `sha256:` plus 64 hex over the exact `principals` string in UTF-8 | tamper-evidence for the set |
+| `digest` | `sha256:` plus 64 hex over the exact `principals` string in UTF-8 | INTERNAL consistency of this row only — recomputed from the string beside it, and silent about completeness |
 
 **Effective writer** means any principal able to write a ref at that instant: collaborators with
 `push` (administrators included, since admin implies push); App installations with `contents: write`;
@@ -167,22 +197,38 @@ deploy keys with `read_only` false; and the Actions token when `default_workflow
 `write` or when any workflow at `head_sha` declares `contents: write`. Teams are expanded to their
 member users and additionally recorded as `team:<id>`; a user-owned repository has none.
 
-**Post-merge proof that the record refers to the authorization instant is structural, not temporal.**
-`census_observed.head_sha` must equal the final pre-merge PR head that `merge_approved` binds, and
-`observed_at` must not exceed the server-observed instant of the first commit containing the census
-row. Both are checkable after the fact from platform records, and neither trusts a local clock.
+**Post-merge binding is structural, not temporal.** `census_observed.head_sha` must equal the final
+pre-merge PR head that `merge_approved` binds, and `observed_at` must not exceed the server-observed
+instant of the first commit containing the census row. Both are checkable after the fact from
+platform records, and neither trusts a local clock. Binding is a NECESSARY condition; it is not
+evidence that the enumeration is complete.
 
-**Classification.** *Malformed* — any key missing, any grammar violation, `principal_count` unequal to
-the token count, or `digest` unequal to the recomputation → `claimed_unknown`. *Stale* — `head_sha`
-is not the final pre-merge head → `claimed_stale`. *Unavailable* — a read needed to verify the record
-did not complete → `unavailable`, hence `ST-7`. *Verified* — schema valid, binding holds, and
-`principal_count` is 1.
+**This schema is a grammar, not evidence.** Every key above is written into the contract file by the
+principal whose authority the row asserts, so a syntactically perfect row is a well-formed CLAIM. The
+`digest` detects only later editing of the `principals` string beside it; it cannot detect a writer
+class that was never enumerated, and a census omitting one entirely is byte-perfect and
+self-consistent. No combination of these keys authorizes anything.
 
-**Stated limitation, not a gap.** The census cannot be CAPTURED today, because the App-installation
-surface returns 401 or 403 to every available credential. The predicate above remains fully
-evaluable — the event is either absent, malformed or valid — so no unevaluable state is introduced.
-Route U simply cannot reach `verified` until that surface is readable, and `claimed_unknown` is the
-correct classification in the meantime.
+**The attestation requirement.** A census payload supports `verified` only when it is bound to an
+attestation that is (a) separately retrievable from the contract file, (b) produced by the platform
+rather than by any principal who can write this repository, (c) read by the verifier itself at
+verification time, and (d) validated without reference to the payload's own self-descriptive fields.
+**This contract defines no such source and names none.** A later amendment must define a real
+external attestation source before `verified` can exist on this route.
+
+**Classification, while dormant.** *Malformed* — any key missing, any grammar violation,
+`principal_count` unequal to the token count, or `digest` unequal to the recomputation →
+`claimed_unknown`. *Stale* — `head_sha` is not the final pre-merge head → `claimed_stale`.
+*Unattested* — every remaining case, a schema-valid row asserting `principal_count` 1 included →
+`claimed_unknown`. *Unavailable* — a read needed to verify the record, or the attestation dependency,
+did not complete → `unavailable`, hence `ST-7`. **There is no verified outcome.**
+
+**Two separate blockers, and readability is the lesser one.** The census cannot be CAPTURED today,
+because the App-installation surface returns 401 or 403 to every available credential. Making that
+surface readable would still not make Route U verify: the captured result would be transcribed into
+this file by its author, which is the defect this section removes. Readability is necessary; external
+attestation is what is missing. The predicate stays fully evaluable throughout — the event is absent,
+malformed, stale or unattested — so no unevaluable state is introduced.
 
 ### the `accepted` event, schema
 
@@ -263,24 +309,29 @@ Each is independently checkable using only this repository and this contract:
 3. The amended §4.3 states the three precedence rules given above.
 4. The amended §4.3 states that state derivation and the decision are separate, that an unavailable
    read still yields a merged-family state, and that `ST-7` fires independently.
-5. The amended §4.1a contains the ordered algorithm above, including the disjoint input sets and both
-   decisions: no Route U fallback on an unavailable Route W read, and no Route U input read once
-   Route W qualifies.
+5. The amended §4.1a contains the ordered algorithm above, including the disjoint input sets, both
+   decisions — no Route U fallback on an unavailable Route W read, and no Route U input read once
+   Route W qualifies — the rule that only a `state == APPROVED` review is a Route W authorization
+   claim, and the statement that Route U has NO step returning `verified`.
 6. The amended §4.1a states that the witnessed predicate is `state == APPROVED` and
    `commit_id == final_pre_merge_head` alone; that reviewer identity is not an input available to the
    verifier; that this amendment adds no identity or permission predicate; and that any non-author
    property of the review is platform-produced evidence rather than a verifier rule.
-7. The amended §4.2 defines the `census_observed` and `accepted` schemas exactly as above.
+7. The amended §4.2 defines the `census_observed` and `accepted` schemas exactly as above, and states
+   that the census schema is a grammar rather than evidence.
 8. The amended §4.2 defines `merge_authorization` as the CLOSED six-value set above and carries the
    exhaustiveness proof.
 9. The amended §4.3 defines `acceptance_verified` as A through F and states that `evidence=` carries
    no verification weight.
 10. The amended text carries the obligation-to-evidence transform, including that an unmapped
     obligation fails acceptance.
-11. The amended text names NC-SM-01 through NC-SM-27 and the three new rules `ST-9`, `ST-10` and
+11. The amended text names NC-SM-01 through NC-SM-29 and the three new rules `ST-9`, `ST-10` and
     `ST-11`, and authorizes no other new rule identifier.
 12. `python -m tools.arch ci` and `python -m tools.ci static` exit 0.
 13. `git diff --name-only <base>...<head>` equals `expected_surfaces` exactly.
+14. The amended §4.1a and §4.2 both carry the four attestation requirements, state that no source
+    satisfying them is defined, and state that Route U cannot reach `verified` until a later
+    amendment defines one.
 
 ### implementation controls
 
@@ -290,15 +341,16 @@ implementation must INTRODUCE, and no other new rule id is authorized — `ST-8`
 maximum. Rows marked **structural** assert a property outside the decision table and name the exact
 test failure they must produce.
 
-**Twenty-seven controls.** The previous inventory of nineteen predated route separation, the census
-schema, the accepted schema and the obligation transform; eight controls cover those. The count is
-twenty-seven because the table below has twenty-seven rows.
+**Twenty-nine controls.** The inventory of nineteen predated route separation, the census schema, the
+accepted schema and the obligation transform; eight controls cover those. Two more cover Route U's
+dormancy and the review-claim classification. The count is twenty-nine because the table below has
+twenty-nine rows.
 
 | id | injected defect or missing evidence | expected derived state | expected rule | outcome | distinct boundary proven |
 |---|---|---|---|---|---|
 | NC-SM-01 | an `accepted` event with `merge_authorization` not `verified` | acceptance_claimed | ST-11 | stop | a written row cannot promote to `accepted` |
 | NC-SM-02 | merge on `main`, a verified route, no `accepted` event | merged | OK | continue | verification alone does not manufacture acceptance |
-| NC-SM-03 | reads complete and prove no admissible claim exists | merged_unauthorized | ST-9 | stop | a readable negative reaches ST-9 and `ST-7` must NOT fire |
+| NC-SM-03 | no reviews at all and no `merge_approved` event — reads complete and prove no claim exists | merged_unauthorized | ST-9 | stop | a readable negative reaches ST-9 and `ST-7` must NOT fire |
 | NC-SM-04 | a required Route U read raises | merged_unverified | ST-7 | stop | `unavailable` is its own value and reaches the fail-closed rule |
 | NC-SM-05 | a Route U claim binding a head other than the final pre-merge head | merged_unverified | ST-10 | stop | binding is to the FINAL head, not any head |
 | NC-SM-06 | a post-merge `merge_approved` append onto a `merged_unauthorized` record | merged_unauthorized, unchanged | ST-9 | stop | an append verifies nothing and originates nothing |
@@ -316,13 +368,15 @@ twenty-seven because the table below has twenty-seven rows.
 | NC-SM-18 | the `census_observed` event absent | merged_unverified | ST-10 | stop | `claimed_unknown` is a readable finding, NOT `unavailable` |
 | NC-SM-19 | an `accepted` row whose `evidence=` text asserts success while `runs` does not | acceptance_claimed | ST-11 | stop | free-form evidence text cannot verify itself |
 | NC-SM-20 | a qualifying Route W review present while EVERY Route U-only input raises | merged | OK | continue | Route U inputs are never read once Route W qualifies |
-| NC-SM-21 | the Route W review read raises, with a Route U claim present that would otherwise qualify | merged_unverified | ST-7 | stop | an unavailable Route W read does NOT permit Route U fallback |
+| NC-SM-21 | the Route W review read raises, with a complete `merge_approved` and census present | merged_unverified | ST-7 | stop | an unavailable Route W read does NOT permit Route U fallback |
 | NC-SM-22 | `census_observed` with `principal_count` unequal to the token count, or a mismatched `digest` | merged_unverified | ST-10 | stop | a malformed census is `claimed_unknown`, never silently trusted |
 | NC-SM-23 | two `binding` events, with `accepted.pr` naming the earlier one | acceptance_claimed | ST-11 | stop | the governed PR is the last binding, and disagreement is malformed |
 | NC-SM-24 | `accepted.runs` non-ascending, containing a duplicate, or empty | acceptance_claimed | ST-11 | stop | the run set has a canonical encoding that arbitrary values cannot satisfy |
 | NC-SM-25 | a verification obligation resolving to none of the three evidence forms | acceptance_claimed | ST-11 | stop | an unmapped obligation fails acceptance and is never dropped |
 | NC-SM-26 | three `accepted` events, only the last of which verifies | accepted | OK | continue | the last claim is evaluated and earlier ones are historical |
 | NC-SM-27 | an `accepted` event with `decision` other than the literal `accepted` | rejected at validation | A5 | stop | `decision` has exactly one permitted value |
+| NC-SM-28 | a `census_observed` row passing EVERY internal check — schema valid, `digest` recomputing, `principal_count` 1, bound to the final head — with no independently retrievable server attestation | merged_unverified | ST-10 | stop | a census perfect on its own terms is `claimed_unknown`; Route U has NO path to `verified` |
+| NC-SM-29 | reviews present but every one `COMMENTED`, with no `merge_approved` event | merged_unauthorized | ST-9 | stop | a non-APPROVED review is not an authorization claim, so the finding is `absent`, NOT `claimed_stale` |
 
 ### rollback
 
@@ -369,7 +423,7 @@ POST-amendment digest is recorded in the lifecycle `approved` row as `adr_0105_r
 | tools/contract/adapters.py | no port added; the census and check-run joins are later contracts |
 | tools/contract/__main__.py | the dependency fail-closed repair belongs to the implementation contract |
 | tools/contract/selftest.py | no control added; this contract NAMES the inventory and does not build it |
-| tests/** | NC-SM-01 through NC-SM-27 are implemented under a later contract, never here |
+| tests/** | NC-SM-01 through NC-SM-29 are implemented under a later contract, never here |
 | .github/ci-control-registry.yml | the registry amendment is a SEPARATE contract |
 | .github/workflows/** | no workflow change; enforcement remains Phase 6 |
 | src/fanops/** | no runtime change |
@@ -391,8 +445,8 @@ POST-amendment digest is recorded in the lifecycle `approved` row as `adr_0105_r
 |---|---|---|
 | the ADR-0105 body | the `ADR_0105_DIGEST` pin AND the ADR front-matter `approved_digest` | `NC-C27` recomputes the body digest and compares it to both. A body edit without both is red CI; a pin edit without the body is a lie about what was approved |
 | the stated state count of fourteen | the enumerated ladder in the amended §4.3 | a number in prose that no reader can recount against a list is a defect. `NC-SM-11` keeps them equal |
-| the control identifiers NC-SM-01..NC-SM-27 | the amended §4.3 text | an inventory living only in a contract body is one the implementation can silently shorten |
-| the `census_observed` schema | the `verified` predicate of Route U | a route whose admissibility evidence has no schema cannot be verified after the fact, which is how the present defect arose |
+| the control identifiers NC-SM-01..NC-SM-29 | the amended §4.3 text | an inventory living only in a contract body is one the implementation can silently shorten |
+| the `census_observed` schema | the statement that it is a grammar rather than evidence, AND the four attestation requirements | a schema published without both reads as an authorization mechanism, which is precisely the defect corrected here |
 
 ### reusable_evidence
 
