@@ -53,10 +53,10 @@ only when every rank above it fails. Fourteen states, matching the count stated 
 | 1 | refused | a `refused` event is present |
 | 2 | superseded | a `superseded` event is present |
 | 3 | abandoned | an `abandoned` event is present |
-| 4 | accepted | an `accepted` event is present AND `merge_authorization == verified` AND `acceptance_verified` |
-| 5 | acceptance_claimed | an `accepted` event is present AND (`merge_authorization != verified` OR NOT `acceptance_verified`) |
+| 4 | accepted | an `accepted` event is present AND the governed merge commit exists on `main` AND `accepted.merge_sha` equals that actual governed merge commit AND `merge_authorization == verified` AND `acceptance_verified` |
+| 5 | acceptance_claimed | an `accepted` event is present AND rank 4 does not hold — the merge is not on `main`, or `accepted.merge_sha` names a commit that is not the governed merge, or `merge_authorization != verified`, or NOT `acceptance_verified` |
 | 6 | merged | the merge commit is on `main` AND `merge_authorization == verified` |
-| 7 | merged_unverified | the merge commit is on `main` AND `merge_authorization` is one of `claimed_stale`, `claimed_unknown`, `claimed_inadmissible`, `fidelity_failed` |
+| 7 | merged_unverified | the merge commit is on `main` AND `merge_authorization` is one of `claimed_stale`, `claimed_unknown`, `claimed_inadmissible`, `fidelity_failed`, `unavailable` |
 | 8 | merged_unauthorized | the merge commit is on `main` AND `merge_authorization == absent` |
 | 9 | approved_for_merge | `merge_authorization == verified` at the current head |
 | 10 | implemented | a `head_proposed` event binds the current head AND CI is green |
@@ -80,32 +80,79 @@ Ranks 6–8 partition the single condition "the merge commit is on `main`" by au
 That condition is derived from the platform and from `main` ancestry, never from a lifecycle row, so
 a contract that never records a `merged` event still reaches the correct rank.
 
-### the post-merge states, distinguished
+### the authorization value set, closed and total
 
-`merge_authorization` takes exactly one of six values: `verified`, `claimed_stale`,
-`claimed_unknown`, `claimed_inadmissible`, `fidelity_failed`, `absent`.
+`merge_authorization` takes **exactly one of seven** values. The seventh, `unavailable`, exists
+because an incomplete read is not a readable negative and must never be hidden inside one.
 
-| condition | `merge_authorization` | derived state |
-|---|---|---|
-| an authorization route is successfully rederived after merge | `verified` | `merged`, or `accepted` if an `accepted` event is present and acceptance verifies |
-| repository or review evidence is unavailable (the read did not complete) | not computable; never `verified` | `merged_unverified`, marked unverifiable — and the DECISION independently stops at `ST-7` |
-| evidence is readable and proves no qualifying authorization ever existed | `absent` | `merged_unauthorized` |
-| evidence is readable and a claim exists but does not qualify | `claimed_stale`, `claimed_unknown`, `claimed_inadmissible` or `fidelity_failed` | `merged_unverified` |
-| an `accepted` event exists without verified merge authorization | any value except `verified` | `acceptance_claimed` |
-| acceptance evidence is missing, malformed or stale but readable | `acceptance_verified` is false | `acceptance_claimed` |
-| acceptance evidence is unverifiable because a read did not complete | `acceptance_verified` is false | `acceptance_claimed`, and the DECISION stops at `ST-7` |
+| value | exact predicate | required reads | all reads completed | pre-merge state | post-merge state | rule | outcome |
+|---|---|---|---|---|---|---|---|
+| verified | a qualifying route binds the FINAL pre-merge PR head, and post-merge the fidelity conjuncts hold | PR head ref + API head; reviews; `merge_approved` blob at PR head; admissibility census; trees | yes | approved_for_merge | merged | OK | continue |
+| claimed_stale | a claim exists but binds a head other than the final pre-merge head, or `parent_binds` fails there | as above | yes | lower ladder | merged_unverified | ST-10 | stop |
+| claimed_unknown | a claim binds correctly, but no record establishes the effective-writer census AT the authorization instant. A permanent property of the fact, not a read failure | as above, all succeeding | yes | lower ladder | merged_unverified | ST-10 | stop |
+| claimed_inadmissible | reads prove two or more effective ref writers existed at the authorization instant | as above, all succeeding | yes | lower ladder | merged_unverified | ST-10 | stop |
+| fidelity_failed | PR-head tree does not equal the merged-commit tree | trees at both commits | yes | n/a | merged_unverified | ST-10 | stop |
+| absent | every required read completed and no qualifying claim of either route exists | as above, all succeeding | yes | lower ladder | merged_unauthorized | ST-9 | stop |
+| unavailable | at least one required read did NOT complete | whichever read failed | **no** | lower ladder | merged_unverified | ST-7 | stop |
+
+**Exhaustiveness proof, which the amendment must carry.** The seven values partition into three
+disjoint groups: `{verified}` → rank 6; `{claimed_stale, claimed_unknown, claimed_inadmissible,
+fidelity_failed, unavailable}` → rank 7; `{absent}` → rank 8. The groups are disjoint and their union
+is the whole set, so once "the governed merge commit is on `main`" holds, exactly one of ranks 6, 7
+and 8 matches. **No value can fall through to `approved_for_merge`, `implemented`, or any lower
+rank after the merge is known to exist**, because rank 8's predicate is the negation, within the
+closed set, of ranks 6 and 7 taken together. `NC-SM-14` and `NC-SM-17` hold this at implementation.
+
+**Readable negatives and unavailable evidence stay distinct.** `absent` means the reads succeeded
+and proved nothing qualifying exists — a finding, reported through `ST-9`, and `ST-7` must NOT fire.
+`unavailable` means a read did not complete — reported through `ST-7`, and it must never be recorded
+as `absent`, which would convert an outage into a proven governance failure.
 
 **State derivation and the decision are separate, and the amendment must say so in those words.**
-When a required input is unavailable, state derivation still runs and still yields a merged-family
-state — it simply can never yield `merged` or `accepted`, because neither is reachable without a
-`verified` authorization. The decision independently stops at `ST-7`. The report must therefore carry
-both the derived state and the unverifiable marker, so that a state reached under an incomplete read
-is never mistaken for a readable negative. A state is a description; `ST-7` is a refusal to proceed;
-neither substitutes for the other.
+Under `unavailable`, derivation still runs and still yields `merged_unverified`; it can never yield
+`merged` or `accepted`, since neither is reachable without `verified`. The decision independently
+stops at `ST-7`. The report carries both the derived state and the unavailable classification, so a
+state reached under an incomplete read is never mistaken for a readable negative.
 
-**The `ST-7` rule is preserved unchanged: any required input whose read did not complete reaches
-`ST-7`.** A readable negative — a proven-absent authorization, a tree mismatch, a failing or absent
-required check — is a finding and must never be routed to `ST-7`.
+### `acceptance_verified`, defined mechanically
+
+`acceptance_verified` is TRUE if and only if **all** of A–F hold. Nothing here consults free-form
+prose, and no row can satisfy this gate by existing.
+
+**A — required lifecycle values present and well formed.** An `accepted` event carrying
+`merge_sha` (40 hex), `decision`, `date`, `operator`; and a `merged` event carrying `merge_sha`.
+A row violating this grammar is rejected during **lifecycle validation** as `ACCEPT-INCOMPLETE`,
+reaching rule `A5` — it never reaches state derivation at all. A row that parses but whose values
+disagree with reality is NOT a validation error; it is represented as an unverified claim
+(`acceptance_claimed`). Grammar failures are parse-time; semantic mismatches are state-time.
+
+**B — the actual governed merge SHA is established from the platform, never from a row.** It is
+`pullRequest.mergeCommit.oid`, confirmed an ancestor of `main`. Immutable identifier: the commit SHA.
+
+**C — SHA agreement.** `accepted.merge_sha` and `merged.merge_sha` both equal the value from B.
+
+**D — merge chronology.** The `merged` row timestamp equals `pullRequest.mergedAt` exactly. Equality,
+not an upper bound. Immutable identifier: the server-stamped instant.
+
+**E — success-condition evidence, machine-verified.** For every context in
+`intended_required_contexts` read from `.github/ci-control-registry.yml` **at `created.base_sha`**,
+plus every context named by a `verification` obligation: a qualifying check-run exists at
+`head_sha == <B>` with `conclusion == success`. A run qualifies only when its pinned identity tuple
+matches — app id, workflow id, workflow file path, job name — and only the greatest check-run id per
+name is considered. Immutable identifiers: check-run id, workflow id, and the workflow-file blob SHA
+at `created.base_sha`. `failure`, `skipped`, `cancelled` and absent all fail E as **readable**
+negatives.
+
+**F — the evidence set is pinned.** The `accepted` row records the check-run **id set** it was
+verified against. After acceptance, only those ids are verified; a later rerun cannot revise an
+earlier verdict, and recognising one requires appending a new `accepted` row.
+
+**The `evidence=` free-text field is descriptive only and carries no verification weight.** The
+amendment must state that in those words. A–F are the whole gate.
+
+**Readable failures produce `acceptance_claimed`:** any of C, D, E or F failing on completed reads.
+**Unavailable reads additionally fire `ST-7`:** the PR record, the check-runs list, or the registry
+blob at `created.base_sha` failing to read.
 
 ### the witnessed route, stated exactly
 
@@ -141,32 +188,53 @@ Each is independently checkable using only this repository and this contract:
    exactly" above, including the explicit statement that no identity or permission predicate is added.
 6. The amended §4.1a states that both routes bind the final pre-merge PR head, and that post-merge
    rederivation verifies an existing authorization and never originates one.
-7. The amended text names every control identifier in "implementation controls" below, so the
-   implementation contract inherits a fixed inventory rather than a description.
-8. `python -m tools.arch ci` and `python -m tools.ci static` exit 0.
-9. `git diff --name-only <base>...<head>` equals `expected_surfaces` exactly.
+7. The amended text names every control identifier in "implementation controls" below — NC-SM-01
+   through NC-SM-19 — so the implementation contract inherits a fixed inventory, not a description.
+8. The amended §4.2 defines `merge_authorization` as the CLOSED seven-value set of "the authorization
+   value set, closed and total" above, including `unavailable` as a distinct value, and carries the
+   exhaustiveness proof that every merge on `main` reaches exactly one of ranks 6, 7 and 8.
+9. The amended §4.3 defines `acceptance_verified` as conditions A through F of "`acceptance_verified`,
+   defined mechanically" above, and states in those words that the `evidence=` free-text field is
+   descriptive only and carries no verification weight.
+10. The amended text names the three new decision rules the implementation must introduce — `ST-9`,
+    `ST-10`, `ST-11` — and authorizes no other new rule identifier.
+11. `python -m tools.arch ci` and `python -m tools.ci static` exit 0.
+12. `git diff --name-only <base>...<head>` equals `expected_surfaces` exactly.
 
 ### implementation controls
 
 The later implementation contract must build every control below. **This contract builds none of
-them**, and the amendment's only obligation is to name their identifiers so the inventory is fixed
-before implementation begins.
+them.** Every expected rule is named by exact identifier: `A5`, `OK`, `RF-3` and `ST-7` exist today;
+`ST-9`, `ST-10` and `ST-11` are the three the implementation must INTRODUCE, and no other new rule id
+is authorized. `ST-8` is the highest rule presently defined, so the new ids extend the sequence
+without colliding.
 
-| id | injected defect or missing evidence | expected derived state | expected rule and outcome | distinct boundary proven |
-|---|---|---|---|---|
-| NC-SM-01 | an `accepted` event with no qualifying authorization of either route | acceptance_claimed | stop, the acceptance rule | a written row cannot promote to `accepted` |
-| NC-SM-02 | merge with a verified route present and no `accepted` event | merged | continue at `OK` | verification alone does not manufacture acceptance |
-| NC-SM-03 | a readable record proving no qualifying authorization ever existed | merged_unauthorized | stop, the unauthorized-merge rule | a readable negative is a finding, never `ST-7` |
-| NC-SM-04 | every authorization read raises, so no read completes | merged_unverified, marked unverifiable | stop at `ST-7` | unavailability reaches the fail-closed rule and does not masquerade as a finding |
-| NC-SM-05 | an authorization bound to a head that is not the final pre-merge head | merged_unverified | stop, the stale-authorization rule | binding is to the final head, not to any head |
-| NC-SM-06 | a post-merge lifecycle row appended in an attempt to create authorization | unchanged from before the append | stop, unchanged | rederivation and appends verify; neither originates |
-| NC-SM-07 | a witnessed review whose `commit_id` is not the final pre-merge head | merged_unverified | stop, the stale-authorization rule | the witnessed route binds the final head |
-| NC-SM-08 | an unwitnessed claim bound to anything other than the final pre-merge head | merged_unverified | stop, the stale-authorization rule | the unwitnessed route binds the final head |
-| NC-SM-09 | a terminal event present alongside a fully verified acceptance | the terminal event | stop, the terminal rule | terminal precedence is unconditional and outranks rank 4 |
-| NC-SM-10 | inputs satisfying two ladder ranks at once | the higher rank only | the higher rank's outcome | first-match-wins is ordering, not a search for the best fit |
-| NC-SM-11 | the implemented state set enumerated and compared to the declared count | not applicable | fail if the counts differ | the declared number and the implemented set cannot drift |
-| NC-SM-12 | acceptance evidence readable but missing, malformed or stale | acceptance_claimed | stop, the acceptance rule | acceptance verification is separate from merge authorization |
-| NC-SM-13 | a merged-family state derived while a required read did not complete | merged_unverified, marked unverifiable | stop at `ST-7` | derivation and decision are separate and both are reported |
+**Nineteen controls.** The previous inventory of thirteen was written before the authorization set
+was closed and before `accepted` required the merge to exist; six controls were added to cover those
+corrections. The count is nineteen because the list below has nineteen rows, not because thirteen or
+any other number was carried forward.
+
+| id | injected defect or missing evidence | expected derived state | expected rule | outcome | distinct boundary proven |
+|---|---|---|---|---|---|
+| NC-SM-01 | an `accepted` event with `merge_authorization != verified` | acceptance_claimed | ST-11 | stop | a written row cannot promote to `accepted` |
+| NC-SM-02 | merge on `main`, a verified route, and no `accepted` event | merged | OK | continue | verification alone does not manufacture acceptance |
+| NC-SM-03 | every read completes and proves no qualifying claim exists | merged_unauthorized | ST-9 | stop | a readable negative reaches ST-9 and `ST-7` must NOT fire |
+| NC-SM-04 | a required authorization read raises | merged_unverified | ST-7 | stop | `unavailable` is its own value and reaches the fail-closed rule |
+| NC-SM-05 | a Route U claim binding a head other than the final pre-merge head | merged_unverified | ST-10 | stop | binding is to the FINAL head, not any head |
+| NC-SM-06 | a post-merge `merge_approved` append onto a `merged_unauthorized` record | merged_unauthorized, unchanged | ST-9 | stop | an append verifies nothing and originates nothing |
+| NC-SM-07 | a witnessed review whose `commit_id` is not the final pre-merge head | merged_unverified | ST-10 | stop | the witnessed route binds the final head |
+| NC-SM-08 | PR-head tree not equal to the merged-commit tree | merged_unverified | ST-10 | stop | `fidelity_failed` is a readable negative, never `ST-7` |
+| NC-SM-09 | a `refused` event alongside a fully verified acceptance | refused | RF-3 | refuse | terminal precedence is unconditional and outranks rank 4 |
+| NC-SM-10 | inputs satisfying two ladder ranks at once | the higher rank only | that rank's rule | that rank's outcome | first-match-wins is ordering, not a search for the best fit |
+| NC-SM-11 | the implemented state set enumerated and compared to the declared count fourteen | not applicable | fail the control | fail | the declared number and the implemented set cannot drift |
+| NC-SM-12 | a required check-run at the merge SHA is `failure`, `skipped`, `cancelled` or absent | acceptance_claimed | ST-11 | stop | acceptance verification is separate from merge authorization |
+| NC-SM-13 | a required read does not complete while the governed merge is on `main` | merged_unverified | ST-7 | stop | derivation and decision are separate and both are reported |
+| NC-SM-14 | each of the seven authorization values driven in turn with the merge on `main` | exactly one of merged, merged_unverified, merged_unauthorized per value | OK, ST-10, ST-10, ST-10, ST-10, ST-9, ST-7 respectively | continue for the first, stop for the rest | the value set is total and the post-merge partition is exhaustive and mutually exclusive |
+| NC-SM-15 | an `accepted` event while the governed merge is NOT on `main` | acceptance_claimed | ST-11 | stop | acceptance cannot precede the merge it accepts |
+| NC-SM-16 | `accepted.merge_sha` naming a commit that is not the governed merge | acceptance_claimed | ST-11 | stop | the row is checked against the platform, never trusted |
+| NC-SM-17 | the governed merge on `main` under every authorization value | never a rank below 8 | never a rank-9-or-lower rule | stop or continue per NC-SM-14 | no fall-through to `approved_for_merge`, `implemented` or lower |
+| NC-SM-18 | reads all complete but no record establishes the census at the authorization instant | merged_unverified | ST-10 | stop | `claimed_unknown` is a readable finding and is NOT `unavailable` |
+| NC-SM-19 | an `accepted` row whose `evidence=` text asserts success while the pinned check-run set does not | acceptance_claimed | ST-11 | stop | free-form evidence text cannot verify itself |
 
 ### rollback
 
@@ -214,7 +282,7 @@ POST-amendment digest is recorded in the lifecycle `approved` row as `adr_0105_r
 | tools/contract/adapters.py | no port added; the census and check-run joins are later contracts |
 | tools/contract/__main__.py | the dependency fail-closed repair belongs to the implementation contract |
 | tools/contract/selftest.py | no control added; this contract NAMES the inventory and does not build it |
-| tests/** | NC-SM-01 through NC-SM-13 are implemented under a later contract, never here |
+| tests/** | NC-SM-01 through NC-SM-19 are implemented under a later contract, never here |
 | .github/ci-control-registry.yml | the registry amendment is a SEPARATE contract |
 | .github/workflows/** | no workflow change; enforcement remains Phase 6 |
 | src/fanops/** | no runtime change |
@@ -236,7 +304,7 @@ POST-amendment digest is recorded in the lifecycle `approved` row as `adr_0105_r
 |---|---|---|
 | the ADR-0105 body | the `ADR_0105_DIGEST` pin AND the ADR front-matter `approved_digest` | `NC-C27` recomputes the body digest and compares it to both. A body edit without both is red CI; a pin edit without the body is a lie about what was approved |
 | the stated state count of fourteen | the enumerated ladder in the amended §4.3 | a number in prose that no reader can recount against a list is the defect this revision exists to remove. `NC-SM-11` is the control that keeps them equal |
-| the control identifiers NC-SM-01..NC-SM-13 | the amended §4.3 text | an inventory that lives only in a contract body is an inventory the implementation can silently shorten |
+| the control identifiers NC-SM-01..NC-SM-19 | the amended §4.3 text | an inventory that lives only in a contract body is an inventory the implementation can silently shorten |
 
 ### reusable_evidence
 
