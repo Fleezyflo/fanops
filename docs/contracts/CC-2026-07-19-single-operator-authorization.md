@@ -123,16 +123,27 @@ prior model exactly.
 
 | id | source_file | blob_sha |
 |---|---|---|
-| ADR-0105 | docs/adr/0105-reusable-change-contract-architecture.md | f9fa602b501f80418d8a66eb9c6389a99ae64c8a |
+| ADR-0105 | docs/adr/0105-reusable-change-contract-architecture.md | d971a881f4c7e58ab31f268b3a8d352b884ddec3 |
 | C2.1 | docs/REPOSITORY_CONSTITUTION.md | 1f42a8ea298af39fffd56e3ce5c3542cef512df2 |
 | C18.1 | docs/REPOSITORY_CONSTITUTION.md | 1f42a8ea298af39fffd56e3ce5c3542cef512df2 |
 | LAW-SOT-01 | docs/ARCHITECTURAL_LAWS.md | 91ce5627ddc08b5f90189114bbef18c268b484a0 |
 | LAW-DOC-01 | docs/ARCHITECTURAL_LAWS.md | 91ce5627ddc08b5f90189114bbef18c268b484a0 |
 
-The ADR blob named here is the **pre-correction** body — the authority this change acts upon. This
-change amends that body, so the blob moves and `AUTH-BLOB-MOVED` / `ST-2` is the EXPECTED verdict
-until the operator re-confirms the corrected body and the row is rebound to it. Per §4.4 a moved
-authority blob flags for re-confirmation and does not auto-void.
+**The ADR row names the CORRECTED body, `d971a881f4c7e58ab31f268b3a8d352b884ddec3`.** The contract
+originally cited `f9fa602b501f80418d8a66eb9c6389a99ae64c8a`, the **pre-correction** body this change
+acts upon — that is the historical fact, and it is not erased: it is the value in every commit up to
+and including `2722dc0a7e7d7af5d794b544b808c1f70c180263`, `git log -p` on this file shows the
+transition, and each `reusable_evidence` row below is still bound to the pre-correction tree at
+`35cbf7fcebdd9e2b5f657a971af6c31140879123`.
+
+**Why the row is rebound before any approval, not after.** This change amends the very ADR it cites,
+so the blob moves the moment the correction lands and `AUTH-BLOB-MOVED` / `ST-2` fires. §4.4 makes
+that a FLAG for re-confirmation rather than an auto-void, and the flag is discharged by recording
+what was re-confirmed — a lifecycle append cannot do it, because `AUTH-BLOB-MOVED` compares this
+table against the live blob and reads no lifecycle event. Rebinding first means the operator approves
+one final `D` instead of approving a digest that the rebind would immediately invalidate. **This
+terminates:** editing this contract moves `D` but does not move the ADR blob, so the row it now names
+stays correct and no further round is generated.
 
 ### reusable_evidence
 
