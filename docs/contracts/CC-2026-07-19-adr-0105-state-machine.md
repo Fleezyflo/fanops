@@ -392,14 +392,28 @@ This contract is RETAINED after any terminal event, per ADR-0105 §11.2.
 
 | id | source_file | blob_sha |
 |---|---|---|
-| ADR-0105 | docs/adr/0105-reusable-change-contract-architecture.md | f9fa602b501f80418d8a66eb9c6389a99ae64c8a |
+| ADR-0105 | docs/adr/0105-reusable-change-contract-architecture.md | f0ebd9f0322a58b794c5275b0c8482831a5ca04a |
 | C2.1 | docs/REPOSITORY_CONSTITUTION.md | 1f42a8ea298af39fffd56e3ce5c3542cef512df2 |
 | C18.1 | docs/REPOSITORY_CONSTITUTION.md | 1f42a8ea298af39fffd56e3ce5c3542cef512df2 |
 | LAW-SOT-01 | docs/ARCHITECTURAL_LAWS.md | 91ce5627ddc08b5f90189114bbef18c268b484a0 |
 | LAW-DOC-01 | docs/ARCHITECTURAL_LAWS.md | 91ce5627ddc08b5f90189114bbef18c268b484a0 |
 
-The ADR blob named here is the PRE-amendment body, the authority this change acts upon. The
-POST-amendment digest is recorded in the lifecycle `approved` row as `adr_0105_renewed`.
+**The ADR row records the operator-reconfirmed POST-amendment blob.** The original declaration cited
+`f9fa602b501f80418d8a66eb9c6389a99ae64c8a`, the pre-amendment body this change acts upon; that
+original binding is not erased, because **git history preserves it** — it is the value in every commit
+up to and including `3f147edc6c008c1bebcb656b0649d9bdf112f356`, and `git log -p` on this file shows the
+transition. The live row now names `f0ebd9f0322a58b794c5275b0c8482831a5ca04a`, the blob the operator
+re-confirmed under token `APPROVE ADR-0105 RENEWED BODY DIGEST`, whose body digest
+`sha256:6db101a956dc3a8479cad2281dc0c43fe0e52a234e2c29705da63774c3826e5d` is recorded in the lifecycle
+`approved` row of 2026-07-19T16:55:23Z as `adr_0105_renewed`.
+
+**Why the binding is updated rather than left stale.** ADR-0105 §4.4 makes a moved authority blob FLAG
+for re-confirmation; re-confirmation happened, so the flag must be discharged by recording what was
+re-confirmed. A lifecycle append cannot discharge it — `AUTH-BLOB-MOVED` compares this table against
+the live blob and reads no lifecycle event — so the only truthful discharge is here. **This
+terminates:** editing this contract changes `D` and requires a fresh approval of that `D`, but it does
+not move the ADR blob, so the authority row it now names stays correct and no further round is
+generated. The cost is exactly one re-approval, which is the point of the gate, not a bypass of it.
 
 ### owners
 
