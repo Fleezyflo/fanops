@@ -1,0 +1,149 @@
+---
+id: CC-2026-07-19-single-operator-authorization
+traits: [governance]
+authorized_actions: [design, implement]
+incidental_allowlist: []
+blast_radius: []
+invariants: [LAW-SOT-01, LAW-DOC-01, C2.1, C18.1]
+stop_conditions: ["T6: the operator required a contract for this correction"]
+supersedes: []
+---
+
+# CC-2026-07-19-single-operator-authorization
+
+### objective
+
+Remove the second-person-centered merge-authorization system from the active repository and replace
+it with a single-operator model.
+
+This repository has exactly **one** human operator. The shipped model required a non-author GitHub
+`APPROVED` review to authorize a merge (`ST-4`). That reviewer does not exist and must never be
+required, so the gate could be waited on indefinitely and never cleared. ADR-0105 §4.1a already named
+this outcome in its own text — a governance system that can never authorize a merge in the repository
+it governs *"does not fail safe, it fails **inoperative**, and inoperative controls are removed
+wholesale rather than satisfied."* This contract applies that sentence to the rule itself.
+
+**The problem.**
+
+Three distinct defects, one root cause — **an authorization predicate that names a principal the
+repository does not have**.
+
+1. **`ST-4` is unsatisfiable here.** Its predicate reads `gates.exact_head_approval`, which was
+   computed primarily from PR reviews. The sole account is also the author of every PR and GitHub
+   refuses self-approval, so no evidence admissible to that rule can ever exist.
+2. **The in-file fallback was gated on a census the platform will not return.** The "unwitnessed"
+   route required proof that exactly one principal could push. App-installation endpoints answer 401
+   or 403 to every available credential, so the fallback was frequently `unknown`, which is not
+   satisfied — the fallback inherited the same unreachability it existed to cure.
+3. **A review outage could change a governance verdict.** `read_reviews` returning `None` set the
+   gate to `unknown`. Availability of an irrelevant third-party API decided whether a merge was
+   authorized.
+
+**The solution.**
+
+**One route.** Merge authorization is an operator-issued `merge_approved` lifecycle event carrying
+`parent_sha`, `digest`, `pr`, `operator` and `token`, satisfying the four `parent_binds` checks.
+
+**`ST-4` is deleted** — not renamed, aliased or renumbered. `ST-9` is a *different question*: has the
+sole authority authorized THIS parent, for THIS contract, on THIS PR. The operator can answer it.
+
+**No review or principal read survives in the authorization path.** `gates()` has no parameter to
+pass them through; `read_reviews`, `read_principals` and `ReviewPort` are deleted rather than left
+unused. The absence is structural — a dormant adapter is an invitation to wire it back in.
+
+**What does not relax.** Every binding check still bites and each is proven from git or the
+declaration rather than taken at its word: wrong digest, wrong PR, non-ancestor parent, a
+non-contract path moved after the parent, a declaration edit, a rewritten lifecycle. A
+lifecycle-only append still binds, because the §3 byte split proves that delta inert. **The agent may
+transcribe an operator token; it may never author one.**
+
+### success_condition
+
+1. `python -m tools.contract selftest` exits 0 with every control DETECTED, including `NC-C27`.
+2. `NC-SO-01` through `NC-SO-11` are registered and DETECTED, covering all fourteen required
+   controls.
+3. `ST-4` appears in no rule table, predicate, model constant, verifier path, report string or
+   fixture; `decide.RULES` contains no `ST-4` and no duplicate ids.
+4. `lifecycle.gates` has no `reviews` or `principals` parameter; `read_reviews`, `read_principals`,
+   `WITNESSED`, `UNWITNESSED` and `ReviewPort` do not exist.
+5. No executable line in `lifecycle.py`, `decide.py`, `adapters.py`, `__main__.py`, `report.py` or
+   `model.py` contains a review, reviewer-identity or principal-census read.
+6. A contract with **zero** PR reviews and a valid operator authorization reaches
+   `merge_authorization == satisfied`.
+7. `python -m tools.arch ci` and `python -m tools.ci static` exit 0.
+8. The ADR body digest, its front-matter `approved_digest` and `classify.py::ADR_0105_DIGEST` agree.
+
+### verification
+
+| obligation_id | control_or_requirement | distinct_boundary |
+|---|---|---|
+| OB-NEG-CONTROL | tools/contract/selftest.py, every control DETECTED including NC-SO-01..NC-SO-11 | proves each rule FIRES on an injected defect — the only check that can show a deleted route is really gone |
+| OB-ARCH-CI | python -m tools.arch ci | regeneration byte-compare plus the policy rule set — proves the ARTIFACTS match the source |
+| OB-CI-STATIC | python -m tools.ci static | registry-versus-workflow reconciliation — proves the DECLARED controls match the wired ones |
+| OB-C18 | the ADR-0105 correction disclosed, its digest recomputed, and renewed operator approval obtained | proves the AUTHORITY changed with consent, not silently |
+| OB-REVERIFY | the structural absence tests in tests/test_contract_compiler.py | proves no review or principal read survives ANYWHERE in the authorization path, which a behavioural probe cannot show |
+
+### rollback
+
+Revert this PR. The change is confined to the contract compiler, its ADR and its tests; no runtime
+`src/fanops/` path, no CI workflow and no repository setting is touched, so a revert restores the
+prior model exactly.
+
+### allowed_scope
+
+| glob | why | basis |
+|---|---|---|
+| docs/adr/0105-reusable-change-contract-architecture.md | the normative model being corrected | ADR-0105 §4.1a |
+| tools/contract/** | the implementation of that model | ADR-0105 §1 T3 |
+| tests/test_contract_compiler.py | the tests pinning the deleted model | ADR-0105 §9 |
+| docs/contracts/CC-2026-07-19-single-operator-authorization.md | this contract | ADR-0105 §3.6 |
+
+### expected_surfaces
+
+| path | kind | why |
+|---|---|---|
+| docs/adr/0105-reusable-change-contract-architecture.md | MODIFIED | §4.1a rewritten to one route; §4.2 and §4.3 rows and §Risks corrected; body digest recomputed |
+| tools/contract/lifecycle.py | MODIFIED | single-route `gates()`; `_merge_authorization`; `read_reviews`/`read_principals`/`WITNESSED`/`UNWITNESSED` deleted |
+| tools/contract/decide.py | MODIFIED | `ST-4` deleted; `ST-9` added |
+| tools/contract/model.py | MODIFIED | `Gates.exact_head_approval` → `merge_authorization`; `exact_head_evidence` deleted |
+| tools/contract/adapters.py | MODIFIED | `ReviewPort` and its slug helper deleted |
+| tools/contract/__main__.py | MODIFIED | review and principal reads removed from the execution path; `Ports.reviews` deleted |
+| tools/contract/report.py | MODIFIED | gate payload and disclosure line follow the single route |
+| tools/contract/selftest.py | MODIFIED | `FakeReviews` deleted; `NC-SO-01`..`NC-SO-11` added |
+| tools/contract/classify.py | MODIFIED | `ADR_0105_DIGEST` re-pinned to the corrected body |
+| tests/test_contract_compiler.py | MODIFIED | two-route tests replaced with single-operator and structural-absence tests |
+
+### owners
+
+| subsystem_id | why_touched |
+|---|---|
+| S01_foundation | no `src/fanops/` module changes; ownership is DECLARED for the governance tooling and documentation paths, never inferred (ADR-0105 §7) |
+
+### authority
+
+| id | source_file | blob_sha |
+|---|---|---|
+| ADR-0105 | docs/adr/0105-reusable-change-contract-architecture.md | f9fa602b501f80418d8a66eb9c6389a99ae64c8a |
+| C2.1 | docs/REPOSITORY_CONSTITUTION.md | 1f42a8ea298af39fffd56e3ce5c3542cef512df2 |
+| C18.1 | docs/REPOSITORY_CONSTITUTION.md | 1f42a8ea298af39fffd56e3ce5c3542cef512df2 |
+| LAW-SOT-01 | docs/ARCHITECTURAL_LAWS.md | 91ce5627ddc08b5f90189114bbef18c268b484a0 |
+| LAW-DOC-01 | docs/ARCHITECTURAL_LAWS.md | 91ce5627ddc08b5f90189114bbef18c268b484a0 |
+
+The ADR blob named here is the **pre-correction** body — the authority this change acts upon. This
+change amends that body, so the blob moves and `AUTH-BLOB-MOVED` / `ST-2` is the EXPECTED verdict
+until the operator re-confirms the corrected body and the row is rebound to it. Per §4.4 a moved
+authority blob flags for re-confirmation and does not auto-void.
+
+### reusable_evidence
+
+| claim | proven_by | proven_at | binding |
+|---|---|---|---|
+| `ST-4`'s predicate read `gates.exact_head_approval`, which was computed from PR reviews | read of tools/contract/decide.py:136 and lifecycle.py:177 before the correction | 35cbf7fcebdd9e2b5f657a971af6c31140879123 | tool:single-operator-correction |
+| the in-file route required `len(principals) == 1` and treated an unreadable census as `unknown` | read of tools/contract/lifecycle.py:190-197 before the correction | 35cbf7fcebdd9e2b5f657a971af6c31140879123 | tool:single-operator-correction |
+| `write_principals()` read only `/collaborators`, so App installations were never enumerated | read of tools/contract/adapters.py:225-236 before the correction | 35cbf7fcebdd9e2b5f657a971af6c31140879123 | tool:single-operator-correction |
+
+## Lifecycle
+
+| timestamp | event | values |
+|---|---|---|
+| 2026-07-19T21:52:58Z | created | id=CC-2026-07-19-single-operator-authorization; base_sha=35cbf7fcebdd9e2b5f657a971af6c31140879123; timestamp_source=GitHub API Date response header, observed during this operation |

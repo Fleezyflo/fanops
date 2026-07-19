@@ -133,8 +133,13 @@ STAGE_B: tuple[Rule, ...] = (
          "a cited authority changed after approval, or its file no longer exists", "operator"),
     Rule("ST-3", STOP, (HEAD, MERGE), lambda di: di.gates.content_approval != "satisfied",
          "no `approved` event names the current declaration digest `D`", "operator"),
-    Rule("ST-4", STOP, (MERGE,), lambda di: di.gates.exact_head_approval != "satisfied",
-         "no pull-request review approves the exact current head", "operator"),
+    # `ST-9` REPLACES NOTHING. The deleted `ST-4` asked whether a PR review approved the head, which
+    # in a one-operator repository asked whether a person who does not exist had acted — unsatisfiable
+    # rather than strict. This asks whether the sole authority authorized THIS parent for THIS
+    # contract and THIS PR. It is satisfiable by the operator alone, and no review can satisfy,
+    # strengthen or block it.
+    Rule("ST-9", STOP, (MERGE,), lambda di: di.gates.merge_authorization != "satisfied",
+         "no operator `merge_approved` event authorizes the current head", "operator"),
     Rule("ST-5", STOP, (HEAD, MERGE), lambda di: "GENERATED-NOT-REPRODUCIBLE" in _codes(di),
          "a generated consequence is not reproduced by regeneration", "agent"),
     Rule("ST-6", STOP, _ALL, lambda di: bool(_codes(di) & {"I1", "I4", "EV-SHAPE"}),

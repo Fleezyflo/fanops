@@ -37,8 +37,8 @@ def payload(decision: Decision, *, contract_id: str, digest: str, traits, risk_t
         "traits": sorted(traits),
         "risk_tier": risk_tier,
         "gates": {"content_approval": gates.content_approval,
-                  "exact_head_approval": gates.exact_head_approval,
-                  "exact_head_evidence": gates.exact_head_evidence,
+                  "merge_authorization": gates.merge_authorization,
+                  "authorized_parent": gates.approved_head,
                   "acceptance": gates.acceptance},
         "diagnostics": [{"kind": d.kind, "code": d.code, "detail": d.detail, "at": d.located(),
                          "path": d.path, "got": d.got, "expected": d.expected,
@@ -73,18 +73,16 @@ def render(decision: Decision, *, contract_id: str, digest: str, traits, risk_ti
          f"- derived state: `{state}`",
          f"- traits: {', '.join(f'`{t}`' for t in sorted(traits)) or '`contained` (empty set)'}",
          f"- risk_tier: `{risk_tier}` — selects the breach response ONLY, never the obligations",
-         f"- gates: content `{gates.content_approval}` · exact-head `{gates.exact_head_approval}`"
-         f"{f' ({gates.exact_head_evidence})' if gates.exact_head_evidence else ''} "
-         f"· acceptance `{gates.acceptance}`", ""]
+         f"- gates: content `{gates.content_approval}` · merge-authorization "
+         f"`{gates.merge_authorization}` · acceptance `{gates.acceptance}`", ""]
 
-    # An exact-head gate satisfied WITHOUT a second principal is disclosed at the top of the report,
-    # not buried in `detail`. The whole difference between an honest degradation and a bypass is
-    # whether the reader is told, and a reader who has to go looking has not been told.
-    if gates.exact_head_evidence == "unwitnessed":
-        L += ["> **This merge approval is UNWITNESSED.** It is parent-bound and git-verified, but no "
-              "second principal reviewed it — the repository has exactly one account with push "
-              "access, so none exists. It carries the operator's judgement alone (ADR-0105 §4.1).",
-              ""]
+    # WHAT the operator authorized is disclosed at the top of the report, not buried in `detail`. A
+    # satisfied authorization gate should let the reader see the exact parent it rests on without
+    # going looking — a reader who has to go looking has not been told.
+    if gates.merge_authorization == "satisfied" and gates.approved_head:
+        L += [f"> **Merge authorized by the operator** at parent `{gates.approved_head[:12]}…`, "
+              f"parent-bound and git-verified against the current head. This repository has one "
+              f"human authority and no review is read (ADR-0105 §4.1a).", ""]
 
     if decision.outcome == "refuse":
         L += ["> **Refusal is a first-class successful outcome** (ADR-0105 §10). A contract "

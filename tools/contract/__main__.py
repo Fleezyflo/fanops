@@ -40,7 +40,7 @@ import sys
 from pathlib import Path
 
 from . import classify, derive, lifecycle, report, validate
-from .adapters import REPO, ArtifactPort, ImpactPort, PortError, RegistryPort, RepoPort, ReviewPort
+from .adapters import REPO, ArtifactPort, ImpactPort, PortError, RegistryPort, RepoPort
 from .decide import HEAD, MERGE, PRE, decide
 from .model import EXIT_CONTINUE, EXIT_UNTRUSTWORTHY, DecisionInput, Derived
 from .parse import BOUNDARY, digest as digest_of, parse
@@ -55,12 +55,11 @@ MAIN_REF = "origin/main"
 class Ports:
     """The five ports, together. `selftest` substitutes fakes wholesale rather than monkeypatching."""
 
-    def __init__(self, repo=None, impact=None, artifacts=None, registry=None, reviews=None) -> None:
+    def __init__(self, repo=None, impact=None, artifacts=None, registry=None) -> None:
         self.repo = repo or RepoPort()
         self.impact = impact or ImpactPort()
         self.artifacts = artifacts or ArtifactPort()
         self.registry = registry or RegistryPort()
-        self.reviews = reviews or ReviewPort()
 
 
 def _load(ports: Ports, path: str, ref: str | None) -> tuple[bytes | None, str]:
@@ -207,17 +206,13 @@ def run(ports: Ports, path: str, *, base: str, head: str | None, pr: int | None,
 
     # ── S7 gates ────────────────────────────────────────────────────────────────────────────
     pr_num = pr if pr is not None else _pr_of(decl)
-    reviews, review_problem = lifecycle.read_reviews(ports.reviews, pr_num)
-    if review_problem:
-        diags += validate.v_dependency([review_problem])
     head_sha = ports.repo.resolve(head_ref) or ""
     merged = main_blob is not None                 # the S5 read; never a second, disagreeable one
-    principals, principal_problem = lifecycle.read_principals(ports.reviews, pr_num)
-    if principal_problem:
-        diags += validate.v_dependency([principal_problem])
-    gates = lifecycle.gates(decl, decl.events, head_sha=head_sha, pr=pr_num, reviews=reviews,
-                            main_has_contract=merged, repo=ports.repo, path=path, raw=raw,
-                            principals=principals)
+    # NO review read and NO principal read. Merge authorization is the operator's own parent-bound
+    # event, so this path touches git and the declaration and nothing on the network. A dead, denied
+    # or empty review API cannot change a verdict, because no verdict consults one.
+    gates = lifecycle.gates(decl, decl.events, head_sha=head_sha, pr=pr_num,
+                            main_has_contract=merged, repo=ports.repo, path=path, raw=raw)
     proposals = [e for e in decl.events if e.kind == "head_proposed"]
     proposal_bound = bool(proposals) and lifecycle.parent_binds(
         proposals[-1], repo=ports.repo, path=path, head_sha=head_sha, raw=raw)[0]

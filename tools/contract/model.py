@@ -228,17 +228,18 @@ class Derived:
 
 @dataclass(frozen=True)
 class Gates:
-    """The three ADR-0105 §4.1 gates. `unknown` is NOT `satisfied` — see `decide.py` ST-3/ST-4."""
+    """The three ADR-0105 §4.1 gates. `unknown` is NOT `satisfied` — see `decide.py` ST-3/ST-9.
+
+    `merge_authorization` has exactly ONE route: the operator's parent-bound `merge_approved` event.
+    There is no second evidence class to name, so the field recording WHICH route satisfied the gate
+    is gone with the route it existed to disclose.
+    """
     content_approval: str = "not_sought"           # satisfied | stale | unknown | not_sought
-    exact_head_approval: str = "not_sought"
+    merge_authorization: str = "not_sought"
     acceptance: str = "not_sought"
     approved_digest: str = ""
-    approved_head: str = ""
+    approved_head: str = ""                        # the parent the operator authorized
     detail: tuple[str, ...] = ()
-    # Which of the two §4.1 evidence routes satisfied the exact-head gate. `witnessed` carries a
-    # second principal's judgement; `unwitnessed` carries the operator's alone and says so. A gate
-    # that is satisfied by weaker evidence must REPORT that, or the weakening is a lie by omission.
-    exact_head_evidence: str = ""
 
 
 @dataclass(frozen=True)

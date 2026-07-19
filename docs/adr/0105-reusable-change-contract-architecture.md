@@ -2,7 +2,7 @@
 status: accepted
 date: 2026-07-18
 accepted_in_principle: 2026-07-18
-approved_digest: sha256:e757fb6e01d3e6f143f6d6af9f45bce780331562adb07149b55857baefc5875a
+approved_digest: sha256:37db3e0ca3c7557555a1b5885bc66138949dc320699bd5c3f4e9ab03cac87eea
 supersedes: []
 references: [0100, 0101, 0102]
 deciders: [operator]
@@ -410,33 +410,62 @@ approval covers — the parent, plus a delta proven inert — instead of moving 
 cannot cover itself. **Relocation was the one escape of the three that depended on a fact outside the
 repository, and it is the one that broke.**
 
-**Two evidence routes, and which applies is not a choice.**
+**ONE authorization route, because this repository has ONE human authority.**
 
 | Route | Evidence | Admissible when |
 |---|---|---|
-| **witnessed** | a non-author `APPROVED` PR review whose `commit_id` equals the head | always; **tried first, and preferred whenever it succeeds** |
-| **unwitnessed** | an in-file `merge_approved` event satisfying the four parent-binding checks | **only** when the platform reports **exactly one** principal with push access |
+| **operator** | an in-file `merge_approved` event carrying `parent_sha`, `digest`, `pr`, `operator` and `token`, satisfying the four parent-binding checks | **always — it is the only route** |
 
-The admissibility test reads the platform's write-access set. It is not a field, a flag, or anything
-the governed tree can assert about itself — a repository must not be able to declare its own
-population. **Where two or more principals can push, the unwitnessed route is unreachable and
-behaviour is byte-identical to the original model.** Where the set cannot be read, the route is
-**inadmissible** (unknown is not satisfied — the same rule the gates already follow).
+**The witnessed route is DELETED, and so is `ST-4`.** The original rule admitted only a non-author
+`APPROVED` PR review. This repository has exactly one human operator, who is also the author of every
+PR, and GitHub refuses self-approval — so that gate could be waited on forever and never cleared. A
+rule that cannot be satisfied is not strict, it is **unsatisfiable**, and the section below already
+said what follows: a governance system that can never authorize a merge in the repository it governs
+"does not fail safe, it fails **inoperative**, and inoperative controls are removed wholesale rather
+than satisfied." That is now applied to the rule itself rather than argued around.
 
-**What the unwitnessed route does not have, stated plainly.** It carries no second principal's
-judgement, and no amount of verification can manufacture one. It is admissible only where such
-judgement is *structurally unavailable* — never as a shortcut where it is merely inconvenient. The
-verifier names the evidence class in its report and its payload, and a satisfied-but-unwitnessed gate
-is disclosed above the fold. **A governance system that degrades silently has been bypassed; one that
-degrades loudly and durably has been honest about what it can prove.**
+**Nothing replaces it.** No rule may be introduced whose real meaning is "a second person has not
+approved". `ST-9` asks a different question — *has the sole authority authorized THIS parent, for
+THIS contract, on THIS PR* — and the operator can answer it.
 
-**Why this is not "the author may self-approve".** In a single-principal repository the operator's own
-word is *already* the sole evidence behind content approval (§4.1 row 1) and acceptance (row 3), both
-of which are in-file records an agent writes. The unwitnessed route does not lower the system's floor;
-it stops one gate from *appearing* to stand on stronger ground than the two beside it. The alternative
-considered and rejected was to leave the gate unsatisfiable: a governance system that can never
-authorize a merge in the repository it governs does not fail safe, it fails **inoperative**, and
-inoperative controls are removed wholesale rather than satisfied.
+**A GitHub review is irrelevant to authorization.** It cannot grant, strengthen, weaken or block it.
+An `APPROVED` review by itself authorizes nothing, and a dead, denied or empty review API changes no
+verdict. This is structural, not configured: `lifecycle.gates()` has no review parameter, no
+reviewer-identity input and no principal-census input, and `ReviewPort` is deleted rather than left
+unused. **Principal censuses — collaborators, App installations, deploy keys, workflow tokens — are
+not read by the merge gate at all.** Whether such a census is readable, and what count it would
+report, has no effect on any verdict.
+
+**What the operator's authorization must carry, and what is checked.**
+
+| value | what proves it |
+|---|---|
+| `parent_sha` | git: an ancestor of the head, and the four `parent_binds` checks above |
+| `digest` | it must equal the current `D` — an authorization of different contract text is stale |
+| `pr` | it must equal the governed PR — an authorization of a different change is stale |
+| `operator` | non-empty: an authorization that names no human records no human act |
+| `token` | non-empty: the exact operator instruction being transcribed |
+
+**The agent may transcribe an operator's token; it may never author one.** A `merge_approved` row
+whose token did not originate in an explicit operator message is a record that something was
+authorized without recording *what* — the one failure this whole model exists to prevent. Missing,
+malformed, mismatched, rewritten or stale authorization fails closed through ordinary state
+derivation, exactly as before.
+
+**What this does NOT relax.** Every binding check still bites, and all of them are checked against
+git or the declaration rather than taken at their word. A non-contract path that moved after the
+authorized parent, a declaration edited after it, a rewritten lifecycle, a non-ancestor parent, a
+wrong digest and a wrong PR each defeat the authorization. A **lifecycle-only** append after the
+authorized parent still binds, because the §3 byte split proves that delta cannot change the
+declaration, the code or any authority. The gate became **reachable by one operator**, not automatic.
+
+**Why this is not "the author may self-approve".** The operator's own word is *already* the sole
+evidence behind content approval (§4.1 row 1) and acceptance (row 3), both of which are in-file
+records an agent writes. Removing the second-person requirement from the middle gate does not lower
+the system's floor; it stops one gate from *appearing* to stand on ground the two beside it never
+stood on. What actually constrains the operator here is not a witness — it never was — it is that the
+authorization must name a specific commit, a specific contract text and a specific PR, and git is
+asked whether those still hold.
 
 #### 4.2 Lifecycle events
 
@@ -449,7 +478,7 @@ Append-only. Each carries a UTC timestamp and its binding.
 | `binding` | agent | `branch`, `pr` — re-appended whenever either changes | yes |
 | `implementation_started` | agent | — | yes |
 | `head_proposed` | agent | **`parent_sha`**, required-CI result at that head, verifier result | yes |
-| `merge_approved` | **operator** | a GitHub PR review at `commit_id`, **or** in-file **`parent_sha`** (§4.1a) | **no** |
+| `merge_approved` | **operator** | in-file **`parent_sha`**, **`digest`**, **`pr`**, **`operator`**, **`token`** (§4.1a) | **no** |
 | `merged` | derived | the squash SHA on `main` | n/a |
 | `accepted` | operator, recorded by agent | merged `main` SHA, evidence for `success_condition` | yes (post-merge) |
 | `refused` | agent **or** operator | reason | yes |
@@ -467,7 +496,7 @@ State is **computed**, never declared:
 refused | superseded | abandoned   if the corresponding terminal event is present
 accepted                           if an `accepted` event is present
 merged                             if the squash commit exists on main
-approved_for_merge                 if a `merge_approved` binds to the current head by either §4.1a route
+approved_for_merge                 if an operator `merge_approved` binds to the current head (§4.1a)
 implemented                        if `head_proposed` binds to the current head (§4.1a) with CI green
 in_implementation                  if `approved` exists and commits follow it
 approved                           if an `approved` event names the current D
@@ -871,20 +900,21 @@ which remains hand-maintained in Phase 2 by accepted operator decision.
   than trusting the badge. *(estimate.)*
 - **The `T3` surface list has no completeness proof.** Hand-maintained in Phase 2 by accepted operator
   decision; mechanical verification is Phase 3 work. *(accepted, time-boxed.)*
-- **An unwitnessed merge approval (§4.1a) is forgeable by the agent that writes it.** So is `approved`,
-  and so is `accepted` — all three are in-file records of an operator act, and this route makes the
-  set consistent rather than adding a new exposure. The threat model is **agent drift and overreach,
-  not a compromised agent**: an adversary with commit access already owns every artifact this system
-  is made of. **Accepted residual.** *Mitigation, and the honest ceiling on it:* the route is
-  unreachable wherever a second principal exists, and the report discloses it every time it is used.
-  If the threat model ever widens to a compromised agent, the correct answer is a **signature over
-  `parent_sha` by a key the agent cannot reach** — deliberately not built now, because key custody is
-  an operator fact this repository cannot verify, and an unverifiable check is decoration.
-- **The witnessed route proves account-distinctness, not independence.** A single operator can hold a
-  second account and approve their own work; the gate would go green having proven nothing. This is
-  unchanged by the amendment and is called out because it bounds what the *stronger* route is worth:
-  neither route can prove that a human actually read the diff. **Accepted residual** — the same limit
-  as "contracts become box-ticking", below.
+- **An operator merge authorization (§4.1a) is forgeable by the agent that writes it.** So is
+  `approved`, and so is `accepted` — all three are in-file records of an operator act, and the single
+  route makes the set consistent rather than adding a new exposure. The threat model is **agent drift
+  and overreach, not a compromised agent**: an adversary with commit access already owns every
+  artifact this system is made of. **Accepted residual.** *Mitigation, and the honest ceiling on it:*
+  the authorization must name a specific parent, digest and PR, each checked against git or the
+  declaration, and the agent may transcribe an operator token but never author one. If the threat
+  model ever widens to a compromised agent, the correct answer is a **signature over `parent_sha` by
+  a key the agent cannot reach** — deliberately not built now, because key custody is an operator
+  fact this repository cannot verify, and an unverifiable check is decoration.
+- **A PR review would have proven account-distinctness, not independence — which is part of why it is
+  gone.** A single operator can hold a second account and approve their own work; the gate would go
+  green having proven nothing. The deleted route was therefore paying an *unsatisfiable* cost for a
+  guarantee it never delivered. No route can prove that a human actually read the diff. **Accepted
+  residual** — the same limit as "contracts become box-ticking", below.
 - **Contracts become box-ticking.** *Mitigation:* derive what is derivable; require a falsifiable
   success condition. **Accepted residual** — no mechanism forces a human to think.
 - **Phase 3 slips and the model stays prose.** *Mitigation:* §5.3 ships immediately with zero
