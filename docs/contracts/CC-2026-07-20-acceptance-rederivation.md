@@ -68,9 +68,10 @@ evidence after an earlier failed or absent run.
 distinction its predicate cannot.
 
 **The single-operator guarantee is preserved by shape.** `MergeFactsPort` has no `get(path)`, no
-`api()`, no base-URL parameter; three private methods build fixed paths from validated components, and
-`MergeFacts` has no field that could carry a review, an approval count or a person. `/reviews` is not
-one argument away because no argument reaches path construction. `ST-4` stays deleted.
+`api()`, no base-URL parameter; its two platform reads build fixed paths from validated components
+through a single private `_api`, and `MergeFacts` has no field that could carry a review, an approval
+count or a person. `/reviews` is not one argument away because no argument reaches path construction.
+`ST-4` stays deleted.
 
 **Process deviation, recorded accurately.** The implementation on this branch was written **before**
 any operator approval of this declaration. Part of that was necessary and part was not, and the two
@@ -85,9 +86,10 @@ must not be conflated:
   precisely the sequencing this system exists to prevent, and an earlier report of mine described the
   whole of it as "forced" — that was wrong and is corrected here rather than deleted.
 
-The branch is preserved as **unapproved implementation**. It carries no approval row, no PR is open,
-and nothing is merged. If the operator approves this declaration, the existing commits become
-authorized work; if not, they are discarded.
+The branch is preserved as **unapproved implementation**. It carries **no approval row** and nothing
+is merged; **draft PR #708 is open** against `main` so the declaration can be verified before it is
+approved, with no reviewer requested and no repository setting changed. If the operator approves this
+declaration, the existing commits become authorized work; if not, they are discarded.
 
 ### success_condition
 
@@ -183,22 +185,22 @@ restores the prior model exactly. Reverting reinstates the four defects above, i
 
 **Repository settings are out of scope by construction, not by declaration.** No collaborator,
 permission, branch-protection rule, reviewer or App installation is added or altered; none of those
-live in the tree, so no glob can name them. Branch protection is **read** to learn the required
-contexts and is never written.
+live in the tree, so no glob can name them. Branch protection is neither written NOR read: the required
+context set comes from the base-pinned in-repo registry, so no repository setting is an input here.
 
 ### expected_surfaces
 
 | path | kind | why |
 |---|---|---|
 | docs/adr/0105-reusable-change-contract-architecture.md | MODIFIED | §4.3a added; §4.1, §4.2, §4.3, §4.4 amended; a retired risk and two stale gate names corrected; body digest recomputed |
-| tools/contract/model.py | MODIFIED | `MergeFacts`; `MERGED_VALUES`; `check_runs` added to `ACCEPTANCE_VALUES`; the state names; `MAIN_REF` relocated here |
+| tools/contract/model.py | MODIFIED | `MergeFacts`; `MERGED_VALUES`; `check_runs` carried by `ACCEPTANCE_EVIDENCE_VALUES` (gate-required) and deliberately NOT by `ACCEPTANCE_VALUES` (structural); the state names; `MAIN_REF` relocated here |
 | tools/contract/lifecycle.py | MODIFIED | `_acceptance`; `_rederive_post_merge`; `MERGED-INCOMPLETE`; the corrected `state()` ladder; `CLAIMED` |
 | tools/contract/decide.py | MODIFIED | `ST-10` added after `ST-7`; `MERGED-INCOMPLETE` added to `_LIFECYCLE_FAIL` |
-| tools/contract/adapters.py | MODIFIED | `MergeFactsPort` with three closed reads; `RepoPort.tree_of`; path-segment and slug validation |
+| tools/contract/adapters.py | MODIFIED | `MergeFactsPort` with two closed PLATFORM reads (`pull`, `check_runs`); the base-pinned `required_contexts_at` as a module-level, repository-local parser and NOT a port endpoint; `RepoPort.tree_of`; path-segment and slug validation |
 | tools/contract/__main__.py | MODIFIED | the S5 platform read before `Derived` is frozen; `Ports.merge_facts`; the `cmd_state` crash repaired |
 | tools/contract/report.py | MODIFIED | claimed and unknown acceptance disclosed in the rendered report |
 | tools/contract/classify.py | MODIFIED | `ADR_0105_DIGEST` re-pinned to the amended body |
-| tools/contract/selftest.py | MODIFIED | `FakeMergeFacts`; `FakeRepo.tree_of`; `NC-AC-01`..`NC-AC-12`; `NC-C25` strengthened across the three merged states |
+| tools/contract/selftest.py | MODIFIED | `FakeMergeFacts`; `FakeRepo.tree_of`; `NC-AC-01`..`NC-AC-17`, bringing the suite to 113 controls; `NC-C25` strengthened across the three merged states |
 | tests/test_contract_compiler.py | MODIFIED | acceptance and rederivation tests; the rename guard widened to six modules; the AST guard over every `cmd_*` verb |
 | tests/fixtures/contracts/valid_full.md | MODIFIED | `merged` and `accepted` rows carry the added values |
 | docs/governance/AGENT_CHANGE_SYSTEM_ROADMAP.md | MODIFIED | the Phase 3 row records that acceptance is now verified |
@@ -214,13 +216,13 @@ contexts and is never written.
 
 | id | source_file | blob_sha |
 |---|---|---|
-| ADR-0105 | docs/adr/0105-reusable-change-contract-architecture.md | 65b3e7267117fe41d4b09b3ac9ad421e74673797 |
+| ADR-0105 | docs/adr/0105-reusable-change-contract-architecture.md | 9e3dcba940867191d4815d9164dbac5442f94d89 |
 | C2.1 | docs/REPOSITORY_CONSTITUTION.md | 1f42a8ea298af39fffd56e3ce5c3542cef512df2 |
 | C18.1 | docs/REPOSITORY_CONSTITUTION.md | 1f42a8ea298af39fffd56e3ce5c3542cef512df2 |
 | LAW-SOT-01 | docs/ARCHITECTURAL_LAWS.md | 91ce5627ddc08b5f90189114bbef18c268b484a0 |
 | LAW-DOC-01 | docs/ARCHITECTURAL_LAWS.md | 91ce5627ddc08b5f90189114bbef18c268b484a0 |
 
-**The ADR row names the AMENDED body, `65b3e7267117fe41d4b09b3ac9ad421e74673797`.** The
+**The ADR row names the AMENDED body, `9e3dcba940867191d4815d9164dbac5442f94d89`.** The
 pre-amendment body was `d971a881f4c7e58ab31f268b3a8d352b884ddec3` — that is the historical fact and
 it is not erased: it is the value on `main` at `8311bc94b83fc0ba1b2ec0f1e1e163caee75e362`, and
 `git log -p` on this file shows the transition.

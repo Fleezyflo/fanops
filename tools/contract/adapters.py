@@ -219,12 +219,19 @@ class RegistryPort:
 # existed requires the pre-merge PR head — a merge fact, not a person.
 #
 # The safety property is enforced by SHAPE, not by discipline. There is no `get(path)`, no `api()`,
-# no base-URL parameter and no format string a caller can steer: three private methods each build
-# their own fixed path from validated components. `/reviews` is not one argument away, because there
+# no base-URL parameter and no format string a caller can steer: the two platform reads each build
+# their own fixed path from validated components through a single private `_api`. `/reviews` is not one argument away, because there
 # is no argument that reaches path construction. This mirrors `lifecycle.gates()` having no
 # `reviews` parameter — you cannot pass what the signature cannot express.
 class MergeFactsPort:
-    """Three closed reads: the PR's merge facts, the check runs at a SHA, the protected contexts."""
+    """Two closed PLATFORM reads: the PR's merge facts, and the check runs at a SHA.
+
+    There is deliberately no third. The required-context set is NOT a platform read — it is parsed
+    from the in-repo registry at the contract's own base commit by the module-level
+    `required_contexts_at`, so live configuration cannot reach an acceptance verdict about the past.
+    Its absence from this class is the same structural guarantee as the absence of a review reader:
+    what the interface cannot express, no caller can request.
+    """
 
     def __init__(self, slug: str = "") -> None:
         self.slug = slug or _repo_slug()

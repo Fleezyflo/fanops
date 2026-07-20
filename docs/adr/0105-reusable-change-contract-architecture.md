@@ -2,7 +2,7 @@
 status: accepted
 date: 2026-07-18
 accepted_in_principle: 2026-07-18
-approved_digest: sha256:0150c089ef35dd72f74355f4e6a40e8c5847ccc81897b41684b5a6a9f19cd6c5
+approved_digest: sha256:58d2a108cff4aa3858f4130fd16a9fdfbab0fc0185d257b472e21b15bcf85ff2
 supersedes: []
 references: [0100, 0101, 0102]
 deciders: [operator]
@@ -23,9 +23,23 @@ met: Phase 1 `ACCEPTED` (PR #701, `937777d`).
 exact-head gate as originally specified is **unsatisfiable in this repository**, and that the same
 self-reference defeats `head_proposed` in every repository. §4.1a replaces relocation-of-the-record
 with **parent-binding**, and adds an explicitly-bounded second evidence route for repositories with a
-single write principal. Multi-principal behaviour is unchanged. **This amendment moved the body, so it
-requires renewed approval; the `approved_digest` above names the amended body, which is
-`REQUESTED / NOT YET APPROVED` until the operator answers the Phase 3B governance-amendment gate.**
+single write principal. Multi-principal behaviour is unchanged. *(Answered: approved and merged as
+PR #703. The second evidence route was subsequently deleted outright — see the next amendment.)*
+
+**Amendment, 2026-07-19 — single-operator authorization.** The "second evidence route" above was
+removed rather than bounded: this repository has one human operator, so a gate requiring a second
+person is unsatisfiable rather than strict. `ST-4` and every review reader were deleted; an
+operator-issued, parent-bound `merge_approved` is the only route. *(Answered: approved and merged as
+PR #707.)*
+
+**Amendment, 2026-07-20 — §4.3a, acceptance is verified rather than asserted.** A state and a gate
+that were both satisfied by the presence of the row they were gating are replaced by machine
+verification against the platform, and post-merge authorization is rederived against the pre-merge PR
+head instead of the squash commit. §4.3a additionally fixes the **source** of the required acceptance
+set: the base-pinned in-repo registry, never the row, never live branch protection, never
+`intended_required_contexts`. **This amendment moved the body, so it requires renewed approval; the
+`approved_digest` above names the amended body, which is `REQUESTED / NOT YET APPROVED` until the
+operator approves `CC-2026-07-20-acceptance-rederivation` (draft PR #708).**
 
 **What this acceptance binds to.** `approved_digest` in the front matter is `sha256` over this file's
 **body** — every byte after the front matter's closing `---` line, including the newline that follows
@@ -540,8 +554,30 @@ that was not given.
 human; it is not proof and is never read as proof. The verifier checks the platform: the actual merge
 SHA, that the recorded `merged` timestamp equals the platform `mergedAt`, that the required check runs
 are bound to that merge SHA, that every required run **succeeded**, and that the recorded check-run
-ids exactly match the verified set. The required set is read from **branch protection** — never from
-the row, because a row that names its own bar sets its own bar.
+ids exactly match the verified set.
+
+**The required set is pinned to the past.** It is `current_required_contexts`, read from
+`.github/ci-control-registry.yml` **at the contract's own `created.base_sha`**. That source is
+exhaustive and the exclusions are normative:
+
+- It is **never** sourced from the `accepted` row, because a row that names its own bar sets its own
+  bar.
+- It is **never** sourced from current or live branch protection. Live protection is present-day
+  configuration: reading it would mean relaxing a setting tomorrow retroactively invalidates an
+  acceptance earned today, or tightening one manufactures a bar a past merge was never held to.
+- It is **never** sourced from `intended_required_contexts`. That field is an aspiration, and a bar
+  that was never live cannot be the bar a past merge had to clear.
+
+Live branch protection **may** be reported separately as present-day drift telemetry. It is **not**
+an input to `acceptance_verified`, and no drift finding may create, invalidate, or regress a
+historical acceptance. A verdict about the past must rest on evidence that is itself fixed in the
+past, and a git blob at a named commit is exactly that.
+
+**A requirement introduced now does not reach backwards.** The same principle governs the shape of
+the row: a value that becomes necessary for acceptance to *verify* does not thereby make every
+acceptance recorded before it existed **malformed**. Absent evidence is UNVERIFIED — it fails the
+gate — but it is never FALSIFIED, and never a §3.6 tampering finding about a record written in good
+faith under the then-live rules.
 
 **Three outcomes, and only one of them is acceptance.** A completed read that disagrees is a KNOWN
 NEGATIVE and lands in `acceptance_claimed` or `merged_unverified` — a definite finding, recorded as
