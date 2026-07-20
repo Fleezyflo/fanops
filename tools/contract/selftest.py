@@ -144,6 +144,8 @@ CONTROLS: list[Control] = [
             "decision"),
     Control("NC-AC-15", "the required set is pinned to the contract's base commit", "", "",
             "decision"),
+    Control("NC-AC-17", "an `accepted` row recording no `check_runs` is unverified, not malformed",
+            "ST-10", "", "decision"),
     Control("NC-AC-16", "an incomplete check-run page is unavailability, not absence", "", "",
             "structural"),
     Control("NC-C10b", "a rewritten lifecycle history", "A5", "LIFECYCLE-REWRITTEN", "decision"),
@@ -958,6 +960,36 @@ def _c_nc_ac_07(c):
     if st != "acceptance_claimed":
         return False, f"NOT DETECTED — expected 'acceptance_claimed', got {st!r}"
     return True, f"state {st!r} — the recorded merge date is not the platform's"
+
+
+def _c_nc_ac_17(c):
+    """An `accepted` row recording NO `check_runs` is UNVERIFIED, never MALFORMED.
+
+    The distinction is the whole point. `check_runs` post-dates every acceptance recorded before it
+    existed, so requiring it STRUCTURALLY made the correctly-accepted Phase 3B contract MALFORMED and
+    routed it to `A5` — "the lifecycle record is invalid, reordered, or the landed declaration was
+    edited". A record written in good faith under the then-live rules was accused of being tampered
+    with, which is the base-pinned-required-set defect one field over: a present-day bar reaching
+    backwards to invalidate a historical acceptance.
+
+    Fail-closed is UNCHANGED and that is what this asserts: the acceptance still does not verify, so
+    it stops at `ST-10` with `acceptance_claimed`. Absent evidence is not satisfied; it is also not
+    falsified. Both halves are checked here, because dropping either one would let this regress into
+    the opposite defect.
+    """
+    raw, kw = _landed(rows=_acc_rows(drop=("check_runs",)))
+    trees = kw.pop("trees", None)
+    dec, ctx = _run(raw, _trees=trees, **kw)
+    codes = {d.code for d in dec.diagnostics}
+    if "ACCEPT-INCOMPLETE" in codes:
+        return False, "NOT DETECTED — absent evidence was reported as a MALFORMED record"
+    if dec.rule == "A5":
+        return False, "NOT DETECTED — absent evidence routed to the lifecycle-tampering rule A5"
+    if ctx["state"] != "acceptance_claimed":
+        return False, f"NOT DETECTED — expected 'acceptance_claimed', got {ctx['state']!r}"
+    if dec.rule != "ST-10":
+        return False, f"NOT DETECTED — expected rule 'ST-10', got {dec.rule!r}"
+    return True, f"ST-10 → {dec.outcome}; unverified, not malformed"
 
 
 def _c_nc_ac_08(c):

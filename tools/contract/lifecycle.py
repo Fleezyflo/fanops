@@ -35,10 +35,10 @@ taken at its word. The operator can authorize; the operator cannot authorize vag
 """
 from __future__ import annotations
 
-from .model import (ACCEPTANCE_VALUES, ACCEPTED, ACCEPTANCE_CLAIMED, EVENT_KINDS, MAIN_REF,
-                    MALFORMED, MERGED, MERGED_UNAUTHORIZED, MERGED_UNVERIFIED, MERGED_VALUES,
-                    MISSING, PARENT_BOUND_EVENTS, PARENT_BOUND_VALUES, TERMINAL_EVENTS,
-                    Diagnostic, Gates)
+from .model import (ACCEPTANCE_CLAIMED, ACCEPTANCE_EVIDENCE_VALUES, ACCEPTANCE_VALUES, ACCEPTED,
+                    EVENT_KINDS, MAIN_REF, MALFORMED, MERGED, MERGED_UNAUTHORIZED,
+                    MERGED_UNVERIFIED, MERGED_VALUES, MISSING, PARENT_BOUND_EVENTS,
+                    PARENT_BOUND_VALUES, TERMINAL_EVENTS, Diagnostic, Gates)
 from .parse import BOUNDARY, is_utc
 
 SATISFIED, STALE, UNKNOWN_GATE, NOT_SOUGHT = "satisfied", "stale", "unknown", "not_sought"
@@ -321,10 +321,13 @@ def _acceptance(events, mf, auth: str) -> tuple[str, list[str]]:
     # is an acceptance decaying on its own, which is not a verification. Identity is the anchor: the
     # ids that were recorded are the ids that get looked up, and later runs are simply not consulted.
     by_id = {rid: (name, concl) for rid, name, concl in mf.check_runs}
-    recorded = [x.strip() for x in ev.get("check_runs", "").split(",") if x.strip()]
+    recorded = [x.strip() for k in ACCEPTANCE_EVIDENCE_VALUES
+                for x in ev.get(k, "").split(",") if x.strip()]
     if not recorded:
-        return CLAIMED, ["the `accepted` row records no check-run id, so nothing binds the claim to "
-                         "a run the platform actually performed"]
+        # NOT malformed — see `ACCEPTANCE_EVIDENCE_VALUES`. A row predating this requirement is
+        # UNVERIFIED, which is not satisfied and stops here; it is not a tampered record.
+        return CLAIMED, [f"the `accepted` row records no {'/'.join(ACCEPTANCE_EVIDENCE_VALUES)}, so "
+                         f"nothing binds the claim to a run the platform actually performed"]
     covered: dict[str, str] = {}
     for rid in recorded:
         if rid not in by_id:

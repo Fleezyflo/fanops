@@ -83,15 +83,24 @@ EVENT_KINDS = ("created", "approved", "binding", "implementation_started", "head
                "merge_approved", "merged", "accepted", "refused", "superseded", "abandoned")
 TERMINAL_EVENTS = ("refused", "superseded", "abandoned")
 
-# The values an `accepted` event must persist (ADR-0105 §4.2, §4.3a). Acceptance is a separate
-# decision from merge; recording it with any of these missing would produce an acceptance nobody can
-# audit, which is the same as no acceptance at all.
-#
-# `check_runs` is the addition that makes acceptance CHECKABLE rather than merely complete. The other
-# five can all be written from inside the repository; `check_runs` names platform objects that either
-# exist bound to the merge SHA with the recorded ids, or do not. `evidence` remains — it is rationale
+# The values an `accepted` event must STRUCTURALLY persist (ADR-0105 §4.2, §4.3a). Acceptance is a
+# separate decision from merge; recording it with any of these missing would produce an acceptance
+# nobody can audit, which is the same as no acceptance at all. `evidence` remains — it is rationale
 # for a human and is NEVER read as proof (§4.3a): a row cannot prove itself by describing itself.
-ACCEPTANCE_VALUES = ("merge_sha", "decision", "evidence", "date", "operator", "check_runs")
+ACCEPTANCE_VALUES = ("merge_sha", "decision", "evidence", "date", "operator")
+
+# `check_runs` is what makes an acceptance CHECKABLE, and it is required for the acceptance GATE to
+# reach `satisfied` — `_acceptance` refuses a row that records none. It is deliberately NOT in
+# `ACCEPTANCE_VALUES`, because those two requirements differ in kind and a past record must not be
+# judged by a bar invented after it.
+#
+# Putting it there made every acceptance recorded before this field existed MALFORMED, and malformed
+# lifecycle rows route to `A5` — "the lifecycle record is invalid, reordered, or the landed
+# declaration was edited", a §3.6 tampering finding. The Phase 3B contract, correctly accepted under
+# the then-live rules, was accused of being edited. That is the same defect the base-pinned required
+# set exists to prevent (a present-day bar invalidating a historical acceptance), reproduced one
+# field over. Absent evidence is UNVERIFIED, never FALSIFIED.
+ACCEPTANCE_EVIDENCE_VALUES = ("check_runs",)
 
 # The values a `merged` event must persist.
 #

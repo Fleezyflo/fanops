@@ -91,10 +91,28 @@ authorized work; if not, they are discarded.
 
 ### success_condition
 
+THREE SEPARATE PROOFS, NEVER ONE STANDING IN FOR ANOTHER. Conditions 1–2 are control REACHABILITY;
+condition 1a is the pytest suite; condition 1b is the real-tooling boundary. They are different
+evidence about different things and are listed apart because conflating them already caused a defect:
+`selftest` was reported as validation while the `unit` job was RED, and it could never have caught
+that — `selftest` drives `FakeMergeFacts`, so no failure of the real port or of a pytest-only test is
+visible to it. A green `selftest` is not, and must never be presented as, a green suite.
+
 1. `python -m tools.contract selftest` exits 0 with every control DETECTED, including `NC-C27`.
+   This proves CONTROL REACHABILITY ONLY — that each rule fires on an injected defect.
+1a. The required context `unit (fast, no toolchain)` concludes SUCCESS on the exact head. This is the
+   only evidence that the pytest suite passes, including every test `selftest` does not execute.
+1b. The required context `real-tooling E2E (must run, not skip)` concludes SUCCESS on the exact head.
 2. `NC-AC-01` through `NC-AC-11` are registered and DETECTED, covering all eleven required controls;
-   `NC-AC-12` covers `MERGED-INCOMPLETE`, and `NC-AC-13`..`NC-AC-16` cover the no-`--pr` path, rerun
-   pinning, base-pinned required contexts and pagination completeness.
+   `NC-AC-12` covers `MERGED-INCOMPLETE`, `NC-AC-13`..`NC-AC-16` cover the no-`--pr` path, rerun
+   pinning, base-pinned required contexts and pagination completeness, and `NC-AC-17` covers absent
+   acceptance evidence.
+2a. An `accepted` row recording no `check_runs` is UNVERIFIED, never MALFORMED: it yields
+   `acceptance_claimed` via `ST-10` and never `ACCEPT-INCOMPLETE`/`A5`. A requirement introduced now
+   must not reach backwards and label a correctly-recorded historical acceptance as tampering.
+2b. The hermetic CLI cases serve the platform from a deterministic `gh` stand-in on a temporary PATH:
+   the ordinary no-`--pr` invocation succeeds AND the call is proven to have happened, while an
+   unusable or absent `gh` yields `ST-7` — never `OK`, never a crash, never a fabricated negative.
 3. An `accepted` row alone never derives state `accepted`, for every non-`satisfied` gate value.
 4. A valid authorization rederives across a squash: state `merged`, `merge_authorization` satisfied.
 5. A completed read that disagrees yields `acceptance_claimed` or `merged_unverified`, never `ST-7`;
@@ -107,7 +125,8 @@ authorized work; if not, they are discarded.
 6. `gates.acceptance` is read by at least one decision rule (`ST-10`).
 7. No `cmd_*` verb reads a `Gates` attribute that is not a field of `Gates`, proven by AST.
 8. `lifecycle.gates` has no `reviews`/`principals` parameter; `ST-4` is absent; `MergeFactsPort`
-   exposes exactly `pull`, `check_runs`, `required_contexts` and no escape hatch.
+   exposes exactly `pull` and `check_runs` and no escape hatch — the required set is NOT a platform
+   read, so the port has no method that could make it one.
 9. `python -m tools.arch ci` and `python -m tools.ci static` exit 0.
 10. The ADR body digest, its front-matter `approved_digest` and `classify.py::ADR_0105_DIGEST` agree.
 
@@ -115,7 +134,10 @@ authorized work; if not, they are discarded.
 
 | obligation_id | control_or_requirement | distinct_boundary |
 |---|---|---|
-| OB-NEG-CONTROL | tools/contract/selftest.py, every control DETECTED including NC-AC-01..NC-AC-12 | proves each rule FIRES on an injected defect — the only check that can show a self-asserting gate is really gone |
+| OB-NEG-CONTROL | tools/contract/selftest.py, every control DETECTED including NC-AC-01..NC-AC-17 | proves each rule FIRES on an injected defect — the only check that can show a self-asserting gate is really gone. Proves REACHABILITY ONLY: it drives FakeMergeFacts, so it can never witness a real-port regression or a pytest-only failure |
+| OB-UNIT-CI | the required context `unit (fast, no toolchain)` concluding success on the exact head | the ONLY evidence the pytest suite passes — a DISTINCT boundary from OB-NEG-CONTROL, which shares neither its fixtures nor its ports and reported green while this job was red |
+| OB-E2E-CI | the required context `real-tooling E2E (must run, not skip)` concluding success on the exact head | exercises the real toolchain rather than a fake, so it fails where every in-process proof above would pass |
+| OB-HERMETIC-PLATFORM | the fake-`gh` CLI cases in tests/test_contract_compiler.py | proves the platform read HAPPENS on the ordinary no-`--pr` path and that its absence is ST-7 — a call log, which no outcome assertion can show |
 | OB-ORDERING | NC-AC-04 and NC-AC-05 together | proves a completed-but-disagreeing read and an incomplete read reach DIFFERENT outcomes, which no single control can show |
 | OB-STRUCTURAL | NC-AC-10 plus the structural absence tests in tests/test_contract_compiler.py | proves the new platform port cannot express a review question, which a behavioural probe cannot show |
 | OB-VERB-COVERAGE | the AST guard over every `cmd_*` verb in tests/test_contract_compiler.py | proves the verb wrappers read only fields that exist — the gap that let a crash ship |
@@ -225,6 +247,8 @@ set of surfaces that must move together or the repository is left asserting some
 | the base-pinned `current_required_contexts` read | `_acceptance`'s required-set loop and `lifecycle.select_run_ids` | if the pin and the judging loop disagree about where the bar comes from, a live setting change can invalidate or manufacture a historical acceptance |
 | the `cmd_*` Gates-field AST guard | every rename of a `model.Gates` field | the guard is the only thing that reads the verb wrappers; a rename without it ships a crash, which is exactly how `cmd_state` broke |
 | recorded check-run ids in an `accepted` row | `MergeFactsPort.check_runs` pagination completeness | resolving recorded ids against a truncated page would report a recorded run as absent, turning a short read into a negative finding |
+| `model.ACCEPTANCE_EVIDENCE_VALUES` | `lifecycle.validate_events`'s structural check and `_acceptance`'s verification check | the two must stay on OPPOSITE sides of the split: a value moved back into `ACCEPTANCE_VALUES` becomes retroactively MALFORMED and routes every acceptance recorded before it existed to `A5`, accusing a valid historical record of tampering (`NC-AC-17`) |
+| the hermetic `gh` stand-in and its fixture table | every `binding` PR number the CLI cases write | `_pr_of` reads the LAST `binding` row, so a case that appends or rewrites one re-targets the platform read; an unserved number makes that case fail on a fixture gap instead of on what it mutated |
 
 ### reusable_evidence
 
