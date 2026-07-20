@@ -980,18 +980,46 @@ import json, os, sys
 argv = sys.argv[1:]
 with open(os.environ["FAKE_GH_LOG"], "a", encoding="utf-8") as fh:
     fh.write(" ".join(argv) + "\\n")
-if len(argv) < 2 or argv[0] != "api":
+if not argv or argv[0] != "api":
     sys.stderr.write("fake gh: only `gh api <path>` is served, got %r\\n" % (argv,))
+    raise SystemExit(2)
+
+# PARSE FLAGS, DO NOT INDEX. `argv[1]` was the path until the port began pinning `--method GET`,
+# at which point every request resolved to the fixture named "--method". A double that assumes an
+# argument POSITION breaks silently the moment the real caller's argv changes shape.
+path, method, rest = "", "", argv[1:]
+i = 0
+while i < len(rest):
+    a = rest[i]
+    if a == "--method":
+        method = rest[i + 1] if i + 1 < len(rest) else ""
+        i += 2
+    elif a in ("-f", "-F", "--field", "--raw-field"):
+        i += 2
+    elif a.startswith("-"):
+        i += 1
+    elif not path:
+        path = a
+        i += 1
+    else:
+        i += 1
+
+# Every endpoint this port reads is a GET. A double that answered a POST identically would let the
+# verb regress without a single test noticing.
+if method != "GET":
+    sys.stderr.write("fake gh: refusing a non-GET read (method=%r)\\n" % (method,))
     raise SystemExit(2)
 if os.environ.get("FAKE_GH_BROKEN"):
     sys.stderr.write("gh: authentication required\\n")
     raise SystemExit(1)
 with open(os.environ["FAKE_GH_TABLE"], encoding="utf-8") as fh:
     table = json.load(fh)
-if argv[1] not in table:
-    sys.stderr.write("fake gh: no fixture for %s\\n" % argv[1])
+if path not in table:
+    sys.stderr.write("fake gh: no fixture for %s\\n" % path)
     raise SystemExit(1)
-sys.stdout.write(json.dumps(table[argv[1]]))
+# `--slurp` semantics: ALWAYS an array of page documents, one element per page.
+pages = table[path]
+sys.stdout.write(json.dumps(pages if isinstance(pages, list) else [pages]))
 '''
 
 
