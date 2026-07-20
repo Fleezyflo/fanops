@@ -13,6 +13,8 @@ to its literal text.
 """
 from __future__ import annotations
 
+import re
+
 from dataclasses import dataclass, field
 
 # ── the closed field set (ADR-0105 §3.1: 18 fields, plus `supersedes` from §6) ──────────────
@@ -83,10 +85,61 @@ EVENT_KINDS = ("created", "approved", "binding", "implementation_started", "head
                "merge_approved", "merged", "accepted", "refused", "superseded", "abandoned")
 TERMINAL_EVENTS = ("refused", "superseded", "abandoned")
 
-# The five values an `accepted` event must persist (operator decision D-3). Acceptance is a separate
-# decision from merge; recording it with any of these missing would produce an acceptance nobody can
-# audit, which is the same as no acceptance at all.
+# The values an `accepted` event must STRUCTURALLY persist (ADR-0105 §4.2, §4.3a). Acceptance is a
+# separate decision from merge; recording it with any of these missing would produce an acceptance
+# nobody can audit, which is the same as no acceptance at all. `evidence` remains — it is rationale
+# for a human and is NEVER read as proof (§4.3a): a row cannot prove itself by describing itself.
 ACCEPTANCE_VALUES = ("merge_sha", "decision", "evidence", "date", "operator")
+
+# `check_runs` is what makes an acceptance CHECKABLE, and it is required for the acceptance GATE to
+# reach `satisfied` — `_acceptance` refuses a row that records none. It is deliberately NOT in
+# `ACCEPTANCE_VALUES`, because those two requirements differ in kind and a past record must not be
+# judged by a bar invented after it.
+#
+# Putting it there made every acceptance recorded before this field existed MALFORMED, and malformed
+# lifecycle rows route to `A5` — "the lifecycle record is invalid, reordered, or the landed
+# declaration was edited", a §3.6 tampering finding. The Phase 3B contract, correctly accepted under
+# the then-live rules, was accused of being edited. That is the same defect the base-pinned required
+# set exists to prevent (a present-day bar invalidating a historical acceptance), reproduced one
+# field over. Absent evidence is UNVERIFIED, never FALSIFIED.
+ACCEPTANCE_EVIDENCE_VALUES = ("check_runs",)
+
+# The accepted row's own value semantics, enforced rather than assumed (§4.3a).
+#
+# `decision=` must be exactly this. A row reading `decision=rejected` alongside otherwise-valid
+# evidence used to verify as an acceptance, because nothing ever read the field it recorded.
+ACCEPTED_DECISION = "accepted"
+# Recorded check-run ids must be unique DECIMAL strings. Non-decimal text cannot name a platform
+# object, and a duplicate id lets one run stand in for two required contexts.
+CHECK_RUN_ID = re.compile(r"^[0-9]+$")
+
+# The values a `merged` event must persist.
+#
+# `merged_at` is DELIBERATELY NOT HERE. Chronology is verified against the event's own TIMESTAMP
+# COLUMN, which is the claim the row actually makes about when the merge happened. Accepting a
+# separate self-written `merged_at=` while ignoring the timestamp would let a row satisfy chronology
+# with a field it authored and contradict itself in the column that dates it.
+MERGED_VALUES = ("merge_sha",)
+
+# Where the required-context set is pinned from, at the contract's own `created.base_sha`.
+CI_REGISTRY_PATH = ".github/ci-control-registry.yml"
+REQUIRED_CONTEXTS_KEY = "current_required_contexts"
+
+# ── derived state names (ADR-0105 §4.3, amended by §4.3a) ───────────────────────────────────
+#
+# Three states were added because "on main" is not one situation but four, and collapsing them let
+# the weakest read as the strongest. A merge whose authorization rederives is `merged`; one whose
+# claim cannot be verified is `merged_unverified`; one with no claim at all is `merged_unauthorized`;
+# and an `accepted` row whose proof does not complete is `acceptance_claimed`, NOT `accepted`.
+# The ref that means "landed". Defined HERE, in the module that imports nothing, because both the
+# CLI and the lifecycle rules need it and neither may import the other.
+MAIN_REF = "origin/main"
+
+ACCEPTED = "accepted"
+ACCEPTANCE_CLAIMED = "acceptance_claimed"
+MERGED = "merged"
+MERGED_UNVERIFIED = "merged_unverified"
+MERGED_UNAUTHORIZED = "merged_unauthorized"
 
 # The values a PARENT-BOUND event must persist (ADR-0105 §4.1, amended). `parent_sha` is the commit
 # the event is appended ONTO, never the commit that contains it: a record cannot name the commit
@@ -227,16 +280,96 @@ class Derived:
 
 
 @dataclass(frozen=True)
+class CheckRun:
+    """One check run, with the facts provenance and chronology need — never just a name.
+
+    `app_id`/`app_slug` answer WHO PRODUCED IT. `status`, `started_at` and `completed_at` answer WHEN,
+    which is what makes "the latest qualifying run at the moment of acceptance" a decidable question
+    instead of an ordering guessed from how large an integer is.
+    """
+    id: str = ""
+    name: str = ""
+    conclusion: str = ""
+    status: str = ""
+    started_at: str = ""
+    completed_at: str = ""
+    app_id: str = ""
+    app_slug: str = ""
+
+
+@dataclass(frozen=True)
+class MergeFacts:
+    """Platform facts about a merged PR, read once in S5 and frozen. NONE OF THESE IS A REVIEW.
+
+    This type is the whole interface between the GitHub read and the decision. It names merge facts
+    and check runs and NOTHING else — there is no field here for a review, a reviewer, an approval
+    count or a collaborator, so no amount of downstream code can consult one. The guarantee is the
+    same one `gates()` makes by having no `reviews` parameter: absence enforced by shape.
+
+    `read_ok=False` means the read did not complete. That is UNAVAILABLE, not a negative finding, and
+    the caller must have already recorded it in `Derived.unverifiable` so it stops at `ST-7` (§4.3a).
+    """
+    read_ok: bool = False
+    pr_head: str = ""                              # the FINAL pre-merge PR head — what §4.1a is about
+    merge_sha: str = ""                            # the platform's own merge commit
+    merged_at: str = ""                            # platform `mergedAt`, UTC ISO-8601
+    merged: bool = False
+    # The required set is PINNED to the contract's own `created.base_sha`, read from the in-repo
+    # control registry's `current_required_contexts`. NOT live branch protection: a live setting is
+    # present-day configuration, and letting it decide a historical acceptance means relaxing
+    # protection tomorrow could retroactively invalidate — or manufacture — an acceptance recorded
+    # today. A verdict about the past must be computed from evidence that is itself fixed in the past.
+    required_contexts: tuple[str, ...] = ()
+    # context -> (workflow_path, job_key) from the SAME pinned registry. A required context is
+    # otherwise only a NAME, and a name is author-controlled: without the mapping there is nothing
+    # to check the joined workflow run against.
+    context_provenance: tuple[tuple[str, tuple[str, str]], ...] = ()
+    # Every check run bound to `merge_sha`, as `CheckRun` records. Rich, not `(id, name, conclusion)`:
+    # the producing App identity is what separates a run GitHub Actions made from one any App with
+    # `checks:write` published under the same name, and the server timestamps are what make "later"
+    # a fact about time rather than about integer size.
+    check_runs: tuple[CheckRun, ...] = ()
+    # The documented check-run -> job -> workflow-run join, resolved in S5.
+    # check_run_id -> (job_name, workflow_run_id, workflow_path)
+    run_provenance: tuple[tuple[str, tuple[str, str, str]], ...] = ()
+    # context -> (status, detail) from `adapters.workflow_job_binding` against the workflow blob AT
+    # THE VERIFIED BASE. Binds the registry's job KEY to the display name the platform reports, which
+    # is the only field a check run actually carries; `ambiguous` means two keys render one name and
+    # no deterministic attribution exists.
+    job_binding: tuple[tuple[str, tuple[str, str]], ...] = ()
+    # workflow path -> True when its blob at the PR head is byte-identical to its blob at the
+    # externally-verified base. A workflow edited inside the change it is certifying is not evidence
+    # about that change.
+    workflow_stable: tuple[tuple[str, bool], ...] = ()
+    # The platform's own PR base SHA. The external anchor for `created.base_sha`, which the agent
+    # writes OUTSIDE `D` and which selects the registry commit the required set is read from.
+    base_sha: str = ""
+    # The contract blob AT the final pre-merge PR head, read in S5. `None` = the read did not
+    # complete (unavailability -> ST-7); `b""` = read fine and the contract was ABSENT at that head
+    # (a known negative: the claim was not effective there). Never a substituted current blob.
+    pr_head_blob: bytes | None = None
+    # Trees resolved in S5, where a failed read can still reach `Derived.unverifiable`. Empty means
+    # UNRESOLVED, which is unavailability — never a completed mismatch (ADR-0105 §4.3a).
+    pr_tree: str = ""
+    merge_tree: str = ""
+
+
+@dataclass(frozen=True)
 class Gates:
-    """The three ADR-0105 §4.1 gates. `unknown` is NOT `satisfied` — see `decide.py` ST-3/ST-9.
+    """The three ADR-0105 §4.1 gates. `unknown` is NOT `satisfied` — see `decide.py` ST-3/ST-9/ST-10.
 
     `merge_authorization` has exactly ONE route: the operator's parent-bound `merge_approved` event.
     There is no second evidence class to name, so the field recording WHICH route satisfied the gate
     is gone with the route it existed to disclose.
+
+    `acceptance` gained the value `claimed`, which is the entire point of §4.3a: a row that asserts
+    acceptance without external proof is a CLAIM, and a claim is not a gate. It used to be
+    `satisfied` on row presence alone — and because no rule read the field, nothing could observe
+    that it was wrong.
     """
     content_approval: str = "not_sought"           # satisfied | stale | unknown | not_sought
     merge_authorization: str = "not_sought"
-    acceptance: str = "not_sought"
+    acceptance: str = "not_sought"                 # satisfied | claimed | unknown | not_sought
     approved_digest: str = ""
     approved_head: str = ""                        # the parent the operator authorized
     detail: tuple[str, ...] = ()

@@ -12,8 +12,10 @@
 # below exist so this file cannot become either of those.
 from __future__ import annotations
 
+import ast
 import json
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -400,11 +402,105 @@ def test_an_incomplete_acceptance_event_is_malformed():
 
 
 def test_merged_never_implies_accepted():
+    """ADR-0105 §4.3/§4.3a. Neither direction: merge does not imply acceptance, and neither does a row."""
     from tools.contract import lifecycle
     d = parse.parse(selftest.build())
-    st = lifecycle.state(d, d.events, model.Gates(), merged=True, ci_green=False,
-                         proposal_bound=False, pr_open=False, mandatory_ok=True)
-    assert st == "merged"
+    for gates, expect in ((model.Gates(), "merged_unauthorized"),
+                          (model.Gates(merge_authorization="satisfied"), "merged")):
+        st = lifecycle.state(d, d.events, gates, merged=True, ci_green=False,
+                             proposal_bound=False, pr_open=False, mandatory_ok=True)
+        assert st == expect, f"merged with {gates.merge_authorization!r} derived {st!r}"
+        assert st != "accepted"
+
+
+def test_an_accepted_row_alone_never_derives_accepted():
+    """§4.3a. The row used to BE the proof; now it is only the claim the proof is about."""
+    from tools.contract import lifecycle
+    raw = selftest.build(extra="| 2026-07-20T00:00:00Z | accepted | merge_sha=abc; decision=a; "
+                               "evidence=e; date=2026-07-20; operator=operator; check_runs=1 |\n")
+    d = parse.parse(raw)
+    for acc in ("not_sought", "claimed", "unknown"):
+        st = lifecycle.state(d, d.events, model.Gates(acceptance=acc), merged=True, ci_green=False,
+                             proposal_bound=False, pr_open=False, mandatory_ok=True)
+        assert st == "acceptance_claimed", f"acceptance={acc!r} derived {st!r}"
+    st = lifecycle.state(d, d.events, model.Gates(acceptance="satisfied"), merged=True,
+                         ci_green=False, proposal_bound=False, pr_open=False, mandatory_ok=True)
+    assert st == "accepted", "a VERIFIED acceptance must still reach `accepted`"
+
+
+def test_the_acceptance_gate_is_read_by_a_rule():
+    """A gate no rule consumes is documentation, not enforcement — the defect §4.3a also fixed.
+
+    `gates.acceptance` was computed and reported but read by NO rule, so its wrong value could not
+    have been observed. This asserts the reader exists, which is what makes the corrected predicate
+    matter.
+
+    READ THE WHOLE MODULE, NOT `inspect.getsource(lambda)`. For a lambda spanning two lines
+    `getsource` returns only the first, so the read on line two was invisible and this test reported
+    `readers=[]` about a rule that plainly reads the gate — a false negative that would have been
+    "fixed" by deleting the rule. The AST sees the entire expression regardless of layout.
+    """
+    from tools.contract import decide
+
+    tree = ast.parse((_ROOT / "tools" / "contract" / "decide.py").read_text(encoding="utf-8"))
+    readers = set()
+    for call in (n for n in ast.walk(tree)
+                 if isinstance(n, ast.Call) and getattr(n.func, "id", "") == "Rule"):
+        rid = call.args[0].value if call.args and isinstance(call.args[0], ast.Constant) else ""
+        for node in ast.walk(call):
+            # `<anything>.gates.acceptance` — the attribute CHAIN, so a bare local named
+            # `acceptance` or a string mentioning it cannot pass for a read of the gate.
+            if (isinstance(node, ast.Attribute) and node.attr == "acceptance"
+                    and isinstance(node.value, ast.Attribute) and node.value.attr == "gates"):
+                readers.add(rid)
+    assert "ST-10" in readers, f"no registered rule reads `.gates.acceptance`; readers={sorted(readers)}"
+
+    # A gate read by a rule that can never be reached is still decoration. `ST-7` (unavailable) MUST
+    # be evaluated first, or an unreadable platform would be reported as an acceptance that failed to
+    # verify — unavailability wearing the costume of a finding, which is the §4.3a defect exactly.
+    order = [r.id for r in decide.RULES]
+    assert order.index("ST-7") < order.index("ST-10"), (
+        f"ST-7 must precede ST-10 in first-match-wins order; got {order}")
+
+
+def test_post_merge_authorization_is_rederived_against_the_pre_merge_head():
+    """§4.3a. A squash makes the authorized parent a non-ancestor; asking the squash is asking wrong.
+
+    ASSERTED BEHAVIOURALLY, ON PURPOSE. The first version of this test asserted that the string
+    `tree_of` appeared inside `_rederive_post_merge`, which is a claim about where a line of code
+    lives rather than about what the tool does — and it went red for the RIGHT change, when the tree
+    reads were correctly hoisted to where a failed read can still reach `Derived.unverifiable`. A
+    test that forbids the fix it was written to protect is worse than no test.
+
+    The invariant has three halves and all three are checked here, because each one alone is
+    satisfiable by a defect: only-unavailable would pass if nothing ever compared trees, only-unequal
+    would pass if unavailability were reported as a mismatch, and the ORDER matters because a read
+    that completes after `Derived` is frozen produces a diagnostic no rule consumes.
+    """
+    from tools.contract import selftest as st
+
+    # 1. Two readable, UNEQUAL trees are a FINDING: the landed content differs from the authorized
+    #    content, which `merged_unverified` names exactly. Never `ST-7` — nothing was unavailable.
+    raw, kw = st._landed(rows="", trees={"h" * 40: "a" * 40, st.MERGE_SHA: "b" * 40})
+    dec, ctx = st._run(raw, _trees=kw.pop("trees"), **kw)
+    assert ctx["state"] == "merged_unverified", (
+        f"two readable unequal trees must be a FINDING, got {ctx['state']!r} via {dec.rule}")
+    assert dec.rule != "ST-7", "an unequal comparison is a disagreement, never unavailability"
+
+    # 2. An UNREADABLE tree is NOT a mismatch. It must stop at `ST-7`, and the only way `ST-7` can
+    #    see it is if the read completed before `Derived` froze `unverifiable` into a tuple — a read
+    #    landing after the freeze would produce a diagnostic no rule consumes, a silent fail-open.
+    raw, kw = st._landed(rows="")
+    kw.pop("trees", None)
+    dec, ctx = st._run(raw, repo_fail="tree", **kw)
+    assert dec.rule == "ST-7", f"an unresolvable tree must be UNAVAILABLE, got {dec.rule}"
+    assert ctx["state"] != "merged_unverified", (
+        "a tree that could not be read was reported as a tree that did not match")
+
+    # 3. The carrier itself, asserted rather than inferred: the failed read is IN the frozen tuple.
+    carried = ctx["derived"].unverifiable
+    assert any("could not be read" in u for u in carried), (
+        f"the failed tree read must be carried in Derived.unverifiable, got {carried}")
 
 
 def test_the_bootstrap_contract_is_structurally_valid():
@@ -511,18 +607,57 @@ def test_ac21_passes_once_the_operator_approval_is_simulated():
         approved = raw + f"| {nxt} | approved | digest={d}; token=APPROVE |\n".encode()
         assert parse.parse(approved).digest == d, "a lifecycle append must never change `D` (ADR §3)"
 
+    # ISOLATION. AC-21 asks ONE question: with the operator's content approval on record, does the
+    # contract reach `continue` at its own head? Everything the contract accumulated AFTER that point
+    # — `merged`, `accepted` — is later history that this assertion is not about, and leaving it in
+    # is what let unrelated machinery answer in its place. It did: the acceptance-evidence
+    # requirement turned the trailing `accepted` row into a permanent `ST-10`, and before that a
+    # structural-completeness check turned it into `A5`, both of them masking AC-21 entirely.
+    #
+    # So the simulated lifecycle is TRUNCATED at the first post-merge event and the approval is
+    # appended there. The fixture is complete and internally consistent at that point, and the
+    # injected merge facts agree with it (this PR is not merged in the simulated world), so no gate
+    # is left comparing the record against a platform that contradicts it.
+    decl_b, _, life_b = approved.partition(parse.BOUNDARY)
+    lines = life_b.decode().splitlines(keepends=True)
+    kept, stop = [], False
+    for x in lines:
+        if x.startswith("| 20"):
+            if stop or re.match(r"^\|[^|]*\|\s*(merged|accepted)\s*\|", x):
+                stop = True
+                continue
+            kept.append(x)
+        else:
+            kept.append(x)
+    approved = decl_b + parse.BOUNDARY + "".join(kept).encode()
+    assert parse.parse(approved).digest == d, "truncating the lifecycle must not move `D`"
+    sim = parse.parse(approved)
+    assert not [e for e in sim.events if e.kind in ("merged", "accepted")], (
+        f"the isolated fixture must carry no post-merge event; got "
+        f"{[e.kind for e in sim.events]}")
+
     class _Approved:
+        """The simulated blob at EVERY ref, `origin/main` included.
+
+        Returning it only for the head would make the head diverge from the landed record and fire
+        `LIFECYCLE-REWRITTEN` — a true finding about a fixture this test invented, not about the
+        product. Both ends move together, so the append-only check still bites on anything else.
+        """
         def __init__(self, i): self.i = i
         def blob(self, r, q):
             b = self.i.blob(r, q)
-            return approved if (q == p and b is not None and r != "origin/main") else b
+            return approved if (q == p and b is not None) else b
         def blob_sha(self, r, q): return self.i.blob_sha(r, q)
         def diff_names(self, b, h): return self.i.diff_names(b, h)
         def contains(self, r, q): return self.i.contains(r, q)
         def resolve(self, r): return self.i.resolve(r)
         def is_ancestor(self, a, b): return self.i.is_ancestor(a, b)
+        def tree_of(self, r): return self.i.tree_of(r)
 
-    ports = Ports(repo=_Approved(real))
+    # The platform is INJECTED, never reached. `pr=None` is deliberate — it exercises the ordinary
+    # path that resolves the governed PR from `binding` — and a unit test must not depend on a token.
+    ports = Ports(repo=_Approved(real), merge_facts=selftest.FakeMergeFacts(
+        merged=False, merge_sha="", merged_at="", pr_head=""))
     got = {}
     for phase in ("pre-implementation", "at-head", "merge-gate"):
         dec, _ = run_pipeline(ports, p, base=base_ref, head=head_ref, pr=None, phase=phase)
@@ -642,11 +777,47 @@ def test_st_4_is_deleted_and_not_recreated_under_another_identifier():
     ids = [r.id for r in decide.RULES]
     assert "ST-4" not in ids, "ST-4 is still registered"
     assert len(ids) == len(set(ids)), f"duplicate rule ids: {ids}"
-    src = Path(decide.__file__).read_text(encoding="utf-8")
-    for line in src.splitlines():
-        if line.lstrip().startswith("#"):
-            continue
-        assert "exact_head_approval" not in line, "the deleted gate field is still read"
+    # SCANNED ACROSS EVERY MODULE, not just this one. Scoping it to `decide.py` let a live crash
+    # ship: `cmd_state` in `__main__.py` kept reading `g.exact_head_approval` after the rename and
+    # exited 2 on every invocation. A rename guard that checks one file proves one file.
+    from tools.contract import adapters, lifecycle, report
+    import tools.contract.__main__ as main_mod
+    for mod in (decide, lifecycle, adapters, main_mod, report, model):
+        for i, line in enumerate(Path(mod.__file__).read_text(encoding="utf-8").splitlines(), 1):
+            if line.lstrip().startswith("#"):
+                continue
+            assert "exact_head_approval" not in line, \
+                f"{Path(mod.__file__).name}:{i} still reads the deleted gate field"
+
+
+def test_every_cli_verb_reads_only_fields_that_exist():
+    """A VERB WITH NO TEST IS A VERB THAT CAN SHIP BROKEN — and one did.
+
+    `cmd_state` had zero callers besides the dispatcher, so nothing exercised it and a stale field
+    read survived into `main`, exiting 2 on every invocation. The selftest calls `run()` directly
+    and never reaches the verb wrappers, which is exactly the gap this closes.
+
+    Checked by SOURCE rather than by invocation: the verbs need a repository and a network, and a
+    test that needs those proves the sandbox, not the code. Every gate attribute each verb reads must
+    be a real field of `Gates`.
+    """
+    import ast
+    import dataclasses
+    import tools.contract.__main__ as main_mod
+    fields = {f.name for f in dataclasses.fields(model.Gates)}
+    tree = ast.parse(Path(main_mod.__file__).read_text(encoding="utf-8"))
+    for fn in [n for n in ast.walk(tree)
+               if isinstance(n, ast.FunctionDef) and n.name.startswith("cmd_")]:
+        gate_vars = {t.id for a in ast.walk(fn) if isinstance(a, ast.Assign)
+                     for t in a.targets if isinstance(t, ast.Name)
+                     and isinstance(a.value, ast.Subscript)
+                     and getattr(getattr(a.value.slice, "value", None), "__eq__", None)
+                     and getattr(a.value.slice, "value", None) == "gates"}
+        for node in ast.walk(fn):
+            if (isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name)
+                    and node.value.id in gate_vars):
+                assert node.attr in fields, \
+                    f"{fn.name} reads `Gates.{node.attr}`, which does not exist; fields={sorted(fields)}"
 
 
 def test_an_authorization_for_a_different_contract_or_pr_does_not_bind():
@@ -788,6 +959,131 @@ def _git(repo, *args):
     subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
 
 
+# ── the hermetic platform ───────────────────────────────────────────────────────────────────
+#
+# These CLI cases drive the PRODUCTION entry point, and the production entry point resolves the
+# governed PR from the contract's own `binding` row and then READS THE PLATFORM. That is correct and
+# is not relaxed here: a verifier that skipped the read for a landed contract would answer confidently
+# about facts it never looked at. What must not happen is the read reaching the real GitHub — a unit
+# test that succeeds only where a token exists is not hermetic, and one that silently answers `ST-7`
+# everywhere else is not testing anything.
+#
+# So the platform is SERVED, deterministically, by a `gh` stand-in on a temporary PATH. It answers
+# only the two closed endpoints `MergeFactsPort` can construct, from a fixture table, and it LOGS
+# every call so a test can prove the read actually happened rather than infer it from a green result.
+_FAKE_SLUG = "fixture-owner/fixture-repo"
+_FAKE_CONTEXT = "unit (fast, no toolchain)"
+_FAKE_WORKFLOW = ".github/workflows/ci.yml"
+_FAKE_GH = '''"""A deterministic `gh` stand-in. Serves ONLY `gh api <path>` for paths in the fixture table."""
+import json, os, sys
+
+argv = sys.argv[1:]
+with open(os.environ["FAKE_GH_LOG"], "a", encoding="utf-8") as fh:
+    fh.write(" ".join(argv) + "\\n")
+if not argv or argv[0] != "api":
+    sys.stderr.write("fake gh: only `gh api <path>` is served, got %r\\n" % (argv,))
+    raise SystemExit(2)
+
+# PARSE FLAGS, DO NOT INDEX. `argv[1]` was the path until the port began pinning `--method GET`,
+# at which point every request resolved to the fixture named "--method". A double that assumes an
+# argument POSITION breaks silently the moment the real caller's argv changes shape.
+path, method, rest = "", "", argv[1:]
+i = 0
+while i < len(rest):
+    a = rest[i]
+    if a == "--method":
+        method = rest[i + 1] if i + 1 < len(rest) else ""
+        i += 2
+    elif a in ("-f", "-F", "--field", "--raw-field"):
+        i += 2
+    elif a.startswith("-"):
+        i += 1
+    elif not path:
+        path = a
+        i += 1
+    else:
+        i += 1
+
+# Every endpoint this port reads is a GET. A double that answered a POST identically would let the
+# verb regress without a single test noticing.
+if method != "GET":
+    sys.stderr.write("fake gh: refusing a non-GET read (method=%r)\\n" % (method,))
+    raise SystemExit(2)
+if os.environ.get("FAKE_GH_BROKEN"):
+    sys.stderr.write("gh: authentication required\\n")
+    raise SystemExit(1)
+with open(os.environ["FAKE_GH_TABLE"], encoding="utf-8") as fh:
+    table = json.load(fh)
+if path not in table:
+    sys.stderr.write("fake gh: no fixture for %s\\n" % path)
+    raise SystemExit(1)
+# `--slurp` semantics: ALWAYS an array of page documents, one element per page.
+pages = table[path]
+sys.stdout.write(json.dumps(pages if isinstance(pages, list) else [pages]))
+'''
+
+
+def _build_fake_gh(repo, *, extra=None, base_sha=""):
+    """Write the stand-in, its fixture table, and a PATH directory that has `git` but NOT `gh`.
+
+    Two directories, because "unusable" and "missing" are different failures and both must land on
+    `ST-7`. `bin-nogh` carries a `git` symlink so the missing-`gh` case isolates the tool under test
+    instead of also removing the one every port needs.
+    """
+    bin_dir, nogh = repo / ".fakebin", repo / ".fakebin-nogh"
+    bin_dir.mkdir(exist_ok=True)
+    nogh.mkdir(exist_ok=True)
+    (bin_dir / "fake_gh.py").write_text(_FAKE_GH, encoding="utf-8")
+    # A `/bin/sh` wrapper, NOT a `#!{sys.executable}` shebang. This repository's virtualenv lives
+    # under a path containing a space, and a shebang interpreter path cannot contain one — the
+    # kernel splits on it, the exec fails with ENOENT, and the port reports "gh not found on PATH".
+    # Every test would then pass its ST-7 assertion and fail its positive one, for a reason that has
+    # nothing to do with the product. Quoting inside `sh` is what makes the path survive.
+    gh = bin_dir / "gh"
+    gh.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{bin_dir / "fake_gh.py"}" "$@"\n',
+                  encoding="utf-8")
+    gh.chmod(0o755)
+    real_git = shutil.which("git")
+    assert real_git, "the fixture needs a real `git` to place on the restricted PATH"
+    for d in (bin_dir, nogh):
+        link = d / "git"
+        if not link.exists():
+            link.symlink_to(real_git)
+    # PRs 1, 2 and 99 — every number the cases below put in a `binding` row. `_pr_of` reads the LAST
+    # one, so case B's appended `pr=2` and case C's tampered `pr=99` each re-target the read; serving
+    # all three keeps a case's result about the thing it mutated rather than about a fixture gap.
+    # ADDITIVE, NEVER REPLACING. `cli_repo` is module-scoped, so a test that overwrote this table
+    # would silently strip the entries every LATER test depends on — an order-dependent failure that
+    # passes alone and fails in a suite, which is exactly how it reached CI.
+    unmerged = [{"head": {"sha": ""}, "base": {"sha": base_sha}, "merge_commit_sha": "",
+                 "merged_at": "", "merged": False}]
+    table = {f"repos/{_FAKE_SLUG}/pulls/{n}": unmerged for n in (1, 2, 99)}
+    path = repo / ".fake-gh-table.json"
+    if path.exists():
+        table = {**json.loads(path.read_text(encoding="utf-8")), **table}
+    table.update(extra or {})
+    path.write_text(json.dumps(table), encoding="utf-8")
+    return bin_dir, nogh
+
+
+def _serve_platform(monkeypatch, repo, *, broken=False, missing=False):
+    """Point the ports at the fixture repository and the fake platform for ONE test."""
+    from tools.contract import adapters
+    # ONLY the slug resolver. `adapters.REPO` also anchors every other path this tool resolves, so
+    # repointing it at the fixture makes unrelated ports fail on files that live in the real tree —
+    # a broad monkeypatch that breaks more than it isolates.
+    monkeypatch.setattr(adapters, "_repo_slug", lambda: _FAKE_SLUG)
+    bin_dir, nogh = repo / ".fakebin", repo / ".fakebin-nogh"
+    monkeypatch.setenv("FAKE_GH_TABLE", str(repo / ".fake-gh-table.json"))
+    monkeypatch.setenv("FAKE_GH_LOG", str(repo / ".fake-gh.log"))
+    (repo / ".fake-gh.log").write_text("", encoding="utf-8")
+    if broken:
+        monkeypatch.setenv("FAKE_GH_BROKEN", "1")
+    # `str(...)` ONLY — the real PATH is deliberately not appended, so a fixture gap surfaces as a
+    # missing tool here instead of silently reaching the developer's authenticated `gh`.
+    monkeypatch.setenv("PATH", str(nogh if missing else bin_dir))
+
+
 @pytest.fixture(scope="module")
 def cli_repo(tmp_path_factory):
     """A real git repository with a LANDED contract on `origin/main`, carrying TWO lifecycle rows.
@@ -803,27 +1099,48 @@ def cli_repo(tmp_path_factory):
     (repo / "docs" / "adr").mkdir(parents=True)
     (repo / "docs" / "contracts").mkdir(parents=True)
     (repo / ".agents").mkdir()
+    (repo / ".github").mkdir()
     (repo / ".agents" / "lanes.json").write_text("{}", encoding="utf-8")
     (repo / _CLI_ADR).write_text("# ADR-0105 (fixture)\n", encoding="utf-8")
+    # The required set is read from the registry AT THE CONTRACT'S OWN BASE, so the fixture must
+    # carry one at the commit it names — the same pinning the product does, not a stub beside it.
+    (repo / ".github" / "workflows").mkdir(parents=True)
+    (repo / _FAKE_WORKFLOW).write_text(
+        f"jobs:\n  unit:\n    name: {_FAKE_CONTEXT}\n", encoding="utf-8")
+    # The registry must MAP each required context to the workflow and job that produce it — a bare
+    # name is not provenance, so the verifier refuses a registry that declares one without the other.
+    (repo / ".github" / "ci-control-registry.yml").write_text(
+        f"current_required_contexts:\n  - {_FAKE_CONTEXT}\n"
+        f"controls:\n"
+        f"  - id: CI-UNIT\n"
+        f"    name: {_FAKE_CONTEXT}\n"
+        f"    workflow: {_FAKE_WORKFLOW}\n"
+        f"    job: unit\n", encoding="utf-8")
     (repo / "impact.json").write_text(json.dumps(
         {"classification": "COMPATIBLE_CHANGE", "architecture": {}, "implementation": {},
          "touched_src": [], "changed_files": []}), encoding="utf-8")
     _git(repo, "init", "-q", "-b", "main")
     _git(repo, "config", "user.email", "t@example.com")
     _git(repo, "config", "user.name", "t")
+    # A FIXED remote, so `_repo_slug()` derives a slug from THIS repository and the fake `gh` is
+    # keyed on a path that can never coincide with the real one.
+    _git(repo, "remote", "add", "origin", f"https://github.com/{_FAKE_SLUG}.git")
     _git(repo, "add", "-A")
     _git(repo, "commit", "-qm", "scaffold")
 
+    base_sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, check=True,
+                              capture_output=True, text=True).stdout.strip()
     adr_blob = subprocess.run(["git", "rev-parse", f"HEAD:{_CLI_ADR}"], cwd=repo, check=True,
                               capture_output=True, text=True).stdout.strip()
     body = (FIXTURES / "valid_minimal.md").read_text(encoding="utf-8").replace(
         "| ADR-0105 | docs/adr/0105-reusable-change-contract-architecture.md | fixture-not-resolved |",
-        f"| ADR-0105 | {_CLI_ADR} | {adr_blob} |")
+        f"| ADR-0105 | {_CLI_ADR} | {adr_blob} |").replace("base_sha=ce132f6", f"base_sha={base_sha}")
     (repo / _CLI_CONTRACT).write_text(body + "| 2026-07-18T09:30:00Z | binding | pr=1 |\n",
                                       encoding="utf-8")
     _git(repo, "add", "-A")
     _git(repo, "commit", "-qm", "land the contract")
     _git(repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+    _build_fake_gh(repo, base_sha=base_sha)
     return repo
 
 
@@ -836,6 +1153,7 @@ def _cli(monkeypatch, capsys, repo, *extra):
     orig = cli.Ports
     monkeypatch.setattr(cli, "REPO", repo)
     monkeypatch.setattr(cli, "Ports", lambda **kw: orig(repo=RepoPort(repo), **kw))
+    _serve_platform(monkeypatch, repo)
     code = cli.main(["verify", _CLI_CONTRACT, "--base", "origin/main", "--phase", "pre", "--json",
                      "--impact-json", str(repo / "impact.json"), *extra])
     return code, json.loads(capsys.readouterr().out)
@@ -866,6 +1184,82 @@ def test_cli_A_valid_landed_lifecycle_passes(monkeypatch, capsys, cli_repo):
     """A. The positive control. Without it, every case below could pass by breaking the tool."""
     code, out = _cli(monkeypatch, capsys, cli_repo)
     assert (code, out["decision"], out["rule"]) == (0, "continue", "OK"), out["diagnostics"]
+
+
+def test_cli_A2_the_ordinary_no_pr_invocation_actually_reads_the_platform(monkeypatch, capsys,
+                                                                          cli_repo):
+    """A2. `test_cli_A` passing is not proof the read happened — it is also what a SKIPPED read looks
+    like, which is the exact defect the governed-PR correction fixed. So assert the call.
+
+    The command carries no `--pr`. If the governed PR stops being resolved from `binding`, the log is
+    empty and this goes red while every other CLI case stays green.
+    """
+    code, out = _cli(monkeypatch, capsys, cli_repo)
+    called = (cli_repo / ".fake-gh.log").read_text(encoding="utf-8").strip().splitlines()
+    assert (code, out["rule"]) == (0, "OK"), out["diagnostics"]
+    assert any(f"repos/{_FAKE_SLUG}/pulls/1" in line for line in called), (
+        f"the ordinary no---pr command must resolve the governed PR from `binding` and READ it; "
+        f"gh was called with {called}")
+
+
+@pytest.mark.parametrize("mode", ["unusable", "missing"])
+def test_cli_A3_an_unreadable_platform_is_ST_7_never_OK(monkeypatch, capsys, cli_repo, mode):
+    """A3. The negative half, and the one that must never be traded away for a green suite.
+
+    Fail-closed: with no usable `gh` the merge facts are UNAVAILABLE, and unavailable is neither
+    authorized nor a finding. `ST-7` is the only honest answer — not `OK` (which would be a verdict
+    about facts never read), not a crash, and not a fabricated negative like `merged_unverified`.
+    """
+    from tools.contract import __main__ as cli
+    from tools.contract.adapters import RepoPort
+    orig = cli.Ports
+    monkeypatch.setattr(cli, "REPO", cli_repo)
+    monkeypatch.setattr(cli, "Ports", lambda **kw: orig(repo=RepoPort(cli_repo), **kw))
+    _serve_platform(monkeypatch, cli_repo, broken=(mode == "unusable"), missing=(mode == "missing"))
+    code = cli.main(["verify", _CLI_CONTRACT, "--base", "origin/main", "--phase", "pre", "--json",
+                     "--impact-json", str(cli_repo / "impact.json")])
+    out = json.loads(capsys.readouterr().out)
+    assert out["rule"] == "ST-7", f"{mode}: expected ST-7, got {out['decision']}/{out['rule']}"
+    assert code != 0, f"{mode}: an unreadable platform must not exit 0"
+    assert "merged_unverified" not in json.dumps(out), (
+        f"{mode}: unavailability must not be reported as a disagreement")
+
+
+@pytest.mark.parametrize("pages,expect", [
+    ("two-good", 3),
+    ("short", None),
+])
+def test_the_check_run_read_aggregates_every_page(monkeypatch, tmp_path, cli_repo, pages, expect):
+    """A REAL two-page fixture. `--paginate` alone emits one JSON document PER PAGE, so the previous
+    single `json.loads` either threw on page two or silently read only page one — and `total_count`
+    was then compared against that same short list, so a paginated answer looked complete.
+
+    Two cases, because either alone is passable by a defect: the good one proves pages are actually
+    joined, and the short one proves the aggregate is checked rather than trusted.
+    """
+    from tools.contract import adapters
+    sha = "a" * 40
+    good = [{"total_count": 3, "check_runs": [_page_run("1"), _page_run("2")]},
+            {"total_count": 3, "check_runs": [_page_run("3")]}]
+    short = [{"total_count": 3, "check_runs": [_page_run("1"), _page_run("2")]}]
+    _build_fake_gh(cli_repo, extra={f"repos/{_FAKE_SLUG}/commits/{sha}/check-runs":
+                                    good if pages == "two-good" else short})
+    _serve_platform(monkeypatch, cli_repo)
+    port = adapters.MergeFactsPort(slug=_FAKE_SLUG)
+    if expect is None:
+        with pytest.raises(adapters.PortError) as exc:
+            port.check_runs(sha)
+        assert "incomplete" in str(exc.value), str(exc.value)
+    else:
+        got = port.check_runs(sha)
+        assert [r["id"] for r in got] == ["1", "2", "3"], got
+        assert len(got) == expect
+
+
+def _page_run(rid):
+    return {"id": rid, "name": _FAKE_CONTEXT, "conclusion": "success", "status": "completed",
+            "started_at": "2026-07-19T23:00:00Z", "completed_at": "2026-07-19T23:05:00Z",
+            "app": {"id": 15368, "slug": "github-actions"}}
 
 
 def test_cli_B_monotone_append_passes(monkeypatch, capsys, cli_repo):

@@ -40,26 +40,39 @@ import sys
 from pathlib import Path
 
 from . import classify, derive, lifecycle, report, validate
-from .adapters import REPO, ArtifactPort, ImpactPort, PortError, RegistryPort, RepoPort
+from .adapters import (REPO, ArtifactPort, ImpactPort, MergeFactsPort, PortError, RegistryPort,
+                       RepoPort, required_contexts_at, workflow_job_binding)
 from .decide import HEAD, MERGE, PRE, decide
-from .model import EXIT_CONTINUE, EXIT_UNTRUSTWORTHY, DecisionInput, Derived
+from .model import (CheckRun, CI_REGISTRY_PATH, EXIT_CONTINUE, EXIT_UNTRUSTWORTHY,
+                    MAIN_REF as MODEL_MAIN_REF, DecisionInput, Derived, MergeFacts)
 from .parse import BOUNDARY, digest as digest_of, parse
 
 CONTRACTS = "docs/contracts"
 
 # The landed record every append-only check compares against (ADR-0105 §3.6, §4.4). A remote-TRACKING
 # ref, so the read is git-local: no network, no `gh`, no GitHub dependence in a git integrity rule.
-MAIN_REF = "origin/main"
+MAIN_REF = MODEL_MAIN_REF                          # re-exported; defined in `model` (imports nothing)
 
 
 class Ports:
     """The five ports, together. `selftest` substitutes fakes wholesale rather than monkeypatching."""
 
-    def __init__(self, repo=None, impact=None, artifacts=None, registry=None) -> None:
+    def __init__(self, repo=None, impact=None, artifacts=None, registry=None,
+                 merge_facts=None) -> None:
         self.repo = repo or RepoPort()
         self.impact = impact or ImpactPort()
         self.artifacts = artifacts or ArtifactPort()
         self.registry = registry or RegistryPort()
+        # Constructed LAZILY: `MergeFactsPort.__init__` reads the git remote to derive the slug and
+        # raises `PortError` without one. Building it eagerly would make every verb fail in a clone
+        # with no remote, including verbs that never consult the platform.
+        self._merge_facts = merge_facts
+
+    @property
+    def merge_facts(self):
+        if self._merge_facts is None:
+            self._merge_facts = MergeFactsPort()
+        return self._merge_facts
 
 
 def _load(ports: Ports, path: str, ref: str | None) -> tuple[bytes | None, str]:
@@ -135,6 +148,123 @@ def run(ports: Ports, path: str, *, base: str, head: str | None, pr: int | None,
     except PortError as exc:
         unverifiable.append(f"the landed contract at {MAIN_REF} could not be read: {exc}")
 
+    # ── the platform merge facts (ADR-0105 §4.3a) ───────────────────────────────────────────
+    #
+    # READ HERE, BEFORE `Derived` IS FROZEN. `unverifiable` is snapshotted by `tuple(...)` at the
+    # `Derived(...)` construction below; anything appended after it still reaches the dependency
+    # validator but NEVER reaches `ST-7`, which reads the frozen tuple. A failed platform read that
+    # landed after that point would produce a diagnostic no rule consumes — a silent fail-open, which
+    # is the exact failure this tool exists to make unreachable.
+    #
+    # Attempted only for a landed contract with a governed PR: before the merge there is nothing to
+    # rederive, and asking would spend a network call to learn nothing.
+    # THE GOVERNED PR IS RESOLVED HERE, NOT AT S7. Guarding this read on the explicit `pr` argument
+    # meant the ordinary command — `verify <contract>` with no `--pr` — silently skipped the platform
+    # read entirely and every post-merge check with it, while still reporting a confident verdict. The
+    # contract's own `binding.pr` is the governed PR; requiring it to be re-supplied on the command
+    # line made correctness depend on how the tool was invoked.
+    pr_num = pr if pr is not None else _pr_of(decl)
+
+    mf = None
+    if main_blob is not None and pr_num is not None:
+        try:
+            d = ports.merge_facts.pull(pr_num)
+            claimed_base = next((e.get("base_sha") for e in decl.events
+                                 if e.kind == "created" and e.get("base_sha")), "")
+            if not claimed_base:
+                raise PortError("the contract records no `created.base_sha`, so the required-context "
+                                "set cannot be pinned to the commit this change was written against")
+            # THE ANCHOR IS EXTERNAL. `created.base_sha` is written by the agent, outside `D`, and it
+            # selects which commit's registry supplies the required set — so left unchecked an agent
+            # could name an older, weaker registry commit and the bar would follow it there. The
+            # platform's own `base.sha` is the answer that was not written by the thing being judged.
+            #
+            # A DISAGREEMENT IS A FINDING, NOT UNAVAILABILITY. Both SHAs were read successfully; they
+            # simply differ. So the registry is left UNREAD (the required set stays empty) and
+            # `_acceptance` reports the mismatch itself — raising here would spend `ST-7` on a
+            # completed read, which is the exact confusion §4.3a exists to prevent.
+            base_ok = bool(d["base_sha"]) and d["base_sha"] == claimed_base
+            contexts: tuple = ()
+            provenance: tuple = ()
+            if base_ok:
+                reg = ports.repo.blob(claimed_base, CI_REGISTRY_PATH)
+                if reg is None:
+                    raise PortError(f"{CI_REGISTRY_PATH} is absent at the verified base "
+                                    f"{claimed_base[:12]}")
+                names, by_ctx = required_contexts_at(reg)
+                contexts, provenance = tuple(names), tuple(sorted(by_ctx.items()))
+            raw_runs = ports.merge_facts.check_runs(d["merge_sha"]) if d["merge_sha"] else []
+            runs = [CheckRun(**r) for r in raw_runs]
+            # CHRONOLOGY MUST COME FROM THE SERVER OR NOT AT ALL. Without `started_at` the question
+            # "was this the latest attempt at the moment of acceptance" has no answer in the data,
+            # and answering it from id size would be inferring time from an opaque identifier.
+            undated = [r.id for r in runs if r.name in contexts and not r.started_at]
+            if undated:
+                raise PortError(f"check run(s) {', '.join(undated)} carry no `started_at`, so the "
+                                f"ordering acceptance depends on cannot be established")
+            # THE DOCUMENTED JOIN: check run <- job.check_run_url -> workflow run -> workflow path.
+            join: dict[str, tuple[str, str, str]] = {}
+            if d["merge_sha"] and contexts:
+                for wr in ports.merge_facts.workflow_runs(d["merge_sha"]):
+                    for job in ports.merge_facts.jobs(wr["id"]):
+                        crid = job["check_run_id"]
+                        if not crid:
+                            continue
+                        if crid in join and join[crid] != (job["name"], wr["id"], wr["path"]):
+                            raise PortError(f"check run {crid} joins to more than one job, so its "
+                                            f"provenance is ambiguous")
+                        join[crid] = (job["name"], wr["id"], wr["path"])
+            # A workflow edited inside the change it certifies is not evidence about that change.
+            # Gated on MERGED, like the tree reads: before the merge there is no landed content to
+            # compare and acceptance is not sought, so demanding the comparison would turn every
+            # pre-merge verification of an open PR into an unavailability.
+            stable: dict[str, bool] = {}
+            binding: dict[str, tuple[str, str]] = {}
+            for ctx, (wf_path, job_key) in (dict(provenance).items() if d["merged"] else ()):
+                at_base = ports.repo.blob(claimed_base, wf_path)
+                at_head = ports.repo.blob(d["pr_head"], wf_path) if d["pr_head"] else None
+                if at_base is None or at_head is None:
+                    raise PortError(f"the governing workflow {wf_path} could not be read at both the "
+                                    f"verified base and the PR head, so whether it changed inside "
+                                    f"this change is unknown")
+                stable[wf_path] = at_base == at_head
+                # The job KEY is resolved AGAINST THE BASE BLOB, the same commit that supplied the
+                # required set. Resolving it at the head would let the change under review rename the
+                # job that certifies it and still satisfy the binding.
+                binding[ctx] = workflow_job_binding(at_base, job_key)
+            # Trees are read HERE, where a failed read can still reach `unverifiable`. Resolving them
+            # inside the gate would turn "could not read" into "did not match" — an unavailability
+            # wearing the costume of a finding.
+            pr_tree = ports.repo.tree_of(d["pr_head"]) if d["pr_head"] else None
+            merge_tree = ports.repo.tree_of(d["merge_sha"]) if d["merge_sha"] else None
+            if d["merged"] and (pr_tree is None or merge_tree is None):
+                which = "PR head" if pr_tree is None else "merge commit"
+                raise PortError(f"the {which} tree could not be resolved, so the landed content "
+                                f"cannot be compared to the authorized content")
+            # The contract AS IT STOOD at the final pre-merge PR head. `None` means the ref or object
+            # could not be read (unavailability); `b""` means the read succeeded and the contract was
+            # ABSENT there. The gate must be able to tell those apart, so no `or` collapses them.
+            head_blob: bytes | None = None
+            if d["pr_head"]:
+                if ports.repo.resolve(d["pr_head"]) is None:
+                    raise PortError(f"the PR head {d['pr_head'][:12]} is unresolvable, so the "
+                                    f"contract as it stood there cannot be read")
+                b = ports.repo.blob(d["pr_head"], path)
+                head_blob = b if b is not None else b""
+            mf = MergeFacts(read_ok=True, pr_head=d["pr_head"], merge_sha=d["merge_sha"],
+                            merged_at=d["merged_at"], merged=d["merged"], base_sha=d["base_sha"],
+                            required_contexts=contexts, context_provenance=provenance,
+                            check_runs=tuple(runs), run_provenance=tuple(sorted(join.items())),
+                            workflow_stable=tuple(sorted(stable.items())),
+                            job_binding=tuple(sorted(binding.items())),
+                            pr_tree=pr_tree or "", merge_tree=merge_tree or "",
+                            pr_head_blob=head_blob)
+        except PortError as exc:
+            mf = MergeFacts(read_ok=False)
+            unverifiable.append(f"the platform merge facts for PR #{pr_num} could not be read "
+                                f"({exc}); post-merge authorization and acceptance are UNVERIFIABLE, "
+                                f"which ADR-0105 §4.3a does not treat as a negative finding")
+
     non_monotone = _non_monotone_contracts(ports, changed or [], base, head_ref)
     declared_live = "live" in decl.traits
     trigs = classify.triggers(changed, impact_classification=classification, hot_files=hot,
@@ -205,14 +335,14 @@ def run(ports: Ports, path: str, *, base: str, head: str | None, pr: int | None,
              + gs)
 
     # ── S7 gates ────────────────────────────────────────────────────────────────────────────
-    pr_num = pr if pr is not None else _pr_of(decl)
     head_sha = ports.repo.resolve(head_ref) or ""
     merged = main_blob is not None                 # the S5 read; never a second, disagreeable one
     # NO review read and NO principal read. Merge authorization is the operator's own parent-bound
-    # event, so this path touches git and the declaration and nothing on the network. A dead, denied
-    # or empty review API cannot change a verdict, because no verdict consults one.
+    # event. The one network read that now exists carries merge facts and check runs — `MergeFacts`
+    # has no field for a review, so a dead, denied or empty review API still cannot change a verdict,
+    # because no verdict consults one and no type here can carry one.
     gates = lifecycle.gates(decl, decl.events, head_sha=head_sha, pr=pr_num,
-                            main_has_contract=merged, repo=ports.repo, path=path, raw=raw)
+                            main_has_contract=merged, repo=ports.repo, path=path, raw=raw, mf=mf)
     proposals = [e for e in decl.events if e.kind == "head_proposed"]
     proposal_bound = bool(proposals) and lifecycle.parent_binds(
         proposals[-1], repo=ports.repo, path=path, head_sha=head_sha, raw=raw)[0]
@@ -350,15 +480,17 @@ def cmd_state(args) -> int:
     g = ctx["gates"]
     if args.json:
         print(report.as_json({"state": ctx["state"], "gates": {
-            "content_approval": g.content_approval, "exact_head_approval": g.exact_head_approval,
+            "content_approval": g.content_approval,
+            "merge_authorization": g.merge_authorization,
             "acceptance": g.acceptance}, "detail": list(g.detail)}))
         return EXIT_CONTINUE
     print(f"## state: `{ctx['state']}`\n")
     print(f"  content approval     {g.content_approval}")
-    print(f"  exact-head approval  {g.exact_head_approval}")
+    print(f"  merge authorization  {g.merge_authorization}")
     print(f"  acceptance           {g.acceptance}")
     for line in g.detail: print(f"    · {line}")
-    print("\n  `merged` NEVER implies `accepted` — acceptance is a separate operator decision.")
+    print("\n  `merged` NEVER implies `accepted`, and an `accepted` ROW never implies `accepted`")
+    print("  either — acceptance is verified against the platform, never asserted (§4.3a).")
     return EXIT_CONTINUE
 
 

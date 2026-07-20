@@ -17,7 +17,7 @@ acceptance, and freeze.
 |---|---|---|---|---|
 | 1 | Authority Repair and Program Boundaries | **ACCEPTED** | A verified contradiction register on a named base SHA | The six verified contradictions closed; this roadmap persisted; `tools/arch` + `tools/ci` clean; CI green on the exact PR head |
 | 2 | Reusable Change-Contract Architecture | **ACCEPTED** | Phase 1 `ACCEPTED` | An accepted ADR defining the change-contract model |
-| 3 | Change-Contract Compiler and Verifier | **IN IMPLEMENTATION** | Phase 2 `ACCEPTED` | Compiler + verifier merged, each rule carrying a firing negative control |
+| 3 | Change-Contract Compiler and Verifier | **IN IMPLEMENTATION** | Phase 2 `ACCEPTED` | Compiler + verifier merged, each rule carrying a firing negative control; acceptance verified against the platform rather than asserted by its own row (ADR-0105 §4.3a) |
 | 4 | Cold-Start Acceptance | NOT STARTED | Phase 3 `ACCEPTED` | A fresh agent, unaided, drives three cases through the contract — see below |
 | 5 | Operational Governance Deployment | NOT STARTED | Phase 4 `ACCEPTED` + explicit operator gate | M1–M6 applied one at a time; live required set == `intended_required_contexts` |
 | 6 | Orchestration Enforcement Decision | NOT STARTED | Phase 5 `ACCEPTED` | A recorded decision to re-enable, replace or retire the dormant orchestration gate |

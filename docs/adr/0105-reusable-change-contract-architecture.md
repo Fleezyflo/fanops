@@ -2,7 +2,7 @@
 status: accepted
 date: 2026-07-18
 accepted_in_principle: 2026-07-18
-approved_digest: sha256:37db3e0ca3c7557555a1b5885bc66138949dc320699bd5c3f4e9ab03cac87eea
+approved_digest: sha256:236ef890f9d1ea95a69322e168c5fbde83c57b083da77c05c3b3470e1791b3da
 supersedes: []
 references: [0100, 0101, 0102]
 deciders: [operator]
@@ -23,9 +23,29 @@ met: Phase 1 `ACCEPTED` (PR #701, `937777d`).
 exact-head gate as originally specified is **unsatisfiable in this repository**, and that the same
 self-reference defeats `head_proposed` in every repository. §4.1a replaces relocation-of-the-record
 with **parent-binding**, and adds an explicitly-bounded second evidence route for repositories with a
-single write principal. Multi-principal behaviour is unchanged. **This amendment moved the body, so it
-requires renewed approval; the `approved_digest` above names the amended body, which is
-`REQUESTED / NOT YET APPROVED` until the operator answers the Phase 3B governance-amendment gate.**
+single write principal. Multi-principal behaviour is unchanged. *(Answered: approved and merged as
+PR #703. The second evidence route was subsequently deleted outright — see the next amendment.)*
+
+**Amendment, 2026-07-19 — single-operator authorization.** The "second evidence route" above was
+removed rather than bounded: this repository has one human operator, so a gate requiring a second
+person is unsatisfiable rather than strict. `ST-4` and every review reader were deleted; an
+operator-issued, parent-bound `merge_approved` is the only route. *(Answered: approved and merged as
+PR #707.)*
+
+**Amendment, 2026-07-20 — §4.3a, acceptance is verified rather than asserted.** A state and a gate
+that were both satisfied by the presence of the row they were gating are replaced by machine
+verification against the platform, and post-merge authorization is rederived against the pre-merge PR
+head instead of the squash commit. §4.3a additionally fixes the **source** of the required acceptance
+set: the base-pinned in-repo registry, never the row, never live branch protection, never
+`intended_required_contexts`. **This amendment moved the body, so it requires renewed approval; the
+`approved_digest` above names the amended body, which is `REQUESTED / NOT YET APPROVED` until the
+operator approves `CC-2026-07-20-acceptance-rederivation` (draft PR #708).**
+
+**Amendment, 2026-07-20 (second) — §4.3a acceptance predicates.** The first §4.3a amendment made
+acceptance a verified finding but left four holes: the base anchor selecting the bar was agent-written
+and unchecked, a required context was matched by NAME alone, rerun pinning had no clock in it, and the
+PR-head declaration read silently fell back to the current blob. All four are now stated as predicates
+above. Covered by the same pending approval.
 
 **What this acceptance binds to.** `approved_digest` in the front matter is `sha256` over this file's
 **body** — every byte after the front matter's closing `---` line, including the newline that follows
@@ -371,12 +391,12 @@ voids approval (§4.4), **and** it is a `T3` governance change in its own right.
 | Gate | Binds to | Recorded where | Moves the head? |
 |---|---|---|---|
 | **Content approval** (`approved`) | the **declaration digest `D`** | in-file, `## Lifecycle`, in the same commit that freezes the declaration | Yes — and it does not matter: it precedes implementation, and it is not what merge approval binds to. |
-| **Exact-head approval** (`merge_approved`) | the triple **(`D`, `parent_sha`, blob SHA of the contract at `parent_sha`)** | **a GitHub pull-request review** where a second principal exists; otherwise **in-file, parent-bound** (§4.1a) | **No, in either form** — a review is not a commit, and a parent-bound record names the commit it is appended *onto*. |
-| **Acceptance** (`accepted`) | the **resulting `main` SHA** plus a demonstration of `success_condition` | in-file, appended **after** the merge, in a separate commit | Yes — post-merge, so nothing downstream depends on the head it moves. |
+| **Merge authorization** (`merge_approved`) | the triple **(`D`, `parent_sha`, blob SHA of the contract at `parent_sha`)** | **in-file, parent-bound** (§4.1a) — there is no second route | **No** — a parent-bound record names the commit it is appended *onto*. |
+| **Acceptance** (`accepted`) | the **resulting `main` SHA** plus a demonstration of `success_condition`, **each machine-verified against the platform** (§4.3a) | in-file, appended **after** the merge, in a separate commit | Yes — post-merge, so nothing downstream depends on the head it moves. |
 
-**This is the answer to the circularity.** Exact-head approval is the only gate that must not move the
-head. Where a second principal exists it is recorded outside the tree — in a mechanism (a PR review)
-that already binds to a commit SHA and that GitHub makes immutable and auditable.
+**This is the answer to the circularity.** Merge authorization is the only gate that must not move the
+head, and §4.1a resolves it *inside* the tree by binding to the parent rather than by relocating the
+record. Post-merge it is rederived against the pre-merge PR head, never against the squash (§4.3a).
 
 #### 4.1a Parent-binding, and the two evidence routes (amends the original §4.1)
 
@@ -479,14 +499,15 @@ Append-only. Each carries a UTC timestamp and its binding.
 | `implementation_started` | agent | — | yes |
 | `head_proposed` | agent | **`parent_sha`**, required-CI result at that head, verifier result | yes |
 | `merge_approved` | **operator** | in-file **`parent_sha`**, **`digest`**, **`pr`**, **`operator`**, **`token`** (§4.1a) | **no** |
-| `merged` | derived | the squash SHA on `main` | n/a |
-| `accepted` | operator, recorded by agent | merged `main` SHA, evidence for `success_condition` | yes (post-merge) |
+| `merged` | derived | the squash SHA on `main`, and the platform `mergedAt` it must equal | n/a |
+| `accepted` | operator, recorded by agent | merged `main` SHA, the **check-run ids** proving required CI, evidence for `success_condition` (§4.3a) | yes (post-merge) |
 | `refused` | agent **or** operator | reason | yes |
 | `superseded` | operator | successor `id` | yes |
 | `abandoned` | operator | reason | yes |
 
-`merged` and `accepted` are appended together in the single post-merge commit. The file is written in
-three logical stages: creation-and-approval, any pre-merge appends, and the post-merge record.
+`merged` and `accepted` **may** be appended together in a single post-merge commit, but they are two
+independent findings and either may stand without the other (§4.3a). The file is written in three
+logical stages: creation-and-approval, any pre-merge appends, and the post-merge record.
 
 #### 4.3 Derived lifecycle state
 
@@ -494,8 +515,12 @@ State is **computed**, never declared:
 
 ```text
 refused | superseded | abandoned   if the corresponding terminal event is present
-accepted                           if an `accepted` event is present
-merged                             if the squash commit exists on main
+accepted                           if an `accepted` event is present AND post-merge authorization
+                                   rederives (§4.3a) AND every acceptance claim is machine-verified
+acceptance_claimed                 if an `accepted` event is present but any part of that proof fails
+merged                             if the squash commit exists on main and authorization rederives
+merged_unverified                  if it exists on main with an authorization claim that cannot verify
+merged_unauthorized                if it exists on main with no effective authorization claim at all
 approved_for_merge                 if an operator `merge_approved` binds to the current head (§4.1a)
 implemented                        if `head_proposed` binds to the current head (§4.1a) with CI green
 in_implementation                  if `approved` exists and commits follow it
@@ -506,11 +531,126 @@ draft                              otherwise
 
 Three human gates — `approved`, `merge_approved`, `accepted` — and these are the three the program
 already runs on. **Merge is an event, not a state that authorizes anything.** `merged` never implies
-`accepted`.
+`accepted`, **and the presence of an `accepted` row never implies `accepted` either** (§4.3a).
+
+#### 4.3a Acceptance is verified, never asserted (amends §4.2 and §4.3)
+
+**The defect this amends.** §4.3's original second row read *"`accepted` if an `accepted` event is
+present"*, and the implementation matched it exactly. The row being evaluated was therefore the whole
+of its own evidence: writing the row produced the state, and the state was the only thing the row had
+to earn. A gate whose sole input is the claim it is gating is not a gate. The same shape appeared in
+the acceptance gate itself, which was `satisfied` on row presence alone — and, because no decision
+rule read it, could not have been observed to be wrong.
+
+**A merge rewrites the commit the authorization named.** §4.1a binds authorization to a `parent_sha`
+that must be an ancestor of the head. A squash merge creates a *new* commit whose parent is the old
+`main`, so the authorized parent is **not** an ancestor of it. Re-evaluating the same valid
+authorization against the squash commit therefore reports `stale` — not because anything is wrong,
+but because the question was asked against the wrong commit. **Post-merge, authorization is rederived
+against the final pre-merge PR head**, which is the commit it was always about.
+
+**Rederivation verifies; it never creates.** For a merged PR the verifier obtains the final pre-merge
+PR head, evaluates the existing `merge_approved` event and the four §4.1a checks against *that* head,
+requires the platform merge SHA to be present on `main`, requires any recorded merge SHA to equal the
+platform's, and requires the final PR-head tree to equal the landed merge tree. Every input is a fact
+that existed **before** the merge. No sequence of post-merge appends can manufacture an authorization
+that was not given.
+
+**Acceptance evidence is external, not prose.** An `accepted` row's `evidence=` is rationale for a
+human; it is not proof and is never read as proof. The verifier checks the platform: the actual merge
+SHA, that the recorded `merged` timestamp equals the platform `mergedAt`, that the required check runs
+are bound to that merge SHA, that every required run **succeeded**, and that the recorded check-run
+ids exactly match the verified set.
+
+**The required set is pinned to the past.** It is `current_required_contexts`, read from
+`.github/ci-control-registry.yml` **at the contract's own `created.base_sha`**. That source is
+exhaustive and the exclusions are normative:
+
+- It is **never** sourced from the `accepted` row, because a row that names its own bar sets its own
+  bar.
+- It is **never** sourced from current or live branch protection. Live protection is present-day
+  configuration: reading it would mean relaxing a setting tomorrow retroactively invalidates an
+  acceptance earned today, or tightening one manufactures a bar a past merge was never held to.
+- It is **never** sourced from `intended_required_contexts`. That field is an aspiration, and a bar
+  that was never live cannot be the bar a past merge had to clear.
+
+Live branch protection **may** be reported separately as present-day drift telemetry. It is **not**
+an input to `acceptance_verified`, and no drift finding may create, invalidate, or regress a
+historical acceptance. A verdict about the past must rest on evidence that is itself fixed in the
+past, and a git blob at a named commit is exactly that.
+
+**The anchor for that pin is EXTERNAL.** `created.base_sha` is written by the agent into the
+lifecycle, outside `D`, and it selects the commit whose registry supplies the bar. A contract that
+chose its own anchor could name an older, weaker registry commit and be judged against a bar it
+selected for itself. The verifier therefore reads the platform's own PR `base.sha` and requires the
+two to be equal **before** the registry is read at all. Both values are read successfully, so a
+disagreement is a KNOWN NEGATIVE; only a failed read is `ST-7`.
+
+**A required context is verified by PROVENANCE, never by its name.** A check-run name is
+author-controlled: any App holding `checks:write` can publish a green run called exactly
+`unit (fast, no toolchain)`. For every required context the verifier proves all of the following, and
+a failure of any one is a finding:
+
+1. the check run is bound to the platform merge SHA;
+2. its producing App is GitHub Actions, matched against a **pinned** App identity;
+3. the registry at the externally-verified base maps the context to a workflow **path** and **job key**;
+4. the check-run→job join is made through the documented `job.check_run_url`, never through the
+   undocumented coincidence that a job id equals its check-run id;
+4a. the registry's pinned job **key** exists in the governing workflow blob at the verified base,
+   its effective display name equals the required context, and it is the ONLY key in that workflow
+   rendering that name — GitHub's job payload exposes the display name and never the key, so
+   uniqueness in the pinned blob is what makes the join deterministic rather than a guess;
+4b. the joined platform job's name equals that uniquely-bound display name;
+5. the joined workflow run's `path` equals the registry's path for that context;
+6. the governing workflow's blob at the final pre-merge PR head is byte-identical to its blob at the
+   verified base — a workflow edited inside the change it certifies is not evidence about that change;
+7. the recorded run concluded `success`.
+
+Every platform read is an explicit `GET`. This is not a formality: `gh api -f k=v` constructs a
+request BODY and thereby switches the verb to `POST`, so the parameterised workflow-runs read would
+otherwise issue a mutation verb against an endpoint this model may only read.
+
+An ambiguous join — one check run claimed by two jobs — is UNAVAILABILITY, not a negative: the read
+completed but does not settle the question, and answering it anyway would state a verdict the data
+does not support.
+
+**Completeness of a paginated read is mandatory, not conditional.** A `total_count` that is absent,
+null or non-numeric does not relax the check; it fails it. Honouring the count only when it happened
+to be usable disabled the guard precisely in the case where a truncated read is least detectable.
+
+**Rerun pinning is TEMPORAL, and both directions are enforced.** Relative to the effective `accepted`
+event's own timestamp: every recorded run must have existed and completed successfully **by** that
+instant; the recorded id must be the **latest qualifying run** for its full identity at that instant;
+a newer failed, cancelled, skipped, pending or absent run that already existed then makes acceptance
+unverified; and a rerun created **after** that instant does not change the recorded verdict. Ordering
+comes from the platform's own `started_at`/`completed_at`, never from the size of an opaque id. If the
+platform data cannot establish the ordering, the verdict fails closed at `ST-7`.
+
+**The declaration is read AT the head it was in effect at.** Post-merge rederivation parses the
+contract blob at the final pre-merge PR head, read before the derived facts are frozen. A contract
+ABSENT at that head is a known negative — the authorization it records was not in effect at the commit
+that merged. An unreadable ref, blob or object is `ST-7`. No current, landed or working-tree blob is
+ever substituted for the one that stood there.
+
+**The accepted row's own values are enforced.** `decision` must be exactly `accepted`; recorded
+check-run ids must be unique decimal platform ids in ascending numeric order, so that two correct
+agents write the same bytes and no single run stands as evidence for two required contexts.
+
+**A requirement introduced now does not reach backwards.** The same principle governs the shape of
+the row: a value that becomes necessary for acceptance to *verify* does not thereby make every
+acceptance recorded before it existed **malformed**. Absent evidence is UNVERIFIED — it fails the
+gate — but it is never FALSIFIED, and never a §3.6 tampering finding about a record written in good
+faith under the then-live rules.
+
+**Three outcomes, and only one of them is acceptance.** A completed read that disagrees is a KNOWN
+NEGATIVE and lands in `acceptance_claimed` or `merged_unverified` — a definite finding, recorded as
+such. A read that could not complete is UNAVAILABLE: it is recorded in `unverifiable` before the
+derived facts are frozen, and stops at `ST-7`. Collapsing those two would let a network failure read
+as a governance verdict, which is the failure this ADR exists to prevent.
 
 #### 4.4 Invalidation
 
-| Event | Content approval (`D`) | Exact-head approval |
+| Event | Content approval (`D`) | Merge authorization |
 |---|---|---|
 | **Declaration edited** (any of §3.1, or `supersedes`) | **VOID.** `D` changes. Re-approve. | **VOID** |
 | **Lifecycle appended** | **survives** — `D` is unchanged by construction | **survives if the append is lifecycle-only** (§4.1a checks 2–4 prove it); **VOID** if the same range carries anything else |
@@ -520,9 +660,9 @@ already runs on. **Merge is an event, not a state that authorizes anything.** `m
 | **Contract `id` reused or reassigned** | **VOID** | **VOID** |
 
 **Appending a lifecycle event voids neither approval, and a commit carrying anything else voids the
-exact-head one.** The line is drawn at *what moved*, not at *whether the head moved* — the head always
-moves. Content approval survives an append by the §3 byte split; exact-head approval survives it by the
-§4.1a delta proof. Both rest on the same fact: a lifecycle append cannot change the declaration, the
+merge authorization.** The line is drawn at *what moved*, not at *whether the head moved* — the head
+always moves. Content approval survives an append by the §3 byte split; merge authorization survives
+it by the §4.1a delta proof. Both rest on the same fact: a lifecycle append cannot change the declaration, the
 code, or a cited authority. **Binding to head equality instead would have voided the record in the act
 of writing it** — which is what made the original rule unsatisfiable rather than merely strict.
 
@@ -894,10 +1034,12 @@ which remains hand-maintained in Phase 2 by accepted operator decision.
 - **`T4` depends on an agent recognizing its own action is live.** *Mitigation:* any doubt resolves to
   `T4`; a live action additionally requires a separate operator execution gate. **Accepted residual** —
   no mechanism detects an intention.
-- **Exact-head approval depends on GitHub review semantics.** If reviews are dismissed on push
-  (`dismiss_stale_reviews`), that *reinforces* the model; if not, the verifier must compare the
-  review's `commit_id` to the current head itself. *Mitigation:* Phase 3 compares explicitly rather
-  than trusting the badge. *(estimate.)*
+- **~~Exact-head approval depends on GitHub review semantics.~~** — **RETIRED 2026-07-20 (§4.1a).**
+  The risk described a dependency that no longer exists: merge authorization reads no review, so
+  `dismiss_stale_reviews` and `commit_id` staleness cannot affect any verdict. The risk that replaces
+  it is **post-merge rederivation** — a squash rewrites the commit the authorization named, so the
+  verifier must ask against the pre-merge PR head or report a false `stale` (§4.3a). *Mitigation:*
+  rederivation is proven by firing controls, not assumed. *(estimate.)*
 - **The `T3` surface list has no completeness proof.** Hand-maintained in Phase 2 by accepted operator
   decision; mechanical verification is Phase 3 work. *(accepted, time-boxed.)*
 - **An operator merge authorization (§4.1a) is forgeable by the agent that writes it.** So is

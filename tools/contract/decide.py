@@ -76,8 +76,8 @@ _PARSE_FAIL = {"NO-BOUNDARY", "MULTI-BOUNDARY", "UNSUP-CRLF", "NO-FRONTMATTER",
                "UNSUP-NESTED", "DUP-KEY", "BAD-KEY", "NO-COLON", "ORPHAN-ITEM", "BAD-COLUMNS",
                "BAD-ROW", "NO-TABLE", "BAD-EVENT-COLUMNS", "BAD-EVENT-ROW", "WRONG-LOCATION"}
 _LIFECYCLE_FAIL = {"EVENT-KIND", "EVENT-TIME", "EVENT-ORDER", "EVENT-AFTER-TERMINAL",
-                   "ACCEPT-INCOMPLETE", "PARENT-BIND-INCOMPLETE", "DECL-DIVERGED",
-                   "LIFECYCLE-REWRITTEN"}
+                   "ACCEPT-INCOMPLETE", "MERGED-INCOMPLETE", "PARENT-BIND-INCOMPLETE",
+                   "DECL-DIVERGED", "LIFECYCLE-REWRITTEN"}
 
 STAGE_A: tuple[Rule, ...] = (
     Rule("A1", CLARIFICATION, _ALL, lambda di: bool(_codes(di) & _PARSE_FAIL),
@@ -148,6 +148,22 @@ STAGE_B: tuple[Rule, ...] = (
          "a required input was unavailable — unavailable is never authorized", "operator"),
     Rule("ST-8", STOP, (HEAD, MERGE), lambda di: bool(_codes(di) & {"GS-1", "GS-2"}),
          "a governance surface is not covered by the ADR-0105 §1 T3 list", "operator"),
+    # `ST-10` exists because the acceptance gate was DECORATIVE. `gates.acceptance` was computed and
+    # reported, but no row in this table read it — so when it was `satisfied` on row presence alone,
+    # nothing could observe that it was wrong. Correcting the predicate without adding a reader would
+    # have left it just as unobserved. A gate no rule consumes is documentation, not enforcement.
+    #
+    # IT SITS AFTER `ST-7`, AND THE ORDER IS THE POINT. `claimed` is a completed read that disagreed;
+    # `unknown` is a read that did not complete. Both are "not satisfied", so this predicate matches
+    # either — but an unavailable read must be reported as UNAVAILABLE, not as a finding against the
+    # claim. Placing this row before `ST-7` made a failed network call say "acceptance does not
+    # verify", which asserts something nobody checked. First-match-wins does the disambiguation, so
+    # the row's POSITION carries the distinction its predicate cannot (`NC-AC-05`).
+    Rule("ST-10", STOP, _ALL,
+         lambda di: any(e.kind == "accepted" for e in di.declaration.events)
+         and di.gates.acceptance != "satisfied",
+         "an `accepted` event is recorded but acceptance does not verify against the platform",
+         "operator"),
 
     Rule("EA-1", EXPANDED, (PRE,), lambda di: _declared(di, "EA-1"),
          "the correct change lies outside `allowed_scope` — never widen unilaterally", "operator"),
