@@ -83,10 +83,35 @@ EVENT_KINDS = ("created", "approved", "binding", "implementation_started", "head
                "merge_approved", "merged", "accepted", "refused", "superseded", "abandoned")
 TERMINAL_EVENTS = ("refused", "superseded", "abandoned")
 
-# The five values an `accepted` event must persist (operator decision D-3). Acceptance is a separate
+# The values an `accepted` event must persist (ADR-0105 §4.2, §4.3a). Acceptance is a separate
 # decision from merge; recording it with any of these missing would produce an acceptance nobody can
 # audit, which is the same as no acceptance at all.
-ACCEPTANCE_VALUES = ("merge_sha", "decision", "evidence", "date", "operator")
+#
+# `check_runs` is the addition that makes acceptance CHECKABLE rather than merely complete. The other
+# five can all be written from inside the repository; `check_runs` names platform objects that either
+# exist bound to the merge SHA with the recorded ids, or do not. `evidence` remains — it is rationale
+# for a human and is NEVER read as proof (§4.3a): a row cannot prove itself by describing itself.
+ACCEPTANCE_VALUES = ("merge_sha", "decision", "evidence", "date", "operator", "check_runs")
+
+# The values a `merged` event must persist. `merged_at` is compared against the platform `mergedAt`,
+# so the row cannot claim a merge that the platform dates differently.
+MERGED_VALUES = ("merge_sha", "merged_at")
+
+# ── derived state names (ADR-0105 §4.3, amended by §4.3a) ───────────────────────────────────
+#
+# Three states were added because "on main" is not one situation but four, and collapsing them let
+# the weakest read as the strongest. A merge whose authorization rederives is `merged`; one whose
+# claim cannot be verified is `merged_unverified`; one with no claim at all is `merged_unauthorized`;
+# and an `accepted` row whose proof does not complete is `acceptance_claimed`, NOT `accepted`.
+# The ref that means "landed". Defined HERE, in the module that imports nothing, because both the
+# CLI and the lifecycle rules need it and neither may import the other.
+MAIN_REF = "origin/main"
+
+ACCEPTED = "accepted"
+ACCEPTANCE_CLAIMED = "acceptance_claimed"
+MERGED = "merged"
+MERGED_UNVERIFIED = "merged_unverified"
+MERGED_UNAUTHORIZED = "merged_unauthorized"
 
 # The values a PARENT-BOUND event must persist (ADR-0105 §4.1, amended). `parent_sha` is the commit
 # the event is appended ONTO, never the commit that contains it: a record cannot name the commit
@@ -227,16 +252,43 @@ class Derived:
 
 
 @dataclass(frozen=True)
+class MergeFacts:
+    """Platform facts about a merged PR, read once in S5 and frozen. NONE OF THESE IS A REVIEW.
+
+    This type is the whole interface between the GitHub read and the decision. It names merge facts
+    and check runs and NOTHING else — there is no field here for a review, a reviewer, an approval
+    count or a collaborator, so no amount of downstream code can consult one. The guarantee is the
+    same one `gates()` makes by having no `reviews` parameter: absence enforced by shape.
+
+    `read_ok=False` means the read did not complete. That is UNAVAILABLE, not a negative finding, and
+    the caller must have already recorded it in `Derived.unverifiable` so it stops at `ST-7` (§4.3a).
+    """
+    read_ok: bool = False
+    pr_head: str = ""                              # the FINAL pre-merge PR head — what §4.1a is about
+    merge_sha: str = ""                            # the platform's own merge commit
+    merged_at: str = ""                            # platform `mergedAt`, UTC ISO-8601
+    merged: bool = False
+    required_contexts: tuple[str, ...] = ()        # from BRANCH PROTECTION, never from the row
+    # (check_run_id, context_name, conclusion) for every run bound to `merge_sha`.
+    check_runs: tuple[tuple[str, str, str], ...] = ()
+
+
+@dataclass(frozen=True)
 class Gates:
-    """The three ADR-0105 §4.1 gates. `unknown` is NOT `satisfied` — see `decide.py` ST-3/ST-9.
+    """The three ADR-0105 §4.1 gates. `unknown` is NOT `satisfied` — see `decide.py` ST-3/ST-9/ST-10.
 
     `merge_authorization` has exactly ONE route: the operator's parent-bound `merge_approved` event.
     There is no second evidence class to name, so the field recording WHICH route satisfied the gate
     is gone with the route it existed to disclose.
+
+    `acceptance` gained the value `claimed`, which is the entire point of §4.3a: a row that asserts
+    acceptance without external proof is a CLAIM, and a claim is not a gate. It used to be
+    `satisfied` on row presence alone — and because no rule read the field, nothing could observe
+    that it was wrong.
     """
     content_approval: str = "not_sought"           # satisfied | stale | unknown | not_sought
     merge_authorization: str = "not_sought"
-    acceptance: str = "not_sought"
+    acceptance: str = "not_sought"                 # satisfied | claimed | unknown | not_sought
     approved_digest: str = ""
     approved_head: str = ""                        # the parent the operator authorized
     detail: tuple[str, ...] = ()

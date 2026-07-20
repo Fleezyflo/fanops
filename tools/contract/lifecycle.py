@@ -35,11 +35,17 @@ taken at its word. The operator can authorize; the operator cannot authorize vag
 """
 from __future__ import annotations
 
-from .model import (ACCEPTANCE_VALUES, EVENT_KINDS, MALFORMED, MISSING, PARENT_BOUND_EVENTS,
-                    PARENT_BOUND_VALUES, TERMINAL_EVENTS, Diagnostic, Gates)
+from .model import (ACCEPTANCE_VALUES, ACCEPTED, ACCEPTANCE_CLAIMED, EVENT_KINDS, MAIN_REF,
+                    MALFORMED, MERGED, MERGED_UNAUTHORIZED, MERGED_UNVERIFIED, MERGED_VALUES,
+                    MISSING, PARENT_BOUND_EVENTS, PARENT_BOUND_VALUES, TERMINAL_EVENTS,
+                    Diagnostic, Gates)
 from .parse import BOUNDARY, is_utc
 
 SATISFIED, STALE, UNKNOWN_GATE, NOT_SOUGHT = "satisfied", "stale", "unknown", "not_sought"
+
+# `claimed` is a COMPLETED read that disagreed — a definite negative finding, distinct from both
+# `satisfied` and from `unknown` (which is a read that did not complete). ADR-0105 §4.3a.
+CLAIMED = "claimed"
 
 # Every value a `merge_approved` event must carry. `parent_sha` binds the commit, `digest` binds the
 # declaration, `pr` binds the change, `operator` and `token` bind the human act. An authorization
@@ -97,7 +103,19 @@ def validate_events(events, *, main_blob: bytes | None, decl_bytes: bytes, life_
                                       got=", ".join(k for k, _ in e.values),
                                       expected=", ".join(ACCEPTANCE_VALUES),
                                       remediation="an acceptance nobody can audit is not an "
-                                                  "acceptance (operator decision D-3)"))
+                                                  "acceptance (ADR-0105 §4.2, §4.3a)"))
+        # A `merged` row is the date and SHA the acceptance check compares against, so an incomplete
+        # one leaves acceptance with nothing external to disagree with — which is how a claim passes.
+        if e.kind == "merged":
+            missing = [k for k in MERGED_VALUES if not e.get(k)]
+            if missing:
+                out.append(Diagnostic(MALFORMED, "MERGED-INCOMPLETE",
+                                      f"a `merged` event must persist all of "
+                                      f"{', '.join(MERGED_VALUES)}; missing {', '.join(missing)}",
+                                      line=e.line, got=", ".join(k for k, _ in e.values),
+                                      expected=", ".join(MERGED_VALUES),
+                                      remediation="the platform merge SHA and `mergedAt` are what "
+                                                  "acceptance is checked against (ADR-0105 §4.3a)"))
 
     if main_blob is not None and BOUNDARY in main_blob:
         m_decl, _, m_life = main_blob.partition(BOUNDARY)
@@ -154,12 +172,17 @@ def parent_binds(event, *, repo, path: str, head_sha: str, raw: bytes) -> tuple[
 
 
 def gates(decl, events, *, head_sha: str, pr: int | None, main_has_contract: bool,
-          repo=None, path: str = "", raw: bytes = b""):
-    """The three §4.1 gates. AN UNKNOWN GATE IS NOT A SATISFIED GATE — see `ST-9`.
+          repo=None, path: str = "", raw: bytes = b"", mf=None):
+    """The three §4.1 gates. AN UNKNOWN GATE IS NOT A SATISFIED GATE — see `ST-9` and `ST-10`.
 
     Merge authorization has ONE route: the operator's own `merge_approved` event. No review, reviewer
     identity or principal census is a parameter here, so none can be consulted, defaulted or flagged
     back on. The absence is structural, not configured.
+
+    `mf` is a `MergeFacts` — merge SHA, timestamp, pre-merge PR head and check runs. It is the ONLY
+    new input, and its type has no field for a review, so widening this signature did not widen what
+    can be consulted. `None` means the read was not attempted; `read_ok=False` means it failed, and
+    the caller must already have recorded that in `Derived.unverifiable` (§4.3a).
     """
     detail: list[str] = []
     approved = [e for e in events if e.kind == "approved"]
@@ -186,10 +209,120 @@ def gates(decl, events, *, head_sha: str, pr: int | None, main_has_contract: boo
                                                             head_sha=head_sha, raw=raw)
             detail.append(why)
 
-    accepted = SATISFIED if any(e.kind == "accepted" for e in events) else NOT_SOUGHT
+    # POST-MERGE, THE QUESTION IS ASKED AGAINST THE WRONG COMMIT UNLESS IT IS REDIRECTED.
+    #
+    # A squash merge creates a NEW commit whose parent is the old `main`, so the authorized parent is
+    # not an ancestor of it and `parent_binds` reports False — a false `stale` for an authorization
+    # that was, and remains, valid. §4.3a rederives against the final pre-merge PR head, the commit
+    # the authorization was always about. This VERIFIES; it cannot create. Every input existed before
+    # the merge, so no post-merge append can manufacture an authorization that was never given.
+    if main_has_contract and mf is not None and mf.read_ok and mf.pr_head:
+        ma = [e for e in events if e.kind == "merge_approved"]
+        if ma and repo is not None and path:
+            auth, approved_head, why = _rederive_post_merge(ma[-1], decl, pr, events, mf,
+                                                            repo=repo, path=path, raw=raw)
+            detail.append(why)
+
+    accepted, acc_why = _acceptance(events, mf, auth)
+    detail.extend(acc_why)
     if main_has_contract:
         detail.append("the contract exists on `main` — the change has landed")
     return Gates(content, auth, accepted, approved_digest, approved_head, tuple(detail))
+
+
+def _rederive_post_merge(ev, decl, pr, events, mf, *, repo, path: str, raw: bytes):
+    """`(gate, authorized_parent, why)` for a MERGED PR. Five checks, all against pre-merge facts.
+
+    THIS VERIFIES AN AUTHORIZATION THAT ALREADY EXISTED. Every input — the PR head, the event, the
+    trees — was fixed before the merge, so no post-merge append can manufacture authorization that
+    was never given. What the merge changed is only WHICH COMMIT the question must be asked against.
+    """
+    ok, approved_head, why = _merge_authorization(ev, decl, pr, repo=repo, path=path,
+                                                  head_sha=mf.pr_head,
+                                                  raw=repo.blob(mf.pr_head, path) or raw)
+    if ok != SATISFIED:
+        return STALE, "", f"post-merge rederivation at PR head {mf.pr_head[:12]} failed: {why}"
+    if not mf.merge_sha or not repo.is_ancestor(mf.merge_sha, MAIN_REF):
+        return STALE, "", (f"the platform reports merge {mf.merge_sha[:12] or '<none>'} but it is "
+                           f"not present on `main` — the landed change is not the authorized one")
+    recorded = [e for e in events if e.kind == "merged"]
+    if recorded and recorded[-1].get("merge_sha") != mf.merge_sha:
+        return STALE, "", (f"the `merged` row records {recorded[-1].get('merge_sha')[:12]} but the "
+                           f"platform merged {mf.merge_sha[:12]}")
+    # Content identity, not commit identity: a squash is SUPPOSED to be a different commit.
+    pr_tree, merge_tree = repo.tree_of(mf.pr_head), repo.tree_of(mf.merge_sha)
+    if pr_tree is None or merge_tree is None:
+        return STALE, "", (f"a tree could not be resolved for {mf.pr_head[:12]} or "
+                           f"{mf.merge_sha[:12]} — the landed content cannot be compared")
+    if pr_tree != merge_tree:
+        return STALE, "", (f"the landed tree {merge_tree[:12]} differs from the authorized PR-head "
+                           f"tree {pr_tree[:12]} — something changed in the merge")
+    return SATISFIED, approved_head, (f"post-merge rederivation at PR head {mf.pr_head[:12]}: {why}; "
+                                      f"merge {mf.merge_sha[:12]} is on `main` and its tree "
+                                      f"{merge_tree[:12]} equals the authorized PR-head tree")
+
+
+def _acceptance(events, mf, auth: str) -> tuple[str, list[str]]:
+    """`(gate, why)`. AN `accepted` ROW IS A CLAIM. This is what turns it into a finding, or not.
+
+    The row supplies what it asserts; every check below reads the PLATFORM. `evidence=` is rationale
+    for a human and is deliberately never consulted — a record cannot prove itself by describing
+    itself, and the previous implementation's entire acceptance test was that the row existed.
+
+    Returns `claimed` for a COMPLETED read that disagrees — a definite negative finding. It never
+    returns `claimed` for a read that did not complete: that is UNAVAILABLE, recorded in
+    `Derived.unverifiable` upstream so it stops at `ST-7`. Collapsing the two would let a network
+    failure read as a governance verdict.
+    """
+    acc = [e for e in events if e.kind == "accepted"]
+    if not acc:
+        return NOT_SOUGHT, []
+    ev = acc[-1]
+    if mf is None or not mf.read_ok:
+        return UNKNOWN_GATE, ["an `accepted` row is present but the platform could not be read — "
+                              "UNKNOWN, which is not satisfied"]
+    if auth != SATISFIED:
+        return CLAIMED, ["an `accepted` row is present but merge authorization does not verify — "
+                         "acceptance cannot rest on an unauthorized merge"]
+    if not mf.merged or not mf.merge_sha:
+        return CLAIMED, ["an `accepted` row is present but the platform does not report this PR "
+                         "as merged"]
+    if ev.get("merge_sha") != mf.merge_sha:
+        return CLAIMED, [f"the `accepted` row names merge SHA {ev.get('merge_sha')[:12] or '<none>'} "
+                         f"but the platform merged {mf.merge_sha[:12]}"]
+
+    merged_rows = [e for e in events if e.kind == "merged"]
+    if not merged_rows:
+        return CLAIMED, ["an `accepted` row is present with no `merged` row to date it against"]
+    if merged_rows[-1].get("merged_at") != mf.merged_at:
+        return CLAIMED, [f"the `merged` row dates the merge {merged_rows[-1].get('merged_at') or '<none>'} "
+                         f"but the platform dates it {mf.merged_at}"]
+    if merged_rows[-1].get("merge_sha") != mf.merge_sha:
+        return CLAIMED, ["the `merged` row names a different SHA than the platform merged"]
+
+    # Only the REQUIRED set may be judged. Unrelated runs are legitimately `skipped` at a merge
+    # commit (`impact report` and `scheduled reconciliation` both are), so "every run succeeded"
+    # would reject a valid acceptance for jobs that were never the bar.
+    if not mf.required_contexts:
+        return CLAIMED, ["branch protection requires no context, so a green merge proves nothing "
+                         "about required CI"]
+    by_name = {name: (rid, concl) for rid, name, concl in mf.check_runs}
+    verified: list[str] = []
+    for ctx in mf.required_contexts:
+        if ctx not in by_name:
+            return CLAIMED, [f"required context {ctx!r} has no check run bound to the merge SHA"]
+        rid, concl = by_name[ctx]
+        if concl != "success":
+            return CLAIMED, [f"required context {ctx!r} concluded {concl or '<none>'}, not success"]
+        verified.append(rid)
+
+    recorded = sorted(x.strip() for x in ev.get("check_runs", "").split(",") if x.strip())
+    if recorded != sorted(verified):
+        return CLAIMED, [f"the `accepted` row records check runs {', '.join(recorded) or '<none>'} "
+                         f"but the verified required set is {', '.join(sorted(verified))}"]
+    return SATISFIED, [f"acceptance verified against the platform: merge {mf.merge_sha[:12]} at "
+                       f"{mf.merged_at}, required contexts {', '.join(mf.required_contexts)} all "
+                       f"success, check runs {', '.join(sorted(verified))}"]
 
 
 def _merge_authorization(ev, decl, pr: int, *, repo, path: str, head_sha: str, raw: bytes):
@@ -222,12 +355,16 @@ def _merge_authorization(ev, decl, pr: int, *, repo, path: str, head_sha: str, r
 
 def state(decl, events, g: Gates, *, merged: bool, ci_green: bool, proposal_bound: bool,
           pr_open: bool, mandatory_ok: bool) -> str:
-    """The nine §4.3 states, FIRST MATCH WINS. State is computed, never declared.
+    """The twelve §4.3 states, FIRST MATCH WINS. State is computed, never declared.
 
     `merged` is derived from the change having landed, independently of any written event, so a
     delayed acceptance leaves no gap in the record. And `merged` NEVER implies `accepted`: merge is
     an event, acceptance is a separate operator decision demonstrating the success condition, and
     collapsing the two is exactly the shortcut this ordering forbids (`NC-C25`).
+
+    §4.3a closed the SAME shortcut in the other direction. The guard above was one-way — it stopped
+    `merged` implying `accepted`, while an `accepted` ROW produced `accepted` outright. Both halves
+    are now closed: neither the merge nor the claim decides, only the verified finding does.
 
     `proposal_bound` replaces the original `head_proposed.head_sha == head_sha` test, which no commit
     could ever satisfy: appending the event IS the commit, so the event would have to name a hash
@@ -237,8 +374,18 @@ def state(decl, events, g: Gates, *, merged: bool, ci_green: bool, proposal_boun
     for kind in TERMINAL_EVENTS:
         if any(e.kind == kind for e in events):
             return kind
-    if any(e.kind == "accepted" for e in events): return "accepted"
-    if merged: return "merged"
+    # ROW PRESENCE NEVER DECIDES. This row used to read `if any(e.kind == "accepted"): return
+    # "accepted"` — the claim being evaluated was the whole of its own evidence. Now the gate has
+    # already been checked against the platform, so what lands here is a FINDING about the row, not
+    # the row itself. `claimed` and `unknown` both fall through to `acceptance_claimed`: a claim that
+    # did not verify and a claim that could not be checked are equally not acceptance.
+    if any(e.kind == "accepted" for e in events):
+        return ACCEPTED if g.acceptance == SATISFIED else ACCEPTANCE_CLAIMED
+    # "On main" is four situations, not one. Collapsing them let the weakest read as the strongest.
+    if merged:
+        if g.merge_authorization == SATISFIED: return MERGED
+        if any(e.kind == "merge_approved" for e in events): return MERGED_UNVERIFIED
+        return MERGED_UNAUTHORIZED
     if g.merge_authorization == SATISFIED: return "approved_for_merge"
     if ci_green and proposal_bound: return "implemented"
     if g.content_approval == SATISFIED and any(e.kind == "implementation_started"

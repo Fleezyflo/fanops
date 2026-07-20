@@ -84,6 +84,17 @@ def render(decision: Decision, *, contract_id: str, digest: str, traits, risk_ti
               f"parent-bound and git-verified against the current head. This repository has one "
               f"human authority and no review is read (ADR-0105 §4.1a).", ""]
 
+    # An acceptance that did NOT verify is disclosed as loudly as one that did. The failure mode this
+    # guards is a reader seeing an `accepted` row in the file and assuming the state matches it.
+    if gates.acceptance == "claimed":
+        L += ["> **Acceptance is CLAIMED, not verified.** An `accepted` event is recorded, but "
+              "checking it against the platform disagreed. The row is a claim about the change, not "
+              "evidence for it (ADR-0105 §4.3a). See the gate detail below.", ""]
+    elif gates.acceptance == "unknown":
+        L += ["> **Acceptance could not be checked.** An `accepted` event is recorded, but the "
+              "platform read did not complete. This is UNAVAILABLE, not a negative finding — and "
+              "unavailable is never authorized (ADR-0105 §4.3a).", ""]
+
     if decision.outcome == "refuse":
         L += ["> **Refusal is a first-class successful outcome** (ADR-0105 §10). A contract "
               "terminating in `refused` with a recorded reason has done its job.", ""]

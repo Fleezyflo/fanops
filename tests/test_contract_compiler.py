@@ -400,11 +400,52 @@ def test_an_incomplete_acceptance_event_is_malformed():
 
 
 def test_merged_never_implies_accepted():
+    """ADR-0105 §4.3/§4.3a. Neither direction: merge does not imply acceptance, and neither does a row."""
     from tools.contract import lifecycle
     d = parse.parse(selftest.build())
-    st = lifecycle.state(d, d.events, model.Gates(), merged=True, ci_green=False,
-                         proposal_bound=False, pr_open=False, mandatory_ok=True)
-    assert st == "merged"
+    for gates, expect in ((model.Gates(), "merged_unauthorized"),
+                          (model.Gates(merge_authorization="satisfied"), "merged")):
+        st = lifecycle.state(d, d.events, gates, merged=True, ci_green=False,
+                             proposal_bound=False, pr_open=False, mandatory_ok=True)
+        assert st == expect, f"merged with {gates.merge_authorization!r} derived {st!r}"
+        assert st != "accepted"
+
+
+def test_an_accepted_row_alone_never_derives_accepted():
+    """§4.3a. The row used to BE the proof; now it is only the claim the proof is about."""
+    from tools.contract import lifecycle
+    raw = selftest.build(extra="| 2026-07-20T00:00:00Z | accepted | merge_sha=abc; decision=a; "
+                               "evidence=e; date=2026-07-20; operator=operator; check_runs=1 |\n")
+    d = parse.parse(raw)
+    for acc in ("not_sought", "claimed", "unknown"):
+        st = lifecycle.state(d, d.events, model.Gates(acceptance=acc), merged=True, ci_green=False,
+                             proposal_bound=False, pr_open=False, mandatory_ok=True)
+        assert st == "acceptance_claimed", f"acceptance={acc!r} derived {st!r}"
+    st = lifecycle.state(d, d.events, model.Gates(acceptance="satisfied"), merged=True,
+                         ci_green=False, proposal_bound=False, pr_open=False, mandatory_ok=True)
+    assert st == "accepted", "a VERIFIED acceptance must still reach `accepted`"
+
+
+def test_the_acceptance_gate_is_read_by_a_rule():
+    """A gate no rule consumes is documentation, not enforcement — the defect §4.3a also fixed.
+
+    `gates.acceptance` was computed and reported but read by NO rule, so its wrong value could not
+    have been observed. This asserts the reader exists, which is what makes the corrected predicate
+    matter.
+    """
+    import inspect
+    from tools.contract import decide
+    readers = [r.id for r in decide.RULES if "acceptance" in inspect.getsource(r.predicate)]
+    assert "ST-10" in readers, f"no rule reads gates.acceptance; readers={readers}"
+
+
+def test_post_merge_authorization_is_rederived_against_the_pre_merge_head():
+    """§4.3a. A squash makes the authorized parent a non-ancestor; asking the squash is asking wrong."""
+    import inspect
+    from tools.contract import lifecycle
+    src = inspect.getsource(lifecycle._rederive_post_merge)
+    assert "mf.pr_head" in src, "rederivation must target the pre-merge PR head"
+    assert "tree_of" in src, "rederivation must compare the landed tree to the authorized tree"
 
 
 def test_the_bootstrap_contract_is_structurally_valid():
@@ -642,11 +683,47 @@ def test_st_4_is_deleted_and_not_recreated_under_another_identifier():
     ids = [r.id for r in decide.RULES]
     assert "ST-4" not in ids, "ST-4 is still registered"
     assert len(ids) == len(set(ids)), f"duplicate rule ids: {ids}"
-    src = Path(decide.__file__).read_text(encoding="utf-8")
-    for line in src.splitlines():
-        if line.lstrip().startswith("#"):
-            continue
-        assert "exact_head_approval" not in line, "the deleted gate field is still read"
+    # SCANNED ACROSS EVERY MODULE, not just this one. Scoping it to `decide.py` let a live crash
+    # ship: `cmd_state` in `__main__.py` kept reading `g.exact_head_approval` after the rename and
+    # exited 2 on every invocation. A rename guard that checks one file proves one file.
+    from tools.contract import adapters, lifecycle, report
+    import tools.contract.__main__ as main_mod
+    for mod in (decide, lifecycle, adapters, main_mod, report, model):
+        for i, line in enumerate(Path(mod.__file__).read_text(encoding="utf-8").splitlines(), 1):
+            if line.lstrip().startswith("#"):
+                continue
+            assert "exact_head_approval" not in line, \
+                f"{Path(mod.__file__).name}:{i} still reads the deleted gate field"
+
+
+def test_every_cli_verb_reads_only_fields_that_exist():
+    """A VERB WITH NO TEST IS A VERB THAT CAN SHIP BROKEN — and one did.
+
+    `cmd_state` had zero callers besides the dispatcher, so nothing exercised it and a stale field
+    read survived into `main`, exiting 2 on every invocation. The selftest calls `run()` directly
+    and never reaches the verb wrappers, which is exactly the gap this closes.
+
+    Checked by SOURCE rather than by invocation: the verbs need a repository and a network, and a
+    test that needs those proves the sandbox, not the code. Every gate attribute each verb reads must
+    be a real field of `Gates`.
+    """
+    import ast
+    import dataclasses
+    import tools.contract.__main__ as main_mod
+    fields = {f.name for f in dataclasses.fields(model.Gates)}
+    tree = ast.parse(Path(main_mod.__file__).read_text(encoding="utf-8"))
+    for fn in [n for n in ast.walk(tree)
+               if isinstance(n, ast.FunctionDef) and n.name.startswith("cmd_")]:
+        gate_vars = {t.id for a in ast.walk(fn) if isinstance(a, ast.Assign)
+                     for t in a.targets if isinstance(t, ast.Name)
+                     and isinstance(a.value, ast.Subscript)
+                     and getattr(getattr(a.value.slice, "value", None), "__eq__", None)
+                     and getattr(a.value.slice, "value", None) == "gates"}
+        for node in ast.walk(fn):
+            if (isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name)
+                    and node.value.id in gate_vars):
+                assert node.attr in fields, \
+                    f"{fn.name} reads `Gates.{node.attr}`, which does not exist; fields={sorted(fields)}"
 
 
 def test_an_authorization_for_a_different_contract_or_pr_does_not_bind():

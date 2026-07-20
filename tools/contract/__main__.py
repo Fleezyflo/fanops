@@ -40,26 +40,39 @@ import sys
 from pathlib import Path
 
 from . import classify, derive, lifecycle, report, validate
-from .adapters import REPO, ArtifactPort, ImpactPort, PortError, RegistryPort, RepoPort
+from .adapters import (REPO, ArtifactPort, ImpactPort, MergeFactsPort, PortError, RegistryPort,
+                       RepoPort)
 from .decide import HEAD, MERGE, PRE, decide
-from .model import EXIT_CONTINUE, EXIT_UNTRUSTWORTHY, DecisionInput, Derived
+from .model import (EXIT_CONTINUE, EXIT_UNTRUSTWORTHY, MAIN_REF as MODEL_MAIN_REF, DecisionInput,
+                    Derived, MergeFacts)
 from .parse import BOUNDARY, digest as digest_of, parse
 
 CONTRACTS = "docs/contracts"
 
 # The landed record every append-only check compares against (ADR-0105 §3.6, §4.4). A remote-TRACKING
 # ref, so the read is git-local: no network, no `gh`, no GitHub dependence in a git integrity rule.
-MAIN_REF = "origin/main"
+MAIN_REF = MODEL_MAIN_REF                          # re-exported; defined in `model` (imports nothing)
 
 
 class Ports:
     """The five ports, together. `selftest` substitutes fakes wholesale rather than monkeypatching."""
 
-    def __init__(self, repo=None, impact=None, artifacts=None, registry=None) -> None:
+    def __init__(self, repo=None, impact=None, artifacts=None, registry=None,
+                 merge_facts=None) -> None:
         self.repo = repo or RepoPort()
         self.impact = impact or ImpactPort()
         self.artifacts = artifacts or ArtifactPort()
         self.registry = registry or RegistryPort()
+        # Constructed LAZILY: `MergeFactsPort.__init__` reads the git remote to derive the slug and
+        # raises `PortError` without one. Building it eagerly would make every verb fail in a clone
+        # with no remote, including verbs that never consult the platform.
+        self._merge_facts = merge_facts
+
+    @property
+    def merge_facts(self):
+        if self._merge_facts is None:
+            self._merge_facts = MergeFactsPort()
+        return self._merge_facts
 
 
 def _load(ports: Ports, path: str, ref: str | None) -> tuple[bytes | None, str]:
@@ -135,6 +148,31 @@ def run(ports: Ports, path: str, *, base: str, head: str | None, pr: int | None,
     except PortError as exc:
         unverifiable.append(f"the landed contract at {MAIN_REF} could not be read: {exc}")
 
+    # ── the platform merge facts (ADR-0105 §4.3a) ───────────────────────────────────────────
+    #
+    # READ HERE, BEFORE `Derived` IS FROZEN. `unverifiable` is snapshotted by `tuple(...)` at the
+    # `Derived(...)` construction below; anything appended after it still reaches the dependency
+    # validator but NEVER reaches `ST-7`, which reads the frozen tuple. A failed platform read that
+    # landed after that point would produce a diagnostic no rule consumes — a silent fail-open, which
+    # is the exact failure this tool exists to make unreachable.
+    #
+    # Attempted only for a landed contract with a governed PR: before the merge there is nothing to
+    # rederive, and asking would spend a network call to learn nothing.
+    mf = None
+    if main_blob is not None and pr is not None:
+        try:
+            d = ports.merge_facts.pull(pr)
+            runs = ports.merge_facts.check_runs(d["merge_sha"]) if d["merge_sha"] else []
+            mf = MergeFacts(read_ok=True, pr_head=d["pr_head"], merge_sha=d["merge_sha"],
+                            merged_at=d["merged_at"], merged=d["merged"],
+                            required_contexts=tuple(ports.merge_facts.required_contexts()),
+                            check_runs=tuple(runs))
+        except PortError as exc:
+            mf = MergeFacts(read_ok=False)
+            unverifiable.append(f"the platform merge facts for PR #{pr} could not be read ({exc}); "
+                                f"post-merge authorization and acceptance are UNVERIFIABLE, which "
+                                f"ADR-0105 §4.3a does not treat as a negative finding")
+
     non_monotone = _non_monotone_contracts(ports, changed or [], base, head_ref)
     declared_live = "live" in decl.traits
     trigs = classify.triggers(changed, impact_classification=classification, hot_files=hot,
@@ -209,10 +247,11 @@ def run(ports: Ports, path: str, *, base: str, head: str | None, pr: int | None,
     head_sha = ports.repo.resolve(head_ref) or ""
     merged = main_blob is not None                 # the S5 read; never a second, disagreeable one
     # NO review read and NO principal read. Merge authorization is the operator's own parent-bound
-    # event, so this path touches git and the declaration and nothing on the network. A dead, denied
-    # or empty review API cannot change a verdict, because no verdict consults one.
+    # event. The one network read that now exists carries merge facts and check runs — `MergeFacts`
+    # has no field for a review, so a dead, denied or empty review API still cannot change a verdict,
+    # because no verdict consults one and no type here can carry one.
     gates = lifecycle.gates(decl, decl.events, head_sha=head_sha, pr=pr_num,
-                            main_has_contract=merged, repo=ports.repo, path=path, raw=raw)
+                            main_has_contract=merged, repo=ports.repo, path=path, raw=raw, mf=mf)
     proposals = [e for e in decl.events if e.kind == "head_proposed"]
     proposal_bound = bool(proposals) and lifecycle.parent_binds(
         proposals[-1], repo=ports.repo, path=path, head_sha=head_sha, raw=raw)[0]
@@ -350,15 +389,17 @@ def cmd_state(args) -> int:
     g = ctx["gates"]
     if args.json:
         print(report.as_json({"state": ctx["state"], "gates": {
-            "content_approval": g.content_approval, "exact_head_approval": g.exact_head_approval,
+            "content_approval": g.content_approval,
+            "merge_authorization": g.merge_authorization,
             "acceptance": g.acceptance}, "detail": list(g.detail)}))
         return EXIT_CONTINUE
     print(f"## state: `{ctx['state']}`\n")
     print(f"  content approval     {g.content_approval}")
-    print(f"  exact-head approval  {g.exact_head_approval}")
+    print(f"  merge authorization  {g.merge_authorization}")
     print(f"  acceptance           {g.acceptance}")
     for line in g.detail: print(f"    · {line}")
-    print("\n  `merged` NEVER implies `accepted` — acceptance is a separate operator decision.")
+    print("\n  `merged` NEVER implies `accepted`, and an `accepted` ROW never implies `accepted`")
+    print("  either — acceptance is verified against the platform, never asserted (§4.3a).")
     return EXIT_CONTINUE
 
 

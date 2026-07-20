@@ -107,5 +107,5 @@ so restore it before changing the parser.
 | 2026-07-18T09:10:00Z | binding | branch=feat/fixture; pr=999 |
 | 2026-07-18T09:15:00Z | implementation_started | — |
 | 2026-07-18T10:00:00Z | head_proposed | head_sha=deadbeef; ci=green; verifier=continue |
-| 2026-07-18T11:00:00Z | merged | merge_sha=cafebabe |
-| 2026-07-18T12:00:00Z | accepted | merge_sha=cafebabe; decision=ACCEPT; evidence=the success condition held; date=2026-07-18; operator=operator |
+| 2026-07-18T11:00:00Z | merged | merge_sha=cafebabe; merged_at=2026-07-18T11:00:00Z |
+| 2026-07-18T12:00:00Z | accepted | merge_sha=cafebabe; decision=ACCEPT; evidence=the success condition held; date=2026-07-18; operator=operator; check_runs=1,2 |

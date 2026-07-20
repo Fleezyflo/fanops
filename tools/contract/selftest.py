@@ -115,6 +115,28 @@ CONTROLS: list[Control] = [
     Control("NC-SO-10", "an authorization carrying no operator token", "ST-9", "", "decision"),
     Control("NC-SO-11", "no authorization module reads reviews, reviewer identity or a principal "
             "census", "", "", "structural"),
+    # ADR-0105 §4.3a — the eleven required firing controls for verified acceptance.
+    Control("NC-AC-01", "an `accepted` row alone does not yield state `accepted`", "", "",
+            "decision"),
+    Control("NC-AC-02", "an `accepted` row with stale authorization yields `acceptance_claimed`",
+            "", "", "decision"),
+    Control("NC-AC-03", "authorization rederived across the squash plus valid evidence yields "
+            "`accepted`", "", "", "decision"),
+    Control("NC-AC-04", "a PR-head/merge-tree mismatch yields `merged_unverified`, not `ST-7`", "",
+            "", "decision"),
+    Control("NC-AC-05", "an unavailable platform read yields `ST-7`, never a negative finding", "",
+            "", "decision"),
+    Control("NC-AC-06", "a wrong merge SHA yields `acceptance_claimed`", "ST-10", "", "decision"),
+    Control("NC-AC-07", "a wrong `mergedAt` chronology yields `acceptance_claimed`", "", "",
+            "decision"),
+    Control("NC-AC-08", "a failed, skipped, cancelled or absent required run yields "
+            "`acceptance_claimed`", "", "", "decision"),
+    Control("NC-AC-09", "zero reviews remains fully valid through acceptance", "", "", "decision"),
+    Control("NC-AC-10", "the platform port cannot express a review question", "", "", "structural"),
+    Control("NC-AC-11", "`ST-4` remains absent and `ST-10` is not it renumbered", "", "",
+            "structural"),
+    Control("NC-AC-12", "a `merged` event missing its SHA or timestamp", "A5", "MERGED-INCOMPLETE",
+            "decision"),
     Control("NC-C10b", "a rewritten lifecycle history", "A5", "LIFECYCLE-REWRITTEN", "decision"),
     Control("NC-C10c", "an `id` that does not match the filename stem", "A4", "ID-FILENAME",
             "decision"),
@@ -230,12 +252,15 @@ CONTROLS: list[Control] = [
 # ── fakes ───────────────────────────────────────────────────────────────────────────────────
 class FakeRepo:
     def __init__(self, blobs=None, changed=(), head="h" * 40, fail=None, ancestry=(),
-                 changed_since=None):
+                 changed_since=None, trees=None):
         self.blobs = dict(blobs or {})
         self.changed = list(changed)
         self.head = head
         self.fail = fail
         self.ancestry = set(ancestry)
+        # {ref: tree_sha}. Default: every ref shares ONE tree, so content matches unless a control
+        # deliberately says otherwise — the same default-innocent shape as `ancestry`.
+        self.trees = dict(trees or {})
         # {base: [paths]} — what moved since ONE specific base. `parent_binds` asks this of the
         # authorized parent, and that answer is not the same as the PR-wide base..head diff.
         self.changed_since = dict(changed_since or {})
@@ -256,6 +281,10 @@ class FakeRepo:
         return sorted(self.changed)
 
     def contains(self, ref, path): return (ref, path) in self.blobs
+
+    def tree_of(self, ref):
+        if self.fail == "tree": raise PortError("git unavailable (injected)")
+        return self.trees.get(ref, "t" * 40)
 
     def resolve(self, ref): return self.head
 
@@ -308,6 +337,31 @@ class FakeRegistry:
 # There is deliberately NO FakeReviews. The authorization path reads no review and no principal
 # census, so there is nothing to fake — and a fake left standing would let a future edit re-introduce
 # the dependency without a single control going red.
+#
+# `FakeMergeFacts` is NOT a counter-example to that. It fakes merge facts and check runs — the three
+# closed reads of `MergeFactsPort` — and, like the real port, it has no method that could answer a
+# question about a review or a person. What cannot be faked here is exactly what cannot be read
+# there.
+class FakeMergeFacts:
+    def __init__(self, *, pr_head="h" * 40, merge_sha="m" * 40, merged_at="2026-07-19T23:19:38Z",
+                 merged=True, contexts=("unit",), runs=None, fail=None):
+        self.d = {"pr_head": pr_head, "merge_sha": merge_sha, "merged_at": merged_at,
+                  "merged": merged}
+        self.contexts = list(contexts)
+        self.runs = list(runs) if runs is not None else [("101", "unit", "success")]
+        self.fail = fail
+
+    def pull(self, pr):
+        if self.fail == "pull": raise PortError("the PR could not be read (injected)")
+        return dict(self.d)
+
+    def check_runs(self, sha):
+        if self.fail == "checks": raise PortError("check runs could not be read (injected)")
+        return list(self.runs)
+
+    def required_contexts(self, branch="main"):
+        if self.fail == "protection": raise PortError("branch protection is unreadable (injected)")
+        return list(self.contexts)
 
 
 # ── the fixture contract ────────────────────────────────────────────────────────────────────
@@ -411,15 +465,17 @@ def build(*, cid="CC-2026-07-18-example", traits="", stops="", adr_sha=None,
     return decl.encode().rstrip(b"\n") + BOUNDARY + life.encode()
 
 
-def _ports(repo=None, impact=None, artifacts=None, registry=None):
+def _ports(repo=None, impact=None, artifacts=None, registry=None, merge_facts=None):
     from .__main__ import Ports
     return Ports(repo=repo or FakeRepo(), impact=impact or FakeImpact(),
-                 artifacts=artifacts or FakeArtifacts(), registry=registry or FakeRegistry())
+                 artifacts=artifacts or FakeArtifacts(), registry=registry or FakeRegistry(),
+                 merge_facts=merge_facts or FakeMergeFacts())
 
 
 def _run(raw: bytes, *, changed=("src/fanops/example.py",), phase="at-head", pr=None,
          artifacts=None, registry=None, impact=None, main_blob=None, repo_fail=None,
-         extra_blobs=None, path=CONTRACT_PATH, ancestry=(), parent_changed=None):
+         extra_blobs=None, path=CONTRACT_PATH, ancestry=(), parent_changed=None,
+         merge_facts=None, _trees=None):
     from .__main__ import run
     head = "h" * 40
     blobs = {(head, path): raw, (head, ADR_PATH): ADR_BLOB,
@@ -429,8 +485,9 @@ def _run(raw: bytes, *, changed=("src/fanops/example.py",), phase="at-head", pr=
     blobs.update(extra_blobs or {})
     since = {PARENT: parent_changed if parent_changed is not None else [path]} if ancestry else {}
     repo = FakeRepo(blobs=blobs, changed=changed, head=head, fail=repo_fail,
-                    ancestry=ancestry, changed_since=since)
-    ports = _ports(repo=repo, impact=impact, artifacts=artifacts, registry=registry)
+                    ancestry=ancestry, changed_since=since, trees=_trees)
+    ports = _ports(repo=repo, impact=impact, artifacts=artifacts, registry=registry,
+                   merge_facts=merge_facts)
     return run(ports, path, base="base", head=head, pr=pr, phase=phase)
 
 
@@ -466,6 +523,7 @@ _CODE_INJECTIONS = {
     "NC-C50": dict(extra="| 2026-07-18T11:00:00Z | refused | reason=x |\n"
                          "| 2026-07-18T12:00:00Z | binding | pr=1 |\n"),
     "NC-C51": dict(extra="| 2026-07-18T12:00:00Z | accepted | merge_sha=abc |\n"),
+    "NC-AC-12": dict(extra="| 2026-07-18T12:00:00Z | merged | merge_sha=abc |\n"),
     "NC-C52": dict(main=lambda: build(decl_mutate=lambda d: d.replace("Prove the", "Proved the", 1))),
     "NC-C53": dict(mut=lambda d: d.replace(ADR_PATH, "docs/adr/does-not-exist.md", 1)),
     "NC-C54": dict(mut=lambda d: d.replace("| ADR-0105 |", "| DC-999 |", 1)),
@@ -726,6 +784,233 @@ def _c_nc_so_11(c):
     if hits:
         return False, f"NOT DETECTED — second-person read still present: {hits[:3]}"
     return True, f"no second-person read in {6} authorization modules"
+
+
+# ── ADR-0105 §4.3a · acceptance is verified, never asserted ─────────────────────────────────
+#
+# THE DEFECT THESE EXIST FOR: the previous implementation returned state `accepted` whenever an
+# `accepted` ROW was present, and set the acceptance gate `satisfied` on the same test. The claim
+# being evaluated was the entirety of its own evidence. Worse, NO decision rule read the gate, so
+# even the wrong answer was unobservable — which is why `ST-10` had to be added alongside the fix.
+#
+# Every control below builds a contract that is landed, authorized and merged, then breaks EXACTLY
+# ONE external fact. A control that fails on the wrong rule proves nothing about the rule it names.
+MERGE_SHA = "m" * 40
+MERGED_AT = "2026-07-19T23:19:38Z"
+
+
+def _acc_rows(*, merge_sha=MERGE_SHA, accepted_sha=None, merged_at=MERGED_AT, runs="101", drop=()):
+    """A `merged` + `accepted` pair. `drop` omits keys so a control can probe one missing value.
+
+    The two SHAs are separable BECAUSE THE TWO CHECKS ARE. The `merged` row is read during
+    authorization rederivation; the `accepted` row is read during acceptance. A control that broke
+    both at once would fire `ST-9` and never reach `ST-10`, proving nothing about acceptance.
+    """
+    kv = [("merge_sha", merge_sha if accepted_sha is None else accepted_sha),
+          ("decision", "accept"), ("evidence", "the success condition"),
+          ("date", "2026-07-20"), ("operator", "operator"), ("check_runs", runs)]
+    body = "; ".join(f"{k}={v}" for k, v in kv if k not in drop)
+    return (f"| 2026-07-19T23:19:38Z | merged | merge_sha={merge_sha}; merged_at={merged_at} |\n"
+            f"| 2026-07-20T00:00:00Z | accepted | {body} |\n")
+
+
+def _landed(*, rows=None, mf=None, trees=None, **authz):
+    """(raw, kwargs) for a LANDED, authorized, merged contract carrying `merged` + `accepted`.
+
+    Defaults are all-correct on purpose: each control breaks one fact and inherits the rest, so a
+    red result names the fact it broke rather than a fixture that was never coherent.
+    """
+    head = "h" * 40
+    d = parse(build()).digest
+    authz.setdefault("digest", d)
+    raw = build(extra=_authz(**authz) + (rows if rows is not None else _acc_rows()))
+    parent_raw = build()
+    return raw, {
+        "phase": "merge-gate", "pr": 7, "main_blob": raw,
+        "extra_blobs": {(PARENT, CONTRACT_PATH): parent_raw, (head, CONTRACT_PATH): raw},
+        "ancestry": {(PARENT, head), (MERGE_SHA, "origin/main")},
+        "parent_changed": [CONTRACT_PATH],
+        "merge_facts": mf or FakeMergeFacts(pr_head=head),
+        "trees": trees,
+    }
+
+
+def _acc_state(raw, kw):
+    """The derived STATE for an acceptance fixture. State is the thing these controls are about."""
+    trees = kw.pop("trees", None)
+    _, ctx = _run(raw, _trees=trees, **kw)
+    return ctx["state"], ctx["gates"]
+
+
+def _c_nc_ac_01(c):
+    """REQUIRED CONTROL 1: an `accepted` row ALONE does not yield `accepted`.
+
+    The row is present and complete; the platform simply does not corroborate it. Under the previous
+    implementation this returned `accepted` — the row was the whole proof.
+    """
+    raw, kw = _landed(mf=FakeMergeFacts(pr_head="h" * 40, merged=False, merge_sha=""))
+    st, g = _acc_state(raw, kw)
+    if st == "accepted":
+        return False, "NOT DETECTED — an unsupported `accepted` row still derived state 'accepted'"
+    return True, f"state {st!r}, acceptance gate {g.acceptance!r} — the row did not prove itself"
+
+
+def _c_nc_ac_02(c):
+    """REQUIRED CONTROL 2: `accepted` row + STALE authorization ⇒ `acceptance_claimed` via `ST-10`.
+
+    Also the control that keeps `ST-10` non-decorative: it asserts the RULE fires, not merely that
+    the state is right. A state nobody's verdict depends on would be the old defect wearing a new
+    name.
+    """
+    raw, kw = _landed(parent="q" * 40)          # a parent that is not an ancestor of the PR head
+    st, _ = _acc_state(raw, kw)
+    if st != "acceptance_claimed":
+        return False, f"NOT DETECTED — expected 'acceptance_claimed', got {st!r}"
+    return True, f"state {st!r} — acceptance cannot rest on an unauthorized merge"
+
+
+def _c_nc_ac_03(c):
+    """REQUIRED CONTROL 3: authorization rederived ACROSS THE SQUASH + valid evidence ⇒ `accepted`.
+
+    The positive case, and the one that proves the others are not passing for a trivial reason. The
+    authorized parent is NOT an ancestor of the merge commit — that is what a squash does — so this
+    only passes because rederivation asks against the pre-merge PR head.
+    """
+    raw, kw = _landed()
+    st, g = _acc_state(raw, kw)
+    if st != "accepted" or g.acceptance != "satisfied":
+        return False, f"NOT DETECTED — a fully-verified acceptance derived {st!r}/{g.acceptance!r}"
+    return True, f"state {st!r}, acceptance {g.acceptance!r} — verified across the squash"
+
+
+def _c_nc_ac_04(c):
+    """REQUIRED CONTROL 4: PR-head/merge-tree MISMATCH ⇒ `merged_unverified`, NOT `ST-7`.
+
+    A completed read that disagrees is a KNOWN NEGATIVE. Reporting it as `ST-7` would say "could not
+    check" about a check that ran and failed — the difference between ignorance and a finding.
+    """
+    raw, kw = _landed(rows="", trees={"h" * 40: "a" * 40, MERGE_SHA: "b" * 40})
+    dec, ctx = _run(raw, _trees=kw.pop("trees"), **kw)
+    if ctx["state"] != "merged_unverified":
+        return False, f"NOT DETECTED — expected 'merged_unverified', got {ctx['state']!r}"
+    if dec.rule == "ST-7":
+        return False, "NOT DETECTED — a completed, disagreeing read was reported as unavailable"
+    return True, f"state 'merged_unverified' via {dec.rule} — a finding, not an unavailability"
+
+
+def _c_nc_ac_05(c):
+    """REQUIRED CONTROL 5: an UNAVAILABLE platform read ⇒ `ST-7`, never a negative finding.
+
+    Fails the PR read itself. The distinction this defends is the whole of `Derived.unverifiable`:
+    a network failure must never be able to read as a governance verdict.
+    """
+    raw, kw = _landed(mf=FakeMergeFacts(fail="pull"))
+    dec, ctx = _run(raw, _trees=kw.pop("trees"), **kw)
+    if dec.rule != "ST-7":
+        return False, f"NOT DETECTED — an unreadable platform gave {dec.rule!r}, not 'ST-7'"
+    return True, f"ST-7 → {dec.outcome}; state {ctx['state']!r} — unavailable is never authorized"
+
+
+def _c_nc_ac_06(c):
+    """REQUIRED CONTROL 6: a WRONG merge SHA in the `accepted` row ⇒ `acceptance_claimed` via ST-10.
+
+    Also the control that keeps `ST-10` non-decorative — it asserts the RULE fires, not merely that
+    the state is right. Only the ACCEPTED row's SHA is wrong, so authorization still rederives and
+    `ST-9` does not pre-empt: this is the narrowest fixture that reaches the acceptance rule at all.
+    """
+    raw, kw = _landed(rows=_acc_rows(accepted_sha="z" * 40))
+    trees = kw.pop("trees", None)
+    dec, ctx = _run(raw, _trees=trees, **kw)
+    if ctx["state"] != "acceptance_claimed":
+        return False, f"NOT DETECTED — expected 'acceptance_claimed', got {ctx['state']!r}"
+    if dec.rule != "ST-10":
+        return False, f"NOT DETECTED — expected rule 'ST-10', got {dec.rule!r}"
+    return True, f"ST-10 → {dec.outcome}; the row named a merge the platform did not perform"
+
+
+def _c_nc_ac_07(c):
+    """REQUIRED CONTROL 7: a WRONG `mergedAt` ⇒ `acceptance_claimed`."""
+    raw, kw = _landed(rows=_acc_rows(merged_at="2020-01-01T00:00:00Z"))
+    st, _ = _acc_state(raw, kw)
+    if st != "acceptance_claimed":
+        return False, f"NOT DETECTED — expected 'acceptance_claimed', got {st!r}"
+    return True, f"state {st!r} — the recorded merge date is not the platform's"
+
+
+def _c_nc_ac_08(c):
+    """REQUIRED CONTROL 8: a required run that FAILED, was SKIPPED, CANCELLED or is ABSENT.
+
+    All four in one control because they are one predicate — "did every required context succeed" —
+    and a required context that is merely present is not a required context that passed. `skipped`
+    is the sharp case: at a merge commit unrelated jobs legitimately skip, so a naive "all runs
+    succeeded" test would reject a valid acceptance while still admitting a skipped REQUIRED one.
+    """
+    for concl, runs in (("failure", [("101", "unit", "failure")]),
+                        ("skipped", [("101", "unit", "skipped")]),
+                        ("cancelled", [("101", "unit", "cancelled")]),
+                        ("absent", [("101", "something-else", "success")])):
+        raw, kw = _landed(mf=FakeMergeFacts(pr_head="h" * 40, runs=runs))
+        st, _ = _acc_state(raw, kw)
+        if st != "acceptance_claimed":
+            return False, f"NOT DETECTED — a {concl} required run derived {st!r}"
+    return True, "failed, skipped, cancelled and absent required runs all yield acceptance_claimed"
+
+
+def _c_nc_ac_09(c):
+    """REQUIRED CONTROL 9: ZERO reviews remains fully valid, through acceptance.
+
+    The single-operator guarantee must survive this change. No review exists, none is read, and the
+    contract still reaches `accepted` — which is the property #707 established and this must not
+    quietly cost.
+    """
+    raw, kw = _landed()
+    st, g = _acc_state(raw, kw)
+    if st != "accepted" or g.merge_authorization != "satisfied":
+        return False, f"NOT DETECTED — zero-review acceptance derived {st!r}"
+    return True, f"state {st!r} with no review read anywhere in the path"
+
+
+def _c_nc_ac_10(c):
+    """REQUIRED CONTROL 10: the new platform port cannot express a review question.
+
+    `MergeFactsPort` reintroduces a GitHub read, which is exactly where the #707 guarantee could
+    quietly collapse. Proven by SHAPE: no general path method, and no field on `MergeFacts` that
+    could carry a review — so there is no argument to bend toward `/reviews`.
+    """
+    from . import adapters
+    from .model import MergeFacts as _MF
+    import dataclasses as _dc
+    port = adapters.MergeFactsPort
+    escape = [n for n in dir(port)
+              if n in ("get", "api", "request", "fetch", "call", "raw", "query")]
+    if escape:
+        return False, f"NOT DETECTED — the port exposes a general escape hatch: {escape}"
+    public = sorted(n for n in vars(port) if not n.startswith("_"))
+    if public != ["check_runs", "pull", "required_contexts"]:
+        return False, f"NOT DETECTED — the port's surface widened to {public}"
+    fields = {f.name for f in _dc.fields(_MF)}
+    leaks = {f for f in fields if any(w in f for w in ("review", "approv", "principal", "collab"))}
+    if leaks:
+        return False, f"NOT DETECTED — MergeFacts can carry {leaks}"
+    return True, f"three closed reads {public}, and no MergeFacts field can name a person"
+
+
+def _c_nc_ac_11(c):
+    """REQUIRED CONTROL 11: `ST-4` remains absent, and `ST-10` is not it under a new number.
+
+    `ST-10` asks whether an acceptance CLAIM verifies against the platform. That question has no
+    second person in it, and could not be answered by one.
+    """
+    from . import decide as _d
+    ids = [r.id for r in _d.RULES]
+    if "ST-4" in ids:
+        return False, "NOT DETECTED — ST-4 is registered again"
+    st10 = [r for r in _d.RULES if r.id == "ST-10"]
+    if not st10:
+        return False, "NOT DETECTED — ST-10 is absent, so the acceptance gate has no reader"
+    if "review" in st10[0].why.lower() or "person" in st10[0].why.lower():
+        return False, f"NOT DETECTED — ST-10 names a second person: {st10[0].why!r}"
+    return True, f"ST-4 absent; ST-10 reads the acceptance gate ({len(ids)} rules, no duplicates)"
 
 
 def _c_nc_c10b(c):
@@ -1186,22 +1471,33 @@ def _c_nc_c31(c):
 
 
 def _c_nc_c25(c):
-    """`merged` NEVER implies `accepted`, and an incomplete `accepted` event is MALFORMED."""
+    """`merged` NEVER implies `accepted` — now across ALL THREE merged states (§4.3a).
+
+    "On main" used to be one state. Splitting it into `merged`, `merged_unverified` and
+    `merged_unauthorized` multiplied the ways this implication could be reintroduced, so the control
+    checks every one rather than the single case that existed when it was written.
+    """
     from . import lifecycle
     from .model import Gates
-    landed = build()
-    d = parse(landed)
-    st = lifecycle.state(d, d.events, Gates(), merged=True, ci_green=False, proposal_bound=False,
-                         pr_open=False, mandatory_ok=True)
-    if st != "merged":
-        return False, f"NOT DETECTED — a merged contract derived state {st!r}"
+    d = parse(build())
+    cases = {
+        "merged_unauthorized": Gates(),                                   # no claim at all
+        "merged": Gates(merge_authorization="satisfied"),                 # a claim that verifies
+    }
+    for expect, g in cases.items():
+        st = lifecycle.state(d, d.events, g, merged=True, ci_green=False, proposal_bound=False,
+                             pr_open=False, mandatory_ok=True)
+        if st != expect:
+            return False, f"NOT DETECTED — a merged contract derived {st!r}, expected {expect!r}"
+        if st == "accepted":
+            return False, "NOT DETECTED — merge implied acceptance"
     accepted = build(extra="| 2026-07-18T12:00:00Z | merged | merge_sha=abc |\n"
                            "| 2026-07-18T13:00:00Z | accepted | merge_sha=abc |\n")
     diags = lifecycle.validate_events(parse(accepted).events, main_blob=None, decl_bytes=b"",
                                       life_bytes=b"")
     if "ACCEPT-INCOMPLETE" not in {x.code for x in diags}:
-        return False, "NOT DETECTED — an `accepted` event missing four of five values passed"
-    return True, "merged ⇏ accepted; an incomplete acceptance is MALFORMED"
+        return False, "NOT DETECTED — an `accepted` event missing five of six values passed"
+    return True, "merged ⇏ accepted in every merged state; an incomplete acceptance is MALFORMED"
 
 
 def _c_nc_c26(c):

@@ -13,12 +13,18 @@ outcome unreachable.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 
 _TIMEOUT = 30                     # matches `tools/ci/live.py:15`'s probe budget; not a new number
+
+# A GitHub path segment this module is willing to build. Deliberately narrow: no slash, no dot, so a
+# segment can neither traverse (`../reviews`) nor append (`707/reviews`). See `MergeFactsPort`.
+_SAFE_SEGMENT = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+_SAFE_SLUG = re.compile(r"^[A-Za-z0-9_.-]{1,64}/[A-Za-z0-9_.-]{1,64}$")
 
 
 class PortError(Exception):
@@ -82,6 +88,18 @@ class RepoPort:
 
     def resolve(self, ref: str) -> str | None:
         out, rc = self._git("rev-parse", ref, check=False)
+        sha = out.strip()
+        return sha if rc == 0 and _is_sha(sha) else None
+
+    def tree_of(self, ref: str) -> str | None:
+        """The TREE object a commit points at — content identity, independent of commit identity.
+
+        A squash merge deliberately produces a different COMMIT than the PR head (new parent, new
+        message, new hash) while producing the same CONTENT. Comparing commits would therefore always
+        differ and prove nothing; comparing trees answers the question actually being asked — did the
+        thing that landed equal the thing that was authorized (ADR-0105 §4.3a).
+        """
+        out, rc = self._git("rev-parse", f"{ref}^{{tree}}", check=False)
         sha = out.strip()
         return sha if rc == 0 and _is_sha(sha) else None
 
@@ -188,8 +206,109 @@ class RegistryPort:
         return {c["id"] for c in reg.get("controls", []) if isinstance(c, dict) and "id" in c}
 
 
-# There is deliberately NO `gh` port here. Merge authorization is the operator's own parent-bound
-# lifecycle event, so no port reads reviews, reviewer identity, collaborators, App installations,
-# deploy keys or workflow tokens. `ReviewPort` and the slug helper it needed are DELETED rather than
-# left unused: a dormant adapter is an invitation to wire it back in, and the guarantee this module
-# now offers is that the code to consult a second person does not exist.
+# ── GitHub merge facts ──────────────────────────────────────────────────────────────────────
+#
+# THE ONE THING THIS PORT MUST NOT BECOME IS A GENERAL GITHUB CLIENT.
+#
+# Merge authorization is still the operator's own parent-bound lifecycle event; no port reads
+# reviews, reviewer identity, collaborators, App installations, deploy keys or workflow tokens.
+# `ReviewPort` stays DELETED. What ADR-0105 §4.3a needs is different in kind: after a squash the
+# authorized parent is no longer an ancestor of the head, so verifying an authorization that already
+# existed requires the pre-merge PR head — a merge fact, not a person.
+#
+# The safety property is enforced by SHAPE, not by discipline. There is no `get(path)`, no `api()`,
+# no base-URL parameter and no format string a caller can steer: three private methods each build
+# their own fixed path from validated components. `/reviews` is not one argument away, because there
+# is no argument that reaches path construction. This mirrors `lifecycle.gates()` having no
+# `reviews` parameter — you cannot pass what the signature cannot express.
+class MergeFactsPort:
+    """Three closed reads: the PR's merge facts, the check runs at a SHA, the protected contexts."""
+
+    def __init__(self, slug: str = "") -> None:
+        self.slug = slug or _repo_slug()
+        if not _SAFE_SLUG.match(self.slug):
+            raise PortError(f"refusing to build a GitHub path from the slug {self.slug!r}")
+
+    def _api(self, *segments: str) -> object:
+        """`gh api <fixed-path>` — segments are validated, never a caller-supplied path.
+
+        The slug is validated in `__init__` and every other component here, so EVERY part of the
+        path is constrained. An unvalidated component would reopen by the back door exactly what the
+        missing `get(path)` closes at the front.
+        """
+        for s in segments:
+            if not _SAFE_SEGMENT.match(s):
+                raise PortError(f"refusing to build a GitHub path from {s!r}")
+        path = "/".join(("repos", self.slug, *segments))
+        try:
+            r = subprocess.run(["gh", "api", path, "--paginate"], capture_output=True, text=True,
+                               timeout=_TIMEOUT)
+        except FileNotFoundError:
+            raise PortError("gh not found on PATH") from None
+        except subprocess.TimeoutExpired:
+            raise PortError(f"gh api {path} timed out after {_TIMEOUT}s") from None
+        if r.returncode != 0:
+            raise PortError(f"gh api {path} failed: {r.stderr.strip()[:160]}")
+        try:
+            return json.loads(r.stdout)
+        except json.JSONDecodeError as exc:
+            raise PortError(f"gh api {path} returned unparseable JSON: {exc}") from None
+
+    def pull(self, pr: int) -> dict:
+        """Merge facts for ONE pull request. Returns only the five keys §4.3a reads."""
+        d = self._api("pulls", str(int(pr)))
+        if not isinstance(d, dict):
+            raise PortError(f"gh api pulls/{pr} did not return an object")
+        head = (d.get("head") or {}).get("sha") or ""
+        return {"pr_head": head, "merge_sha": d.get("merge_commit_sha") or "",
+                "merged_at": d.get("merged_at") or "", "merged": bool(d.get("merged"))}
+
+    def check_runs(self, sha: str) -> list[tuple[str, str, str]]:
+        """`(id, name, conclusion)` for every check run bound to `sha`. Ids are strings on purpose.
+
+        A check-run id is a platform object identifier, not a number to do arithmetic on, and the
+        `accepted` row records it as text. Comparing text to text keeps the recorded set and the
+        verified set the same kind of thing.
+        """
+        if not _is_sha(sha):
+            raise PortError(f"{sha!r} is not a 40-character commit SHA")
+        d = self._api("commits", sha, "check-runs")
+        if not isinstance(d, dict):
+            raise PortError(f"gh api commits/{sha[:12]}/check-runs did not return an object")
+        out = []
+        for c in d.get("check_runs") or []:
+            if isinstance(c, dict):
+                out.append((str(c.get("id") or ""), str(c.get("name") or ""),
+                            str(c.get("conclusion") or "")))
+        return sorted(out)
+
+    def required_contexts(self, branch: str = "main") -> list[str]:
+        """The contexts branch protection actually requires — the bar, read from outside the repo.
+
+        Read here rather than from the `accepted` row because a row that names its own required set
+        sets its own bar, which is the self-assertion §4.3a exists to remove. A token that cannot
+        read protection produces `PortError` → `unverifiable` → `ST-7`, never a relaxed bar.
+        """
+        d = self._api("branches", branch, "protection")
+        if not isinstance(d, dict):
+            raise PortError(f"gh api branches/{branch}/protection did not return an object")
+        ctx = ((d.get("required_status_checks") or {}).get("contexts")) or []
+        return sorted(str(c) for c in ctx)
+
+
+def _repo_slug() -> str:
+    """`owner/name` from the git remote. No network, and no way to point this at another repo."""
+    try:
+        r = subprocess.run(["git", "remote", "get-url", "origin"], cwd=REPO, capture_output=True,
+                           text=True, timeout=_TIMEOUT)
+    except FileNotFoundError:
+        raise PortError("git not found on PATH") from None
+    except subprocess.TimeoutExpired:
+        raise PortError(f"git remote get-url timed out after {_TIMEOUT}s") from None
+    if r.returncode != 0:
+        raise PortError(f"cannot read the origin remote: {r.stderr.strip()[:160]}")
+    url = r.stdout.strip().removesuffix(".git")
+    m = re.search(r"[:/]([^/:]+/[^/]+)$", url)
+    if not m:
+        raise PortError(f"cannot derive owner/name from the origin remote {url!r}")
+    return m.group(1)
