@@ -3,6 +3,10 @@
 > **This document discloses. It does not repair.** Every gap below is recorded as it stands on
 > `main`. No lifecycle row is added to any contract named here, no authorization is asserted after
 > the fact, and no state is edited into existence. A gap that is disclosed is still a gap.
+>
+> **The gaps are DISPOSED, not open** — see *Disposition* below. Each has a final recorded outcome,
+> and in all three cases that outcome is that it stands unrepaired. This is a decision that has been
+> made, not a decision that is pending.
 
 ## Why this exists
 
@@ -82,7 +86,9 @@ What is missing is only the **post-merge append**: no `merged` row, no `accepted
 landed as `8311bc94b83fc0ba1b2ec0f1e1e163caee75e362` (PR #707). Acceptance was never claimed —
 which is correct behaviour, not a false claim. The gap is an omission, not a misstatement.
 
-## What is deliberately NOT done here
+## What is deliberately NOT done — here or later
+
+Under the disposition above these are permanent, not scoped to this change.
 
 - **No backfill.** No row is appended to G1, G2 or G3.
 - **No retroactive authorization.** Nothing in this document authorizes a merge that has already
@@ -95,16 +101,33 @@ Backfilling would be the worst available option: it would produce a clean-lookin
 cleanliness was manufactured after the fact by the same agent whose omissions created the gaps.
 The record is more useful wrong-and-labelled than right-and-fabricated.
 
-## Closing these gaps would require, and this change does not attempt
+## Disposition — final, recorded 2026-07-20
 
-- **G1** — an operator decision on whether a change merged without recorded authorization is
-  ratified, re-derived, or left standing as a disclosed violation. That is an operator judgement,
-  not a document edit, and none of the three outcomes can be chosen by the agent that caused it.
-- **G2** — the same decision, plus a decision about an `accepted` row that the verifier already
-  declines to honour. The verifier's refusal is currently doing the work the record should have.
-- **G3** — the post-merge `merged` + `accepted` append, which is mechanical and already
-  demonstrated on `CC-2026-07-20-acceptance-rederivation`. It is the only one of the three that a
-  routine operation would close.
+**R9 is DISPOSED, not open.** The operator's decision is that all three gaps stand exactly as they
+are, permanently, and that none of them is repaired. Each has been considered and each has an
+outcome. What follows is the disposition, not a plan.
+
+| gap | disposition |
+|---|---|
+| **G1** | An **unratified, disclosed unauthorized merge.** Not ratified. Not re-derived. Not backfilled. It stands on the record as a merge that occurred without recorded authorization. |
+| **G2** | An **unratified `acceptance_claimed` historical violation.** Not ratified. The `accepted` row stays exactly as written, and the verifier continues to decline to honour it. |
+| **G3** | A **disclosed post-merge omission.** The `merged` + `accepted` append is not performed, now or later. The contract stays at `merged`. |
+
+**Disposed does not mean fixed, and it does not mean forgiven.** It means the question of what to
+do about each gap has been answered, and the answer is *nothing*. These are not pending items, not
+follow-up work, and not a backlog. Any future proposal to append a row to G1, G2 or G3, or to edit
+their bodies, contradicts this disposition and requires reversing it explicitly first.
+
+**Why leaving them is the correct outcome and not merely the cheap one.** Ratifying G1 after the
+fact would grant an authorization that was never sought, at a moment chosen for convenience, for a
+change whose merge is long past — which is indistinguishable from the failure the authorization
+requirement exists to prevent. Repairing G2 would remove the single clearest live demonstration the
+program has that an `accepted` row does not produce an `accepted` state. Completing G3 would be
+harmless in isolation, but it would leave one of three gaps closed and two open, implying the
+remaining two were judged less real rather than judged and kept.
+
+The verifier already reports each of these correctly and will continue to, at every future run.
+That is the enforcement. The record is not improved by making it look better than the history was.
 
 ## Correction to a previously published claim
 

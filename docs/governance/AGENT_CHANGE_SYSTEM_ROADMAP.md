@@ -77,17 +77,27 @@ Both exit criteria are met, and each is mechanically re-derivable rather than as
   `acceptance_claimed` because the merge beneath it is not fully authorized. A criterion that only
   admits is not a criterion; this one also refuses.
 
-**Residual R9 — the phase's own lifecycle records are incomplete, and are disclosed rather than
-repaired.** Three of the four contracts written under ADR-0105 during Phase 3 carry gaps: one
-merged with no authorization recorded (`merged_unauthorized`), one claims an acceptance the
-verifier declines to honour (`acceptance_claimed`), and one was fully authorized but never received
-its post-merge append (`merged`). Full statement, with the derived state of each and what closing
-each would require: `docs/governance/PHASE3_LIFECYCLE_DISCLOSURE.md`.
+**Residual R9 — the phase's own lifecycle records are incomplete. DISPOSED 2026-07-20: all three
+gaps stand unrepaired, permanently.** Three of the four contracts written under ADR-0105 during
+Phase 3 carry gaps, and each has a final recorded outcome:
 
-**R9 is not closed by this status.** Phase 3's exit criteria concern the compiler and verifier, and
-those are met and proven. The gaps are program-execution debt from building the tool, surfaced by
-the tool itself. Nothing here ratifies the unauthorized merge in **G1**, and `ACCEPTED` must not be
-read as doing so. Disposition of G1 and G2 is an operator decision that remains open.
+| gap | contract | derived state | disposition |
+|---|---|---|---|
+| **G1** | `CC-2026-07-19-cli-lifecycle-integrity` | `merged_unauthorized` | an **unratified, disclosed unauthorized merge** |
+| **G2** | `CC-2026-07-18-change-contract-compiler` | `acceptance_claimed` | an **unratified historical violation** |
+| **G3** | `CC-2026-07-19-single-operator-authorization` | `merged` | a **disclosed post-merge omission** |
+
+Full statement, with each state as derived by the tool and the reasoning behind the disposition:
+`docs/governance/PHASE3_LIFECYCLE_DISCLOSURE.md`.
+
+**R9 is disposed, which is not the same as closed, repaired or forgiven.** The question of what to
+do about each gap has been answered, and the answer is *nothing*. They are not pending items and
+not follow-up work. **Nothing here ratifies G1's unauthorized merge or G2's claimed acceptance**,
+and Phase 3's `ACCEPTED` must not be read as doing so — the two are independent. Phase 3's exit
+criteria concern the compiler and verifier, which are met and proven; the gaps are
+program-execution debt from building the tool, surfaced by the tool itself, and the verifier
+reports them correctly at every run. Appending a row to G1, G2 or G3, or editing their bodies,
+contradicts this disposition and requires reversing it explicitly first.
 
 ### Phase 4 — acceptance intent
 
@@ -157,9 +167,12 @@ Production acceptance is only met when both are proven on real work:
 
 **APPROVE PHASE 4 COLD-START ACCEPTANCE**
 
-Phase 3 is `ACCEPTED`, which satisfies Phase 4's entry criterion. Phase 4 has **not** begun: no
-cold-start case has been designed, attempted or scored, and residual **R9** above is open. The gate
-authorizes starting Phase 4; it is not a record that Phase 4 started.
+Phase 3 is `ACCEPTED`, which satisfies Phase 4's entry criterion, and residual **R9** is disposed
+rather than open, so nothing in Phase 3 is awaiting an answer.
+
+**Phase 4 remains `NOT STARTED`.** No cold-start case has been designed, attempted or scored. The
+gate authorizes *starting* Phase 4; it is not a record that Phase 4 started, and R9's disposition
+is not a Phase 4 entry event.
 
 ## Program Execution Method
 

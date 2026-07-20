@@ -35,7 +35,11 @@ re-examined, and two sentences describing code that nothing compared against the
 
 3. **Three of Phase 3's four contracts carry incomplete lifecycles**, and defect 1 hid it: every one
    answered `CL-2` regardless of state. With the base fixed they derive `merged_unauthorized`,
-   `acceptance_claimed` and `merged`. They are **disclosed, not backfilled**.
+   `acceptance_claimed` and `merged`. They are **disclosed, not backfilled** — and, by operator
+   disposition recorded 2026-07-20, they are **disposed rather than left open**: all three stand
+   unrepaired, permanently. G1 remains an unratified disclosed unauthorized merge, G2 an unratified
+   `acceptance_claimed` historical violation, G3 a disclosed post-merge omission. *Disposed* means
+   the question has been answered and the answer is *nothing* — not that anything was fixed.
 
 ### success_condition
 
@@ -52,14 +56,19 @@ Each is machine-checkable against the landed tree. None restates a count that co
 5. No source file states a count of `MergeFactsPort`'s reads in prose. Where the size of that set
    matters it is derived from the port, which is what `NC-AC-10` already does.
 6. `docs/governance/PHASE3_LIFECYCLE_DISCLOSURE.md` states, for each Phase 3 contract, the state
-   derived by `python -m tools.contract state` — not a state transcribed from intent.
+   derived by `python -m tools.contract state` — not a state transcribed from intent — and records
+   a **disposition** for each of G1, G2 and G3.
 7. The lifecycle rows of `CC-2026-07-18-change-contract-compiler`,
    `CC-2026-07-19-cli-lifecycle-integrity` and `CC-2026-07-19-single-operator-authorization` are
    **byte-identical** to their values at `ddbf696baf69189212e11a9004aa2cf05762b047`. Nothing is
-   backfilled.
-8. The roadmap's Phase 3 row reads `ACCEPTED`, its outcome section names residual **R9** and links
-   the disclosure, and the next gate names Phase 4 without recording that Phase 4 began.
-9. `python -m tools.arch ci` and `python -m tools.ci static` both exit 0.
+   backfilled, ratified or rewritten — and under the disposition, nothing later will be.
+8. The roadmap's Phase 3 row reads `ACCEPTED`, its outcome section records **R9 as DISPOSED** with
+   a per-gap disposition and links the disclosure, and the next gate names Phase 4 while Phase 4's
+   status row still reads `NOT STARTED`.
+9. Neither document lets `ACCEPTED` be read as ratifying G1 or G2. Both state the independence
+   explicitly, because a phase status and an authorization are different claims and the danger of
+   this change is that a reader collapses them.
+10. `python -m tools.arch ci` and `python -m tools.ci static` both exit 0.
 
 ### rollback
 
@@ -136,8 +145,8 @@ tree, so no glob can name them.
 | tools/contract/__main__.py | MODIFIED | S4a resolves the base from the contract's own `created.base_sha` when none is given; unresolvable is `unverifiable`, never a silent fallback; `--base` defaults to `None`; `run()`'s `base` becomes optional |
 | tools/contract/selftest.py | MODIFIED | `NC-AC-35` added and registered; `NC-AC-10`'s success message derives its count instead of stating it |
 | tests/test_contract_compiler.py | MODIFIED | the hermetic-platform comment stops naming a count and points at the control that derives one |
-| docs/governance/AGENT_CHANGE_SYSTEM_ROADMAP.md | MODIFIED | Phase 3 → `ACCEPTED`; a Phase 3 outcome section with residual **R9**; the next gate becomes Phase 4; the disclosure added to evidence links |
-| docs/governance/PHASE3_LIFECYCLE_DISCLOSURE.md | NEW | the **R9** disclosure — three incomplete lifecycles stated as derived, with no repair |
+| docs/governance/AGENT_CHANGE_SYSTEM_ROADMAP.md | MODIFIED | Phase 3 → `ACCEPTED`; a Phase 3 outcome section recording **R9 as DISPOSED** with a per-gap disposition; the next gate becomes Phase 4 while Phase 4 stays `NOT STARTED`; the disclosure added to evidence links |
+| docs/governance/PHASE3_LIFECYCLE_DISCLOSURE.md | NEW | the **R9** disclosure — three incomplete lifecycles stated as derived, each with a final disposition leaving it unrepaired, and no repair performed |
 | docs/contracts/CC-2026-07-20-phase3-closeout.md | NEW | this contract |
 
 ### reusable_evidence
