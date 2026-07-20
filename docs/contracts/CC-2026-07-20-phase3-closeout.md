@@ -176,3 +176,4 @@ tree, so no glob can name them.
 |---|---|---|
 | 2026-07-20T18:28:03Z | created | id=CC-2026-07-20-phase3-closeout; base_sha=ddbf696baf69189212e11a9004aa2cf05762b047; timestamp_source=GitHub API Date response header, observed during this operation |
 | 2026-07-20T19:49:21Z | approved | digest=sha256:da421500eda6113b901a0d5c9268259ae99d0f3db933034a8533ad27630eec93; token=APPROVE PHASE 3 CLOSEOUT DECLARATION; scope=phase3-closeout; adr_0105_authority_blob=a4538c284a14536de4c00547bee8e49086b79fd0; operator=operator; pr=710; timestamp_source=GitHub API Date response header |
+| 2026-07-20T20:08:01Z | implementation_started | bound_to=sha256:da421500eda6113b901a0d5c9268259ae99d0f3db933034a8533ad27630eec93; implemented_head=7fc30b4c7ed89c1e219b24757f278aeb257ef913; note=implementation preceded approval and this lifecycle event under the operator Phase 3 closeout directive; pr=710; timestamp_source=GitHub API Date response header |
