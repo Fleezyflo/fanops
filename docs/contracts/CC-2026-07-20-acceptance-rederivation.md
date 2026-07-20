@@ -44,11 +44,22 @@ be on `main`, any recorded merge SHA to equal it, and the PR-head **tree** to eq
 Trees, not commits — a squash is *supposed* to be a different commit and the same content. Every input
 existed before the merge, so this **verifies an authorization; it cannot create one**.
 
-**Acceptance is checked against the platform.** Actual merge SHA, `merged` timestamp equal to
-`mergedAt`, required check runs bound to that SHA, every required run `success`, and the recorded
-check-run ids exactly equal to the verified set. The required set is read from **branch protection** —
-never from the row, because a row that names its own bar sets its own bar. `evidence=` stays as human
+**Acceptance is checked against the platform.** Actual merge SHA, the `merged` event's own **timestamp
+column** equal to `mergedAt`, and each required context satisfied by a **recorded** check-run id that
+is bound to the merge SHA, names that context, and concluded `success`. `evidence=` stays as human
 rationale and is never read as proof.
+
+**The bar is pinned to the past, and so is the evidence.** The required set is read from
+`current_required_contexts` in `.github/ci-control-registry.yml` **at the contract's own
+`created.base_sha`** — not from live branch protection, whose relaxation tomorrow would otherwise
+retroactively invalidate or manufacture an acceptance recorded today; and not from
+`intended_required_contexts`, which is an aspiration and was never a bar any merge had to clear. Live
+protection may be reported as present-day drift, but it decides nothing here. Correspondingly,
+acceptance resolves the **recorded ids themselves** rather than rebuilding a newest-run map: a rerun
+mints a new id, and a verdict that decays because a job was re-run was never a verification. Ids are
+chosen once, before the first acceptance — greatest numeric qualifying id per required context — and
+a later rerun is simply not consulted. A new `accepted` row is needed only to recognise replacement
+evidence after an earlier failed or absent run.
 
 **Three outcomes, and only one is acceptance.** A completed read that disagrees is a known negative
 (`acceptance_claimed` / `merged_unverified`). A read that cannot complete is unavailable: recorded in
@@ -61,15 +72,38 @@ distinction its predicate cannot.
 `MergeFacts` has no field that could carry a review, an approval count or a person. `/reviews` is not
 one argument away because no argument reaches path construction. `ST-4` stays deleted.
 
+**Process deviation, recorded accurately.** The implementation on this branch was written **before**
+any operator approval of this declaration. Part of that was necessary and part was not, and the two
+must not be conflated:
+
+- **Necessary:** drafting the ADR-0105 amendment text and re-pinning its digest. This contract cites
+  ADR-0105, so the amended body must exist before its blob SHA can be named in `authority`, and the
+  authority row must be settled before `D` is stable. Without that ordering the approved digest would
+  be invalidated by the very amendment it approves.
+- **NOT necessary, and premature:** implementing the verifier, the adapter, the state machine and the
+  tests. None of that was required to stabilise `D`. It was done ahead of authorization, which is
+  precisely the sequencing this system exists to prevent, and an earlier report of mine described the
+  whole of it as "forced" — that was wrong and is corrected here rather than deleted.
+
+The branch is preserved as **unapproved implementation**. It carries no approval row, no PR is open,
+and nothing is merged. If the operator approves this declaration, the existing commits become
+authorized work; if not, they are discarded.
+
 ### success_condition
 
 1. `python -m tools.contract selftest` exits 0 with every control DETECTED, including `NC-C27`.
 2. `NC-AC-01` through `NC-AC-11` are registered and DETECTED, covering all eleven required controls;
-   `NC-AC-12` covers the new `MERGED-INCOMPLETE` code.
+   `NC-AC-12` covers `MERGED-INCOMPLETE`, and `NC-AC-13`..`NC-AC-16` cover the no-`--pr` path, rerun
+   pinning, base-pinned required contexts and pagination completeness.
 3. An `accepted` row alone never derives state `accepted`, for every non-`satisfied` gate value.
 4. A valid authorization rederives across a squash: state `merged`, `merge_authorization` satisfied.
 5. A completed read that disagrees yields `acceptance_claimed` or `merged_unverified`, never `ST-7`;
-   a read that cannot complete yields `ST-7`, never a negative finding.
+   a read that cannot complete — including an unresolvable ref or tree, an unreadable pinned registry,
+   or an incomplete check-run page — yields `ST-7`, never a negative finding.
+5a. The ordinary command with no `--pr` resolves the governed PR from `binding` and performs every
+   post-merge check (`NC-AC-13`).
+5b. A later rerun of a required job does not disturb an already-recorded verdict (`NC-AC-14`), and the
+   required set is pinned to `created.base_sha` rather than live configuration (`NC-AC-15`).
 6. `gates.acceptance` is read by at least one decision rule (`ST-10`).
 7. No `cmd_*` verb reads a `Gates` attribute that is not a field of `Gates`, proven by AST.
 8. `lifecycle.gates` has no `reviews`/`principals` parameter; `ST-4` is absent; `MergeFactsPort`
@@ -176,6 +210,21 @@ recording what was re-confirmed — a lifecycle append cannot do it, because `AU
 this table against the live blob and reads no lifecycle event. Binding first means the operator
 approves one final `D` instead of a digest the rebind would immediately invalidate. **This
 terminates:** editing this contract moves `D` but does not move the ADR blob.
+
+### coupling
+
+Optional in the generic schema does not mean absent when the change has known coupling. Each row is a
+set of surfaces that must move together or the repository is left asserting something untrue.
+
+| what | must_move_with | why |
+|---|---|---|
+| the ADR-0105 body text | its front-matter `approved_digest` and `tools/contract/classify.py::ADR_0105_DIGEST` | the digest is computed over the body; editing prose without re-pinning both leaves `NC-C27` red and the §1 `T3` pin naming a body that no longer exists |
+| `model.MergeFacts` | `adapters.MergeFactsPort` reads, the S5 construction in `__main__.py`, `lifecycle.gates`/`_acceptance`/`_rederive_post_merge`, and `report.payload`/`render` | a field added to the type but not read, or read but not populated, produces a gate computed from a default — the silent fail-open this contract exists to remove |
+| `model.ACCEPTANCE_VALUES` and `model.MERGED_VALUES` | `tests/fixtures/contracts/valid_full.md`, `selftest._acc_rows`, and `_contract_refs()` in tests/test_contract_compiler.py | `_contract_refs` resolves a contract's END COMMIT from `merge_sha` on `merged`/`accepted`; changing that key's meaning silently repoints which diff two landed-contract tests check |
+| `ST-7`'s position in `decide.RULES` | the position of `ST-10` | first-match-wins carries the unavailable-versus-disagreeing distinction that neither predicate can express; `ST-10` above `ST-7` reports a failed read as a finding (`NC-AC-05`) |
+| the base-pinned `current_required_contexts` read | `_acceptance`'s required-set loop and `lifecycle.select_run_ids` | if the pin and the judging loop disagree about where the bar comes from, a live setting change can invalidate or manufacture a historical acceptance |
+| the `cmd_*` Gates-field AST guard | every rename of a `model.Gates` field | the guard is the only thing that reads the verb wrappers; a rename without it ships a crash, which is exactly how `cmd_state` broke |
+| recorded check-run ids in an `accepted` row | `MergeFactsPort.check_runs` pagination completeness | resolving recorded ids against a truncated page would report a recorded run as absent, turning a short read into a negative finding |
 
 ### reusable_evidence
 

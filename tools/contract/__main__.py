@@ -41,10 +41,10 @@ from pathlib import Path
 
 from . import classify, derive, lifecycle, report, validate
 from .adapters import (REPO, ArtifactPort, ImpactPort, MergeFactsPort, PortError, RegistryPort,
-                       RepoPort)
+                       RepoPort, required_contexts_at)
 from .decide import HEAD, MERGE, PRE, decide
-from .model import (EXIT_CONTINUE, EXIT_UNTRUSTWORTHY, MAIN_REF as MODEL_MAIN_REF, DecisionInput,
-                    Derived, MergeFacts)
+from .model import (CI_REGISTRY_PATH, EXIT_CONTINUE, EXIT_UNTRUSTWORTHY,
+                    MAIN_REF as MODEL_MAIN_REF, DecisionInput, Derived, MergeFacts)
 from .parse import BOUNDARY, digest as digest_of, parse
 
 CONTRACTS = "docs/contracts"
@@ -158,20 +158,47 @@ def run(ports: Ports, path: str, *, base: str, head: str | None, pr: int | None,
     #
     # Attempted only for a landed contract with a governed PR: before the merge there is nothing to
     # rederive, and asking would spend a network call to learn nothing.
+    # THE GOVERNED PR IS RESOLVED HERE, NOT AT S7. Guarding this read on the explicit `pr` argument
+    # meant the ordinary command — `verify <contract>` with no `--pr` — silently skipped the platform
+    # read entirely and every post-merge check with it, while still reporting a confident verdict. The
+    # contract's own `binding.pr` is the governed PR; requiring it to be re-supplied on the command
+    # line made correctness depend on how the tool was invoked.
+    pr_num = pr if pr is not None else _pr_of(decl)
+
     mf = None
-    if main_blob is not None and pr is not None:
+    if main_blob is not None and pr_num is not None:
         try:
-            d = ports.merge_facts.pull(pr)
+            d = ports.merge_facts.pull(pr_num)
             runs = ports.merge_facts.check_runs(d["merge_sha"]) if d["merge_sha"] else []
+            # The required set is pinned to the contract's OWN base commit, so a live setting change
+            # can neither invalidate nor manufacture a historical acceptance.
+            base_sha = next((e.get("base_sha") for e in decl.events
+                             if e.kind == "created" and e.get("base_sha")), "")
+            if not base_sha:
+                raise PortError("the contract records no `created.base_sha`, so the required-context "
+                                "set cannot be pinned to the commit this change was written against")
+            reg = ports.repo.blob(base_sha, CI_REGISTRY_PATH)
+            if reg is None:
+                raise PortError(f"{CI_REGISTRY_PATH} is absent at the pinned base {base_sha[:12]}")
+            # Trees are read HERE, where a failed read can still reach `unverifiable`. Resolving them
+            # inside the gate would turn "could not read" into "did not match" — an unavailability
+            # wearing the costume of a finding.
+            pr_tree = ports.repo.tree_of(d["pr_head"]) if d["pr_head"] else None
+            merge_tree = ports.repo.tree_of(d["merge_sha"]) if d["merge_sha"] else None
+            if d["merged"] and (pr_tree is None or merge_tree is None):
+                which = "PR head" if pr_tree is None else "merge commit"
+                raise PortError(f"the {which} tree could not be resolved, so the landed content "
+                                f"cannot be compared to the authorized content")
             mf = MergeFacts(read_ok=True, pr_head=d["pr_head"], merge_sha=d["merge_sha"],
                             merged_at=d["merged_at"], merged=d["merged"],
-                            required_contexts=tuple(ports.merge_facts.required_contexts()),
-                            check_runs=tuple(runs))
+                            required_contexts=tuple(required_contexts_at(reg)),
+                            check_runs=tuple(runs), pr_tree=pr_tree or "",
+                            merge_tree=merge_tree or "")
         except PortError as exc:
             mf = MergeFacts(read_ok=False)
-            unverifiable.append(f"the platform merge facts for PR #{pr} could not be read ({exc}); "
-                                f"post-merge authorization and acceptance are UNVERIFIABLE, which "
-                                f"ADR-0105 §4.3a does not treat as a negative finding")
+            unverifiable.append(f"the platform merge facts for PR #{pr_num} could not be read "
+                                f"({exc}); post-merge authorization and acceptance are UNVERIFIABLE, "
+                                f"which ADR-0105 §4.3a does not treat as a negative finding")
 
     non_monotone = _non_monotone_contracts(ports, changed or [], base, head_ref)
     declared_live = "live" in decl.traits
@@ -243,7 +270,6 @@ def run(ports: Ports, path: str, *, base: str, head: str | None, pr: int | None,
              + gs)
 
     # ── S7 gates ────────────────────────────────────────────────────────────────────────────
-    pr_num = pr if pr is not None else _pr_of(decl)
     head_sha = ports.repo.resolve(head_ref) or ""
     merged = main_blob is not None                 # the S5 read; never a second, disagreeable one
     # NO review read and NO principal read. Merge authorization is the operator's own parent-bound

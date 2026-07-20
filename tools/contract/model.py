@@ -93,9 +93,17 @@ TERMINAL_EVENTS = ("refused", "superseded", "abandoned")
 # for a human and is NEVER read as proof (§4.3a): a row cannot prove itself by describing itself.
 ACCEPTANCE_VALUES = ("merge_sha", "decision", "evidence", "date", "operator", "check_runs")
 
-# The values a `merged` event must persist. `merged_at` is compared against the platform `mergedAt`,
-# so the row cannot claim a merge that the platform dates differently.
-MERGED_VALUES = ("merge_sha", "merged_at")
+# The values a `merged` event must persist.
+#
+# `merged_at` is DELIBERATELY NOT HERE. Chronology is verified against the event's own TIMESTAMP
+# COLUMN, which is the claim the row actually makes about when the merge happened. Accepting a
+# separate self-written `merged_at=` while ignoring the timestamp would let a row satisfy chronology
+# with a field it authored and contradict itself in the column that dates it.
+MERGED_VALUES = ("merge_sha",)
+
+# Where the required-context set is pinned from, at the contract's own `created.base_sha`.
+CI_REGISTRY_PATH = ".github/ci-control-registry.yml"
+REQUIRED_CONTEXTS_KEY = "current_required_contexts"
 
 # ── derived state names (ADR-0105 §4.3, amended by §4.3a) ───────────────────────────────────
 #
@@ -268,9 +276,18 @@ class MergeFacts:
     merge_sha: str = ""                            # the platform's own merge commit
     merged_at: str = ""                            # platform `mergedAt`, UTC ISO-8601
     merged: bool = False
-    required_contexts: tuple[str, ...] = ()        # from BRANCH PROTECTION, never from the row
+    # The required set is PINNED to the contract's own `created.base_sha`, read from the in-repo
+    # control registry's `current_required_contexts`. NOT live branch protection: a live setting is
+    # present-day configuration, and letting it decide a historical acceptance means relaxing
+    # protection tomorrow could retroactively invalidate — or manufacture — an acceptance recorded
+    # today. A verdict about the past must be computed from evidence that is itself fixed in the past.
+    required_contexts: tuple[str, ...] = ()
     # (check_run_id, context_name, conclusion) for every run bound to `merge_sha`.
     check_runs: tuple[tuple[str, str, str], ...] = ()
+    # Trees resolved in S5, where a failed read can still reach `Derived.unverifiable`. Empty means
+    # UNRESOLVED, which is unavailability — never a completed mismatch (ADR-0105 §4.3a).
+    pr_tree: str = ""
+    merge_tree: str = ""
 
 
 @dataclass(frozen=True)

@@ -250,10 +250,13 @@ def _rederive_post_merge(ev, decl, pr, events, mf, *, repo, path: str, raw: byte
         return STALE, "", (f"the `merged` row records {recorded[-1].get('merge_sha')[:12]} but the "
                            f"platform merged {mf.merge_sha[:12]}")
     # Content identity, not commit identity: a squash is SUPPOSED to be a different commit.
-    pr_tree, merge_tree = repo.tree_of(mf.pr_head), repo.tree_of(mf.merge_sha)
-    if pr_tree is None or merge_tree is None:
-        return STALE, "", (f"a tree could not be resolved for {mf.pr_head[:12]} or "
-                           f"{mf.merge_sha[:12]} — the landed content cannot be compared")
+    #
+    # The trees were resolved in S5, where a failed read reaches `Derived.unverifiable` and `ST-7`.
+    # They are NOT re-read here, because an unresolvable ref is unavailability and this function can
+    # only return findings — resolving them at this point would convert "could not read" into "did
+    # not match", asserting a comparison that never happened. ONLY TWO SUCCESSFULLY READ, UNEQUAL
+    # TREES REACH THE MISMATCH BELOW.
+    pr_tree, merge_tree = mf.pr_tree, mf.merge_tree
     if pr_tree != merge_tree:
         return STALE, "", (f"the landed tree {merge_tree[:12]} differs from the authorized PR-head "
                            f"tree {pr_tree[:12]} — something changed in the merge")
@@ -294,9 +297,12 @@ def _acceptance(events, mf, auth: str) -> tuple[str, list[str]]:
     merged_rows = [e for e in events if e.kind == "merged"]
     if not merged_rows:
         return CLAIMED, ["an `accepted` row is present with no `merged` row to date it against"]
-    if merged_rows[-1].get("merged_at") != mf.merged_at:
-        return CLAIMED, [f"the `merged` row dates the merge {merged_rows[-1].get('merged_at') or '<none>'} "
-                         f"but the platform dates it {mf.merged_at}"]
+    # CHRONOLOGY IS THE ROW'S OWN TIMESTAMP COLUMN, not a self-written value beside it. The column is
+    # the claim the event makes about when the merge happened; letting a separate `merged_at=` field
+    # satisfy this would let a row pass on a value it authored while its dating column said otherwise.
+    if merged_rows[-1].timestamp != mf.merged_at:
+        return CLAIMED, [f"the `merged` row is timestamped {merged_rows[-1].timestamp} but the "
+                         f"platform dates the merge {mf.merged_at}"]
     if merged_rows[-1].get("merge_sha") != mf.merge_sha:
         return CLAIMED, ["the `merged` row names a different SHA than the platform merged"]
 
@@ -304,25 +310,67 @@ def _acceptance(events, mf, auth: str) -> tuple[str, list[str]]:
     # commit (`impact report` and `scheduled reconciliation` both are), so "every run succeeded"
     # would reject a valid acceptance for jobs that were never the bar.
     if not mf.required_contexts:
-        return CLAIMED, ["branch protection requires no context, so a green merge proves nothing "
-                         "about required CI"]
-    by_name = {name: (rid, concl) for rid, name, concl in mf.check_runs}
-    verified: list[str] = []
-    for ctx in mf.required_contexts:
-        if ctx not in by_name:
-            return CLAIMED, [f"required context {ctx!r} has no check run bound to the merge SHA"]
-        rid, concl = by_name[ctx]
-        if concl != "success":
-            return CLAIMED, [f"required context {ctx!r} concluded {concl or '<none>'}, not success"]
-        verified.append(rid)
+        return CLAIMED, ["the pinned registry names no required context, so a green merge proves "
+                         "nothing about required CI"]
 
-    recorded = sorted(x.strip() for x in ev.get("check_runs", "").split(",") if x.strip())
-    if recorded != sorted(verified):
-        return CLAIMED, [f"the `accepted` row records check runs {', '.join(recorded) or '<none>'} "
-                         f"but the verified required set is {', '.join(sorted(verified))}"]
+    # RESOLVE THE RECORDED IDS THEMSELVES — a rerun must not move an already-recorded verdict.
+    #
+    # The earlier version rebuilt a name→run map on every evaluation and compared the recorded ids to
+    # whatever was newest. A rerun of a required job mints a NEW id, so a verdict recorded yesterday
+    # silently became `acceptance_claimed` today with nothing about the change having altered. That
+    # is an acceptance decaying on its own, which is not a verification. Identity is the anchor: the
+    # ids that were recorded are the ids that get looked up, and later runs are simply not consulted.
+    by_id = {rid: (name, concl) for rid, name, concl in mf.check_runs}
+    recorded = [x.strip() for x in ev.get("check_runs", "").split(",") if x.strip()]
+    if not recorded:
+        return CLAIMED, ["the `accepted` row records no check-run id, so nothing binds the claim to "
+                         "a run the platform actually performed"]
+    covered: dict[str, str] = {}
+    for rid in recorded:
+        if rid not in by_id:
+            return CLAIMED, [f"recorded check run {rid} is not bound to the merge SHA "
+                             f"{mf.merge_sha[:12]}"]
+        name, concl = by_id[rid]
+        if name not in mf.required_contexts:
+            return CLAIMED, [f"recorded check run {rid} is {name!r}, which is not a required context"]
+        if concl != "success":
+            return CLAIMED, [f"recorded check run {rid} ({name}) concluded {concl or '<none>'}, "
+                             f"not success"]
+        if name in covered:
+            return CLAIMED, [f"required context {name!r} is claimed by two recorded runs "
+                             f"({covered[name]} and {rid})"]
+        covered[name] = rid
+    missing = [c for c in mf.required_contexts if c not in covered]
+    if missing:
+        return CLAIMED, [f"no recorded check run covers required context(s) {', '.join(missing)}"]
     return SATISFIED, [f"acceptance verified against the platform: merge {mf.merge_sha[:12]} at "
-                       f"{mf.merged_at}, required contexts {', '.join(mf.required_contexts)} all "
-                       f"success, check runs {', '.join(sorted(verified))}"]
+                       f"{mf.merged_at}, required contexts {', '.join(mf.required_contexts)} each "
+                       f"satisfied by the RECORDED run ("
+                       + ", ".join(f"{n}={covered[n]}" for n in sorted(covered)) + ")"]
+
+
+def select_run_ids(mf) -> tuple[list[str], list[str]]:
+    """`(ids, problems)` — the ids an operator should RECORD, chosen once, before first acceptance.
+
+    Greatest numeric qualifying id per required context: if a job was re-run before acceptance, the
+    latest attempt is the one that stood at the moment of the decision. After the row exists this
+    function is never consulted again — `_acceptance` resolves the recorded ids themselves, so a
+    later rerun cannot displace a verdict that has already been made.
+    """
+    def _num(rid: str) -> int:
+        return int(rid) if rid.isdigit() else -1
+    chosen, problems = [], []
+    for ctx in mf.required_contexts:
+        runs = [(rid, concl) for rid, name, concl in mf.check_runs if name == ctx]
+        if not runs:
+            problems.append(f"required context {ctx!r} has no check run bound to {mf.merge_sha[:12]}")
+            continue
+        rid, concl = max(runs, key=lambda r: _num(r[0]))
+        if concl != "success":
+            problems.append(f"required context {ctx!r} concluded {concl or '<none>'}, not success")
+            continue
+        chosen.append(rid)
+    return sorted(chosen), problems
 
 
 def _merge_authorization(ev, decl, pr: int, *, repo, path: str, head_sha: str, raw: bytes):

@@ -17,6 +17,8 @@ import re
 import subprocess
 from pathlib import Path
 
+from .model import CI_REGISTRY_PATH, REQUIRED_CONTEXTS_KEY
+
 REPO = Path(__file__).resolve().parents[2]
 
 _TIMEOUT = 30                     # matches `tools/ci/live.py:15`'s probe budget; not a new number
@@ -269,31 +271,53 @@ class MergeFactsPort:
         A check-run id is a platform object identifier, not a number to do arithmetic on, and the
         `accepted` row records it as text. Comparing text to text keeps the recorded set and the
         verified set the same kind of thing.
+
+        PAGINATION IS VERIFIED, NOT ASSUMED. `total_count` is compared against what was actually
+        returned, and a short read raises rather than answering. Silently returning page one would
+        let "this run is absent" mean "this run was on page two" — an absence conjured from a
+        truncated read, which is the strongest possible form of the failure `ST-7` exists to prevent.
         """
         if not _is_sha(sha):
             raise PortError(f"{sha!r} is not a 40-character commit SHA")
         d = self._api("commits", sha, "check-runs")
         if not isinstance(d, dict):
             raise PortError(f"gh api commits/{sha[:12]}/check-runs did not return an object")
-        out = []
-        for c in d.get("check_runs") or []:
-            if isinstance(c, dict):
-                out.append((str(c.get("id") or ""), str(c.get("name") or ""),
-                            str(c.get("conclusion") or "")))
-        return sorted(out)
+        runs = [c for c in (d.get("check_runs") or []) if isinstance(c, dict)]
+        total = d.get("total_count")
+        if isinstance(total, int) and len(runs) < total:
+            raise PortError(f"check-runs for {sha[:12]} returned {len(runs)} of {total} — the read "
+                            f"is incomplete and an unreturned page is not proof of absence")
+        return sorted((str(c.get("id") or ""), str(c.get("name") or ""),
+                       str(c.get("conclusion") or "")) for c in runs)
 
-    def required_contexts(self, branch: str = "main") -> list[str]:
-        """The contexts branch protection actually requires — the bar, read from outside the repo.
 
-        Read here rather than from the `accepted` row because a row that names its own required set
-        sets its own bar, which is the self-assertion §4.3a exists to remove. A token that cannot
-        read protection produces `PortError` → `unverifiable` → `ST-7`, never a relaxed bar.
-        """
-        d = self._api("branches", branch, "protection")
-        if not isinstance(d, dict):
-            raise PortError(f"gh api branches/{branch}/protection did not return an object")
-        ctx = ((d.get("required_status_checks") or {}).get("contexts")) or []
-        return sorted(str(c) for c in ctx)
+def required_contexts_at(raw: bytes) -> list[str]:
+    """The required set PINNED to the contract's base commit, parsed from the in-repo registry.
+
+    NOT live branch protection. Live protection is present-day configuration: reading it here would
+    mean relaxing a setting tomorrow could retroactively invalidate an acceptance recorded today, or
+    manufacture one that was never earned. A verdict about the past must rest on evidence that is
+    itself fixed in the past, and a git blob at a named commit is exactly that.
+
+    `intended_required_contexts` is deliberately NOT consulted — it is an aspiration, and a bar that
+    was never live cannot be the bar a past merge had to clear.
+    """
+    try:
+        import yaml
+    except Exception as exc:
+        raise PortError(f"the required-context set is unreadable ({type(exc).__name__}: {exc}); "
+                        f"PyYAML is undeclared and reaches tools/ci third-order via vcrpy") from None
+    try:
+        doc = yaml.safe_load(raw.decode("utf-8"))
+    except Exception as exc:
+        raise PortError(f"{CI_REGISTRY_PATH} is unparseable at the pinned commit: {exc}") from None
+    if not isinstance(doc, dict) or REQUIRED_CONTEXTS_KEY not in doc:
+        raise PortError(f"{CI_REGISTRY_PATH} has no `{REQUIRED_CONTEXTS_KEY}` at the pinned commit")
+    ctx = doc.get(REQUIRED_CONTEXTS_KEY) or []
+    if not isinstance(ctx, list) or not ctx:
+        raise PortError(f"`{REQUIRED_CONTEXTS_KEY}` is empty at the pinned commit — a merge with no "
+                        f"required context proves nothing about required CI")
+    return sorted(str(c) for c in ctx)
 
 
 def _repo_slug() -> str:

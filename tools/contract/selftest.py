@@ -34,7 +34,8 @@ from pathlib import Path
 from . import classify, derive
 from .adapters import REPO, PortError
 from .decide import RULE_IDS
-from .model import CLARIFICATION, CONTINUE, ESCALATE, EXPANDED, REFUSE, STOP
+from .model import (CI_REGISTRY_PATH, CLARIFICATION, CONTINUE, ESCALATE, EXPANDED,
+                    REFUSE, STOP)
 from .parse import BOUNDARY, digest, parse
 
 _CODE_SHAPE = re.compile(r"^[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)*$")
@@ -135,8 +136,16 @@ CONTROLS: list[Control] = [
     Control("NC-AC-10", "the platform port cannot express a review question", "", "", "structural"),
     Control("NC-AC-11", "`ST-4` remains absent and `ST-10` is not it renumbered", "", "",
             "structural"),
-    Control("NC-AC-12", "a `merged` event missing its SHA or timestamp", "A5", "MERGED-INCOMPLETE",
+    Control("NC-AC-12", "a `merged` event that names no merge SHA", "A5", "MERGED-INCOMPLETE",
             "decision"),
+    Control("NC-AC-13", "the ordinary no---pr command path resolves the governed PR from `binding`",
+            "", "", "decision"),
+    Control("NC-AC-14", "a later rerun does not disturb an already-recorded verdict", "", "",
+            "decision"),
+    Control("NC-AC-15", "the required set is pinned to the contract's base commit", "", "",
+            "decision"),
+    Control("NC-AC-16", "an incomplete check-run page is unavailability, not absence", "", "",
+            "structural"),
     Control("NC-C10b", "a rewritten lifecycle history", "A5", "LIFECYCLE-REWRITTEN", "decision"),
     Control("NC-C10c", "an `id` that does not match the filename stem", "A4", "ID-FILENAME",
             "decision"),
@@ -344,10 +353,9 @@ class FakeRegistry:
 # there.
 class FakeMergeFacts:
     def __init__(self, *, pr_head="h" * 40, merge_sha="m" * 40, merged_at="2026-07-19T23:19:38Z",
-                 merged=True, contexts=("unit",), runs=None, fail=None):
+                 merged=True, runs=None, fail=None):
         self.d = {"pr_head": pr_head, "merge_sha": merge_sha, "merged_at": merged_at,
                   "merged": merged}
-        self.contexts = list(contexts)
         self.runs = list(runs) if runs is not None else [("101", "unit", "success")]
         self.fail = fail
 
@@ -359,9 +367,10 @@ class FakeMergeFacts:
         if self.fail == "checks": raise PortError("check runs could not be read (injected)")
         return list(self.runs)
 
-    def required_contexts(self, branch="main"):
-        if self.fail == "protection": raise PortError("branch protection is unreadable (injected)")
-        return list(self.contexts)
+    # NOTE: no `required_contexts` method. The required set is NOT a platform read — it is pinned to
+    # the contract's own `created.base_sha` from the in-repo registry, so live configuration can
+    # neither invalidate nor manufacture a historical acceptance. The absence of the method here is
+    # the same structural guarantee as the absence of a review reader.
 
 
 # ── the fixture contract ────────────────────────────────────────────────────────────────────
@@ -440,12 +449,12 @@ Prove the compiler detects what it claims to detect.
 _LIFE = """
 | timestamp | event | values |
 |---|---|---|
-| 2026-07-18T10:00:00Z | created | id={cid}; base_sha=base |
+| 2026-07-18T10:00:00Z | created | id={cid}; base_sha={base} |
 | 2026-07-18T10:05:00Z | approved | digest={D}; token=APPROVE{gate} |
 {extra}"""
 
 
-def build(*, cid="CC-2026-07-18-example", traits="", stops="", adr_sha=None,
+def build(*, cid="CC-2026-07-18-example", traits="", stops="", adr_sha=None, base="base",
           evidence="", extra="", gate="", approve_digest=None, decl_mutate=None, declare=()) -> bytes:
     """A VALID contract by default. EVERY CONTROL MUTATES EXACTLY ONE THING ABOUT IT.
 
@@ -461,7 +470,7 @@ def build(*, cid="CC-2026-07-18-example", traits="", stops="", adr_sha=None,
     if decl_mutate is not None:
         decl = decl_mutate(decl)
     d = digest(decl.encode().rstrip(b"\n"))
-    life = _LIFE.format(cid=cid, D=approve_digest or d, gate=gate, extra=extra)
+    life = _LIFE.format(cid=cid, D=approve_digest or d, gate=gate, extra=extra, base=base)
     return decl.encode().rstrip(b"\n") + BOUNDARY + life.encode()
 
 
@@ -523,7 +532,7 @@ _CODE_INJECTIONS = {
     "NC-C50": dict(extra="| 2026-07-18T11:00:00Z | refused | reason=x |\n"
                          "| 2026-07-18T12:00:00Z | binding | pr=1 |\n"),
     "NC-C51": dict(extra="| 2026-07-18T12:00:00Z | accepted | merge_sha=abc |\n"),
-    "NC-AC-12": dict(extra="| 2026-07-18T12:00:00Z | merged | merge_sha=abc |\n"),
+    "NC-AC-12": dict(extra="| 2026-07-18T12:00:00Z | merged | note=no sha |\n"),
     "NC-C52": dict(main=lambda: build(decl_mutate=lambda d: d.replace("Prove the", "Proved the", 1))),
     "NC-C53": dict(mut=lambda d: d.replace(ADR_PATH, "docs/adr/does-not-exist.md", 1)),
     "NC-C54": dict(mut=lambda d: d.replace("| ADR-0105 |", "| DC-999 |", 1)),
@@ -799,6 +808,12 @@ MERGE_SHA = "m" * 40
 MERGED_AT = "2026-07-19T23:19:38Z"
 
 
+BASE_SHA = "b" * 40
+# The pinned registry blob every acceptance fixture reads its required set from — the in-repo file at
+# the contract's own base commit, never live branch protection.
+REGISTRY_BLOB = b"current_required_contexts:\n  - \"unit\"\n"
+
+
 def _acc_rows(*, merge_sha=MERGE_SHA, accepted_sha=None, merged_at=MERGED_AT, runs="101", drop=()):
     """A `merged` + `accepted` pair. `drop` omits keys so a control can probe one missing value.
 
@@ -810,11 +825,12 @@ def _acc_rows(*, merge_sha=MERGE_SHA, accepted_sha=None, merged_at=MERGED_AT, ru
           ("decision", "accept"), ("evidence", "the success condition"),
           ("date", "2026-07-20"), ("operator", "operator"), ("check_runs", runs)]
     body = "; ".join(f"{k}={v}" for k, v in kv if k not in drop)
-    return (f"| 2026-07-19T23:19:38Z | merged | merge_sha={merge_sha}; merged_at={merged_at} |\n"
+    # `merged_at` is the ROW TIMESTAMP, not a value beside it — the column is the claim being verified.
+    return (f"| {merged_at} | merged | merge_sha={merge_sha} |\n"
             f"| 2026-07-20T00:00:00Z | accepted | {body} |\n")
 
 
-def _landed(*, rows=None, mf=None, trees=None, **authz):
+def _landed(*, rows=None, mf=None, trees=None, registry=REGISTRY_BLOB, **authz):
     """(raw, kwargs) for a LANDED, authorized, merged contract carrying `merged` + `accepted`.
 
     Defaults are all-correct on purpose: each control breaks one fact and inherits the rest, so a
@@ -823,11 +839,18 @@ def _landed(*, rows=None, mf=None, trees=None, **authz):
     head = "h" * 40
     d = parse(build()).digest
     authz.setdefault("digest", d)
-    raw = build(extra=_authz(**authz) + (rows if rows is not None else _acc_rows()))
-    parent_raw = build()
+    binding = "| 2026-07-18T10:30:00Z | binding | branch=feat/x; pr=7 |\n"
+    raw = build(base=BASE_SHA,
+                extra=binding + _authz(**authz) + (rows if rows is not None else _acc_rows()))
+    parent_raw = build(base=BASE_SHA, extra=binding)
+    blobs = {(PARENT, CONTRACT_PATH): parent_raw, (head, CONTRACT_PATH): raw}
+    if registry is not None:
+        blobs[(BASE_SHA, CI_REGISTRY_PATH)] = registry
     return raw, {
-        "phase": "merge-gate", "pr": 7, "main_blob": raw,
-        "extra_blobs": {(PARENT, CONTRACT_PATH): parent_raw, (head, CONTRACT_PATH): raw},
+        # NO explicit `pr`. The governed PR comes from the contract's own `binding` row, which is the
+        # ordinary command path — passing `--pr` here would hide the very bug `NC-AC-13` exists for.
+        "phase": "merge-gate", "main_blob": raw,
+        "extra_blobs": blobs,
         "ancestry": {(PARENT, head), (MERGE_SHA, "origin/main")},
         "parent_changed": [CONTRACT_PATH],
         "merge_facts": mf or FakeMergeFacts(pr_head=head),
@@ -986,13 +1009,16 @@ def _c_nc_ac_10(c):
     if escape:
         return False, f"NOT DETECTED — the port exposes a general escape hatch: {escape}"
     public = sorted(n for n in vars(port) if not n.startswith("_"))
-    if public != ["check_runs", "pull", "required_contexts"]:
+    if public != ["check_runs", "pull"]:
         return False, f"NOT DETECTED — the port's surface widened to {public}"
     fields = {f.name for f in _dc.fields(_MF)}
     leaks = {f for f in fields if any(w in f for w in ("review", "approv", "principal", "collab"))}
     if leaks:
         return False, f"NOT DETECTED — MergeFacts can carry {leaks}"
-    return True, f"three closed reads {public}, and no MergeFacts field can name a person"
+    if hasattr(port, "required_contexts"):
+        return False, ("NOT DETECTED — the port reads the required set from live configuration; it "
+                       "must be pinned to the contract's base commit instead")
+    return True, f"two closed reads {public}, and no MergeFacts field can name a person"
 
 
 def _c_nc_ac_11(c):
@@ -1011,6 +1037,68 @@ def _c_nc_ac_11(c):
     if "review" in st10[0].why.lower() or "person" in st10[0].why.lower():
         return False, f"NOT DETECTED — ST-10 names a second person: {st10[0].why!r}"
     return True, f"ST-4 absent; ST-10 reads the acceptance gate ({len(ids)} rules, no duplicates)"
+
+
+def _c_nc_ac_13(c):
+    """The ORDINARY command path: no `--pr`, and the lifecycle `binding.pr` must be sufficient.
+
+    The platform read used to be guarded on the explicit `pr` argument while the governed PR was not
+    resolved until two stages later, so `verify <contract>` — the normal invocation — skipped every
+    post-merge check and still printed a confident verdict. Correctness must not depend on how the
+    tool was called. Every other acceptance control also runs without `--pr`, so this path is the
+    one under test throughout, not a special case.
+    """
+    raw, kw = _landed()
+    assert "pr" not in kw, "the acceptance fixture must not pass an explicit --pr"
+    st, g = _acc_state(raw, kw)
+    if st != "accepted" or g.acceptance != "satisfied":
+        return False, f"NOT DETECTED — the no---pr path derived {st!r}/{g.acceptance!r}"
+    return True, f"state {st!r} with the governed PR taken from `binding.pr`, no --pr supplied"
+
+
+def _c_nc_ac_14(c):
+    """A LATER RERUN must not disturb an already-recorded verdict.
+
+    The recorded id stays green while a NEWER run for the same context is added alongside it — and
+    the newer run is failing, to make the point sharply. Resolving by name would pick the new one and
+    silently decay a recorded acceptance into `acceptance_claimed` with nothing about the change
+    having altered. Identity is the anchor.
+    """
+    later = [("101", "unit", "success"), ("999", "unit", "failure")]
+    raw, kw = _landed(mf=FakeMergeFacts(pr_head="h" * 40, runs=later))
+    st, g = _acc_state(raw, kw)
+    if st != "accepted" or g.acceptance != "satisfied":
+        return False, f"NOT DETECTED — a later rerun moved a recorded verdict to {st!r}"
+    return True, "the recorded run id still verifies; a later failing rerun is not consulted"
+
+
+def _c_nc_ac_15(c):
+    """The required set is PINNED to the contract's base commit, not read from live configuration.
+
+    The registry blob at the pinned base names a context the check runs do not satisfy. If the set
+    were taken from anywhere present-day, this would pass; pinned, it correctly refuses.
+    """
+    raw, kw = _landed(registry=b"current_required_contexts:\n  - \"a-context-never-run\"\n")
+    st, _ = _acc_state(raw, kw)
+    if st != "acceptance_claimed":
+        return False, f"NOT DETECTED — the pinned required set was not honoured, got {st!r}"
+    # And an ABSENT registry at the pinned base is unavailability, never a relaxed bar.
+    raw2, kw2 = _landed(registry=None)
+    trees = kw2.pop("trees", None)
+    dec2, _ = _run(raw2, _trees=trees, **kw2)
+    if dec2.rule != "ST-7":
+        return False, f"NOT DETECTED — an absent pinned registry gave {dec2.rule!r}, not 'ST-7'"
+    return True, "the pinned set decides, and an unreadable pinned set is ST-7 rather than a pass"
+
+
+def _c_nc_ac_16(c):
+    """An INCOMPLETE check-run page is unavailability, never proof that a run is absent."""
+    from . import adapters
+    import inspect
+    src = inspect.getsource(adapters.MergeFactsPort.check_runs)
+    if "total_count" not in src or "incomplete" not in src:
+        return False, "NOT DETECTED — the check-run read does not verify pagination completeness"
+    return True, "a short check-run read raises rather than reporting a run as absent"
 
 
 def _c_nc_c10b(c):
