@@ -969,8 +969,13 @@ def _git(repo, *args):
 # everywhere else is not testing anything.
 #
 # So the platform is SERVED, deterministically, by a `gh` stand-in on a temporary PATH. It answers
-# only the two closed endpoints `MergeFactsPort` can construct, from a fixture table, and it LOGS
+# only the closed set of paths `MergeFactsPort` can construct, from a fixture table, and it LOGS
 # every call so a test can prove the read actually happened rather than infer it from a green result.
+#
+# NO COUNT IS STATED HERE, DELIBERATELY. This line read "the two closed endpoints" long after the
+# port had grown to four — `pull`, `check_runs`, `workflow_runs`, `jobs` — because nothing reads a
+# comment. Updating the number would only reset the same clock. The size of that set is asserted in
+# the one place that executes, `NC-AC-10`, which derives it from the port instead of restating it.
 _FAKE_SLUG = "fixture-owner/fixture-repo"
 _FAKE_CONTEXT = "unit (fast, no toolchain)"
 _FAKE_WORKFLOW = ".github/workflows/ci.yml"

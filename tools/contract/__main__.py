@@ -88,7 +88,7 @@ def _load(ports: Ports, path: str, ref: str | None) -> tuple[bytes | None, str]:
     return blob, f"read the blob at {ref} (ADR-0105 §11.1)"
 
 
-def run(ports: Ports, path: str, *, base: str, head: str | None, pr: int | None, phase: str,
+def run(ports: Ports, path: str, *, base: str | None, head: str | None, pr: int | None, phase: str,
         impact_override: dict | None = None):
     """S1–S8. Returns (decision, context) or raises PortError for the exit-2 class."""
     raw, note = _load(ports, path, head)
@@ -99,6 +99,44 @@ def run(ports: Ports, path: str, *, base: str, head: str | None, pr: int | None,
     stem = Path(path).stem
     unverifiable: list[str] = []
     evidence: list[str] = [note]
+
+    # ── S4a THE BASE ANCHOR ─────────────────────────────────────────────────────────────────
+    # THE CONTRACT NAMES ITS OWN BASE; the tool must not guess one. `--base` defaulted to
+    # `origin/main`, which is the right comparison only while the change is still in flight. Once
+    # the contract has LANDED, `origin/main` IS the head — the diff is empty, no trait derives, and
+    # the declaration is reported as differing from a derived set that was never computed. Every
+    # landed contract answered `CL-2` for a reason having nothing to do with the contract, and the
+    # only way to get a true answer was to know to pass `--base` by hand.
+    #
+    # AN EMPTY DIFF IS NOT EVIDENCE THAT NOTHING CHANGED. It is evidence of a base that was never
+    # the base — the same vacuous zero this tool refuses everywhere else, arriving through the
+    # default value of a flag rather than through a failed read.
+    #
+    # `created.base_sha` is the commit the contract itself declares it started from. §4.3a already
+    # anchors the required-context set to it, and already confirms it against the platform's own
+    # `base.sha` before that registry is read, so this consumes an anchor the system already
+    # verifies rather than introducing a second one. An EXPLICIT `--base` still wins: a gate passes
+    # one, and an author comparing against something else is entitled to.
+    if base is None:
+        claimed = next((e.get("base_sha") for e in decl.events
+                        if e.kind == "created" and e.get("base_sha")), "")
+        if not claimed:
+            base = MAIN_REF
+            evidence.append(f"the contract declares no `created.base_sha`, so the changed-file set "
+                            f"is computed against {MAIN_REF}")
+        elif ports.repo.resolve(claimed) is None:
+            # NOT a silent fallback. Comparing against `MAIN_REF` anyway would recompute the exact
+            # empty diff this change exists to stop producing, and then report it as a finding about
+            # the declaration. Unresolvable is `unverifiable` — the tool could not look.
+            base = MAIN_REF
+            unverifiable.append(f"the declared base {claimed} is unresolvable here, so the changed-"
+                                f"file set could not be computed against the base the contract "
+                                f"names")
+        else:
+            base = claimed
+            evidence.append(f"base {claimed} read from the contract's own `created.base_sha`")
+    else:
+        evidence.append(f"base {base} was given explicitly")
 
     # ── S5 derive ───────────────────────────────────────────────────────────────────────────
     head_ref = head or "HEAD"
@@ -540,7 +578,12 @@ def main(argv: list[str] | None = None) -> int:
         s.add_argument("--json", action="store_true", help="structured output")
         s.add_argument("--quiet", action="store_true")
         if path: s.add_argument("path", help=f"path to the contract, e.g. {CONTRACTS}/<id>.md")
-        if base: s.add_argument("--base", default="origin/main")
+        # DEFAULT `None`, NOT a ref. `run()` then reads the base off the contract's own
+        # `created.base_sha`. A ref default was `origin/main`, which equals the head on a landed
+        # contract and yields an empty diff — see the S4a note in `run()`.
+        if base: s.add_argument("--base", default=None,
+                                help="compare against this commit instead of the contract's own "
+                                     "`created.base_sha`")
         if head: s.add_argument("--head", default=None)
         if pr: s.add_argument("--pr", type=int, default=None)
         if impact: s.add_argument("--impact-json", default=None,
