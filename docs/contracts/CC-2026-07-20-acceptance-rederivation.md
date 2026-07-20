@@ -108,7 +108,7 @@ visible to it. A green `selftest` is not, and must never be presented as, a gree
 2. `NC-AC-01` through `NC-AC-11` are registered and DETECTED, covering all eleven required controls;
    `NC-AC-12` covers `MERGED-INCOMPLETE`, `NC-AC-13`..`NC-AC-16` cover the no-`--pr` path, rerun
    pinning, base-pinned required contexts and pagination completeness, `NC-AC-17` covers absent
-   acceptance evidence, and `NC-AC-18`..`NC-AC-31` cover the four predicates above — 127 in all.
+   acceptance evidence, and `NC-AC-18`..`NC-AC-34` cover the four predicates above plus the explicit GET, the consumed job key and mandatory pagination completeness — 130 in all.
 2a. An `accepted` row recording no `check_runs` is UNVERIFIED, never MALFORMED: it yields
    `acceptance_claimed` via `ST-10` and never `ACCEPT-INCOMPLETE`/`A5`. A requirement introduced now
    must not reach backwards and label a correctly-recorded historical acceptance as tampering.
@@ -124,6 +124,14 @@ visible to it. A green `selftest` is not, and must never be presented as, a gree
 2g. The accepted row's own values are enforced — `decision=accepted`, unique decimal ids in ascending
    order (`NC-AC-26`, `NC-AC-27`).
 2h. Counts are DERIVED, not asserted in prose: fourteen states, seven `RepoPort` methods (`NC-AC-31`).
+2i. Every GitHub read pins `--method GET`; `gh api -f k=v` otherwise builds a request BODY and
+   issues a POST against a read-only endpoint (`NC-AC-32`).
+2j. The registry's pinned job KEY is CONSUMED: it must exist in the workflow blob at the
+   verified base, render the required context as its display name, be the only key doing so,
+   and match the joined platform job (`NC-AC-33`, evidenced positively by `NC-AC-25`).
+2k. Pagination completeness is MANDATORY — `total_count` must exist, be a non-negative integer,
+   agree across pages, and equal the flattened item count, with no element silently dropped
+   (`NC-AC-34`).
 2b. The hermetic CLI cases serve the platform from a deterministic `gh` stand-in on a temporary PATH:
    the ordinary no-`--pr` invocation succeeds AND the call is proven to have happened, while an
    unusable or absent `gh` yields `ST-7` — never `OK`, never a crash, never a fabricated negative.
@@ -148,7 +156,7 @@ visible to it. A green `selftest` is not, and must never be presented as, a gree
 
 | obligation_id | control_or_requirement | distinct_boundary |
 |---|---|---|
-| OB-NEG-CONTROL | tools/contract/selftest.py, every control DETECTED including NC-AC-01..NC-AC-17 | proves each rule FIRES on an injected defect — the only check that can show a self-asserting gate is really gone. Proves REACHABILITY ONLY: it drives FakeMergeFacts, so it can never witness a real-port regression or a pytest-only failure |
+| OB-NEG-CONTROL | tools/contract/selftest.py, every control DETECTED including NC-AC-01..NC-AC-34 | proves each rule FIRES on an injected defect — the only check that can show a self-asserting gate is really gone. Proves REACHABILITY ONLY: it drives FakeMergeFacts, so it can never witness a real-port regression or a pytest-only failure |
 | OB-UNIT-CI | the required context `unit (fast, no toolchain)` concluding success on the exact head | the ONLY evidence the pytest suite passes — a DISTINCT boundary from OB-NEG-CONTROL, which shares neither its fixtures nor its ports and reported green while this job was red |
 | OB-E2E-CI | the required context `real-tooling E2E (must run, not skip)` concluding success on the exact head | exercises the real toolchain rather than a fake, so it fails where every in-process proof above would pass |
 | OB-HERMETIC-PLATFORM | the fake-`gh` CLI cases in tests/test_contract_compiler.py | proves the platform read HAPPENS on the ordinary no-`--pr` path and that its absence is ST-7 — a call log, which no outcome assertion can show |
@@ -210,11 +218,11 @@ context set comes from the base-pinned in-repo registry, so no repository settin
 | tools/contract/lifecycle.py | MODIFIED | `_acceptance` with the base anchor, the seven-step provenance chain, temporal rerun pinning and the row's own value semantics; `_rederive_post_merge` reading the carried PR-head blob with no substitution; `select_run_ids` ordered by server time; `MERGED-INCOMPLETE`; the corrected `state()` ladder; `CLAIMED` |
 | tools/contract/decide.py | MODIFIED | `ST-10` added after `ST-7`; `MERGED-INCOMPLETE` added to `_LIFECYCLE_FAIL` |
 | pyproject.toml | MODIFIED | PyYAML declared a DIRECT `[dev]` dependency instead of arriving third-order via `vcrpy` |
-| tools/contract/adapters.py | MODIFIED | `MergeFactsPort` with FOUR closed PLATFORM reads (`pull` incl. `base.sha`, `check_runs` with App identity and server timestamps, `workflow_runs`, `jobs`); `--slurp` page aggregation proven against `total_count` in `_collect`; the pinned GitHub-Actions App identity; `required_contexts_at` returning the context→(workflow, job) map; `workflow_job_name`; the shared `_yaml` reader; `RepoPort.tree_of`; path-segment, slug and `check_run_url` validation |
+| tools/contract/adapters.py | MODIFIED | `MergeFactsPort` with FOUR closed PLATFORM reads (`pull` incl. `base.sha`, `check_runs` with App identity and server timestamps, `workflow_runs`, `jobs`); explicit `--method GET` on every read; `--slurp` page aggregation with MANDATORY `total_count` in `_collect`; the pinned GitHub-Actions App identity; `required_contexts_at` returning the context→(workflow, job) map; `workflow_job_binding` (key -> display name, with ambiguity reported); the shared `_yaml` reader; `RepoPort.tree_of`; path-segment, slug and `check_run_url` validation |
 | tools/contract/__main__.py | MODIFIED | the S5 platform read before `Derived` is frozen; `Ports.merge_facts`; the `cmd_state` crash repaired |
 | tools/contract/report.py | MODIFIED | claimed and unknown acceptance disclosed in the rendered report |
 | tools/contract/classify.py | MODIFIED | `ADR_0105_DIGEST` re-pinned to the amended body |
-| tools/contract/selftest.py | MODIFIED | `FakeMergeFacts` over all four reads; `_check_run`; `FakeRepo.tree_of` and per-(ref,path) `unreadable`; `NC-AC-01`..`NC-AC-31`, bringing the suite to 127 controls; `NC-C25` strengthened across the three merged states |
+| tools/contract/selftest.py | MODIFIED | `FakeMergeFacts` over all four reads; `_check_run`; `FakeRepo.tree_of` and per-(ref,path) `unreadable`; `NC-AC-01`..`NC-AC-34`, bringing the suite to 130 controls; `NC-C25` strengthened across the three merged states |
 | tests/test_contract_compiler.py | MODIFIED | acceptance and rederivation tests; the rename guard widened to six modules; the AST guard over every `cmd_*` verb |
 | tests/fixtures/contracts/valid_full.md | MODIFIED | `merged` and `accepted` rows carry the added values |
 | docs/governance/AGENT_CHANGE_SYSTEM_ROADMAP.md | MODIFIED | the Phase 3 row records that acceptance is now verified |
@@ -230,13 +238,13 @@ context set comes from the base-pinned in-repo registry, so no repository settin
 
 | id | source_file | blob_sha |
 |---|---|---|
-| ADR-0105 | docs/adr/0105-reusable-change-contract-architecture.md | 79140807cfa2b6c767f8241237bae082070a77d6 |
+| ADR-0105 | docs/adr/0105-reusable-change-contract-architecture.md | a4538c284a14536de4c00547bee8e49086b79fd0 |
 | C2.1 | docs/REPOSITORY_CONSTITUTION.md | 1f42a8ea298af39fffd56e3ce5c3542cef512df2 |
 | C18.1 | docs/REPOSITORY_CONSTITUTION.md | 1f42a8ea298af39fffd56e3ce5c3542cef512df2 |
 | LAW-SOT-01 | docs/ARCHITECTURAL_LAWS.md | 91ce5627ddc08b5f90189114bbef18c268b484a0 |
 | LAW-DOC-01 | docs/ARCHITECTURAL_LAWS.md | 91ce5627ddc08b5f90189114bbef18c268b484a0 |
 
-**The ADR row names the AMENDED body, `79140807cfa2b6c767f8241237bae082070a77d6`.** The
+**The ADR row names the AMENDED body, `a4538c284a14536de4c00547bee8e49086b79fd0`.** The
 pre-amendment body was `d971a881f4c7e58ab31f268b3a8d352b884ddec3` — that is the historical fact and
 it is not erased: it is the value on `main` at `8311bc94b83fc0ba1b2ec0f1e1e163caee75e362`, and
 `git log -p` on this file shows the transition.

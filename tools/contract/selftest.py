@@ -36,6 +36,8 @@ from .adapters import REPO, PortError
 from .decide import RULE_IDS
 from .model import (ACCEPTED_DECISION, CI_REGISTRY_PATH, CLARIFICATION, CONTINUE, ESCALATE, EXPANDED,
                     REFUSE, STOP)
+import json as _json
+
 from . import lifecycle as _lc
 from .parse import BOUNDARY, digest, parse
 
@@ -167,6 +169,12 @@ CONTROLS: list[Control] = [
             "decision"),
     Control("NC-AC-30", "the contract PRESENT at the PR head is the blob parent-binding reads", "",
             "", "decision"),
+    Control("NC-AC-32", "every GitHub read is an explicit GET, including the parameterised one",
+            "", "", "structural"),
+    Control("NC-AC-33", "the registry's pinned job KEY is verified, not merely unpacked", "ST-10",
+            "", "decision"),
+    Control("NC-AC-34", "pagination completeness is mandatory, not conditional on a usable count",
+            "", "", "structural"),
     Control("NC-AC-31", "the derived-state count and the port surfaces are derived, not asserted",
             "", "", "structural"),
     Control("NC-AC-17", "an `accepted` row recording no `check_runs` is unverified, not malformed",
@@ -885,7 +893,7 @@ REGISTRY_BLOB = (b"current_required_contexts:\n  - \"unit\"\n"
                  b"    workflow: .github/workflows/ci.yml\n"
                  b"    job: unit\n")
 WORKFLOW_PATH = ".github/workflows/ci.yml"
-WORKFLOW_BLOB = b"jobs:\n  unit:\n    name: unit\n"
+WORKFLOW_BLOB = b"jobs:\n  unit:\n    name: unit\n  other:\n    name: something else\n"
 
 
 def _acc_rows(*, merge_sha=MERGE_SHA, accepted_sha=None, merged_at=MERGED_AT, runs="101",
@@ -1166,7 +1174,16 @@ def _c_nc_ac_25(c):
     st, g, rule = _prov_state()
     if st != "accepted" or g.acceptance != "satisfied":
         return False, f"NOT DETECTED — full valid provenance derived {st!r}/{g.acceptance!r}"
-    return True, "App, workflow path, job join, blob stability and chronology all verify"
+    # THE POSITIVE MUST NAME WHAT IT PROVED. Asserting only `accepted` would stay green if a link in
+    # the chain were deleted, which is how the job key sat unconsumed while this control passed.
+    why = " ".join(g.detail)
+    # `unit->unit=unit` is the KEY=DISPLAY pair resolved from the workflow blob and carried out of
+    # the predicate that consumed it, so this token cannot appear unless the binding was checked.
+    for token in ("check_run_url", "registry-pinned job key", "unit->unit=unit",
+                  "unchanged from the verified base"):
+        if token not in why:
+            return False, f"NOT DETECTED — the verified reason does not evidence {token!r}: {why[-200:]}"
+    return True, "App, workflow path, JOB KEY, join, blob stability and chronology all verify"
 
 
 def _c_nc_ac_26(c):
@@ -1238,6 +1255,115 @@ def _c_nc_ac_30(c):
     if g.merge_authorization != "satisfied":
         return False, f"NOT DETECTED — the present PR-head blob failed to bind ({g.merge_authorization})"
     return True, "parent binding reads exactly the bytes that stood at the PR head"
+
+
+
+def _c_nc_ac_32(c):
+    """EVERY read is an explicit GET. `gh api -f k=v` builds a request BODY and switches to POST.
+
+    The workflow-runs read passes `head_sha` as a parameter, so without `--method GET` this tool was
+    issuing a POST to `/actions/runs` — a mutation verb against an endpoint it must never mutate. The
+    fake captures the ACTUAL argv rather than reading the source, because the defect is in what gets
+    executed, and asserts both halves: the method is pinned AND the parameter still travels.
+    """
+    from . import adapters
+    seen = []
+
+    class _Done:
+        returncode, stdout, stderr = 0, '[{"total_count":0,"workflow_runs":[]}]', ""
+
+    def _fake_run(argv, **kw):
+        seen.append(list(argv))
+        return _Done()
+
+    real = adapters.subprocess.run
+    adapters.subprocess.run = _fake_run
+    try:
+        adapters.MergeFactsPort(slug="o/r").workflow_runs("a" * 40)
+    finally:
+        adapters.subprocess.run = real
+    if not seen:
+        return False, "NOT DETECTED — no request was issued at all"
+    argv = seen[0]
+    if "--method" not in argv or argv[argv.index("--method") + 1] != "GET":
+        return False, f"NOT DETECTED — the request does not pin GET: {argv}"
+    if not any(a.startswith("head_sha=") for a in argv):
+        return False, f"NOT DETECTED — `head_sha` no longer travels with the request: {argv}"
+    if "-f" in argv and argv.index("--method") > argv.index("-f"):
+        return False, "NOT DETECTED — the method is set after the body flag"
+    return True, f"GET pinned and head_sha supplied: {' '.join(argv[:6])}…"
+
+
+def _c_nc_ac_33(c):
+    """The registry's pinned job KEY is VERIFIED against the workflow blob, not unpacked and dropped.
+
+    Three distinct reasons, because they fail differently and a single fixture would prove only one:
+    a key the workflow does not declare, a key whose display name is not the required context, and
+    two keys rendering one name — which the platform's job payload cannot disambiguate, since it
+    reports the display name and never the key.
+    """
+    cases = [
+        ("missing key", b"jobs:\n  somethingelse:\n    name: unit\n", "declares no such job"),
+        ("wrong name", b"jobs:\n  unit:\n    name: not-the-context\n", "but that job is named"),
+        ("ambiguous", b"jobs:\n  unit:\n    name: unit\n  twin:\n    name: unit\n",
+         "cannot be attributed to either"),
+    ]
+    for label, blob, expect in cases:
+        st, g, rule = _prov_state(workflow=blob, head_workflow=blob)
+        if st != "acceptance_claimed":
+            return False, f"NOT DETECTED — {label} derived {st!r}"
+        if not any(expect in d for d in g.detail):
+            return False, (f"NOT DETECTED — {label} refused, but not for its own reason: "
+                           f"{[d for d in g.detail if 'job' in d][:1]}")
+    return True, "missing key, wrong display name and duplicate display names each refuse by name"
+
+
+def _c_nc_ac_34(c):
+    """Pagination completeness is MANDATORY. It was honoured only when `total_count` happened to be
+    an int, so a missing, null or string count skipped the check that a truncated read is least
+    detectable without.
+
+    A genuine two-page response must succeed; missing, non-integer, inconsistent, short and malformed
+    responses must every one raise, which upstream is `ST-7`.
+    """
+    from . import adapters
+    port = adapters.MergeFactsPort(slug="o/r")
+
+    def run_with(payload):
+        class _Done:
+            returncode, stdout, stderr = 0, _json.dumps(payload), ""
+        real = adapters.subprocess.run
+        adapters.subprocess.run = lambda argv, **kw: _Done()
+        try:
+            return port.check_runs("a" * 40), None
+        except adapters.PortError as exc:
+            return None, str(exc)
+        finally:
+            adapters.subprocess.run = real
+
+    def page(total, runs):
+        return {"total_count": total, "check_runs": runs}
+    def r(i):
+        return {"id": i, "name": "unit", "conclusion": "success", "status": "completed",
+                "started_at": "2026-07-19T23:00:00Z", "completed_at": "2026-07-19T23:05:00Z",
+                "app": {"id": 15368, "slug": "github-actions"}}
+
+    ok, err = run_with([page(3, [r("1"), r("2")]), page(3, [r("3")])])
+    if err or [x["id"] for x in ok] != ["1", "2", "3"]:
+        return False, f"NOT DETECTED — a genuine two-page read failed: {err or ok}"
+    bad = {
+        "missing": [{"check_runs": [r("1")]}],
+        "non-integer": [page("3", [r("1")])],
+        "null": [page(None, [r("1")])],
+        "inconsistent": [page(3, [r("1"), r("2")]), page(9, [r("3")])],
+        "short": [page(3, [r("1"), r("2")])],
+        "malformed item": [page(1, ["not-an-object"])],
+    }
+    for label, payload in bad.items():
+        got, err = run_with(payload)
+        if err is None:
+            return False, f"NOT DETECTED — a {label} response was accepted as complete"
+    return True, "two real pages aggregate; missing, non-integer, null, inconsistent, short and malformed all raise"
 
 
 def _c_nc_ac_31(c):

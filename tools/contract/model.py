@@ -332,6 +332,11 @@ class MergeFacts:
     # The documented check-run -> job -> workflow-run join, resolved in S5.
     # check_run_id -> (job_name, workflow_run_id, workflow_path)
     run_provenance: tuple[tuple[str, tuple[str, str, str]], ...] = ()
+    # context -> (status, detail) from `adapters.workflow_job_binding` against the workflow blob AT
+    # THE VERIFIED BASE. Binds the registry's job KEY to the display name the platform reports, which
+    # is the only field a check run actually carries; `ambiguous` means two keys render one name and
+    # no deterministic attribution exists.
+    job_binding: tuple[tuple[str, tuple[str, str]], ...] = ()
     # workflow path -> True when its blob at the PR head is byte-identical to its blob at the
     # externally-verified base. A workflow edited inside the change it is certifying is not evidence
     # about that change.

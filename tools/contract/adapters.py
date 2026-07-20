@@ -282,7 +282,12 @@ class MergeFactsPort:
             if not _SAFE_SEGMENT.match(seg):
                 raise PortError(f"refusing to build a GitHub path from {seg!r}")
         path = "/".join(("repos", self.slug, *segments))
-        argv = ["gh", "api", path, "--paginate", "--slurp"]
+        # `--method GET` IS MANDATORY, NOT DECORATION. `gh api -f k=v` switches the request to POST:
+        # the flag builds a request BODY, and a body implies a write. Every endpoint here is a read,
+        # so without this the workflow-runs call was issuing a POST to `/actions/runs` — a mutation
+        # verb against an endpoint this tool must never mutate. Stated explicitly on every request,
+        # not only the parameterised one, so no future caller inherits the wrong default.
+        argv = ["gh", "api", "--method", "GET", path, "--paginate", "--slurp"]
         if head_sha:
             if not _is_sha(head_sha):
                 raise PortError(f"refusing to query by {head_sha!r}, which is not a commit SHA")
@@ -313,15 +318,35 @@ class MergeFactsPort:
         if not pages:
             raise PortError(f"{where} returned no pages at all")
         out: list[dict] = []
+        totals: list[object] = []
         for page in pages:
             if not isinstance(page, dict):
                 raise PortError(f"{where} returned a page that is not an object")
             items = page.get(key)
             if items is None or not isinstance(items, list):
                 raise PortError(f"{where} returned a page with no `{key}` list")
-            out += [x for x in items if isinstance(x, dict)]
-        total = pages[0].get("total_count")
-        if isinstance(total, int) and len(out) != total:
+            # NOT `[x for x in items if isinstance(x, dict)]`. Silently dropping a malformed element
+            # makes the flattened list SHORTER than what the server sent, and the count check below
+            # would then be comparing against a set this method quietly edited.
+            for x in items:
+                if not isinstance(x, dict):
+                    raise PortError(f"{where} returned a `{key}` element that is not an object")
+                out.append(x)
+            totals.append(page.get("total_count"))
+        # THE COUNT IS MANDATORY. It was previously honoured only `if isinstance(total, int)`, so a
+        # response with a missing, null or string `total_count` skipped the completeness check
+        # entirely — the one condition under which a truncated read is least detectable is exactly
+        # the one that disabled the guard against it.
+        total = totals[0]
+        if not isinstance(total, int) or isinstance(total, bool) or total < 0:
+            raise PortError(f"{where} returned `total_count`={total!r}, which is not a non-negative "
+                            f"integer — completeness cannot be established and an unverifiable read "
+                            f"is not proof of absence")
+        disagree = [t for t in totals if t != total]
+        if disagree:
+            raise PortError(f"{where} returned inconsistent `total_count` across pages "
+                            f"({total} then {disagree[0]!r}), so no single count describes the read")
+        if len(out) != total:
             raise PortError(f"{where} collected {len(out)} of {total} `{key}` across {len(pages)} "
                             f"page(s) — the read is incomplete and an unreturned page is not proof "
                             f"of absence")
@@ -463,21 +488,33 @@ def required_contexts_at(raw: bytes) -> list[str]:
     return wanted, {c: by_name[c] for c in wanted}
 
 
-def workflow_job_name(raw: bytes, job_key: str) -> str:
-    """The DISPLAY NAME of `job_key` in a workflow blob — the value a check run carries as its name.
+def workflow_job_binding(raw: bytes, job_key: str) -> tuple[str, str]:
+    """`(status, detail)` binding a registry job KEY to the display name the platform reports.
 
-    The registry pins a job KEY; the platform reports a job's display name. This is the only place
-    the two are reconciled, and it is done against the workflow blob itself rather than assumed, so
-    renaming a job's display name without updating the registry breaks the chain instead of quietly
-    binding a required context to a different job.
+    `("ok", <display name>)`, `("missing", "")`, or `("ambiguous", <other key>)`.
+
+    WHY UNIQUENESS IS REQUIRED. The registry pins a job KEY; GitHub's job payload exposes the job's
+    DISPLAY NAME and not the key it came from. The only deterministic join between them is therefore
+    a display name that exactly one key in the pinned workflow produces — if two keys render the same
+    name, a platform job carrying that name cannot be attributed to either, and a verifier that
+    picked one would be guessing. That is reported as ambiguity rather than resolved.
+
+    Returned rather than raised, because each outcome is a FINDING about the change under review and
+    not an unavailability: the blob was read successfully in every case.
     """
     doc = _yaml(raw, "the governing workflow")
-    jobs = doc.get("jobs") if isinstance(doc, dict) else None
+    jobs = doc.get("jobs")
     if not isinstance(jobs, dict) or job_key not in jobs:
-        raise PortError(f"the governing workflow declares no job `{job_key}`")
-    spec = jobs.get(job_key)
-    name = spec.get("name") if isinstance(spec, dict) else None
-    return str(name) if name else job_key
+        return "missing", ""
+
+    def display(key: str) -> str:
+        spec = jobs.get(key)
+        name = spec.get("name") if isinstance(spec, dict) else None
+        return str(name) if name else str(key)
+
+    mine = display(job_key)
+    twin = next((k for k in jobs if k != job_key and display(k) == mine), "")
+    return ("ambiguous", twin) if twin else ("ok", mine)
 
 
 def _repo_slug() -> str:

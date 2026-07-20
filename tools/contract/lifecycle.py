@@ -385,6 +385,7 @@ def _acceptance(events, mf, auth: str) -> tuple[str, list[str]]:
                          "evidence must be deterministic so two correct agents write the same bytes"]
 
     covered: dict[str, str] = {}
+    bound: dict[str, str] = {}
     for rid in recorded:
         run = by_id.get(rid)
         if run is None:
@@ -415,12 +416,30 @@ def _acceptance(events, mf, auth: str) -> tuple[str, list[str]]:
         if wf_path != want_path:
             return CLAIMED, [f"required context {ctx!r} is pinned to {want_path} but run {rid} came "
                              f"from {wf_path or '<unknown>'}"]
-        if job_name != ctx:
-            return CLAIMED, [f"run {rid} joins to job {job_name!r}, which is not {ctx!r}"]
+        # THE PINNED JOB KEY IS CONSUMED HERE. It was previously unpacked and discarded, so the chain
+        # ended at the joined job's DISPLAY NAME — a value the workflow author controls and the
+        # registry never checked. Binding the key means the registry's claim about which job produces
+        # a required context is verified against the workflow blob at the base, not assumed.
+        status, detail = dict(mf.job_binding).get(ctx, ("missing", ""))
+        if status == "missing":
+            return CLAIMED, [f"the registry pins required context {ctx!r} to job key {want_job!r} in "
+                             f"{want_path}, but that workflow declares no such job at the verified "
+                             f"base"]
+        if status == "ambiguous":
+            return CLAIMED, [f"job keys {want_job!r} and {detail!r} in {want_path} both render the "
+                             f"display name the platform reports, so a job carrying it cannot be "
+                             f"attributed to either — the join is not deterministic"]
+        if detail != ctx:
+            return CLAIMED, [f"the registry pins {ctx!r} to job key {want_job!r}, but that job is "
+                             f"named {detail!r} in {want_path} at the verified base"]
+        if job_name != detail:
+            return CLAIMED, [f"run {rid} joins to platform job {job_name!r}, which is not the pinned "
+                             f"job {want_job!r} ({detail!r})"]
         if stable.get(wf_path) is not True:
             return CLAIMED, [f"the governing workflow {wf_path} differs between the verified base and "
                              f"the PR head — a workflow edited inside the change it certifies is not "
                              f"evidence about that change"]
+        bound[ctx] = f"{want_job}={detail}"
         covered[ctx] = rid
     missing = [c for c in mf.required_contexts if c not in covered]
     if missing:
@@ -446,8 +465,10 @@ def _acceptance(events, mf, auth: str) -> tuple[str, list[str]]:
                        f"{mf.merged_at}, base {mf.base_sha[:12]} externally confirmed, required "
                        f"contexts {', '.join(mf.required_contexts)} each satisfied by the RECORDED "
                        f"GitHub-Actions run that was latest at {at} "
-                       f"({', '.join(f'{c}={covered[c]}' for c in sorted(covered))}), each joined to "
-                       f"its pinned workflow whose blob is unchanged from the verified base"]
+                       f"({', '.join(f'{c}={covered[c]}' for c in sorted(covered))}), each joined "
+                       f"through `check_run_url` to the registry-pinned job key "
+                       f"({', '.join(f'{c}->{bound[c]}' for c in sorted(bound))}) in its pinned "
+                       f"workflow, whose blob is unchanged from the verified base"]
 
 
 def select_run_ids(mf) -> tuple[list[str], list[str]]:

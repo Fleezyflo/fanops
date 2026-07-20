@@ -41,7 +41,7 @@ from pathlib import Path
 
 from . import classify, derive, lifecycle, report, validate
 from .adapters import (REPO, ArtifactPort, ImpactPort, MergeFactsPort, PortError, RegistryPort,
-                       RepoPort, required_contexts_at)
+                       RepoPort, required_contexts_at, workflow_job_binding)
 from .decide import HEAD, MERGE, PRE, decide
 from .model import (CheckRun, CI_REGISTRY_PATH, EXIT_CONTINUE, EXIT_UNTRUSTWORTHY,
                     MAIN_REF as MODEL_MAIN_REF, DecisionInput, Derived, MergeFacts)
@@ -219,9 +219,8 @@ def run(ports: Ports, path: str, *, base: str, head: str | None, pr: int | None,
             # compare and acceptance is not sought, so demanding the comparison would turn every
             # pre-merge verification of an open PR into an unavailability.
             stable: dict[str, bool] = {}
-            for wf_path, _job in (dict(provenance).values() if d["merged"] else ()):
-                if wf_path in stable:
-                    continue
+            binding: dict[str, tuple[str, str]] = {}
+            for ctx, (wf_path, job_key) in (dict(provenance).items() if d["merged"] else ()):
                 at_base = ports.repo.blob(claimed_base, wf_path)
                 at_head = ports.repo.blob(d["pr_head"], wf_path) if d["pr_head"] else None
                 if at_base is None or at_head is None:
@@ -229,6 +228,10 @@ def run(ports: Ports, path: str, *, base: str, head: str | None, pr: int | None,
                                     f"verified base and the PR head, so whether it changed inside "
                                     f"this change is unknown")
                 stable[wf_path] = at_base == at_head
+                # The job KEY is resolved AGAINST THE BASE BLOB, the same commit that supplied the
+                # required set. Resolving it at the head would let the change under review rename the
+                # job that certifies it and still satisfy the binding.
+                binding[ctx] = workflow_job_binding(at_base, job_key)
             # Trees are read HERE, where a failed read can still reach `unverifiable`. Resolving them
             # inside the gate would turn "could not read" into "did not match" — an unavailability
             # wearing the costume of a finding.
@@ -253,6 +256,7 @@ def run(ports: Ports, path: str, *, base: str, head: str | None, pr: int | None,
                             required_contexts=contexts, context_provenance=provenance,
                             check_runs=tuple(runs), run_provenance=tuple(sorted(join.items())),
                             workflow_stable=tuple(sorted(stable.items())),
+                            job_binding=tuple(sorted(binding.items())),
                             pr_tree=pr_tree or "", merge_tree=merge_tree or "",
                             pr_head_blob=head_blob)
         except PortError as exc:

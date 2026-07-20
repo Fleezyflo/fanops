@@ -2,7 +2,7 @@
 status: accepted
 date: 2026-07-18
 accepted_in_principle: 2026-07-18
-approved_digest: sha256:815635d3fd95efb9e5be0637bcb68c2ab7a1e638ff1ede16c62c257b1e2e6a3a
+approved_digest: sha256:236ef890f9d1ea95a69322e168c5fbde83c57b083da77c05c3b3470e1791b3da
 supersedes: []
 references: [0100, 0101, 0102]
 deciders: [operator]
@@ -596,14 +596,27 @@ a failure of any one is a finding:
 3. the registry at the externally-verified base maps the context to a workflow **path** and **job key**;
 4. the check-run→job join is made through the documented `job.check_run_url`, never through the
    undocumented coincidence that a job id equals its check-run id;
+4a. the registry's pinned job **key** exists in the governing workflow blob at the verified base,
+   its effective display name equals the required context, and it is the ONLY key in that workflow
+   rendering that name — GitHub's job payload exposes the display name and never the key, so
+   uniqueness in the pinned blob is what makes the join deterministic rather than a guess;
+4b. the joined platform job's name equals that uniquely-bound display name;
 5. the joined workflow run's `path` equals the registry's path for that context;
 6. the governing workflow's blob at the final pre-merge PR head is byte-identical to its blob at the
    verified base — a workflow edited inside the change it certifies is not evidence about that change;
 7. the recorded run concluded `success`.
 
+Every platform read is an explicit `GET`. This is not a formality: `gh api -f k=v` constructs a
+request BODY and thereby switches the verb to `POST`, so the parameterised workflow-runs read would
+otherwise issue a mutation verb against an endpoint this model may only read.
+
 An ambiguous join — one check run claimed by two jobs — is UNAVAILABILITY, not a negative: the read
 completed but does not settle the question, and answering it anyway would state a verdict the data
 does not support.
+
+**Completeness of a paginated read is mandatory, not conditional.** A `total_count` that is absent,
+null or non-numeric does not relax the check; it fails it. Honouring the count only when it happened
+to be usable disabled the guard precisely in the case where a truncated read is least detectable.
 
 **Rerun pinning is TEMPORAL, and both directions are enforced.** Relative to the effective `accepted`
 event's own timestamp: every recorded run must have existed and completed successfully **by** that
