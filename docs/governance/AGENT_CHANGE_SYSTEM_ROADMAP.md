@@ -17,7 +17,7 @@ acceptance, and freeze.
 |---|---|---|---|---|
 | 1 | Authority Repair and Program Boundaries | **ACCEPTED** | A verified contradiction register on a named base SHA | The six verified contradictions closed; this roadmap persisted; `tools/arch` + `tools/ci` clean; CI green on the exact PR head |
 | 2 | Reusable Change-Contract Architecture | **ACCEPTED** | Phase 1 `ACCEPTED` | An accepted ADR defining the change-contract model |
-| 3 | Change-Contract Compiler and Verifier | **IN IMPLEMENTATION** | Phase 2 `ACCEPTED` | Compiler + verifier merged, each rule carrying a firing negative control; acceptance verified against the platform rather than asserted by its own row (ADR-0105 §4.3a) |
+| 3 | Change-Contract Compiler and Verifier | **ACCEPTED** | Phase 2 `ACCEPTED` | Compiler + verifier merged, each rule carrying a firing negative control; acceptance verified against the platform rather than asserted by its own row (ADR-0105 §4.3a) |
 | 4 | Cold-Start Acceptance | NOT STARTED | Phase 3 `ACCEPTED` | A fresh agent, unaided, drives three cases through the contract — see below |
 | 5 | Operational Governance Deployment | NOT STARTED | Phase 4 `ACCEPTED` + explicit operator gate | M1–M6 applied one at a time; live required set == `intended_required_contexts` |
 | 6 | Orchestration Enforcement Decision | NOT STARTED | Phase 5 `ACCEPTED` | A recorded decision to re-enable, replace or retire the dormant orchestration gate |
@@ -58,6 +58,36 @@ and erase the design-approval moment. The same device records Phase 1 above.
 Phase 3B amends ADR-0105 §1 `T3` to add `tools/contract/**`. That is the ADR's own rule — *"adding a
 governance surface must add it here in the same change"* — and it changes the body, hence
 `approved_digest`, hence requires renewed approval of the amended body before merge.
+
+### Phase 3 — outcome
+
+**ACCEPTED** 2026-07-20. Landed across PRs #703 (compiler + verifier), #705 (`LIFECYCLE-REWRITTEN`
+reachable from the shipped CLI), #707 (single-operator merge authorization; `ST-4` deleted), #708
+(acceptance rederived against the platform) and #709 (the post-merge acceptance append).
+
+Both exit criteria are met, and each is mechanically re-derivable rather than asserted here:
+
+- **Every rule carries a firing negative control.** `python -m tools.contract selftest` reports the
+  count and exits non-zero if any control fails to detect its injected defect. The count is
+  deliberately not restated in this file; a number in prose has no reader and rots.
+- **Acceptance is verified against the platform, not asserted by its own row.** Demonstrated in
+  both directions. `CC-2026-07-20-acceptance-rederivation` reaches `accepted` through merge
+  identity, tree fidelity, base-pinned required CI and provenance — *and*
+  `CC-2026-07-18-change-contract-compiler`, which carries an `accepted` row, derives only
+  `acceptance_claimed` because the merge beneath it is not fully authorized. A criterion that only
+  admits is not a criterion; this one also refuses.
+
+**Residual R9 — the phase's own lifecycle records are incomplete, and are disclosed rather than
+repaired.** Three of the four contracts written under ADR-0105 during Phase 3 carry gaps: one
+merged with no authorization recorded (`merged_unauthorized`), one claims an acceptance the
+verifier declines to honour (`acceptance_claimed`), and one was fully authorized but never received
+its post-merge append (`merged`). Full statement, with the derived state of each and what closing
+each would require: `docs/governance/PHASE3_LIFECYCLE_DISCLOSURE.md`.
+
+**R9 is not closed by this status.** Phase 3's exit criteria concern the compiler and verifier, and
+those are met and proven. The gaps are program-execution debt from building the tool, surfaced by
+the tool itself. Nothing here ratifies the unauthorized merge in **G1**, and `ACCEPTED` must not be
+read as doing so. Disposition of G1 and G2 is an operator decision that remains open.
 
 ### Phase 4 — acceptance intent
 
@@ -120,10 +150,16 @@ Production acceptance is only met when both are proven on real work:
 - `docs/adr/0105-reusable-change-contract-architecture.md` (Phase 2 — the change-contract model)
 - `docs/contracts/CC-2026-07-18-change-contract-compiler.md` (Phase 3 — the contract governing its
   own compiler; the first contract written under ADR-0105)
+- `docs/governance/PHASE3_LIFECYCLE_DISCLOSURE.md` (Phase 3 residual **R9** — the incomplete
+  lifecycle records, disclosed and not repaired)
 
 ## Current next gate
 
-**APPROVE CHANGE CONTRACT COMPILER IMPLEMENTATION**
+**APPROVE PHASE 4 COLD-START ACCEPTANCE**
+
+Phase 3 is `ACCEPTED`, which satisfies Phase 4's entry criterion. Phase 4 has **not** begun: no
+cold-start case has been designed, attempted or scored, and residual **R9** above is open. The gate
+authorizes starting Phase 4; it is not a record that Phase 4 started.
 
 ## Program Execution Method
 

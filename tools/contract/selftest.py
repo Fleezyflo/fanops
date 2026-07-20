@@ -177,6 +177,8 @@ CONTROLS: list[Control] = [
             "", "", "structural"),
     Control("NC-AC-31", "the derived-state count and the port surfaces are derived, not asserted",
             "", "", "structural"),
+    Control("NC-AC-35", "the default base is the contract's own, not a ref that lands on the head",
+            "", "", "structural"),
     Control("NC-AC-17", "an `accepted` row recording no `check_runs` is unverified, not malformed",
             "ST-10", "", "decision"),
     Control("NC-AC-16", "an incomplete check-run page is unavailability, not absence", "", "",
@@ -1410,6 +1412,52 @@ def _c_nc_ac_31(c):
     return True, f"14 derived states; RepoPort exposes {len(repo_surface)} read-only methods"
 
 
+def _c_nc_ac_35(c):
+    """REQUIRED CONTROL 35: the default base is the contract's OWN, not a ref that moves onto it.
+
+    `--base` defaulted to `origin/main`. That is the right comparison while a change is in flight
+    and the WRONG one the moment it lands, because the ref then IS the head: the diff comes back
+    empty, no trait derives, and the contract is reported as declaring traits it does not derive.
+    Every landed contract answered `CL-2` — a verdict about a default, dressed as a finding about
+    the declaration. An empty diff is not evidence that nothing changed.
+
+    Guarded at BOTH halves, because either alone leaves the defect reachable. The CLI must not
+    reintroduce a ref default, and `run()` must actually consume `created.base_sha` when given none.
+    Proven behaviourally against a repo where the two candidate bases DISAGREE: the declared base
+    sees the changed file, `origin/main` sees nothing. Revert either half and this goes red.
+    """
+    import ast, inspect, textwrap
+    from . import __main__ as _m
+    from .__main__ import run
+
+    tree = ast.parse(textwrap.dedent(inspect.getsource(_m.main)))
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Call) and getattr(node.func, "attr", "") == "add_argument"
+                and node.args and isinstance(node.args[0], ast.Constant)
+                and node.args[0].value == "--base"):
+            dflt = next((k.value for k in node.keywords if k.arg == "default"), None)
+            if not (isinstance(dflt, ast.Constant) and dflt.value is None):
+                return False, ("NOT DETECTED — `--base` again defaults to a ref rather than to the "
+                               "contract's own `created.base_sha`")
+            break
+    else:
+        return False, "NOT DETECTED — no `--base` argument was found to check"
+
+    head = "h" * 40
+    raw = build(base=BASE_SHA)
+    repo = FakeRepo(blobs={(head, CONTRACT_PATH): raw, (head, ADR_PATH): ADR_BLOB,
+                           ("origin/main", ADR_PATH): ADR_BLOB},
+                    changed=[], head=head,
+                    changed_since={BASE_SHA: ["src/fanops/example.py"], "origin/main": []})
+    _dec, ctx = run(_ports(repo=repo), CONTRACT_PATH, base=None, head=head, pr=None,
+                    phase="at-head")
+    got = list(ctx["derived"].changed_files)
+    if got != ["src/fanops/example.py"]:
+        return False, (f"NOT DETECTED — the default base derived {got}; it did not read the "
+                       f"contract's own `created.base_sha`")
+    return True, f"the default base resolved to the declared {BASE_SHA[:12]}, deriving {got}"
+
+
 def _c_nc_ac_17(c):
     """An `accepted` row recording NO `check_runs` is UNVERIFIED, never MALFORMED.
 
@@ -1498,7 +1546,12 @@ def _c_nc_ac_10(c):
     if hasattr(port, "required_contexts"):
         return False, ("NOT DETECTED — the port reads the required set from live configuration; it "
                        "must be pinned to the contract's base commit instead")
-    return True, f"two closed reads {public}, and no MergeFacts field can name a person"
+    # COUNT DERIVED, NOT WRITTEN. This message said "two closed reads" while printing four of them,
+    # and stayed wrong through every green run — the predicate had already been widened to the real
+    # surface and nothing read the sentence describing it. Same failure as the prose counts
+    # `NC-AC-31` replaced, and the same failure that let `success_condition` 8 of
+    # CC-2026-07-20-acceptance-rederivation ship a stale two-method enumeration.
+    return True, f"{len(public)} closed reads {public}, and no MergeFacts field can name a person"
 
 
 def _c_nc_ac_11(c):
