@@ -293,3 +293,4 @@ set of surfaces that must move together or the repository is left asserting some
 | timestamp | event | values |
 |---|---|---|
 | 2026-07-20T00:06:08Z | created | id=CC-2026-07-20-acceptance-rederivation; base_sha=8311bc94b83fc0ba1b2ec0f1e1e163caee75e362; timestamp_source=GitHub API Date response header, observed during this operation |
+| 2026-07-20T08:59:35Z | approved | digest=sha256:a4430f8b58f1765216c1eca28cfdd2f83b682bd2b3dda50a433f39fe9151aaa0; token=APPROVE ACCEPTANCE REDERIVATION DECLARATION; scope=acceptance-rederivation; adr_0105_renewed=sha256:236ef890f9d1ea95a69322e168c5fbde83c57b083da77c05c3b3470e1791b3da; adr_0105_authority_blob=a4538c284a14536de4c00547bee8e49086b79fd0; operator=operator; pr=708; timestamp_source=GitHub API Date response header |
