@@ -995,7 +995,7 @@ sys.stdout.write(json.dumps(table[argv[1]]))
 '''
 
 
-def _build_fake_gh(repo, *, table=None, base_sha=""):
+def _build_fake_gh(repo, *, extra=None, base_sha=""):
     """Write the stand-in, its fixture table, and a PATH directory that has `git` but NOT `gh`.
 
     Two directories, because "unusable" and "missing" are different failures and both must land on
@@ -1024,11 +1024,17 @@ def _build_fake_gh(repo, *, table=None, base_sha=""):
     # PRs 1, 2 and 99 — every number the cases below put in a `binding` row. `_pr_of` reads the LAST
     # one, so case B's appended `pr=2` and case C's tampered `pr=99` each re-target the read; serving
     # all three keeps a case's result about the thing it mutated rather than about a fixture gap.
+    # ADDITIVE, NEVER REPLACING. `cli_repo` is module-scoped, so a test that overwrote this table
+    # would silently strip the entries every LATER test depends on — an order-dependent failure that
+    # passes alone and fails in a suite, which is exactly how it reached CI.
     unmerged = [{"head": {"sha": ""}, "base": {"sha": base_sha}, "merge_commit_sha": "",
                  "merged_at": "", "merged": False}]
-    (repo / ".fake-gh-table.json").write_text(json.dumps(table if table is not None else {
-        f"repos/{_FAKE_SLUG}/pulls/{n}": unmerged for n in (1, 2, 99)
-    }), encoding="utf-8")
+    table = {f"repos/{_FAKE_SLUG}/pulls/{n}": unmerged for n in (1, 2, 99)}
+    path = repo / ".fake-gh-table.json"
+    if path.exists():
+        table = {**json.loads(path.read_text(encoding="utf-8")), **table}
+    table.update(extra or {})
+    path.write_text(json.dumps(table), encoding="utf-8")
     return bin_dir, nogh
 
 
@@ -1208,7 +1214,7 @@ def test_the_check_run_read_aggregates_every_page(monkeypatch, tmp_path, cli_rep
     good = [{"total_count": 3, "check_runs": [_page_run("1"), _page_run("2")]},
             {"total_count": 3, "check_runs": [_page_run("3")]}]
     short = [{"total_count": 3, "check_runs": [_page_run("1"), _page_run("2")]}]
-    _build_fake_gh(cli_repo, table={f"repos/{_FAKE_SLUG}/commits/{sha}/check-runs":
+    _build_fake_gh(cli_repo, extra={f"repos/{_FAKE_SLUG}/commits/{sha}/check-runs":
                                     good if pages == "two-good" else short})
     _serve_platform(monkeypatch, cli_repo)
     port = adapters.MergeFactsPort(slug=_FAKE_SLUG)
