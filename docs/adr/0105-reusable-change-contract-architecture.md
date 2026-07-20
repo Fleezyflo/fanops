@@ -2,7 +2,7 @@
 status: accepted
 date: 2026-07-18
 accepted_in_principle: 2026-07-18
-approved_digest: sha256:58d2a108cff4aa3858f4130fd16a9fdfbab0fc0185d257b472e21b15bcf85ff2
+approved_digest: sha256:815635d3fd95efb9e5be0637bcb68c2ab7a1e638ff1ede16c62c257b1e2e6a3a
 supersedes: []
 references: [0100, 0101, 0102]
 deciders: [operator]
@@ -40,6 +40,12 @@ set: the base-pinned in-repo registry, never the row, never live branch protecti
 `intended_required_contexts`. **This amendment moved the body, so it requires renewed approval; the
 `approved_digest` above names the amended body, which is `REQUESTED / NOT YET APPROVED` until the
 operator approves `CC-2026-07-20-acceptance-rederivation` (draft PR #708).**
+
+**Amendment, 2026-07-20 (second) — §4.3a acceptance predicates.** The first §4.3a amendment made
+acceptance a verified finding but left four holes: the base anchor selecting the bar was agent-written
+and unchecked, a required context was matched by NAME alone, rerun pinning had no clock in it, and the
+PR-head declaration read silently fell back to the current blob. All four are now stated as predicates
+above. Covered by the same pending approval.
 
 **What this acceptance binds to.** `approved_digest` in the front matter is `sha256` over this file's
 **body** — every byte after the front matter's closing `---` line, including the newline that follows
@@ -572,6 +578,50 @@ Live branch protection **may** be reported separately as present-day drift telem
 an input to `acceptance_verified`, and no drift finding may create, invalidate, or regress a
 historical acceptance. A verdict about the past must rest on evidence that is itself fixed in the
 past, and a git blob at a named commit is exactly that.
+
+**The anchor for that pin is EXTERNAL.** `created.base_sha` is written by the agent into the
+lifecycle, outside `D`, and it selects the commit whose registry supplies the bar. A contract that
+chose its own anchor could name an older, weaker registry commit and be judged against a bar it
+selected for itself. The verifier therefore reads the platform's own PR `base.sha` and requires the
+two to be equal **before** the registry is read at all. Both values are read successfully, so a
+disagreement is a KNOWN NEGATIVE; only a failed read is `ST-7`.
+
+**A required context is verified by PROVENANCE, never by its name.** A check-run name is
+author-controlled: any App holding `checks:write` can publish a green run called exactly
+`unit (fast, no toolchain)`. For every required context the verifier proves all of the following, and
+a failure of any one is a finding:
+
+1. the check run is bound to the platform merge SHA;
+2. its producing App is GitHub Actions, matched against a **pinned** App identity;
+3. the registry at the externally-verified base maps the context to a workflow **path** and **job key**;
+4. the check-run→job join is made through the documented `job.check_run_url`, never through the
+   undocumented coincidence that a job id equals its check-run id;
+5. the joined workflow run's `path` equals the registry's path for that context;
+6. the governing workflow's blob at the final pre-merge PR head is byte-identical to its blob at the
+   verified base — a workflow edited inside the change it certifies is not evidence about that change;
+7. the recorded run concluded `success`.
+
+An ambiguous join — one check run claimed by two jobs — is UNAVAILABILITY, not a negative: the read
+completed but does not settle the question, and answering it anyway would state a verdict the data
+does not support.
+
+**Rerun pinning is TEMPORAL, and both directions are enforced.** Relative to the effective `accepted`
+event's own timestamp: every recorded run must have existed and completed successfully **by** that
+instant; the recorded id must be the **latest qualifying run** for its full identity at that instant;
+a newer failed, cancelled, skipped, pending or absent run that already existed then makes acceptance
+unverified; and a rerun created **after** that instant does not change the recorded verdict. Ordering
+comes from the platform's own `started_at`/`completed_at`, never from the size of an opaque id. If the
+platform data cannot establish the ordering, the verdict fails closed at `ST-7`.
+
+**The declaration is read AT the head it was in effect at.** Post-merge rederivation parses the
+contract blob at the final pre-merge PR head, read before the derived facts are frozen. A contract
+ABSENT at that head is a known negative — the authorization it records was not in effect at the commit
+that merged. An unreadable ref, blob or object is `ST-7`. No current, landed or working-tree blob is
+ever substituted for the one that stood there.
+
+**The accepted row's own values are enforced.** `decision` must be exactly `accepted`; recorded
+check-run ids must be unique decimal platform ids in ascending numeric order, so that two correct
+agents write the same bytes and no single run stands as evidence for two required contexts.
 
 **A requirement introduced now does not reach backwards.** The same principle governs the shape of
 the row: a value that becomes necessary for acceptance to *verify* does not thereby make every

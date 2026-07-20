@@ -34,8 +34,9 @@ from pathlib import Path
 from . import classify, derive
 from .adapters import REPO, PortError
 from .decide import RULE_IDS
-from .model import (CI_REGISTRY_PATH, CLARIFICATION, CONTINUE, ESCALATE, EXPANDED,
+from .model import (ACCEPTED_DECISION, CI_REGISTRY_PATH, CLARIFICATION, CONTINUE, ESCALATE, EXPANDED,
                     REFUSE, STOP)
+from . import lifecycle as _lc
 from .parse import BOUNDARY, digest, parse
 
 _CODE_SHAPE = re.compile(r"^[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)*$")
@@ -144,6 +145,30 @@ CONTROLS: list[Control] = [
             "decision"),
     Control("NC-AC-15", "the required set is pinned to the contract's base commit", "", "",
             "decision"),
+    Control("NC-AC-18", "a newer run already present at the acceptance instant controls the evidence",
+            "ST-10", "", "decision"),
+    Control("NC-AC-19", "a `created.base_sha` naming a weaker registry commit cannot verify",
+            "ST-10", "", "decision"),
+    Control("NC-AC-20", "a required context produced by the wrong App", "ST-10", "", "decision"),
+    Control("NC-AC-21", "a required context produced by the wrong workflow", "ST-10", "", "decision"),
+    Control("NC-AC-22", "the governing workflow blob changed between base and PR head", "ST-10", "",
+            "decision"),
+    Control("NC-AC-23", "a check run that joins to no workflow job", "ST-10", "", "decision"),
+    Control("NC-AC-24", "a check run that joins to two workflow jobs is ambiguous, not absent", "",
+            "", "decision"),
+    Control("NC-AC-25", "full provenance — App, workflow, join and blob stability — verifies", "",
+            "", "decision"),
+    Control("NC-AC-26", "an `accepted` row whose decision is not `accepted`", "ST-10", "",
+            "decision"),
+    Control("NC-AC-27", "recorded ids that are non-decimal, duplicated, or unordered", "ST-10", "",
+            "decision"),
+    Control("NC-AC-28", "the contract is ABSENT at the pre-merge PR head", "", "", "decision"),
+    Control("NC-AC-29", "the contract is UNREADABLE at the pre-merge PR head", "ST-7", "",
+            "decision"),
+    Control("NC-AC-30", "the contract PRESENT at the PR head is the blob parent-binding reads", "",
+            "", "decision"),
+    Control("NC-AC-31", "the derived-state count and the port surfaces are derived, not asserted",
+            "", "", "structural"),
     Control("NC-AC-17", "an `accepted` row recording no `check_runs` is unverified, not malformed",
             "ST-10", "", "decision"),
     Control("NC-AC-16", "an incomplete check-run page is unavailability, not absence", "", "",
@@ -263,8 +288,11 @@ CONTROLS: list[Control] = [
 # ── fakes ───────────────────────────────────────────────────────────────────────────────────
 class FakeRepo:
     def __init__(self, blobs=None, changed=(), head="h" * 40, fail=None, ancestry=(),
-                 changed_since=None, trees=None):
+                 changed_since=None, trees=None, unreadable=()):
         self.blobs = dict(blobs or {})
+        # (ref, path) pairs whose READ FAILS, as distinct from pairs that are simply ABSENT. The
+        # difference is the whole point of `pr_head_blob`: absent is a finding, unreadable is ST-7.
+        self.unreadable = set(unreadable)
         self.changed = list(changed)
         self.head = head
         self.fail = fail
@@ -278,6 +306,8 @@ class FakeRepo:
 
     def blob(self, ref, path):
         if self.fail == "blob": raise PortError("git unavailable (injected)")
+        if (ref, path) in self.unreadable:
+            raise PortError(f"the object {path} at {ref[:12]} could not be read (injected)")
         return self.blobs.get((ref, path))
 
     def blob_sha(self, ref, path):
@@ -354,11 +384,27 @@ class FakeRegistry:
 # question about a review or a person. What cannot be faked here is exactly what cannot be read
 # there.
 class FakeMergeFacts:
-    def __init__(self, *, pr_head="h" * 40, merge_sha="m" * 40, merged_at="2026-07-19T23:19:38Z",
-                 merged=True, runs=None, fail=None):
-        self.d = {"pr_head": pr_head, "merge_sha": merge_sha, "merged_at": merged_at,
-                  "merged": merged}
-        self.runs = list(runs) if runs is not None else [("101", "unit", "success")]
+    """The four closed platform reads, faked coherently.
+
+    Defaults describe a WELL-FORMED world: one GitHub-Actions run per required context, started and
+    completed before the acceptance instant, joined to the workflow the registry pins. Each control
+    then breaks exactly one fact, so a red result names the fact it broke.
+    """
+
+    def __init__(self, *, pr_head="h" * 40, merge_sha=None, merged_at="2026-07-19T23:19:38Z",
+                 merged=True, runs=None, fail=None, base_sha=None, jobs=None, wf_runs=None):
+        self.d = {"pr_head": pr_head, "merge_sha": "m" * 40 if merge_sha is None else merge_sha,
+                  "merged_at": merged_at, "merged": merged,
+                  "base_sha": "b" * 40 if base_sha is None else base_sha}
+        self.runs = list(runs) if runs is not None else [_check_run("101")]
+        self.wf_runs = wf_runs if wf_runs is not None else [{"id": "9001",
+                                                             "path": ".github/workflows/ci.yml",
+                                                             "head_sha": self.d["merge_sha"]}]
+        self.jobs_by_run = jobs if jobs is not None else {
+            "9001": [{"name": "unit", "run_id": "9001", "check_run_id": "101",
+                      "conclusion": "success", "status": "completed",
+                      "started_at": "2026-07-19T23:00:00Z",
+                      "completed_at": "2026-07-19T23:05:00Z"}]}
         self.fail = fail
 
     def pull(self, pr):
@@ -367,12 +413,31 @@ class FakeMergeFacts:
 
     def check_runs(self, sha):
         if self.fail == "checks": raise PortError("check runs could not be read (injected)")
-        return list(self.runs)
+        return [dict(r) for r in self.runs]
+
+    def workflow_runs(self, sha):
+        if self.fail == "wf": raise PortError("workflow runs could not be read (injected)")
+        return [dict(w) for w in self.wf_runs]
+
+    def jobs(self, run_id):
+        if self.fail == "jobs": raise PortError("jobs could not be read (injected)")
+        return [dict(j) for j in self.jobs_by_run.get(str(run_id), [])]
 
     # NOTE: no `required_contexts` method. The required set is NOT a platform read — it is pinned to
     # the contract's own `created.base_sha` from the in-repo registry, so live configuration can
     # neither invalidate nor manufacture a historical acceptance. The absence of the method here is
     # the same structural guarantee as the absence of a review reader.
+
+
+def _check_run(rid, *, name="unit", conclusion="success", status="completed",
+         started="2026-07-19T23:00:00Z", completed="2026-07-19T23:05:00Z",
+         app_id=None, app_slug=None):
+    """One check-run record as the port returns it — GitHub Actions and green unless told otherwise."""
+    from .adapters import GH_ACTIONS_APP_ID, GH_ACTIONS_APP_SLUG
+    return {"id": rid, "name": name, "conclusion": conclusion, "status": status,
+            "started_at": started, "completed_at": completed,
+            "app_id": GH_ACTIONS_APP_ID if app_id is None else app_id,
+            "app_slug": GH_ACTIONS_APP_SLUG if app_slug is None else app_slug}
 
 
 # ── the fixture contract ────────────────────────────────────────────────────────────────────
@@ -486,7 +551,7 @@ def _ports(repo=None, impact=None, artifacts=None, registry=None, merge_facts=No
 def _run(raw: bytes, *, changed=("src/fanops/example.py",), phase="at-head", pr=None,
          artifacts=None, registry=None, impact=None, main_blob=None, repo_fail=None,
          extra_blobs=None, path=CONTRACT_PATH, ancestry=(), parent_changed=None,
-         merge_facts=None, _trees=None):
+         merge_facts=None, _trees=None, _unreadable=()):
     from .__main__ import run
     head = "h" * 40
     blobs = {(head, path): raw, (head, ADR_PATH): ADR_BLOB,
@@ -496,7 +561,7 @@ def _run(raw: bytes, *, changed=("src/fanops/example.py",), phase="at-head", pr=
     blobs.update(extra_blobs or {})
     since = {PARENT: parent_changed if parent_changed is not None else [path]} if ancestry else {}
     repo = FakeRepo(blobs=blobs, changed=changed, head=head, fail=repo_fail,
-                    ancestry=ancestry, changed_since=since, trees=_trees)
+                    ancestry=ancestry, changed_since=since, trees=_trees, unreadable=_unreadable)
     ports = _ports(repo=repo, impact=impact, artifacts=artifacts, registry=registry,
                    merge_facts=merge_facts)
     return run(ports, path, base="base", head=head, pr=pr, phase=phase)
@@ -813,10 +878,18 @@ MERGED_AT = "2026-07-19T23:19:38Z"
 BASE_SHA = "b" * 40
 # The pinned registry blob every acceptance fixture reads its required set from — the in-repo file at
 # the contract's own base commit, never live branch protection.
-REGISTRY_BLOB = b"current_required_contexts:\n  - \"unit\"\n"
+REGISTRY_BLOB = (b"current_required_contexts:\n  - \"unit\"\n"
+                 b"controls:\n"
+                 b"  - id: CI-UNIT\n"
+                 b"    name: unit\n"
+                 b"    workflow: .github/workflows/ci.yml\n"
+                 b"    job: unit\n")
+WORKFLOW_PATH = ".github/workflows/ci.yml"
+WORKFLOW_BLOB = b"jobs:\n  unit:\n    name: unit\n"
 
 
-def _acc_rows(*, merge_sha=MERGE_SHA, accepted_sha=None, merged_at=MERGED_AT, runs="101", drop=()):
+def _acc_rows(*, merge_sha=MERGE_SHA, accepted_sha=None, merged_at=MERGED_AT, runs="101",
+              decision=ACCEPTED_DECISION, drop=()):
     """A `merged` + `accepted` pair. `drop` omits keys so a control can probe one missing value.
 
     The two SHAs are separable BECAUSE THE TWO CHECKS ARE. The `merged` row is read during
@@ -824,7 +897,7 @@ def _acc_rows(*, merge_sha=MERGE_SHA, accepted_sha=None, merged_at=MERGED_AT, ru
     both at once would fire `ST-9` and never reach `ST-10`, proving nothing about acceptance.
     """
     kv = [("merge_sha", merge_sha if accepted_sha is None else accepted_sha),
-          ("decision", "accept"), ("evidence", "the success condition"),
+          ("decision", decision), ("evidence", "the success condition"),
           ("date", "2026-07-20"), ("operator", "operator"), ("check_runs", runs)]
     body = "; ".join(f"{k}={v}" for k, v in kv if k not in drop)
     # `merged_at` is the ROW TIMESTAMP, not a value beside it — the column is the claim being verified.
@@ -832,7 +905,8 @@ def _acc_rows(*, merge_sha=MERGE_SHA, accepted_sha=None, merged_at=MERGED_AT, ru
             f"| 2026-07-20T00:00:00Z | accepted | {body} |\n")
 
 
-def _landed(*, rows=None, mf=None, trees=None, registry=REGISTRY_BLOB, **authz):
+def _landed(*, rows=None, mf=None, trees=None, registry=REGISTRY_BLOB,
+            workflow=WORKFLOW_BLOB, head_workflow=None, **authz):
     """(raw, kwargs) for a LANDED, authorized, merged contract carrying `merged` + `accepted`.
 
     Defaults are all-correct on purpose: each control breaks one fact and inherits the rest, so a
@@ -848,6 +922,14 @@ def _landed(*, rows=None, mf=None, trees=None, registry=REGISTRY_BLOB, **authz):
     blobs = {(PARENT, CONTRACT_PATH): parent_raw, (head, CONTRACT_PATH): raw}
     if registry is not None:
         blobs[(BASE_SHA, CI_REGISTRY_PATH)] = registry
+    # The governing workflow at BOTH ends. Equal by default, because "did this change edit the
+    # workflow that certifies it" must be answerable; a control makes them differ to prove it is.
+    if workflow is not None:
+        blobs[(BASE_SHA, WORKFLOW_PATH)] = workflow
+        at_head = workflow if head_workflow is None else head_workflow
+        blobs[(head, WORKFLOW_PATH)] = at_head
+        pr_head = (mf.d.get("pr_head") if mf is not None else head) or head
+        blobs[(pr_head, WORKFLOW_PATH)] = at_head
     return raw, {
         # NO explicit `pr`. The governed PR comes from the contract's own `binding` row, which is the
         # ordinary command path — passing `--pr` here would hide the very bug `NC-AC-13` exists for.
@@ -962,6 +1044,246 @@ def _c_nc_ac_07(c):
     return True, f"state {st!r} — the recorded merge date is not the platform's"
 
 
+
+# ── §4.3a provenance, chronology and the PR-head blob ───────────────────────────────────────
+#
+# Each of these breaks exactly ONE fact in an otherwise fully-verified world, so a red result names
+# the fact it broke rather than a fixture that was never coherent to begin with.
+_ACC_AT = "2026-07-20T00:00:00Z"        # the acceptance instant `_acc_rows` writes
+
+
+def _prov_state(*, _unreadable=(), **landed):
+    """Run a landed fixture and return `(state, gates, rule)`.
+
+    `_unreadable` is popped by the SIGNATURE, not forwarded: `_landed` passes every unknown keyword
+    on to `_authz`, so a stray one becomes a confusing TypeError instead of a fixture setting.
+    """
+    raw, kw = _landed(**landed)
+    trees = kw.pop("trees", None)
+    dec, ctx = _run(raw, _trees=trees, _unreadable=_unreadable, **kw)
+    return ctx["state"], ctx["gates"], dec.rule
+
+
+def _c_nc_ac_18(c):
+    """The OTHER temporal direction: a newer run that ALREADY EXISTED at the acceptance instant.
+
+    `NC-AC-14` proves a rerun created AFTER the decision cannot revise it. That alone is satisfied by
+    a verifier with no clock at all, which is why it was insufficient on its own. Here the newer run
+    started BEFORE the acceptance and is failing: the thing being accepted was not green at the
+    moment it was accepted, and recording the older green run must not hide that.
+    """
+    runs = [_check_run("101"),
+            _check_run("999", conclusion="failure", started="2026-07-19T23:30:00Z",
+                       completed="2026-07-19T23:40:00Z")]
+    st, g, rule = _prov_state(mf=FakeMergeFacts(pr_head="h" * 40, runs=runs))
+    if st != "acceptance_claimed":
+        return False, f"NOT DETECTED — a newer pre-acceptance failure derived {st!r}"
+    return True, f"{rule} → the recorded run was not the latest qualifying one at {_ACC_AT}"
+
+
+def _c_nc_ac_19(c):
+    """`created.base_sha` is agent-written and OUTSIDE `D`; it must not select its own bar.
+
+    The contract names a base the platform does not report, which is how a change could point the
+    required-context read at an older, weaker registry commit. Both SHAs were read successfully, so
+    this is a FINDING and never `ST-7`.
+    """
+    st, g, rule = _prov_state(mf=FakeMergeFacts(pr_head="h" * 40, base_sha="9" * 40))
+    if rule == "ST-7":
+        return False, "NOT DETECTED — a completed disagreement about the base was reported as unavailable"
+    if st != "acceptance_claimed":
+        return False, f"NOT DETECTED — an unanchored `created.base_sha` derived {st!r}"
+    # THE REASON, NOT MERELY THE STATE. With the base unverified the required set is deliberately
+    # left unread, so an empty-required-set branch also refuses — and this control would pass with
+    # the anchor check deleted, which is precisely how a control becomes decorative.
+    if not any("is not the one this change was opened against" in d for d in g.detail):
+        return False, (f"NOT DETECTED — refused, but not because the base is unanchored: "
+                       f"{[d for d in g.detail if 'accept' in d.lower()][:1]}")
+    return True, f"{rule} → the contract cannot choose the commit whose registry sets its bar"
+
+
+def _c_nc_ac_20(c):
+    """MATCHING NAME, WRONG APP. Any App with `checks:write` can publish `unit` and conclude success."""
+    runs = [_check_run("101", app_id="99999", app_slug="a-friendly-bot")]
+    st, g, rule = _prov_state(mf=FakeMergeFacts(pr_head="h" * 40, runs=runs))
+    if st != "acceptance_claimed":
+        return False, f"NOT DETECTED — a non-Actions App's green run derived {st!r}"
+    return True, f"{rule} → a name is not provenance; the producing App is pinned"
+
+
+def _c_nc_ac_21(c):
+    """MATCHING NAME, WRONG WORKFLOW. The registry pins the context to `ci.yml`; this ran elsewhere."""
+    wf = [{"id": "9001", "path": ".github/workflows/somewhere-else.yml", "head_sha": "m" * 40}]
+    st, g, rule = _prov_state(mf=FakeMergeFacts(pr_head="h" * 40, wf_runs=wf))
+    if st != "acceptance_claimed":
+        return False, f"NOT DETECTED — a run from an unpinned workflow derived {st!r}"
+    # THE REASON, NOT MERELY THE STATE. An unpinned path is also absent from the blob-stability map,
+    # so that guard refuses too — and this control would survive deleting the path check itself.
+    if not any("is pinned to" in d for d in g.detail):
+        return False, (f"NOT DETECTED — refused, but not because the workflow path is wrong: "
+                       f"{[d for d in g.detail if 'workflow' in d.lower()][:1]}")
+    return True, f"{rule} → the joined workflow path must be the one the registry pins"
+
+
+def _c_nc_ac_22(c):
+    """MATCHING NAME AND WORKFLOW, CHANGED BLOB. A workflow edited inside the change it certifies."""
+    st, g, rule = _prov_state(head_workflow=b"jobs:\n  unit:\n    name: unit\n    if: false\n")
+    if st != "acceptance_claimed":
+        return False, f"NOT DETECTED — a workflow edited inside its own change derived {st!r}"
+    return True, f"{rule} → the governing workflow must be unchanged from the verified base"
+
+
+def _c_nc_ac_23(c):
+    """A check run joining to NO job — nothing connects the tick to a workflow this repo runs."""
+    st, g, rule = _prov_state(mf=FakeMergeFacts(pr_head="h" * 40, jobs={"9001": []}))
+    if st != "acceptance_claimed":
+        return False, f"NOT DETECTED — an unjoined check run derived {st!r}"
+    return True, f"{rule} → an unjoinable run is not evidence"
+
+
+def _c_nc_ac_24(c):
+    """An AMBIGUOUS join is unavailability, not a finding — two jobs claiming one check run.
+
+    The read completed; what it returned cannot be resolved to a single provenance. Answering
+    "unverified" would state a conclusion about a question the data does not settle.
+    """
+    jobs = {"9001": [{"name": "unit", "run_id": "9001", "check_run_id": "101",
+                      "conclusion": "success", "status": "completed",
+                      "started_at": "2026-07-19T23:00:00Z",
+                      "completed_at": "2026-07-19T23:05:00Z"},
+                     {"name": "unit-again", "run_id": "9001", "check_run_id": "101",
+                      "conclusion": "success", "status": "completed",
+                      "started_at": "2026-07-19T23:00:00Z",
+                      "completed_at": "2026-07-19T23:05:00Z"}]}
+    st, g, rule = _prov_state(mf=FakeMergeFacts(pr_head="h" * 40, jobs=jobs))
+    if rule != "ST-7":
+        return False, f"NOT DETECTED — an ambiguous join gave {rule}, not ST-7"
+    return True, "ST-7 → an unresolvable provenance is unavailability, never a verdict"
+
+
+def _c_nc_ac_25(c):
+    """THE POSITIVE CONTROL for the whole chain. Without it every case above passes by breaking it."""
+    st, g, rule = _prov_state()
+    if st != "accepted" or g.acceptance != "satisfied":
+        return False, f"NOT DETECTED — full valid provenance derived {st!r}/{g.acceptance!r}"
+    return True, "App, workflow path, job join, blob stability and chronology all verify"
+
+
+def _c_nc_ac_26(c):
+    """`decision=` is READ. It was recorded and never consulted, so a rejection verified as one."""
+    st, g, rule = _prov_state(rows=_acc_rows(decision="rejected"))
+    if st != "acceptance_claimed":
+        return False, f"NOT DETECTED — `decision=rejected` derived {st!r}"
+    return True, f"{rule} → the row's own decision value is enforced, not decorative"
+
+
+def _c_nc_ac_27(c):
+    """Recorded ids must be UNIQUE DECIMAL and DETERMINISTICALLY ORDERED."""
+    for label, ids in (("non-decimal", "unit-101"), ("duplicated", "101,101"),
+                       ("unordered", "999,101")):
+        runs = [_check_run("101"), _check_run("999", name="e2e")]
+        st, g, rule = _prov_state(rows=_acc_rows(runs=ids),
+                                  mf=FakeMergeFacts(pr_head="h" * 40, runs=runs))
+        if st != "acceptance_claimed":
+            return False, f"NOT DETECTED — {label} recorded ids derived {st!r}"
+    return True, "non-decimal, duplicated and unordered recorded ids each refuse"
+
+
+def _c_nc_ac_28(c):
+    """The contract ABSENT at the pre-merge PR head is a FINDING: the claim was not effective there."""
+    # A DIFFERENT PR head, carrying no contract blob. Removing the entry from `extra_blobs` would
+    # not do it: `_run` seeds `(head, path)` itself and `extra_blobs` is merged on top, so the blob
+    # would come back and the control would silently test nothing.
+    raw, kw = _landed(mf=FakeMergeFacts(pr_head="k" * 40))
+    trees = kw.pop("trees", None)
+    dec, ctx = _run(raw, _trees=trees, **kw)
+    if dec.rule == "ST-7":
+        return False, "NOT DETECTED — a contract absent at the PR head was reported as unavailable"
+    if ctx["state"] == "accepted":
+        return False, "NOT DETECTED — a contract absent at the PR head still verified"
+    # THE REASON, NOT MERELY THE STATE. This PR head also fails parent-binding, so the fixture
+    # refuses either way — and with the old `or raw` substitution reinstated this control still
+    # passed, which is exactly the decorative-control shape it exists to prevent.
+    if not any("ABSENT at the final pre-merge PR head" in d for d in ctx["gates"].detail):
+        return False, (f"NOT DETECTED — refused, but not because the contract is absent at the PR "
+                       f"head: {[d for d in ctx['gates'].detail if 'PR head' in d][:1]}")
+    return True, f"{dec.rule} → the authorization was not in effect at the merged commit"
+
+
+def _c_nc_ac_29(c):
+    """The contract UNREADABLE at the pre-merge PR head is UNAVAILABILITY: `ST-7`, never a finding."""
+    st, g, rule = _prov_state(mf=FakeMergeFacts(pr_head="k" * 40),
+                              _unreadable={("k" * 40, CONTRACT_PATH)})
+    if rule != "ST-7":
+        return False, f"NOT DETECTED — an unreadable PR-head blob gave {rule}, not ST-7"
+    return True, "ST-7 → could-not-read never becomes did-not-match"
+
+
+def _c_nc_ac_30(c):
+    """The blob PRESENT at the PR head is the one parent-binding reads — never a substitute.
+
+    The old `repo.blob(...) or raw` fell back to the CURRENT bytes, so a head whose contract differed
+    still bound against the document in hand. Here the PR head carries a DIFFERENT lifecycle, and the
+    rederivation must read that one: a `merge_approved` present only in the current blob must not
+    authorize.
+    """
+    import inspect
+    code = [ln for ln in inspect.getsource(_lc._rederive_post_merge).splitlines()
+            if ln.strip() and not ln.strip().startswith("#")]
+    if not any("mf.pr_head_blob" in ln for ln in code):
+        return False, "NOT DETECTED — rederivation does not read the carried PR-head blob"
+    if any("or raw" in ln for ln in code):
+        return False, "NOT DETECTED — the PR-head blob substitution is still live"
+    st, g, rule = _prov_state()
+    if g.merge_authorization != "satisfied":
+        return False, f"NOT DETECTED — the present PR-head blob failed to bind ({g.merge_authorization})"
+    return True, "parent binding reads exactly the bytes that stood at the PR head"
+
+
+def _c_nc_ac_31(c):
+    """Counts stated in prose ROT. This derives them, so the sentence cannot outlive the code.
+
+    Both numbers had already gone stale: `state()` was documented as twelve states while §4.3a had
+    added three, and `RepoPort` was documented as four methods while it had seven. Neither drift was
+    visible to anything, because no check read either sentence. This one does.
+    """
+    import ast, inspect, re as _re, textwrap
+    from . import adapters as _ad
+    src = inspect.getsource(_lc.state)
+    # AST, NOT REGEX. `acceptance_claimed` is returned from a conditional expression, so a
+    # `return <NAME>` pattern misses it and the derived count silently comes out one short — the
+    # same class of error as the prose number this control exists to replace.
+    tree = ast.parse(textwrap.dedent(src))
+    states = set(_lc.TERMINAL_EVENTS)
+    def results(expr):
+        """Only what a `return` can EVALUATE TO. A conditional return's TEST is not a result — and
+        walking it swept `SATISFIED` in as a fifteenth state, which is the prose-number error again
+        in a different costume."""
+        if isinstance(expr, ast.IfExp):
+            return results(expr.body) + results(expr.orelse)
+        if isinstance(expr, ast.Constant) and isinstance(expr.value, str):
+            return [expr.value]
+        if isinstance(expr, ast.Name):
+            v = getattr(_lc, expr.id, None)
+            return [v] if isinstance(v, str) else []
+        return []
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Return) and node.value is not None:
+            states.update(results(node.value))
+    if len(states) != 14:
+        return False, f"NOT DETECTED — `state()` derives {len(states)} states, not 14: {sorted(states)}"
+    if "FOURTEEN" not in src:
+        return False, "NOT DETECTED — the docstring no longer names the count it is checked against"
+    repo_surface = sorted(n for n in vars(_ad.RepoPort) if not n.startswith("_"))
+    if repo_surface != ["blob", "blob_sha", "contains", "diff_names", "is_ancestor", "resolve",
+                        "tree_of"]:
+        return False, f"NOT DETECTED — RepoPort's surface changed to {repo_surface}"
+    if _re.search(r"\b(Four|four) methods\b", inspect.getsource(_ad.RepoPort)):
+        return False, "NOT DETECTED — RepoPort again states a method count in prose"
+    return True, f"14 derived states; RepoPort exposes {len(repo_surface)} read-only methods"
+
+
 def _c_nc_ac_17(c):
     """An `accepted` row recording NO `check_runs` is UNVERIFIED, never MALFORMED.
 
@@ -1000,10 +1322,10 @@ def _c_nc_ac_08(c):
     is the sharp case: at a merge commit unrelated jobs legitimately skip, so a naive "all runs
     succeeded" test would reject a valid acceptance while still admitting a skipped REQUIRED one.
     """
-    for concl, runs in (("failure", [("101", "unit", "failure")]),
-                        ("skipped", [("101", "unit", "skipped")]),
-                        ("cancelled", [("101", "unit", "cancelled")]),
-                        ("absent", [("101", "something-else", "success")])):
+    for concl, runs in (("failure", [_check_run("101", conclusion="failure")]),
+                        ("skipped", [_check_run("101", conclusion="skipped")]),
+                        ("cancelled", [_check_run("101", conclusion="cancelled")]),
+                        ("absent", [_check_run("101", name="something-else")])):
         raw, kw = _landed(mf=FakeMergeFacts(pr_head="h" * 40, runs=runs))
         st, _ = _acc_state(raw, kw)
         if st != "acceptance_claimed":
@@ -1041,7 +1363,7 @@ def _c_nc_ac_10(c):
     if escape:
         return False, f"NOT DETECTED — the port exposes a general escape hatch: {escape}"
     public = sorted(n for n in vars(port) if not n.startswith("_"))
-    if public != ["check_runs", "pull"]:
+    if public != ["check_runs", "jobs", "pull", "workflow_runs"]:
         return False, f"NOT DETECTED — the port's surface widened to {public}"
     fields = {f.name for f in _dc.fields(_MF)}
     leaks = {f for f in fields if any(w in f for w in ("review", "approv", "principal", "collab"))}
@@ -1096,7 +1418,11 @@ def _c_nc_ac_14(c):
     silently decay a recorded acceptance into `acceptance_claimed` with nothing about the change
     having altered. Identity is the anchor.
     """
-    later = [("101", "unit", "success"), ("999", "unit", "failure")]
+    # The newer run STARTED AFTER the acceptance instant — that is what makes it "later" as a fact
+    # about time rather than about integer size, and it is the half `NC-AC-18` does not cover.
+    later = [_check_run("101"),
+             _check_run("999", conclusion="failure", started="2026-07-20T02:00:00Z",
+                        completed="2026-07-20T02:05:00Z")]
     raw, kw = _landed(mf=FakeMergeFacts(pr_head="h" * 40, runs=later))
     st, g = _acc_state(raw, kw)
     if st != "accepted" or g.acceptance != "satisfied":
@@ -1127,10 +1453,13 @@ def _c_nc_ac_16(c):
     """An INCOMPLETE check-run page is unavailability, never proof that a run is absent."""
     from . import adapters
     import inspect
-    src = inspect.getsource(adapters.MergeFactsPort.check_runs)
+    src = inspect.getsource(adapters.MergeFactsPort._collect)
     if "total_count" not in src or "incomplete" not in src:
-        return False, "NOT DETECTED — the check-run read does not verify pagination completeness"
-    return True, "a short check-run read raises rather than reporting a run as absent"
+        return False, "NOT DETECTED — the aggregate is not verified against total_count"
+    if "--slurp" not in inspect.getsource(adapters.MergeFactsPort._api):
+        return False, ("NOT DETECTED — pagination reads a single JSON document, so page two is "
+                       "either a parse error or silently unread")
+    return True, "every page is slurped, aggregated, and proven against total_count"
 
 
 def _c_nc_c10b(c):

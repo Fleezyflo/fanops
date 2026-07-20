@@ -43,7 +43,7 @@ from . import classify, derive, lifecycle, report, validate
 from .adapters import (REPO, ArtifactPort, ImpactPort, MergeFactsPort, PortError, RegistryPort,
                        RepoPort, required_contexts_at)
 from .decide import HEAD, MERGE, PRE, decide
-from .model import (CI_REGISTRY_PATH, EXIT_CONTINUE, EXIT_UNTRUSTWORTHY,
+from .model import (CheckRun, CI_REGISTRY_PATH, EXIT_CONTINUE, EXIT_UNTRUSTWORTHY,
                     MAIN_REF as MODEL_MAIN_REF, DecisionInput, Derived, MergeFacts)
 from .parse import BOUNDARY, digest as digest_of, parse
 
@@ -169,17 +169,66 @@ def run(ports: Ports, path: str, *, base: str, head: str | None, pr: int | None,
     if main_blob is not None and pr_num is not None:
         try:
             d = ports.merge_facts.pull(pr_num)
-            runs = ports.merge_facts.check_runs(d["merge_sha"]) if d["merge_sha"] else []
-            # The required set is pinned to the contract's OWN base commit, so a live setting change
-            # can neither invalidate nor manufacture a historical acceptance.
-            base_sha = next((e.get("base_sha") for e in decl.events
-                             if e.kind == "created" and e.get("base_sha")), "")
-            if not base_sha:
+            claimed_base = next((e.get("base_sha") for e in decl.events
+                                 if e.kind == "created" and e.get("base_sha")), "")
+            if not claimed_base:
                 raise PortError("the contract records no `created.base_sha`, so the required-context "
                                 "set cannot be pinned to the commit this change was written against")
-            reg = ports.repo.blob(base_sha, CI_REGISTRY_PATH)
-            if reg is None:
-                raise PortError(f"{CI_REGISTRY_PATH} is absent at the pinned base {base_sha[:12]}")
+            # THE ANCHOR IS EXTERNAL. `created.base_sha` is written by the agent, outside `D`, and it
+            # selects which commit's registry supplies the required set — so left unchecked an agent
+            # could name an older, weaker registry commit and the bar would follow it there. The
+            # platform's own `base.sha` is the answer that was not written by the thing being judged.
+            #
+            # A DISAGREEMENT IS A FINDING, NOT UNAVAILABILITY. Both SHAs were read successfully; they
+            # simply differ. So the registry is left UNREAD (the required set stays empty) and
+            # `_acceptance` reports the mismatch itself — raising here would spend `ST-7` on a
+            # completed read, which is the exact confusion §4.3a exists to prevent.
+            base_ok = bool(d["base_sha"]) and d["base_sha"] == claimed_base
+            contexts: tuple = ()
+            provenance: tuple = ()
+            if base_ok:
+                reg = ports.repo.blob(claimed_base, CI_REGISTRY_PATH)
+                if reg is None:
+                    raise PortError(f"{CI_REGISTRY_PATH} is absent at the verified base "
+                                    f"{claimed_base[:12]}")
+                names, by_ctx = required_contexts_at(reg)
+                contexts, provenance = tuple(names), tuple(sorted(by_ctx.items()))
+            raw_runs = ports.merge_facts.check_runs(d["merge_sha"]) if d["merge_sha"] else []
+            runs = [CheckRun(**r) for r in raw_runs]
+            # CHRONOLOGY MUST COME FROM THE SERVER OR NOT AT ALL. Without `started_at` the question
+            # "was this the latest attempt at the moment of acceptance" has no answer in the data,
+            # and answering it from id size would be inferring time from an opaque identifier.
+            undated = [r.id for r in runs if r.name in contexts and not r.started_at]
+            if undated:
+                raise PortError(f"check run(s) {', '.join(undated)} carry no `started_at`, so the "
+                                f"ordering acceptance depends on cannot be established")
+            # THE DOCUMENTED JOIN: check run <- job.check_run_url -> workflow run -> workflow path.
+            join: dict[str, tuple[str, str, str]] = {}
+            if d["merge_sha"] and contexts:
+                for wr in ports.merge_facts.workflow_runs(d["merge_sha"]):
+                    for job in ports.merge_facts.jobs(wr["id"]):
+                        crid = job["check_run_id"]
+                        if not crid:
+                            continue
+                        if crid in join and join[crid] != (job["name"], wr["id"], wr["path"]):
+                            raise PortError(f"check run {crid} joins to more than one job, so its "
+                                            f"provenance is ambiguous")
+                        join[crid] = (job["name"], wr["id"], wr["path"])
+            # A workflow edited inside the change it certifies is not evidence about that change.
+            # Gated on MERGED, like the tree reads: before the merge there is no landed content to
+            # compare and acceptance is not sought, so demanding the comparison would turn every
+            # pre-merge verification of an open PR into an unavailability.
+            stable: dict[str, bool] = {}
+            for wf_path, _job in (dict(provenance).values() if d["merged"] else ()):
+                if wf_path in stable:
+                    continue
+                at_base = ports.repo.blob(claimed_base, wf_path)
+                at_head = ports.repo.blob(d["pr_head"], wf_path) if d["pr_head"] else None
+                if at_base is None or at_head is None:
+                    raise PortError(f"the governing workflow {wf_path} could not be read at both the "
+                                    f"verified base and the PR head, so whether it changed inside "
+                                    f"this change is unknown")
+                stable[wf_path] = at_base == at_head
             # Trees are read HERE, where a failed read can still reach `unverifiable`. Resolving them
             # inside the gate would turn "could not read" into "did not match" — an unavailability
             # wearing the costume of a finding.
@@ -189,11 +238,23 @@ def run(ports: Ports, path: str, *, base: str, head: str | None, pr: int | None,
                 which = "PR head" if pr_tree is None else "merge commit"
                 raise PortError(f"the {which} tree could not be resolved, so the landed content "
                                 f"cannot be compared to the authorized content")
+            # The contract AS IT STOOD at the final pre-merge PR head. `None` means the ref or object
+            # could not be read (unavailability); `b""` means the read succeeded and the contract was
+            # ABSENT there. The gate must be able to tell those apart, so no `or` collapses them.
+            head_blob: bytes | None = None
+            if d["pr_head"]:
+                if ports.repo.resolve(d["pr_head"]) is None:
+                    raise PortError(f"the PR head {d['pr_head'][:12]} is unresolvable, so the "
+                                    f"contract as it stood there cannot be read")
+                b = ports.repo.blob(d["pr_head"], path)
+                head_blob = b if b is not None else b""
             mf = MergeFacts(read_ok=True, pr_head=d["pr_head"], merge_sha=d["merge_sha"],
-                            merged_at=d["merged_at"], merged=d["merged"],
-                            required_contexts=tuple(required_contexts_at(reg)),
-                            check_runs=tuple(runs), pr_tree=pr_tree or "",
-                            merge_tree=merge_tree or "")
+                            merged_at=d["merged_at"], merged=d["merged"], base_sha=d["base_sha"],
+                            required_contexts=contexts, context_provenance=provenance,
+                            check_runs=tuple(runs), run_provenance=tuple(sorted(join.items())),
+                            workflow_stable=tuple(sorted(stable.items())),
+                            pr_tree=pr_tree or "", merge_tree=merge_tree or "",
+                            pr_head_blob=head_blob)
         except PortError as exc:
             mf = MergeFacts(read_ok=False)
             unverifiable.append(f"the platform merge facts for PR #{pr_num} could not be read "

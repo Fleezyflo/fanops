@@ -107,11 +107,23 @@ visible to it. A green `selftest` is not, and must never be presented as, a gree
 1b. The required context `real-tooling E2E (must run, not skip)` concludes SUCCESS on the exact head.
 2. `NC-AC-01` through `NC-AC-11` are registered and DETECTED, covering all eleven required controls;
    `NC-AC-12` covers `MERGED-INCOMPLETE`, `NC-AC-13`..`NC-AC-16` cover the no-`--pr` path, rerun
-   pinning, base-pinned required contexts and pagination completeness, and `NC-AC-17` covers absent
-   acceptance evidence.
+   pinning, base-pinned required contexts and pagination completeness, `NC-AC-17` covers absent
+   acceptance evidence, and `NC-AC-18`..`NC-AC-31` cover the four predicates above — 127 in all.
 2a. An `accepted` row recording no `check_runs` is UNVERIFIED, never MALFORMED: it yields
    `acceptance_claimed` via `ST-10` and never `ACCEPT-INCOMPLETE`/`A5`. A requirement introduced now
    must not reach backwards and label a correctly-recorded historical acceptance as tampering.
+2c. The base anchor is EXTERNAL: `created.base_sha` must equal the platform's PR `base.sha` before
+   the registry is read, and a disagreement is a finding rather than `ST-7` (`NC-AC-19`).
+2d. Every required context is verified by PROVENANCE — merge-SHA binding, pinned GitHub-Actions App,
+   registry-pinned workflow path and job key, the documented `check_run_url` join, workflow-blob
+   stability between the verified base and the PR head, and `success` (`NC-AC-20`..`NC-AC-25`).
+2e. Rerun pinning is TEMPORAL in both directions against the `accepted` row's own timestamp
+   (`NC-AC-14` after, `NC-AC-18` before), ordered by server time and never by id size.
+2f. The PR-head declaration is read, never substituted: absent is a finding, unreadable is `ST-7`,
+   present is what parent-binding parses (`NC-AC-28`..`NC-AC-30`).
+2g. The accepted row's own values are enforced — `decision=accepted`, unique decimal ids in ascending
+   order (`NC-AC-26`, `NC-AC-27`).
+2h. Counts are DERIVED, not asserted in prose: fourteen states, seven `RepoPort` methods (`NC-AC-31`).
 2b. The hermetic CLI cases serve the platform from a deterministic `gh` stand-in on a temporary PATH:
    the ordinary no-`--pr` invocation succeeds AND the call is proven to have happened, while an
    unusable or absent `gh` yields `ST-7` — never `OK`, never a crash, never a fabricated negative.
@@ -158,6 +170,7 @@ restores the prior model exactly. Reverting reinstates the four defects above, i
 
 | glob | why | basis |
 |---|---|---|
+| pyproject.toml | PyYAML is declared a direct `[dev]` dependency where the governance tooling uses it | declared |
 | docs/adr/0105-reusable-change-contract-architecture.md | the normative model being amended (§4.1, §4.2, §4.3, §4.3a, §4.4) | declared |
 | tools/contract/** | the implementation of that model (ADR-0105 §1 `T3`) | declared |
 | tests/test_contract_compiler.py | the tests pinning the corrected model (ADR-0105 §9) | declared |
@@ -181,7 +194,7 @@ restores the prior model exactly. Reverting reinstates the four defects above, i
 | docs/contracts/CC-2026-07-19-cli-lifecycle-integrity.md | a landed contract; not this change's record |
 | .claude/** | no hook change |
 | .githooks/** | no hook change |
-| requirements/** | no dependency added — stdlib and `gh` only |
+| requirements/** | no lockfile touched; the one dependency this change relies on (PyYAML) is DECLARED in `pyproject.toml` `[dev]` rather than left to arrive third-order via `vcrpy` |
 
 **Repository settings are out of scope by construction, not by declaration.** No collaborator,
 permission, branch-protection rule, reviewer or App installation is added or altered; none of those
@@ -193,14 +206,15 @@ context set comes from the base-pinned in-repo registry, so no repository settin
 | path | kind | why |
 |---|---|---|
 | docs/adr/0105-reusable-change-contract-architecture.md | MODIFIED | §4.3a added; §4.1, §4.2, §4.3, §4.4 amended; a retired risk and two stale gate names corrected; body digest recomputed |
-| tools/contract/model.py | MODIFIED | `MergeFacts`; `MERGED_VALUES`; `check_runs` carried by `ACCEPTANCE_EVIDENCE_VALUES` (gate-required) and deliberately NOT by `ACCEPTANCE_VALUES` (structural); the state names; `MAIN_REF` relocated here |
-| tools/contract/lifecycle.py | MODIFIED | `_acceptance`; `_rederive_post_merge`; `MERGED-INCOMPLETE`; the corrected `state()` ladder; `CLAIMED` |
+| tools/contract/model.py | MODIFIED | `CheckRun`; `MergeFacts` gains `base_sha`, `context_provenance`, `run_provenance`, `workflow_stable` and `pr_head_blob`; `ACCEPTED_DECISION` and `CHECK_RUN_ID`; `check_runs` carried by `ACCEPTANCE_EVIDENCE_VALUES` (gate-required) and deliberately NOT by `ACCEPTANCE_VALUES` (structural); the state names; `MAIN_REF` relocated here |
+| tools/contract/lifecycle.py | MODIFIED | `_acceptance` with the base anchor, the seven-step provenance chain, temporal rerun pinning and the row's own value semantics; `_rederive_post_merge` reading the carried PR-head blob with no substitution; `select_run_ids` ordered by server time; `MERGED-INCOMPLETE`; the corrected `state()` ladder; `CLAIMED` |
 | tools/contract/decide.py | MODIFIED | `ST-10` added after `ST-7`; `MERGED-INCOMPLETE` added to `_LIFECYCLE_FAIL` |
-| tools/contract/adapters.py | MODIFIED | `MergeFactsPort` with two closed PLATFORM reads (`pull`, `check_runs`); the base-pinned `required_contexts_at` as a module-level, repository-local parser and NOT a port endpoint; `RepoPort.tree_of`; path-segment and slug validation |
+| pyproject.toml | MODIFIED | PyYAML declared a DIRECT `[dev]` dependency instead of arriving third-order via `vcrpy` |
+| tools/contract/adapters.py | MODIFIED | `MergeFactsPort` with FOUR closed PLATFORM reads (`pull` incl. `base.sha`, `check_runs` with App identity and server timestamps, `workflow_runs`, `jobs`); `--slurp` page aggregation proven against `total_count` in `_collect`; the pinned GitHub-Actions App identity; `required_contexts_at` returning the context→(workflow, job) map; `workflow_job_name`; the shared `_yaml` reader; `RepoPort.tree_of`; path-segment, slug and `check_run_url` validation |
 | tools/contract/__main__.py | MODIFIED | the S5 platform read before `Derived` is frozen; `Ports.merge_facts`; the `cmd_state` crash repaired |
 | tools/contract/report.py | MODIFIED | claimed and unknown acceptance disclosed in the rendered report |
 | tools/contract/classify.py | MODIFIED | `ADR_0105_DIGEST` re-pinned to the amended body |
-| tools/contract/selftest.py | MODIFIED | `FakeMergeFacts`; `FakeRepo.tree_of`; `NC-AC-01`..`NC-AC-17`, bringing the suite to 113 controls; `NC-C25` strengthened across the three merged states |
+| tools/contract/selftest.py | MODIFIED | `FakeMergeFacts` over all four reads; `_check_run`; `FakeRepo.tree_of` and per-(ref,path) `unreadable`; `NC-AC-01`..`NC-AC-31`, bringing the suite to 127 controls; `NC-C25` strengthened across the three merged states |
 | tests/test_contract_compiler.py | MODIFIED | acceptance and rederivation tests; the rename guard widened to six modules; the AST guard over every `cmd_*` verb |
 | tests/fixtures/contracts/valid_full.md | MODIFIED | `merged` and `accepted` rows carry the added values |
 | docs/governance/AGENT_CHANGE_SYSTEM_ROADMAP.md | MODIFIED | the Phase 3 row records that acceptance is now verified |
@@ -216,13 +230,13 @@ context set comes from the base-pinned in-repo registry, so no repository settin
 
 | id | source_file | blob_sha |
 |---|---|---|
-| ADR-0105 | docs/adr/0105-reusable-change-contract-architecture.md | 9e3dcba940867191d4815d9164dbac5442f94d89 |
+| ADR-0105 | docs/adr/0105-reusable-change-contract-architecture.md | 79140807cfa2b6c767f8241237bae082070a77d6 |
 | C2.1 | docs/REPOSITORY_CONSTITUTION.md | 1f42a8ea298af39fffd56e3ce5c3542cef512df2 |
 | C18.1 | docs/REPOSITORY_CONSTITUTION.md | 1f42a8ea298af39fffd56e3ce5c3542cef512df2 |
 | LAW-SOT-01 | docs/ARCHITECTURAL_LAWS.md | 91ce5627ddc08b5f90189114bbef18c268b484a0 |
 | LAW-DOC-01 | docs/ARCHITECTURAL_LAWS.md | 91ce5627ddc08b5f90189114bbef18c268b484a0 |
 
-**The ADR row names the AMENDED body, `9e3dcba940867191d4815d9164dbac5442f94d89`.** The
+**The ADR row names the AMENDED body, `79140807cfa2b6c767f8241237bae082070a77d6`.** The
 pre-amendment body was `d971a881f4c7e58ab31f268b3a8d352b884ddec3` — that is the historical fact and
 it is not erased: it is the value on `main` at `8311bc94b83fc0ba1b2ec0f1e1e163caee75e362`, and
 `git log -p` on this file shows the transition.
@@ -249,6 +263,10 @@ set of surfaces that must move together or the repository is left asserting some
 | the base-pinned `current_required_contexts` read | `_acceptance`'s required-set loop and `lifecycle.select_run_ids` | if the pin and the judging loop disagree about where the bar comes from, a live setting change can invalidate or manufacture a historical acceptance |
 | the `cmd_*` Gates-field AST guard | every rename of a `model.Gates` field | the guard is the only thing that reads the verb wrappers; a rename without it ships a crash, which is exactly how `cmd_state` broke |
 | recorded check-run ids in an `accepted` row | `MergeFactsPort.check_runs` pagination completeness | resolving recorded ids against a truncated page would report a recorded run as absent, turning a short read into a negative finding |
+| the pinned GitHub-Actions App identity | `_acceptance`'s provenance loop and `select_run_ids` | both decide whether a run counts; if only one pins the App, the recorded evidence and the evidence an operator is told to record disagree (`NC-AC-20`) |
+| `MergeFactsPort.workflow_runs`/`jobs` | the S5 join and `MergeFacts.run_provenance` | the join is the ONLY thing connecting a check run to a workflow path; a read added without wiring it leaves provenance silently unproven (`NC-AC-23`, `NC-AC-24`) |
+| the `accepted` row's timestamp column | `_acceptance`'s temporal window and `NC-AC-14`/`NC-AC-18` | it is the instant BOTH rerun directions are measured against; changing what dates an acceptance changes which runs are admissible |
+| `MergeFacts.pr_head_blob`'s three-valued contract | S5's read and `_rederive_post_merge` | `None` (unreadable) and `b""` (absent) must stay distinct all the way through, or unavailability becomes a finding again (`NC-AC-28`, `NC-AC-29`) |
 | `model.ACCEPTANCE_EVIDENCE_VALUES` | `lifecycle.validate_events`'s structural check and `_acceptance`'s verification check | the two must stay on OPPOSITE sides of the split: a value moved back into `ACCEPTANCE_VALUES` becomes retroactively MALFORMED and routes every acceptance recorded before it existed to `A5`, accusing a valid historical record of tampering (`NC-AC-17`) |
 | the hermetic `gh` stand-in and its fixture table | every `binding` PR number the CLI cases write | `_pr_of` reads the LAST `binding` row, so a case that appends or rewrites one re-targets the platform read; an unserved number makes that case fail on a fixture gap instead of on what it mutated |
 

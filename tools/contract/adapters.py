@@ -35,7 +35,11 @@ class PortError(Exception):
 
 # ── git ─────────────────────────────────────────────────────────────────────────────────────
 class RepoPort:
-    """Four methods, so a fake is a dict literal. Every one of them is read-only."""
+    """A small READ-ONLY surface, so a fake is a dict literal.
+
+    The count is deliberately not stated here: it was "four" while the class had seven, because a
+    number in prose does not move when the code does. `NC-AC-31` asserts the actual surface instead.
+    """
 
     def __init__(self, repo: Path = REPO) -> None:
         self.repo = repo
@@ -219,18 +223,37 @@ class RegistryPort:
 # existed requires the pre-merge PR head — a merge fact, not a person.
 #
 # The safety property is enforced by SHAPE, not by discipline. There is no `get(path)`, no `api()`,
-# no base-URL parameter and no format string a caller can steer: the two platform reads each build
-# their own fixed path from validated components through a single private `_api`. `/reviews` is not one argument away, because there
-# is no argument that reaches path construction. This mirrors `lifecycle.gates()` having no
-# `reviews` parameter — you cannot pass what the signature cannot express.
-class MergeFactsPort:
-    """Two closed PLATFORM reads: the PR's merge facts, and the check runs at a SHA.
+# no base-URL parameter and no format string a caller can steer: each platform read builds its own
+# FIXED path from validated components through the private `_api`, whose every segment must match
+# `_SAFE_SEGMENT` and whose only query parameters are a validated commit SHA. `/reviews` is not one
+# argument away, because no argument reaches path construction. This mirrors `lifecycle.gates()`
+# having no `reviews` parameter — you cannot pass what the signature cannot express.
+# The DOCUMENTED check-run join. A job's `check_run_url` is a published field naming the check run
+# that job produced; the id is its last path component. The slug is captured so a URL pointing at
+# another repository can be refused rather than joined.
+_CHECK_RUN_URL = re.compile(r"^https://api\.github\.com/repos/([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)/check-runs/(\d+)$")
 
-    There is deliberately no third. The required-context set is NOT a platform read — it is parsed
-    from the in-repo registry at the contract's own base commit by the module-level
-    `required_contexts_at`, so live configuration cannot reach an acceptance verdict about the past.
-    Its absence from this class is the same structural guarantee as the absence of a review reader:
-    what the interface cannot express, no caller can request.
+# GitHub Actions' App identity, PINNED. Required CI is only meaningful if the runs proving it were
+# produced by the CI system; any App with `checks:write` can publish a green check run under a
+# required context's exact name. Both the numeric id and the slug must match, because the id is
+# stable and machine-checkable while the slug is what a human reads in the failure message.
+GH_ACTIONS_APP_ID = "15368"
+GH_ACTIONS_APP_SLUG = "github-actions"
+
+
+class MergeFactsPort:
+    """Four closed PLATFORM reads, and nothing that can be steered into a fifth.
+
+    `pull` (merge facts incl. the PR BASE), `check_runs` (runs bound to a SHA, with their producing
+    App identity and server timestamps), `workflow_runs` (the Actions runs at a SHA, with the
+    workflow PATH each came from), and `jobs` (a run's jobs, each carrying `check_run_url` — the
+    DOCUMENTED join back to a check run).
+
+    The required-context set is NOT among them. It is parsed from the in-repo registry at the
+    contract's own base commit by the module-level `required_contexts_at`, so live configuration
+    cannot reach a verdict about the past. Its absence from this class is the same structural
+    guarantee as the absence of a review reader: what the interface cannot express, no caller can
+    request.
     """
 
     def __init__(self, slug: str = "") -> None:
@@ -238,20 +261,34 @@ class MergeFactsPort:
         if not _SAFE_SLUG.match(self.slug):
             raise PortError(f"refusing to build a GitHub path from the slug {self.slug!r}")
 
-    def _api(self, *segments: str) -> object:
-        """`gh api <fixed-path>` — segments are validated, never a caller-supplied path.
+    def _api(self, *segments: str, head_sha: str = "") -> list:
+        """`gh api <fixed-path> --paginate --slurp` → the LIST OF PAGE DOCUMENTS.
 
         The slug is validated in `__init__` and every other component here, so EVERY part of the
         path is constrained. An unvalidated component would reopen by the back door exactly what the
-        missing `get(path)` closes at the front.
+        missing `get(path)` closes at the front. `head_sha` is the ONLY query parameter this port can
+        express and it must be a 40-hex commit SHA, so it can select a commit and nothing else — it
+        cannot traverse, cannot name another repository, and cannot reach a different endpoint.
+
+        `--slurp` IS THE CORRECTION, NOT A FLAG CHOICE. Plain `--paginate` concatenates one JSON
+        document PER PAGE, and a single `json.loads` over that either throws on page two or silently
+        reads only the first. Either way the previous implementation could see one page of a
+        multi-page result while `total_count` was checked against that same short list, so a
+        genuinely paginated answer would have been reported as complete. `--slurp` returns every page
+        as an element of one array; aggregation and the `total_count` comparison happen in the
+        endpoint-specific readers below, over the WHOLE result.
         """
-        for s in segments:
-            if not _SAFE_SEGMENT.match(s):
-                raise PortError(f"refusing to build a GitHub path from {s!r}")
+        for seg in segments:
+            if not _SAFE_SEGMENT.match(seg):
+                raise PortError(f"refusing to build a GitHub path from {seg!r}")
         path = "/".join(("repos", self.slug, *segments))
+        argv = ["gh", "api", path, "--paginate", "--slurp"]
+        if head_sha:
+            if not _is_sha(head_sha):
+                raise PortError(f"refusing to query by {head_sha!r}, which is not a commit SHA")
+            argv += ["-f", f"head_sha={head_sha}"]
         try:
-            r = subprocess.run(["gh", "api", path, "--paginate"], capture_output=True, text=True,
-                               timeout=_TIMEOUT)
+            r = subprocess.run(argv, capture_output=True, text=True, timeout=_TIMEOUT)
         except FileNotFoundError:
             raise PortError("gh not found on PATH") from None
         except subprocess.TimeoutExpired:
@@ -259,43 +296,137 @@ class MergeFactsPort:
         if r.returncode != 0:
             raise PortError(f"gh api {path} failed: {r.stderr.strip()[:160]}")
         try:
-            return json.loads(r.stdout)
+            pages = json.loads(r.stdout)
         except json.JSONDecodeError as exc:
             raise PortError(f"gh api {path} returned unparseable JSON: {exc}") from None
+        if not isinstance(pages, list):
+            raise PortError(f"gh api {path} --slurp did not return a page list")
+        return pages
+
+    def _collect(self, pages: list, key: str, where: str) -> list[dict]:
+        """Flatten `key` across every page and PROVE the aggregate against `total_count`.
+
+        The count is taken from the first page and compared to the total collected, so a truncated
+        or malformed page cannot pass as a complete answer. Short read → `PortError` → `ST-7`:
+        "this run is absent" must never be able to mean "this run was on a page nobody read".
+        """
+        if not pages:
+            raise PortError(f"{where} returned no pages at all")
+        out: list[dict] = []
+        for page in pages:
+            if not isinstance(page, dict):
+                raise PortError(f"{where} returned a page that is not an object")
+            items = page.get(key)
+            if items is None or not isinstance(items, list):
+                raise PortError(f"{where} returned a page with no `{key}` list")
+            out += [x for x in items if isinstance(x, dict)]
+        total = pages[0].get("total_count")
+        if isinstance(total, int) and len(out) != total:
+            raise PortError(f"{where} collected {len(out)} of {total} `{key}` across {len(pages)} "
+                            f"page(s) — the read is incomplete and an unreturned page is not proof "
+                            f"of absence")
+        return out
 
     def pull(self, pr: int) -> dict:
-        """Merge facts for ONE pull request. Returns only the five keys §4.3a reads."""
-        d = self._api("pulls", str(int(pr)))
+        """Merge facts for ONE pull request. Returns exactly the FIVE keys §4.3a reads.
+
+        `base_sha` is the fifth and it is not cosmetic. `created.base_sha` is written by the agent
+        into the lifecycle, OUTSIDE `D`, and it selects which commit's registry supplies the required
+        set. Left unchecked, an agent could name an older, weaker registry commit and the acceptance
+        bar would follow it. The platform's own `base.sha` is the external anchor that claim is
+        checked against; the caller refuses before reading the registry when they disagree.
+        """
+        pages = self._api("pulls", str(int(pr)))
+        d = pages[0] if pages else None
         if not isinstance(d, dict):
             raise PortError(f"gh api pulls/{pr} did not return an object")
-        head = (d.get("head") or {}).get("sha") or ""
-        return {"pr_head": head, "merge_sha": d.get("merge_commit_sha") or "",
+        return {"pr_head": (d.get("head") or {}).get("sha") or "",
+                "base_sha": (d.get("base") or {}).get("sha") or "",
+                "merge_sha": d.get("merge_commit_sha") or "",
                 "merged_at": d.get("merged_at") or "", "merged": bool(d.get("merged"))}
 
-    def check_runs(self, sha: str) -> list[tuple[str, str, str]]:
-        """`(id, name, conclusion)` for every check run bound to `sha`. Ids are strings on purpose.
+    def check_runs(self, sha: str) -> list[dict]:
+        """Every check run bound to `sha`, with the facts provenance and chronology need.
 
-        A check-run id is a platform object identifier, not a number to do arithmetic on, and the
-        `accepted` row records it as text. Comparing text to text keeps the recorded set and the
-        verified set the same kind of thing.
-
-        PAGINATION IS VERIFIED, NOT ASSUMED. `total_count` is compared against what was actually
-        returned, and a short read raises rather than answering. Silently returning page one would
-        let "this run is absent" mean "this run was on page two" — an absence conjured from a
-        truncated read, which is the strongest possible form of the failure `ST-7` exists to prevent.
+        A NAME IS NOT PROVENANCE. Any App with checks:write can create a check run called
+        `unit (fast, no toolchain)`; matching on the name alone accepts a green tick that GitHub
+        Actions never produced. So the producing App identity travels with every run, and the caller
+        pins it. The server timestamps travel too: without them "a later rerun" is a claim about
+        ordering with no time in it, and ordering inferred from numeric ids alone is not chronology.
         """
         if not _is_sha(sha):
             raise PortError(f"{sha!r} is not a 40-character commit SHA")
-        d = self._api("commits", sha, "check-runs")
-        if not isinstance(d, dict):
-            raise PortError(f"gh api commits/{sha[:12]}/check-runs did not return an object")
-        runs = [c for c in (d.get("check_runs") or []) if isinstance(c, dict)]
-        total = d.get("total_count")
-        if isinstance(total, int) and len(runs) < total:
-            raise PortError(f"check-runs for {sha[:12]} returned {len(runs)} of {total} — the read "
-                            f"is incomplete and an unreturned page is not proof of absence")
-        return sorted((str(c.get("id") or ""), str(c.get("name") or ""),
-                       str(c.get("conclusion") or "")) for c in runs)
+        runs = self._collect(self._api("commits", sha, "check-runs"), "check_runs",
+                             f"check-runs for {sha[:12]}")
+        return sorted(({"id": str(c.get("id") or ""), "name": str(c.get("name") or ""),
+                        "conclusion": str(c.get("conclusion") or ""),
+                        "status": str(c.get("status") or ""),
+                        "started_at": str(c.get("started_at") or ""),
+                        "completed_at": str(c.get("completed_at") or ""),
+                        "app_id": str((c.get("app") or {}).get("id") or ""),
+                        "app_slug": str((c.get("app") or {}).get("slug") or "")}
+                       for c in runs), key=lambda r: (r["name"], r["id"]))
+
+    def workflow_runs(self, sha: str) -> list[dict]:
+        """The Actions runs at `sha`, each carrying the workflow PATH it was produced from.
+
+        The path is what the registry pins a required context to. Reading it here is what makes
+        "this context came from the workflow that is supposed to produce it" checkable at all.
+        """
+        if not _is_sha(sha):
+            raise PortError(f"{sha!r} is not a 40-character commit SHA")
+        runs = self._collect(self._api("actions", "runs", head_sha=sha), "workflow_runs",
+                             f"workflow runs at {sha[:12]}")
+        return [{"id": str(r.get("id") or ""), "path": str(r.get("path") or ""),
+                 "head_sha": str(r.get("head_sha") or "")} for r in runs]
+
+    def jobs(self, run_id: str) -> list[dict]:
+        """One workflow run's jobs. `check_run_url` is the DOCUMENTED join back to a check run.
+
+        NOT `job.id == check_run.id`. That equality happens to hold today and is documented nowhere,
+        so a verifier resting on it rests on a coincidence the platform never promised. `check_run_url`
+        is a published field whose whole purpose is to name the check run a job produced; the join is
+        made by parsing the id off the END of that URL, and the URL's own prefix is required to match
+        this repository so a foreign run cannot be joined in.
+        """
+        if not str(run_id).isdigit():
+            raise PortError(f"{run_id!r} is not a workflow run id")
+        jobs = self._collect(self._api("actions", "runs", str(run_id), "jobs"), "jobs",
+                             f"jobs for run {run_id}")
+        out = []
+        for j in jobs:
+            url = str(j.get("check_run_url") or "")
+            m = _CHECK_RUN_URL.match(url)
+            if url and (not m or m.group(1) != self.slug):
+                raise PortError(f"job {j.get('name')!r} names a check run outside {self.slug}: {url}")
+            out.append({"name": str(j.get("name") or ""), "run_id": str(j.get("run_id") or ""),
+                        "check_run_id": m.group(2) if m else "",
+                        "conclusion": str(j.get("conclusion") or ""),
+                        "status": str(j.get("status") or ""),
+                        "started_at": str(j.get("started_at") or ""),
+                        "completed_at": str(j.get("completed_at") or "")})
+        return out
+
+
+def _yaml(raw: bytes, what: str) -> dict:
+    """Parse YAML, or raise `PortError`. PyYAML is a DECLARED dependency (`[dev]`), not a lucky one.
+
+    It previously reached this module only as a third-order dependency of `vcrpy`, so the code that
+    reads this repository's governance authority was one unrelated dev-dependency bump away from
+    being unable to read it. A dependency load-bearing for a verdict is declared where it is used.
+    """
+    try:
+        import yaml
+    except Exception as exc:                                  # pragma: no cover - declared in [dev]
+        raise PortError(f"{what} is unreadable ({type(exc).__name__}: {exc}); PyYAML is declared in "
+                        f"the `dev` extra — install with `pip install -e '.[dev]'`") from None
+    try:
+        doc = yaml.safe_load(raw.decode("utf-8"))
+    except Exception as exc:
+        raise PortError(f"{what} is unparseable at the pinned commit: {exc}") from None
+    if not isinstance(doc, dict):
+        raise PortError(f"{what} did not parse to a mapping at the pinned commit")
+    return doc
 
 
 def required_contexts_at(raw: bytes) -> list[str]:
@@ -309,22 +440,44 @@ def required_contexts_at(raw: bytes) -> list[str]:
     `intended_required_contexts` is deliberately NOT consulted — it is an aspiration, and a bar that
     was never live cannot be the bar a past merge had to clear.
     """
-    try:
-        import yaml
-    except Exception as exc:
-        raise PortError(f"the required-context set is unreadable ({type(exc).__name__}: {exc}); "
-                        f"PyYAML is undeclared and reaches tools/ci third-order via vcrpy") from None
-    try:
-        doc = yaml.safe_load(raw.decode("utf-8"))
-    except Exception as exc:
-        raise PortError(f"{CI_REGISTRY_PATH} is unparseable at the pinned commit: {exc}") from None
-    if not isinstance(doc, dict) or REQUIRED_CONTEXTS_KEY not in doc:
+    doc = _yaml(raw, CI_REGISTRY_PATH)
+    if REQUIRED_CONTEXTS_KEY not in doc:
         raise PortError(f"{CI_REGISTRY_PATH} has no `{REQUIRED_CONTEXTS_KEY}` at the pinned commit")
     ctx = doc.get(REQUIRED_CONTEXTS_KEY) or []
     if not isinstance(ctx, list) or not ctx:
         raise PortError(f"`{REQUIRED_CONTEXTS_KEY}` is empty at the pinned commit — a merge with no "
                         f"required context proves nothing about required CI")
-    return sorted(str(c) for c in ctx)
+    # Each required context is mapped to the (workflow path, job key) the registry says produces it.
+    # Without that mapping a context is only a NAME, and a name is author-controlled: the provenance
+    # chain has nothing to check the joined workflow run against.
+    by_name = {}
+    for c in doc.get("controls") or []:
+        if isinstance(c, dict) and c.get("name") and c.get("workflow") and c.get("job"):
+            by_name.setdefault(str(c["name"]), (str(c["workflow"]), str(c["job"])))
+    wanted = sorted(str(c) for c in ctx)
+    missing = [c for c in wanted if c not in by_name]
+    if missing:
+        raise PortError(f"the registry at the pinned commit names required context(s) "
+                        f"{', '.join(missing)} with no control declaring their workflow and job, so "
+                        f"their provenance cannot be checked")
+    return wanted, {c: by_name[c] for c in wanted}
+
+
+def workflow_job_name(raw: bytes, job_key: str) -> str:
+    """The DISPLAY NAME of `job_key` in a workflow blob — the value a check run carries as its name.
+
+    The registry pins a job KEY; the platform reports a job's display name. This is the only place
+    the two are reconciled, and it is done against the workflow blob itself rather than assumed, so
+    renaming a job's display name without updating the registry breaks the chain instead of quietly
+    binding a required context to a different job.
+    """
+    doc = _yaml(raw, "the governing workflow")
+    jobs = doc.get("jobs") if isinstance(doc, dict) else None
+    if not isinstance(jobs, dict) or job_key not in jobs:
+        raise PortError(f"the governing workflow declares no job `{job_key}`")
+    spec = jobs.get(job_key)
+    name = spec.get("name") if isinstance(spec, dict) else None
+    return str(name) if name else job_key
 
 
 def _repo_slug() -> str:

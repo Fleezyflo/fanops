@@ -35,10 +35,11 @@ taken at its word. The operator can authorize; the operator cannot authorize vag
 """
 from __future__ import annotations
 
+from .adapters import GH_ACTIONS_APP_ID, GH_ACTIONS_APP_SLUG
 from .model import (ACCEPTANCE_CLAIMED, ACCEPTANCE_EVIDENCE_VALUES, ACCEPTANCE_VALUES, ACCEPTED,
-                    EVENT_KINDS, MAIN_REF, MALFORMED, MERGED, MERGED_UNAUTHORIZED,
-                    MERGED_UNVERIFIED, MERGED_VALUES, MISSING, PARENT_BOUND_EVENTS,
-                    PARENT_BOUND_VALUES, TERMINAL_EVENTS, Diagnostic, Gates)
+                    ACCEPTED_DECISION, CHECK_RUN_ID, EVENT_KINDS, MAIN_REF, MALFORMED, MERGED,
+                    MERGED_UNAUTHORIZED, MERGED_UNVERIFIED, MERGED_VALUES, MISSING,
+                    PARENT_BOUND_EVENTS, PARENT_BOUND_VALUES, TERMINAL_EVENTS, Diagnostic, Gates)
 from .parse import BOUNDARY, is_utc
 
 SATISFIED, STALE, UNKNOWN_GATE, NOT_SOUGHT = "satisfied", "stale", "unknown", "not_sought"
@@ -237,9 +238,23 @@ def _rederive_post_merge(ev, decl, pr, events, mf, *, repo, path: str, raw: byte
     trees — was fixed before the merge, so no post-merge append can manufacture authorization that
     was never given. What the merge changed is only WHICH COMMIT the question must be asked against.
     """
+    # THE CONTRACT BLOB AT THE PR HEAD, READ IN S5 — never substituted.
+    #
+    # This was `repo.blob(mf.pr_head, path) or raw`. That `or` silently swapped in the CURRENT blob
+    # whenever the read returned nothing, so two different failures both became "verify against
+    # whatever we have here": a contract ABSENT at the PR head (a known negative — the claim was not
+    # effective at that commit) and an UNREADABLE ref (unavailability). Both then parent-bound
+    # against a document that was never at that head. `None` is unavailability and cannot reach this
+    # function; `b""` is the contract genuinely absent.
+    if mf.pr_head_blob is None:
+        return STALE, "", (f"the contract blob at the PR head {mf.pr_head[:12]} was not read, so "
+                           f"authorization cannot be rederived against it")
+    if mf.pr_head_blob == b"":
+        return STALE, "", (f"this contract is ABSENT at the final pre-merge PR head "
+                           f"{mf.pr_head[:12]} — the authorization it records was not in effect at "
+                           f"the commit that was merged")
     ok, approved_head, why = _merge_authorization(ev, decl, pr, repo=repo, path=path,
-                                                  head_sha=mf.pr_head,
-                                                  raw=repo.blob(mf.pr_head, path) or raw)
+                                                  head_sha=mf.pr_head, raw=mf.pr_head_blob)
     if ok != SATISFIED:
         return STALE, "", f"post-merge rederivation at PR head {mf.pr_head[:12]} failed: {why}"
     if not mf.merge_sha or not repo.is_ancestor(mf.merge_sha, MAIN_REF):
@@ -306,12 +321,39 @@ def _acceptance(events, mf, auth: str) -> tuple[str, list[str]]:
     if merged_rows[-1].get("merge_sha") != mf.merge_sha:
         return CLAIMED, ["the `merged` row names a different SHA than the platform merged"]
 
+    # THE ANCHOR FOR THE BAR ITSELF. `created.base_sha` is agent-written and lives OUTSIDE `D`, yet it
+    # chooses which commit's registry supplies the required set — so an unchecked one lets a contract
+    # point at an older, weaker registry and be judged against a bar it selected for itself. The
+    # platform's own PR base is the external answer. Both were read successfully, so a disagreement
+    # is a FINDING; this is checked before the required set because with the base in doubt the set
+    # was deliberately never read.
+    claimed_base = next((e.get("base_sha") for e in events
+                         if e.kind == "created" and e.get("base_sha")), "")
+    if not claimed_base:
+        return CLAIMED, ["the contract records no `created.base_sha`, so the required-context set "
+                         "has no commit to be pinned to"]
+    if not mf.base_sha:
+        return CLAIMED, ["the platform reports no base SHA for this PR, so `created.base_sha` has "
+                         "nothing external to be checked against"]
+    if claimed_base != mf.base_sha:
+        return CLAIMED, [f"the contract records `created.base_sha={claimed_base[:12]}` but the "
+                         f"platform reports this PR based on {mf.base_sha[:12]} — the commit whose "
+                         f"registry sets the required bar is not the one this change was opened "
+                         f"against, and the anchor for that bar is not the contract's to choose"]
+
     # Only the REQUIRED set may be judged. Unrelated runs are legitimately `skipped` at a merge
     # commit (`impact report` and `scheduled reconciliation` both are), so "every run succeeded"
     # would reject a valid acceptance for jobs that were never the bar.
     if not mf.required_contexts:
         return CLAIMED, ["the pinned registry names no required context, so a green merge proves "
                          "nothing about required CI"]
+
+    # THE ROW'S OWN VALUES ARE READ, NOT ASSUMED. `decision=` used to be recorded and never
+    # consulted, so a row saying `decision=rejected` beside otherwise-valid evidence verified as an
+    # acceptance. A field nothing reads is not a record, it is decoration.
+    if ev.get("decision") != ACCEPTED_DECISION:
+        return CLAIMED, [f"the `accepted` row records decision={ev.get('decision') or '<none>'!s}, "
+                         f"not {ACCEPTED_DECISION!r}"]
 
     # RESOLVE THE RECORDED IDS THEMSELVES — a rerun must not move an already-recorded verdict.
     #
@@ -320,7 +362,11 @@ def _acceptance(events, mf, auth: str) -> tuple[str, list[str]]:
     # silently became `acceptance_claimed` today with nothing about the change having altered. That
     # is an acceptance decaying on its own, which is not a verification. Identity is the anchor: the
     # ids that were recorded are the ids that get looked up, and later runs are simply not consulted.
-    by_id = {rid: (name, concl) for rid, name, concl in mf.check_runs}
+    by_id = {r.id: r for r in mf.check_runs}
+    prov = dict(mf.run_provenance)
+    ctx_map = dict(mf.context_provenance)
+    stable = dict(mf.workflow_stable)
+    at = ev.timestamp
     recorded = [x.strip() for k in ACCEPTANCE_EVIDENCE_VALUES
                 for x in ev.get(k, "").split(",") if x.strip()]
     if not recorded:
@@ -328,52 +374,116 @@ def _acceptance(events, mf, auth: str) -> tuple[str, list[str]]:
         # UNVERIFIED, which is not satisfied and stops here; it is not a tampered record.
         return CLAIMED, [f"the `accepted` row records no {'/'.join(ACCEPTANCE_EVIDENCE_VALUES)}, so "
                          f"nothing binds the claim to a run the platform actually performed"]
+    bad = [r for r in recorded if not CHECK_RUN_ID.match(r)]
+    if bad:
+        return CLAIMED, [f"recorded check-run id(s) {', '.join(bad)} are not decimal platform ids"]
+    if len(set(recorded)) != len(recorded):
+        return CLAIMED, ["the `accepted` row records the same check-run id twice, so one run would "
+                         "stand as evidence for two required contexts"]
+    if recorded != sorted(recorded, key=int):
+        return CLAIMED, ["the recorded check-run ids are not in ascending numeric order — the row's "
+                         "evidence must be deterministic so two correct agents write the same bytes"]
+
     covered: dict[str, str] = {}
     for rid in recorded:
-        if rid not in by_id:
+        run = by_id.get(rid)
+        if run is None:
             return CLAIMED, [f"recorded check run {rid} is not bound to the merge SHA "
                              f"{mf.merge_sha[:12]}"]
-        name, concl = by_id[rid]
-        if name not in mf.required_contexts:
-            return CLAIMED, [f"recorded check run {rid} is {name!r}, which is not a required context"]
-        if concl != "success":
-            return CLAIMED, [f"recorded check run {rid} ({name}) concluded {concl or '<none>'}, "
-                             f"not success"]
-        if name in covered:
-            return CLAIMED, [f"required context {name!r} is claimed by two recorded runs "
-                             f"({covered[name]} and {rid})"]
-        covered[name] = rid
+        ctx = run.name
+        if ctx not in mf.required_contexts:
+            return CLAIMED, [f"recorded check run {rid} is {ctx!r}, which is not a required context"]
+        # PROVENANCE, not a name. Any App with `checks:write` can publish a green run under a
+        # required context's exact name; pinning the producing App is what makes the tick mean CI ran.
+        if (run.app_id, run.app_slug) != (GH_ACTIONS_APP_ID, GH_ACTIONS_APP_SLUG):
+            return CLAIMED, [f"recorded check run {rid} ({ctx}) was produced by App "
+                             f"{run.app_slug or '<none>'}/{run.app_id or '<none>'}, not GitHub "
+                             f"Actions ({GH_ACTIONS_APP_SLUG}/{GH_ACTIONS_APP_ID})"]
+        if run.status != "completed" or run.conclusion != "success":
+            return CLAIMED, [f"recorded check run {rid} ({ctx}) is {run.status or '<none>'}/"
+                             f"{run.conclusion or '<none>'}, not completed/success"]
+        if not run.completed_at or run.completed_at > at:
+            return CLAIMED, [f"recorded check run {rid} ({ctx}) completed "
+                             f"{run.completed_at or '<never>'}, which is not on or before the "
+                             f"acceptance at {at} — evidence cannot post-date the decision it proves"]
+        joined = prov.get(rid)
+        if joined is None:
+            return CLAIMED, [f"recorded check run {rid} ({ctx}) joins to no workflow job, so nothing "
+                             f"connects it to a workflow this repository actually runs"]
+        job_name, _run_id, wf_path = joined
+        want_path, want_job = ctx_map.get(ctx, ("", ""))
+        if wf_path != want_path:
+            return CLAIMED, [f"required context {ctx!r} is pinned to {want_path} but run {rid} came "
+                             f"from {wf_path or '<unknown>'}"]
+        if job_name != ctx:
+            return CLAIMED, [f"run {rid} joins to job {job_name!r}, which is not {ctx!r}"]
+        if stable.get(wf_path) is not True:
+            return CLAIMED, [f"the governing workflow {wf_path} differs between the verified base and "
+                             f"the PR head — a workflow edited inside the change it certifies is not "
+                             f"evidence about that change"]
+        covered[ctx] = rid
     missing = [c for c in mf.required_contexts if c not in covered]
     if missing:
         return CLAIMED, [f"no recorded check run covers required context(s) {', '.join(missing)}"]
+
+    # TEMPORAL PINNING, BOTH DIRECTIONS. Relative to the acceptance instant: a run created AFTER it
+    # is not consulted (a rerun cannot revise a verdict already made), and a run that already existed
+    # THEN and is newer than the recorded one must be the evidence instead — whatever it concluded.
+    # A newer failed, cancelled, skipped or still-pending run present at that moment means the thing
+    # being accepted was not green at the moment it was accepted.
+    for ctx, rid in covered.items():
+        mine = by_id[rid]
+        contemporaneous = [r for r in mf.check_runs
+                           if r.name == ctx and r.started_at and r.started_at <= at]
+        newer = [r for r in contemporaneous if (r.started_at, r.id) > (mine.started_at, mine.id)]
+        if newer:
+            n = max(newer, key=lambda r: (r.started_at, r.id))
+            return CLAIMED, [f"required context {ctx!r} records run {rid} (started {mine.started_at}) "
+                             f"but run {n.id} had already started {n.started_at} by the acceptance at "
+                             f"{at} and is {n.status or '<none>'}/{n.conclusion or '<none>'} — the "
+                             f"recorded run was not the latest qualifying one at that instant"]
     return SATISFIED, [f"acceptance verified against the platform: merge {mf.merge_sha[:12]} at "
-                       f"{mf.merged_at}, required contexts {', '.join(mf.required_contexts)} each "
-                       f"satisfied by the RECORDED run ("
-                       + ", ".join(f"{n}={covered[n]}" for n in sorted(covered)) + ")"]
+                       f"{mf.merged_at}, base {mf.base_sha[:12]} externally confirmed, required "
+                       f"contexts {', '.join(mf.required_contexts)} each satisfied by the RECORDED "
+                       f"GitHub-Actions run that was latest at {at} "
+                       f"({', '.join(f'{c}={covered[c]}' for c in sorted(covered))}), each joined to "
+                       f"its pinned workflow whose blob is unchanged from the verified base"]
 
 
 def select_run_ids(mf) -> tuple[list[str], list[str]]:
     """`(ids, problems)` — the ids an operator should RECORD, chosen once, before first acceptance.
 
-    Greatest numeric qualifying id per required context: if a job was re-run before acceptance, the
-    latest attempt is the one that stood at the moment of the decision. After the row exists this
-    function is never consulted again — `_acceptance` resolves the recorded ids themselves, so a
-    later rerun cannot displace a verdict that has already been made.
+    LATEST BY SERVER TIME, not by integer size. Ids are opaque platform identifiers; "the bigger
+    number is the newer run" is an assumption about how GitHub mints them, and a verdict that rests
+    on it rests on something the platform never promised. The check runs carry `started_at`, so the
+    latest attempt is decidable from the data rather than inferred from it.
+
+    After the row exists this function is never consulted again — `_acceptance` resolves the recorded
+    ids themselves and pins them to the acceptance instant, so a later rerun cannot displace a verdict
+    that has already been made.
     """
-    def _num(rid: str) -> int:
-        return int(rid) if rid.isdigit() else -1
     chosen, problems = [], []
     for ctx in mf.required_contexts:
-        runs = [(rid, concl) for rid, name, concl in mf.check_runs if name == ctx]
+        runs = [r for r in mf.check_runs if r.name == ctx]
         if not runs:
             problems.append(f"required context {ctx!r} has no check run bound to {mf.merge_sha[:12]}")
             continue
-        rid, concl = max(runs, key=lambda r: _num(r[0]))
-        if concl != "success":
-            problems.append(f"required context {ctx!r} concluded {concl or '<none>'}, not success")
+        undated = [r for r in runs if not r.started_at]
+        if undated:
+            problems.append(f"required context {ctx!r} has a check run with no `started_at`, so "
+                            f"which attempt is latest cannot be established from the platform data")
             continue
-        chosen.append(rid)
-    return sorted(chosen), problems
+        r = max(runs, key=lambda x: (x.started_at, x.id))
+        if (r.app_id, r.app_slug) != (GH_ACTIONS_APP_ID, GH_ACTIONS_APP_SLUG):
+            problems.append(f"the latest run for {ctx!r} was produced by App "
+                            f"{r.app_slug or '<none>'}, not GitHub Actions")
+            continue
+        if r.status != "completed" or r.conclusion != "success":
+            problems.append(f"required context {ctx!r} concluded "
+                            f"{r.conclusion or r.status or '<none>'}, not success")
+            continue
+        chosen.append(r.id)
+    return sorted(chosen, key=lambda x: int(x) if x.isdigit() else -1), problems
 
 
 def _merge_authorization(ev, decl, pr: int, *, repo, path: str, head_sha: str, raw: bytes):
@@ -406,7 +516,12 @@ def _merge_authorization(ev, decl, pr: int, *, repo, path: str, head_sha: str, r
 
 def state(decl, events, g: Gates, *, merged: bool, ci_green: bool, proposal_bound: bool,
           pr_open: bool, mandatory_ok: bool) -> str:
-    """The twelve §4.3 states, FIRST MATCH WINS. State is computed, never declared.
+    """The FOURTEEN derived states, FIRST MATCH WINS. State is computed, never declared.
+
+    Eleven reachable through the ladder below plus the three terminal event kinds returned above it.
+    The docstring said "twelve" while §4.3a had already added `acceptance_claimed`,
+    `merged_unverified` and `merged_unauthorized` — a count in prose does not move when the code
+    does, so `NC-AC-31` derives it from `state()` itself rather than trusting this sentence.
 
     `merged` is derived from the change having landed, independently of any written event, so a
     delayed acceptance leaves no gap in the record. And `merged` NEVER implies `accepted`: merge is

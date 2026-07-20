@@ -6,7 +6,11 @@ requires-python = ">=3.12,<3.14"
 dependencies = ["pydantic>=2.7", "pydantic-settings>=2.0", "requests>=2.31", "python-dotenv>=1.0", "yt-dlp>=2024.0"]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "pytest-mock>=3.12", "pytest-timeout>=2.3", "pytest-cov>=5.0", "pytest-xdist>=3.5", "ruff>=0.5", "pytest-recording>=0.13", "vcrpy>=6.0"]
+# PyYAML is DIRECT, not transitive. `tools/ci` and `tools/contract` parse the control registry and
+# workflow files with it; it previously arrived only as a third-order dependency of vcrpy, so the
+# governance tooling was one unrelated dev-dependency bump away from being unable to read its own
+# authority. A dependency load-bearing for a verdict must be declared where it is used.
+dev = ["pytest>=8.0", "pytest-mock>=3.12", "pytest-timeout>=2.3", "pytest-cov>=5.0", "pytest-xdist>=3.5", "ruff>=0.5", "pytest-recording>=0.13", "vcrpy>=6.0", "PyYAML>=6.0"]
 # Local transcription. Installed into the venv in Task 2. (whisper CLI lands on PATH.)
 transcribe = ["openai-whisper>=20231117"]
 # Local web cockpit (spec §10). Flask is OPTIONAL: `pip install -e .` (core CLI) stays Flask-free;

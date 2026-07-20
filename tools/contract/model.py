@@ -13,6 +13,8 @@ to its literal text.
 """
 from __future__ import annotations
 
+import re
+
 from dataclasses import dataclass, field
 
 # ── the closed field set (ADR-0105 §3.1: 18 fields, plus `supersedes` from §6) ──────────────
@@ -101,6 +103,15 @@ ACCEPTANCE_VALUES = ("merge_sha", "decision", "evidence", "date", "operator")
 # set exists to prevent (a present-day bar invalidating a historical acceptance), reproduced one
 # field over. Absent evidence is UNVERIFIED, never FALSIFIED.
 ACCEPTANCE_EVIDENCE_VALUES = ("check_runs",)
+
+# The accepted row's own value semantics, enforced rather than assumed (§4.3a).
+#
+# `decision=` must be exactly this. A row reading `decision=rejected` alongside otherwise-valid
+# evidence used to verify as an acceptance, because nothing ever read the field it recorded.
+ACCEPTED_DECISION = "accepted"
+# Recorded check-run ids must be unique DECIMAL strings. Non-decimal text cannot name a platform
+# object, and a duplicate id lets one run stand in for two required contexts.
+CHECK_RUN_ID = re.compile(r"^[0-9]+$")
 
 # The values a `merged` event must persist.
 #
@@ -269,6 +280,24 @@ class Derived:
 
 
 @dataclass(frozen=True)
+class CheckRun:
+    """One check run, with the facts provenance and chronology need — never just a name.
+
+    `app_id`/`app_slug` answer WHO PRODUCED IT. `status`, `started_at` and `completed_at` answer WHEN,
+    which is what makes "the latest qualifying run at the moment of acceptance" a decidable question
+    instead of an ordering guessed from how large an integer is.
+    """
+    id: str = ""
+    name: str = ""
+    conclusion: str = ""
+    status: str = ""
+    started_at: str = ""
+    completed_at: str = ""
+    app_id: str = ""
+    app_slug: str = ""
+
+
+@dataclass(frozen=True)
 class MergeFacts:
     """Platform facts about a merged PR, read once in S5 and frozen. NONE OF THESE IS A REVIEW.
 
@@ -291,8 +320,29 @@ class MergeFacts:
     # protection tomorrow could retroactively invalidate — or manufacture — an acceptance recorded
     # today. A verdict about the past must be computed from evidence that is itself fixed in the past.
     required_contexts: tuple[str, ...] = ()
-    # (check_run_id, context_name, conclusion) for every run bound to `merge_sha`.
-    check_runs: tuple[tuple[str, str, str], ...] = ()
+    # context -> (workflow_path, job_key) from the SAME pinned registry. A required context is
+    # otherwise only a NAME, and a name is author-controlled: without the mapping there is nothing
+    # to check the joined workflow run against.
+    context_provenance: tuple[tuple[str, tuple[str, str]], ...] = ()
+    # Every check run bound to `merge_sha`, as `CheckRun` records. Rich, not `(id, name, conclusion)`:
+    # the producing App identity is what separates a run GitHub Actions made from one any App with
+    # `checks:write` published under the same name, and the server timestamps are what make "later"
+    # a fact about time rather than about integer size.
+    check_runs: tuple[CheckRun, ...] = ()
+    # The documented check-run -> job -> workflow-run join, resolved in S5.
+    # check_run_id -> (job_name, workflow_run_id, workflow_path)
+    run_provenance: tuple[tuple[str, tuple[str, str, str]], ...] = ()
+    # workflow path -> True when its blob at the PR head is byte-identical to its blob at the
+    # externally-verified base. A workflow edited inside the change it is certifying is not evidence
+    # about that change.
+    workflow_stable: tuple[tuple[str, bool], ...] = ()
+    # The platform's own PR base SHA. The external anchor for `created.base_sha`, which the agent
+    # writes OUTSIDE `D` and which selects the registry commit the required set is read from.
+    base_sha: str = ""
+    # The contract blob AT the final pre-merge PR head, read in S5. `None` = the read did not
+    # complete (unavailability -> ST-7); `b""` = read fine and the contract was ABSENT at that head
+    # (a known negative: the claim was not effective there). Never a substituted current blob.
+    pr_head_blob: bytes | None = None
     # Trees resolved in S5, where a failed read can still reach `Derived.unverifiable`. Empty means
     # UNRESOLVED, which is unavailability — never a completed mismatch (ADR-0105 §4.3a).
     pr_tree: str = ""

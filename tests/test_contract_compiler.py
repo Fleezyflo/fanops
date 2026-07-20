@@ -973,6 +973,7 @@ def _git(repo, *args):
 # every call so a test can prove the read actually happened rather than infer it from a green result.
 _FAKE_SLUG = "fixture-owner/fixture-repo"
 _FAKE_CONTEXT = "unit (fast, no toolchain)"
+_FAKE_WORKFLOW = ".github/workflows/ci.yml"
 _FAKE_GH = '''"""A deterministic `gh` stand-in. Serves ONLY `gh api <path>` for paths in the fixture table."""
 import json, os, sys
 
@@ -994,7 +995,7 @@ sys.stdout.write(json.dumps(table[argv[1]]))
 '''
 
 
-def _build_fake_gh(repo, *, table=None):
+def _build_fake_gh(repo, *, table=None, base_sha=""):
     """Write the stand-in, its fixture table, and a PATH directory that has `git` but NOT `gh`.
 
     Two directories, because "unusable" and "missing" are different failures and both must land on
@@ -1023,7 +1024,8 @@ def _build_fake_gh(repo, *, table=None):
     # PRs 1, 2 and 99 — every number the cases below put in a `binding` row. `_pr_of` reads the LAST
     # one, so case B's appended `pr=2` and case C's tampered `pr=99` each re-target the read; serving
     # all three keeps a case's result about the thing it mutated rather than about a fixture gap.
-    unmerged = {"head": {"sha": ""}, "merge_commit_sha": "", "merged_at": "", "merged": False}
+    unmerged = [{"head": {"sha": ""}, "base": {"sha": base_sha}, "merge_commit_sha": "",
+                 "merged_at": "", "merged": False}]
     (repo / ".fake-gh-table.json").write_text(json.dumps(table if table is not None else {
         f"repos/{_FAKE_SLUG}/pulls/{n}": unmerged for n in (1, 2, 99)
     }), encoding="utf-8")
@@ -1068,8 +1070,18 @@ def cli_repo(tmp_path_factory):
     (repo / _CLI_ADR).write_text("# ADR-0105 (fixture)\n", encoding="utf-8")
     # The required set is read from the registry AT THE CONTRACT'S OWN BASE, so the fixture must
     # carry one at the commit it names — the same pinning the product does, not a stub beside it.
+    (repo / ".github" / "workflows").mkdir(parents=True)
+    (repo / _FAKE_WORKFLOW).write_text(
+        f"jobs:\n  unit:\n    name: {_FAKE_CONTEXT}\n", encoding="utf-8")
+    # The registry must MAP each required context to the workflow and job that produce it — a bare
+    # name is not provenance, so the verifier refuses a registry that declares one without the other.
     (repo / ".github" / "ci-control-registry.yml").write_text(
-        f"current_required_contexts:\n  - {_FAKE_CONTEXT}\n", encoding="utf-8")
+        f"current_required_contexts:\n  - {_FAKE_CONTEXT}\n"
+        f"controls:\n"
+        f"  - id: CI-UNIT\n"
+        f"    name: {_FAKE_CONTEXT}\n"
+        f"    workflow: {_FAKE_WORKFLOW}\n"
+        f"    job: unit\n", encoding="utf-8")
     (repo / "impact.json").write_text(json.dumps(
         {"classification": "COMPATIBLE_CHANGE", "architecture": {}, "implementation": {},
          "touched_src": [], "changed_files": []}), encoding="utf-8")
@@ -1094,7 +1106,7 @@ def cli_repo(tmp_path_factory):
     _git(repo, "add", "-A")
     _git(repo, "commit", "-qm", "land the contract")
     _git(repo, "update-ref", "refs/remotes/origin/main", "HEAD")
-    _build_fake_gh(repo)
+    _build_fake_gh(repo, base_sha=base_sha)
     return repo
 
 
@@ -1177,6 +1189,43 @@ def test_cli_A3_an_unreadable_platform_is_ST_7_never_OK(monkeypatch, capsys, cli
     assert code != 0, f"{mode}: an unreadable platform must not exit 0"
     assert "merged_unverified" not in json.dumps(out), (
         f"{mode}: unavailability must not be reported as a disagreement")
+
+
+@pytest.mark.parametrize("pages,expect", [
+    ("two-good", 3),
+    ("short", None),
+])
+def test_the_check_run_read_aggregates_every_page(monkeypatch, tmp_path, cli_repo, pages, expect):
+    """A REAL two-page fixture. `--paginate` alone emits one JSON document PER PAGE, so the previous
+    single `json.loads` either threw on page two or silently read only page one — and `total_count`
+    was then compared against that same short list, so a paginated answer looked complete.
+
+    Two cases, because either alone is passable by a defect: the good one proves pages are actually
+    joined, and the short one proves the aggregate is checked rather than trusted.
+    """
+    from tools.contract import adapters
+    sha = "a" * 40
+    good = [{"total_count": 3, "check_runs": [_page_run("1"), _page_run("2")]},
+            {"total_count": 3, "check_runs": [_page_run("3")]}]
+    short = [{"total_count": 3, "check_runs": [_page_run("1"), _page_run("2")]}]
+    _build_fake_gh(cli_repo, table={f"repos/{_FAKE_SLUG}/commits/{sha}/check-runs":
+                                    good if pages == "two-good" else short})
+    _serve_platform(monkeypatch, cli_repo)
+    port = adapters.MergeFactsPort(slug=_FAKE_SLUG)
+    if expect is None:
+        with pytest.raises(adapters.PortError) as exc:
+            port.check_runs(sha)
+        assert "incomplete" in str(exc.value), str(exc.value)
+    else:
+        got = port.check_runs(sha)
+        assert [r["id"] for r in got] == ["1", "2", "3"], got
+        assert len(got) == expect
+
+
+def _page_run(rid):
+    return {"id": rid, "name": _FAKE_CONTEXT, "conclusion": "success", "status": "completed",
+            "started_at": "2026-07-19T23:00:00Z", "completed_at": "2026-07-19T23:05:00Z",
+            "app": {"id": 15368, "slug": "github-actions"}}
 
 
 def test_cli_B_monotone_append_passes(monkeypatch, capsys, cli_repo):
