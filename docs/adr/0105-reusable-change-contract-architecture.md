@@ -2,7 +2,7 @@
 status: accepted
 date: 2026-07-18
 accepted_in_principle: 2026-07-18
-approved_digest: sha256:8a9902a233021926a875b9a7221ab34927e4076c4173f21715eecbfafa317ec9
+approved_digest: sha256:6b065acb4b0736b7035b46fb62fce4258f6e33b32b4d19f9799d037689bd93c1
 supersedes: []
 references: [0100, 0101, 0102]
 deciders: [operator]
@@ -274,6 +274,14 @@ phase-dependent, because at `pre` the evidence is incomplete in exactly one dire
 - **`pre-implementation`** — a trait the intended paths **prove** and the declaration **omits** is a
   finding (under-declaration). A declaration that names **more** than intent proves is not: `T2` may
   yet add `cross-system`, and penalising the conservative declaration would reward the minimal one.
+
+  `T2` is **not evaluated** at this phase, and the impact analysis is **not run** — not run and
+  reported unknown, but never attempted. The distinction is load-bearing in both directions: the
+  trigger must report *not evaluated* rather than *unknown*, because the second describes a read
+  that happened; and a failure of that analysis must not reach `unverifiable`, or `ST-7` would halt
+  `pre` on the unavailability of the one input the phase is defined not to need. The tolerance of
+  over-declaration above is justified by exactly this unevaluability, so `--impact-json` does not
+  re-enable `T2` here either.
 - **`at-head` and `merge-gate`** — the diff exists and impact is computable, so declared and derived
   must match **exactly**, unchanged from before. An over-declaration that never materialised is
   caught here, by evidence that can settle it.

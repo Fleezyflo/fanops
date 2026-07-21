@@ -56,8 +56,13 @@ Each is machine-checkable against the landed tree. None restates a count that co
 6. An intended path that is wildcarded, malformed, unknown, under `src/` but not a module, or a
    module no subsystem owns, **fails closed** — never `contained`, never `not required`.
 7. `AGENTS.md` names `python -m tools.contract preflight` directly.
-8. `python -m tools.contract selftest` reports every control DETECTED, including `NC-P1`–`NC-P13`,
-   and each of those thirteen was additionally observed **MISSED** with its named defect reinstated.
+8. `python -m tools.contract selftest` reports every control DETECTED, including `NC-P1`–`NC-P16`,
+   and each of those was additionally observed **MISSED** with its named defect reinstated.
+11. At `pre` the impact analysis is **not run**: `T2`'s reason reads *not evaluated* rather than
+    *unknown*, derived evidence records it, and an impact port that raises does **not** produce
+    `ST-7` — proven through the production entry point, not only through fakes.
+12. At `at-head` the **same** raising impact port still reaches `ST-7`, and a head diff classified
+    `MIGRATION_REQUIRED` still fires `T2` and derives `cross-system`.
 9. `python -m tools.arch ci`, `python -m tools.ci static` and `./scripts/check.sh` pass.
 10. The five landed contracts in `docs/contracts/` are **byte-identical** to `25d2b96`, and their
     verdicts at their own recorded historical heads are unchanged.
@@ -72,7 +77,7 @@ migrate back.
 
 | id | source_file | blob_sha |
 |---|---|---|
-| ADR-0105 | docs/adr/0105-reusable-change-contract-architecture.md | a9613b094dc301143d1c95203bfeafad42d04aff |
+| ADR-0105 | docs/adr/0105-reusable-change-contract-architecture.md | PENDING-FINAL-BLOB |
 
 ### coupling
 
