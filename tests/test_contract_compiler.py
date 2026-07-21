@@ -1219,7 +1219,7 @@ def _cli(monkeypatch, capsys, repo, *extra):
     return code, json.loads(capsys.readouterr().out)
 
 
-def _cli_no_impact(monkeypatch, capsys, repo, phase):
+def _cli_no_impact(monkeypatch, capsys, repo, phase, *extra):
     """`_cli` without `--impact-json`, so the REAL `ImpactPort` is the thing under test."""
     from tools.contract import __main__ as cli
     from tools.contract.adapters import RepoPort
@@ -1227,8 +1227,8 @@ def _cli_no_impact(monkeypatch, capsys, repo, phase):
     monkeypatch.setattr(cli, "REPO", repo)
     monkeypatch.setattr(cli, "Ports", lambda **kw: orig(repo=RepoPort(repo), **kw))
     _serve_platform(monkeypatch, repo)
-    code = cli.main(["verify", _CLI_CONTRACT, "--base", "origin/main", "--phase", phase, "--json"])
-    return code, json.loads(capsys.readouterr().out)
+    code = cli.main(["verify", _CLI_CONTRACT, "--base", "origin/main", "--phase", phase, *extra])
+    return code, capsys.readouterr().out
 
 
 def _raises_port_error(*_a, **_k):
@@ -1246,19 +1246,52 @@ def test_cli_T2_is_not_evaluated_at_pre_even_when_the_impact_port_raises(monkeyp
     """
     from tools.contract.adapters import ImpactPort
     monkeypatch.setattr(ImpactPort, "report", _raises_port_error)
-    code, out = _cli_no_impact(monkeypatch, capsys, cli_repo, "pre")
+    code, raw = _cli_no_impact(monkeypatch, capsys, cli_repo, "pre", "--json")
+    out = json.loads(raw)
     assert (code, out["rule"]) == (0, "OK"), out["diagnostics"]
-    t2 = next(t for t in out["triggers"] if t["id"] == "T2")
-    assert "not evaluated" in t2["reason"], t2
-    assert not any("impact" in str(d) for d in out["diagnostics"]), out["diagnostics"]
+    assert not any("impact" in json.dumps(d) for d in out["diagnostics"]), out["diagnostics"]
 
 
-def test_cli_the_same_unavailable_impact_still_reaches_st7_at_head(monkeypatch, capsys, cli_repo):
-    """The containing half. Narrowing `pre` must not have relaxed the fail-closed read at `head`."""
+def test_cli_triggers_says_T2_was_not_evaluated_rather_than_unknown(monkeypatch, capsys, cli_repo):
+    """The RENDERED reason, through the shipped command, with the impact port raising.
+
+    On the `triggers` verb, not `verify`: `report.render` lists only triggers that FIRED, and `T2`
+    by definition does not fire here, so `verify`'s output could never carry the string either way.
+    `triggers` prints all six with their reasons and runs at `pre`, which is exactly the surface an
+    agent reads. "unknown" is a read that completed and told us nothing; "not evaluated" is a read
+    the phase does not make, and the two must not share a string.
+    """
+    from tools.contract import __main__ as cli
+    from tools.contract.adapters import ImpactPort, RepoPort
+    monkeypatch.setattr(ImpactPort, "report", _raises_port_error)
+    orig = cli.Ports
+    monkeypatch.setattr(cli, "REPO", cli_repo)
+    monkeypatch.setattr(cli, "Ports", lambda **kw: orig(repo=RepoPort(cli_repo), **kw))
+    _serve_platform(monkeypatch, cli_repo)
+    code = cli.main(["triggers", _CLI_CONTRACT, "--base", "origin/main"])
+    text = capsys.readouterr().out
+    assert code == 0, text[:1200]
+    assert "not evaluated at `pre`" in text, text[:1200]
+    assert "impact classification is unknown" not in text, text[:1200]
+
+
+def test_cli_the_same_unavailable_impact_still_fails_closed_at_head(monkeypatch, capsys, cli_repo):
+    """The containing half: narrowing `pre` must not have relaxed the read at `head`.
+
+    THE ASSERTION IS THE DIAGNOSTIC, NOT THE RULE. This fixture carries no `approved` row, so `ST-3`
+    precedes `ST-7` by first-match and no input could make `ST-7` the answer here — asserting the
+    rule would pin the fixture's approval state, not the behaviour under test. What must hold is that
+    the impact read still HAPPENS and still lands in the fail-closed channel `ST-7` consumes.
+    `NC-P15` owns the rule itself, on a contract whose content gate is satisfied.
+    """
     from tools.contract.adapters import ImpactPort
     monkeypatch.setattr(ImpactPort, "report", _raises_port_error)
-    code, out = _cli_no_impact(monkeypatch, capsys, cli_repo, "head")
-    assert (code, out["rule"]) == (1, "ST-7"), out["diagnostics"]
+    code, raw = _cli_no_impact(monkeypatch, capsys, cli_repo, "head", "--json")
+    out = json.loads(raw)
+    assert code == 1, out
+    impact_diags = [d for d in out["diagnostics"] if "impact analysis unavailable" in json.dumps(d)]
+    assert impact_diags, out["diagnostics"]
+    assert impact_diags[0]["code"] == "UNVERIFIABLE", impact_diags[0]
 
 
 def _codes(payload):
