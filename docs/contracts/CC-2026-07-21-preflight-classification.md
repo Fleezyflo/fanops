@@ -77,7 +77,7 @@ migrate back.
 
 | id | source_file | blob_sha |
 |---|---|---|
-| ADR-0105 | docs/adr/0105-reusable-change-contract-architecture.md | PENDING-FINAL-BLOB |
+| ADR-0105 | docs/adr/0105-reusable-change-contract-architecture.md | bce8525d462e9df8e070191972cc7a757c6da377 |
 
 ### coupling
 
