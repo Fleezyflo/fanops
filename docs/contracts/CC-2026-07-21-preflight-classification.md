@@ -129,7 +129,7 @@ migrate back.
 | tools/contract/derive.py | MODIFIED | `intended_paths` |
 | tools/contract/classify.py | MODIFIED | `intent_path_kind`; the renewed pin |
 | tools/contract/decide.py | MODIFIED | phase-aware `CL-2` |
-| tools/contract/selftest.py | MODIFIED | `NC-P1`–`NC-P13` |
+| tools/contract/selftest.py | MODIFIED | `NC-P1`–`NC-P16` |
 | tests/test_contract_compiler.py | MODIFIED | the production-entrypoint proof |
 | AGENTS.md | MODIFIED | the front-door route |
 | docs/contracts/CC-2026-07-21-preflight-classification.md | NEW | this contract |
@@ -143,7 +143,7 @@ migrate back.
 
 | obligation_id | control_or_requirement | distinct_boundary |
 |---|---|---|
-| OB-NEG-CONTROL | tools/contract/selftest.py, every control DETECTED, including `NC-P1`–`NC-P13`. Each of the thirteen was additionally run with its named defect reinstated and observed MISSED | a control proven only in the green direction has not been proven — `CC-2026-07-20-phase3-closeout` records the same requirement |
+| OB-NEG-CONTROL | tools/contract/selftest.py, every control DETECTED, including `NC-P1`–`NC-P16`. Each of the sixteen was additionally run with its named defect reinstated and observed MISSED | a control proven only in the green direction has not been proven — `CC-2026-07-20-phase3-closeout` records the same requirement |
 | OB-ENTRYPOINT | tests/test_contract_compiler.py drives `python -m tools.contract preflight` through `subprocess` | the selftest drives FAKES; only a real process proves argparse wires the verb and the real ports resolve the real artifacts |
 | OB-ARM-REPLAY | the three recorded probe heads re-verified against this head | the only evidence the defect is actually closed on the inputs that exhibited it, rather than on fixtures written after the fact |
 | OB-NO-BACKFILL | byte-comparison of the five landed contracts against `25d2b96`, and re-verification of each at its own recorded historical head | proves the correction disclosed and did not repair — the one obligation whose failure would invert this change's purpose |
