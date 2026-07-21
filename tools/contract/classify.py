@@ -141,7 +141,8 @@ def t3_operation_is_monotone(path: str, base_blob: bytes | None, head_blob: byte
 
 def triggers(changed: list[str] | None, *, impact_classification: str, hot_files,
              contract_ops_non_monotone: list[str], operator_required: bool,
-             subsystems: list[str], path_source: str = "the diff") -> tuple[Trigger, ...]:
+             subsystems: list[str], path_source: str = "the diff",
+             t2_unevaluated: str = "") -> tuple[Trigger, ...]:
     """`T1`–`T6`. A trigger that did NOT fire still carries its reason, so a contract can show why.
 
     `path_source` NAMES WHERE `changed` CAME FROM, and exists only so an unenumerable path set says
@@ -157,9 +158,15 @@ def triggers(changed: list[str] | None, *, impact_classification: str, hot_files
                        f"{len(spans)} subsystem(s) spanned: {', '.join(spans) or 'none'}",
                        tuple(spans)))
 
-    above = impact_classification in ("MIGRATION_REQUIRED", "BREAKING_CHANGE", "UNKNOWN_IMPACT")
-    out.append(Trigger("T2", above, f"impact classification is {impact_classification or 'unknown'}",
-                       (impact_classification,) if impact_classification else ()))
+    # "unknown" and "not evaluated" are DIFFERENT ANSWERS and must not share a string. The first is
+    # a read that completed and told us nothing; the second is a read the phase does not make.
+    if t2_unevaluated:
+        out.append(Trigger("T2", False, t2_unevaluated, ()))
+    else:
+        above = impact_classification in ("MIGRATION_REQUIRED", "BREAKING_CHANGE", "UNKNOWN_IMPACT")
+        out.append(Trigger("T2", above,
+                           f"impact classification is {impact_classification or 'unknown'}",
+                           (impact_classification,) if impact_classification else ()))
 
     if changed is None:
         out.append(Trigger("T3", False, f"{path_source} could not be enumerated", ()))

@@ -145,14 +145,6 @@ def run(ports: Ports, path: str, *, base: str | None, head: str | None, pr: int 
     except PortError as exc:
         changed, unverifiable = None, [*unverifiable, f"the diff could not be enumerated: {exc}"]
 
-    impact: dict | None = impact_override
-    if impact is None:
-        try:
-            impact = ports.impact.report(base)
-        except PortError as exc:
-            unverifiable.append(f"impact analysis unavailable: {exc}")
-    classification = (impact or {}).get("classification", "")
-
     try:
         modules_art = ports.artifacts.modules()
     except PortError as exc:
@@ -331,12 +323,41 @@ def run(ports: Ports, path: str, *, base: str | None, head: str | None, pr: int 
                                 f"({exc}); post-merge authorization and acceptance are UNVERIFIABLE, "
                                 f"which ADR-0105 §4.3a does not treat as a negative finding")
 
+    # ── S5b `T2`'s INPUT, READ ONLY WHERE `T2` IS EVALUABLE (ADR-0105 §1a) ──────────────────
+    # `T2` is a property of an implementation diff. At `pre` there is none, so the impact report is
+    # NOT ATTEMPTED — and that is a different thing from attempting it and getting nothing.
+    #
+    # Attempting it there cost twice. The trigger's reason read "impact classification is unknown",
+    # which describes a read that happened and came back empty rather than one the phase is defined
+    # not to need. And a failure of the analysis landed in `unverifiable`, where `ST-7` consumes it:
+    # `pre` then HALTED on the unavailability of the single input it does not use. `ST-7` exists to
+    # stop a verdict resting on an unread input; nothing at `pre` rests on this one.
+    #
+    # `--impact-json` is ignored here too, deliberately. A back door letting `T2` be evaluated at
+    # `pre` after all would make the ADR's "not evaluable" true only when nobody passed a flag, and
+    # `NC-P10`'s tolerance of over-declaration is justified BY that unevaluability.
+    t2_unevaluated = ""
+    impact: dict | None = None
+    if phase == PRE:
+        t2_unevaluated = ("not evaluated at `pre` — `T2` needs an implementation diff, which does "
+                          "not exist before implementation (ADR-0105 §1a)")
+        evidence.append("`T2` was NOT evaluated: the impact report is not run at `pre`, so no "
+                        "architectural-impact classification enters the trigger set")
+    else:
+        impact = impact_override
+        if impact is None:
+            try:
+                impact = ports.impact.report(base)
+            except PortError as exc:
+                unverifiable.append(f"impact analysis unavailable: {exc}")
+    classification = (impact or {}).get("classification", "")
+
     non_monotone = _non_monotone_contracts(ports, changed or [], base, head_ref)
     declared_live = "live" in decl.traits
     trigs = classify.triggers(class_paths, impact_classification=classification, hot_files=hot,
                               contract_ops_non_monotone=non_monotone,
                               operator_required=_declares_t6(decl), subsystems=subsystems,
-                              path_source=path_source)
+                              path_source=path_source, t2_unevaluated=t2_unevaluated)
     fired = {t.id: t.fired for t in trigs}
     traits = classify.traits_from(fired, declared_live)
     tier = classify.risk_tier(traits)
@@ -356,10 +377,16 @@ def run(ports: Ports, path: str, *, base: str | None, head: str | None, pr: int 
         generated = ports.artifacts.generated_paths()
     except PortError as exc:
         generated = set(); unverifiable.append(f"generated-artifact set: {exc}")
-    try:
-        stale = ports.artifacts.stale()
-    except PortError as exc:
-        stale = []; unverifiable.append(f"regeneration proof unavailable: {exc}")
+    # NOT AT `pre`, AND THE REASON IS ITS CONSUMER, NOT ITS COST. `v_scope` reads `stale_artifacts`
+    # only when a GENERATED file is in the diff; at `pre` the diff cannot contain one, so this read
+    # can never produce a finding there and can only produce `ST-7`. A check whose sole possible
+    # outcome is halting on its own unavailability is not a check.
+    stale: list[str] = []
+    if phase != PRE:
+        try:
+            stale = ports.artifacts.stale()
+        except PortError as exc:
+            unverifiable.append(f"regeneration proof unavailable: {exc}")
 
     try:
         control_ids = ports.registry.control_ids()

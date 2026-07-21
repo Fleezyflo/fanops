@@ -1219,6 +1219,48 @@ def _cli(monkeypatch, capsys, repo, *extra):
     return code, json.loads(capsys.readouterr().out)
 
 
+def _cli_no_impact(monkeypatch, capsys, repo, phase):
+    """`_cli` without `--impact-json`, so the REAL `ImpactPort` is the thing under test."""
+    from tools.contract import __main__ as cli
+    from tools.contract.adapters import RepoPort
+    orig = cli.Ports
+    monkeypatch.setattr(cli, "REPO", repo)
+    monkeypatch.setattr(cli, "Ports", lambda **kw: orig(repo=RepoPort(repo), **kw))
+    _serve_platform(monkeypatch, repo)
+    code = cli.main(["verify", _CLI_CONTRACT, "--base", "origin/main", "--phase", phase, "--json"])
+    return code, json.loads(capsys.readouterr().out)
+
+
+def _raises_port_error(*_a, **_k):
+    from tools.contract.adapters import PortError
+    raise PortError("impact unavailable (injected)")
+
+
+def test_cli_T2_is_not_evaluated_at_pre_even_when_the_impact_port_raises(monkeypatch, capsys,
+                                                                        cli_repo):
+    """ADR-0105 §1a. `pre` must not halt on the one input it is defined not to need.
+
+    Through the PRODUCTION entry point with NO `--impact-json`, so the REAL `ImpactPort` is what
+    fails. `tools/contract/selftest.py` proves the branch exists with fakes; only this proves the
+    shipped command takes it — the distinction that made `NC-P7` worth writing separately too.
+    """
+    from tools.contract.adapters import ImpactPort
+    monkeypatch.setattr(ImpactPort, "report", _raises_port_error)
+    code, out = _cli_no_impact(monkeypatch, capsys, cli_repo, "pre")
+    assert (code, out["rule"]) == (0, "OK"), out["diagnostics"]
+    t2 = next(t for t in out["triggers"] if t["id"] == "T2")
+    assert "not evaluated" in t2["reason"], t2
+    assert not any("impact" in str(d) for d in out["diagnostics"]), out["diagnostics"]
+
+
+def test_cli_the_same_unavailable_impact_still_reaches_st7_at_head(monkeypatch, capsys, cli_repo):
+    """The containing half. Narrowing `pre` must not have relaxed the fail-closed read at `head`."""
+    from tools.contract.adapters import ImpactPort
+    monkeypatch.setattr(ImpactPort, "report", _raises_port_error)
+    code, out = _cli_no_impact(monkeypatch, capsys, cli_repo, "head")
+    assert (code, out["rule"]) == (1, "ST-7"), out["diagnostics"]
+
+
 def _codes(payload):
     return {d["code"] for d in payload["diagnostics"] if d["kind"] != "ok"}
 

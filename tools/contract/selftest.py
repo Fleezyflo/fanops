@@ -316,6 +316,11 @@ CONTROLS: list[Control] = [
             "derivation"),
     Control("NC-P13", "an unmapped intended path disappears into `contained`", "", "",
             "derivation"),
+    Control("NC-P14", "`pre` halts on an unavailable impact port it does not use", "", "",
+            "derivation"),
+    Control("NC-P15", "the same unavailable impact stops halting `at-head`", "", "", "derivation"),
+    Control("NC-P16", "`T2` stops deriving `cross-system` from a real head diff", "", "",
+            "derivation"),
 ]
 
 
@@ -2400,6 +2405,44 @@ def _c_nc_p13(c):
     if decision.rule != "ST-7":
         return False, f"NOT DETECTED — expected ST-7, got {decision.rule}"
     return True, "an unmapped intended path cannot disappear into `contained`"
+
+
+def _t2(ctx):
+    return next(t for t in ctx["derived"].triggers if t.id == "T2")
+
+
+def _c_nc_p14(c):
+    decision, ctx = _pre(_cross_intent(), impact=FakeImpact(fail=True))
+    if decision.rule == "ST-7":
+        return False, ("NOT DETECTED — an unavailable impact port halted `pre`, the phase that does "
+                       "not use it")
+    if decision.rule != "OK":
+        return False, f"NOT DETECTED — expected OK at `pre`, got {decision.rule}"
+    if "not evaluated" not in _t2(ctx).reason:
+        return False, f"NOT DETECTED — `T2` reads {_t2(ctx).reason!r}, not `not evaluated`"
+    if any("impact" in u for u in ctx["derived"].unverifiable):
+        return False, f"NOT DETECTED — impact reached `unverifiable`: {ctx['derived'].unverifiable}"
+    return True, "`pre` survives a raising impact port and records `T2` as not evaluated"
+
+
+def _c_nc_p15(c):
+    decision, ctx = _run(_cross_intent(), changed=("src/fanops/example.py",), phase="at-head",
+                         artifacts=_TwoSubsystems(), impact=FakeImpact(fail=True))
+    if decision.rule != "ST-7":
+        return False, (f"NOT DETECTED — an unavailable impact port at `at-head` gave "
+                       f"{decision.rule}, not ST-7; the fail-closed read was weakened")
+    return True, "the SAME unavailable input still halts `at-head` — `pre` was narrowed, not weakened"
+
+
+def _c_nc_p16(c):
+    decision, ctx = _run(build(traits="cross-system", decl_mutate=_with_blast),
+                         changed=("src/fanops/example.py",), phase="at-head",
+                         impact=FakeImpact(classification="MIGRATION_REQUIRED"))
+    if not _fired(ctx).get("T2"):
+        return False, "NOT DETECTED — `T2` did not fire on a MIGRATION_REQUIRED head diff"
+    if "cross-system" not in ctx["derived"].traits:
+        return False, f"NOT DETECTED — `T2` fired but traits are {sorted(ctx['derived'].traits)}"
+    return True, "`T2` still derives `cross-system` from a real head diff, with `T1` silent"
 
 
 # ── the harness ─────────────────────────────────────────────────────────────────────────────
