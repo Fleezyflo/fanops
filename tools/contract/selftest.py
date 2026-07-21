@@ -2369,8 +2369,12 @@ def _c_nc_p10(c):
 
 
 def _c_nc_p11(c):
-    decision, ctx = _run(build(traits="cross-system", decl_mutate=_with_blast),
-                         changed=("src/fanops/example.py",), phase="at-head")
+    # THE INTENT MUST SPAN TWO SUBSYSTEMS WHILE THE DIFF SPANS ONE. With a one-subsystem intent the
+    # two evidence sources agree, `CL-2` fires either way, and the control proves nothing about
+    # WHICH set `at-head` read — it was written that way first and went DETECTED against a defect
+    # that was present.
+    decision, ctx = _run(_cross_intent(), changed=("src/fanops/example.py",), phase="at-head",
+                         artifacts=_TwoSubsystems())
     if decision.rule != "CL-2":
         return False, (f"NOT DETECTED — the over-declaration `pre` tolerated survived to `at-head` "
                        f"as {decision.rule}")
