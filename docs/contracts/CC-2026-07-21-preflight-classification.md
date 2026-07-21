@@ -58,14 +58,14 @@ Each is machine-checkable against the landed tree. None restates a count that co
 7. `AGENTS.md` names `python -m tools.contract preflight` directly.
 8. `python -m tools.contract selftest` reports every control DETECTED, including `NC-P1`–`NC-P16`,
    and each of those was additionally observed **MISSED** with its named defect reinstated.
+9. `python -m tools.arch ci`, `python -m tools.ci static` and `./scripts/check.sh` pass.
+10. The five landed contracts in `docs/contracts/` are **byte-identical** to `25d2b96`, and their
+    verdicts at their own recorded historical heads are unchanged.
 11. At `pre` the impact analysis is **not run**: `T2`'s reason reads *not evaluated* rather than
     *unknown*, derived evidence records it, and an impact port that raises does **not** produce
     `ST-7` — proven through the production entry point, not only through fakes.
 12. At `at-head` the **same** raising impact port still reaches `ST-7`, and a head diff classified
     `MIGRATION_REQUIRED` still fires `T2` and derives `cross-system`.
-9. `python -m tools.arch ci`, `python -m tools.ci static` and `./scripts/check.sh` pass.
-10. The five landed contracts in `docs/contracts/` are **byte-identical** to `25d2b96`, and their
-    verdicts at their own recorded historical heads are unchanged.
 
 ### rollback
 
@@ -101,7 +101,7 @@ migrate back.
 | tools/contract/derive.py | `intended_paths` — the fail-closed intent resolver | declared |
 | tools/contract/classify.py | `intent_path_kind`, `NON_SOURCE_CLASSES`, the `path_source` message parameter, the renewed digest pin | declared |
 | tools/contract/decide.py | `CL-2` becomes phase-aware — the only rule whose predicate changes | declared |
-| tools/contract/selftest.py | `NC-P1`–`NC-P13` | declared |
+| tools/contract/selftest.py | `NC-P1`–`NC-P16` | declared |
 | tests/test_contract_compiler.py | the production-entrypoint proof — the selftest drives fakes and cannot show the verb is reachable | declared |
 | AGENTS.md | the front door names the preflight command | declared |
 | docs/contracts/CC-2026-07-21-preflight-classification.md | this contract (ADR-0105 §3.6) | declared |
