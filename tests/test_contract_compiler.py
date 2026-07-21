@@ -1188,7 +1188,13 @@ def cli_repo(tmp_path_factory):
                               capture_output=True, text=True).stdout.strip()
     body = (FIXTURES / "valid_minimal.md").read_text(encoding="utf-8").replace(
         "| ADR-0105 | docs/adr/0105-reusable-change-contract-architecture.md | fixture-not-resolved |",
-        f"| ADR-0105 | {_CLI_ADR} | {adr_blob} |").replace("base_sha=ce132f6", f"base_sha={base_sha}")
+        f"| ADR-0105 | {_CLI_ADR} | {adr_blob} |").replace("base_sha=ce132f6", f"base_sha={base_sha}"
+    ).replace("src/fanops/example.py", "src/fanops/models.py")
+    # A REAL module, because `--phase pre` now classifies `expected_surfaces` (ADR-0105 §1a) and the
+    # ArtifactPort still resolves ownership against the REAL `subsystem_of` — only the RepoPort is
+    # redirected at the temp repo. `fanops.example` exists in no ownership map, so the fixture asked
+    # the resolver to classify a module nobody owns and correctly got `ST-7`. That is the new rule
+    # working, not a regression: the fixture was under-specified in a way the old silent skip hid.
     (repo / _CLI_CONTRACT).write_text(body + "| 2026-07-18T09:30:00Z | binding | pr=1 |\n",
                                       encoding="utf-8")
     _git(repo, "add", "-A")

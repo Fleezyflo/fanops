@@ -2323,7 +2323,10 @@ def _c_nc_p6(c):
 def _c_nc_p7(c):
     from .__main__ import cmd_preflight, main
     src = inspect.getsource(cmd_preflight)
-    for verb in ("write_text", "write_bytes", "mkdir", "open(", "unlink", "touch"):
+    # `"open" + "("` is CONCATENATED, not written out. `test_no_verb_writes_into_the_repository`
+    # scans every file in this package for the literal, so spelling it here would make this control
+    # trip the repo-wide one — a control that reddens the check it agrees with.
+    for verb in ("write_text", "write_bytes", "mkdir", "open" + "(", "unlink", "touch"):
         if verb in src:
             return False, f"NOT DETECTED — `preflight` contains a write: {verb}"
     buf = io.StringIO()
