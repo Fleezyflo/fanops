@@ -28,6 +28,7 @@ from __future__ import annotations
 
 from collections import deque
 
+from . import classify
 from .adapters import PortError
 from .classify import module_of
 
@@ -76,6 +77,60 @@ def owners_for(paths, modules_artifact: dict):
             continue
         pairs.append((p, sid))
     return pairs, sorted({s for _, s in pairs}), problems
+
+
+# ── R5a · the INTENDED path set (ADR-0105 §1a) ──────────────────────────────────────────────
+def intended_paths(surfaces, modules_artifact: dict):
+    """Resolve `expected_surfaces` paths for `pre-implementation` and `preflight`.
+
+    Returns `(paths, rows, problems)`.
+
+      `paths`    the concrete path list, or **`None`** when ANY path failed to resolve. `None`, never
+                 a shortened list: a partial set classifies as though the unresolved paths did not
+                 exist, which is precisely the answer that must not be reachable.
+      `rows`     `(path, kind, detail)` for EVERY input path, resolved or not. A preflight that
+                 prints a verdict without printing what it classified cannot be audited.
+      `problems` named failures for `Derived.unverifiable`, which `ST-7` reads.
+
+    This is the ONE difference from `owners_for`, and it is deliberate. `owners_for` skips a path
+    with no module because a DIFF contains docs and tooling that own none. Intent is not a diff. It
+    is a list an agent wrote, so `module_of` returning `None` is ambiguous between "a doc, correctly
+    unowned" and "a typo", and only the first is safe to ignore. `intent_path_kind` decides which,
+    by class, before ownership is ever consulted.
+    """
+    sub_of = modules_artifact.get("subsystem_of", {})
+    rows: list[tuple[str, str, str]] = []
+    problems: list[str] = []
+    if not modules_artifact.get("partition_is_total", False):
+        problems.append("modules.json reports partition_is_total: false — intended paths cannot be "
+                        "resolved against an ownership map that does not cover every module")
+    if not surfaces:
+        problems.append("`expected_surfaces` declares no path, so there is nothing to classify at "
+                        "`pre-implementation` — an empty intent set is not evidence of a contained "
+                        "change")
+    for p in surfaces:
+        kind = classify.intent_path_kind(p)
+        if kind == "source":
+            m = classify.module_of(p)
+            if m is None:
+                rows.append((p, "UNMAPPABLE", "under `src/` but not a Python module path"))
+                problems.append(f"intended path {p} is under `src/` but resolves to no module")
+                continue
+            sid = sub_of.get(m)
+            if sid is None:
+                rows.append((p, "UNMAPPABLE", f"module {m} is owned by no subsystem"))
+                problems.append(f"intended path {p} maps to module {m}, which no subsystem owns")
+                continue
+            rows.append((p, "source", sid))
+        elif kind == "non-source":
+            rows.append((p, "non-source", "excluded from T1 by class (ADR-0105 §7)"))
+        else:
+            rows.append((p, "UNMAPPABLE", f"{kind} path"))
+            problems.append(f"intended path {p!r} is {kind} — an intended path must be a concrete "
+                            f"repository path, and an unresolvable one is never `contained`")
+    if problems:
+        return None, tuple(rows), problems
+    return [p for p, k, _ in rows if k in ("source", "non-source")], tuple(rows), problems
 
 
 def totality_holds(modules_artifact: dict) -> bool:

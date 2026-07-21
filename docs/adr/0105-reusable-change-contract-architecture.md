@@ -2,7 +2,7 @@
 status: accepted
 date: 2026-07-18
 accepted_in_principle: 2026-07-18
-approved_digest: sha256:236ef890f9d1ea95a69322e168c5fbde83c57b083da77c05c3b3470e1791b3da
+approved_digest: sha256:8a9902a233021926a875b9a7221ab34927e4076c4173f21715eecbfafa317ec9
 supersedes: []
 references: [0100, 0101, 0102]
 deciders: [operator]
@@ -114,7 +114,7 @@ design through acceptance. It is task-specific, binding, and written **before** 
 - **Predicate:** the set `{ subsystem_of(module_of(p)) : p ∈ changed_paths, module_of(p) ≠ ⊥ }` has
   cardinality > 1.
 - **Evidence source:** `.reports/architecture/derived/modules.json` `subsystem_of` (total, derived,
-  byte-verified), via `git diff --name-only <base>...<head>`.
+  byte-verified), over the phase's classification path set (§1a).
 - **Derivability:** **mechanically derivable**, once the path→module transform exists (gap **G2**).
 - **Why it requires a contract:** a change inside one boundary is already governed by that boundary's
   laws and by required CI. The moment it spans boundaries, no single owner's rules cover it, and the
@@ -222,6 +222,63 @@ design through acceptance. It is task-specific, binding, and written **before** 
 governed by the existing laws and required CI, which already work. **This is the default path and it
 must stay free.** A system demanding a contract for every change gets routed around, and a routed-around
 control is worse than none, because it also lies.
+
+---
+
+## §1a — The classification path set, by phase
+
+`T1`, `T3` and `T5` are predicates over a **set of paths**. §1 defines the predicates; this section
+defines which set each phase evaluates them over. **The predicates themselves are unchanged and are
+not widened by anything here.**
+
+| phase | classification path set | authority |
+|---|---|---|
+| `pre-implementation` | the contract's `expected_surfaces` **path** column — the intended paths | intent |
+| `at-head`, `merge-gate` | `git diff --name-only <base>...<head>` | the actual change |
+
+**Why `pre` cannot read the diff.** A contract is written **before** implementation (§3). At that
+moment the diff contains the contract and nothing else, so a change the contract itself declares
+spans two subsystems classifies as spanning none. Declaring the truthful trait then diverged from the
+derived set and answered `CL-2`; declaring `contained` passed by misclassifying; and the only route to
+a truthful `continue` was to implement first — the one act the phase exists to forbid. The phase was
+unreachable by the rule it enforces.
+
+**Intent is held to a stricter standard than a diff, not a weaker one.** A diff contains only paths
+that exist, and its docs and tooling legitimately own no module, so an unowned path is correctly
+skipped. An intended path is prose, so the same skip would let a typo shrink the spanned set and
+answer `contained`. Every intended path therefore resolves to exactly one of: a **source** path with
+an owning subsystem (participates in `T1`); a **non-source** repository class, excluded from `T1`
+**by name**; or **`UNMAPPABLE`** — wildcard, malformed, unknown, or a source path no subsystem owns —
+which **fails closed** and yields no classification at all. A wildcard is rejected rather than
+expanded: `expected_surfaces` states what *will* be touched, and `allowed_scope` is where globs
+belong, keeping its `at-head` scope role unchanged.
+
+`expected_surfaces` is inside the declaration digest `D`, so the path set driving `pre`
+classification is bound by the same content approval as everything else it is read beside.
+
+### Path-only preflight, and what it cannot answer
+
+`python -m tools.contract preflight <path>...` answers the requirement question from intended paths
+alone, with no contract and no implementation. It is a **one-way detector**: it returns `REQUIRED` or
+`UNDETERMINED`, and **never `NOT REQUIRED`**. Paths settle `T1`, `T3` and `T5`. They cannot settle
+`T2` — architectural impact is a property of code not yet written — nor `T4` or `T6`, which are human
+facts. `NOT REQUIRED` would assert three triggers nobody evaluated, and it is the one false negative
+that sends a change past the gate entirely. §1's free default path is unchanged: it is reached by the
+full trigger evaluation at `at-head`, not by a path-only preflight.
+
+### `pre` versus final trait comparison
+
+`CL-2` fires on a **declared/derived trait divergence**, and what counts as divergence is
+phase-dependent, because at `pre` the evidence is incomplete in exactly one direction:
+
+- **`pre-implementation`** — a trait the intended paths **prove** and the declaration **omits** is a
+  finding (under-declaration). A declaration that names **more** than intent proves is not: `T2` may
+  yet add `cross-system`, and penalising the conservative declaration would reward the minimal one.
+- **`at-head` and `merge-gate`** — the diff exists and impact is computable, so declared and derived
+  must match **exactly**, unchanged from before. An over-declaration that never materialised is
+  caught here, by evidence that can settle it.
+
+---
 
 **A Change Contract does not govern:** how code is written (`STD-*`), what the architecture is
 (`LAW-*`), what CI runs (the registry), why a standing decision was made (an ADR), where the program

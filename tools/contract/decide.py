@@ -51,6 +51,28 @@ def _declared(di: DecisionInput, rule_id: str) -> bool:
     return False
 
 
+def _trait_divergence(di: DecisionInput) -> bool:
+    """`CL-2`, phase-aware. UNDER-declaration at `pre`; exact equality at `head` and `merge`.
+
+    AT `pre` THE EVIDENCE IS INCOMPLETE BY CONSTRUCTION, AND ONLY IN ONE DIRECTION. `T1`, `T3` and
+    `T5` derive from the intended paths and are as final as they will ever be. `T2` cannot be:
+    architectural impact is a property of code that does not exist yet, and `T4`/`T6` are human
+    facts. So `derived ⊄ declared` — a trait the intent PROVES and the declaration OMITS — is a real
+    finding, while `declared ⊋ derived` is an author who declared the trait `T2` may yet add. Making
+    the second a finding would punish the conservative declaration and reward the minimal one, in a
+    system whose whole purpose is to make under-declaring expensive.
+
+    AT `head` THE ASYMMETRY IS GONE. The diff exists, impact is computable, and equality is required
+    exactly as before — so an over-declaration that never materialised is still caught, one phase
+    later, by evidence that can actually settle it.
+    """
+    if not di.declaration.present("traits"):
+        return False
+    if di.phase == PRE:
+        return bool(di.derived.traits - di.declaration.traits)
+    return di.declaration.traits != di.derived.traits
+
+
 def _live(di: DecisionInput) -> bool:
     return "live" in di.derived.traits
 
@@ -170,8 +192,7 @@ STAGE_B: tuple[Rule, ...] = (
 
     Rule("CL-1", CLARIFICATION, _ALL, lambda di: "TRAIT-CONDITIONAL" in _codes(di),
          "a trait-conditional mandatory field is absent", "operator"),
-    Rule("CL-2", CLARIFICATION, _ALL,
-         lambda di: di.declaration.traits != di.derived.traits and di.declaration.present("traits"),
+    Rule("CL-2", CLARIFICATION, _ALL, lambda di: _trait_divergence(di),
          "the declared trait set differs from the derived one", "operator"),
     Rule("CL-3", CLARIFICATION, _ALL, lambda di: "UNFALSIFIABLE" in _codes(di),
          "`success_condition` names nothing observable", "operator"),

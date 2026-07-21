@@ -28,7 +28,7 @@ from .model import Diagnostic, Trigger, UNKNOWN
 # `ADR_0105_DIGEST` pins the exact approved body this transcription was taken from. Recomputing it
 # is how `NC-C27` proves the two have not diverged: the ADR is the only authority for `T3`, and a
 # copy of an authority that can drift from it silently is not a copy, it is a second authority.
-ADR_0105_DIGEST = "sha256:236ef890f9d1ea95a69322e168c5fbde83c57b083da77c05c3b3470e1791b3da"
+ADR_0105_DIGEST = "sha256:8a9902a233021926a875b9a7221ab34927e4076c4173f21715eecbfafa317ec9"
 
 T3_PATTERNS = ("docs/REPOSITORY_CONSTITUTION.md", "docs/ARCHITECTURAL_LAWS.md",
                "docs/ENGINEERING_STANDARDS.md", "docs/adr/**", "docs/governance/**",
@@ -79,6 +79,39 @@ def module_of(path: str) -> str | None:
     return ".".join(["fanops", *parts])
 
 
+# ── ADR-0105 §1a · the shape of an INTENDED path ────────────────────────────────────────────
+#
+# The repository classes that legitimately own no module. ADR-0105 §7 already says ownership for
+# these is DECLARED and reviewed, never inferred — so they are excluded from `T1` HERE, BY NAME,
+# which is the whole point: the exclusion is a listed decision a reader can audit, not the residue
+# of a path that fell through a lookup.
+NON_SOURCE_CLASSES = ("docs/**", "tests/**", "scripts/**", ".github/**", "tools/**",
+                      ".agents/**", ".orchestration/**", ".claude/**",
+                      "*.md", "*.toml", "*.cfg", "*.ini", "*.txt", "*.yml", "*.yaml")
+
+_GLOB_CHARS = ("*", "?", "[", "]")
+
+
+def intent_path_kind(path: str) -> str:
+    """`source` · `non-source` · `wildcard` · `malformed` · `unknown`. Five outcomes, no sixth.
+
+    A sixth outcome would be the silent skip. That skip is CORRECT for a diff — git only reports
+    paths that exist, and a doc genuinely owns no module — and it is a FAIL-OPEN for intent, where
+    the path set is prose an agent typed. `src/fanops/modles.py` maps to no module; skipping it
+    shrinks the spanned set and answers `contained` for a change that spans two subsystems.
+
+    Wildcards are rejected rather than expanded. `expected_surfaces` states what WILL be touched;
+    a glob states what MAY be, and a classification derived from `may` is not evidence about `will`.
+    `allowed_scope` is where globs belong and keeps its at-head role unchanged.
+    """
+    if not path or path != path.strip(): return "malformed"
+    if any(ch in path for ch in _GLOB_CHARS): return "wildcard"
+    if path.startswith("/") or "\\" in path or ".." in path.split("/"): return "malformed"
+    if path.startswith("src/"): return "source"
+    if any_match(path, NON_SOURCE_CLASSES): return "non-source"
+    return "unknown"
+
+
 # ── triggers ────────────────────────────────────────────────────────────────────────────────
 def t3_operation_is_monotone(path: str, base_blob: bytes | None, head_blob: bytes | None,
                              boundary: bytes) -> bool:
@@ -108,8 +141,15 @@ def t3_operation_is_monotone(path: str, base_blob: bytes | None, head_blob: byte
 
 def triggers(changed: list[str] | None, *, impact_classification: str, hot_files,
              contract_ops_non_monotone: list[str], operator_required: bool,
-             subsystems: list[str]) -> tuple[Trigger, ...]:
-    """`T1`–`T6`. A trigger that did NOT fire still carries its reason, so a contract can show why."""
+             subsystems: list[str], path_source: str = "the diff") -> tuple[Trigger, ...]:
+    """`T1`–`T6`. A trigger that did NOT fire still carries its reason, so a contract can show why.
+
+    `path_source` NAMES WHERE `changed` CAME FROM, and exists only so an unenumerable path set says
+    which set it was (ADR-0105 §1a). At `pre-implementation` the classification paths are the
+    contract's `expected_surfaces`, so reporting "the diff could not be enumerated" there would
+    describe a read nobody attempted — the same class of confident-but-wrong message `ST-7` exists to
+    prevent. The PREDICATES are untouched: this changes no trigger's condition, only its prose.
+    """
     out: list[Trigger] = []
 
     spans = sorted(set(subsystems))
@@ -122,7 +162,7 @@ def triggers(changed: list[str] | None, *, impact_classification: str, hot_files
                        (impact_classification,) if impact_classification else ()))
 
     if changed is None:
-        out.append(Trigger("T3", False, "the diff could not be enumerated", ()))
+        out.append(Trigger("T3", False, f"{path_source} could not be enumerated", ()))
     else:
         hits = [p for p in changed if any_match(p, T3_PATTERNS)]
         hits += [p for p in contract_ops_non_monotone if p not in hits]
@@ -137,8 +177,7 @@ def triggers(changed: list[str] | None, *, impact_classification: str, hot_files
     out.append(Trigger("T4", False, "live/destructive is human-declared, never derived", ()))
 
     if changed is None:
-        out.append(Trigger("T5", True, "the changed-file set could not be enumerated — FAIL CLOSED",
-                           ()))
+        out.append(Trigger("T5", True, f"{path_source} could not be enumerated — FAIL CLOSED", ()))
     else:
         hot = sorted(p for p in changed if p in hot_files)
         broad = len(changed) > BREADTH_THRESHOLD

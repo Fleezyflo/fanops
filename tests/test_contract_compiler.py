@@ -295,6 +295,55 @@ def test_the_t3_pin_matches_the_adr_body():
     assert classify.ADR_0105_DIGEST in adr.read_text(encoding="utf-8").split("\n---\n", 1)[0]
 
 
+# ── 5a. ADR-0105 §1a — the preflight entrypoint, exercised as PRODUCTION ────────────────────
+#
+# THROUGH `subprocess`, NOT `main([...])`. `tools/contract/selftest.py` already drives the verb with
+# fakes and proves the LOGIC; nothing there proves the verb is REACHABLE — that argparse wires it,
+# that the real `Ports` resolve the real artifacts, that a fresh agent typing the command in
+# `AGENTS.md` gets an answer rather than a traceback. A subskill of the same process cannot show
+# that, because it shares the imports that would be the thing failing.
+def _preflight(*paths):
+    r = subprocess.run([sys.executable, "-m", "tools.contract", "preflight", *paths, "--json"],
+                       cwd=_ROOT, capture_output=True, text=True, timeout=120)
+    try:
+        return r.returncode, json.loads(r.stdout)
+    except json.JSONDecodeError:
+        return r.returncode, {"stdout": r.stdout[-2000:], "stderr": r.stderr[-2000:]}
+
+
+def test_preflight_identifies_a_two_subsystem_intent_as_required():
+    """The cold-start question, asked with no contract and no diff, against the REAL repository."""
+    rc, out = _preflight("src/fanops/models.py", "src/fanops/studio/views_review.py")
+    assert rc == 0, out
+    assert out["verdict"] == "REQUIRED", out
+    assert out["traits"] == ["cross-system"], out
+    t1 = next(t for t in out["triggers"] if t["id"] == "T1")
+    assert t1["fired"] and sorted(t1["evidence"]) == ["S01_foundation", "S16_studio"], t1
+
+
+def test_preflight_never_answers_not_required():
+    """The one-way rule. `T2`/`T4`/`T6` are not evaluable from paths, so silence is UNDETERMINED."""
+    rc, out = _preflight("src/fanops/framing.py")
+    assert rc == 0, out
+    assert out["verdict"] == "UNDETERMINED", out
+    assert "NOT REQUIRED" not in json.dumps(out)
+    assert set(out["unevaluable"]) == {"T2", "T4", "T6"}, out
+    assert [t["id"] for t in out["triggers"] if t["evaluated"]] == ["T1", "T3", "T5"]
+
+
+def test_preflight_fails_closed_on_an_unresolvable_path():
+    """A typo must never read as `contained`. Exit 2 is the untrustworthy class, not a verdict."""
+    rc, out = _preflight("src/fanops/models.py", "src/fanops/modles.py")
+    assert rc == 2, out
+    assert out["fail_closed"] is True, out
+    assert any(r["kind"] == "UNMAPPABLE" for r in out["paths"]), out
+
+
+def test_the_front_door_names_the_preflight_command():
+    """`NC-P8`'s production half: the routing doc a fresh agent is told to read must name the verb."""
+    assert "tools.contract preflight" in (_ROOT / "AGENTS.md").read_text(encoding="utf-8")
+
+
 def test_tools_contract_is_a_governance_surface():
     """AC-19. The package that judges every other change must itself be judged."""
     assert classify.any_match("tools/contract/decide.py", classify.T3_PATTERNS)

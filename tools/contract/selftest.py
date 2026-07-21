@@ -26,6 +26,7 @@ from __future__ import annotations
 import ast
 import contextlib
 import hashlib
+import inspect
 import io
 import re
 from dataclasses import dataclass
@@ -292,6 +293,29 @@ CONTROLS: list[Control] = [
             "AUTH-NAMESPACE", "decision"),
     Control("NC-C13q", "a trait-conditional mandatory field is absent", "CL-1", "TRAIT-CONDITIONAL",
             "decision"),
+
+    # ── ADR-0105 §1a · pre-implementation classification (each paired with its container) ────
+    Control("NC-P1", "`pre` classifies the contract-only diff, hiding the intended span", "", "",
+            "derivation"),
+    Control("NC-P2", "`at-head` classifies intent instead of the diff", "", "", "derivation"),
+    Control("NC-P3", "an under-declared contract passes `pre`", "CL-2", "", "decision"),
+    Control("NC-P4", "an intended `src/` path that is no module is silently skipped", "", "",
+            "derivation"),
+    Control("NC-P5", "an intended module no subsystem owns is silently skipped", "", "",
+            "derivation"),
+    Control("NC-P6", "`T1` fires on a single-subsystem intent set (broadened)", "", "",
+            "derivation"),
+    Control("NC-P7", "`preflight` needs a contract, or writes something", "", "", "repository"),
+    Control("NC-P8", "the front door does not name `preflight`", "", "", "repository"),
+    Control("NC-P9", "path-only preflight answers `NOT REQUIRED`", "", "", "repository"),
+    Control("NC-P10", "a conservative `pre` declaration is rejected while `T2` is unevaluable", "",
+            "", "decision"),
+    Control("NC-P11", "an over-declaration tolerated at `pre` survives `at-head`", "", "",
+            "decision"),
+    Control("NC-P12", "a wildcarded or malformed intended path classifies as contained", "", "",
+            "derivation"),
+    Control("NC-P13", "an unmapped intended path disappears into `contained`", "", "",
+            "derivation"),
 ]
 
 
@@ -2199,6 +2223,176 @@ def _c_nc_c28(c):
     if offenders:
         return False, f"NOT DETECTED — sibling(s) import tools.contract: {offenders}"
     return True, "neither tools/arch nor tools/ci imports tools.contract"
+
+
+# ── ADR-0105 §1a · the pre-implementation classification correction ─────────────────────────
+#
+# EVERY CONTROL HERE PAIRS WITH ITS OPPOSITE, because the defect this closes was itself a rule that
+# only ever fired one way. `NC-P1` (pre reads intent) is only meaningful beside `NC-P2` (head does
+# not); `NC-P10` (pre tolerates over-declaration) is only safe beside `NC-P11` (head still catches
+# it, same contract, one phase later). A relaxation proven without its containing control is how a
+# gate becomes decorative.
+class _TwoSubsystems(FakeArtifacts):
+    """`fanops.other` in a SECOND subsystem — otherwise `T1` cannot fire in any control at all."""
+
+    def modules(self):
+        m = dict(super().modules())
+        m["modules"] = [*m["modules"], "fanops.other"]
+        m["subsystem_of"] = {**m["subsystem_of"], "fanops.other": "S16_studio"}
+        return m
+
+    def dependencies(self):
+        d = dict(super().dependencies())
+        d["edges"] = {**d["edges"],
+                      "fanops.other": {"compile": ["fanops"], "lazy": [], "optional": [],
+                                       "typing": []}}
+        return d
+
+
+def _with_blast(d: str) -> str:
+    """`cross-system` makes `blast_radius` mandatory (`CL-1`), which would mask `CL-2` under test."""
+    return d.replace("blast_radius: []", "blast_radius: [fanops]", 1)
+
+
+def _cross_intent(traits="cross-system", extra_path="src/fanops/other.py"):
+    """Intent spans two subsystems. The DIFF will carry only the contract — that is the point."""
+    return build(traits=traits, declare=(extra_path,), decl_mutate=_with_blast)
+
+
+def _pre(raw, **kw):
+    """`pre`, with a contract-only diff — the state a contract is actually written in."""
+    kw.setdefault("artifacts", _TwoSubsystems())
+    return _run(raw, changed=(CONTRACT_PATH,), phase="pre-implementation", **kw)
+
+
+def _fired(ctx) -> dict:
+    return {t.id: t.fired for t in ctx["derived"].triggers}
+
+
+def _c_nc_p1(c):
+    decision, ctx = _pre(_cross_intent())
+    if not _fired(ctx).get("T1"):
+        return False, ("NOT DETECTED — `T1` did not fire; `pre` classified the contract-only diff "
+                       "instead of `expected_surfaces`")
+    if decision.rule != "OK":
+        return False, f"NOT DETECTED — expected OK at `pre`, got {decision.rule}"
+    return True, "`T1` fired from `expected_surfaces` on a contract-only diff; `pre` → continue"
+
+
+def _c_nc_p2(c):
+    decision, ctx = _run(_cross_intent(), changed=("src/fanops/example.py",), phase="at-head",
+                         artifacts=_TwoSubsystems())
+    if _fired(ctx).get("T1"):
+        return False, "NOT DETECTED — `T1` fired at `at-head` from intent; the diff rules there"
+    if decision.rule != "CL-2":
+        return False, f"NOT DETECTED — expected CL-2 at `at-head`, got {decision.rule}"
+    return True, "`at-head` classified the diff (1 subsystem) and caught the mismatch"
+
+
+def _c_nc_p3(c):
+    return _decides(c, _cross_intent(traits=""), changed=(CONTRACT_PATH,),
+                    phase="pre-implementation", artifacts=_TwoSubsystems())
+
+
+def _c_nc_p4(c):
+    decision, ctx = _pre(_cross_intent(extra_path="src/fanops/data.json"))
+    if decision.rule != "ST-7":
+        return False, (f"NOT DETECTED — a `src/` path that is no module gave {decision.rule}, not "
+                       f"ST-7")
+    return True, "a non-module path under `src/` is UNMAPPABLE and fails closed"
+
+
+def _c_nc_p5(c):
+    decision, ctx = _pre(_cross_intent(extra_path="src/fanops/orphan.py"))
+    if decision.rule != "ST-7":
+        return False, f"NOT DETECTED — an unowned module gave {decision.rule}, not ST-7"
+    return True, "a module no subsystem owns is UNMAPPABLE and fails closed"
+
+
+def _c_nc_p6(c):
+    decision, ctx = _pre(build())
+    if _fired(ctx).get("T1"):
+        return False, "NOT DETECTED — `T1` fired on a single-subsystem intent set; it was BROADENED"
+    if ctx["derived"].traits:
+        return False, f"NOT DETECTED — one subsystem derived traits {sorted(ctx['derived'].traits)}"
+    if decision.rule != "OK":
+        return False, f"NOT DETECTED — a contained intent set gave {decision.rule}, not OK"
+    return True, "one subsystem → `T1` silent, traits contained; §1's accepted false negative stands"
+
+
+def _c_nc_p7(c):
+    from .__main__ import cmd_preflight, main
+    src = inspect.getsource(cmd_preflight)
+    for verb in ("write_text", "write_bytes", "mkdir", "open(", "unlink", "touch"):
+        if verb in src:
+            return False, f"NOT DETECTED — `preflight` contains a write: {verb}"
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc = main(["preflight", "src/fanops/framing.py", "--json"])
+    data = _json.loads(buf.getvalue())
+    if rc != 0 or "verdict" not in data:
+        return False, f"NOT DETECTED — contractless preflight exited {rc} / {sorted(data)[:4]}"
+    return True, "no contract, no diff, no write verb in the entrypoint; structured JSON returned"
+
+
+def _c_nc_p8(c):
+    t = (REPO / "AGENTS.md").read_text(encoding="utf-8")
+    if "tools.contract preflight" not in t:
+        return False, ("NOT DETECTED — the front door never names `python -m tools.contract "
+                       "preflight`, so a fresh agent cannot reach it")
+    return True, "AGENTS.md names the preflight command directly"
+
+
+def _c_nc_p9(c):
+    from .__main__ import main
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        main(["preflight", "src/fanops/framing.py", "--json"])
+    data = _json.loads(buf.getvalue())
+    if data.get("verdict") != "UNDETERMINED":
+        return False, (f"NOT DETECTED — a path set that fires nothing returned "
+                       f"{data.get('verdict')!r}; only REQUIRED or UNDETERMINED are answerable")
+    missing = [t for t in ("T2", "T4", "T6") if t not in (data.get("unevaluable") or {})]
+    if missing:
+        return False, f"NOT DETECTED — {missing} not reported as unevaluable"
+    return True, "path-only silence is UNDETERMINED, never NOT REQUIRED; T2/T4/T6 named unevaluable"
+
+
+def _c_nc_p10(c):
+    decision, ctx = _pre(build(traits="cross-system", decl_mutate=_with_blast))
+    if decision.rule == "CL-2":
+        return False, ("NOT DETECTED — a CONSERVATIVE declaration was rejected at `pre` for a trait "
+                       "`T2` cannot yet evaluate")
+    if decision.rule != "OK":
+        return False, f"NOT DETECTED — expected OK, got {decision.rule}"
+    return True, "declaring more than intent proves is allowed at `pre` while `T2` is unevaluable"
+
+
+def _c_nc_p11(c):
+    decision, ctx = _run(build(traits="cross-system", decl_mutate=_with_blast),
+                         changed=("src/fanops/example.py",), phase="at-head")
+    if decision.rule != "CL-2":
+        return False, (f"NOT DETECTED — the over-declaration `pre` tolerated survived to `at-head` "
+                       f"as {decision.rule}")
+    return True, "the same contract `NC-P10` allows at `pre` is caught at `at-head` — no leak"
+
+
+def _c_nc_p12(c):
+    for bad, label in (("src/fanops/**", "wildcard"), ("/etc/passwd", "malformed")):
+        decision, _ = _pre(_cross_intent(extra_path=bad))
+        if decision.rule != "ST-7":
+            return False, f"NOT DETECTED — a {label} intended path gave {decision.rule}, not ST-7"
+    return True, "a wildcarded and a malformed `expected_surfaces` path each fail closed"
+
+
+def _c_nc_p13(c):
+    decision, ctx = _pre(_cross_intent(traits="", extra_path="src/fanops/orphan.py"))
+    if decision.rule == "OK" or not ctx["derived"].unverifiable:
+        return False, ("NOT DETECTED — an intended path absent from the ownership map vanished and "
+                       "the change read as `contained`")
+    if decision.rule != "ST-7":
+        return False, f"NOT DETECTED — expected ST-7, got {decision.rule}"
+    return True, "an unmapped intended path cannot disappear into `contained`"
 
 
 # ── the harness ─────────────────────────────────────────────────────────────────────────────
