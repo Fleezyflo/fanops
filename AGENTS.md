@@ -9,7 +9,8 @@ and the nested `src/fanops/CLAUDE.md`, `src/fanops/post/CLAUDE.md`, `src/fanops/
 
 | You need | Go to |
 |---|---|
-| Whether this change needs a Change Contract, and what it must contain | [`docs/adr/0105-reusable-change-contract-architecture.md`](docs/adr/0105-reusable-change-contract-architecture.md) |
+| **Whether this change needs a Change Contract — ASK THIS FIRST, BEFORE YOU WRITE OR IMPLEMENT ANYTHING** | `python -m tools.contract preflight <path>...` — list the exact repository paths you intend to change |
+| What a Change Contract must contain, and the rules behind it | [`docs/adr/0105-reusable-change-contract-architecture.md`](docs/adr/0105-reusable-change-contract-architecture.md) |
 | The rules and their honest enforcement status | [`docs/REPOSITORY_CONSTITUTION.md`](docs/REPOSITORY_CONSTITUTION.md) |
 | The enforceable architecture (`LAW-*`) | [`docs/ARCHITECTURAL_LAWS.md`](docs/ARCHITECTURAL_LAWS.md) |
 | How code is written here (`STD-*`) | [`docs/ENGINEERING_STANDARDS.md`](docs/ENGINEERING_STANDARDS.md) |
@@ -20,6 +21,19 @@ and the nested `src/fanops/CLAUDE.md`, `src/fanops/post/CLAUDE.md`, `src/fanops/
 
 When these disagree, the precedence is fixed (ADR-0100, restated in the Constitution): **executable
 source & tests > live GitHub config > accepted ADRs & registries > generated docs > historical prose.**
+
+**Step zero, before the first edit:**
+
+```bash
+python -m tools.contract preflight src/fanops/caption.py src/fanops/digest.py   # <- YOUR paths
+```
+
+It needs **no contract and no implementation** — just the exact paths you intend to touch — and
+writes nothing. It answers `REQUIRED` (write the contract first, before you implement) or
+`UNDETERMINED`. **It never answers "not required":** paths settle `T1`/`T3`/`T5`, but architectural
+impact needs a real diff and `T4`/`T6` are facts only you can state, so `UNDETERMINED` means
+"nothing visible from paths fired" — not "you are clear". An intended path that does not resolve
+**fails closed** rather than reading as a contained change.
 
 One ticket at a time, in its own git worktree, TDD-first, pushed small.
 Correctness and safety beat speed. When unsure, do the safe serial thing.

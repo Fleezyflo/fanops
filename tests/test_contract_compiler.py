@@ -295,6 +295,55 @@ def test_the_t3_pin_matches_the_adr_body():
     assert classify.ADR_0105_DIGEST in adr.read_text(encoding="utf-8").split("\n---\n", 1)[0]
 
 
+# ── 5a. ADR-0105 §1a — the preflight entrypoint, exercised as PRODUCTION ────────────────────
+#
+# THROUGH `subprocess`, NOT `main([...])`. `tools/contract/selftest.py` already drives the verb with
+# fakes and proves the LOGIC; nothing there proves the verb is REACHABLE — that argparse wires it,
+# that the real `Ports` resolve the real artifacts, that a fresh agent typing the command in
+# `AGENTS.md` gets an answer rather than a traceback. A subskill of the same process cannot show
+# that, because it shares the imports that would be the thing failing.
+def _preflight(*paths):
+    r = subprocess.run([sys.executable, "-m", "tools.contract", "preflight", *paths, "--json"],
+                       cwd=_ROOT, capture_output=True, text=True, timeout=120)
+    try:
+        return r.returncode, json.loads(r.stdout)
+    except json.JSONDecodeError:
+        return r.returncode, {"stdout": r.stdout[-2000:], "stderr": r.stderr[-2000:]}
+
+
+def test_preflight_identifies_a_two_subsystem_intent_as_required():
+    """The cold-start question, asked with no contract and no diff, against the REAL repository."""
+    rc, out = _preflight("src/fanops/models.py", "src/fanops/studio/views_review.py")
+    assert rc == 0, out
+    assert out["verdict"] == "REQUIRED", out
+    assert out["traits"] == ["cross-system"], out
+    t1 = next(t for t in out["triggers"] if t["id"] == "T1")
+    assert t1["fired"] and sorted(t1["evidence"]) == ["S01_foundation", "S16_studio"], t1
+
+
+def test_preflight_never_answers_not_required():
+    """The one-way rule. `T2`/`T4`/`T6` are not evaluable from paths, so silence is UNDETERMINED."""
+    rc, out = _preflight("src/fanops/framing.py")
+    assert rc == 0, out
+    assert out["verdict"] == "UNDETERMINED", out
+    assert "NOT REQUIRED" not in json.dumps(out)
+    assert set(out["unevaluable"]) == {"T2", "T4", "T6"}, out
+    assert [t["id"] for t in out["triggers"] if t["evaluated"]] == ["T1", "T3", "T5"]
+
+
+def test_preflight_fails_closed_on_an_unresolvable_path():
+    """A typo must never read as `contained`. Exit 2 is the untrustworthy class, not a verdict."""
+    rc, out = _preflight("src/fanops/models.py", "src/fanops/modles.py")
+    assert rc == 2, out
+    assert out["fail_closed"] is True, out
+    assert any(r["kind"] == "UNMAPPABLE" for r in out["paths"]), out
+
+
+def test_the_front_door_names_the_preflight_command():
+    """`NC-P8`'s production half: the routing doc a fresh agent is told to read must name the verb."""
+    assert "tools.contract preflight" in (_ROOT / "AGENTS.md").read_text(encoding="utf-8")
+
+
 def test_tools_contract_is_a_governance_surface():
     """AC-19. The package that judges every other change must itself be judged."""
     assert classify.any_match("tools/contract/decide.py", classify.T3_PATTERNS)
@@ -1139,7 +1188,13 @@ def cli_repo(tmp_path_factory):
                               capture_output=True, text=True).stdout.strip()
     body = (FIXTURES / "valid_minimal.md").read_text(encoding="utf-8").replace(
         "| ADR-0105 | docs/adr/0105-reusable-change-contract-architecture.md | fixture-not-resolved |",
-        f"| ADR-0105 | {_CLI_ADR} | {adr_blob} |").replace("base_sha=ce132f6", f"base_sha={base_sha}")
+        f"| ADR-0105 | {_CLI_ADR} | {adr_blob} |").replace("base_sha=ce132f6", f"base_sha={base_sha}"
+    ).replace("src/fanops/example.py", "src/fanops/models.py")
+    # A REAL module, because `--phase pre` now classifies `expected_surfaces` (ADR-0105 §1a) and the
+    # ArtifactPort still resolves ownership against the REAL `subsystem_of` — only the RepoPort is
+    # redirected at the temp repo. `fanops.example` exists in no ownership map, so the fixture asked
+    # the resolver to classify a module nobody owns and correctly got `ST-7`. That is the new rule
+    # working, not a regression: the fixture was under-specified in a way the old silent skip hid.
     (repo / _CLI_CONTRACT).write_text(body + "| 2026-07-18T09:30:00Z | binding | pr=1 |\n",
                                       encoding="utf-8")
     _git(repo, "add", "-A")
@@ -1162,6 +1217,81 @@ def _cli(monkeypatch, capsys, repo, *extra):
     code = cli.main(["verify", _CLI_CONTRACT, "--base", "origin/main", "--phase", "pre", "--json",
                      "--impact-json", str(repo / "impact.json"), *extra])
     return code, json.loads(capsys.readouterr().out)
+
+
+def _cli_no_impact(monkeypatch, capsys, repo, phase, *extra):
+    """`_cli` without `--impact-json`, so the REAL `ImpactPort` is the thing under test."""
+    from tools.contract import __main__ as cli
+    from tools.contract.adapters import RepoPort
+    orig = cli.Ports
+    monkeypatch.setattr(cli, "REPO", repo)
+    monkeypatch.setattr(cli, "Ports", lambda **kw: orig(repo=RepoPort(repo), **kw))
+    _serve_platform(monkeypatch, repo)
+    code = cli.main(["verify", _CLI_CONTRACT, "--base", "origin/main", "--phase", phase, *extra])
+    return code, capsys.readouterr().out
+
+
+def _raises_port_error(*_a, **_k):
+    from tools.contract.adapters import PortError
+    raise PortError("impact unavailable (injected)")
+
+
+def test_cli_T2_is_not_evaluated_at_pre_even_when_the_impact_port_raises(monkeypatch, capsys,
+                                                                        cli_repo):
+    """ADR-0105 §1a. `pre` must not halt on the one input it is defined not to need.
+
+    Through the PRODUCTION entry point with NO `--impact-json`, so the REAL `ImpactPort` is what
+    fails. `tools/contract/selftest.py` proves the branch exists with fakes; only this proves the
+    shipped command takes it — the distinction that made `NC-P7` worth writing separately too.
+    """
+    from tools.contract.adapters import ImpactPort
+    monkeypatch.setattr(ImpactPort, "report", _raises_port_error)
+    code, raw = _cli_no_impact(monkeypatch, capsys, cli_repo, "pre", "--json")
+    out = json.loads(raw)
+    assert (code, out["rule"]) == (0, "OK"), out["diagnostics"]
+    assert not any("impact" in json.dumps(d) for d in out["diagnostics"]), out["diagnostics"]
+
+
+def test_cli_triggers_says_T2_was_not_evaluated_rather_than_unknown(monkeypatch, capsys, cli_repo):
+    """The RENDERED reason, through the shipped command, with the impact port raising.
+
+    On the `triggers` verb, not `verify`: `report.render` lists only triggers that FIRED, and `T2`
+    by definition does not fire here, so `verify`'s output could never carry the string either way.
+    `triggers` prints all six with their reasons and runs at `pre`, which is exactly the surface an
+    agent reads. "unknown" is a read that completed and told us nothing; "not evaluated" is a read
+    the phase does not make, and the two must not share a string.
+    """
+    from tools.contract import __main__ as cli
+    from tools.contract.adapters import ImpactPort, RepoPort
+    monkeypatch.setattr(ImpactPort, "report", _raises_port_error)
+    orig = cli.Ports
+    monkeypatch.setattr(cli, "REPO", cli_repo)
+    monkeypatch.setattr(cli, "Ports", lambda **kw: orig(repo=RepoPort(cli_repo), **kw))
+    _serve_platform(monkeypatch, cli_repo)
+    code = cli.main(["triggers", _CLI_CONTRACT, "--base", "origin/main"])
+    text = capsys.readouterr().out
+    assert code == 0, text[:1200]
+    assert "not evaluated at `pre`" in text, text[:1200]
+    assert "impact classification is unknown" not in text, text[:1200]
+
+
+def test_cli_the_same_unavailable_impact_still_fails_closed_at_head(monkeypatch, capsys, cli_repo):
+    """The containing half: narrowing `pre` must not have relaxed the read at `head`.
+
+    THE ASSERTION IS THE DIAGNOSTIC, NOT THE RULE. This fixture carries no `approved` row, so `ST-3`
+    precedes `ST-7` by first-match and no input could make `ST-7` the answer here — asserting the
+    rule would pin the fixture's approval state, not the behaviour under test. What must hold is that
+    the impact read still HAPPENS and still lands in the fail-closed channel `ST-7` consumes.
+    `NC-P15` owns the rule itself, on a contract whose content gate is satisfied.
+    """
+    from tools.contract.adapters import ImpactPort
+    monkeypatch.setattr(ImpactPort, "report", _raises_port_error)
+    code, raw = _cli_no_impact(monkeypatch, capsys, cli_repo, "head", "--json")
+    out = json.loads(raw)
+    assert code == 1, out
+    impact_diags = [d for d in out["diagnostics"] if "impact analysis unavailable" in json.dumps(d)]
+    assert impact_diags, out["diagnostics"]
+    assert impact_diags[0]["code"] == "UNVERIFIABLE", impact_diags[0]
 
 
 def _codes(payload):

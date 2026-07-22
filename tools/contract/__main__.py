@@ -145,20 +145,40 @@ def run(ports: Ports, path: str, *, base: str | None, head: str | None, pr: int 
     except PortError as exc:
         changed, unverifiable = None, [*unverifiable, f"the diff could not be enumerated: {exc}"]
 
-    impact: dict | None = impact_override
-    if impact is None:
-        try:
-            impact = ports.impact.report(base)
-        except PortError as exc:
-            unverifiable.append(f"impact analysis unavailable: {exc}")
-    classification = (impact or {}).get("classification", "")
-
     try:
         modules_art = ports.artifacts.modules()
     except PortError as exc:
         modules_art = {}
         unverifiable.append(f"derived/modules.json: {exc}")
-    pairs, subsystems, own_problems = derive.owners_for(changed or [], modules_art)
+    # ── S5a THE CLASSIFICATION PATH SET (ADR-0105 §1a) ──────────────────────────────────────
+    # A CONTRACT IS WRITTEN BEFORE IMPLEMENTATION (§3), SO AT `pre` THE DIFF CANNOT CONTAIN THE
+    # CHANGE. It contains the contract and nothing else. Classifying that diff answered `0
+    # subsystem(s) spanned` for a change the contract itself says spans two, so declaring the true
+    # trait diverged from the derived set and every cross-system contract answered `CL-2` before it
+    # was implemented. The only way to a `continue` at `pre` was to implement first — which is the
+    # one thing the phase exists to forbid. The phase was unreachable by the rule it enforces.
+    #
+    # SO `pre` CLASSIFIES INTENT AND `head`/`merge` CLASSIFY THE DIFF. Intent is not a weaker diff;
+    # it is the only evidence that exists yet, it lives inside digest `D` (so approval binds it),
+    # and it is held to a STRICTER resolution than a diff ever is — see `derive.intended_paths`.
+    # The diff stays authoritative wherever it exists: scope, `ST-1`, and the final trait equality
+    # below all still read `changed`, unchanged.
+    surfaces = [r.get("path", "") for r in (decl.value("expected_surfaces") or [])]
+    intent_rows: tuple = ()
+    if phase == PRE:
+        class_paths, intent_rows, intent_problems = derive.intended_paths(surfaces, modules_art)
+        unverifiable += intent_problems
+        path_source = "the contract's `expected_surfaces`"
+        evidence.append(f"`pre` classified {len(surfaces)} intended path(s) from "
+                        f"`expected_surfaces`; the diff is not evidence of an implementation that "
+                        f"does not exist yet")
+    else:
+        class_paths, path_source = changed, "the diff"
+
+    # `owners_for` on a set `intended_paths` already PROVED resolvable. Its silent skip cannot hide
+    # anything here, and reusing it keeps ONE path→module→subsystem transform (ADR-0105 §9 forbids a
+    # second selector) rather than a parallel one that would drift.
+    pairs, subsystems, own_problems = derive.owners_for(class_paths or [], modules_art)
     unverifiable += own_problems
 
     hot, hot_problems = classify.hot_files_from(REPO / ".agents" / "lanes.json")
@@ -303,16 +323,46 @@ def run(ports: Ports, path: str, *, base: str | None, head: str | None, pr: int 
                                 f"({exc}); post-merge authorization and acceptance are UNVERIFIABLE, "
                                 f"which ADR-0105 §4.3a does not treat as a negative finding")
 
+    # ── S5b `T2`'s INPUT, READ ONLY WHERE `T2` IS EVALUABLE (ADR-0105 §1a) ──────────────────
+    # `T2` is a property of an implementation diff. At `pre` there is none, so the impact report is
+    # NOT ATTEMPTED — and that is a different thing from attempting it and getting nothing.
+    #
+    # Attempting it there cost twice. The trigger's reason read "impact classification is unknown",
+    # which describes a read that happened and came back empty rather than one the phase is defined
+    # not to need. And a failure of the analysis landed in `unverifiable`, where `ST-7` consumes it:
+    # `pre` then HALTED on the unavailability of the single input it does not use. `ST-7` exists to
+    # stop a verdict resting on an unread input; nothing at `pre` rests on this one.
+    #
+    # `--impact-json` is ignored here too, deliberately. A back door letting `T2` be evaluated at
+    # `pre` after all would make the ADR's "not evaluable" true only when nobody passed a flag, and
+    # `NC-P10`'s tolerance of over-declaration is justified BY that unevaluability.
+    t2_unevaluated = ""
+    impact: dict | None = None
+    if phase == PRE:
+        t2_unevaluated = ("not evaluated at `pre` — `T2` needs an implementation diff, which does "
+                          "not exist before implementation (ADR-0105 §1a)")
+        evidence.append("`T2` was NOT evaluated: the impact report is not run at `pre`, so no "
+                        "architectural-impact classification enters the trigger set")
+    else:
+        impact = impact_override
+        if impact is None:
+            try:
+                impact = ports.impact.report(base)
+            except PortError as exc:
+                unverifiable.append(f"impact analysis unavailable: {exc}")
+    classification = (impact or {}).get("classification", "")
+
     non_monotone = _non_monotone_contracts(ports, changed or [], base, head_ref)
     declared_live = "live" in decl.traits
-    trigs = classify.triggers(changed, impact_classification=classification, hot_files=hot,
+    trigs = classify.triggers(class_paths, impact_classification=classification, hot_files=hot,
                               contract_ops_non_monotone=non_monotone,
-                              operator_required=_declares_t6(decl), subsystems=subsystems)
+                              operator_required=_declares_t6(decl), subsystems=subsystems,
+                              path_source=path_source, t2_unevaluated=t2_unevaluated)
     fired = {t.id: t.fired for t in trigs}
     traits = classify.traits_from(fired, declared_live)
     tier = classify.risk_tier(traits)
 
-    seeds = [m for m in (classify.module_of(p) for p in (changed or [])) if m]
+    seeds = [m for m in (classify.module_of(p) for p in (class_paths or [])) if m]
     blast: tuple[str, ...] = ()
     if "cross-system" in traits and seeds:
         try:
@@ -327,17 +377,22 @@ def run(ports: Ports, path: str, *, base: str | None, head: str | None, pr: int 
         generated = ports.artifacts.generated_paths()
     except PortError as exc:
         generated = set(); unverifiable.append(f"generated-artifact set: {exc}")
-    try:
-        stale = ports.artifacts.stale()
-    except PortError as exc:
-        stale = []; unverifiable.append(f"regeneration proof unavailable: {exc}")
+    # NOT AT `pre`, AND THE REASON IS ITS CONSUMER, NOT ITS COST. `v_scope` reads `stale_artifacts`
+    # only when a GENERATED file is in the diff; at `pre` the diff cannot contain one, so this read
+    # can never produce a finding there and can only produce `ST-7`. A check whose sole possible
+    # outcome is halting on its own unavailability is not a check.
+    stale: list[str] = []
+    if phase != PRE:
+        try:
+            stale = ports.artifacts.stale()
+        except PortError as exc:
+            unverifiable.append(f"regeneration proof unavailable: {exc}")
 
     try:
         control_ids = ports.registry.control_ids()
     except PortError as exc:
         control_ids = None; unverifiable.append(str(exc))
 
-    surfaces = [r.get("path", "") for r in (decl.value("expected_surfaces") or [])]
     allow = list(decl.value("incidental_allowlist") or [])
     labelled = classify.labels(changed or [], expected_surfaces=surfaces,
                                incidental_allowlist=allow, generated_paths=generated)
@@ -393,7 +448,8 @@ def run(ports: Ports, path: str, *, base: str | None, head: str | None, pr: int 
     # ── S8 decide ───────────────────────────────────────────────────────────────────────────
     di = DecisionInput(declaration=decl, derived=derived, gates=gates, state=state,
                        diagnostics=tuple(diags), phase=phase)
-    return decide(di), {"decl": decl, "derived": derived, "gates": gates, "state": state}
+    return decide(di), {"decl": decl, "derived": derived, "gates": gates, "state": state,
+                        "intent_paths": intent_rows, "path_source": path_source}
 
 
 def _exists(ports: Ports, ref: str, path: str) -> bool:
@@ -489,6 +545,79 @@ def cmd_triggers(args) -> int:
     print(f"\n  traits: {sorted(d.traits) or 'contained (empty set)'}   risk_tier: {d.risk_tier}")
     if not need:
         print("\n  This is the DEFAULT PATH and it must stay free (ADR-0105 §1).")
+    return EXIT_CONTINUE
+
+
+def cmd_preflight(args) -> int:
+    """ADR-0105 §1a — "do I need a contract?", asked BEFORE a contract or an implementation exists.
+
+    THE ONE-WAY RULE. This answers `REQUIRED` or `UNDETERMINED` and can never answer `NOT REQUIRED`.
+    Paths settle `T1`, `T3` and `T5`. They cannot settle `T2` — architectural impact is a property of
+    code that has not been written — and they cannot settle `T4` or `T6`, which are human facts no
+    tool derives. A `NOT REQUIRED` here would be a claim about three triggers that were never
+    evaluated, and it would be the single most load-bearing false negative the system could emit:
+    the answer that sends an agent past the gate entirely. `UNDETERMINED` says the true thing —
+    nothing here fired, and something not visible from paths still might.
+    """
+    ports = Ports()
+    problems: list[str] = []
+    try:
+        modules_art = ports.artifacts.modules()
+    except PortError as exc:
+        modules_art = {}; problems.append(f"derived/modules.json: {exc}")
+    hot, hot_problems = classify.hot_files_from(REPO / ".agents" / "lanes.json")
+    problems += hot_problems
+
+    paths, rows, path_problems = derive.intended_paths(list(args.paths), modules_art)
+    problems += path_problems
+    _, subsystems, own_problems = derive.owners_for(paths or [], modules_art)
+    problems += own_problems
+
+    trigs = classify.triggers(paths, impact_classification="", hot_files=hot,
+                              contract_ops_non_monotone=[], operator_required=False,
+                              subsystems=subsystems, path_source="the supplied path set")
+    # READ ONLY THE PATH-DERIVED TRIGGERS. `classify.triggers` is the single selector (ADR-0105 §9
+    # forbids a second), so `T2`/`T4`/`T6` come back "did not fire" — which here means "was not
+    # evaluated". The verdict must not read them, and the output must not let a reader mistake one
+    # for the other, so they are reported as `unevaluable` by name rather than silently dropped.
+    fired = {t.id: t.fired for t in trigs}
+    path_derived = ("T1", "T3", "T5")
+    required = any(fired.get(t) for t in path_derived)
+    fail_closed = paths is None
+    verdict = "REQUIRED" if required else "UNDETERMINED"
+    traits = sorted(classify.traits_from({k: fired.get(k, False) for k in path_derived}, False))
+    unevaluable = {
+        "T2": "architectural impact requires an implementation diff — `python -m tools.arch impact`",
+        "T4": "live/destructive is human-declared, never derived",
+        "T6": "an operator requirement is an operator fact",
+    }
+    if args.json:
+        print(report.as_json({
+            "verdict": verdict, "fail_closed": fail_closed, "traits": traits,
+            "paths": [{"path": p, "kind": k, "detail": d} for p, k, d in rows],
+            "triggers": [{"id": t.id, "evaluated": t.id in path_derived, "fired": t.fired,
+                          "reason": t.reason, "evidence": list(t.evidence)} for t in trigs],
+            "unevaluable": unevaluable, "problems": problems}))
+        return EXIT_UNTRUSTWORTHY if fail_closed else EXIT_CONTINUE
+    print(f"## A contract is {verdict}\n")
+    for p, kind, detail in rows:
+        print(f"  {kind:<12} {p}\n               {detail}")
+    print()
+    for t in trigs:
+        if t.id in path_derived:
+            print(f"  {'FIRED  ' if t.fired else '  -    '} {t.id}  {t.reason}")
+        else:
+            print(f"  UNEVAL   {t.id}  {unevaluable[t.id]}")
+    print(f"\n  path-derived traits: {traits or 'none from paths'}")
+    for p in problems:
+        print(f"  ! {p}")
+    if fail_closed:
+        print("\n  FAIL CLOSED — an intended path did not resolve, so no classification was "
+              "\n  computed. This is NOT `contained` and is NOT `not required`.")
+        return EXIT_UNTRUSTWORTHY
+    if not required:
+        print("\n  UNDETERMINED, never `NOT REQUIRED`: `T2`, `T4` and `T6` were not evaluated here."
+              "\n  Re-run `triggers` against a real diff, and declare `T4`/`T6` yourself.")
     return EXIT_CONTINUE
 
 
@@ -595,6 +724,12 @@ def main(argv: list[str] | None = None) -> int:
     v.set_defaults(fn=cmd_verify)
     add("scope", head=True, impact=True, help_="ADR-0105 §5.3 alone").set_defaults(fn=cmd_scope)
     add("triggers", head=True, help_="do I need a contract?").set_defaults(fn=cmd_triggers)
+    pf = sub.add_parser("preflight", help="do I need a contract? — asked from INTENDED paths, "
+                                          "before any contract or implementation exists")
+    pf.add_argument("paths", nargs="+", help="the exact repository paths you intend to change")
+    pf.add_argument("--json", action="store_true", help="structured output")
+    pf.add_argument("--quiet", action="store_true")
+    pf.set_defaults(fn=cmd_preflight)
     add("compile", help_="resolve the derivable fields").set_defaults(fn=cmd_compile)
     add("state", pr=True, help_="derived lifecycle state").set_defaults(fn=cmd_state)
     add("digest", base=False, help_="`D` — what an approval names").set_defaults(fn=cmd_digest)
