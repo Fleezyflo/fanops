@@ -20,6 +20,11 @@ deciders: [operator]
 > repository **security policy** to the live branch-protection surface. It is a **governance-operations**
 > activity, **not remaining engineering work**; wherever this ADR says "Phase E," read "OGD." The two
 > concepts are kept distinct — engineering produced the policy; OGD deploys it.
+>
+> **⛔ AMENDED 2026-07-22 — read the amendment before §1.** OGD is **CANCELLED** and the required set is
+> **final at two contexts**, not five. Every reference below to "Phase E", "OGD", mutations "M1–M6", a
+> five-context required set, or a promotion "pending deployment" is **historical**: it describes a plan
+> that was designed and then dropped, and names no pending action. See "AMENDMENT 2026-07-22" below.
 
 ## Status
 
@@ -38,7 +43,51 @@ contexts match by mutable job `name:` strings (a rename **deadlocks** the queue 
 bypass). Two constraints bound this ADR: never require code-owner review (it would block the
 orchestrator's autonomous merge — 0097); do not revive the dormant enforcement gate / land-gate (0096).
 
+## AMENDMENT 2026-07-22 — the required set is TWO, and OGD is cancelled
+
+**Operator decision (CI simplification).** This amendment supersedes decision §1's five-context set and
+cancels the staged deployment that would have installed it. Nothing else in this ADR is reopened.
+
+**Required, and final:**
+
+| Required context | Control | Distinct invariant it owns | When it does its work |
+|---|---|---|---|
+| `unit (fast, no toolchain)` | CI-UNIT | hermetic logic suite + lint + SLO + secret-scan + lock-drift + the skip→fail hook + the arch and CI-registry validators | every PR — the sole **routine** blocker |
+| `real-tooling E2E (must run, not skip)` | CI-E2E | the real ffmpeg/whisper pipeline runs (not mocks) + cross-face proofs + validator-effectiveness | every PR, but the suite executes only on a runtime-relevant change |
+
+**Reclassified to advisory** — they still run on every PR and their verdicts are still read; they no
+longer block a merge: `ARCH-GATE` (architecture gate), `CI-BASEINSTALL` (base install), `LANE-GUARD`
+(lane ownership + cross-open-PR collision). `ARCH-IMPACT` was already advisory and is unchanged.
+
+**Why.** Five merge-blocking contexts bought less than they cost. Three of them re-proved things the
+unit lane already blocks on or, in `LANE-GUARD`'s case, could not honestly gate at all — its Linear
+lookup is best-effort and fails open without `LINEAR_API_KEY`, so a "required" classification would have
+promised an enforcement it cannot deliver. The heaviest, `real-tooling E2E`, ran a full toolchain
+install and a ~7-minute suite on documentation-only changes that cannot affect a render.
+
+**The E2E context is kept, not removed.** It stays required in live branch protection; what changed is
+that its work is relevance-gated (`scripts/ci_e2e_relevance.py`), and the gate lives INSIDE the job
+rather than as a workflow `paths:` filter — a required workflow skipped by a path filter never reports
+and leaves branch protection pending. The predicate fails toward RUNNING: work is skipped only when
+every changed path is documentation or a governance record. Disclosed consequence: on such a change the
+`@pytest.mark.slow` suite, including the arch negative controls, does not execute, because the unit lane
+deselects `slow`.
+
+**OGD (mutations M1–M6) is cancelled, not deferred.** `intended_required_contexts` now equals
+`current_required_contexts` equals live, so `python -m tools.ci deployed` reports no findings.
+`enforce_admins` remains **false**; §4 below described enabling it as OGD's final mutation and that no
+longer applies. **Removing** `real-tooling E2E` from live branch protection would be a repository
+settings change requiring separate, explicit operator approval — no pull request performs one.
+
+Growing the required set again is an ADR amendment, not a configuration tweak.
+
+---
+
 ## Decision
+
+> **§1 below is SUPERSEDED by the 2026-07-22 amendment above.** It is preserved because the
+> distinct-invariant analysis it records is still the reasoning that justifies each control's
+> existence — only the *classification* changed.
 
 **1 · Five required contexts** — each owning a **distinct** merge-blocking invariant (exact `name:`
 strings, verified 2026-07-15):

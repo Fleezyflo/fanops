@@ -31,34 +31,34 @@ status: accepted
 generated_view: docs/ci/CI_CONTROL_INVENTORY.md
 # Validators live in a dedicated tools/ci module (ADR-0100, operator amendment) — NOT tools/arch.
 
-# Term (reclassification 2026-07-16): OGD = Operational Governance Deployment — the deployment of
-# repository SECURITY POLICY to the live branch-protection surface (adding required contexts, enabling
-# admin enforcement / linear-history / conversation-resolution). The CI-governance ENGINEERING is
-# complete and merged; OGD is the distinct governance-OPERATIONS activity that deploys it, applied by
-# the operator one mutation at a time. "OGD" was formerly labeled "Phase E" — an alias kept only for
-# continuity with the merged history. Runbook: docs/ci/CI_BRANCH_PROTECTION_MUTATIONS.md.
+# OGD IS CANCELLED (operator decision, 2026-07-22). OGD — Operational Governance Deployment — was the
+# staged rollout that would have added three more required contexts to live branch protection, one
+# mutation at a time. It will not happen. The required set is now FINAL at the two contexts below, and
+# `intended` equals `current` equals LIVE, so there is no pending expansion for DC-3 to report and no
+# runbook left to execute. The term is retained here only so the merged history stays readable.
+#
+# What replaced it: `unit (fast, no toolchain)` is the sole ROUTINE PR blocker for logic, and
+# `real-tooling E2E (must run, not skip)` stays required but does its work only on runtime-relevant
+# changes (see CI-E2E). Everything else — the architecture gate, impact, base-install, lane guard and
+# the cross-PR collision guard — is ADVISORY: it still runs and is still read, it just no longer
+# blocks a merge. Rationale: docs/adr/0101-required-checks-and-merge-gate-policy.md.
 
-# Rollout model (ADR-0101, operator amendment) — so DC-3 never self-deadlocks. `current_required_contexts`
-# is what SHOULD be live RIGHT NOW; each OGD mutation adds one context and updates `current` in the
-# SAME PR. DC-3 requires live == current (blocking) and reports the current->intended gap as a PLANNED
-# TRANSITION (informational) while phase != "enforced". When current == intended and admin enforcement
-# is on, flip phase to "enforced" and any remaining gap becomes blocking.
+# Rollout model (ADR-0101). `current_required_contexts` is what SHOULD be live right now; DC-3
+# requires live == current (blocking). `phase: enforced` means THE REQUIRED SET IS FINAL — any
+# current/intended divergence is a failure rather than a planned transition. It does NOT assert that
+# GitHub admin enforcement is on; `enforce_admins` is false and changing it is a separate,
+# operator-approved repository-settings change that no PR performs.
 rollout:
-  phase: transitioning            # transitioning | enforced
-current_required_contexts:        # matches LIVE GitHub as of 2026-07-15 (Phase-A freeze)
+  phase: enforced                 # transitioning | enforced — see the note above on what this asserts
+current_required_contexts:        # matches LIVE GitHub, re-read 2026-07-22
   - "unit (fast, no toolchain)"
   - "real-tooling E2E (must run, not skip)"
 
-# Plane 1 — the merge policy the repository INTENDS (ADR-0101, accepted in principle 2026-07-15).
-# DC-3 reconciles this against LIVE GitHub. Today LIVE = the first two only; the remaining three are
-# added one at a time in OGD (add gate -> base-install -> lane-guard), gated on the tools/ci
-# validator + remediation PRs being green. Exact name: strings verified 2026-07-15.
+# Plane 1 — the merge policy the repository INTENDS (ADR-0101, amended 2026-07-22). DC-3 reconciles
+# this against LIVE GitHub. It equals `current` and equals live: the set is final, not a staging post.
 intended_required_contexts:
   - "unit (fast, no toolchain)"
   - "real-tooling E2E (must run, not skip)"
-  - "base install (no extras) refuses smart-framing"
-  - "gate (drift + policy + registries)"
-  - "lane file-ownership + cross-PR collision"
 
 # ---------------------------------------------------------------------------------------------------
 # Registered intentional redundancy. A control may share an invariant with another ONLY via a group
@@ -67,28 +67,28 @@ intended_required_contexts:
 duplicate_groups:
   arch-drift-policy:
     reason: >-
-      One architecture-governance implementation (tools/arch policy + drift + registries). Model A
-      (ADR-0101) makes ARCH-GATE the authoritative REQUIRED merge-gate for it. But ARCH-GATE is NOT a
-      required context until OGD (mutation M1); until then the unit lane is the ONLY required line
-      enforcing arch drift/policy/registries, so the overlap is deliberately RETAINED here as intentional,
-      justified redundancy — not silent duplication. De-dup is deferred to a post-M1 follow-up.
+      One architecture-governance implementation (tools/arch policy + drift + registries) reached two
+      ways. With OGD cancelled (2026-07-22) ARCH-GATE is ADVISORY and will not become a required
+      context, so the unit lane is PERMANENTLY the merge-blocking line for arch drift/policy/registries.
+      The overlap is therefore no longer a transitional residual awaiting de-dup — it is the design:
+      the advisory gate gives a fast, standalone, readable arch verdict, and the unit lane is what
+      actually blocks. Retained deliberately, not silently duplicated.
     members: [ARCH-GATE, CI-UNIT-ARCHGOV]
     distinct_boundaries:
-      ARCH-GATE: "REQUIRED at OGD — the authoritative merge-gate for arch drift + policy + registries (runs `tools.arch ci` on every PR)."
-      CI-UNIT-ARCHGOV: "carries the invariants gate does NOT run (regeneration determinism, generated-artifacts-are-a-pure-function-of-source, rule reachability, field-authority) AND, RETAINED through OGD, the drift/policy/registries checks — the sole REQUIRED arch enforcement until ARCH-GATE becomes a required context."
+      ARCH-GATE: "ADVISORY — a standalone, readable `tools.arch ci` verdict per PR (drift + policy + registries) that does not block a merge."
+      CI-UNIT-ARCHGOV: "the merge-blocking line: the invariants the gate does NOT run (regeneration determinism, generated-artifacts-are-a-pure-function-of-source, rule reachability, field-authority) PLUS the drift/policy/registries checks, collected in the sole routine PR blocker."
     remediation: >-
-      Model A is the DECIDED end-state; the overlap is a KNOWN, retained redundancy, NOT resolved-away.
-      SLICE-ARCH-MODEL (Phase D) records it here truthfully. De-duplication — scoping the unit lane down
-      to only the four distinct invariants — is DEFERRED to a post-M1 follow-up: removing the overlap
-      before ARCH-GATE is a proven-required, stable context would leave arch drift/policy/registries with
-      NO required enforcement (an enforcement gap). Accepted residual until then.
+      Keep both. De-duplication is CLOSED, not deferred: scoping the unit lane down to the four
+      distinct invariants would leave arch drift/policy/registries with no merge-blocking enforcement
+      at all, because the only other implementation is now advisory. The earlier plan to de-dup after
+      ARCH-GATE became required died with OGD.
   negative-controls:
     reason: "One selftest.detect implementation invoked via two harnesses (pytest test case + CLI verb)."
     members: [CI-E2E-NEGCONTROLS, ARCH-CONTROLS]
     distinct_boundaries:
-      CI-E2E-NEGCONTROLS: "the MERGE-BLOCKING path — collected in the required `e2e` slow step."
+      CI-E2E-NEGCONTROLS: "the merge-blocking path — collected in the `e2e` slow step, which since 2026-07-22 runs only when the change is runtime-relevant (see CI-E2E). The controls are `@pytest.mark.slow`, and the unit lane deselects `slow`, so on a documentation-only PR they do NOT run. Disclosed, not hidden: a docs-only change alters neither the rules nor the validators those controls discriminate against, and any edit under `src/`, `tools/`, `tests/` or `.github/` runs them in full."
       ARCH-CONTROLS: "standalone CLI selftest visibility + the push-to-main and path-selected dimension; advisory."
-    remediation: "SLICE-NEGCTRL-DEDUP (6.3) — on an arch-relevant PR BOTH run the full ~170s suite. Keep ONE authoritative full run; reduce the other to a lightweight reachability/registry assertion WITHOUT weakening the every-rule-has-a-firing-control guarantee."
+    remediation: "Keep both. The former SLICE-NEGCTRL-DEDUP plan — reduce one side to a lightweight reachability assertion — is unnecessary now that the two no longer both run on every arch-relevant PR at merge-blocking cost."
   ruff-scopes:
     reason: "ruff runs at deliberately-tiered scopes; each protects a different feedback boundary (not duplication)."
     members: [CI-UNIT-LINT, LOCAL-RUFF-PRECOMMIT, LOCAL-CHECK-SH]
@@ -284,8 +284,8 @@ controls:
     trigger: [pull_request, push]
     classification: required
     runtime_class: fast
-    justification: "the unit-lane arch tests. Model A (ADR-0101) names ARCH-GATE the AUTHORITATIVE arch merge-gate, but ARCH-GATE is not a required context until OGD (M1) — so TODAY this collection is the sole REQUIRED enforcement of arch drift/policy/registries, AND it carries the distinct invariants gate does not run (determinism, pure-function-of-source, reachability, field-authority). The overlap is retained (duplicate_group arch-drift-policy), not scoped away; de-dup is a post-M1 follow-up."
-    deletion_consequence: "TODAY (ARCH-GATE not yet required): arch drift/policy/registries lose their ONLY required enforcement AND the distinct invariants (determinism, pure-function-of-source, reachability, field-authority) lose their check. Post-OGD, once ARCH-GATE is a required context, deletion would drop only the four distinct invariants — which is why de-dup is deferred to then."
+    justification: "the unit-lane arch tests. Since 2026-07-22 ARCH-GATE is advisory and will not be promoted, so this collection is PERMANENTLY the sole merge-blocking enforcement of arch drift/policy/registries, AND it carries the distinct invariants gate does not run (determinism, pure-function-of-source, reachability, field-authority). The overlap is retained by design (duplicate_group arch-drift-policy); de-dup is CLOSED, not deferred."
+    deletion_consequence: "arch drift/policy/registries lose their ONLY merge-blocking enforcement AND the distinct invariants (determinism, pure-function-of-source, reachability, field-authority) lose their check. With ARCH-GATE advisory there is no second blocking implementation to fall back on, so this is unconditionally the worst deletion in the arch set."
     duplicate_group: arch-drift-policy
     adr: [ADR-0100, ADR-0101]
     failure_evidence: "test_no_blocking_policy_findings / test_derived_artifacts_are_not_stale fail on an injected defect; the negative-control suite proves the validators discriminate."
@@ -304,7 +304,7 @@ controls:
     trigger: [pull_request, push]
     classification: required
     runtime_class: fast
-    justification: "the tools/ci static validator run as a unit test, so DC-1/2/4/5/6 block a PR that diverges the registry from the workflow implementation. It delegates to tools.ci.checks.run_static + shape_findings — the SAME code the CLI `static` verb runs — so the pytest gate and the CLI can never disagree on a commit. DC-3 (deployed-state vs live GitHub) is NOT here: it needs an authenticated admin probe and is a scheduled / OGD concern (ADR-0100, ADR-0101)."
+    justification: "the tools/ci static validator run as a unit test, so DC-1/2/4/5/6 block a PR that diverges the registry from the workflow implementation. It delegates to tools.ci.checks.run_static + shape_findings — the SAME code the CLI `static` verb runs — so the pytest gate and the CLI can never disagree on a commit. DC-3 (deployed-state vs live GitHub) is NOT here: it needs an authenticated admin probe and is a scheduled concern (ADR-0100, ADR-0101)."
     deletion_consequence: "registry<->workflow drift stops blocking PRs — a renamed required context (DC-1), an untracked job or phantom control (DC-2), prose calling a required context advisory (DC-4), a duplicate_group naming an unknown control (DC-5), or a job that drops its timeout / SHA-pin (DC-6) would merge unchallenged. The exact divergence class the control registry exists to prevent."
     duplicate_group: null
     adr: [ADR-0100, ADR-0101]
@@ -322,37 +322,37 @@ controls:
     step: "Base-install smoke — cv2 absent, fanops+CLI import, representative op, render prereq refuses"
     command: "python scripts/base_install_smoke.py"
     trigger: [pull_request, push]
-    classification: required
+    classification: advisory
     runtime_class: fast
     timeout_minutes: 10
     dependencies: []
     artifacts: []
     consumers: []
-    justification: "the ONLY control exercising the clean, extras-absent packaging path and the cv2 fail-closed contract (ADR 0034)."
-    deletion_consequence: "a packaging regression that breaks a clean no-extras install, or a silent centre-crop instead of a loud refusal, merges undetected — no other control covers this."
+    justification: "the ONLY control exercising the clean, extras-absent packaging path and the cv2 fail-closed contract (ADR 0034). ADVISORY since 2026-07-22: it runs on every PR and its verdict is read, but it does not block a merge."
+    deletion_consequence: "a packaging regression that breaks a clean no-extras install, or a silent centre-crop instead of a loud refusal, ships with no signal at all — no other control covers this. Advisory means UNBLOCKING, not unwatched: deleting the job is a different and worse act than declassifying it."
     duplicate_group: null
     adr: [ADR-0101]
     branch_protection_context: "base install (no extras) refuses smart-framing"
-    failure_evidence: "base_install_smoke.py exits non-zero if import / CLI / refuse-loudly contract breaks."
+    failure_evidence: "base_install_smoke.py exits non-zero if import / CLI / refuse-loudly contract breaks; the job reddens without blocking."
     evidence_status: verified-this-session
     status: active
-    notes: "REQUIRED (ADR-0101). OGD promotion order = 2nd (after gate). Unique invariant, no blocking backup."
+    notes: "ADVISORY (ADR-0101 as amended 2026-07-22, CI simplification). It was slated to become the 2nd required context under OGD; OGD is cancelled, so it stays advisory. `branch_protection_context` is retained as the job's exact context STRING — it is not in the required set."
 
   # ===== ci.yml · e2e (composite, REQUIRED) =========================================================
   - id: CI-E2E
     name: "real-tooling E2E (must run, not skip)"
-    invariant: "the real ffmpeg/whisper/espeak pipeline actually runs (not mocks) and never silently skips; @slow cross-face proofs pass; cv2 present"
+    invariant: "on a runtime-relevant change the real ffmpeg/whisper/espeak pipeline actually runs (not mocks) and never silently skips; @slow cross-face proofs pass; cv2 present"
     owner: ci-lane
     workflow: .github/workflows/ci.yml
     job: e2e
-    trigger: [pull_request, push]
+    trigger: [pull_request, push, workflow_dispatch]
     classification: required
     runtime_class: slow
     timeout_minutes: 25
     dependencies: []
     artifacts: ["ci-timing.partial.json (main push only)"]
     consumers: [CI-TIMING]
-    justification: "proves the pipeline is real, not mocked — the second live required context."
+    justification: "proves the pipeline is real, not mocked — the second and final live required context."
     deletion_consequence: "the real-tooling proof disappears; a broken render could be masked by mocks and merge."
     duplicate_group: null
     adr: [ADR-0101]
@@ -360,6 +360,24 @@ controls:
     failure_evidence: "FANOPS_REQUIRE_E2E=1 turns an integration skip into a failure; the job is a LIVE required context."
     evidence_status: verified-this-session
     status: active
+    relevance_gate:
+      since: 2026-07-22
+      decided_by: "scripts/ci_e2e_relevance.py (pure `decide()`; proven both directions by tests/test_ci_e2e_relevance.py in the unit lane)"
+      always_reports: >-
+        The job has NO workflow-level `paths:` filter and always runs, because a required workflow
+        that is skipped by a path filter never reports and leaves branch protection pending forever.
+        The gate is INSIDE the job and controls only whether the ~7 minutes of work execute.
+      runs_in_full_when: >-
+        any changed path is outside `docs/`, `.claude/`, `.reports/` and root-level `*.md` — which
+        includes all of `src/`, `tests/`, `scripts/`, `tools/`, `.github/` (the workflow itself),
+        `pyproject.toml` and `requirements/`; or the event is a push to main or a manual dispatch; or
+        the PR carries the `force-e2e` label or `[force-e2e]` in its title; or the diff cannot be read.
+      skips_work_when: "every changed path is documentation or a governance record, and only then."
+      disclosed_consequence: >-
+        On such a change the `@pytest.mark.slow` suite — including the arch negative controls
+        (CI-E2E-NEGCONTROLS) — does not execute, because the unit lane deselects `slow`. A
+        documentation-only change alters neither those rules nor the validators they discriminate
+        against, and any edit to code, tooling, tests or workflows runs them in full.
 
   - id: CI-E2E-TOOLCHAIN
     name: "Verify toolchain on PATH"
@@ -475,19 +493,19 @@ controls:
     step: "Regenerate + byte-compare + policy + registries"
     command: "python -m tools.arch ci"
     trigger: [pull_request, push]
-    classification: required
+    classification: advisory
     runtime_class: fast
     timeout_minutes: 10
     concurrency: "arch-<workflow>-<ref>, cancel-in-progress"
-    justification: "REQUIRED (Model A) — the AUTHORITATIVE merge-gate for architecture governance (drift + policy + registries) via `tools.arch ci`; stdlib-only, zero installs, runs every PR."
-    deletion_consequence: "arch-governance loses its authoritative merge-blocking owner; drift/policy/registry regressions could merge."
+    justification: "ADVISORY since 2026-07-22 — a standalone, readable `tools.arch ci` verdict (drift + policy + registries) on every PR; stdlib-only, zero installs. It does not block a merge; the same checks block through the unit lane (CI-UNIT-ARCHGOV)."
+    deletion_consequence: "arch governance loses its fast, standalone, human-readable verdict and its job summary. The drift/policy/registry checks themselves keep blocking via CI-UNIT-ARCHGOV, so this is a legibility loss rather than an enforcement gap — which is exactly why it can be advisory."
     duplicate_group: arch-drift-policy
     adr: [ADR-0100, ADR-0101]
     branch_protection_context: "gate (drift + policy + registries)"
-    failure_evidence: "tools.arch ci exits non-zero on drift/policy/registry failure; SLICE-ARCH-MODEL adds a negative control proving this context blocks."
+    failure_evidence: "tools.arch ci exits non-zero on drift/policy/registry failure; the job reddens without blocking."
     evidence_status: verified-this-session
     status: active
-    notes: "Classification REQUIRED (ADR-0101) — this is the INTENDED end-state, not the live one: this context is NOT in current_required_contexts until OGD M1. OGD promotion order = 1st. Model A gives it ownership of arch drift/policy/registries; the unit-lane arch tests are NOT yet scoped down — the overlap is deliberately RETAINED through M1 (see duplicate_groups.arch-drift-policy). SLICE-ARCH-MODEL was satisfied via the declared-residual branch (record the overlap truthfully), not by de-duplicating."
+    notes: "ADVISORY (ADR-0101 as amended 2026-07-22, CI simplification). Model A named this the authoritative required merge-gate and OGD M1 would have promoted it; OGD is cancelled, so the authoritative merge-blocking line for arch drift/policy/registries is permanently CI-UNIT-ARCHGOV. `branch_protection_context` is retained as the job's exact context STRING — it is not in the required set."
 
   - id: ARCH-IMPACT
     name: "impact report"
@@ -565,19 +583,19 @@ controls:
     step: "Lane hot-file ownership + Cross-open-PR hot-file collision guard"
     command: "python scripts/lane_guard.py ... && python scripts/pr_collision_guard.py ..."
     trigger: [pull_request]
-    classification: required
+    classification: advisory
     runtime_class: fast
-    timeout_minutes: null
-    concurrency: null
-    justification: "REQUIRED (ADR-0101) — mechanical enforcement of the AGENTS.md parallelism rules for multi-agent waves (ADR 0095)."
-    deletion_consequence: "concurrent multi-agent work can silently collide on a hot file (merge-drift) with no blocking owner."
+    timeout_minutes: 10
+    concurrency: "lane-guard-<workflow>-<ref>, cancel-in-progress"
+    justification: "ADVISORY since 2026-07-22 — mechanical reporting of the AGENTS.md parallelism rules for multi-agent waves (ADR 0095). Both the lane hot-file ownership check and the cross-open-PR collision guard run on every PR and are read; neither blocks a merge."
+    deletion_consequence: "concurrent multi-agent work can collide on a hot file with no signal at all. Advisory keeps the signal and removes only the block — which suits a check whose Linear lookup is best-effort and fails open without LINEAR_API_KEY, i.e. one that could never honestly gate a merge."
     duplicate_group: null
     adr: [ADR-0101]
     branch_protection_context: "lane file-ownership + cross-PR collision"
-    failure_evidence: "lane_guard.py / pr_collision_guard.py exit non-zero on a cross-lane or cross-PR hot-file clash."
+    failure_evidence: "lane_guard.py / pr_collision_guard.py exit non-zero on a cross-lane or cross-PR hot-file clash; the job reddens without blocking."
     evidence_status: verified-this-session
-    status: transitional
-    notes: "REQUIRED (ADR-0101) but MUST be hardened FIRST: SLICE-LANEGUARD-HARDEN pins checkout@v7 + setup-python@v6 to SHAs and adds timeout-minutes + concurrency. OGD promotion order = 3rd, after an observation window characterizes the best-effort LINEAR lookup failure mode."
+    status: active
+    notes: "ADVISORY (ADR-0101 as amended 2026-07-22, CI simplification). It was slated to become the 3rd required context under OGD after an observation window; OGD is cancelled, so it stays advisory and the observation window is moot. `branch_protection_context` is retained as the job's exact context STRING — it is not in the required set. `timeout_minutes`/`concurrency` corrected here to the values the workflow actually declares (they were recorded as null)."
 
   # ===== nightly.yml ================================================================================
   - id: NIGHTLY-PIPAUDIT
@@ -601,7 +619,7 @@ controls:
     failure_evidence: "n/a — advisory (continue-on-error); the report artifact is the deliverable."
     evidence_status: verified-this-session
     status: active
-    notes: "6.12: keep advisory OR promote is a risk/product decision. ADR-0101 defines owner + response + escalation threshold; promotion (if any) is OGD."
+    notes: "6.12: keep advisory OR promote is a risk/product decision. ADR-0101 defines owner + response + escalation threshold. With OGD cancelled (2026-07-22) there is no promotion pathway staged; growing the required set is an ADR amendment."
 
   - id: NIGHTLY-ASR
     name: "[asr] toolchain smoke (nightly)"

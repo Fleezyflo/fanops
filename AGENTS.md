@@ -183,15 +183,16 @@ work-loss. Cap concurrency so drift is rare; when it happens, use the re-sync pr
     fail-open without it). Also runs at `pre-push` (prefix-only there, fail-open on infra gaps).
   - `scripts/pr_collision_guard.py` refuses a PR whose hot file is ALSO open in another PR to `main` —
     the real drift risk when many `cursor/mol-*` agents run at once (no lane/Linear needed).
-  A PR touching no hot files (docs/tooling/tests) passes trivially. Merge authority is the
-  `fanops-orchestrator`: it lands PRs serially after sub-agent verification. That serial-landing
-  contract is a **convention today** — the hook land-gate that once refused unverified merges is
-  DORMANT (see the status marker below). Never require code-owner review in branch protection — that
-  would block the orchestrator's autonomous merge. The orchestration that drives lanes lives in
-  `.cursor/agents/fanops-*.md` + `.agents/*-agent.md` (Linear-driven queue, orchestrator-owned serial
-  merges). **Remaining human toggles:** add `LINEAR_API_KEY` as an Actions secret (for MOL-id lane
-  resolution) and mark the `lane-guard` check as REQUIRED in branch protection to make it blocking
-  rather than advisory.
+  A PR touching no hot files (docs/tooling/tests) passes trivially. Both checks are **advisory** —
+  they run on every PR and their verdict is read, but neither blocks a merge (CI simplification,
+  2026-07-22). That fits a check whose Linear lookup is best-effort and fails open without
+  `LINEAR_API_KEY`. Merge authority is the `fanops-orchestrator`: it lands PRs serially after
+  sub-agent verification. That serial-landing contract is a **convention today** — the hook land-gate
+  that once refused unverified merges is DORMANT (see the status marker below). Never require
+  code-owner review in branch protection — that would block the orchestrator's autonomous merge. The
+  orchestration that drives lanes lives in `.cursor/agents/fanops-*.md` + `.agents/*-agent.md`
+  (Linear-driven queue, orchestrator-owned serial merges). **Remaining human toggle:** add
+  `LINEAR_API_KEY` as an Actions secret, for MOL-id lane resolution.
 - **Advisory (this file — no git hook exists to enforce it):** `git reset --hard`, force-push to a
   FEATURE branch, and "commit only staged files". Git has no `pre-reset` hook, so these rely on the
   agent obeying the guardrails above. Treat them as absolute anyway; they are the exact operations
