@@ -82,6 +82,7 @@ with no migration; a contract written in the declaration-only shape in the inter
 | docs/adr/0106-declaration-only-change-contracts.md | the governing decision | declared |
 | docs/governance/AGENT_CHANGE_SYSTEM_ROADMAP.md | Phases 4–8 marked cancelled; the sequencing decisions they carried voided | declared |
 | AGENTS.md | the agent-facing route: the four-step contract flow, and normal work no longer routed through dormant orchestration | declared |
+| ORCHESTRATION.md | the wave quickstart; a banner saying it is not the normal path and its gate is permanently dormant | declared |
 | docs/contracts/CC-2026-07-22-declaration-only-contracts.md | this declaration | declared |
 
 ### prohibited_scope
@@ -112,6 +113,7 @@ with no migration; a contract written in the declaration-only shape in the inter
 | docs/adr/0106-declaration-only-change-contracts.md | NEW | the governing decision |
 | docs/governance/AGENT_CHANGE_SYSTEM_ROADMAP.md | MODIFIED | Phases 4–8 CANCELLED; D2/D4/B1/B2/P5-1/P5-2 voided |
 | AGENTS.md | MODIFIED | the four-step flow; orchestration de-routed |
+| ORCHESTRATION.md | MODIFIED | the not-the-normal-path banner; the gate's dormancy stated as permanent |
 | docs/contracts/CC-2026-07-22-declaration-only-contracts.md | NEW | this declaration |
 
 ### coupling

@@ -164,7 +164,9 @@ STAGE_B: tuple[Rule, ...] = (
          lambda di: bool(_codes(di) & {"AUTH-BLOB-MOVED", "AUTH-MISSING-FILE"}),
          "a cited authority changed after approval, or its file no longer exists", "operator"),
     Rule("ST-3", STOP, (HEAD, MERGE), lambda di: di.gates.content_approval != "satisfied",
-         "no `approved` event names the current declaration digest `D`", "operator"),
+         "nothing names the current declaration digest `D` — a declaration-only contract records "
+         "approval in `approved_digest` (ADR-0106), a lifecycle-bearing one in an `approved` event",
+         "operator"),
     # `ST-9` REPLACES NOTHING. The deleted `ST-4` asked whether a PR review approved the head, which
     # in a one-operator repository asked whether a person who does not exist had acted — unsatisfiable
     # rather than strict. This asks whether the sole authority authorized THIS parent for THIS
