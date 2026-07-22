@@ -45,7 +45,7 @@ from .adapters import (REPO, ArtifactPort, ImpactPort, MergeFactsPort, PortError
 from .decide import HEAD, MERGE, PRE, decide
 from .model import (CheckRun, CI_REGISTRY_PATH, EXIT_CONTINUE, EXIT_UNTRUSTWORTHY,
                     MAIN_REF as MODEL_MAIN_REF, DecisionInput, Derived, MergeFacts)
-from .parse import BOUNDARY, digest as digest_of, parse
+from .parse import BOUNDARY, digest as digest_of, digest_range, parse
 
 CONTRACTS = "docs/contracts"
 
@@ -121,9 +121,15 @@ def run(ports: Ports, path: str, *, base: str | None, head: str | None, pr: int 
         claimed = next((e.get("base_sha") for e in decl.events
                         if e.kind == "created" and e.get("base_sha")), "")
         if not claimed:
+            # A DECLARATION-ONLY CONTRACT NAMES NO BASE, DELIBERATELY (ADR-0106). A SHA written into
+            # a tracked file is a transient value that is stale the moment `main` advances, and the
+            # anchor it used to buy — pinning the required-context set for a post-merge acceptance
+            # rederivation — has no consumer left, because there is no post-merge rederivation. The
+            # honest base for an in-flight branch is the merge base, which `diff_names` already takes
+            # by using the three-dot form against `origin/main`.
             base = MAIN_REF
-            evidence.append(f"the contract declares no `created.base_sha`, so the changed-file set "
-                            f"is computed against {MAIN_REF}")
+            evidence.append(f"no `created.base_sha` is recorded, so the changed-file set is the "
+                            f"three-dot diff against {MAIN_REF} — its merge base with this head")
         elif ports.repo.resolve(claimed) is None:
             # NOT a silent fallback. Comparing against `MAIN_REF` anyway would recompute the exact
             # empty diff this change exists to stop producing, and then report it as a finding about
@@ -662,16 +668,22 @@ def cmd_state(args) -> int:
 
 
 def cmd_digest(args) -> int:
+    """`D`, under whichever shape the file is. `parse.digest_range` is the single definition.
+
+    Computing the range here as well is what let the two drift: this used to re-split on `BOUNDARY`
+    itself and refuse a file without one, so the CLI answered "undefined" for a shape the parser
+    would go on to digest perfectly well.
+    """
     p = REPO / args.path
     if not p.exists():
         print(f"{args.path} does not exist", file=sys.stderr)
         return EXIT_UNTRUSTWORTHY
     raw = p.read_bytes()
-    decl = raw.split(BOUNDARY, 1)[0]
-    if BOUNDARY not in raw:
-        print(f"{args.path} has no `## Lifecycle` boundary — `D` is undefined", file=sys.stderr)
+    if raw.count(BOUNDARY) > 1:
+        print(f"{args.path} has more than one `## Lifecycle` boundary — the declaration extent, and "
+              f"therefore `D`, is ambiguous", file=sys.stderr)
         return EXIT_UNTRUSTWORTHY
-    print(digest_of(decl))
+    print(digest_of(digest_range(raw)))
     return EXIT_CONTINUE
 
 

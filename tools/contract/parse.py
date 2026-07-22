@@ -24,6 +24,11 @@ from .model import (ALL_FIELDS, FIELD_TYPES, FRONTMATTER_FIELDS, MALFORMED, MISS
                     Field, LifecycleEvent)
 
 BOUNDARY = b"\n## Lifecycle\n"
+# The three ADR-0106 approval fields, elided from `D`. Kept as a literal here rather than imported
+# from `model.APPROVAL_FIELDS` because this is a BYTE rule: the pattern is what a digest depends on,
+# and a digest whose definition follows a list someone can extend elsewhere is not a fixed rule.
+# `test_approval_fields_and_digest_elision_agree` asserts the two never drift apart.
+_APPROVAL_LINES = re.compile(rb"(?m)^(?:approved_digest|approval_token|execution_gate):[^\n]*\n")
 
 _KEY = re.compile(r"^[a-z][a-z0-9_]*$")
 _HEADING = re.compile(r"^###\s+(?P<name>[a-z][a-z0-9_]*)\s*$")
@@ -50,6 +55,32 @@ def digest(decl: bytes) -> str:
     return "sha256:" + hashlib.sha256(decl).hexdigest()
 
 
+def digest_range(raw: bytes) -> bytes:
+    """The exact bytes `D` covers, under whichever of the two contract shapes this file is.
+
+    LIFECYCLE-BEARING (a `## Lifecycle` boundary is present) — everything before the boundary,
+    byte-identical to ADR-0105 §3. The six contracts written under that model keep the digests their
+    approvals already name; nothing here recomputes them.
+
+    DECLARATION-ONLY (no boundary, ADR-0106) — the whole file, with its three approval lines elided.
+    The elision is what lets the approval live inside the artifact it approves without
+    self-reference: recording the operator's answer leaves `D` BYTE-IDENTICAL, so the digest the
+    operator named is still the digest the file computes afterwards. ADR-0105 §Status already relies
+    on exactly this property for an ADR's own `approved_digest`; the difference is only that an ADR
+    gets it by excluding the whole front matter, which is not available here because a contract's
+    front matter carries load-bearing declaration fields (`traits`, `authorized_actions`,
+    `blast_radius`) that approval MUST cover.
+
+    ALL THREE APPROVAL FIELDS ARE ELIDED, AND THIS IS NOT A HOLE. They are the RECORD of the two
+    operator acts, never part of what was authorized. Everything an approval is about — every field
+    above — is inside `D`, so any edit to the change being authorized still voids the approval.
+    Leaving the token inside would make writing it change `D` and void the approval in the act of
+    recording it, which is the unsatisfiable-gate shape ADR-0105 §4.1a already had to correct once.
+    """
+    decl, _, n = split(raw)
+    return decl if n else _APPROVAL_LINES.sub(b"", raw)
+
+
 def split(raw: bytes) -> tuple[bytes, bytes, int]:
     """Return (declaration bytes, lifecycle bytes, boundary count).
 
@@ -72,7 +103,7 @@ def parse(raw: bytes, path: str = "") -> Declaration:
     """Parse a whole contract file. Never raises on bad input; it returns diagnostics."""
     diags: list[Diagnostic] = []
     decl, life, boundaries = split(raw)
-    d = Declaration(path=path, digest=digest(decl), raw=raw, decl_bytes=decl,
+    d = Declaration(path=path, digest=digest(digest_range(raw)), raw=raw, decl_bytes=decl,
                     boundary_count=boundaries)
 
     if b"\r\n" in raw:
@@ -83,12 +114,10 @@ def parse(raw: bytes, path: str = "") -> Declaration:
                                             "separator and the digest are both byte-literal"))
         return _with(d, diagnostics=tuple(diags))
 
-    if boundaries == 0:
-        diags.append(Diagnostic(MISSING, "NO-BOUNDARY", "no `## Lifecycle` boundary line",
-                                expected="a line exactly `## Lifecycle`",
-                                remediation="add the boundary; without it the declaration extent, "
-                                            "and therefore `D`, is undefined"))
-        return _with(d, diagnostics=tuple(diags))
+    # NO BOUNDARY IS NOT A DEFECT — IT IS THE DECLARATION-ONLY SHAPE (ADR-0106). It was a hard parse
+    # failure while every contract had to carry an append chain; the extent of `D` is now settled by
+    # `digest_range` in both shapes, so the boundary count SELECTS a model instead of gating one.
+    # A file with two boundaries is still ambiguous, and still refused.
     if boundaries > 1:
         diags.append(Diagnostic(MALFORMED, "MULTI-BOUNDARY",
                                 f"{boundaries} `## Lifecycle` boundary lines; the declaration "

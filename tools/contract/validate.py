@@ -23,9 +23,9 @@ from __future__ import annotations
 import re
 
 from .classify import GENERATED, UNAUTHORIZED, any_match
-from .model import (ACTIONS, EMPTY_ALLOWED_FIELDS, MALFORMED, MANDATORY_FIELDS, MISSING,
-                    SCOPE_BASES, SEMANTIC, SURFACE_KINDS, TABLE_FIELDS, TRAIT_CONDITIONAL_FIELDS,
-                    TRAITS, Diagnostic)
+from .model import (ACTIONS, APPROVAL_FIELDS, EMPTY_ALLOWED_FIELDS, MALFORMED, MANDATORY_FIELDS,
+                    MISSING, SCOPE_BASES, SEMANTIC, SURFACE_KINDS, TABLE_FIELDS,
+                    TRAIT_CONDITIONAL_FIELDS, TRAITS, Diagnostic)
 
 _ID = re.compile(r"^CC-\d{4}-\d{2}-\d{2}-[a-z0-9]+(?:-[a-z0-9]+){0,5}$")
 _PRINT_BUDGET = re.compile(r"_CLI_PRINT_COUNT\s*=\s*\d+")
@@ -87,6 +87,42 @@ def v_schema(decl, filename_stem: str, in_contracts_dir: bool = True):
             out.append(Diagnostic(MALFORMED, "ENUM", f"`allowed_scope.basis` {row.get('basis')!r} "
                                                      f"is not permitted", got=str(row.get("basis")),
                                   expected=", ".join(SCOPE_BASES)))
+    out += _approval_shape(decl)
+    return out
+
+
+def _approval_shape(decl):
+    """The two ways the ADR-0106 approval fields can be wrong. Both are `A5`, not formatting.
+
+    ONE CONTRACT, ONE APPROVAL ROUTE. `lifecycle.gates` selects the route from `boundary_count`, so
+    a lifecycle-bearing contract carrying `approved_digest` has an approval record that is never
+    read. An inert authorization record is worse than an absent one: it looks like approval in the
+    diff and decides nothing, which is exactly the shape a reader would trust and a rule would miss.
+
+    A DIGEST WITHOUT A TOKEN IS NOT AN OPERATOR ACT. The `approved` event it replaces required both
+    (§4.2) — the digest says WHAT was approved and the token is the operator's own words saying it
+    was. Either alone records half of an authorization, so the pair is required together or not at
+    all; neither is required on its own, because a contract exists before it is approved.
+    """
+    out: list[Diagnostic] = []
+    present = [f for f in APPROVAL_FIELDS if decl.value(f)]
+    if decl.boundary_count and present:
+        out.append(Diagnostic(MALFORMED, "APPROVAL-DUAL-ROUTE",
+                              f"this contract carries a `## Lifecycle` section AND the "
+                              f"declaration-only approval field(s) {', '.join(present)} — the "
+                              f"lifecycle route is the one that is read, so these decide nothing",
+                              got=", ".join(present), expected="one route, not two",
+                              remediation="a lifecycle-bearing contract records approval as an "
+                                          "`approved` event (ADR-0105 §4.2); a declaration-only one "
+                                          "records it in front matter (ADR-0106) — never both"))
+    digest_v, token_v = decl.value("approved_digest"), decl.value("approval_token")
+    if bool(digest_v) != bool(token_v):
+        got = "approved_digest" if digest_v else "approval_token"
+        out.append(Diagnostic(MALFORMED, "APPROVAL-INCOMPLETE",
+                              f"`{got}` is present without its pair — an approval names both WHAT "
+                              f"was approved and the operator words that approved it",
+                              got=got, expected="approved_digest and approval_token together",
+                              remediation="record both, or neither until the operator has answered"))
     return out
 
 

@@ -255,7 +255,6 @@ CONTROLS: list[Control] = [
     # `GS-2` hid because coverage was measured over rule ids, and `ST-8` looked covered via `GS-1`.
     # These close the same class everywhere else: each names a code some rule reads, and injects the
     # defect that produces it. `NC-C31` is what keeps the set complete as rules are added.
-    Control("NC-C32", "no `## Lifecycle` boundary", "A1", "NO-BOUNDARY", "grammar"),
     Control("NC-C33", "two `## Lifecycle` boundaries", "A1", "MULTI-BOUNDARY", "grammar"),
     Control("NC-C34", "no front matter at all", "A1", "NO-FRONTMATTER", "grammar"),
     Control("NC-C35", "front matter never closed", "A1", "UNCLOSED-FRONTMATTER", "grammar"),
@@ -321,6 +320,31 @@ CONTROLS: list[Control] = [
     Control("NC-P15", "the same unavailable impact stops halting `at-head`", "", "", "derivation"),
     Control("NC-P16", "`T2` stops deriving `cross-system` from a real head diff", "", "",
             "derivation"),
+
+    # ── ADR-0106 · declaration-only contracts ───────────────────────────────────────────────
+    #
+    # THE RISK THE NEW SHAPE INTRODUCES IS A SILENT PASS, not a rejection. Admitting a file with no
+    # `## Lifecycle` boundary means the gate that used to fire on it (`A1` via `NO-BOUNDARY`) is
+    # gone, so every control below asks the same question from a different side: does an UNAPPROVED
+    # declaration-only contract still stop?
+    Control("NC-D1", "a declaration-only contract with no approval reads as approved", "ST-3", "",
+            "decision"),
+    Control("NC-D2", "an `approved_digest` naming a stale `D` reads as approved", "ST-3", "",
+            "decision"),
+    Control("NC-D3", "an approval recorded in BOTH routes, so the one read is ambiguous", "A5",
+            "APPROVAL-DUAL-ROUTE", "decision"),
+    Control("NC-D4", "a digest recorded with no operator token beside it", "A5",
+            "APPROVAL-INCOMPLETE", "decision"),
+    Control("NC-D5", "recording the approval changes `D`, so approval can never be satisfied", "",
+            "", "derivation"),
+    Control("NC-D6", "a landed declaration-only contract edited in place", "A5", "DECL-DIVERGED",
+            "decision"),
+    Control("NC-D7", "a `live` declaration-only contract with no separate execution gate", "RF-1",
+            "", "decision"),
+    Control("NC-D8", "the legacy digest moved, invalidating every landed approval", "", "",
+            "repository"),
+    Control("NC-D9", "a declaration-only contract skips the scope check", "ST-1",
+            "SCOPE-UNAUTHORIZED", "decision"),
 ]
 
 
@@ -578,6 +602,28 @@ def build(*, cid="CC-2026-07-18-example", traits="", stops="", adr_sha=None, bas
     d = digest(decl.encode().rstrip(b"\n"))
     life = _LIFE.format(cid=cid, D=approve_digest or d, gate=gate, extra=extra, base=base)
     return decl.encode().rstrip(b"\n") + BOUNDARY + life.encode()
+
+
+def build_decl_only(*, approve=True, approve_digest=None, token="APPROVE", gate=None,
+                    trailer="", **kw) -> bytes:
+    """The ADR-0106 shape: the same declaration, with NO `## Lifecycle` section at all.
+
+    `approve=True` writes the approval the way an agent does — compute `D` on the unapproved bytes,
+    then insert the line — so every control that uses it also exercises the elision property that
+    makes writing the approval leave `D` unchanged. A control that hand-computed the digest instead
+    would pass even if that property broke.
+    """
+    kw.pop("extra", None); kw.pop("gate", None); kw.pop("base", None)
+    body = build(**kw).split(BOUNDARY, 1)[0] + b"\n" + trailer.encode()
+    lines = []
+    if approve:
+        lines.append(f"approved_digest: {approve_digest or digest(body)}")
+        lines.append(f"approval_token: {token}")
+    if gate is not None:
+        lines.append(f"execution_gate: {gate}")
+    if not lines:
+        return body
+    return body.replace(b"supersedes: []\n", b"supersedes: []\n" + "\n".join(lines).encode() + b"\n", 1)
 
 
 def _ports(repo=None, impact=None, artifacts=None, registry=None, merge_facts=None):
@@ -2443,6 +2489,105 @@ def _c_nc_p16(c):
     if "cross-system" not in ctx["derived"].traits:
         return False, f"NOT DETECTED — `T2` fired but traits are {sorted(ctx['derived'].traits)}"
     return True, "`T2` still derives `cross-system` from a real head diff, with `T1` silent"
+
+
+# ── ADR-0106 · declaration-only contracts ───────────────────────────────────────────────────
+def _c_nc_d1(c):
+    """The contract PARSES — and is still refused, because nothing has approved it."""
+    decision, ctx = _run(build_decl_only(approve=False))
+    if any(d.code == "NO-BOUNDARY" for d in decision.diagnostics):
+        return False, "NOT DETECTED — the declaration-only shape still emits `NO-BOUNDARY`"
+    if not ctx["decl"].value("objective"):
+        return False, "NOT DETECTED — the file was admitted but its fields did not parse"
+    if decision.rule != "ST-3":
+        return False, f"NOT DETECTED — rule {decision.rule} fired, expected ST-3"
+    return True, f"parsed as declaration-only, then ST-3 → {decision.outcome}"
+
+
+def _c_nc_d2(c):
+    return _decides(c, build_decl_only(approve_digest="sha256:" + "0" * 64))
+
+
+def _c_nc_d3(c):
+    """Both routes at once. The lifecycle one is read, so the front-matter pair decides nothing."""
+    raw = build().replace(b"supersedes: []\n",
+                          b"supersedes: []\napproved_digest: sha256:" + b"0" * 64
+                          + b"\napproval_token: APPROVE\n", 1)
+    return _decides(c, raw)
+
+
+def _c_nc_d4(c):
+    body = build_decl_only(approve=False)
+    return _decides(c, body.replace(b"supersedes: []\n",
+                                    b"supersedes: []\napproved_digest: sha256:" + b"0" * 64 + b"\n",
+                                    1))
+
+
+def _c_nc_d5(c):
+    """THE LOAD-BEARING PROPERTY. If recording the approval moved `D`, `ST-3` could never clear.
+
+    Asserted in the direction that can fail silently: the digest BEFORE the operator answers must
+    equal the digest AFTER the agent writes the answer down, including the live-execution gate,
+    because an agent writes all three lines into a file whose digest was computed without them.
+    """
+    unapproved = parse(build_decl_only(approve=False)).digest
+    approved = parse(build_decl_only()).digest
+    with_gate = parse(build_decl_only(gate="RUN IT")).digest
+    if unapproved != approved:
+        return False, f"NOT DETECTED — writing the approval moved D: {unapproved[:20]} -> {approved[:20]}"
+    if unapproved != with_gate:
+        return False, f"NOT DETECTED — writing `execution_gate` moved D: {with_gate[:20]}"
+    if parse(build_decl_only(trailer="\nan added byte\n")).digest == unapproved:
+        return False, "NOT DETECTED — a change to the declaration ITSELF did not move D"
+    return True, f"D is stable across recording the approval ({unapproved[:20]}…) and moves on an edit"
+
+
+def _c_nc_d6(c):
+    landed = build_decl_only()
+    return _decides(c, landed.replace(b"Prove the compiler", b"Prove the COMPILER", 1),
+                    main_blob=landed)
+
+
+def _c_nc_d7(c):
+    decision, _ = _run(build_decl_only(traits="live", gate="RUN IT"))
+    if decision.rule == "RF-1":
+        return False, "the control is inverted — RF-1 fired WITH an execution gate recorded"
+    return _decides(c, build_decl_only(traits="live"))
+
+
+def _c_nc_d8(c):
+    """Every contract already on `main` must keep the digest its approval names. VERIFICATION ITEM.
+
+    Reads the landed files and recomputes `D` through `digest_range`, then compares against the
+    digest each contract's own `approved` event records. A change to the digest rule that reached
+    the legacy shape would silently un-approve six landed authorizations.
+    """
+    from .parse import digest_range
+    contracts = sorted((REPO / "docs" / "contracts").glob("CC-*.md"))
+    if not contracts:
+        return False, "CONTROL ERRORED: no landed contracts found to check"
+    broken = []
+    for p in contracts:
+        raw = p.read_bytes()
+        d = parse(raw)
+        # THE LAST `approved` EVENT, because that is the one `lifecycle.gates` reads. A contract may
+        # be re-approved after an amendment; comparing against the first would check a digest the
+        # gate itself abandoned.
+        recorded = ([e.get("digest") for e in d.events if e.kind == "approved"] or [""])[-1]
+        if not recorded:
+            continue
+        if digest(digest_range(raw)) != recorded:
+            broken.append(f"{p.name}: computes {digest(digest_range(raw))[:20]}…, "
+                          f"approval names {recorded[:20]}…")
+    if broken:
+        return False, "NOT DETECTED — the legacy digest moved:\n             " + \
+                      "\n             ".join(broken)
+    return True, f"all {len(contracts)} landed contract(s) still compute the digest their approval names"
+
+
+def _c_nc_d9(c):
+    """The scope check is INDEPENDENT of the lifecycle and must survive its removal."""
+    return _decides(c, build_decl_only(), changed=("src/fanops/example.py", "src/fanops/rogue.py"))
 
 
 # ── the harness ─────────────────────────────────────────────────────────────────────────────
