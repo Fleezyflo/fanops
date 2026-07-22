@@ -25,7 +25,7 @@ source & tests > live GitHub config > accepted ADRs & registries > generated doc
 **Step zero, before the first edit:**
 
 ```bash
-python -m tools.contract preflight src/fanops/models.py src/fanops/studio/views_review.py
+python -m tools.contract preflight src/fanops/caption.py src/fanops/digest.py   # <- YOUR paths
 ```
 
 It needs **no contract and no implementation** — just the exact paths you intend to touch — and
