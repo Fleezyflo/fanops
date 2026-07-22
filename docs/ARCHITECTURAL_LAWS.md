@@ -175,8 +175,8 @@
 ### LAW-FAIL-03 — A correctness prerequisite refuses loudly (cv2 required; no silent centre-crop)
 - Scope: smart-framing render path (no-extras install). · Owner: framing + ci-lane. · ADR: 0034 (catalogue); 0103 (reframe principle).
 - Evidence: `require_cv2` → `ToolchainMissingError` (exit 2); `scripts/base_install_smoke.py`.
-- Enforcement: **enforced** — the base-install smoke asserts the loud refusal. · CI/validator: `CI-BASEINSTALL` (required-intent; currently advisory, promotion 2nd in Phase E).
-- Bypass: `CI-BASEINSTALL` not yet a *live* required context (advisory today). · Residual: AR-3 (Phase-E promotion). · Remediation: SLICE-BASEINSTALL-REQUIRED (Phase E).
+- Enforcement: **enforced** — the base-install smoke asserts the loud refusal. · CI/validator: `CI-BASEINSTALL` (advisory; it runs on every PR and its verdict is read, but it does not block a merge).
+- Bypass: `CI-BASEINSTALL` is advisory, so a red smoke does not hold the merge. · Residual: AR-3 — now PERMANENT, not pending: the staged promotion (OGD) was cancelled 2026-07-22 and the required set is final at two contexts. · Remediation: none staged; promoting it again is an ADR-0101 amendment.
 
 ### LAW-FAIL-04 — Schedule monotonicity is asserted at import time
 - Scope: `crosspost` scheduling. · Owner: crosspost. · ADR: —.
@@ -265,8 +265,8 @@
 ### LAW-CI-06 — Squash-only + linear history; a generated-artifact conflict is regenerated, never hand-merged
 - Scope: `main` merge strategy. · Owner: operator + `tools/arch`. · ADR: 0102.
 - Evidence: ADR-0102 §1/§4; the #637+ squash convention; the arch drift gate rejects a hand-merged derived file.
-- Enforcement: **partially-enforced / proposed** — the derived-file half is **enforced** (`ARCH-GATE` byte-compare); `required_linear_history` + squash-only-button are **Phase-E** (proposed). Commit-message grammar is **documented-only** (reviving a gate = the dormant land-gate). · CI/validator: `ARCH-GATE`; branch-protection `required_linear_history` (Phase E).
-- Bypass: merge-commit is legal until Phase E; message grammar unenforced (AR-4). · Residual: AR-4. · Remediation: SLICE-LINEAR-HISTORY (Phase E).
+- Enforcement: **partially-enforced** — the derived-file half is checked by the `ARCH-GATE` byte-compare (advisory since 2026-07-22) and blocks through the unit lane (`CI-UNIT-ARCHGOV`); `required_linear_history` + squash-only-button are NOT set and are no longer staged (OGD cancelled). Commit-message grammar is **documented-only** (reviving a gate = the dormant land-gate). · CI/validator: `ARCH-GATE` (advisory) + `CI-UNIT-ARCHGOV` (blocking).
+- Bypass: merge-commit is legal and message grammar unenforced (AR-4). · Residual: AR-4 — now PERMANENT unless the operator separately approves a branch-protection change; OGD was cancelled 2026-07-22. · Remediation: none staged.
 
 ### LAW-CI-07 — Workflow hygiene: every job SHA-pins its actions and declares a timeout + concurrency
 - Scope: `.github/workflows/**`. · Owner: ci-lane. · ADR: 0100 (DC-6).

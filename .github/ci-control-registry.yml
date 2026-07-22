@@ -284,8 +284,8 @@ controls:
     trigger: [pull_request, push]
     classification: required
     runtime_class: fast
-    justification: "the unit-lane arch tests. Model A (ADR-0101) names ARCH-GATE the AUTHORITATIVE arch merge-gate, but ARCH-GATE is not a required context until OGD (M1) — so TODAY this collection is the sole REQUIRED enforcement of arch drift/policy/registries, AND it carries the distinct invariants gate does not run (determinism, pure-function-of-source, reachability, field-authority). The overlap is retained (duplicate_group arch-drift-policy), not scoped away; de-dup is a post-M1 follow-up."
-    deletion_consequence: "TODAY (ARCH-GATE not yet required): arch drift/policy/registries lose their ONLY required enforcement AND the distinct invariants (determinism, pure-function-of-source, reachability, field-authority) lose their check. Post-OGD, once ARCH-GATE is a required context, deletion would drop only the four distinct invariants — which is why de-dup is deferred to then."
+    justification: "the unit-lane arch tests. Since 2026-07-22 ARCH-GATE is advisory and will not be promoted, so this collection is PERMANENTLY the sole merge-blocking enforcement of arch drift/policy/registries, AND it carries the distinct invariants gate does not run (determinism, pure-function-of-source, reachability, field-authority). The overlap is retained by design (duplicate_group arch-drift-policy); de-dup is CLOSED, not deferred."
+    deletion_consequence: "arch drift/policy/registries lose their ONLY merge-blocking enforcement AND the distinct invariants (determinism, pure-function-of-source, reachability, field-authority) lose their check. With ARCH-GATE advisory there is no second blocking implementation to fall back on, so this is unconditionally the worst deletion in the arch set."
     duplicate_group: arch-drift-policy
     adr: [ADR-0100, ADR-0101]
     failure_evidence: "test_no_blocking_policy_findings / test_derived_artifacts_are_not_stale fail on an injected defect; the negative-control suite proves the validators discriminate."
@@ -304,7 +304,7 @@ controls:
     trigger: [pull_request, push]
     classification: required
     runtime_class: fast
-    justification: "the tools/ci static validator run as a unit test, so DC-1/2/4/5/6 block a PR that diverges the registry from the workflow implementation. It delegates to tools.ci.checks.run_static + shape_findings — the SAME code the CLI `static` verb runs — so the pytest gate and the CLI can never disagree on a commit. DC-3 (deployed-state vs live GitHub) is NOT here: it needs an authenticated admin probe and is a scheduled / OGD concern (ADR-0100, ADR-0101)."
+    justification: "the tools/ci static validator run as a unit test, so DC-1/2/4/5/6 block a PR that diverges the registry from the workflow implementation. It delegates to tools.ci.checks.run_static + shape_findings — the SAME code the CLI `static` verb runs — so the pytest gate and the CLI can never disagree on a commit. DC-3 (deployed-state vs live GitHub) is NOT here: it needs an authenticated admin probe and is a scheduled concern (ADR-0100, ADR-0101)."
     deletion_consequence: "registry<->workflow drift stops blocking PRs — a renamed required context (DC-1), an untracked job or phantom control (DC-2), prose calling a required context advisory (DC-4), a duplicate_group naming an unknown control (DC-5), or a job that drops its timeout / SHA-pin (DC-6) would merge unchallenged. The exact divergence class the control registry exists to prevent."
     duplicate_group: null
     adr: [ADR-0100, ADR-0101]
@@ -619,7 +619,7 @@ controls:
     failure_evidence: "n/a — advisory (continue-on-error); the report artifact is the deliverable."
     evidence_status: verified-this-session
     status: active
-    notes: "6.12: keep advisory OR promote is a risk/product decision. ADR-0101 defines owner + response + escalation threshold; promotion (if any) is OGD."
+    notes: "6.12: keep advisory OR promote is a risk/product decision. ADR-0101 defines owner + response + escalation threshold. With OGD cancelled (2026-07-22) there is no promotion pathway staged; growing the required set is an ADR amendment."
 
   - id: NIGHTLY-ASR
     name: "[asr] toolchain smoke (nightly)"

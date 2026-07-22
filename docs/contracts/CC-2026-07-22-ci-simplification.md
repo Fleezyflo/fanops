@@ -76,6 +76,8 @@ in — see `blast_radius` in the front matter.
 | docs/adr/0101-required-checks-and-merge-gate-policy.md | the merge-gate policy of record | declared |
 | docs/ci/**.md | the CI governance docs that describe the cancelled rollout | declared |
 | AGENTS.md | the DC-4 prose surface, which described the lane guard as a pending promotion | declared |
+| docs/ARCHITECTURAL_LAWS.md | LAW rows staged `CI-BASEINSTALL` promotion and `required_linear_history` as Phase-E remediation | declared |
+| docs/ENGINEERING_STANDARDS.md | the STD row named `CI-BASEINSTALL` promotion as planned work | declared |
 | scripts/ci_e2e_relevance.py | the relevance predicate | declared |
 | tests/test_ci_e2e_relevance.py | its proof, in the unit lane | declared |
 | docs/contracts/CC-2026-07-22-ci-simplification.md | this declaration | declared |
@@ -102,6 +104,8 @@ in — see `blast_radius` in the front matter.
 | docs/ci/CI_GOVERNANCE_INDEX.md | MODIFIED | lifecycle status, ownership matrix, decision tree |
 | docs/ci/CI_PROGRAM_LIFECYCLE.md | MODIFIED | Phase 5 CANCELLED; Phase 6 residual stated honestly |
 | AGENTS.md | MODIFIED | lane guard described as advisory; the promotion toggle removed |
+| docs/ARCHITECTURAL_LAWS.md | MODIFIED | AR-3 and AR-4 residuals restated as permanent rather than pending a cancelled rollout |
+| docs/ENGINEERING_STANDARDS.md | MODIFIED | `CI-BASEINSTALL` promotion removed from planned work |
 | scripts/ci_e2e_relevance.py | NEW | the pure relevance predicate + its CLI |
 | tests/test_ci_e2e_relevance.py | NEW | both directions and the fail-safe polarity |
 | docs/contracts/CC-2026-07-22-ci-simplification.md | NEW | this declaration |
