@@ -197,7 +197,7 @@ operates from here:
 | declaration digest approval | ADR-0106 §2–§3 |
 | expected surfaces versus the actual diff | ADR-0105 §5.3 · `python -m tools.contract scope` |
 | a separate operator gate for a live action | ADR-0105 §1 `T4` · ADR-0106 §2 |
-| unit CI; relevance-gated E2E | ADR-0101 as amended 2026-07-22 |
+| unit CI (the sole routine PR blocker); the real-tooling E2E suite on demand only | ADR-0101 as amended 2026-07-22 |
 
 ## Program Execution Method — as executed, for the record
 

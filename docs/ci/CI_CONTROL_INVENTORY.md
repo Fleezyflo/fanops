@@ -83,7 +83,7 @@ evidence is `to-verify-phase-C` (re-read when the `tools/ci` validators are buil
 | Context | Distinct invariant | When it does its work |
 |---|---|---|
 | `unit (fast, no toolchain)` | hermetic logic + lint + SLO + secret-scan + lock-drift + skip→fail hook + the arch and CI-registry validators | every PR — the sole ROUTINE blocker |
-| `real-tooling E2E (must run, not skip)` | real ffmpeg/whisper pipeline + cross-face proofs + validator-effectiveness | every PR, but the suite executes only on a runtime-relevant change (`scripts/ci_e2e_relevance.py`); the context always reports |
+| `real-tooling E2E (must run, not skip)` | real ffmpeg/whisper pipeline + cross-face proofs + validator-effectiveness | **the context reports on every PR in seconds; the suite is ON-DEMAND** — manual dispatch, the 04:00 UTC nightly schedule, or an explicit `force-e2e` request (`scripts/ci_e2e_trigger.py`) |
 
 Everything else runs and is read without blocking: the architecture gate, impact report, base-install
 smoke, and the lane + cross-open-PR collision guard. Declassifying them is **not** deleting them — the
@@ -103,9 +103,10 @@ scoping the unit lane down would leave those checks blocking nothing at all.
   deferred. *(History: this was "DECIDED (Model A), NOT YET RESOLVED" while OGD M1 was still expected
   to promote `gate`; before 2026-07-18 it wrongly claimed the scoping was already done.)*
 - **`negative-controls`** — `CI-E2E-NEGCONTROLS` is the full validator-effectiveness run, collected in
-  the `e2e` slow step; since 2026-07-22 that step runs only on a runtime-relevant change, and because
-  the controls are `@pytest.mark.slow` and the unit lane deselects `slow`, they do not execute on a
-  documentation-only PR. `ARCH-CONTROLS` (advisory) is the standalone CLI path.
+  the `e2e` slow step. Since 2026-07-22 that step is ON-DEMAND, and the controls are
+  `@pytest.mark.slow` while the unit lane deselects `slow`, so **they do not execute on any pull
+  request**. `ARCH-CONTROLS` (advisory) is the only negative-control run a PR sees — meaning no
+  negative-control run blocks a merge. Stated, not implied.
 - **`ruff-scopes`**, **`secret-scan`** — deliberate scope/moment tiering; keep all, remove none.
 
 ## Current-state defects → remediation slices

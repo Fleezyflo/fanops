@@ -53,7 +53,7 @@ cancels the staged deployment that would have installed it. Nothing else in this
 | Required context | Control | Distinct invariant it owns | When it does its work |
 |---|---|---|---|
 | `unit (fast, no toolchain)` | CI-UNIT | hermetic logic suite + lint + SLO + secret-scan + lock-drift + the skip→fail hook + the arch and CI-registry validators | every PR — the sole **routine** blocker |
-| `real-tooling E2E (must run, not skip)` | CI-E2E | the real ffmpeg/whisper pipeline runs (not mocks) + cross-face proofs + validator-effectiveness | every PR, but the suite executes only on a runtime-relevant change |
+| `real-tooling E2E (must run, not skip)` | CI-E2E | the real ffmpeg/whisper pipeline runs (not mocks) + cross-face proofs + validator-effectiveness | **on demand only** — manual dispatch, the nightly schedule, or an explicit `force-e2e` request. The context reports on every PR in seconds; the suite does not run. |
 
 **Reclassified to advisory** — they still run on every PR and their verdicts are still read; they no
 longer block a merge: `ARCH-GATE` (architecture gate), `CI-BASEINSTALL` (base install), `LANE-GUARD`
@@ -66,12 +66,39 @@ promised an enforcement it cannot deliver. The heaviest, `real-tooling E2E`, ran
 install and a ~7-minute suite on documentation-only changes that cannot affect a render.
 
 **The E2E context is kept, not removed.** It stays required in live branch protection; what changed is
-that its work is relevance-gated (`scripts/ci_e2e_relevance.py`), and the gate lives INSIDE the job
-rather than as a workflow `paths:` filter — a required workflow skipped by a path filter never reports
-and leaves branch protection pending. The predicate fails toward RUNNING: work is skipped only when
-every changed path is documentation or a governance record. Disclosed consequence: on such a change the
-`@pytest.mark.slow` suite, including the arch negative controls, does not execute, because the unit lane
-deselects `slow`.
+when its suite runs. The gate lives INSIDE the job rather than as a workflow `paths:` filter — a
+required workflow skipped by a path filter never reports and leaves branch protection pending.
+
+### CORRECTION, same day — the E2E suite is ON-DEMAND, not relevance-gated
+
+**The first attempt did not do what it said.** It was described as relevance-gated: work skipped only
+when every changed path is documentation or a governance record. In practice a change touching `src/`,
+`tests/`, `scripts/`, `tools/` or `.github/` — that is, **all real work** — ran the full lane, so the
+~7-minute suite still gated every ordinary push and every PR iteration. A gate that answers "run" for
+everything real is not a gate, and calling it one made the situation harder to see, not easier.
+
+**Operator decision: the full real-tooling E2E is not a push/PR gate.** The predicate
+(`scripts/ci_e2e_trigger.py`) now reads the TRIGGER, not the paths:
+
+| runs the full suite | does not |
+|---|---|
+| `workflow_dispatch` (manual) · `schedule` (04:00 UTC nightly on `main`) · the `force-e2e` label or `[force-e2e]` in the PR title | every `push`, every `pull_request`, and any event not named on the left |
+
+**The polarity is inverted, deliberately.** The relevance predicate failed toward MORE testing because
+an unclassified path might have mattered. This one cannot, without reinstating the behaviour being
+removed: an unrecognised event is by construction not one an operator asked the heavy lane to run on.
+
+**Disclosed consequence, and it is larger than the first amendment's.** *Nothing* in the real-tooling
+suite runs on a pull request: neither the real ffmpeg/whisper/espeak integration tests, nor the
+`@pytest.mark.slow` hermetic cross-face proofs — which include the arch negative controls
+(`CI-E2E-NEGCONTROLS`) and the capstone per-persona and account-first E2E proofs — because the unit lane
+deselects both `integration` and `slow`. A render, publish or per-persona regression can merge green and
+be caught only by the nightly run, a manual dispatch, or in production. **No negative-control run blocks
+a merge any more.** The nightly schedule exists so the detection window is a day rather than unbounded;
+it is not equivalent to pre-merge feedback and is not claimed to be.
+
+The four `CI-E2E-*` sub-controls are reclassified `scheduled` in the registry to match, rather than
+left claiming `required` on `[pull_request, push]` triggers they no longer fire on.
 
 **OGD (mutations M1–M6) is cancelled, not deferred.** `intended_required_contexts` now equals
 `current_required_contexts` equals live, so `python -m tools.ci deployed` reports no findings.

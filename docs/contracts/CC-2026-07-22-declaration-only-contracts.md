@@ -34,7 +34,15 @@ first thing verified in it.
 Preserved verbatim, and each is exercised by this change: the `T1`–`T6` trigger model, path-only
 preflight, the declaration and its closed field set, declaration digest approval, the
 expected-surface-versus-diff check, the separate operator gate for a live action, the unit lane, and
-relevance-gated E2E.
+the real-tooling E2E lane on demand.
+
+**Second operator directive, same unit — the CI gating correction.** PR #714 left the full
+real-tooling E2E running on any change touching `src/`, `tests/`, `scripts/`, `tools/` or `.github/`,
+which is all real work, so a ~7-minute toolchain suite still gated every push and every PR iteration
+while being described as relevance-gated. The suite becomes **on-demand**: manual dispatch, the
+nightly schedule, or an explicit `force-e2e` request. The required CONTEXT is untouched and still
+reports on every push and PR, in seconds — live branch protection is not mutated by this change, and
+removing that context from it remains a separate, operator-approved repository-settings change.
 
 ### success_condition
 
@@ -51,6 +59,10 @@ Five observable facts, each re-run on the final head:
    unauthorized surface.
 5. `python -m tools.arch ci` and `python -m tools.ci static` stay clean, and the `unit (fast, no
    toolchain)` context concludes success on the exact head.
+6. On the pull request carrying this change, `real-tooling E2E (must run, not skip)` concludes
+   **success in under a minute without installing ffmpeg, espeak or Whisper**, and its log says the
+   suite did not run — while a `workflow_dispatch` on the same head runs it in full and passes.
+7. Live branch protection still requires both contexts, unchanged, and is not touched by this PR.
 
 ### rollback
 
@@ -83,6 +95,12 @@ with no migration; a contract written in the declaration-only shape in the inter
 | docs/governance/AGENT_CHANGE_SYSTEM_ROADMAP.md | Phases 4–8 marked cancelled; the sequencing decisions they carried voided | declared |
 | AGENTS.md | the agent-facing route: the four-step contract flow, and normal work no longer routed through dormant orchestration | declared |
 | ORCHESTRATION.md | the wave quickstart; a banner saying it is not the normal path and its gate is permanently dormant | declared |
+| .github/workflows/ci.yml | the E2E trigger gate inside the job, and the nightly schedule | declared |
+| .github/ci-control-registry.yml | CI-E2E's `trigger_gate`, the four sub-controls' classification, the duplicate-group boundaries | declared |
+| scripts/ci_e2e_trigger.py | the trigger predicate, replacing the relevance predicate | declared |
+| tests/test_ci_e2e_trigger.py | its proof, in the unit lane | declared |
+| docs/adr/0101-required-checks-and-merge-gate-policy.md | the merge-gate policy of record, corrected | declared |
+| docs/ci/**.md | the CI governance docs that describe when the E2E suite runs | declared |
 | docs/contracts/CC-2026-07-22-declaration-only-contracts.md | this declaration | declared |
 
 ### prohibited_scope
@@ -92,8 +110,9 @@ with no migration; a contract written in the declaration-only shape in the inter
 | docs/adr/0105-reusable-change-contract-architecture.md | six landed contracts cite its blob SHA; any edit puts every one of them into `AUTH-BLOB-MOVED` → `ST-2` for doing nothing wrong |
 | docs/contracts/CC-2026-07-1*.md | historical contracts are immutable records, never rewritten |
 | docs/contracts/CC-2026-07-2[01]-*.md | same |
-| src/** | no runtime behaviour changes in this unit |
-| .github/** | no workflow, registry or branch-protection change |
+| src/** | no runtime behaviour changes in this unit — the CI wiring needs none |
+| live GitHub branch protection | a repository-settings mutation needs separate, explicit operator approval; no PR performs one |
+| .github/workflows/architecture.yml, .github/workflows/lane-guard.yml | the E2E gate is the only lane being changed |
 | .orchestration/**, scripts/orchestrate.py, .cursor/** | the orchestration machinery is de-routed in prose, never deleted or rewired |
 
 ### expected_surfaces
@@ -114,6 +133,13 @@ with no migration; a contract written in the declaration-only shape in the inter
 | docs/governance/AGENT_CHANGE_SYSTEM_ROADMAP.md | MODIFIED | Phases 4–8 CANCELLED; D2/D4/B1/B2/P5-1/P5-2 voided |
 | AGENTS.md | MODIFIED | the four-step flow; orchestration de-routed |
 | ORCHESTRATION.md | MODIFIED | the not-the-normal-path banner; the gate's dormancy stated as permanent |
+| .github/workflows/ci.yml | MODIFIED | the trigger gate replaces the relevance step; every heavy step including `setup-python` rides it; nightly `schedule` added |
+| .github/ci-control-registry.yml | MODIFIED | `relevance_gate` → `trigger_gate` with the inverted polarity and the enlarged disclosure; the four `CI-E2E-*` sub-controls → `scheduled` |
+| scripts/ci_e2e_trigger.py | NEW | the trigger predicate (renamed from `ci_e2e_relevance.py`, which no longer described what it did) |
+| tests/test_ci_e2e_trigger.py | NEW | both directions, the #715-shaped case, and the unknown-event polarity |
+| docs/adr/0101-required-checks-and-merge-gate-policy.md | MODIFIED | the same-day CORRECTION section: on-demand, not relevance-gated |
+| docs/ci/CI_CONTROL_INVENTORY.md | MODIFIED | the required-set table and the `negative-controls` duplicate-group note |
+| docs/ci/CI_BRANCH_PROTECTION_MUTATIONS.md | MODIFIED | the cancellation banner's description of when E2E runs |
 | docs/contracts/CC-2026-07-22-declaration-only-contracts.md | NEW | this declaration |
 
 ### coupling
@@ -140,5 +166,8 @@ with no migration; a contract written in the declaration-only shape in the inter
 | OB-CI-STATIC | python -m tools.ci static | the registry-versus-workflow reconciliation is undisturbed by the prose edits |
 | OB-UNIT-CI | the required context `unit (fast, no toolchain)` concluding success on the exact head | the only evidence the pytest suite, including the new fixture and tests, passes |
 | OB-SELF | python -m tools.contract verify on this contract | the new shape is verified by the tool that defines it, in the PR that introduces it |
+| OB-CI-DEPLOYED | python -m tools.ci deployed | the registry still matches LIVE branch protection, read-only — proof no setting was mutated |
+| OB-E2E-FAST | the `real-tooling E2E` context concluding success on this PR without installing a toolchain | the gate's skip branch, observed rather than asserted |
+| OB-E2E-DISPATCH | a `workflow_dispatch` run on this exact head completing the full suite | the gate's run branch — a switch nobody pulls is a switch nobody knows is broken |
 | OB-C18 | this contract and ADR-0106 | Constitution C18.1 / the ADR process |
 | OB-REVERIFY | every claim above re-run on the final head, not reused from an earlier run | no evidence reuse |
