@@ -19,24 +19,28 @@
 # FanOps — CI Control Inventory (current state)
 
 **Derived from:** `.github/ci-control-registry.yml` reconciled against the live tree and branch
-protection in `docs/ci/freeze/2026-07-15/PHASE-A-SNAPSHOT.md`. **Revalidated 2026-07-15** (HEAD
-`0a3b503`; live required contexts still the two below; the three new required contexts' exact `name:`
-strings verified char-for-char). **Provisional generated view** — the Phase-C generator replaces it.
+protection in `docs/ci/freeze/2026-07-15/PHASE-A-SNAPSHOT.md`. **Revalidated 2026-07-22** against live
+branch protection (required = the two contexts below, `strict` on, `enforce_admins` false).
+
+**This view is HAND-MAINTAINED, not generated.** `generated_view:` in the registry and `GEN_VIEW` in
+`tools/ci/common.py` name this file, but `GEN_VIEW` has no reader: there is no generator and no
+byte-compare behind it. Treat it as prose that must be edited alongside the registry, and trust the
+registry when the two disagree.
 
 ## Summary
 
 - **4 workflows · 11 jobs.** **Live required today: 2** (`unit …`, `real-tooling E2E …`), strict on.
-- **Intended required (ADR-0101): 5** — `unit`, `real-tooling E2E`, `base install (no extras) refuses
-  smart-framing`, `gate (drift + policy + registries)`, `lane file-ownership + cross-PR collision`.
-  The three new ones are added **one at a time during Operational Governance Deployment (OGD)** (order: gate → base-install → lane-guard),
-  gated on the `tools/ci` validator + remediation PRs being green.
-- **Controls inventoried:** 5 required top-level jobs (+ required sub-gates that block transitively),
-  2 advisory (`ARCH-IMPACT`, `CI-TIMING`), 3 scheduled/advisory (`ARCH-RECONCILE`, `NIGHTLY-ASR`,
-  `NIGHTLY-PIPAUDIT` — the last stays advisory until its failure policy is separately approved),
-  3 local. Every control maps to a real workflow job, scheduled process, or local hook — no orphans.
-- **4 duplicate groups**; `arch-drift-policy` is **resolved to Model A** (gate authoritative).
+- **Intended required (ADR-0101, amended 2026-07-22): 2** — identical to the live set. The staged
+  expansion to five (OGD) is **CANCELLED**, so `intended == current ==` live and `tools.ci deployed`
+  reports no findings.
+- **Controls inventoried:** 2 required top-level jobs (+ required sub-gates that block transitively),
+  5 advisory (`ARCH-GATE`, `CI-BASEINSTALL`, `LANE-GUARD`, `ARCH-IMPACT`, `CI-TIMING`), 3
+  scheduled/advisory (`ARCH-RECONCILE`, `NIGHTLY-ASR`, `NIGHTLY-PIPAUDIT`), 3 local. Every control maps
+  to a real workflow job, scheduled process, or local hook — no orphans.
+- **4 duplicate groups**; `arch-drift-policy` is retained by design — with `ARCH-GATE` advisory, the
+  unit lane is permanently the merge-blocking line for arch drift/policy/registries.
 
-**Req? legend:** ✅ = live-required now · ⬦ = intended-required, added during OGD · ↳ = blocks
+**Req? legend:** ✅ = live-required now · ○ = advisory (runs and is read; does not block) · ↳ = blocks
 transitively through its parent required job (never its own context).
 
 ## Ownership matrix
@@ -52,18 +56,18 @@ transitively through its parent required job (never its own context).
 | ↳ `CI-UNIT-SLO` | Unit pytest SLO gate | required* | ci-lane | ci · unit | ↳ | — | 0101 | active |
 | ↳ `CI-UNIT-HOOKVERIFY` | skip→fail hook verify | required* | ci-lane | ci · unit | ↳ | — | 0101 | active |
 | ↳ `CI-UNIT-ARCHGOV` | arch tests (distinct invariants) | required* | arch-engine | ci · unit | ↳ | **arch-drift-policy** | 0100/0101 | active |
-| `CI-BASEINSTALL` | base install (no extras) refuses smart-framing | **required** | ci-lane | ci · base-install | ⬦ (E-2nd) | — | 0101 | active |
+| `CI-BASEINSTALL` | base install (no extras) refuses smart-framing | advisory | ci-lane | ci · base-install | ○ | — | 0101 | active |
 | `CI-E2E` | real-tooling E2E (must run, not skip) | **required** | ci-lane | ci · e2e | ✅ | — | 0101 | active |
 | ↳ `CI-E2E-TOOLCHAIN` | Verify toolchain on PATH | required* | ci-lane | ci · e2e | ↳ | — | 0101 | active |
 | ↳ `CI-E2E-INTEGRATION` | Integration suite (must run) | required* | ci-lane | ci · e2e | ↳ | — | 0101 | active |
 | ↳ `CI-E2E-SLOW` | Slow cross-face proofs | required* | ci-lane | ci · e2e | ↳ | — | 0101 | active |
 | ↳ `CI-E2E-NEGCONTROLS` | negative controls (validator effectiveness) | required* | arch-engine | ci · e2e | ↳ | **negative-controls** | 0100/0101 | active |
 | `CI-TIMING` | ci-timing artifact (main only) | advisory | ci-lane | ci · ci-timing | ❌ | — | 0101 | active (obs.) |
-| `ARCH-GATE` | gate (drift + policy + registries) | **required** | arch-engine | architecture · gate | ⬦ (E-1st) | **arch-drift-policy** | 0100/0101 | active |
+| `ARCH-GATE` | gate (drift + policy + registries) | advisory | arch-engine | architecture · gate | ○ | **arch-drift-policy** | 0100/0101 | active |
 | `ARCH-IMPACT` | impact report | advisory | arch-engine | architecture · impact | ❌ | — | 0101 | active |
 | `ARCH-CONTROLS` | negative controls (validator effectiveness) | advisory | arch-engine | architecture · controls | ❌ | **negative-controls** | 0100 | **transitional** |
 | `ARCH-RECONCILE` | scheduled reconciliation | scheduled | arch-engine | architecture · reconcile | ❌ | — | 0100 | active |
-| `LANE-GUARD` | lane file-ownership + cross-PR collision | **required** | ci-lane | lane-guard · lane-guard | ⬦ (E-3rd) | — | 0101 | **transitional · harden-first** |
+| `LANE-GUARD` | lane file-ownership + cross-PR collision | advisory | ci-lane | lane-guard · lane-guard | ○ | — | 0101 | active |
 | `NIGHTLY-PIPAUDIT` | dependency audit (pip-audit) | scheduled | ci-lane | nightly · dependency-audit | ❌ | — | 0101 | active (advisory until failure policy approved) |
 | `NIGHTLY-ASR` | [asr] toolchain smoke | scheduled | ci-lane | nightly · asr-smoke | ❌ | — | 0101 | active |
 | `LOCAL-RUFF-PRECOMMIT` | ruff (staged) | local | ci-lane | .githooks/pre-commit | — | ruff-scopes | 0100 | active |
@@ -74,33 +78,34 @@ transitively through its parent required job (never its own context).
 GitHub context (a required control's identity is the stable `id`, not the display name). `local`
 evidence is `to-verify-phase-C` (re-read when the `tools/ci` validators are built — INV-20).
 
-## Five required contexts — five distinct merge-blocking invariants
+## Two merge-blocking contexts, and what everything else is for
 
-| Context | Distinct invariant |
-|---|---|
-| `unit (fast, no toolchain)` | hermetic logic + lint + SLO + secret-scan + lock-drift + skip→fail hook |
-| `real-tooling E2E (must run, not skip)` | real ffmpeg/whisper pipeline + cross-face proofs + validator-effectiveness |
-| `base install (no extras) refuses smart-framing` | clean no-extras packaging + cv2 fail-closed |
-| `gate (drift + policy + registries)` | architecture governance (drift + policy + registries) — **Model A authoritative** |
-| `lane file-ownership + cross-PR collision` | no cross-lane / cross-open-PR hot-file collision |
+| Context | Distinct invariant | When it does its work |
+|---|---|---|
+| `unit (fast, no toolchain)` | hermetic logic + lint + SLO + secret-scan + lock-drift + skip→fail hook + the arch and CI-registry validators | every PR — the sole ROUTINE blocker |
+| `real-tooling E2E (must run, not skip)` | real ffmpeg/whisper pipeline + cross-face proofs + validator-effectiveness | every PR, but the suite executes only on a runtime-relevant change (`scripts/ci_e2e_relevance.py`); the context always reports |
 
-One required context **does** overlap another, deliberately and on the record. `CI-UNIT-ARCHGOV` (a unit
-sub-gate) carries the invariants `gate` does **not** run (determinism, pure-function-of-source,
-reachability, field-authority) **and, retained through OGD M1, the drift/policy/registries checks as
-well** — because `gate` is not a required context yet, the unit lane is today the **only** required line
-enforcing them. The overlap is registered in `duplicate_groups.arch-drift-policy`; de-duplication is a
-post-M1 follow-up. *(Corrected 2026-07-18; this paragraph previously asserted the scoping was already
-done — "is scoped by `SLICE-ARCH-MODEL` … so `unit` and `gate` stay distinct".)*
+Everything else runs and is read without blocking: the architecture gate, impact report, base-install
+smoke, and the lane + cross-open-PR collision guard. Declassifying them is **not** deleting them — the
+jobs still execute on every PR and a red one is still a red one; it just does not hold the merge.
+
+The remaining overlap is deliberate. `CI-UNIT-ARCHGOV` (a unit sub-gate) carries the invariants `gate`
+does **not** run (determinism, pure-function-of-source, reachability, field-authority) **and** the
+drift/policy/registries checks — and with `gate` now advisory, the unit lane is **permanently** the only
+merge-blocking line enforcing them. That closes the de-duplication question rather than deferring it:
+scoping the unit lane down would leave those checks blocking nothing at all.
 
 ## Registered intentional redundancy
 
-- **`arch-drift-policy` — DECIDED (Model A), NOT YET RESOLVED.** `ARCH-GATE` is classified `required`
-  and is the *intended* authoritative merge-gate for arch drift/policy/registries — but it is **not in
-  `current_required_contexts`** until OGD M1. `CI-UNIT-ARCHGOV` is **not** yet scoped down; the overlap
-  is retained by design until M1 lands and `gate` is proven stable. *(Corrected 2026-07-18; previously
-  "RESOLVED" with `ARCH-GATE` marked "(required)" as though live.)*
-- **`negative-controls`** — `CI-E2E-NEGCONTROLS` (required, in e2e) is the full validator-effectiveness
-  run; `ARCH-CONTROLS` (advisory) reduces to a reachability assertion (`SLICE-NEGCTRL-DEDUP`).
+- **`arch-drift-policy` — RETAINED BY DESIGN.** `ARCH-GATE` is advisory (2026-07-22); the
+  merge-blocking line for arch drift/policy/registries is permanently `CI-UNIT-ARCHGOV`. The advisory
+  gate keeps a fast, standalone, readable verdict and a job summary. De-duplication is closed, not
+  deferred. *(History: this was "DECIDED (Model A), NOT YET RESOLVED" while OGD M1 was still expected
+  to promote `gate`; before 2026-07-18 it wrongly claimed the scoping was already done.)*
+- **`negative-controls`** — `CI-E2E-NEGCONTROLS` is the full validator-effectiveness run, collected in
+  the `e2e` slow step; since 2026-07-22 that step runs only on a runtime-relevant change, and because
+  the controls are `@pytest.mark.slow` and the unit lane deselects `slow`, they do not execute on a
+  documentation-only PR. `ARCH-CONTROLS` (advisory) is the standalone CLI path.
 - **`ruff-scopes`**, **`secret-scan`** — deliberate scope/moment tiering; keep all, remove none.
 
 ## Current-state defects → remediation slices

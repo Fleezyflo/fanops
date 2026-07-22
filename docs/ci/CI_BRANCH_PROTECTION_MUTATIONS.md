@@ -1,4 +1,41 @@
-# FanOps — Operational Governance Deployment (repository security policy)
+# FanOps — Operational Governance Deployment (repository security policy) — **CANCELLED**
+
+> # ⛔ CANCELLED — DO NOT EXECUTE ANY MUTATION BELOW
+>
+> **Operator decision, 2026-07-22 (CI simplification).** OGD will not happen. **M1–M6 are cancelled,
+> not deferred**, and nothing in this file is a pending action. The document is retained unedited
+> below the line as the historical record of a plan that was designed, reviewed, and then dropped —
+> deleting it would erase why the repository looks the way it does.
+>
+> **What is true instead:**
+>
+> - The required-context set is **FINAL at two**: `unit (fast, no toolchain)` and
+>   `real-tooling E2E (must run, not skip)`. `intended_required_contexts` in
+>   `.github/ci-control-registry.yml` now equals `current_required_contexts` equals live GitHub, so
+>   `python -m tools.ci deployed` reports **no findings** where it previously reported three contexts
+>   "pending Operational Governance Deployment".
+> - `unit` is the sole **routine** PR blocker for logic. `real-tooling E2E` stays required but does its
+>   work only on runtime-relevant changes (`scripts/ci_e2e_relevance.py`); on a documentation- or
+>   governance-only change the context still reports, in seconds, with an explicit message saying the
+>   suite was not relevant and did not run.
+> - The three contexts M1–M3 would have promoted — the architecture gate, base-install and the lane +
+>   cross-PR collision guard — are **advisory**: they still run on every PR and their verdicts are
+>   read; they no longer block a merge. Impact was already advisory and is unchanged.
+> - M4 (`required_conversation_resolution`), M5 (`required_linear_history` + squash-only) and M6
+>   (`enforce_admins`) are cancelled with the rest. `enforce_admins` remains **false**.
+>
+> **Live branch protection is untouched by this change.** It still requires both contexts, and that is
+> deliberate — requirement 4 of the simplification was that the E2E context must not disappear. Should
+> anyone later want `real-tooling E2E` **removed** from live branch protection, that is a **repository
+> settings mutation requiring separate, explicit operator approval**. No pull request performs it, and
+> this one did not: it changed policy, classification and job behaviour in the repository only.
+>
+> Rationale of record: `docs/adr/0101-required-checks-and-merge-gate-policy.md` (amended 2026-07-22).
+
+---
+
+<sub>Everything below this line is the CANCELLED plan, preserved verbatim as history. It is not a
+runbook and has no pending steps.</sub>
 
 > **This is NOT engineering work.** The CI-governance **engineering implementation is complete and
 > merged** — the ADRs (0100–0102), the control registry, the `tools/ci` validator (DC-1..DC-6), every
