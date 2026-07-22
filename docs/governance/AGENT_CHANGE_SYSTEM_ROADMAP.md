@@ -4,12 +4,18 @@
 > blocks it, and what the next gate is. It states no law, standard, ADR policy, CI policy, schema or
 > executable rule — those live in their own authorities and are linked, never restated.
 
+> **⛔ THE PROGRAM IS CLOSED. Phases 4–8 are CANCELLED (operator decision, 2026-07-22).** Phases 1–3
+> shipped and are `ACCEPTED`; what they built — the trigger model, preflight, the declaration, the
+> digest approval and the scope check — is live and stays live. Everything staged after Phase 3 was
+> further ceremony, and the ceremony is what was cancelled. **This file is now a historical record of
+> a finished program. It has no next gate and no open work.**
+
 ## Objective
 
 A reusable, mechanically-verified change contract for agent-authored changes to this repository:
-truthful authority surfaces first, then the contract architecture, its compiler and verifier,
-cold-start acceptance, governance deployment, the orchestration-enforcement decision, production
-acceptance, and freeze.
+truthful authority surfaces first, then the contract architecture, then its compiler and verifier.
+Phases 4–8 would have added cold-start acceptance, governance deployment, an orchestration decision,
+production acceptance and a freeze; none was started, and none will be.
 
 ## Phases
 
@@ -18,18 +24,43 @@ acceptance, and freeze.
 | 1 | Authority Repair and Program Boundaries | **ACCEPTED** | A verified contradiction register on a named base SHA | The six verified contradictions closed; this roadmap persisted; `tools/arch` + `tools/ci` clean; CI green on the exact PR head |
 | 2 | Reusable Change-Contract Architecture | **ACCEPTED** | Phase 1 `ACCEPTED` | An accepted ADR defining the change-contract model |
 | 3 | Change-Contract Compiler and Verifier | **ACCEPTED** | Phase 2 `ACCEPTED` | Compiler + verifier merged, each rule carrying a firing negative control; acceptance verified against the platform rather than asserted by its own row (ADR-0105 §4.3a) |
-| 4 | Cold-Start Acceptance | NOT STARTED | Phase 3 `ACCEPTED` | A fresh agent, unaided, drives three cases through the contract — see below |
-| 5 | Operational Governance Deployment | NOT STARTED | Phase 4 `ACCEPTED` + explicit operator gate | M1–M6 applied one at a time; live required set == `intended_required_contexts` |
-| 6 | Orchestration Enforcement Decision | NOT STARTED | Phase 5 `ACCEPTED` | A recorded decision to re-enable, replace or retire the dormant orchestration gate |
-| 7 | Production Acceptance | NOT STARTED | Phase 6 `ACCEPTED` | The system accepted against its own contract on real work — see below |
-| 8 | Closeout and Freeze | NOT STARTED | Phase 7 `ACCEPTED` | An immutable closeout record + amendment process; the program is frozen |
+| 4 | Cold-Start Acceptance | ⛔ **CANCELLED** | — | — |
+| 5 | Operational Governance Deployment | ⛔ **CANCELLED** | — | — |
+| 6 | Orchestration Enforcement Decision | ⛔ **CANCELLED** | — | — |
+| 7 | Production Acceptance | ⛔ **CANCELLED** | — | — |
+| 8 | Closeout and Freeze | ⛔ **CANCELLED** | — | — |
 
-**Status values:** `NOT STARTED` → `IN DESIGN` → `APPROVED` → `IN IMPLEMENTATION` → `ACCEPTED`.
+**Status values:** `NOT STARTED` → `IN DESIGN` → `APPROVED` → `IN IMPLEMENTATION` → `ACCEPTED`, or
+`CANCELLED`. **`CANCELLED` is not `DEFERRED`.** A cancelled phase is not waiting for a gate, a
+prerequisite or a quieter week; there is nothing to resume and no condition under which it resumes.
+Re-opening any of this would be a NEW program with its own ADR, never a continuation of this one.
 
-**A later phase may begin only after the preceding phase is `ACCEPTED`. A merge alone does not
-authorize progression** — merging is an *event*, not a phase status. A phase remains
-`IN IMPLEMENTATION` after its code lands, and reaches `ACCEPTED` only when its exit criteria are
-demonstrated and explicitly signed off.
+**A later phase may begin only after the preceding phase is `ACCEPTED`.** That rule stands for the
+record; with 4–8 cancelled it has nothing left to sequence.
+
+### Why 4–8 were cancelled
+
+Each was ceremony layered on a system that already worked without it, and the cancellations landed
+across two decisions:
+
+- **Phase 5 (OGD)** — cancelled 2026-07-22 by the CI simplification (PR #714). The required set is
+  final at two contexts; `intended == current == live` and `tools.ci deployed` reports no findings.
+  The three further contexts it would have made blocking still run on every PR, advisory.
+- **Phases 4, 7 (cold-start and production acceptance)** — an acceptance *ceremony* for a system whose
+  every rule already carries a firing negative control and whose verdicts are re-derivable on demand.
+  Phase 3's exit criteria proved the tool discriminates; a scored cold-start run would have proved
+  that a particular agent, on a particular day, followed a document.
+- **Phase 6 (orchestration enforcement decision)** — the gate has been dormant since 2026-07-15 and
+  normal work no longer routes through it (`AGENTS.md`). A recorded decision to re-enable, replace or
+  retire it was a decision nothing was waiting on.
+- **Phase 8 (closeout and freeze)** — this section is the closeout. A separate immutable record and a
+  formal amendment process are governance about governance; the ADRs already are the amendment
+  process.
+
+The contract model itself was narrowed at the same time: **ADR-0106** makes a new contract
+declaration-only, retiring the lifecycle append chain, the post-merge publication PR and the
+acceptance ceremony. ADR-0105 remains in force for everything else, and in full for the six contracts
+written under it.
 
 ### Phase 1 — outcome
 
@@ -99,65 +130,50 @@ program-execution debt from building the tool, surfaced by the tool itself, and 
 reports them correctly at every run. Appending a row to G1, G2 or G3, or editing their bodies,
 contradicts this disposition and requires reversing it explicitly first.
 
-### Phase 4 — acceptance intent
+### Phases 4 and 7 — what "acceptance intent" meant, kept for the record
 
-Cold-start acceptance is only met when a fresh agent, working from the entry point and the contract
-alone, proves all three:
-
-1. a **contained** change (single subsystem, inside one boundary);
-2. a **cross-system** change (spanning subsystem boundaries, requiring impact analysis);
-3. an **unsafe or under-specified** request that it **correctly stops on** rather than attempting.
-
-Case 3 is not optional. A system that only proves the happy paths has not been tested for refusal.
-
-### Phase 7 — acceptance intent
-
-Production acceptance is only met when both are proven on real work:
-
-1. one **successful real change** carried end-to-end through the contract;
-2. one **unsafe or boundary-exceeding** request that is **correctly refused**.
+Cold-start acceptance would have required a fresh agent, working from the entry point and the
+contract alone, to drive a contained change, a cross-system change and a request it correctly stops
+on. Production acceptance would have required one real change carried end to end plus one correctly
+refused. **Neither was ever attempted, and neither will be.** The refusal path they were designed to
+prove is covered where it can be proved repeatedly rather than once: `RF-1`–`RF-4`, `ES-1`–`ES-3` and
+`ST-1`–`ST-10` each carry a firing negative control in `python -m tools.contract selftest`.
 
 ## Accepted sequencing decisions
 
 - **D1** — Authority truth precedes contract design. A contract built on false authority surfaces
-  inherits their falsehoods.
-- **D2** — The architecture gate becomes a required context (OGD M1) **before** any architecture
-  de-duplication. Owner: `.github/ci-control-registry.yml` (`duplicate_groups.arch-drift-policy`) and
-  `docs/adr/0101-required-checks-and-merge-gate-policy.md` §2. Removing the overlap first would leave
-  architecture drift/policy/registries with no required enforcement.
+  inherits their falsehoods. *(Held; Phase 1 was executed on it.)*
+- **D2** — ⛔ **VOID.** It sequenced architecture de-duplication behind OGD M1, and OGD is cancelled.
+  The architecture gate is advisory and stays advisory; de-duplication is not scheduled.
 - **D3** — The Cycle-6 implementation contract remains a historical program record. Future work is
-  **not** added to it.
-- **D4** — The dormant orchestration gate is neither re-enabled nor deleted before Phase 6.
+  **not** added to it. *(Holds, and now applies to this roadmap too.)*
+- **D4** — ⛔ **VOID.** It held the dormant orchestration gate un-re-enabled and undeleted until Phase
+  6, which is cancelled. The disposition is now permanent rather than pending: the machinery is
+  **retained on disk, dormant, and out of the normal agent workflow**. `.orchestration/SPEC.md`
+  remains its status owner.
 
-## Unresolved blockers
+## Residual notes
 
-- **B1** *(Phase 5)* — DC-3 (live-vs-declared reconciliation) is wired into no workflow and needs an
-  operator-provisioned admin token. Until it exists, reconciliation after each mutation is the **manual
-  read-only re-probe** prescribed by `docs/ci/CI_BRANCH_PROTECTION_MUTATIONS.md`, not an automated check.
-- **B2** *(Phase 5)* — the de-duplication inventory is understated; see P5-1.
-- **B3** *(external to every phase)* — the untracked reconstruction documents
-  `docs/reconciliation/01_…` … `05_…` are **not safely committable in their current state**: one carries
-  a stale `_CLI_PRINT_COUNT` assignment that `IMPL-007` reads as a live claim, which would turn the
-  architecture gate red. They are deliberately untouched and remain outside every phase. Recorded so
-  this is not rediscovered as a surprise.
+None of these is open work; each is recorded so it is not rediscovered as a surprise.
 
-## Phase-5 prerequisites (recorded, not executed)
-
-- **P5-1** — the four-invariant description of the unit-lane de-duplication target may **omit two
-  distinct invariants** (the path-selection tests). The complete inventory must be reverified from the
-  test file itself before any de-duplication is designed.
-- **P5-2** — generated-document drift does **not** receive complete required enforcement until the
-  architecture gate is a required context. This strengthens D2.
+- **B1, B2, P5-1, P5-2** — ⛔ **VOID with Phase 5.** DC-3 needs no admin token because there is no
+  mutation to reconcile after; the de-duplication inventory needs no re-verification because no
+  de-duplication is planned.
+- **B3** — the untracked reconstruction documents `docs/reconciliation/01_…` … `05_…` are **not safely
+  committable in their current state**: one carries a stale `_CLI_PRINT_COUNT` assignment that
+  `IMPL-007` reads as a live claim, which would turn the architecture gate red. They remain untouched
+  and untracked. This is a property of those files, not a program task.
 
 ## Evidence links
 
 - `docs/REPOSITORY_CONSTITUTION.md` · `docs/ARCHITECTURAL_LAWS.md` · `docs/ENGINEERING_STANDARDS.md`
 - `docs/adr/` (accepted ADRs) · `docs/adr/README.md` (historical decision evidence)
 - `.github/ci-control-registry.yml` · `docs/ci/CI_GOVERNANCE_INDEX.md`
-- `docs/ci/CI_BRANCH_PROTECTION_MUTATIONS.md` (Phase 5 runbook — nothing executed)
-- `.orchestration/SPEC.md` (orchestration-gate status owner)
+- `docs/ci/CI_BRANCH_PROTECTION_MUTATIONS.md` (the CANCELLED OGD runbook — nothing was ever executed)
+- `.orchestration/SPEC.md` (orchestration-gate status owner; dormant, permanently)
 - `.reports/architecture/IMPLEMENTATION_CONTRACT.md` (Cycle-6 historical program record)
 - `docs/adr/0105-reusable-change-contract-architecture.md` (Phase 2 — the change-contract model)
+- `docs/adr/0106-declaration-only-change-contracts.md` (the narrowing: declaration-only contracts)
 - `docs/contracts/CC-2026-07-18-change-contract-compiler.md` (Phase 3 — the contract governing its
   own compiler; the first contract written under ADR-0105)
 - `docs/governance/PHASE3_LIFECYCLE_DISCLOSURE.md` (Phase 3 residual **R9** — the incomplete
@@ -165,28 +181,33 @@ Production acceptance is only met when both are proven on real work:
 
 ## Current next gate
 
-**APPROVE PHASE 4 COLD-START ACCEPTANCE**
+**None. The program is closed.**
 
-Phase 3 is `ACCEPTED`, which satisfies Phase 4's entry criterion, and residual **R9** is disposed
-rather than open, so nothing in Phase 3 is awaiting an answer.
+Phase 3 is `ACCEPTED`; Phases 4–8 are `CANCELLED`; residual **R9** was disposed 2026-07-20 and stays
+disposed. There is no phase awaiting approval and no artifact awaiting a signature.
 
-**Phase 4 remains `NOT STARTED`.** No cold-start case has been designed, attempted or scored. The
-gate authorizes *starting* Phase 4; it is not a record that Phase 4 started, and R9's disposition
-is not a Phase 4 entry event.
+**What is live, and where it is governed** — none of this is program work, it is how the repository
+operates from here:
 
-## Program Execution Method
+| still in force | authority |
+|---|---|
+| `T1`–`T6` triggers; a contract is required when one fires | ADR-0105 §1 |
+| path-only preflight before the first edit | ADR-0105 §1a · `python -m tools.contract preflight` |
+| the declaration; the closed field set | ADR-0105 §3.1 |
+| declaration digest approval | ADR-0106 §2–§3 |
+| expected surfaces versus the actual diff | ADR-0105 §5.3 · `python -m tools.contract scope` |
+| a separate operator gate for a live action | ADR-0105 §1 `T4` · ADR-0106 §2 |
+| unit CI; relevance-gated E2E | ADR-0101 as amended 2026-07-22 |
 
-- Each phase uses the governing artifact appropriate to its work — an ADR, contract, runbook, PR or
-  acceptance record. Documents are not created to satisfy a template.
-- This roadmap records status, accepted decisions, blockers, evidence links and the next gate. Nothing
-  else.
-- Verified evidence is reused while its relevant source remains unchanged.
-- Reinvestigation occurs only for drift, conflicting evidence, incomplete proof, or a live/destructive
-  action.
-- Design, implementation, merge, deployment and acceptance are separately authorized, only where those
-  actions exist.
-- Implementation uses the smallest authorized scope, verification sufficient for its risk, and an
+## Program Execution Method — as executed, for the record
+
+- Each phase used the governing artifact appropriate to its work — an ADR, contract, runbook, PR or
+  acceptance record. Documents were not created to satisfy a template.
+- This roadmap recorded status, accepted decisions, blockers, evidence links and the next gate.
+  Nothing else. It is now a closed record and takes no further entries.
+- Verified evidence was reused while its relevant source remained unchanged.
+- Reinvestigation occurred only for drift, conflicting evidence, incomplete proof, or a
+  live/destructive action.
+- Implementation used the smallest authorized scope, verification sufficient for its risk, and an
   explicit rollback.
-- Adjacent findings stay out of scope unless they are required dependencies.
-- Future sessions resume from this roadmap and the current phase's governing artifact, rather than
-  reconstructing the program or repeating completed investigations.
+- Adjacent findings stayed out of scope unless they were required dependencies.
