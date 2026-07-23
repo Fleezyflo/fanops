@@ -25,12 +25,25 @@ from dataclasses import dataclass, field
 # fields are records with fixed columns. Front-matter fields are scalars and flat lists.
 
 FRONTMATTER_FIELDS = ("id", "traits", "authorized_actions", "incidental_allowlist",
-                      "blast_radius", "invariants", "stop_conditions", "supersedes")
+                      "blast_radius", "invariants", "stop_conditions", "supersedes",
+                      "approved_digest", "approval_token", "execution_gate")
+
+# ── the three approval fields (ADR-0106) ────────────────────────────────────────────────────
+#
+# A declaration-only contract has no append chain to record an operator act in, so the two acts that
+# were `approved` events become two fields. They are still OPERATOR acts recorded by the agent —
+# exactly as the events were (§4.2: *"`approved` | operator, recorded by agent"*) — and the audit is
+# the same one it always was: the token appears in the diff, and `D` is what the operator named.
+#
+# `execution_gate` stays SEPARATE from `approval_token` because ADR-0105 §1 T4 requires a separate
+# gate for a `live` change. One field carrying both would make approving the change approve running
+# it, which is the single distinction that field exists to hold.
+APPROVAL_FIELDS = ("approved_digest", "approval_token", "execution_gate")
 PROSE_FIELDS = ("objective", "success_condition", "rollback")
 TABLE_FIELDS = ("authority", "owners", "allowed_scope", "prohibited_scope", "expected_surfaces",
                 "coupling", "reusable_evidence", "verification")
 
-ALL_FIELDS = FRONTMATTER_FIELDS + PROSE_FIELDS + TABLE_FIELDS      # 8 + 3 + 8 = 19 slots
+ALL_FIELDS = FRONTMATTER_FIELDS + PROSE_FIELDS + TABLE_FIELDS      # 11 + 3 + 8 = 22 slots
 
 # Unconditionally mandatory (ADR-0105 §3.1 "Required" column == mandatory).
 MANDATORY_FIELDS = ("id", "objective", "success_condition", "traits", "authority", "owners",
@@ -44,7 +57,7 @@ MANDATORY_FIELDS = ("id", "objective", "success_condition", "traits", "authority
 TRAIT_CONDITIONAL_FIELDS = {"blast_radius": "cross-system"}
 
 OPTIONAL_FIELDS = ("incidental_allowlist", "reusable_evidence", "stop_conditions", "coupling",
-                   "supersedes")
+                   "supersedes") + APPROVAL_FIELDS
 
 # Mandatory AND legitimately empty. Exactly one field qualifies, and the ADR says so outright:
 # §5.1 — *"`contained` is not a trait. It is the derived label for the empty trait set … A contract
@@ -71,6 +84,7 @@ FIELD_TYPES = {
     **{f: "list" for f in ("traits", "authorized_actions", "incidental_allowlist", "blast_radius",
                            "invariants", "stop_conditions", "supersedes")},
     "id": "str",
+    **{f: "str" for f in APPROVAL_FIELDS},
     **{f: "prose" for f in PROSE_FIELDS},
     **{f: "table" for f in TABLE_FIELDS},
 }

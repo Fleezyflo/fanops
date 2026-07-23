@@ -80,10 +80,17 @@ def _live(di: DecisionInput) -> bool:
 def _execution_gate_recorded(di: DecisionInput) -> bool:
     """ADR-0105 §1 T4 / §10: a live action needs a SEPARATE execution gate an operator must give.
 
-    Recorded as `execution_gate=` on an `approved` event, so it is an operator act bound into the
-    append-only history — not a declaration field the agent writing the contract could fill in for
-    itself. That distinction is the whole content of the word "separate".
+    Recorded as `execution_gate=` on an `approved` event in a lifecycle-bearing contract, and as the
+    front-matter `execution_gate` field in a declaration-only one (ADR-0106). The route follows the
+    contract's shape, exactly as content approval does in `lifecycle.gates`.
+
+    WHAT "SEPARATE" MEANS IS UNCHANGED BY THE MOVE. It never meant "in a different section of the
+    file" — an agent could write either place. It means a SECOND operator act, distinct from
+    approving the declaration, which is why `execution_gate` is its own field and not a value inside
+    `approval_token`.
     """
+    if di.declaration.boundary_count == 0:
+        return bool(di.declaration.value("execution_gate"))
     return any(e.kind == "approved" and e.get("execution_gate") for e in di.declaration.events)
 
 
@@ -92,14 +99,17 @@ def _execution_gate_recorded(di: DecisionInput) -> bool:
 # A table cannot evaluate a contract that did not parse, and `unauthorized` is meaningless before
 # `expected_surfaces` exists. Running Stage B on an inadmissible contract would produce a confident
 # verdict about a document nobody has successfully read.
-_PARSE_FAIL = {"NO-BOUNDARY", "MULTI-BOUNDARY", "UNSUP-CRLF", "NO-FRONTMATTER",
+_PARSE_FAIL = {"MULTI-BOUNDARY", "UNSUP-CRLF", "NO-FRONTMATTER",
                "UNCLOSED-FRONTMATTER", "UNSUP-MULTIDOC", "UNSUP-TAB", "UNSUP-MERGE", "UNSUP-ANCHOR",
                "UNSUP-ALIAS", "UNSUP-TAG", "UNSUP-BLOCK-SCALAR", "UNSUP-FLOW-MAP", "UNSUP-COMMENT",
                "UNSUP-NESTED", "DUP-KEY", "BAD-KEY", "NO-COLON", "ORPHAN-ITEM", "BAD-COLUMNS",
                "BAD-ROW", "NO-TABLE", "BAD-EVENT-COLUMNS", "BAD-EVENT-ROW", "WRONG-LOCATION"}
 _LIFECYCLE_FAIL = {"EVENT-KIND", "EVENT-TIME", "EVENT-ORDER", "EVENT-AFTER-TERMINAL",
                    "ACCEPT-INCOMPLETE", "MERGED-INCOMPLETE", "PARENT-BIND-INCOMPLETE",
-                   "DECL-DIVERGED", "LIFECYCLE-REWRITTEN"}
+                   "DECL-DIVERGED", "LIFECYCLE-REWRITTEN",
+                   # The declaration-only authorization record (ADR-0106) fails in the same family:
+                   # a half-written or unread approval is a broken authorization record, not a typo.
+                   "APPROVAL-DUAL-ROUTE", "APPROVAL-INCOMPLETE"}
 
 STAGE_A: tuple[Rule, ...] = (
     Rule("A1", CLARIFICATION, _ALL, lambda di: bool(_codes(di) & _PARSE_FAIL),
@@ -154,7 +164,9 @@ STAGE_B: tuple[Rule, ...] = (
          lambda di: bool(_codes(di) & {"AUTH-BLOB-MOVED", "AUTH-MISSING-FILE"}),
          "a cited authority changed after approval, or its file no longer exists", "operator"),
     Rule("ST-3", STOP, (HEAD, MERGE), lambda di: di.gates.content_approval != "satisfied",
-         "no `approved` event names the current declaration digest `D`", "operator"),
+         "nothing names the current declaration digest `D` — a declaration-only contract records "
+         "approval in `approved_digest` (ADR-0106), a lifecycle-bearing one in an `approved` event",
+         "operator"),
     # `ST-9` REPLACES NOTHING. The deleted `ST-4` asked whether a PR review approved the head, which
     # in a one-operator repository asked whether a person who does not exist had acted — unsatisfiable
     # rather than strict. This asks whether the sole authority authorized THIS parent for THIS

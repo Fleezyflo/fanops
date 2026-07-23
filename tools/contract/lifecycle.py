@@ -118,6 +118,18 @@ def validate_events(events, *, main_blob: bytes | None, decl_bytes: bytes, life_
                                       remediation="the platform merge SHA and `mergedAt` are what "
                                                   "acceptance is checked against (ADR-0105 §4.3a)"))
 
+    # A DECLARATION-ONLY CONTRACT IS ALL DECLARATION, so ANY byte that moves after it lands is a
+    # landed-declaration edit — the same §3.6 finding, reached without a boundary to partition on.
+    # Omitting this would have left the new shape with no landed-record integrity check at all,
+    # which is the one guarantee the append-only model was buying.
+    if main_blob is not None and BOUNDARY not in main_blob and main_blob != decl_bytes:
+        out.append(Diagnostic(MALFORMED, "DECL-DIVERGED",
+                              "the contract differs from the one already on `main` — a "
+                              "declaration-only contract is all declaration, so editing a landed "
+                              "one is §3.6 governance-sensitive",
+                              remediation="a post-approval declaration change is a NEW contract "
+                                          "with `supersedes:`, never an edit (ADR-0105 §6)"))
+
     if main_blob is not None and BOUNDARY in main_blob:
         m_decl, _, m_life = main_blob.partition(BOUNDARY)
         if m_decl != decl_bytes:
@@ -186,10 +198,21 @@ def gates(decl, events, *, head_sha: str, pr: int | None, main_has_contract: boo
     the caller must already have recorded that in `Derived.unverifiable` (§4.3a).
     """
     detail: list[str] = []
+    # ONE GATE, TWO PLACES IT CAN BE RECORDED, SELECTED BY THE CONTRACT'S SHAPE — never by fallback.
+    # A declaration-only contract (ADR-0106) has no append chain, so approval is the front-matter
+    # `approved_digest`; a lifecycle-bearing one keeps reading its last `approved` event, unchanged.
+    # The selector is `boundary_count`, a fact about the bytes, so no contract can be read both ways
+    # and no contract can have its approval read from whichever place happens to say yes.
     approved = [e for e in events if e.kind == "approved"]
     content = NOT_SOUGHT
     approved_digest = ""
-    if approved:
+    if decl.boundary_count == 0:
+        approved_digest = str(decl.value("approved_digest") or "")
+        if approved_digest:
+            content = SATISFIED if approved_digest == decl.digest else STALE
+            detail.append(f"content approval names {approved_digest[:20]}…; D is "
+                          f"{decl.digest[:20]}… (declaration-only, ADR-0106)")
+    elif approved:
         approved_digest = approved[-1].get("digest")
         content = SATISFIED if approved_digest == decl.digest else STALE
         detail.append(f"content approval names {approved_digest[:20] or '<no digest>'}…; "

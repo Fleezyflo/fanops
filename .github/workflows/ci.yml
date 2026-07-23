@@ -14,7 +14,12 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
-  workflow_dispatch:        # the manual force-E2E trigger (see the `e2e` relevance step)
+  workflow_dispatch:        # the manual full-E2E trigger (see the `e2e` trigger-gate step)
+  schedule:
+    # The nightly full-E2E proof lane. Since 2026-07-22 the real-tooling suite does not run on
+    # ordinary pushes or pull requests, so this is what stops it rotting unobserved. It blocks
+    # nothing: a red nightly is a signal to look, not a merge gate.
+    - cron: "0 4 * * *"
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -115,50 +120,53 @@ jobs:
           python scripts/base_install_smoke.py
 
   e2e:
-    # RELEVANCE-GATED, NOT PATH-FILTERED. This job backs a LIVE REQUIRED context, so it must always
-    # REPORT: a required workflow skipped by a top-level `paths:` filter never reports at all and
-    # leaves branch protection pending forever. So the workflow has NO path filter; instead the
-    # relevance decision happens INSIDE the job and gates the ~7 minutes of work. On a change that
-    # cannot touch runtime behaviour the job passes in seconds with an explicit message; on anything
-    # else — including a path class the predicate has never seen — it runs in full.
+    # ON-DEMAND, NOT PATH-FILTERED, AND NOT A PUSH/PR GATE (operator decision, 2026-07-22).
+    #
+    # The full real-tooling suite runs on a MANUAL dispatch, the NIGHTLY schedule, or an explicit
+    # force-e2e request — never on an ordinary push or pull request. On those it reports in seconds
+    # so PR iteration is not held for ~7 minutes of ffmpeg, espeak and Whisper.
+    #
+    # THE CONTEXT MUST STILL REPORT, which is why the decision lives inside the JOB and there is no
+    # workflow-level `paths:` filter: `real-tooling E2E (must run, not skip)` is live in branch
+    # protection, and a required workflow that is skipped never reports at all, leaving protection
+    # pending forever. Only the WORK is conditional; the context is not.
+    #
+    # This replaced a relevance gate that ran the lane for any change touching `src/`, `tests/`,
+    # `scripts/`, `tools/` or `.github/` — i.e. for all real work. It was described as relevance-
+    # gated while in practice still gating every push.
     name: real-tooling E2E (must run, not skip)
     timeout-minutes: 25
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          fetch-depth: 0          # the relevance decision diffs against the PR base
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
-        with:
-          python-version: "3.12"
-          cache: pip
-          cache-dependency-path: requirements/ci-e2e.txt
-      - name: Is the real-tooling E2E relevant to this change?
-        id: relevance
+      - name: Does this run request the full real-tooling lane?
+        id: gate
         env:
           EVENT: ${{ github.event_name }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
           FORCE_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'force-e2e') }}
           FORCE_TITLE: ${{ contains(github.event.pull_request.title, '[force-e2e]') }}
         run: |
           ARGS=""
-          if [ "$EVENT" = "workflow_dispatch" ] || [ "$FORCE_LABEL" = "true" ] || [ "$FORCE_TITLE" = "true" ]; then
-            ARGS="--forced"
-          fi
-          : > changed-paths.txt
-          if [ "$EVENT" = "pull_request" ]; then
-            # A failed diff leaves the file EMPTY, which the predicate reads as "run the full lane".
-            git diff --name-only "$BASE_SHA...HEAD" > changed-paths.txt || : > changed-paths.txt
-          fi
-          python scripts/ci_e2e_relevance.py --event "$EVENT" --changed-from changed-paths.txt $ARGS
-      - name: E2E not relevant — this context passed WITHOUT running the real-tooling suite
-        if: steps.relevance.outputs.run != 'true'
+          if [ "$FORCE_LABEL" = "true" ] || [ "$FORCE_TITLE" = "true" ]; then ARGS="--forced"; fi
+          python3 scripts/ci_e2e_trigger.py --event "$EVENT" $ARGS
+      - name: Not requested — this context passed WITHOUT running the real-tooling suite
+        if: steps.gate.outputs.run != 'true'
         run: |
-          echo "::notice title=E2E not run::Every changed path is documentation or a governance"\
-               "record, so the real-tooling E2E suite did not execute. This required context still"\
-               "reported so branch protection resolves. To run it anyway: add the 'force-e2e' label,"\
-               "put [force-e2e] in the PR title, or dispatch the CI workflow manually."
-      - if: steps.relevance.outputs.run == 'true'
+          echo "::notice title=Full E2E not run::The real-tooling suite is ON-DEMAND since"\
+               "2026-07-22 and does not run on ordinary pushes or pull requests. This required"\
+               "context still reported so branch protection resolves. To run it: gh workflow run"\
+               "ci.yml --ref <branch>, add the 'force-e2e' label, or put [force-e2e] in the PR"\
+               "title. It also runs nightly on main."
+      # `setup-python` and everything below it are part of the ~7 minutes, so they are gated too.
+      # Leaving the interpreter and pip cache ungated would spend ~20s on every push for a lane that
+      # is not going to run — the exact cost this change exists to remove.
+      - if: steps.gate.outputs.run == 'true'
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements/ci-e2e.txt
+      - if: steps.gate.outputs.run == 'true'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -168,18 +176,18 @@ jobs:
           restore-keys: |
             apt-ffmpeg-espeak-${{ runner.os }}-
       - name: Install real toolchain (ffmpeg + espeak TTS)
-        if: steps.relevance.outputs.run == 'true'
+        if: steps.gate.outputs.run == 'true'
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg espeak
       - name: Install from hashed lock (dev+transcribe+studio+compose+framing; MOL-195/196 — reproducible)
-        if: steps.relevance.outputs.run == 'true'
+        if: steps.gate.outputs.run == 'true'
         run: |
           python -m pip install --upgrade pip
           pip install --require-hashes -r requirements/ci-e2e.txt
           pip install -e . --no-deps
       - name: Cache whisper 'tiny' checkpoint
-        if: steps.relevance.outputs.run == 'true'
+        if: steps.gate.outputs.run == 'true'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/whisper
@@ -187,16 +195,16 @@ jobs:
           restore-keys: |
             whisper-tiny-${{ runner.os }}-
       - name: Pre-fetch whisper 'tiny' (so the E2E never needs a network fetch mid-test)
-        if: steps.relevance.outputs.run == 'true'
+        if: steps.gate.outputs.run == 'true'
         run: |
           python -c "import whisper; whisper.load_model('tiny')"
       - name: Verify toolchain on PATH
-        if: steps.relevance.outputs.run == 'true'
+        if: steps.gate.outputs.run == 'true'
         run: |
           for b in ffmpeg ffprobe whisper espeak; do command -v "$b" || { echo "MISSING: $b"; exit 1; }; done
       - name: Integration suite — E2E MUST run (FANOPS_REQUIRE_E2E=1 fails on skip)
         id: e2e-integration
-        if: steps.relevance.outputs.run == 'true'
+        if: steps.gate.outputs.run == 'true'
         env:
           FANOPS_REQUIRE_E2E: "1"
           FANOPS_REQUIRE_STUDIO: "1"
@@ -206,21 +214,21 @@ jobs:
           python -m pytest -q -m "integration and not ci_hook_regression and not asr" -rs \
             --durations=25 --durations-min=1.0 2>&1 | tee pytest-e2e-integration.log   # MOL-452
       - name: CI duration report (e2e integration)
-        if: always() && steps.relevance.outputs.run == 'true' && steps.e2e-integration.outcome != 'cancelled'
+        if: always() && steps.gate.outputs.run == 'true' && steps.e2e-integration.outcome != 'cancelled'
         continue-on-error: true
         run: |
           python scripts/ci_timing_report.py --step e2e_integration --log pytest-e2e-integration.log \
             --sha "${{ github.sha }}" --json-out ci-timing.partial.json
       - name: Slow cross-face proofs (hermetic — no real toolchain required)
         id: e2e-slow
-        if: steps.relevance.outputs.run == 'true'
+        if: steps.gate.outputs.run == 'true'
         env:
           FANOPS_REQUIRE_STUDIO: "1"
         run: |
           set -o pipefail
           python -m pytest -q -m slow --durations=25 --durations-min=1.0 2>&1 | tee pytest-e2e-slow.log   # MOL-452
       - name: CI duration report (e2e slow)
-        if: always() && steps.relevance.outputs.run == 'true' && steps.e2e-slow.outcome != 'cancelled'
+        if: always() && steps.gate.outputs.run == 'true' && steps.e2e-slow.outcome != 'cancelled'
         continue-on-error: true
         run: |
           python scripts/ci_timing_report.py --step e2e_slow --log pytest-e2e-slow.log \

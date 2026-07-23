@@ -1,5 +1,15 @@
 # Running a wave (quickstart)
 
+> **⚠️ THIS IS NOT THE NORMAL WORKFLOW, and you do not need it for ordinary work.** One ticket is one
+> worktree, one branch, one PR, merged on green — [`AGENTS.md`](AGENTS.md) "Per-ticket workflow" is
+> the whole path. Reach for a wave only when an operator hands you a *batch* and asks for one.
+>
+> **The enforcement gate this document describes is DORMANT and stays dormant** — no wiring exists in
+> `.cursor/hooks.json` or `.claude/settings.json`, so none of the "refused", "denied" or "ledgered"
+> guarantees below actually fire. The decision to re-enable, replace or retire it was Phase 6 of the
+> Agent Change System program, which is **cancelled**, so dormancy is the permanent disposition
+> rather than a pending question. Status owner: [`.orchestration/SPEC.md`](.orchestration/SPEC.md).
+
 Hand a batch of Linear tasks to one agent; it delegates every bit of the work to sub-agents and
 lands the verified results itself. You don't manage it after launch.
 

@@ -181,13 +181,87 @@ def test_no_implicit_typing(value):
 
 
 def test_the_field_set_is_closed_and_complete():
-    """ADR-0105 §3.1: eighteen fields, plus `supersedes`. Nineteen slots, no more, no fewer."""
-    assert len(model.ALL_FIELDS) == 19
-    assert len(set(model.ALL_FIELDS)) == 19
-    assert len(model.FRONTMATTER_FIELDS) == 8
+    """ADR-0105 §3.1 (18 + `supersedes`) plus ADR-0106's three approval fields. 22 slots exactly."""
+    assert len(model.ALL_FIELDS) == 22
+    assert len(set(model.ALL_FIELDS)) == 22
+    assert len(model.FRONTMATTER_FIELDS) == 11
     assert len(model.PROSE_FIELDS) == 3
     assert len(model.TABLE_FIELDS) == 8
     assert set(model.TABLE_COLUMNS) == set(model.TABLE_FIELDS)
+    assert set(model.APPROVAL_FIELDS) <= set(model.FRONTMATTER_FIELDS)
+
+
+# ── 3a. ADR-0106 · declaration-only contracts ───────────────────────────────────────────────
+def test_a_declaration_only_contract_parses_with_every_field():
+    """The shape a new contract is written in. It must PARSE, not merely be tolerated."""
+    d = parse.parse(selftest.build_decl_only())
+    assert [x.code for x in d.diagnostics] == []
+    assert d.boundary_count == 0 and d.events == ()
+    for f in model.MANDATORY_FIELDS:
+        assert d.present(f), f"`{f}` did not parse out of a declaration-only contract"
+
+
+def test_recording_the_approval_leaves_the_digest_unchanged():
+    """THE PROPERTY THE WHOLE SHAPE RESTS ON. If it fails, `ST-3` can never be cleared.
+
+    The operator names `D` computed on an unapproved file; the agent then writes three lines INTO
+    that file. Unless those lines are outside `D`, writing the answer down invalidates the answer.
+    """
+    other_words = "APPROVE, WORDED DIFFERENTLY"
+    bare = parse.parse(selftest.build_decl_only(approve=False)).digest
+    assert parse.parse(selftest.build_decl_only()).digest == bare
+    assert parse.parse(selftest.build_decl_only(gate="RUN IT")).digest == bare
+    assert parse.parse(selftest.build_decl_only(token=other_words)).digest == bare
+
+
+def test_any_declaration_byte_still_changes_the_digest_without_a_lifecycle():
+    """The other half: `D` must still be sensitive to everything that IS being approved."""
+    bare = parse.parse(selftest.build_decl_only()).digest
+    for mutate in (dict(trailer="\nan added byte\n"),
+                   dict(traits="governance"),
+                   dict(decl_mutate=lambda d: d.replace("Prove the compiler", "Prove  the compiler", 1))):
+        assert parse.parse(selftest.build_decl_only(**mutate)).digest != bare, mutate
+
+
+def test_approval_fields_and_digest_elision_agree():
+    """`parse` elides a literal pattern; `model` lists the fields. Drift would silently widen `D`.
+
+    A field added to `APPROVAL_FIELDS` but not to the pattern would land INSIDE `D`, so recording it
+    would void the approval — the unsatisfiable-gate failure, reintroduced by an edit that looks
+    like bookkeeping.
+    """
+    elided = set(parse._APPROVAL_LINES.pattern.decode().split("(?:", 1)[1].split(")", 1)[0].split("|"))
+    assert elided == set(model.APPROVAL_FIELDS)
+
+
+def test_the_legacy_digest_is_byte_identical_for_a_lifecycle_bearing_contract():
+    """ADR-0105's reference implementation still decides `D` wherever a `## Lifecycle` line exists."""
+    import hashlib
+    raw = selftest.build()
+    want = "sha256:" + hashlib.sha256(raw.split(b"\n## Lifecycle\n", 1)[0]).hexdigest()
+    assert parse.parse(raw).digest == want
+    # ... and eliding is NOT applied there, even if such a line somehow appeared in the declaration.
+    with_line = raw.replace(b"supersedes: []\n", b"supersedes: []\napproved_digest: x\n", 1)
+    assert parse.parse(with_line).digest != want
+
+
+def test_every_landed_contract_keeps_the_digest_its_approval_names():
+    """The migration guarantee, read off the repository rather than a fixture.
+
+    Six contracts landed under the lifecycle model. If the digest rule reached them, every one of
+    those approvals would silently stop naming its own declaration.
+    """
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1] / "docs" / "contracts"
+    checked = 0
+    for p in sorted(root.glob("CC-*.md")):
+        d = parse.parse(p.read_bytes())
+        recorded = [e.get("digest") for e in d.events if e.kind == "approved"]
+        if not recorded:
+            continue
+        assert d.digest == recorded[-1], f"{p.name} no longer computes the digest it was approved at"
+        checked += 1
+    assert checked >= 5, f"only {checked} landed approvals were checked — the corpus went missing"
 
 
 def test_traits_may_be_empty_but_no_other_mandatory_field_may():
@@ -421,7 +495,8 @@ def _verify(path: Path, *extra: str) -> tuple[int, dict]:
         return r.returncode, {"stdout": r.stdout[-2000:], "stderr": r.stderr[-2000:]}
 
 
-@pytest.mark.parametrize("name", ["valid_minimal.md", "valid_full.md"])
+@pytest.mark.parametrize("name", ["valid_minimal.md", "valid_full.md",
+                                   "valid_declaration_only.md"])
 def test_the_independent_fixtures_parse_with_no_structural_diagnostics(name):
     """D-6: independent fixtures, so self-validation is not the only evidence the compiler works."""
     d = parse.parse((FIXTURES / name).read_bytes(), path=f"tests/fixtures/contracts/{name}")
@@ -432,13 +507,34 @@ def test_the_independent_fixtures_parse_with_no_structural_diagnostics(name):
         assert d.present(f), f"{name} is missing mandatory field `{f}`"
 
 
-def test_the_full_fixture_exercises_every_slot_and_state():
-    d = parse.parse((FIXTURES / "valid_full.md").read_bytes())
-    assert {f.name for f in d.fields} == set(model.ALL_FIELDS)
-    assert d.traits == frozenset(model.TRAITS)
-    kinds = {e.kind for e in d.events}
+def test_the_committed_fixtures_between_them_exercise_every_slot_and_state():
+    """NO SINGLE FIXTURE CAN COVER EVERY SLOT, and that is a property, not a gap.
+
+    The two approval routes are mutually exclusive — `APPROVAL-DUAL-ROUTE` refuses a contract that
+    records both — so a lifecycle-bearing fixture cannot carry the ADR-0106 approval fields and a
+    declaration-only one cannot carry an `approved` event. The union is the right unit.
+    """
+    full = parse.parse((FIXTURES / "valid_full.md").read_bytes())
+    decl_only = parse.parse((FIXTURES / "valid_declaration_only.md").read_bytes())
+    assert {f.name for f in full.fields} | {f.name for f in decl_only.fields} == set(model.ALL_FIELDS)
+    assert {f.name for f in full.fields} == set(model.ALL_FIELDS) - set(model.APPROVAL_FIELDS)
+    assert set(model.APPROVAL_FIELDS) <= {f.name for f in decl_only.fields}
+    assert full.traits == frozenset(model.TRAITS)
+    assert decl_only.boundary_count == 0 and decl_only.events == ()
+    kinds = {e.kind for e in full.events}
     assert {"created", "approved", "binding", "implementation_started", "head_proposed", "merged",
             "accepted"} <= kinds
+
+
+def test_the_declaration_only_fixture_is_approved_and_gated():
+    """The committed artifact must itself satisfy the gates it exists to pin, not merely parse."""
+    d = parse.parse((FIXTURES / "valid_declaration_only.md").read_bytes())
+    assert d.value("approved_digest") == d.digest, "the fixture's approval no longer names its own D"
+    assert d.value("approval_token") and d.value("execution_gate")
+    di = model.DecisionInput(declaration=d, derived=model.Derived(),
+                             gates=model.Gates(content_approval="satisfied"), state="approved",
+                             diagnostics=(), phase="at-head")
+    assert decide(di).rule != "RF-1", "a recorded `execution_gate` did not satisfy the live gate"
 
 
 def test_an_incomplete_acceptance_event_is_malformed():

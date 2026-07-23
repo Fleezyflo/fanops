@@ -14,10 +14,10 @@
 >   `.github/ci-control-registry.yml` now equals `current_required_contexts` equals live GitHub, so
 >   `python -m tools.ci deployed` reports **no findings** where it previously reported three contexts
 >   "pending Operational Governance Deployment".
-> - `unit` is the sole **routine** PR blocker for logic. `real-tooling E2E` stays required but does its
->   work only on runtime-relevant changes (`scripts/ci_e2e_relevance.py`); on a documentation- or
->   governance-only change the context still reports, in seconds, with an explicit message saying the
->   suite was not relevant and did not run.
+> - `unit` is the sole **routine** PR blocker for logic. `real-tooling E2E` stays required as a
+>   CONTEXT, but its suite is **on-demand** (`scripts/ci_e2e_trigger.py`): manual dispatch, the 04:00
+>   UTC nightly schedule, or an explicit `force-e2e` request. On an ordinary push or pull request the
+>   context reports in seconds with a message saying the suite did not run.
 > - The three contexts M1–M3 would have promoted — the architecture gate, base-install and the lane +
 >   cross-PR collision guard — are **advisory**: they still run on every PR and their verdicts are
 >   read; they no longer block a merge. Impact was already advisory and is unchanged.

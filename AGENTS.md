@@ -10,7 +10,8 @@ and the nested `src/fanops/CLAUDE.md`, `src/fanops/post/CLAUDE.md`, `src/fanops/
 | You need | Go to |
 |---|---|
 | **Whether this change needs a Change Contract — ASK THIS FIRST, BEFORE YOU WRITE OR IMPLEMENT ANYTHING** | `python -m tools.contract preflight <path>...` — list the exact repository paths you intend to change |
-| What a Change Contract must contain, and the rules behind it | [`docs/adr/0105-reusable-change-contract-architecture.md`](docs/adr/0105-reusable-change-contract-architecture.md) |
+| What a Change Contract must contain, and the rules behind it | [`docs/adr/0105-reusable-change-contract-architecture.md`](docs/adr/0105-reusable-change-contract-architecture.md), as narrowed by [`0106`](docs/adr/0106-declaration-only-change-contracts.md) |
+| The skeleton to copy when you write one | `python -m tools.contract template` |
 | The rules and their honest enforcement status | [`docs/REPOSITORY_CONSTITUTION.md`](docs/REPOSITORY_CONSTITUTION.md) |
 | The enforceable architecture (`LAW-*`) | [`docs/ARCHITECTURAL_LAWS.md`](docs/ARCHITECTURAL_LAWS.md) |
 | How code is written here (`STD-*`) | [`docs/ENGINEERING_STANDARDS.md`](docs/ENGINEERING_STANDARDS.md) |
@@ -34,6 +35,23 @@ writes nothing. It answers `REQUIRED` (write the contract first, before you impl
 impact needs a real diff and `T4`/`T6` are facts only you can state, so `UNDETERMINED` means
 "nothing visible from paths fired" — not "you are clear". An intended path that does not resolve
 **fails closed** rather than reading as a contained change.
+
+**If it answers `REQUIRED`, the whole contract is four steps** (ADR-0106):
+
+1. `python -m tools.contract template > docs/contracts/CC-<date>-<slug>.md`, then fill it in.
+2. `python -m tools.contract verify <path> --phase pre` — fix what it names, then ask the operator to
+   approve. **Do not implement before they answer**; that is what the phase exists to stop.
+3. Write `approved_digest:` (the value `python -m tools.contract digest <path>` prints) and
+   `approval_token:` (their words, verbatim) into the front matter. Nothing else changes, and `D` is
+   unchanged by writing them.
+4. Implement. Before you push, `python -m tools.contract scope <path>` must report **no unauthorized
+   surface**, and `verify <path>` must reach `continue`.
+
+**There is no step 5.** No lifecycle table, no `created` row, no event chain, no run ids or SHAs
+copied into the file, and **no second pull request after the merge**. A contract records what was
+authorized; the platform records what happened. *(The six contracts under `docs/contracts/` dated
+before 2026-07-22 carry a `## Lifecycle` section — that is the retired ADR-0105 model, still read by
+the verifier, never written into a new contract. Do not edit them: a landed contract is immutable.)*
 
 One ticket at a time, in its own git worktree, TDD-first, pushed small.
 Correctness and safety beat speed. When unsure, do the safe serial thing.
@@ -186,13 +204,9 @@ work-loss. Cap concurrency so drift is rare; when it happens, use the re-sync pr
   A PR touching no hot files (docs/tooling/tests) passes trivially. Both checks are **advisory** —
   they run on every PR and their verdict is read, but neither blocks a merge (CI simplification,
   2026-07-22). That fits a check whose Linear lookup is best-effort and fails open without
-  `LINEAR_API_KEY`. Merge authority is the `fanops-orchestrator`: it lands PRs serially after
-  sub-agent verification. That serial-landing contract is a **convention today** — the hook land-gate
-  that once refused unverified merges is DORMANT (see the status marker below). Never require
-  code-owner review in branch protection — that would block the orchestrator's autonomous merge. The
-  orchestration that drives lanes lives in `.cursor/agents/fanops-*.md` + `.agents/*-agent.md`
-  (Linear-driven queue, orchestrator-owned serial merges). **Remaining human toggle:** add
-  `LINEAR_API_KEY` as an Actions secret, for MOL-id lane resolution.
+  `LINEAR_API_KEY`. Land PRs **serially** — that is a convention held by you, not a gate. Never
+  require code-owner review in branch protection; it would block autonomous merges. **Remaining human
+  toggle:** add `LINEAR_API_KEY` as an Actions secret, for MOL-id lane resolution.
 - **Advisory (this file — no git hook exists to enforce it):** `git reset --hard`, force-push to a
   FEATURE branch, and "commit only staged files". Git has no `pre-reset` hook, so these rely on the
   agent obeying the guardrails above. Treat them as absolute anyway; they are the exact operations
@@ -204,23 +218,25 @@ Post one line: `MOL-xxx merged, CI green, worktree removed`.
 Stop and ask if: a blocker isn't merged, a ticket's anchors no longer match the code,
 CI is red for a reason you can't fix quickly, or any guardrail would be violated.
 
-## Delegation-only orchestration (fanops-orchestrator)
+## Wave orchestration — NOT part of normal work
 
-To run a wave, see the quickstart **`ORCHESTRATION.md`** (one command: `python scripts/orchestrate.py
-start | status | done`). Under the hood, the `fanops-orchestrator` agent
-(`.cursor/agents/fanops-orchestrator.md`) **delegates every unit of work to sub-agents** and personally
-runs ONLY the git land commands.
+**Do not route ordinary work through the orchestrator.** The per-ticket workflow above is the whole
+path: one worktree, one branch, one PR, merge on green. Nothing in it requires
+`scripts/orchestrate.py`, an `ACTIVE` wave marker, a verification record or a sub-agent.
 
-> **ORCHESTRATION-GATE-STATUS: DORMANT** — no gate wiring is present in `.cursor/hooks.json` or
-> `.claude/settings.json`. Status owner: [`.orchestration/SPEC.md`](.orchestration/SPEC.md).
+> **ORCHESTRATION-GATE-STATUS: DORMANT, permanently** — no gate wiring is present in
+> `.cursor/hooks.json` or `.claude/settings.json`, and none is planned. Status owner:
+> [`.orchestration/SPEC.md`](.orchestration/SPEC.md).
 
-The gate machinery was written to make that contract mechanical — `gh pr merge` refused without a
-sub-agent **verification record**, destructive git denied, every sub-agent start/stop ledgered. It was
-wired and enforcing until the operator disabled it (2026-07-15). It is retained on disk and still
-covered by CI, but **it enforces nothing today**; the delegation contract is a convention held by the
-agent files. Full protocol + the re-enable path: `.orchestration/SPEC.md`. Whole-repo scope (open PRs,
-conflicts, stale branches, artifacts) is surfaced read-only by `python scripts/repo_sweep.py`. Worker
-sub-agents follow `.agents/_worker-protocol.md`.
+The delegation machinery (`ORCHESTRATION.md`, `scripts/orchestrate.py`, `.cursor/agents/fanops-*.md`,
+`.agents/*-agent.md`, `.cursor/hooks/orchestration_gate.py`) is **retained on disk, still covered by
+CI, and enforces nothing.** It was wired and enforcing until the operator disabled it 2026-07-15; the
+decision to re-enable, replace or retire it was Phase 6 of the Agent Change System program, which is
+**cancelled** — so the dormancy is now the permanent disposition, not a pending question. Read
+`.orchestration/SPEC.md` before touching any of it.
+
+`python scripts/repo_sweep.py` is read-only and independently useful — open PRs, conflicts, stale
+branches, leftover artifacts — with or without a wave.
 
 ## Cursor Cloud specific instructions
 

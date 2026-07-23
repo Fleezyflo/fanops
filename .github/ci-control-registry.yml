@@ -38,10 +38,12 @@ generated_view: docs/ci/CI_CONTROL_INVENTORY.md
 # runbook left to execute. The term is retained here only so the merged history stays readable.
 #
 # What replaced it: `unit (fast, no toolchain)` is the sole ROUTINE PR blocker for logic, and
-# `real-tooling E2E (must run, not skip)` stays required but does its work only on runtime-relevant
-# changes (see CI-E2E). Everything else — the architecture gate, impact, base-install, lane guard and
-# the cross-PR collision guard — is ADVISORY: it still runs and is still read, it just no longer
-# blocks a merge. Rationale: docs/adr/0101-required-checks-and-merge-gate-policy.md.
+# `real-tooling E2E (must run, not skip)` stays required as a CONTEXT but its suite is ON-DEMAND —
+# manual dispatch, the nightly schedule, or an explicit force-e2e request. It does NOT run on an
+# ordinary push or pull request (see CI-E2E `trigger_gate`). Everything else — the architecture gate,
+# impact, base-install, lane guard and the cross-PR collision guard — is ADVISORY: it still runs and
+# is still read, it just no longer blocks a merge. Rationale:
+# docs/adr/0101-required-checks-and-merge-gate-policy.md.
 
 # Rollout model (ADR-0101). `current_required_contexts` is what SHOULD be live right now; DC-3
 # requires live == current (blocking). `phase: enforced` means THE REQUIRED SET IS FINAL — any
@@ -86,9 +88,9 @@ duplicate_groups:
     reason: "One selftest.detect implementation invoked via two harnesses (pytest test case + CLI verb)."
     members: [CI-E2E-NEGCONTROLS, ARCH-CONTROLS]
     distinct_boundaries:
-      CI-E2E-NEGCONTROLS: "the merge-blocking path — collected in the `e2e` slow step, which since 2026-07-22 runs only when the change is runtime-relevant (see CI-E2E). The controls are `@pytest.mark.slow`, and the unit lane deselects `slow`, so on a documentation-only PR they do NOT run. Disclosed, not hidden: a docs-only change alters neither the rules nor the validators those controls discriminate against, and any edit under `src/`, `tools/`, `tests/` or `.github/` runs them in full."
-      ARCH-CONTROLS: "standalone CLI selftest visibility + the push-to-main and path-selected dimension; advisory."
-    remediation: "Keep both. The former SLICE-NEGCTRL-DEDUP plan — reduce one side to a lightweight reachability assertion — is unnecessary now that the two no longer both run on every arch-relevant PR at merge-blocking cost."
+      CI-E2E-NEGCONTROLS: "the ON-DEMAND path — collected in the `e2e` slow step, which since 2026-07-22 runs only on a manual dispatch, the nightly schedule or an explicit force-e2e request (see CI-E2E `trigger_gate`). The controls are `@pytest.mark.slow` and the unit lane deselects `slow`, so THEY DO NOT RUN ON ANY PULL REQUEST. It is no longer a merge-blocking path; ARCH-CONTROLS below is what a PR actually sees, and it is advisory."
+      ARCH-CONTROLS: "standalone CLI selftest visibility + the push-to-main and path-selected dimension; advisory. Since 2026-07-22 this is the ONLY negative-control execution a pull request gets."
+    remediation: "Keep both, for a reason that changed on 2026-07-22: they no longer overlap on a PR at all. ARCH-CONTROLS is the sole PR-visible run (advisory), CI-E2E-NEGCONTROLS the on-demand/nightly one. The former SLICE-NEGCTRL-DEDUP plan is dead — removing either would leave a real gap rather than trimming a duplicate. NOTE the honest consequence: no negative-control run BLOCKS a merge any more."
   ruff-scopes:
     reason: "ruff runs at deliberately-tiered scopes; each protects a different feedback boundary (not duplication)."
     members: [CI-UNIT-LINT, LOCAL-RUFF-PRECOMMIT, LOCAL-CHECK-SH]
@@ -341,11 +343,11 @@ controls:
   # ===== ci.yml · e2e (composite, REQUIRED) =========================================================
   - id: CI-E2E
     name: "real-tooling E2E (must run, not skip)"
-    invariant: "on a runtime-relevant change the real ffmpeg/whisper/espeak pipeline actually runs (not mocks) and never silently skips; @slow cross-face proofs pass; cv2 present"
+    invariant: "when the full lane is REQUESTED (manual dispatch, the nightly schedule, or force-e2e) the real ffmpeg/whisper/espeak pipeline actually runs (not mocks) and never silently skips; @slow cross-face proofs pass; cv2 present. On an ordinary push or pull request the context reports in seconds and the suite does not run."
     owner: ci-lane
     workflow: .github/workflows/ci.yml
     job: e2e
-    trigger: [pull_request, push, workflow_dispatch]
+    trigger: [pull_request, push, workflow_dispatch, schedule]
     classification: required
     runtime_class: slow
     timeout_minutes: 25
@@ -360,24 +362,37 @@ controls:
     failure_evidence: "FANOPS_REQUIRE_E2E=1 turns an integration skip into a failure; the job is a LIVE required context."
     evidence_status: verified-this-session
     status: active
-    relevance_gate:
+    trigger_gate:
       since: 2026-07-22
-      decided_by: "scripts/ci_e2e_relevance.py (pure `decide()`; proven both directions by tests/test_ci_e2e_relevance.py in the unit lane)"
+      supersedes: >-
+        The `relevance_gate` recorded here earlier the same day. It ran the full lane for any change
+        outside `docs/`, `.claude/`, `.reports/` and root `*.md` — that is, for all real work — so
+        the suite still gated every ordinary push and every PR iteration while being described as
+        relevance-gated. Operator decision: the full real-tooling E2E is not a push/PR gate.
+      decided_by: "scripts/ci_e2e_trigger.py (pure `decide()`; proven both directions by tests/test_ci_e2e_trigger.py in the unit lane)"
       always_reports: >-
         The job has NO workflow-level `paths:` filter and always runs, because a required workflow
         that is skipped by a path filter never reports and leaves branch protection pending forever.
         The gate is INSIDE the job and controls only whether the ~7 minutes of work execute.
       runs_in_full_when: >-
-        any changed path is outside `docs/`, `.claude/`, `.reports/` and root-level `*.md` — which
-        includes all of `src/`, `tests/`, `scripts/`, `tools/`, `.github/` (the workflow itself),
-        `pyproject.toml` and `requirements/`; or the event is a push to main or a manual dispatch; or
-        the PR carries the `force-e2e` label or `[force-e2e]` in its title; or the diff cannot be read.
-      skips_work_when: "every changed path is documentation or a governance record, and only then."
+        the event is `workflow_dispatch` (manual) or `schedule` (the 04:00 UTC nightly), or the pull
+        request carries the `force-e2e` label or `[force-e2e]` in its title. Nothing else runs it —
+        not a push to main, not a pull request, and not any changed path.
+      skips_work_when: "every ordinary push and pull_request event, and any event not named above."
+      polarity: >-
+        INVERTED from the relevance gate, deliberately. That predicate failed toward MORE testing
+        because an unclassified path might have mattered. This one cannot, without reinstating the
+        behaviour that was removed: an unrecognised event is by construction not one an operator
+        asked the heavy lane to run on.
       disclosed_consequence: >-
-        On such a change the `@pytest.mark.slow` suite — including the arch negative controls
-        (CI-E2E-NEGCONTROLS) — does not execute, because the unit lane deselects `slow`. A
-        documentation-only change alters neither those rules nor the validators they discriminate
-        against, and any edit to code, tooling, tests or workflows runs them in full.
+        NOTHING in the real-tooling suite runs on a pull request. That is: the real ffmpeg/whisper/
+        espeak integration tests, and the `@pytest.mark.slow` hermetic cross-face proofs — including
+        the arch negative controls (CI-E2E-NEGCONTROLS) and the capstone per-persona and
+        account-first E2E proofs — are absent from PR feedback entirely, because the unit lane
+        deselects both `integration` and `slow`. A render, publish or per-persona regression can
+        therefore merge green and be caught only by the nightly run, a manual dispatch, or in
+        production. This is the accepted cost of not holding PR iteration for ~7 minutes; the
+        nightly schedule exists so the window is a day rather than unbounded.
 
   - id: CI-E2E-TOOLCHAIN
     name: "Verify toolchain on PATH"
@@ -388,8 +403,8 @@ controls:
     job: e2e
     step: "Verify toolchain on PATH"
     command: 'for b in ffmpeg ffprobe whisper espeak; do command -v "$b" || exit 1; done'
-    trigger: [pull_request, push]
-    classification: required
+    trigger: [workflow_dispatch, schedule]
+    classification: scheduled
     runtime_class: fast
     justification: "fails clearly and early on a missing tool instead of mid-test."
     deletion_consequence: "a missing binary surfaces as a confusing deep failure rather than an obvious one."
@@ -408,8 +423,8 @@ controls:
     job: e2e
     step: "Integration suite — E2E MUST run (FANOPS_REQUIRE_E2E=1 fails on skip)"
     command: 'python -m pytest -q -m "integration and not ci_hook_regression and not asr" -rs'
-    trigger: [pull_request, push]
-    classification: required
+    trigger: [workflow_dispatch, schedule]
+    classification: scheduled
     runtime_class: slow
     justification: "the executed proof that the pipeline works against real ffmpeg/whisper."
     deletion_consequence: "the pipeline's real-tooling proof disappears; a mock could mask a broken render."
@@ -428,8 +443,8 @@ controls:
     job: e2e
     step: "Slow cross-face proofs (hermetic — no real toolchain required)"
     command: "python -m pytest -q -m slow"
-    trigger: [pull_request, push]
-    classification: required
+    trigger: [workflow_dispatch, schedule]
+    classification: scheduled
     runtime_class: slow
     justification: "catches cross-cutting regressions across the account/persona/hashtag faces the unit lane deselects."
     deletion_consequence: "cross-cutting closed-loop regressions merge; also the negative-control blocking path (collected here) disappears."
@@ -448,8 +463,8 @@ controls:
     job: e2e
     step: "collected: test_negative_control_is_detected (@slow) in the e2e slow step"
     command: "python -m pytest -q -m slow (collects the parametrized negative controls)"
-    trigger: [pull_request, push]
-    classification: required
+    trigger: [workflow_dispatch, schedule]
+    classification: scheduled
     runtime_class: slow
     justification: "THE merge-blocking proof that the arch validators discriminate (delegates to selftest.detect)."
     deletion_consequence: "arch validators could silently become decorative with no blocking detector; ARCH-CONTROLS is only advisory."
