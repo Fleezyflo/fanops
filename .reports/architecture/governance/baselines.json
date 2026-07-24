@@ -11,7 +11,7 @@
   "approved_terminal_post_writers": [
     "src/fanops/post/run.py:343",
     "src/fanops/reconcile.py:766",
-    "src/fanops/studio/actions.py:280",
+    "src/fanops/studio/actions.py:301",
     "src/fanops/track.py:193"
   ],
   "approved_terminal_post_writers_note": "Every site WRITING PostState.published / PostState.analyzed with a LITERAL value. The R1 invariant fires at CONSTRUCTION ONLY; model_copy and setattr both bypass it, and four manual call-site guards hold the line. A FIFTH door saves cleanly and then BRICKS THE NEXT Ledger.load. This is GB-4, mechanized (rule IMPL-009). *** IT DOES NOT COVER THE DYNAMIC DOORS — PostState(<runtime>), model_copy(update=…), setattr(…). That blind spot is reported on EVERY run rather than hidden. ***",

@@ -36,10 +36,14 @@ def _model(caption="A FRESH TAKE", hashtags=None, surface="a/instagram"):
 
 def test_regenerate_rewrites_queued_post(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg)
-    res = regenerate_caption(cfg, "p_edit", "punchier", model=_model("PUNCHIER LINE"), now=NOW)
+    res = regenerate_caption(cfg, "p_edit", "punchier", model=_model("PUNCHIER LINE", ["#hiphop", "#rap"]), now=NOW)
     assert res.ok is True
-    assert Ledger.load(cfg).posts["p_edit"].caption == "PUNCHIER LINE"
-    assert res.detail["caption"] == "PUNCHIER LINE"
+    p = Ledger.load(cfg).posts["p_edit"]
+    # pipeline parity (ingest_captions contract): the written caption IS the vetted <=4-tag line —
+    # raw model prose/tags are never persisted past the vet.
+    assert p.caption == " ".join(p.hashtags) and 0 < len(p.hashtags) <= 4
+    assert p.caption != "PUNCHIER LINE"
+    assert res.detail["caption"] == p.caption
 
 
 def test_regenerate_refuses_and_never_spawns_claude_in_manual_mode(tmp_path, monkeypatch):
@@ -83,6 +87,30 @@ def test_regenerate_rejects_offbrand_without_persisting(tmp_path):
     assert res.ok is False and "brand" in (res.error or "").lower()
     assert Ledger.load(cfg).posts["p_edit"].caption == "CLEAN"   # unchanged — no guardrail bypass
 
+def test_regenerate_payload_carries_corpus_and_vet_keeps_it(tmp_path):
+    # The two halves of the regen parity gap, pinned closed: (1) the regen prompt carries the account's
+    # curated corpus exactly like the batch payload (caption.request_captions:195-213); (2) the write
+    # runs the SAME vet as ingest — a picked corpus member survives, junk is dropped, the 4-cap holds.
+    import json as _json
+    cfg = Config(root=tmp_path)
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(_json.dumps({"accounts": [
+        {"handle": "a", "platforms": ["instagram"], "status": "active",
+         "hashtag_corpus": ["#alphacorpus", "#betacorpus"]}]}))
+    _seed(cfg)
+    seen = {}
+    def m(prompt, schema):
+        seen["prompt"] = prompt
+        return {"items": [{"surface": "a/instagram", "caption": "x", "language": "en",
+                           "hashtags": ["#alphacorpus", "#j1", "#j2", "#j3", "#j4", "#j5", "#j6", "#j7"]}]}
+    res = regenerate_caption(cfg, "p_edit", "", model=m, now=NOW)
+    assert res.ok is True
+    assert "#alphacorpus" in seen["prompt"]                          # corpus reached the prompt
+    p = Ledger.load(cfg).posts["p_edit"]
+    assert "#alphacorpus" in p.hashtags and len(p.hashtags) <= 4     # corpus member survives the vet
+    assert not any(t.startswith("#j") for t in p.hashtags)           # raw junk can no longer be written
+
+
 def test_regenerate_guards_non_queued(tmp_path):
     cfg = Config(root=tmp_path); led = _seed(cfg)
     led.posts["p_edit"].state = PostState.published; led.save()
@@ -112,18 +140,20 @@ def test_regenerate_surfaces_missing_claude(tmp_path):
 def test_regenerate_picks_exact_surface_among_many(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg)
     def m(prompt, schema):
-        return {"items": [{"surface": "b/youtube", "caption": "WRONG", "language": "en"},
-                          {"surface": "a/instagram", "caption": "RIGHT", "language": "en"}]}
+        # the b/youtube decoy is OFF-BRAND: picking it would REJECT, so res.ok proves a/instagram won
+        return {"items": [{"surface": "b/youtube", "caption": "check the link in bio", "language": "en"},
+                          {"surface": "a/instagram", "caption": "RIGHT", "hashtags": ["#hiphop"], "language": "en"}]}
     res = regenerate_caption(cfg, "p_edit", "", model=m, now=NOW)
-    assert res.ok is True and res.detail["caption"] == "RIGHT"
+    assert res.ok is True and res.detail["caption"] == " ".join(res.detail["hashtags"])
 
 def test_regenerate_accepts_lone_item_on_surface_mismatch(tmp_path):
     # Single-surface regen: if the model returns exactly ONE item whose surface label differs from
     # ours (off-by-format), accept it rather than failing — the production happy path (one surface).
     cfg = Config(root=tmp_path); _seed(cfg)
-    def m(prompt, schema): return {"items": [{"surface": "wrong/label", "caption": "LONE", "language": "en"}]}
+    def m(prompt, schema): return {"items": [{"surface": "wrong/label", "caption": "LONE",
+                                              "hashtags": ["#hiphop"], "language": "en"}]}
     res = regenerate_caption(cfg, "p_edit", "", model=m, now=NOW)
-    assert res.ok is True and res.detail["caption"] == "LONE"
+    assert res.ok is True and res.detail["caption"] == " ".join(res.detail["hashtags"])
 
 def test_regenerate_malformed_model_output_rejected(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg, caption="KEEP")
@@ -142,11 +172,13 @@ def test_regenerate_route_swaps_edit_field(tmp_path, monkeypatch):
     # to the fake — proves the real HTTP path persists and re-renders the edit field with the new text.
     monkeypatch.setattr("fanops.llm.claude_json",
                         lambda prompt, schema, **kw: {"items": [{"surface": "a/instagram",
-                                                                 "caption": "ROUTED", "language": "en"}]})
+                                                                 "caption": "ROUTED", "hashtags": ["#hiphop"],
+                                                                 "language": "en"}]})
     app = create_app(cfg); app.config.update(TESTING=True)
     r = app.test_client().post("/regenerate/p_edit", data={"guidance": "punchier"})
-    assert r.status_code == 200 and b"ROUTED" in r.data
-    assert Ledger.load(cfg).posts["p_edit"].caption == "ROUTED"
+    assert r.status_code == 200 and b"#hiphop" in r.data            # the vetted line re-rendered in the field
+    p = Ledger.load(cfg).posts["p_edit"]
+    assert p.caption == " ".join(p.hashtags) and "#hiphop" in p.hashtags
 
 def test_regenerate_route_unknown_post_shows_clean_error(tmp_path):
     from fanops.studio.app import create_app

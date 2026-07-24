@@ -79,7 +79,8 @@
       "fanops.cli": 168,
       "fanops.hashtag_migrate": 11,
       "fanops.log": 1,
-      "fanops.paths_rebase": 2
+      "fanops.paths_rebase": 2,
+      "fanops.recaption": 5
     },
     "silent_broad_except_by_file": {
       "src/fanops/accounts.py": 3,

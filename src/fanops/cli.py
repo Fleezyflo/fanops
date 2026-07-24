@@ -823,6 +823,13 @@ def main(argv: list[str] | None = None) -> int:
     p_health = sub.add_parser("health", help="runtime dependency health (docker/postiz/zernio) from the unified model")
     p_health.add_argument("--json", action="store_true", help="machine-readable JSON (exit 1 when unhealthy)")
     sub.add_parser("publish-queue", help="list queued posts to publish BY HAND (manual / no-service free path)")
+    p_posts = sub.add_parser("posts", help="post-lifecycle utilities")
+    posts_sub = p_posts.add_subparsers(dest="posts_cmd", required=True)
+    p_rc = posts_sub.add_parser("recaption", help="re-run the ORIGINAL caption pipeline over the backlog "
+                                "(awaiting_approval + non-imminent queued posts); default = read-only dry-run listing")
+    p_rc.add_argument("--apply", action="store_true", help="MUTATE: request->answer->ingest->sync per seed clip; "
+                      "snapshot first; resumable via 00_control/.recaption_progress.json")
+    p_rc.add_argument("--dry-run", action="store_true", help="READ-ONLY target listing (the default)")
     p_audit = sub.add_parser("audit", help="(R3) operator audit-trail commands")
     audit_sub = p_audit.add_subparsers(dest="audit_cmd")
     p_at = audit_sub.add_parser("tail", help="print the last N lines of 00_control/studio_audit.log")
@@ -1383,6 +1390,10 @@ def _dispatch(cfg: Config, args) -> int:
     if args.cmd == "config":   return cmd_config(cfg)
     if args.cmd == "doctor":   return cmd_doctor(cfg, args)
     if args.cmd == "publish-queue": return cmd_publish_queue(cfg)
+    if args.cmd == "posts":
+        if args.posts_cmd == "recaption":
+            from fanops.recaption import cmd_posts_recaption   # lazy, matching the hashtags-verb precedent
+            return cmd_posts_recaption(cfg, args)
     if args.cmd == "daemon":   return cmd_daemon(cfg, args)
     if args.cmd == "autopilot": return cmd_autopilot(cfg, args)
     if args.cmd == "up":       return cmd_up(cfg, args)
