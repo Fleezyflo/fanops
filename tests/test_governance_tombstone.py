@@ -17,6 +17,7 @@ DEAD = [
     "docs/governance",
     "docs/ci",
     "docs/superpowers",
+    "docs/reconciliation",
     "docs/REPOSITORY_CONSTITUTION.md",
     "docs/ARCHITECTURAL_LAWS.md",
     "docs/ARCHITECTURE_GOVERNANCE.md",
