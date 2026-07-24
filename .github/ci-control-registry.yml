@@ -4,9 +4,10 @@
 # and live GitHub branch protection. Proposed by ADR-0100.
 #
 # THIS IS NOT AN INDEPENDENT SOURCE OF TRUTH. It is the reconciling middle plane:
-#   ADRs (docs/adr/) own policy/rationale  ->  THIS registry owns the intended executable inventory
-#   ->  workflows (.github/workflows/) implement  ->  GitHub branch protection enforces the required set
-#   ->  validators (Phase C, DC-1..DC-6) prove all planes agree  ->  generated docs present the state.
+#   main history archives policy/rationale (the ADR layer died with the governance prose, 2026-07;
+#   docs/ENFORCEMENT.md is the live index of enforcers)  ->  THIS registry owns the intended
+#   executable inventory  ->  workflows (.github/workflows/) implement  ->  GitHub branch protection
+#   enforces the required set  ->  validators (DC-1..DC-6) prove all planes agree.
 #
 # Authority order when planes disagree (ADR-0100): executable source & tests > live GitHub config >
 # accepted ADRs & this registry > generated docs > historical prose.
@@ -28,7 +29,7 @@
 # =====================================================================================================
 version: 1
 status: accepted
-generated_view: docs/ci/CI_CONTROL_INVENTORY.md
+generated_view: "NONE — the generated inventory view died with docs/ci/ (2026-07); read this registry directly (schema requires this key)"
 # Validators live in a dedicated tools/ci module (ADR-0100, operator amendment) — NOT tools/arch.
 
 # OGD IS CANCELLED (operator decision, 2026-07-22). OGD — Operational Governance Deployment — was the
@@ -44,8 +45,8 @@ generated_view: docs/ci/CI_CONTROL_INVENTORY.md
 # `workflow_dispatch` or the nightly schedule ONLY (job-level `if`), and when it runs, it really runs
 # (FANOPS_REQUIRE_E2E=1 fails on skip). Everything else — the architecture gate, impact,
 # base-install, lane guard and the cross-PR collision guard — is ADVISORY: it still runs and is
-# still read, it just no longer blocks a merge. Rationale:
-# docs/adr/0101-required-checks-and-merge-gate-policy.md.
+# still read, it just no longer blocks a merge. Rationale: archived in main history (formerly
+# ADR-0101; the ADR layer died with the governance prose, 2026-07).
 
 # Rollout model (ADR-0101). `current_required_contexts` is what SHOULD be live right now; DC-3
 # requires live == current (blocking). `phase: enforced` means THE REQUIRED SET IS FINAL — any
@@ -464,7 +465,7 @@ controls:
     timeout_minutes: null
     dependencies: [CI-UNIT, CI-E2E]
     artifacts: ["ci-timing.json"]
-    consumers: ["SLO trend (docs/CI_SLO.md)"]
+    consumers: ["operator (ad-hoc timing/SLO trend review; the docs/CI_SLO.md view died 2026-07)"]
     justification: "merges the unit/e2e timing partials into one artifact for SLO-trend observability."
     deletion_consequence: "SLO trend visibility is lost — no correctness impact."
     duplicate_group: null

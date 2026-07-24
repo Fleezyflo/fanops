@@ -126,12 +126,10 @@ RULES: dict[str, Rule] = {r.id: r for r in [
     Rule("ARCH-006", "Generated artifacts are never hand-edited",
          "A generated file that has been hand-edited is a fork of the truth that regeneration will "
          "silently destroy — or worse, that nobody regenerates because the diff is noisy.",
-         "derived/** + docs/ARCHITECTURE_GOVERNANCE.md", BLOCKING,
-         "regeneration is byte-identical to the committed bytes (drift.stale_artifacts for "
-         "derived/, drift.stale_docs for the generated doc — the doc is as generated as the JSON "
-         "but does not live in derived/, so it needs its own comparison or it drifts unwatched)",
-         "Re-run `python -m tools.arch regen && python -m tools.arch docs` and commit. Never edit "
-         "derived/ or the generated doc by hand."),
+         "derived/**", BLOCKING,
+         "regeneration is byte-identical to the committed bytes (drift.stale_artifacts over "
+         "derived/ — the only generated surface since the governance doc's deletion, 2026-07)",
+         "Re-run `python -m tools.arch regen` and commit. Never edit derived/ by hand."),
 
     Rule("ARCH-007", "A lazy import may not be hoisted to module level (GB-1)",
          "Many lazy (in-function) import edges point to an equal-or-higher layer level, and dozens are "
@@ -675,9 +673,8 @@ def _ratchet_drift(rat: dict) -> list[Finding]:
     # (the very thing the rule checks for, in the file that does the checking). Widened to tools/arch/
     # and docs/, and to .py, so every live copy is held to the test. `selftest.py` is EXCLUDED because
     # it INJECTS a deliberately-wrong assignment as the NC-15 fixture — scanning it would fire the rule
-    # on the negative control's own payload. The generated doc (docs/ARCHITECTURE_GOVERNANCE.md) is
-    # scanned too: if a rule rationale ever states a stale number, it lands there via `docs` and this
-    # rule catches it — the same faithfulness-vs-truth gap ARCH-006 cannot see.
+    # on the negative control's own payload. docs/ is scanned too: if any doc states a stale copy of
+    # the budget, this rule catches it.
     _scan_exclude = _HISTORY | {"selftest.py"}
     _scanned: set = set()
     for root in (ARCH, REPO / "tools" / "arch", REPO / "docs"):

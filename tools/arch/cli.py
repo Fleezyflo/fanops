@@ -8,7 +8,7 @@
     registries   validate the exception + unknown registries
     baseline     accept the current derived state as the approved ratchet baseline (REVIEWED)
     selftest     negative controls — prove the validators detect what they claim to
-    docs         render human-readable docs FROM the canonical machine artifacts
+    docs         render generated docs from the machine artifacts (none remain since 2026-07 — no-op)
     ci           the composite gate: regen-is-clean + policy + registries  (exit 1 on BLOCKING)
 """
 from __future__ import annotations
@@ -74,12 +74,10 @@ def cmd_check(_: argparse.Namespace) -> int:
 
 
 def cmd_drift(_: argparse.Namespace) -> int:
-    # all_stale = derived/*.json AND the generated docs. The docs are as generated as the JSON is;
-    # they simply do not live in derived/, which is exactly why they went unwatched.
     drifts = drift_mod.all_stale()
     print("generated-artifact integrity:")
     if not drifts:
-        print(_paint("OK", "  derived/ + generated docs are byte-identical to regeneration — "
+        print(_paint("OK", "  derived/ is byte-identical to regeneration — "
                            "no stale artifact, no hand-edit"))
     for d in drifts:
         print(_paint("BLOCKING", f"  [STALE] {d.artifact}  ({d.dimension})"))

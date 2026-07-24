@@ -40,7 +40,8 @@ def stale_artifacts(derived_dir: Path | None = None) -> list[Drift]:
 
     `= None`, not `= DERIVED`: a default argument is bound ONCE at import, so a module-level
     default cannot be redirected by the negative-control fixture (which isolates the checkers by
-    reassigning these globals). That trap silently defeated NC-23. Resolve globals at CALL time.
+    reassigning these globals). That trap silently defeated an earlier negative control (the
+    generated-doc one, removed 2026-07 with the doc). Resolve globals at CALL time.
     """
     derived_dir = derived_dir or DERIVED
     out: list[Drift] = []
@@ -68,31 +69,6 @@ def stale_artifacts(derived_dir: Path | None = None) -> list[Drift]:
                                  _explain(name, load_str(a), load_str(b))))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
-    return out
-
-
-def stale_docs() -> list[Drift]:
-    """The GENERATED docs must equal what the renderer produces, byte for byte.
-
-    `docs/ARCHITECTURE_GOVERNANCE.md` is generated exclusively from the machine artifacts, but it
-    does not live under `derived/`, so `stale_artifacts` never looked at it. Without this check a
-    hand-edit to the governance doc merges green and the human-readable account of the
-    architecture silently diverges from the machine-readable one — which is precisely how a doc
-    comes to "name a mechanism that does not exist" (AR-03), the defect this repo keeps shipping.
-    """
-    from .render import expected
-    out: list[Drift] = []
-    for path, want in expected().items():
-        have = path.read_text(encoding="utf-8") if path.exists() else None
-        if have == want:
-            continue
-        rel = path.name
-        out.append(Drift(
-            "generated_artifact_stale", "public_surface", rel,
-            "generated doc is MISSING — run `python -m tools.arch docs`" if have is None else
-            "generated doc was HAND-EDITED or is STALE — it no longer equals what the renderer "
-            "produces from the canonical artifacts. Run `python -m tools.arch docs`.",
-            [] if have is None else _line_delta(have, want)))
     return out
 
 
@@ -193,12 +169,14 @@ def _set_delta(label: str, old: set, new: set) -> list[str]:
 
 
 def all_stale(derived_dir: Path | None = None) -> list[Drift]:
-    """EVERY generated file, in one place: the derived JSON *and* the generated docs.
+    """EVERY generated file, in one place — today that is the derived JSON.
 
     There is exactly one caller-facing entry point for generated-artifact integrity, because the
     previous shape had two: `cmd_drift` called `stale_artifacts()` directly while a tidy-looking
     `report()` — which nobody called — was the only thing that would have combined them. Adding a
     check to the uncalled function is indistinguishable from not adding it at all. If a check does
-    not run in the gate, it does not exist.
+    not run in the gate, it does not exist. (The generated governance doc and its `stale_docs()`
+    check died with the prose layer, 2026-07; a future generated view re-enters via
+    `render.expected()` and gets its byte-compare added HERE.)
     """
-    return stale_artifacts(derived_dir) + stale_docs()
+    return stale_artifacts(derived_dir)
