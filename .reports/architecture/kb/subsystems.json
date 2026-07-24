@@ -13,8 +13,8 @@
     "v1_errata": "The v1 index variously said '18 subsystems', '18 + Studio' and '19'. The correct and only number is 19."
   },
   "totality": {
-    "modules_total": 134,
-    "modules_assigned": 134,
+    "modules_total": 135,
+    "modules_assigned": 135,
     "unassigned": 0,
     "double_assigned": 0,
     "ghosts": 0,
@@ -321,9 +321,10 @@
       "modules": [
         "pipeline",
         "pipeline_run",
-        "pipeline_status"
+        "pipeline_status",
+        "recaption"
       ],
-      "module_count": 3,
+      "module_count": 4,
       "compile_depends_on": [
         "S01_foundation",
         "S02_configuration",
@@ -340,7 +341,9 @@
         "S13_reconcile_metrics",
         "S14_learning"
       ],
-      "lazy_only_depends_on": []
+      "lazy_only_depends_on": [
+        "S16_studio"
+      ]
     },
     "S16_studio": {
       "modules": [
