@@ -39,8 +39,14 @@ def research_corpus(cfg: Config, pid: str, *, limit: int = 8, now: datetime | No
         raise KeyError(pid)
     have = {_norm(t) for t in per.hashtag_corpus if isinstance(t, str)}
     ev = load_store_evidence(cfg)
-    ranked = sorted((t for t in ev if _is_evidence(ev[t], now=now)), key=lambda t: ev[t]["reach"], reverse=True)
-    return [t for t in ranked if t not in have and is_curatable(t)][:limit]
+    own = _persona_seeds(per)
+    # Two-tier preference (operator 2026-07-25): own-seed-attributed evidence first, then global reach.
+    # Within each tier, rank by measured reach descending. A record without `seeds` has unknown
+    # attribution and still ranks in the global tier — never fabricate provenance for it.
+    candid = [t for t in ev if _is_evidence(ev[t], now=now) and t not in have and is_curatable(t)]
+    candid.sort(key=lambda t: (0 if _seeds_intersect(ev[t].get("seeds"), own) else 1,
+                               -float(ev[t]["reach"])))
+    return candid[:limit]
 
 
 def _is_evidence(rec: dict, *, now: datetime | None = None) -> bool:
@@ -60,6 +66,20 @@ def _is_evidence(rec: dict, *, now: datetime | None = None) -> bool:
     if ts.tzinfo is None:
         ts = ts.replace(tzinfo=timezone.utc)
     return (now or datetime.now(timezone.utc)) - ts <= timedelta(days=_EVIDENCE_MAX_AGE_DAYS)
+
+
+
+def _persona_seeds(per) -> set[str]:
+    """The same seed set `_seed_tags` contributes for ONE persona: curated corpus + intake.genre words.
+    Used to prefer store evidence whose harvest provenance intersects this persona's niche."""
+    seeds = {_norm(t) for t in (per.hashtag_corpus or []) if isinstance(t, str) and _norm(t)}
+    seeds |= {_norm("#" + w) for w in (per.intake.get("genre") or "").split() if w.strip()}
+    return seeds
+
+
+def _seeds_intersect(seeds, own: set[str]) -> bool:
+    if not isinstance(seeds, dict) or not own: return False
+    return any(_norm(s) in own for s in seeds if isinstance(s, str))
 
 
 def discover_corpus(cfg: Config, pid: str, *, limit: int = 8, measure_k: int = 0, get=None,
@@ -150,30 +170,30 @@ def refresh_persona_corpus(cfg: Config, pid: str, *, get=None, now=None) -> dict
     auto = _strip_banned(auto, bans)             # (and a banned auto tag never survives the refresh); bans empty -> byte-identical
     target = cfg.corpus_target
     auto_slots = max(0, target - len(pinned))
+    # Budget gates ONLY the live-Graph discovery attempt. An unreadable counter (None) FAIL-CLOSES live
+    # queries; budget==0 also skips live — but neither aborts the function: the offline evidence fill below
+    # reads measurements already paid for and spends zero quota.
     budget = budget_remaining(cfg, now=now)
-    if budget is None:
-        return {"changed": False, "reason": "budget_unreadable"}
-    if budget == 0:
-        return {"changed": False, "reason": "budget_exhausted"}
     have = set(corpus)
     corpus_has_ban = any(_norm(t) in bans for t in corpus)   # U11: a banned tag already in the corpus must be PURGED even when the corpus is at/over target with no creds (else the ban never takes)
     store_reach = load_store_reach(cfg)
     cands: list[dict] = []
-    if cfg.meta_graph_token and cfg.meta_ig_user_id:
+    can_live = bool(cfg.meta_graph_token and cfg.meta_ig_user_id
+                    and budget is not None and budget > 0)
+    if can_live:
         gap = max(0, target - len(corpus))
         measure_k = min(gap + len(auto), target)
         cands = discover_corpus(cfg, pid, limit=max(auto_slots, gap) + len(auto), measure_k=measure_k,
                                 get=get, offline_fallback=False)
-    elif len(corpus) < target:
-        # R4: was `research_corpus(...)` -> the store, re-ranked, promoted straight into the corpus as AUTO
-        # entries. Since _seed_tags BUILDS the store from the corpora, that closed the loop and let an
-        # unmeasured echo of our own curation return as "research". research_corpus is now evidence-only, so
-        # this path yields tags that carry real Graph measurement or nothing at all. Kept (not deleted) so a
-        # persona under target still fills from GENUINE evidence bought by an earlier funded refresh.
+    # FAIL-OPEN ladder (house norm): live unavailable OR empty -> measured-evidence fill; only then give up.
+    if not cands and len(corpus) < target:
+        # R4: research_corpus is evidence-only (source==graph-reach + freshness). Kept so a persona under
+        # target still fills from GENUINE evidence bought by an earlier funded refresh — including when
+        # creds exist but budget is exhausted / discovery returned nothing.
         cands = [{"tag": t} for t in research_corpus(cfg, pid, limit=target - len(corpus), now=now)]
-    elif corpus_has_ban:
+    elif not cands and corpus_has_ban:
         cands = []          # nothing to ADD, but fall through so `final` (ban-stripped) is written -> the ban is purged
-    else:
+    elif not cands:
         return {"changed": False}
     screened = _screen_content([c["tag"] for c in cands if isinstance(c, dict) and c.get("tag")], cfg)
     # R4 promotion gate: a discovered tag may only become CURATED data if it is structurally clean. Junk that
@@ -184,7 +204,16 @@ def refresh_persona_corpus(cfg: Config, pid: str, *, get=None, now=None) -> dict
     cand_by_tag = {_norm(c["tag"]): c for c in cands if isinstance(c, dict) and _norm(c.get("tag", ""))}
     novel = _strip_banned([t for t in screened if _norm(t) not in have], bans)   # U11: a banned discovered tag never re-enters (store refresh must not resurrect a ban)
     pool = _strip_banned(list(dict.fromkeys(auto + novel)), bans)                 # belt-and-suspenders: no banned tag reaches new_auto/final
-    pool.sort(key=lambda t: _reach_key(t, cand_by_tag, store_reach, meta), reverse=True)
+    from fanops.hashtags import load_store_evidence
+    store_ev = load_store_evidence(cfg)
+    own = _persona_seeds(per)
+    def _own_attr(t: str) -> bool:
+        seeds = (cand_by_tag.get(t) or {}).get("seeds")
+        if not isinstance(seeds, dict):
+            seeds = (store_ev.get(t) or {}).get("seeds")
+        return _seeds_intersect(seeds, own)
+    # Two-tier: own-seed-attributed first, then measured reach (unchanged within tier).
+    pool.sort(key=lambda t: (_own_attr(t), _reach_key(t, cand_by_tag, store_reach, meta)), reverse=True)
     new_auto = pool[:auto_slots] if auto_slots else []
     final = pinned + new_auto
     if final == corpus:

@@ -135,7 +135,8 @@ def test_self_prune(tmp_path, monkeypatch):
     assert "#a" not in corpus
 
 
-def test_budget_exhausted_unchanged(tmp_path, monkeypatch):
+def test_budget_exhausted_no_evidence_unchanged(tmp_path, monkeypatch):
+    """Budget==0 gates ONLY live Graph; with no measured evidence the offline fill has nothing to add."""
     _creds(monkeypatch)
     cfg = Config(root=tmp_path)
     pid = core.add_persona(cfg, name="P1")
@@ -144,8 +145,46 @@ def test_budget_exhausted_unchanged(tmp_path, monkeypatch):
         record_query(cfg, f"#t{i}")
     before = cfg.personas_path.read_text()
     r = refresh_persona_corpus(cfg, pid, get=_router("#fresh"))
-    assert r.get("changed") is False and r.get("reason") == "budget_exhausted"
+    assert r.get("changed") is False
+    assert r.get("reason") != "budget_exhausted"   # early return deleted — budget no longer aborts the function
     assert cfg.personas_path.read_text() == before
+
+
+def test_offline_fill_runs_when_budget_exhausted(tmp_path, monkeypatch):
+    """Pin 1: measured-evidence fill runs at ZERO Graph quota (offline path spends none)."""
+    _creds(monkeypatch)
+    monkeypatch.setenv("FANOPS_CORPUS_TARGET", "4")
+    cfg = Config(root=tmp_path)
+    pid = core.add_persona(cfg, name="P1")
+    core.add_corpus_tag(cfg, pid, "#seed")
+    for i in range(30):
+        record_query(cfg, f"#t{i}")
+    assert __import__("fanops.meta_graph", fromlist=["budget_remaining"]).budget_remaining(cfg) == 0
+    _seed_store(cfg, {"#alpha": 100, "#beta": 90, "#gamma": 80, "#delta": 70})
+    called = {"n": 0}
+    def _no_graph(url, params=None, timeout=None):
+        called["n"] += 1; return _Resp(404, None)
+    r = refresh_persona_corpus(cfg, pid, get=_no_graph)
+    assert called["n"] == 0, "offline fill must not touch the Graph"
+    assert r.get("changed") is True
+    corpus = core.Personas.load(cfg).get(pid).hashtag_corpus
+    assert len(corpus) == 4 and "#seed" in corpus
+    assert {"#alpha", "#beta", "#gamma"} <= set(corpus)
+
+
+def test_offline_fill_when_creds_present_but_live_empty(tmp_path, monkeypatch):
+    """Pin 2: credentialed box degrades to measured evidence when live discovery returns empty."""
+    _creds(monkeypatch)
+    monkeypatch.setenv("FANOPS_CORPUS_TARGET", "4")
+    cfg = Config(root=tmp_path)
+    pid = core.add_persona(cfg, name="P1")
+    core.add_corpus_tag(cfg, pid, "#seed")
+    _seed_store(cfg, {"#alpha": 100, "#beta": 90, "#gamma": 80})
+    monkeypatch.setattr("fanops.persona_research.discover_corpus",
+                        lambda *a, **k: [])                  # live path yields nothing
+    r = refresh_persona_corpus(cfg, pid, get=_router("#ignored"))
+    assert r.get("changed") is True
+    assert len(core.Personas.load(cfg).get(pid).hashtag_corpus) == 4
 
 
 def test_no_creds_offline_fill(tmp_path, monkeypatch):
@@ -157,6 +196,25 @@ def test_no_creds_offline_fill(tmp_path, monkeypatch):
     r = refresh_persona_corpus(cfg, pid)
     assert r.get("changed") is True
     assert len(core.Personas.load(cfg).get(pid).hashtag_corpus) == 4
+
+
+def test_pins_preserved_and_ban_beats_pin_on_offline_fill(tmp_path, monkeypatch):
+    """Pin 3: pinned tags stay; U11 ban still beats pin on the evidence-fill path."""
+    from fanops.hashtags import add_ban
+    monkeypatch.delenv("META_GRAPH_TOKEN", raising=False); monkeypatch.delenv("META_IG_USER_ID", raising=False)
+    monkeypatch.setenv("FANOPS_CORPUS_TARGET", "4")
+    cfg = Config(root=tmp_path)
+    pid = core.add_persona(cfg, name="P1")
+    core.add_corpus_tag(cfg, pid, "#pinned")
+    core.add_corpus_tag(cfg, pid, "#banned")
+    add_ban(cfg, "#banned")
+    _seed_store(cfg, {"#alpha": 100, "#beta": 90, "#gamma": 80})
+    r = refresh_persona_corpus(cfg, pid)
+    assert r.get("changed") is True
+    corpus = core.Personas.load(cfg).get(pid).hashtag_corpus
+    assert "#pinned" in corpus and "#banned" not in corpus
+    meta = json.loads(cfg.personas_path.read_text())["personas"][0]["hashtag_corpus_meta"]
+    assert meta["#pinned"]["source"] == "pinned"
 
 
 def test_corpus_auto_env_var_is_inert(tmp_path, monkeypatch):

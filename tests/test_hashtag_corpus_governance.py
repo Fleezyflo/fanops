@@ -127,3 +127,64 @@ def test_refresh_stamps_provenance_and_survives_zero_budget(tmp_path, monkeypatc
     monkeypatch.delenv("META_GRAPH_TOKEN", raising=False)     # zero-budget tick measures nothing
     refresh_store(cfg)
     assert load_store_evidence(cfg) == ev, "a zero-budget refresh erased accrued evidence"
+
+
+# ---- seed→candidate provenance (Step 2.3-FIX Part B) -------------------------------------------
+def test_provenance_survives_harvest_discover_store_load(tmp_path, monkeypatch):
+    """Pin 5: seeds map survives harvest → discover → refresh_store → load_store_evidence."""
+    from tests.test_fanops_hashtags import _graph_router
+    from fanops.fanops_hashtags import refresh_store
+    from fanops.meta_graph import harvest_cooccurring, discover_candidates
+    monkeypatch.setenv("META_GRAPH_TOKEN", "tok"); monkeypatch.setenv("META_IG_USER_ID", "ig")
+    cfg = Config(root=tmp_path)
+    P.add_persona(cfg, name="Curator", id="curator")
+    P.add_corpus_tag(cfg, "curator", "#bars")
+    harvested = harvest_cooccurring(cfg, ["#bars"], get=_graph_router({"#beta": 900}, cooccur="#beta"))
+    assert "#beta" in harvested and "#bars" in harvested["#beta"]["seeds"]
+    props = discover_candidates(cfg, ["#bars"], get=_graph_router({"#beta": 900}, cooccur="#beta"))
+    assert any(c["tag"] == "#beta" and c.get("seeds", {}).get("#bars") for c in props)
+    refresh_store(cfg, get=_graph_router({"#beta": 900}, cooccur="#beta"), now=NOW)
+    ev = load_store_evidence(cfg)
+    assert ev["#beta"]["source"] == "graph-reach"
+    assert ev["#beta"]["seeds"]["#bars"] >= 1
+    assert load_store_reach(cfg)["#beta"] == 900.0          # Pin 8: flat projection
+
+
+def test_legacy_provenance_less_record_usable_not_fabricated(tmp_path):
+    """Pin 6+8: a record without seeds stays usable; load never fabricates seeds; flat reach intact."""
+    cfg = Config(root=tmp_path)
+    cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.hashtags_path.write_text(json.dumps({"tags": ["#a", "#b"], "reach": {
+        "#a": {"reach": 500, "measured_at": NOW.isoformat(), "source": "graph-reach", "confidence": 1.0},
+        "#b": 1200,   # legacy bare number
+    }}))
+    ev = load_store_evidence(cfg)
+    assert "seeds" not in ev["#a"], "must not fabricate provenance for a record that lacks it"
+    assert ev["#b"]["source"] == "unknown" and "seeds" not in ev["#b"]
+    assert load_store_reach(cfg) == {"#a": 500.0, "#b": 1200.0}
+
+
+def test_own_seed_attributed_preferred_over_higher_reach_global(tmp_path, monkeypatch):
+    """Pin 7: a persona whose seeds match a candidate's provenance gets it ahead of a higher-reach
+    unattributed tag. Ranking within the preferred group stays measured reach descending."""
+    from fanops.persona_research import research_corpus, refresh_persona_corpus
+    monkeypatch.delenv("META_GRAPH_TOKEN", raising=False); monkeypatch.delenv("META_IG_USER_ID", raising=False)
+    monkeypatch.setenv("FANOPS_CORPUS_TARGET", "3")
+    cfg = Config(root=tmp_path)
+    P.add_persona(cfg, name="Rap", id="rap")
+    P.add_corpus_tag(cfg, "rap", "#bars")          # own seed
+    cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.hashtags_path.write_text(json.dumps({"tags": ["#ownish", "#global"], "reach": {
+        "#ownish": {"reach": 100, "measured_at": NOW.isoformat(), "source": "graph-reach",
+                    "confidence": 1.0, "seeds": {"#bars": 3}},
+        "#global": {"reach": 9000, "measured_at": NOW.isoformat(), "source": "graph-reach",
+                    "confidence": 1.0},   # higher reach, NO provenance
+    }}))
+    out = research_corpus(cfg, "rap", limit=2, now=NOW)
+    assert out[0] == "#ownish", f"own-seed attributed must lead, got {out}"
+    assert "#global" in out                         # still usable as the global-tier filler
+    r = refresh_persona_corpus(cfg, "rap", now=NOW)
+    assert r.get("changed") is True
+    corpus = P.Personas.load(cfg).get("rap").hashtag_corpus
+    # target 3 = 1 pin + 2 auto; ownish before global in the auto tail
+    assert corpus.index("#ownish") < corpus.index("#global")

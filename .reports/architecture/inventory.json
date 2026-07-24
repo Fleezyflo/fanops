@@ -3556,7 +3556,9 @@
     "id": "CFG-002",
     "name": "FANOPS_CORPUS_AUTO",
     "file": "src/fanops/config.py",
-    "line": 437
+    "line": 437,
+    "status": "retired",
+    "note": "DELETED 2026-07-25 (PR #721): corpus auto-refresh is unconditional; the 12h marker throttle is the only brake. ID retained per id_stability."
    },
    {
     "id": "CFG-003",
