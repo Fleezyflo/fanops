@@ -114,7 +114,6 @@ Speech-trust filtering is **invariant always-on** — there is no env switch for
 | Var | Default | Effect | Set |
 |---|---|---|---|
 | `FANOPS_HASHTAG_TRENDS` | on | Background Graph reach sampling in `hashtags refresh` | .env |
-| `FANOPS_CORPUS_AUTO` | on | Automated persona corpus refresh during `fanops run` (12h throttle) | .env |
 | `FANOPS_CORPUS_TARGET` | 12 | Target curated tags per persona for auto-refresh (pinned tags preserved) | .env |
 | `META_GRAPH_TOKEN` | None | Meta Graph token for hashtag trends (write-only) | .env |
 | `META_GRAPH_TOKEN__<SLUG>` | falls back to global | Per-handle Graph token (dynamic key, write-only) | S |

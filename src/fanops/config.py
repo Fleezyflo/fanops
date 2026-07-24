@@ -432,12 +432,6 @@ class Config:
         return v not in {"0", "false", "no", "off"}     # DEFAULT ON; only explicit off-words disable it
 
     @property
-    def corpus_auto(self) -> bool:
-        # S12: automated persona corpus refresh during `fanops run` — DEFAULT ON; only explicit off-words disable.
-        v = (os.getenv("FANOPS_CORPUS_AUTO") or "").strip().lower()
-        return v not in {"0", "false", "no", "off"}
-
-    @property
     def corpus_target(self) -> int:
         # S12: target curated tags per persona for the auto-refresh writer (pinned tags don't count toward auto slots).
         try:

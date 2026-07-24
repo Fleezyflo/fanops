@@ -204,13 +204,14 @@ def refresh_persona_corpus(cfg: Config, pid: str, *, get=None, now=None) -> dict
 
 def refresh_corpora_if_due(cfg: Config, *, max_age_s: int = 43200, get=None, now=None) -> dict:
     """S12: constant-update hook the run loop calls — refresh every persona corpus at most once per
-    max_age_s (default 12h), throttled by .corpora_refresh.json mtime. Gated on cfg.corpus_auto. FAIL-OPEN:
-    never raises."""
+    max_age_s (default 12h), throttled by .corpora_refresh.json mtime. UNCONDITIONAL: the `corpus_auto`
+    kill switch was DELETED 2026-07-25 — a routinely refreshed, reach-ranked per-persona corpus IS the
+    system's default behavior, not an opt-in, so no env var can freeze every corpus any more (the live
+    .env carried FANOPS_CORPUS_AUTO=0 and pinned every persona at its 3 seed tags for nine days). The 12h
+    throttle below is the only brake left, and it is a rate limit, not a toggle. FAIL-OPEN: never raises."""
     import time
     from fanops.controlio import write_json_atomic
     from fanops.errors import ControlFileError
-    if not cfg.corpus_auto:
-        return {"refreshed": False, "reason": "disabled"}
     marker = cfg.control / ".corpora_refresh.json"
     try:
         if marker.exists() and (time.time() - marker.stat().st_mtime) < max_age_s:

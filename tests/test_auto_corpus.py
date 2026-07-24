@@ -1,5 +1,5 @@
 # S12 — automated persona corpus refresh (backend-only): throttle, fill-to-target, pin protection,
-# content screen, self-prune, budget gate, offline fill, flag-off byte-identical.
+# content screen, self-prune, budget gate, offline fill, and the inertness of the DELETED corpus_auto env var.
 import json
 import time
 from fanops.config import Config
@@ -159,12 +159,21 @@ def test_no_creds_offline_fill(tmp_path, monkeypatch):
     assert len(core.Personas.load(cfg).get(pid).hashtag_corpus) == 4
 
 
-def test_flag_off_byte_identical(tmp_path, monkeypatch):
+def test_corpus_auto_env_var_is_inert(tmp_path, monkeypatch):
+    """REPLACES test_flag_off_byte_identical (2026-07-25). The `corpus_auto` kill switch is DELETED, so a
+    stale FANOPS_CORPUS_AUTO=0 left in an operator .env must be INERT — it froze every live persona at its
+    3 seed tags for nine days while each tick logged `corpora_refresh_skipped reason=disabled`. The refresh
+    now runs; the 12h marker is the only brake, and it is a rate limit, not a toggle."""
     _creds(monkeypatch)
     monkeypatch.setenv("FANOPS_CORPUS_AUTO", "0")
     cfg = Config(root=tmp_path)
+    assert not hasattr(cfg, "corpus_auto")          # the property is gone, not merely defaulted ON
     pid = core.add_persona(cfg, name="P1")
     core.add_corpus_tag(cfg, pid, "#seed")
-    before = cfg.personas_path.read_text()
-    r = refresh_corpora_if_due(cfg, max_age_s=0, get=_router("#fresh"))
-    assert r.get("refreshed") is False and cfg.personas_path.read_text() == before
+    _seed_store(cfg, {"#alpha": 100})
+    r = refresh_corpora_if_due(cfg, max_age_s=0, get=_router("#alpha #beta", reach={"#alpha": 100, "#beta": 90}))
+    assert r.get("refreshed") is True and r.get("reason") != "disabled"
+    marker = cfg.control / ".corpora_refresh.json"
+    assert marker.exists()
+    r2 = refresh_corpora_if_due(cfg, max_age_s=43200, get=_router("#alpha"))   # throttle PRESERVED
+    assert r2.get("refreshed") is False and r2.get("reason") == "fresh"
