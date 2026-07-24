@@ -113,8 +113,8 @@ def test_every_rule_is_reachable():
     nothing back). It looked enforced. It was not.
     """
     # ARCH-006 is enforced by byte-comparison (drift), not by a policy Finding — NC-08 covers the
-    # derived/ artifacts and NC-23 covers the generated doc. Both name it, so no exemption is
-    # needed here: delete either control and this test correctly goes red.
+    # derived/ artifacts (the only generated surface since the governance doc's deletion, 2026-07).
+    # It names the rule, so no exemption is needed here: delete it and this test correctly goes red.
     covered = {c.expect_rule for c in selftest.CONTROLS}
     uncovered = sorted(set(policy.RULES) - covered)
     assert uncovered == [], (
