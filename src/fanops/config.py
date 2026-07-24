@@ -435,10 +435,10 @@ class Config:
     def corpus_target(self) -> int:
         # S12: target curated tags per persona for the auto-refresh writer (pinned tags don't count toward auto slots).
         try:
-            v = int(os.getenv("FANOPS_CORPUS_TARGET", "12"))
+            v = int(os.getenv("FANOPS_CORPUS_TARGET", "30"))
         except ValueError:
-            return 12
-        return v if v >= 1 else 12
+            return 30
+        return v if v >= 1 else 30
 
     @property
     def require_full_objective(self) -> bool:
