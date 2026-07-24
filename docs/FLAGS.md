@@ -17,7 +17,6 @@ for what each flag does, how to disable it, and which test guards its OFF contra
 |---|---|---|---|---|
 | `account_casting` | `FANOPS_ACCOUNT_CASTING=0` | **ON** | crosspost mints a post **only** on the owning persona's surfaces — the gate is `casting.affinity_admits` reading `Moment.affinities` (stamped single-owner at pick, operator-overridable in the Studio) | legacy fan-to-all — every moment reaches every account; no per-account selection gate |
 | `hashtag_trends` | `FANOPS_HASHTAG_TRENDS=0` | **ON** | `hashtags refresh` builds the store from **live Meta Graph** reach (harvest→measure→rank) | frozen reach floor only, no Graph harvest/measure (also the automatic behavior when `META_GRAPH_TOKEN`/`META_IG_USER_ID` are absent — fail-open) |
-| `corpus_auto` | `FANOPS_CORPUS_AUTO=0` | **ON** | `fanops run` auto-refreshes each persona's hashtag corpus on a 12h throttle (Graph discovery when creds+budget allow; offline store re-rank when under target without creds) | no automatic corpus writes — operator curation only |
 
 Disable semantics are uniform: the env var disables the flag **only** on the explicit off-words `0`/`false`/`no`/`off`;
 unset, empty, or anything else → **ON**.
@@ -44,10 +43,15 @@ unset, empty, or anything else → **ON**.
 - **OFF contract:** `refresh_store` writes the frozen reach floor only — no Graph harvest/measure; the `hashtags.json` shape (`{tags, reach}`) is unchanged (`reach` empty). Fail-open: identical to ON when no Meta token is configured.
 - **Firewall tests:** `test_hashtag_trends_default_on` + `test_hashtag_trends_explicit_off` ([test_graph_tag_metrics.py:93](../tests/test_graph_tag_metrics.py)).
 
-### `corpus_auto`
-- **Code:** [config.py](../src/fanops/config.py) (`def corpus_auto`). Master switch for the **background** persona corpus refresh (`refresh_corpora_if_due` in `persona_research.py`), throttled via `.corpora_refresh.json` mtime (12h).
-- **OFF contract:** `refresh_corpora_if_due` returns immediately — `personas.json` is never touched by the auto-refresh path.
-- **Firewall tests:** `test_flag_off_byte_identical` ([test_auto_corpus.py](../tests/test_auto_corpus.py)).
+> **Removed 2026-07-25 — `corpus_auto` is gone, not disabled.** The toggle was deleted outright, on the
+> operator ruling that "the entire toggle does not need to exist the better way to run the system should be
+> the default". `Config.corpus_auto` no longer exists and **nothing reads `FANOPS_CORPUS_AUTO`** — a line
+> still carrying it in an operator `.env` is inert (pinned by `test_corpus_auto_env_var_is_inert` in
+> [test_auto_corpus.py](../tests/test_auto_corpus.py), which replaced the OFF-contract firewall test). The
+> per-persona corpus refresh in `persona_research.refresh_corpora_if_due` is now **unconditional**; its only
+> brake is the 12h `.corpora_refresh.json` throttle, which is a rate limit rather than a switch. Nothing else
+> changed: the fail-open ladder (budget unreadable/exhausted, no creds, corrupt personas, any exception) and
+> the reach-ranked promotion gate are untouched.
 
 ## Notable default-OFF flags (opt-in; byte-identical when off)
 
