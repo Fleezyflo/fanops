@@ -109,8 +109,17 @@ def refresh_store(cfg: Config, *, get=None, now=None) -> dict:
     stamp = (now or datetime.now(timezone.utc)).isoformat()
     accrued: dict[str, dict] = dict(load_store_evidence(cfg))
     for t in measured:
-        accrued[t] = {"reach": float(round(measured[t])), "measured_at": stamp,
-                      "source": "graph-reach", "confidence": 1.0}
+        rec = {"reach": float(round(measured[t])), "measured_at": stamp,
+               "source": "graph-reach", "confidence": 1.0}
+        # Seed→candidate provenance from this tick's harvest. Prefer fresh attribution; if this tag was
+        # measured via the universe (seed/frozen) without a harvest hit, KEEP any prior seeds rather than
+        # fabricating none and erasing attribution on a later funded tick.
+        seeds = (harvested.get(t) or {}).get("seeds") if isinstance((harvested.get(t) or {}).get("seeds"), dict) else None
+        if seeds:
+            rec["seeds"] = {str(k): int(v) for k, v in seeds.items() if isinstance(k, str)}
+        elif isinstance((accrued.get(t) or {}).get("seeds"), dict) and accrued[t]["seeds"]:
+            rec["seeds"] = dict(accrued[t]["seeds"])
+        accrued[t] = rec
     for t in accrued:                                     # a tag we already MEASURED stays in the universe even when
         if t not in useen: useen.add(t); universe.append(t)   # this tick's harvest does not re-surface it. `universe` is
     # rebuilt per call from the harvest + seeds, so without this a discovered high-reach tag silently leaves BOTH the

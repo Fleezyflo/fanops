@@ -88,7 +88,8 @@ def test_harvest_caption_none_skipped(tmp_path, monkeypatch):
     media = [{"like_count": 5, "comments_count": 1}, {"caption": None, "like_count": 2, "comments_count": 0},
              {"caption": "#keep", "like_count": 3, "comments_count": 0}]
     out = harvest_cooccurring(Config(root=tmp_path), ["#hiphop"], get=_router(media))
-    assert out == {"#keep": {"count": 1, "host_engagement": 3.0}}
+    assert out["#keep"]["count"] == 1 and out["#keep"]["host_engagement"] == 3.0
+    assert out["#keep"]["seeds"] == {"#hiphop": 1}
 
 
 def test_harvest_caps_distinct_tags(tmp_path, monkeypatch):
@@ -109,6 +110,28 @@ def test_harvest_duplicate_seed_deduped(tmp_path, monkeypatch):
     harvest_cooccurring(cfg, ["#hiphop", "#HipHop", "  #hiphop "], get=_router(media))
     assert budget_remaining(cfg) == before - 1                 # normalized-duplicate seeds resolve once
 
+
+
+
+def test_harvest_records_seed_provenance(tmp_path, monkeypatch):
+    """Pin 5 (capture): co-occurring tags carry a per-seed tally from the producing seed."""
+    _creds(monkeypatch)
+    media = [{"caption": "#bars #detroitrap", "like_count": 10, "comments_count": 0},
+             {"caption": "#bars", "like_count": 5, "comments_count": 0}]
+    out = harvest_cooccurring(Config(root=tmp_path), ["#hiphop", "#rap"], get=_router(media))
+    # both seeds see the same media in this stub; each seed contributes its own co-count
+    assert out["#bars"]["seeds"]["#hiphop"] == 2
+    assert out["#bars"]["seeds"]["#rap"] == 2
+    assert out["#detroitrap"]["seeds"]["#hiphop"] == 1
+
+
+def test_discover_carries_seed_provenance(tmp_path, monkeypatch):
+    """Pin 5 (carry): discover_candidates proposals include the harvest seeds map."""
+    _creds(monkeypatch)
+    media = [{"caption": "#novel", "like_count": 7, "comments_count": 0}]
+    out = discover_candidates(Config(root=tmp_path), ["#seed"], get=_router(media))
+    assert out and out[0]["tag"] == "#novel"
+    assert out[0]["seeds"] == {"#seed": 1}
 
 # --- discover_candidates (M2) ------------------------------------------------------------------
 

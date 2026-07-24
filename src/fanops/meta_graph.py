@@ -609,7 +609,9 @@ def harvest_cooccurring(cfg: Config, seed_tags: list[str], *, get=None, now: dat
     """M1 (live discovery): resolve each category SEED tag, read its live top_media, and tally the hashtags
     those currently-winning posts use ALONGSIDE the seed — the only Graph-native way to DISCOVER tags we have
     never named (IG has no trending-by-topic endpoint). Returns {co_tag: {"count": int, "host_engagement":
-    float}} with the seeds themselves EXCLUDED. SAME discipline as sample_trends: FAIL-OPEN on no creds ({});
+    float, "seeds": {seed: co_count}}} with the seeds themselves EXCLUDED. The per-seed tally is the
+    attribution that lets each persona's auto-fill prefer candidates co-occurring with ITS OWN seeds. SAME
+    discipline as sample_trends: FAIL-OPEN on no creds ({});
     FAIL-CLOSED + LOUD on an unreadable budget; a per-seed transport/resolve failure is skipped. The seed
     RESOLUTION spends one ig_hashtag_search slot (top_media reads are free); a duplicate normalized seed
     resolves once. Re-resolving a within-window seed is budget-NEUTRAL (Meta counts UNIQUE searches) and
@@ -653,8 +655,9 @@ def harvest_cooccurring(cfg: Config, seed_tags: list[str], *, get=None, now: dat
                     continue
                 if t not in out and len(out) >= _HARVEST_CAP:
                     continue                                  # cap DISTINCT tags (untrusted-UGC guard); already-seen tags still tally
-                agg = out.setdefault(t, {"count": 0, "host_engagement": 0.0})
+                agg = out.setdefault(t, {"count": 0, "host_engagement": 0.0, "seeds": {}})
                 agg["count"] += 1; agg["host_engagement"] += eng
+                agg["seeds"][seed] = agg["seeds"].get(seed, 0) + 1
     if deferred:
         log("hashtags", "discover", "budget_exhausted", harvested=len(out), deferred=deferred)
     return out
@@ -664,8 +667,9 @@ def discover_candidates(cfg: Config, seeds: list[str], *, known=(), measure_k: i
                         get=None, now: datetime | None = None) -> list[dict]:
     """M2: rank the co-occurrence harvest, DROP the tags we already know (VETTED ∪ store ∪ corpus, passed
     in `known`), and OPTIONALLY measure the top `measure_k` novel tags' live Graph reach within budget. Returns
-    ordered proposals [{"tag","count","host_engagement","measured_engagement"?,"sampled_at"?}], most-relevant
-    first (by co-occurrence count, then host engagement). The FREE harvest is the primary signal; measurement
+    ordered proposals [{"tag","count","host_engagement","seeds","measured_engagement"?,"sampled_at"?}], most-relevant
+    first (by co-occurrence count, then host engagement). `seeds` is the per-seed co-count map from the harvest
+    (JSON-round-trippable attribution). The FREE harvest is the primary signal; measurement
     is the only extra budget cost beyond seed resolution, hard-capped by BOTH measure_k AND a live
     budget_remaining re-check, so it never overspends Meta's 30/7-day window. No creds -> [] (harvest no-ops)."""
     now = now or _now()
@@ -673,7 +677,8 @@ def discover_candidates(cfg: Config, seeds: list[str], *, known=(), measure_k: i
     harvested = harvest_cooccurring(cfg, seeds, get=get, now=now)
     ranked = sorted(((t, d) for t, d in harvested.items() if t not in known_n),
                     key=lambda kv: (kv[1]["count"], kv[1]["host_engagement"]), reverse=True)
-    out = [{"tag": t, "count": d["count"], "host_engagement": d["host_engagement"]} for t, d in ranked]
+    out = [{"tag": t, "count": d["count"], "host_engagement": d["host_engagement"],
+            "seeds": dict(d.get("seeds") or {})} for t, d in ranked]
     for cand in out[:max(0, measure_k)]:                 # measure only the top-K, budget permitting
         if (budget_remaining(cfg, now=now) or 0) <= 0:
             break

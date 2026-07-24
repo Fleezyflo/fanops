@@ -89,12 +89,13 @@ def _reach_value(v):
     return float(v)
 
 def load_store_evidence(cfg) -> dict[str, dict]:
-    """R4 — the per-tag EVIDENCE record behind the store: `{tag: {reach, measured_at, source, confidence}}`.
-    This is the canonical form; `load_store_reach` is the flat projection of it. A legacy bare-number entry
-    reads back as `{"reach": n, "measured_at": None, "source": "unknown", "confidence": 0.0}` — HONEST about
-    what we cannot know rather than back-dating a measurement we never recorded (a fabricated `measured_at`
-    would make an unprovenanced number look like fresh evidence, which is the exact failure this layer
-    exists to prevent). Absent / corrupt -> {}. Never raises."""
+    """R4 — the per-tag EVIDENCE record behind the store: `{tag: {reach, measured_at, source, confidence,
+    seeds?}}`. Optional `seeds` is `{seed_tag: co_count}` harvest attribution — ABSENT on legacy records
+    (never fabricated). This is the canonical form; `load_store_reach` is the flat projection of it. A legacy
+    bare-number entry reads back as `{"reach": n, "measured_at": None, "source": "unknown", "confidence": 0.0}`
+    — HONEST about what we cannot know rather than back-dating a measurement we never recorded (a fabricated
+    `measured_at` would make an unprovenanced number look like fresh evidence, which is the exact failure this
+    layer exists to prevent). Absent / corrupt -> {}. Never raises."""
     p = cfg.hashtags_path
     if not p.exists():
         return {}
@@ -112,13 +113,22 @@ def load_store_evidence(cfg) -> dict[str, dict]:
                 continue
             rec = v if isinstance(v, dict) else {}
             src = rec.get("source")
-            out[_norm(k)] = {
+            entry = {
                 "reach": val,
                 "measured_at": rec.get("measured_at") if isinstance(rec.get("measured_at"), str) else None,
                 "source": src if isinstance(src, str) and src else "unknown",
                 "confidence": float(rec["confidence"]) if isinstance(rec.get("confidence"), (int, float))
                               and not isinstance(rec.get("confidence"), bool) else 0.0,
             }
+            seeds = rec.get("seeds") if isinstance(rec.get("seeds"), dict) else None
+            if seeds:
+                clean: dict[str, int] = {}
+                for sk, sv in seeds.items():
+                    if not isinstance(sk, str) or not _norm(sk): continue
+                    try: clean[_norm(sk)] = int(sv)
+                    except (TypeError, ValueError): continue
+                if clean: entry["seeds"] = clean   # never fabricate; omit when absent/empty
+            out[_norm(k)] = entry
         return out
     except (OSError, json.JSONDecodeError, ValueError, TypeError):
         return {}
