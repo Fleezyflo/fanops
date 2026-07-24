@@ -157,10 +157,14 @@ def refresh_persona_corpus(cfg: Config, pid: str, *, get=None, now=None) -> dict
     """S12: one persona's automated corpus refresh — pinned tags preserved, auto slots filled/pruned to
     cfg.corpus_target by reach. Fail-open ladder on budget/creds; unknown id -> {changed: False}."""
     from fanops.meta_graph import budget_remaining
-    from fanops.persona_store import apply_auto_corpus
+    from fanops.persona_store import apply_auto_corpus, repair_orphaned_auto_meta
     per = Personas.load(cfg).get(pid)
     if per is None:
         return {"changed": False, "reason": "unknown_persona"}
+    # Before partition: stamp source=auto onto meta-absent corpus tags that have store graph-reach evidence
+    # (broken-fill repair — without this, absent-as-pinned freezes rotation on the next refresh).
+    repair_orphaned_auto_meta(cfg, pid, now=now)
+    per = Personas.load(cfg).get(pid)   # re-load after repair (corpus list unchanged; meta may have changed)
     row = _persona_row(cfg, pid) or {}
     meta = row.get("hashtag_corpus_meta") if isinstance(row.get("hashtag_corpus_meta"), dict) else {}
     corpus = [_norm(t) for t in (per.hashtag_corpus or []) if isinstance(t, str) and _norm(t)]

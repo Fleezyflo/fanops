@@ -235,3 +235,88 @@ def test_corpus_auto_env_var_is_inert(tmp_path, monkeypatch):
     assert marker.exists()
     r2 = refresh_corpora_if_due(cfg, max_age_s=43200, get=_router("#alpha"))   # throttle PRESERVED
     assert r2.get("refreshed") is False and r2.get("reason") == "fresh"
+
+
+# --- apply_auto_corpus meta-merge gate + orphaned-auto repair (hashtag-graph-loop unit) ---
+
+def test_apply_auto_corpus_writes_meta_for_brand_new_auto_tag(tmp_path, monkeypatch):
+    """Live bug: brand-new auto tag must land with source=auto sidecar (absent-as-pinned must NOT gate the write)."""
+    from fanops.persona_store import apply_auto_corpus
+    cfg = Config(root=tmp_path)
+    pid = core.add_persona(cfg, name="P1")
+    apply_auto_corpus(cfg, pid, tags=["#fresh"], meta={
+        "#fresh": {"source": "auto", "reach": 42.0, "added": "2026-07-25T00:00:00+00:00"},
+    })
+    meta = json.loads(cfg.personas_path.read_text())["personas"][0]["hashtag_corpus_meta"]
+    assert meta["#fresh"]["source"] == "auto"
+    assert meta["#fresh"]["reach"] == 42.0
+
+
+def test_apply_auto_corpus_updates_reach_on_existing_auto(tmp_path, monkeypatch):
+    from fanops.persona_store import apply_auto_corpus
+    cfg = Config(root=tmp_path)
+    pid = core.add_persona(cfg, name="P1")
+    _write_meta(cfg, pid, ["#auto1"], {
+        "#auto1": {"source": "auto", "reach": 1.0, "added": "2026-01-01T00:00:00+00:00"},
+    })
+    apply_auto_corpus(cfg, pid, tags=["#auto1"], meta={
+        "#auto1": {"source": "auto", "reach": 999.0, "added": "2026-07-25T00:00:00+00:00"},
+    })
+    meta = json.loads(cfg.personas_path.read_text())["personas"][0]["hashtag_corpus_meta"]
+    assert meta["#auto1"]["source"] == "auto" and meta["#auto1"]["reach"] == 999.0
+
+
+def test_apply_auto_corpus_refuses_overwrite_explicit_pin(tmp_path, monkeypatch):
+    from fanops.persona_store import apply_auto_corpus
+    cfg = Config(root=tmp_path)
+    pid = core.add_persona(cfg, name="P1")
+    core.add_corpus_tag(cfg, pid, "#pinned")
+    before = json.loads(cfg.personas_path.read_text())["personas"][0]["hashtag_corpus_meta"]["#pinned"]
+    apply_auto_corpus(cfg, pid, tags=["#pinned", "#other"], meta={
+        "#pinned": {"source": "auto", "reach": 999.0, "added": "2026-07-25T00:00:00+00:00"},
+        "#other": {"source": "auto", "reach": 10.0, "added": "2026-07-25T00:00:00+00:00"},
+    })
+    meta = json.loads(cfg.personas_path.read_text())["personas"][0]["hashtag_corpus_meta"]
+    assert meta["#pinned"]["source"] == "pinned"
+    assert meta["#pinned"] == before
+    assert meta["#other"]["source"] == "auto"
+
+
+def test_legacy_meta_absent_not_in_store_stays_partitioned_pinned(tmp_path, monkeypatch):
+    """PARTITION path: legacy corpus tag with NO meta and NOT in store evidence remains pinned."""
+    from fanops.persona_research import _partition_corpus
+    from fanops.persona_store import repair_orphaned_auto_meta
+    cfg = Config(root=tmp_path)
+    pid = core.add_persona(cfg, name="P1")
+    _write_meta(cfg, pid, ["#legacy"], {})          # no meta entry at all
+    _seed_store(cfg, {"#unrelated": 50})            # store evidence for a DIFFERENT tag
+    n = repair_orphaned_auto_meta(cfg, pid)
+    assert n == 0
+    row = json.loads(cfg.personas_path.read_text())["personas"][0]
+    assert "#legacy" not in (row.get("hashtag_corpus_meta") or {})
+    pinned, auto = _partition_corpus(row["hashtag_corpus"], row.get("hashtag_corpus_meta") or {})
+    assert pinned == ["#legacy"] and auto == []
+
+
+def test_repair_stamps_auto_onto_meta_absent_with_store_evidence(tmp_path, monkeypatch):
+    """Broken-fill repair: meta-absent + store graph-reach → source=auto; explicit pins untouched."""
+    from fanops.persona_store import repair_orphaned_auto_meta
+    from fanops.persona_research import _partition_corpus
+    cfg = Config(root=tmp_path)
+    pid = core.add_persona(cfg, name="P1")
+    _write_meta(cfg, pid, ["#orphan", "#pinned", "#truelegacy"], {
+        "#pinned": {"source": "pinned", "reach": None, "added": "2026-01-01T00:00:00+00:00"},
+        # #orphan and #truelegacy deliberately have NO meta (broken fill / true legacy)
+    })
+    _seed_store(cfg, {"#orphan": 777})              # only #orphan has store evidence
+    n = repair_orphaned_auto_meta(cfg, pid)
+    assert n == 1
+    row = json.loads(cfg.personas_path.read_text())["personas"][0]
+    meta = row["hashtag_corpus_meta"]
+    assert meta["#orphan"]["source"] == "auto" and meta["#orphan"]["reach"] == 777.0
+    assert meta["#pinned"]["source"] == "pinned"
+    assert "#truelegacy" not in meta                # no store evidence → stay legacy-absent (=pinned)
+    n2 = repair_orphaned_auto_meta(cfg, pid)
+    assert n2 == 0                                  # idempotent
+    pinned, auto = _partition_corpus(row["hashtag_corpus"], meta)
+    assert "#orphan" in auto and "#pinned" in pinned and "#truelegacy" in pinned

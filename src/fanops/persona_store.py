@@ -181,8 +181,9 @@ def _is_pinned(meta: dict, tag: str) -> bool:
 
 def apply_auto_corpus(cfg: Config, pid: str, *, tags: list[str], meta: dict[str, dict]) -> None:
     """Atomic writer inside _personas_txn: set hashtag_corpus (normalized, deduped, ≤ _CORPUS_CAP) and merge the
-    hashtag_corpus_meta sidecar. NEVER removes or overwrites pinned tags (source=pinned or legacy=no meta); auto
-    slots fill/prune only the non-pinned tail."""
+    hashtag_corpus_meta sidecar. NEVER removes pinned tags from the corpus list (source=pinned or legacy=no meta);
+    auto slots fill/prune only the non-pinned tail. Incoming auto meta writes when absent or source=auto; an
+    explicit source=pinned sidecar is never overwritten (absent-as-pinned is PARTITION-only — not this gate)."""
     p = cfg.personas_path
     with _personas_txn(cfg):
         raw, plist = _load_raw(p)
@@ -212,14 +213,55 @@ def apply_auto_corpus(cfg: Config, pid: str, *, tags: list[str], meta: dict[str,
             for k, v in meta.items():
                 nk = _norm(k) if isinstance(k, str) else ""
                 if not nk or not isinstance(v, dict): continue
-                if not _is_pinned(merged, nk):
-                    merged[nk] = v
+                # Write when absent or already auto; refuse ONLY an explicit pin.
+                # Do NOT use _is_pinned here — that treats absent-as-pinned for PARTITION, which dropped
+                # brand-new auto meta (live bug: tags entered corpus with no sidecar → next refresh pinned them).
+                exist = merged.get(nk) if isinstance(merged.get(nk), dict) else None
+                if exist is not None and (exist.get("source") or "pinned") == "pinned":
+                    continue
+                merged[nk] = v
             d["hashtag_corpus"] = out
             d["hashtag_corpus_meta"] = {t: merged[t] for t in out if t in merged}
             found = True
         if not found:
             raise KeyError(pid)
         write_json_atomic(p, raw)
+
+
+def repair_orphaned_auto_meta(cfg: Config, pid: str, *, now=None) -> int:
+    """Stamp source=auto+reach onto corpus tags that (i) lack a meta entry and (ii) have store graph-reach
+    evidence. Fixes the broken-fill state where apply_auto_corpus dropped auto meta so tags landed as
+    legacy-absent (=pinned on partition) and rotation died. True legacy pins without meta that are NOT in
+    the evidence store stay untouched. Explicit source=pinned entries untouched. Idempotent. Returns count
+    stamped. Unknown id -> KeyError."""
+    from fanops.hashtags import load_store_evidence
+    ev = {t: r for t, r in load_store_evidence(cfg).items() if r.get("source") == "graph-reach"}
+    now_iso = (now.isoformat() if isinstance(now, datetime) else None) or datetime.now(timezone.utc).isoformat()
+    p = cfg.personas_path
+    stamped = 0
+    with _personas_txn(cfg):
+        raw, plist = _load_raw(p)
+        found = False
+        for d in plist:
+            if not (isinstance(d, dict) and d.get("id") == pid): continue
+            corpus = d.get("hashtag_corpus") if isinstance(d.get("hashtag_corpus"), list) else []
+            meta = d.get("hashtag_corpus_meta") if isinstance(d.get("hashtag_corpus_meta"), dict) else {}
+            meta = dict(meta)
+            for t in corpus:
+                n = _norm(t) if isinstance(t, str) else ""
+                if not n: continue
+                if isinstance(meta.get(n), dict): continue          # already has sidecar (pin or auto)
+                rec = ev.get(n)
+                if not rec: continue                                  # no store evidence → keep legacy-absent
+                meta[n] = {"source": "auto", "reach": rec.get("reach"), "added": now_iso}
+                stamped += 1
+            d["hashtag_corpus_meta"] = meta
+            found = True
+        if not found:
+            raise KeyError(pid)
+        if stamped:
+            write_json_atomic(p, raw)
+    return stamped
 
 
 def add_corpus_tag(cfg: Config, pid: str, tag: str) -> str:
