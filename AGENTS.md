@@ -9,9 +9,6 @@ and the nested `src/fanops/CLAUDE.md`, `src/fanops/post/CLAUDE.md`, `src/fanops/
 
 | You need | Go to |
 |---|---|
-| **Whether this change needs a Change Contract — ASK THIS FIRST, BEFORE YOU WRITE OR IMPLEMENT ANYTHING** | `python -m tools.contract preflight <path>...` — list the exact repository paths you intend to change |
-| What a Change Contract must contain, and the rules behind it | [`docs/adr/0105-reusable-change-contract-architecture.md`](docs/adr/0105-reusable-change-contract-architecture.md), as narrowed by [`0106`](docs/adr/0106-declaration-only-change-contracts.md) |
-| The skeleton to copy when you write one | `python -m tools.contract template` |
 | The rules and their honest enforcement status | [`docs/REPOSITORY_CONSTITUTION.md`](docs/REPOSITORY_CONSTITUTION.md) |
 | The enforceable architecture (`LAW-*`) | [`docs/ARCHITECTURAL_LAWS.md`](docs/ARCHITECTURAL_LAWS.md) |
 | How code is written here (`STD-*`) | [`docs/ENGINEERING_STANDARDS.md`](docs/ENGINEERING_STANDARDS.md) |
@@ -22,36 +19,6 @@ and the nested `src/fanops/CLAUDE.md`, `src/fanops/post/CLAUDE.md`, `src/fanops/
 
 When these disagree, the precedence is fixed (ADR-0100, restated in the Constitution): **executable
 source & tests > live GitHub config > accepted ADRs & registries > generated docs > historical prose.**
-
-**Step zero, before the first edit:**
-
-```bash
-python -m tools.contract preflight src/fanops/caption.py src/fanops/digest.py   # <- YOUR paths
-```
-
-It needs **no contract and no implementation** — just the exact paths you intend to touch — and
-writes nothing. It answers `REQUIRED` (write the contract first, before you implement) or
-`UNDETERMINED`. **It never answers "not required":** paths settle `T1`/`T3`/`T5`, but architectural
-impact needs a real diff and `T4`/`T6` are facts only you can state, so `UNDETERMINED` means
-"nothing visible from paths fired" — not "you are clear". An intended path that does not resolve
-**fails closed** rather than reading as a contained change.
-
-**If it answers `REQUIRED`, the whole contract is four steps** (ADR-0106):
-
-1. `python -m tools.contract template > docs/contracts/CC-<date>-<slug>.md`, then fill it in.
-2. `python -m tools.contract verify <path> --phase pre` — fix what it names, then ask the operator to
-   approve. **Do not implement before they answer**; that is what the phase exists to stop.
-3. Write `approved_digest:` (the value `python -m tools.contract digest <path>` prints) and
-   `approval_token:` (their words, verbatim) into the front matter. Nothing else changes, and `D` is
-   unchanged by writing them.
-4. Implement. Before you push, `python -m tools.contract scope <path>` must report **no unauthorized
-   surface**, and `verify <path>` must reach `continue`.
-
-**There is no step 5.** No lifecycle table, no `created` row, no event chain, no run ids or SHAs
-copied into the file, and **no second pull request after the merge**. A contract records what was
-authorized; the platform records what happened. *(The six contracts under `docs/contracts/` dated
-before 2026-07-22 carry a `## Lifecycle` section — that is the retired ADR-0105 model, still read by
-the verifier, never written into a new contract. Do not edit them: a landed contract is immutable.)*
 
 One ticket at a time, in its own git worktree, TDD-first, pushed small.
 Correctness and safety beat speed. When unsure, do the safe serial thing.
