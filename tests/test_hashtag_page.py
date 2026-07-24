@@ -67,7 +67,7 @@ def test_page_get_is_network_inert(tmp_path, monkeypatch):
     r = _client(cfg).get("/hashtags")
     assert r.status_code == 200
     html = r.data.decode()
-    for needle in ("Corpora at a glance", "Reach store", "Meta lookup budget", "Rotation health", "Ban lane"):
+    for needle in ("Corpora at a glance", "Reach store", "Local lookup meter", "Rotation health", "Ban lane"):
         assert needle in html                            # all five sections present
 
 
@@ -161,13 +161,14 @@ def test_rotation_green_when_rotated(tmp_path):
 
 # ── acceptance #4: corrupt budget/store fail-open copy ──────────────────────────────────────────
 
-def test_corrupt_budget_fail_closed_copy(tmp_path):
+def test_corrupt_budget_observational_copy(tmp_path):
     cfg = Config(root=tmp_path)
     cfg.hashtag_budget_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg.hashtag_budget_path.write_text("CORRUPT")        # budget_remaining -> None (fail-closed)
+    cfg.hashtag_budget_path.write_text("CORRUPT")        # budget_remaining -> None (meter unreadable)
     meter = views_hashtags.budget_meter(cfg)
     assert meter.fail_closed is True
-    assert meter.copy == "budget file unreadable — querying nothing until it heals"
+    assert meter.copy == "local meter unreadable — observational only; Graph calls are not blocked"
+    assert "querying nothing" not in meter.copy
     assert meter.used == 0 and meter.remaining == 0      # no invented numbers
 
 

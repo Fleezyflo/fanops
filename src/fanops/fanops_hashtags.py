@@ -94,14 +94,11 @@ def refresh_store(cfg: Config, *, get=None, now=None) -> dict:
     universe: list[str] = []; useen: set[str] = set()     # candidates to MEASURE: discovered, then niche seeds, then frozen
     for t in by_count + seeds + seed:
         if t not in useen: useen.add(t); universe.append(t)
-    measured = sample_trends(cfg, universe, get=get, now=now)   # {tag: live Graph reach}, budget-bounded, fail-open
-    # ACCRUE reach across refreshes — never clobber. `measured` is bounded by the 30-unique-per-rolling-7-DAY
-    # ig_hashtag_search cap (meta_graph._BUDGET_LIMIT) while refresh_store_if_due runs every 12h, so ~13 of every
-    # 14 refreshes measure NOTHING. Writing `measured` verbatim made each of those ERASE the evidence the one
-    # funded refresh bought: reach could never outlive 12h, which is why the live store carried `reach: {}` while
-    # the budget showed 30 spent queries. Merge over what is on disk and rank by the ACCRUED reach (ranking on
-    # `measured` alone also re-ordered the whole store back to raw seed order on every zero-budget tick). Pruned
-    # to `merged` so a tag dropped from the universe does not linger. No prior reach -> identical to before.
+    measured = sample_trends(cfg, universe, get=get, now=now)   # {tag: live Graph reach}, fail-open on no creds
+    # ACCRUE reach across refreshes — never clobber. A zero-measurement tick (no creds / transport miss /
+    # empty universe) must not ERASE evidence an earlier funded refresh bought. Merge over what is on disk
+    # and rank by the ACCRUED reach. Pruned to `merged` so a tag dropped from the universe does not linger.
+    # No prior reach -> identical to before.
     # R4: evidence records, not bare numbers. This tick's measurements carry FULL provenance (source +
     # measured_at + confidence); anything already on disk is preserved verbatim, so a legacy number stays
     # honestly marked `unknown` rather than being back-dated into fake evidence. research_corpus promotes only

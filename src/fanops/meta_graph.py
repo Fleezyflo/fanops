@@ -1,17 +1,16 @@
 # src/fanops/meta_graph.py
-"""M4 live half — a thin, budget-aware, READ-ONLY Meta Graph client that samples hashtag TREND signal
-(finding #7: hashtags update on what is trending in our niche). Used ONLY by `hashtags refresh`, never
-on the publish path. Two design rules, both load-bearing:
+"""M4 live half — a thin, READ-ONLY Meta Graph client that samples hashtag TREND signal (finding #7:
+hashtags update on what is trending in our niche). Used ONLY by `hashtags refresh`, never on the
+publish path. Design rule:
 
-  1. ENHANCEMENT -> the TRANSPORT fails SOFT. Any per-tag fetch failure (no creds, 401, 5xx, timeout,
-     non-JSON, unresolved hashtag) returns None and is skipped — a missing trend never blocks a refresh
-     (the frozen reach floor still stands). The token is sent as the Graph `access_token` param and is NEVER
-     logged/echoed (METRICS_CLIENT_AUTH_DISCIPLINE — mirrors post/metrics.py).
+  ENHANCEMENT -> the TRANSPORT fails SOFT. Any per-tag fetch failure (no creds, 401, 5xx, timeout,
+  non-JSON, unresolved hashtag) returns None and is skipped — a missing trend never blocks a refresh
+  (the frozen reach floor still stands). The token is sent as the Graph `access_token` param and is NEVER
+  logged/echoed (METRICS_CLIENT_AUTH_DISCIPLINE — mirrors post/metrics.py).
 
-  2. The 30-unique-hashtags / rolling-7-day `ig_hashtag_search` cap is a HARD Meta limit, so the BUDGET
-     fails CLOSED + LOUD: if the persisted counter (00_control/hashtag_budget.json) is unreadable/corrupt,
-     budget_remaining returns None and sample_trends queries NOTHING (better a stale store than a banned
-     app). Meta deprecated hashtag media_count, so the trend signal is engagement summed over top_media."""
+  Local `hashtag_budget.json` / budget_remaining / record_query are OBSERVATIONAL telemetry only —
+  they never refuse a Graph call. Meta's own rate limits (if any) surface as transport errors and
+  fail-open. Meta deprecated hashtag media_count, so the trend signal is engagement summed over top_media."""
 from __future__ import annotations
 import json
 import re
@@ -472,8 +471,8 @@ def _clear_insights_blocked(cfg: Config) -> None:
         get_logger(cfg)("graph_insights", "signal", "clear_failed", err=str(e)[:120])
 
 def _read_queries(cfg: Config):
-    """The recorded search queries, or None if the file is corrupt/unreadable -> the caller treats None
-    as FAIL-CLOSED (budget unknown == exhausted). Absent file == clean state (nothing spent) -> []."""
+    """The recorded search queries for the observational meter, or None if the file is corrupt/unreadable.
+    Absent file == clean state (nothing recorded) -> []. Never gates a Graph call."""
     p = cfg.hashtag_budget_path
     if not p.exists():
         return []
@@ -482,12 +481,12 @@ def _read_queries(cfg: Config):
         q = d.get("queries") if isinstance(d, dict) else None
         return q if isinstance(q, list) else None
     except (OSError, json.JSONDecodeError, ValueError, TypeError) as e:
-        get_logger(cfg)("hashtags", "budget", "queries_read_error", err=str(e)[:160])   # None == fail-closed, but recorded
+        get_logger(cfg)("hashtags", "budget", "queries_read_error", err=str(e)[:160])
         return None
 
 def budget_remaining(cfg: Config, *, now: datetime | None = None):
-    """Remaining ig_hashtag_search budget = 30 - (UNIQUE tags queried in the last 7 days). None means
-    FAIL-CLOSED (the counter is unreadable -> refuse all queries). Pure read."""
+    """Observational: 30 - (UNIQUE tags recorded in the last 7 days). None when the counter file is
+    unreadable. Pure read — NEVER used to refuse a Graph call (Studio meter / telemetry only)."""
     now = now or _now()
     q = _read_queries(cfg)
     if q is None:
@@ -506,11 +505,9 @@ def budget_remaining(cfg: Config, *, now: datetime | None = None):
     return max(0, _BUDGET_LIMIT - len(recent))
 
 def record_query(cfg: Config, tag: str, *, now: datetime | None = None) -> None:
-    """Append a (tag, ts) to the budget counter, pruning entries older than the window so the file stays
-    small. SERIALIZED under an fcntl flock: the read-filter-append-write is a lost-update window — two
-    concurrent Studio calls (tag_metrics / discover_corpus) each re-read, filter, and write back, so the
-    second overwrote the first and the budget under-counted, over-spending the Meta Graph 30/7-day quota.
-    Best-effort persist: on a write/lock failure the next read just sees fewer entries (conservative)."""
+    """Append a (tag, ts) to the observational counter, pruning entries older than the window.
+    SERIALIZED under an fcntl flock (lost-update fix for concurrent Studio calls). Best-effort —
+    never gates a Graph call; on write/lock failure the next read just sees fewer entries."""
     now = now or _now()
     cutoff = now - timedelta(days=_BUDGET_WINDOW_DAYS)
     from fanops.ledger import _file_lock       # lazy: reuse the proven fcntl flock (accounts.py pattern) without a top-level cycle
@@ -532,51 +529,41 @@ def record_query(cfg: Config, tag: str, *, now: datetime | None = None) -> None:
             cfg.hashtag_budget_path.parent.mkdir(parents=True, exist_ok=True)
             cfg.hashtag_budget_path.write_text(json.dumps({"queries": kept}, indent=2))
     except (OSError, LockBusyError) as e:
-        get_logger(cfg)("hashtags", tag, "budget_write_failed", err=str(e)[:120])   # best-effort, but no longer silent
+        get_logger(cfg)("hashtags", tag, "budget_write_failed", err=str(e)[:120])
 
 def tag_metrics(cfg: Config, tag: str, *, get=None, now: datetime | None = None) -> dict:
     """B2: ON-DEMAND live Graph metrics for ONE hashtag the operator wants to RECOMMEND into a persona's
     corpus — the evidence behind a curation decision. Resolves the hashtag node + sums top_media engagement
-    (the same signal sample_trends uses), spending ONE ig_hashtag_search budget slot. Returns a plain dict
-    the Studio renders: {tag, resolved, engagement?, sampled_at?, error?}. SAME discipline as sample_trends:
-    FAIL-OPEN on creds/transport (resolved False + a reason, never raises); FAIL-CLOSED + LOUD on an
-    unreadable budget (resolved False); refuses when the 30/7-day budget is exhausted. The token is never
-    echoed. Operator-initiated, so it is NOT gated by FANOPS_HASHTAG_TRENDS (that gates the background
-    refresh sampling) — only by creds + budget."""
+    (the same signal sample_trends uses). Returns a plain dict the Studio renders:
+    {tag, resolved, engagement?, sampled_at?, error?}. FAIL-OPEN on creds/transport (resolved False + a
+    reason, never raises). Local budget counter is observational only — never refuses the Graph call.
+    The token is never echoed. Operator-initiated, so it is NOT gated by FANOPS_HASHTAG_TRENDS (that gates
+    the background refresh sampling) — only by creds."""
     now = now or _now()
     h = tag if (tag or "").startswith("#") else f"#{(tag or '').strip()}"
     h = h.strip().lower()
-    if not h.lstrip("#"):                                # a bare "#" / blank -> reject BEFORE spending a budget slot
+    if not h.lstrip("#"):                                # a bare "#" / blank -> reject BEFORE the Graph call
         return {"tag": h, "resolved": False, "error": "enter a valid hashtag"}
     if not (cfg.meta_graph_token and cfg.meta_ig_user_id):
         return {"tag": h, "resolved": False, "error": "Graph not configured — set META_GRAPH_TOKEN + META_IG_USER_ID"}
-    remaining = budget_remaining(cfg, now=now)
-    if remaining is None:
-        return {"tag": h, "resolved": False, "error": "trend budget unreadable — refusing the query (fail-closed)"}
-    if remaining <= 0:
-        return {"tag": h, "resolved": False, "error": "trend budget exhausted (Meta's 30-searches / 7-day cap) — retry later"}
     score = trend_score(cfg, h, get=get)                 # resolves the node + sums top_media engagement
-    record_query(cfg, h, now=now)                        # spend one slot (Meta counts unique searches per 7-day window)
+    record_query(cfg, h, now=now)                        # observational telemetry (never a gate)
     if score is None:
         return {"tag": h, "resolved": False, "error": "did not resolve on Instagram — no such hashtag, or no recent public media"}
     return {"tag": h, "resolved": True, "engagement": score, "sampled_at": now.isoformat()}
 
 
 def sample_trends(cfg: Config, candidates: list[str], *, get=None, now: datetime | None = None) -> dict:
-    """Spend the 30/7-day budget sampling trend scores for `candidates` (in order). Returns {tag: score}
-    for the tags actually sampled. FAIL-OPEN on creds/transport (no token -> {}; a per-tag failure is
-    skipped); FAIL-CLOSED + LOUD on the budget (unknown counter -> query nothing). A tag already queried
-    in the window is skipped (Meta counts unique searches; re-asking wastes a slot)."""
+    """Sample trend scores for `candidates` (in order). Returns {tag: score} for the tags actually
+    sampled. FAIL-OPEN on creds/transport (no token -> {}; a per-tag failure is skipped). Always
+    attempts the Graph when creds are present — the local budget counter never refuses. A tag already
+    recorded in the observational window is skipped (re-ask of the same unique search is a no-op for
+    Meta and yields no new signal)."""
     now = now or _now()
-    log = get_logger(cfg)
     if not (cfg.meta_graph_token and cfg.meta_ig_user_id):
         return {}
-    remaining = budget_remaining(cfg, now=now)
-    if remaining is None:
-        log("hashtags", "trends", "budget_unreadable", note="refusing trend queries (fail-closed)")
-        return {}
     cutoff = now - timedelta(days=_BUDGET_WINDOW_DAYS)
-    already: set[str] = set()                       # tags queried WITHIN the window only (an expired one is re-queryable)
+    already: set[str] = set()                       # tags recorded WITHIN the window only (an expired one is re-queryable)
     for e in (_read_queries(cfg) or []):
         if not isinstance(e, dict):
             continue
@@ -589,19 +576,13 @@ def sample_trends(cfg: Config, candidates: list[str], *, get=None, now: datetime
         if ts >= cutoff and isinstance(e.get("tag"), str):
             already.add(e["tag"])
     scores: dict[str, float] = {}
-    deferred = 0
     for tag in candidates:
-        if remaining <= 0:
-            deferred += 1
-            continue
         if tag in already:
             continue                                # recent unique search -> free but not re-sampled
         s = trend_score(cfg, tag, get=get)
-        record_query(cfg, tag, now=now); remaining -= 1; already.add(tag)   # a duplicate candidate must not spend the budget twice
+        record_query(cfg, tag, now=now); already.add(tag)   # observational; dedupe within this pass
         if s is not None:
             scores[tag] = s
-    if deferred:
-        log("hashtags", "trends", "budget_exhausted", sampled=len(scores), deferred=deferred)
     return scores
 
 
@@ -610,30 +591,21 @@ def harvest_cooccurring(cfg: Config, seed_tags: list[str], *, get=None, now: dat
     those currently-winning posts use ALONGSIDE the seed — the only Graph-native way to DISCOVER tags we have
     never named (IG has no trending-by-topic endpoint). Returns {co_tag: {"count": int, "host_engagement":
     float, "seeds": {seed: co_count}}} with the seeds themselves EXCLUDED. The per-seed tally is the
-    attribution that lets each persona's auto-fill prefer candidates co-occurring with ITS OWN seeds. SAME
-    discipline as sample_trends: FAIL-OPEN on no creds ({});
-    FAIL-CLOSED + LOUD on an unreadable budget; a per-seed transport/resolve failure is skipped. The seed
-    RESOLUTION spends one ig_hashtag_search slot (top_media reads are free); a duplicate normalized seed
-    resolves once. Re-resolving a within-window seed is budget-NEUTRAL (Meta counts UNIQUE searches) and
-    yields fresh top_media — which is what a periodic discovery run wants, so in-window seeds are NOT skipped."""
+    attribution that lets each persona's auto-fill prefer candidates co-occurring with ITS OWN seeds.
+    FAIL-OPEN on no creds ({}); a per-seed transport/resolve failure is skipped. Always resolves every
+    unique seed when creds are present — the local budget counter never refuses. Duplicate normalized
+    seeds resolve once."""
     now = now or _now()
-    log = get_logger(cfg)
     if not (cfg.meta_graph_token and cfg.meta_ig_user_id):
-        return {}
-    remaining = budget_remaining(cfg, now=now)
-    if remaining is None:
-        log("hashtags", "discover", "budget_unreadable", note="refusing harvest (fail-closed)")
         return {}
     seeds: list[str] = []; sseen: set[str] = set()
     for s in seed_tags:                                  # normalize + dedupe the seeds (so a seed resolves once)
         n = _norm(s) if isinstance(s, str) else ""
         if n and n not in sseen: sseen.add(n); seeds.append(n)
-    out: dict[str, dict] = {}; deferred = 0
+    out: dict[str, dict] = {}
     for seed in seeds:
-        if remaining <= 0:
-            deferred += 1; continue
         hid = hashtag_id(cfg, seed, get=get)
-        record_query(cfg, seed, now=now); remaining -= 1     # the ONE budget cost (per unique seed ATTEMPTED — Meta charges the search whether or not the tag resolves)
+        record_query(cfg, seed, now=now)                 # observational telemetry (never a gate)
         if hid is None:
             continue
         body = _graph_get(cfg, f"{hid}/top_media",
@@ -658,20 +630,17 @@ def harvest_cooccurring(cfg: Config, seed_tags: list[str], *, get=None, now: dat
                 agg = out.setdefault(t, {"count": 0, "host_engagement": 0.0, "seeds": {}})
                 agg["count"] += 1; agg["host_engagement"] += eng
                 agg["seeds"][seed] = agg["seeds"].get(seed, 0) + 1
-    if deferred:
-        log("hashtags", "discover", "budget_exhausted", harvested=len(out), deferred=deferred)
     return out
 
 
 def discover_candidates(cfg: Config, seeds: list[str], *, known=(), measure_k: int = 0,
                         get=None, now: datetime | None = None) -> list[dict]:
     """M2: rank the co-occurrence harvest, DROP the tags we already know (VETTED ∪ store ∪ corpus, passed
-    in `known`), and OPTIONALLY measure the top `measure_k` novel tags' live Graph reach within budget. Returns
+    in `known`), and OPTIONALLY measure the top `measure_k` novel tags' live Graph reach. Returns
     ordered proposals [{"tag","count","host_engagement","seeds","measured_engagement"?,"sampled_at"?}], most-relevant
     first (by co-occurrence count, then host engagement). `seeds` is the per-seed co-count map from the harvest
-    (JSON-round-trippable attribution). The FREE harvest is the primary signal; measurement
-    is the only extra budget cost beyond seed resolution, hard-capped by BOTH measure_k AND a live
-    budget_remaining re-check, so it never overspends Meta's 30/7-day window. No creds -> [] (harvest no-ops)."""
+    (JSON-round-trippable attribution). The FREE harvest is the primary signal; measurement is capped only
+    by measure_k — the local budget counter never refuses. No creds -> [] (harvest no-ops)."""
     now = now or _now()
     known_n = {_norm(t) for t in known if isinstance(t, str)}
     harvested = harvest_cooccurring(cfg, seeds, get=get, now=now)
@@ -679,11 +648,9 @@ def discover_candidates(cfg: Config, seeds: list[str], *, known=(), measure_k: i
                     key=lambda kv: (kv[1]["count"], kv[1]["host_engagement"]), reverse=True)
     out = [{"tag": t, "count": d["count"], "host_engagement": d["host_engagement"],
             "seeds": dict(d.get("seeds") or {})} for t, d in ranked]
-    for cand in out[:max(0, measure_k)]:                 # measure only the top-K, budget permitting
-        if (budget_remaining(cfg, now=now) or 0) <= 0:
-            break
-        s = trend_score(cfg, cand["tag"], get=get)       # resolve + sum top_media engagement (spends 1 slot)
-        record_query(cfg, cand["tag"], now=now)
+    for cand in out[:max(0, measure_k)]:                 # measure only the top-K
+        s = trend_score(cfg, cand["tag"], get=get)       # resolve + sum top_media engagement
+        record_query(cfg, cand["tag"], now=now)          # observational telemetry (never a gate)
         if s is not None:
             cand["measured_engagement"] = s; cand["sampled_at"] = now.isoformat()
     return out

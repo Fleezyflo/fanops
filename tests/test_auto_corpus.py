@@ -1,5 +1,6 @@
 # S12 — automated persona corpus refresh (backend-only): throttle, fill-to-target, pin protection,
-# content screen, self-prune, budget gate, offline fill, and the inertness of the DELETED corpus_auto env var.
+# content screen, self-prune, live-vs-offline fill, and the inertness of the DELETED corpus_auto env var.
+# Local hashtag_budget.json never refuses Graph calls (observational meter only).
 import json
 import time
 from fanops.config import Config
@@ -135,37 +136,37 @@ def test_self_prune(tmp_path, monkeypatch):
     assert "#a" not in corpus
 
 
-def test_budget_exhausted_no_evidence_unchanged(tmp_path, monkeypatch):
-    """Budget==0 gates ONLY live Graph; with no measured evidence the offline fill has nothing to add."""
+def test_local_meter_full_still_attempts_graph(tmp_path, monkeypatch):
+    """Even with 30 local meter entries, live discovery still hits the Graph when creds exist."""
     _creds(monkeypatch)
     cfg = Config(root=tmp_path)
     pid = core.add_persona(cfg, name="P1")
     core.add_corpus_tag(cfg, pid, "#seed")
     for i in range(30):
         record_query(cfg, f"#t{i}")
-    before = cfg.personas_path.read_text()
-    r = refresh_persona_corpus(cfg, pid, get=_router("#fresh"))
-    assert r.get("changed") is False
-    assert r.get("reason") != "budget_exhausted"   # early return deleted — budget no longer aborts the function
-    assert cfg.personas_path.read_text() == before
+    called = {"n": 0}
+    def _counting_get(url, params=None, timeout=None):
+        called["n"] += 1
+        return _router("#fresh")(url, params=params, timeout=timeout)
+    r = refresh_persona_corpus(cfg, pid, get=_counting_get)
+    assert called["n"] > 0, "local meter full must not refuse Graph"
+    assert r.get("reason") != "budget_exhausted"
 
 
-def test_offline_fill_runs_when_budget_exhausted(tmp_path, monkeypatch):
-    """Pin 1: measured-evidence fill runs at ZERO Graph quota (offline path spends none)."""
-    _creds(monkeypatch)
+def test_offline_fill_when_no_creds(tmp_path, monkeypatch):
+    """Measured-evidence fill runs when Meta creds are absent (live cannot run)."""
+    monkeypatch.delenv("META_GRAPH_TOKEN", raising=False)
+    monkeypatch.delenv("META_IG_USER_ID", raising=False)
     monkeypatch.setenv("FANOPS_CORPUS_TARGET", "4")
     cfg = Config(root=tmp_path)
     pid = core.add_persona(cfg, name="P1")
     core.add_corpus_tag(cfg, pid, "#seed")
-    for i in range(30):
-        record_query(cfg, f"#t{i}")
-    assert __import__("fanops.meta_graph", fromlist=["budget_remaining"]).budget_remaining(cfg) == 0
     _seed_store(cfg, {"#alpha": 100, "#beta": 90, "#gamma": 80, "#delta": 70})
     called = {"n": 0}
     def _no_graph(url, params=None, timeout=None):
         called["n"] += 1; return _Resp(404, None)
     r = refresh_persona_corpus(cfg, pid, get=_no_graph)
-    assert called["n"] == 0, "offline fill must not touch the Graph"
+    assert called["n"] == 0, "no-creds path must not touch the Graph"
     assert r.get("changed") is True
     corpus = core.Personas.load(cfg).get(pid).hashtag_corpus
     assert len(corpus) == 4 and "#seed" in corpus

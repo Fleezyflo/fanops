@@ -65,16 +65,17 @@
     {% endif %}
   </section>
 
-  {# ── 3 · Budget meter ────────────────────────────────────────────────────────────────────────────
-     Meta ig_hashtag_search: 30 unique tags per 7 days, fail-CLOSED. When the counter is unreadable, name the
-     code's actual behavior plainly — no invented numbers. No "check reach" button here (this page is inert). #}
+  {# ── 3 · Local lookup meter (observational) ──────────────────────────────────────────────────────
+     Local record_query telemetry — does NOT block Meta lookups. When the counter is unreadable, say so
+     plainly with no invented numbers. No "check reach" button here (this page is inert). #}
   <section class="hashtag-section budget-section">
-    <h3>Meta lookup budget</h3>
+    <h3>Local lookup meter</h3>
     {% if page.budget.fail_closed %}
-      <p class="result err">✗ {{ page.budget.copy }}</p>
+      <p class="muted">{{ page.budget.copy }}</p>
     {% else %}
-      <p class="muted"><strong>{{ page.budget.used }}</strong> used / <strong>{{ page.budget.remaining }}</strong>
-        remaining of {{ page.budget.limit }} per 7 days{% if page.budget.window_reset %} · window resets {{ page.budget.window_reset | localdt }}{% endif %}.</p>
+      <p class="muted"><strong>{{ page.budget.used }}</strong> recorded / <strong>{{ page.budget.remaining }}</strong>
+        of {{ page.budget.limit }} in the last 7 days{% if page.budget.window_reset %} · oldest entry ages out {{ page.budget.window_reset | localdt }}{% endif %}.</p>
+      <p class="muted">{{ page.budget.note }}</p>
     {% endif %}
   </section>
 

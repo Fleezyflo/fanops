@@ -1,12 +1,14 @@
 """U11 — the Hashtags observatory read-model (pure; ZERO network on any call). Surfaces what S12 (automated
-per-persona corpora) + U9 (per-persona display) leave homeless: the reach store, the Meta budget, cross-account
-rotation health, and the operator's global ban lane. Every projection here is a LOCAL file + ledger read —
-budget_meter wraps meta_graph.budget_remaining (which reads the counter FILE, no Graph call), _store_status
-reads the store file, rotation_health scans the ledger. The page is budget-INERT by construction: nothing here
-spends a Graph query. The ONLY mutation on the page is ban add/remove (studio/hashtags.py), never a GET.
+per-persona corpora) + U9 (per-persona display) leave homeless: the reach store, the local lookup meter,
+cross-account rotation health, and the operator's global ban lane. Every projection here is a LOCAL file +
+ledger read — budget_meter wraps meta_graph.budget_remaining (which reads the counter FILE, no Graph call),
+_store_status reads the store file, rotation_health scans the ledger. The page is budget-INERT by
+construction: nothing here spends a Graph query. The ONLY mutation on the page is ban add/remove
+(studio/hashtags.py), never a GET.
 
 Mirrors views_results.py: dataclass rows, pure reads, fail-open with a breadcrumb. Depends on hashtags (bans +
-store reach), meta_graph (budget), personas/persona_research (corpora), views_results (_EXPOSURE_STATES reuse)."""
+store reach), meta_graph (observational meter), personas/persona_research (corpora), views_results
+(_EXPOSURE_STATES reuse)."""
 from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -20,10 +22,9 @@ from fanops.personas import Personas
 from fanops.persona_research import _partition_corpus, _persona_row
 from fanops.studio.views_results import _EXPOSURE_STATES
 
-# U11: the EXACT fail-closed copy for the budget meter — the plain-language rendering of meta_graph.
-# budget_remaining returning None (the counter is unreadable -> the code refuses every Graph query). Kept
-# verbatim so the test pins the literal, no invented numbers on a corrupt/torn counter.
-BUDGET_UNREADABLE_COPY = "budget file unreadable — querying nothing until it heals"
+# Observational meter only — a corrupt counter never blocks Graph calls. No invented numbers.
+BUDGET_UNREADABLE_COPY = "local meter unreadable — observational only; Graph calls are not blocked"
+BUDGET_OBSERVATIONAL_NOTE = "local meter (observational — does not block Meta lookups)"
 
 
 @dataclass
@@ -50,14 +51,15 @@ class StoreStatus:
 
 @dataclass
 class BudgetMeter:
-    """Section 3: the Meta ig_hashtag_search budget (30 unique tags / 7 days). fail_closed names the code's
-    actual behavior when the counter is unreadable — no invented used/remaining then."""
+    """Section 3: local observational lookup meter (record_query telemetry). fail_closed means the counter
+    FILE is unreadable — Graph calls still proceed; no invented used/remaining then."""
     fail_closed: bool
-    copy: str = ""                     # the plain-language fail-closed line (only when fail_closed)
+    copy: str = ""                     # plain-language line when the counter file is unreadable
     limit: int = 0
     used: int = 0
     remaining: int = 0
-    window_reset: Optional[str] = None  # oldest recorded query ts + 7d (None when no queries recorded / fail-closed)
+    window_reset: Optional[str] = None  # oldest recorded query ts + 7d (None when no queries recorded / unreadable)
+    note: str = ""                     # always-on observational disclaimer
 
 
 @dataclass
@@ -108,14 +110,15 @@ def _store_status(cfg: Config) -> StoreStatus:
 
 
 def budget_meter(cfg: Config, *, now: Optional[datetime] = None) -> BudgetMeter:
-    """Section 3 read: wrap meta_graph.budget_remaining (a FILE read, no Graph call). None -> fail-closed with
-    the EXACT plain-language copy (no invented numbers). Else used = 30 - remaining, and the window reset =
-    oldest recorded query ts + 7d (from the raw counter file). Never raises / never spends budget."""
+    """Section 3 read: wrap meta_graph.budget_remaining (a FILE read, no Graph call). Observational only —
+    None -> unreadable copy (no invented numbers); Graph calls are NOT blocked. Else used = 30 - remaining,
+    window reset = oldest recorded query ts + 7d. Never raises / never spends a Graph query."""
     from fanops.meta_graph import budget_remaining, _read_queries, _BUDGET_LIMIT, _BUDGET_WINDOW_DAYS
     now = now or datetime.now(timezone.utc)
     remaining = budget_remaining(cfg, now=now)
     if remaining is None:
-        return BudgetMeter(fail_closed=True, copy=BUDGET_UNREADABLE_COPY, limit=_BUDGET_LIMIT)
+        return BudgetMeter(fail_closed=True, copy=BUDGET_UNREADABLE_COPY, limit=_BUDGET_LIMIT,
+                           note=BUDGET_OBSERVATIONAL_NOTE)
     reset = None
     q = _read_queries(cfg) or []
     stamps: list[datetime] = []
@@ -130,7 +133,7 @@ def budget_meter(cfg: Config, *, now: Optional[datetime] = None) -> BudgetMeter:
     if stamps:
         reset = (min(stamps) + timedelta(days=_BUDGET_WINDOW_DAYS)).isoformat()
     return BudgetMeter(fail_closed=False, limit=_BUDGET_LIMIT, used=_BUDGET_LIMIT - remaining,
-                       remaining=remaining, window_reset=reset)
+                       remaining=remaining, window_reset=reset, note=BUDGET_OBSERVATIONAL_NOTE)
 
 
 def rotation_health(led: Ledger, *, n: int = 5) -> list:
