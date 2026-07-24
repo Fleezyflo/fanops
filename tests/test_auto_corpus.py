@@ -1,5 +1,6 @@
 # S12 — automated persona corpus refresh (backend-only): throttle, fill-to-target, pin protection,
-# content screen, self-prune, budget gate, offline fill, and the inertness of the DELETED corpus_auto env var.
+# content screen, self-prune, live-vs-offline fill, and the inertness of the DELETED corpus_auto env var.
+# Local hashtag_budget.json never refuses Graph calls (observational meter only).
 import json
 import time
 from fanops.config import Config
@@ -135,37 +136,37 @@ def test_self_prune(tmp_path, monkeypatch):
     assert "#a" not in corpus
 
 
-def test_budget_exhausted_no_evidence_unchanged(tmp_path, monkeypatch):
-    """Budget==0 gates ONLY live Graph; with no measured evidence the offline fill has nothing to add."""
+def test_local_meter_full_still_attempts_graph(tmp_path, monkeypatch):
+    """Even with 30 local meter entries, live discovery still hits the Graph when creds exist."""
     _creds(monkeypatch)
     cfg = Config(root=tmp_path)
     pid = core.add_persona(cfg, name="P1")
     core.add_corpus_tag(cfg, pid, "#seed")
     for i in range(30):
         record_query(cfg, f"#t{i}")
-    before = cfg.personas_path.read_text()
-    r = refresh_persona_corpus(cfg, pid, get=_router("#fresh"))
-    assert r.get("changed") is False
-    assert r.get("reason") != "budget_exhausted"   # early return deleted — budget no longer aborts the function
-    assert cfg.personas_path.read_text() == before
+    called = {"n": 0}
+    def _counting_get(url, params=None, timeout=None):
+        called["n"] += 1
+        return _router("#fresh")(url, params=params, timeout=timeout)
+    r = refresh_persona_corpus(cfg, pid, get=_counting_get)
+    assert called["n"] > 0, "local meter full must not refuse Graph"
+    assert r.get("reason") != "budget_exhausted"
 
 
-def test_offline_fill_runs_when_budget_exhausted(tmp_path, monkeypatch):
-    """Pin 1: measured-evidence fill runs at ZERO Graph quota (offline path spends none)."""
-    _creds(monkeypatch)
+def test_offline_fill_when_no_creds(tmp_path, monkeypatch):
+    """Measured-evidence fill runs when Meta creds are absent (live cannot run)."""
+    monkeypatch.delenv("META_GRAPH_TOKEN", raising=False)
+    monkeypatch.delenv("META_IG_USER_ID", raising=False)
     monkeypatch.setenv("FANOPS_CORPUS_TARGET", "4")
     cfg = Config(root=tmp_path)
     pid = core.add_persona(cfg, name="P1")
     core.add_corpus_tag(cfg, pid, "#seed")
-    for i in range(30):
-        record_query(cfg, f"#t{i}")
-    assert __import__("fanops.meta_graph", fromlist=["budget_remaining"]).budget_remaining(cfg) == 0
     _seed_store(cfg, {"#alpha": 100, "#beta": 90, "#gamma": 80, "#delta": 70})
     called = {"n": 0}
     def _no_graph(url, params=None, timeout=None):
         called["n"] += 1; return _Resp(404, None)
     r = refresh_persona_corpus(cfg, pid, get=_no_graph)
-    assert called["n"] == 0, "offline fill must not touch the Graph"
+    assert called["n"] == 0, "no-creds path must not touch the Graph"
     assert r.get("changed") is True
     corpus = core.Personas.load(cfg).get(pid).hashtag_corpus
     assert len(corpus) == 4 and "#seed" in corpus
@@ -235,3 +236,88 @@ def test_corpus_auto_env_var_is_inert(tmp_path, monkeypatch):
     assert marker.exists()
     r2 = refresh_corpora_if_due(cfg, max_age_s=43200, get=_router("#alpha"))   # throttle PRESERVED
     assert r2.get("refreshed") is False and r2.get("reason") == "fresh"
+
+
+# --- apply_auto_corpus meta-merge gate + orphaned-auto repair (hashtag-graph-loop unit) ---
+
+def test_apply_auto_corpus_writes_meta_for_brand_new_auto_tag(tmp_path, monkeypatch):
+    """Live bug: brand-new auto tag must land with source=auto sidecar (absent-as-pinned must NOT gate the write)."""
+    from fanops.persona_store import apply_auto_corpus
+    cfg = Config(root=tmp_path)
+    pid = core.add_persona(cfg, name="P1")
+    apply_auto_corpus(cfg, pid, tags=["#fresh"], meta={
+        "#fresh": {"source": "auto", "reach": 42.0, "added": "2026-07-25T00:00:00+00:00"},
+    })
+    meta = json.loads(cfg.personas_path.read_text())["personas"][0]["hashtag_corpus_meta"]
+    assert meta["#fresh"]["source"] == "auto"
+    assert meta["#fresh"]["reach"] == 42.0
+
+
+def test_apply_auto_corpus_updates_reach_on_existing_auto(tmp_path, monkeypatch):
+    from fanops.persona_store import apply_auto_corpus
+    cfg = Config(root=tmp_path)
+    pid = core.add_persona(cfg, name="P1")
+    _write_meta(cfg, pid, ["#auto1"], {
+        "#auto1": {"source": "auto", "reach": 1.0, "added": "2026-01-01T00:00:00+00:00"},
+    })
+    apply_auto_corpus(cfg, pid, tags=["#auto1"], meta={
+        "#auto1": {"source": "auto", "reach": 999.0, "added": "2026-07-25T00:00:00+00:00"},
+    })
+    meta = json.loads(cfg.personas_path.read_text())["personas"][0]["hashtag_corpus_meta"]
+    assert meta["#auto1"]["source"] == "auto" and meta["#auto1"]["reach"] == 999.0
+
+
+def test_apply_auto_corpus_refuses_overwrite_explicit_pin(tmp_path, monkeypatch):
+    from fanops.persona_store import apply_auto_corpus
+    cfg = Config(root=tmp_path)
+    pid = core.add_persona(cfg, name="P1")
+    core.add_corpus_tag(cfg, pid, "#pinned")
+    before = json.loads(cfg.personas_path.read_text())["personas"][0]["hashtag_corpus_meta"]["#pinned"]
+    apply_auto_corpus(cfg, pid, tags=["#pinned", "#other"], meta={
+        "#pinned": {"source": "auto", "reach": 999.0, "added": "2026-07-25T00:00:00+00:00"},
+        "#other": {"source": "auto", "reach": 10.0, "added": "2026-07-25T00:00:00+00:00"},
+    })
+    meta = json.loads(cfg.personas_path.read_text())["personas"][0]["hashtag_corpus_meta"]
+    assert meta["#pinned"]["source"] == "pinned"
+    assert meta["#pinned"] == before
+    assert meta["#other"]["source"] == "auto"
+
+
+def test_legacy_meta_absent_not_in_store_stays_partitioned_pinned(tmp_path, monkeypatch):
+    """PARTITION path: legacy corpus tag with NO meta and NOT in store evidence remains pinned."""
+    from fanops.persona_research import _partition_corpus
+    from fanops.persona_store import repair_orphaned_auto_meta
+    cfg = Config(root=tmp_path)
+    pid = core.add_persona(cfg, name="P1")
+    _write_meta(cfg, pid, ["#legacy"], {})          # no meta entry at all
+    _seed_store(cfg, {"#unrelated": 50})            # store evidence for a DIFFERENT tag
+    n = repair_orphaned_auto_meta(cfg, pid)
+    assert n == 0
+    row = json.loads(cfg.personas_path.read_text())["personas"][0]
+    assert "#legacy" not in (row.get("hashtag_corpus_meta") or {})
+    pinned, auto = _partition_corpus(row["hashtag_corpus"], row.get("hashtag_corpus_meta") or {})
+    assert pinned == ["#legacy"] and auto == []
+
+
+def test_repair_stamps_auto_onto_meta_absent_with_store_evidence(tmp_path, monkeypatch):
+    """Broken-fill repair: meta-absent + store graph-reach → source=auto; explicit pins untouched."""
+    from fanops.persona_store import repair_orphaned_auto_meta
+    from fanops.persona_research import _partition_corpus
+    cfg = Config(root=tmp_path)
+    pid = core.add_persona(cfg, name="P1")
+    _write_meta(cfg, pid, ["#orphan", "#pinned", "#truelegacy"], {
+        "#pinned": {"source": "pinned", "reach": None, "added": "2026-01-01T00:00:00+00:00"},
+        # #orphan and #truelegacy deliberately have NO meta (broken fill / true legacy)
+    })
+    _seed_store(cfg, {"#orphan": 777})              # only #orphan has store evidence
+    n = repair_orphaned_auto_meta(cfg, pid)
+    assert n == 1
+    row = json.loads(cfg.personas_path.read_text())["personas"][0]
+    meta = row["hashtag_corpus_meta"]
+    assert meta["#orphan"]["source"] == "auto" and meta["#orphan"]["reach"] == 777.0
+    assert meta["#pinned"]["source"] == "pinned"
+    assert "#truelegacy" not in meta                # no store evidence → stay legacy-absent (=pinned)
+    n2 = repair_orphaned_auto_meta(cfg, pid)
+    assert n2 == 0                                  # idempotent
+    pinned, auto = _partition_corpus(row["hashtag_corpus"], meta)
+    assert "#orphan" in auto and "#pinned" in pinned and "#truelegacy" in pinned

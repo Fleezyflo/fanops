@@ -53,13 +53,13 @@ def test_tag_metrics_unresolved_tag(tmp_path, monkeypatch):
     assert m["resolved"] is False and m.get("error")
 
 
-def test_tag_metrics_budget_unreadable_failclosed(tmp_path, monkeypatch):
+def test_tag_metrics_budget_unreadable_still_queries(tmp_path, monkeypatch):
     _creds(monkeypatch)
     cfg = Config(root=tmp_path)
     cfg.hashtag_budget_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.hashtag_budget_path.write_text("{ not json")
     m = tag_metrics(cfg, "#x", get=_router(900))
-    assert m["resolved"] is False and "budget" in (m.get("error") or "").lower()
+    assert m["resolved"] is True and m["engagement"] == 905
 
 
 def test_tag_metrics_spends_one_budget_slot(tmp_path, monkeypatch):
@@ -70,13 +70,13 @@ def test_tag_metrics_spends_one_budget_slot(tmp_path, monkeypatch):
     assert budget_remaining(cfg) == before - 1
 
 
-def test_tag_metrics_budget_exhausted(tmp_path, monkeypatch):
+def test_tag_metrics_still_queries_when_local_meter_full(tmp_path, monkeypatch):
     _creds(monkeypatch)
     cfg = Config(root=tmp_path)
-    for i in range(30):                                        # fill the 30/7-day window with distinct tags
+    for i in range(30):                                        # fill the local observational counter
         record_query(cfg, f"#t{i}")
     m = tag_metrics(cfg, "#newone", get=_router(900))
-    assert m["resolved"] is False and "budget" in (m.get("error") or "").lower()
+    assert m["resolved"] is True and m["engagement"] == 905
 
 
 def test_tag_metrics_degenerate_tag_spends_no_budget(tmp_path, monkeypatch):

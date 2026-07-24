@@ -3,8 +3,8 @@
 # SEED tag, reads its live top_media captions, and tallies the hashtags those currently-winning posts use
 # ALONGSIDE the seed — the only Graph-native way to find tags the system has never named (IG has no
 # "trending tags by topic" endpoint). discover_candidates ranks the harvest, drops known tags, and
-# optionally measures the top-K within the 30/7-day budget. Same fail-soft/fail-closed discipline as
-# sample_trends; the seed RESOLUTION spends one ig_hashtag_search slot, the top_media caption read is free.
+# optionally measures the top-K. Same fail-soft discipline as sample_trends; seed RESOLUTION hits
+# ig_hashtag_search, the top_media caption read is free. Local budget counter is observational only.
 from fanops.config import Config
 from fanops.meta_graph import harvest_cooccurring, discover_candidates, budget_remaining, record_query
 
@@ -62,16 +62,21 @@ def test_harvest_no_creds_returns_empty(tmp_path, monkeypatch):
     assert harvest_cooccurring(Config(root=tmp_path), ["#hiphop"], get=_router([])) == {}
 
 
-def test_harvest_budget_unreadable_failclosed(tmp_path, monkeypatch):
+def test_harvest_budget_unreadable_still_queries(tmp_path, monkeypatch):
     _creds(monkeypatch)
     cfg = Config(root=tmp_path)
     cfg.hashtag_budget_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.hashtag_budget_path.write_text("{ not json")
     called = {"n": 0}
     def get(url, params=None, timeout=None):
-        called["n"] += 1; return _Resp(200, {"data": []})
+        called["n"] += 1
+        if "ig_hashtag_search" in url:
+            return _Resp(200, {"data": [{"id": "id-hiphop"}]})
+        if "top_media" in url:
+            return _Resp(200, {"data": [{"caption": "#bars", "like_count": 1, "comments_count": 0}]})
+        return _Resp(404, None)
     out = harvest_cooccurring(cfg, ["#hiphop"], get=get)
-    assert out == {} and called["n"] == 0                      # refused BEFORE any Graph call
+    assert called["n"] > 0 and "#bars" in out                  # Graph attempted despite corrupt meter
 
 
 def test_harvest_spends_one_slot_per_seed(tmp_path, monkeypatch):
@@ -171,15 +176,16 @@ def test_discover_measures_top_k(tmp_path, monkeypatch):
     assert measured[0]["measured_engagement"] == 100.0 and "sampled_at" in measured[0]
 
 
-def test_discover_measure_respects_remaining_budget(tmp_path, monkeypatch):
+def test_discover_measure_ignores_local_meter_full(tmp_path, monkeypatch):
+    # Local counter full of 28 prior tags must NOT cap measure_k — all top-K still measured.
     _creds(monkeypatch)
     cfg = Config(root=tmp_path)
-    for i in range(28):                                        # 28 pre + 1 seed + 1 measure = the 30 cap
+    for i in range(28):
         record_query(cfg, f"#pre{i}")
     media = [{"caption": "#a #b #c", "like_count": 5, "comments_count": 0}]
     out = discover_candidates(cfg, ["#seed"], measure_k=3, get=_router(media))
     measured = [c for c in out if "measured_engagement" in c]
-    assert len(measured) == 1                                  # only one slot remained after the seed
+    assert len(measured) == 3                                  # measure_k honored; local meter never gates
 
 
 def test_discover_no_creds_empty(tmp_path, monkeypatch):

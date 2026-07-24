@@ -1,8 +1,8 @@
 # tests/test_meta_graph.py
-# M4 live half: the budget-aware, read-only Meta Graph hashtag-TREND client. Pure-fixture (mocked
-# `get`), no real network. Covers: ig_hashtag_search -> id, top_media -> engagement trend score,
-# transport fail-SOFT (per-tag None, never raises), the 30/7-day budget being fail-CLOSED + LOUD on
-# unknown state, and the token NEVER appearing in any logged output (METRICS_CLIENT_AUTH_DISCIPLINE).
+# M4 live half: the read-only Meta Graph hashtag-TREND client. Pure-fixture (mocked `get`), no real
+# network. Covers: ig_hashtag_search -> id, top_media -> engagement trend score, transport fail-SOFT
+# (per-tag None, never raises), local budget counter as OBSERVATIONAL telemetry (never refuses Graph),
+# and the token NEVER appearing in any logged output (METRICS_CLIENT_AUTH_DISCIPLINE).
 import json
 from datetime import datetime, timedelta, timezone
 from fanops.config import Config
@@ -81,7 +81,7 @@ def test_budget_fail_closed_on_corrupt_file(tmp_path, monkeypatch):
     cfg = _cfg(tmp_path, monkeypatch)
     cfg.hashtag_budget_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.hashtag_budget_path.write_text("{ not json")
-    assert meta_graph.budget_remaining(cfg) is None                # None == fail-closed (unknown -> refuse)
+    assert meta_graph.budget_remaining(cfg) is None                # None == counter unreadable (meter only)
 
 def test_record_query_appends_and_decrements(tmp_path, monkeypatch):
     cfg = _cfg(tmp_path, monkeypatch)
@@ -106,25 +106,28 @@ def test_sample_trends_no_creds_returns_empty(tmp_path, monkeypatch):
     assert meta_graph.sample_trends(cfg, ["#a"], get=get) == {}
     assert get.calls == []                                        # never hits the network without creds
 
-def test_sample_trends_fail_closed_when_budget_unknown(tmp_path, monkeypatch):
+def test_sample_trends_still_queries_when_budget_unknown(tmp_path, monkeypatch):
+    # Local counter corrupt -> meter returns None, but Graph calls MUST still proceed.
     cfg = _cfg(tmp_path, monkeypatch)
     cfg.hashtag_budget_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg.hashtag_budget_path.write_text("CORRUPT")                 # budget unknown -> fail-closed
-    get = _router({"ig_hashtag_search": _Resp(200, {"data": [{"id": "1"}]})})
-    assert meta_graph.sample_trends(cfg, ["#a", "#b"], get=get) == {}
-    assert get.calls == []                                        # refuses to query rather than risk Meta's cap
+    cfg.hashtag_budget_path.write_text("CORRUPT")
+    get = _router({"ig_hashtag_search": _Resp(200, {"data": [{"id": "1"}]}),
+                   "top_media": _Resp(200, {"data": [{"like_count": 7}]})})
+    out = meta_graph.sample_trends(cfg, ["#a", "#b"], get=get)
+    assert out == {"#a": 7.0, "#b": 7.0}
+    assert any("ig_hashtag_search" in u for u, _ in get.calls)
 
-def test_sample_trends_stops_at_budget(tmp_path, monkeypatch):
+def test_sample_trends_still_queries_when_local_meter_full(tmp_path, monkeypatch):
+    # 29 prior local records must NOT refuse further Graph sampling of novel tags.
     cfg = _cfg(tmp_path, monkeypatch)
     now = datetime(2026, 6, 19, tzinfo=timezone.utc)
-    # pre-spend the budget down to 1 remaining (29 unique recent queries)
     cfg.hashtag_budget_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.hashtag_budget_path.write_text(json.dumps({"queries": [
         {"tag": f"#t{i}", "ts": now.isoformat()} for i in range(meta_graph._BUDGET_LIMIT - 1)]}))
     get = _router({"ig_hashtag_search": _Resp(200, {"data": [{"id": "1"}]}),
                    "top_media": _Resp(200, {"data": [{"like_count": 7}]})})
     out = meta_graph.sample_trends(cfg, ["#x", "#y", "#z"], get=get, now=now)
-    assert len(out) == 1                                          # only one slot left -> one sampled
+    assert out == {"#x": 7.0, "#y": 7.0, "#z": 7.0}          # all novel tags sampled
 
 def test_sample_trends_requeries_expired_tag(tmp_path, monkeypatch):
     # A tag last queried >7 days ago is OUTSIDE the budget window -> it must be re-queryable (not skipped
@@ -142,7 +145,7 @@ def test_sample_trends_requeries_expired_tag(tmp_path, monkeypatch):
 def test_token_never_logged(tmp_path, monkeypatch):
     cfg = _cfg(tmp_path, monkeypatch)
     cfg.hashtag_budget_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg.hashtag_budget_path.write_text("CORRUPT")                 # forces the LOUD fail-closed log line
+    cfg.hashtag_budget_path.write_text("CORRUPT")                 # meter unreadable; Graph still attempted
     meta_graph.sample_trends(cfg, ["#a"], get=_router({}), now=datetime(2026, 6, 19, tzinfo=timezone.utc))
     log_text = cfg.log_path.read_text() if cfg.log_path.exists() else ""
     assert _TOKEN not in log_text                                 # the token must never reach run.log

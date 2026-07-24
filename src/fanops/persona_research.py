@@ -155,12 +155,17 @@ def _reach_key(tag: str, cand_by_tag: dict[str, dict], store_reach: dict[str, fl
 
 def refresh_persona_corpus(cfg: Config, pid: str, *, get=None, now=None) -> dict:
     """S12: one persona's automated corpus refresh — pinned tags preserved, auto slots filled/pruned to
-    cfg.corpus_target by reach. Fail-open ladder on budget/creds; unknown id -> {changed: False}."""
-    from fanops.meta_graph import budget_remaining
-    from fanops.persona_store import apply_auto_corpus
+    cfg.corpus_target by reach. Fail-open ladder on missing creds / empty live harvest; unknown id ->
+    {changed: False}. Live discovery runs whenever Meta creds are present — the local budget counter
+    never refuses."""
+    from fanops.persona_store import apply_auto_corpus, repair_orphaned_auto_meta
     per = Personas.load(cfg).get(pid)
     if per is None:
         return {"changed": False, "reason": "unknown_persona"}
+    # Before partition: stamp source=auto onto meta-absent corpus tags that have store graph-reach evidence
+    # (broken-fill repair — without this, absent-as-pinned freezes rotation on the next refresh).
+    repair_orphaned_auto_meta(cfg, pid, now=now)
+    per = Personas.load(cfg).get(pid)   # re-load after repair (corpus list unchanged; meta may have changed)
     row = _persona_row(cfg, pid) or {}
     meta = row.get("hashtag_corpus_meta") if isinstance(row.get("hashtag_corpus_meta"), dict) else {}
     corpus = [_norm(t) for t in (per.hashtag_corpus or []) if isinstance(t, str) and _norm(t)]
@@ -170,16 +175,11 @@ def refresh_persona_corpus(cfg: Config, pid: str, *, get=None, now=None) -> dict
     auto = _strip_banned(auto, bans)             # (and a banned auto tag never survives the refresh); bans empty -> byte-identical
     target = cfg.corpus_target
     auto_slots = max(0, target - len(pinned))
-    # Budget gates ONLY the live-Graph discovery attempt. An unreadable counter (None) FAIL-CLOSES live
-    # queries; budget==0 also skips live — but neither aborts the function: the offline evidence fill below
-    # reads measurements already paid for and spends zero quota.
-    budget = budget_remaining(cfg, now=now)
     have = set(corpus)
     corpus_has_ban = any(_norm(t) in bans for t in corpus)   # U11: a banned tag already in the corpus must be PURGED even when the corpus is at/over target with no creds (else the ban never takes)
     store_reach = load_store_reach(cfg)
     cands: list[dict] = []
-    can_live = bool(cfg.meta_graph_token and cfg.meta_ig_user_id
-                    and budget is not None and budget > 0)
+    can_live = bool(cfg.meta_graph_token and cfg.meta_ig_user_id)
     if can_live:
         gap = max(0, target - len(corpus))
         measure_k = min(gap + len(auto), target)
@@ -189,7 +189,7 @@ def refresh_persona_corpus(cfg: Config, pid: str, *, get=None, now=None) -> dict
     if not cands and len(corpus) < target:
         # R4: research_corpus is evidence-only (source==graph-reach + freshness). Kept so a persona under
         # target still fills from GENUINE evidence bought by an earlier funded refresh — including when
-        # creds exist but budget is exhausted / discovery returned nothing.
+        # creds exist but live discovery returned nothing.
         cands = [{"tag": t} for t in research_corpus(cfg, pid, limit=target - len(corpus), now=now)]
     elif not cands and corpus_has_ban:
         cands = []          # nothing to ADD, but fall through so `final` (ban-stripped) is written -> the ban is purged

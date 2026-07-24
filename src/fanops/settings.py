@@ -159,7 +159,7 @@ class Settings(BaseSettings):
     META_IG_USER_ID: str | None = None
     META_GRAPH_URL: str = ""
     FANOPS_HASHTAG_TRENDS: str = ""
-    FANOPS_CORPUS_TARGET: int = 12
+    FANOPS_CORPUS_TARGET: int = 30
     FANOPS_REQUIRE_FULL_OBJECTIVE: str = ""
     FANOPS_RESPONDER: str = ""
     FANOPS_LLM_TRANSPORT: str = ""
@@ -223,8 +223,8 @@ class Settings(BaseSettings):
     @field_validator("FANOPS_CORPUS_TARGET", mode="before")
     @classmethod
     def _corpus_target(cls, v):
-        iv = _parse_int(v, 12)
-        return iv if iv >= 1 else 12
+        iv = _parse_int(v, 30)
+        return iv if iv >= 1 else 30
 
     @field_validator("FANOPS_VARIANT_MIN_POSTS", mode="before")
     @classmethod

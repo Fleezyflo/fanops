@@ -616,3 +616,19 @@ def test_config_root_source_tracks_origin(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_ROOT", str(tmp_path))
     assert Config().root_source == "env"
     assert Config(root=tmp_path).root_source == "arg"      # explicit arg wins even with FANOPS_ROOT set
+
+
+def test_corpus_target_default_30(tmp_path, monkeypatch):
+    """hashtag-graph-loop: FANOPS_CORPUS_TARGET default 12 → 30; override and invalid/0 fallback."""
+    from fanops.settings import Settings
+    monkeypatch.delenv("FANOPS_CORPUS_TARGET", raising=False)
+    assert Config(root=tmp_path).corpus_target == 30
+    assert Settings().FANOPS_CORPUS_TARGET == 30
+    monkeypatch.setenv("FANOPS_CORPUS_TARGET", "24")
+    assert Config(root=tmp_path).corpus_target == 24
+    assert Settings().FANOPS_CORPUS_TARGET == 24
+    monkeypatch.setenv("FANOPS_CORPUS_TARGET", "0")
+    assert Config(root=tmp_path).corpus_target == 30
+    assert Settings().FANOPS_CORPUS_TARGET == 30
+    monkeypatch.setenv("FANOPS_CORPUS_TARGET", "nope")
+    assert Config(root=tmp_path).corpus_target == 30          # Config fail-opens; Settings raises on bad int
