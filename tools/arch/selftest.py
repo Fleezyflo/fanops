@@ -65,7 +65,6 @@ CONTROLS: list[Control] = [
     Control("NC-20", "a slice boundary written as PROSE, not a predicate", "IMPL-002", "implementation"),
     Control("NC-21", "a required verification DISAPPEARS", "IMPL-006", "implementation"),
     Control("NC-22", "a canonical artifact is MISSING (the gate must FAIL, not pass vacuously)", "GOV-001", "architecture"),
-    Control("NC-23", "a GENERATED doc is hand-edited (docs must not drift from the artifacts)", "ARCH-006", "architecture"),
     Control("NC-24", "a stale _CLI_PRINT_COUNT assignment in tools/arch/ — the engine's OWN rationale (G1 widened scope)", "IMPL-007", "implementation"),
     Control("NC-25", "a stale FANOPS_ var named in docs/CONFIG.md but read nowhere (G2 operator-doc rot)", "ARCH-003", "architecture"),
 ]
@@ -250,20 +249,6 @@ def _inject(cid: str, root: Path, p: dict) -> None:
         # would have produced in CI: no inputs, every check skipped, GREEN.
         (con / "file_ownership.json").unlink()
 
-    elif cid == "NC-23":
-        # Hand-edit the GENERATED governance doc. It is generated exclusively from the machine
-        # artifacts, but it does NOT live under derived/ — so the derived byte-compare never saw
-        # it, and a doc that can silently drift from the code is AR-03 (a doc naming a mechanism
-        # that does not exist), the defect this whole cycle exists to prevent.
-        generate.generate(src=p["SRC"], out=p["DERIVED"])
-        doc = root / "docs" / "ARCHITECTURE_GOVERNANCE.md"
-        doc.parent.mkdir(parents=True, exist_ok=True)
-        # APPEND, never `.replace(<heading>)`: a replace whose anchor is absent silently no-ops and
-        # the "control" then proves nothing while reporting a clean injection. (That is how NC-04
-        # first failed.) An appended line CANNOT fail to change the bytes.
-        doc.write_text(next(iter(render.expected(root).values()))
-                       + "\nA HAND-EDITED CLAIM THAT NO ARTIFACT PRODUCED.\n", encoding="utf-8")
-
     elif cid == "NC-21":  # a required verification DISAPPEARS
         # Baseline a verification as present, then make it absent. (The real baseline is EMPTY
         # today — no slice has landed — so the control must arm the rule itself to test it. A rule
@@ -287,7 +272,7 @@ def _inject(cid: str, root: Path, p: dict) -> None:
     elif cid == "NC-25":
         # G2: the operator doc (docs/CONFIG.md) names a FANOPS_ var the code does not read — the exact rot
         # G2 catches (a switch whose reader was deleted, or a doc naming a var that never existed). APPEND a
-        # stale mention (like NC-23/NC-24, an append cannot fail to change the bytes) and the doc-half of
+        # stale mention (like NC-24, an append cannot fail to change the bytes) and the doc-half of
         # ARCH-003 must fire on it.
         md = root / "docs" / "CONFIG.md"
         md.write_text(md.read_text()
@@ -305,23 +290,20 @@ def detect(c: Control) -> tuple[bool, str]:
 
     `run()` (the CLI) and `tests/test_arch_governance.py` (pytest) BOTH call it. They used to each
     have their own copy of this logic, with their own `if c.id == "NC-08"` special case — and the
-    moment NC-23 was added, only one copy learned about it. `python -m tools.arch selftest`
-    reported 23/23 while pytest failed NC-23, on the same commit. Two implementations of "does this
-    control detect?" will always drift, and the one that drifts is the one nobody watches.
+    moment a new control was added (the generated-doc one, since removed 2026-07), only one copy
+    learned about it: the CLI reported all-green while pytest failed that control, on the same
+    commit. Two implementations of "does this control detect?" will always drift, and the one
+    that drifts is the one nobody watches.
     """
     with fixture() as (root, p):
         sig_before = _sig(_run(p))
         _inject(c.id, root, p)
 
-        # NC-08 and NC-23 assert on GENERATED-ARTIFACT INTEGRITY, which is a byte-comparison, not a
-        # policy Finding — the check that makes every other one trustworthy. NC-08 covers derived/;
-        # NC-23 covers the generated DOC, which lives outside derived/ and which the derived
-        # byte-compare therefore never inspected.
-        if c.id in ("NC-08", "NC-23"):
-            if c.id == "NC-08":
-                stale, want = drift.stale_artifacts(p["DERIVED"]), "modules.json"
-            else:
-                stale, want = drift.stale_docs(), "ARCHITECTURE_GOVERNANCE.md"
+        # NC-08 asserts on GENERATED-ARTIFACT INTEGRITY, which is a byte-comparison, not a
+        # policy Finding — the check that makes every other one trustworthy. It covers derived/
+        # (the only generated surface since the governance doc's deletion, 2026-07).
+        if c.id == "NC-08":
+            stale, want = drift.stale_artifacts(p["DERIVED"]), "modules.json"
             hit = [d for d in stale if d.artifact == want]
             if not hit:
                 return False, f"NOT DETECTED — a hand-edited {want} went unnoticed"

@@ -9,16 +9,14 @@ and the nested `src/fanops/CLAUDE.md`, `src/fanops/post/CLAUDE.md`, `src/fanops/
 
 | You need | Go to |
 |---|---|
-| The rules and their honest enforcement status | [`docs/REPOSITORY_CONSTITUTION.md`](docs/REPOSITORY_CONSTITUTION.md) |
-| The enforceable architecture (`LAW-*`) | [`docs/ARCHITECTURAL_LAWS.md`](docs/ARCHITECTURAL_LAWS.md) |
-| How code is written here (`STD-*`) | [`docs/ENGINEERING_STANDARDS.md`](docs/ENGINEERING_STANDARDS.md) |
-| Decisions and their rationale | [`docs/adr/`](docs/adr/) (accepted ADRs) · [`docs/adr/README.md`](docs/adr/README.md) (historical evidence) |
+| The mechanisms that actually enforce (merge gates, validators, runtime gates) | [`docs/ENFORCEMENT.md`](docs/ENFORCEMENT.md) |
+| How code is written here (`STD-*`, guidance-only) | [`docs/ENGINEERING_STANDARDS.md`](docs/ENGINEERING_STANDARDS.md) |
+| Decisions and their rationale | main history (the ADR/governance prose layer was deleted 2026-07 — see the Tombstone in `docs/ENFORCEMENT.md`) |
 | Which subsystem owns a file; what a change touches | `python -m tools.arch impact --base <sha>` · [`docs/CODEMAPS/README.md`](docs/CODEMAPS/README.md) |
-| What CI actually enforces, and what is merely intended | [`.github/ci-control-registry.yml`](.github/ci-control-registry.yml) · [`docs/ci/CI_GOVERNANCE_INDEX.md`](docs/ci/CI_GOVERNANCE_INDEX.md) |
-| Where the Agent Change System program stands | [`docs/governance/AGENT_CHANGE_SYSTEM_ROADMAP.md`](docs/governance/AGENT_CHANGE_SYSTEM_ROADMAP.md) |
+| What CI actually enforces, and what is merely intended | [`.github/ci-control-registry.yml`](.github/ci-control-registry.yml) |
 
-When these disagree, the precedence is fixed (ADR-0100, restated in the Constitution): **executable
-source & tests > live GitHub config > accepted ADRs & registries > generated docs > historical prose.**
+When these disagree, the precedence is fixed: **executable source & tests > live GitHub config >
+registries > historical prose (main history).**
 
 One ticket at a time, in its own git worktree, TDD-first, pushed small.
 Correctness and safety beat speed. When unsure, do the safe serial thing.
