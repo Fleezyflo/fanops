@@ -62,6 +62,7 @@ def _is_evidence(rec: dict, *, now: datetime | None = None) -> bool:
     return (now or datetime.now(timezone.utc)) - ts <= timedelta(days=_EVIDENCE_MAX_AGE_DAYS)
 
 
+
 def discover_corpus(cfg: Config, pid: str, *, limit: int = 8, measure_k: int = 0, get=None,
                     offline_fallback: bool = True) -> list[dict]:
     """M3: LIVE per-persona discovery — the upgrade from research_corpus's re-rank-what-we-know to
@@ -150,30 +151,30 @@ def refresh_persona_corpus(cfg: Config, pid: str, *, get=None, now=None) -> dict
     auto = _strip_banned(auto, bans)             # (and a banned auto tag never survives the refresh); bans empty -> byte-identical
     target = cfg.corpus_target
     auto_slots = max(0, target - len(pinned))
+    # Budget gates ONLY the live-Graph discovery attempt. An unreadable counter (None) FAIL-CLOSES live
+    # queries; budget==0 also skips live — but neither aborts the function: the offline evidence fill below
+    # reads measurements already paid for and spends zero quota.
     budget = budget_remaining(cfg, now=now)
-    if budget is None:
-        return {"changed": False, "reason": "budget_unreadable"}
-    if budget == 0:
-        return {"changed": False, "reason": "budget_exhausted"}
     have = set(corpus)
     corpus_has_ban = any(_norm(t) in bans for t in corpus)   # U11: a banned tag already in the corpus must be PURGED even when the corpus is at/over target with no creds (else the ban never takes)
     store_reach = load_store_reach(cfg)
     cands: list[dict] = []
-    if cfg.meta_graph_token and cfg.meta_ig_user_id:
+    can_live = bool(cfg.meta_graph_token and cfg.meta_ig_user_id
+                    and budget is not None and budget > 0)
+    if can_live:
         gap = max(0, target - len(corpus))
         measure_k = min(gap + len(auto), target)
         cands = discover_corpus(cfg, pid, limit=max(auto_slots, gap) + len(auto), measure_k=measure_k,
                                 get=get, offline_fallback=False)
-    elif len(corpus) < target:
-        # R4: was `research_corpus(...)` -> the store, re-ranked, promoted straight into the corpus as AUTO
-        # entries. Since _seed_tags BUILDS the store from the corpora, that closed the loop and let an
-        # unmeasured echo of our own curation return as "research". research_corpus is now evidence-only, so
-        # this path yields tags that carry real Graph measurement or nothing at all. Kept (not deleted) so a
-        # persona under target still fills from GENUINE evidence bought by an earlier funded refresh.
+    # FAIL-OPEN ladder (house norm): live unavailable OR empty -> measured-evidence fill; only then give up.
+    if not cands and len(corpus) < target:
+        # R4: research_corpus is evidence-only (source==graph-reach + freshness). Kept so a persona under
+        # target still fills from GENUINE evidence bought by an earlier funded refresh — including when
+        # creds exist but budget is exhausted / discovery returned nothing.
         cands = [{"tag": t} for t in research_corpus(cfg, pid, limit=target - len(corpus), now=now)]
-    elif corpus_has_ban:
+    elif not cands and corpus_has_ban:
         cands = []          # nothing to ADD, but fall through so `final` (ban-stripped) is written -> the ban is purged
-    else:
+    elif not cands:
         return {"changed": False}
     screened = _screen_content([c["tag"] for c in cands if isinstance(c, dict) and c.get("tag")], cfg)
     # R4 promotion gate: a discovered tag may only become CURATED data if it is structurally clean. Junk that
