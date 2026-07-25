@@ -188,6 +188,31 @@ def test_discover_measure_ignores_local_meter_full(tmp_path, monkeypatch):
     assert len(measured) == 3                                  # measure_k honored; local meter never gates
 
 
+def test_harvest_refused_seed_not_recorded(tmp_path, monkeypatch):
+    _creds(monkeypatch)
+    cfg = Config(root=tmp_path)
+    def get(url, params=None, timeout=None): return _Resp(400, {"error": {"code": 18}})
+    assert harvest_cooccurring(cfg, ["#seed"], get=get) == {}
+    from fanops.meta_graph import _BUDGET_LIMIT
+    assert budget_remaining(cfg) == _BUDGET_LIMIT
+
+
+def test_discover_measure_refused_search_not_recorded(tmp_path, monkeypatch):
+    _creds(monkeypatch)
+    cfg = Config(root=tmp_path)
+    media = [{"caption": "#a #b", "like_count": 5, "comments_count": 0}]
+    def get(url, params=None, timeout=None):
+        if "ig_hashtag_search" in url:
+            if (params or {}).get("q") == "seed": return _Resp(200, {"data": [{"id": "id-seed"}]})
+            return _Resp(400, {"error": {"code": 18}})
+        if "top_media" in url: return _Resp(200, {"data": media})
+        return _Resp(404, None)
+    before = budget_remaining(cfg)
+    out = discover_candidates(cfg, ["#seed"], measure_k=2, get=get)
+    assert [c["tag"] for c in out] == ["#a", "#b"] and all("measured_engagement" not in c for c in out)
+    assert budget_remaining(cfg) == before - 1
+
+
 def test_discover_no_creds_empty(tmp_path, monkeypatch):
     monkeypatch.delenv("META_GRAPH_TOKEN", raising=False); monkeypatch.delenv("META_IG_USER_ID", raising=False)
     assert discover_candidates(Config(root=tmp_path), ["#seed"], measure_k=2, get=_router([])) == []

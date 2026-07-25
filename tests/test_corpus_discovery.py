@@ -1,6 +1,6 @@
 # tests/test_corpus_discovery.py
 # M3 — research becomes LIVE. core.discover_corpus harvests live co-occurring tags for a persona's
-# category (corpus + lean pool + intake genre as seeds), drops what we already know (VETTED ∪ store ∪
+# category (corpus + lean pool + intake genre as seeds), drops what this persona already knows (VETTED ∪
 # corpus), and returns evidence-carrying proposals — FAIL-OPEN to today's offline research_corpus re-rank
 # when there are no creds / nothing fresh. The Studio "Research corpus" action now returns those dicts.
 # research_corpus itself (the offline re-rank) is UNCHANGED — its tests in test_corpus_research.py stay green.
@@ -55,6 +55,22 @@ def test_discover_corpus_excludes_existing_corpus(tmp_path, monkeypatch):
     out = core.discover_corpus(cfg, pid, get=_router(media))
     tags = [c["tag"] for c in out]
     assert "#detroitrap" not in tags and "#flintrap" in tags
+
+
+def test_discover_corpus_keeps_store_resident_tag_missing_from_persona(tmp_path, monkeypatch):
+    # The global store is a discovery universe, not proof that THIS persona already carries a tag. Including
+    # all store tags in `known` erased every live candidate and stranded personas below corpus_target.
+    import json
+    _creds(monkeypatch)
+    cfg = Config(root=tmp_path)
+    pid = core.add_persona(cfg, name="P1")
+    core.add_corpus_tag(cfg, pid, "#freestyle")
+    cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.hashtags_path.write_text(json.dumps({"tags": ["#detroitrap"], "reach": {}}))
+    media = [{"caption": "#detroitrap #bars", "like_count": 10, "comments_count": 0}]
+    tags = [c["tag"] for c in core.discover_corpus(cfg, pid, get=_router(media))]
+    assert "#detroitrap" in tags
+    assert "#bars" not in tags
 
 
 def test_discover_corpus_threads_measure_k(tmp_path, monkeypatch):

@@ -85,8 +85,8 @@ def _seeds_intersect(seeds, own: set[str]) -> bool:
 def discover_corpus(cfg: Config, pid: str, *, limit: int = 8, measure_k: int = 0, get=None,
                     offline_fallback: bool = True) -> list[dict]:
     """M3: LIVE per-persona discovery — the upgrade from research_corpus's re-rank-what-we-know to
-    finding tags we have never named. Seeds the Graph co-occurrence harvest from the persona's category
-    (its corpus + intake `genre`), DROPS what we already know (VETTED ∪ reach store ∪ corpus), and returns
+    finding tags this persona has not curated. Seeds the Graph co-occurrence harvest from the persona's
+    category (its corpus + intake `genre`), DROPS what this persona already knows (VETTED ∪ corpus), and returns
     evidence-carrying proposals [{"tag","count","host_engagement",...}] reach-relevant first. FAIL-OPEN: no
     creds / nothing fresh / any Graph error -> today's offline research_corpus re-rank, wrapped as evidence-
     less {"tag": ...} dicts so the caller has ONE shape. measure_k defaults 0 (the free co-occurrence COUNT is
@@ -94,7 +94,7 @@ def discover_corpus(cfg: Config, pid: str, *, limit: int = 8, measure_k: int = 0
     passes measure_k>0 to gate the menu on measured reach. Unknown id -> KeyError. (M3: tag_lean retired —
     the curated corpus is the seed flavor.) offline_fallback=False (S12 auto-refresh): return [] instead of
     the offline re-rank when the Graph path yields nothing."""
-    from fanops.hashtags import load_store, VETTED
+    from fanops.hashtags import VETTED
     from fanops.meta_graph import discover_candidates
     per = Personas.load(cfg).get(pid)
     if per is None:
@@ -102,8 +102,7 @@ def discover_corpus(cfg: Config, pid: str, *, limit: int = 8, measure_k: int = 0
     corpus = [_norm(t) for t in per.hashtag_corpus if isinstance(t, str)]
     genre_seeds = [_norm("#" + w) for w in (per.intake.get("genre") or "").split() if w.strip()]   # `or ""`: a hand-edited "genre": null must not seed "#none"
     seeds = list(dict.fromkeys(corpus + genre_seeds))
-    store = load_store(cfg) or []
-    known = set(VETTED) | set(store) | set(corpus)
+    known = set(VETTED) | set(corpus)                   # the store is the universe, not this persona's corpus
     try:
         cands = discover_candidates(cfg, seeds, known=known, measure_k=measure_k, get=get)
     except Exception:                                    # any Graph/transport error -> offline fallback
