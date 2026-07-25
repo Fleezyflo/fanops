@@ -79,8 +79,8 @@ Shipped baked personas (`src/fanops/data/baked_personas.json`) — what each doe
 
 | id | content_focus (select) | hook_angle | selection_scope | intensity (peak filter) | corpus |
 |----|------------------------|------------|-----------------|-------------------------|--------|
-| `credibility-first` | emotional, storytelling | `curiosity` | `credibility_first` | low | #podcast, #interview, #facts, #science |
-| `controversy` | bold-statement | `challenge` | `controversy_seeking` | high | #celebritygossip, #drama, #popculture, #entertainment |
-| `edutainment` | storytelling | `curiosity` | `source_briefed` | low | #hiphop, #lyrics, #music, #newmusic |
-| `cliffhanger` | storytelling | `curiosity` | `open` | low | #podcast, #storytime, #reels, #viral |
-| `hype-vibe` | hype | `fomo` | `open` | high | #hiphop, #rap, #bars, #undergroundhiphop |
+| `credibility-first` | emotional, storytelling | `curiosity` | `credibility_first` | low | — |
+| `controversy` | bold-statement | `challenge` | `controversy_seeking` | high | — |
+| `edutainment` | storytelling | `curiosity` | `source_briefed` | low | — |
+| `cliffhanger` | storytelling | `curiosity` | `open` | low | — |
+| `hype-vibe` | hype | `fomo` | `open` | high | — |

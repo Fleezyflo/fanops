@@ -87,7 +87,10 @@ LEVER_REGISTRY = [
 # the exact over-claim trap (the catalog's global `clip_profile` is NOT the persona `clip_profile` pin). So
 # EDITABILITY here is defined as "the persona save route persists this field" — kept honest by the behavioral
 # editor-parity test — NOT by catalog-key presence.
-PERSONA_FIELD_EXEMPT = frozenset({"id", "name", "intake"})   # identity / research-seed metadata, not a per-clip output lever
+# Identity + DERIVED state. `hashtag_corpus` is not a lever any more: it is recomputed every tick from
+# platform measurements (persona_research.derive_corpus), and `hashtag_corpus_deprecated` is the retirement
+# record of what it used to hold. Neither has — or should have — an editor control.
+PERSONA_FIELD_EXEMPT = frozenset({"id", "name", "hashtag_corpus", "hashtag_corpus_deprecated"})
 
 # The EDITABLE coherent levers: model field -> the output CHANNEL(s) it owns. Distinctness rule = "<=1 owner per
 # channel". content_focus owns casting-selection + cut-length + cut-framing; selection_scope owns casting-
@@ -97,7 +100,9 @@ PERSONA_EDITABLE_CHANNELS = {
     "content_focus": ("casting-selection", "cut-length", "cut-framing"),
     "selection_scope": ("casting-selection-scope",),
     "hook_angle": ("hook-angle",),
-    "hashtag_corpus": ("hashtags",),
+    # `intake.genre` is the niche root persona_terms searches on, saved by /personas/niche. It replaced
+    # hashtag_corpus as the owner of this channel when the corpus became a derived output.
+    "intake": ("hashtags",),
 }
 
 

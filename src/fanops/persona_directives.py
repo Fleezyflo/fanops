@@ -219,6 +219,7 @@ def compose_breakdown(cfg: Config, p) -> dict:
            "fragments": _cut_fragments(p)}                # M4: the lever(s) that DERIVE the cut (content_focus)
     facts = persona_facts(cfg, p)                         # reuse the EXACT lead-tags + length resolver
     tags = {"lead": facts["lead_tags"],
+            "terms": facts["terms"],                       # what the next measurement pass will search for
             "corpus": list(getattr(p, "hashtag_corpus", None) or [])}
     noops: list[str] = []
     if (getattr(p, "selection_scope", None) or "").strip().lower() in ("", "open"):
@@ -248,8 +249,8 @@ def manifest(cfg: Config, p) -> list[dict]:
             return next((f["text"] for f in bd["casting"]["fragments"] if f["source"] == "selection_scope"), "—")
         if key == "hook_angle":
             return bd["hook"]["text"]
-        if key == "hashtag_corpus":
-            return bd["tags"]["lead"]
+        if key == "intake":
+            return bd["tags"]["terms"]
         return ""
 
     def _health(key):
@@ -310,4 +311,6 @@ def persona_facts(cfg: Config, p) -> dict:
     lead = vet_hashtags([], Platform.instagram,
                         corpus=list(getattr(p, "hashtag_corpus", None) or []), store=store,
                         cfg=cfg)   # U11: honor the global ban list here too (a banned tag must not show as a persona's "lead tag")
-    return {"length_band": f"{band.lo:.0f}-{band.hi:.0f}s", "framing": fr, "lead_tags": lead}
+    from fanops.persona_research import persona_terms
+    return {"length_band": f"{band.lo:.0f}-{band.hi:.0f}s", "framing": fr, "lead_tags": lead,
+            "terms": persona_terms(p)}   # the words Layer A searches on — the description IS the hashtag lever

@@ -934,7 +934,8 @@
         "fanops.hashtags",
         "fanops.log",
         "fanops.models",
-        "fanops.persona_levers"
+        "fanops.persona_levers",
+        "fanops.persona_research"
       ],
       "optional": [],
       "typing": []
@@ -2939,6 +2940,14 @@
       "to_level": 3
     },
     {
+      "from": "fanops.persona_directives",
+      "from_level": 1,
+      "jump": 2,
+      "same_scc": false,
+      "to": "fanops.persona_research",
+      "to_level": 3
+    },
+    {
       "from": "fanops.post.providers",
       "from_level": 1,
       "jump": 2,
@@ -3564,10 +3573,10 @@
     "G2_module_sccs_total": 72,
     "G2_non_trivial_sccs": 8,
     "compile_edges_G1": 567,
-    "lazy_edges": 333,
+    "lazy_edges": 334,
     "lazy_edges_lateral": 47,
-    "lazy_edges_strictly_upward": 65,
-    "lazy_edges_to_equal_or_higher_level": 112,
+    "lazy_edges_strictly_upward": 66,
+    "lazy_edges_to_equal_or_higher_level": 113,
     "modules": 134,
     "optional_edges": 0,
     "typing_only_edges": 7
