@@ -1,5 +1,15 @@
 {
   "$schema": "fanops-arch/governance/baselines/v1",
+  "approved_breaking_changes": [
+    "module fanops.hashtag_migrate was REMOVED — every KB claim about it is now about nothing",
+    "environment variable FANOPS_HASHTAG_TRENDS is no longer read — a deployment setting it now has NO EFFECT, silently",
+    "route REMOVED: POST /personas/corpus/add",
+    "route REMOVED: POST /personas/corpus/remove",
+    "route REMOVED: POST /personas/recommend",
+    "route REMOVED: POST /personas/research",
+    "CLI verb REMOVED: `migrate`"
+  ],
+  "approved_breaking_changes_note": "Breaking facts a REVIEWED PR declared on purpose — each line is the reason string `impact` itself printed, verbatim. `impact --strict` fails on the breaking facts NOT listed here, so DELETING is allowed and deleting SILENTLY is not. UNKNOWN_IMPACT is never declarable. Entries self-retire: a removal reason can only be produced by the diff that performs the removal, so a stale line cannot mask a later change — it remains as the record of a deliberate break. THE ONLY AUTHOR-DECLARED KEY IN THIS FILE; every other one is derived, and `baseline --accept` carries this one forward.",
   "approved_compile_cycles": [],
   "approved_compile_cycles_note": "EMPTY — and that is the point. The tree's ONLY compile-time cycle was persona_research/persona_store/personas: two sibling modules importing the facade that re-exports them. Both edges are now deferred into function bodies (the pairs pinned in must_stay_lazy below), so the compile graph is acyclic and UNK-C5-1 — 'is this cycle intentional?' — is moot. A NEW entry here is a regression, not a baseline.",
   "approved_terminal_post_writers": [

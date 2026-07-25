@@ -22,7 +22,7 @@ _ROOT = Path(__file__).resolve().parents[1]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from tools.arch import drift, policy, registries, selftest  # noqa: E402
+from tools.arch import drift, impact, policy, registries, selftest  # noqa: E402
 from tools.arch.common import REPO  # noqa: E402
 from tools.arch.generate import generate  # noqa: E402
 from tools.arch.select import deep_required  # noqa: E402
@@ -220,3 +220,89 @@ def test_negative_control_is_detected(control):
         f"The rule is DECORATIVE: it is claimed in the policy set but does not detect the "
         f"defect it names. That is worse than having no rule, because it manufactures "
         f"confidence.")
+
+
+# ── 6. `impact --strict` is CLEARABLE by declaration (and only by declaration) ───────────────
+#
+# The gate used to fail on ANY BREAKING_CHANGE with no way to clear it, which made it the ONLY
+# rule here without a declaration slot (ARCH-002 has approved_terminal_post_writers, ARCH-004
+# approved_compile_cycles, ARCH-007 must_stay_lazy — each fires on the DELTA from what is
+# declared). Absolute-fail cannot tell a deliberate deletion from an accidental one, and an
+# unclearable red trains merge-past-red until the signal is worth nothing. These tests pin the
+# discrimination: the gate must fail on what you did NOT say, and clear on what you did.
+_B = "[BREAKING_CHANGE] "
+_REP = {"reasons": [_B + "module fanops.gone was REMOVED",
+                    "[COMPATIBLE_CHANGE] new route POST /kept",
+                    _B + "CLI verb REMOVED: `migrate`"]}
+
+
+def test_undeclared_breaking_lists_only_breaking_reasons():
+    """A COMPATIBLE reason must never reach the fail list — the gate would fail on growth."""
+    assert impact.undeclared_breaking(_REP, approved=[]) == [
+        "module fanops.gone was REMOVED", "CLI verb REMOVED: `migrate`"]
+
+
+def test_partial_declaration_fails_on_exactly_the_undeclared_one():
+    """The discrimination that matters: saying one thing must not clear the OTHER thing."""
+    assert impact.undeclared_breaking(_REP, approved=["CLI verb REMOVED: `migrate`"]) == [
+        "module fanops.gone was REMOVED"]
+
+
+def test_full_declaration_clears_the_gate():
+    assert impact.undeclared_breaking(_REP, approved=[
+        "module fanops.gone was REMOVED", "CLI verb REMOVED: `migrate`"]) == []
+
+
+def test_a_reworded_reason_fails_safe():
+    """Declarations match the tool's own printed string VERBATIM. If a reason is reworded, the old
+    declaration stops matching and the break goes UNdeclared again — the author must re-affirm it.
+    Failing open here would let a stale line vouch for a fact nobody re-read."""
+    assert impact.undeclared_breaking(_REP, approved=["CLI verb REMOVED: migrate"]) != []
+
+
+def test_unknown_impact_is_not_declarable(monkeypatch):
+    """UNKNOWN is routed around the declaration entirely: cli.cmd_impact returns 1 BEFORE asking
+    what was declared. A blast radius that could not be COMPUTED is not one anybody can vouch for —
+    that is the whole reason the class exists, and a declaration must never wave it through.
+
+    Driven through cmd_impact rather than read out of the source. The first version of this test
+    grepped cli.py and split on the string "undeclared_breaking" — which also appears in the COMMENT
+    above the UNKNOWN check, so the split landed mid-comment and the test failed on correct code. A
+    test that a prose edit can break was testing the prose."""
+    import argparse
+    from tools.arch import cli
+
+    rep = {"classification": "UNKNOWN_IMPACT", "base": "x", "changed_files": [],
+           "reasons": ["[UNKNOWN_IMPACT] could not regenerate the derived architecture at base"],
+           "architecture": {}, "implementation": {}}
+    monkeypatch.setattr(cli.impact_mod, "report", lambda base: rep)
+    # The exact refutation: pretend EVERYTHING is declared. If UNKNOWN were routed through the
+    # declaration like BREAKING is, this would return 0 — a declaration would have waved through a
+    # diff nobody could analyse.
+    monkeypatch.setattr(cli.impact_mod, "undeclared_breaking", lambda r, approved=None: [])
+    assert cli.cmd_impact(argparse.Namespace(base="x", strict=True)) == 1
+
+
+def test_live_baseline_declares_nothing_it_has_not_reviewed():
+    """The shipped declaration is a REVIEWED list, not a blanket. Every entry must be a real
+    breaking-reason line — never a wildcard, a regex, or an empty string that would match away
+    an unrelated break."""
+    import json
+    base = json.loads((REPO / ".reports" / "architecture" / "governance"
+                       / "baselines.json").read_text(encoding="utf-8"))
+    declared = base["approved_breaking_changes"]
+    assert isinstance(declared, list)
+    for entry in declared:
+        assert isinstance(entry, str) and entry.strip() == entry and len(entry) > 20
+        assert "*" not in entry and not entry.startswith("[")
+
+
+def test_baseline_accept_carries_the_declaration_forward():
+    """`approved_breaking_changes` is the ONE author-declared key in a file of derived ones. If
+    `baseline --accept` rebuilt it from the tree like the others, every re-accept would silently
+    wipe the declarations and re-arm the gate against already-reviewed breaks."""
+    src = (REPO / "tools" / "arch" / "cli.py").read_text(encoding="utf-8")
+    body = src.split("def cmd_baseline", 1)[1].split("\ndef ", 1)[0]
+    assert "approved_breaking_changes" in body
+    assert 'get("approved_breaking_changes"' in body     # READ from the existing file...
+    assert '"approved_breaking_changes": approved_breaking' in body   # ...and written back
