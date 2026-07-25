@@ -130,6 +130,12 @@ def cmd_baseline(args: argparse.Namespace) -> int:
     lazy_only = sorted({(e["from"], e["to"])
                         for e in deps["lazy_upward"] + deps["lazy_lateral"]} - compile_edges)
     must_stay_lazy = [list(e) for e in lazy_only]
+
+    # AUTHOR-DECLARED, not derived: nothing in the tree can regenerate "the operator meant to
+    # remove this route". Carried forward verbatim — a re-accept that dropped it would silently
+    # re-arm `impact --strict` against breaks that were already reviewed and approved.
+    _prev = load(GOVERNANCE / "baselines.json") if (GOVERNANCE / "baselines.json").exists() else {}
+    approved_breaking = _prev.get("approved_breaking_changes", [])
     payload = {
         "$schema": "fanops-arch/governance/baselines/v1",
         "owner": "architecture governance (see governance/field_authority.json)",
@@ -146,6 +152,15 @@ def cmd_baseline(args: argparse.Namespace) -> int:
             f"in-function imports. The SCC-condensed compile graph is an 11-level DAG ONLY because "
             f"these are deferred to call time. Hoisting any one to module level LOOKS LIKE A CLEANUP "
             f"and can break the process at start. This is GB-1, mechanized (rule ARCH-007).",
+        "approved_breaking_changes": approved_breaking,
+        "approved_breaking_changes_note":
+            "Breaking facts a REVIEWED PR declared on purpose — each line is the reason string "
+            "`impact` itself printed, verbatim. `impact --strict` fails on the breaking facts NOT "
+            "listed here, so DELETING is allowed and deleting SILENTLY is not. UNKNOWN_IMPACT is "
+            "never declarable. Entries self-retire: a removal reason can only be produced by the "
+            "diff that performs the removal, so a stale line cannot mask a later change — it "
+            "remains as the record of a deliberate break. THE ONLY AUTHOR-DECLARED KEY IN THIS "
+            "FILE; every other one is derived, and `baseline --accept` carries this one forward.",
         "approved_terminal_post_writers": policy_mod._terminal_post_writers(),
         "approved_terminal_post_writers_note":
             "Every site WRITING PostState.published / PostState.analyzed with a LITERAL value. The "
@@ -179,7 +194,22 @@ def cmd_baseline(args: argparse.Namespace) -> int:
 def cmd_impact(args: argparse.Namespace) -> int:
     rep = impact_mod.report(args.base)
     print(impact_mod.render(rep))
-    return 1 if rep["classification"] in ("BREAKING_CHANGE", "UNKNOWN_IMPACT") and args.strict else 0
+    if not args.strict:
+        return 0
+    # UNKNOWN is NOT declarable — a blast radius that could not be COMPUTED is not one anyone can
+    # vouch for. BREAKING is: say what you are removing and the gate clears; stay silent and it
+    # does not. See impact.undeclared_breaking for why absolute-fail was the wrong shape.
+    if rep["classification"] == "UNKNOWN_IMPACT":
+        return 1
+    undeclared = impact_mod.undeclared_breaking(rep)
+    if not undeclared:
+        return 0
+    print("\nUNDECLARED breaking change(s) — add each line verbatim to "
+          "`approved_breaking_changes` in governance/baselines.json, and say WHY in the PR:",
+          file=sys.stderr)
+    for r in undeclared:
+        print(f"  {r}", file=sys.stderr)
+    return 1
 
 
 def cmd_verify(args: argparse.Namespace) -> int:
