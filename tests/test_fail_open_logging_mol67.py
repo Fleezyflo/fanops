@@ -93,7 +93,7 @@ def test_persona_facts_logs_on_measurement_cache_read_error(tmp_path, monkeypatc
         energy = None
 
     facts = persona_directives.persona_facts(cfg, _P())
-    assert set(facts) == {"length_band", "framing", "lead_tags"}   # fallback shape unchanged (store=None path)
+    assert set(facts) == {"length_band", "framing", "lead_tags", "terms"}   # fallback shape (cache unreadable)
     log_text = cfg.log_path.read_text() if cfg.log_path.exists() else ""
     assert "personas" in log_text or "persona" in log_text          # logged before falling to store=None
 

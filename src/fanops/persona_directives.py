@@ -262,7 +262,7 @@ def manifest(cfg: Config, p) -> list[dict]:
         return "ok"
 
     out: list[dict] = []
-    for key in levers.PERSONA_EDITABLE_CHANNELS:        # declaration order: voice, content_focus, selection_scope, hook_angle, hashtag_corpus
+    for key in levers.PERSONA_EDITABLE_CHANNELS:        # declaration order: voice, content_focus, selection_scope, hook_angle, intake
         out.append({"key": key, "label": labels.get(key, key.replace("_", " ").title()),
                     "channels": list(levers.channels_of(key)), "value": getattr(p, key, None),
                     "produces": _produces(key), "source": key, "health": _health(key)})

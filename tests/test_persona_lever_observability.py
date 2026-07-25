@@ -67,7 +67,7 @@ def test_manifest_is_derived_no_drift(tmp_path):
                 hashtag_corpus=["#myscene"])
     d = compose_breakdown(cfg, p)
     m = {row["key"]: row for row in manifest(cfg, p)}
-    assert m["hashtag_corpus"]["produces"] == d["tags"]["lead"]        # hashtags == the breakdown's lead tags
+    assert m["intake"]["produces"] == d["tags"]["terms"]               # the niche == the terms Layer A searches on
     assert d["cut"]["band"] in m["content_focus"]["produces"]          # the derived length band
     assert m["hook_angle"]["produces"] == d["hook"]["text"]            # the compiled hook directive
 

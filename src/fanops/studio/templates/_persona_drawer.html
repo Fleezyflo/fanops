@@ -55,7 +55,7 @@
       </tbody></table>
     </section>
     <section class="effective-corpus" aria-label="Hashtag corpus">
-      <h3 class="effective-heading">Corpus</h3>
+      <h3 class="effective-heading">Corpus (derived)</h3>
       {% if p.lead_tags %}<p class="muted">Lead: {{ p.lead_tags | join(', ') }}</p>{% endif %}
       <div class="persona-corpus">
         {% for t in p.corpus[:4] %}

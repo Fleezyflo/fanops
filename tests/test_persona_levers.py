@@ -307,8 +307,8 @@ def test_all_ten_archetypes_map():
 
 def test_no_new_lever_family():
     assert len(_pl.LEVER_REGISTRY) == 5
-    persona_levers = {lv["key"] for lv in _pl.LEVER_REGISTRY if lv["key"] not in ("clip_profile", "hashtag_corpus")}
-    assert persona_levers == set(_pl.editable_fields()) - {"voice", "hashtag_corpus"}
+    persona_levers = {lv["key"] for lv in _pl.LEVER_REGISTRY if lv["key"] not in ("clip_profile", "intake")}
+    assert persona_levers == set(_pl.editable_fields()) - {"voice", "intake"}
 
 
 def test_no_surviving_account_energy_selection_reader():

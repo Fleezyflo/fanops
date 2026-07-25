@@ -46,7 +46,7 @@ _HOOK_ANGLE_OPTIONS = [
 ]
 # clip_profile: the GLOBAL deterministic cut-length lever (Go-Live default) — catalog-only (no per-persona
 # vocab/clause; per persona the length is DERIVED from content_focus). Options are band names; the catalog
-# effect is computed from bands.band_for (lazy). hashtag_corpus: catalog-only, no enumerated options.
+# effect is computed from bands.band_for (lazy). intake: free text (the niche), no enumerated options.
 _CLIP_PROFILE_BANDS = ["short", "medium", "long", "talk", "song"]
 
 _ARCHETYPE_SELECTION_SCOPE = {
@@ -75,8 +75,9 @@ LEVER_REGISTRY = [
     {"key": "clip_profile", "label": "Clip length", "kind": "select", "stage": "cut",
      "does": "the GLOBAL deterministic cut-length band (Go-Live default; per-persona it is derived from content_focus)",
      "options": [{"value": n} for n in _CLIP_PROFILE_BANDS]},
-    {"key": "hashtag_corpus", "label": "Corpus", "kind": "tags", "stage": "caption",
-     "does": "your curated tags LEAD the caption hashtags", "options": []},
+    {"key": "intake", "label": "Niche", "kind": "tags", "stage": "caption",
+     "does": "the niche word(s) the next measurement pass searches Instagram for — the corpus it derives "
+             "then LEADS the caption hashtags", "options": []},
 ]
 
 
@@ -213,8 +214,8 @@ def build_catalog() -> list[dict]:
             opts = [{"value": o["value"], "effect": (o["clause"] or "no change — open selection")} for o in lv["options"]]
         elif lv["key"] == "clip_profile":
             opts = [{"value": o["value"], "effect": f"{band_for(o['value']).lo:g}-{band_for(o['value']).hi:g}s cuts"} for o in lv["options"]]
-        elif lv["key"] == "hashtag_corpus":
-            opts = []
+        elif lv["key"] == "intake":
+            opts = []          # free text, not an enum
         else:
             opts = [{"value": o["value"], "effect": o["clause"]} for o in lv["options"]]
         out.append({"key": lv["key"], "label": lv["label"], "kind": lv["kind"], "stage": lv["stage"],
