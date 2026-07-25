@@ -19,7 +19,7 @@ def test_lever_docs_covers_every_option():
     from fanops.lever_docs import render_levers
     md = render_levers(_cfg())
     for lv in pl.LEVER_REGISTRY:
-        if lv["key"] == "hashtag_corpus":
+        if lv["key"] == "intake":          # the NICHE is free text — no enumerated options to cover
             continue
         for opt in lv["options"]:
             assert opt["value"] in md, f"missing option {lv['key']}:{opt['value']}"

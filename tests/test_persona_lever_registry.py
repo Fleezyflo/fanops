@@ -96,7 +96,7 @@ def test_derive_cut_spec_framing_from_content_focus():
 # ---- lever_catalog() full shape characterization ----
 def test_lever_catalog_shape_byte_identical():
     cat = {lev["key"]: lev for lev in lever_catalog()}
-    assert list(cat) == ["content_focus", "selection_scope", "hook_angle", "clip_profile", "hashtag_corpus"]
+    assert list(cat) == ["content_focus", "selection_scope", "hook_angle", "clip_profile", "intake"]
     # content_focus options == the focus clause map, value+effect exact, in clause order
     cf = cat["content_focus"]
     assert [(o["value"], o["effect"]) for o in cf["options"]] == list(_GOLD_FOCUS_CLAUSE.items())
@@ -106,9 +106,11 @@ def test_lever_catalog_shape_byte_identical():
     assert sc["controversy_seeking"] == _GOLD_SCOPE_CLAUSE["controversy_seeking"] and "open" in sc["open"].lower()
     # hook_angle options == the angle clause map
     assert {o["value"]: o["effect"] for o in cat["hook_angle"]["options"]} == _GOLD_ANGLE_CLAUSE
-    # clip_profile stays the GLOBAL band lever (5 bands), hashtag_corpus has no enumerated options
+    # clip_profile stays the GLOBAL band lever (5 bands); `intake` is the NICHE — free text, so no
+    # enumerated options (it replaced hashtag_corpus as the hashtags-channel lever when the corpus
+    # became a derived output of platform measurements).
     assert [o["value"] for o in cat["clip_profile"]["options"]] == ["short", "medium", "long", "talk", "song"]
-    assert cat["hashtag_corpus"]["options"] == []
+    assert cat["intake"]["options"] == [] and cat["intake"]["label"] == "Niche"
     assert sorted(lever_catalog()[0].keys()) == ["does", "key", "kind", "label", "options", "stage"]
 
 
