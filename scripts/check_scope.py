@@ -27,7 +27,7 @@ _OVERRIDES: dict[str, tuple[str, ...]] = {
     "src/fanops/ledger.py": ("tests/test_ledger.py", "tests/test_ledger_store_interface.py",
                              "tests/test_ledger_backend_parity.py",),
     "src/fanops/paths_rebase.py": ("tests/test_media_path_integrity.py",),
-    "src/fanops/persona_research.py": ("tests/test_corpus_research.py",),
+    "src/fanops/persona_research.py": ("tests/test_hashtag_platform_truth.py", "tests/test_persona_corpus.py"),
     "src/fanops/persona_store.py": ("tests/test_persona_levers.py",),
     "src/fanops/produce.py": ("tests/test_publish_post.py",),
     "src/fanops/settings.py": ("tests/test_config.py",),

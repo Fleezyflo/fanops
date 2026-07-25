@@ -38,8 +38,9 @@ class Persona(BaseModel):
     id: str                                       # stable slug (the link key on Account.persona_id)
     name: str = ""                                # operator-facing display name
     voice: str = ""                               # the persona string the pipeline reads (caption/hook/casting voice)
-    hashtag_corpus: list[str] = Field(default_factory=list)   # B1: the per-persona reach-vetted pool — the SOLE per-account hashtag differentiator (tag_lean folded in, M3)
-    intake: dict = Field(default_factory=dict)    # intake metadata; one live field `genre` — seeds B3 research
+    hashtag_corpus: list[str] = Field(default_factory=list)   # DERIVED by persona_research.derive_corpus from platform measurements — never hand-curated, recomputed every tick
+    hashtag_corpus_deprecated: list[str] = Field(default_factory=list)   # pre-derivation tags retired at cutover: visible, never consumed (see persona_store.deprecate_legacy_corpus)
+    intake: dict = Field(default_factory=dict)    # intake metadata; one live field `genre` — the niche root for persona_terms
     # Lever engine: explicit per-characteristic DIRECTION that compose_persona_instruction renders into the
     # one instruction the casting/hook/caption prompts read. ADDITIVE — all empty on a legacy persona, so
     # compose returns the bare `voice` (byte-identical). Validated at the write boundary (add/update_persona).
@@ -98,14 +99,16 @@ def _slug(s: str) -> str:
 # Re-export the sibling modules' public surface so `from fanops.personas import X` keeps resolving for every
 # existing consumer (the facade contract). These imports sit AFTER the foundation above — the siblings import
 # the foundation back from this partially-initialized module, which already holds those names, so there is no
-# cycle. discover_corpus is bound here as an attribute, which is what tests patch + fanops_hashtags reads.
+# cycle. The corpus mutators (add_corpus_tag/remove_corpus_tag) and the proposal flows (research_corpus/
+# discover_corpus) are GONE: the corpus is derived from platform measurements, so there is nothing to curate
+# by hand and nothing to propose for approval.
 from fanops.persona_directives import (   # noqa: E402,F401  (facade re-export; after foundation by design)
     derive_cut_spec, resolved_cut_spec, casting_directive, hook_directive, hook_author_slot, caption_directive,
     compose_persona_instruction, lever_catalog, compose_breakdown, produces_summary, persona_facts, manifest,
     _FOCUS_CLAUSE, _SCOPE_CLAUSE, _ANGLE_CLAUSE, _FOCUS_PROFILE, _FRAMING_MAP)
 from fanops.persona_store import (   # noqa: E402,F401
-    add_persona, update_persona, add_corpus_tag, remove_corpus_tag,
+    add_persona, update_persona, apply_auto_corpus, deprecate_legacy_corpus,
     delete_persona, migrate_from_accounts, link_personas_by_voice,
     baked_personas, ensure_baked_personas)
-from fanops.persona_research import research_corpus, discover_corpus   # noqa: E402,F401
+from fanops.persona_research import persona_terms, derive_corpus, derived_report   # noqa: E402,F401
 from fanops.persona_levers import LEVER_REGISTRY, build_catalog as _registry_build_catalog   # noqa: E402,F401  (facade re-export of the M1 registry)

@@ -6,14 +6,20 @@ never leaves a torn file. The validators are the WRITE boundary — a typo'd lev
 so the file never lands a record that won't reload. All names are re-exported from fanops.personas."""
 from __future__ import annotations
 from contextlib import contextmanager
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 from fanops.config import Config
-from fanops.hashtags import _norm, _strip_banned, load_bans
-from fanops.hashtag_hygiene import tag_defect
+from fanops.hashtags import METRIC_FIELD, _norm, _strip_banned, load_bans
 from fanops.controlio import load_raw_list, write_json_atomic   # shared atomic control-file IO
-from fanops.personas import (CONTENT_FOCUS, SELECTION_SCOPE_LEVELS, HOOK_ANGLES, Personas, _slug)
+# NOT `from fanops.personas import ...`: personas.py is the FACADE that re-exports this module, so a
+# module-level edge back to it is a compile-time cycle (the tree's only one, ARCH-004). The lever
+# vocabularies are PROJECTIONS of the one registry, so they come straight from it; `Personas`/`_slug`
+# are deferred into the four functions that need them (the `_file_lock` idiom already used below).
+from fanops.persona_levers import vocab as _lever_vocab
+
+CONTENT_FOCUS = _lever_vocab("content_focus")
+SELECTION_SCOPE_LEVELS = _lever_vocab("selection_scope")
+HOOK_ANGLES = _lever_vocab("hook_angle")
 
 _CORPUS_CAP = 40                # max curated tags per persona — keeps captions/budget bounded (cap, not a target)
 _BAKED_FILE = "baked_personas.json"
@@ -24,9 +30,10 @@ def _baked_path() -> Path:
 
 
 def _persona_dict(p) -> dict:
-    """Serialize a Persona (or baked record) to the personas.json row shape."""
+    """Serialize a Persona (or baked record) to the personas.json row shape. `hashtag_corpus` is empty on
+    a fresh record by construction — it is a DERIVED value that Layer B fills from platform evidence."""
     return {"id": p.id, "name": p.name or "", "voice": p.voice or "",
-            "hashtag_corpus": list(p.hashtag_corpus or []), "intake": dict(p.intake or {}),
+            "hashtag_corpus": [], "intake": dict(p.intake or {}),
             "content_focus": list(p.content_focus or []), "selection_scope": p.selection_scope,
             "hook_angle": p.hook_angle}
 
@@ -45,10 +52,11 @@ def baked_personas() -> list:
         focus = _norm_focus(x.get("content_focus"))
         scope_v = _enum_or_none(x.get("selection_scope", ""), SELECTION_SCOPE_LEVELS, "selection_scope")
         angle_v = _enum_or_none(x.get("hook_angle", ""), HOOK_ANGLES, "hook_angle")
-        corpus = [_norm(t) for t in (x.get("hashtag_corpus") or []) if _norm(t)]
+        # A baked archetype ships its voice + levers, never a corpus: hashtags are derived from platform
+        # evidence, so a hand-written starter list would be exactly the unmeasured seeding this removed.
         out.append(Persona(id=str(x["id"]), name=str(x.get("name") or ""), voice=str(x.get("voice") or ""),
                            content_focus=focus, selection_scope=scope_v, hook_angle=angle_v,
-                           hashtag_corpus=corpus, intake=dict(x.get("intake") or {})))
+                           hashtag_corpus=[], intake=dict(x.get("intake") or {})))
     return out
 
 
@@ -121,6 +129,7 @@ def add_persona(cfg: Config, name: str, voice: str = "",
     field against its vocabulary. Returns the id; raises ValueError on bad input. (M3: tag_lean retired —
     hashtag_corpus is the hashtag differentiator; the per-persona clip_profile/framing PINS retired — the
     cut LENGTH + FRAMING derive from content_focus.)"""
+    from fanops.personas import _slug
     nm = (name or "").strip()
     if not nm:
         raise ValueError("persona name is required")
@@ -172,155 +181,86 @@ def update_persona(cfg: Config, pid: str, *, name=_UNSET, voice=_UNSET, intake=_
     return pid
 
 
-def _is_pinned(meta: dict, tag: str) -> bool:
-    """Legacy tags with no meta entry are pinned; explicit source=pinned stays pinned."""
+def _is_derived(meta: dict, tag: str) -> bool:
+    """True when a corpus tag carries DERIVATION meta — the platform's own field plus a measurement stamp.
+    Anything else (a legacy `{source: pinned|auto, reach: …}` sidecar, or no sidecar at all) predates the
+    derivation architecture and has no platform evidence behind it."""
     m = meta.get(tag) if isinstance(meta.get(tag), dict) else None
-    if m is None: return True
-    return (m.get("source") or "pinned") == "pinned"
+    if not m:
+        return False
+    return isinstance(m.get(METRIC_FIELD), (int, float)) and isinstance(m.get("measured_at"), str)
+
+
+def deprecate_legacy_corpus(cfg: Config, pid: str) -> list[str]:
+    """CUTOVER: move every pre-derivation corpus tag out of `hashtag_corpus` into the visible
+    `hashtag_corpus_deprecated` field, and drop its stale sidecar. Returns the tags moved.
+
+    The old corpora were hand-tended state with no platform evidence behind them — r4 "pinned" tags,
+    auto-fills stamped `reach: null`, and tags belonging to a different artist entirely. They are not
+    silently dropped (that would hide what shipped for months) and they are not kept (that would let them
+    keep shipping): they are retired somewhere an operator can still see them, while hydration and
+    selection read only `hashtag_corpus` and therefore stop using them the moment this runs.
+
+    IDEMPOTENT: once a corpus holds only derived tags there is nothing to move. Unknown id -> KeyError."""
+    p = cfg.personas_path
+    moved: list[str] = []
+    with _personas_txn(cfg):
+        raw, plist = _load_raw(p)
+        found = False
+        for d in plist:
+            if not (isinstance(d, dict) and d.get("id") == pid): continue
+            found = True
+            meta = d.get("hashtag_corpus_meta") if isinstance(d.get("hashtag_corpus_meta"), dict) else {}
+            cur = [_norm(t) for t in (d.get("hashtag_corpus") or []) if isinstance(t, str) and _norm(t)]
+            keep = [t for t in cur if _is_derived(meta, t)]
+            moved = [t for t in cur if not _is_derived(meta, t)]
+            if not moved:
+                return []
+            prior = [_norm(t) for t in (d.get("hashtag_corpus_deprecated") or [])
+                     if isinstance(t, str) and _norm(t)]
+            out: list[str] = []; seen: set[str] = set()
+            for t in prior + moved:
+                if t not in seen: seen.add(t); out.append(t)
+            d["hashtag_corpus"] = keep
+            d["hashtag_corpus_deprecated"] = out
+            d["hashtag_corpus_meta"] = {t: meta[t] for t in keep if t in meta}
+        if not found:
+            raise KeyError(pid)
+        write_json_atomic(p, raw)
+    return moved
 
 
 def apply_auto_corpus(cfg: Config, pid: str, *, tags: list[str], meta: dict[str, dict]) -> None:
-    """Atomic writer inside _personas_txn: set hashtag_corpus (normalized, deduped, ≤ _CORPUS_CAP) and merge the
-    hashtag_corpus_meta sidecar. NEVER removes pinned tags from the corpus list (source=pinned or legacy=no meta);
-    auto slots fill/prune only the non-pinned tail. Incoming auto meta writes when absent or source=auto; an
-    explicit source=pinned sidecar is never overwritten (absent-as-pinned is PARTITION-only — not this gate)."""
+    """Atomic writer inside _personas_txn: REPLACE hashtag_corpus with the derived list (normalized,
+    deduped, <= _CORPUS_CAP) and its derivation sidecar.
+
+    Wholesale replacement is the point. The corpus is a derived value, so there is nothing here to
+    reconcile against — no pin partition, no merge, no absent-meta-means-pinned rule. Those existed to
+    protect hand-curated entries and, in doing so, froze rotation and preserved tags that no measurement
+    supported. Bans still apply at the write (an operator veto outranks a derivation). Unknown id ->
+    KeyError."""
     p = cfg.personas_path
     with _personas_txn(cfg):
         raw, plist = _load_raw(p)
         found = False
+        bans = load_bans(cfg)
         for d in plist:
             if not (isinstance(d, dict) and d.get("id") == pid): continue
-            existing_meta = d.get("hashtag_corpus_meta") if isinstance(d.get("hashtag_corpus_meta"), dict) else {}
-            cur = d.get("hashtag_corpus") if isinstance(d.get("hashtag_corpus"), list) else []
-            cur_norm = [_norm(t) for t in cur if isinstance(t, str) and _norm(t)]
-            bans = load_bans(cfg)          # U11: ban BEATS pin — a banned tag is NOT re-preserved as pinned here
-            pinned: list[str] = []; pseen: set[str] = set()   # (this writer reconstructs pinned from the FILE, so the ban must apply at the write too, else refresh_persona_corpus' strip is undone)
-            for t in _strip_banned(cur_norm, bans):
-                if _is_pinned(existing_meta, t) and t not in pseen:
-                    pseen.add(t); pinned.append(t)
-            incoming: list[str] = []; iseen: set[str] = set()
-            for t in _strip_banned(list(tags), bans):   # U11: and a banned incoming auto tag never lands
+            out: list[str] = []; seen: set[str] = set()
+            for t in _strip_banned(list(tags), bans):
                 n = _norm(t) if isinstance(t, str) else ""
-                if n and n not in iseen: iseen.add(n); incoming.append(n)
-            out: list[str] = []; oseen: set[str] = set()
-            for t in pinned:
-                if t not in oseen: oseen.add(t); out.append(t)
-            for t in incoming:
-                if t in pseen or t in oseen: continue
-                oseen.add(t); out.append(t)
+                if n and n not in seen: seen.add(n); out.append(n)
             if len(out) > _CORPUS_CAP: out = out[:_CORPUS_CAP]
-            merged = dict(existing_meta)
-            for k, v in meta.items():
+            clean: dict[str, dict] = {}
+            for k, v in (meta or {}).items():
                 nk = _norm(k) if isinstance(k, str) else ""
-                if not nk or not isinstance(v, dict): continue
-                # Write when absent or already auto; refuse ONLY an explicit pin.
-                # Do NOT use _is_pinned here — that treats absent-as-pinned for PARTITION, which dropped
-                # brand-new auto meta (live bug: tags entered corpus with no sidecar → next refresh pinned them).
-                exist = merged.get(nk) if isinstance(merged.get(nk), dict) else None
-                if exist is not None and (exist.get("source") or "pinned") == "pinned":
-                    continue
-                merged[nk] = v
+                if nk and isinstance(v, dict): clean[nk] = v
             d["hashtag_corpus"] = out
-            d["hashtag_corpus_meta"] = {t: merged[t] for t in out if t in merged}
+            d["hashtag_corpus_meta"] = {t: clean[t] for t in out if t in clean}
             found = True
         if not found:
             raise KeyError(pid)
         write_json_atomic(p, raw)
-
-
-def repair_orphaned_auto_meta(cfg: Config, pid: str, *, now=None) -> int:
-    """Stamp source=auto+reach onto corpus tags that (i) lack a meta entry and (ii) have store graph-reach
-    evidence. Fixes the broken-fill state where apply_auto_corpus dropped auto meta so tags landed as
-    legacy-absent (=pinned on partition) and rotation died. True legacy pins without meta that are NOT in
-    the evidence store stay untouched. Explicit source=pinned entries untouched. Idempotent. Returns count
-    stamped. Unknown id -> KeyError."""
-    from fanops.hashtags import load_store_evidence
-    ev = {t: r for t, r in load_store_evidence(cfg).items() if r.get("source") == "graph-reach"}
-    now_iso = (now.isoformat() if isinstance(now, datetime) else None) or datetime.now(timezone.utc).isoformat()
-    p = cfg.personas_path
-    stamped = 0
-    with _personas_txn(cfg):
-        raw, plist = _load_raw(p)
-        found = False
-        for d in plist:
-            if not (isinstance(d, dict) and d.get("id") == pid): continue
-            corpus = d.get("hashtag_corpus") if isinstance(d.get("hashtag_corpus"), list) else []
-            meta = d.get("hashtag_corpus_meta") if isinstance(d.get("hashtag_corpus_meta"), dict) else {}
-            meta = dict(meta)
-            for t in corpus:
-                n = _norm(t) if isinstance(t, str) else ""
-                if not n: continue
-                if isinstance(meta.get(n), dict): continue          # already has sidecar (pin or auto)
-                rec = ev.get(n)
-                if not rec: continue                                  # no store evidence → keep legacy-absent
-                meta[n] = {"source": "auto", "reach": rec.get("reach"), "added": now_iso}
-                stamped += 1
-            d["hashtag_corpus_meta"] = meta
-            found = True
-        if not found:
-            raise KeyError(pid)
-        if stamped:
-            write_json_atomic(p, raw)
-    return stamped
-
-
-def add_corpus_tag(cfg: Config, pid: str, tag: str) -> str:
-    """Add ONE hashtag to a persona's curated corpus atomically — normalized (#prefix, lowercase),
-    deduped, capped at _CORPUS_CAP. Empty tag -> ValueError. Unknown id -> KeyError."""
-    h = _norm(tag)
-    if not h:
-        raise ValueError("empty hashtag")
-    # R4: the curated corpus is BRAND data — structural junk must be unable to enter it, at the boundary,
-    # rather than be cleaned up downstream forever. A corpus tag seeds the discovery store, joins the vetted
-    # membership, and leads the shipped line, so junk here is load-bearing junk everywhere. Refuse with the
-    # reason (`#fypppppppppp…` was live and shipping). Semantic fit stays the operator's call — see
-    # hashtag_hygiene's module docstring for why that is deliberately not machine-decided.
-    defect = tag_defect(h)
-    if defect:
-        raise ValueError(f"refusing {h}: {defect}")
-    p = cfg.personas_path
-    with _personas_txn(cfg):
-        raw, plist = _load_raw(p)
-        found = False
-        for d in plist:
-            if isinstance(d, dict) and d.get("id") == pid:
-                cur = d.get("hashtag_corpus") if isinstance(d.get("hashtag_corpus"), list) else []
-                out: list[str] = []; seen: set[str] = set()
-                for t in list(cur) + [h]:
-                    n = _norm(t) if isinstance(t, str) else ""
-                    if n and n not in seen: seen.add(n); out.append(n)
-                # Refuse a NEW tag past the cap rather than SILENTLY dropping it (an existing tag just
-                # reorders/dedupes -> never grows past the cap, so it stays a clean no-op).
-                if len(out) > _CORPUS_CAP:
-                    raise ValueError(f"corpus full ({_CORPUS_CAP} tags) — remove one before adding {h}")
-                d["hashtag_corpus"] = out
-                meta = d.get("hashtag_corpus_meta") if isinstance(d.get("hashtag_corpus_meta"), dict) else {}
-                meta[h] = {"source": "pinned", "reach": None, "added": datetime.now(timezone.utc).isoformat()}
-                d["hashtag_corpus_meta"] = meta
-                found = True
-        if not found:
-            raise KeyError(pid)
-        write_json_atomic(p, raw)
-    return pid
-
-
-def remove_corpus_tag(cfg: Config, pid: str, tag: str) -> str:
-    """Remove ONE hashtag from a persona's corpus atomically (normalization-insensitive). Unknown id ->
-    KeyError; a tag not present is a no-op."""
-    h = _norm(tag)
-    p = cfg.personas_path
-    with _personas_txn(cfg):
-        raw, plist = _load_raw(p)
-        found = False
-        for d in plist:
-            if isinstance(d, dict) and d.get("id") == pid:
-                cur = d.get("hashtag_corpus") if isinstance(d.get("hashtag_corpus"), list) else []
-                d["hashtag_corpus"] = [t for t in cur if isinstance(t, str) and _norm(t) != h]
-                found = True
-        if not found:
-            raise KeyError(pid)
-        write_json_atomic(p, raw)
-    return pid
 
 
 def delete_persona(cfg: Config, pid: str) -> str:
@@ -343,6 +283,7 @@ def link_personas_by_voice(cfg: Config) -> list[str]:
     """Link accounts whose inline persona voice EXACTLY matches a first-class Persona record (idempotent).
     Skips accounts that already carry persona_id. Returns the handles linked. Does NOT create personas."""
     from fanops.accounts import Accounts, link_persona
+    from fanops.personas import Personas
     reg = Personas.load(cfg)
     linked: list[str] = []
     for a in Accounts.load(cfg).accounts:
@@ -365,6 +306,7 @@ def migrate_from_accounts(cfg: Config) -> dict:
     skipped (nothing to lift). Two SEQUENTIAL transactions (create personas, then link accounts) — never
     a nested lock. Returns {created:[ids], linked:[handles]}."""
     from fanops.accounts import Accounts, link_persona
+    from fanops.personas import Personas, _slug
     voice_linked = link_personas_by_voice(cfg)                 # match brief-seeded inline voices to existing Personas
     accts = Accounts.load(cfg)
     existing = {p.id for p in Personas.load(cfg).all()}

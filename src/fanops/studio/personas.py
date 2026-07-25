@@ -109,38 +109,6 @@ def delete_persona(cfg: Config, pid: str) -> ActionResult:
     return ActionResult(ok=True, detail={"deleted": pid})
 
 
-def add_corpus_tag(cfg: Config, pid: str, tag: str) -> ActionResult:
-    """Add ONE hashtag to a persona's curated corpus (normalized, deduped, capped). Empty tag / corpus
-    full / unknown id -> a clean one-line error (the cap is surfaced, never a silent drop)."""
-    pid = (pid or "").strip()
-    if not pid:
-        return ActionResult(ok=False, error="no persona selected")
-    try:
-        core.add_corpus_tag(cfg, pid, tag)
-    except KeyError:
-        return ActionResult(ok=False, error=f"no such persona: {pid}")
-    except ValueError as exc:                            # empty tag / corpus full
-        return ActionResult(ok=False, error=str(exc))
-    except Exception as exc:
-        return ActionResult(ok=False, error=f"could not add tag: {str(exc)[:160]}")
-    return ActionResult(ok=True, detail={"persona": pid, "added": tag})
-
-
-def remove_corpus_tag(cfg: Config, pid: str, tag: str) -> ActionResult:
-    """Remove ONE hashtag from a persona's corpus (normalization-insensitive). Unknown id / blank ->
-    a clean one-line error; a tag not present is a clean no-op."""
-    pid = (pid or "").strip()
-    if not pid:
-        return ActionResult(ok=False, error="no persona selected")
-    try:
-        core.remove_corpus_tag(cfg, pid, tag)
-    except KeyError:
-        return ActionResult(ok=False, error=f"no such persona: {pid}")
-    except Exception as exc:
-        return ActionResult(ok=False, error=f"could not remove tag: {str(exc)[:160]}")
-    return ActionResult(ok=True, detail={"persona": pid, "removed": tag})
-
-
 def connect_account(cfg: Config, handle: str, persona_id: str) -> ActionResult:
     """Connect ONE account to a persona (set Account.persona_id). A BLANK persona_id DISCONNECTS (the
     account's inline persona/tag_lean stand again). A non-blank id is checked to EXIST at call time
@@ -162,44 +130,21 @@ def connect_account(cfg: Config, handle: str, persona_id: str) -> ActionResult:
     return ActionResult(ok=True, detail={"handle": handle, "persona_id": pid or None})
 
 
-def recommend_tag(cfg: Config, pid: str, tag: str) -> ActionResult:
-    """B2: fetch a hashtag's live Graph metrics so the operator can SEE its reach before adding it to a
-    persona's corpus. Validates the persona exists + a non-blank tag; returns the metrics in detail (the
-    panel shows engagement + an 'Add to corpus' button). Does NOT add — adding is a separate confirmed
-    step (add_corpus_tag). A Graph miss / no creds / exhausted budget -> a clean one-line error, never 500."""
-    pid = (pid or "").strip(); tag = (tag or "").strip()
-    if not pid:
-        return ActionResult(ok=False, error="no persona selected")
-    if not tag:
-        return ActionResult(ok=False, error="enter a hashtag to check")
-    if core.Personas.load(cfg).get(pid) is None:
-        return ActionResult(ok=False, error=f"no such persona: {pid}")
-    from fanops.meta_graph import tag_metrics             # function-local so a missing Meta app never breaks import
-    m = tag_metrics(cfg, tag)
-    if not m.get("resolved"):
-        return ActionResult(ok=False, error=m.get("error") or "could not fetch metrics for that tag")
-    return ActionResult(ok=True, detail={"persona": pid, "tag": m["tag"],
-                                         "engagement": m.get("engagement"), "recommend": True})
-
-
-def research_corpus(cfg: Config, pid: str, genre: str = "") -> ActionResult:
-    """M3: LIVE discovery — propose the hashtags the category's currently-winning posts use that this
-    persona doesn't yet carry (Graph co-occurrence harvest), each with its co-occurrence evidence; the
-    panel renders them with one-click Add. The genre seed lives WITH this control (it is what research uses),
-    so a non-blank genre is saved to the persona's intake first. FAIL-OPEN: no Meta creds / nothing fresh ->
-    the offline re-rank. Unknown id -> a clean one-line error, never a 500."""
+def set_genre(cfg: Config, pid: str, genre: str = "") -> ActionResult:
+    """Save the persona's NICHE word(s) — `intake.genre`, the highest-specificity root `persona_terms`
+    searches on, and therefore the operator's most direct lever over which hashtags get discovered and
+    measured for this persona. There is no "research" button beside it any more: proposals were a
+    curation step in a system that no longer curates. Change the description; the next pass follows it."""
     pid = (pid or "").strip()
     if not pid:
         return ActionResult(ok=False, error="no persona selected")
     try:
-        if (genre or "").strip():
-            core.update_persona(cfg, pid, intake=_intake(genre))   # persist the seed where it is set
-        proposals = core.discover_corpus(cfg, pid)
+        core.update_persona(cfg, pid, intake=_intake(genre))
     except KeyError:
         return ActionResult(ok=False, error=f"no such persona: {pid}")
     except Exception as exc:
-        return ActionResult(ok=False, error=f"research failed: {str(exc)[:160]}")
-    return ActionResult(ok=True, detail={"persona": pid, "proposals": proposals})
+        return ActionResult(ok=False, error=f"could not save the niche: {str(exc)[:160]}")
+    return ActionResult(ok=True, detail={"persona": pid, "genre": (genre or "").strip()})
 
 
 def run_migration(cfg: Config) -> ActionResult:

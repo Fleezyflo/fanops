@@ -5,7 +5,7 @@
 # (not registry-derived in M1)" rests on: if a future field is declared editable but the save route drops it,
 # this reds; if a field is added to the model with no editor wire and no quarantine, the coverage assertion reds.
 from fanops.config import Config
-from fanops.personas import Persona, Personas, add_persona, update_persona, add_corpus_tag
+from fanops.personas import Persona, Personas, add_persona, update_persona, apply_auto_corpus
 import fanops.persona_levers as pl
 
 # the guard's quarantine is now EMPTY (M3 resolved all six incoherent fields end-to-end). Every model field is
@@ -15,10 +15,12 @@ _QUARANTINE = set()
 
 def test_every_editable_field_persists_through_the_save_route(tmp_path):
     # behavioral proof, field by field: set it via the real writer, reload from disk, assert it stuck.
+    # `hashtag_corpus` is DERIVED, so its real (and only) writer is apply_auto_corpus — the derivation's
+    # wholesale replace — not an operator add/remove that no longer exists.
     cfg = Config(root=tmp_path)
     add_persona(cfg, name="P", voice="champions craft", content_focus=["punchlines", "hype"],
                 selection_scope="controversy_seeking", hook_angle="curiosity")
-    add_corpus_tag(cfg, "p", "#myscene")
+    apply_auto_corpus(cfg, "p", tags=["#myscene"], meta={})
     p = Personas.load(cfg).get("p")
     persisted = {
         "voice": p.voice == "champions craft",

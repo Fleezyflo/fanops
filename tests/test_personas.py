@@ -54,14 +54,43 @@ def test_update_unknown_persona_raises(tmp_path):
         P.update_persona(cfg, "ghost", voice="x")
 
 
-def test_corpus_add_remove_normalized_and_deduped(tmp_path):
+def test_apply_auto_corpus_normalizes_dedupes_and_REPLACES(tmp_path):
+    # The corpus is a DERIVED value, so the writer replaces it wholesale: no pin partition, no merge, no
+    # absent-meta-means-pinned rule. Those protected hand-curated entries and, in doing so, froze rotation.
     cfg = Config(root=tmp_path)
     pid = P.add_persona(cfg, name="Z")
-    P.add_corpus_tag(cfg, pid, "DetroitRap")        # no '#', mixed case
-    P.add_corpus_tag(cfg, pid, "#detroitrap")        # duplicate after normalization
-    assert P.Personas.load(cfg).get(pid).hashtag_corpus == ["#detroitrap"]
-    P.remove_corpus_tag(cfg, pid, "#DetroitRap")     # remove is normalization-insensitive
-    assert P.Personas.load(cfg).get(pid).hashtag_corpus == []
+    P.apply_auto_corpus(cfg, pid, tags=["DetroitRap", "#detroitrap", 7, "", "#flintbars"], meta={})
+    assert P.Personas.load(cfg).get(pid).hashtag_corpus == ["#detroitrap", "#flintbars"]
+    P.apply_auto_corpus(cfg, pid, tags=["#newone"], meta={})
+    assert P.Personas.load(cfg).get(pid).hashtag_corpus == ["#newone"]   # REPLACED, not merged
+
+
+def test_apply_auto_corpus_unknown_persona_raises(tmp_path):
+    cfg = Config(root=tmp_path)
+    with pytest.raises(KeyError):
+        P.apply_auto_corpus(cfg, "ghost", tags=["#x"], meta={})
+
+
+def test_deprecate_legacy_corpus_moves_unprovenanced_tags_and_is_idempotent(tmp_path):
+    # The cutover: a corpus tag with no DERIVATION meta has no platform evidence behind it, so it is
+    # retired somewhere the operator can still see it — never silently dropped, never left shipping.
+    import json
+    from fanops.hashtags import METRIC_FIELD
+    cfg = Config(root=tmp_path)
+    pid = P.add_persona(cfg, name="Z")
+    raw = json.loads(cfg.personas_path.read_text())
+    for d in raw["personas"]:
+        if d["id"] == pid:
+            d["hashtag_corpus"] = ["#derived", "#legacypin", "#nometa"]
+            d["hashtag_corpus_meta"] = {
+                "#derived": {METRIC_FIELD: 900.0, "measured_at": "2026-07-20T00:00:00+00:00"},
+                "#legacypin": {"source": "pinned", "reach": None, "added": "20260716T130424Z"}}
+    cfg.personas_path.write_text(json.dumps(raw))
+    assert set(P.deprecate_legacy_corpus(cfg, pid)) == {"#legacypin", "#nometa"}
+    per = P.Personas.load(cfg).get(pid)
+    assert per.hashtag_corpus == ["#derived"]                     # only the evidence-backed tag survives
+    assert set(per.hashtag_corpus_deprecated) == {"#legacypin", "#nometa"}
+    assert P.deprecate_legacy_corpus(cfg, pid) == []              # idempotent
 
 
 def test_delete_persona(tmp_path):
@@ -201,16 +230,15 @@ def test_update_persona_rejects_blank_name(tmp_path):
         P.update_persona(cfg, pid, name="   ")
 
 
-def test_add_corpus_tag_raises_when_full_but_existing_is_noop(tmp_path):
+def test_apply_auto_corpus_truncates_at_the_cap(tmp_path):
+    # _CORPUS_CAP bounds a DERIVED list, so the surplus is truncated, not refused: a derivation must never
+    # raise into the unattended run.
+    from fanops.persona_store import _CORPUS_CAP
     cfg = Config(root=tmp_path)
     pid = P.add_persona(cfg, name="Full")
-    for i in range(40):                              # fill to _CORPUS_CAP
-        P.add_corpus_tag(cfg, pid, f"#tag{i}")
-    assert len(P.Personas.load(cfg).get(pid).hashtag_corpus) == 40
-    with pytest.raises(ValueError):                  # a NEW tag past the cap is refused, not silently dropped
-        P.add_corpus_tag(cfg, pid, "#overflow")
-    P.add_corpus_tag(cfg, pid, "#tag0")              # an already-present tag at cap is a clean no-op
-    assert len(P.Personas.load(cfg).get(pid).hashtag_corpus) == 40
+    P.apply_auto_corpus(cfg, pid, tags=[f"#tag{i}" for i in range(_CORPUS_CAP + 10)], meta={})
+    corpus = P.Personas.load(cfg).get(pid).hashtag_corpus
+    assert len(corpus) == _CORPUS_CAP and corpus[0] == "#tag0"
 
 
 # --- MOL-175: baked archetype personas (seed data) ---------------------------------------------
@@ -221,7 +249,9 @@ def test_baked_personas_load():
     for p in baked:
         assert isinstance(p, P.Persona) and p.id and p.voice
         assert p.content_focus and p.hook_angle
-        assert p.hashtag_corpus
+        # a baked archetype ships its voice + levers, NEVER a corpus: hashtags are derived from platform
+        # evidence, so a hand-written starter list would be exactly the unmeasured seeding this removed.
+        assert p.hashtag_corpus == []
 
 
 def test_each_baked_persona_coherent(tmp_path):

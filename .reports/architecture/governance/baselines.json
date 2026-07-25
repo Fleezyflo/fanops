@@ -1,17 +1,11 @@
 {
   "$schema": "fanops-arch/governance/baselines/v1",
-  "approved_compile_cycles": [
-    [
-      "fanops.persona_research",
-      "fanops.persona_store",
-      "fanops.personas"
-    ]
-  ],
-  "approved_compile_cycles_note": "The ONLY compile-time import cycle in the tree. Load-order sensitive and UNDEFENDED (no comment, no test, no ADR). Its intentionality is UNKNOWN (UNK-C5-1). It is baselined because it EXISTS, not because it is endorsed.",
+  "approved_compile_cycles": [],
+  "approved_compile_cycles_note": "EMPTY — and that is the point. The tree's ONLY compile-time cycle was persona_research/persona_store/personas: two sibling modules importing the facade that re-exports them. Both edges are now deferred into function bodies (the pairs pinned in must_stay_lazy below), so the compile graph is acyclic and UNK-C5-1 — 'is this cycle intentional?' — is moot. A NEW entry here is a regression, not a baseline.",
   "approved_terminal_post_writers": [
     "src/fanops/post/run.py:343",
     "src/fanops/reconcile.py:766",
-    "src/fanops/studio/actions.py:301",
+    "src/fanops/studio/actions.py:298",
     "src/fanops/track.py:193"
   ],
   "approved_terminal_post_writers_note": "Every site WRITING PostState.published / PostState.analyzed with a LITERAL value. The R1 invariant fires at CONSTRUCTION ONLY; model_copy and setattr both bypass it, and four manual call-site guards hold the line. A FIFTH door saves cleanly and then BRICKS THE NEXT Ledger.load. This is GB-4, mechanized (rule IMPL-009). *** IT DOES NOT COVER THE DYNAMIC DOORS — PostState(<runtime>), model_copy(update=…), setattr(…). That blind spot is reported on EVERY run rather than hidden. ***",
@@ -135,7 +129,15 @@
     ],
     [
       "fanops.fanops_hashtags",
+      "fanops.persona_research"
+    ],
+    [
+      "fanops.fanops_hashtags",
       "fanops.personas"
+    ],
+    [
+      "fanops.hashtag_hygiene",
+      "fanops.hashtags"
     ],
     [
       "fanops.hashtags",
@@ -239,11 +241,15 @@
     ],
     [
       "fanops.persona_research",
-      "fanops.meta_graph"
+      "fanops.persona_store"
     ],
     [
       "fanops.persona_research",
-      "fanops.persona_store"
+      "fanops.personas"
+    ],
+    [
+      "fanops.persona_store",
+      "fanops.personas"
     ],
     [
       "fanops.pipeline",
@@ -446,7 +452,7 @@
       "fanops.digest"
     ]
   ],
-  "must_stay_lazy_note": "57 strictly-upward + 51 lateral in-function imports. The SCC-condensed compile graph is an 11-level DAG ONLY because these are deferred to call time. Hoisting any one to module level LOOKS LIKE A CLEANUP and can break the process at start. This is GB-1, mechanized (rule ARCH-007).",
+  "must_stay_lazy_note": "65 strictly-upward + 47 lateral in-function imports. The SCC-condensed compile graph is an 11-level DAG ONLY because these are deferred to call time. Hoisting any one to module level LOOKS LIKE A CLEANUP and can break the process at start. This is GB-1, mechanized (rule ARCH-007).",
   "owner": "architecture governance (see governance/field_authority.json)",
   "required_verifications_note": "The tests the Cycle-6 verification matrix requires AND which currently EXIST. *** THIS IS EMPTY TODAY: no slice in the program has been implemented, so none of its ~25 required tests exists yet, and rule IMPL-006 is therefore ARMED ON NOTHING. *** Stated out loud rather than hidden. It ARMS ITSELF: the moment a slice lands and its tests appear, re-accept this baseline and their removal becomes CI-red.",
   "required_verifications_present": [
