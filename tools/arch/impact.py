@@ -11,6 +11,11 @@ Classifies a diff as one of:
 UNKNOWN_IMPACT IS NEVER TREATED AS SAFE. That is the whole point of having the class: a change
 whose blast radius we cannot compute is not a change we can wave through, and the honest failure
 mode of any static analyser is "I don't know", not "probably fine".
+
+BREAKING_CHANGE is DECLARABLE; UNKNOWN_IMPACT is not. `--strict` fails on breaking facts the
+governance baseline does not declare (`undeclared_breaking`) — deleting a module is allowed, and
+deleting one you did not mention is not. Absolute-fail made the gate unclearable on every
+deliberate deletion, which trains merge-past-red and costs the signal.
 """
 from __future__ import annotations
 
@@ -19,7 +24,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from .common import DERIVED, REPO, SRC, load
+from .common import DERIVED, GOVERNANCE, REPO, SRC, load
 from .drift import stale_artifacts
 from .generate import generate
 
@@ -330,6 +335,36 @@ def _schema_bumped(base: str) -> bool:
         return None
     a, b = ver(old), ver(new)
     return a is not None and b is not None and a != b
+
+
+def undeclared_breaking(rep: dict, approved: list[str] | None = None) -> list[str]:
+    """The BREAKING_CHANGE reasons this diff carries that the governance baseline does NOT declare.
+
+    `impact --strict` was ABSOLUTE: any BREAKING_CHANGE failed the PR, with no way to clear it. That
+    made it the ONLY rule in this system without a declaration slot — ARCH-002 has
+    `approved_terminal_post_writers`, ARCH-004 has `approved_compile_cycles`, ARCH-007 has
+    `must_stay_lazy`, and each fires on the DELTA from what is declared. Absolute meant the gate
+    could not tell "the author removed this on purpose and said so" from "the author has no idea
+    they deleted a route" — and only the second case is worth a gate. A red no one can clear is a
+    red everyone learns to merge past, which costs exactly the signal the gate exists to give.
+
+    So: declare the breaking facts, and the gate fails on the ones you did NOT. The declaration is
+    the reason string the tool itself printed, verbatim (minus the `[BREAKING_CHANGE] ` prefix) — so
+    it is copy-pasteable from a red run, and a reworded reason FAILS SAFE by going undeclared again.
+
+    UNKNOWN_IMPACT is NOT routed through here and is NEVER declarable (`cli.cmd_impact`). A blast
+    radius that could not be COMPUTED is not a blast radius anyone can vouch for.
+
+    Entries are self-retiring in practice: a removal reason can only be produced by the diff that
+    performs the removal, so a declaration cannot mask a later change. It stays as the record of a
+    deliberate break."""
+    if approved is None:
+        p = GOVERNANCE / "baselines.json"
+        approved = load(p).get("approved_breaking_changes", []) if p.exists() else []
+    declared = {s.strip() for s in approved}
+    pre = f"[{BREAKING}] "
+    return [r[len(pre):] for r in rep["reasons"]
+            if r.startswith(pre) and r[len(pre):].strip() not in declared]
 
 
 def render(rep: dict) -> str:
