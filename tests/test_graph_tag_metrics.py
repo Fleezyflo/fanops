@@ -79,6 +79,15 @@ def test_tag_metrics_still_queries_when_local_meter_full(tmp_path, monkeypatch):
     assert m["resolved"] is True and m["engagement"] == 905
 
 
+def test_tag_metrics_refused_search_not_recorded(tmp_path, monkeypatch):
+    _creds(monkeypatch)
+    cfg = Config(root=tmp_path)
+    before = budget_remaining(cfg)
+    def get(url, params=None, timeout=None): return _Resp(400, {"error": {"code": 18}})
+    m = tag_metrics(cfg, "#refused", get=get)
+    assert m["resolved"] is False and budget_remaining(cfg) == before
+
+
 def test_tag_metrics_degenerate_tag_spends_no_budget(tmp_path, monkeypatch):
     # a bare "#" must be rejected BEFORE the Graph call so it never wastes one of the 30/7-day slots.
     _creds(monkeypatch)

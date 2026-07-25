@@ -142,6 +142,53 @@ def test_sample_trends_requeries_expired_tag(tmp_path, monkeypatch):
     out = meta_graph.sample_trends(cfg, ["#old"], get=get, now=now)
     assert out == {"#old": 12.0}                                 # expired -> re-sampled, not skipped
 
+def test_sample_trends_refused_search_not_recorded_and_resampleable(tmp_path, monkeypatch):
+    # 2026-07-25 live incident: Meta's server-side 30-unique/7d cap REFUSED every novel search (HTTP 400
+    # code 18 / subcode 2207034) yet each refusal was still RECORDED, so the local window then skipped
+    # ~1400 tags for a week and every later funded pass measured 0. A refused search is NOT a unique
+    # search Meta counted: it must not be recorded, so the tag stays re-sampleable on the next pass.
+    cfg = _cfg(tmp_path, monkeypatch)
+    now = datetime(2026, 6, 19, tzinfo=timezone.utc)
+    refused = _router({"ig_hashtag_search": _Resp(400, {"error": {"code": 18}})})
+    assert meta_graph.sample_trends(cfg, ["#novel"], get=refused, now=now) == {}
+    assert meta_graph.budget_remaining(cfg, now=now) == meta_graph._BUDGET_LIMIT   # refusal NOT recorded
+    ok = _router({"ig_hashtag_search": _Resp(200, {"data": [{"id": "1"}]}),
+                  "top_media": _Resp(200, {"data": [{"like_count": 3}]})})
+    assert meta_graph.sample_trends(cfg, ["#novel"], get=ok, now=now) == {"#novel": 3.0}   # not skipped
+
+def test_sample_trends_accepted_but_unresolved_is_recorded(tmp_path, monkeypatch):
+    # A 200 search resolving to NO node was still a unique search Meta counted -> recorded (window skip).
+    cfg = _cfg(tmp_path, monkeypatch)
+    now = datetime(2026, 6, 19, tzinfo=timezone.utc)
+    get = _router({"ig_hashtag_search": _Resp(200, {"data": []})})
+    assert meta_graph.sample_trends(cfg, ["#ghost"], get=get, now=now) == {}
+    assert meta_graph.budget_remaining(cfg, now=now) == meta_graph._BUDGET_LIMIT - 1
+
+def test_sample_trends_caps_novel_attempts_per_pass(tmp_path, monkeypatch):
+    # Meta accepts at most _BUDGET_LIMIT unique searches per rolling week; attempting hundreds more in one
+    # pass is guaranteed-failure spam (code 18 each) that trips the APP-level request limit (code 4) the
+    # metrics reader shares. One pass attempts at most _BUDGET_LIMIT NOVEL tags; the rest wait their turn.
+    cfg = _cfg(tmp_path, monkeypatch)
+    now = datetime(2026, 6, 19, tzinfo=timezone.utc)
+    get = _router({"ig_hashtag_search": _Resp(200, {"data": [{"id": "1"}]}),
+                   "top_media": _Resp(200, {"data": [{"like_count": 2}]})})
+    cands = [f"#t{i}" for i in range(meta_graph._BUDGET_LIMIT + 10)]
+    out = meta_graph.sample_trends(cfg, cands, get=get, now=now)
+    assert len(out) == meta_graph._BUDGET_LIMIT
+    searches = [u for u, _ in get.calls if "ig_hashtag_search" in u]
+    assert len(searches) == meta_graph._BUDGET_LIMIT
+
+def test_sample_trends_skipped_tags_do_not_consume_the_cap(tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path, monkeypatch)
+    now = datetime(2026, 6, 19, tzinfo=timezone.utc)
+    cfg.hashtag_budget_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.hashtag_budget_path.write_text(json.dumps({"queries": [
+        {"tag": f"#pre{i}", "ts": now.isoformat()} for i in range(meta_graph._BUDGET_LIMIT)]}))
+    get = _router({"ig_hashtag_search": _Resp(200, {"data": [{"id": "1"}]}),
+                   "top_media": _Resp(200, {"data": [{"like_count": 4}]})})
+    cands = [f"#pre{i}" for i in range(meta_graph._BUDGET_LIMIT)] + ["#novel"]
+    assert meta_graph.sample_trends(cfg, cands, get=get, now=now) == {"#novel": 4.0}
+
 def test_token_never_logged(tmp_path, monkeypatch):
     cfg = _cfg(tmp_path, monkeypatch)
     cfg.hashtag_budget_path.parent.mkdir(parents=True, exist_ok=True)

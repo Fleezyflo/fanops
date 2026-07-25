@@ -201,26 +201,49 @@ def hashtag_id(cfg: Config, tag: str, *, get=None):
     sufficient on its own — the separate 'Instagram Public Content Access' FEATURE (its OWN App Review
     submission, distinct from the permission) is ALSO mandatory. An operator granting only instagram_basic
     hits an opaque rejection; the missing piece is that App Review feature, not another scope."""
-    body = _graph_get(cfg, "ig_hashtag_search",
-                      {"user_id": cfg.meta_ig_user_id, "q": tag.lstrip("#")}, get=get)
+    hid, _accepted = _hashtag_id_status(cfg, tag, get=get)
+    return hid
+
+def _hashtag_id_status(cfg: Config, tag: str, *, get=None) -> tuple[Optional[str], bool]:
+    """Resolve a hashtag and report whether Graph ACCEPTED the unique-search request. `accepted` is true
+    only on HTTP 200, including an empty data result; transport/non-200 refusals are false. This distinction
+    is load-bearing for the observational query meter: a refused request did not consume Meta's unique-tag
+    allowance and must stay re-sampleable."""
+    get = get or _default_get
     try:
+        resp = get(f"{cfg.meta_graph_url}/ig_hashtag_search",
+                   params={"user_id": cfg.meta_ig_user_id, "q": tag.lstrip("#"),
+                           "access_token": cfg.meta_graph_token}, timeout=20)
+    except requests.exceptions.RequestException:
+        return None, False
+    if getattr(resp, "status_code", None) != 200:
+        return None, False
+    try:
+        body = resp.json()
+        if not isinstance(body, dict):
+            return None, True
         data = body.get("data") if body else None
-        return data[0]["id"] if data else None
-    except (KeyError, IndexError, TypeError):
-        return None
+        return (data[0]["id"] if data else None), True
+    except (KeyError, IndexError, TypeError, ValueError):
+        return None, True
 
 def trend_score(cfg: Config, tag: str, *, get=None):
     """A RELATIVE trend signal for one hashtag = total engagement (likes + comments) over its top_media.
     Meta gives no media_count, so engagement on the top posts is the available visibility proxy. None on
     any failure (unresolved tag, no media, transport error)."""
-    hid = hashtag_id(cfg, tag, get=get)
+    score, _accepted = _trend_score_status(cfg, tag, get=get)
+    return score
+
+def _trend_score_status(cfg: Config, tag: str, *, get=None) -> tuple[Optional[float], bool]:
+    """Return (trend score, unique-search accepted). See `_hashtag_id_status`."""
+    hid, accepted = _hashtag_id_status(cfg, tag, get=get)
     if hid is None:
-        return None
+        return None, accepted
     body = _graph_get(cfg, f"{hid}/top_media",
                       {"user_id": cfg.meta_ig_user_id, "fields": "like_count,comments_count"}, get=get)
     data = body.get("data") if body else None
     if not isinstance(data, list):
-        return None
+        return None, accepted
     total = 0.0
     for m in data:
         if not isinstance(m, dict):
@@ -229,7 +252,7 @@ def trend_score(cfg: Config, tag: str, *, get=None):
             v = m.get(k)
             if isinstance(v, (int, float)) and not isinstance(v, bool):
                 total += float(v)
-    return total
+    return total, accepted
 
 _MEDIA_FIELDS = "id,permalink,media_product_type,timestamp,caption"   # caption added (ledger-rebuild): the inverse projection mirrors a live-only media's caption (display-only); resolve ignores the extra field
 _MEDIA_PAGE_CAP = 50            # defensive: >50 pages of the IG user's OWN media is a pathological/mocked paging loop
@@ -574,8 +597,9 @@ def tag_metrics(cfg: Config, tag: str, *, get=None, now: datetime | None = None)
         return {"tag": h, "resolved": False, "error": "enter a valid hashtag"}
     if not (cfg.meta_graph_token and cfg.meta_ig_user_id):
         return {"tag": h, "resolved": False, "error": "Graph not configured — set META_GRAPH_TOKEN + META_IG_USER_ID"}
-    score = trend_score(cfg, h, get=get)                 # resolves the node + sums top_media engagement
-    record_query(cfg, h, now=now)                        # observational telemetry (never a gate)
+    score, accepted = _trend_score_status(cfg, h, get=get)
+    if accepted:
+        record_query(cfg, h, now=now)                    # only an accepted unique search belongs in the meter
     if score is None:
         return {"tag": h, "resolved": False, "error": "did not resolve on Instagram — no such hashtag, or no recent public media"}
     return {"tag": h, "resolved": True, "engagement": score, "sampled_at": now.isoformat()}
@@ -604,11 +628,16 @@ def sample_trends(cfg: Config, candidates: list[str], *, get=None, now: datetime
         if ts >= cutoff and isinstance(e.get("tag"), str):
             already.add(e["tag"])
     scores: dict[str, float] = {}
+    attempted = 0; attempted_tags: set[str] = set()
     for tag in candidates:
-        if tag in already:
+        if tag in already or tag in attempted_tags:
             continue                                # recent unique search -> free but not re-sampled
-        s = trend_score(cfg, tag, get=get)
-        record_query(cfg, tag, now=now); already.add(tag)   # observational; dedupe within this pass
+        if attempted >= _BUDGET_LIMIT:
+            break                                   # bound one pass; never spam guaranteed-refused unique searches
+        attempted += 1; attempted_tags.add(tag)
+        s, accepted = _trend_score_status(cfg, tag, get=get)
+        if accepted:
+            record_query(cfg, tag, now=now); already.add(tag)   # observational; accepted unique searches only
         if s is not None:
             scores[tag] = s
     return scores
@@ -632,8 +661,9 @@ def harvest_cooccurring(cfg: Config, seed_tags: list[str], *, get=None, now: dat
         if n and n not in sseen: sseen.add(n); seeds.append(n)
     out: dict[str, dict] = {}
     for seed in seeds:
-        hid = hashtag_id(cfg, seed, get=get)
-        record_query(cfg, seed, now=now)                 # observational telemetry (never a gate)
+        hid, accepted = _hashtag_id_status(cfg, seed, get=get)
+        if accepted:
+            record_query(cfg, seed, now=now)             # accepted unique searches only
         if hid is None:
             continue
         body = _graph_get(cfg, f"{hid}/top_media",
@@ -663,8 +693,8 @@ def harvest_cooccurring(cfg: Config, seed_tags: list[str], *, get=None, now: dat
 
 def discover_candidates(cfg: Config, seeds: list[str], *, known=(), measure_k: int = 0,
                         get=None, now: datetime | None = None) -> list[dict]:
-    """M2: rank the co-occurrence harvest, DROP the tags we already know (VETTED ∪ store ∪ corpus, passed
-    in `known`), and OPTIONALLY measure the top `measure_k` novel tags' live Graph reach. Returns
+    """M2: rank the co-occurrence harvest, DROP the caller-supplied `known` tags, and OPTIONALLY measure
+    the top `measure_k` novel tags' live Graph reach. Returns
     ordered proposals [{"tag","count","host_engagement","seeds","measured_engagement"?,"sampled_at"?}], most-relevant
     first (by co-occurrence count, then host engagement). `seeds` is the per-seed co-count map from the harvest
     (JSON-round-trippable attribution). The FREE harvest is the primary signal; measurement is capped only
@@ -677,8 +707,9 @@ def discover_candidates(cfg: Config, seeds: list[str], *, known=(), measure_k: i
     out = [{"tag": t, "count": d["count"], "host_engagement": d["host_engagement"],
             "seeds": dict(d.get("seeds") or {})} for t, d in ranked]
     for cand in out[:max(0, measure_k)]:                 # measure only the top-K
-        s = trend_score(cfg, cand["tag"], get=get)       # resolve + sum top_media engagement
-        record_query(cfg, cand["tag"], now=now)          # observational telemetry (never a gate)
+        s, accepted = _trend_score_status(cfg, cand["tag"], get=get)
+        if accepted:
+            record_query(cfg, cand["tag"], now=now)      # accepted unique searches only
         if s is not None:
             cand["measured_engagement"] = s; cand["sampled_at"] = now.isoformat()
     return out
