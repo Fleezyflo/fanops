@@ -36,7 +36,7 @@ the URL on the next pass. See also the traps section below.
 
 ## Zernio idempotency — five things that look wrong and are not (report 11)
 
-Anchored by SYMBOL, not line: these move. Full record `docs/reconciliation/11_ZERNIO_IDEMPOTENCY_DESIGN.md`;
+Anchored by SYMBOL, not line: these move. Full record: main history (the reconciliation archive landed in #718 and was consumed by #719);
 tests `tests/test_zernio_idempotency.py`.
 
 - **`_request_id` is NOT `uuid5(ns, post.id)` and must not be "simplified" to it.** It hashes a **canonical
