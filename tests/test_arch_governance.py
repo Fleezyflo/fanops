@@ -260,14 +260,27 @@ def test_a_reworded_reason_fails_safe():
     assert impact.undeclared_breaking(_REP, approved=["CLI verb REMOVED: migrate"]) != []
 
 
-def test_unknown_impact_is_not_declarable():
-    """UNKNOWN is routed around the declaration entirely (cli.cmd_impact returns 1 before asking).
-    A blast radius that could not be COMPUTED is not one anybody can vouch for — that is the whole
-    reason the class exists, and a declaration must never be able to wave it through."""
-    src = (REPO / "tools" / "arch" / "cli.py").read_text(encoding="utf-8")
-    body = src.split("def cmd_impact", 1)[1].split("\ndef ", 1)[0]
-    early = body.split("undeclared_breaking", 1)[0]
-    assert "UNKNOWN_IMPACT" in early and "return 1" in early
+def test_unknown_impact_is_not_declarable(monkeypatch):
+    """UNKNOWN is routed around the declaration entirely: cli.cmd_impact returns 1 BEFORE asking
+    what was declared. A blast radius that could not be COMPUTED is not one anybody can vouch for —
+    that is the whole reason the class exists, and a declaration must never wave it through.
+
+    Driven through cmd_impact rather than read out of the source. The first version of this test
+    grepped cli.py and split on the string "undeclared_breaking" — which also appears in the COMMENT
+    above the UNKNOWN check, so the split landed mid-comment and the test failed on correct code. A
+    test that a prose edit can break was testing the prose."""
+    import argparse
+    from tools.arch import cli
+
+    rep = {"classification": "UNKNOWN_IMPACT", "base": "x", "changed_files": [],
+           "reasons": ["[UNKNOWN_IMPACT] could not regenerate the derived architecture at base"],
+           "architecture": {}, "implementation": {}}
+    monkeypatch.setattr(cli.impact_mod, "report", lambda base: rep)
+    # The exact refutation: pretend EVERYTHING is declared. If UNKNOWN were routed through the
+    # declaration like BREAKING is, this would return 0 — a declaration would have waved through a
+    # diff nobody could analyse.
+    monkeypatch.setattr(cli.impact_mod, "undeclared_breaking", lambda r, approved=None: [])
+    assert cli.cmd_impact(argparse.Namespace(base="x", strict=True)) == 1
 
 
 def test_live_baseline_declares_nothing_it_has_not_reviewed():
