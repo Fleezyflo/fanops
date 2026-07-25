@@ -149,3 +149,34 @@ def test_token_never_logged(tmp_path, monkeypatch):
     meta_graph.sample_trends(cfg, ["#a"], get=_router({}), now=datetime(2026, 6, 19, tzinfo=timezone.utc))
     log_text = cfg.log_path.read_text() if cfg.log_path.exists() else ""
     assert _TOKEN not in log_text                                 # the token must never reach run.log
+
+
+def test_default_get_is_ipv4_session(tmp_path, monkeypatch):
+    # Default Graph transport (get=None) must ride the IPv4-forcing Session — not bare requests.get —
+    # so macOS does not pay the AAAA blackhole tax. Injectable get= still bypasses (existing tests).
+    cfg = _cfg(tmp_path, monkeypatch)
+    seen = []
+    def spy(url, **kw):
+        seen.append(url); return _Resp(200, {"data": [{"id": "1"}]})
+    monkeypatch.setattr(meta_graph, "_default_get", spy)
+    assert meta_graph.hashtag_id(cfg, "#x") == "1"               # get=None -> _default_get
+    assert seen and "ig_hashtag_search" in seen[0]
+
+def test_ipv4_adapter_forces_af_inet(monkeypatch):
+    # The adapter pins urllib3's allowed_gai_family to AF_INET for the duration of send() only.
+    import socket
+    import urllib3.util.connection as uc
+    from unittest.mock import MagicMock
+    families = []
+    adapter = meta_graph._IPv4HTTPAdapter()
+    def fake_send(self, request, stream=False, timeout=None, verify=True, cert=None, proxies=None):
+        families.append(uc.allowed_gai_family()); return MagicMock(status_code=200)
+    monkeypatch.setattr(meta_graph.HTTPAdapter, "send", fake_send)
+    before = uc.allowed_gai_family()
+    adapter.send(MagicMock())
+    assert families == [socket.AF_INET]                           # during send: IPv4-only
+    assert uc.allowed_gai_family() == before                      # restored after send
+
+def test_ipv4_session_mounts_ipv4_adapter():
+    s = meta_graph._ipv4_session()
+    assert isinstance(s.get_adapter("https://graph.facebook.com/"), meta_graph._IPv4HTTPAdapter)

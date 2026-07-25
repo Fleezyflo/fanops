@@ -14,13 +14,41 @@ publish path. Design rule:
 from __future__ import annotations
 import json
 import re
+import socket
 from datetime import datetime, timedelta, timezone
 from typing import NamedTuple, Optional
 import requests
+from requests.adapters import HTTPAdapter
 from fanops.config import Config
 from fanops.errors import MetaInsightsScopeError
 from fanops.log import get_logger
 from fanops.hashtags import _norm
+
+
+# Force AF_INET for Graph HTTP only — macOS often blackholes AAAA for graph.facebook.com (~20s then
+# IPv4 fallback). Scoped to this Session/adapter; do NOT patch process-wide (daemon also talks Postiz).
+class _IPv4HTTPAdapter(HTTPAdapter):
+    def send(self, request, stream=False, timeout=None, verify=True, cert=None, proxies=None):
+        import urllib3.util.connection as uc
+        orig = uc.allowed_gai_family
+        try:
+            uc.allowed_gai_family = lambda: socket.AF_INET
+            return super().send(request, stream=stream, timeout=timeout, verify=verify, cert=cert, proxies=proxies)
+        finally:
+            uc.allowed_gai_family = orig
+
+_IPV4_SESSION: Optional[requests.Session] = None
+
+def _ipv4_session() -> requests.Session:
+    global _IPV4_SESSION
+    if _IPV4_SESSION is None:
+        s = requests.Session(); a = _IPv4HTTPAdapter()
+        s.mount("https://", a); s.mount("http://", a); _IPV4_SESSION = s
+    return _IPV4_SESSION
+
+def _default_get(url, **kw):
+    """Default Graph transport: Session whose adapter resolves AF_INET only (IPv6 blackhole tax)."""
+    return _ipv4_session().get(url, **kw)
 
 
 # ---- Per-account Meta credential resolution (the audit's per-handle-creds gap) --------------------------
@@ -93,14 +121,13 @@ def debug_token_expiry(cfg: Config, token: str, *, get=None) -> tuple[str, objec
     silent pass). The token rides the debug_token params (input_token + access_token) exactly like every other
     Graph read here; it is NEVER placed in a logged/returned string (only the epoch or a generic reason).
     debug_token is Meta's own token-introspection edge; expires_at=0 is Meta's sentinel for 'does not expire'."""
-    import requests as _rq
-    get = get or _rq.get
+    get = get or _default_get
     if not token:
         return ("unknown", "no token")
     try:
         resp = get(f"{cfg.meta_graph_url}/debug_token",
                    params={"input_token": token, "access_token": token}, timeout=20)
-    except _rq.exceptions.RequestException:
+    except requests.exceptions.RequestException:
         return ("unknown", "transport error")
     if getattr(resp, "status_code", None) != 200:
         return ("unknown", f"debug_token HTTP {getattr(resp, 'status_code', '?')}")
@@ -151,8 +178,9 @@ def account_overview(cfg: Config, handle: str, *, get=None) -> Optional[dict]:
 def _graph_get(cfg: Config, path: str, params: dict, *, get=None, token: Optional[str] = None):
     """Read-only Graph GET -> parsed JSON dict, or None on ANY failure (fail-soft enhancement). The
     token rides in the `access_token` param; it is never placed in a logged string. `token` overrides the
-    global cfg.meta_graph_token (per-account creds threading); None keeps the global (byte-identical)."""
-    get = get or requests.get
+    global cfg.meta_graph_token (per-account creds threading); None keeps the global (byte-identical).
+    Default transport is IPv4-only (_default_get) — macOS IPv6 blackhole to graph.facebook.com."""
+    get = get or _default_get
     try:
         resp = get(f"{cfg.meta_graph_url}/{path}",
                    params={**params, "access_token": token if token is not None else cfg.meta_graph_token}, timeout=20)
@@ -406,7 +434,7 @@ def media_insights(cfg: Config, media_id: str, product_type: str | None, *, get=
         # resolves its product_type next reconcile pass, then lands real metrics. NO request is ever built.
         get_logger(cfg)("graph_insights", str(media_id), "unresolved_type_skip", product_type=str(product_type))
         return None
-    get = get or requests.get
+    get = get or _default_get
     try:
         resp = get(f"{cfg.meta_graph_url}/{media_id}/insights",
                    params={"metric": ",".join(metrics), "access_token": creds.token}, timeout=20)
