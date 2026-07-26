@@ -2,11 +2,11 @@ name: architecture
 
 # Cycle 7 — continuous architecture & implementation governance.
 #
-# Three gates, and the split is EVIDENCE-BASED, not guessed:
+# Two advisory jobs on a PR, plus a scheduled reconciler. The split is EVIDENCE-BASED, not guessed:
 #
-#   gate      drift + policy + registries          seconds    EVERY pull request
-#   impact    the PR's architectural blast radius  seconds    EVERY pull request
-#   controls  the negative-control suite           minutes    PATH-SELECTED (+ on push to main)
+#   impact     the PR's architectural blast radius  seconds    EVERY pull request
+#   controls   the negative-control suite           minutes    PATH-SELECTED (+ on push to main)
+#   reconcile  derived/ regen + DC-3 vs live        minutes    schedule / workflow_dispatch
 #
 # No exact count or duration is written here ON PURPOSE. A number in a comment is a number that
 # rots, and a rotted number in a governance file is this repo's signature defect (AR-03: the doc
@@ -14,9 +14,10 @@ name: architecture
 # CONTROLS; the authoritative duration is whatever this job just took.
 #
 # The negative controls prove the VALIDATORS work. They need re-proving when the validators — or
-# the artifacts they read — change. A pure src/ change does not alter the validators, and `gate`
-# already catches its drift. The selection rule lives in tools/arch/select.py, it FAILS OPEN, and
-# it is TESTED (tests/test_arch_governance.py::test_deep_gate_selection).
+# the artifacts they read — change. A pure src/ change does not alter the validators, and the
+# required unit lane already catches its drift (tests/test_arch_governance.py). The selection rule
+# lives in tools/arch/select.py, it FAILS OPEN, and it is TESTED
+# (tests/test_arch_governance.py::test_deep_gate_selection).
 #
 # NOTE: tools/arch is STDLIB-ONLY. These jobs need no pip install and no lockfile — which is why
 # they can afford to run on every PR.
