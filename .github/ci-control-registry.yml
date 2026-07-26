@@ -53,31 +53,15 @@ generated_view: "NONE — the generated inventory view died with docs/ci/ (2026-
 # current/intended divergence is a failure rather than a planned transition. It does NOT assert that
 # GitHub admin enforcement is on; `enforce_admins` is false and changing it is a separate,
 # operator-approved repository-settings change that no PR performs.
-# REOPENED 2026-07-26 (operator decision) for ONE context, and one only. The block above says the
-# required set is FINAL; that stood while every advisory job merely REPORTED. It does not stand for
-# `negative controls`, because that job is the ONLY thing that proves the arch validators DETECT the
-# defects they name — and it could not block. Meanwhile the controls test carries @pytest.mark.slow,
-# which the unit lane deselects, so no merge-blocking run of it existed anywhere. The required lane
-# blocks on "no blocking findings", a check that goes GREENER when a rule silently stops firing.
-# That is the IMPL-007 failure this repo already had. A validator suite nobody must heed is
-# decoration, and docs/ENFORCEMENT.md's own first rule forbids decoration.
-#
-# NOT the fix that was tried first and reverted: moving the controls INTO the unit lane doubled it
-# (126s -> 240s) and needed the blocking MOL-460 SLO raised to fit — adapting the budget to the work
-# instead of the work to the budget, which defeats the gate. A fast pre-merge lane and a deep
-# validator-effectiveness suite are different tiers and stay in different contexts.
 rollout:
-  phase: transitioning            # transitioning | enforced — ONE promotion in flight (see above)
+  phase: enforced                 # transitioning | enforced — see the note above on what this asserts
 current_required_contexts:        # matches LIVE GitHub, re-read 2026-07-24 (E2E context dropped, gate 1)
   - "unit (fast, no toolchain)"
 
 # Plane 1 — the merge policy the repository INTENDS (ADR-0101, amended 2026-07-22). DC-3 reconciles
-# this against LIVE GitHub. It is AHEAD of `current` by exactly one context: flipping live branch
-# protection needs an admin-scoped token, which no PR has. The operator runs it, then a follow-up
-# moves the context into `current` and sets ARCH-CONTROLS classification: required.
+# this against LIVE GitHub. It equals `current` and equals live: the set is final, not a staging post.
 intended_required_contexts:
   - "unit (fast, no toolchain)"
-  - "negative controls (validator effectiveness)"
 
 # ---------------------------------------------------------------------------------------------------
 # Registered intentional redundancy. A control may share an invariant with another ONLY via a group
@@ -558,7 +542,7 @@ controls:
     failure_evidence: "tools.arch selftest exits non-zero if any control fails to fire."
     evidence_status: verified-this-session
     status: transitional
-    notes: "PROMOTION IN FLIGHT (2026-07-26): listed in intended_required_contexts, NOT yet in current — the live branch-protection flip needs an admin token no PR has. classification stays `advisory` until live says otherwise, so DC-4 keeps measuring prose against reality rather than against intent. This is the ONLY merge-blocking-capable proof that the arch validators detect what they name; CI-E2E-NEGCONTROLS is scheduled-only and its `THE merge-blocking proof` justification was false. SLICE-NEGCTRL-DEDUP stays open and is NOT resolved by folding this into the unit lane — that was tried, doubled the lane 126s->240s, and required raising the blocking MOL-460 SLO to fit."
+    notes: "SLICE-NEGCTRL-DEDUP (6.3): on an arch-relevant PR this runs the SAME selftest.detect as CI-E2E-NEGCONTROLS. Reduce to a lightweight reachability assertion; keep the full run in exactly one authoritative place."
 
   - id: ARCH-RECONCILE
     name: "scheduled reconciliation"
