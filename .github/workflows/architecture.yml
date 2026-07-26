@@ -2,11 +2,11 @@ name: architecture
 
 # Cycle 7 — continuous architecture & implementation governance.
 #
-# Three gates, and the split is EVIDENCE-BASED, not guessed:
+# Two advisory jobs on a PR, plus a scheduled reconciler. The split is EVIDENCE-BASED, not guessed:
 #
-#   gate      drift + policy + registries          seconds    EVERY pull request
-#   impact    the PR's architectural blast radius  seconds    EVERY pull request
-#   controls  the negative-control suite           minutes    PATH-SELECTED (+ on push to main)
+#   impact     the PR's architectural blast radius  seconds    EVERY pull request
+#   controls   the negative-control suite           minutes    PATH-SELECTED (+ on push to main)
+#   reconcile  derived/ regen + DC-3 vs live        minutes    schedule / workflow_dispatch
 #
 # No exact count or duration is written here ON PURPOSE. A number in a comment is a number that
 # rots, and a rotted number in a governance file is this repo's signature defect (AR-03: the doc
@@ -14,9 +14,10 @@ name: architecture
 # CONTROLS; the authoritative duration is whatever this job just took.
 #
 # The negative controls prove the VALIDATORS work. They need re-proving when the validators — or
-# the artifacts they read — change. A pure src/ change does not alter the validators, and `gate`
-# already catches its drift. The selection rule lives in tools/arch/select.py, it FAILS OPEN, and
-# it is TESTED (tests/test_arch_governance.py::test_deep_gate_selection).
+# the artifacts they read — change. A pure src/ change does not alter the validators, and the
+# required unit lane already catches its drift (tests/test_arch_governance.py). The selection rule
+# lives in tools/arch/select.py, it FAILS OPEN, and it is TESTED
+# (tests/test_arch_governance.py::test_deep_gate_selection).
 #
 # NOTE: tools/arch is STDLIB-ONLY. These jobs need no pip install and no lockfile — which is why
 # they can afford to run on every PR.
@@ -37,47 +38,19 @@ concurrency:
 permissions:
   contents: read
 
+# The `gate` job (`tools.arch ci` = drift + policy + registries) was DELETED 2026-07-26. Every check
+# it ran also runs in the required `unit` lane via tests/test_arch_governance.py, which runs a strict
+# SUPERSET: test_derived_artifacts_are_not_stale, test_no_blocking_policy_findings and
+# test_registries_are_valid are the same three, plus regeneration determinism,
+# generated-artifacts-are-a-pure-function-of-source, rule reachability and field authority, which
+# `tools.arch ci` never ran at all. So this job was a second, NON-BLOCKING copy of a check that
+# already blocks — a full runner per PR to reprint a verdict the merge already depends on.
+#
+# Cost of the deletion, stated: its job summary. Acceptable HERE and nowhere else in this file,
+# precisely because the superset blocks. That is the opposite of `impact`, `controls` and
+# `base-install`, which are each the ONLY signal for what they check — which is why those three got a
+# job summary rather than a deletion.
 jobs:
-  gate:
-    name: gate (drift + policy + registries)
-    if: github.event_name != 'schedule'
-    # ADVISORY, and now shaped like it (DC-7). Everything this job can catch — derived/ drift,
-    # blocking policy findings, registry validity — ALSO runs in the required unit lane via
-    # tests/test_arch_governance.py, which is why the registry files both under the
-    # `arch-drift-policy` duplicate group and names CI-UNIT-ARCHGOV "the merge-blocking line".
-    # So a red here was never the only signal; it was a second copy of one that already blocks,
-    # and an un-actionable red teaches people to merge past red generally. It reports.
-    continue-on-error: true
-    timeout-minutes: 10
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
-        with:
-          python-version: "3.12"
-
-      # The single check that makes every other one trustworthy: if the committed derived/
-      # artifacts differ from regeneration, every claim downstream of them is a claim about a
-      # file somebody hand-edited.
-      # The summary is a TEE of this run, not a second one. It used to re-invoke `tools.arch drift`,
-      # which re-ran regeneration + the whole policy set (1.9s measured) purely to reprint text
-      # `ci` had already produced — and `ci` IS drift + registries, so the two could in principle
-      # disagree, leaving a summary that did not describe the run that gated the PR.
-      - name: Regenerate + byte-compare + policy + registries
-        run: |
-          set -o pipefail
-          python -m tools.arch ci 2>&1 | tee arch-ci.log
-
-      - name: Job summary
-        if: always()
-        run: |
-          {
-            echo "## Architecture gate"
-            echo '```'
-            cat arch-ci.log 2>/dev/null || echo "(the gate step produced no output)"
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-
   impact:
     name: impact report
     if: github.event_name == 'pull_request'
@@ -158,9 +131,6 @@ jobs:
           print(f"why={why}")
           PY
 
-      - name: Why
-        run: echo "deep gate = ${{ steps.select.outputs.run }} — ${{ steps.select.outputs.why }}"
-
       # Each negative control injects one defect and asserts its rule fires on evidence that was
       # ABSENT before. The authoritative COUNT lives in tools/arch/selftest.py::CONTROLS — a bare
       # number here would rot (this file's own AR-03 / lines 12-13), so it is deliberately absent.
@@ -169,7 +139,37 @@ jobs:
       # exactly that in its own IMPL-007 on the first run.)
       - name: Negative controls
         if: steps.select.outputs.run == 'true'
-        run: python -m tools.arch selftest
+        run: |
+          set -o pipefail
+          python -m tools.arch selftest 2>&1 | tee controls.log
+
+      # `continue-on-error: true` makes a FAILED job report SUCCESS to the check API — the honest
+      # shape for an advisory job, but on its own a mute button rather than a report: until this
+      # step a failure here produced NO artefact anywhere.
+      #
+      # It prints the SELECTION VERDICT, not just the log, and that is the load-bearing part. The
+      # real step above is selection-gated, so a missing log is ambiguous between "the suite was
+      # skipped" and "it ran and said nothing" — and this repo has already shipped a GREEN
+      # `negative controls` context whose step never ran. A summary that cannot tell those apart
+      # would rebuild the exact blind spot it exists to close. (It also replaces the old `Why` echo,
+      # which put the same two values somewhere nobody looks.)
+      - name: Verdict
+        if: always()
+        run: |
+          {
+            echo '## negative controls (validator effectiveness) — ADVISORY, does not gate'
+            echo
+            echo "selection: run=\`${{ steps.select.outputs.run }}\` — ${{ steps.select.outputs.why }}"
+            echo
+            if [ -f controls.log ]; then
+              echo '```'
+              cat controls.log
+              echo '```'
+            else
+              echo '**The negative-control suite did NOT run** — the selector above deselected it.'
+              echo 'This is a skip, not a pass: nothing here proves the arch validators still fire.'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
   reconcile:
     name: scheduled reconciliation

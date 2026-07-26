@@ -1,4 +1,4 @@
-"""DC-1..DC-6 — the six registry-integrity divergences (ADR-0100).
+"""DC-1, DC-2, DC-3, DC-4, DC-6, DC-7 — the registry-integrity divergences.
 
 Each is a PURE function of (registry, discovered jobs) [+ live contexts for DC-3], so the
 negative-control selftest can inject exactly one defect into a copy and assert the named DC fires.
@@ -112,34 +112,15 @@ def dc4_prose_matches_classification(reg: dict, prose_docs) -> list[Finding]:
     return out
 
 
-def dc5_duplicate_ownership(reg: dict) -> list[Finding]:
-    """Two controls sharing an invariant without an explicit, complete duplicate_group; and
-    duplicate_group referential integrity (>=2 real members, each with a distinct boundary)."""
-    out: list[Finding] = []
-    ids = {c["id"] for c in reg["controls"]}
-    grouped: dict[str, set] = {}
-    for gname, g in (reg.get("duplicate_groups") or {}).items():
-        members = g.get("members") or []
-        boundaries = g.get("distinct_boundaries") or {}
-        if len(members) < 2:
-            out.append(Finding("DC-5", gname, "duplicate_group has fewer than 2 members", True))
-        for m in members:
-            if m not in ids:
-                out.append(Finding("DC-5", gname, f"duplicate_group names unknown control {m!r}", True))
-            if m not in boundaries:
-                out.append(Finding("DC-5", gname, f"member {m!r} has no distinct_boundaries entry", True))
-            grouped.setdefault(m, set()).add(gname)
-    by_inv: dict[str, list[str]] = {}
-    for c in reg["controls"]:
-        by_inv.setdefault(c.get("invariant"), []).append(c["id"])
-    for inv, members in by_inv.items():
-        if len(members) < 2:
-            continue
-        common = set.intersection(*(grouped.get(m, set()) for m in members))
-        if not common:
-            out.append(Finding("DC-5", ",".join(sorted(members)),
-                "controls share a byte-identical invariant but are not in a common duplicate_group", True))
-    return out
+# DC-5 (duplicate ownership) was deleted 2026-07-26 along with the `duplicate_groups` block and the
+# `invariant` field it keyed on. It policed a duplication the registry itself manufactured: of its four
+# groups, two paired a real job with a `LOCAL-*` git-hook row that existed for no other purpose, and
+# the other two paired a job with a sub-row describing a STEP of another job. Delete the sub-rows and
+# the hook rows — neither was ever verified against anything — and every group empties.
+#
+# The duplication that actually mattered here was COMPUTE: the `gate` job re-running, per PR, what the
+# required unit lane already blocks on. No declared-invariant string could have caught that, and it is
+# fixed by deleting the job, not by registering the overlap.
 
 
 def dc6_workflow_hygiene(reg: dict, jobs: list[dict]) -> list[Finding]:
@@ -195,11 +176,10 @@ def dc7_advisory_must_not_hard_fail(reg: dict, jobs: list[dict]) -> list[Finding
 
 
 def run_static(reg: dict, jobs: list[dict], prose_docs) -> list[Finding]:
-    """Static plane: registry <-> workflow implementation (no network). DC-1/2/4/5/6/7."""
+    """Static plane: registry <-> workflow implementation (no network). DC-1/2/4/6/7."""
     return (dc1_renamed_required_context(reg, jobs)
             + dc2_registry_jobs_bijection(reg, jobs)
             + dc4_prose_matches_classification(reg, prose_docs)
-            + dc5_duplicate_ownership(reg)
             + dc6_workflow_hygiene(reg, jobs)
             + dc7_advisory_must_not_hard_fail(reg, jobs))
 

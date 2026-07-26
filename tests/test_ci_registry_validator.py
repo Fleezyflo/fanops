@@ -4,7 +4,7 @@
 # It DELEGATES to tools.ci (selftest.detect + checks.run_static — the same implementations the CLI
 # verbs run) so the pytest gate and the CLI can never report different results on the same commit —
 # the drift tools/arch was bitten by. It proves the DCs DISCRIMINATE (fire on an injected defect)
-# AND — now the Phase-D remediation has landed — that the committed tree is static-clean: DC-1/2/4/5/6
+# AND — now the Phase-D remediation has landed — that the committed tree is static-clean: DC-1/2/4/6/7
 # find no blocking registry<->workflow divergence. (DC-3, deployed-state vs live GitHub, is scheduled
 # and out of this offline gate.)
 from __future__ import annotations
@@ -33,24 +33,29 @@ def test_registry_is_shape_valid():
 def test_static_planes_have_no_blocking_divergence():
     """The tree-clean gate. With the Phase-D remediation landed, the static planes are reconciled:
     the committed registry conforms to shape AND the registry<->workflow static checks
-    (DC-1/2/4/5/6) produce no BLOCKING finding. Runs the SAME code the CLI `static` verb runs
+    (DC-1/2/4/6/7) produce no BLOCKING finding. Runs the SAME code the CLI `static` verb runs
     (shape_findings + checks.run_static), so the pytest gate and the CLI can never disagree. A future
     PR that reintroduces a static divergence — a renamed required context (DC-1), an untracked job or
-    phantom control (DC-2), prose calling a required context advisory (DC-4), a duplicate_group naming
-    an unknown control (DC-5), or a job that drops its timeout / SHA-pin (DC-6) — reddens the required
-    `unit` lane here. No network (DC-3 is deployed-state, scheduled, out of this gate)."""
+    phantom control (DC-2), prose calling a required context advisory (DC-4), a job that drops its
+    timeout / SHA-pin (DC-6), or an advisory job that can hard-fail the workflow (DC-7) — reddens the
+    required `unit` lane here. No network (DC-3 is deployed-state, scheduled, out of this gate)."""
     reg = load_registry()
     findings = shape_findings(reg) + checks.run_static(reg, discover_jobs(), PROSE_DOCS)
     blocking = [f for f in findings if f.blocking and not f.skipped]
-    assert blocking == [], ("static registry<->workflow divergence (DC-1/2/4/5/6):\n  "
+    assert blocking == [], ("static registry<->workflow divergence (DC-1/2/4/6/7):\n  "
                             + "\n  ".join(f.render() for f in blocking))
 
 
 def test_every_blocking_condition_has_a_negative_control():
     """Each DC that can block must be exercised by at least one negative control — a check nobody
     has tried to fool is a check nobody should trust (the tools/arch NC-15 lesson)."""
+    # DC-7 is IN this set now. It always had a negative control (NC-DC7-hardfail) but was never
+    # REQUIRED to have one — so deleting that control would have gone unnoticed by the very test whose
+    # job is to notice. DC-5 is out: the check, the duplicate_groups block it read and NC-DC5-dup were
+    # deleted together 2026-07-26.
+    expected = {"DC-1", "DC-2", "DC-3", "DC-4", "DC-6", "DC-7"}
     covered = {c.expect_dc for c in selftest.CONTROLS}
-    assert {"DC-1", "DC-2", "DC-3", "DC-4", "DC-5", "DC-6"} <= covered, f"uncovered DCs: {sorted({'DC-1','DC-2','DC-3','DC-4','DC-5','DC-6'} - covered)}"
+    assert expected <= covered, f"uncovered DCs: {sorted(expected - covered)}"
 
 
 @pytest.mark.parametrize("control", selftest.CONTROLS, ids=lambda c: c.id)

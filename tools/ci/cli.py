@@ -1,6 +1,6 @@
 """tools.ci CLI — three validation modes with deterministic, actionable diagnostics.
 
-  static     registry <-> workflow implementation (DC-1/2/4/5/6). No network. Local + PR.
+  static     registry <-> workflow implementation (DC-1/2/4/6/7). No network. Local + PR.
   deployed   registry <-> live GitHub protection (DC-3). Explicit read-only probe.
              --require-live => a probe failure FAILS (the designated authenticated job).
              Otherwise a probe failure is an explicit NON-AUTHORITATIVE SKIP — never a false pass.
