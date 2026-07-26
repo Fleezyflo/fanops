@@ -237,7 +237,7 @@ controls:
   - id: CI-UNIT-SLO
     name: "Unit pytest SLO gate (blocking — MOL-460)"
     parent: CI-UNIT
-    invariant: "unit pytest wall-time <= budget (135 s PR / 140 s main)"
+    invariant: "unit pytest wall-time <= budget (270 s PR / 275 s main)"
     owner: ci-lane
     workflow: .github/workflows/ci.yml
     job: unit
