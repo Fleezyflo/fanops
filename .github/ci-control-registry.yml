@@ -1,57 +1,22 @@
 # .github/ci-control-registry.yml
 # =====================================================================================================
-# FanOps CI Control Registry — the intended executable inventory, reconciled against the workflows and
-# against live GitHub branch protection by `tools/ci` (DC-1..DC-7).
+# The intended CI inventory. `tools/ci` reconciles it against .github/workflows/ (DC-1/2/4/6/7, in the
+# required unit lane via tests/test_ci_registry_validator.py) and against live GitHub branch protection
+# (DC-3, in the scheduled `reconcile` job). Shape is enforced by ci-control-registry.schema.json.
 #
-#   THIS registry owns the intended inventory  ->  .github/workflows/ implement  ->  GitHub branch
-#   protection enforces the required set  ->  the DC checks prove the three agree.
+# Authority when planes disagree: executable source & tests > live GitHub config > this file.
+# docs/ENFORCEMENT.md indexes what actually enforces.
 #
-# Authority when they disagree: executable source & tests > live GitHub config > this registry.
-# docs/ENFORCEMENT.md is the index of what actually enforces.
-#
-# HOW TO READ A ROW. Every field below is READ BY A CHECK — that is the entry condition, not a style
-# note. This file carried 27 controls and 16 fields per control until 2026-07-26; exactly three fields
-# drove any check, and 13 of the controls were sub-rows describing individual STEPS of the `unit` and
-# `e2e` jobs — unverified copies of ci.yml that nothing compared against ci.yml. They are gone; the
-# reason each step exists now lives in a comment ON that step, where it cannot drift. Three more were
-# `LOCAL-*` git-hook rows with `workflow: -`, which existed only to be members of duplicate groups the
-# registry itself invented. Those groups, and DC-5 which policed them, are gone with them.
-#
-#   id                         stable identity, never a mutable job display name (DC-1/2/5/6/7 report it)
-#   classification             required | advisory | scheduled  (DC-1, DC-4, DC-7)
-#   workflow + job             the implementing job; DC-2 proves the mapping is a bijection (DC-2, DC-7)
-#   branch_protection_context  the check-run context string (DC-1, DC-4, DC-6)
-#
-# Identity rule: `id` is STABLE. A job's display name may change; the id never does. Renaming a job
-# that backs a required context is caught by DC-1, the anti-silent-detach mechanism.
-#
-# Shape validation is `tools/ci/registry.py` `shape_findings` — ONE validator, PyYAML-only. The
-# draft-07 JSON schema that used to sit beside it was deleted 2026-07-26: `jsonschema` was declared in
-# neither requirements/ nor pyproject.toml and the loader failed open, so it had never once run in CI.
-#
-# No workflow STEP names this file, but the LIVE REQUIRED `unit` lane reads it on every PR via
-# tests/test_ci_registry_validator.py -> tools/ci, so a registry<->workflow divergence reddens a
-# required context. DC-3 (this file vs LIVE protection) runs in the scheduled `reconcile` job.
+# ONE ROW PER JOB — DC-2 enforces the bijection in both directions, so adding a workflow job without a
+# row here reddens the required lane. `id` is STABLE: a job's display name may change, the id never
+# does, and DC-1 catches a required context whose job was renamed out from under it.
 # =====================================================================================================
 version: 1
 status: accepted
 
-# OGD IS CANCELLED (operator decision, 2026-07-22). OGD — Operational Governance Deployment — was the
-# staged rollout that would have added more required contexts to live branch protection one mutation at
-# a time. It will not happen. The required set is FINAL at the single context below, and `intended`
-# equals `current` equals LIVE, so there is no pending expansion and no runbook left to execute.
-#
-# `unit (fast, no toolchain)` is the SOLE required context and the sole routine PR blocker. The
-# real-tooling E2E context was dropped from protection on 2026-07-24: as a required context it
-# auto-greened on every push without running the suite — an unfalsifiable gate. The suite survives as a
-# SCHEDULED lane (`workflow_dispatch` or nightly only), and when it runs it really runs
-# (FANOPS_REQUIRE_E2E=1 fails on skip). Everything else is ADVISORY: it runs, it reports, it does not
-# block. DC-7 keeps advisory jobs `continue-on-error`, and each of them writes a job summary so that
-# "does not block" never means "disappears".
-#
-# `phase: enforced` means THE REQUIRED SET IS FINAL — any current/intended divergence is a failure
-# rather than a planned transition. It does NOT assert that GitHub admin enforcement is on;
-# `enforce_admins` is false and changing it is a separate operator-approved settings change.
+# `phase: enforced` means the required set is FINAL: a current/intended divergence is a failure, not a
+# planned transition. It does NOT assert GitHub admin enforcement — `enforce_admins` is false, and
+# changing it is a separate operator-approved settings change.
 rollout:
   phase: enforced
 current_required_contexts:        # DC-3 requires LIVE == this (blocking)
@@ -91,13 +56,6 @@ controls:
     job: ci-timing
 
   # ===== architecture.yml ===========================================================================
-  # ARCH-GATE (the `gate` job) was deleted 2026-07-26 with the job itself. Everything it could catch —
-  # derived/ drift, blocking policy findings, registry validity — ALSO runs in the required unit lane
-  # via tests/test_arch_governance.py, which runs a strict SUPERSET (it additionally covers regeneration
-  # determinism, generated-artifacts-are-a-pure-function-of-source, rule reachability and field
-  # authority, none of which `tools.arch ci` runs). A second, non-blocking copy of a check that already
-  # blocks buys a job summary and costs a run per PR. Acceptable to drop HERE and nowhere else in this
-  # file, precisely because the superset blocks.
   - id: ARCH-IMPACT
     classification: advisory
     workflow: .github/workflows/architecture.yml

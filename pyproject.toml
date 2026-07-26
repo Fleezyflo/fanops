@@ -11,10 +11,9 @@ dependencies = ["pydantic>=2.7", "pydantic-settings>=2.0", "requests>=2.31", "py
 # governance tooling was one unrelated dev-dependency bump away from being unable to read its own
 # authority. A dependency load-bearing for a verdict must be declared where it is used.
 # jsonschema is DIRECT and LOAD-BEARING, for the same reason PyYAML is: `tools/ci` validates the control
-# registry against .github/ci-control-registry.schema.json, and registry.py imports it at MODULE SCOPE so
-# an absent validator is an ImportError, never a silent pass. It was undeclared until 2026-07-26, which
-# meant the schema had never once executed in CI — inert, with a find_spec fail-open hiding the fact.
-# A dependency load-bearing for a verdict must be declared where it is used.
+# registry against .github/ci-control-registry.schema.json and imports it at MODULE SCOPE, so removing it
+# here does not weaken a check — it breaks the unit lane. A dependency load-bearing for a verdict must be
+# declared where it is used.
 dev = ["pytest>=8.0", "pytest-mock>=3.12", "pytest-timeout>=2.3", "pytest-cov>=5.0", "pytest-xdist>=3.5", "ruff>=0.5", "pytest-recording>=0.13", "vcrpy>=6.0", "PyYAML>=6.0", "jsonschema>=4.0"]
 # Local transcription. Installed into the venv in Task 2. (whisper CLI lands on PATH.)
 transcribe = ["openai-whisper>=20231117"]

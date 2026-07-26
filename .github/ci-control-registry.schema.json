@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://fanops/ci-control-registry.schema.json",
   "title": "FanOps CI Control Registry",
-  "description": "Validation schema for .github/ci-control-registry.yml. ENFORCED: tools/ci/registry.py imports jsonschema at MODULE SCOPE (declared in the `dev` extra, installed by the required unit lane) and validates on every `tools.ci static` and every run of tests/test_ci_registry_validator.py. The previous version of this file never executed once — jsonschema was undeclared and the loader failed open. A validation failure names the exact path and constraint.",
+  "description": "Validation schema for .github/ci-control-registry.yml, enforced by tools/ci/registry.py on every `tools.ci static` and every run of tests/test_ci_registry_validator.py in the required unit lane. A validation failure names the exact path and constraint.",
   "type": "object",
   "additionalProperties": false,
   "required": ["version", "status", "rollout", "current_required_contexts", "intended_required_contexts", "controls"],

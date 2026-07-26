@@ -8,8 +8,6 @@ REPO = Path(__file__).resolve().parents[2]
 REGISTRY = REPO / ".github" / "ci-control-registry.yml"
 SCHEMA = REPO / ".github" / "ci-control-registry.schema.json"
 WORKFLOWS = REPO / ".github" / "workflows"
-# No GEN_VIEW: it named a generated inventory under a docs namespace deleted in 2026-07. Nothing
-# imported the constant; the path had been dangling ever since.
 
 # Hand-maintained docs that may make required/advisory claims about CI contexts (DC-4).
 # Kept small and explicit — the generated inventory is covered by the byte-compare, not by DC-4.

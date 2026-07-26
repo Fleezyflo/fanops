@@ -16,9 +16,9 @@ on:
     branches: [main]
   workflow_dispatch:        # the manual full-E2E trigger (runs the `e2e` job)
   schedule:
-    # The nightly full-E2E proof lane. Since 2026-07-22 the real-tooling suite does not run on
-    # ordinary pushes or pull requests, so this is what stops it rotting unobserved. It blocks
-    # nothing: a red nightly is a signal to look, not a merge gate.
+    # The nightly full-E2E proof lane. The real-tooling suite does not run on ordinary pushes or
+    # pull requests, so this is what stops it rotting unobserved. A red nightly is a signal to look,
+    # not a merge gate.
     - cron: "0 4 * * *"
 
 concurrency:
@@ -108,10 +108,8 @@ jobs:
     # separate F3 off-switch decision). A dedicated clean-venv job so the base packaging contract cannot
     # rot unnoticed. Seconds; base deps only (pydantic/requests/yt-dlp), no toolchain, no lock.
     name: base install (no extras) refuses smart-framing
-    # ADVISORY, and now shaped like it (DC-7). The required set is FINAL at the single `unit`
-    # context (registry `rollout`). Disclosed cost: the unit lane installs [framing], so nothing
-    # else exercises a clean no-extras install or the loud cv2 refusal — this job is the only
-    # signal, and it reports. A signal nothing can gate on must not paint the board red.
+    # ADVISORY (DC-7 requires the flag). The unit lane installs [framing], so nothing else exercises
+    # a clean no-extras install or the loud cv2 refusal.
     continue-on-error: true
     timeout-minutes: 10
     runs-on: ubuntu-latest
@@ -135,11 +133,7 @@ jobs:
           . .venv-base/bin/activate
           python scripts/base_install_smoke.py 2>&1 | tee -a base-install.log
 
-      # `continue-on-error: true` makes a FAILED job report SUCCESS to the check API. That is the
-      # honest shape for an advisory job — but on its own it is a mute button, not a report: until
-      # this step, a failure here produced NO artefact anywhere. `impact` survived the same treatment
-      # only because it happens to tee its verdict to the summary; this job wrote nothing at all.
-      # The INSTALL is teed too, not just the smoke: if `pip install .` is what breaks, that IS the
+      # The INSTALL is teed as well as the smoke: if `pip install .` is what breaks, that IS the
       # packaging regression this job exists to catch, and it must not vanish into a green check.
       - name: Verdict
         if: always()
@@ -152,16 +146,12 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   e2e:
-    # ON-DEMAND + NIGHTLY ONLY (operator decision 2026-07-22; de-theatred 2026-07-24).
-    #
-    # The full real-tooling suite runs on a MANUAL dispatch or the NIGHTLY schedule — never on a
-    # push or pull request. It is NOT a required context: branch protection carries only the unit
-    # lane, and a red nightly is a signal to look, not a merge gate.
-    #
-    # This replaced an auto-green arrangement: the context stayed live in branch protection while a
-    # trigger-gate step made it report green in seconds on every push/PR without running anything.
-    # The job-level `if` is now the whole decision — when the job runs, the suite really runs
-    # (FANOPS_REQUIRE_E2E=1 turns integration-marked skips into failures).
+    # ON-DEMAND + NIGHTLY ONLY. The full real-tooling suite runs on a manual dispatch or the nightly
+    # schedule, never on a push or pull request, and is NOT a required context — a red nightly is a
+    # signal to look, not a merge gate. The job-level `if` is the WHOLE decision: do not reintroduce
+    # an in-job trigger-gate step, which makes the context report green without running anything.
+    # When the job runs, the suite really runs (FANOPS_REQUIRE_E2E=1 turns integration skips into
+    # failures).
     name: real-tooling E2E (must run, not skip)
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
     timeout-minutes: 25

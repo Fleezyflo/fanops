@@ -38,26 +38,13 @@ concurrency:
 permissions:
   contents: read
 
-# The `gate` job (`tools.arch ci` = drift + policy + registries) was DELETED 2026-07-26. Every check
-# it ran also runs in the required `unit` lane via tests/test_arch_governance.py, which runs a strict
-# SUPERSET: test_derived_artifacts_are_not_stale, test_no_blocking_policy_findings and
-# test_registries_are_valid are the same three, plus regeneration determinism,
-# generated-artifacts-are-a-pure-function-of-source, rule reachability and field authority, which
-# `tools.arch ci` never ran at all. So this job was a second, NON-BLOCKING copy of a check that
-# already blocks — a full runner per PR to reprint a verdict the merge already depends on.
-#
-# Cost of the deletion, stated: its job summary. Acceptable HERE and nowhere else in this file,
-# precisely because the superset blocks. That is the opposite of `impact`, `controls` and
-# `base-install`, which are each the ONLY signal for what they check — which is why those three got a
-# job summary rather than a deletion.
 jobs:
   impact:
     name: impact report
     if: github.event_name == 'pull_request'
-    # ADVISORY, and now shaped like it (DC-7). The required set is FINAL at the single `unit`
-    # context (registry `rollout`). Disclosed cost: nothing else detects a breaking blast radius,
-    # so this is the only signal. `--strict` still exits non-zero and still prints every UNDECLARED
-    # reason line, so the verdict lands in the log — it just does not paint the board red.
+    # ADVISORY (DC-7 requires the flag). The ONLY breaking-change detection in the repo: nothing else
+    # sees blast radius, so read the log — `--strict` still exits non-zero and prints every UNDECLARED
+    # reason line, it just does not gate.
     continue-on-error: true
     timeout-minutes: 10
     runs-on: ubuntu-latest
@@ -93,10 +80,8 @@ jobs:
   controls:
     name: negative controls (validator effectiveness)
     if: github.event_name != 'schedule'
-    # ADVISORY, and now shaped like it (DC-7). The required set is FINAL at the single `unit`
-    # context (registry `rollout`). Disclosed cost: the pytest twin is @pytest.mark.slow and the
-    # unit lane deselects slow, so this is the only PR-visible proof the arch validators fire. It
-    # reports that in the log; it does not block, so it must not paint the board red.
+    # ADVISORY (DC-7 requires the flag). The only PR-visible proof the arch validators fire: the
+    # pytest twin is @pytest.mark.slow and the unit lane deselects slow.
     continue-on-error: true
     timeout-minutes: 15
     runs-on: ubuntu-latest
@@ -143,16 +128,9 @@ jobs:
           set -o pipefail
           python -m tools.arch selftest 2>&1 | tee controls.log
 
-      # `continue-on-error: true` makes a FAILED job report SUCCESS to the check API — the honest
-      # shape for an advisory job, but on its own a mute button rather than a report: until this
-      # step a failure here produced NO artefact anywhere.
-      #
-      # It prints the SELECTION VERDICT, not just the log, and that is the load-bearing part. The
-      # real step above is selection-gated, so a missing log is ambiguous between "the suite was
-      # skipped" and "it ran and said nothing" — and this repo has already shipped a GREEN
-      # `negative controls` context whose step never ran. A summary that cannot tell those apart
-      # would rebuild the exact blind spot it exists to close. (It also replaces the old `Why` echo,
-      # which put the same two values somewhere nobody looks.)
+      # MUST print the selection verdict, not just the log. The step above is selection-gated, so a
+      # missing log alone cannot distinguish "deselected" from "ran and said nothing", and this job
+      # reports SUCCESS either way.
       - name: Verdict
         if: always()
         run: |
@@ -233,21 +211,11 @@ jobs:
       - name: Negative controls (the validators still work)
         run: python -m tools.arch selftest
 
-      # DC-3 — registry `current_required_contexts` vs LIVE branch protection. Until now this was
-      # the only check in tools/ci that ran NOWHERE: `static` rides the required unit lane via
-      # tests/test_ci_registry_validator.py, but DC-3 needs the network and an authenticated read,
-      # so it existed solely as a CLI verb a human had to remember to type. Nobody typed it, and on
-      # 2026-07-26 live protection was found carrying THREE contexts the registry did not declare —
-      # all three `continue-on-error`, i.e. required checks that could never fail. A check that only
-      # runs when someone remembers is not a control; this is the job that remembers.
-      #
-      # `--require-live` is correct HERE and only here: this is the designated authenticated job, so
-      # an unreadable probe is a failure, not a shrug. Elsewhere the same verb degrades to an
-      # explicit non-authoritative SKIP rather than a false pass.
-      #
-      # PyYAML is the one dependency tools/ci needs that tools/arch does not (this workflow is
-      # otherwise stdlib-only, see the header). Scoped to this job, no lockfile: it reads the
-      # registry, it does not build the product.
+      # DC-3 — registry `current_required_contexts` vs LIVE branch protection. `--require-live` is
+      # correct HERE and only here: this is the designated authenticated job (it holds the
+      # `administration: read` grant), so an unreadable probe is a FAILURE. Everywhere else the same
+      # verb degrades to an explicit non-authoritative SKIP.
+      # PyYAML because tools/ci reads the registry; this workflow is otherwise stdlib-only (header).
       - name: Deployed-state reconciliation (registry vs live branch protection)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
