@@ -16,14 +16,15 @@ captured.
   route to protected `main`.
 
 ## Unit-lane validators — run inside the required `unit` job; each has a firing negative control
-- **`tools/arch`** — architecture governance. Proof: every negative control fires on an injected
-  defect (the count is printed by the run, never pinned in prose). Wired via
-  `tests/test_arch_governance.py::test_negative_control_is_detected` in the unit lane — which is
-  true as of 2026-07-26 and was NOT before: the test carried `@pytest.mark.slow`, the unit lane
-  deselects `slow`, and the only PR-visible run was an ADVISORY job in `architecture.yml`. So this
-  file claimed a merge-blocking proof that did not exist, while the required lane checked only
-  `no blocking findings` — a check that goes GREENER when a rule silently stops firing. The marker
-  and the advisory duplicate job are both gone; the controls run exactly once, where they block.
+- **`tools/arch`** — architecture governance. The RULES run here: `test_no_blocking_policy_findings`,
+  the `derived/` drift byte-compare, and `test_every_rule_is_reachable` are all in the unit lane.
+  **The proof that those rules FIRE is not** — `test_negative_control_is_detected` carries
+  `@pytest.mark.slow` and the unit lane runs `-m "not integration and not slow"`, so no
+  merge-blocking run of the negative controls exists. This paragraph used to claim otherwise. That
+  matters because the blocking check is "no blocking findings", which goes GREENER when a rule
+  silently stops firing — the IMPL-007 failure this repo already had. The `negative controls` job
+  below is the only PR-visible run; it is listed in `intended_required_contexts` and blocks once the
+  operator flips branch protection (admin token; no PR can). Until then, say advisory and mean it.
   - `tools/arch/policy.py`: ARCH-001, ARCH-002, ARCH-003, ARCH-004, ARCH-006, ARCH-007, ARCH-008,
     ARCH-009, ARCH-010; IMPL-006, IMPL-007, IMPL-009, IMPL-010.
   - `tools/arch/drift.py` (artifacts under `derived/` byte-identical to regeneration) ·

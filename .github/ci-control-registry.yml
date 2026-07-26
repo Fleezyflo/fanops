@@ -53,15 +53,31 @@ generated_view: "NONE — the generated inventory view died with docs/ci/ (2026-
 # current/intended divergence is a failure rather than a planned transition. It does NOT assert that
 # GitHub admin enforcement is on; `enforce_admins` is false and changing it is a separate,
 # operator-approved repository-settings change that no PR performs.
+# REOPENED 2026-07-26 (operator decision) for ONE context, and one only. The block above says the
+# required set is FINAL; that stood while every advisory job merely REPORTED. It does not stand for
+# `negative controls`, because that job is the ONLY thing that proves the arch validators DETECT the
+# defects they name — and it could not block. Meanwhile the controls test carries @pytest.mark.slow,
+# which the unit lane deselects, so no merge-blocking run of it existed anywhere. The required lane
+# blocks on "no blocking findings", a check that goes GREENER when a rule silently stops firing.
+# That is the IMPL-007 failure this repo already had. A validator suite nobody must heed is
+# decoration, and docs/ENFORCEMENT.md's own first rule forbids decoration.
+#
+# NOT the fix that was tried first and reverted: moving the controls INTO the unit lane doubled it
+# (126s -> 240s) and needed the blocking MOL-460 SLO raised to fit — adapting the budget to the work
+# instead of the work to the budget, which defeats the gate. A fast pre-merge lane and a deep
+# validator-effectiveness suite are different tiers and stay in different contexts.
 rollout:
-  phase: enforced                 # transitioning | enforced — see the note above on what this asserts
+  phase: transitioning            # transitioning | enforced — ONE promotion in flight (see above)
 current_required_contexts:        # matches LIVE GitHub, re-read 2026-07-24 (E2E context dropped, gate 1)
   - "unit (fast, no toolchain)"
 
 # Plane 1 — the merge policy the repository INTENDS (ADR-0101, amended 2026-07-22). DC-3 reconciles
-# this against LIVE GitHub. It equals `current` and equals live: the set is final, not a staging post.
+# this against LIVE GitHub. It is AHEAD of `current` by exactly one context: flipping live branch
+# protection needs an admin-scoped token, which no PR has. The operator runs it, then a follow-up
+# moves the context into `current` and sets ARCH-CONTROLS classification: required.
 intended_required_contexts:
   - "unit (fast, no toolchain)"
+  - "negative controls (validator effectiveness)"
 
 # ---------------------------------------------------------------------------------------------------
 # Registered intentional redundancy. A control may share an invariant with another ONLY via a group
@@ -85,12 +101,13 @@ duplicate_groups:
       distinct invariants would leave arch drift/policy/registries with no merge-blocking enforcement
       at all, because the only other implementation is now advisory. The earlier plan to de-dup after
       ARCH-GATE became required died with OGD.
-  # `negative-controls` is GONE — there is no longer a duplicate to group. The two members were
-  # CI-E2E-NEGCONTROLS (scheduled; `@slow`, which the unit lane deselects) and ARCH-CONTROLS
-  # (advisory). Neither could block a merge, so this group's own note ended: "no negative-control
-  # run BLOCKS a merge any more" — while the scheduled member's justification still called itself
-  # "THE merge-blocking proof". Both could not be true. The controls now run exactly once, in the
-  # required unit lane (CI-UNIT-NEGCONTROLS); the advisory copy is deleted.
+  negative-controls:
+    reason: "One selftest.detect implementation invoked via two harnesses (pytest test case + CLI verb)."
+    members: [CI-E2E-NEGCONTROLS, ARCH-CONTROLS]
+    distinct_boundaries:
+      CI-E2E-NEGCONTROLS: "the SCHEDULED path — collected in the `e2e` slow step, which since 2026-07-24 runs only on a manual `workflow_dispatch` or the nightly schedule (job-level `if`; the auto-green trigger-gate and the force-e2e escape are gone). The controls are `@pytest.mark.slow` and the unit lane deselects `slow`, so THEY DO NOT RUN ON ANY PULL REQUEST. It is not a merge-blocking path; ARCH-CONTROLS below is what a PR actually sees, and it is advisory."
+      ARCH-CONTROLS: "standalone CLI selftest visibility + the push-to-main and path-selected dimension; advisory. Since 2026-07-22 this is the ONLY negative-control execution a pull request gets."
+    remediation: "Keep both, for a reason that changed on 2026-07-22: they no longer overlap on a PR at all. ARCH-CONTROLS is the sole PR-visible run (advisory), CI-E2E-NEGCONTROLS the on-demand/nightly one. The former SLICE-NEGCTRL-DEDUP plan is dead — removing either would leave a real gap rather than trimming a duplicate. NOTE the honest consequence: no negative-control run BLOCKS a merge any more."
   ruff-scopes:
     reason: "ruff runs at deliberately-tiered scopes; each protects a different feedback boundary (not duplication)."
     members: [CI-UNIT-LINT, LOCAL-RUFF-PRECOMMIT, LOCAL-CHECK-SH]
@@ -237,7 +254,7 @@ controls:
   - id: CI-UNIT-SLO
     name: "Unit pytest SLO gate (blocking — MOL-460)"
     parent: CI-UNIT
-    invariant: "unit pytest wall-time <= budget (270 s PR / 275 s main)"
+    invariant: "unit pytest wall-time <= budget (135 s PR / 140 s main)"
     owner: ci-lane
     workflow: .github/workflows/ci.yml
     job: unit
@@ -431,20 +448,21 @@ controls:
     evidence_status: verified-this-session
     status: active
 
-  - id: CI-UNIT-NEGCONTROLS
-    name: "negative controls (test_negative_control_is_detected, required unit lane)"
-    parent: CI-UNIT
+  - id: CI-E2E-NEGCONTROLS
+    name: "negative controls (collected via @slow test_negative_control_is_detected)"
+    parent: CI-E2E
     invariant: "every arch policy rule has a negative control that FIRES on an injected defect (validators are not decorative)"
     owner: arch-engine
     workflow: .github/workflows/ci.yml
-    job: unit
-    step: "collected: test_negative_control_is_detected in the Unit tests step"
-    command: "python -m pytest -q -n auto -m \"not integration and not slow\" (collects the parametrized negative controls)"
-    trigger: [pull_request, push]
-    classification: required
-    runtime_class: fast
-    justification: "THE merge-blocking proof that the arch validators discriminate (delegates to selftest.detect). It was @slow, which the unit lane deselects, so it ran on NO pull request — the required lane checked only 'no blocking findings', which goes GREENER when a rule silently stops firing."
-    deletion_consequence: "arch validators can silently become decorative with nothing blocking to detect it — the IMPL-007 failure this repo already had."
+    job: e2e
+    step: "collected: test_negative_control_is_detected (@slow) in the e2e slow step"
+    command: "python -m pytest -q -m slow (collects the parametrized negative controls)"
+    trigger: [workflow_dispatch, schedule]
+    classification: scheduled
+    runtime_class: slow
+    justification: "THE merge-blocking proof that the arch validators discriminate (delegates to selftest.detect)."
+    deletion_consequence: "arch validators could silently become decorative with no blocking detector; ARCH-CONTROLS is only advisory."
+    duplicate_group: negative-controls
     adr: [ADR-0100, ADR-0101]
     failure_evidence: "each parametrized control asserts NEW evidence absent before injection; a non-firing rule fails the case."
     evidence_status: verified-this-session
@@ -520,11 +538,27 @@ controls:
     status: active
     notes: "PROMOTION CANDIDATE — but ONLY after an advisory observation period quantifies its UNKNOWN_IMPACT / false-positive rate (ADR-0101 promotion criterion 2)."
 
-  # ARCH-CONTROLS (architecture.yml job `controls`, advisory) was DELETED. It was the only
-  # negative-control run a pull request got, and it could not block; meanwhile the controls test
-  # carried @pytest.mark.slow, which the unit lane deselects. So nothing merge-blocking ever
-  # proved these validators discriminate. SLICE-NEGCTRL-DEDUP is now CLOSED by moving the run into
-  # the required lane (CI-UNIT-NEGCONTROLS) rather than by keeping two non-blocking copies.
+  - id: ARCH-CONTROLS
+    name: "negative controls (validator effectiveness)"
+    invariant: "the negative-control suite proves every validator discriminates (fires on an injected defect)"
+    owner: arch-engine
+    workflow: .github/workflows/architecture.yml
+    job: controls
+    step: "Negative controls"
+    command: "python -m tools.arch selftest"
+    trigger: [pull_request, push]
+    classification: advisory
+    runtime_class: slow
+    timeout_minutes: 15
+    justification: "standalone selftest visibility + the push-to-main and path-selected dimension; fails OPEN on an unreadable diff (tested)."
+    deletion_consequence: "the standalone selftest surface + push-to-main run disappears; the merge-blocking neg-control path rides CI-E2E-NEGCONTROLS."
+    duplicate_group: negative-controls
+    adr: [ADR-0100]
+    branch_protection_context: null
+    failure_evidence: "tools.arch selftest exits non-zero if any control fails to fire."
+    evidence_status: verified-this-session
+    status: transitional
+    notes: "PROMOTION IN FLIGHT (2026-07-26): listed in intended_required_contexts, NOT yet in current — the live branch-protection flip needs an admin token no PR has. classification stays `advisory` until live says otherwise, so DC-4 keeps measuring prose against reality rather than against intent. This is the ONLY merge-blocking-capable proof that the arch validators detect what they name; CI-E2E-NEGCONTROLS is scheduled-only and its `THE merge-blocking proof` justification was false. SLICE-NEGCTRL-DEDUP stays open and is NOT resolved by folding this into the unit lane — that was tried, doubled the lane 126s->240s, and required raising the blocking MOL-460 SLO to fit."
 
   - id: ARCH-RECONCILE
     name: "scheduled reconciliation"

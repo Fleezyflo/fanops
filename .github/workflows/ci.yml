@@ -75,14 +75,7 @@ jobs:
       - name: Unit pytest SLO gate (blocking — MOL-460)
         if: always() && steps.unit-tests.outcome != 'cancelled'
         env:
-          # 135/140 -> 270/275, paid for by the 24 negative controls moving INTO this lane
-          # (they were @slow, so they ran on no PR at all). Measured, not estimated: CI clocked
-          # 240.39s on the first run that collected them, vs ~126s before. 270 is that number plus
-          # ~12% for runner variance. The WALL-CLOCK cost is smaller than it looks — the advisory
-          # `controls` job this replaces already burned 2m55s in parallel, so PR turnaround goes
-          # ~2m55s -> ~4m22s, roughly +87s, in exchange for the controls actually blocking.
-          # If this grows again, make the controls cheaper — do NOT raise the budget to fit.
-          CI_UNIT_PYTEST_BUDGET_S: ${{ github.event_name == 'pull_request' && '270' || '275' }}
+          CI_UNIT_PYTEST_BUDGET_S: ${{ github.event_name == 'pull_request' && '135' || '140' }}
         run: python scripts/ci_slo_gate.py --log pytest-unit.log
       - name: Upload ci-timing partial (main only)
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'

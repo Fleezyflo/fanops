@@ -98,14 +98,54 @@ jobs:
           BASE: ${{ github.event.pull_request.base.sha }}
         run: python -m tools.arch impact --base "$BASE" --strict > /dev/null
 
-  # The `controls` job (negative controls / validator effectiveness) lived here and is GONE.
-  # It was the ONLY negative-control run a pull request got, and it was ADVISORY — while the
-  # controls test itself carried @pytest.mark.slow, which the unit lane deselects. So the proof
-  # that these validators DISCRIMINATE blocked nothing, and the required lane only checked
-  # "no blocking findings" — a check that goes GREENER when a rule silently stops firing.
-  # The marker is removed; tests/test_arch_governance.py::test_negative_control_is_detected now
-  # runs in the REQUIRED `unit (fast, no toolchain)` lane, invoking the same selftest.detect this
-  # job invoked. Re-adding a standalone advisory copy would restore the duplicate, not coverage.
+  controls:
+    name: negative controls (validator effectiveness)
+    if: github.event_name != 'schedule'
+    timeout-minutes: 15
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+
+      - name: Decide whether the deep gate is required (FAILS OPEN)
+        id: select
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git diff --name-only "$BASE...HEAD" > /tmp/changed.txt || true
+          else
+            git diff --name-only HEAD~1...HEAD > /tmp/changed.txt || true
+          fi
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import pathlib, sys
+          sys.path.insert(0, ".")
+          from tools.arch.select import deep_required
+          try:
+              changed = [l for l in pathlib.Path("/tmp/changed.txt").read_text().splitlines() if l]
+          except Exception:
+              changed = None            # unreadable -> FAIL OPEN
+          run, why = deep_required(changed)
+          print(f"run={'true' if run else 'false'}")
+          print(f"why={why}")
+          PY
+
+      - name: Why
+        run: echo "deep gate = ${{ steps.select.outputs.run }} — ${{ steps.select.outputs.why }}"
+
+      # Each negative control injects one defect and asserts its rule fires on evidence that was
+      # ABSENT before. The authoritative COUNT lives in tools/arch/selftest.py::CONTROLS — a bare
+      # number here would rot (this file's own AR-03 / lines 12-13), so it is deliberately absent.
+      # A MISSED control means the rule it names is DECORATIVE — claimed in the policy set but not
+      # actually firing. That is worse than no rule: it manufactures confidence. (This gate caught
+      # exactly that in its own IMPL-007 on the first run.)
+      - name: Negative controls
+        if: steps.select.outputs.run == 'true'
+        run: python -m tools.arch selftest
 
   reconcile:
     name: scheduled reconciliation
