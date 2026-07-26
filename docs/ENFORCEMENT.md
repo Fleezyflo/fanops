@@ -10,20 +10,10 @@ fixture and the gate caught it (`selftest`), or it is a live product gate whose 
 captured.
 
 ## Merge gates — the only things that block a PR to `main`
-- **Required status context `unit (fast, no toolchain)`** — `.github/workflows/ci.yml`. Live in
-  branch protection today; reconciled by the DC-3 probe below.
+- **Required status context `unit (fast, no toolchain)`** — `.github/workflows/ci.yml`. The sole
+  blocking check on push/PR (live branch protection; reconciled by the DC-3 probe below).
 - **`merge_approved` single-operator ruleset** — the operator's merge *is* the authorization; the only
   route to protected `main`.
-- **Declared required, live flip PENDING** (in `intended_required_contexts`, not yet in
-  `current_required_contexts` — the flip needs an admin-scoped token no PR holds; DC-3 reconciles
-  the gap):
-  - **`impact report`** — the only breaking-change detection there is. Requirable only since
-    `9c5f71e` made it clearable: `--strict` fails on breaking facts the author did not DECLARE, so
-    deletion is allowed and *silent* deletion is not.
-  - **`negative controls (validator effectiveness)`** — the only proof the arch validators DETECT
-    what they name. Its pytest twin is `@pytest.mark.slow` and the unit lane deselects `slow`.
-  - **`base install (no extras) refuses smart-framing`** — the unit lane installs the `[framing]`
-    extra, so it cannot prove a clean base install works or that smart-framing refuses without cv2.
 
 ## Unit-lane validators — run inside the required `unit` job; each has a firing negative control
 - **`tools/arch`** — architecture governance. The RULES run here: `test_no_blocking_policy_findings`,
@@ -33,8 +23,8 @@ captured.
   merge-blocking run of the negative controls exists. This paragraph used to claim otherwise. That
   matters because the blocking check is "no blocking findings", which goes GREENER when a rule
   silently stops firing — the IMPL-007 failure this repo already had. The `negative controls` job
-  below is the only PR-visible run; it is listed in `intended_required_contexts` and blocks once the
-  operator flips branch protection (admin token; no PR can). Until then, say advisory and mean it.
+  below is the only PR-visible run and it is ADVISORY: it reports, it does not gate. That gap is
+  disclosed here, not closed — say advisory and mean it.
   - `tools/arch/policy.py`: ARCH-001, ARCH-002, ARCH-003, ARCH-004, ARCH-006, ARCH-007, ARCH-008,
     ARCH-009, ARCH-010; IMPL-006, IMPL-007, IMPL-009, IMPL-010.
   - `tools/arch/drift.py` (artifacts under `derived/` byte-identical to regeneration) ·
@@ -61,9 +51,21 @@ captured.
 ## Advisory automation — runs and REPORTS; carries `continue-on-error: true` so it cannot paint red
 Advisory now means advisory. Until 2026-07-26 these jobs hard-failed while nothing could block on
 them — red that had to be merged past, which is decoration by this file's own first rule and trains
-merge-past-red on the whole board. Each was sorted by one question: *does a merge-blocking check
-already catch this same failure?* These do; the ones that did not were promoted above. **DC-7 keeps
-it that way** — an advisory job without `continue-on-error` is now a blocking validator finding.
+merge-past-red on the whole board. **DC-7 keeps it that way** — an advisory job without
+`continue-on-error` is now a blocking validator finding. The required set stays FINAL at the single
+`unit` context, so every job here takes the same shape: report, do not gate. The first three are the
+ONLY signal for what they check; that cost is stated on each line rather than hidden.
+- `architecture.yml` `impact` job — `tools.arch impact --strict`, the only breaking-change detection
+  in the repo. It exits non-zero and prints each UNDECLARED reason verbatim; `9c5f71e` made those
+  reasons clearable by pasting the printed line into `approved_breaking_changes` in
+  `governance/baselines.json`. Nothing gates on the verdict — read the log.
+- `architecture.yml` `controls` job — `tools.arch selftest`, the only PR-visible proof the arch
+  validators fire on an injected defect. The pytest twin is `@pytest.mark.slow` and the unit lane
+  deselects `slow`. Nothing gates on it, while the unit lane's own blocking check is "no blocking
+  findings" — a check that goes GREENER when a rule silently stops firing.
+- ci.yml `base-install` job — `scripts/base_install_smoke.py`, the only exercise of a clean
+  no-extras install and the loud cv2 refusal; the unit lane installs `[framing]`, so it is
+  structurally incapable of covering this.
 - `architecture.yml` `gate` job — `tools.arch ci`. Redundant by design: drift/policy/registries also
   run in the required unit lane, which is why the registry files them under the `arch-drift-policy`
   duplicate group and names CI-UNIT-ARCHGOV "the merge-blocking line".

@@ -80,6 +80,11 @@ jobs:
   impact:
     name: impact report
     if: github.event_name == 'pull_request'
+    # ADVISORY, and now shaped like it (DC-7). The required set is FINAL at the single `unit`
+    # context (registry `rollout`). Disclosed cost: nothing else detects a breaking blast radius,
+    # so this is the only signal. `--strict` still exits non-zero and still prints every UNDECLARED
+    # reason line, so the verdict lands in the log — it just does not paint the board red.
+    continue-on-error: true
     timeout-minutes: 10
     runs-on: ubuntu-latest
     steps:
@@ -114,6 +119,11 @@ jobs:
   controls:
     name: negative controls (validator effectiveness)
     if: github.event_name != 'schedule'
+    # ADVISORY, and now shaped like it (DC-7). The required set is FINAL at the single `unit`
+    # context (registry `rollout`). Disclosed cost: the pytest twin is @pytest.mark.slow and the
+    # unit lane deselects slow, so this is the only PR-visible proof the arch validators fire. It
+    # reports that in the log; it does not block, so it must not paint the board red.
+    continue-on-error: true
     timeout-minutes: 15
     runs-on: ubuntu-latest
     steps:
