@@ -91,7 +91,7 @@ from "passed silently" would rebuild the blind spot it exists to close.
 - `architecture.yml` `reconcile` job — the scheduled `derived/` AUTO-REGEN leg (regenerates the
   machine artifacts and FAILS on drift with a reviewable diff; deleting it silently rots `derived/`)
   AND the sole execution of **DC-3** (`tools.ci deployed --require-live`: registry
-  `current_required_contexts` vs LIVE branch protection). DC-3 is the one `tools/ci` check the
+  `required_contexts` vs LIVE branch protection). DC-3 is the one `tools/ci` check the
   required unit lane cannot carry — it needs the network and an authenticated settings read — so
   until 2026-07-26 it ran nowhere at all, and live protection silently carried three contexts the
   registry never declared. Schedule-or-dispatch only: a red there is a signal to look, and no merge
