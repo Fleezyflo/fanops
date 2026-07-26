@@ -6,6 +6,8 @@
              Otherwise a probe failure is an explicit NON-AUTHORITATIVE SKIP — never a false pass.
   reconcile  all three planes together (static + deployed).
   selftest   run the negative controls (each blocking condition fires on an injected defect).
+  regen      rewrite the GENERATED schema from tools/ci/schema.py. The unit lane byte-compares it,
+             so a hand-edited schema is a failure, not a silent divergence.
 
 Exit 0 = clean (or explicitly skipped, non-authoritative); 1 = blocking divergence; 2 = usage.
 """
@@ -13,8 +15,8 @@ from __future__ import annotations
 
 import sys
 
-from . import checks, selftest
-from .common import PROSE_DOCS
+from . import checks, schema, selftest
+from .common import PROSE_DOCS, SCHEMA
 from .live import probe_protection, required_contexts
 from .registry import load_registry, shape_findings
 from .workflows import discover_jobs
@@ -65,6 +67,12 @@ def cmd_selftest() -> int:
     return 0 if ok else 1
 
 
+def cmd_regen() -> int:
+    changed = schema.write()
+    print(f"== regen ==\n  {'rewritten' if changed else 'unchanged'}  {SCHEMA}")
+    return 0
+
+
 def main(argv=None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     require_live = "--require-live" in argv
@@ -78,5 +86,7 @@ def main(argv=None) -> int:
         return cmd_reconcile(require_live)
     if verb == "selftest":
         return cmd_selftest()
-    print(f"unknown verb {verb!r}; use: static | deployed [--require-live] | reconcile | selftest")
+    if verb == "regen":
+        return cmd_regen()
+    print(f"unknown verb {verb!r}; use: static | deployed [--require-live] | reconcile | selftest | regen")
     return 2
