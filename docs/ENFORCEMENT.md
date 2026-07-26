@@ -16,9 +16,14 @@ captured.
   route to protected `main`.
 
 ## Unit-lane validators — run inside the required `unit` job; each has a firing negative control
-- **`tools/arch`** — architecture governance. Proof: `python -m tools.arch selftest` (every control
-  fires; the count is printed by the run, never pinned in prose). Wired via
-  `tests/test_arch_governance.py` in the unit lane.
+- **`tools/arch`** — architecture governance. Proof: every negative control fires on an injected
+  defect (the count is printed by the run, never pinned in prose). Wired via
+  `tests/test_arch_governance.py::test_negative_control_is_detected` in the unit lane — which is
+  true as of 2026-07-26 and was NOT before: the test carried `@pytest.mark.slow`, the unit lane
+  deselects `slow`, and the only PR-visible run was an ADVISORY job in `architecture.yml`. So this
+  file claimed a merge-blocking proof that did not exist, while the required lane checked only
+  `no blocking findings` — a check that goes GREENER when a rule silently stops firing. The marker
+  and the advisory duplicate job are both gone; the controls run exactly once, where they block.
   - `tools/arch/policy.py`: ARCH-001, ARCH-002, ARCH-003, ARCH-004, ARCH-006, ARCH-007, ARCH-008,
     ARCH-009, ARCH-010; IMPL-006, IMPL-007, IMPL-009, IMPL-010.
   - `tools/arch/drift.py` (artifacts under `derived/` byte-identical to regeneration) ·

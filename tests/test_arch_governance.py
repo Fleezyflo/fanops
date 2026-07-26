@@ -200,7 +200,14 @@ def test_selection_fails_open_not_closed():
 
 
 # ── 5. the negative controls — the proof the validators are not decorative ──────────────────
-@pytest.mark.slow
+#
+# NOT `@pytest.mark.slow`. It was, and the unit lane deselects `slow`, so the entire proof that
+# these validators DISCRIMINATE ran on no pull request at all — the registry said so in its own
+# words ("THEY DO NOT RUN ON ANY PULL REQUEST", "no negative-control run BLOCKS a merge any more")
+# while simultaneously calling the scheduled path "THE merge-blocking proof". The blocking lane
+# checked `no blocking findings`, which goes GREENER when a rule silently stops firing. That is
+# precisely the IMPL-007 failure this repo already had: a rule in the policy set, reported in the
+# docs, parsing a number out of prose and detecting nothing. The proof belongs where it blocks.
 @pytest.mark.parametrize("control", selftest.CONTROLS, ids=lambda c: c.id)
 def test_negative_control_is_detected(control):
     """Inject exactly one defect; assert the named rule fires with evidence that was ABSENT before.
