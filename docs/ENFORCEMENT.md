@@ -42,11 +42,18 @@ captured.
 - **`tests/test_governance_tombstone.py`** — pins the governance-prose deletion (see Tombstone below)
   and this file's existence, forever in the required lane.
 
-## On-demand admin probe — operator-run, no workflow invokes it
+## Admin probe — now automated; was operator-run, and the trigger was not honoured
 - **DC-3: `python -m tools.ci deployed --require-live`** — reconciles LIVE branch protection against
-  the registry's `current`/`intended` context lists. Needs an admin-scoped token, so it is not
-  automated. Defined trigger: the operator runs it after ANY branch-protection change. First
-  exercised at cleanup gate 2 (2026-07-25): PASS.
+  the registry's `current`/`intended` context lists. Runs in the `reconcile` job (weekly + on
+  `workflow_dispatch`), which holds the `administration: read` grant the branch-protection GET needs.
+  Until 2026-07-26 this entry read "operator-run, no workflow invokes it… Defined trigger: the
+  operator runs it after ANY branch-protection change." That was a deliberate decision, not an
+  oversight — and it failed the way a human-memory trigger fails. Protection was changed on
+  2026-07-24; the probe was not run; live carried FOUR required contexts against a registry
+  declaring ONE for two days, three of them `continue-on-error` (required checks that could never
+  fail). A control whose trigger is "somebody remembers" is the weakest kind this file admits, so it
+  is now on a schedule. The operator run remains useful immediately after a protection change —
+  it is just no longer the only thing standing between a drift and nobody noticing.
 
 ## Advisory automation — runs and REPORTS; carries `continue-on-error: true` so it cannot paint red
 Advisory now means advisory. Until 2026-07-26 these jobs hard-failed while nothing could block on
