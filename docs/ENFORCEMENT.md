@@ -74,8 +74,13 @@ ONLY signal for what they check; that cost is stated on each line rather than hi
   Linear lookup, not a claim about the diff.
 - ci.yml `ci-timing` job — post-hoc timing telemetry on main; nothing reads its result.
 - `architecture.yml` `reconcile` job — the scheduled `derived/` AUTO-REGEN leg (regenerates the
-  machine artifacts and FAILS on drift with a reviewable diff; deleting it silently rots `derived/`).
-  Schedule-only: a red there is a signal to look, and no merge is waiting on it.
+  machine artifacts and FAILS on drift with a reviewable diff; deleting it silently rots `derived/`)
+  AND the sole execution of **DC-3** (`tools.ci deployed --require-live`: registry
+  `current_required_contexts` vs LIVE branch protection). DC-3 is the one `tools/ci` check the
+  required unit lane cannot carry — it needs the network and an authenticated settings read — so
+  until 2026-07-26 it ran nowhere at all, and live protection silently carried three contexts the
+  registry never declared. Schedule-or-dispatch only: a red there is a signal to look, and no merge
+  is waiting on it.
 - `.github/workflows/nightly.yml` — pip-audit (`continue-on-error: true`) + ASR smoke. Scheduled,
   independent; never touches the e2e job.
 
