@@ -31,6 +31,7 @@ CONTROLS = [
     Control("NC-DC5-dup", "DC-5", "a duplicate_group names an unknown member"),
     Control("NC-DC6-timeout", "DC-6", "a job loses its timeout"),
     Control("NC-DC6-float", "DC-6", "a job uses a floating action tag"),
+    Control("NC-DC7-hardfail", "DC-7", "an advisory job can fail the workflow"),
 ]
 
 
@@ -123,5 +124,25 @@ def detect(ctrl: Control):
                 break
         new = _blocking(checks.dc6_workflow_hygiene(reg, j2), "DC-6") - base
         return bool(new), "; ".join(sorted(new)) or "no new DC-6 float finding"
+
+    if ctrl.id == "NC-DC7-hardfail":
+        # Clean baseline: every advisory job reports (continue-on-error). Then take ONE advisory job
+        # and let it fail the workflow. Building the baseline rather than reading the live tree is
+        # what proves DISCRIMINATION — the live tree is already clean, so a control that merely
+        # asserted "DC-7 fires" would prove nothing about the injected defect.
+        advisory = {(c["workflow"].split("/")[-1], c["job"]) for c in reg["controls"]
+                    if c.get("classification") == "advisory" and c.get("workflow") and c.get("job")
+                    and not c.get("parent")}
+        j2 = copy.deepcopy(jobs)
+        for j in j2:
+            if (j["workflow"], j["job_id"]) in advisory:
+                j["continue_on_error"] = True
+        base = _blocking(checks.dc7_advisory_must_not_hard_fail(reg, j2), "DC-7")
+        for j in j2:
+            if (j["workflow"], j["job_id"]) in advisory:
+                j["continue_on_error"] = False      # inject ONE hard-failing advisory job
+                break
+        new = _blocking(checks.dc7_advisory_must_not_hard_fail(reg, j2), "DC-7") - base
+        return bool(new), "; ".join(sorted(new)) or "no new DC-7 finding"
 
     return False, f"unknown control {ctrl.id}"

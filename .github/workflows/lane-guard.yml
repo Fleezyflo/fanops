@@ -27,6 +27,11 @@ permissions:
 jobs:
   lane-guard:
     name: lane file-ownership + cross-PR collision
+    # ADVISORY, and now shaped like it (DC-7). This job reports on COORDINATION — who else is
+    # touching these files, does the branch map to a lane. That is advice for the author, not a
+    # correctness claim about the diff, and it leans on a best-effort Linear lookup that can be
+    # wrong for reasons having nothing to do with the PR. It reports; it does not paint red.
+    continue-on-error: true
     # Measured runtime ~7-12 s; 10-minute ceiling (matches the sibling stdlib jobs gate/impact) is a
     # generous hang-guard for the git fetch-depth-0 + the best-effort Linear lookup, not a tight bound.
     timeout-minutes: 10

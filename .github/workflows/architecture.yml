@@ -40,6 +40,13 @@ jobs:
   gate:
     name: gate (drift + policy + registries)
     if: github.event_name != 'schedule'
+    # ADVISORY, and now shaped like it (DC-7). Everything this job can catch — derived/ drift,
+    # blocking policy findings, registry validity — ALSO runs in the required unit lane via
+    # tests/test_arch_governance.py, which is why the registry files both under the
+    # `arch-drift-policy` duplicate group and names CI-UNIT-ARCHGOV "the merge-blocking line".
+    # So a red here was never the only signal; it was a second copy of one that already blocks,
+    # and an un-actionable red teaches people to merge past red generally. It reports.
+    continue-on-error: true
     timeout-minutes: 10
     runs-on: ubuntu-latest
     steps:

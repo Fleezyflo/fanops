@@ -159,13 +159,49 @@ def dc6_workflow_hygiene(reg: dict, jobs: list[dict]) -> list[Finding]:
     return out
 
 
+def dc7_advisory_must_not_hard_fail(reg: dict, jobs: list[dict]) -> list[Finding]:
+    """An ADVISORY job that can fail the workflow. Red nobody is able to act on.
+
+    Nothing blocks on an advisory context, so its failure cannot stop a merge — it can only train
+    people to merge past red, and that habit does not stay confined to the advisory board. It is
+    also precisely the decoration docs/ENFORCEMENT.md forbids in its own first paragraph: authority
+    claimed without a mechanism.
+
+    A job gets exactly two honest shapes:
+      required  -> it may fail, and its failure blocks.
+      advisory  -> it reports; `continue-on-error: true` keeps the failure a visible annotation
+                   instead of a red check nobody can clear.
+
+    Why no control caught this before: DC-1/2/5 reconcile NAMES and ownership, DC-3 reconciles the
+    deployed context list, DC-4 reconciles PROSE against classification, DC-6 checks hygiene
+    (timeouts, pinned actions). Every one of them compares a declaration to another declaration.
+    None asked what the job DOES when it fails. This one does."""
+    # Key on (workflow, job) exactly as DC-2's bijection does. Keying on the control id or the
+    # branch-protection context instead SILENTLY SKIPS every control whose id differs from its
+    # job_id — which is most of them, including the two worst offenders. A control that quietly
+    # covers less than it claims is the failure this whole module exists to catch.
+    by_job = {(c["workflow"].split("/")[-1], c["job"]): c
+              for c in reg["controls"] if c.get("workflow") and c.get("job") and not c.get("parent")}
+    out: list[Finding] = []
+    for j in jobs:
+        c = by_job.get((j["workflow"], j["job_id"]))
+        if c is None or c.get("classification") != "advisory" or j.get("continue_on_error"):
+            continue
+        out.append(Finding("DC-7", c["id"],
+            f"job {j['job_id']} ({j['name']!r}, {j['workflow']}) is classified ADVISORY but can "
+            f"FAIL the workflow — a red no one can block on. Either mark the job "
+            f"`continue-on-error: true` so it reports, or make it a required context.", True))
+    return out
+
+
 def run_static(reg: dict, jobs: list[dict], prose_docs) -> list[Finding]:
-    """Static plane: registry <-> workflow implementation (no network). DC-1/2/4/5/6."""
+    """Static plane: registry <-> workflow implementation (no network). DC-1/2/4/5/6/7."""
     return (dc1_renamed_required_context(reg, jobs)
             + dc2_registry_jobs_bijection(reg, jobs)
             + dc4_prose_matches_classification(reg, prose_docs)
             + dc5_duplicate_ownership(reg)
-            + dc6_workflow_hygiene(reg, jobs))
+            + dc6_workflow_hygiene(reg, jobs)
+            + dc7_advisory_must_not_hard_fail(reg, jobs))
 
 
 def run_deployed(reg: dict, live_contexts, live_error: str | None = None) -> list[Finding]:
