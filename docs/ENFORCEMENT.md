@@ -23,7 +23,8 @@ captured.
   merge-blocking run of the negative controls exists. This paragraph used to claim otherwise. That
   matters because the blocking check is "no blocking findings", which goes GREENER when a rule
   silently stops firing — the IMPL-007 failure this repo already had. The `negative controls` job
-  below is the only run a PR gets, and it is advisory.
+  below is the only PR-visible run; it is listed in `intended_required_contexts` and blocks once the
+  operator flips branch protection (admin token; no PR can). Until then, say advisory and mean it.
   - `tools/arch/policy.py`: ARCH-001, ARCH-002, ARCH-003, ARCH-004, ARCH-006, ARCH-007, ARCH-008,
     ARCH-009, ARCH-010; IMPL-006, IMPL-007, IMPL-009, IMPL-010.
   - `tools/arch/drift.py` (artifacts under `derived/` byte-identical to regeneration) ·
