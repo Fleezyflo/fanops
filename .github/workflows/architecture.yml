@@ -51,8 +51,14 @@ jobs:
       # The single check that makes every other one trustworthy: if the committed derived/
       # artifacts differ from regeneration, every claim downstream of them is a claim about a
       # file somebody hand-edited.
+      # The summary is a TEE of this run, not a second one. It used to re-invoke `tools.arch drift`,
+      # which re-ran regeneration + the whole policy set (1.9s measured) purely to reprint text
+      # `ci` had already produced — and `ci` IS drift + registries, so the two could in principle
+      # disagree, leaving a summary that did not describe the run that gated the PR.
       - name: Regenerate + byte-compare + policy + registries
-        run: python -m tools.arch ci
+        run: |
+          set -o pipefail
+          python -m tools.arch ci 2>&1 | tee arch-ci.log
 
       - name: Job summary
         if: always()
@@ -60,7 +66,7 @@ jobs:
           {
             echo "## Architecture gate"
             echo '```'
-            python -m tools.arch drift || true
+            cat arch-ci.log 2>/dev/null || echo "(the gate step produced no output)"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
