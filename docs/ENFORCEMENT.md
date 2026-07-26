@@ -42,11 +42,18 @@ captured.
 - **`tests/test_governance_tombstone.py`** — pins the governance-prose deletion (see Tombstone below)
   and this file's existence, forever in the required lane.
 
-## On-demand admin probe — operator-run, no workflow invokes it
+## Admin probe — now automated; was operator-run, and the trigger was not honoured
 - **DC-3: `python -m tools.ci deployed --require-live`** — reconciles LIVE branch protection against
-  the registry's `current`/`intended` context lists. Needs an admin-scoped token, so it is not
-  automated. Defined trigger: the operator runs it after ANY branch-protection change. First
-  exercised at cleanup gate 2 (2026-07-25): PASS.
+  the registry's `current`/`intended` context lists. Runs in the `reconcile` job (weekly + on
+  `workflow_dispatch`), which holds the `administration: read` grant the branch-protection GET needs.
+  Until 2026-07-26 this entry read "operator-run, no workflow invokes it… Defined trigger: the
+  operator runs it after ANY branch-protection change." That was a deliberate decision, not an
+  oversight — and it failed the way a human-memory trigger fails. Protection was changed on
+  2026-07-24; the probe was not run; live carried FOUR required contexts against a registry
+  declaring ONE for two days, three of them `continue-on-error` (required checks that could never
+  fail). A control whose trigger is "somebody remembers" is the weakest kind this file admits, so it
+  is now on a schedule. The operator run remains useful immediately after a protection change —
+  it is just no longer the only thing standing between a drift and nobody noticing.
 
 ## Advisory automation — runs and REPORTS; carries `continue-on-error: true` so it cannot paint red
 Advisory now means advisory. Until 2026-07-26 these jobs hard-failed while nothing could block on
@@ -74,8 +81,13 @@ ONLY signal for what they check; that cost is stated on each line rather than hi
   Linear lookup, not a claim about the diff.
 - ci.yml `ci-timing` job — post-hoc timing telemetry on main; nothing reads its result.
 - `architecture.yml` `reconcile` job — the scheduled `derived/` AUTO-REGEN leg (regenerates the
-  machine artifacts and FAILS on drift with a reviewable diff; deleting it silently rots `derived/`).
-  Schedule-only: a red there is a signal to look, and no merge is waiting on it.
+  machine artifacts and FAILS on drift with a reviewable diff; deleting it silently rots `derived/`)
+  AND the sole execution of **DC-3** (`tools.ci deployed --require-live`: registry
+  `current_required_contexts` vs LIVE branch protection). DC-3 is the one `tools/ci` check the
+  required unit lane cannot carry — it needs the network and an authenticated settings read — so
+  until 2026-07-26 it ran nowhere at all, and live protection silently carried three contexts the
+  registry never declared. Schedule-or-dispatch only: a red there is a signal to look, and no merge
+  is waiting on it.
 - `.github/workflows/nightly.yml` — pip-audit (`continue-on-error: true`) + ASR smoke. Scheduled,
   independent; never touches the e2e job.
 
