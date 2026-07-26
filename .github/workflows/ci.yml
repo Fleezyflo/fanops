@@ -205,6 +205,10 @@ jobs:
     name: ci-timing artifact (main only)
     if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.unit.result != 'cancelled' && needs.e2e.result != 'cancelled'
     needs: [unit, e2e]
+    # ADVISORY, and now shaped like it (DC-7). This job collates timing telemetry after the fact;
+    # nothing reads its result and no merge waits on it. A failed artifact upload must not paint
+    # main red.
+    continue-on-error: true
     timeout-minutes: 10
     runs-on: ubuntu-latest
     steps:

@@ -53,31 +53,59 @@ generated_view: "NONE — the generated inventory view died with docs/ci/ (2026-
 # current/intended divergence is a failure rather than a planned transition. It does NOT assert that
 # GitHub admin enforcement is on; `enforce_admins` is false and changing it is a separate,
 # operator-approved repository-settings change that no PR performs.
-# REOPENED 2026-07-26 (operator decision) for ONE context, and one only. The block above says the
-# required set is FINAL; that stood while every advisory job merely REPORTED. It does not stand for
-# `negative controls`, because that job is the ONLY thing that proves the arch validators DETECT the
-# defects they name — and it could not block. Meanwhile the controls test carries @pytest.mark.slow,
-# which the unit lane deselects, so no merge-blocking run of it existed anywhere. The required lane
-# blocks on "no blocking findings", a check that goes GREENER when a rule silently stops firing.
-# That is the IMPL-007 failure this repo already had. A validator suite nobody must heed is
-# decoration, and docs/ENFORCEMENT.md's own first rule forbids decoration.
+# REOPENED 2026-07-26 (operator decision, stated twice: "something we merge past is not
+# acceptable"). The block above closed the required set while assuming advisory jobs merely REPORT.
+# They do not — SIX of them could FAIL the workflow while nothing could block on them (the new DC-7
+# names each one). A job that reddens a board no one can gate on does not inform anybody; it teaches
+# that red is survivable, and that lesson does not stay inside the advisory board.
 #
-# NOT the fix that was tried first and reverted: moving the controls INTO the unit lane doubled it
-# (126s -> 240s) and needed the blocking MOL-460 SLO raised to fit — adapting the budget to the work
-# instead of the work to the budget, which defeats the gate. A fast pre-merge lane and a deep
-# validator-effectiveness suite are different tiers and stay in different contexts.
+# Every offender was then sorted by ONE question — does a merge-blocking check already catch this
+# same failure?
+#
+#   YES -> advisory means advisory. `continue-on-error: true`, it reports:
+#     ARCH-GATE    drift/policy/registries also run in the required unit lane; this file already
+#                  files them under the `arch-drift-policy` duplicate group and names
+#                  CI-UNIT-ARCHGOV "the merge-blocking line". The red was a second copy.
+#     CI-TIMING    post-hoc telemetry on main; nothing reads its result.
+#     LANE-GUARD   coordination advice resting on a best-effort Linear lookup, not a claim about
+#                  the diff.
+#
+#   NO -> the failure is real and invisible everywhere else, so it must block:
+#     ARCH-IMPACT      the only breaking-change detection there is. Safe to require ONLY because
+#                      9c5f71e made it clearable: --strict now fails on breaking facts the author
+#                      did not DECLARE, so deletion is allowed and silent deletion is not. Before
+#                      that, requiring it would have hard-blocked every deliberate removal forever.
+#     ARCH-CONTROLS    the only proof the arch validators DETECT what they name. Its pytest twin is
+#                      @pytest.mark.slow and the unit lane deselects slow, so no merge-blocking run
+#                      exists anywhere. Meanwhile the unit lane blocks on "no blocking findings" —
+#                      which goes GREENER when a rule silently stops firing. That is IMPL-007, which
+#                      this repo already shipped once.
+#     CI-BASEINSTALL   the unit lane installs the [framing] extra, so it is structurally incapable
+#                      of proving a clean base install works or that smart-framing refuses loudly
+#                      without cv2. Nothing else covers it.
+#
+# NOT the fix that was tried first and reverted: moving the controls INTO the unit lane
+# doubled it (126s -> 240.39s measured) and needed the blocking MOL-460 SLO raised to fit —
+# adapting the budget to the work instead of the work to the budget, which defeats the gate.
+# A fast pre-merge lane and a deep validator-effectiveness suite are different tiers and stay
+# in different contexts.
+#
+# What is NOT reopened: OGD stays cancelled. This is not a staged rollout, it is one sorting of the
+# jobs that already existed, by whether their failure is already caught.
 rollout:
-  phase: transitioning            # transitioning | enforced — ONE promotion in flight (see above)
+  phase: transitioning            # transitioning | enforced — three promotions in flight (above)
 current_required_contexts:        # matches LIVE GitHub, re-read 2026-07-24 (E2E context dropped, gate 1)
   - "unit (fast, no toolchain)"
 
 # Plane 1 — the merge policy the repository INTENDS (ADR-0101, amended 2026-07-22). DC-3 reconciles
-# this against LIVE GitHub. It is AHEAD of `current` by exactly one context: flipping live branch
-# protection needs an admin-scoped token, which no PR has. The operator runs it, then a follow-up
-# moves the context into `current` and sets ARCH-CONTROLS classification: required.
+# this against LIVE GitHub. It is AHEAD of `current` by three contexts: flipping live branch
+# protection needs an admin-scoped token, which no PR has. The operator flips it, then a follow-up
+# moves them into `current`.
 intended_required_contexts:
   - "unit (fast, no toolchain)"
+  - "impact report"
   - "negative controls (validator effectiveness)"
+  - "base install (no extras) refuses smart-framing"
 
 # ---------------------------------------------------------------------------------------------------
 # Registered intentional redundancy. A control may share an invariant with another ONLY via a group
@@ -341,7 +369,7 @@ controls:
     step: "Base-install smoke — cv2 absent, fanops+CLI import, representative op, render prereq refuses"
     command: "python scripts/base_install_smoke.py"
     trigger: [pull_request, push]
-    classification: advisory
+    classification: required
     runtime_class: fast
     timeout_minutes: 10
     dependencies: []
@@ -525,14 +553,14 @@ controls:
     step: "Fail on BREAKING / UNKNOWN_IMPACT"
     command: 'python -m tools.arch impact --base "<base.sha>" --strict'
     trigger: [pull_request]
-    classification: advisory
+    classification: required
     runtime_class: fast
     timeout_minutes: 10
     justification: "the ONLY detector of an uncomputable / breaking architectural blast radius on a PR."
     deletion_consequence: "UNKNOWN_IMPACT / BREAKING diffs lose their only detector — UNIQUE, no blocking backup."
     duplicate_group: null
     adr: [ADR-0101]
-    branch_protection_context: null
+    branch_protection_context: "impact report"
     failure_evidence: "impact --strict exits non-zero on BREAKING/UNKNOWN_IMPACT."
     evidence_status: verified-this-session
     status: active
@@ -547,14 +575,14 @@ controls:
     step: "Negative controls"
     command: "python -m tools.arch selftest"
     trigger: [pull_request, push]
-    classification: advisory
+    classification: required
     runtime_class: slow
     timeout_minutes: 15
     justification: "standalone selftest visibility + the push-to-main and path-selected dimension; fails OPEN on an unreadable diff (tested)."
     deletion_consequence: "the standalone selftest surface + push-to-main run disappears; the merge-blocking neg-control path rides CI-E2E-NEGCONTROLS."
     duplicate_group: negative-controls
     adr: [ADR-0100]
-    branch_protection_context: null
+    branch_protection_context: "negative controls (validator effectiveness)"
     failure_evidence: "tools.arch selftest exits non-zero if any control fails to fire."
     evidence_status: verified-this-session
     status: transitional

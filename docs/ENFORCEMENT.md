@@ -10,10 +10,20 @@ fixture and the gate caught it (`selftest`), or it is a live product gate whose 
 captured.
 
 ## Merge gates — the only things that block a PR to `main`
-- **Required status context `unit (fast, no toolchain)`** — `.github/workflows/ci.yml`. The sole
-  blocking check on push/PR (live branch protection; reconciled by the DC-3 probe below).
+- **Required status context `unit (fast, no toolchain)`** — `.github/workflows/ci.yml`. Live in
+  branch protection today; reconciled by the DC-3 probe below.
 - **`merge_approved` single-operator ruleset** — the operator's merge *is* the authorization; the only
   route to protected `main`.
+- **Declared required, live flip PENDING** (in `intended_required_contexts`, not yet in
+  `current_required_contexts` — the flip needs an admin-scoped token no PR holds; DC-3 reconciles
+  the gap):
+  - **`impact report`** — the only breaking-change detection there is. Requirable only since
+    `9c5f71e` made it clearable: `--strict` fails on breaking facts the author did not DECLARE, so
+    deletion is allowed and *silent* deletion is not.
+  - **`negative controls (validator effectiveness)`** — the only proof the arch validators DETECT
+    what they name. Its pytest twin is `@pytest.mark.slow` and the unit lane deselects `slow`.
+  - **`base install (no extras) refuses smart-framing`** — the unit lane installs the `[framing]`
+    extra, so it cannot prove a clean base install works or that smart-framing refuses without cv2.
 
 ## Unit-lane validators — run inside the required `unit` job; each has a firing negative control
 - **`tools/arch`** — architecture governance. The RULES run here: `test_no_blocking_policy_findings`,
@@ -31,8 +41,11 @@ captured.
     `tools/arch/registries.py` (registry validity / unknown-growth).
 - **`tools/ci`** — CI-registry ↔ workflow reconciliation. Proof: `python -m tools.ci selftest`. Wired
   via `tests/test_ci_registry_validator.py` in the unit lane.
-  - `tools/ci/checks.py`: DC-1, DC-2, DC-4, DC-5, DC-6, measured against
-    `.github/ci-control-registry.yml`.
+  - `tools/ci/checks.py`: DC-1, DC-2, DC-4, DC-5, DC-6, DC-7, measured against
+    `.github/ci-control-registry.yml`. **DC-7** is the one that catches the failure below: an
+    advisory job that can nonetheless FAIL the workflow. Its five siblings all compare a
+    declaration to another declaration; none asked what a job DOES when it fails, which is why six
+    jobs sat in that state unnoticed.
 - **`ruff check .`** (F+E), **`scripts/scan-secrets.sh`** (PR-diff secret scan),
   **`scripts/check-locks.sh`** (lockfile drift), **`scripts/ci_slo_gate.py`** (unit-suite SLO,
   blocking) — all steps of the `unit` job.
@@ -45,14 +58,22 @@ captured.
   automated. Defined trigger: the operator runs it after ANY branch-protection change. First
   exercised at cleanup gate 2 (2026-07-25): PASS.
 
-## Advisory automation — runs and reports, does NOT block a PR (keep; real work, just not a gate)
-- `.github/workflows/architecture.yml` — `tools.arch ci`/`impact` + the `derived/` AUTO-REGEN
-  reconcile leg (regenerates the machine artifacts and FAILS on drift with a reviewable diff;
-  deleting it silently rots `derived/`).
+## Advisory automation — runs and REPORTS; carries `continue-on-error: true` so it cannot paint red
+Advisory now means advisory. Until 2026-07-26 these jobs hard-failed while nothing could block on
+them — red that had to be merged past, which is decoration by this file's own first rule and trains
+merge-past-red on the whole board. Each was sorted by one question: *does a merge-blocking check
+already catch this same failure?* These do; the ones that did not were promoted above. **DC-7 keeps
+it that way** — an advisory job without `continue-on-error` is now a blocking validator finding.
+- `architecture.yml` `gate` job — `tools.arch ci`. Redundant by design: drift/policy/registries also
+  run in the required unit lane, which is why the registry files them under the `arch-drift-policy`
+  duplicate group and names CI-UNIT-ARCHGOV "the merge-blocking line".
 - `.github/workflows/lane-guard.yml` — `scripts/lane_guard.py` (file-ownership) +
-  `scripts/pr_collision_guard.py` (cross-PR collision).
-- ci.yml `base-install` job — clean-venv packaging smoke (`scripts/base_install_smoke.py`): base
-  install must import fanops + CLI and REFUSE smart-framing loudly without cv2.
+  `scripts/pr_collision_guard.py` (cross-PR collision). Coordination advice resting on a best-effort
+  Linear lookup, not a claim about the diff.
+- ci.yml `ci-timing` job — post-hoc timing telemetry on main; nothing reads its result.
+- `architecture.yml` `reconcile` job — the scheduled `derived/` AUTO-REGEN leg (regenerates the
+  machine artifacts and FAILS on drift with a reviewable diff; deleting it silently rots `derived/`).
+  Schedule-only: a red there is a signal to look, and no merge is waiting on it.
 - `.github/workflows/nightly.yml` — pip-audit (`continue-on-error: true`) + ASR smoke. Scheduled,
   independent; never touches the e2e job.
 
