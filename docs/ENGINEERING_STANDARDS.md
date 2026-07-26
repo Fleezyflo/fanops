@@ -210,7 +210,7 @@ Owned by real mechanisms:
 ## 12 · CI expectations — **[REFERENCE]**
 
 **Owned by the registry and the validators. This document restates no control row.**
-- [`.github/ci-control-registry.yml`](../.github/ci-control-registry.yml) — the intended executable inventory (the single owner of control rows), reconciled against the workflows by `tools/ci` (DC-1..DC-6) in the required unit lane.
+- [`.github/ci-control-registry.yml`](../.github/ci-control-registry.yml) — the intended executable inventory (the single owner of control rows), reconciled against the workflows by `tools/ci` (DC-1/2/4/6/7) in the required unit lane.
 - [`docs/ENFORCEMENT.md`](ENFORCEMENT.md) — what actually blocks a merge, and what merely runs.
 
 **What an author needs to know:** your PR is gated by the **live** required set — `unit (fast, no toolchain)` only. Everything else runs and reports (advisory), or runs on schedule/dispatch. Do not add, rename, or promote a check without updating the registry in the same PR — the reconciliation validators go red on drift.

@@ -37,47 +37,19 @@ concurrency:
 permissions:
   contents: read
 
+# The `gate` job (`tools.arch ci` = drift + policy + registries) was DELETED 2026-07-26. Every check
+# it ran also runs in the required `unit` lane via tests/test_arch_governance.py, which runs a strict
+# SUPERSET: test_derived_artifacts_are_not_stale, test_no_blocking_policy_findings and
+# test_registries_are_valid are the same three, plus regeneration determinism,
+# generated-artifacts-are-a-pure-function-of-source, rule reachability and field authority, which
+# `tools.arch ci` never ran at all. So this job was a second, NON-BLOCKING copy of a check that
+# already blocks — a full runner per PR to reprint a verdict the merge already depends on.
+#
+# Cost of the deletion, stated: its job summary. Acceptable HERE and nowhere else in this file,
+# precisely because the superset blocks. That is the opposite of `impact`, `controls` and
+# `base-install`, which are each the ONLY signal for what they check — which is why those three got a
+# job summary rather than a deletion.
 jobs:
-  gate:
-    name: gate (drift + policy + registries)
-    if: github.event_name != 'schedule'
-    # ADVISORY, and now shaped like it (DC-7). Everything this job can catch — derived/ drift,
-    # blocking policy findings, registry validity — ALSO runs in the required unit lane via
-    # tests/test_arch_governance.py, which is why the registry files both under the
-    # `arch-drift-policy` duplicate group and names CI-UNIT-ARCHGOV "the merge-blocking line".
-    # So a red here was never the only signal; it was a second copy of one that already blocks,
-    # and an un-actionable red teaches people to merge past red generally. It reports.
-    continue-on-error: true
-    timeout-minutes: 10
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
-        with:
-          python-version: "3.12"
-
-      # The single check that makes every other one trustworthy: if the committed derived/
-      # artifacts differ from regeneration, every claim downstream of them is a claim about a
-      # file somebody hand-edited.
-      # The summary is a TEE of this run, not a second one. It used to re-invoke `tools.arch drift`,
-      # which re-ran regeneration + the whole policy set (1.9s measured) purely to reprint text
-      # `ci` had already produced — and `ci` IS drift + registries, so the two could in principle
-      # disagree, leaving a summary that did not describe the run that gated the PR.
-      - name: Regenerate + byte-compare + policy + registries
-        run: |
-          set -o pipefail
-          python -m tools.arch ci 2>&1 | tee arch-ci.log
-
-      - name: Job summary
-        if: always()
-        run: |
-          {
-            echo "## Architecture gate"
-            echo '```'
-            cat arch-ci.log 2>/dev/null || echo "(the gate step produced no output)"
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-
   impact:
     name: impact report
     if: github.event_name == 'pull_request'

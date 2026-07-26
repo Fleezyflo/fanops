@@ -31,11 +31,14 @@ captured.
     `tools/arch/registries.py` (registry validity / unknown-growth).
 - **`tools/ci`** — CI-registry ↔ workflow reconciliation. Proof: `python -m tools.ci selftest`. Wired
   via `tests/test_ci_registry_validator.py` in the unit lane.
-  - `tools/ci/checks.py`: DC-1, DC-2, DC-4, DC-5, DC-6, DC-7, measured against
+  - `tools/ci/checks.py`: DC-1, DC-2, DC-4, DC-6, DC-7, measured against
     `.github/ci-control-registry.yml`. **DC-7** is the one that catches the failure below: an
-    advisory job that can nonetheless FAIL the workflow. Its five siblings all compare a
-    declaration to another declaration; none asked what a job DOES when it fails, which is why six
-    jobs sat in that state unnoticed.
+    advisory job that can nonetheless FAIL the workflow. Its siblings all compare a declaration to
+    another declaration; none asked what a job DOES when it fails, which is why six jobs sat in that
+    state unnoticed. **DC-5 was deleted 2026-07-26** with the `duplicate_groups` block it policed:
+    every group paired a real job either with a `LOCAL-*` git-hook row that existed for no other
+    purpose, or with a sub-row describing a STEP of another job. The registry manufactured the
+    duplication the check then found.
 - **`ruff check .`** (F+E), **`scripts/scan-secrets.sh`** (PR-diff secret scan),
   **`scripts/check-locks.sh`** (lockfile drift), **`scripts/ci_slo_gate.py`** (unit-suite SLO,
   blocking) — all steps of the `unit` job.
@@ -81,9 +84,6 @@ from "passed silently" would rebuild the blind spot it exists to close.
 - ci.yml `base-install` job — `scripts/base_install_smoke.py`, the only exercise of a clean
   no-extras install and the loud cv2 refusal; the unit lane installs `[framing]`, so it is
   structurally incapable of covering this.
-- `architecture.yml` `gate` job — `tools.arch ci`. Redundant by design: drift/policy/registries also
-  run in the required unit lane, which is why the registry files them under the `arch-drift-policy`
-  duplicate group and names CI-UNIT-ARCHGOV "the merge-blocking line".
 - `.github/workflows/lane-guard.yml` — `scripts/lane_guard.py` (file-ownership) +
   `scripts/pr_collision_guard.py` (cross-PR collision). Coordination advice resting on a best-effort
   Linear lookup, not a claim about the diff.

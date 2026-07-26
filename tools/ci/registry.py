@@ -25,19 +25,21 @@ import yaml
 
 from .common import REGISTRY, Finding
 
-_REQUIRED_CONTROL_FIELDS = ("id", "name", "invariant", "owner", "classification", "trigger",
-                            "justification", "deletion_consequence", "adr", "failure_evidence",
-                            "status")
-# The CLOSED set — `additionalProperties: false`, which the schema asserted and CI never ran. A
-# field not named here is a typo or a leftover, never an extension. Widening it must be a deliberate
-# edit; that is the point, because an unread field is exactly what accumulates silently otherwise.
-_ALLOWED_CONTROL_FIELDS = frozenset(_REQUIRED_CONTROL_FIELDS) | {
-    "workflow", "job", "parent", "step", "command", "runtime_class", "timeout_minutes",
-    "concurrency", "dependencies", "artifacts", "consumers", "branch_protection_context",
-    "duplicate_group", "evidence_status", "notes",
-}
-_CLASSES = {"required", "advisory", "scheduled", "local"}
-_STATUSES = {"active", "transitional", "deprecated", "dormant"}
+_REQUIRED_CONTROL_FIELDS = ("id", "classification", "workflow", "job")
+# The CLOSED set — `additionalProperties: false`, which the schema asserted and CI never ran. A field
+# not named here is a typo or a leftover, never an extension. Widening it must be a deliberate edit;
+# that is the point, because an unread field is exactly what accumulates silently otherwise.
+#
+# ENTRY CONDITION: a field belongs here only if a check READS it. The registry carried 16 fields per
+# control until 2026-07-26 and exactly three drove any check. `timeout_minutes` and `concurrency` were
+# registry copies of values DC-6 reads from the WORKFLOW — pure drift-bait. `failure_evidence` claimed
+# each control had a proving negative control while nothing verified the claim (the real mechanism is
+# tools/ci/selftest.py::CONTROLS + test_every_blocking_condition_has_a_negative_control). `adr` was
+# mandatory and pointed at documents deleted with the governance-prose layer. `status` was dropped as
+# a constant: its one non-`active` value marked a de-duplication this file's own duplicate_groups
+# block declared dead, and a column with one value is not data.
+_ALLOWED_CONTROL_FIELDS = frozenset(_REQUIRED_CONTROL_FIELDS) | {"branch_protection_context"}
+_CLASSES = {"required", "advisory", "scheduled"}
 # STABLE identity — never a mutable job display name.
 _ID_RE = re.compile(r"^[A-Z][A-Z0-9-]+$")
 
@@ -71,8 +73,6 @@ def shape_findings(reg: dict) -> list[Finding]:
         seen.add(cid)
         if c.get("classification") not in _CLASSES:
             out.append(Finding("SCHEMA", cid, f"classification {c.get('classification')!r} invalid", True))
-        if c.get("status") not in _STATUSES:
-            out.append(Finding("SCHEMA", cid, f"status {c.get('status')!r} invalid", True))
-        if c.get("classification") == "required" and not c.get("parent") and not c.get("branch_protection_context"):
+        if c.get("classification") == "required" and not c.get("branch_protection_context"):
             out.append(Finding("SCHEMA", cid, "required top-level control has no branch_protection_context", True))
     return out

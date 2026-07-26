@@ -54,6 +54,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install --require-hashes -r requirements/ci-unit.txt
           pip install -e . --no-deps
+      # Never fails BY DESIGN, and keep it that way: without it the measured toolchain state
+      # disappears from unit-lane logs and toolchain-presence debugging falls back to inferring
+      # from YAML. That is why a step that can't go red still earns its seconds.
       - name: CI env probe (diagnostic — measures ffmpeg/cv2, never fails)
         run: python scripts/ci_env_probe.py
       - name: Lint (ruff — pyflakes F + pycodestyle E, the house ruleset in pyproject)
@@ -72,6 +75,8 @@ jobs:
         run: |
           python scripts/ci_timing_report.py --step unit --log pytest-unit.log \
             --sha "${{ github.sha }}" --xdist --json-out ci-timing.partial.json
+      # Blocking on PURPOSE: without a gate the unit suite slows without bound and the
+      # fast-feedback contract erodes silently — no single PR is ever the one that broke it.
       - name: Unit pytest SLO gate (blocking — MOL-460)
         if: always() && steps.unit-tests.outcome != 'cancelled'
         env:
@@ -84,6 +89,8 @@ jobs:
           name: ci-timing-part-unit
           path: ci-timing.partial.json
           if-no-files-found: ignore
+      # Proves the e2e must-run guarantee is real. Delete it and that guarantee becomes
+      # unprovable: a silently-skipping e2e suite would report green and nothing would notice.
       - name: Verify FANOPS_REQUIRE_E2E skip→fail hook (must fail, not skip)
         env:
           FANOPS_REQUIRE_E2E: "1"
@@ -193,9 +200,13 @@ jobs:
       - name: Pre-fetch whisper 'tiny' (so the E2E never needs a network fetch mid-test)
         run: |
           python -c "import whisper; whisper.load_model('tiny')"
+      # A preflight, not a duplicate: without it a missing binary surfaces as a confusing deep
+      # failure inside a render instead of an obvious one here.
       - name: Verify toolchain on PATH
         run: |
           for b in ffmpeg ffprobe whisper espeak; do command -v "$b" || { echo "MISSING: $b"; exit 1; }; done
+      # The pipeline's only real-tooling proof. Without it a mock can mask a broken render —
+      # which is precisely why the skip→fail hook above exists to keep this honest.
       - name: Integration suite — E2E MUST run (FANOPS_REQUIRE_E2E=1 fails on skip)
         id: e2e-integration
         env:
@@ -212,6 +223,10 @@ jobs:
         run: |
           python scripts/ci_timing_report.py --step e2e_integration --log pytest-e2e-integration.log \
             --sha "${{ github.sha }}" --json-out ci-timing.partial.json
+      # Two things live here: the cross-cutting closed-loop regressions, AND
+      # test_negative_control_is_detected — the only BLOCKING-path run of the arch negative
+      # controls. Drop this step and the arch validators can go decorative with no blocking
+      # detector at all; ARCH-CONTROLS is advisory and cannot cover it.
       - name: Slow cross-face proofs (hermetic — no real toolchain required)
         id: e2e-slow
         env:

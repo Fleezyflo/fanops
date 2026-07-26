@@ -28,7 +28,6 @@ CONTROLS = [
     Control("NC-DC2-unknown", "DC-2", "drop a control so its job becomes unregistered"),
     Control("NC-DC3-drift", "DC-3", "live required set diverges from declared current"),
     Control("NC-DC4-prose", "DC-4", "a doc calls a required context advisory"),
-    Control("NC-DC5-dup", "DC-5", "a duplicate_group names an unknown member"),
     Control("NC-DC6-timeout", "DC-6", "a job loses its timeout"),
     Control("NC-DC6-float", "DC-6", "a job uses a floating action tag"),
     Control("NC-DC7-hardfail", "DC-7", "an advisory job can fail the workflow"),
@@ -94,15 +93,6 @@ def detect(ctrl: Control):
             after = checks.dc4_prose_matches_classification(reg, [doc])
         new = _blocking(after) - _blocking(before)
         return bool(new), "; ".join(sorted(new)) or "no new DC-4 finding"
-
-    if ctrl.id == "NC-DC5-dup":
-        before = checks.dc5_duplicate_ownership(reg)
-        r2 = copy.deepcopy(reg)
-        r2.setdefault("duplicate_groups", {})["bogus"] = {
-            "reason": "injected", "members": ["CI-UNIT", "DOES-NOT-EXIST"],
-            "distinct_boundaries": {"CI-UNIT": "x", "DOES-NOT-EXIST": "x"}}
-        new = _blocking(checks.dc5_duplicate_ownership(r2)) - _blocking(before)
-        return bool(new), "; ".join(sorted(new)) or "no new DC-5 finding"
 
     if ctrl.id == "NC-DC6-timeout":
         j2 = copy.deepcopy(jobs)
