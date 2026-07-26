@@ -84,6 +84,12 @@ generated_view: "NONE — the generated inventory view died with docs/ci/ (2026-
 #                      of proving a clean base install works or that smart-framing refuses loudly
 #                      without cv2. Nothing else covers it.
 #
+# NOT the fix that was tried first and reverted: moving the controls INTO the unit lane
+# doubled it (126s -> 240.39s measured) and needed the blocking MOL-460 SLO raised to fit —
+# adapting the budget to the work instead of the work to the budget, which defeats the gate.
+# A fast pre-merge lane and a deep validator-effectiveness suite are different tiers and stay
+# in different contexts.
+#
 # What is NOT reopened: OGD stays cancelled. This is not a staged rollout, it is one sorting of the
 # jobs that already existed, by whether their failure is already caught.
 rollout:
@@ -580,7 +586,7 @@ controls:
     failure_evidence: "tools.arch selftest exits non-zero if any control fails to fire."
     evidence_status: verified-this-session
     status: transitional
-    notes: "SLICE-NEGCTRL-DEDUP (6.3): on an arch-relevant PR this runs the SAME selftest.detect as CI-E2E-NEGCONTROLS. Reduce to a lightweight reachability assertion; keep the full run in exactly one authoritative place."
+    notes: "PROMOTION IN FLIGHT (2026-07-26): listed in intended_required_contexts, NOT yet in current — the live branch-protection flip needs an admin token no PR has. classification stays `advisory` until live says otherwise, so DC-4 keeps measuring prose against reality rather than against intent. This is the ONLY merge-blocking-capable proof that the arch validators detect what they name; CI-E2E-NEGCONTROLS is scheduled-only and its `THE merge-blocking proof` justification was false. SLICE-NEGCTRL-DEDUP stays open and is NOT resolved by folding this into the unit lane — that was tried, doubled the lane 126s->240s, and required raising the blocking MOL-460 SLO to fit."
 
   - id: ARCH-RECONCILE
     name: "scheduled reconciliation"
