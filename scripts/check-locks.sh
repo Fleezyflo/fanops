@@ -9,16 +9,12 @@ changed() { git diff --name-only "${base}...HEAD" -- "$@"; }
 
 # Did the PR touch the dependency-bearing parts of pyproject.toml?
 #
-# PARSE, don't grep. This used to regex the diff for added lines containing "dependencies", or for a
-# bare quoted requirement (`+  "foo>=1.0"`). Both miss the most ordinary edit there is: adding a
-# package to an EXISTING extra written inline —
-#   dev = ["pytest>=8.0", ..., "jsonschema>=4.0"]
-# That added line begins `dev = [`, matching neither branch, so the guard printed "dependencies
-# unchanged" while the dependencies had in fact changed, and a PR could ship a new package against
-# stale hashed locks. Observed 2026-07-26 on a change that did exactly that.
-#
-# tomllib is stdlib on the 3.12 runner and setup-python runs before this step. Comparing the PARSED
-# tables is exact — no pattern can be nearly-right about whether a dependency set differs.
+# PARSE, don't grep. Diff-regexing this is wrong in a way that reads as working: adding a package to
+# an EXISTING inline extra (`dev = ["pytest>=8.0", ..., "jsonschema>=4.0"]`) produces an added line
+# beginning `dev = [`, which matches neither "contains the word dependencies" nor "is a bare quoted
+# requirement" — so the guard reports unchanged while the deps changed, and a new package ships
+# against stale hashed locks. Comparing the PARSED tables is exact.
+# tomllib is stdlib on the 3.12 runner; setup-python runs before this step.
 pyproj_dep_change="$(python3 - "$base" <<'PY' || true
 import subprocess, sys, tomllib
 

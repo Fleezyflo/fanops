@@ -1,19 +1,10 @@
-"""Load the registry (YAML) and validate it against the JSON schema. ONE validator, and it RUNS.
+"""Load the registry (YAML) and validate it against `.github/ci-control-registry.schema.json`.
 
-The schema is the source of shape truth: `.github/ci-control-registry.schema.json`. It is declarative,
-it is what an editor can validate the file against live while you type (point a YAML language server
-at it), and it cannot have bugs in its own control flow the way hand-written checks can.
+The schema is the sole source of shape truth — field set, id pattern, enums,
+required-implies-context, unique rows. Nothing here restates it.
 
-It was inert until 2026-07-26. `jsonschema` was declared in neither pyproject.toml nor requirements/,
-and this module skipped validation when the import was missing — so in CI the schema had NEVER ONCE
-executed and a 24-line hand-rolled subset was the only thing running. The repair is the obvious one
-and it is deliberately not clever: declare the dependency, and import it AT MODULE SCOPE so a missing
-validator is an ImportError that stops the lane, never a silent pass. An optional validator is not a
-validator; it is a fail-open with a docstring.
-
-NOTHING here is hand-written. Closed field set, id pattern, enums, required-implies-context, unique
-rows — all of it is stated once, in the schema. `shape_findings` runs the validator and maps its
-errors to Findings; that is the entire function.
+DO NOT make the jsonschema import optional. It is at module scope so an absent validator is an
+ImportError that stops the lane. A guarded import here means validation silently does not happen.
 
 Residual, named rather than hidden: `uniqueItems` compares WHOLE objects, so two controls sharing an
 `id` while differing in any other field are not rejected here. The structural fix is to key `controls`

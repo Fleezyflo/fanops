@@ -112,16 +112,6 @@ def dc4_prose_matches_classification(reg: dict, prose_docs) -> list[Finding]:
     return out
 
 
-# DC-5 (duplicate ownership) was deleted 2026-07-26 along with the `duplicate_groups` block and the
-# `invariant` field it keyed on. It policed a duplication the registry itself manufactured: of its four
-# groups, two paired a real job with a `LOCAL-*` git-hook row that existed for no other purpose, and
-# the other two paired a job with a sub-row describing a STEP of another job. Delete the sub-rows and
-# the hook rows — neither was ever verified against anything — and every group empties.
-#
-# The duplication that actually mattered here was COMPUTE: the `gate` job re-running, per PR, what the
-# required unit lane already blocks on. No declared-invariant string could have caught that, and it is
-# fixed by deleting the job, not by registering the overlap.
-
 
 def dc6_workflow_hygiene(reg: dict, jobs: list[dict]) -> list[Finding]:
     """Every job has a timeout; every action `uses:` is pinned to a 40-hex SHA."""
