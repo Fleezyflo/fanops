@@ -79,7 +79,7 @@ def detect(ctrl: Control):
         return bool(new), "; ".join(sorted(new)) or "no new DC-2 finding"
 
     if ctrl.id == "NC-DC3-drift":
-        current = list(reg.get("current_required_contexts", []))
+        current = list(reg.get("required_contexts", []))
         before = checks.dc3_deployed_state(reg, current)
         new = _blocking(checks.dc3_deployed_state(reg, ["only-one-context"])) - _blocking(before)
         return bool(new), "; ".join(sorted(new)) or "no new DC-3 blocking finding"

@@ -211,7 +211,7 @@ jobs:
       - name: Negative controls (the validators still work)
         run: python -m tools.arch selftest
 
-      # DC-3 — registry `current_required_contexts` vs LIVE branch protection. `--require-live` is
+      # DC-3 — registry `required_contexts` vs LIVE branch protection. `--require-live` is
       # correct HERE and only here: this is the designated authenticated job (it holds the
       # `administration: read` grant), so an unreadable probe is a FAILURE. Everywhere else the same
       # verb degrades to an explicit non-authoritative SKIP.

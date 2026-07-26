@@ -5,7 +5,7 @@
   "description": "Validation schema for .github/ci-control-registry.yml, enforced by tools/ci/registry.py on every `tools.ci static` and every run of tests/test_ci_registry_validator.py in the required unit lane. A validation failure names the exact path and constraint.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["version", "status", "rollout", "current_required_contexts", "intended_required_contexts", "controls"],
+  "required": ["version", "status", "required_contexts", "controls"],
   "properties": {
     "version": { "type": "integer", "minimum": 1 },
     "status": {
@@ -13,29 +13,12 @@
       "enum": ["proposed", "accepted", "superseded"],
       "description": "Lifecycle of the registry document itself."
     },
-    "intended_required_contexts": {
+    "required_contexts": {
       "type": "array",
-      "description": "Plane 1 — the merge policy the repo INTENDS. Reconciled against live GitHub by DC-3. Every string here must equal the branch_protection_context of a control classified 'required'.",
+      "description": "The required branch-protection contexts. DC-3 requires LIVE GitHub protection to equal this exactly — change both in the same PR. DC-1 requires each entry to match a real workflow job name, and each must be the branch_protection_context of a control classified 'required'.",
       "items": { "type": "string", "minLength": 1 },
       "uniqueItems": true,
       "minItems": 1
-    },
-    "current_required_contexts": {
-      "type": "array",
-      "description": "What SHOULD be live in branch protection RIGHT NOW (== live GitHub). DC-3 requires live == this; it runs in the scheduled `reconcile` job.",
-      "items": { "type": "string", "minLength": 1 },
-      "uniqueItems": true,
-      "minItems": 1
-    },
-    "rollout": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["phase"],
-      "description": "Rollout state so DC-3 does not self-deadlock while the required set changes. `enforced` means the set is FINAL and any current/intended divergence is a failure, not a planned transition.",
-      "properties": {
-        "phase": { "type": "string", "enum": ["transitioning", "enforced"] },
-        "note": { "type": "string" }
-      }
     },
     "controls": {
       "type": "array",

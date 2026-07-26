@@ -14,14 +14,10 @@
 version: 1
 status: accepted
 
-# `phase: enforced` means the required set is FINAL: a current/intended divergence is a failure, not a
-# planned transition. It does NOT assert GitHub admin enforcement — `enforce_admins` is false, and
-# changing it is a separate operator-approved settings change.
-rollout:
-  phase: enforced
-current_required_contexts:        # DC-3 requires LIVE == this (blocking)
-  - "unit (fast, no toolchain)"
-intended_required_contexts:       # equals `current`: the set is final, not a staging post
+# The required set. DC-3 requires LIVE branch protection to equal this exactly, and change them in the
+# same PR. This does NOT assert GitHub admin enforcement — `enforce_admins` is false, and changing it
+# is a separate operator-approved settings change.
+required_contexts:
   - "unit (fast, no toolchain)"
 
 # ---------------------------------------------------------------------------------------------------

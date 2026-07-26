@@ -14,8 +14,7 @@ _SHA40 = re.compile(r"[0-9a-f]{40}$")
 
 
 def _required_top(reg: dict) -> list[dict]:
-    return [c for c in reg["controls"]
-            if c.get("classification") == "required" and not c.get("parent")]
+    return [c for c in reg["controls"] if c.get("classification") == "required"]
 
 
 def dc1_renamed_required_context(reg: dict, jobs: list[dict]) -> list[Finding]:
@@ -28,11 +27,10 @@ def dc1_renamed_required_context(reg: dict, jobs: list[dict]) -> list[Finding]:
         if ctx not in names:
             out.append(Finding("DC-1", c["id"],
                 f"required context {ctx!r} matches no workflow job name — rename/detach risk", True))
-    for key in ("current_required_contexts", "intended_required_contexts"):
-        for ctx in reg.get(key, []) or []:
-            if ctx not in names:
-                out.append(Finding("DC-1", "-",
-                    f"{key} entry {ctx!r} matches no workflow job name", True))
+    for ctx in reg.get("required_contexts") or []:
+        if ctx not in names:
+            out.append(Finding("DC-1", "-",
+                f"required_contexts entry {ctx!r} matches no workflow job name", True))
     return out
 
 
@@ -43,8 +41,6 @@ def dc2_registry_jobs_bijection(reg: dict, jobs: list[dict]) -> list[Finding]:
     real = {(j["workflow"], j["job_id"]) for j in jobs}
     mapped: set[tuple] = set()
     for c in reg["controls"]:
-        if c.get("parent"):
-            continue
         wf, job = c.get("workflow"), c.get("job")
         if wf and job:
             key = (wf.split("/")[-1], job)
@@ -61,32 +57,20 @@ def dc2_registry_jobs_bijection(reg: dict, jobs: list[dict]) -> list[Finding]:
 
 
 def dc3_deployed_state(reg: dict, live_contexts, live_error: str | None = None) -> list[Finding]:
-    """Registry (declared) vs live GitHub required contexts. Rollout-aware, so it never
-    self-deadlocks: DC-3 requires live == `current_required_contexts` (what SHOULD be live now) and
-    reports the current->intended gap as a PLANNED TRANSITION (informational) until phase==enforced.
-    A live-probe failure is an explicit non-authoritative SKIP, never a pass."""
+    """Registry `required_contexts` vs live GitHub required contexts.
+
+    A live-probe failure is an explicit non-authoritative SKIP, never a pass — the caller decides
+    whether that is tolerable (local) or a hard failure (--require-live, the authenticated job)."""
     if live_error is not None:
         return [Finding("DC-3", "-",
             f"NON-AUTHORITATIVE: live protection unreadable ({live_error}) — deployed-state not verified",
             blocking=False, skipped=True)]
-    phase = (reg.get("rollout") or {}).get("phase", "transitioning")
-    current = set(reg.get("current_required_contexts", []) or [])
-    intended = set(reg.get("intended_required_contexts", []) or [])
+    declared = set(reg.get("required_contexts") or [])
     live = set(live_contexts or [])
-    out: list[Finding] = []
-    if live != current:
-        out.append(Finding("DC-3", "-",
-            f"live required != declared current — missing={sorted(current - live)} unexpected={sorted(live - current)}", True))
-    gap = intended - current
-    if phase != "enforced":
-        if gap:
-            out.append(Finding("DC-3", "-",
-                f"PLANNED TRANSITION — {len(gap)} context(s) pending Operational Governance Deployment: {sorted(gap)}",
-                blocking=False))
-    elif current != intended:
-        out.append(Finding("DC-3", "-",
-            "phase=enforced but current_required_contexts != intended_required_contexts", True))
-    return out
+    if live == declared:
+        return []
+    return [Finding("DC-3", "-",
+        f"live required != declared — missing={sorted(declared - live)} unexpected={sorted(live - declared)}", True)]
 
 
 def dc4_prose_matches_classification(reg: dict, prose_docs) -> list[Finding]:
@@ -152,7 +136,7 @@ def dc7_advisory_must_not_hard_fail(reg: dict, jobs: list[dict]) -> list[Finding
     # job_id — which is most of them, including the two worst offenders. A control that quietly
     # covers less than it claims is the failure this whole module exists to catch.
     by_job = {(c["workflow"].split("/")[-1], c["job"]): c
-              for c in reg["controls"] if c.get("workflow") and c.get("job") and not c.get("parent")}
+              for c in reg["controls"] if c.get("workflow") and c.get("job")}
     out: list[Finding] = []
     for j in jobs:
         c = by_job.get((j["workflow"], j["job_id"]))
