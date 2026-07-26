@@ -30,14 +30,25 @@ _REQUIRED_CONTROL_FIELDS = ("id", "classification", "workflow", "job")
 # not named here is a typo or a leftover, never an extension. Widening it must be a deliberate edit;
 # that is the point, because an unread field is exactly what accumulates silently otherwise.
 #
-# ENTRY CONDITION: a field belongs here only if a check READS it. The registry carried 16 fields per
-# control until 2026-07-26 and exactly three drove any check. `timeout_minutes` and `concurrency` were
-# registry copies of values DC-6 reads from the WORKFLOW — pure drift-bait. `failure_evidence` claimed
-# each control had a proving negative control while nothing verified the claim (the real mechanism is
-# tools/ci/selftest.py::CONTROLS + test_every_blocking_condition_has_a_negative_control). `adr` was
-# mandatory and pointed at documents deleted with the governance-prose layer. `status` was dropped as
-# a constant: its one non-`active` value marked a de-duplication this file's own duplicate_groups
-# block declared dead, and a column with one value is not data.
+# ENTRY CONDITION — and it is NOT "a check reads it". A registry may carry documentation a parser
+# never touches: who owns a control, why deleting it would hurt. Those earn their place without code.
+# The bar is: NO UNVERIFIED CLAIM, NO UNSYNCED DUPLICATE, NO POINTER TO SOMETHING DELETED. A field
+# that asserts something nothing confirms is decoration, and decoration in a governance file is the
+# failure this module exists to catch.
+#
+# The 16-field shape failed that bar, not an arithmetic one:
+#   timeout_minutes, concurrency  copies of values DC-6 reads from the WORKFLOW, with nothing syncing
+#                                 the two — drift-bait that reads as authority.
+#   failure_evidence              claimed every control had a proving negative control. NOTHING checked
+#                                 the claim. The real mechanism is selftest.py::CONTROLS plus
+#                                 test_every_blocking_condition_has_a_negative_control.
+#   adr                           mandatory on all 27, naming documents deleted with the prose layer.
+#   step, command, name           unverified copies of ci.yml / the job's own `name:`.
+#   invariant                     read only by DC-5, which went with the duplicate_groups it policed.
+#   status                        one non-`active` value, marking a de-duplication this file's own
+#                                 duplicate_groups block declared DEAD. A column with one value.
+# deletion_consequence was the one worth keeping, so it MOVED — to comments on the ci.yml steps it
+# describes, where it sits next to the thing it explains and cannot drift from it.
 _ALLOWED_CONTROL_FIELDS = frozenset(_REQUIRED_CONTROL_FIELDS) | {"branch_protection_context"}
 _CLASSES = {"required", "advisory", "scheduled"}
 # STABLE identity — never a mutable job display name.
