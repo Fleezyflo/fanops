@@ -56,25 +56,12 @@ def register_personas_routes(app, cfg):
     def do_personas_delete():
         return _personas_panel(studio_personas.delete_persona(cfg, request.form.get("id", "")))
 
-    @app.post("/personas/corpus/add")
-    def do_personas_corpus_add():
-        return _personas_panel(studio_personas.add_corpus_tag(cfg, request.form.get("id", ""), request.form.get("tag", "")))
-
-    @app.post("/personas/corpus/remove")
-    def do_personas_corpus_remove():
-        return _personas_panel(studio_personas.remove_corpus_tag(cfg, request.form.get("id", ""), request.form.get("tag", "")))
-
-    @app.post("/personas/research")
-    def do_personas_research():
-        # B3: propose the reach-best hashtags this persona lacks (bootstrap research) -> the panel renders
-        # them with one-click Add. Grounded in the reach store; instant + budget-free.
-        return _personas_panel(studio_personas.research_corpus(cfg, request.form.get("id", ""), request.form.get("genre", "")))
-
-    @app.post("/personas/recommend")
-    def do_personas_recommend():
-        # B2: look up a candidate tag's live Graph metrics (engagement) so the operator can decide before
-        # adding it to the corpus. The panel renders the metrics + an Add button; no add happens here.
-        return _personas_panel(studio_personas.recommend_tag(cfg, request.form.get("id", ""), request.form.get("tag", "")))
+    @app.post("/personas/niche")
+    def do_personas_niche():
+        # The corpus has no add/remove/research controls: it is DERIVED from platform measurements, so the
+        # operator's lever is the description. This saves the niche word(s) the next measurement pass roots
+        # its searches in.
+        return _personas_panel(studio_personas.set_genre(cfg, request.form.get("id", ""), request.form.get("genre", "")))
 
     @app.post("/personas/connect")
     def do_personas_connect():

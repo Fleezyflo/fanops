@@ -1,28 +1,37 @@
 # src/fanops/meta_graph.py
-"""M4 live half — a thin, READ-ONLY Meta Graph client that samples hashtag TREND signal (finding #7:
-hashtags update on what is trending in our niche). Used ONLY by `hashtags refresh`, never on the
-publish path. Design rule:
+"""A thin, READ-ONLY Meta Graph client. Used by `hashtags refresh` (the hashtag half) and by the
+metrics/insights paths; never on the publish path. Design rules:
 
-  ENHANCEMENT -> the TRANSPORT fails SOFT. Any per-tag fetch failure (no creds, 401, 5xx, timeout,
-  non-JSON, unresolved hashtag) returns None and is skipped — a missing trend never blocks a refresh
-  (the frozen reach floor still stands). The token is sent as the Graph `access_token` param and is NEVER
-  logged/echoed (METRICS_CLIENT_AUTH_DISCIPLINE — mirrors post/metrics.py).
+  The TRANSPORT fails SOFT. Any per-tag fetch failure (no creds, 401, 5xx, timeout, non-JSON,
+  unresolved hashtag) returns None and the tag is skipped — a later pass retries it. The token is sent
+  as the Graph `access_token` param and is NEVER logged/echoed (METRICS_CLIENT_AUTH_DISCIPLINE —
+  mirrors post/metrics.py).
 
-  Local `hashtag_budget.json` / budget_remaining / record_query are OBSERVATIONAL telemetry only —
-  they never refuse a Graph call. Meta's own rate limits (if any) surface as transport errors and
-  fail-open. Meta deprecated hashtag media_count, so the trend signal is engagement summed over top_media."""
+  META IS THE ONLY GOVERNOR of how much a hashtag pass gets through. There is no local budget: the
+  previous `_BUDGET_LIMIT = 30 unique searches / 7 days` was a hardcoded guess that logged every search
+  and then refused to re-measure anything it had logged. It starved the store for six days (21 of 1,704
+  tags measured, nothing since 2026-07-20) while Meta was in fact accepting 1,500+ searches in one run.
+  Throttle codes are absorbed with a jittered backoff and, if they persist, end the pass with whatever
+  evidence accrued; nothing here predicts or meters an allowance.
+
+  The hashtag REACH datum is Meta's own `like_count`, taken verbatim off one `top_media` item. Probed
+  live 2026-07-26: the IG Hashtag node serves only `id` and `name` — `media_count` answers
+  "(#100) Tried accessing nonexisting field" — so post volume is genuinely unavailable, and the earlier
+  likes+comments SUM was a number we invented rather than one the platform published."""
 from __future__ import annotations
 import json
+import random
 import re
 import socket
-from datetime import datetime, timedelta, timezone
+import time
+from datetime import datetime, timezone
 from typing import NamedTuple, Optional
 import requests
 from requests.adapters import HTTPAdapter
 from fanops.config import Config
 from fanops.errors import MetaInsightsScopeError
 from fanops.log import get_logger
-from fanops.hashtags import _norm
+from fanops.hashtags import METRIC_FIELD, _norm
 
 
 # Force AF_INET for Graph HTTP only — macOS often blackholes AAAA for graph.facebook.com (~20s then
@@ -149,8 +158,6 @@ def debug_token_expiry(cfg: Config, token: str, *, get=None) -> tuple[str, objec
     return (("expired", exp) if exp <= now else ("ok", exp))
 
 
-_BUDGET_LIMIT = 30                  # Meta: 30 UNIQUE hashtags per IG user per rolling 7 days
-_BUDGET_WINDOW_DAYS = 7
 _TAG_RE = re.compile(r"#[0-9A-Za-z_؀-ۿ]+")   # a hashtag in a caption: Latin + Arabic-block letters
 _HARVEST_CAP = 5000                 # upper bound on distinct co-tags per harvest — a guard against a pathological/mocked top_media response (untrusted UGC); unreachable under Meta's own caption+page limits
 
@@ -194,65 +201,118 @@ def _graph_get(cfg: Config, path: str, params: dict, *, get=None, token: Optiona
         return None
     return body if isinstance(body, dict) else None
 
-def hashtag_id(cfg: Config, tag: str, *, get=None):
-    """Resolve a '#tag' to its Graph hashtag-node id via ig_hashtag_search (q has no leading '#'), or
-    None if it does not resolve / the call fails.
+class GraphThrottled(Exception):
+    """Meta answered with a THROTTLE code and kept answering with one after the backoff ladder. The
+    caller ends its pass and keeps the evidence it already accrued. This exception is the ONLY thing
+    that bounds a pass — there is no local allowance model to consult."""
+
+
+_THROTTLE_CODES = frozenset({4, 17, 32, 613})   # Meta's own rate-limit codes: app / user / page / custom
+_MAX_RL_RETRIES = 3                             # total attempts = retries + 1 (mirrors llm.py's ladder)
+_RL_BASE_DELAY = 2.0                            # seconds; doubled per attempt + jittered
+_sleep = time.sleep                             # indirection so tests can stub the backoff wait
+
+
+def _error_code(body) -> Optional[int]:
+    """Meta's numeric error code from a response body, or None when the body carries no error object."""
+    if not isinstance(body, dict):
+        return None
+    err = body.get("error")
+    code = err.get("code") if isinstance(err, dict) else None
+    return code if isinstance(code, int) and not isinstance(code, bool) else None
+
+
+def _hashtag_get(cfg: Config, path: str, params: dict, *, get=None):
+    """One hashtag-endpoint GET, with Meta's own refusals as the only control loop.
+
+    Returns the parsed body, or None when Meta refused for any reason OTHER than throttling (that tag is
+    skipped; a later pass retries it — a refusal costs nothing and predicts nothing). Raises
+    GraphThrottled when a throttle code survives the jittered-backoff ladder, which is the signal to end
+    the pass. The token rides the `access_token` param and never enters a logged string."""
+    get = get or _default_get
+    delay = _RL_BASE_DELAY
+    for attempt in range(_MAX_RL_RETRIES + 1):
+        try:
+            resp = get(f"{cfg.meta_graph_url}/{path}",
+                       params={**params, "access_token": cfg.meta_graph_token}, timeout=20)
+        except requests.exceptions.RequestException:
+            return None                                  # transport hiccup: skip the tag, keep the pass
+        if getattr(resp, "status_code", None) == 200:
+            try:
+                body = resp.json()
+            except ValueError:
+                return None
+            return body if isinstance(body, dict) else None
+        try:
+            body = resp.json()
+        except (ValueError, AttributeError):
+            body = None
+        if _error_code(body) not in _THROTTLE_CODES:
+            return None                                  # ordinary refusal -> skip this tag only
+        if attempt < _MAX_RL_RETRIES:
+            _sleep(delay + random.uniform(0, delay))     # jitter so retries don't land in lockstep
+            delay *= 2
+    raise GraphThrottled(f"Meta throttled {path} after {_MAX_RL_RETRIES} retries")
+
+
+def resolve_hashtag(cfg: Config, tag: str, *, get=None) -> Optional[str]:
+    """Resolve '#tag' to its Graph hashtag-node id via ig_hashtag_search (`q` carries no leading '#').
+    None when the tag does not resolve or Meta refused; raises GraphThrottled on a persistent throttle.
+
+    Node ids are STABLE and global, which is why callers cache them: a tag we have already resolved never
+    spends another search, so the search endpoint funds novel discovery only.
+
     Meta permissions (docs/instagram-platform/.../hashtag-search): instagram_basic is REQUIRED but NOT
     sufficient on its own — the separate 'Instagram Public Content Access' FEATURE (its OWN App Review
     submission, distinct from the permission) is ALSO mandatory. An operator granting only instagram_basic
     hits an opaque rejection; the missing piece is that App Review feature, not another scope."""
-    hid, _accepted = _hashtag_id_status(cfg, tag, get=get)
-    return hid
+    if not (cfg.meta_graph_token and cfg.meta_ig_user_id):
+        return None
+    q = _norm(tag).lstrip("#")
+    if not q:
+        return None
+    body = _hashtag_get(cfg, "ig_hashtag_search", {"user_id": cfg.meta_ig_user_id, "q": q}, get=get)
+    data = body.get("data") if isinstance(body, dict) else None
+    if not isinstance(data, list) or not data or not isinstance(data[0], dict):
+        return None
+    hid = data[0].get("id")
+    return hid if isinstance(hid, str) and hid else None
 
-def _hashtag_id_status(cfg: Config, tag: str, *, get=None) -> tuple[Optional[str], bool]:
-    """Resolve a hashtag and report whether Graph ACCEPTED the unique-search request. `accepted` is true
-    only on HTTP 200, including an empty data result; transport/non-200 refusals are false. This distinction
-    is load-bearing for the observational query meter: a refused request did not consume Meta's unique-tag
-    allowance and must stay re-sampleable."""
-    get = get or _default_get
-    try:
-        resp = get(f"{cfg.meta_graph_url}/ig_hashtag_search",
-                   params={"user_id": cfg.meta_ig_user_id, "q": tag.lstrip("#"),
-                           "access_token": cfg.meta_graph_token}, timeout=20)
-    except requests.exceptions.RequestException:
-        return None, False
-    if getattr(resp, "status_code", None) != 200:
-        return None, False
-    try:
-        body = resp.json()
-        if not isinstance(body, dict):
-            return None, True
-        data = body.get("data") if body else None
-        return (data[0]["id"] if data else None), True
-    except (KeyError, IndexError, TypeError, ValueError):
-        return None, True
 
-def trend_score(cfg: Config, tag: str, *, get=None):
-    """A RELATIVE trend signal for one hashtag = total engagement (likes + comments) over its top_media.
-    Meta gives no media_count, so engagement on the top posts is the available visibility proxy. None on
-    any failure (unresolved tag, no media, transport error)."""
-    score, _accepted = _trend_score_status(cfg, tag, get=get)
-    return score
+def measure_and_harvest(cfg: Config, hid: str, *, get=None) -> tuple[Optional[float], dict[str, int]]:
+    """ONE `top_media` fetch serving BOTH jobs — the measurement and the discovery harvest.
 
-def _trend_score_status(cfg: Config, tag: str, *, get=None) -> tuple[Optional[float], bool]:
-    """Return (trend score, unique-search accepted). See `_hashtag_id_status`."""
-    hid, accepted = _hashtag_id_status(cfg, tag, get=get)
-    if hid is None:
-        return None, accepted
-    body = _graph_get(cfg, f"{hid}/top_media",
-                      {"user_id": cfg.meta_ig_user_id, "fields": "like_count,comments_count"}, get=get)
-    data = body.get("data") if body else None
+    metric  = the FIRST item in Meta's own top_media ordering that carries a `like_count`, verbatim. Meta
+              ranks the media and Meta supplies the number; this selects, it never computes. An item with
+              likes hidden is SKIPPED rather than read as zero (probed live: real top media do hide them).
+              No item carries one -> None -> the tag is UNMEASURED, and unmeasured is inadmissible.
+    harvest = every hashtag those same captions carry (`_TAG_RE`), tallied. Co-occurrence is the only
+              Graph-native way to DISCOVER tags nobody has named — IG has no trending-by-topic endpoint —
+              and it is also where versatility comes from: the posts winning in a niche right now carry
+              both the niche tags and the broad ones.
+
+    Raises GraphThrottled; any other refusal -> (None, {})."""
+    body = _hashtag_get(cfg, f"{hid}/top_media",
+                        {"user_id": cfg.meta_ig_user_id, "fields": f"caption,{METRIC_FIELD}"}, get=get)
+    data = body.get("data") if isinstance(body, dict) else None
     if not isinstance(data, list):
-        return None, accepted
-    total = 0.0
+        return None, {}
+    metric: Optional[float] = None
+    cotags: dict[str, int] = {}
     for m in data:
         if not isinstance(m, dict):
             continue
-        for k in ("like_count", "comments_count"):
-            v = m.get(k)
-            if isinstance(v, (int, float)) and not isinstance(v, bool):
-                total += float(v)
-    return total, accepted
+        v = m.get(METRIC_FIELD)
+        if metric is None and isinstance(v, (int, float)) and not isinstance(v, bool) and v >= 0:
+            metric = float(v)
+        for raw in _TAG_RE.findall(m.get("caption") or ""):
+            t = _norm(raw)
+            if not t:
+                continue
+            if t not in cotags and len(cotags) >= _HARVEST_CAP:
+                continue                                  # cap DISTINCT co-tags (untrusted-UGC guard)
+            cotags[t] = cotags.get(t, 0) + 1
+    return metric, cotags
 
 _MEDIA_FIELDS = "id,permalink,media_product_type,timestamp,caption"   # caption added (ledger-rebuild): the inverse projection mirrors a live-only media's caption (display-only); resolve ignores the extra field
 _MEDIA_PAGE_CAP = 50            # defensive: >50 pages of the IG user's OWN media is a pathological/mocked paging loop
@@ -520,196 +580,3 @@ def _clear_insights_blocked(cfg: Config) -> None:
         cfg.insights_blocked_path.unlink(missing_ok=True)
     except OSError as e:
         get_logger(cfg)("graph_insights", "signal", "clear_failed", err=str(e)[:120])
-
-def _read_queries(cfg: Config):
-    """The recorded search queries for the observational meter, or None if the file is corrupt/unreadable.
-    Absent file == clean state (nothing recorded) -> []. Never gates a Graph call."""
-    p = cfg.hashtag_budget_path
-    if not p.exists():
-        return []
-    try:
-        d = json.loads(p.read_text())
-        q = d.get("queries") if isinstance(d, dict) else None
-        return q if isinstance(q, list) else None
-    except (OSError, json.JSONDecodeError, ValueError, TypeError) as e:
-        get_logger(cfg)("hashtags", "budget", "queries_read_error", err=str(e)[:160])
-        return None
-
-def budget_remaining(cfg: Config, *, now: datetime | None = None):
-    """Observational: 30 - (UNIQUE tags recorded in the last 7 days). None when the counter file is
-    unreadable. Pure read — NEVER used to refuse a Graph call (Studio meter / telemetry only)."""
-    now = now or _now()
-    q = _read_queries(cfg)
-    if q is None:
-        return None
-    cutoff = now - timedelta(days=_BUDGET_WINDOW_DAYS)
-    recent: set[str] = set()
-    for e in q:
-        try:
-            ts = datetime.fromisoformat(e["ts"]); tag = e["tag"]
-        except (KeyError, TypeError, ValueError):
-            continue
-        if ts.tzinfo is None:
-            ts = ts.replace(tzinfo=timezone.utc)
-        if ts >= cutoff and isinstance(tag, str):
-            recent.add(tag)
-    return max(0, _BUDGET_LIMIT - len(recent))
-
-def record_query(cfg: Config, tag: str, *, now: datetime | None = None) -> None:
-    """Append a (tag, ts) to the observational counter, pruning entries older than the window.
-    SERIALIZED under an fcntl flock (lost-update fix for concurrent Studio calls). Best-effort —
-    never gates a Graph call; on write/lock failure the next read just sees fewer entries."""
-    now = now or _now()
-    cutoff = now - timedelta(days=_BUDGET_WINDOW_DAYS)
-    from fanops.ledger import _file_lock       # lazy: reuse the proven fcntl flock (accounts.py pattern) without a top-level cycle
-    from fanops.errors import LockBusyError
-    try:
-        with _file_lock(cfg.hashtag_budget_lock):
-            q = _read_queries(cfg) or []
-            kept = []
-            for e in q:
-                try:
-                    ts = datetime.fromisoformat(e["ts"])
-                except (KeyError, TypeError, ValueError):
-                    continue
-                if ts.tzinfo is None:
-                    ts = ts.replace(tzinfo=timezone.utc)
-                if ts >= cutoff:
-                    kept.append(e)
-            kept.append({"tag": tag, "ts": now.isoformat()})
-            cfg.hashtag_budget_path.parent.mkdir(parents=True, exist_ok=True)
-            cfg.hashtag_budget_path.write_text(json.dumps({"queries": kept}, indent=2))
-    except (OSError, LockBusyError) as e:
-        get_logger(cfg)("hashtags", tag, "budget_write_failed", err=str(e)[:120])
-
-def tag_metrics(cfg: Config, tag: str, *, get=None, now: datetime | None = None) -> dict:
-    """B2: ON-DEMAND live Graph metrics for ONE hashtag the operator wants to RECOMMEND into a persona's
-    corpus — the evidence behind a curation decision. Resolves the hashtag node + sums top_media engagement
-    (the same signal sample_trends uses). Returns a plain dict the Studio renders:
-    {tag, resolved, engagement?, sampled_at?, error?}. FAIL-OPEN on creds/transport (resolved False + a
-    reason, never raises). Local budget counter is observational only — never refuses the Graph call.
-    The token is never echoed. Operator-initiated, so it is NOT gated by FANOPS_HASHTAG_TRENDS (that gates
-    the background refresh sampling) — only by creds."""
-    now = now or _now()
-    h = tag if (tag or "").startswith("#") else f"#{(tag or '').strip()}"
-    h = h.strip().lower()
-    if not h.lstrip("#"):                                # a bare "#" / blank -> reject BEFORE the Graph call
-        return {"tag": h, "resolved": False, "error": "enter a valid hashtag"}
-    if not (cfg.meta_graph_token and cfg.meta_ig_user_id):
-        return {"tag": h, "resolved": False, "error": "Graph not configured — set META_GRAPH_TOKEN + META_IG_USER_ID"}
-    score, accepted = _trend_score_status(cfg, h, get=get)
-    if accepted:
-        record_query(cfg, h, now=now)                    # only an accepted unique search belongs in the meter
-    if score is None:
-        return {"tag": h, "resolved": False, "error": "did not resolve on Instagram — no such hashtag, or no recent public media"}
-    return {"tag": h, "resolved": True, "engagement": score, "sampled_at": now.isoformat()}
-
-
-def sample_trends(cfg: Config, candidates: list[str], *, get=None, now: datetime | None = None) -> dict:
-    """Sample trend scores for `candidates` (in order). Returns {tag: score} for the tags actually
-    sampled. FAIL-OPEN on creds/transport (no token -> {}; a per-tag failure is skipped). Always
-    attempts the Graph when creds are present — the local budget counter never refuses. A tag already
-    recorded in the observational window is skipped (re-ask of the same unique search is a no-op for
-    Meta and yields no new signal)."""
-    now = now or _now()
-    if not (cfg.meta_graph_token and cfg.meta_ig_user_id):
-        return {}
-    cutoff = now - timedelta(days=_BUDGET_WINDOW_DAYS)
-    already: set[str] = set()                       # tags recorded WITHIN the window only (an expired one is re-queryable)
-    for e in (_read_queries(cfg) or []):
-        if not isinstance(e, dict):
-            continue
-        try:
-            ts = datetime.fromisoformat(e["ts"])
-        except (KeyError, TypeError, ValueError):
-            continue
-        if ts.tzinfo is None:
-            ts = ts.replace(tzinfo=timezone.utc)
-        if ts >= cutoff and isinstance(e.get("tag"), str):
-            already.add(e["tag"])
-    scores: dict[str, float] = {}
-    attempted = 0; attempted_tags: set[str] = set()
-    for tag in candidates:
-        if tag in already or tag in attempted_tags:
-            continue                                # recent unique search -> free but not re-sampled
-        if attempted >= _BUDGET_LIMIT:
-            break                                   # bound one pass; never spam guaranteed-refused unique searches
-        attempted += 1; attempted_tags.add(tag)
-        s, accepted = _trend_score_status(cfg, tag, get=get)
-        if accepted:
-            record_query(cfg, tag, now=now); already.add(tag)   # observational; accepted unique searches only
-        if s is not None:
-            scores[tag] = s
-    return scores
-
-
-def harvest_cooccurring(cfg: Config, seed_tags: list[str], *, get=None, now: datetime | None = None) -> dict[str, dict]:
-    """M1 (live discovery): resolve each category SEED tag, read its live top_media, and tally the hashtags
-    those currently-winning posts use ALONGSIDE the seed — the only Graph-native way to DISCOVER tags we have
-    never named (IG has no trending-by-topic endpoint). Returns {co_tag: {"count": int, "host_engagement":
-    float, "seeds": {seed: co_count}}} with the seeds themselves EXCLUDED. The per-seed tally is the
-    attribution that lets each persona's auto-fill prefer candidates co-occurring with ITS OWN seeds.
-    FAIL-OPEN on no creds ({}); a per-seed transport/resolve failure is skipped. Always resolves every
-    unique seed when creds are present — the local budget counter never refuses. Duplicate normalized
-    seeds resolve once."""
-    now = now or _now()
-    if not (cfg.meta_graph_token and cfg.meta_ig_user_id):
-        return {}
-    seeds: list[str] = []; sseen: set[str] = set()
-    for s in seed_tags:                                  # normalize + dedupe the seeds (so a seed resolves once)
-        n = _norm(s) if isinstance(s, str) else ""
-        if n and n not in sseen: sseen.add(n); seeds.append(n)
-    out: dict[str, dict] = {}
-    for seed in seeds:
-        hid, accepted = _hashtag_id_status(cfg, seed, get=get)
-        if accepted:
-            record_query(cfg, seed, now=now)             # accepted unique searches only
-        if hid is None:
-            continue
-        body = _graph_get(cfg, f"{hid}/top_media",
-                          {"user_id": cfg.meta_ig_user_id, "fields": "caption,like_count,comments_count"}, get=get)
-        data = body.get("data") if body else None
-        if not isinstance(data, list):
-            continue
-        for m in data:
-            if not isinstance(m, dict):
-                continue
-            eng = 0.0
-            for k in ("like_count", "comments_count"):
-                v = m.get(k)
-                if isinstance(v, (int, float)) and not isinstance(v, bool):
-                    eng += float(v)
-            for raw in _TAG_RE.findall(m.get("caption") or ""):
-                t = _norm(raw)
-                if not t or t in sseen:                       # exclude the seeds themselves
-                    continue
-                if t not in out and len(out) >= _HARVEST_CAP:
-                    continue                                  # cap DISTINCT tags (untrusted-UGC guard); already-seen tags still tally
-                agg = out.setdefault(t, {"count": 0, "host_engagement": 0.0, "seeds": {}})
-                agg["count"] += 1; agg["host_engagement"] += eng
-                agg["seeds"][seed] = agg["seeds"].get(seed, 0) + 1
-    return out
-
-
-def discover_candidates(cfg: Config, seeds: list[str], *, known=(), measure_k: int = 0,
-                        get=None, now: datetime | None = None) -> list[dict]:
-    """M2: rank the co-occurrence harvest, DROP the caller-supplied `known` tags, and OPTIONALLY measure
-    the top `measure_k` novel tags' live Graph reach. Returns
-    ordered proposals [{"tag","count","host_engagement","seeds","measured_engagement"?,"sampled_at"?}], most-relevant
-    first (by co-occurrence count, then host engagement). `seeds` is the per-seed co-count map from the harvest
-    (JSON-round-trippable attribution). The FREE harvest is the primary signal; measurement is capped only
-    by measure_k — the local budget counter never refuses. No creds -> [] (harvest no-ops)."""
-    now = now or _now()
-    known_n = {_norm(t) for t in known if isinstance(t, str)}
-    harvested = harvest_cooccurring(cfg, seeds, get=get, now=now)
-    ranked = sorted(((t, d) for t, d in harvested.items() if t not in known_n),
-                    key=lambda kv: (kv[1]["count"], kv[1]["host_engagement"]), reverse=True)
-    out = [{"tag": t, "count": d["count"], "host_engagement": d["host_engagement"],
-            "seeds": dict(d.get("seeds") or {})} for t, d in ranked]
-    for cand in out[:max(0, measure_k)]:                 # measure only the top-K
-        s, accepted = _trend_score_status(cfg, cand["tag"], get=get)
-        if accepted:
-            record_query(cfg, cand["tag"], now=now)      # accepted unique searches only
-        if s is not None:
-            cand["measured_engagement"] = s; cand["sampled_at"] = now.isoformat()
-    return out

@@ -1,8 +1,9 @@
 {# src/fanops/studio/templates/_hashtags_panel.html — U11 the Hashtags observatory body, htmx-swapped in place
-   (#hashtags-panel). FIVE sections: (1) corpora at a glance (read-only, links to Personas), (2) the reach store
-   (ranked chips, banned struck-through, VIEW-ONLY), (3) the Meta budget meter (fail-closed named plainly),
-   (4) rotation health (consecutive-duplicate warn per account), (5) the global ban lane (the ONLY mutation).
-   Only the ban forms POST (they swap the whole panel). Autoescape stays on (no |safe). #}
+   (#hashtags-panel). FOUR sections: (1) corpora at a glance (read-only — corpora are derived, so there is
+   nothing to edit), (2) the platform measurement cache (ranked chips, banned struck-through, VIEW-ONLY),
+   (3) rotation health (consecutive-duplicate warn per account), (4) the global ban lane (the ONLY mutation).
+   The local "budget meter" section is gone with the fiction it reported. Only the ban forms POST (they swap
+   the whole panel). Autoescape stays on (no |safe). #}
 <div id="hashtags-panel" aria-live="polite">
   {% if result %}
     <div class="result {{ 'ok' if result.ok else 'err' }}">
@@ -15,24 +16,23 @@
   {% endif %}
 
   {# ── 1 · Corpora at a glance ─────────────────────────────────────────────────────────────────────
-     One compact row per persona. Read-only — editing lives on Personas (the "edit →" link). No add/remove/
-     research controls here (byte-truth counts from personas.json). #}
+     One compact row per persona. Read-only everywhere: a corpus is DERIVED from the cache below, so the
+     lever is the persona's description (the "edit →" link). Byte-truth counts from personas.json. #}
   <section class="hashtag-section corpora-section">
     <h3>Corpora at a glance</h3>
-    <p class="muted">Each persona's curated pool, its pinned/auto split, when it last changed, and its
-      top tags by live reach. Edit a corpus on Personas.</p>
+    <p class="muted">Each persona's corpus is <strong>derived</strong> from live platform measurements —
+      nothing here is hand-picked. To change what a persona reaches for, edit its description on Personas.</p>
     {% if page.corpora %}
       <table class="corpora-grid">
-        <thead><tr><th>Persona</th><th>Size</th><th>Pinned</th><th>Auto</th><th>Last refreshed</th><th>Top by reach</th><th></th></tr></thead>
+        <thead><tr><th>Persona</th><th>Size</th><th>Last measured</th><th>Top by {{ page.store.metric_field }}</th><th>Retired</th><th></th></tr></thead>
         <tbody>
           {% for r in page.corpora %}
             <tr>
               <td>{{ r.name }}</td>
               <td>{{ r.size }}</td>
-              <td>{{ r.pinned }}</td>
-              <td>{{ r.auto }}</td>
               <td>{{ r.last_refreshed | localdt or '—' }}</td>
               <td>{% for t in r.top3 %}<span class="chip tag ro">{{ t }}</span>{% else %}<span class="muted">—</span>{% endfor %}</td>
+              <td>{% if r.deprecated %}<span class="muted" title="pre-derivation tags, retired and no longer shipped">{{ r.deprecated }}</span>{% else %}—{% endif %}</td>
               <td><a href="{{ r.edit_href }}" class="muted">edit →</a></td>
             </tr>
           {% endfor %}
@@ -43,43 +43,32 @@
     {% endif %}
   </section>
 
-  {# ── 2 · The reach store ─────────────────────────────────────────────────────────────────────────
-     "What the system currently believes is worth using" — the ranked pool with per-tag live reach. A banned
-     tag is struck-through (chip.banned) but the store FILE is untouched (view-only). Three states named. #}
+  {# ── 2 · The measurement cache ───────────────────────────────────────────────────────────────────
+     Every tag the platform has given us a number for, ranked by that number. The value is Meta's own
+     field, shown under Meta's own name — nothing here is computed by us. A banned tag is struck-through
+     (chip.banned) but the cache FILE is untouched (view-only). Three states named. #}
   <section class="hashtag-section store-section">
-    <h3>Reach store</h3>
-    {% if page.store.state == 'frozen floor' %}
-      <p class="muted">No store yet — selection falls back to the <strong>frozen floor</strong> (the built-in
-        reach-ranked pools). Refresh the store on a live deployment to see measured reach here.</p>
+    <h3>Measurement cache</h3>
+    {% if page.store.state == 'empty' %}
+      <p class="muted">Nothing measured yet. Until the first pass lands, posts ship only their platform
+        discovery tag — short and honest rather than padded with guesses.</p>
     {% elif page.store.state == 'unreadable' %}
-      <p class="result err">✗ store unreadable — the store file could not be parsed. Selection falls back to the
-        frozen floor; a breadcrumb was logged.</p>
+      <p class="result err">✗ cache unreadable — the file could not be parsed. Selection ships short until it
+        is rewritten; a breadcrumb was logged.</p>
     {% else %}
-      <p class="muted">Provenance <strong>{{ page.store.provenance }}</strong> · last written {{ page.store.age | localdt or '—' }}.
-        Banned tags are shown struck-through (view only — the store is untouched).</p>
+      <p class="muted">{{ page.store.tags | length }} tags · each number is Instagram's own
+        <strong>{{ page.store.metric_field }}</strong> on that tag's top media · last written
+        {{ page.store.age | localdt or '—' }}{% if page.store.oldest %} · oldest measurement {{ page.store.oldest | localdt }}{% endif %}.
+        Banned tags are shown struck-through (view only — the cache is untouched).</p>
       <div class="store-tags">
         {% for t in page.store.tags %}
-          <span class="chip tag{% if t.banned %} banned{% endif %}">{{ t.tag }}{% if t.reach is not none %}<span class="reach-n"> · {{ t.reach | int }}</span>{% endif %}</span>
-        {% else %}<span class="muted">the store is empty — frozen floor applies</span>{% endfor %}
+          <span class="chip tag{% if t.banned %} banned{% endif %}">{{ t.tag }}{% if t.value is not none %}<span class="reach-n"> · {{ t.value | int }}</span>{% endif %}</span>
+        {% else %}<span class="muted">no measurements yet</span>{% endfor %}
       </div>
     {% endif %}
   </section>
 
-  {# ── 3 · Local lookup meter (observational) ──────────────────────────────────────────────────────
-     Local record_query telemetry — does NOT block Meta lookups. When the counter is unreadable, say so
-     plainly with no invented numbers. No "check reach" button here (this page is inert). #}
-  <section class="hashtag-section budget-section">
-    <h3>Local lookup meter</h3>
-    {% if page.budget.fail_closed %}
-      <p class="muted">{{ page.budget.copy }}</p>
-    {% else %}
-      <p class="muted"><strong>{{ page.budget.used }}</strong> recorded / <strong>{{ page.budget.remaining }}</strong>
-        of {{ page.budget.limit }} in the last 7 days{% if page.budget.window_reset %} · oldest entry ages out {{ page.budget.window_reset | localdt }}{% endif %}.</p>
-      <p class="muted">{{ page.budget.note }}</p>
-    {% endif %}
-  </section>
-
-  {# ── 4 · Rotation health ─────────────────────────────────────────────────────────────────────────
+  {# ── 3 · Rotation health ─────────────────────────────────────────────────────────────────────────
      Per account, the last few shipped/queued tag LINES with consecutive-duplicate detection — the exact
      pre-S06 failure the operator caught live. Warn chip when two consecutive posts shipped an identical line;
      green otherwise. Observatory only (never calls vet_hashtags). #}
@@ -105,9 +94,10 @@
     {% endif %}
   </section>
 
-  {# ── 5 · Ban lane ────────────────────────────────────────────────────────────────────────────────
-     The operator's global deny-list. A banned tag disappears from selection (vet_hashtags) and auto-accept
-     (S12), and shows struck-through in the store above. Bans beat pins. The ONLY mutation on this page. #}
+  {# ── 4 · Ban lane ────────────────────────────────────────────────────────────────────────────────
+     The operator's global deny-list, and the one hashtag lever left: a banned tag disappears from selection
+     (vet_hashtags) and from corpus derivation, and shows struck-through in the cache above. The ONLY
+     mutation on this page. #}
   <section class="hashtag-section ban-section">
     <h3>Ban lane</h3>
     <p class="muted">A tag you never want to ship — even one that passes the brand screen and earns reach. It's

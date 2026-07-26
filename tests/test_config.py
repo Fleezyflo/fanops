@@ -570,7 +570,7 @@ def test_settings_bool_empty_and_off_words_ok_at_boundary(monkeypatch):
 
 
 _BOOL_KEYS_FOR_SETTINGS_TEST = (
-    "FANOPS_LIVE", "FANOPS_HASHTAG_TRENDS", "FANOPS_REQUIRE_FULL_OBJECTIVE", "FANOPS_BURN_SUBS",
+    "FANOPS_LIVE", "FANOPS_REQUIRE_FULL_OBJECTIVE", "FANOPS_BURN_SUBS",
 )
 
 

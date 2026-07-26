@@ -1,70 +1,58 @@
-"""U11 — the Hashtags observatory read-model (pure; ZERO network on any call). Surfaces what S12 (automated
-per-persona corpora) + U9 (per-persona display) leave homeless: the reach store, the local lookup meter,
-cross-account rotation health, and the operator's global ban lane. Every projection here is a LOCAL file +
-ledger read — budget_meter wraps meta_graph.budget_remaining (which reads the counter FILE, no Graph call),
-_store_status reads the store file, rotation_health scans the ledger. The page is budget-INERT by
-construction: nothing here spends a Graph query. The ONLY mutation on the page is ban add/remove
-(studio/hashtags.py), never a GET.
+"""U11 — the Hashtags observatory read-model (pure; ZERO network on any call). Surfaces the platform
+measurement cache, the derived per-persona corpora, cross-account rotation health, and the operator's
+global ban lane. Every projection here is a LOCAL file + ledger read: `_store_status` reads the cache
+file, `_corpora_rows` reads personas.json, `rotation_health` scans the ledger. The page spends no Graph
+call by construction. The ONLY mutation on the page is ban add/remove (studio/hashtags.py), never a GET.
 
-Mirrors views_results.py: dataclass rows, pure reads, fail-open with a breadcrumb. Depends on hashtags (bans +
-store reach), meta_graph (observational meter), personas/persona_research (corpora), views_results
-(_EXPOSURE_STATES reuse)."""
+The old "budget meter" section is gone with the fiction it displayed — there is no local allowance to
+report. What the operator needs instead is COVERAGE: how much of the cache is measured and how fresh it
+is, which is what StoreStatus now carries.
+
+Mirrors views_results.py: dataclass rows, pure reads, fail-open with a breadcrumb."""
 from __future__ import annotations
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Optional
 
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.log import get_logger
-from fanops.hashtags import _norm, load_bans, load_store, load_store_reach
+from fanops.hashtags import METRIC_FIELD, _norm, load_bans, load_measurements, ranked_tags
 from fanops.personas import Personas
-from fanops.persona_research import _partition_corpus, _persona_row
+from fanops.persona_research import _persona_row
 from fanops.studio.views_results import _EXPOSURE_STATES
 
-# Observational meter only — a corrupt counter never blocks Graph calls. No invented numbers.
-BUDGET_UNREADABLE_COPY = "local meter unreadable — observational only; Graph calls are not blocked"
-BUDGET_OBSERVATIONAL_NOTE = "local meter (observational — does not block Meta lookups)"
+# The number next to every tag is Meta's own field, named as Meta names it — never relabelled "reach".
+METRIC_LABEL = f"{METRIC_FIELD} (top post)"
 
 
 @dataclass
 class CorpusRow:
-    """Section 1: one persona's corpus at a glance (read-only — editing lives in U9/Personas)."""
+    """Section 1: one persona's DERIVED corpus at a glance (read-only — there is nothing to edit; the
+    persona's description is the lever)."""
     pid: str
     name: str
     size: int
-    pinned: int
-    auto: int
-    last_refreshed: Optional[str]      # max `added` stamp across this persona's hashtag_corpus_meta (NOT the global marker)
-    top3: list                         # corpus tags sorted by live store reach, truncated to 3
-    edit_href: str = ""                # url_for('personas_view') — the "edit →" link (section 1 has NO edit controls)
+    last_refreshed: Optional[str]      # max `measured_at` across this persona's hashtag_corpus_meta
+    top3: list                         # corpus tags by the platform metric, truncated to 3
+    deprecated: int = 0                # pre-derivation tags retired at cutover (visible, never shipped)
+    edit_href: str = ""                # url_for('personas_view') — the "edit →" link
 
 
 @dataclass
 class StoreStatus:
-    """Section 2: the reach store — its state + the ranked chips (with a per-tag banned flag for the struck view)."""
-    state: str                         # "frozen floor" (file missing) | "unreadable" (parse error) | "ok"
-    provenance: str = ""               # "graph-reach" when a non-empty reach map is present, else "frozen floor"
-    age: Optional[str] = None          # store file mtime, ISO (None when missing/unreadable)
-    tags: list = field(default_factory=list)   # [{tag, reach, banned}] ranked by reach desc
-
-
-@dataclass
-class BudgetMeter:
-    """Section 3: local observational lookup meter (record_query telemetry). fail_closed means the counter
-    FILE is unreadable — Graph calls still proceed; no invented used/remaining then."""
-    fail_closed: bool
-    copy: str = ""                     # plain-language line when the counter file is unreadable
-    limit: int = 0
-    used: int = 0
-    remaining: int = 0
-    window_reset: Optional[str] = None  # oldest recorded query ts + 7d (None when no queries recorded / unreadable)
-    note: str = ""                     # always-on observational disclaimer
+    """Section 2: the measurement cache — its state, freshness, and the ranked chips (with a per-tag
+    banned flag for the struck view)."""
+    state: str                         # "empty" (no cache yet) | "unreadable" (parse error) | "ok"
+    metric_field: str = METRIC_FIELD    # the platform field every number below is quoted from
+    age: Optional[str] = None          # cache file mtime, ISO (None when missing/unreadable)
+    oldest: Optional[str] = None       # the stalest `measured_at` in the cache — the real freshness signal
+    tags: list = field(default_factory=list)   # [{tag, value, banned}] ranked by the platform metric desc
 
 
 @dataclass
 class RotationAccount:
-    """Section 4: one account's rotation health — the last N tag lines + the consecutive-duplicate warn."""
+    """Section 3: one account's rotation health — the last N tag lines + the consecutive-duplicate warn."""
     account: str
     warn: bool                         # True iff two adjacent (by created_at desc) posts shipped an identical tag line
     lines: list = field(default_factory=list)   # [[tag, ...], ...] the recent tag lines (most-recent first)
@@ -72,22 +60,21 @@ class RotationAccount:
 
 @dataclass
 class HashtagsPage:
-    """The whole /hashtags read-model — the five sections. Pure; assembled with zero network."""
+    """The whole /hashtags read-model. Pure; assembled with zero network."""
     corpora: list = field(default_factory=list)
     store: Optional[StoreStatus] = None
-    budget: Optional[BudgetMeter] = None
     rotation: list = field(default_factory=list)
     bans: list = field(default_factory=list)   # the sorted ban list (display + remove targets)
 
 
 def _store_status(cfg: Config) -> StoreStatus:
-    """Section 2 read: distinguish THREE store states — missing file (frozen floor), parse error (unreadable
-    + one log breadcrumb), or ok (ranked chips + mtime age + provenance). Banned tags are FLAGGED for the
-    struck-through view but the store FILE is untouched (view-only). Never raises."""
+    """Section 2 read: distinguish THREE cache states — no file yet (empty), parse error (unreadable + one
+    log breadcrumb), or ok (ranked chips + mtime + the stalest measurement). Banned tags are FLAGGED for
+    the struck-through view but the cache FILE is untouched (view-only). Never raises."""
     p = cfg.hashtags_path
     bans = load_bans(cfg)
     if not p.exists():
-        return StoreStatus(state="frozen floor", provenance="frozen floor")
+        return StoreStatus(state="empty")
     try:
         import json
         raw = json.loads(p.read_text())
@@ -97,50 +84,21 @@ def _store_status(cfg: Config) -> StoreStatus:
     if not isinstance(raw, dict):
         get_logger(cfg)("hashtags", "store", "store_unreadable", err="expected a JSON object")
         return StoreStatus(state="unreadable")
-    tags = load_store(cfg) or []
-    reach = load_store_reach(cfg)
-    provenance = "graph-reach" if reach else "frozen floor"
+    m = load_measurements(cfg)
     try:
         age = datetime.fromtimestamp(p.stat().st_mtime, tz=timezone.utc).isoformat()
     except OSError:
         age = None
-    ranked = sorted(tags, key=lambda t: (-(reach.get(_norm(t), -1.0)), _norm(t)))
-    rows = [{"tag": t, "reach": reach.get(_norm(t)), "banned": _norm(t) in bans} for t in ranked]
-    return StoreStatus(state="ok", provenance=provenance, age=age, tags=rows)
-
-
-def budget_meter(cfg: Config, *, now: Optional[datetime] = None) -> BudgetMeter:
-    """Section 3 read: wrap meta_graph.budget_remaining (a FILE read, no Graph call). Observational only —
-    None -> unreadable copy (no invented numbers); Graph calls are NOT blocked. Else used = 30 - remaining,
-    window reset = oldest recorded query ts + 7d. Never raises / never spends a Graph query."""
-    from fanops.meta_graph import budget_remaining, _read_queries, _BUDGET_LIMIT, _BUDGET_WINDOW_DAYS
-    now = now or datetime.now(timezone.utc)
-    remaining = budget_remaining(cfg, now=now)
-    if remaining is None:
-        return BudgetMeter(fail_closed=True, copy=BUDGET_UNREADABLE_COPY, limit=_BUDGET_LIMIT,
-                           note=BUDGET_OBSERVATIONAL_NOTE)
-    reset = None
-    q = _read_queries(cfg) or []
-    stamps: list[datetime] = []
-    for e in q:
-        try:
-            ts = datetime.fromisoformat(e["ts"])
-        except (KeyError, TypeError, ValueError):
-            continue
-        if ts.tzinfo is None:
-            ts = ts.replace(tzinfo=timezone.utc)
-        stamps.append(ts)
-    if stamps:
-        reset = (min(stamps) + timedelta(days=_BUDGET_WINDOW_DAYS)).isoformat()
-    return BudgetMeter(fail_closed=False, limit=_BUDGET_LIMIT, used=_BUDGET_LIMIT - remaining,
-                       remaining=remaining, window_reset=reset, note=BUDGET_OBSERVATIONAL_NOTE)
+    stamps = [r.get("measured_at") for r in m.values() if isinstance(r.get("measured_at"), str)]
+    rows = [{"tag": t, "value": m[t].get(METRIC_FIELD), "banned": t in bans} for t in ranked_tags(m)]
+    return StoreStatus(state="ok", age=age, oldest=(min(stamps) if stamps else None), tags=rows)
 
 
 def rotation_health(led: Ledger, *, n: int = 5) -> list:
-    """Section 4 read: per account, take the last `n` in-flight/shipped posts (by created_at desc) — the SAME
-    posts tag_exposure counts (reuses _EXPOSURE_STATES) — and warn when any two ADJACENT posts shipped an
-    identical FULL tag line (compared as normalized tuples). This is the exact pre-S06 failure the operator
-    caught live. Observatory ONLY — it never calls vet_hashtags. Pure read; never raises."""
+    """Section 3 read: per account, take the last `n` in-flight/shipped posts (by created_at desc) — the
+    SAME posts tag_exposure counts (reuses _EXPOSURE_STATES) — and warn when any two ADJACENT posts shipped
+    an identical FULL tag line (compared as normalized tuples). This is the exact pre-S06 failure the
+    operator caught live. Observatory ONLY — it never calls vet_hashtags. Pure read; never raises."""
     by_account: dict[str, list] = {}
     for p in led.posts.values():
         if p.state not in _EXPOSURE_STATES:
@@ -158,36 +116,35 @@ def rotation_health(led: Ledger, *, n: int = 5) -> list:
 
 
 def _corpora_rows(cfg: Config, *, edit_href: str = "") -> list:
-    """Section 1 read: one row per persona from Personas.load — size, pinned/auto split (via _partition_corpus
-    + the raw hashtag_corpus_meta), last_refreshed = max `added` across that persona's meta, top3 by store
-    reach. Read-only (the edit_href points at U9/Personas). Byte-truth: counts come straight from personas.json."""
-    reach = load_store_reach(cfg)
+    """Section 1 read: one row per persona — corpus size, its stalest measurement, the top 3 by the
+    platform metric, and how many pre-derivation tags were retired. Byte-truth: everything comes straight
+    from personas.json + the cache."""
+    m = load_measurements(cfg)
     rows: list[CorpusRow] = []
     for per in Personas.load(cfg).all():
         row = _persona_row(cfg, per.id) or {}
         meta = row.get("hashtag_corpus_meta") if isinstance(row.get("hashtag_corpus_meta"), dict) else {}
         corpus = [_norm(t) for t in (per.hashtag_corpus or []) if isinstance(t, str) and _norm(t)]
-        pinned, auto = _partition_corpus(corpus, meta)
-        stamps = [m.get("added") for m in meta.values() if isinstance(m, dict) and isinstance(m.get("added"), str)]
-        last = max(stamps) if stamps else None
-        top3 = sorted(corpus, key=lambda t: (-(reach.get(_norm(t), -1.0)), _norm(t)))[:3]
+        stamps = [v.get("measured_at") for v in meta.values()
+                  if isinstance(v, dict) and isinstance(v.get("measured_at"), str)]
+        top3 = sorted(corpus, key=lambda t: (-((m.get(t) or {}).get(METRIC_FIELD) or -1.0), t))[:3]
         rows.append(CorpusRow(pid=per.id, name=per.name or per.id, size=len(corpus),
-                              pinned=len(pinned), auto=len(auto), last_refreshed=last, top3=top3,
+                              last_refreshed=(max(stamps) if stamps else None), top3=top3,
+                              deprecated=len(getattr(per, "hashtag_corpus_deprecated", []) or []),
                               edit_href=edit_href))
     return rows
 
 
 def hashtags_page(cfg: Config, *, led: Optional[Ledger] = None, edit_href: str = "",
                   now: Optional[datetime] = None) -> HashtagsPage:
-    """Assemble the whole /hashtags read-model — the five sections — with ZERO network. `led` is injected by
-    the route (one Ledger.load); `edit_href` is url_for('personas_view'). Fail-open: any section that trips is
-    already internally guarded (store/budget/rotation each swallow + degrade), so the page never 500s."""
+    """Assemble the whole /hashtags read-model with ZERO network. `led` is injected by the route (one
+    Ledger.load); `edit_href` is url_for('personas_view'). Fail-open: each section is internally guarded,
+    so the page never 500s. `now` is accepted for call-compat; nothing here is time-dependent."""
     if led is None:
         led = Ledger.load(cfg)
     return HashtagsPage(
         corpora=_corpora_rows(cfg, edit_href=edit_href),
         store=_store_status(cfg),
-        budget=budget_meter(cfg, now=now),
         rotation=rotation_health(led),
         bans=sorted(load_bans(cfg)),
     )

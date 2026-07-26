@@ -1,10 +1,10 @@
 # tests/test_meta_graph.py
-# M4 live half: the read-only Meta Graph hashtag-TREND client. Pure-fixture (mocked `get`), no real
-# network. Covers: ig_hashtag_search -> id, top_media -> engagement trend score, transport fail-SOFT
-# (per-tag None, never raises), local budget counter as OBSERVATIONAL telemetry (never refuses Graph),
-# and the token NEVER appearing in any logged output (METRICS_CLIENT_AUTH_DISCIPLINE).
-import json
-from datetime import datetime, timedelta, timezone
+# The read-only Meta Graph HASHTAG client. Pure-fixture (mocked `get`), no real network. Covers:
+# ig_hashtag_search -> node id, top_media -> (verbatim like_count, co-occurring tags), transport
+# fail-SOFT (per-tag None, never raises), throttle backoff -> GraphThrottled (Meta's own refusal is the
+# ONLY governor — the local 30/7-day budget fiction is deleted), the token NEVER appearing in any logged
+# output (METRICS_CLIENT_AUTH_DISCIPLINE), and the IPv4-only default transport.
+import pytest
 from fanops.config import Config
 from fanops import meta_graph
 
@@ -33,170 +33,85 @@ def _router(routes):
     return get
 
 
-def test_hashtag_id_parses_first_data_id(tmp_path, monkeypatch):
+# ── resolve_hashtag: the search endpoint funds NOVEL tags only ──────────────────────────────────
+
+def test_resolve_hashtag_parses_first_data_id(tmp_path, monkeypatch):
     cfg = _cfg(tmp_path, monkeypatch)
     get = _router({"ig_hashtag_search": _Resp(200, {"data": [{"id": "177"}]})})
-    assert meta_graph.hashtag_id(cfg, "#hiphop", get=get) == "177"
+    assert meta_graph.resolve_hashtag(cfg, "#hiphop", get=get) == "177"
+    assert get.calls[0][1]["q"] == "hiphop"                        # `q` carries no leading '#'
 
-def test_hashtag_id_none_on_empty_or_error(tmp_path, monkeypatch):
+def test_resolve_hashtag_none_on_empty_or_error(tmp_path, monkeypatch):
     cfg = _cfg(tmp_path, monkeypatch)
-    assert meta_graph.hashtag_id(cfg, "#x", get=_router({"ig_hashtag_search": _Resp(200, {"data": []})})) is None
-    assert meta_graph.hashtag_id(cfg, "#x", get=_router({"ig_hashtag_search": _Resp(400, None)})) is None
+    assert meta_graph.resolve_hashtag(cfg, "#x", get=_router({"ig_hashtag_search": _Resp(200, {"data": []})})) is None
+    assert meta_graph.resolve_hashtag(cfg, "#x", get=_router({"ig_hashtag_search": _Resp(400, None)})) is None
 
-def test_trend_score_sums_top_media_engagement(tmp_path, monkeypatch):
-    cfg = _cfg(tmp_path, monkeypatch)
-    get = _router({"ig_hashtag_search": _Resp(200, {"data": [{"id": "9"}]}),
-                   "top_media": _Resp(200, {"data": [{"like_count": 100, "comments_count": 5},
-                                                     {"like_count": 50, "comments_count": 1}]})})
-    assert meta_graph.trend_score(cfg, "#rap", get=get) == 156.0
-
-def test_trend_score_none_when_hashtag_unresolved(tmp_path, monkeypatch):
-    cfg = _cfg(tmp_path, monkeypatch)
-    get = _router({"ig_hashtag_search": _Resp(200, {"data": []})})
-    assert meta_graph.trend_score(cfg, "#x", get=get) is None
+def test_resolve_hashtag_no_creds_never_touches_the_network(tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path, monkeypatch, token=None)
+    get = _router({})
+    assert meta_graph.resolve_hashtag(cfg, "#a", get=get) is None
+    assert get.calls == []                                         # short-circuits BEFORE any request
 
 def test_graph_get_fail_soft_on_transport_error(tmp_path, monkeypatch):
     cfg = _cfg(tmp_path, monkeypatch)
     import requests
     def boom(url, params=None, timeout=None): raise requests.exceptions.ConnectionError("down")
-    assert meta_graph.hashtag_id(cfg, "#x", get=boom) is None      # never raises -> enhancement fails soft
+    assert meta_graph.resolve_hashtag(cfg, "#x", get=boom) is None  # never raises -> the tag is skipped
 
 
-def test_budget_remaining_fresh_is_full(tmp_path, monkeypatch):
+# ── measure_and_harvest: ONE top_media fetch serves the metric AND the discovery harvest ────────
+
+def test_measure_and_harvest_reads_the_verbatim_like_count_and_the_cotags(tmp_path, monkeypatch):
     cfg = _cfg(tmp_path, monkeypatch)
-    assert meta_graph.budget_remaining(cfg) == meta_graph._BUDGET_LIMIT
+    get = _router({"top_media": _Resp(200, {"data": [
+        {"caption": "bars #alpha #Beta", "like_count": 100, "comments_count": 5},
+        {"caption": "#alpha", "like_count": 50, "comments_count": 1}]})})
+    metric, cotags = meta_graph.measure_and_harvest(cfg, "id-x", get=get)
+    assert metric == 100.0                                         # the FIRST like_count, never a sum
+    assert cotags == {"#alpha": 2, "#beta": 1}                     # tallied + normalized
 
-def test_budget_counts_unique_tags_in_window_and_expires_old(tmp_path, monkeypatch):
+def test_measure_skips_a_media_with_likes_hidden(tmp_path, monkeypatch):
+    # Meta hides like_count on some posts (probed live): a leading like-less item is SKIPPED, not zero.
     cfg = _cfg(tmp_path, monkeypatch)
-    now = datetime(2026, 6, 19, tzinfo=timezone.utc)
-    old = (now - timedelta(days=10)).isoformat()
-    recent = (now - timedelta(days=1)).isoformat()
-    cfg.hashtag_budget_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg.hashtag_budget_path.write_text(json.dumps({"queries": [
-        {"tag": "#a", "ts": old}, {"tag": "#b", "ts": recent}, {"tag": "#b", "ts": recent}]}))
-    # only #b counts (recent + unique); #a expired
-    assert meta_graph.budget_remaining(cfg, now=now) == meta_graph._BUDGET_LIMIT - 1
+    get = _router({"top_media": _Resp(200, {"data": [{"caption": "", "comments_count": 8},
+                                                     {"caption": "", "like_count": 777}]})})
+    assert meta_graph.measure_and_harvest(cfg, "id-x", get=get)[0] == 777.0
 
-def test_budget_fail_closed_on_corrupt_file(tmp_path, monkeypatch):
+def test_measure_and_harvest_unmeasured_on_refusal(tmp_path, monkeypatch):
     cfg = _cfg(tmp_path, monkeypatch)
-    cfg.hashtag_budget_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg.hashtag_budget_path.write_text("{ not json")
-    assert meta_graph.budget_remaining(cfg) is None                # None == counter unreadable (meter only)
+    assert meta_graph.measure_and_harvest(cfg, "id-x", get=_router({})) == (None, {})
 
-def test_record_query_appends_and_decrements(tmp_path, monkeypatch):
+
+# ── Meta's refusals are the only governor ───────────────────────────────────────────────────────
+
+def test_throttle_code_backs_off_then_raises_graph_throttled(tmp_path, monkeypatch):
     cfg = _cfg(tmp_path, monkeypatch)
-    now = datetime(2026, 6, 19, tzinfo=timezone.utc)
-    meta_graph.record_query(cfg, "#new", now=now)
-    assert meta_graph.budget_remaining(cfg, now=now) == meta_graph._BUDGET_LIMIT - 1
+    slept: list = []
+    monkeypatch.setattr(meta_graph, "_sleep", lambda s: slept.append(s))
+    get = _router({"ig_hashtag_search": _Resp(400, {"error": {"code": 4, "message": "rate limit"}})})
+    with pytest.raises(meta_graph.GraphThrottled):
+        meta_graph.resolve_hashtag(cfg, "#a", get=get)
+    assert len(slept) == meta_graph._MAX_RL_RETRIES                # backed off before giving up
+    assert len(get.calls) == meta_graph._MAX_RL_RETRIES + 1
 
-def test_record_query_serializes_under_a_flock(tmp_path, monkeypatch):
-    # meta-budget-race: record_query does read-filter-append-write with NO lock, so two concurrent Studio calls
-    # lose writes (the budget under-counts -> over-spends the Meta Graph 30/7-day quota). Serialize the RMW under
-    # the same fcntl flock the other control-file mutators use.
+def test_ordinary_refusal_is_a_skip_not_a_throttle(tmp_path, monkeypatch):
+    # code 18 (the server-side search window) is NOT a throttle: that tag is skipped, the pass continues.
     cfg = _cfg(tmp_path, monkeypatch)
-    now = datetime(2026, 6, 19, tzinfo=timezone.utc)
-    meta_graph.record_query(cfg, "#new", now=now)
-    assert cfg.hashtag_budget_path.exists()                          # the query persisted
-    assert (cfg.control / "hashtag_budget.lock").exists()           # ...under an fcntl flock (the lost-update fix)
-
-
-def test_sample_trends_no_creds_returns_empty(tmp_path, monkeypatch):
-    cfg = _cfg(tmp_path, monkeypatch, token=None)                 # no token -> Graph fails open (no trend signal)
-    get = _router({})
-    assert meta_graph.sample_trends(cfg, ["#a"], get=get) == {}
-    assert get.calls == []                                        # never hits the network without creds
-
-def test_sample_trends_still_queries_when_budget_unknown(tmp_path, monkeypatch):
-    # Local counter corrupt -> meter returns None, but Graph calls MUST still proceed.
-    cfg = _cfg(tmp_path, monkeypatch)
-    cfg.hashtag_budget_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg.hashtag_budget_path.write_text("CORRUPT")
-    get = _router({"ig_hashtag_search": _Resp(200, {"data": [{"id": "1"}]}),
-                   "top_media": _Resp(200, {"data": [{"like_count": 7}]})})
-    out = meta_graph.sample_trends(cfg, ["#a", "#b"], get=get)
-    assert out == {"#a": 7.0, "#b": 7.0}
-    assert any("ig_hashtag_search" in u for u, _ in get.calls)
-
-def test_sample_trends_still_queries_when_local_meter_full(tmp_path, monkeypatch):
-    # 29 prior local records must NOT refuse further Graph sampling of novel tags.
-    cfg = _cfg(tmp_path, monkeypatch)
-    now = datetime(2026, 6, 19, tzinfo=timezone.utc)
-    cfg.hashtag_budget_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg.hashtag_budget_path.write_text(json.dumps({"queries": [
-        {"tag": f"#t{i}", "ts": now.isoformat()} for i in range(meta_graph._BUDGET_LIMIT - 1)]}))
-    get = _router({"ig_hashtag_search": _Resp(200, {"data": [{"id": "1"}]}),
-                   "top_media": _Resp(200, {"data": [{"like_count": 7}]})})
-    out = meta_graph.sample_trends(cfg, ["#x", "#y", "#z"], get=get, now=now)
-    assert out == {"#x": 7.0, "#y": 7.0, "#z": 7.0}          # all novel tags sampled
-
-def test_sample_trends_requeries_expired_tag(tmp_path, monkeypatch):
-    # A tag last queried >7 days ago is OUTSIDE the budget window -> it must be re-queryable (not skipped
-    # as if recent). Regression for the unwindowed `already` set.
-    cfg = _cfg(tmp_path, monkeypatch)
-    now = datetime(2026, 6, 19, tzinfo=timezone.utc)
-    old = (now - timedelta(days=10)).isoformat()
-    cfg.hashtag_budget_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg.hashtag_budget_path.write_text(json.dumps({"queries": [{"tag": "#old", "ts": old}]}))
-    get = _router({"ig_hashtag_search": _Resp(200, {"data": [{"id": "1"}]}),
-                   "top_media": _Resp(200, {"data": [{"like_count": 12}]})})
-    out = meta_graph.sample_trends(cfg, ["#old"], get=get, now=now)
-    assert out == {"#old": 12.0}                                 # expired -> re-sampled, not skipped
-
-def test_sample_trends_refused_search_not_recorded_and_resampleable(tmp_path, monkeypatch):
-    # 2026-07-25 live incident: Meta's server-side 30-unique/7d cap REFUSED every novel search (HTTP 400
-    # code 18 / subcode 2207034) yet each refusal was still RECORDED, so the local window then skipped
-    # ~1400 tags for a week and every later funded pass measured 0. A refused search is NOT a unique
-    # search Meta counted: it must not be recorded, so the tag stays re-sampleable on the next pass.
-    cfg = _cfg(tmp_path, monkeypatch)
-    now = datetime(2026, 6, 19, tzinfo=timezone.utc)
-    refused = _router({"ig_hashtag_search": _Resp(400, {"error": {"code": 18}})})
-    assert meta_graph.sample_trends(cfg, ["#novel"], get=refused, now=now) == {}
-    assert meta_graph.budget_remaining(cfg, now=now) == meta_graph._BUDGET_LIMIT   # refusal NOT recorded
-    ok = _router({"ig_hashtag_search": _Resp(200, {"data": [{"id": "1"}]}),
-                  "top_media": _Resp(200, {"data": [{"like_count": 3}]})})
-    assert meta_graph.sample_trends(cfg, ["#novel"], get=ok, now=now) == {"#novel": 3.0}   # not skipped
-
-def test_sample_trends_accepted_but_unresolved_is_recorded(tmp_path, monkeypatch):
-    # A 200 search resolving to NO node was still a unique search Meta counted -> recorded (window skip).
-    cfg = _cfg(tmp_path, monkeypatch)
-    now = datetime(2026, 6, 19, tzinfo=timezone.utc)
-    get = _router({"ig_hashtag_search": _Resp(200, {"data": []})})
-    assert meta_graph.sample_trends(cfg, ["#ghost"], get=get, now=now) == {}
-    assert meta_graph.budget_remaining(cfg, now=now) == meta_graph._BUDGET_LIMIT - 1
-
-def test_sample_trends_caps_novel_attempts_per_pass(tmp_path, monkeypatch):
-    # Meta accepts at most _BUDGET_LIMIT unique searches per rolling week; attempting hundreds more in one
-    # pass is guaranteed-failure spam (code 18 each) that trips the APP-level request limit (code 4) the
-    # metrics reader shares. One pass attempts at most _BUDGET_LIMIT NOVEL tags; the rest wait their turn.
-    cfg = _cfg(tmp_path, monkeypatch)
-    now = datetime(2026, 6, 19, tzinfo=timezone.utc)
-    get = _router({"ig_hashtag_search": _Resp(200, {"data": [{"id": "1"}]}),
-                   "top_media": _Resp(200, {"data": [{"like_count": 2}]})})
-    cands = [f"#t{i}" for i in range(meta_graph._BUDGET_LIMIT + 10)]
-    out = meta_graph.sample_trends(cfg, cands, get=get, now=now)
-    assert len(out) == meta_graph._BUDGET_LIMIT
-    searches = [u for u, _ in get.calls if "ig_hashtag_search" in u]
-    assert len(searches) == meta_graph._BUDGET_LIMIT
-
-def test_sample_trends_skipped_tags_do_not_consume_the_cap(tmp_path, monkeypatch):
-    cfg = _cfg(tmp_path, monkeypatch)
-    now = datetime(2026, 6, 19, tzinfo=timezone.utc)
-    cfg.hashtag_budget_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg.hashtag_budget_path.write_text(json.dumps({"queries": [
-        {"tag": f"#pre{i}", "ts": now.isoformat()} for i in range(meta_graph._BUDGET_LIMIT)]}))
-    get = _router({"ig_hashtag_search": _Resp(200, {"data": [{"id": "1"}]}),
-                   "top_media": _Resp(200, {"data": [{"like_count": 4}]})})
-    cands = [f"#pre{i}" for i in range(meta_graph._BUDGET_LIMIT)] + ["#novel"]
-    assert meta_graph.sample_trends(cfg, cands, get=get, now=now) == {"#novel": 4.0}
+    slept: list = []
+    monkeypatch.setattr(meta_graph, "_sleep", lambda s: slept.append(s))
+    get = _router({"ig_hashtag_search": _Resp(400, {"error": {"code": 18}})})
+    assert meta_graph.resolve_hashtag(cfg, "#a", get=get) is None
+    assert slept == [] and len(get.calls) == 1                     # no retry ladder, no wait
 
 def test_token_never_logged(tmp_path, monkeypatch):
     cfg = _cfg(tmp_path, monkeypatch)
-    cfg.hashtag_budget_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg.hashtag_budget_path.write_text("CORRUPT")                 # meter unreadable; Graph still attempted
-    meta_graph.sample_trends(cfg, ["#a"], get=_router({}), now=datetime(2026, 6, 19, tzinfo=timezone.utc))
+    meta_graph.resolve_hashtag(cfg, "#a", get=_router({}))
+    meta_graph.measure_and_harvest(cfg, "id-a", get=_router({}))
     log_text = cfg.log_path.read_text() if cfg.log_path.exists() else ""
-    assert _TOKEN not in log_text                                 # the token must never reach run.log
+    assert _TOKEN not in log_text                                  # the token must never reach run.log
 
+
+# ── transport ───────────────────────────────────────────────────────────────────────────────────
 
 def test_default_get_is_ipv4_session(tmp_path, monkeypatch):
     # Default Graph transport (get=None) must ride the IPv4-forcing Session — not bare requests.get —
@@ -206,7 +121,7 @@ def test_default_get_is_ipv4_session(tmp_path, monkeypatch):
     def spy(url, **kw):
         seen.append(url); return _Resp(200, {"data": [{"id": "1"}]})
     monkeypatch.setattr(meta_graph, "_default_get", spy)
-    assert meta_graph.hashtag_id(cfg, "#x") == "1"               # get=None -> _default_get
+    assert meta_graph.resolve_hashtag(cfg, "#x") == "1"           # get=None -> _default_get
     assert seen and "ig_hashtag_search" in seen[0]
 
 def test_ipv4_adapter_forces_af_inet(monkeypatch):

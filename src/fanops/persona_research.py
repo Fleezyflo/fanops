@@ -1,64 +1,76 @@
 # src/fanops/persona_research.py
-"""Per-persona hashtag CORPUS research + live Graph discovery (extracted from personas.py, audit #6 —
-behavior byte-identical). research_corpus is the budget-free offline re-rank of what we already know;
-discover_corpus is the live co-occurrence harvest that finds tags we have never named, FAIL-OPEN to the
-offline re-rank. Both are re-exported from fanops.personas — and discover_corpus MUST stay patchable at
-`fanops.personas.discover_corpus` (tests monkeypatch it there; fanops_hashtags imports it lazily)."""
+"""Layer B — a persona's hashtag corpus, DERIVED. Zero network: a pure function of the measurement cache
+Layer A already bought (fanops_hashtags.refresh_store) and the persona's own description.
+
+  terms(persona)  ->  anchors  ->  aligned pool  ->  top `corpus_target` by the platform metric
+
+`persona_terms` is also what roots discovery in Layer A, so the two halves agree on what a persona IS by
+construction rather than by convention. The corpus is never read back as an input anywhere.
+
+The corpus is OUTPUT, not curated state: every tick recomputes it. There are no pins, no operator
+add/remove, and no proposal flows to reconcile against — those made a derived value hand-tended, and left
+the live system with corpora that were ~90% auto-filled tags carrying `reach: null`, i.e. promoted with no
+measurement at all. Admission now needs a real, unexpired platform measurement, so a corpus is either
+evidence-backed or honestly SHORT."""
 from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from fanops.config import Config
-from fanops.hashtags import _norm, _screen_content, _strip_banned, load_bans, load_store_reach
+from fanops.hashtags import METRIC_FIELD, _norm, _STOPWORDS, _WORD, load_measurements
 from fanops.hashtag_hygiene import is_curatable
-from fanops.personas import Personas
+
+_EVIDENCE_MAX_AGE_DAYS = 90       # older than this is history, not evidence — a dead measurement cannot curate
 
 
-_EVIDENCE_MAX_AGE_DAYS = 90       # older than this is stale, not evidence — expiry, so a dead measurement cannot curate forever
+def _registry(cfg: Config):
+    """The persona registry, imported lazily. `fanops.personas` is the FACADE that re-exports this module,
+    so a module-level import here only resolves when personas.py is imported first — importing this module
+    directly (as tests and fanops_hashtags do) would hit a partially-initialized facade."""
+    from fanops.personas import Personas
+    return Personas.load(cfg)
 
 
-def research_corpus(cfg: Config, pid: str, *, limit: int = 8, now: datetime | None = None) -> list[str]:
-    """B3/R4: propose hashtags this persona doesn't carry, from MEASURED EVIDENCE ONLY — never from the
-    store menu. Budget-free (it reads what refresh_store already bought). Unknown id -> KeyError.
+def persona_terms(per) -> list[str]:
+    """The discovery/alignment vocabulary for ONE persona, from its own words only: `intake.genre` first
+    (the explicit niche declaration), then the voice — adjacent-word CONCATENATIONS before the single
+    words, because that is how hashtags are actually written ("syrian rapper" -> #syrianrapper) — then the
+    name, whole-name concatenation first.
 
-    R4 — THIS FUNCTION IS THE CUT THAT BREAKS THE CIRCULARITY, so the filter below is load-bearing, not
-    defensive dressing. It used to propose from `vetted_menu(load_store(cfg))`: the whole store, ranked.
-    But `fanops_hashtags._seed_tags` BUILDS the store out of every persona's corpus, so the store's tags
-    are mostly the corpora echoed back — and `refresh_persona_corpus` fed these proposals straight into
-    the corpus as auto entries. corpus -> store -> corpus, closed, with no external evidence anywhere in
-    it and nothing in the shape of the data to reveal that. Measured on the live control dir 2026-07-16:
-    the store was BYTE-IDENTICAL to `seeds + frozen floor` — 53 tags, 0 discovered, `reach: {}` — while
-    every proposal it made looked like ranked research.
+    Pure, deterministic, and CORPUS-BLIND. Specificity leads so the narrowest, most on-niche searches
+    happen before a throttle can end a pass. Reuses the tokenizer the clip-content signal uses
+    (`hashtags._WORD` / `_STOPWORDS`), so "a token" means the same thing everywhere."""
+    out: list[str] = []; seen: set[str] = set()
 
-    The fix is structural, not a heuristic: a tag may be proposed ONLY if it carries real Graph evidence
-    (`source == 'graph-reach'`, a `measured_at`, a positive reach) that is not expired. A corpus tag
-    echoed into the store as an unmeasured SEED carries none, so it can never be proposed back — the edge
-    is severed by the data model, not by a rule someone must remember. No evidence -> [] (honest silence:
-    the correct answer when nothing has been measured is 'nothing', not a re-ranked mirror)."""
-    from fanops.hashtags import load_store_evidence
-    per = Personas.load(cfg).get(pid)
-    if per is None:
-        raise KeyError(pid)
-    have = {_norm(t) for t in per.hashtag_corpus if isinstance(t, str)}
-    ev = load_store_evidence(cfg)
-    own = _persona_seeds(per)
-    # Two-tier preference (operator 2026-07-25): own-seed-attributed evidence first, then global reach.
-    # Within each tier, rank by measured reach descending. A record without `seeds` has unknown
-    # attribution and still ranks in the global tier — never fabricate provenance for it.
-    candid = [t for t in ev if _is_evidence(ev[t], now=now) and t not in have and is_curatable(t)]
-    candid.sort(key=lambda t: (0 if _seeds_intersect(ev[t].get("seeds"), own) else 1,
-                               -float(ev[t]["reach"])))
-    return candid[:limit]
+    def add(t: str) -> None:
+        t = (t or "").strip().lower()
+        if t and t not in seen and t not in _STOPWORDS:
+            seen.add(t); out.append(t)
+
+    intake = per.intake if isinstance(getattr(per, "intake", None), dict) else {}
+    for t in _WORD.findall(str(intake.get("genre") or "").lower()):
+        add(t)
+    words = _WORD.findall(str(getattr(per, "voice", "") or "").lower())
+    for a, b in zip(words, words[1:]):
+        if a not in _STOPWORDS and b not in _STOPWORDS:
+            add(a + b)
+    for t in words:
+        add(t)
+    nm = _WORD.findall(str(getattr(per, "name", "") or "").lower())
+    if len(nm) > 1:
+        add("".join(nm))
+    for t in nm:
+        add(t)
+    return out
 
 
 def _is_evidence(rec: dict, *, now: datetime | None = None) -> bool:
-    """True when an evidence record is a real, unexpired Graph MEASUREMENT — the promotion gate's core
-    predicate. Demands provenance (`source == 'graph-reach'`), a parseable `measured_at`, a positive
-    reach, and freshness within _EVIDENCE_MAX_AGE_DAYS. `source: 'unknown'` (a legacy bare number whose
-    provenance we genuinely do not know) FAILS by design — unprovenanced data must not curate, and the
-    migration marks it honestly instead of inventing a source for it."""
-    if not isinstance(rec, dict) or rec.get("source") != "graph-reach":
+    """True when a cache record is a real, unexpired PLATFORM measurement — the admission predicate.
+    Demands the platform's own field (`METRIC_FIELD`, positive), a parseable `measured_at`, and freshness.
+    A legacy record (the invented likes+comments sum under a `reach` key) carries no METRIC_FIELD and fails
+    here exactly as it fails the cache reader: an unprovenanced number must never curate."""
+    if not isinstance(rec, dict):
         return False
     try:
-        if float(rec.get("reach") or 0) <= 0:
+        if float(rec.get(METRIC_FIELD) or 0) <= 0:
             return False
         ts = datetime.fromisoformat(rec["measured_at"])
     except (KeyError, TypeError, ValueError):
@@ -68,198 +80,113 @@ def _is_evidence(rec: dict, *, now: datetime | None = None) -> bool:
     return (now or datetime.now(timezone.utc)) - ts <= timedelta(days=_EVIDENCE_MAX_AGE_DAYS)
 
 
+def _aligned_pool(per, cache: dict[str, dict], *, now=None) -> list[tuple[str, float, str]]:
+    """This persona's candidate pool from the cache, as (tag, metric, from-anchor), ranked by the platform
+    metric desc (ties by tag, so a derivation is reproducible).
 
-def _persona_seeds(per) -> set[str]:
-    """The same seed set `_seed_tags` contributes for ONE persona: curated corpus + intake.genre words.
-    Used to prefer store evidence whose harvest provenance intersects this persona's niche."""
-    seeds = {_norm(t) for t in (per.hashtag_corpus or []) if isinstance(t, str) and _norm(t)}
-    seeds |= {_norm("#" + w) for w in (per.intake.get("genre") or "").split() if w.strip()}
-    return seeds
+    Alignment is a binary membership test, never a rank key: a tag qualifies if it IS one of the persona's
+    anchors, or if the harvest recorded it co-occurring with one. Relevance therefore comes from the
+    platform's own co-occurrence data rooted at the persona's description — not from a similarity score we
+    invented. Versatility comes free: the posts winning in a niche right now carry the broad tags too."""
+    anchors = {_norm("#" + t) for t in persona_terms(per)}
+    anchors.discard("#")
+    out: list[tuple[str, float, str]] = []
+    for tag, rec in cache.items():
+        if not _is_evidence(rec, now=now) or not is_curatable(tag):
+            continue
+        if tag in anchors:
+            src = tag
+        else:
+            frm = rec.get("from") if isinstance(rec.get("from"), dict) else {}
+            hits = [a for a in frm if a in anchors]
+            if not hits:
+                continue
+            src = max(hits, key=lambda a: (frm.get(a) or 0, a))
+        out.append((tag, float(rec[METRIC_FIELD]), src))
+    out.sort(key=lambda r: (-r[1], r[0]))
+    return out
 
 
-def _seeds_intersect(seeds, own: set[str]) -> bool:
-    if not isinstance(seeds, dict) or not own: return False
-    return any(_norm(s) in own for s in seeds if isinstance(s, str))
+def derive_corpus(cfg: Config, pid: str, *, now=None) -> dict:
+    """Recompute ONE persona's corpus from the cache. Zero network. Returns {changed, added, removed}.
 
+    First it retires anything pre-derivation: a corpus tag without derivation meta is moved to the visible
+    `hashtag_corpus_deprecated` field (persona_store.deprecate_legacy_corpus) so it stops shipping the
+    moment this code runs, rather than lingering until a derivation happens to succeed.
 
-def discover_corpus(cfg: Config, pid: str, *, limit: int = 8, measure_k: int = 0, get=None,
-                    offline_fallback: bool = True) -> list[dict]:
-    """M3: LIVE per-persona discovery — the upgrade from research_corpus's re-rank-what-we-know to
-    finding tags this persona has not curated. Seeds the Graph co-occurrence harvest from the persona's
-    category (its corpus + intake `genre`), DROPS what this persona already knows (VETTED ∪ corpus), and returns
-    evidence-carrying proposals [{"tag","count","host_engagement",...}] reach-relevant first. FAIL-OPEN: no
-    creds / nothing fresh / any Graph error -> today's offline research_corpus re-rank, wrapped as evidence-
-    less {"tag": ...} dicts so the caller has ONE shape. measure_k defaults 0 (the free co-occurrence COUNT is
-    the operator's evidence; per-tag reach stays the explicit 'Check reach' action) — the global refresh
-    passes measure_k>0 to gate the menu on measured reach. Unknown id -> KeyError. (M3: tag_lean retired —
-    the curated corpus is the seed flavor.) offline_fallback=False (S12 auto-refresh): return [] instead of
-    the offline re-rank when the Graph path yields nothing."""
-    from fanops.hashtags import VETTED
-    from fanops.meta_graph import discover_candidates
-    per = Personas.load(cfg).get(pid)
+    Then the corpus becomes the top `cfg.corpus_target` of the aligned, measured, structurally-clean pool.
+    Nothing pads it: with thin evidence the corpus is short, and with NO evidence (a cold cache, or the
+    platform unreachable) the previous derived corpus stands untouched — an outage must not empty a
+    working persona. Unknown id -> {changed: False}."""
+    from fanops.persona_store import apply_auto_corpus, deprecate_legacy_corpus
+    per = _registry(cfg).get(pid)
     if per is None:
-        raise KeyError(pid)
-    corpus = [_norm(t) for t in per.hashtag_corpus if isinstance(t, str)]
-    genre_seeds = [_norm("#" + w) for w in (per.intake.get("genre") or "").split() if w.strip()]   # `or ""`: a hand-edited "genre": null must not seed "#none"
-    seeds = list(dict.fromkeys(corpus + genre_seeds))
-    known = set(VETTED) | set(corpus)                   # the store is the universe, not this persona's corpus
-    try:
-        cands = discover_candidates(cfg, seeds, known=known, measure_k=measure_k, get=get)
-    except Exception:                                    # any Graph/transport error -> offline fallback
-        cands = []
-    if cands:
-        return cands[:limit]
-    if not offline_fallback:
-        return []
-    return [{"tag": t} for t in research_corpus(cfg, pid, limit=limit)]   # FAIL-OPEN to the offline re-rank
+        return {"changed": False, "reason": "unknown_persona"}
+    deprecate_legacy_corpus(cfg, pid)
+    per = _registry(cfg).get(pid)                      # re-load: the cutover may have emptied the corpus
+    corpus = [_norm(t) for t in (per.hashtag_corpus or []) if isinstance(t, str) and _norm(t)]
+    pool = _aligned_pool(per, load_measurements(cfg), now=now)
+    if not pool:
+        return {"changed": False}                          # outage / cold cache: hold, never empty
+    stamp = (now.isoformat() if isinstance(now, datetime) else None) or datetime.now(timezone.utc).isoformat()
+    chosen = pool[:max(1, cfg.corpus_target)]
+    final = [t for t, _v, _s in chosen]
+    if final == corpus:
+        return {"changed": False}
+    meta = {t: {METRIC_FIELD: v, "measured_at": stamp, "from": s} for t, v, s in chosen}
+    apply_auto_corpus(cfg, pid, tags=final, meta=meta)
+    return {"changed": True, "added": [t for t in final if t not in set(corpus)],
+            "removed": [t for t in corpus if t not in set(final)]}
+
+
+def derived_report(cfg: Config, pid: str, *, top_n: int = 8, now=None) -> dict:
+    """A read-only projection of what a persona's niche looks like in the cache right now — the terms it
+    searches on, how many measured tags align with it, and the strongest few. Zero network; feeds
+    `fanops hashtags discover` and the Studio panel. Unknown id -> empty shape."""
+    per = _registry(cfg).get(pid)
+    if per is None:
+        return {"terms": [], "measured": 0, "top": []}
+    pool = _aligned_pool(per, load_measurements(cfg), now=now)
+    return {"terms": persona_terms(per), "measured": len(pool),
+            "top": [(t, v) for t, v, _s in pool[:top_n]]}
 
 
 def _persona_row(cfg: Config, pid: str) -> dict | None:
+    """The RAW personas.json row for one persona (so a reader can see fields the model doesn't carry,
+    e.g. `hashtag_corpus_meta`). None when absent."""
     from fanops.persona_store import _load_raw
     _, plist = _load_raw(cfg.personas_path)
     return next((d for d in plist if isinstance(d, dict) and d.get("id") == pid), None)
 
 
-def _partition_corpus(corpus: list[str], meta: dict) -> tuple[list[str], list[str]]:
-    pinned: list[str] = []; auto: list[str] = []; seen: set[str] = set()
-    for t in corpus:
-        n = _norm(t) if isinstance(t, str) else ""
-        if not n or n in seen: continue
-        seen.add(n)
-        if _is_pinned(meta, n): pinned.append(n)
-        else: auto.append(n)
-    return pinned, auto
-
-
-def _is_pinned(meta: dict, tag: str) -> bool:
-    m = meta.get(tag) if isinstance(meta.get(tag), dict) else None
-    if m is None: return True
-    return (m.get("source") or "pinned") == "pinned"
-
-
-def _reach_key(tag: str, cand_by_tag: dict[str, dict], store_reach: dict[str, float],
-               meta: dict | None = None) -> float:
-    c = cand_by_tag.get(tag)
-    if c and c.get("measured_engagement") is not None:
-        try: return float(c["measured_engagement"])
-        except (TypeError, ValueError): pass
-    if meta:
-        m = meta.get(tag) if isinstance(meta.get(tag), dict) else None
-        if m and m.get("reach") is not None:
-            try: return float(m["reach"])
-            except (TypeError, ValueError): pass
-    r = store_reach.get(tag)
-    return float(r) if r is not None else -1.0
-
-
-def refresh_persona_corpus(cfg: Config, pid: str, *, get=None, now=None) -> dict:
-    """S12: one persona's automated corpus refresh — pinned tags preserved, auto slots filled/pruned to
-    cfg.corpus_target by reach. Fail-open ladder on missing creds / empty live harvest; unknown id ->
-    {changed: False}. Live discovery runs whenever Meta creds are present — the local budget counter
-    never refuses."""
-    from fanops.persona_store import apply_auto_corpus, repair_orphaned_auto_meta
-    per = Personas.load(cfg).get(pid)
-    if per is None:
-        return {"changed": False, "reason": "unknown_persona"}
-    # Before partition: stamp source=auto onto meta-absent corpus tags that have store graph-reach evidence
-    # (broken-fill repair — without this, absent-as-pinned freezes rotation on the next refresh).
-    repair_orphaned_auto_meta(cfg, pid, now=now)
-    per = Personas.load(cfg).get(pid)   # re-load after repair (corpus list unchanged; meta may have changed)
-    row = _persona_row(cfg, pid) or {}
-    meta = row.get("hashtag_corpus_meta") if isinstance(row.get("hashtag_corpus_meta"), dict) else {}
-    corpus = [_norm(t) for t in (per.hashtag_corpus or []) if isinstance(t, str) and _norm(t)]
-    pinned, auto = _partition_corpus(corpus, meta)
-    bans = load_bans(cfg)                        # U11: the operator's global deny-list — ban BEATS pin, so a banned
-    pinned = _strip_banned(pinned, bans)         # tag is dropped from `final` even when pinned (last explicit negative wins)
-    auto = _strip_banned(auto, bans)             # (and a banned auto tag never survives the refresh); bans empty -> byte-identical
-    target = cfg.corpus_target
-    auto_slots = max(0, target - len(pinned))
-    have = set(corpus)
-    corpus_has_ban = any(_norm(t) in bans for t in corpus)   # U11: a banned tag already in the corpus must be PURGED even when the corpus is at/over target with no creds (else the ban never takes)
-    store_reach = load_store_reach(cfg)
-    cands: list[dict] = []
-    can_live = bool(cfg.meta_graph_token and cfg.meta_ig_user_id)
-    if can_live:
-        gap = max(0, target - len(corpus))
-        measure_k = min(gap + len(auto), target)
-        cands = discover_corpus(cfg, pid, limit=max(auto_slots, gap) + len(auto), measure_k=measure_k,
-                                get=get, offline_fallback=False)
-    # FAIL-OPEN ladder (house norm): live unavailable OR empty -> measured-evidence fill; only then give up.
-    if not cands and len(corpus) < target:
-        # R4: research_corpus is evidence-only (source==graph-reach + freshness). Kept so a persona under
-        # target still fills from GENUINE evidence bought by an earlier funded refresh — including when
-        # creds exist but live discovery returned nothing.
-        cands = [{"tag": t} for t in research_corpus(cfg, pid, limit=target - len(corpus), now=now)]
-    elif not cands and corpus_has_ban:
-        cands = []          # nothing to ADD, but fall through so `final` (ban-stripped) is written -> the ban is purged
-    elif not cands:
-        return {"changed": False}
-    screened = _screen_content([c["tag"] for c in cands if isinstance(c, dict) and c.get("tag")], cfg)
-    # R4 promotion gate: a discovered tag may only become CURATED data if it is structurally clean. Junk that
-    # reaches the corpus is near-permanent (it seeds the store, biases selection, and a human has to notice it
-    # to remove it) — `#fypppppppppp…` got in exactly this way and shipped live. Deterministic, so promotion is
-    # reviewable rather than a matter of taste at 3am on a daemon tick.
-    screened = [t for t in screened if is_curatable(t)]
-    cand_by_tag = {_norm(c["tag"]): c for c in cands if isinstance(c, dict) and _norm(c.get("tag", ""))}
-    novel = _strip_banned([t for t in screened if _norm(t) not in have], bans)   # U11: a banned discovered tag never re-enters (store refresh must not resurrect a ban)
-    pool = _strip_banned(list(dict.fromkeys(auto + novel)), bans)                 # belt-and-suspenders: no banned tag reaches new_auto/final
-    from fanops.hashtags import load_store_evidence
-    store_ev = load_store_evidence(cfg)
-    own = _persona_seeds(per)
-    def _own_attr(t: str) -> bool:
-        seeds = (cand_by_tag.get(t) or {}).get("seeds")
-        if not isinstance(seeds, dict):
-            seeds = (store_ev.get(t) or {}).get("seeds")
-        return _seeds_intersect(seeds, own)
-    # Two-tier: own-seed-attributed first, then measured reach (unchanged within tier).
-    pool.sort(key=lambda t: (_own_attr(t), _reach_key(t, cand_by_tag, store_reach, meta)), reverse=True)
-    new_auto = pool[:auto_slots] if auto_slots else []
-    final = pinned + new_auto
-    if final == corpus:
-        return {"changed": False}
-    added = [t for t in final if t not in set(corpus)]
-    removed = [t for t in corpus if t not in set(final)]
-    now_iso = (now.isoformat() if isinstance(now, datetime) else None) or datetime.now(timezone.utc).isoformat()
-    new_meta: dict[str, dict] = {}
-    for t in new_auto:
-        c = cand_by_tag.get(t, {})
-        reach = c.get("measured_engagement")
-        if reach is None: reach = store_reach.get(t)
-        new_meta[t] = {"source": "auto", "reach": reach, "added": now_iso}
-    apply_auto_corpus(cfg, pid, tags=final, meta=new_meta)
-    return {"changed": True, "added": added, "removed": removed}
-
-
-def refresh_corpora_if_due(cfg: Config, *, max_age_s: int = 43200, get=None, now=None) -> dict:
-    """S12: constant-update hook the run loop calls — refresh every persona corpus at most once per
-    max_age_s (default 12h), throttled by .corpora_refresh.json mtime. UNCONDITIONAL: the `corpus_auto`
-    kill switch was DELETED 2026-07-25 — a routinely refreshed, reach-ranked per-persona corpus IS the
-    system's default behavior, not an opt-in, so no env var can freeze every corpus any more (the live
-    .env carried FANOPS_CORPUS_AUTO=0 and pinned every persona at its 3 seed tags for nine days). The 12h
-    throttle below is the only brake left, and it is a rate limit, not a toggle. FAIL-OPEN: never raises."""
+def refresh_corpora_if_due(cfg: Config, *, max_age_s: int = 43200, now=None) -> dict:
+    """The run-loop hook: re-derive every persona's corpus at most once per `max_age_s` (default 12h),
+    throttled by .corpora_refresh.json's mtime. UNCONDITIONAL — there is no kill switch, because a
+    routinely re-derived corpus IS the system's behaviour, not an opt-in (a `FANOPS_CORPUS_AUTO=0` line in
+    the live .env once froze every persona at its seed tags for nine days). FAIL-OPEN: never raises."""
     import time
     from fanops.controlio import write_json_atomic
-    from fanops.errors import ControlFileError
+    from fanops.errors import ControlFileError, fail_open
+    from fanops.log import get_logger
     marker = cfg.control / ".corpora_refresh.json"
     try:
         if marker.exists() and (time.time() - marker.stat().st_mtime) < max_age_s:
             return {"refreshed": False, "reason": "fresh"}
         try:
-            personas = Personas.load(cfg).all()
+            personas = _registry(cfg).all()
         except ControlFileError as e:
             return {"refreshed": False, "aborted": "corrupt_personas", "reason": str(e)}
         changed = 0; added_n = 0; removed_n = 0
-        from fanops.errors import fail_open
         for per in personas:
             r = {"changed": False}
-            with fail_open(f"persona_research.refresh_corpora.{per.id}"):
-                r = refresh_persona_corpus(cfg, per.id, get=get, now=now)
+            with fail_open(f"persona_research.derive_corpus.{per.id}"):
+                r = derive_corpus(cfg, per.id, now=now)
             if r.get("changed"):
                 changed += 1; added_n += len(r.get("added") or []); removed_n += len(r.get("removed") or [])
         write_json_atomic(marker, {"ts": datetime.now(timezone.utc).isoformat(), "personas": len(personas),
                                    "changed": changed, "added": added_n, "removed": removed_n})
-        return {"refreshed": True, "personas": len(personas), "changed": changed, "added": added_n, "removed": removed_n}
-    except Exception as exc:
-        from fanops.log import get_logger
+        return {"refreshed": True, "personas": len(personas), "changed": changed,
+                "added": added_n, "removed": removed_n}
+    except Exception as exc:                               # noqa: BLE001 — the tick must never die here
         get_logger(cfg)("corpus", "-", "refresh_error", err=f"{type(exc).__name__}: {str(exc)[:120]}")
         return {"refreshed": False, "reason": f"error: {str(exc)[:120]}"}

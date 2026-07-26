@@ -176,9 +176,13 @@ def test_regenerate_route_swaps_edit_field(tmp_path, monkeypatch):
                                                                  "language": "en"}]})
     app = create_app(cfg); app.config.update(TESTING=True)
     r = app.test_client().post("/regenerate/p_edit", data={"guidance": "punchier"})
-    assert r.status_code == 200 and b"#hiphop" in r.data            # the vetted line re-rendered in the field
+    # The route re-renders the VETTED line, not the model's raw pick. With no measurement cache and no
+    # derived corpus in this fixture, #hiphop carries no platform evidence and is therefore not in the
+    # membership set — what survives is the platform discovery tag. That IS the contract: a tag ships only
+    # when the platform measured it, and a thin line is correct where a padded one would be a lie.
+    assert r.status_code == 200 and b"#reels" in r.data
     p = Ledger.load(cfg).posts["p_edit"]
-    assert p.caption == " ".join(p.hashtags) and "#hiphop" in p.hashtags
+    assert p.caption == " ".join(p.hashtags) and p.hashtags == ["#reels"]
 
 def test_regenerate_route_unknown_post_shows_clean_error(tmp_path):
     from fanops.studio.app import create_app

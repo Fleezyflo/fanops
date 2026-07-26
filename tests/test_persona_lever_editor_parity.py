@@ -5,7 +5,7 @@
 # (not registry-derived in M1)" rests on: if a future field is declared editable but the save route drops it,
 # this reds; if a field is added to the model with no editor wire and no quarantine, the coverage assertion reds.
 from fanops.config import Config
-from fanops.personas import Persona, Personas, add_persona, update_persona, add_corpus_tag
+from fanops.personas import Persona, Personas, add_persona, update_persona
 import fanops.persona_levers as pl
 
 # the guard's quarantine is now EMPTY (M3 resolved all six incoherent fields end-to-end). Every model field is
@@ -15,17 +15,20 @@ _QUARANTINE = set()
 
 def test_every_editable_field_persists_through_the_save_route(tmp_path):
     # behavioral proof, field by field: set it via the real writer, reload from disk, assert it stuck.
+    # `hashtag_corpus` is no longer here: it is DERIVED (apply_auto_corpus replaces it wholesale from
+    # platform measurements), so it is exempt. `intake` took over the hashtags channel — its `genre` is
+    # the niche root persona_terms searches on, saved by the /personas/niche route.
     cfg = Config(root=tmp_path)
-    add_persona(cfg, name="P", voice="champions craft", content_focus=["punchlines", "hype"],
+    add_persona(cfg, name="P", voice="champions craft", intake={"genre": "hiphop"},
+                content_focus=["punchlines", "hype"],
                 selection_scope="controversy_seeking", hook_angle="curiosity")
-    add_corpus_tag(cfg, "p", "#myscene")
     p = Personas.load(cfg).get("p")
     persisted = {
         "voice": p.voice == "champions craft",
         "content_focus": p.content_focus == ["punchlines", "hype"],
         "selection_scope": p.selection_scope == "controversy_seeking",
         "hook_angle": p.hook_angle == "curiosity",
-        "hashtag_corpus": "#myscene" in p.hashtag_corpus,
+        "intake": (p.intake or {}).get("genre") == "hiphop",
     }
     for field in pl.editable_fields():
         assert persisted.get(field), f"registry marks {field!r} editable but it did NOT persist through the save route"
@@ -54,4 +57,4 @@ def test_quarantined_fields_are_not_in_the_editable_set():
 
 def test_editable_set_is_exactly_the_five_clean_levers():
     # pin the editable set so an accidental widening (e.g. re-admitting tag_lean as "editable") reds here.
-    assert set(pl.editable_fields()) == {"voice", "content_focus", "selection_scope", "hook_angle", "hashtag_corpus"}
+    assert set(pl.editable_fields()) == {"voice", "content_focus", "selection_scope", "hook_angle", "intake"}

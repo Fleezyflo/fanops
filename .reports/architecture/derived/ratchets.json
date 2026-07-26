@@ -77,7 +77,6 @@
   "measured": {
     "print_calls_by_module": {
       "fanops.cli": 168,
-      "fanops.hashtag_migrate": 11,
       "fanops.log": 1,
       "fanops.paths_rebase": 2,
       "fanops.recaption": 5
@@ -87,7 +86,7 @@
       "src/fanops/agentstep.py": 1,
       "src/fanops/artifacts.py": 1,
       "src/fanops/audit.py": 2,
-      "src/fanops/caption.py": 2,
+      "src/fanops/caption.py": 1,
       "src/fanops/cli.py": 3,
       "src/fanops/clip.py": 1,
       "src/fanops/compose.py": 4,
@@ -101,7 +100,6 @@
       "src/fanops/health_model.py": 5,
       "src/fanops/llm.py": 2,
       "src/fanops/moments.py": 3,
-      "src/fanops/persona_research.py": 1,
       "src/fanops/pipeline.py": 12,
       "src/fanops/pipeline_run.py": 2,
       "src/fanops/pipeline_status.py": 1,
@@ -123,7 +121,7 @@
       "src/fanops/studio/actions_wipe.py": 3,
       "src/fanops/studio/app.py": 1,
       "src/fanops/studio/golive.py": 15,
-      "src/fanops/studio/personas.py": 10,
+      "src/fanops/studio/personas.py": 8,
       "src/fanops/studio/views.py": 12,
       "src/fanops/studio/views_common.py": 2,
       "src/fanops/studio/views_results.py": 3,

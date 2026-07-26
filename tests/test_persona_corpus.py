@@ -1,9 +1,9 @@
 # tests/test_persona_corpus.py
-# B1 — the per-persona hashtag CORPUS drives selection. A persona's curated corpus (A1) reaches the
-# caption path: it JOINS the vetted membership (so a curated tag the frozen set doesn't know survives)
-# and FLOATS to the front of the reach order for that persona's accounts. vet_hashtags(corpus=...) is the
-# deterministic gate; request_captions carries each surface's corpus to ingest + the prompt; the account
-# hydrates its corpus from the linked persona. corpus=None/empty -> byte-identical to today.
+# The per-persona hashtag CORPUS drives selection. A persona's DERIVED corpus reaches the caption path:
+# it JOINS the membership (so a corpus tag whose cache entry has since expired still survives) and LEADS
+# the metric order for that persona's accounts. vet_hashtags(corpus=...) is the deterministic gate;
+# request_captions carries each surface's corpus to ingest + the prompt; the account hydrates its corpus
+# from the linked persona. corpus=None/empty -> byte-identical.
 import json
 from fanops.config import Config
 from fanops.ledger import Ledger
@@ -16,20 +16,23 @@ from fanops.prompts import caption_prompt
 from fanops.agentstep import response_path, request_path, latest_request_id
 from fanops.caption import request_captions, ingest_captions
 
+STORE = ["#hiphop", "#rap"]        # the measurement cache as an ordered menu
+
 
 # --- vet_hashtags(corpus=...) — the deterministic gate -----------------------------------------
 
-def test_corpus_tag_not_in_vetted_survives_and_leads():
-    # A curated tag the frozen VETTED set has never heard of must survive AND lead (the operator's pool wins).
-    out = vet_hashtags(["#hiphop"], Platform.instagram, "en", corpus=["#detroitrap"])
+def test_corpus_tag_outside_the_cache_survives_and_leads():
+    # A corpus tag the measurement cache no longer carries must survive AND lead: the corpus JOINS the
+    # membership, so a cache entry expiring between derivation and selection cannot silently drop it.
+    out = vet_hashtags(["#hiphop"], Platform.instagram, "en", store=STORE, corpus=["#detroitrap"])
     assert out[0] == "#detroitrap"
     assert "#hiphop" in out
 
 
 def test_empty_corpus_is_byte_identical():
-    base = vet_hashtags(["#hiphop", "#rap"], Platform.tiktok, "en")
-    assert vet_hashtags(["#hiphop", "#rap"], Platform.tiktok, "en", corpus=[]) == base
-    assert vet_hashtags(["#hiphop", "#rap"], Platform.tiktok, "en", corpus=None) == base
+    base = vet_hashtags(["#hiphop", "#rap"], Platform.tiktok, "en", store=STORE)
+    assert vet_hashtags(["#hiphop", "#rap"], Platform.tiktok, "en", store=STORE, corpus=[]) == base
+    assert vet_hashtags(["#hiphop", "#rap"], Platform.tiktok, "en", store=STORE, corpus=None) == base
 
 
 def test_corpus_with_non_str_entry_is_dropped_not_crashed():
@@ -38,7 +41,8 @@ def test_corpus_with_non_str_entry_is_dropped_not_crashed():
     # every corpus entry (n = _norm(t) if isinstance(t, str) else "") so a non-str is DROPPED, never raised.
     # Pinned so a future refactor that removes the guard can't reintroduce a Personas-page crash. (NB the
     # Persona model also validates hashtag_corpus: list[str], so this is the second line of defense.)
-    out = vet_hashtags(["#hiphop"], Platform.instagram, "en", corpus=["#detroitrap", 123, None, "#rap"])
+    out = vet_hashtags(["#hiphop"], Platform.instagram, "en", store=STORE,
+                       corpus=["#detroitrap", 123, None, "#rap"])
     assert "#detroitrap" in out and "#hiphop" in out      # valid tags kept
     assert all(isinstance(t, str) for t in out)            # no non-str leaked into the result; no exception
 
@@ -77,7 +81,7 @@ def test_corpus_normalizes_and_dedupes_model_picks():
 def test_account_hydrates_hashtag_corpus_from_persona(tmp_path):
     cfg = Config(root=tmp_path)
     pid = core.add_persona(cfg, name="P1", voice="v1")
-    core.add_corpus_tag(cfg, pid, "#detroitrap")
+    core.apply_auto_corpus(cfg, pid, tags=["#detroitrap"], meta={})
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.accounts_path.write_text(json.dumps({"accounts": [
         {"handle": "@a", "platforms": ["instagram"], "status": "active", "persona_id": pid}]}))

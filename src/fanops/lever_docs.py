@@ -119,10 +119,12 @@ def render_levers(cfg: Config) -> str:  # cfg reserved for future persona-aware 
     parts = [hdr, how]
     for lv in pl.LEVER_REGISTRY:
         key = lv["key"]
-        if key == "hashtag_corpus":
+        if key == "intake":
             parts.append(f"\n## {key} (stage: {lv['stage']})\n\n"
                          f"**Does:** {lv['does']}\n\n"
-                         "Curated tags lead caption hashtags (`hashtags.vet_hashtags`); no enumerated options.\n")
+                         "Free text, not an enum: `persona_research.persona_terms` tokenizes it (with the "
+                         "voice and name) into the tags `fanops_hashtags.refresh_store` searches Instagram "
+                         "for. The corpus it derives then leads caption hashtags.\n")
             continue
         parts.append(f"\n## {key} (stage: {lv['stage']})\n\n**Does:** {lv['does']}\n{table_hdr}")
         for opt in lv["options"]:

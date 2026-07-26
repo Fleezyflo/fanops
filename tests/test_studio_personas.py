@@ -6,6 +6,7 @@
 import json
 from fanops.config import Config
 from fanops.accounts import Accounts
+from fanops.hashtags import METRIC_FIELD
 from fanops import personas as core
 from fanops.studio import personas as sp
 from fanops.studio import views
@@ -25,15 +26,16 @@ def _client(cfg):
 # --- action layer ------------------------------------------------------------------------------
 
 def test_create_persona_is_the_clean_lever_set(tmp_path):
-    # create takes the five clean levers only (voice + content_focus/selection_scope/hook_angle); tag_lean and genre are
-    # NOT create params — hashtags come from the card corpus, genre is set via the Research control.
+    # create takes the clean levers only (voice + content_focus/selection_scope/hook_angle); tag_lean and
+    # genre are NOT create params — the corpus is DERIVED, the niche is set via the Save-niche control.
     cfg = Config(root=tmp_path)
     r = sp.create_persona(cfg, name="Curator", voice="champions craft", content_focus=["punchlines"],
                           selection_scope="controversy_seeking", hook_angle="curiosity")
     assert r.ok
     p = core.Personas.load(cfg).get(r.detail["created"])
     assert p.voice == "champions craft" and p.content_focus == ["punchlines"] and p.hook_angle == "curiosity"
-    assert p.intake == {}                          # genre is set later via Research, not collected at create
+    assert p.intake == {}                          # the niche is set later, not collected at create
+    assert p.hashtag_corpus == []                  # a fresh persona ships NO corpus — derivation fills it
 
 
 def test_create_persona_blank_name_is_clean_error(tmp_path):
@@ -64,13 +66,30 @@ def test_delete_unknown_persona_is_clean_error(tmp_path):
     assert r.ok is False and r.error
 
 
-def test_corpus_add_then_remove(tmp_path):
+def test_set_genre_saves_the_niche_root(tmp_path):
+    # `intake.genre` is the highest-specificity root persona_terms searches on — the operator's most
+    # direct lever over which hashtags get discovered and measured. It REPLACED corpus add/remove:
+    # a derived value has nothing to hand-curate.
     cfg = Config(root=tmp_path)
     pid = core.add_persona(cfg, name="Z")
-    assert sp.add_corpus_tag(cfg, pid, "DetroitRap").ok
-    assert core.Personas.load(cfg).get(pid).hashtag_corpus == ["#detroitrap"]
-    assert sp.remove_corpus_tag(cfg, pid, "#detroitrap").ok
-    assert core.Personas.load(cfg).get(pid).hashtag_corpus == []
+    assert sp.set_genre(cfg, pid, " Detroit Rap ").ok
+    assert core.Personas.load(cfg).get(pid).intake == {"genre": "Detroit Rap"}
+    assert sp.set_genre(cfg, pid, "").ok                # blank CLEARS it (the form is authoritative)
+    assert core.Personas.load(cfg).get(pid).intake == {}
+
+
+def test_set_genre_unknown_persona_is_a_clean_error(tmp_path):
+    cfg = Config(root=tmp_path)
+    r = sp.set_genre(cfg, "ghost", "rap")
+    assert r.ok is False and r.error
+    assert sp.set_genre(cfg, "", "rap").ok is False     # no persona selected -> clean error, never a 500
+
+
+def test_corpus_curation_actions_are_gone(tmp_path):
+    # The corpus is DERIVED wholesale from platform evidence, so there is nothing to add, remove,
+    # research or recommend. These must be absent, not merely unused.
+    for dead in ("add_corpus_tag", "remove_corpus_tag", "recommend_tag", "research_corpus"):
+        assert not hasattr(sp, dead), f"{dead} is a curation action and must be deleted"
 
 
 def test_connect_account_links_persona(tmp_path):
@@ -121,10 +140,18 @@ def test_run_migration_action(tmp_path):
 
 # --- read-model --------------------------------------------------------------------------------
 
+def _cache(cfg, values):
+    """The platform measurement cache in its real shape: {tag: {graph_id, like_count, measured_at}}."""
+    cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.hashtags_path.write_text(json.dumps({
+        t: {"graph_id": "id-" + t.lstrip("#"), METRIC_FIELD: float(v),
+            "measured_at": "2026-07-20T00:00:00+00:00"} for t, v in values.items()}))
+
+
 def test_personas_page_read_model(tmp_path):
     cfg = Config(root=tmp_path)
     pid = core.add_persona(cfg, name="P1", voice="v1")
-    core.add_corpus_tag(cfg, pid, "#detroitrap")
+    core.apply_auto_corpus(cfg, pid, tags=["#detroitrap"], meta={})
     _seed_accounts(cfg, [{"handle": "@a", "platforms": ["instagram"], "status": "active", "persona_id": pid},
                          {"handle": "@b", "platforms": ["instagram"], "status": "active"}])
     page = views.personas_page(cfg)
@@ -134,53 +161,65 @@ def test_personas_page_read_model(tmp_path):
     assert links["a"] == pid and links["b"] is None
 
 
-def test_personas_page_surfaces_live_graph_reach(tmp_path):
-    # WS5 / MOL-59: the card's reach annotation + ★ come from the LIVE Graph-reach store (refresh_store), NOT
-    # own-post reach. A curated tag with a MEASURED Graph reach value is flagged most-active + shows the number.
+def test_personas_page_surfaces_the_platform_metric(tmp_path):
+    # The card's number + ★ come from the platform MEASUREMENT CACHE, never own-post reach, and it is
+    # Meta's own like_count — not a "reach" figure we computed.
     cfg = Config(root=tmp_path)
     pid = core.add_persona(cfg, name="P1", voice="v1")
-    core.add_corpus_tag(cfg, pid, "#detroitrap")
-    cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg.hashtags_path.write_text(json.dumps({"tags": ["#detroitrap", "#hiphop"], "reach": {"#detroitrap": 4200}}))
+    core.apply_auto_corpus(cfg, pid, tags=["#detroitrap"], meta={})
+    _cache(cfg, {"#detroitrap": 4200, "#hiphop": 900})
     card = next(c for c in views.personas_page(cfg).personas if c.id == pid)
-    assert "#detroitrap" in card.reach_tags                 # measured reach -> flagged most-active (★)
-    assert card.reach_means.get("#detroitrap") == 4200.0    # the LIVE Graph reach, surfaced honestly
+    assert "#detroitrap" in card.reach_tags                 # measured -> flagged most-active (★)
+    assert card.reach_means.get("#detroitrap") == 4200.0    # Meta's own like_count, surfaced honestly
 
 
-def test_personas_page_star_gated_on_measured_reach_not_store_presence(tmp_path):
-    # MOL-59: a tag merely PRESENT in the store (a seed) with an EMPTY reach map is NOT most-active — the ★
-    # asserts a live-reach fact, so with zero measurements ZERO tags star. This is today's live state.
+def test_personas_page_star_is_gated_on_a_real_measurement(tmp_path):
+    # The ★ asserts a live-platform fact: a corpus tag the cache has no record for does NOT star, and a
+    # LEGACY record (the invented likes+comments sum under a `reach` key) is not a measurement either.
     cfg = Config(root=tmp_path)
     pid = core.add_persona(cfg, name="P1", voice="v1")
-    core.add_corpus_tag(cfg, pid, "#detroitrap")
+    core.apply_auto_corpus(cfg, pid, tags=["#detroitrap"], meta={})
     cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg.hashtags_path.write_text(json.dumps({"tags": ["#detroitrap", "#hiphop"], "reach": {}}))
+    cfg.hashtags_path.write_text(json.dumps({"#detroitrap": {
+        "graph_id": "id-detroitrap", "reach": 4200, "measured_at": "2026-07-20T00:00:00+00:00"}}))
     card = next(c for c in views.personas_page(cfg).personas if c.id == pid)
-    assert card.reach_tags == []                            # store-present but unmeasured -> no ★
-    # and the rendered panel shows no star for it
+    assert card.reach_tags == []                            # no platform field -> unmeasured -> no ★
     html = _client(cfg).get("/personas").get_data(as_text=True)
     assert "#detroitrap" in html and "★" not in html
 
 
 def test_personas_page_star_only_on_measured_tags(tmp_path):
-    # MOL-59: with reach covering SOME corpus tags, ONLY the measured ones star.
+    # with the cache covering SOME corpus tags, ONLY the measured ones star.
     cfg = Config(root=tmp_path)
     pid = core.add_persona(cfg, name="P1", voice="v1")
-    core.add_corpus_tag(cfg, pid, "#detroitrap")
-    core.add_corpus_tag(cfg, pid, "#hiphop")
-    cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg.hashtags_path.write_text(json.dumps({"tags": ["#detroitrap", "#hiphop"], "reach": {"#detroitrap": 4200}}))
+    core.apply_auto_corpus(cfg, pid, tags=["#detroitrap", "#hiphop"], meta={})
+    _cache(cfg, {"#detroitrap": 4200})
     card = next(c for c in views.personas_page(cfg).personas if c.id == pid)
-    assert card.reach_tags == ["#detroitrap"]               # measured only; #hiphop present-in-store but unmeasured
+    assert card.reach_tags == ["#detroitrap"]               # #hiphop is in the corpus but unmeasured
 
 
-def test_personas_page_no_store_no_stars(tmp_path):
-    # MOL-59: no store at all -> no measurements -> no ★ (pins the existing fail-open).
+def test_personas_page_no_cache_no_stars(tmp_path):
+    # no cache at all -> no measurements -> no ★ (pins the existing fail-open).
     cfg = Config(root=tmp_path)
     pid = core.add_persona(cfg, name="P1", voice="v1")
-    core.add_corpus_tag(cfg, pid, "#detroitrap")
+    core.apply_auto_corpus(cfg, pid, tags=["#detroitrap"], meta={})
     card = next(c for c in views.personas_page(cfg).personas if c.id == pid)
     assert card.reach_tags == []
+
+
+def test_personas_page_shows_the_retired_pre_derivation_tags(tmp_path):
+    # the cutover keeps legacy tags VISIBLE (never silently dropped) while they stop shipping.
+    cfg = Config(root=tmp_path)
+    pid = core.add_persona(cfg, name="P1", voice="v1")
+    raw = json.loads(cfg.personas_path.read_text())
+    for d in raw["personas"]:
+        if d["id"] == pid: d["hashtag_corpus"] = ["#taylorswift"]
+    cfg.personas_path.write_text(json.dumps(raw))
+    core.deprecate_legacy_corpus(cfg, pid)
+    card = next(c for c in views.personas_page(cfg).personas if c.id == pid)
+    assert card.corpus == [] and card.deprecated_tags == ["#taylorswift"]
+    html = _client(cfg).get("/personas").get_data(as_text=True)
+    assert "Retired (1)" in html and "#taylorswift" in html
 
 
 def test_personas_page_failopen_on_corrupt(tmp_path):
@@ -216,12 +255,15 @@ def test_edit_drawer_is_the_clean_five_lever_set(tmp_path):
         assert gone not in drawer, f"removed control still in the edit drawer: {gone}"
 
 
-def test_genre_moves_from_editor_to_research(tmp_path):
-    # genre is not a clip lever — it seeds hashtag RESEARCH, so its input lives with the Research control.
+def test_genre_lives_with_the_derived_corpus_as_the_niche_lever(tmp_path):
+    # genre is not a clip lever — it is the niche root the next measurement pass searches on, so its input
+    # sits beside the DERIVED corpus it steers. The proposal routes it used to sit next to are gone.
     cfg = Config(root=tmp_path)
     core.add_persona(cfg, name="P1", voice="v1")
     page = _client(cfg).get("/personas").get_data(as_text=True)
-    assert 'name="genre"' in page and "/personas/research" in page     # genre settable in the research area
+    assert 'name="genre"' in page and "/personas/niche" in page       # the niche is settable on the card
+    for gone in ("/personas/research", "/personas/recommend", "/personas/corpus/add", "/personas/corpus/remove"):
+        assert gone not in page, f"a curation route survived in the panel: {gone}"
 
 
 def test_persona_forms_drop_dead_intake_fields(tmp_path):
@@ -244,12 +286,10 @@ def test_post_add_persona_route(tmp_path):
     assert any(p.name == "New One" for p in core.Personas.load(cfg).all())
 
 
-def test_corpus_tag_with_quote_is_json_escaped_in_attribute(tmp_path):
-    # _norm keeps a double-quote (a hand-edit could land one); the hx-vals attribute must JSON-escape it
-    # via tojson so a crafted tag can NEVER break out of the attribute (defense-in-depth — ecc:python-review).
-    # R4: `add_corpus_tag` now REFUSES this tag structurally (hashtag_hygiene), so that route is closed — but
-    # the threat this test names is a HAND-EDIT of personas.json, which bypasses the write boundary entirely.
-    # The escaping defense therefore still matters; seed the file directly, i.e. via the vector that remains.
+def test_corpus_tag_with_quote_is_escaped_when_rendered(tmp_path):
+    # _norm keeps a double-quote (a hand-edit could land one) and the corpus is now rendered as chip TEXT,
+    # so Jinja autoescape is the defense. The threat this test names is a HAND-EDIT of personas.json,
+    # which bypasses every write boundary — seed the file directly, i.e. via the vector that remains.
     import json as _json
     cfg = Config(root=tmp_path)
     pid = core.add_persona(cfg, name="P1")
@@ -259,8 +299,8 @@ def test_corpus_tag_with_quote_is_json_escaped_in_attribute(tmp_path):
     cfg.personas_path.write_text(_json.dumps(_raw))
     r = _client(cfg).get("/personas")
     assert r.status_code == 200
-    assert b'#a\\"b' in r.data                  # tojson escaped the inner quote
-    assert b'"tag": "#a"b"' not in r.data        # the raw, un-escaped (breakout) form must NOT appear
+    assert b"#a&#34;b" in r.data                 # autoescape neutralized the inner quote
+    assert b'#a"b' not in r.data                 # the raw, un-escaped (breakout) form must NOT appear
 
 
 def test_post_connect_route_links(tmp_path):
@@ -287,12 +327,11 @@ def test_account_assignment_is_folded_into_each_card(tmp_path):
     assert "Connect accounts" not in html                            # the orphan page-foot section is removed
 
 
-def test_persona_card_action_tiers_assign_over_hashtag_utils(tmp_path):
-    # MOL-60 (kept, U9-updated selectors): on a persona card the CONSEQUENTIAL, rare Assign (rewires which
-    # voice drives a real account, stealing it from another persona) must out-weigh the FREQUENT, low-stakes
-    # hashtag utilities (Force refresh now / Add / Check reach — two of which only PROPOSE, never mutate). Per
-    # the MOL-44 3-tier system: Assign stays secondary (base .button = fill+border), the three hashtag tools
-    # drop to .ghost. U9: the card's single .primary is now the zone-2 inline Save (was "Tune this voice").
+def test_persona_card_action_tiers_assign_over_the_niche_util(tmp_path):
+    # MOL-60 (kept, repointed): on a persona card the CONSEQUENTIAL, rare Assign (rewires which voice
+    # drives a real account, stealing it from another persona) must out-weigh the FREQUENT, low-stakes
+    # hashtag utility. With the corpus DERIVED there is exactly one such utility left — Save niche — and
+    # it sits in the tertiary ghost tier. The card's single .primary is the zone-2 inline Save.
     import re
     cfg = Config(root=tmp_path)
     _seed_accounts(cfg, [{"handle": "@free", "platforms": ["tiktok"], "status": "active"}])
@@ -304,18 +343,15 @@ def test_persona_card_action_tiers_assign_over_hashtag_utils(tmp_path):
         assert m, f"{label!r} button not found in rendered personas panel"
         return m.group(0)
 
-    # the three hashtag utilities are demoted to the tertiary ghost tier (Research is relabelled Force refresh now)
-    assert 'class="ghost"' in _btn("Force refresh now")
-    assert 'class="ghost"' in _btn("Add")
-    # "Check reach" may wrap across whitespace in the template; match on its title as the anchor
-    check = re.search(r'<button\b[^>]*title="look up this tag[^"]*"[^>]*>', html)
-    assert check and 'class="ghost"' in check.group(0), "Check reach must be a ghost button"
+    assert 'class="ghost"' in _btn("Save niche")
+    # the retired curation buttons must not come back with the routes deleted underneath them
+    for gone in ("Force refresh now", "Check reach", "Tune this voice"):
+        assert gone not in html, f"a deleted curation control still renders: {gone}"
 
     # Assign stays secondary — NOT demoted to ghost, NOT promoted to primary
     assign = _btn("Assign")
     assert "ghost" not in assign, "Assign must out-weigh the hashtag utils (not ghost)"
     assert "primary" not in assign, "Assign must not become a second primary (one per view)"
 
-    # the card's single primary is now the zone-2 inline Save (the drawer-trigger primary is gone)
+    # the card's single primary is the zone-2 inline Save
     assert 'class="primary">Save</button>' in html
-    assert "Tune this voice" not in html

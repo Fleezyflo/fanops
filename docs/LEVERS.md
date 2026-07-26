@@ -66,11 +66,11 @@ Then run `fanops lever docs` to regenerate this file.
 | `talk` | n/a (global band name) | band_for → 12-22s render window | 12-22s cuts | cut/render (Go-Live default; per-persona derived from content_focus) |
 | `song` | n/a (global band name) | band_for → 18-35s render window | 18-35s cuts | cut/render (Go-Live default; per-persona derived from content_focus) |
 
-## hashtag_corpus (stage: caption)
+## intake (stage: caption)
 
-**Does:** your curated tags LEAD the caption hashtags
+**Does:** the niche word(s) the next measurement pass searches Instagram for — the corpus it derives then LEADS the caption hashtags
 
-Curated tags lead caption hashtags (`hashtags.vet_hashtags`); no enumerated options.
+Free text, not an enum: `persona_research.persona_terms` tokenizes it (with the voice and name) into the tags `fanops_hashtags.refresh_store` searches Instagram for. The corpus it derives then leads caption hashtags.
 
 
 ## ARCHETYPE CROSSWALK
@@ -79,8 +79,8 @@ Shipped baked personas (`src/fanops/data/baked_personas.json`) — what each doe
 
 | id | content_focus (select) | hook_angle | selection_scope | intensity (peak filter) | corpus |
 |----|------------------------|------------|-----------------|-------------------------|--------|
-| `credibility-first` | emotional, storytelling | `curiosity` | `credibility_first` | low | #podcast, #interview, #facts, #science |
-| `controversy` | bold-statement | `challenge` | `controversy_seeking` | high | #celebritygossip, #drama, #popculture, #entertainment |
-| `edutainment` | storytelling | `curiosity` | `source_briefed` | low | #hiphop, #lyrics, #music, #newmusic |
-| `cliffhanger` | storytelling | `curiosity` | `open` | low | #podcast, #storytime, #reels, #viral |
-| `hype-vibe` | hype | `fomo` | `open` | high | #hiphop, #rap, #bars, #undergroundhiphop |
+| `credibility-first` | emotional, storytelling | `curiosity` | `credibility_first` | low | — |
+| `controversy` | bold-statement | `challenge` | `controversy_seeking` | high | — |
+| `edutainment` | storytelling | `curiosity` | `source_briefed` | low | — |
+| `cliffhanger` | storytelling | `curiosity` | `open` | low | — |
+| `hype-vibe` | hype | `fomo` | `open` | high | — |

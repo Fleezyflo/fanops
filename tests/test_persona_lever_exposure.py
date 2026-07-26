@@ -148,8 +148,8 @@ def test_preview_compose_merges_saved_corpus_for_an_existing_id(tmp_path):
     cfg = Config(root=tmp_path)
     add_persona(cfg, name="Curator", voice="v")
     Personas.load(cfg)  # sanity
-    from fanops.personas import add_corpus_tag
-    add_corpus_tag(cfg, "curator", "#myscene")
+    from fanops.personas import apply_auto_corpus
+    apply_auto_corpus(cfg, "curator", tags=["#myscene"], meta={})
     r = sp.preview_compose(cfg, _Form({"id": "curator", "content_focus": ["punchlines"]}))
     assert r.ok and "#myscene" in r.detail["tags"]["lead"]         # the saved corpus shows in the live preview
 

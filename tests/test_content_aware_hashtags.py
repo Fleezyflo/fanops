@@ -2,11 +2,15 @@
 survive vetting, and carry a provenance `source` for every shipped tag. Captions stay hashtags-only.
 
 These pin the pure hashtags.py seams (the extractor + the `content=` admit/slot + the traced provenance).
-The `content=None` cases are the FIREWALL — they must be byte-identical to today's vet_hashtags."""
+The `content=None` cases are the FIREWALL — they must be byte-identical to today's vet_hashtags.
+`STORE` stands in for the measurement cache as an ordered menu: membership is the cache UNION the corpus
+UNION the content candidates, so a test that needs four slots filled must supply one."""
 import pytest
 from fanops.models import Platform
 from fanops import hashtags as H
 from fanops.hashtags import vet_hashtags, content_tag_candidates, vet_hashtags_traced
+
+STORE = ["#hiphop", "#rap", "#bars", "#newmusic", "#rapmusic", "#viral"]   # the measured menu, metric-ranked
 
 
 # ---- Task 1: the pure content extractor --------------------------------------------------------------
@@ -37,9 +41,11 @@ def test_content_candidates_are_bounded_and_normalized():
 
 # ---- Task 2: vet_hashtags(content=) joins membership + reserves a slot --------------------------------
 def test_content_tag_survives_vetting():
-    # a content tag the model picked is NOT in VETTED; today it is dropped. With content= it survives.
-    assert "#diss" not in H.VETTED
-    out = vet_hashtags(["#diss"], Platform.instagram, None, content=["#diss"])
+    # a content tag the model picked is NOT in the measurement cache; on its own it dies. `content=` joins
+    # it to the membership, which is the whole point of the channel.
+    assert "#diss" not in STORE
+    assert "#diss" not in vet_hashtags(["#diss"], Platform.instagram, None, store=STORE)
+    out = vet_hashtags(["#diss"], Platform.instagram, None, store=STORE, content=["#diss"])
     assert "#diss" in out
 
 
@@ -47,44 +53,46 @@ def test_content_tag_survives_vetting():
 def test_content_none_is_byte_identical(corpus):
     # FIREWALL: content=None must reproduce today's output exactly, across corpus combos.
     tags = ["#rap", "#bars", "#nonsense"]
-    base = vet_hashtags(tags, Platform.tiktok, "en", corpus=corpus)
-    withc = vet_hashtags(tags, Platform.tiktok, "en", corpus=corpus, content=None)
+    base = vet_hashtags(tags, Platform.tiktok, "en", store=STORE, corpus=corpus)
+    withc = vet_hashtags(tags, Platform.tiktok, "en", store=STORE, corpus=corpus, content=None)
     assert base == withc
 
 
-def test_content_floor_reserves_one_slot_when_reach_fills_four():
-    # model fills all 4 with reach tags; a content tag still claims exactly one slot.
+def test_content_floor_reserves_one_slot_when_the_measured_menu_fills_four():
+    # model fills all 4 with measured tags; a content tag still claims exactly one slot.
     out = vet_hashtags(["#hiphop", "#rap", "#bars", "#newmusic"], Platform.instagram, "en",
-                       content=["#loyalty"])
+                       store=STORE, content=["#loyalty"])
     assert "#loyalty" in out and len(out) == 4
 
 
 def test_arabic_region_floor_still_wins_over_content():
-    # an Arabic clip under a lean keeps its region tag AND gets a content tag (both floors satisfied).
+    # an Arabic clip under a corpus keeps its region tag AND gets a content tag (both floors satisfied).
     out = vet_hashtags(["#hiphop", "#rap", "#bars", "#newmusic"], Platform.instagram, "ar",
-                       corpus=["#viral", "#rapmusic", "#hiphop"], content=["#loyalty"])
+                       store=STORE, corpus=["#viral", "#rapmusic", "#hiphop"], content=["#loyalty"])
     assert any(t in set(H._ARABIC) for t in out)       # region reach preserved
     assert "#loyalty" in out
 
 
 # ---- Task 3: provenance -- every shipped tag traces to a real signal ----------------------------------
 def test_every_kept_tag_has_a_source():
-    tags, sources = vet_hashtags_traced(["#diss", "#rap"], Platform.tiktok, "en",
+    tags, sources = vet_hashtags_traced(["#diss", "#rap"], Platform.tiktok, "en", store=STORE,
                                         corpus=["#viral", "#rapmusic", "#hiphop", "#customtag"], content=["#diss"])
     assert set(sources) == set(tags)                   # one source per shipped tag
     assert all(sources[t] for t in tags)               # none empty/sourceless
+    assert set(sources.values()) <= {"content", "corpus", "region", "graph-reach", "discovery"}
 
 
-def test_source_priority_content_over_reach():
-    # a tag that is BOTH a content candidate AND a reach/genre tag is credited to content.
-    tags, sources = vet_hashtags_traced(["#newmusic"], Platform.instagram, "en",
+def test_source_priority_content_over_the_measured_menu():
+    # a tag that is BOTH a content candidate AND a measured cache tag is credited to content.
+    tags, sources = vet_hashtags_traced(["#newmusic"], Platform.instagram, "en", store=STORE,
                                         content=["#newmusic"])
     assert sources.get("#newmusic") == "content"
 
 
 def test_traced_list_matches_plain_vet():
     # DRY contract: the traced list == the plain list for identical inputs.
-    kw = dict(corpus=["#freestyle", "#undergroundhiphop", "#trap", "#customtag"], content=["#loyalty"])
+    kw = dict(store=STORE, corpus=["#freestyle", "#undergroundhiphop", "#trap", "#customtag"],
+              content=["#loyalty"])
     plain = vet_hashtags(["#diss"], Platform.tiktok, "en", **kw)
     traced, _ = vet_hashtags_traced(["#diss"], Platform.tiktok, "en", **kw)
     assert plain == traced
@@ -99,7 +107,7 @@ def test_offbrand_content_candidate_never_ships_even_as_floor():
     # "begging" trips brand_risk_flag's default \bbeg(ging)?\b; it is the top content token and would win
     # the content-floor slot. It must NOT appear in the output, and the line still fills to 4 via backfill.
     out = vet_hashtags(["#hiphop", "#rap", "#bars", "#newmusic"], Platform.instagram, "en",
-                       content=["#begging", "#loyalty"])
+                       store=STORE, content=["#begging", "#loyalty"])
     assert "#begging" not in out                       # off-brand content tag screened out of the floor
     assert len(out) == 4                               # backfill guarantees a non-empty, full line
 
@@ -107,22 +115,22 @@ def test_offbrand_content_candidate_never_ships_even_as_floor():
 def test_offbrand_content_candidate_not_admitted_to_membership():
     # even when the model itself "picks" the off-brand content word, it must not survive vetting via the
     # content= membership join (the floor screen is at the single choke point, not just the reserved slot).
-    out = vet_hashtags(["#begging"], Platform.tiktok, "en", content=["#begging"])
+    out = vet_hashtags(["#begging"], Platform.tiktok, "en", store=STORE, content=["#begging"])
     assert "#begging" not in out
 
 
 def test_clean_content_floor_still_force_inserts_unchanged():
     # HAPPY PATH unchanged: a clean top token still claims the content-floor slot when the model's picks
-    # don't cover a content tag (mirrors test_content_floor_reserves_one_slot_when_reach_fills_four).
+    # don't cover a content tag (mirrors the measured-menu-fills-four case above).
     out = vet_hashtags(["#hiphop", "#rap", "#bars", "#newmusic"], Platform.instagram, "en",
-                       content=["#loyalty"])
+                       store=STORE, content=["#loyalty"])
     assert "#loyalty" in out and len(out) == 4
 
 
 def test_offbrand_screen_leaves_next_clean_content_tag_as_floor():
     # when the top content token is off-brand, the NEXT clean content token still reaches the line.
     out = vet_hashtags(["#hiphop", "#rap", "#bars", "#newmusic"], Platform.instagram, "en",
-                       content=["#begging", "#loyalty"])
+                       store=STORE, content=["#begging", "#loyalty"])
     assert "#loyalty" in out                           # the clean runner-up content tag still floors
 
 
@@ -194,8 +202,9 @@ def _ingest_empty(led, cfg, clip_id):
     return ingest_captions(led, cfg, clip_id)
 
 
-def test_two_clips_one_persona_same_frozen_floor_without_corpus(tmp_path):
-    # corpus-only: without a corpus both clips get the same frozen-floor tags (content no longer diverges).
+def test_two_clips_one_persona_ship_the_same_line_without_a_corpus(tmp_path):
+    # corpus-only: with no corpus and a cold cache both clips get the same line (the discovery slot) —
+    # the content channel is dormant in the pipeline, so two different transcripts do NOT diverge.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path="/s.mp4", language="en"))
     _seed(led, clip_id="clip_a", mom_id="mom_a", transcript="a fiery diss track about betrayal")
@@ -204,12 +213,12 @@ def test_two_clips_one_persona_same_frozen_floor_without_corpus(tmp_path):
     led = _ingest_empty(led, cfg, "clip_b")
     a = led.clips["clip_a"].meta_captions["a/instagram"]["hashtags"]
     b = led.clips["clip_b"].meta_captions["a/instagram"]["hashtags"]
-    assert a == b                                              # corpus-only: same frozen floor for both
+    assert a == b == ["#reels"]                                # the honest cold-cache floor, not a padded line
     assert not any(t in ("#diss", "#fiery", "#betrayal", "#tender", "#lullaby", "#devotion") for t in a)
 
 
 def test_seed_fallback_entry_carries_tag_sources(tmp_path):
-    # corpus-only: all sources are corpus/region/graph-reach/discovery/genre-floor — never "content".
+    # corpus-only: all sources are corpus/region/graph-reach/discovery — never "content".
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path="/s.mp4", language="en"))
     _seed(led, clip_id="clip_a", mom_id="mom_a", transcript="a fiery diss track about betrayal")
