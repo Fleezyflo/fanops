@@ -157,9 +157,6 @@ jobs:
           print(f"why={why}")
           PY
 
-      - name: Why
-        run: echo "deep gate = ${{ steps.select.outputs.run }} — ${{ steps.select.outputs.why }}"
-
       # Each negative control injects one defect and asserts its rule fires on evidence that was
       # ABSENT before. The authoritative COUNT lives in tools/arch/selftest.py::CONTROLS — a bare
       # number here would rot (this file's own AR-03 / lines 12-13), so it is deliberately absent.
@@ -168,7 +165,37 @@ jobs:
       # exactly that in its own IMPL-007 on the first run.)
       - name: Negative controls
         if: steps.select.outputs.run == 'true'
-        run: python -m tools.arch selftest
+        run: |
+          set -o pipefail
+          python -m tools.arch selftest 2>&1 | tee controls.log
+
+      # `continue-on-error: true` makes a FAILED job report SUCCESS to the check API — the honest
+      # shape for an advisory job, but on its own a mute button rather than a report: until this
+      # step a failure here produced NO artefact anywhere.
+      #
+      # It prints the SELECTION VERDICT, not just the log, and that is the load-bearing part. The
+      # real step above is selection-gated, so a missing log is ambiguous between "the suite was
+      # skipped" and "it ran and said nothing" — and this repo has already shipped a GREEN
+      # `negative controls` context whose step never ran. A summary that cannot tell those apart
+      # would rebuild the exact blind spot it exists to close. (It also replaces the old `Why` echo,
+      # which put the same two values somewhere nobody looks.)
+      - name: Verdict
+        if: always()
+        run: |
+          {
+            echo '## negative controls (validator effectiveness) — ADVISORY, does not gate'
+            echo
+            echo "selection: run=\`${{ steps.select.outputs.run }}\` — ${{ steps.select.outputs.why }}"
+            echo
+            if [ -f controls.log ]; then
+              echo '```'
+              cat controls.log
+              echo '```'
+            else
+              echo '**The negative-control suite did NOT run** — the selector above deselected it.'
+              echo 'This is a skip, not a pass: nothing here proves the arch validators still fire.'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
   reconcile:
     name: scheduled reconciliation

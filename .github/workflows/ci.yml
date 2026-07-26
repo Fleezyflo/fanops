@@ -115,14 +115,34 @@ jobs:
           python-version: "3.12"
       - name: Clean base install in a LITERAL fresh venv (no extras — cv2 genuinely absent)
         run: |
-          python -m venv .venv-base
-          . .venv-base/bin/activate
-          python -m pip install --upgrade pip
-          python -m pip install .
+          set -o pipefail
+          {
+            python -m venv .venv-base
+            . .venv-base/bin/activate
+            python -m pip install --upgrade pip
+            python -m pip install .
+          } 2>&1 | tee base-install.log
       - name: Base-install smoke — cv2 absent, fanops+CLI import, representative op, render prereq refuses
         run: |
+          set -o pipefail
           . .venv-base/bin/activate
-          python scripts/base_install_smoke.py
+          python scripts/base_install_smoke.py 2>&1 | tee -a base-install.log
+
+      # `continue-on-error: true` makes a FAILED job report SUCCESS to the check API. That is the
+      # honest shape for an advisory job — but on its own it is a mute button, not a report: until
+      # this step, a failure here produced NO artefact anywhere. `impact` survived the same treatment
+      # only because it happens to tee its verdict to the summary; this job wrote nothing at all.
+      # The INSTALL is teed too, not just the smoke: if `pip install .` is what breaks, that IS the
+      # packaging regression this job exists to catch, and it must not vanish into a green check.
+      - name: Verdict
+        if: always()
+        run: |
+          {
+            echo '## base install (no extras) — ADVISORY, does not gate'
+            echo '```'
+            cat base-install.log 2>/dev/null || echo "(the base-install steps produced no output)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
   e2e:
     # ON-DEMAND + NIGHTLY ONLY (operator decision 2026-07-22; de-theatred 2026-07-24).

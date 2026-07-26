@@ -16,9 +16,11 @@
 # `accepted` since this file was authored). Both conditions the original line named are met: ADR-0100 is
 # accepted, and the Phase-C validators landed as `tools/ci`. No workflow STEP names this file, but the
 # LIVE REQUIRED `unit` lane reads it on every PR via tests/test_ci_registry_validator.py -> tools/ci, so a
-# registry<->workflow divergence reddens a required context. Schema validation is BEST-EFFORT, not
-# guaranteed: tools/ci/registry.py skips it when `jsonschema` is absent, and `jsonschema` is declared in
-# neither requirements/ nor pyproject.toml — the hand-rolled shape checks still run.
+# registry<->workflow divergence reddens a required context. Shape validation is `tools/ci/registry.py`
+# `shape_findings` — ONE validator, PyYAML-only. The draft-07 JSON schema that used to sit beside it was
+# deleted 2026-07-26: `jsonschema` was declared in neither requirements/ nor pyproject.toml and the loader
+# failed open, so the schema had never once run in CI. Its unique assertions (closed field set, id pattern,
+# enums) moved into shape_findings rather than being bought with a hash-pinned dependency.
 #   ORIGINAL LINE, preserved (written 2026-07-15 in the same commit as `status: accepted`, i.e. stale on
 #   arrival — not drift): "STATUS: proposed — inert until ADR-0100 is accepted and the Phase-C validators
 #   land. No workflow reads this file yet. Validated against ci-control-registry.schema.json."
@@ -29,8 +31,9 @@
 # =====================================================================================================
 version: 1
 status: accepted
-generated_view: "NONE — the generated inventory view died with docs/ci/ (2026-07); read this registry directly (schema requires this key)"
 # Validators live in a dedicated tools/ci module (ADR-0100, operator amendment) — NOT tools/arch.
+# (`generated_view` is gone: it named a generated inventory under a docs namespace deleted in 2026-07,
+# and existed only because the JSON schema listed it as required. No check ever read it.)
 
 # OGD IS CANCELLED (operator decision, 2026-07-22). OGD — Operational Governance Deployment — was the
 # staged rollout that would have added three more required contexts to live branch protection, one

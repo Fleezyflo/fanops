@@ -6,9 +6,12 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 REGISTRY = REPO / ".github" / "ci-control-registry.yml"
-SCHEMA = REPO / ".github" / "ci-control-registry.schema.json"
 WORKFLOWS = REPO / ".github" / "workflows"
-GEN_VIEW = REPO / "docs" / "ci" / "CI_CONTROL_INVENTORY.md"
+# No SCHEMA: the draft-07 copy is deleted. It was never enforced — `jsonschema` is declared nowhere
+# and the loader failed open — so registry.py::shape_findings was always the only validator that
+# ran, and is now the only one that exists.
+# No GEN_VIEW: it named a generated inventory under a docs namespace deleted in 2026-07. Nothing
+# imported the constant; the path had been dangling ever since.
 
 # Hand-maintained docs that may make required/advisory claims about CI contexts (DC-4).
 # Kept small and explicit — the generated inventory is covered by the byte-compare, not by DC-4.

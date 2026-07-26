@@ -55,6 +55,14 @@ merge-past-red on the whole board. **DC-7 keeps it that way** — an advisory jo
 `continue-on-error` is now a blocking validator finding. The required set stays FINAL at the single
 `unit` context, so every job here takes the same shape: report, do not gate. The first three are the
 ONLY signal for what they check; that cost is stated on each line rather than hidden.
+
+**And each of them now WRITES that report.** `continue-on-error` makes a failed job report success,
+so on its own it is a mute button, not a report — until 2026-07-26 `controls` and `base-install`
+produced no artefact whatsoever when they failed, and only `impact` was legible, by the accident of
+teeing its verdict to the run summary. All three now emit a job summary. `controls` additionally
+prints its SELECTION VERDICT, because its suite is selection-gated and this repo has already shipped
+a green `negative controls` context whose step never ran: a summary that cannot distinguish "skipped"
+from "passed silently" would rebuild the blind spot it exists to close.
 - `architecture.yml` `impact` job — `tools.arch impact --strict`, the only breaking-change detection
   in the repo. It exits non-zero and prints each UNDECLARED reason verbatim; `9c5f71e` made those
   reasons clearable by pasting the printed line into `approved_breaking_changes` in
