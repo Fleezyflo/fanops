@@ -125,6 +125,41 @@ def _run(paths: dict) -> list[policy.Finding]:
     return policy.check(paths["DERIVED"])
 
 
+_BASELINE: set[tuple[str, str]] | None = None
+
+
+def _clean_baseline() -> set[tuple[str, str]]:
+    """Findings a PRISTINE fixture produces — the same value for every control, so computed ONCE.
+
+    Measured: a control is 0.36s fixture + 1.89s pristine pass + 1.90s injected pass. The pristine
+    pass was recomputed 24 times for an identical answer — 44% of the suite's 99s, spent deriving
+    a constant. The injected pass is irreducible; it is the actual test.
+
+    Sharing is sound because no finding names the temp tree it was built in — every evidence string
+    is repo-relative (`fanops.config:1112 computed_env_key`). `_assert_fixture_agnostic` re-proves
+    that on the real findings rather than trusting it, because the failure would be silent and
+    total: a baseline carrying fixture paths matches nothing, every control's own evidence reads as
+    NEW, and all 24 pass while detecting nothing.
+
+    Computed OUTSIDE any `fixture()` context — fixture() patches module path constants and restores
+    them on exit, so entering it from inside another restores to already-patched values."""
+    global _BASELINE
+    if _BASELINE is None:
+        with fixture() as (root, p):
+            findings = _run(p)
+            _assert_fixture_agnostic(findings, root)
+            _BASELINE = _sig(findings)
+    return _BASELINE
+
+
+def _assert_fixture_agnostic(findings: list[policy.Finding], root: Path) -> None:
+    leaked = [e for f in findings for e in (*f.evidence, f.detail) if str(root) in e]
+    if leaked:
+        raise AssertionError(
+            f"{len(leaked)} finding(s) name the fixture root, so one control's baseline cannot be "
+            f"compared against another's tree: {leaked[0][:120]}")
+
+
 # ── the injections ──────────────────────────────────────────────────────────────────────────
 def _inject(cid: str, root: Path, p: dict) -> None:
     src, kb, con, gov = p["SRC"], p["KB"], p["CONTRACT"], p["GOVERNANCE"]
@@ -295,8 +330,8 @@ def detect(c: Control) -> tuple[bool, str]:
     commit. Two implementations of "does this control detect?" will always drift, and the one
     that drifts is the one nobody watches.
     """
+    sig_before = _clean_baseline()      # once per process, not once per control
     with fixture() as (root, p):
-        sig_before = _sig(_run(p))
         _inject(c.id, root, p)
 
         # NC-08 asserts on GENERATED-ARTIFACT INTEGRITY, which is a byte-comparison, not a
