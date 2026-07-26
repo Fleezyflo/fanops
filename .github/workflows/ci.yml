@@ -101,6 +101,11 @@ jobs:
     # separate F3 off-switch decision). A dedicated clean-venv job so the base packaging contract cannot
     # rot unnoticed. Seconds; base deps only (pydantic/requests/yt-dlp), no toolchain, no lock.
     name: base install (no extras) refuses smart-framing
+    # ADVISORY, and now shaped like it (DC-7). The required set is FINAL at the single `unit`
+    # context (registry `rollout`). Disclosed cost: the unit lane installs [framing], so nothing
+    # else exercises a clean no-extras install or the loud cv2 refusal — this job is the only
+    # signal, and it reports. A signal nothing can gate on must not paint the board red.
+    continue-on-error: true
     timeout-minutes: 10
     runs-on: ubuntu-latest
     steps:
