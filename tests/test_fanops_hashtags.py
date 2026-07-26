@@ -1,15 +1,15 @@
 # tests/test_fanops_hashtags.py
-# Hashtag store builder — the ONLY judge of a hashtag is its LIVE Meta Graph reach (operator 2026-06-27).
-# refresh_store harvests co-occurring candidates from the niche seeds, measures their Graph reach within the
-# 30/7-day budget, ranks by reach, writes 00_control/hashtags.json. NO ledger, NO learn-doctor gate (the store
-# is independent of any published post). Own-post-reach attribution (tag_reach_means/rank_tags_by_reach) and
-# the doctor gate were DELETED — a post's outcome attributes to the hook/clip/account, never to the hashtag.
+# Layer A — the ONLY code that touches the Graph for hashtags and the only writer of the measurement
+# cache (00_control/hashtags.json). One pass per POSTING persona: description -> terms -> anchor tags ->
+# ONE top_media fetch per tag -> {like_count, co-occurring tags}. NO ledger, NO doctor gate, NO local
+# budget (Meta's own refusals are the sole governor — see test_hashtag_platform_truth.py).
+# This file owns the DRIVER contract: the written file's shape + order, accrual, the corrupt-personas
+# abort, the 12h throttle, and the two CLI verbs.
 import inspect
 import json
 import pytest
 from fanops.config import Config
-from fanops.models import Platform
-from fanops.hashtags import load_store, vetted_menu, vet_hashtags
+from fanops.hashtags import METRIC_FIELD, load_measurements
 from fanops.fanops_hashtags import refresh_store
 
 
@@ -20,19 +20,39 @@ class _Resp:
         return self._body
 
 
-def _graph_router(reach_by_tag, *, cooccur=""):
-    """A fake Meta Graph `get`: ig_hashtag_search resolves '#tag'->'id-tag'; {hid}/top_media returns the
-    co-occurring caption (for the harvest) + like/comments = the tag's reach (for the measurement)."""
+def _graph_router(metric_by_tag, *, cooccur=""):
+    """A fake Meta Graph `get`: ig_hashtag_search resolves '<q>'->'id-<q>'; {hid}/top_media returns the
+    co-occurring caption (for the harvest) + the tag's verbatim like_count (for the measurement). A tag
+    this router does not know 404s on top_media — Meta published nothing, so it stays UNMEASURED."""
     def get(url, params=None, timeout=None):
         p = params or {}
         if "ig_hashtag_search" in url:
             return _Resp(200, {"data": [{"id": "id-" + p.get("q", "")}]})
         if url.endswith("/top_media"):
             tag = "#" + url.rsplit("/", 2)[-2].replace("id-", "")
-            return _Resp(200, {"data": [{"caption": cooccur, "like_count": reach_by_tag.get(tag, 0),
+            if tag not in metric_by_tag:
+                return _Resp(404, None)
+            return _Resp(200, {"data": [{"caption": cooccur, "like_count": metric_by_tag[tag],
                                          "comments_count": 0}]})
         return _Resp(404, None)
     return get
+
+
+def _dead_router(url, params=None, timeout=None):
+    """Meta answers nothing useful — proves a code path spends no REAL network call."""
+    return _Resp(404, None)
+
+
+def _persona(cfg, *, pid="curator"):
+    """A persona whose name/voice/genre are ONE word, so persona_terms yields exactly one anchor
+    (#hiphop) and the harvest attribution is unambiguous. Linked to an ACTIVE account, because
+    _posting_personas narrows discovery to the personas that actually post."""
+    from fanops import personas as P
+    P.add_persona(cfg, name="Hiphop", voice="hiphop", intake={"genre": "hiphop"}, id=pid)
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": [
+        {"handle": "a", "platforms": ["instagram"], "status": "active", "persona_id": pid}]}))
+    return pid
 
 
 def test_refresh_store_atomic_write_preserves_prior_on_crash(tmp_path, monkeypatch):
@@ -40,7 +60,7 @@ def test_refresh_store_atomic_write_preserves_prior_on_crash(tmp_path, monkeypat
     from fanops import controlio
     monkeypatch.delenv("META_GRAPH_TOKEN", raising=False); monkeypatch.delenv("META_IG_USER_ID", raising=False)
     cfg = Config(root=tmp_path)
-    refresh_store(cfg)                                      # establish a valid store
+    refresh_store(cfg)                                      # establish a valid cache file
     good = cfg.hashtags_path.read_text()
     real_replace = controlio.os.replace
     def boom(src, dst):
@@ -54,7 +74,7 @@ def test_refresh_store_atomic_write_preserves_prior_on_crash(tmp_path, monkeypat
 
 def test_refresh_store_takes_no_ledger_and_no_doctor_gate(tmp_path, monkeypatch):
     # The own-reach model is gone: refresh_store's signature carries NO `led`, and it writes WITHOUT any
-    # learn-doctor verdict on disk (the store does not depend on a published post).
+    # learn-doctor verdict on disk (the cache does not depend on a published post).
     monkeypatch.delenv("META_GRAPH_TOKEN", raising=False); monkeypatch.delenv("META_IG_USER_ID", raising=False)
     assert "led" not in inspect.signature(refresh_store).parameters
     cfg = Config(root=tmp_path)
@@ -63,135 +83,68 @@ def test_refresh_store_takes_no_ledger_and_no_doctor_gate(tmp_path, monkeypatch)
     assert out["written"] is True and cfg.hashtags_path.exists()  # still writes — no gate
 
 
-def test_refresh_store_ranks_by_live_graph_reach(tmp_path, monkeypatch):
-    # The store is ranked by LIVE Graph reach: a higher-reach co-occurring tag leads, regardless of any post.
+def test_written_file_is_the_flat_record_shape_ranked_by_the_metric(tmp_path, monkeypatch):
+    # The cache is `{tag: {graph_id, like_count, measured_at, from}}` written in metric-DESC order, so a
+    # reader that just iterates the file already has the menu.
     monkeypatch.setenv("META_GRAPH_TOKEN", "tok"); monkeypatch.setenv("META_IG_USER_ID", "ig")
-    cfg = Config(root=tmp_path)
-    from fanops import personas as P
-    P.add_persona(cfg, name="Curator", id="curator")
-    P.add_corpus_tag(cfg, "curator", "#seed")               # the niche seed the harvest reads from
-    get = _graph_router({"#beta": 900, "#alpha": 100}, cooccur="#alpha #beta")
-    out = refresh_store(cfg, get=get)
-    store = json.loads(cfg.hashtags_path.read_text())["tags"]
-    assert store[0] == "#beta"                              # highest LIVE Graph reach leads
-    assert store.index("#beta") < store.index("#alpha")     # reach order, not insertion order
-    assert out["measured"] >= 2
+    cfg = Config(root=tmp_path); _persona(cfg)
+    refresh_store(cfg, get=_graph_router({"#hiphop": 500, "#beta": 900, "#alpha": 100},
+                                         cooccur="#alpha #beta"))
+    blob = json.loads(cfg.hashtags_path.read_text())
+    assert list(blob) == sorted(blob, key=lambda t: (-blob[t][METRIC_FIELD], t))   # metric desc on disk
+    assert blob["#beta"]["graph_id"] == "id-beta" and blob["#beta"]["measured_at"]
+    assert blob["#beta"]["from"] == {"#hiphop": 1}          # the anchor whose top media surfaced it
+    assert "reach" not in json.dumps(blob)                  # no invented metric key survives
 
 
-def test_zero_budget_refresh_preserves_prior_reach(tmp_path, monkeypatch):
-    # H3: refresh_store wrote `reach` from THIS call's measurements only, with no merge — so a refresh that
-    # measured nothing ERASED every prior measurement. That is not hypothetical: the 30-unique/rolling-7-DAY
-    # ig_hashtag_search cap vs refresh_store_if_due's 12h throttle means ~13 of every 14 refreshes measure
-    # nothing, so a reach datum could never outlive 12h. The live store proved it — `reach: {}` while
-    # hashtag_budget.json showed all 30 slots spent 4 days earlier.
+def test_measurements_accrue_across_passes(tmp_path, monkeypatch):
+    # A later pass that discovers a DIFFERENT slice must ADD to the evidence, not replace it: candidates
+    # rotate as the anchor's top media change, and the cache must accumulate what each pass bought. Pass 2
+    # cannot even re-measure #alpha (Meta refuses it) — its pass-1 record must still stand.
     monkeypatch.setenv("META_GRAPH_TOKEN", "tok"); monkeypatch.setenv("META_IG_USER_ID", "ig")
-    cfg = Config(root=tmp_path)
-    from fanops import personas as P
-    P.add_persona(cfg, name="Curator", id="curator")
-    P.add_corpus_tag(cfg, "curator", "#seed")
-    out = refresh_store(cfg, get=_graph_router({"#beta": 900, "#alpha": 100}, cooccur="#alpha #beta"))
-    assert out["measured"] >= 2
-    earned = json.loads(cfg.hashtags_path.read_text())["reach"]
-    assert earned, "precondition: the funded refresh must persist reach"
-
-    monkeypatch.delenv("META_GRAPH_TOKEN", raising=False)   # the next tick measures nothing (budget/creds)
-    refresh_store(cfg)
-    kept = json.loads(cfg.hashtags_path.read_text())["reach"]
-    assert kept == earned, "a refresh that measured nothing destroyed the accrued reach"
+    cfg = Config(root=tmp_path); _persona(cfg)
+    refresh_store(cfg, get=_graph_router({"#hiphop": 500, "#alpha": 100}, cooccur="#alpha"))
+    refresh_store(cfg, get=_graph_router({"#hiphop": 500, "#beta": 900}, cooccur="#beta"))
+    m = load_measurements(cfg)
+    assert "#alpha" in m and "#beta" in m                    # both slices survive
+    assert m["#alpha"][METRIC_FIELD] == 100                  # an unreachable tag keeps its prior evidence
+    assert m["#beta"][METRIC_FIELD] == 900
 
 
-def test_reach_accrues_across_refreshes(tmp_path, monkeypatch):
-    # A later refresh that measures a DIFFERENT slice must add to the evidence, not replace it — the budget
-    # window rolls, so candidates rotate across ticks and the store must accumulate what each tick bought.
-    monkeypatch.setenv("META_GRAPH_TOKEN", "tok"); monkeypatch.setenv("META_IG_USER_ID", "ig")
-    cfg = Config(root=tmp_path)
-    from fanops import personas as P
-    P.add_persona(cfg, name="Curator", id="curator")
-    P.add_corpus_tag(cfg, "curator", "#seed")
-    refresh_store(cfg, get=_graph_router({"#alpha": 100}, cooccur="#alpha"))
-    refresh_store(cfg, get=_graph_router({"#beta": 900}, cooccur="#beta"))
-    d = json.loads(cfg.hashtags_path.read_text())
-    assert "#alpha" in d["reach"] and "#beta" in d["reach"]      # both slices survive
-    assert d["tags"].index("#beta") < d["tags"].index("#alpha")  # ranked by ACCRUED reach, not just this call's
-
-
-def test_refresh_store_fail_open_without_creds_writes_frozen_floor(tmp_path, monkeypatch):
-    # No Meta creds -> harvest/measure no-op -> the frozen reach-ranked seed stands (never empty, never raises).
+def test_refresh_store_without_creds_measures_nothing_and_never_calls_out(tmp_path, monkeypatch):
+    # No Meta creds -> resolve_hashtag short-circuits BEFORE any request, so the pass measures nothing and
+    # writes an EMPTY cache. Honest: there is no frozen floor left to pad it with.
     monkeypatch.delenv("META_GRAPH_TOKEN", raising=False); monkeypatch.delenv("META_IG_USER_ID", raising=False)
-    cfg = Config(root=tmp_path)
-    out = refresh_store(cfg)
-    store = json.loads(cfg.hashtags_path.read_text())["tags"]
+    cfg = Config(root=tmp_path); _persona(cfg)
+    calls: list = []
+    def spy(url, params=None, timeout=None):
+        calls.append(url); return _Resp(404, None)
+    out = refresh_store(cfg, get=spy)
     assert out["written"] is True and out["measured"] == 0
-    assert store[0] == vetted_menu()[0]                     # frozen floor order, byte-stable
-    assert "#hiphop" in store
+    assert calls == []                                       # never hits the network without creds
+    assert json.loads(cfg.hashtags_path.read_text()) == {}
 
 
-def test_load_store_reads_tags_or_none(tmp_path):
-    cfg = Config(root=tmp_path)
-    assert load_store(cfg) is None                          # absent -> None (fall back to frozen)
-    cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg.hashtags_path.write_text(json.dumps({"tags": ["#x", "#y"]}))
-    assert load_store(cfg) == ["#x", "#y"]
-    cfg.hashtags_path.write_text("{ corrupt")
-    assert load_store(cfg) is None                          # corrupt -> None, never raises
-
-
-def test_refresh_store_flag_off_writes_frozen_floor_even_with_creds(tmp_path, monkeypatch):
-    # FANOPS_HASHTAG_TRENDS=0 is the operator escape hatch: the store is the frozen reach floor only — no Graph
-    # harvest/measure — even when Meta creds are present. Keeps the flag meaningful (not a dead switch).
-    monkeypatch.setenv("FANOPS_HASHTAG_TRENDS", "0")
-    monkeypatch.setenv("META_GRAPH_TOKEN", "tok"); monkeypatch.setenv("META_IG_USER_ID", "ig")
-    cfg = Config(root=tmp_path)
-    out = refresh_store(cfg, get=_graph_router({"#beta": 900}, cooccur="#beta"))   # router present but must NOT be used
-    store = json.loads(cfg.hashtags_path.read_text())["tags"]
-    assert out["measured"] == 0 and out["harvested"] == 0       # Graph sampling skipped
-    assert store == vetted_menu()                               # frozen floor verbatim
-
-
-def test_load_store_reach_reads_graph_reach_map_or_empty(tmp_path):
-    # WS5: refresh_store persists {"reach": {tag: graph reach}} for the Studio surface; load_store_reach reads
-    # it normalized, fail-open to {} when absent / no reach key / corrupt.
-    from fanops.hashtags import load_store_reach
-    cfg = Config(root=tmp_path)
-    assert load_store_reach(cfg) == {}                      # absent -> {}
-    cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg.hashtags_path.write_text(json.dumps({"tags": ["#a"]}))     # no reach key -> {}
-    assert load_store_reach(cfg) == {}
-    cfg.hashtags_path.write_text(json.dumps({"tags": ["#a"], "reach": {"#A": 1200, "#b": "x"}}))
-    assert load_store_reach(cfg) == {"#a": 1200.0}          # normalized key; non-numeric dropped
-
-
-def test_vetted_menu_uses_store_when_given_else_frozen():
-    assert vetted_menu(store=["#a", "#b"]) == ["#a", "#b"]  # dynamic store drives the menu
-    assert "#hiphop" in vetted_menu()                       # no store -> frozen pools
-
-
-def test_vet_hashtags_store_aware_and_byte_identical_without_store():
-    base = vet_hashtags(["#hiphop", "#garbageword"], Platform.instagram, "en")
-    assert vet_hashtags(["#hiphop", "#garbageword"], Platform.instagram, "en", store=None) == base
-    out = vet_hashtags(["#mytrend", "#garbageword"], Platform.instagram, "en", store=["#mytrend", "#second"])
-    assert "#mytrend" in out and "#garbageword" not in out
-    assert len(out) <= 4
-
-
-# --- `hashtags discover` REPORTS fresh per-persona tags, NEVER writes the caption menu. Auto-absorbing
-# unvetted discoveries into the menu was DROPPED (an engagement floor admits spam + bypasses the operator
-# curation gate). Curation stays operator-gated in the Studio: discover -> operator ACCEPTS into a corpus.
+# --- `hashtags discover` is the per-persona niche REPORT: READ-ONLY and ZERO NETWORK ------------------
 def test_cmd_hashtags_discover_reports_and_writes_nothing(tmp_path, monkeypatch):
     from fanops.fanops_hashtags import cmd_hashtags_discover
-    from fanops import personas as P
-    cfg = Config(root=tmp_path)
-    P.add_persona(cfg, name="Curator", id="curator")
-    monkeypatch.setattr("fanops.personas.discover_corpus",
-                        lambda c, pid, **k: [{"tag": "#detroitrap", "count": 9}])
+    monkeypatch.setenv("META_GRAPH_TOKEN", "tok"); monkeypatch.setenv("META_IG_USER_ID", "ig")
+    from datetime import datetime, timezone
+    cfg = Config(root=tmp_path); pid = _persona(cfg)
+    cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.hashtags_path.write_text(json.dumps({"#detroitrap": {
+        "graph_id": "id-detroitrap", METRIC_FIELD: 4200.0,
+        "measured_at": datetime.now(timezone.utc).isoformat(), "from": {"#hiphop": 3}}}))
+    import requests
+    monkeypatch.setattr(requests, "get", lambda *a, **k: pytest.fail("discover must spend no Graph call"))
+    before = cfg.hashtags_path.read_text()
     rc = cmd_hashtags_discover(cfg)
     blob = cfg.log_path.read_text()
-    assert rc == 0 and "#detroitrap" in blob and "curator" in blob
-    assert not cfg.hashtags_path.exists()                   # discovery NEVER writes the caption menu
+    assert rc == 0 and "#detroitrap" in blob and pid in blob
+    assert cfg.hashtags_path.read_text() == before           # a report never mutates the cache
 
 
 def test_cmd_hashtags_discover_no_personas(tmp_path):
-    import json
     from fanops.fanops_hashtags import cmd_hashtags_discover
     cfg = Config(root=tmp_path)
     rc = cmd_hashtags_discover(cfg)
@@ -199,132 +152,80 @@ def test_cmd_hashtags_discover_no_personas(tmp_path):
     assert rc == 0 and any(r["outcome"] == "no_personas" for r in recs)
 
 
-# --- WS2: the run loop refreshes the Graph-reach store on a throttle (constant update), fail-open.
+# --- the run loop refreshes the cache on a 12h throttle (constant update), fail-open ------------------
 def test_refresh_store_if_due_throttles_and_fail_open(tmp_path, monkeypatch):
     import os
     from fanops.fanops_hashtags import refresh_store_if_due
     monkeypatch.delenv("META_GRAPH_TOKEN", raising=False); monkeypatch.delenv("META_IG_USER_ID", raising=False)
     cfg = Config(root=tmp_path)
-    assert refresh_store_if_due(cfg)["refreshed"] is False       # no Meta creds -> clean no-op
+    assert refresh_store_if_due(cfg)["refreshed"] is False        # no Meta creds -> clean no-op
     assert not cfg.hashtags_path.exists()
     monkeypatch.setenv("META_GRAPH_TOKEN", "t"); monkeypatch.setenv("META_IG_USER_ID", "ig")
-    assert refresh_store_if_due(cfg)["refreshed"] is True        # no store yet -> writes (fail-open frozen floor)
+    assert refresh_store_if_due(cfg, get=_dead_router)["refreshed"] is True   # no cache yet -> writes
     assert cfg.hashtags_path.exists()
-    assert refresh_store_if_due(cfg, max_age_s=43200)["refreshed"] is False   # just written -> fresh -> throttled
+    assert refresh_store_if_due(cfg, max_age_s=43200, get=_dead_router)["refreshed"] is False  # fresh -> throttled
     old = cfg.hashtags_path.stat().st_mtime - 100000
     os.utime(cfg.hashtags_path, (old, old))
-    assert refresh_store_if_due(cfg, max_age_s=10)["refreshed"] is True       # stale -> refresh again
+    assert refresh_store_if_due(cfg, max_age_s=10, get=_dead_router)["refreshed"] is True      # stale -> refresh
 
 
-# --- Corrupt personas.json MUST NOT clobber the curated store (MOL-12→15). _seed_tags used to swallow the
-# ControlFileError Personas.load raises, coercing corrupt->[]; the refresh then overwrote the operator's
-# curated store with a generic one, silently. The guard: corrupt personas -> refresh ABORTS, store untouched;
-# genuinely-absent personas still rebuild from the frozen floor exactly as before.
+# --- Corrupt personas.json MUST NOT clobber the accrued cache (MOL-12→15). Personas.load raises
+# ControlFileError; refresh_store turns that into a loud abort and leaves the file byte-identical, while a
+# genuinely-ABSENT personas.json is not an abort (it just measures nothing).
 def _write_corrupt_personas(cfg):
     cfg.personas_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.personas_path.write_text('{"personas": [oops]}')    # bareword: not valid JSON -> ControlFileError
 
-def test_seed_tags_propagates_control_file_error_on_corrupt_personas(tmp_path):
-    # MOL-12: _seed_tags no longer swallows to [] — the ControlFileError propagates so refresh_store can tell
-    # "corrupt" (abort) apart from "no personas" (rebuild). Absent/empty personas still yield [] (no raise).
-    from fanops.fanops_hashtags import _seed_tags
-    from fanops.errors import ControlFileError
-    cfg = Config(root=tmp_path)
-    assert _seed_tags(cfg) == []                            # absent personas.json -> [] (legitimately empty)
-    _write_corrupt_personas(cfg)
-    with pytest.raises(ControlFileError):
-        _seed_tags(cfg)                                     # corrupt -> propagates, NOT coerced to []
 
-def test_refresh_store_aborts_and_preserves_store_on_corrupt_personas(tmp_path, monkeypatch):
-    # MOL-13: with a curated store already on disk, a corrupt personas.json makes refresh_store ABORT — the
-    # store is byte-identical afterward (the destroy-the-good-store defect is structurally impossible) and the
-    # return is a non-`written` abort result carrying the reason. Meta creds present so seeding is reached.
+def test_refresh_store_aborts_and_preserves_cache_on_corrupt_personas(tmp_path, monkeypatch):
     monkeypatch.setenv("META_GRAPH_TOKEN", "tok"); monkeypatch.setenv("META_IG_USER_ID", "ig")
     cfg = Config(root=tmp_path)
     cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
-    curated = json.dumps({"tags": ["#curatedwinner", "#second"], "reach": {"#curatedwinner": 5000}}, indent=2)
-    cfg.hashtags_path.write_text(curated)                   # the operator's reach-ranked store
+    accrued = json.dumps({"#measured": {"graph_id": "id-measured", METRIC_FIELD: 5000.0,
+                                        "measured_at": "2026-07-20T00:00:00+00:00"}}, indent=2)
+    cfg.hashtags_path.write_text(accrued)                   # evidence already bought
     _write_corrupt_personas(cfg)
     out = refresh_store(cfg, get=_graph_router({"#beta": 900}, cooccur="#beta"))
     assert out["written"] is False and out["aborted"] == "corrupt_personas"   # loud, non-success return
     assert "personas.json invalid:" in out["reason"]                          # the reason surfaces
-    assert cfg.hashtags_path.read_text() == curated         # byte-identical: the curated store is UNTOUCHED
+    assert cfg.hashtags_path.read_text() == accrued          # byte-identical: the evidence is UNTOUCHED
 
-def test_refresh_store_absent_personas_rebuilds_from_floor(tmp_path, monkeypatch):
-    # MOL-13: the genuinely-empty case (no personas configured) still rebuilds from the frozen floor — the
-    # abort is ONLY for corrupt, never for absent. Byte-identical to the no-creds frozen-floor behavior today.
+
+def test_refresh_store_absent_personas_is_not_an_abort(tmp_path, monkeypatch):
+    # The abort is ONLY for corrupt, never for absent: with no personas there are no anchors, so the pass
+    # measures nothing and writes cleanly.
     monkeypatch.delenv("META_GRAPH_TOKEN", raising=False); monkeypatch.delenv("META_IG_USER_ID", raising=False)
     cfg = Config(root=tmp_path)
-    assert not cfg.personas_path.exists()                   # no personas at all
+    assert not cfg.personas_path.exists()
     out = refresh_store(cfg)
-    store = json.loads(cfg.hashtags_path.read_text())["tags"]
-    assert out["written"] is True and "aborted" not in out
-    assert store[0] == vetted_menu()[0] and "#hiphop" in store   # frozen floor, exactly as before
+    assert out["written"] is True and "aborted" not in out and out["measured"] == 0
 
-def test_refresh_store_healthy_personas_output_unchanged(tmp_path, monkeypatch):
-    # MOL-13: the healthy path is byte-identical to today — a valid personas.json produces the same store the
-    # pre-guard code did. (The guard only ADDS a corrupt-abort branch; the clean run is untouched.)
-    monkeypatch.setenv("META_GRAPH_TOKEN", "tok"); monkeypatch.setenv("META_IG_USER_ID", "ig")
-    cfg = Config(root=tmp_path)
-    from fanops import personas as P
-    P.add_persona(cfg, name="Curator", id="curator"); P.add_corpus_tag(cfg, "curator", "#seed")
-    out = refresh_store(cfg, get=_graph_router({"#beta": 900, "#alpha": 100}, cooccur="#alpha #beta"))
-    store = json.loads(cfg.hashtags_path.read_text())["tags"]
-    assert out["written"] is True and "aborted" not in out
-    assert store[0] == "#beta" and store.index("#beta") < store.index("#alpha")   # reach order preserved
 
 def test_refresh_store_if_due_corrupt_personas_reports_reason_never_raises(tmp_path, monkeypatch):
     # MOL-14: the unattended tick keeps its fail-open contract (never raises into the run) AND surfaces the
-    # corrupt-abort as a REPORTED reason — `refreshed` is False, the reason names the abort, and a curated
-    # store on disk is preserved byte-identical. Meta creds present so the tick reaches the refresh.
+    # corrupt-abort as a REPORTED reason, with the accrued cache preserved byte-identical.
     import os
     from fanops.fanops_hashtags import refresh_store_if_due
     monkeypatch.setenv("META_GRAPH_TOKEN", "t"); monkeypatch.setenv("META_IG_USER_ID", "ig")
     cfg = Config(root=tmp_path)
     cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
-    curated = json.dumps({"tags": ["#curatedwinner"], "reach": {}}, indent=2)
-    cfg.hashtags_path.write_text(curated)
-    _write_corrupt_personas(cfg)                            # the broken control file that must not clobber the store
+    accrued = json.dumps({"#measured": {"graph_id": "id-measured", METRIC_FIELD: 1.0,
+                                        "measured_at": "2026-07-20T00:00:00+00:00"}}, indent=2)
+    cfg.hashtags_path.write_text(accrued)
+    _write_corrupt_personas(cfg)                            # the broken control file that must not clobber
     old = cfg.hashtags_path.stat().st_mtime - 100000
-    os.utime(cfg.hashtags_path, (old, old))                 # make it stale so the throttle doesn't short-circuit
-    r = refresh_store_if_due(cfg, max_age_s=10, get=_graph_router({"#beta": 900}, cooccur="#beta"))  # must NOT raise
+    os.utime(cfg.hashtags_path, (old, old))                 # stale, so the throttle doesn't short-circuit
+    r = refresh_store_if_due(cfg, max_age_s=10, get=_graph_router({"#beta": 900}))   # must NOT raise
     assert r["refreshed"] is False and r["aborted"] == "corrupt_personas"
     assert "personas.json invalid:" in r["reason"]
-    assert cfg.hashtags_path.read_text() == curated         # curated store preserved
-
-def test_refresh_store_writes_reach_map_with_per_tag_live_scores(tmp_path, monkeypatch):
-    # mol-hashtag-reach-graph-2c21: refresh_store persists {"reach": {tag: score}} where `score` is the
-    # LIVE Meta Graph engagement (sum of top_media like+comment counts via trend_score).  The "reach" key
-    # is what load_store_reach + the Studio Personas tab consume.  Operator invariant (2026-06-27): a tag's
-    # worth is its LIVE platform reach — never a post's outcome.
-    monkeypatch.setenv("META_GRAPH_TOKEN", "tok"); monkeypatch.setenv("META_IG_USER_ID", "ig")
-    cfg = Config(root=tmp_path)
-    from fanops import personas as P
-    P.add_persona(cfg, name="Curator", id="curator"); P.add_corpus_tag(cfg, "curator", "#seed")
-    get = _graph_router({"#beta": 900, "#alpha": 100}, cooccur="#alpha #beta")
-    # R4: an entry is now an EVIDENCE RECORD {reach, measured_at, source, confidence}, not a bare number.
-    # Provenance is load-bearing — research_corpus promotes only on `source == "graph-reach"` + freshness —
-    # so the value alone is no longer enough to write. `load_store_reach` still projects both shapes to the
-    # same float, which is why every consumer (incl. the Studio tab named above) is unchanged. See ADR-0104.
-    from fanops.hashtags import load_store_reach
-    out = refresh_store(cfg, get=get)
-    blob = json.loads(cfg.hashtags_path.read_text())
-    assert out["written"] is True
-    assert "reach" in blob                                  # reach key present in written file
-    assert blob["reach"]["#beta"]["reach"] == 900           # LIVE Graph engagement (mocked like_count 900)
-    assert blob["reach"]["#alpha"]["reach"] == 100          # LIVE Graph engagement (mocked like_count 100)
-    assert blob["reach"]["#beta"]["source"] == "graph-reach" and blob["reach"]["#beta"]["measured_at"]
-    assert load_store_reach(cfg)["#beta"] == 900.0          # flat projection: consumers see no change
-    assert out["measured"] == len(blob["reach"])            # summary count matches the persisted map
+    assert cfg.hashtags_path.read_text() == accrued          # accrued cache preserved
 
 
 def test_cmd_hashtags_refresh_corrupt_personas_exits_2_and_no_keyerror(tmp_path, monkeypatch):
-    # MOL-13 caller contract: `fanops hashtags refresh` used to index r['measured']/['harvested']/['total']
-    # unconditionally and always exit 0. On a corrupt-abort it must NOT KeyError on the abort shape — it logs
-    # the reason loudly and exits 2. The healthy verb still logs its summary and exits 0.
-    import json
+    # MOL-13 caller contract: `fanops hashtags refresh` must NOT KeyError on the abort shape — it logs the
+    # reason loudly and exits 2. The healthy verb still logs its summary and exits 0.
     from fanops.fanops_hashtags import cmd_hashtags_refresh
-    monkeypatch.setenv("META_GRAPH_TOKEN", "tok"); monkeypatch.setenv("META_IG_USER_ID", "ig")
+    monkeypatch.delenv("META_GRAPH_TOKEN", raising=False); monkeypatch.delenv("META_IG_USER_ID", raising=False)
     cfg = Config(root=tmp_path)
     _write_corrupt_personas(cfg)
     rc = cmd_hashtags_refresh(cfg)

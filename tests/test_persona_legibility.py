@@ -62,33 +62,26 @@ def test_blank_clears_hint_renders(tmp_path):
     assert "Leaving scope or hook angle blank clears it on save." in zone2
 
 
-def test_corpus_provenance_chips(tmp_path):
-    # S12 meta drives the badge: a pinned tag -> "pinned", an auto tag -> "auto", and a corpus tag with NO
-    # meta entry -> a PLAIN chip (no badge) — the graceful-degrade path.
+def test_corpus_chips_carry_the_measurement_and_its_anchor(tmp_path):
+    # Derivation meta drives the chip: each tag shows Meta's own value and the ANCHOR tag whose top posts
+    # surfaced it ("via #hiphop") — the honest "why is this here". A tag with NO meta entry degrades to a
+    # PLAIN chip rather than inventing a number.
+    from fanops.hashtags import METRIC_FIELD
     cfg = Config(root=tmp_path)
     pid = core.add_persona(cfg, name="P1", voice="v1")
-    core.add_corpus_tag(cfg, pid, "#pinnedtag")          # stamps source=pinned
-    # inject an auto tag + a meta-less tag directly (add_corpus_tag only ever produces pinned)
-    raw = json.loads(cfg.personas_path.read_text())
-    d = raw["personas"][0]
-    d["hashtag_corpus"] = ["#pinnedtag", "#autotag", "#barenometa"]
-    d["hashtag_corpus_meta"]["#autotag"] = {"source": "auto", "reach": 1500, "added": "2026-07-01T00:00:00+00:00"}
-    # #barenometa deliberately gets NO meta entry
-    cfg.personas_path.write_text(json.dumps(raw))
-    # the read-model carries the raw source per tag
+    core.apply_auto_corpus(cfg, pid, tags=["#derivedtag", "#barenometa"], meta={
+        "#derivedtag": {METRIC_FIELD: 1500.0, "measured_at": "2026-07-01T00:00:00+00:00", "from": "#hiphop"}})
+    # the read-model carries the value + anchor per tag
     card = next(c for c in views.personas_page(cfg).personas if c.id == pid)
     by_tag = {r["tag"]: r for r in card.corpus_tags}
-    assert by_tag["#pinnedtag"]["source"] == "pinned"
-    assert by_tag["#autotag"]["source"] == "auto"
-    assert by_tag["#barenometa"]["source"] is None       # meta-less -> None -> plain chip
-    # and the rendered chips: the badges appear for pinned/auto, and the bare tag renders WITHOUT one
+    assert by_tag["#derivedtag"]["value"] == 1500.0 and by_tag["#derivedtag"]["from"] == "#hiphop"
+    assert by_tag["#barenometa"]["value"] is None and by_tag["#barenometa"]["from"] is None
+    # and the rendered chips: the measured tag shows its number + anchor, the bare one shows neither
     html = _panel(cfg)
     corpus = html.split('class="persona-corpus"', 1)[1]
-    assert '<span class="corpus-prov pinned"' in corpus and "pinned</span>" in corpus
-    assert '<span class="corpus-prov auto"' in corpus and "auto</span>" in corpus
-    # the bare tag renders as a chip but not immediately followed by a provenance badge
-    bare = corpus.split("#barenometa", 1)[1][:60]
-    assert "corpus-prov" not in bare, "a meta-less tag must render a plain chip (no badge)"
+    assert "1500" in corpus and "via #hiphop" in corpus
+    bare = corpus.split("#barenometa", 1)[1][:80]
+    assert "corpus-prov" not in bare and "reach-n" not in bare, "a meta-less tag must render a plain chip"
 
 
 def test_edit_one_lever_round_trip(tmp_path):
@@ -101,7 +94,7 @@ def test_edit_one_lever_round_trip(tmp_path):
         "id": pid, "name": "Keep", "voice": "the voice",
         "content_focus": ["punchlines"], "selection_scope": "subject_locked", "hook_angle": "curiosity"})
     assert r0.status_code == 200
-    core.add_corpus_tag(cfg, pid, "#keeper")
+    core.apply_auto_corpus(cfg, pid, tags=["#keeper"], meta={})
     before = json.loads(cfg.personas_path.read_text())["personas"][0]
     # change ONLY hook_angle, re-posting the same other values (the form is authoritative)
     r = _client(cfg).post("/personas/edit", data={
@@ -114,11 +107,14 @@ def test_edit_one_lever_round_trip(tmp_path):
         assert after[k] == before[k], f"{k} changed on a one-lever edit: {before[k]!r} -> {after[k]!r}"
 
 
-def test_research_renders_force_refresh_label(tmp_path):
-    # The Research control is relabelled "Force refresh now" in the derived zone (it re-runs the reach harvest
-    # + proposes; the automatic 12h refresh is the passive path this button forces early).
+def test_derived_zone_offers_the_niche_lever_not_a_curation_lane(tmp_path):
+    # Zone 3 is DERIVED output. The one editable thing beside the corpus is the NICHE, because that is what
+    # the next measurement pass searches on — the add/remove/research proposal lane is gone with the
+    # curation model it belonged to.
     cfg = Config(root=tmp_path)
     core.add_persona(cfg, name="Curator", voice="champions craft")
     html = _panel(cfg)
     zone3 = html.split("Derived — updates itself", 1)[1].split("</article>", 1)[0]
-    assert "Force refresh now" in zone3
+    assert 'name="genre"' in zone3 and "Save niche" in zone3
+    for gone in ("Force refresh now", "Check reach", "/personas/research", "/personas/corpus/add"):
+        assert gone not in zone3, f"a retired curation control still renders in the derived zone: {gone}"

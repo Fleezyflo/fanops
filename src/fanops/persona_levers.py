@@ -46,7 +46,7 @@ _HOOK_ANGLE_OPTIONS = [
 ]
 # clip_profile: the GLOBAL deterministic cut-length lever (Go-Live default) — catalog-only (no per-persona
 # vocab/clause; per persona the length is DERIVED from content_focus). Options are band names; the catalog
-# effect is computed from bands.band_for (lazy). hashtag_corpus: catalog-only, no enumerated options.
+# effect is computed from bands.band_for (lazy). intake: free text (the niche), no enumerated options.
 _CLIP_PROFILE_BANDS = ["short", "medium", "long", "talk", "song"]
 
 _ARCHETYPE_SELECTION_SCOPE = {
@@ -75,8 +75,9 @@ LEVER_REGISTRY = [
     {"key": "clip_profile", "label": "Clip length", "kind": "select", "stage": "cut",
      "does": "the GLOBAL deterministic cut-length band (Go-Live default; per-persona it is derived from content_focus)",
      "options": [{"value": n} for n in _CLIP_PROFILE_BANDS]},
-    {"key": "hashtag_corpus", "label": "Corpus", "kind": "tags", "stage": "caption",
-     "does": "your curated tags LEAD the caption hashtags", "options": []},
+    {"key": "intake", "label": "Niche", "kind": "tags", "stage": "caption",
+     "does": "the niche word(s) the next measurement pass searches Instagram for — the corpus it derives "
+             "then LEADS the caption hashtags", "options": []},
 ]
 
 
@@ -87,7 +88,10 @@ LEVER_REGISTRY = [
 # the exact over-claim trap (the catalog's global `clip_profile` is NOT the persona `clip_profile` pin). So
 # EDITABILITY here is defined as "the persona save route persists this field" — kept honest by the behavioral
 # editor-parity test — NOT by catalog-key presence.
-PERSONA_FIELD_EXEMPT = frozenset({"id", "name", "intake"})   # identity / research-seed metadata, not a per-clip output lever
+# Identity + DERIVED state. `hashtag_corpus` is not a lever any more: it is recomputed every tick from
+# platform measurements (persona_research.derive_corpus), and `hashtag_corpus_deprecated` is the retirement
+# record of what it used to hold. Neither has — or should have — an editor control.
+PERSONA_FIELD_EXEMPT = frozenset({"id", "name", "hashtag_corpus", "hashtag_corpus_deprecated"})
 
 # The EDITABLE coherent levers: model field -> the output CHANNEL(s) it owns. Distinctness rule = "<=1 owner per
 # channel". content_focus owns casting-selection + cut-length + cut-framing; selection_scope owns casting-
@@ -97,7 +101,9 @@ PERSONA_EDITABLE_CHANNELS = {
     "content_focus": ("casting-selection", "cut-length", "cut-framing"),
     "selection_scope": ("casting-selection-scope",),
     "hook_angle": ("hook-angle",),
-    "hashtag_corpus": ("hashtags",),
+    # `intake.genre` is the niche root persona_terms searches on, saved by /personas/niche. It replaced
+    # hashtag_corpus as the owner of this channel when the corpus became a derived output.
+    "intake": ("hashtags",),
 }
 
 
@@ -208,8 +214,8 @@ def build_catalog() -> list[dict]:
             opts = [{"value": o["value"], "effect": (o["clause"] or "no change — open selection")} for o in lv["options"]]
         elif lv["key"] == "clip_profile":
             opts = [{"value": o["value"], "effect": f"{band_for(o['value']).lo:g}-{band_for(o['value']).hi:g}s cuts"} for o in lv["options"]]
-        elif lv["key"] == "hashtag_corpus":
-            opts = []
+        elif lv["key"] == "intake":
+            opts = []          # free text, not an enum
         else:
             opts = [{"value": o["value"], "effect": o["clause"]} for o in lv["options"]]
         out.append({"key": lv["key"], "label": lv["label"], "kind": lv["kind"], "stage": lv["stage"],

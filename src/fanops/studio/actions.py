@@ -121,7 +121,7 @@ def regenerate_caption(cfg: Config, post_id: str, guidance: str = "", *,
     Does NOT publish — safe on any backend, so no confirm gate."""
     from fanops.prompts import caption_prompt
     from fanops.caption import brand_risk_flag
-    from fanops.hashtags import load_store
+    from fanops.hashtags import load_measurements, ranked_tags
     now = _now(now)
     led = Ledger.load(cfg)                              # lock-free read: reject early, build context
     p, err = _guard_editable_post(led, post_id, now)
@@ -136,24 +136,21 @@ def regenerate_caption(cfg: Config, post_id: str, guidance: str = "", *,
     if (guidance or "").strip():                        # operator hint is highest priority for this re-roll
         full_guidance = (base + "\n\nOPERATOR INSTRUCTION FOR THIS REGENERATION (highest priority): "
                          + guidance.strip())
-    store = load_store(cfg)
-    # Parity with the batch payload (caption.request_captions:195-213): the regen prompt carries the SAME
-    # per-surface persona/corpus/genre the pipeline prompts with — a corpus-blind regen invents tags (MOL-86 class).
+    store = ranked_tags(load_measurements(cfg)) or None
+    # Parity with the batch payload (caption.request_captions): the regen prompt carries the SAME
+    # per-surface persona/corpus the pipeline prompts with — a corpus-blind regen invents tags (MOL-86 class).
     from fanops.accounts import Accounts
-    from fanops.caption import _genres_for_accounts
     from fanops.personas import caption_directive
     accts = Accounts.load(cfg)
     acct = next((a for a in accts.accounts if a.handle == p.account), None)
     persona = caption_directive(acct) if acct is not None else None
     corpus = list(getattr(acct, "hashtag_corpus", []) or []) if acct is not None else []
-    genre = _genres_for_accounts(accts, cfg).get(p.account)
     payload = {"clip_id": p.parent_id, "language": src.language if src else None,
                "transcript_excerpt": moment.transcript_excerpt if moment else "",
                "guidance": full_guidance,
                "surfaces": [{"surface": surface, "platform": p.platform.value,
                              **({"persona": persona} if persona else {}),
-                             **({"corpus": corpus} if corpus else {}),
-                             **({"genre": genre} if genre else {})}],
+                             **({"corpus": corpus} if corpus else {})}],
                **({"hashtag_store": store} if store is not None else {})}
     if model is None:
         # NO haphazard claude (ROOT): Regenerate calls the LLM, so it obeys the SAME single switch as every
@@ -184,14 +181,14 @@ def regenerate_caption(cfg: Config, post_id: str, guidance: str = "", *,
     if flag:
         return ActionResult(ok=False, error=f"regenerated caption rejected — {flag}. "
                             "Edit it by hand or regenerate again.")
-    # Parity with ingest_captions (caption.py:325-333, the one true vet): the model's picks are vetted under
-    # the post's platform with corpus/genre + recency threading, and the POSTED caption IS the vetted <=4-tag
-    # line — regenerate can no longer write raw model tags past the cap/membership gates.
+    # Parity with ingest_captions (the one true vet): the model's picks are vetted under the post's platform
+    # with corpus + recency threading, and the POSTED caption IS the vetted <=4-tag line — regenerate can no
+    # longer write raw model tags past the cap/membership gates.
     from fanops.caption import _recent_tags, _tags_in
     from fanops.hashtags import vet_hashtags_traced
     vetted, _sources = vet_hashtags_traced(list(item.hashtags or []) or _tags_in(item.caption),
                            p.platform, src.language if src else None, store=store,
-                           corpus=corpus, genre=genre, cfg=cfg, recent=_recent_tags(led, p.account))
+                           corpus=corpus, cfg=cfg, recent=_recent_tags(led, p.account))
     new_caption, new_tags = " ".join(vetted), vetted
     with Ledger.transaction(cfg) as led2:               # re-guard + write INSIDE a short transaction
         # fresh now: the model call may have taken ~180s, during which the post could have become

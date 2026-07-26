@@ -47,8 +47,10 @@ actions, views) changes still require a Studio restart.
 
 - **Every API key is write-only** (`POSTIZ_API_KEY`, `ZERNIO_API_KEY`, `META_GRAPH_TOKEN__<slug>`): set via
   `golive._dual_write`, NEVER rendered back into any template/response. Don't add a field that echoes one.
-- **Persona edits are authoritative** — a blank lever field CLEARS it (`personas.py`). Discovery/recommend only
-  PROPOSE tags; the operator ACCEPTS into the corpus. Discovery must never auto-write a caption tag (curation gate).
+- **Persona edits are authoritative** — a blank lever field CLEARS it (`personas.py`). The hashtag corpus is NOT
+  editable: it is DERIVED from platform measurements every tick (`persona_research.derive_corpus`), so the tab
+  shows it read-only. The operator's levers are the persona description (`/personas/niche` sets the search root)
+  and the global ban list.
 
 ## Where to look
 

@@ -21,28 +21,6 @@
     </div>
   {% endif %}
 
-  {% if result and result.ok and result.detail and result.detail.proposals is defined %}
-    {# M3: LIVE discovery proposals — tags the category's currently-winning posts use that this persona
-       lacks, each with its evidence (co-occurrence count; measured reach when present). One click to add. #}
-    <div class="research-result">
-      <strong>Discovered for {{ result.detail.persona }}</strong> (from live top posts — add the ones that fit):
-      {% for p in result.detail.proposals %}
-        <button type="button" class="chip tag add"
-          hx-post="{{ url_for('do_personas_corpus_add') }}" hx-target="#personas-panel" hx-swap="outerHTML"
-          hx-vals='{{ {"id": result.detail.persona, "tag": p.tag} | tojson }}'>+ {{ p.tag }}{% if p.count %}<span class="reach-n"> · {{ p.count | int }} posts</span>{% endif %}{% if p.measured_engagement %}<span class="reach-n"> · {{ (p.measured_engagement / 1000) | round(1) }}k</span>{% endif %}</button>
-      {% else %}<span class="muted">no fresh tags found — corpus covers the live winners</span>{% endfor %}
-    </div>
-  {% endif %}
-
-  {% if result and result.ok and result.detail and result.detail.recommend %}
-    {# B2: a recommended tag's live Graph metrics + a one-click Add-to-corpus (the curation evidence step). #}
-    <div class="recommend-result">
-      <strong>{{ result.detail.tag }}</strong> — {{ result.detail.engagement }} engagement on Instagram's top media.
-      <button type="button" hx-post="{{ url_for('do_personas_corpus_add') }}" hx-target="#personas-panel" hx-swap="outerHTML"
-        hx-vals='{{ {"id": result.detail.persona, "tag": result.detail.tag} | tojson }}'>Add to corpus</button>
-    </div>
-  {% endif %}
-
   {# Clarity: the persona LIST is the page's primary content, so the big creation form (intro + lever
      reference + every lever field) is tucked behind a disclosure instead of opening as a wall above the
      list. Collapsed by default; the htmx panel-swap re-collapses it after an add, surfacing the new persona. #}
@@ -152,33 +130,28 @@
             {% if p.hook_angle %} · {{ p.hook_angle }} hook{% endif %}
           </p>
 
-          {# 3 · Hashtag corpus — S12 presentation: each tag with its provenance badge (pinned/auto from meta;
-             a meta-less/None-source tag gets NO badge), its live Graph reach (★ = currently most-active), a
-             remove (×), plus the add / force-refresh / check-reach curation tools. #}
+          {# 3 · Hashtag corpus — READ-ONLY. Every tag here was measured on Instagram and chosen by that
+             number; there is nothing to add, remove or pin. Each chip shows the platform's own like_count
+             and the anchor tag whose top posts surfaced it. The one editable thing is the NICHE, because
+             that is what the next measurement pass searches on. #}
           <div class="persona-corpus">
-            <span class="muted persona-corpus-label">Hashtags ({{ p.corpus|length }})</span>
-            {% if p.corpus_refreshed_at %}<span class="corpus-refreshed muted" title="last time this corpus was refreshed">last refreshed {{ p.corpus_refreshed_at }}</span>{% endif %}
+            <span class="muted persona-corpus-label">Hashtags ({{ p.corpus|length }}) — derived from live Instagram measurements</span>
+            {% if p.corpus_refreshed_at %}<span class="corpus-refreshed muted" title="when these measurements were taken">measured {{ p.corpus_refreshed_at }}</span>{% endif %}
             {% for row in p.corpus_tags %}
               {% set t = row.tag %}
-              <span class="chip tag{{ ' high-reach' if t in p.reach_tags else '' }}">{{ t }}{% if row.source == 'pinned' %}<span class="corpus-prov pinned" title="pinned by you (curated)">pinned</span>{% elif row.source == 'auto' %}<span class="corpus-prov auto" title="auto-added by the reach refresh">auto</span>{% endif %}{% if t in p.reach_tags %}<span class="reach" title="currently most-active on the platform (live Graph reach)">★</span>{% endif %}{% if p.reach_means.get(t) %}<span class="reach-n" title="live Graph reach (top-media engagement)">· {{ (p.reach_means[t] / 1000) | round(1) }}k</span>{% endif %}
-                <button type="button" title="remove {{ t }}" class="chip-x"
-                  hx-post="{{ url_for('do_personas_corpus_remove') }}" hx-target="#personas-panel" hx-swap="outerHTML"
-                  hx-vals='{{ {"id": p.id, "tag": t} | tojson }}'>×</button></span>
-            {% else %}<span class="muted">none yet</span>{% endfor %}
+              <span class="chip tag ro{{ ' high-reach' if t in p.reach_tags else '' }}">{{ t }}{% if row.value is not none %}<span class="reach-n" title="Instagram like_count on this tag's top post">· {{ row.value | int }}</span>{% endif %}{% if row.from %}<span class="corpus-prov auto" title="found alongside {{ row.from }} in Instagram's top posts">via {{ row.from }}</span>{% endif %}</span>
+            {% else %}<span class="muted">nothing measured for this persona yet</span>{% endfor %}
+            {% if p.deprecated_tags %}
+              <div class="muted persona-corpus-deprecated" title="pre-derivation tags, retired at cutover — kept visible, never shipped">
+                Retired ({{ p.deprecated_tags|length }}): {% for t in p.deprecated_tags %}<span class="chip tag ro banned">{{ t }}</span>{% endfor %}
+              </div>
+            {% endif %}
             <div class="persona-corpus-tools">
-              <form class="inline" hx-post="{{ url_for('do_personas_research') }}" hx-target="#personas-panel" hx-swap="outerHTML">
+              <form class="inline" hx-post="{{ url_for('do_personas_niche') }}" hx-target="#personas-panel" hx-swap="outerHTML">
                 <input type="hidden" name="id" value="{{ p.id }}">
-                <input type="text" name="genre" value="{{ p.intake.get('genre', '') }}" placeholder="genre" size="10"
-                  title="seeds the hashtag search for this persona (saved when you Force refresh)">
-                <button type="submit" class="ghost" title="re-run the reach harvest now and propose the reach-best tags this persona is missing">Force refresh now</button>
-              </form>
-              <form class="inline" hx-post="{{ url_for('do_personas_corpus_add') }}" hx-target="#personas-panel" hx-swap="outerHTML">
-                <input type="hidden" name="id" value="{{ p.id }}">
-                <input type="text" name="tag" placeholder="#tag" size="12"><button type="submit" class="ghost">Add</button>
-              </form>
-              <form class="inline" hx-post="{{ url_for('do_personas_recommend') }}" hx-target="#personas-panel" hx-swap="outerHTML">
-                <input type="hidden" name="id" value="{{ p.id }}">
-                <input type="text" name="tag" placeholder="#candidate" size="12"><button type="submit" class="ghost" title="look up this tag's live Instagram reach via the Graph API">Check reach</button>
+                <input type="text" name="genre" value="{{ p.intake.get('genre', '') }}" placeholder="niche" size="14"
+                  title="the niche word(s) the next measurement pass searches on — your lever over what this persona reaches for">
+                <button type="submit" class="ghost" title="save the niche; the next pass measures it">Save niche</button>
               </form>
             </div>
           </div>

@@ -16,12 +16,12 @@ from fanops.models import Platform
 UZ = ["#freestyle", "#undergroundhiphop", "#trap", "#methodman", "#wuwear", "#90shiphop",
       "#rza", "#wutang", "#ghostfacekillah", "#wutangclan", "#cappadonna", "#wutangbrand"]   # a live 12-tag corpus
 CF = ["#podcast", "#interview", "#facts", "#science"]                                        # a live 4-tag corpus (5 of 8 personas)
-STORE = UZ + CF + ["#hiphop", "#rap", "#bars", "#viral", "#fyp", "#reels"]
+STORE = UZ + CF + ["#hiphop", "#rap", "#bars", "#viral", "#fyp", "#reels"]   # the measured menu, metric-ranked
 
 
 def _line(picks, corpus, recent=None, lang="en", store=STORE):
     return vet_hashtags(picks, Platform.instagram, lang, 4, store=store, corpus=corpus,
-                        content=None, genre="rap", cfg=None, recent=recent or [])
+                        content=None, cfg=None, recent=recent or [])
 
 
 # ---- H1: the corpus may not monopolise the line ------------------------------------------------------

@@ -34,7 +34,7 @@ def _write_accounts(cfg, rows):
 def test_link_personas_by_voice_links_matching_accounts(tmp_path):
     cfg = Config(root=tmp_path)
     pid = P.add_persona(cfg, name="Hip-Hop Curator", voice="underground scene evangelist")
-    P.add_corpus_tag(cfg, pid, "#hiphop")
+    P.apply_auto_corpus(cfg, pid, tags=["#hiphop"], meta={})
     _write_accounts(cfg, [
         {"handle": "@hip",  "platforms": ["instagram"], "status": "active",
          "persona": "underground scene evangelist"},   # exact voice match -> should link
@@ -133,11 +133,10 @@ def test_hydration_carries_voice_corpus_levers_after_migration(tmp_path):
     result = migrate_from_accounts(cfg)
     pid = result["created"][0]
 
-    # Operator adds levers + corpus to the freshly-created persona
+    # Operator sets the levers; the corpus arrives from a derivation (its only writer)
     P.update_persona(cfg, pid, content_focus=["storytelling"], hook_angle="emotional",
                      selection_scope="subject_locked")
-    P.add_corpus_tag(cfg, pid, "#beatmaking")
-    P.add_corpus_tag(cfg, pid, "#underground")
+    P.apply_auto_corpus(cfg, pid, tags=["#beatmaking", "#underground"], meta={})
 
     a = Accounts.load(cfg).accounts[0]
     assert a.persona_id == pid

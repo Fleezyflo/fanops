@@ -1,10 +1,15 @@
 """Drift guard: the fanops-hook-hashtag SKILL.md is DOCUMENTATION; the source of truth is the code
-(hashtags.VETTED + prompts._hook_spec). The doc duplicates those values, so without a test it can
-silently drift from what actually runs. These tests parse the machine-readable DRIFT-GUARD blocks in
-SKILL.md and assert they match the code — mutate either side and this goes red."""
+(the hashtags.py COMPOSITION floors + prompts._hook_spec). The doc duplicates those values, so without a
+test it can silently drift from what actually runs. These tests parse the machine-readable DRIFT-GUARD
+blocks in SKILL.md and assert they match the code — mutate either side and this goes red.
+
+The hashtag block used to mirror `hashtags.VETTED`, a hand-ranked reach pool. That pool is DELETED: a
+tag's worth is now its live platform measurement, so there is no canonical tag list to document. What
+remains frozen — and therefore documentable — are the COMPOSITION floors: the AR region tags and the
+per-platform discovery tags, neither of which is a reach claim."""
 import re
 from pathlib import Path
-from fanops.hashtags import VETTED
+from fanops.hashtags import _ARABIC, _DISCOVERY
 from fanops.prompts import _hook_spec
 
 _SKILL = Path(__file__).resolve().parents[1] / ".claude" / "skills" / "fanops-hook-hashtag" / "SKILL.md"
@@ -24,9 +29,15 @@ def _guard_block(name: str) -> str:
     return m.group(1)
 
 
-def test_skill_vetted_hashtags_match_code():
-    doc_tags = set(re.findall(r"#\S+", _guard_block("hashtags")))
-    assert doc_tags == VETTED                      # doc tag set == code VETTED set, exactly
+def _composition_floors() -> list[str]:
+    """The only frozen tag lists left in hashtags.py: the AR region floor + every platform's discovery
+    pool. Sorted so the doc has ONE canonical ordering to mirror."""
+    return sorted(set(_ARABIC) | {t for pool in _DISCOVERY.values() for t in pool})
+
+
+def test_skill_composition_floors_match_code():
+    doc_tags = re.findall(r"#\S+", _guard_block("hashtags"))
+    assert doc_tags == _composition_floors()       # doc list == the code's composition floors, in order
 
 
 def test_skill_hook_patterns_match_code():

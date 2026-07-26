@@ -113,9 +113,8 @@ Speech-trust filtering is **invariant always-on** — there is no env switch for
 ## Hashtags / Meta Graph
 | Var | Default | Effect | Set |
 |---|---|---|---|
-| `FANOPS_HASHTAG_TRENDS` | on | Background Graph reach sampling in `hashtags refresh` | .env |
-| `FANOPS_CORPUS_TARGET` | 30 | Target curated tags per persona for auto-refresh (pinned tags preserved) | .env |
-| `META_GRAPH_TOKEN` | None | Meta Graph token for hashtag trends (write-only) | .env |
+| `FANOPS_CORPUS_TARGET` | 30 | Ceiling on a persona's DERIVED corpus (never padded to reach it) | .env |
+| `META_GRAPH_TOKEN` | None | Meta Graph token for the hashtag measurement pass (write-only) | .env |
 | `META_GRAPH_TOKEN__<SLUG>` | falls back to global | Per-handle Graph token (dynamic key, write-only) | S |
 | `META_IG_USER_ID` | None | IG Business account id for `ig_hashtag_search` (set into accounts.json, not env) | .env |
 | `META_GRAPH_URL` | `https://graph.facebook.com/v21.0` | Graph base (overridable) | .env |

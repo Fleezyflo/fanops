@@ -842,9 +842,10 @@ def test_run_learn_block_logs_auth_error_with_type_name(tmp_path, monkeypatch, m
     log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
     assert "PostizAuthError" in log                         # the type name is in the breadcrumb
 
-def test_main_hashtags_refresh_writes_from_graph_failopen(tmp_path, monkeypatch, capsys):
-    # `fanops hashtags refresh` rebuilds the store from LIVE Graph reach — no ledger, no doctor gate. Without
-    # Meta creds it FAILS OPEN to the frozen reach floor (still writes), and exits 0 cleanly (MOL-358: log not stdout).
+def test_main_hashtags_refresh_writes_the_cache_failopen(tmp_path, monkeypatch, capsys):
+    # `fanops hashtags refresh` runs one measurement pass — no ledger, no doctor gate. Without Meta creds
+    # it measures NOTHING (resolve_hashtag short-circuits before any request), still writes the cache, and
+    # exits 0 cleanly (MOL-358: log not stdout).
     from fanops.config import Config
     monkeypatch.delenv("META_GRAPH_TOKEN", raising=False); monkeypatch.delenv("META_IG_USER_ID", raising=False)
     monkeypatch.chdir(tmp_path)
@@ -853,3 +854,13 @@ def test_main_hashtags_refresh_writes_from_graph_failopen(tmp_path, monkeypatch,
     compact = log.replace(" ", "")
     assert '"outcome":"refreshed"' in compact and '"measured":"0"' in compact
     assert (tmp_path / "MohFlow-FanOps" / "00_control" / "hashtags.json").exists()
+
+
+def test_main_hashtags_verbs_are_refresh_and_discover_only(tmp_path, monkeypatch, capsys):
+    # The one-shot `hashtags migrate` verb (the corpus-hygiene sweep) is GONE with the curated corpus it
+    # rewrote — argparse must REJECT it rather than silently accept an unknown subcommand.
+    import pytest
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit) as ei:
+        main(["hashtags", "migrate"])
+    assert ei.value.code == 2                             # argparse "invalid choice", not a silent no-op

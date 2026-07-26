@@ -394,11 +394,12 @@ class PersonaCard:
     id: str
     name: str
     voice: str
-    corpus: list                       # the per-persona reach-vetted hashtag pool (B1) — the SOLE hashtag differentiator (M3), DISPLAYED reach-first (B3)
-    intake: dict                       # genre/language/reference_accounts/notes (seeds B3 research)
+    corpus: list                       # the per-persona DERIVED hashtag pool, ordered by the platform metric
+    intake: dict                       # intake metadata; `genre` is the niche root persona_terms searches on
     linked_handles: list               # accounts whose persona_id points at this persona
-    reach_tags: list = field(default_factory=list)   # corpus tags present in the LIVE Graph-reach store -> flag as currently most-active
-    reach_means: dict = field(default_factory=dict)  # {corpus tag -> LIVE Graph reach} from the store (the honest 'why this tag' signal)
+    reach_tags: list = field(default_factory=list)   # corpus tags carrying a live platform measurement
+    reach_means: dict = field(default_factory=dict)  # {corpus tag -> Meta's own like_count} — the honest 'why this tag'
+    deprecated_tags: list = field(default_factory=list)   # pre-derivation tags retired at cutover: shown, never shipped
     # Lever engine: the per-characteristic levers + the COMPOSED instruction the pipeline will read
     # ("what the AI will read") — so the operator sees their config's exact downstream effect on the card.
     content_focus: list = field(default_factory=list)
@@ -521,29 +522,28 @@ def _lever_detail_rows(cfg: Config, persona, manifest_rows: list, catalog: list,
 
 
 def _corpus_tag_rows(cfg: Config, persona) -> tuple[list, str]:
-    """U9: the DERIVED-zone corpus projection — REUSES the persona_research readers views_hashtags leans on
-    (`_persona_row` for the raw hashtag_corpus_meta, load_store_reach for the reach number) rather than
-    hand-rolling a second reader. Returns (rows, refreshed_at): rows = [{tag, source, reach, added}] one per
-    corpus tag (source is the RAW meta value — "pinned"/"auto"/None — so a meta-less tag renders a plain chip),
-    refreshed_at = max `added` across the meta, else the .corpora_refresh.json marker ts. Fail-open: any trip
-    -> ([], "")."""
+    """U9: the DERIVED-zone corpus projection. Returns (rows, refreshed_at): rows =
+    [{tag, value, measured_at, from}] one per corpus tag, where `value` is Meta's own METRIC_FIELD as
+    stamped at derivation (falling back to the live cache when a row predates the stamp) and `from` is the
+    anchor tag whose top media surfaced it — the honest "why is this here". refreshed_at = max
+    `measured_at` across the meta, else the .corpora_refresh.json marker ts. Fail-open: any trip -> ([], "")."""
     from fanops.persona_research import _persona_row
-    from fanops.hashtags import load_store_reach, _norm
+    from fanops.hashtags import METRIC_FIELD, load_measurements, _norm
     try:
         row = _persona_row(cfg, persona.id) or {}
         meta = row.get("hashtag_corpus_meta") if isinstance(row.get("hashtag_corpus_meta"), dict) else {}
-        reach = load_store_reach(cfg)
+        cache = load_measurements(cfg)
         rows: list = []; seen: set = set()
         for t in (persona.hashtag_corpus or []):
             n = _norm(t) if isinstance(t, str) else ""
             if not n or n in seen: continue
             seen.add(n)
             m = meta.get(n) if isinstance(meta.get(n), dict) else {}
-            src = m.get("source")                                 # RAW: "pinned" | "auto" | None (meta-less) -> the template badges only pinned/auto
-            r = m.get("reach")                                    # per-tag stamped reach (S12 auto rows carry it)
-            if r is None: r = reach.get(n)                        # else the live store reach (the ★-tags' number)
-            rows.append({"tag": n, "source": src, "reach": r, "added": m.get("added")})
-        stamps = [m.get("added") for m in meta.values() if isinstance(m, dict) and isinstance(m.get("added"), str)]
+            v = m.get(METRIC_FIELD)
+            if v is None: v = (cache.get(n) or {}).get(METRIC_FIELD)
+            rows.append({"tag": n, "value": v, "measured_at": m.get("measured_at"), "from": m.get("from")})
+        stamps = [m.get("measured_at") for m in meta.values()
+                  if isinstance(m, dict) and isinstance(m.get("measured_at"), str)]
         refreshed = max(stamps) if stamps else _corpora_marker_ts(cfg)
         return rows, refreshed
     except Exception as exc:
@@ -599,17 +599,15 @@ def personas_page(cfg: Config, *, led: Optional[Ledger] = None) -> "PersonasPage
     for a in accts:
         if getattr(a, "persona_id", None):
             by_pid.setdefault(a.persona_id, []).append(a.handle)
-    # Surface each corpus REACH-RANKED by the LIVE Graph-reach store and flag the currently-most-active tags.
-    # MOL-59: "most-active" (★) is gated on a MEASURED Graph reach value, NOT mere store presence — a seed tag
-    # with no measurement asserts no live-reach fact, so it never stars. No measurements -> reach_tags empty.
-    from fanops.hashtags import vetted_menu, load_store, load_store_reach, _norm
-    store = load_store(cfg)
-    rank = {t: i for i, t in enumerate(vetted_menu(store))}
-    # The numeric reach annotation per tag is the tag's LIVE Graph reach, persisted in the store by
-    # refresh_store — NOT own-post reach (the own-reach judge was deleted; a tag's worth is its platform
-    # reach, never a post that used it). Absent store / no creds -> {} (the number simply doesn't render).
-    # MOL-59: `means` is also the ★ gate — a tag is "most-active" iff it has a measured reach here.
-    means = load_store_reach(cfg)
+    # Surface each corpus ranked by the PLATFORM's own number (Meta's like_count on the tag's top media),
+    # and flag the tags that actually carry one. A corpus tag should always be measured — it can only have
+    # entered by being measured — but a cache entry can expire between derivations, so the ★ still gates on
+    # a present measurement rather than assuming it.
+    from fanops.hashtags import METRIC_FIELD, load_measurements, ranked_tags, _norm
+    cache = load_measurements(cfg)
+    store = ranked_tags(cache) or None
+    rank = {t: i for i, t in enumerate(store or [])}
+    means = {t: r[METRIC_FIELD] for t, r in cache.items()}
     def _ranked(corpus):
         return sorted((_norm(t) for t in corpus), key=lambda n: rank.get(n, 10 ** 6))
     from fanops.personas import lever_catalog
@@ -632,6 +630,7 @@ def personas_page(cfg: Config, *, led: Optional[Ledger] = None) -> "PersonasPage
                          linked_handles=by_pid.get(p.id, []),
                          reach_tags=[_norm(t) for t in p.hashtag_corpus if _norm(t) in means],
                          reach_means={_norm(t): means[_norm(t)] for t in p.hashtag_corpus if _norm(t) in means},
+                         deprecated_tags=list(getattr(p, "hashtag_corpus_deprecated", []) or []),
                          content_focus=list(p.content_focus), selection_scope=p.selection_scope, hook_angle=p.hook_angle,
                          clip_profile=resolved_cut_spec(p)[0], framing=facts["framing"],
                          instruction=compose_persona_instruction(p),

@@ -77,7 +77,6 @@ holds TWO variables). Table is complete (no sampling):
 | 8 | `META_GRAPH_TOKEN` | config.py:309 | None | Meta Graph token for hashtag trends (write-only) |
 | 9 | `META_IG_USER_ID` | config.py:315 | None | IG Business account id for `ig_hashtag_search` |
 | 10 | `META_GRAPH_URL` | config.py:321 | `https://graph.facebook.com/v21.0` | Graph base (overridable) |
-| 11 | `FANOPS_HASHTAG_TRENDS` | config.py:332 | ON | Background Graph reach sampling in `hashtags refresh` |
 | 12 | `FANOPS_REQUIRE_FULL_OBJECTIVE` | config.py:341 | OFF | Refuse to amplify a lift-degraded winner |
 | 13 | `FANOPS_RESPONDER` | config.py:392 (also doctor.py:31, autopilot.py:76, actions_run.py:36) | `manual` | THE explicit AI switch (llm/manual) |
 | 14 | `FANOPS_LLM_MODEL` | config.py:408 | per-gate defaults | Force ONE model across all gates |
@@ -175,7 +174,7 @@ The ONLY Studio setter of environment variables is the Go-Live tab via `golive._
 `FANOPS_ISOLATE_VOCALS`, `FANOPS_BURN_SUBS`, `FANOPS_AWARE_REFRAME`, `FANOPS_SUBTITLE_FONT`,
 `FANOPS_VISUAL_START`), scheduling (`FANOPS_OPERATOR_TZ`, `FANOPS_REALISTIC_CADENCE`,
 `FANOPS_PUBLISH_LEAD_MINUTES`), infra (`FANOPS_CONCURRENT_*`, `FANOPS_GC_KEEP_DAYS`, `FANOPS_UPLOAD_MAX_MB`,
-`FANOPS_*_PER_MIN`, `FANOPS_ZERNIO_MAX_UPLOAD_MB`, `FANOPS_POSTIZ_*`, `FANOPS_HASHTAG_TRENDS`,
+`FANOPS_*_PER_MIN`, `FANOPS_ZERNIO_MAX_UPLOAD_MB`, `FANOPS_POSTIZ_*`,
 `FANOPS_REQUIRE_FULL_OBJECTIVE`, `FANOPS_LLM_MODEL`, `FANOPS_ARTIST_NAME`, `FANOPS_POSTER`), the Meta/TLS
 creds (`META_GRAPH_TOKEN`, `META_IG_USER_ID`, `META_GRAPH_URL`, `ANTHROPIC_API_KEY`, `XDG_CACHE_HOME`,
 `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`).
@@ -205,17 +204,21 @@ which sits AFTER transcribe+signals+keyframes by construction (`pipeline._stage_
 
 ### 2.1 Sources a tag can enter from (end-to-end)
 
-1. **Frozen reach-ranked pools** — `_MEGA/_RELEVANCE/_ARABIC/_DISCOVERY` (`hashtags.py:15-24`); `VETTED` is
-   their union (`hashtags.py:30`), which is the cold-start FLOOR (comment `hashtags.py`, header).
-2. **Live Graph reach store** — `fanops_hashtags.refresh_store` (`fanops_hashtags.py:41`) harvests
-   co-occurring candidates (`meta_graph.harvest_cooccurring` `meta_graph.py:460`), measures live reach
-   (`sample_trends` `meta_graph.py:417`), ranks by reach, writes `00_control/hashtags.json`
-   `{tags, reach}` (`fanops_hashtags.py:77`). Read side: `hashtags.load_store` (`hashtags.py:37`),
-   `load_store_reach` (`hashtags.py:53`). Refreshed on a 12h throttle inside `run` via `refresh_store_if_due`
-   (`fanops_hashtags.py:81`).
-3. **Per-persona curated corpus** — `Persona.hashtag_corpus` (`personas.py:41`), hydrated onto the account
-   (`accounts._hydrate_from_personas` `accounts.py:258`), the **SOLE per-account hashtag differentiator**
-   since the tag_lean fold (M3, `hashtags.py:32-35`).
+1. **Composition floors** — `_ARABIC` + `_DISCOVERY` (`hashtags.py`). These are FORMAT, not reach claims:
+   one platform discovery tag per post, one region tag on Arabic clips. The frozen reach-ranked pools
+   (`_MEGA`/`_RELEVANCE`/`_RANK`/`VETTED`) were DELETED 2026-07-26 — they asserted reach from desk research.
+2. **The platform measurement cache** — `fanops_hashtags.refresh_store` derives search terms from each
+   posting persona's DESCRIPTION (`persona_research.persona_terms`), resolves them via
+   `meta_graph.resolve_hashtag`, and one `meta_graph.measure_and_harvest` call per tag returns both the
+   verbatim `like_count` and the co-occurring tags. Writes `00_control/hashtags.json` as
+   `{tag: {graph_id, like_count, measured_at, from}}` — measured tags only. Read side:
+   `hashtags.load_measurements` + `ranked_tags`. 12h throttle inside `run` via `refresh_store_if_due`.
+   No local budget: Meta's own throttle codes end a pass, and a cached `graph_id` means a known tag never
+   spends another search.
+3. **Per-persona DERIVED corpus** — `Persona.hashtag_corpus`, recomputed every tick by
+   `persona_research.derive_corpus` (zero network) as the top `corpus_target` of the persona's aligned,
+   measured pool; hydrated onto the account (`accounts._hydrate_from_personas`). Pre-derivation tags live
+   in `hashtag_corpus_deprecated` — visible, never shipped.
 4. **Per-clip content derivation** — `hashtags.content_tag_candidates` (`hashtags.py:107`): deterministic,
    pure, NO NLP — latin word tokens 3-20 chars, stopword-filtered, frequency-then-first-seen ordered,
    capped at 6. Blank/Arabic/numbers → `[]` (byte-identical).

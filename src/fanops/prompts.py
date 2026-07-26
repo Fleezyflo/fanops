@@ -8,7 +8,6 @@ from __future__ import annotations
 import json
 import re
 from fanops.bands import Band, TALK, band_for
-from fanops.hashtags import vetted_menu
 
 _NEUTRAL_BRAIN = "You are the editorial brain of an autonomous fan-account clip engine"
 
@@ -371,15 +370,14 @@ def caption_prompt(payload: dict) -> str:
         f"{json.dumps(transferred, ensure_ascii=False)}\n"
         if transferred else ""
     )
-    genres = [s.get("genre") for s in surfaces if s.get("genre")]
-    store = payload.get("hashtag_store")
-    seen_menu: set[str] = set(); menu: list[str] = []
-    for g in dict.fromkeys(genres or [None]):             # None -> rap default floor; union when mixed niches
-        for t in vetted_menu(store=store, genre=g):
-            if t not in seen_menu: seen_menu.add(t); menu.append(t)
+    # The menu IS the measurement cache, already ranked by the platform's own number — there is no frozen
+    # pool to union in and no niche floor to pick, because a tag with no platform measurement is not a
+    # candidate. Absent cache -> an empty menu, and the surface corpus carries the line.
+    menu = [t for t in (payload.get("hashtag_store") or []) if isinstance(t, str)]
     menu_json = json.dumps(menu, ensure_ascii=False)
-    pick_rule = ("Pick up to 4 tags by REACH × how well each fits THIS clip — choose ONLY from the menu "
-                 f"UNION each surface's `corpus`; do NOT invent tags outside the menu or a surface corpus: {menu_json}. ")
+    pick_rule = ("Pick up to 4 tags by how well each fits THIS clip — the menu is already ordered by live "
+                 "platform reach, so prefer earlier entries when the fit is equal. Choose ONLY from the menu "
+                 f"UNION each surface's `corpus`; do NOT invent tags outside them: {menu_json}. ")
     return (
         "You write captions for FAN ACCOUNTS that repost and celebrate an artist. "
         "You are a FAN hyping the artist to other fans — NEVER the artist, never an official account. "

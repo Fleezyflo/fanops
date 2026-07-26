@@ -130,9 +130,9 @@ def test_ingest_captions_multi_surface_clean_advances(tmp_path):
     assert set(c.meta_captions) == {"a/instagram", "a/tiktok"}
 
 def test_ingest_captions_vets_hashtags_max4_and_drops_random(tmp_path):
-    # The operator rule: <=4 hashtags, HARD, and only reach-vetted tags (never random AI words).
-    # ingest must filter whatever the model returns through vet_hashtags before storing.
-    from fanops.hashtags import VETTED
+    # The operator rule: <=4 hashtags, HARD, and only PLATFORM-MEASURED tags (never random AI words).
+    # ingest must filter whatever the model returns through vet_hashtags before storing. With a cold
+    # measurement cache and no corpus, EVERY model pick dies and the line is the honest discovery floor.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)
     led = request_captions(led, cfg, "clip_1", [("a", Platform.instagram)])
     rid = latest_request_id(cfg, "captions", "clip_1")
@@ -142,10 +142,10 @@ def test_ingest_captions_vets_hashtags_max4_and_drops_random(tmp_path):
     led = ingest_captions(led, cfg, "clip_1")
     mc = led.clips["clip_1"].meta_captions["a/instagram"]
     assert len(mc["hashtags"]) <= 4                       # hard cap
-    assert "#mohflow" not in mc["hashtags"]               # non-vetted random word dropped
-    # every survivor traces to a real signal: reach-vetted OR a per-clip content tag (content membership
-    # is the new evidence source — a tag is never a sourceless junk word).
-    assert all(t in VETTED or mc["tag_sources"].get(t) == "content" for t in mc["hashtags"])
+    assert "#mohflow" not in mc["hashtags"]               # an unmeasured random word is dropped
+    assert mc["hashtags"] == ["#reels"]                   # cold cache -> the platform discovery slot only
+    # every survivor traces to a real signal — a tag is never a sourceless junk word.
+    assert set(mc["tag_sources"].values()) <= {"content", "corpus", "region", "graph-reach", "discovery"}
     assert all(mc["tag_sources"][t] for t in mc["hashtags"])   # no sourceless tag ships
     assert mc["caption"] == " ".join(mc["hashtags"])      # posted caption == the vetted tag line
 

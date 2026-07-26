@@ -164,10 +164,8 @@ class Config:
         self.personas_lock_path = self.control / "personas.lock"   # serializes the personas.json read-modify-write mutators
         self.context_path = self.control / "context.md"
         self.tuning_path = self.control / "tuning.json"
-        self.hashtags_path = self.control / "hashtags.json"  # M4 dynamic reach-ranked tag store; absent -> frozen pools
+        self.hashtags_path = self.control / "hashtags.json"  # the platform measurement cache {tag: {graph_id, like_count, measured_at, from}}; absent -> selection ships short
         self.account_stats_path = self.control / "account_stats.json"  # U3: throttled IG follower snapshot per handle; absent -> empty
-        self.hashtag_budget_path = self.control / "hashtag_budget.json"  # M4 Meta Graph 30/7-day search budget counter
-        self.hashtag_budget_lock = self.control / "hashtag_budget.lock"  # serializes record_query's read-modify-write (concurrent Studio calls lost writes -> quota over-spend)
         self.hashtag_bans_path = self.control / "hashtag_bans.json"  # U11 operator global hashtag deny-list {"bans": [...]}; consumed at selection (vet_hashtags) + S12 auto-accept
         self.hashtag_bans_lock = self.control / "hashtag_bans.lock"  # serializes add_ban/remove_ban's read-modify-write
         self.cutover_path = self.control / "cutover.json"   # live-cutover harness scratch state; NEVER the ledger
@@ -421,19 +419,9 @@ class Config:
         return (v or "https://graph.facebook.com/v21.0").rstrip("/")
 
     @property
-    def hashtag_trends(self) -> bool:
-        # B2 (2026-06-23): the Graph API is now ON BY DEFAULT — sample LIVE Meta Graph hashtag trends during
-        # `hashtags refresh`. FAIL-OPEN: without META_GRAPH_TOKEN + META_IG_USER_ID, sample_trends no-ops and
-        # the refresh falls open to the frozen reach floor, so default-ON is safe on a deployment with no Meta
-        # app. Only the explicit OFF-words disable it (operator escape hatch).
-        # NB: this gates the BACKGROUND refresh sampling only; the on-demand operator lookup (meta_graph.
-        # tag_metrics) is gated by creds + budget, never this flag. Mirrors account_casting's default-ON shape.
-        v = (os.getenv("FANOPS_HASHTAG_TRENDS") or "").strip().lower()
-        return v not in {"0", "false", "no", "off"}     # DEFAULT ON; only explicit off-words disable it
-
-    @property
     def corpus_target(self) -> int:
-        # S12: target curated tags per persona for the auto-refresh writer (pinned tags don't count toward auto slots).
+        # How many measured tags a persona's DERIVED corpus aims to hold. A ceiling, not a quota: derivation
+        # never pads to reach it, so a persona with thin platform evidence keeps a shorter corpus.
         try:
             v = int(os.getenv("FANOPS_CORPUS_TARGET", "30"))
         except ValueError:
@@ -1098,7 +1086,7 @@ class Config:
     @property
     def postiz_autostart(self) -> bool:
         # Auto-start the local Postiz docker-compose stack before publish (postiz_lifecycle). DEFAULT ON;
-        # only explicit off-words disable (mirrors hashtag_trends).
+        # only explicit off-words disable.
         v = (os.getenv("FANOPS_POSTIZ_AUTOSTART") or "").strip().lower()
         return v not in {"0", "false", "no", "off"}
 

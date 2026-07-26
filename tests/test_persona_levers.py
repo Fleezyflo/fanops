@@ -253,7 +253,7 @@ from fanops.config import Config as _Cfg
 def test_selection_scope_replaces_energy_in_registry():
     keys = [lv["key"] for lv in _pl.LEVER_REGISTRY]
     assert "energy" not in keys and "selection_scope" in keys
-    assert keys == ["content_focus", "selection_scope", "hook_angle", "clip_profile", "hashtag_corpus"]
+    assert keys == ["content_focus", "selection_scope", "hook_angle", "clip_profile", "intake"]
     assert set(_pl.vocab("selection_scope")) == {"open", "subject_locked", "source_briefed", "credibility_first", "controversy_seeking"}
     assert "energy" not in _pl.editable_fields()
     assert "selection_scope" in _pl.editable_fields()
@@ -307,8 +307,8 @@ def test_all_ten_archetypes_map():
 
 def test_no_new_lever_family():
     assert len(_pl.LEVER_REGISTRY) == 5
-    persona_levers = {lv["key"] for lv in _pl.LEVER_REGISTRY if lv["key"] not in ("clip_profile", "hashtag_corpus")}
-    assert persona_levers == set(_pl.editable_fields()) - {"voice", "hashtag_corpus"}
+    persona_levers = {lv["key"] for lv in _pl.LEVER_REGISTRY if lv["key"] not in ("clip_profile", "intake")}
+    assert persona_levers == set(_pl.editable_fields()) - {"voice", "intake"}
 
 
 def test_no_surviving_account_energy_selection_reader():

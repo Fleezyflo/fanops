@@ -9,6 +9,8 @@ def ensure_archetype_personas(cfg: Config) -> Accounts:
     """Two divergent archetypes + a third account for negative crosspost assertions."""
     cfg.control.mkdir(parents=True, exist_ok=True)
     if not cfg.personas_path.exists():
+        # the corpus is DERIVED from platform evidence, so a fixture SIMULATES a completed derivation
+        # (apply_auto_corpus, the only writer) rather than hand-curating tags one by one.
         specs = (
             ("Credibility First", "restraint is the product; pass on the sensational cut",
              "credibility_first", ["emotional", "storytelling"], "curiosity", ["#podcast", "#facts"]),
@@ -18,8 +20,7 @@ def ensure_archetype_personas(cfg: Config) -> Accounts:
         for name, voice, scope, focus, angle, corpus in specs:
             pid = P.add_persona(cfg, name=name, voice=voice, selection_scope=scope,
                                 content_focus=focus, hook_angle=angle)
-            for tag in corpus:
-                P.add_corpus_tag(cfg, pid, tag)
+            P.apply_auto_corpus(cfg, pid, tags=corpus, meta={})
     pids = {p.name: p.id for p in P.Personas.load(cfg).personas}
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     if not cfg.accounts_path.exists():

@@ -16,7 +16,6 @@ for what each flag does, how to disable it, and which test guards its OFF contra
 | Flag | Env var (OFF) | Default | What ON does | What OFF restores |
 |---|---|---|---|---|
 | `account_casting` | `FANOPS_ACCOUNT_CASTING=0` | **ON** | crosspost mints a post **only** on the owning persona's surfaces — the gate is `casting.affinity_admits` reading `Moment.affinities` (stamped single-owner at pick, operator-overridable in the Studio) | legacy fan-to-all — every moment reaches every account; no per-account selection gate |
-| `hashtag_trends` | `FANOPS_HASHTAG_TRENDS=0` | **ON** | `hashtags refresh` builds the store from **live Meta Graph** reach (harvest→measure→rank) | frozen reach floor only, no Graph harvest/measure (also the automatic behavior when `META_GRAPH_TOKEN`/`META_IG_USER_ID` are absent — fail-open) |
 
 Disable semantics are uniform: the env var disables the flag **only** on the explicit off-words `0`/`false`/`no`/`off`;
 unset, empty, or anything else → **ON**.
@@ -37,21 +36,6 @@ unset, empty, or anything else → **ON**.
 - **OFF contract:** the selection gate never discriminates — every (account, moment) is admitted (fan-to-all); the LLM casting request/ingest is inert.
 - **Firewall tests:** `test_gate_off_firewall_admits_all` ([test_account_selection.py:244](../tests/test_account_selection.py)), `test_off_firewall_pending_inert_and_fans_all` ([test_casting_application.py:102](../tests/test_casting_application.py)), `test_off_firewall_lanes_still_render_readonly` ([test_review_lanes.py:165](../tests/test_review_lanes.py) — the lanes read-model is config-independent: it still renders, the gate is what flips).
 - **Note:** the wired LLM path is **uncapped by design** — there is no per-account moment budget (cost guardrails are a product call, deliberately not imposed).
-
-### `hashtag_trends`
-- **Code:** [config.py:255](../src/fanops/config.py) (`def hashtag_trends`). Master switch for the **background** `hashtags refresh` Graph store build only; the on-demand operator lookup (`meta_graph.tag_metrics`) is gated by creds + budget, never this flag.
-- **OFF contract:** `refresh_store` writes the frozen reach floor only — no Graph harvest/measure; the `hashtags.json` shape (`{tags, reach}`) is unchanged (`reach` empty). Fail-open: identical to ON when no Meta token is configured.
-- **Firewall tests:** `test_hashtag_trends_default_on` + `test_hashtag_trends_explicit_off` ([test_graph_tag_metrics.py:93](../tests/test_graph_tag_metrics.py)).
-
-> **Removed 2026-07-25 — `corpus_auto` is gone, not disabled.** The toggle was deleted outright, on the
-> operator ruling that "the entire toggle does not need to exist the better way to run the system should be
-> the default". `Config.corpus_auto` no longer exists and **nothing reads `FANOPS_CORPUS_AUTO`** — a line
-> still carrying it in an operator `.env` is inert (pinned by `test_corpus_auto_env_var_is_inert` in
-> [test_auto_corpus.py](../tests/test_auto_corpus.py), which replaced the OFF-contract firewall test). The
-> per-persona corpus refresh in `persona_research.refresh_corpora_if_due` is now **unconditional**; its only
-> brake is the 12h `.corpora_refresh.json` throttle, which is a rate limit rather than a switch. Nothing else
-> changed: the fail-open ladder (budget unreadable/exhausted, no creds, corrupt personas, any exception) and
-> the reach-ranked promotion gate are untouched.
 
 ## Notable default-OFF flags (opt-in; byte-identical when off)
 

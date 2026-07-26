@@ -38,7 +38,7 @@ _MUTATIONS = {
     "content_focus": (["punchlines"], ["hype"]),
     "selection_scope": ("open", "subject_locked"),
     "hook_angle": ("curiosity", "fomo"),
-    "hashtag_corpus": (["#aaa"], ["#bbb"]),
+    "intake": ({"genre": "hiphop"}, {"genre": "gossip"}),
 }
 
 
@@ -46,7 +46,8 @@ def _output(cfg, p):
     """The full compiled fingerprint a persona produces — the bytes that actually reach the pipeline."""
     d = compose_breakdown(cfg, p)
     return (d["casting"]["text"], d["hook"]["text"], d["caption"]["text"],
-            d["cut"]["band"], d["cut"]["framing"], tuple(d["tags"]["lead"]))
+            d["cut"]["band"], d["cut"]["framing"], tuple(d["tags"]["lead"]),
+            tuple(d["tags"]["terms"]))   # the niche words Layer A searches on — intake's output channel
 
 
 def test_quarantine_is_printed_every_run():

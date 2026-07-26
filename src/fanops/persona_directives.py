@@ -219,6 +219,7 @@ def compose_breakdown(cfg: Config, p) -> dict:
            "fragments": _cut_fragments(p)}                # M4: the lever(s) that DERIVE the cut (content_focus)
     facts = persona_facts(cfg, p)                         # reuse the EXACT lead-tags + length resolver
     tags = {"lead": facts["lead_tags"],
+            "terms": facts["terms"],                       # what the next measurement pass will search for
             "corpus": list(getattr(p, "hashtag_corpus", None) or [])}
     noops: list[str] = []
     if (getattr(p, "selection_scope", None) or "").strip().lower() in ("", "open"):
@@ -248,8 +249,8 @@ def manifest(cfg: Config, p) -> list[dict]:
             return next((f["text"] for f in bd["casting"]["fragments"] if f["source"] == "selection_scope"), "—")
         if key == "hook_angle":
             return bd["hook"]["text"]
-        if key == "hashtag_corpus":
-            return bd["tags"]["lead"]
+        if key == "intake":
+            return bd["tags"]["terms"]
         return ""
 
     def _health(key):
@@ -261,7 +262,7 @@ def manifest(cfg: Config, p) -> list[dict]:
         return "ok"
 
     out: list[dict] = []
-    for key in levers.PERSONA_EDITABLE_CHANNELS:        # declaration order: voice, content_focus, selection_scope, hook_angle, hashtag_corpus
+    for key in levers.PERSONA_EDITABLE_CHANNELS:        # declaration order: voice, content_focus, selection_scope, hook_angle, intake
         out.append({"key": key, "label": labels.get(key, key.replace("_", " ").title()),
                     "channels": list(levers.channels_of(key)), "value": getattr(p, key, None),
                     "produces": _produces(key), "source": key, "health": _health(key)})
@@ -293,22 +294,23 @@ def persona_facts(cfg: Config, p) -> dict:
     """The TRANSPARENCY read (M2 Task 8) — "what this persona produces", derived from the EXACT resolvers the
     pipeline calls (never a re-encoded copy that could drift): the clip LENGTH band (bands.band_for on the
     resolved profile — the same call moment_pick_prompt makes), the FRAMING, and the deterministic LEAD
-    hashtags (hashtags.vet_hashtags with this persona's curated corpus over the live reach store). The corpus
-    is a DETERMINISTIC post-step (not shown to the caption LLM), so this is the only place the operator sees
-    its effect. PURE read; FAIL-OPEN to the frozen floor when no store/creds. Duck-typed (serves a Persona OR
-    a hydrated Account)."""
+    hashtags (hashtags.vet_hashtags with this persona's derived corpus over the platform measurement cache).
+    PURE read; a cold cache simply yields a shorter lead line. Duck-typed (serves a Persona OR a hydrated
+    Account)."""
     from fanops.bands import band_for
-    from fanops.hashtags import vet_hashtags, load_store
+    from fanops.hashtags import vet_hashtags, load_measurements, ranked_tags
     from fanops.models import Platform
     prof, fr = resolved_cut_spec(p)          # the EFFECTIVE cut — pin OR derived from content_focus (the
     band = band_for(prof)                    # SAME spec hydration applies), so the card shows the REAL length, not
     try:                                     # the raw-unset value (which made every persona read as one global band)
-        store = load_store(cfg)
+        store = ranked_tags(load_measurements(cfg)) or None
     except Exception as exc:
-        from fanops.log import get_logger     # a store read-fail falls to the frozen floor — record it, don't hide it
+        from fanops.log import get_logger     # a cache read-fail degrades to corpus-only — record it, don't hide it
         get_logger(cfg)("personas", getattr(p, "handle", "-"), "store_load_error", err=str(exc)[:160])
         store = None
     lead = vet_hashtags([], Platform.instagram,
                         corpus=list(getattr(p, "hashtag_corpus", None) or []), store=store,
-                        genre=((getattr(p, "intake", None) or {}).get("genre") or None), cfg=cfg)   # U11: honor the global ban list here too (a banned tag must not show as a persona's "lead tag")
-    return {"length_band": f"{band.lo:.0f}-{band.hi:.0f}s", "framing": fr, "lead_tags": lead}
+                        cfg=cfg)   # U11: honor the global ban list here too (a banned tag must not show as a persona's "lead tag")
+    from fanops.persona_research import persona_terms
+    return {"length_band": f"{band.lo:.0f}-{band.hi:.0f}s", "framing": fr, "lead_tags": lead,
+            "terms": persona_terms(p)}   # the words Layer A searches on — the description IS the hashtag lever

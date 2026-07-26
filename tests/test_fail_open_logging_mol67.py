@@ -76,14 +76,14 @@ def test_demucs_env_narrowed_does_not_swallow_unrelated(tmp_path, monkeypatch):
 
 
 # ── 3. persona_directives.persona_facts — except -> store = None (cfg in scope) ──
-def test_persona_facts_logs_on_store_load_error(tmp_path, monkeypatch):
+def test_persona_facts_logs_on_measurement_cache_read_error(tmp_path, monkeypatch):
     from fanops import persona_directives
     cfg = _cfg(tmp_path)
 
     def _boom(_cfg):
-        raise OSError("store unreadable")
+        raise OSError("measurement cache unreadable")
 
-    monkeypatch.setattr("fanops.hashtags.load_store", _boom)
+    monkeypatch.setattr("fanops.hashtags.load_measurements", _boom)
 
     class _P:
         hashtag_corpus = []
@@ -93,23 +93,12 @@ def test_persona_facts_logs_on_store_load_error(tmp_path, monkeypatch):
         energy = None
 
     facts = persona_directives.persona_facts(cfg, _P())
-    assert set(facts) == {"length_band", "framing", "lead_tags"}   # fallback shape unchanged (store=None path)
+    assert set(facts) == {"length_band", "framing", "lead_tags", "terms"}   # fallback shape (cache unreadable)
     log_text = cfg.log_path.read_text() if cfg.log_path.exists() else ""
     assert "personas" in log_text or "persona" in log_text          # logged before falling to store=None
 
 
-# ── 4. meta_graph._read_queries — except -> return None (cfg in scope) ──
-def test_read_queries_logs_on_corrupt_budget(tmp_path, monkeypatch):
-    from fanops import meta_graph
-    cfg = _cfg(tmp_path)
-    cfg.hashtag_budget_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg.hashtag_budget_path.write_text("NOT JSON {{{")
-    result = meta_graph._read_queries(cfg)
-    assert result is None                                           # fallback unchanged (fail-closed None)
-    log_text = cfg.log_path.read_text() if cfg.log_path.exists() else ""
-    assert "queries" in log_text or "budget" in log_text            # logged before swallow
-
-
+# (site 4 — meta_graph._read_queries, the local hashtag budget reader — is GONE with the budget fiction.)
 # ── 5. studio/preview_media — returns None when no artifact exists (P9: no render ladder) ──
 def test_preview_media_returns_none_when_no_artifact(tmp_path):
     from fanops.studio import preview_media

@@ -32,12 +32,12 @@
       "verb": "auth"
     },
     {
-      "line": 896,
+      "line": 894,
       "module": "fanops.cli",
       "verb": "autopilot"
     },
     {
-      "line": 911,
+      "line": 909,
       "module": "fanops.cli",
       "verb": "baseline"
     },
@@ -47,17 +47,17 @@
       "verb": "bulk-send-to-review"
     },
     {
-      "line": 900,
+      "line": 898,
       "module": "fanops.cli",
       "verb": "canary"
     },
     {
-      "line": 909,
+      "line": 907,
       "module": "fanops.cli",
       "verb": "cancel"
     },
     {
-      "line": 912,
+      "line": 910,
       "module": "fanops.cli",
       "verb": "compare"
     },
@@ -77,7 +77,7 @@
       "verb": "cutover"
     },
     {
-      "line": 885,
+      "line": 883,
       "module": "fanops.cli",
       "verb": "daemon"
     },
@@ -87,7 +87,7 @@
       "verb": "digest"
     },
     {
-      "line": 908,
+      "line": 906,
       "module": "fanops.cli",
       "verb": "discard"
     },
@@ -102,12 +102,12 @@
       "verb": "discover"
     },
     {
-      "line": 878,
+      "line": 876,
       "module": "fanops.cli",
       "verb": "docs"
     },
     {
-      "line": 881,
+      "line": 879,
       "module": "fanops.cli",
       "verb": "docs"
     },
@@ -122,7 +122,7 @@
       "verb": "doctor"
     },
     {
-      "line": 893,
+      "line": 891,
       "module": "fanops.cli",
       "verb": "ensure"
     },
@@ -152,7 +152,7 @@
       "verb": "init"
     },
     {
-      "line": 887,
+      "line": 885,
       "module": "fanops.cli",
       "verb": "install"
     },
@@ -167,7 +167,7 @@
       "verb": "learn"
     },
     {
-      "line": 876,
+      "line": 874,
       "module": "fanops.cli",
       "verb": "lever"
     },
@@ -177,7 +177,7 @@
       "verb": "lift"
     },
     {
-      "line": 895,
+      "line": 893,
       "module": "fanops.cli",
       "verb": "logs"
     },
@@ -190,11 +190,6 @@
       "line": 852,
       "module": "fanops.cli",
       "verb": "metrics"
-    },
-    {
-      "line": 874,
-      "module": "fanops.cli",
-      "verb": "migrate"
     },
     {
       "line": 796,
@@ -217,7 +212,7 @@
       "verb": "posts"
     },
     {
-      "line": 902,
+      "line": 900,
       "module": "fanops.cli",
       "verb": "prepare"
     },
@@ -292,7 +287,7 @@
       "verb": "retry-source"
     },
     {
-      "line": 882,
+      "line": 880,
       "module": "fanops.cli",
       "verb": "run"
     },
@@ -302,12 +297,12 @@
       "verb": "status"
     },
     {
-      "line": 892,
+      "line": 890,
       "module": "fanops.cli",
       "verb": "status"
     },
     {
-      "line": 894,
+      "line": 892,
       "module": "fanops.cli",
       "verb": "stop"
     },
@@ -322,7 +317,7 @@
       "verb": "tail"
     },
     {
-      "line": 879,
+      "line": 877,
       "module": "fanops.cli",
       "verb": "threshold"
     },
@@ -337,7 +332,7 @@
       "verb": "unhold"
     },
     {
-      "line": 898,
+      "line": 896,
       "module": "fanops.cli",
       "verb": "up"
     },
@@ -387,7 +382,6 @@
     "logs",
     "map-media",
     "metrics",
-    "migrate",
     "p4-bias",
     "paths-rebase",
     "post",
@@ -1226,35 +1220,13 @@
     {
       "decorator": "app.post",
       "handler": "do_personas_connect",
-      "line": 80,
+      "line": 67,
       "methods": [
         "POST"
       ],
       "module": "fanops.studio.app_routes_personas",
       "mutating": true,
       "path": "/personas/connect"
-    },
-    {
-      "decorator": "app.post",
-      "handler": "do_personas_corpus_add",
-      "line": 60,
-      "methods": [
-        "POST"
-      ],
-      "module": "fanops.studio.app_routes_personas",
-      "mutating": true,
-      "path": "/personas/corpus/add"
-    },
-    {
-      "decorator": "app.post",
-      "handler": "do_personas_corpus_remove",
-      "line": 64,
-      "methods": [
-        "POST"
-      ],
-      "module": "fanops.studio.app_routes_personas",
-      "mutating": true,
-      "path": "/personas/corpus/remove"
     },
     {
       "decorator": "app.post",
@@ -1292,7 +1264,7 @@
     {
       "decorator": "app.post",
       "handler": "do_personas_migrate",
-      "line": 85,
+      "line": 72,
       "methods": [
         "POST"
       ],
@@ -1302,25 +1274,14 @@
     },
     {
       "decorator": "app.post",
-      "handler": "do_personas_recommend",
-      "line": 74,
+      "handler": "do_personas_niche",
+      "line": 60,
       "methods": [
         "POST"
       ],
       "module": "fanops.studio.app_routes_personas",
       "mutating": true,
-      "path": "/personas/recommend"
-    },
-    {
-      "decorator": "app.post",
-      "handler": "do_personas_research",
-      "line": 68,
-      "methods": [
-        "POST"
-      ],
-      "module": "fanops.studio.app_routes_personas",
-      "mutating": true,
-      "path": "/personas/research"
+      "path": "/personas/niche"
     },
     {
       "decorator": "app.get",
@@ -2086,10 +2047,10 @@
     "src/fanops/**/*.py"
   ],
   "totals": {
-    "cli_add_parser_sites": 70,
-    "cli_verbs_unique": 65,
-    "route_endpoints": 150,
-    "route_endpoints_mutating": 109,
-    "route_unique_paths": 149
+    "cli_add_parser_sites": 69,
+    "cli_verbs_unique": 64,
+    "route_endpoints": 147,
+    "route_endpoints_mutating": 106,
+    "route_unique_paths": 146
   }
 }
