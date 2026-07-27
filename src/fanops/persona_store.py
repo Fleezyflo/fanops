@@ -33,7 +33,7 @@ def _persona_dict(p) -> dict:
     """Serialize a Persona (or baked record) to the personas.json row shape. `hashtag_corpus` is empty on
     a fresh record by construction — it is a DERIVED value that Layer B fills from platform evidence."""
     return {"id": p.id, "name": p.name or "", "voice": p.voice or "",
-            "hashtag_corpus": [], "intake": dict(p.intake or {}),
+            "hashtag_corpus": [], "niche": list(getattr(p, "niche", None) or []),
             "content_focus": list(p.content_focus or []), "selection_scope": p.selection_scope,
             "hook_angle": p.hook_angle}
 
@@ -56,7 +56,7 @@ def baked_personas() -> list:
         # evidence, so a hand-written starter list would be exactly the unmeasured seeding this removed.
         out.append(Persona(id=str(x["id"]), name=str(x.get("name") or ""), voice=str(x.get("voice") or ""),
                            content_focus=focus, selection_scope=scope_v, hook_angle=angle_v,
-                           hashtag_corpus=[], intake=dict(x.get("intake") or {})))
+                           hashtag_corpus=[], niche=_norm_niche(x.get("niche"))))
     return out
 
 
@@ -140,7 +140,7 @@ _UNSET = object()
 
 
 def add_persona(cfg: Config, name: str, voice: str = "",
-                intake: Optional[dict] = None, id: str = "", *, content_focus=None,
+                id: str = "", *, content_focus=None,
                 selection_scope: str = "", hook_angle: str = "", niche=None) -> str:
     """Create a NEW persona atomically. The id is the given slug or one derived from `name`; rejects a
     duplicate id and a blank name (never write a record that won't reload). Validates every lever-engine
@@ -167,13 +167,13 @@ def add_persona(cfg: Config, name: str, voice: str = "",
             raise ValueError(f"duplicate persona id {pid!r} (already exists)")
         plist.append({"id": pid, "name": nm, "voice": str(voice or ""),
                       "hashtag_corpus": [], "niche": niche_v,
-                      "intake": dict(intake or {}), "content_focus": focus,
+                      "content_focus": focus,
                       "selection_scope": scope_v, "hook_angle": angle_v})
         write_json_atomic(p, raw)
     return pid
 
 
-def update_persona(cfg: Config, pid: str, *, name=_UNSET, voice=_UNSET, intake=_UNSET,
+def update_persona(cfg: Config, pid: str, *, name=_UNSET, voice=_UNSET,
                    content_focus=_UNSET, selection_scope=_UNSET, hook_angle=_UNSET, niche=_UNSET) -> str:
     """Edit a persona's fields atomically (the A2 edit form). Only the fields PASSED change; each lever
     clears on "". Niche is the exception: an empty niche is refused (a persona with none cannot discover
@@ -196,7 +196,6 @@ def update_persona(cfg: Config, pid: str, *, name=_UNSET, voice=_UNSET, intake=_
                     if not _nm: raise ValueError("persona name cannot be blank")
                     d["name"] = _nm
                 if voice is not _UNSET: d["voice"] = str(voice or "")
-                if intake is not _UNSET: d["intake"] = dict(intake or {})
                 if _focus is not _UNSET: d["content_focus"] = _focus
                 if _scope is not _UNSET: d["selection_scope"] = _scope
                 if _angle is not _UNSET: d["hook_angle"] = _angle

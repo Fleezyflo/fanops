@@ -396,7 +396,6 @@ class PersonaCard:
     voice: str
     corpus: list                       # the per-persona DERIVED hashtag pool, ordered by the platform metric
     niche: list                        # declared subject terms the next measurement pass searches on
-    intake: dict                       # intake metadata; residual until A-12 deletes it
     linked_handles: list               # accounts whose persona_id points at this persona
     reach_tags: list = field(default_factory=list)   # corpus tags carrying a live platform measurement
     reach_means: dict = field(default_factory=dict)  # {corpus tag -> Meta's own like_count} — the honest 'why this tag'
@@ -624,7 +623,7 @@ def personas_page(cfg: Config, *, led: Optional[Ledger] = None) -> "PersonasPage
         lev_detail = _lever_detail_rows(cfg, p, mf, _cat, _fx)
         corpus_rows, corpus_refreshed = _corpus_tag_rows(cfg, p)   # U9: the derived-zone corpus projection (S12 meta), fail-open ([], "")
         cards.append(PersonaCard(id=p.id, name=p.name, voice=p.voice,
-                         corpus=_ranked(p.hashtag_corpus), niche=list(p.niche), intake=dict(p.intake),
+                         corpus=_ranked(p.hashtag_corpus), niche=list(p.niche),
                          linked_handles=by_pid.get(p.id, []),
                          reach_tags=[_norm(t) for t in p.hashtag_corpus if _norm(t) in means],
                          reach_means={_norm(t): means[_norm(t)] for t in p.hashtag_corpus if _norm(t) in means},

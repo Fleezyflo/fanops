@@ -11,7 +11,7 @@ from fanops.studio.app import _LEVER_EFFECTS, _LEVERS, _LEVER_REF
 def register_personas_routes(app, cfg):
     @app.get("/personas")
     def personas_view():
-        # First-class personas (voice/corpus/intake/levers) — list, add via intake, edit, connect to
+        # First-class personas (voice/corpus/niche/levers) — list, add via intake, edit, connect to
         # accounts. nav_account is injected globally but the page is account-agnostic (it lists ALL).
         return render_template("personas.html", page=views.personas_page(cfg),
                                levers=_LEVERS, effects=_LEVER_EFFECTS, lever_ref=_LEVER_REF, result=None, tab="personas")

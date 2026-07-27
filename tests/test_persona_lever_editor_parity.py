@@ -16,7 +16,7 @@ _QUARANTINE = set()
 def test_every_editable_field_persists_through_the_save_route(tmp_path):
     # behavioral proof, field by field: set it via the real writer, reload from disk, assert it stuck.
     # `hashtag_corpus` is DERIVED (exempt). `niche` owns the hashtags channel — persona_terms returns it
-    # (B-6), saved by the /personas/niche route. `intake` is transitional-exempt until A-12 deletes it.
+    # (B-6), saved by the /personas/niche route.
     cfg = Config(root=tmp_path)
     add_persona(cfg, name="P", voice="champions craft", niche=["hiphop"],
                 content_focus=["punchlines", "hype"],

@@ -66,7 +66,7 @@ Then run `fanops lever docs` to regenerate this file.
 | `talk` | n/a (global band name) | band_for → 12-22s render window | 12-22s cuts | cut/render (Go-Live default; per-persona derived from content_focus) |
 | `song` | n/a (global band name) | band_for → 18-35s render window | 18-35s cuts | cut/render (Go-Live default; per-persona derived from content_focus) |
 
-## intake (stage: caption)
+## niche (stage: caption)
 
 **Does:** the niche word(s) the next measurement pass searches Instagram for — the corpus it derives then LEADS the caption hashtags
 
