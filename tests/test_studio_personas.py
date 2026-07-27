@@ -66,23 +66,26 @@ def test_delete_unknown_persona_is_clean_error(tmp_path):
     assert r.ok is False and r.error
 
 
-def test_set_genre_saves_the_niche_root(tmp_path):
-    # `intake.genre` is the highest-specificity root persona_terms searches on — the operator's most
-    # direct lever over which hashtags get discovered and measured. It REPLACED corpus add/remove:
-    # a derived value has nothing to hand-curate.
+def test_set_niche_saves_the_declared_terms(tmp_path):
+    # `Persona.niche` is the declared subject list persona_terms will search on — the operator's most
+    # direct lever over which hashtags get discovered and measured. Comma/newline split; an inner space
+    # is ONE entry and is refused at the store with the tag_defect string (no silent join/split).
     cfg = Config(root=tmp_path)
     pid = core.add_persona(cfg, name="Z")
-    assert sp.set_genre(cfg, pid, " Detroit Rap ").ok
-    assert core.Personas.load(cfg).get(pid).intake == {"genre": "Detroit Rap"}
-    assert sp.set_genre(cfg, pid, "").ok                # blank CLEARS it (the form is authoritative)
-    assert core.Personas.load(cfg).get(pid).intake == {}
+    assert sp.set_niche(cfg, pid, "lyricism, songwriting").ok
+    assert core.Personas.load(cfg).get(pid).niche == ["lyricism", "songwriting"]
+    bad = sp.set_niche(cfg, pid, "hip hop")
+    assert bad.ok is False and "malformed" in (bad.error or "")
+    assert core.Personas.load(cfg).get(pid).niche == ["lyricism", "songwriting"]  # refusal left prior intact
+    assert sp.set_niche(cfg, pid, "").ok                # blank CLEARS it (the form is authoritative) — A-13 inverts this
+    assert core.Personas.load(cfg).get(pid).niche == []
 
 
-def test_set_genre_unknown_persona_is_a_clean_error(tmp_path):
+def test_set_niche_unknown_persona_is_a_clean_error(tmp_path):
     cfg = Config(root=tmp_path)
-    r = sp.set_genre(cfg, "ghost", "rap")
+    r = sp.set_niche(cfg, "ghost", "rap")
     assert r.ok is False and r.error
-    assert sp.set_genre(cfg, "", "rap").ok is False     # no persona selected -> clean error, never a 500
+    assert sp.set_niche(cfg, "", "rap").ok is False     # no persona selected -> clean error, never a 500
 
 
 def test_corpus_curation_actions_are_gone(tmp_path):
@@ -252,13 +255,14 @@ def test_edit_drawer_is_the_clean_five_lever_set(tmp_path):
         assert gone not in drawer, f"removed control still in the edit drawer: {gone}"
 
 
-def test_genre_lives_with_the_derived_corpus_as_the_niche_lever(tmp_path):
-    # genre is not a clip lever — it is the niche root the next measurement pass searches on, so its input
-    # sits beside the DERIVED corpus it steers. The proposal routes it used to sit next to are gone.
+def test_niche_lives_in_the_editable_zone(tmp_path):
+    # niche is not a clip lever — it is the declared subject list the next measurement pass searches on,
+    # so its input sits in zone 2 ("What you can change"). The proposal routes it used to sit next to are gone.
     cfg = Config(root=tmp_path)
     core.add_persona(cfg, name="P1", voice="v1")
     page = _client(cfg).get("/personas").get_data(as_text=True)
-    assert 'name="genre"' in page and "/personas/niche" in page       # the niche is settable on the card
+    assert 'name="niche"' in page and "/personas/niche" in page       # the niche is settable on the card
+    assert 'name="genre"' not in page
     for gone in ("/personas/research", "/personas/recommend", "/personas/corpus/add", "/personas/corpus/remove"):
         assert gone not in page, f"a curation route survived in the panel: {gone}"
 

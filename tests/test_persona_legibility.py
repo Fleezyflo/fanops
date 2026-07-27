@@ -35,22 +35,24 @@ def test_card_renders_three_zones_in_order(tmp_path):
 
 
 def test_zone2_editable_inventory_matches_registry(tmp_path):
-    # Every editable lever (LEVER_REGISTRY, minus the tags corpus which lives in zone 3) plus name/voice has a
-    # real form control in zone 2; and zone 3 carries NO editable lever inputs (it is read-only + corpus tools).
+    # Every editable lever (LEVER_REGISTRY multi/select) plus name/voice/niche has a real form control in
+    # zone 2; zone 3 carries NO editable inputs (derived corpus chips only).
     from fanops.persona_levers import LEVER_REGISTRY
     cfg = Config(root=tmp_path)
     core.add_persona(cfg, name="Curator", voice="champions craft")
     html = _panel(cfg)
     zone2 = html.split("What you can change", 1)[1].split("Derived — updates itself", 1)[0]
     assert 'name="name"' in zone2 and 'name="voice"' in zone2
+    assert 'name="niche"' in zone2   # the niche is an editable lever, not a derived-zone input
     # the editor levers (content_focus/selection_scope/hook_angle) are the editable non-tag registry keys —
-    # the corpus (kind=tags) and the GLOBAL clip_profile band are not per-persona card inputs.
+    # the GLOBAL clip_profile band is not a per-persona card input.
     editable = [lv["key"] for lv in LEVER_REGISTRY if lv["kind"] in ("multi", "select") and lv["key"] != "clip_profile"]
     for key in editable:
         assert f'name="{key}"' in zone2, f"editable lever {key} missing a control in zone 2"
     # zone 3 is derived/read-only — it must not repeat a lever INPUT
     zone3 = html.split("Derived — updates itself", 1)[1].split("</article>", 1)[0]
     assert 'name="selection_scope"' not in zone3 and 'name="hook_angle"' not in zone3 and 'name="content_focus"' not in zone3
+    assert 'name="niche"' not in zone3 and 'name="genre"' not in zone3
 
 
 def test_blank_clears_hint_renders(tmp_path):
@@ -107,14 +109,15 @@ def test_edit_one_lever_round_trip(tmp_path):
         assert after[k] == before[k], f"{k} changed on a one-lever edit: {before[k]!r} -> {after[k]!r}"
 
 
-def test_derived_zone_offers_the_niche_lever_not_a_curation_lane(tmp_path):
-    # Zone 3 is DERIVED output. The one editable thing beside the corpus is the NICHE, because that is what
-    # the next measurement pass searches on — the add/remove/research proposal lane is gone with the
-    # curation model it belonged to.
+def test_edit_zone_offers_the_niche_lever_not_a_curation_lane(tmp_path):
+    # The niche is an editable lever (zone 2 — "What you can change"). Zone 3 is DERIVED output only —
+    # corpus chips, no name= inputs. The add/remove/research proposal lane is gone with the curation model.
     cfg = Config(root=tmp_path)
     core.add_persona(cfg, name="Curator", voice="champions craft")
     html = _panel(cfg)
+    zone2 = html.split("What you can change", 1)[1].split("Derived — updates itself", 1)[0]
     zone3 = html.split("Derived — updates itself", 1)[1].split("</article>", 1)[0]
-    assert 'name="genre"' in zone3 and "Save niche" in zone3
+    assert 'name="niche"' in zone2 and "Save niche" in zone2
+    assert 'name="niche"' not in zone3 and 'name="genre"' not in zone3
     for gone in ("Force refresh now", "Check reach", "/personas/research", "/personas/corpus/add"):
         assert gone not in zone3, f"a retired curation control still renders in the derived zone: {gone}"
