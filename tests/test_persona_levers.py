@@ -245,7 +245,6 @@ def test_studio_edit_persona_persists_levers(tmp_path):
 # lever slot as selection_scope. Still 5 levers; resolve_top_bias stays on account.framing.
 # ======================================================================================
 import json as _json
-from pathlib import Path as _Path
 import fanops.persona_levers as _pl
 from fanops.config import Config as _Cfg
 
@@ -290,19 +289,6 @@ def test_energy_to_scope_migration_parity(tmp_path):
     assert "introspective" not in str(casting_directive(p))          # old energy=low clause gone; framing from focus
     d = compose_breakdown(cfg, p)
     assert d["cut"]["framing"] == "top" and "28-45s" in d["cut"]["band"]
-
-
-def test_all_ten_archetypes_map():
-    archetypes = _json.loads((_Path(__file__).resolve().parents[1] / "clipping_account_archetypes.json").read_text())
-    ids = {t["id"] for t in archetypes["types"]}
-    assert len(ids) == 10
-    mapped = _pl.archetype_selection_scope_map()
-    assert set(mapped) == ids
-    assert mapped["single_source_briefed"] == "source_briefed"
-    assert mapped["single_subject_fan"] == "subject_locked"
-    assert mapped["manufactured_controversy"] == "controversy_seeking"
-    assert mapped["credibility_first"] == "credibility_first"
-    assert mapped["opportunistic_broad_curator"] == "open"
 
 
 def test_no_new_lever_family():

@@ -49,19 +49,6 @@ _HOOK_ANGLE_OPTIONS = [
 # effect is computed from bands.band_for (lazy). intake: free text (the niche), no enumerated options.
 _CLIP_PROFILE_BANDS = ["short", "medium", "long", "talk", "song"]
 
-_ARCHETYPE_SELECTION_SCOPE = {
-    "single_source_briefed": "source_briefed",
-    "single_subject_fan": "subject_locked",
-    "multi_source_vibe_compilation": "open",
-    "structural_cliffhanger": "open",
-    "edutainment_niche": "open",
-    "personality_banter": "open",
-    "manufactured_controversy": "controversy_seeking",
-    "credibility_first": "credibility_first",
-    "gossip_drama_aggregator": "open",
-    "opportunistic_broad_curator": "open",
-}
-
 LEVER_REGISTRY = [
     {"key": "content_focus", "label": "Clips · favors moments", "kind": "multi", "stage": "casting",
      "does": "which KINDS of moments this account clips for (casting prompt) — and DERIVES cut LENGTH + FRAMING",
@@ -195,11 +182,6 @@ def derive_intensity_from_focus(content_focus: list[str] | None) -> str | None:
             if im.get(f) == tier:
                 return tier
     return None
-
-
-def archetype_selection_scope_map() -> dict:
-    """The 10 clipping_account_archetypes.json type ids -> selection_scope lever value (MOL-170)."""
-    return dict(_ARCHETYPE_SELECTION_SCOPE)
 
 
 def build_catalog() -> list[dict]:
