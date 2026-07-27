@@ -59,9 +59,9 @@ def register_personas_routes(app, cfg):
     @app.post("/personas/niche")
     def do_personas_niche():
         # The corpus has no add/remove/research controls: it is DERIVED from platform measurements, so the
-        # operator's lever is the description. This saves the niche word(s) the next measurement pass roots
+        # operator's lever is the declared niche. This saves the niche term(s) the next measurement pass roots
         # its searches in.
-        return _personas_panel(studio_personas.set_genre(cfg, request.form.get("id", ""), request.form.get("genre", "")))
+        return _personas_panel(studio_personas.set_niche(cfg, request.form.get("id", ""), request.form.get("niche", "")))
 
     @app.post("/personas/connect")
     def do_personas_connect():

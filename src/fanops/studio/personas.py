@@ -12,12 +12,15 @@ from fanops.accounts import link_persona as _link_persona
 from fanops.studio.actions import ActionResult
 
 
-def _intake(genre: str = "") -> dict:
-    """Build the persona intake dict from the form. GENRE is the only intake field that drives anything —
-    it seeds B3's per-persona hashtag research (persona_research). language/reference_accounts/notes were
-    inert (language is derived from the SOURCE transcript, not the persona) and were removed. Blank -> {}."""
-    g = (genre or "").strip()
-    return {"genre": g} if g else {}
+def _parse_niche(raw: str) -> list[str]:
+    """Split the niche form value on commas and newlines ONLY. Whitespace is not a separator — an entry
+    with an inner space stays one token and is refused at the store by tag_defect (no silent join/split)."""
+    out: list[str] = []
+    for part in (raw or "").replace(",", "\n").splitlines():
+        s = part.strip()
+        if s:
+            out.append(s)
+    return out
 
 
 def preview_compose(cfg: Config, form) -> ActionResult:
@@ -130,21 +133,22 @@ def connect_account(cfg: Config, handle: str, persona_id: str) -> ActionResult:
     return ActionResult(ok=True, detail={"handle": handle, "persona_id": pid or None})
 
 
-def set_genre(cfg: Config, pid: str, genre: str = "") -> ActionResult:
-    """Save the persona's NICHE word(s) — `intake.genre`, the highest-specificity root `persona_terms`
+def set_niche(cfg: Config, pid: str, niche: str = "") -> ActionResult:
+    """Save the persona's DECLARED niche terms — `Persona.niche`, the list the next measurement pass
     searches on, and therefore the operator's most direct lever over which hashtags get discovered and
-    measured for this persona. There is no "research" button beside it any more: proposals were a
-    curation step in a system that no longer curates. Change the description; the next pass follows it."""
+    measured for this persona. Parse is comma/newline only; store validation refuses defective entries."""
     pid = (pid or "").strip()
     if not pid:
         return ActionResult(ok=False, error="no persona selected")
     try:
-        core.update_persona(cfg, pid, intake=_intake(genre))
+        core.update_persona(cfg, pid, niche=_parse_niche(niche))
     except KeyError:
         return ActionResult(ok=False, error=f"no such persona: {pid}")
+    except ValueError as exc:
+        return ActionResult(ok=False, error=str(exc))
     except Exception as exc:
         return ActionResult(ok=False, error=f"could not save the niche: {str(exc)[:160]}")
-    return ActionResult(ok=True, detail={"persona": pid, "genre": (genre or "").strip()})
+    return ActionResult(ok=True, detail={"persona": pid, "niche": _parse_niche(niche)})
 
 
 def run_migration(cfg: Config) -> ActionResult:
