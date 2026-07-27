@@ -88,15 +88,15 @@ def archetype_crosswalk_rows() -> list[dict]:
 
 def _archetype_crosswalk_section() -> str:
     lines = ["## ARCHETYPE CROSSWALK", "",
-             "Shipped baked personas (`src/fanops/data/baked_personas.json`) — what each does at PICK + HOOK + corpus.",
+             "Archetype EXAMPLES of lever combinations (`src/fanops/data/baked_personas.json`) — what each "
+             "combination compiles to at PICK + HOOK. Reference archetypes, not installed personas.",
              "",
-             "| id | content_focus (select) | hook_angle | selection_scope | intensity (peak filter) | corpus |",
-             "|----|------------------------|------------|-----------------|-------------------------|--------|"]
+             "| id | content_focus (select) | hook_angle | selection_scope | intensity (peak filter) |",
+             "|----|------------------------|------------|-----------------|-------------------------|"]
     for r in archetype_crosswalk_rows():
-        corp = ", ".join(r["corpus"][:4]) if r["corpus"] else "—"
         foc = ", ".join(r["content_focus"]) if r["content_focus"] else "—"
         lines.append(f"| `{r['id']}` | {foc} | `{r['hook_angle']}` | `{r['selection_scope']}` | "
-                     f"{r['intensity']} | {corp} |")
+                     f"{r['intensity']} |")
     return "\n".join(lines)
 
 

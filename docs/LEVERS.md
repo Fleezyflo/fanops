@@ -75,12 +75,12 @@ Free text, not an enum: `persona_research.persona_terms` tokenizes it (with the 
 
 ## ARCHETYPE CROSSWALK
 
-Shipped baked personas (`src/fanops/data/baked_personas.json`) — what each does at PICK + HOOK + corpus.
+Archetype EXAMPLES of lever combinations (`src/fanops/data/baked_personas.json`) — what each combination compiles to at PICK + HOOK. Reference archetypes, not installed personas.
 
-| id | content_focus (select) | hook_angle | selection_scope | intensity (peak filter) | corpus |
-|----|------------------------|------------|-----------------|-------------------------|--------|
-| `credibility-first` | emotional, storytelling | `curiosity` | `credibility_first` | low | — |
-| `controversy` | bold-statement | `challenge` | `controversy_seeking` | high | — |
-| `edutainment` | storytelling | `curiosity` | `source_briefed` | low | — |
-| `cliffhanger` | storytelling | `curiosity` | `open` | low | — |
-| `hype-vibe` | hype | `fomo` | `open` | high | — |
+| id | content_focus (select) | hook_angle | selection_scope | intensity (peak filter) |
+|----|------------------------|------------|-----------------|-------------------------|
+| `credibility-first` | emotional, storytelling | `curiosity` | `credibility_first` | low |
+| `controversy` | bold-statement | `challenge` | `controversy_seeking` | high |
+| `edutainment` | storytelling | `curiosity` | `source_briefed` | low |
+| `cliffhanger` | storytelling | `curiosity` | `open` | low |
+| `hype-vibe` | hype | `fomo` | `open` | high |
