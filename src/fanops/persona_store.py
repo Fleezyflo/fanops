@@ -101,24 +101,6 @@ def _norm_focus(content_focus) -> list[str]:
     return out
 
 
-def _norm_niche(niche) -> list[str]:
-    """Normalize + validate the DECLARED niche terms: stripped, lowercased, deduped, order preserved. A
-    None/non-list -> []. Each entry must clear hashtag_hygiene.tag_defect as a tag body — the SAME structural
-    gate a derived corpus tag passes, so a declared term can actually be searched — and the first defect raises
-    carrying its reason. A leading '#' is normalized off (the operator types the tag form)."""
-    from fanops.hashtag_hygiene import tag_defect
-    seq = niche if isinstance(niche, (list, tuple)) else []
-    out: list[str] = []; seen: set[str] = set()
-    for n in seq:
-        s = str(n).strip().lstrip("#").lower()
-        if not s or s in seen: continue
-        defect = tag_defect("#" + s)
-        if defect:
-            raise ValueError(f"bad niche entry {s!r}: {defect}")
-        seen.add(s); out.append(s)
-    return out
-
-
 def _load_raw(p) -> tuple[dict, list]:
     """personas.json as the RAW dict (absent -> empty) + its list. Mutating the raw dict (not
     Persona.model_dump) preserves unknown/future fields and sibling records exactly, like accounts.py."""
@@ -141,7 +123,7 @@ _UNSET = object()
 
 def add_persona(cfg: Config, name: str, voice: str = "",
                 intake: Optional[dict] = None, id: str = "", *, content_focus=None,
-                selection_scope: str = "", hook_angle: str = "", niche=None) -> str:
+                selection_scope: str = "", hook_angle: str = "") -> str:
     """Create a NEW persona atomically. The id is the given slug or one derived from `name`; rejects a
     duplicate id and a blank name (never write a record that won't reload). Validates every lever-engine
     field against its vocabulary. Returns the id; raises ValueError on bad input. (M3: tag_lean retired —
@@ -157,29 +139,26 @@ def add_persona(cfg: Config, name: str, voice: str = "",
     focus = _norm_focus(content_focus)
     scope_v = _enum_or_none(selection_scope, SELECTION_SCOPE_LEVELS, "selection_scope")
     angle_v = _enum_or_none(hook_angle, HOOK_ANGLES, "hook_angle")
-    niche_v = _norm_niche(niche)
     p = cfg.personas_path
     with _personas_txn(cfg):
         raw, plist = _load_raw(p)
         if any(isinstance(d, dict) and d.get("id") == pid for d in plist):
             raise ValueError(f"duplicate persona id {pid!r} (already exists)")
         plist.append({"id": pid, "name": nm, "voice": str(voice or ""),
-                      "hashtag_corpus": [], "niche": niche_v,
-                      "intake": dict(intake or {}), "content_focus": focus,
+                      "hashtag_corpus": [], "intake": dict(intake or {}), "content_focus": focus,
                       "selection_scope": scope_v, "hook_angle": angle_v})
         write_json_atomic(p, raw)
     return pid
 
 
 def update_persona(cfg: Config, pid: str, *, name=_UNSET, voice=_UNSET, intake=_UNSET,
-                   content_focus=_UNSET, selection_scope=_UNSET, hook_angle=_UNSET, niche=_UNSET) -> str:
+                   content_focus=_UNSET, selection_scope=_UNSET, hook_angle=_UNSET) -> str:
     """Edit a persona's fields atomically (the A2 edit form). Only the fields PASSED change; each lever
     clears on "". Validates every passed lever against its vocabulary BEFORE the lock (never write a typo).
     Unknown id -> KeyError. (M3: tag_lean, the clip_profile/framing pins, and the directive overrides retired.)"""
     _focus = _norm_focus(content_focus) if content_focus is not _UNSET else _UNSET
     _scope = _enum_or_none(selection_scope, SELECTION_SCOPE_LEVELS, "selection_scope") if selection_scope is not _UNSET else _UNSET
     _angle = _enum_or_none(hook_angle, HOOK_ANGLES, "hook_angle") if hook_angle is not _UNSET else _UNSET
-    _niche = _norm_niche(niche) if niche is not _UNSET else _UNSET
     p = cfg.personas_path
     with _personas_txn(cfg):
         raw, plist = _load_raw(p)
@@ -195,7 +174,6 @@ def update_persona(cfg: Config, pid: str, *, name=_UNSET, voice=_UNSET, intake=_
                 if _focus is not _UNSET: d["content_focus"] = _focus
                 if _scope is not _UNSET: d["selection_scope"] = _scope
                 if _angle is not _UNSET: d["hook_angle"] = _angle
-                if _niche is not _UNSET: d["niche"] = _niche
                 found = True
         if not found:
             raise KeyError(pid)
