@@ -73,9 +73,6 @@ class Personas:
                 for x in raw.get("personas", []):
                     if not isinstance(x, dict): continue
                     d = dict(x)
-                    if "energy" in d:                          # MOL-170: legacy energy -> selection_scope=open
-                        d.pop("energy")
-                        d.setdefault("selection_scope", "open")
                     d.pop("intake", None)                       # MOL-529: leftover intake keys ignored at load
                     personas.append(Persona(**d))
                 r.personas = personas
