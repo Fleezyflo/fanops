@@ -110,20 +110,14 @@ def _aligned_pool(per, cache: dict[str, dict], *, now=None) -> list[tuple[str, f
 def derive_corpus(cfg: Config, pid: str, *, now=None) -> dict:
     """Recompute ONE persona's corpus from the cache. Zero network. Returns {changed, added, removed}.
 
-    First it retires anything pre-derivation: a corpus tag without derivation meta is moved to the visible
-    `hashtag_corpus_deprecated` field (persona_store.deprecate_legacy_corpus) so it stops shipping the
-    moment this code runs, rather than lingering until a derivation happens to succeed.
-
-    Then the corpus becomes the top `cfg.corpus_target` of the aligned, measured, structurally-clean pool.
+    The corpus becomes the top `cfg.corpus_target` of the aligned, measured, structurally-clean pool.
     Nothing pads it: with thin evidence the corpus is short, and with NO evidence (a cold cache, or the
     platform unreachable) the previous derived corpus stands untouched — an outage must not empty a
     working persona. Unknown id -> {changed: False}."""
-    from fanops.persona_store import apply_auto_corpus, deprecate_legacy_corpus
+    from fanops.persona_store import apply_auto_corpus
     per = _registry(cfg).get(pid)
     if per is None:
         return {"changed": False, "reason": "unknown_persona"}
-    deprecate_legacy_corpus(cfg, pid)
-    per = _registry(cfg).get(pid)                      # re-load: the cutover may have emptied the corpus
     corpus = [_norm(t) for t in (per.hashtag_corpus or []) if isinstance(t, str) and _norm(t)]
     pool = _aligned_pool(per, load_measurements(cfg), now=now)
     if not pool:

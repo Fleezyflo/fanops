@@ -24,7 +24,7 @@
       nothing here is hand-picked. To change what a persona reaches for, edit its description on Personas.</p>
     {% if page.corpora %}
       <table class="corpora-grid">
-        <thead><tr><th>Persona</th><th>Size</th><th>Last measured</th><th>Top by {{ page.store.metric_field }}</th><th>Retired</th><th></th></tr></thead>
+        <thead><tr><th>Persona</th><th>Size</th><th>Last measured</th><th>Top by {{ page.store.metric_field }}</th><th></th></tr></thead>
         <tbody>
           {% for r in page.corpora %}
             <tr>
@@ -32,7 +32,6 @@
               <td>{{ r.size }}</td>
               <td>{{ r.last_refreshed | localdt or '—' }}</td>
               <td>{% for t in r.top3 %}<span class="chip tag ro">{{ t }}</span>{% else %}<span class="muted">—</span>{% endfor %}</td>
-              <td>{% if r.deprecated %}<span class="muted" title="pre-derivation tags, retired and no longer shipped">{{ r.deprecated }}</span>{% else %}—{% endif %}</td>
               <td><a href="{{ r.edit_href }}" class="muted">edit →</a></td>
             </tr>
           {% endfor %}

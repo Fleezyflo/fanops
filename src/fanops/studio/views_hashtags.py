@@ -35,7 +35,6 @@ class CorpusRow:
     size: int
     last_refreshed: Optional[str]      # max `measured_at` across this persona's hashtag_corpus_meta
     top3: list                         # corpus tags by the platform metric, truncated to 3
-    deprecated: int = 0                # pre-derivation tags retired at cutover (visible, never shipped)
     edit_href: str = ""                # url_for('personas_view') — the "edit →" link
 
 
@@ -130,7 +129,6 @@ def _corpora_rows(cfg: Config, *, edit_href: str = "") -> list:
         top3 = sorted(corpus, key=lambda t: (-((m.get(t) or {}).get(METRIC_FIELD) or -1.0), t))[:3]
         rows.append(CorpusRow(pid=per.id, name=per.name or per.id, size=len(corpus),
                               last_refreshed=(max(stamps) if stamps else None), top3=top3,
-                              deprecated=len(getattr(per, "hashtag_corpus_deprecated", []) or []),
                               edit_href=edit_href))
     return rows
 

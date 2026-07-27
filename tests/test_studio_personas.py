@@ -207,19 +207,16 @@ def test_personas_page_no_cache_no_stars(tmp_path):
     assert card.reach_tags == []
 
 
-def test_personas_page_shows_the_retired_pre_derivation_tags(tmp_path):
-    # the cutover keeps legacy tags VISIBLE (never silently dropped) while they stop shipping.
+def test_personas_page_renders_no_retired_block(tmp_path):
+    # A-11 deleted the deprecated-corpus record: the card has no "Retired" section to render any more.
     cfg = Config(root=tmp_path)
     pid = core.add_persona(cfg, name="P1", voice="v1")
     raw = json.loads(cfg.personas_path.read_text())
     for d in raw["personas"]:
         if d["id"] == pid: d["hashtag_corpus"] = ["#taylorswift"]
     cfg.personas_path.write_text(json.dumps(raw))
-    core.deprecate_legacy_corpus(cfg, pid)
-    card = next(c for c in views.personas_page(cfg).personas if c.id == pid)
-    assert card.corpus == [] and card.deprecated_tags == ["#taylorswift"]
     html = _client(cfg).get("/personas").get_data(as_text=True)
-    assert "Retired (1)" in html and "#taylorswift" in html
+    assert "Retired (" not in html
 
 
 def test_personas_page_failopen_on_corrupt(tmp_path):
