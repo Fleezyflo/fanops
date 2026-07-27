@@ -302,7 +302,7 @@ cannot ship, `hashtags.py:222`), recorded in `meta_captions[surface].tag_sources
 floors; corpus float/floors), `tests/test_content_aware_hashtags.py` (content extraction, floor reserves a
 slot, every-kept-tag-has-a-source, byte-identical-without-content), `tests/test_hashtag_attribution_severance.py`
 (no post→hashtag feedback), `tests/test_fanops_hashtags.py`, `tests/test_hashtag_lifecycle_e2e.py`,
-`tests/test_graph_tag_metrics.py`, `tests/test_persona_corpus.py`.
+`tests/test_persona_corpus.py`.
 
 ---
 
@@ -504,12 +504,14 @@ generation and schedule toward measured reach, but never past the operator appro
    per-actuator or per-account validation — the plumbing proof is system-wide. Evidence:
    `_auto_validate_metrics_shape` writes one flag consumed by every frozen actuator.
 
-5. **Hashtag ranking is fully severed from post performance — the tag's OWN live Graph reach is the sole
-   judge, enforced by an invariant test.** `_W` carries no hashtag dimension and the store ranks by
-   `sample_trends` reach, never by a post that used the tag (`fanops_hashtags.py:71`, `track.py:30`), pinned
-   by `tests/test_hashtag_attribution_severance.py`. Combined with `vet_hashtags`' hard `[:4]` cap and the
-   never-empty provenance label (`hashtags.py:206,222`), no model-invented or performance-derived tag can ever
-   ship. Evidence: the attribution-severance test names + the vet algorithm.
+5. **Hashtag ranking is fully severed from post performance — the tag's OWN live platform measurement is
+   the sole judge, enforced by an invariant test.** `_W` carries no hashtag dimension and the store ranks
+   by `METRIC_FIELD = "like_count"` — Meta's own field, read off the first `top_media` item that carries
+   one by `measure_and_harvest` — never by a post that used the tag (`hashtags.py:27,107`,
+   `meta_graph.py:282`, `track.py:30`), pinned by `tests/test_hashtag_attribution_severance.py`.
+   Combined with `vet_hashtags`' hard `[:4]` cap and the never-empty provenance label
+   (`hashtags.py:206,222`), no model-invented or performance-derived tag can ever ship. Evidence: the
+   attribution-severance test names + the vet algorithm.
 
 **UNRESOLVED:** None material to the mapped questions. One narrow item: the `origin="scan"` catalogue path is
 declared in `_catalogue_file`'s contract (`ingest.py:174`) but I did not locate a production caller that
