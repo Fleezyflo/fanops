@@ -6,11 +6,11 @@ One pass, per persona that actually posts:
 
   description -> terms -> anchor tags -> ONE top_media fetch per tag -> {metric, co-occurring tags}
 
-`persona_terms` reads the persona's own words (name / intake.genre / voice) and NOTHING else. The corpus
-is never an input: it used to seed this pass, which made the store a re-ranked echo of the corpora it
-then fed — a closed loop with no external evidence anywhere in it (measured live 2026-07-16: the store
-was byte-identical to seeds + the frozen floor, 0 discovered, `reach: {}`, while every proposal it made
-looked like research). Rooting discovery in the description severs that edge structurally.
+`persona_terms` returns the persona's declared `niche` and NOTHING else. The corpus is never an input:
+it used to seed this pass, which made the store a re-ranked echo of the corpora it then fed — a closed
+loop with no external evidence anywhere in it (measured live 2026-07-16: the store was byte-identical
+to seeds + the frozen floor, 0 discovered, `reach: {}`, while every proposal it made looked like
+research). Rooting discovery in the declared niche severs that edge structurally.
 
 The metric is Meta's own `like_count`, verbatim (see meta_graph.measure_and_harvest). A tag Meta gives no
 number for is UNMEASURED and simply absent — the cache holds measured tags only, so the menu it feeds is

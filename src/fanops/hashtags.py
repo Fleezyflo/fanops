@@ -157,8 +157,8 @@ def remove_ban(cfg, tag: str) -> None:
         write_json_atomic(cfg.hashtag_bans_path, {"bans": bans})
 
 
-# Word tokenizer shared by the per-clip content signal and persona_research.persona_terms. A token is a
-# latin word, 3-20 chars, starting with a letter (so '12'/'###'/Arabic yield nothing).
+# Word tokenizer for the per-clip content signal. A token is a latin word, 3-20 chars, starting with a
+# letter (so '12'/'###'/Arabic yield nothing). (persona_terms no longer tokenizes — it returns niche.)
 _STOPWORDS = frozenset(
     "a an and are as at be but by for from had has have he her his i in is it its me my no not of on or "
     "our out so that the their them they this to too up us was we what when where which who will with you "
