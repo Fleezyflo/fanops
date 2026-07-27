@@ -552,7 +552,6 @@
         "fields": [
           "content_focus",
           "hashtag_corpus",
-          "hashtag_corpus_deprecated",
           "hook_angle",
           "id",
           "intake",

@@ -204,7 +204,6 @@ def test_corpus_rows_read_only(tmp_path):
     assert row.size == 2                                 # byte-truth from personas.json
     assert row.top3 == ["#hiphop", "#rap"]               # ranked by the platform metric
     assert row.last_refreshed == "2026-07-21T00:00:00+00:00"   # the newest measurement stamp
-    assert row.deprecated == 0
     # The section-1 HTML must carry NO add/remove/research controls (the corpus is DERIVED, not curated).
     html = _client(cfg).get("/hashtags").data.decode()
     section1 = html.split("<h3>Measurement cache</h3>")[0]   # everything before section 2 is section 1 + header
@@ -214,14 +213,14 @@ def test_corpus_rows_read_only(tmp_path):
     assert "edit →" in section1                          # but the read-only link to Personas is present
 
 
-def test_corpus_row_counts_the_retired_pre_derivation_tags(tmp_path):
-    # the cutover moves legacy tags to hashtag_corpus_deprecated: visible on the row, never shipped.
+def test_corpus_row_size_is_byte_truth_from_personas_json(tmp_path):
+    # A-11 deleted the deprecated-corpus record and its "Retired" column; `size` is the whole row story.
     cfg = Config(root=tmp_path)
     pid = core.add_persona(cfg, name="P1")
     raw = json.loads(cfg.personas_path.read_text())
     for d in raw["personas"]:
         if d["id"] == pid: d["hashtag_corpus"] = ["#legacyone", "#legacytwo"]
     cfg.personas_path.write_text(json.dumps(raw))
-    core.deprecate_legacy_corpus(cfg, pid)
     row = next(r for r in views_hashtags._corpora_rows(cfg) if r.pid == pid)
-    assert row.size == 0 and row.deprecated == 2
+    assert row.size == 2
+    assert not hasattr(row, "deprecated")

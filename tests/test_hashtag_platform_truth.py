@@ -11,7 +11,7 @@ from fanops.config import Config
 from fanops.models import Platform
 from fanops.hashtags import METRIC_FIELD, load_measurements, ranked_tags, vet_hashtags, vet_hashtags_traced
 from fanops.fanops_hashtags import refresh_store
-from fanops.personas import Personas, add_persona, apply_auto_corpus, deprecate_legacy_corpus
+from fanops.personas import Personas, add_persona, apply_auto_corpus
 from fanops.persona_research import persona_terms, derive_corpus
 
 
@@ -233,31 +233,13 @@ def test_unreachable_platform_holds_a_derived_corpus(tmp_path, monkeypatch):
     assert Personas.load(cfg).get(pid).hashtag_corpus == before
 
 
-# ---------------------------------------------------------------- 5. deprecation cutover
+# ---------------------------------------------------------------- 5. pre-derivation tags do not survive
 
-def test_first_pass_deprecates_every_pre_derivation_corpus_tag(tmp_path):
-    """The existing corpus has NO authority. Legacy tags (r4 pins included) are MOVED to a visible
-    hashtag_corpus_deprecated field and stop shipping immediately — not silently kept, not ignored."""
-    cfg = Config(root=tmp_path)
-    pid = _persona(cfg, voice="hiphop")
-    raw = json.loads(cfg.personas_path.read_text())
-    for d in raw["personas"]:
-        if d["id"] == pid:
-            d["hashtag_corpus"] = ["#bars", "#lyrics", "#hiphopmusic"]
-            d["hashtag_corpus_meta"] = {t: {"source": "pinned", "reach": None, "added": "20260716T130424Z"}
-                                        for t in d["hashtag_corpus"]}
-    cfg.personas_path.write_text(json.dumps(raw))
-    moved = deprecate_legacy_corpus(cfg, pid)
-    assert set(moved) == {"#bars", "#lyrics", "#hiphopmusic"}
-    per = Personas.load(cfg).get(pid)
-    assert per.hashtag_corpus == []
-    assert set(per.hashtag_corpus_deprecated) == {"#bars", "#lyrics", "#hiphopmusic"}
-    assert deprecate_legacy_corpus(cfg, pid) == [], "idempotent"
-
-
-def test_deprecated_tags_do_not_ship_and_do_not_resurrect(tmp_path, monkeypatch):
-    """After cutover the old tags are invisible to hydration/selection, and a later derivation only brings
-    a tag back through fresh platform evidence."""
+def test_pre_derivation_tags_do_not_survive_a_derivation(tmp_path, monkeypatch):
+    """A hand-curated tag has NO authority. apply_auto_corpus replaces hashtag_corpus WHOLESALE with the
+    derived list, so a legacy tag is gone the first time a derivation succeeds and only returns through
+    fresh platform evidence. (A-11 deleted the separate deprecation cutover; this is the guarantee that
+    outlived it, and it is what keeps a legacy tag off the caption line.)"""
     _live(monkeypatch)
     cfg = Config(root=tmp_path)
     pid = _persona(cfg, voice="hiphop")
@@ -274,7 +256,7 @@ def test_deprecated_tags_do_not_ship_and_do_not_resurrect(tmp_path, monkeypatch)
     derive_corpus(cfg, pid)
     per = Personas.load(cfg).get(pid)
     assert "#taylorswift" not in per.hashtag_corpus
-    assert "#taylorswift" in per.hashtag_corpus_deprecated
+    assert per.hashtag_corpus, "the derivation must actually have produced a corpus"
     from fanops.accounts import Accounts
     acc = Accounts.load(cfg).accounts[0]
     assert "#taylorswift" not in list(getattr(acc, "hashtag_corpus", []) or [])

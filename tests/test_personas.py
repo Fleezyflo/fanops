@@ -103,28 +103,6 @@ def test_apply_auto_corpus_unknown_persona_raises(tmp_path):
         P.apply_auto_corpus(cfg, "ghost", tags=["#x"], meta={})
 
 
-def test_deprecate_legacy_corpus_moves_unprovenanced_tags_and_is_idempotent(tmp_path):
-    # The cutover: a corpus tag with no DERIVATION meta has no platform evidence behind it, so it is
-    # retired somewhere the operator can still see it — never silently dropped, never left shipping.
-    import json
-    from fanops.hashtags import METRIC_FIELD
-    cfg = Config(root=tmp_path)
-    pid = P.add_persona(cfg, name="Z")
-    raw = json.loads(cfg.personas_path.read_text())
-    for d in raw["personas"]:
-        if d["id"] == pid:
-            d["hashtag_corpus"] = ["#derived", "#legacypin", "#nometa"]
-            d["hashtag_corpus_meta"] = {
-                "#derived": {METRIC_FIELD: 900.0, "measured_at": "2026-07-20T00:00:00+00:00"},
-                "#legacypin": {"source": "pinned", "reach": None, "added": "20260716T130424Z"}}
-    cfg.personas_path.write_text(json.dumps(raw))
-    assert set(P.deprecate_legacy_corpus(cfg, pid)) == {"#legacypin", "#nometa"}
-    per = P.Personas.load(cfg).get(pid)
-    assert per.hashtag_corpus == ["#derived"]                     # only the evidence-backed tag survives
-    assert set(per.hashtag_corpus_deprecated) == {"#legacypin", "#nometa"}
-    assert P.deprecate_legacy_corpus(cfg, pid) == []              # idempotent
-
-
 def test_delete_persona(tmp_path):
     cfg = Config(root=tmp_path)
     pid = P.add_persona(cfg, name="Gone")

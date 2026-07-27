@@ -9,7 +9,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Optional
 from fanops.config import Config
-from fanops.hashtags import METRIC_FIELD, _norm, _strip_banned, load_bans
+from fanops.hashtags import _norm, _strip_banned, load_bans
 from fanops.controlio import load_raw_list, write_json_atomic   # shared atomic control-file IO
 # NOT `from fanops.personas import ...`: personas.py is the FACADE that re-exports this module, so a
 # module-level edge back to it is a compile-time cycle (the tree's only one, ARCH-004). The lever
@@ -201,55 +201,6 @@ def update_persona(cfg: Config, pid: str, *, name=_UNSET, voice=_UNSET, intake=_
             raise KeyError(pid)
         write_json_atomic(p, raw)
     return pid
-
-
-def _is_derived(meta: dict, tag: str) -> bool:
-    """True when a corpus tag carries DERIVATION meta — the platform's own field plus a measurement stamp.
-    Anything else (a legacy `{source: pinned|auto, reach: …}` sidecar, or no sidecar at all) predates the
-    derivation architecture and has no platform evidence behind it."""
-    m = meta.get(tag) if isinstance(meta.get(tag), dict) else None
-    if not m:
-        return False
-    return isinstance(m.get(METRIC_FIELD), (int, float)) and isinstance(m.get("measured_at"), str)
-
-
-def deprecate_legacy_corpus(cfg: Config, pid: str) -> list[str]:
-    """CUTOVER: move every pre-derivation corpus tag out of `hashtag_corpus` into the visible
-    `hashtag_corpus_deprecated` field, and drop its stale sidecar. Returns the tags moved.
-
-    The old corpora were hand-tended state with no platform evidence behind them — r4 "pinned" tags,
-    auto-fills stamped `reach: null`, and tags belonging to a different artist entirely. They are not
-    silently dropped (that would hide what shipped for months) and they are not kept (that would let them
-    keep shipping): they are retired somewhere an operator can still see them, while hydration and
-    selection read only `hashtag_corpus` and therefore stop using them the moment this runs.
-
-    IDEMPOTENT: once a corpus holds only derived tags there is nothing to move. Unknown id -> KeyError."""
-    p = cfg.personas_path
-    moved: list[str] = []
-    with _personas_txn(cfg):
-        raw, plist = _load_raw(p)
-        found = False
-        for d in plist:
-            if not (isinstance(d, dict) and d.get("id") == pid): continue
-            found = True
-            meta = d.get("hashtag_corpus_meta") if isinstance(d.get("hashtag_corpus_meta"), dict) else {}
-            cur = [_norm(t) for t in (d.get("hashtag_corpus") or []) if isinstance(t, str) and _norm(t)]
-            keep = [t for t in cur if _is_derived(meta, t)]
-            moved = [t for t in cur if not _is_derived(meta, t)]
-            if not moved:
-                return []
-            prior = [_norm(t) for t in (d.get("hashtag_corpus_deprecated") or [])
-                     if isinstance(t, str) and _norm(t)]
-            out: list[str] = []; seen: set[str] = set()
-            for t in prior + moved:
-                if t not in seen: seen.add(t); out.append(t)
-            d["hashtag_corpus"] = keep
-            d["hashtag_corpus_deprecated"] = out
-            d["hashtag_corpus_meta"] = {t: meta[t] for t in keep if t in meta}
-        if not found:
-            raise KeyError(pid)
-        write_json_atomic(p, raw)
-    return moved
 
 
 def apply_auto_corpus(cfg: Config, pid: str, *, tags: list[str], meta: dict[str, dict]) -> None:

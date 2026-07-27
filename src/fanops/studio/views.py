@@ -399,7 +399,6 @@ class PersonaCard:
     linked_handles: list               # accounts whose persona_id points at this persona
     reach_tags: list = field(default_factory=list)   # corpus tags carrying a live platform measurement
     reach_means: dict = field(default_factory=dict)  # {corpus tag -> Meta's own like_count} — the honest 'why this tag'
-    deprecated_tags: list = field(default_factory=list)   # pre-derivation tags retired at cutover: shown, never shipped
     # Lever engine: the per-characteristic levers + the COMPOSED instruction the pipeline will read
     # ("what the AI will read") — so the operator sees their config's exact downstream effect on the card.
     content_focus: list = field(default_factory=list)
@@ -628,7 +627,6 @@ def personas_page(cfg: Config, *, led: Optional[Ledger] = None) -> "PersonasPage
                          linked_handles=by_pid.get(p.id, []),
                          reach_tags=[_norm(t) for t in p.hashtag_corpus if _norm(t) in means],
                          reach_means={_norm(t): means[_norm(t)] for t in p.hashtag_corpus if _norm(t) in means},
-                         deprecated_tags=list(getattr(p, "hashtag_corpus_deprecated", []) or []),
                          content_focus=list(p.content_focus), selection_scope=p.selection_scope, hook_angle=p.hook_angle,
                          clip_profile=resolved_cut_spec(p)[0], framing=facts["framing"],
                          instruction=compose_persona_instruction(p),
