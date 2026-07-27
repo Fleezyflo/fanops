@@ -14,7 +14,6 @@ def discover_jobs() -> list[dict]:
     jobs: list[dict] = []
     for wf in sorted(WORKFLOWS.glob("*.yml")):
         doc = yaml.safe_load(wf.read_text(encoding="utf-8")) or {}
-        wf_concurrency = "concurrency" in doc
         for job_id, job in (doc.get("jobs") or {}).items():
             job = job or {}
             steps = job.get("steps") or []
@@ -25,14 +24,9 @@ def discover_jobs() -> list[dict]:
                 "name": job.get("name", job_id),
                 "timeout": job.get("timeout-minutes"),
                 "uses": uses,
-                "concurrency": ("concurrency" in job) or wf_concurrency,
                 # DC-7 reads this. A job that can fail the workflow while nothing can block on it
                 # emits red no one is able to act on. Step-level continue-on-error does NOT count:
                 # it lets the job keep going, but the JOB still reports failure to the check API.
                 "continue_on_error": bool(job.get("continue-on-error", False)),
             })
     return jobs
-
-
-def job_names(jobs: list[dict]) -> set[str]:
-    return {j["name"] for j in jobs}

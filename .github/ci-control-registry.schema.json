@@ -1,89 +1,112 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$comment": "GENERATED — do not hand-edit. Regenerate with `python -m tools.ci regen`.",
   "$id": "https://fanops/ci-control-registry.schema.json",
-  "title": "FanOps CI Control Registry",
-  "description": "Validation schema for .github/ci-control-registry.yml, enforced by tools/ci/registry.py on every `tools.ci static` and every run of tests/test_ci_registry_validator.py in the required unit lane. A validation failure names the exact path and constraint.",
-  "type": "object",
+  "$schema": "http://json-schema.org/draft-07/schema#",
   "additionalProperties": false,
-  "required": ["version", "status", "rollout", "current_required_contexts", "intended_required_contexts", "controls"],
-  "properties": {
-    "version": { "type": "integer", "minimum": 1 },
-    "status": {
-      "type": "string",
-      "enum": ["proposed", "accepted", "superseded"],
-      "description": "Lifecycle of the registry document itself."
-    },
-    "intended_required_contexts": {
-      "type": "array",
-      "description": "Plane 1 — the merge policy the repo INTENDS. Reconciled against live GitHub by DC-3. Every string here must equal the branch_protection_context of a control classified 'required'.",
-      "items": { "type": "string", "minLength": 1 },
-      "uniqueItems": true,
-      "minItems": 1
-    },
-    "current_required_contexts": {
-      "type": "array",
-      "description": "What SHOULD be live in branch protection RIGHT NOW (== live GitHub). DC-3 requires live == this; it runs in the scheduled `reconcile` job.",
-      "items": { "type": "string", "minLength": 1 },
-      "uniqueItems": true,
-      "minItems": 1
-    },
-    "rollout": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["phase"],
-      "description": "Rollout state so DC-3 does not self-deadlock while the required set changes. `enforced` means the set is FINAL and any current/intended divergence is a failure, not a planned transition.",
-      "properties": {
-        "phase": { "type": "string", "enum": ["transitioning", "enforced"] },
-        "note": { "type": "string" }
-      }
-    },
-    "controls": {
-      "type": "array",
-      "minItems": 1,
-      "uniqueItems": true,
-      "items": { "$ref": "#/definitions/control" }
-    }
-  },
   "definitions": {
     "control": {
-      "type": "object",
       "additionalProperties": false,
-      "required": ["id", "classification", "workflow", "job"],
-      "description": "One row per workflow job. DC-2 enforces the bijection in both directions, so this list is exhaustive by construction: adding a job without a row reddens the required unit lane.",
-      "properties": {
-        "id": {
-          "type": "string",
-          "pattern": "^[A-Z][A-Z0-9-]+$",
-          "description": "STABLE identity — never a mutable job display name. Renaming a job MUST NOT change this id."
-        },
-        "classification": {
-          "type": "string",
-          "enum": ["required", "advisory", "scheduled"],
-          "description": "required = in live branch protection, and blocks; advisory = runs on PR, reports, does not block (DC-7 additionally requires `continue-on-error: true` on the job); scheduled = cron/dispatch only."
-        },
-        "workflow": {
-          "type": "string",
-          "pattern": "^\\.github/workflows/[a-z0-9-]+\\.yml$",
-          "description": "Path to the implementing workflow file."
-        },
-        "job": {
-          "type": "string",
-          "minLength": 1,
-          "description": "Workflow job id — the YAML key under `jobs:`, stable within the file. NOT the display name."
-        },
-        "branch_protection_context": {
-          "type": "string",
-          "minLength": 1,
-          "description": "The exact check-run context string, i.e. the job's `name:`. MUST be present when classification == 'required' — that is the anti-silent-detach mechanism DC-1 reads. Optional otherwise, and worth setting on an advisory job so DC-4 can catch prose that miscalls it."
-        }
-      },
       "allOf": [
         {
           "$comment": "A required control MUST declare its branch-protection context. DC-1 compares that string against real workflow job names, so an unmirrored rename is caught instead of silently detaching the gate.",
-          "if": { "properties": { "classification": { "const": "required" } }, "required": ["classification"] },
-          "then": { "required": ["branch_protection_context"] }
+          "if": {
+            "properties": {
+              "classification": {
+                "const": "required"
+              }
+            },
+            "required": [
+              "classification"
+            ]
+          },
+          "then": {
+            "required": [
+              "branch_protection_context"
+            ]
+          }
         }
-      ]
+      ],
+      "properties": {
+        "branch_protection_context": {
+          "description": "The exact check-run context string, i.e. the job's `name:`. MUST be present when classification == 'required' — the anti-silent-detach mechanism DC-1 reads. Optional otherwise, and worth setting on an advisory job so DC-4 can catch prose that miscalls it.",
+          "minLength": 1,
+          "type": "string"
+        },
+        "classification": {
+          "description": "required = in live branch protection, and blocks; advisory = runs on PR, reports, does not block (DC-7 additionally requires `continue-on-error: true` on the job); scheduled = cron/dispatch only.",
+          "enum": [
+            "required",
+            "advisory",
+            "scheduled"
+          ],
+          "type": "string"
+        },
+        "id": {
+          "description": "STABLE identity — never a mutable job display name. Renaming a job MUST NOT change this id.",
+          "pattern": "^[A-Z][A-Z0-9-]+$",
+          "type": "string"
+        },
+        "job": {
+          "description": "Workflow job id — the YAML key under `jobs:`, stable within the file. NOT the display name.",
+          "minLength": 1,
+          "type": "string"
+        },
+        "workflow": {
+          "description": "Path to the implementing workflow file.",
+          "pattern": "^\\.github/workflows/[a-z0-9-]+\\.yml$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "classification",
+        "workflow",
+        "job"
+      ],
+      "type": "object"
     }
-  }
+  },
+  "description": "Validation schema for .github/ci-control-registry.yml, enforced by tools/ci/registry.py on every `tools.ci static` and every run of tests/test_ci_registry_validator.py in the required unit lane. A validation failure names the exact path and constraint.",
+  "properties": {
+    "controls": {
+      "description": "One row per workflow job. DC-2 enforces the bijection in both directions, so this list is exhaustive by construction: adding a job without a row reddens the required unit lane.",
+      "items": {
+        "$ref": "#/definitions/control"
+      },
+      "minItems": 1,
+      "type": "array",
+      "uniqueItems": true
+    },
+    "required_contexts": {
+      "description": "The required branch-protection contexts. DC-3 requires LIVE GitHub protection to equal this exactly — change both in the same PR. DC-1 requires each entry to match a real workflow job name, and each must be the branch_protection_context of a control classified 'required'.",
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "minItems": 1,
+      "type": "array",
+      "uniqueItems": true
+    },
+    "status": {
+      "description": "Lifecycle of the registry document itself.",
+      "enum": [
+        "proposed",
+        "accepted",
+        "superseded"
+      ],
+      "type": "string"
+    },
+    "version": {
+      "minimum": 1,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "version",
+    "status",
+    "required_contexts",
+    "controls"
+  ],
+  "title": "FanOps CI Control Registry",
+  "type": "object"
 }
