@@ -243,47 +243,66 @@ which sits AFTER transcribe+signals+keyframes by construction (`pipeline._stage_
 
 ### 2.4 How tags reach the LLM prompt (exact text)
 
-`caption_prompt` (`prompts.py:361`). Menu injected via `vetted_menu()` (`prompts.py:390`). Two pick-rules:
-- WITHOUT content tags (`prompts.py:398`): *"Choose ONLY from this REACH-VETTED menu (ranked by real post
-  volume); do NOT invent tags: {menu}."*
-- WITH content tags (`prompts.py:393-396`): *"Choose from this REACH-VETTED menu ... OR the CLIP-SPECIFIC
-  tags listed next; do NOT invent anything outside BOTH lists ... CLIP-SPECIFIC tags (derived from THIS clip
-  — prefer them when they fit the content)."*
+`caption_prompt` (`prompts.py:348`). The menu IS the measurement cache — `menu` is read straight off
+`payload["hashtag_store"]` (`prompts.py:376`), already metric-ranked; there is no frozen pool to union in and
+no niche floor to pick, because a tag with no platform measurement is not a candidate. An absent cache yields
+an EMPTY menu and the surface corpus carries the line (`prompts.py:373-375`). ONE pick-rule, not two
+(`prompts.py:378-380`): *"Pick up to 4 tags by how well each fits THIS clip — the menu is already ordered by
+live platform reach, so prefer earlier entries when the fit is equal. Choose ONLY from the menu UNION each
+surface's `corpus`; do NOT invent tags outside them: {menu_json}."*
 
-The HARD RULE (`prompts.py:420-426`): *"Each `caption` is HASHTAGS ONLY: a single line of AT MOST 4 hashtags
-(MAX 4 — fewer is fine) ... Compose a balanced 4: one mega genre tag (#hiphop/#rap), one relevance tag
-(#rapper/#bars), one language/region tag for an Arabic clip ... else a second music tag (#newmusic), and one
-platform-discovery tag (#fyp/#reels). ... Anything beyond 4 or off-menu is dropped by the system."* Corpus
-instruction (`prompts.py:429-431`): *"When a surface carries a `corpus` ... PREFER the tags in that
-surface's `corpus` for that surface ... fill any remaining slots (up to 4) from the menu above."*
+The HARD RULE (`prompts.py:402-405`): *"Each `caption` is HASHTAGS ONLY: a single line of AT MOST 4 hashtags
+(MAX 4 — fewer is fine) separated by spaces and NOTHING ELSE — no sentences, no prose, no @mentions, no
+emoji. Put the SAME tags in the `hashtags` array. ... Anything beyond 4 or off-menu is dropped by the system,
+so pick well."* NO composition template is prescribed — the "balanced 4" (mega genre + relevance + region +
+discovery) went out with the frozen pools on 2026-07-26 (§2.2). Corpus instruction (`prompts.py:408-410`):
+*"When a surface carries a `corpus` (its curated, reach-vetted tag pool), PREFER the tags in that surface's
+`corpus` for that surface — they are its hand-picked, account-specific tags; fill any remaining slots (up to
+4) from the menu above."*
 
 ### 2.5 Enforcement on LLM output (the full vet algorithm, step by step)
 
-`vet_hashtags` (`hashtags.py:140`), traced variant `vet_hashtags_traced` (`hashtags.py:224`). Called from
-`ingest_captions` (`caption.py:328,344`) — **it never trusts the model**:
-1. Normalize+dedupe corpus and content (`hashtags.py:157-158`).
-2. Membership set = `store OR VETTED` ∪ corpus ∪ content — corpus and content JOIN the gate so a curated or
-   clip-specific tag the frozen set doesn't know SURVIVES (`hashtags.py:159`).
-3. Rank base = store order if store else `_RANK` (`hashtags.py:160`); preference float: corpus > content
-   ahead of the frozen rank (negative-indexed, `hashtags.py:162-166`).
-4. Seed the WHOLE corpus first (`hashtags.py:170-172`), then honor the model's picks but ONLY vetted ones
-   (`hashtags.py:174-177`).
-5. Sort by rank (`hashtags.py:178`).
-6. **Reserved floors** take TAIL slots so corpus/reach lead is preserved: region (Arabic) floor first when a
-   corpus + Arabic clip (`hashtags.py:187-188`), then ONE content tag (`hashtags.py:189-190`).
-7. **Backfill** REACH-first: corpus + one platform discovery floor + store + `_composition` default 4 +
-   content (`hashtags.py:198-205`).
-8. **HARD cap `kept[:max_tags]`** with `max_tags=4` (`hashtags.py:206`).
+`vet_hashtags` (`hashtags.py:207`), traced variant `vet_hashtags_traced` (`hashtags.py:310`). Called from
+`ingest_captions` (`caption.py:305` model path, `caption.py:324` fallback path) — **it never trusts the
+model**:
+1. Load the operator ban list, then normalize+dedupe corpus, content and store, stripping bans from EACH
+   (`hashtags.py:226-229`). Content is additionally brand-risk screened (`_screen_content`).
+2. Membership set = store ∪ corpus ∪ content, MINUS the ban list — corpus and content JOIN the gate so a
+   derived or clip-specific tag the measured cache doesn't know SURVIVES (`hashtags.py:230`). No frozen pool
+   is in the union: a tag in none of the three dies here.
+3. Rank base = the measured store's OWN order (`hashtags.py:231`) — there is NO frozen fallback, so a cold
+   cache yields an empty base rank; preference float: corpus > content ahead of the metric rank
+   (negative-indexed, `hashtags.py:233-237`).
+4. Seed the WHOLE corpus first (`hashtags.py:241-242`), then honor the model's picks but ONLY vetted ones
+   (`hashtags.py:244-247`).
+5. Sort on FOUR keys (`hashtags.py:265`): tier (corpus 0 > content 1 > cache 2, `hashtags.py:260-263`), then
+   model-picked-first, then a GRADED LRU (`recent` arrives oldest-first, last write wins, never-used tags
+   lead — `hashtags.py:251-254`), then the rank from step 3. Recency is graded, NOT a boolean: as a flag the
+   tiebreak went constant once `recent` covered the corpus, locking the line from clip 3 onward.
+6. **Corpus LEAD cap** `_CORPUS_LEAD_MAX = 2` (`hashtags.py:38`, applied `hashtags.py:269-272`): a corpus of
+   ≥ `max_tags` would monopolise the line and make the shipped tags a pure function of the persona with the
+   video not an input. Surplus corpus tags keep their order BEHIND the picks and still backfill.
+7. **Reserved floors** take TAIL slots so the corpus/metric lead is preserved, detected against the CAP
+   WINDOW rather than `seen`: one Arabic tag on an Arabic-language clip (`hashtags.py:277-278`), then ONE
+   content tag (`hashtags.py:279-280`), spliced in as `head + reserved` (`hashtags.py:281-283`).
+8. **Backfill**, corpus-first: corpus → one platform discovery tag (unconditional — the one composition
+   element that depends on no measurement, so a cold cache still ships a line) → the measured store →
+   content (`hashtags.py:286-290`).
+9. **HARD cap** with a final ban sweep: `_strip_banned(kept, bans)[:max_tags]`, `max_tags=4`
+   (`hashtags.py:291`).
 
-Provenance (`vet_hashtags_traced` → `_tag_source` `hashtags.py:211`): each shipped tag labelled
-`content > corpus > region > graph-reach > discovery > genre-floor` — **never empty** (a sourceless tag
-cannot ship, `hashtags.py:222`), recorded in `meta_captions[surface].tag_sources` (`caption.py:332`).
+Provenance (`vet_hashtags_traced` → `_tag_source` `hashtags.py:297`): each shipped tag labelled
+`content > corpus > region > graph-reach > discovery` (five labels — there is no `genre-floor`) — **never
+empty**, TOTAL by construction: membership is cache ∪ corpus ∪ content and the only tags added outside that
+are the two floors, so a tag matching none of the first four can only be the discovery slot
+(`hashtags.py:298-307`). Recorded in `meta_captions[surface].tag_sources` (`caption.py:310,328`).
 
 ### 2.6 What determines rank; feedback; caption composition
 
-- **Rank everywhere**: in the store, by LIVE Graph reach desc (`fanops_hashtags.py:71`); in `vet_hashtags`,
-  corpus > content > (store reach OR frozen `_RANK`) (`hashtags.py:160-178`); the frozen `_RANK` is a static
-  class-ranking (`hashtags.py:27`).
+- **Rank everywhere**: in the store, by the platform metric desc (`ranked_tags`, `hashtags.py:107`); in
+  `vet_hashtags`, corpus > content > the measured cache's own order (`hashtags.py:231-265`). The frozen
+  `_MEGA`/`_RELEVANCE`/`_RANK`/`VETTED` pools were DELETED 2026-07-26 (§2.2) — NO static class-ranking
+  remains anywhere in the path.
 - **Post-performance feedback into tag selection: NONE.** The `lift_score` weight map `_W` (`track.py:30`)
   carries NO hashtag dimension; the store is ranked by the tag's OWN live Graph reach, never a post that used
   it (`fanops_hashtags.py:2-4`). Pinned by `tests/test_hashtag_attribution_severance.py`
