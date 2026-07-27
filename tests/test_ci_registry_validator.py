@@ -18,10 +18,24 @@ _ROOT = Path(__file__).resolve().parents[1]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from tools.ci import checks, selftest  # noqa: E402
-from tools.ci.common import PROSE_DOCS  # noqa: E402
+from tools.ci import checks, schema, selftest  # noqa: E402
+from tools.ci.common import PROSE_DOCS, SCHEMA  # noqa: E402
 from tools.ci.registry import load_registry, shape_findings  # noqa: E402
 from tools.ci.workflows import discover_jobs  # noqa: E402
+
+
+def test_schema_is_not_stale():
+    """The schema is GENERATED (tools/ci/schema.py). Byte-compare it against regeneration.
+
+    Without this the schema is a hand-maintained file that merely looks generated: someone edits the
+    JSON, the shape it enforces silently stops matching the shape the generator declares, and the
+    divergence is invisible because the schema still validates. Same discipline tools/arch applies
+    to its derived artifacts, and the same reason.
+    """
+    committed = SCHEMA.read_text(encoding="utf-8") if SCHEMA.exists() else ""
+    assert committed == schema.render(), (
+        "committed schema differs from regeneration — it was HAND-EDITED or is STALE. "
+        "Run `python -m tools.ci regen` and commit the result.")
 
 
 def test_registry_is_shape_valid():
