@@ -54,6 +54,38 @@ def test_update_unknown_persona_raises(tmp_path):
         P.update_persona(cfg, "ghost", voice="x")
 
 
+# --- niche (A-10): declared terms, per-entry validated at BOTH writers ---------------------------
+
+def test_persona_round_trips_a_niche_normalized(tmp_path):
+    cfg = Config(root=tmp_path)
+    pid = P.add_persona(cfg, name="Nicher", niche=["hiphop", " #ArabicRap ", "hiphop"])
+    assert P.Personas.load(cfg).get(pid).niche == ["hiphop", "arabicrap"]   # stripped, de-hashed, lowered, deduped
+    P.update_persona(cfg, pid, niche=["syria"])
+    assert P.Personas.load(cfg).get(pid).niche == ["syria"]
+
+
+def test_persona_without_a_niche_defaults_empty(tmp_path):
+    # TRANSITIONAL: empty is accepted only until A-13 refuses it (the 3 live rows have none yet).
+    cfg = Config(root=tmp_path)
+    pid = P.add_persona(cfg, name="No Niche")
+    assert P.Personas.load(cfg).get(pid).niche == []
+
+
+def test_add_persona_refuses_a_defective_niche_entry(tmp_path):
+    cfg = Config(root=tmp_path)
+    with pytest.raises(ValueError, match="keysmash"):
+        P.add_persona(cfg, name="Bad", niche=["fypppppppppp"])
+    assert P.Personas.load(cfg).get("bad") is None   # refused BEFORE the lock — nothing was written
+
+
+def test_update_persona_refuses_a_defective_niche_entry(tmp_path):
+    cfg = Config(root=tmp_path)
+    pid = P.add_persona(cfg, name="Good", niche=["hiphop"])
+    with pytest.raises(ValueError, match="keysmash"):
+        P.update_persona(cfg, pid, niche=["fypppppppppp"])
+    assert P.Personas.load(cfg).get(pid).niche == ["hiphop"]   # the refusal left the stored value intact
+
+
 def test_apply_auto_corpus_normalizes_dedupes_and_REPLACES(tmp_path):
     # The corpus is a DERIVED value, so the writer replaces it wholesale: no pin partition, no merge, no
     # absent-meta-means-pinned rule. Those protected hand-curated entries and, in doing so, froze rotation.
