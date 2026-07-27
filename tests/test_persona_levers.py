@@ -275,14 +275,15 @@ def test_resolve_top_bias_still_reads_account_framing(tmp_path):
     assert cfg.resolve_top_bias(Account(handle="bare")) == cfg.aware_reframe
 
 
-def test_energy_to_scope_migration_parity(tmp_path):
+def test_legacy_energy_key_ignored_scope_unset(tmp_path):
+    # MOL-502: leftover energy keys are inert (Pydantic extra=ignore); do NOT infer selection_scope=open.
     cfg = _Cfg(root=tmp_path)
     legacy = {"personas": [{"id": "curator", "name": "Curator", "voice": "tasteful",
                             "content_focus": ["storytelling"], "energy": "low", "hook_angle": "emotional"}]}
     cfg.personas_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.personas_path.write_text(_json.dumps(legacy))
     p = Personas.load(cfg).get("curator")
-    assert p.selection_scope == "open"
+    assert p.selection_scope is None                         # honest unset — no energy→open inference
     assert not hasattr(p, "energy") or getattr(p, "energy", None) is None
     assert resolved_cut_spec(p) == ("long", "top")
     from fanops.personas import casting_directive, compose_breakdown
