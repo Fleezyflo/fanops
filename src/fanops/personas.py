@@ -39,7 +39,6 @@ class Persona(BaseModel):
     name: str = ""                                # operator-facing display name
     voice: str = ""                               # the persona string the pipeline reads (caption/hook/casting voice)
     hashtag_corpus: list[str] = Field(default_factory=list)   # DERIVED by persona_research.derive_corpus from platform measurements — never hand-curated, recomputed every tick
-    hashtag_corpus_deprecated: list[str] = Field(default_factory=list)   # pre-derivation tags retired at cutover: visible, never consumed (see persona_store.deprecate_legacy_corpus)
     intake: dict = Field(default_factory=dict)    # intake metadata; one live field `genre` — the niche root for persona_terms
     # Lever engine: explicit per-characteristic DIRECTION that compose_persona_instruction renders into the
     # one instruction the casting/hook/caption prompts read. ADDITIVE — all empty on a legacy persona, so
@@ -107,7 +106,7 @@ from fanops.persona_directives import (   # noqa: E402,F401  (facade re-export; 
     compose_persona_instruction, lever_catalog, compose_breakdown, produces_summary, persona_facts, manifest,
     _FOCUS_CLAUSE, _SCOPE_CLAUSE, _ANGLE_CLAUSE, _FOCUS_PROFILE, _FRAMING_MAP)
 from fanops.persona_store import (   # noqa: E402,F401
-    add_persona, update_persona, apply_auto_corpus, deprecate_legacy_corpus,
+    add_persona, update_persona, apply_auto_corpus,
     delete_persona, migrate_from_accounts, link_personas_by_voice,
     baked_personas, ensure_baked_personas)
 from fanops.persona_research import persona_terms, derive_corpus, derived_report   # noqa: E402,F401

@@ -141,11 +141,6 @@
               {% set t = row.tag %}
               <span class="chip tag ro{{ ' high-reach' if t in p.reach_tags else '' }}">{{ t }}{% if row.value is not none %}<span class="reach-n" title="Instagram like_count on this tag's top post">· {{ row.value | int }}</span>{% endif %}{% if row.from %}<span class="corpus-prov auto" title="found alongside {{ row.from }} in Instagram's top posts">via {{ row.from }}</span>{% endif %}</span>
             {% else %}<span class="muted">nothing measured for this persona yet</span>{% endfor %}
-            {% if p.deprecated_tags %}
-              <div class="muted persona-corpus-deprecated" title="pre-derivation tags, retired at cutover — kept visible, never shipped">
-                Retired ({{ p.deprecated_tags|length }}): {% for t in p.deprecated_tags %}<span class="chip tag ro banned">{{ t }}</span>{% endfor %}
-              </div>
-            {% endif %}
             <div class="persona-corpus-tools">
               <form class="inline" hx-post="{{ url_for('do_personas_niche') }}" hx-target="#personas-panel" hx-swap="outerHTML">
                 <input type="hidden" name="id" value="{{ p.id }}">
