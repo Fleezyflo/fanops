@@ -150,10 +150,11 @@ byte-identical, so the *terminal* SHA — not just the one restarted onto — is
    the pump needs a 600s pass to report its new SHA. Fixing (1) removed the mask and it stormed immediately
    (pids 49425→51695→52493→52886→53266 in ~8 min, `last_exit -15`). Now `settle = interval + one keeper tick`.
 
-## Residuals — ACCEPTED, not unfinished R4 work
+## Residuals as of 2026-07-16 — ACCEPTED, not unfinished R4 work
 
-These were measured, recorded, and **accepted by the operator as closed-out residue**. R4 is frozen; none of
-these reopens it. Residual 1 is handed to a separate program, briefed and not started.
+These were measured, recorded, and **accepted by the operator as closed-out residue** *as of 2026-07-16*; they
+are the state at migration time, not a current-state list. R4 is frozen; none of these reopens it. Residual 1
+is handed to a separate program, briefed and not started.
 
 1. **The model repeats itself — a hypothesis, not a measurement.** Replaying its real picks: **6–15 distinct
    pick-sets per handle over 66–76 surfaces, 54–76% on one set**, against a **~4% structural floor**. Recorded
@@ -167,11 +168,6 @@ these reopens it. Residual 1 is handed to a separate program, briefed and not st
    **brief only**: it gates all work on regenerating captions against the clean menu first, and it may not
    touch corpus hygiene, reach persistence, or daemon adoption. Note the trap it records — a whole-line
    diversity metric is maximised by **deleting the curated lead**, i.e. by undoing R4.
-2. Dormant personas' `intake.genre` is still catalogue-wrong (`science`, `gossip`). They cannot reach the
-   store any more (#687), but would drive the wrong niche floor **if activated**. Persona configuration, not
-   architecture.
-3. The 12h refresh vs the 7-day budget window is harmless now (evidence accrues) but still wasteful.
-4. **No measured evidence survived.** The store was `reach: {}` at migration time — the 30 measurements bought
+2. **No measured evidence survived.** The store was `reach: {}` at migration time — the 30 measurements bought
    2026-07-12 were already destroyed by the pre-#679 overwrite. The migration preserved nothing because
-   nothing was left, and invented no substitute. Re-measurement is impossible until the budget rolls
-   (~2026-07-19); until then `research_corpus` correctly proposes nothing.
+   nothing was left, and invented no substitute.
