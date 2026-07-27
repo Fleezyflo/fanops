@@ -240,18 +240,6 @@ which sits AFTER transcribe+signals+keyframes by construction (`pipeline._stage_
   `fallback: True` on seed synthesis (`caption.py:278`).
 - `Post.hashtags: list[str]` (`models.py:227`) — copied from `cap.get("hashtags")` at mint
   (`crosspost.py:275`).
-- Budget counter `00_control/hashtag_budget.json` — `{"queries": [{"tag", "ts"}, ...]}`
-  (`meta_graph.py:385`), lock `hashtag_budget.lock` (`config.py:108`).
-
-### 2.3 Meta Graph budget accounting
-
-`_BUDGET_LIMIT=30` unique hashtags per IG user per rolling `_BUDGET_WINDOW_DAYS=7`
-(`meta_graph.py:73-74`). `budget_remaining` = 30 − (unique tags in last 7 days), or **None = FAIL-CLOSED**
-when the counter is unreadable (`meta_graph.py:340-358`). `record_query` appends a `(tag, ts)` under an
-fcntl flock (lost-update guard, `meta_graph.py:360-387`). Every consumer checks budget then spends:
-`sample_trends` (`meta_graph.py:417`), `harvest_cooccurring` (one slot per unique seed, `meta_graph.py:486`),
-`tag_metrics` (one slot, `meta_graph.py:411`), `discover_candidates` (top-K only, `meta_graph.py:529-533`).
-An unreadable budget queries NOTHING (better a stale store than a banned app, `meta_graph.py:11-13`).
 
 ### 2.4 How tags reach the LLM prompt (exact text)
 
