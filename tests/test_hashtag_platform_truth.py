@@ -162,12 +162,12 @@ def test_terms_come_from_the_description_never_from_the_corpus(tmp_path, monkeyp
 
 
 def test_persona_terms_return_declared_niche_only(tmp_path):
-    """persona_terms is the declared niche — normalized/deduped — and nothing else. Voice/name/intake/
+    """persona_terms is the declared niche — normalized/deduped — and nothing else. Voice/name/
     corpus never contribute a token (B-6)."""
     from fanops.personas import Persona
     per = Persona(id="x", name="Craft Curator", voice="syrian rapper craft",
                   niche=["Lyricism", "songwriting", "lyricism", "#MusicReview"],
-                  intake={"genre": "hiphop"}, hashtag_corpus=["#neverseenhere"])
+                  hashtag_corpus=["#neverseenhere"])
     terms = persona_terms(per)
     assert terms == ["lyricism", "songwriting", "musicreview"]
     assert "syrian" not in terms and "craftcurator" not in terms and "hiphop" not in terms

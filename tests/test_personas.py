@@ -56,6 +56,22 @@ def test_update_unknown_persona_raises(tmp_path):
 
 # --- niche (A-10): declared terms, per-entry validated at BOTH writers ---------------------------
 
+def test_load_ignores_leftover_intake_keys(tmp_path):
+    # MOL-529: live personas.json may still carry an intake dict; load must not fail and must not
+    # rehydrate it onto the model (Persona.intake is deleted; niche owns the hashtags channel).
+    cfg = Config(root=tmp_path)
+    cfg.personas_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.personas_path.write_text(json.dumps({
+        "personas": [{"id": "a", "name": "A", "voice": "v", "niche": ["hiphop"],
+                      "intake": {"genre": "hiphop", "language": "ar"}}],
+    }))
+    p = P.Personas.load(cfg).get("a")
+    assert p is not None and p.niche == ["hiphop"]
+    assert "intake" not in P.Persona.model_fields
+    raw = json.loads(cfg.personas_path.read_text())
+    assert "intake" in raw["personas"][0]          # leftover on disk untouched
+
+
 def test_persona_round_trips_a_niche_normalized(tmp_path):
     cfg = Config(root=tmp_path)
     pid = P.add_persona(cfg, name="Nicher", niche=["hiphop", " #ArabicRap ", "hiphop"])

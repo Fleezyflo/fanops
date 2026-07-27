@@ -35,7 +35,6 @@ def test_create_persona_is_the_clean_lever_set(tmp_path):
     p = core.Personas.load(cfg).get(r.detail["created"])
     assert p.voice == "champions craft" and p.content_focus == ["punchlines"] and p.hook_angle == "curiosity"
     assert p.niche == ["hiphop"]
-    assert p.intake == {}
     assert p.hashtag_corpus == []                  # a fresh persona ships NO corpus — derivation fills it
 
 

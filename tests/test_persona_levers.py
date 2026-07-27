@@ -252,7 +252,7 @@ from fanops.config import Config as _Cfg
 def test_selection_scope_replaces_energy_in_registry():
     keys = [lv["key"] for lv in _pl.LEVER_REGISTRY]
     assert "energy" not in keys and "selection_scope" in keys
-    assert keys == ["content_focus", "selection_scope", "hook_angle", "clip_profile", "intake"]
+    assert keys == ["content_focus", "selection_scope", "hook_angle", "clip_profile", "niche"]
     assert set(_pl.vocab("selection_scope")) == {"open", "subject_locked", "source_briefed", "credibility_first", "controversy_seeking"}
     assert "energy" not in _pl.editable_fields()
     assert "selection_scope" in _pl.editable_fields()
@@ -293,7 +293,7 @@ def test_energy_to_scope_migration_parity(tmp_path):
 
 def test_no_new_lever_family():
     assert len(_pl.LEVER_REGISTRY) == 5
-    persona_levers = {lv["key"] for lv in _pl.LEVER_REGISTRY if lv["key"] not in ("clip_profile", "intake")}
+    persona_levers = {lv["key"] for lv in _pl.LEVER_REGISTRY if lv["key"] not in ("clip_profile", "niche")}
     assert persona_levers == set(_pl.editable_fields()) - {"voice", "niche"}
 
 

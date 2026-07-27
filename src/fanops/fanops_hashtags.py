@@ -45,7 +45,7 @@ def _posting_personas(cfg: Config) -> list:
     """The persona RECORDS whose descriptions root discovery. Narrowed to personas linked to an active
     account: discovery seeded from personas that post nothing is wrong by construction, and it was not
     theoretical — five DORMANT personas put `#science`, `#gossip`, `#celebritygossip` and `#drama` into a
-    Syrian rapper's menu through their `intake.genre`. FAIL-OPEN: no readable accounts.json, or no active
+    Syrian rapper's menu through their `niche`. FAIL-OPEN: no readable accounts.json, or no active
     account carrying a persona -> every persona (a missing control file must not silently stop discovery).
     A CORRUPT personas.json raises ControlFileError, which refresh_store turns into a loud abort."""
     from fanops.personas import Personas

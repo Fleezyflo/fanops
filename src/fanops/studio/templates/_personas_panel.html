@@ -108,9 +108,8 @@
                 hx-confirm="Delete persona {{ p.name }}? Linked accounts fall back to their inline persona.">Delete</button>
             </div>
           </form>
-          {# Niche is a SEPARATE form (not folded into lever_fields — that macro is shared with Add + drawer).
-             Registry key is still `intake` until A-12 renames it; the form field is already `niche`. #}
-          {% set niche_lever = lever_ref | selectattr("key", "equalto", "intake") | first %}
+          {# Niche is a SEPARATE form (not folded into lever_fields — that macro is shared with Add + drawer). #}
+          {% set niche_lever = lever_ref | selectattr("key", "equalto", "niche") | first %}
           <form class="inline persona-niche-form" hx-post="{{ url_for('do_personas_niche') }}" hx-target="#personas-panel" hx-swap="outerHTML">
             <input type="hidden" name="id" value="{{ p.id }}">
             <label>Niche

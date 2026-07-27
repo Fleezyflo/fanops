@@ -7,8 +7,7 @@
       "selection_scope": "credibility_first",
       "content_focus": ["emotional", "storytelling"],
       "hook_angle": "curiosity",
-      "hashtag_corpus": ["#podcast", "#interview", "#facts", "#science"],
-      "intake": {"genre": "science"}
+      "hashtag_corpus": ["#podcast", "#interview", "#facts", "#science"]
     },
     {
       "id": "controversy",
@@ -17,8 +16,7 @@
       "selection_scope": "controversy_seeking",
       "content_focus": ["bold-statement"],
       "hook_angle": "challenge",
-      "hashtag_corpus": ["#celebritygossip", "#drama", "#popculture", "#entertainment"],
-      "intake": {"genre": "gossip"}
+      "hashtag_corpus": ["#celebritygossip", "#drama", "#popculture", "#entertainment"]
     },
     {
       "id": "edutainment",
@@ -27,8 +25,7 @@
       "selection_scope": "source_briefed",
       "content_focus": ["storytelling"],
       "hook_angle": "curiosity",
-      "hashtag_corpus": ["#hiphop", "#lyrics", "#music", "#newmusic"],
-      "intake": {"genre": "hiphop"}
+      "hashtag_corpus": ["#hiphop", "#lyrics", "#music", "#newmusic"]
     },
     {
       "id": "cliffhanger",
@@ -37,8 +34,7 @@
       "selection_scope": "open",
       "content_focus": ["storytelling"],
       "hook_angle": "curiosity",
-      "hashtag_corpus": ["#podcast", "#storytime", "#reels", "#viral"],
-      "intake": {"genre": "podcast"}
+      "hashtag_corpus": ["#podcast", "#storytime", "#reels", "#viral"]
     },
     {
       "id": "hype-vibe",
@@ -47,8 +43,7 @@
       "selection_scope": "open",
       "content_focus": ["hype"],
       "hook_angle": "fomo",
-      "hashtag_corpus": ["#hiphop", "#rap", "#bars", "#undergroundhiphop"],
-      "intake": {"genre": "rap"}
+      "hashtag_corpus": ["#hiphop", "#rap", "#bars", "#undergroundhiphop"]
     }
   ]
 }

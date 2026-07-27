@@ -119,7 +119,7 @@ def render_levers(cfg: Config) -> str:  # cfg reserved for future persona-aware 
     parts = [hdr, how]
     for lv in pl.LEVER_REGISTRY:
         key = lv["key"]
-        if key == "intake":
+        if key == "niche":
             parts.append(f"\n## {key} (stage: {lv['stage']})\n\n"
                          f"**Does:** {lv['does']}\n\n"
                          "Declared subject list (`Persona.niche`): `persona_research.persona_terms` returns "

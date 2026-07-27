@@ -1,10 +1,10 @@
 # src/fanops/personas.py
 """A1 — Personas as a FIRST-CLASS entity. Until now a "persona" was only a free-text Account.persona
 string + tag_lean, seeded by hand from a brief doc — not editable, not reusable, not a thing you could
-add an intake for. This makes a Persona a named record in 00_control/personas.json: a `voice` (the
-string the pipeline reads), a `tag_lean`, a `hashtag_corpus` (the per-persona reach-vetted pool, B1),
-and `intake` metadata whose one live field is `genre` (seeds B3's research). Accounts LINK
-to a persona via Account.persona_id; the linked persona's voice/tag_lean HYDRATE the account in memory
+add. This makes a Persona a named record in 00_control/personas.json: a `voice` (the
+string the pipeline reads), a `hashtag_corpus` (the per-persona reach-vetted pool, B1),
+and a declared `niche` (subject terms for hashtag discovery). Accounts LINK
+to a persona via Account.persona_id; the linked persona's voice HYDRATES the account in memory
 at load (accounts._hydrate_from_personas), so every existing consumer (caption/moments/casting/
 variant_transfer) stays byte-identical while an operator edit takes effect on the next load.
 
@@ -40,7 +40,6 @@ class Persona(BaseModel):
     voice: str = ""                               # the persona string the pipeline reads (caption/hook/casting voice)
     hashtag_corpus: list[str] = Field(default_factory=list)   # DERIVED by persona_research.derive_corpus from platform measurements — never hand-curated, recomputed every tick
     niche: list[str] = Field(default_factory=list)   # the persona's DECLARED subject terms; required at writers (add/update_persona refuse empty); per-entry validated at the write boundary, like `name`
-    intake: dict = Field(default_factory=dict)    # intake metadata; one live field `genre` — the niche root for persona_terms
     # Lever engine: explicit per-characteristic DIRECTION that compose_persona_instruction renders into the
     # one instruction the casting/hook/caption prompts read. ADDITIVE — all empty on a legacy persona, so
     # compose returns the bare `voice` (byte-identical). Validated at the write boundary (add/update_persona).
@@ -77,6 +76,7 @@ class Personas:
                     if "energy" in d:                          # MOL-170: legacy energy -> selection_scope=open
                         d.pop("energy")
                         d.setdefault("selection_scope", "open")
+                    d.pop("intake", None)                       # MOL-529: leftover intake keys ignored at load
                     personas.append(Persona(**d))
                 r.personas = personas
             except Exception as e:                 # a hand-edit typo: clear one-liner, not a raw traceback
