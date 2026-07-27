@@ -77,7 +77,11 @@ LEVER_REGISTRY = [
 # editor-parity test — NOT by catalog-key presence.
 # Identity + DERIVED state. `hashtag_corpus` is not a lever any more: it is recomputed every tick from
 # platform measurements (persona_research.derive_corpus), so it has — and should have — no editor control.
-PERSONA_FIELD_EXEMPT = frozenset({"id", "name", "hashtag_corpus"})
+# `niche` is exempt TRANSITIONALLY, not by design: A-10 lands the field + its write-boundary validation, and
+# B-5 adds the save-route control and moves it into PERSONA_EDITABLE_CHANNELS (it takes the `hashtags` channel
+# `intake` holds today). Parked here rather than quarantined because the quarantine is a shrink-only ratchet —
+# a new field must be made coherent, never grandfathered.
+PERSONA_FIELD_EXEMPT = frozenset({"id", "name", "hashtag_corpus", "niche"})
 
 # The EDITABLE coherent levers: model field -> the output CHANNEL(s) it owns. Distinctness rule = "<=1 owner per
 # channel". content_focus owns casting-selection + cut-length + cut-framing; selection_scope owns casting-
