@@ -115,13 +115,6 @@ Purpose: read-only, budget-aware Meta Graph client — hashtag trend sampling, p
 - **`media_insights(cfg, media_id, product_type, *, get=None, creds=None)`** — the sole IG analytics read; raises `MetaInsightsScopeError` on real permission refusal. Callers: `post.metrics.GraphInsightsClient._default_insights`, `track.pull_imported_insights`.
 - **`insights_blocked_signal(cfg)`** — reads persisted scope-blocked breadcrumb. Callers: `doctor.doctor_report`, `studio.views.build_system_strip`.
 - **`_set_insights_blocked(cfg)`/`_clear_insights_blocked(cfg)`** — write/delete the breadcrumb. Callers: `post.metrics.GraphInsightsClient.list_posts`.
-- **`_read_queries(cfg)`** — reads hashtag-budget log; `None` on corrupt (fail-closed). Callers: `budget_remaining`, `record_query`, `sample_trends`.
-- **`budget_remaining(cfg, *, now=None)`** — `30 - queried-in-7d`. Callers: `discover_candidates`, `harvest_cooccurring`, `sample_trends`, `tag_metrics`.
-- **`record_query(cfg, tag, *, now=None)`** — appends+prunes budget log under flock. Callers: `discover_candidates`, `harvest_cooccurring`, `sample_trends`, `tag_metrics`.
-- **`tag_metrics(cfg, tag, *, get=None, now=None)`** — operator on-demand single-tag read. Callers: `studio.personas.recommend_tag`.
-- **`sample_trends(cfg, candidates, *, get=None, now=None)`** — budget-bounded trend sampling. Callers: `fanops_hashtags.refresh_store`.
-- **`harvest_cooccurring(cfg, seed_tags, *, get=None, now=None)`** — co-occurrence tally, capped 5000 tags. Callers: `fanops_hashtags.refresh_store`, `discover_candidates`.
-- **`discover_candidates(cfg, seeds, *, known=(), measure_k=0, get=None, now=None)`** — ranks harvest, drops known, optionally measures top-K reach. Callers: `persona_research.discover_corpus`.
 
 ### `metrics_schedule.py` — pure cadence selector, no I/O
 - **`offset_seconds(offset)`** — `'4h'`→14400. Pure. Callers: `due_offset`.
