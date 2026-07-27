@@ -557,6 +557,7 @@
           "id",
           "intake",
           "name",
+          "niche",
           "selection_scope",
           "voice"
         ],
