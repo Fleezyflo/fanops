@@ -165,6 +165,33 @@ def _transferred_hooks(led: Ledger, cfg: Config, accounts,
         logger.warning("variant transfer prior skipped (fail-open)", exc_info=True)
         return []
 
+
+def _per_account_hashtag_stores(cfg: Config, accounts) -> dict[str, list[str]]:
+    """Each account's LLM hashtag menu = its persona's `_aligned_pool` (platform-metric ranked), not the
+    global `ranked_tags(load_measurements)` cache. Measurements are read ONCE. No persona / empty pool /
+    load failure -> that handle omitted (surface key stays absent — same shape as empty corpus).
+    Fail-open: never raises. MOL-513 (C-3)."""
+    if accounts is None:
+        return {}
+    try:
+        from fanops.accounts import _persona_for_account
+        from fanops.personas import Personas
+        from fanops.persona_research import _aligned_pool
+        reg = Personas.load(cfg)
+        meas = load_measurements(cfg)
+    except Exception:
+        return {}
+    out: dict[str, list[str]] = {}
+    for a in accounts.accounts:
+        per = _persona_for_account(a, reg)
+        if per is None:
+            continue
+        pool = _aligned_pool(per, meas)
+        if pool:
+            out[a.handle] = [t for t, _v, _s in pool]
+    return out
+
+
 def request_captions(led: Ledger, cfg: Config, clip_id: str,
                      surfaces: list[tuple[str, Platform]], accounts=None) -> Ledger:
     clip = led.clips[clip_id]
@@ -179,7 +206,8 @@ def request_captions(led: Ledger, cfg: Config, clip_id: str,
     # hashtag differentiator. Rides the payload so it survives to ingest (-> vet_hashtags leads on it) AND
     # the prompt shows it as the surface's own menu. Empty corpus -> no key.
     corpora = {a.handle: list(getattr(a, "hashtag_corpus", []) or []) for a in accounts.accounts} if accounts is not None else {}
-    store = ranked_tags(load_measurements(cfg)) or None   # the measured menu; None until the first pass lands
+    # MOL-513 (C-3): per-surface menu = that account's persona aligned pool (not the global cache).
+    stores = _per_account_hashtag_stores(cfg, accounts)
     payload = {
         "clip_id": clip_id,
         "transcript_excerpt": moment.transcript_excerpt,
@@ -187,7 +215,8 @@ def request_captions(led: Ledger, cfg: Config, clip_id: str,
         "guidance": load_guidance(cfg),
         "surfaces": [{"surface": _surface_str(acct, plat), "platform": plat.value,
                       **({"persona": pv} if (pv := personas.get(acct)) else {}),
-                      **({"corpus": cv} if (cv := corpora.get(acct)) else {})}
+                      **({"corpus": cv} if (cv := corpora.get(acct)) else {}),
+                      **({"hashtag_store": sv} if (sv := stores.get(acct)) else {})}
                      for acct, plat in surfaces],
         # variation v2: only present when a surface crossed the trust gate -> OFF/below-gate keeps
         # the payload byte-identical to pre-v2 (caption_prompt renders this block when present).
@@ -195,7 +224,6 @@ def request_captions(led: Ledger, cfg: Config, clip_id: str,
         # transfer (v2 follow-up): a borrowed cross-surface STYLE for a COLD recipient — separate
         # key so own-signal reads as primary; absent unless the flag is on AND a donor qualifies.
         **({"learned_hooks_transferred": transferred} if transferred else {}),
-        **({"hashtag_store": store} if store is not None else {}),
     }
     write_request(cfg, kind="captions", key=clip_id, payload=payload)
     led.set_clip_state(clip_id, ClipState.captions_requested)

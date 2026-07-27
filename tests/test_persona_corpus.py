@@ -5,6 +5,7 @@
 # request_captions carries each surface's corpus to ingest + the prompt; the account hydrates its corpus
 # from the linked persona. corpus=None/empty -> byte-identical.
 import json
+from datetime import datetime, timezone
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import (Clip, Moment, Source, MomentState, ClipState, Platform,
@@ -149,3 +150,62 @@ def test_caption_prompt_has_corpus_rule_and_shows_tags():
     out = caption_prompt(payload)
     assert "prefer the tags in that surface's `corpus`" in out.lower()   # the explicit rule (not just the JSON key leaking)
     assert "#detroitrap" in out                             # the corpus reaches the model (in the surfaces JSON)
+
+
+# --- MOL-513 (C-3): per-surface hashtag_store = persona aligned pool -------------------------
+
+def _write_meas(cfg, rows):
+    """rows: {tag: (like_count, from_anchor_or_None)} — fresh evidence for _aligned_pool."""
+    now = datetime.now(timezone.utc).isoformat()
+    data = {}
+    for tag, (metric, src) in rows.items():
+        rec = {"graph_id": "id-" + tag.lstrip("#"), "like_count": metric, "measured_at": now}
+        if src:
+            rec["from"] = {src: 1}
+        data[tag] = rec
+    cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.hashtags_path.write_text(json.dumps(data))
+
+
+def test_request_captions_carries_per_surface_aligned_store(tmp_path):
+    # Two personas, one global cache: each surface's hashtag_store is THAT persona's aligned pool,
+    # not ranked_tags(load_measurements) (which would be identical on every surface).
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led)
+    pid_a = core.add_persona(cfg, name="Hip", voice="va", niche=["hiphop"], id="pa")
+    pid_b = core.add_persona(cfg, name="Pod", voice="vb", niche=["podcast"], id="pb")
+    _write_meas(cfg, {
+        "#hiphop": (100, None),
+        "#detroitrap": (900, "#hiphop"),   # co-occur with hiphop only
+        "#podcast": (200, None),
+        "#interview": (800, "#podcast"),   # co-occur with podcast only
+        "#globalwinner": (9999, None),     # unaligned to either niche — must NOT enter either menu
+    })
+    a = Accounts(cfg)
+    a.accounts = [
+        Account(handle="a", platforms=[Platform.instagram], persona_id=pid_a),
+        Account(handle="b", platforms=[Platform.instagram], persona_id=pid_b),
+    ]
+    request_captions(led, cfg, "clip_1",
+                     [("a", Platform.instagram), ("b", Platform.instagram)], accounts=a)
+    payload = json.loads(request_path(cfg, "captions", "clip_1").read_text())
+    assert "hashtag_store" not in payload                    # root key gone (MOL-513)
+    by = {s["surface"]: s for s in payload["surfaces"]}
+    sa, sb = by["a/instagram"]["hashtag_store"], by["b/instagram"]["hashtag_store"]
+    assert "#detroitrap" in sa and "#hiphop" in sa
+    assert "#interview" not in sa and "#podcast" not in sa and "#globalwinner" not in sa
+    assert "#interview" in sb and "#podcast" in sb
+    assert "#detroitrap" not in sb and "#hiphop" not in sb and "#globalwinner" not in sb
+    # Prompt for the request must not put B-only tags in A's pick rule.
+    prompt = caption_prompt(payload)
+    a_rule = prompt.split('For surface "a/instagram"', 1)[1].split('For surface "b/instagram"', 1)[0]
+    assert "#detroitrap" in a_rule and "#interview" not in a_rule
+
+
+def test_request_captions_omits_hashtag_store_when_no_aligned_pool(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led)
+    # Account with no persona link + empty cache -> no hashtag_store key (parity with empty corpus).
+    accts = _accounts_with_corpus(cfg, [])
+    request_captions(led, cfg, "clip_1", [("a", Platform.instagram)], accounts=accts)
+    payload = json.loads(request_path(cfg, "captions", "clip_1").read_text())
+    assert "hashtag_store" not in payload
+    assert "hashtag_store" not in payload["surfaces"][0]
