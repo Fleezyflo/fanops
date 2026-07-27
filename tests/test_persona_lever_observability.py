@@ -93,7 +93,7 @@ def test_drawer_renders_cut_and_caption_provenance(tmp_path):
     from fanops.studio.app import create_app
     from fanops.personas import add_persona
     cfg = Config(root=tmp_path)
-    add_persona(cfg, name="P", voice="a devoted fan", content_focus=["storytelling", "emotional"])
+    add_persona(cfg, name="P", voice="a devoted fan", content_focus=["storytelling", "emotional"], niche=["hiphop"])
     app = create_app(cfg); app.config.update(TESTING=True)
     html = app.test_client().post("/personas/compose", data={
         "voice": "a devoted fan", "content_focus": "storytelling"}).get_data(as_text=True)
@@ -104,7 +104,7 @@ def test_drawer_renders_lever_health_panel(tmp_path):
     from fanops.studio.app import create_app
     from fanops.personas import add_persona
     cfg = Config(root=tmp_path)
-    pid = add_persona(cfg, name="P", voice="a devoted fan", content_focus=["storytelling"], hook_angle="curiosity")
+    pid = add_persona(cfg, name="P", voice="a devoted fan", content_focus=["storytelling"], hook_angle="curiosity", niche=["hiphop"])
     app = create_app(cfg); app.config.update(TESTING=True)
     html = app.test_client().get(f"/personas/drawer/{pid}").get_data(as_text=True)
     assert 'class="effective-persona"' in html and "Levers" in html and "✓" in html

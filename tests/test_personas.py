@@ -20,7 +20,7 @@ def _write_accounts(cfg, rows):
 
 def test_add_and_load_persona(tmp_path):
     cfg = Config(root=tmp_path)
-    pid = P.add_persona(cfg, name="Music Blogger", voice="champions craft")
+    pid = P.add_persona(cfg, name="Music Blogger", voice="champions craft", niche=["hiphop"])
     p = P.Personas.load(cfg).get(pid)
     assert p is not None
     assert p.voice == "champions craft"
@@ -29,9 +29,9 @@ def test_add_and_load_persona(tmp_path):
 
 def test_add_persona_rejects_duplicate(tmp_path):
     cfg = Config(root=tmp_path)
-    P.add_persona(cfg, name="Dupe")
+    P.add_persona(cfg, name="Dupe", niche=["hiphop"])
     with pytest.raises(ValueError):
-        P.add_persona(cfg, name="Dupe")
+        P.add_persona(cfg, name="Dupe", niche=["hiphop"])
 
 
 def test_add_persona_requires_name(tmp_path):
@@ -42,7 +42,7 @@ def test_add_persona_requires_name(tmp_path):
 
 def test_update_persona_fields(tmp_path):
     cfg = Config(root=tmp_path)
-    pid = P.add_persona(cfg, name="Z", voice="old")
+    pid = P.add_persona(cfg, name="Z", voice="old", niche=["hiphop"])
     P.update_persona(cfg, pid, voice="new")
     p = P.Personas.load(cfg).get(pid)
     assert p.voice == "new"
@@ -64,11 +64,21 @@ def test_persona_round_trips_a_niche_normalized(tmp_path):
     assert P.Personas.load(cfg).get(pid).niche == ["syria"]
 
 
-def test_persona_without_a_niche_defaults_empty(tmp_path):
-    # TRANSITIONAL: empty is accepted only until A-13 refuses it (the 3 live rows have none yet).
+def test_add_persona_refuses_missing_and_empty_niche(tmp_path):
     cfg = Config(root=tmp_path)
-    pid = P.add_persona(cfg, name="No Niche")
-    assert P.Personas.load(cfg).get(pid).niche == []
+    with pytest.raises(ValueError, match="persona niche is required"):
+        P.add_persona(cfg, name="No Niche")
+    with pytest.raises(ValueError, match="persona niche is required"):
+        P.add_persona(cfg, name="No Niche", niche=[])
+    assert P.Personas.load(cfg).get("no-niche") is None
+
+
+def test_update_persona_refuses_clearing_niche(tmp_path):
+    cfg = Config(root=tmp_path)
+    pid = P.add_persona(cfg, name="Keep Niche", niche=["hiphop"])
+    with pytest.raises(ValueError, match="persona niche is required"):
+        P.update_persona(cfg, pid, niche=[])
+    assert P.Personas.load(cfg).get(pid).niche == ["hiphop"]
 
 
 def test_add_persona_refuses_a_defective_niche_entry(tmp_path):
@@ -90,7 +100,7 @@ def test_apply_auto_corpus_normalizes_dedupes_and_REPLACES(tmp_path):
     # The corpus is a DERIVED value, so the writer replaces it wholesale: no pin partition, no merge, no
     # absent-meta-means-pinned rule. Those protected hand-curated entries and, in doing so, froze rotation.
     cfg = Config(root=tmp_path)
-    pid = P.add_persona(cfg, name="Z")
+    pid = P.add_persona(cfg, name="Z", niche=["hiphop"])
     P.apply_auto_corpus(cfg, pid, tags=["DetroitRap", "#detroitrap", 7, "", "#flintbars"], meta={})
     assert P.Personas.load(cfg).get(pid).hashtag_corpus == ["#detroitrap", "#flintbars"]
     P.apply_auto_corpus(cfg, pid, tags=["#newone"], meta={})
@@ -105,7 +115,7 @@ def test_apply_auto_corpus_unknown_persona_raises(tmp_path):
 
 def test_delete_persona(tmp_path):
     cfg = Config(root=tmp_path)
-    pid = P.add_persona(cfg, name="Gone")
+    pid = P.add_persona(cfg, name="Gone", niche=["hiphop"])
     P.delete_persona(cfg, pid)
     assert P.Personas.load(cfg).get(pid) is None
 
@@ -115,7 +125,7 @@ def test_delete_persona(tmp_path):
 def test_link_persona_sets_account_field(tmp_path):
     cfg = Config(root=tmp_path)
     _write_accounts(cfg, [{"handle": "@a", "platforms": ["instagram"], "status": "active"}])
-    pid = P.add_persona(cfg, name="P1", voice="voice-1")
+    pid = P.add_persona(cfg, name="P1", voice="voice-1", niche=["hiphop"])
     link_persona(cfg, "@a", pid)
     raw = json.loads(cfg.accounts_path.read_text())
     assert raw["accounts"][0]["persona_id"] == pid
@@ -130,7 +140,7 @@ def test_link_unknown_account_raises(tmp_path):
 
 def test_load_hydrates_linked_account_from_persona(tmp_path):
     cfg = Config(root=tmp_path)
-    pid = P.add_persona(cfg, name="P1", voice="curator voice")
+    pid = P.add_persona(cfg, name="P1", voice="curator voice", niche=["hiphop"])
     _write_accounts(cfg, [{"handle": "@a", "platforms": ["instagram"], "status": "active",
                            "persona": "stale inline", "persona_id": pid}])
     a = Accounts.load(cfg).accounts[0]
@@ -147,7 +157,7 @@ def test_load_failopen_when_personas_absent(tmp_path):
 
 def test_load_unlinked_account_is_byte_identical(tmp_path):
     cfg = Config(root=tmp_path)
-    P.add_persona(cfg, name="Other", voice="other voice")   # a persona exists but this account isn't linked
+    P.add_persona(cfg, name="Other", voice="other voice", niche=["hiphop"])   # a persona exists but this account isn't linked
     _write_accounts(cfg, [{"handle": "@a", "platforms": ["instagram"], "status": "active",
                            "persona": "my own voice"}])
     a = Accounts.load(cfg).accounts[0]
@@ -161,7 +171,7 @@ def test_unlinking_a_persona_leaves_no_stale_hydrated_state(tmp_path):
     # tag_lean never leak into accounts.json, and the next load reads the inline persona again. This pins that
     # contract so a future hydrated-save path can't silently strand a stale hydrated value on unlink.
     cfg = Config(root=tmp_path)
-    pid = P.add_persona(cfg, name="P1", voice="curator voice")
+    pid = P.add_persona(cfg, name="P1", voice="curator voice", niche=["hiphop"])
     _write_accounts(cfg, [{"handle": "@a", "platforms": ["instagram"], "status": "active",
                            "persona": "my own inline voice"}])
     link_persona(cfg, "@a", pid)
@@ -235,7 +245,7 @@ def test_migrate_skips_unsluggable_handle(tmp_path):
 
 def test_update_persona_rejects_blank_name(tmp_path):
     cfg = Config(root=tmp_path)
-    pid = P.add_persona(cfg, name="Real")
+    pid = P.add_persona(cfg, name="Real", niche=["hiphop"])
     with pytest.raises(ValueError):
         P.update_persona(cfg, pid, name="   ")
 
@@ -245,7 +255,7 @@ def test_apply_auto_corpus_truncates_at_the_cap(tmp_path):
     # raise into the unattended run.
     from fanops.persona_store import _CORPUS_CAP
     cfg = Config(root=tmp_path)
-    pid = P.add_persona(cfg, name="Full")
+    pid = P.add_persona(cfg, name="Full", niche=["hiphop"])
     P.apply_auto_corpus(cfg, pid, tags=[f"#tag{i}" for i in range(_CORPUS_CAP + 10)], meta={})
     corpus = P.Personas.load(cfg).get(pid).hashtag_corpus
     assert len(corpus) == _CORPUS_CAP and corpus[0] == "#tag0"

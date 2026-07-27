@@ -67,7 +67,7 @@ def test_global_when_bare():
 # ---- hydration: a linked signal-bearing persona drives the account's cut; unlinked is unchanged ----
 def test_hydration_applies_derived_spec(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg, [_acct()])
-    pid = add_persona(cfg, name="Storyteller", voice="v", content_focus=["storytelling", "emotional"])
+    pid = add_persona(cfg, name="Storyteller", voice="v", content_focus=["storytelling", "emotional"], niche=["hiphop"])
     link_persona(cfg, "@a", pid)
     acc = next(a for a in Accounts.load(cfg).accounts if a.handle == "a")
     assert acc.clip_profile == "long" and acc.framing == "top"    # derived from content_focus
@@ -97,7 +97,7 @@ def test_voice_match_hydrates_without_persona_id(tmp_path):
     cfg = Config(root=tmp_path)
     voice = "music-blogger curator who champions craft."
     _accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active", "persona": voice}])
-    add_persona(cfg, name="Craft", voice=voice, content_focus=["storytelling", "emotional"])
+    add_persona(cfg, name="Craft", voice=voice, content_focus=["storytelling", "emotional"], niche=["hiphop"])
     acc = next(a for a in Accounts.load(cfg).accounts if a.handle == "a")
     assert acc.persona_id is None and acc.clip_profile == "long" and acc.framing == "top"   # voice match, no persisted link
 

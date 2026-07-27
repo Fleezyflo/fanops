@@ -26,7 +26,7 @@ def test_card_renders_three_zones_in_order(tmp_path):
     # The card answers, top to bottom: what this is / what you can change / what the system derives. Assert the
     # three eyebrow headings render in that sequence for the persona's card.
     cfg = Config(root=tmp_path)
-    core.add_persona(cfg, name="Curator", voice="champions craft")
+    core.add_persona(cfg, name="Curator", voice="champions craft", niche=["hiphop"])
     html = _panel(cfg)
     i1 = html.find("What this is")
     i2 = html.find("What you can change")
@@ -39,7 +39,7 @@ def test_zone2_editable_inventory_matches_registry(tmp_path):
     # zone 2; zone 3 carries NO editable inputs (derived corpus chips only).
     from fanops.persona_levers import LEVER_REGISTRY
     cfg = Config(root=tmp_path)
-    core.add_persona(cfg, name="Curator", voice="champions craft")
+    core.add_persona(cfg, name="Curator", voice="champions craft", niche=["hiphop"])
     html = _panel(cfg)
     zone2 = html.split("What you can change", 1)[1].split("Derived — updates itself", 1)[0]
     assert 'name="name"' in zone2 and 'name="voice"' in zone2
@@ -58,7 +58,7 @@ def test_zone2_editable_inventory_matches_registry(tmp_path):
 def test_blank_clears_hint_renders(tmp_path):
     # Zone 2 documents the authoritative save behavior (an unchecked/blank lever CLEARS it, studio/personas.py).
     cfg = Config(root=tmp_path)
-    core.add_persona(cfg, name="Curator", voice="champions craft")
+    core.add_persona(cfg, name="Curator", voice="champions craft", niche=["hiphop"])
     html = _panel(cfg)
     zone2 = html.split("What you can change", 1)[1].split("Derived — updates itself", 1)[0]
     assert "Leaving scope or hook angle blank clears it on save." in zone2
@@ -70,7 +70,7 @@ def test_corpus_chips_carry_the_measurement_and_its_anchor(tmp_path):
     # PLAIN chip rather than inventing a number.
     from fanops.hashtags import METRIC_FIELD
     cfg = Config(root=tmp_path)
-    pid = core.add_persona(cfg, name="P1", voice="v1")
+    pid = core.add_persona(cfg, name="P1", voice="v1", niche=["hiphop"])
     core.apply_auto_corpus(cfg, pid, tags=["#derivedtag", "#barenometa"], meta={
         "#derivedtag": {METRIC_FIELD: 1500.0, "measured_at": "2026-07-01T00:00:00+00:00", "from": "#hiphop"}})
     # the read-model carries the value + anchor per tag
@@ -90,7 +90,7 @@ def test_edit_one_lever_round_trip(tmp_path):
     # Editing ONE lever (hook_angle) via the inline zone-2 form must leave every OTHER on-disk persona field
     # byte-identical (name/voice/content_focus/selection_scope + the corpus/meta) — no collateral mutation.
     cfg = Config(root=tmp_path)
-    pid = core.add_persona(cfg, name="Keep", voice="the voice")
+    pid = core.add_persona(cfg, name="Keep", voice="the voice", niche=["hiphop"])
     # seed a full lever set + a corpus so there is real state to preserve, THROUGH the same edit route
     r0 = _client(cfg).post("/personas/edit", data={
         "id": pid, "name": "Keep", "voice": "the voice",
@@ -113,7 +113,7 @@ def test_edit_zone_offers_the_niche_lever_not_a_curation_lane(tmp_path):
     # The niche is an editable lever (zone 2 — "What you can change"). Zone 3 is DERIVED output only —
     # corpus chips, no name= inputs. The add/remove/research proposal lane is gone with the curation model.
     cfg = Config(root=tmp_path)
-    core.add_persona(cfg, name="Curator", voice="champions craft")
+    core.add_persona(cfg, name="Curator", voice="champions craft", niche=["hiphop"])
     html = _panel(cfg)
     zone2 = html.split("What you can change", 1)[1].split("Derived — updates itself", 1)[0]
     zone3 = html.split("Derived — updates itself", 1)[1].split("</article>", 1)[0]

@@ -29,10 +29,12 @@
       <summary class="step-summary">+ Add a persona</summary>
       <p class="muted persona-levers-intro">Each persona's levers{{ term('lever') }} shape its clips, hooks and captions.</p>
       {{ levers_reference(lever_ref) }}
-      <p class="muted">Name it, write its voice, and set its levers — which moments it clips, its selection scope, and
-        its hook angle. Hashtags (and genre for research) are curated per-card after it exists.</p>
+      <p class="muted">Name it, declare its niche, write its voice, and set its levers — which moments it clips, its
+        selection scope, and its hook angle. Hashtags (and genre for research) are curated per-card after it exists.</p>
       <form hx-post="{{ url_for('do_personas_add') }}" hx-target="#personas-panel" hx-swap="outerHTML">
         <label>Name <input type="text" name="name" placeholder="e.g. Music Blogger" size="22" required></label>
+        <label>Niche <input type="text" name="niche" placeholder="e.g. hiphop, arabicrap" size="28" required
+          title="the subject term(s) the next measurement pass searches Instagram for"></label>
         <label class="block">Voice
           <textarea name="voice" rows="2" placeholder="champions craft; clip the moments that show artistry…"></textarea></label>
         {{ lever_fields(levers, effects) }}

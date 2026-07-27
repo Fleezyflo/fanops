@@ -146,7 +146,7 @@ def test_preview_compose_returns_breakdown_without_persisting(tmp_path):
 def test_preview_compose_merges_saved_corpus_for_an_existing_id(tmp_path):
     from fanops.studio import personas as sp
     cfg = Config(root=tmp_path)
-    add_persona(cfg, name="Curator", voice="v")
+    add_persona(cfg, name="Curator", voice="v", niche=["hiphop"])
     Personas.load(cfg)  # sanity
     from fanops.personas import apply_auto_corpus
     apply_auto_corpus(cfg, "curator", tags=["#myscene"], meta={})

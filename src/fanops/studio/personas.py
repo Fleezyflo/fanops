@@ -62,15 +62,17 @@ def preview_compose(cfg: Config, form) -> ActionResult:
 
 
 def create_persona(cfg: Config, name: str, voice: str = "",
-                   content_focus=None, selection_scope: str = "", hook_angle: str = "") -> ActionResult:
-    """Create a NEW persona from the five clean levers (voice + content_focus/selection_scope/hook_angle; the corpus is
-    curated on the card, genre via Research). Validates a non-blank name + each lever value at the A1 write
-    boundary; a duplicate id / unknown lever / blank name -> a clean one-line error, never a 500. The cut
-    (length) is DERIVED from content_focus."""
+                   content_focus=None, selection_scope: str = "", hook_angle: str = "",
+                   niche: str = "") -> ActionResult:
+    """Create a NEW persona from the clean levers (voice + content_focus/selection_scope/hook_angle) plus a
+    required declared niche. The corpus is curated on the card, genre via Research. Validates a non-blank
+    name + niche + each lever value at the A1 write boundary; a duplicate id / unknown lever / blank name
+    / empty niche -> a clean one-line error, never a 500. The cut (length) is DERIVED from content_focus."""
     try:
         pid = core.add_persona(cfg, name=name, voice=voice,
-                               content_focus=content_focus, selection_scope=selection_scope, hook_angle=hook_angle)
-    except ValueError as exc:                            # blank name / unknown lean or lever / duplicate id
+                               content_focus=content_focus, selection_scope=selection_scope, hook_angle=hook_angle,
+                               niche=_parse_niche(niche))
+    except ValueError as exc:                            # blank name / empty niche / unknown lean or lever / duplicate id
         return ActionResult(ok=False, error=str(exc))
     except Exception as exc:
         return ActionResult(ok=False, error=f"could not create persona: {str(exc)[:160]}")

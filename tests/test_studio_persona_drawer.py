@@ -26,7 +26,7 @@ def test_panel_edit_is_an_inline_form_not_a_drawer_trigger(tmp_path):
     # (no hx-target="#persona-drawer" on the card, no nested Edit collapse). The drawer route/mount/JS still
     # exist and are proven by the /personas/drawer/<pid> tests below; the card just stopped triggering them.
     cfg = Config(root=tmp_path)
-    core.add_persona(cfg, name="Curator", voice="champions craft")
+    core.add_persona(cfg, name="Curator", voice="champions craft", niche=["hiphop"])
     html = _client(cfg).get("/personas").data.decode()
     # the card's editor is the proven /personas/edit route, swapping the panel (not the drawer mount)
     assert '/personas/edit' in html and 'hx-target="#personas-panel"' in html
@@ -37,7 +37,7 @@ def test_panel_edit_is_an_inline_form_not_a_drawer_trigger(tmp_path):
 
 def test_personas_page_mounts_drawer_backdrop_and_js(tmp_path):
     cfg = Config(root=tmp_path)
-    core.add_persona(cfg, name="Curator", voice="x")
+    core.add_persona(cfg, name="Curator", voice="x", niche=["hiphop"])
     html = _client(cfg).get("/personas").data.decode()
     assert 'id="persona-drawer"' in html                 # the slide-out mount (body-level, outside .workspace)
     assert 'drawer-backdrop' in html                     # the click-to-dismiss scrim
@@ -46,7 +46,7 @@ def test_personas_page_mounts_drawer_backdrop_and_js(tmp_path):
 
 def test_drawer_route_renders_levers_visible(tmp_path):
     cfg = Config(root=tmp_path)
-    pid = core.add_persona(cfg, name="Curator", voice="champions craft")
+    pid = core.add_persona(cfg, name="Curator", voice="champions craft", niche=["hiphop"])
     html = _client(cfg).get(f"/personas/drawer/{pid}").data.decode()
     assert 'role="dialog"' in html and 'aria-modal="true"' in html
     assert 'id="persona-drawer-heading"' in html         # the labelled, focusable heading drawer.js focuses
@@ -58,7 +58,7 @@ def test_drawer_route_renders_levers_visible(tmp_path):
 
 def test_drawer_route_has_compose_preview_mount(tmp_path):
     cfg = Config(root=tmp_path)
-    pid = core.add_persona(cfg, name="Curator", voice="x")
+    pid = core.add_persona(cfg, name="Curator", voice="x", niche=["hiphop"])
     html = _client(cfg).get(f"/personas/drawer/{pid}").data.decode()
     assert f'id="persona-compose-{pid}"' in html          # the live "compiles to" preview target
     assert '/personas/compose' in html                    # the levers post to the compose preview
@@ -66,7 +66,7 @@ def test_drawer_route_has_compose_preview_mount(tmp_path):
 
 def test_drawer_save_targets_panel_and_has_close_and_delete(tmp_path):
     cfg = Config(root=tmp_path)
-    pid = core.add_persona(cfg, name="Curator", voice="x")
+    pid = core.add_persona(cfg, name="Curator", voice="x", niche=["hiphop"])
     html = _client(cfg).get(f"/personas/drawer/{pid}").data.decode()
     assert '/personas/edit' in html and 'hx-target="#personas-panel"' in html   # Save reuses the proven path
     assert '/personas/delete' in html                     # Delete present
@@ -84,7 +84,7 @@ def test_drawer_unknown_persona_is_clean_not_500(tmp_path):
 
 def test_drawer_edit_persists_via_existing_route(tmp_path):
     cfg = Config(root=tmp_path)
-    pid = core.add_persona(cfg, name="Z", voice="old")
+    pid = core.add_persona(cfg, name="Z", voice="old", niche=["hiphop"])
     r = _client(cfg).post("/personas/edit", data={
         "id": pid, "name": "Z2", "voice": "new voice", "content_focus": ["hype"], "hook_angle": "fomo"})
     assert r.status_code == 200
@@ -94,7 +94,7 @@ def test_drawer_edit_persists_via_existing_route(tmp_path):
 
 def test_persona_with_no_levers_still_renders_drawer(tmp_path):
     cfg = Config(root=tmp_path)
-    pid = core.add_persona(cfg, name="Bare")               # no levers set
+    pid = core.add_persona(cfg, name="Bare", niche=["hiphop"])               # no levers set
     html = _client(cfg).get(f"/personas/drawer/{pid}").data.decode()
     assert 'role="dialog"' in html and f'id="persona-compose-{pid}"' in html   # renders, compose mount present
     assert "Bare" in html
@@ -121,7 +121,7 @@ def test_compose_panel_empty_levers_keeps_the_grid_no_produces_line(tmp_path):
 def test_drawer_lever_fields_persist_via_edit(tmp_path):
     # the WHOLE POINT of the drawer is surfacing the levers — prove a full lever submission round-trips and saves.
     cfg = Config(root=tmp_path)
-    pid = core.add_persona(cfg, name="Lever Test")
+    pid = core.add_persona(cfg, name="Lever Test", niche=["hiphop"])
     r = _client(cfg).post("/personas/edit", data={
         "id": pid, "name": "Lever Test", "voice": "v",
         "content_focus": ["storytelling", "emotional"], "selection_scope": "subject_locked", "hook_angle": "curiosity"})

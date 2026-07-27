@@ -39,7 +39,7 @@ class Persona(BaseModel):
     name: str = ""                                # operator-facing display name
     voice: str = ""                               # the persona string the pipeline reads (caption/hook/casting voice)
     hashtag_corpus: list[str] = Field(default_factory=list)   # DERIVED by persona_research.derive_corpus from platform measurements — never hand-curated, recomputed every tick
-    niche: list[str] = Field(default_factory=list)   # the persona's DECLARED subject terms; per-entry validated at the write boundary (add/update_persona), like `name`. Empty is TRANSITIONAL — A-13 refuses it once B-9 backfills the live rows
+    niche: list[str] = Field(default_factory=list)   # the persona's DECLARED subject terms; required at writers (add/update_persona refuse empty); per-entry validated at the write boundary, like `name`
     intake: dict = Field(default_factory=dict)    # intake metadata; one live field `genre` — the niche root for persona_terms
     # Lever engine: explicit per-characteristic DIRECTION that compose_persona_instruction renders into the
     # one instruction the casting/hook/caption prompts read. ADDITIVE — all empty on a legacy persona, so

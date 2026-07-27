@@ -158,6 +158,8 @@ def add_persona(cfg: Config, name: str, voice: str = "",
     scope_v = _enum_or_none(selection_scope, SELECTION_SCOPE_LEVELS, "selection_scope")
     angle_v = _enum_or_none(hook_angle, HOOK_ANGLES, "hook_angle")
     niche_v = _norm_niche(niche)
+    if not niche_v:
+        raise ValueError("persona niche is required")
     p = cfg.personas_path
     with _personas_txn(cfg):
         raw, plist = _load_raw(p)
@@ -174,12 +176,15 @@ def add_persona(cfg: Config, name: str, voice: str = "",
 def update_persona(cfg: Config, pid: str, *, name=_UNSET, voice=_UNSET, intake=_UNSET,
                    content_focus=_UNSET, selection_scope=_UNSET, hook_angle=_UNSET, niche=_UNSET) -> str:
     """Edit a persona's fields atomically (the A2 edit form). Only the fields PASSED change; each lever
-    clears on "". Validates every passed lever against its vocabulary BEFORE the lock (never write a typo).
+    clears on "". Niche is the exception: an empty niche is refused (a persona with none cannot discover
+    hashtags). Validates every passed lever against its vocabulary BEFORE the lock (never write a typo).
     Unknown id -> KeyError. (M3: tag_lean, the clip_profile/framing pins, and the directive overrides retired.)"""
     _focus = _norm_focus(content_focus) if content_focus is not _UNSET else _UNSET
     _scope = _enum_or_none(selection_scope, SELECTION_SCOPE_LEVELS, "selection_scope") if selection_scope is not _UNSET else _UNSET
     _angle = _enum_or_none(hook_angle, HOOK_ANGLES, "hook_angle") if hook_angle is not _UNSET else _UNSET
     _niche = _norm_niche(niche) if niche is not _UNSET else _UNSET
+    if niche is not _UNSET and not _niche:
+        raise ValueError("persona niche is required")
     p = cfg.personas_path
     with _personas_txn(cfg):
         raw, plist = _load_raw(p)
@@ -294,7 +299,13 @@ def migrate_from_accounts(cfg: Config) -> dict:
         if not pid:
             continue                                 # a handle with no usable slug (e.g. "@@@") -> never a false empty link
         if pid not in existing:
-            add_persona(cfg, name=a.handle, voice=voice, id=pid)   # M3: tag_lean retired; corpus is curated separately
+            # A-13: every persona needs a declared niche. Seed tag-safe from the persona id (alphanumeric /
+            # underscore only, lowercased); fall back to "account" if empty or tag_defect.
+            seed = "".join(c for c in pid if c.isalnum() or c == "_").lower() or "account"
+            from fanops.hashtag_hygiene import tag_defect
+            if tag_defect("#" + seed):
+                seed = "account"
+            add_persona(cfg, name=a.handle, voice=voice, id=pid, niche=[seed])   # M3: tag_lean retired; corpus is curated separately
             existing.add(pid); created.append(pid)
         link_persona(cfg, a.handle, pid)
         linked.append(a.handle)

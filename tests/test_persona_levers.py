@@ -43,7 +43,7 @@ def test_compose_ignores_cut_levers_in_text():
 # ---- write boundary: levers validate + round-trip ----
 def test_add_persona_persists_levers(tmp_path):
     cfg = Config(root=tmp_path)
-    add_persona(cfg, name="Curator", voice="tasteful crate-digger", content_focus=["storytelling", "emotional"], hook_angle="emotional")
+    add_persona(cfg, name="Curator", voice="tasteful crate-digger", content_focus=["storytelling", "emotional"], hook_angle="emotional", niche=["hiphop"])
     p = Personas.load(cfg).get("curator")
     assert p.content_focus == ["storytelling", "emotional"] and p.selection_scope is None
     assert p.hook_angle == "emotional"
@@ -52,13 +52,13 @@ def test_add_persona_persists_levers(tmp_path):
 def test_add_persona_rejects_unknown_lever(tmp_path):
     cfg = Config(root=tmp_path)
     with pytest.raises(ValueError):
-        add_persona(cfg, name="Bad", selection_scope="ludicrous")
+        add_persona(cfg, name="Bad", selection_scope="ludicrous", niche=["hiphop"])
     with pytest.raises(ValueError):
-        add_persona(cfg, name="Bad2", content_focus=["punchlines", "not-a-thing"])
+        add_persona(cfg, name="Bad2", content_focus=["punchlines", "not-a-thing"], niche=["hiphop"])
 
 def test_update_persona_changes_levers_only_when_passed(tmp_path):
     cfg = Config(root=tmp_path)
-    add_persona(cfg, name="P", voice="v", content_focus=["storytelling"])
+    add_persona(cfg, name="P", voice="v", content_focus=["storytelling"], niche=["hiphop"])
     update_persona(cfg, "p", hook_angle="challenge")          # voice/energy untouched
     p = Personas.load(cfg).get("p")
     assert p.voice == "v" and p.selection_scope is None and p.hook_angle == "challenge"
@@ -110,7 +110,7 @@ def test_casting_directive_carries_lever_direction(tmp_path):
 def test_studio_create_persona_persists_levers(tmp_path):
     from fanops.studio import personas as sp
     cfg = Config(root=tmp_path)
-    r = sp.create_persona(cfg, name="Curator", voice="champions craft", content_focus=["punchlines", "hype"], hook_angle="curiosity")
+    r = sp.create_persona(cfg, name="Curator", voice="champions craft", content_focus=["punchlines", "hype"], hook_angle="curiosity", niche="hiphop")
     assert r.ok
     p = Personas.load(cfg).get(r.detail["created"])
     assert p.content_focus == ["punchlines", "hype"] and p.selection_scope is None or p.selection_scope == "open"
@@ -119,13 +119,13 @@ def test_studio_create_persona_persists_levers(tmp_path):
 def test_studio_create_persona_bad_lever_is_clean_error(tmp_path):
     from fanops.studio import personas as sp
     cfg = Config(root=tmp_path)
-    r = sp.create_persona(cfg, name="X", selection_scope="ludicrous")
+    r = sp.create_persona(cfg, name="X", selection_scope="ludicrous", niche="hiphop")
     assert r.ok is False and r.error                     # no raise -> the panel renders the ✗
 
 def test_personas_page_exposes_composed_instruction(tmp_path):
     from fanops.studio import views
     cfg = Config(root=tmp_path)
-    add_persona(cfg, name="P", voice="a devoted fan", content_focus=["hype"])
+    add_persona(cfg, name="P", voice="a devoted fan", content_focus=["hype"], niche=["hiphop"])
     card = next(c for c in views.personas_page(cfg).personas if c.id == "p")
     assert card.instruction.startswith("a devoted fan") and "hype moments" in card.instruction   # voice + substantive clip-for
     assert card.content_focus == ["hype"] and card.selection_scope is None
@@ -133,7 +133,7 @@ def test_personas_page_exposes_composed_instruction(tmp_path):
 def test_personas_panel_renders_lever_controls(tmp_path):
     from fanops.studio.app import create_app
     cfg = Config(root=tmp_path)
-    add_persona(cfg, name="P", voice="v", content_focus=["punchlines"], hook_angle="curiosity")
+    add_persona(cfg, name="P", voice="v", content_focus=["punchlines"], hook_angle="curiosity", niche=["hiphop"])
     app = create_app(cfg); app.config.update(TESTING=True)
     html = app.test_client().get("/personas").get_data(as_text=True)
     assert 'name="content_focus"' in html and 'name="hook_angle"' in html   # the lever controls render
@@ -170,7 +170,7 @@ def test_persona_facts_default_length_when_unset(tmp_path):
 def test_personas_page_exposes_facts(tmp_path):
     from fanops.studio import views
     cfg = Config(root=tmp_path)
-    add_persona(cfg, name="P", voice="v", content_focus=["storytelling"])   # M3d: derives long (28-45s)
+    add_persona(cfg, name="P", voice="v", content_focus=["storytelling"], niche=["hiphop"])   # M3d: derives long (28-45s)
     card = next(c for c in views.personas_page(cfg).personas if c.id == "p")
     assert card.length_band == "28-45s"
     assert isinstance(card.lead_tags, list)
@@ -178,7 +178,7 @@ def test_personas_page_exposes_facts(tmp_path):
 def test_personas_panel_renders_transparency_facts(tmp_path):
     from fanops.studio.app import create_app
     cfg = Config(root=tmp_path)
-    add_persona(cfg, name="P", voice="v", content_focus=["punchlines"])   # M3d: derives short (8-15s)
+    add_persona(cfg, name="P", voice="v", content_focus=["punchlines"], niche=["hiphop"])   # M3d: derives short (8-15s)
     app = create_app(cfg); app.config.update(TESTING=True)
     html = app.test_client().get("/personas").get_data(as_text=True)
     assert "8-15s" in html                       # the resolved length band is shown (transparency)
@@ -224,7 +224,7 @@ def test_personas_panel_renders_directive_ui(tmp_path):
     # the per-persona UI: the compiled directives show per dimension (read-only "what this compiles to")
     from fanops.studio.app import create_app
     cfg = Config(root=tmp_path)
-    add_persona(cfg, name="P", voice="v", content_focus=["punchlines"], hook_angle="curiosity")
+    add_persona(cfg, name="P", voice="v", content_focus=["punchlines"], hook_angle="curiosity", niche=["hiphop"])
     app = create_app(cfg); app.config.update(TESTING=True)
     html = app.test_client().get("/personas").get_data(as_text=True)
     assert "hook &#8594;" in html or "hook →" in html or "hook →" in html   # per-dimension directive shown (clips/hook/caption)
@@ -233,7 +233,7 @@ def test_personas_panel_renders_directive_ui(tmp_path):
 def test_studio_edit_persona_persists_levers(tmp_path):
     from fanops.studio import personas as sp
     cfg = Config(root=tmp_path)
-    add_persona(cfg, name="P", voice="v")
+    add_persona(cfg, name="P", voice="v", niche=["hiphop"])
     r = sp.edit_persona(cfg, "p", name="P", voice="v", content_focus=["punchlines"], hook_angle="curiosity")
     assert r.ok
     p = Personas.load(cfg).get("p")

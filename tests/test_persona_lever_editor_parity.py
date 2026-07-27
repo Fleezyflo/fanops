@@ -35,7 +35,7 @@ def test_every_editable_field_persists_through_the_save_route(tmp_path):
 
 def test_update_route_also_persists_each_editable_field(tmp_path):
     cfg = Config(root=tmp_path)
-    add_persona(cfg, name="P", voice="v")
+    add_persona(cfg, name="P", voice="v", niche=["hiphop"])
     update_persona(cfg, "p", voice="changed", content_focus=["storytelling"], selection_scope="subject_locked", hook_angle="fomo")
     p = Personas.load(cfg).get("p")
     assert p.voice == "changed" and p.content_focus == ["storytelling"]
