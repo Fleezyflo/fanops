@@ -1126,7 +1126,7 @@ def _cmd_run_pass(cfg: Config, base_time: str) -> dict | None:
         except Exception as e:
             get_logger(cfg)("timing_bias", "-", "error", err=str(e)[:120])
     # WS2: constant Graph-reach hashtag store update — refresh at most once per cadence (12h), throttled by
-    # the store mtime so the 10-min publish cadence doesn't hammer the 30/7-day Graph budget. NOT gated on
+    # the store mtime so the 10-min publish cadence doesn't re-run a full Graph pass every tick. NOT gated on
     # is_live_backend (a hashtag's worth is its live platform reach, independent of whether WE publish) —
     # only on Meta creds, handled inside the helper. Its OWN try/except; refresh_store_if_due never raises,
     # so the unattended run can never break on a hashtag refresh.
