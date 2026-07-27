@@ -249,7 +249,7 @@ def manifest(cfg: Config, p) -> list[dict]:
             return next((f["text"] for f in bd["casting"]["fragments"] if f["source"] == "selection_scope"), "—")
         if key == "hook_angle":
             return bd["hook"]["text"]
-        if key == "intake":
+        if key == "niche":
             return bd["tags"]["terms"]
         return ""
 
@@ -262,7 +262,7 @@ def manifest(cfg: Config, p) -> list[dict]:
         return "ok"
 
     out: list[dict] = []
-    for key in levers.PERSONA_EDITABLE_CHANNELS:        # declaration order: voice, content_focus, selection_scope, hook_angle, intake
+    for key in levers.PERSONA_EDITABLE_CHANNELS:        # declaration order: voice, content_focus, selection_scope, hook_angle, niche
         out.append({"key": key, "label": labels.get(key, key.replace("_", " ").title()),
                     "channels": list(levers.channels_of(key)), "value": getattr(p, key, None),
                     "produces": _produces(key), "source": key, "health": _health(key)})

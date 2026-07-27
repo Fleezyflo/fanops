@@ -15,11 +15,10 @@ _QUARANTINE = set()
 
 def test_every_editable_field_persists_through_the_save_route(tmp_path):
     # behavioral proof, field by field: set it via the real writer, reload from disk, assert it stuck.
-    # `hashtag_corpus` is no longer here: it is DERIVED (apply_auto_corpus replaces it wholesale from
-    # platform measurements), so it is exempt. `intake` took over the hashtags channel — its `genre` is
-    # the niche root persona_terms searches on, saved by the /personas/niche route.
+    # `hashtag_corpus` is DERIVED (exempt). `niche` owns the hashtags channel — persona_terms returns it
+    # (B-6), saved by the /personas/niche route. `intake` is transitional-exempt until A-12 deletes it.
     cfg = Config(root=tmp_path)
-    add_persona(cfg, name="P", voice="champions craft", intake={"genre": "hiphop"},
+    add_persona(cfg, name="P", voice="champions craft", niche=["hiphop"],
                 content_focus=["punchlines", "hype"],
                 selection_scope="controversy_seeking", hook_angle="curiosity")
     p = Personas.load(cfg).get("p")
@@ -28,7 +27,7 @@ def test_every_editable_field_persists_through_the_save_route(tmp_path):
         "content_focus": p.content_focus == ["punchlines", "hype"],
         "selection_scope": p.selection_scope == "controversy_seeking",
         "hook_angle": p.hook_angle == "curiosity",
-        "intake": (p.intake or {}).get("genre") == "hiphop",
+        "niche": p.niche == ["hiphop"],
     }
     for field in pl.editable_fields():
         assert persisted.get(field), f"registry marks {field!r} editable but it did NOT persist through the save route"
@@ -57,4 +56,4 @@ def test_quarantined_fields_are_not_in_the_editable_set():
 
 def test_editable_set_is_exactly_the_five_clean_levers():
     # pin the editable set so an accidental widening (e.g. re-admitting tag_lean as "editable") reds here.
-    assert set(pl.editable_fields()) == {"voice", "content_focus", "selection_scope", "hook_angle", "intake"}
+    assert set(pl.editable_fields()) == {"voice", "content_focus", "selection_scope", "hook_angle", "niche"}

@@ -55,8 +55,8 @@ def test_hashtag_lifecycle_end_to_end(tmp_path, monkeypatch):
     monkeypatch.setenv("META_GRAPH_TOKEN", "tok"); monkeypatch.setenv("META_IG_USER_ID", "ig")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
 
-    # 1 · a persona declares its niche in its own words, and an ACTIVE account carries it
-    pid = core.add_persona(cfg, name="Hiphop", voice="hiphop", intake={"genre": "hiphop"}, id="curator")
+    # 1 · a persona declares its niche, and an ACTIVE account carries it
+    pid = core.add_persona(cfg, name="Hiphop", voice="any register", niche=["hiphop"], id="curator")
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.accounts_path.write_text(json.dumps({"accounts": [
         {"handle": "@a", "platforms": ["instagram"], "status": "active", "persona_id": pid}]}))

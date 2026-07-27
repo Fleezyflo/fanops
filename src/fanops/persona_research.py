@@ -15,7 +15,7 @@ evidence-backed or honestly SHORT."""
 from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from fanops.config import Config
-from fanops.hashtags import METRIC_FIELD, _norm, _STOPWORDS, _WORD, load_measurements
+from fanops.hashtags import METRIC_FIELD, _norm, load_measurements
 from fanops.hashtag_hygiene import is_curatable
 
 _EVIDENCE_MAX_AGE_DAYS = 90       # older than this is history, not evidence — a dead measurement cannot curate
@@ -30,35 +30,17 @@ def _registry(cfg: Config):
 
 
 def persona_terms(per) -> list[str]:
-    """The discovery/alignment vocabulary for ONE persona, from its own words only: `intake.genre` first
-    (the explicit niche declaration), then the voice — adjacent-word CONCATENATIONS before the single
-    words, because that is how hashtags are actually written ("syrian rapper" -> #syrianrapper) — then the
-    name, whole-name concatenation first.
+    """The discovery/alignment vocabulary for ONE persona: its declared `niche`, normalized and deduped,
+    in declared order. Nothing else — no voice glue, no name concat, no intake.genre, no stopword filter.
 
-    Pure, deterministic, and CORPUS-BLIND. Specificity leads so the narrowest, most on-niche searches
-    happen before a throttle can end a pass. Reuses the tokenizer the clip-content signal uses
-    (`hashtags._WORD` / `_STOPWORDS`), so "a token" means the same thing everywhere."""
+    Pure, deterministic, and CORPUS-BLIND. Voice is the LLM register for caption/hook prompts, not a
+    vocabulary source. Entries are operator declarations already validated by `tag_defect` at the store
+    boundary; this function does not invent or silently drop terms."""
     out: list[str] = []; seen: set[str] = set()
-
-    def add(t: str) -> None:
-        t = (t or "").strip().lower()
-        if t and t not in seen and t not in _STOPWORDS:
+    for n in getattr(per, "niche", None) or []:
+        t = str(n).strip().lstrip("#").lower()
+        if t and t not in seen:
             seen.add(t); out.append(t)
-
-    intake = per.intake if isinstance(getattr(per, "intake", None), dict) else {}
-    for t in _WORD.findall(str(intake.get("genre") or "").lower()):
-        add(t)
-    words = _WORD.findall(str(getattr(per, "voice", "") or "").lower())
-    for a, b in zip(words, words[1:]):
-        if a not in _STOPWORDS and b not in _STOPWORDS:
-            add(a + b)
-    for t in words:
-        add(t)
-    nm = _WORD.findall(str(getattr(per, "name", "") or "").lower())
-    if len(nm) > 1:
-        add("".join(nm))
-    for t in nm:
-        add(t)
     return out
 
 

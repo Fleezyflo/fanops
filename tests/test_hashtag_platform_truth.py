@@ -42,8 +42,9 @@ def _live(monkeypatch):
     monkeypatch.setenv("META_GRAPH_TOKEN", "t"); monkeypatch.setenv("META_IG_USER_ID", "u")
 
 
-def _persona(cfg, pid="craft", name="Craft Curator", voice="syrian rapper craft", genre="hiphop"):
-    add_persona(cfg, name=name, voice=voice, intake={"genre": genre}, id=pid)
+def _persona(cfg, pid="craft", name="Craft Curator", voice="syrian rapper craft", niche=None):
+    # niche is the discovery root (B-6); default one-token niche so Layer A resolves a single anchor.
+    add_persona(cfg, name=name, voice=voice, niche=list(niche) if niche is not None else ["hiphop"], id=pid)
     return pid
 
 
@@ -131,7 +132,7 @@ def test_graph_id_is_cached_so_a_known_tag_never_spends_another_search(tmp_path,
     is legitimately re-searched next pass, which is a different behaviour from re-searching a known one.)"""
     _live(monkeypatch)
     cfg = Config(root=tmp_path)
-    pid = _persona(cfg, name="Hiphop", voice="hiphop", genre="hiphop"); _link_active(cfg, pid)
+    pid = _persona(cfg, name="Hiphop", voice="hiphop", niche=["hiphop"]); _link_active(cfg, pid)
     media = {"#hiphop": [{"caption": "", "like_count": 5, "comments_count": 0}]}
     refresh_store(cfg, get=_graph(media))
     assert load_measurements(cfg)["#hiphop"]["graph_id"] == "id-hiphop"
@@ -148,7 +149,7 @@ def test_terms_come_from_the_description_never_from_the_corpus(tmp_path, monkeyp
     A poison tag sitting in the corpus is never searched and never re-enters."""
     _live(monkeypatch)
     cfg = Config(root=tmp_path)
-    pid = _persona(cfg, voice="hiphop bars", genre="rap")
+    pid = _persona(cfg, voice="poison-proof prose", niche=["hiphop", "bars"])
     _link_active(cfg, pid)
     apply_auto_corpus(cfg, pid, tags=["#poisontag"], meta={})
     calls: list = []
@@ -160,13 +161,16 @@ def test_terms_come_from_the_description_never_from_the_corpus(tmp_path, monkeyp
     assert "#poisontag" not in Personas.load(cfg).get(pid).hashtag_corpus, "and it cannot survive derivation"
 
 
-def test_persona_terms_are_pure_and_description_derived(tmp_path):
+def test_persona_terms_return_declared_niche_only(tmp_path):
+    """persona_terms is the declared niche — normalized/deduped — and nothing else. Voice/name/intake/
+    corpus never contribute a token (B-6)."""
     from fanops.personas import Persona
-    per = Persona(id="x", name="Craft Curator", voice="syrian rapper craft", intake={"genre": "hiphop"},
-                  hashtag_corpus=["#neverseenhere"])
+    per = Persona(id="x", name="Craft Curator", voice="syrian rapper craft",
+                  niche=["Lyricism", "songwriting", "lyricism", "#MusicReview"],
+                  intake={"genre": "hiphop"}, hashtag_corpus=["#neverseenhere"])
     terms = persona_terms(per)
-    assert "hiphop" in terms and "syrian" in terms and "rapper" in terms
-    assert "craftcurator" in terms, "the whole-name concatenation is how IG tags are written"
+    assert terms == ["lyricism", "songwriting", "musicreview"]
+    assert "syrian" not in terms and "craftcurator" not in terms and "hiphop" not in terms
     assert not any("neverseenhere" in t for t in terms), "the corpus is never a term source"
     assert terms == persona_terms(per), "pure"
 
@@ -310,7 +314,7 @@ def test_ranked_tags_orders_by_platform_field_desc(tmp_path):
 def test_throttle_backs_off_then_stops_the_pass_with_evidence_intact(tmp_path, monkeypatch):
     _live(monkeypatch)
     cfg = Config(root=tmp_path)
-    pid = _persona(cfg, voice="hiphop bars"); _link_active(cfg, pid)
+    pid = _persona(cfg, niche=["hiphop", "bars"]); _link_active(cfg, pid)
     import fanops.meta_graph as mg
     slept: list = []
     monkeypatch.setattr(mg, "_sleep", lambda s: slept.append(s))
@@ -332,7 +336,7 @@ def test_throttle_backs_off_then_stops_the_pass_with_evidence_intact(tmp_path, m
 def test_ordinary_refusal_skips_the_tag_and_the_pass_continues(tmp_path, monkeypatch):
     _live(monkeypatch)
     cfg = Config(root=tmp_path)
-    pid = _persona(cfg, voice="hiphop bars"); _link_active(cfg, pid)
+    pid = _persona(cfg, niche=["hiphop", "bars"]); _link_active(cfg, pid)
     def get(url, params=None, timeout=None):
         p = params or {}
         if "ig_hashtag_search" in url:

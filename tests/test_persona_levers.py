@@ -294,7 +294,7 @@ def test_energy_to_scope_migration_parity(tmp_path):
 def test_no_new_lever_family():
     assert len(_pl.LEVER_REGISTRY) == 5
     persona_levers = {lv["key"] for lv in _pl.LEVER_REGISTRY if lv["key"] not in ("clip_profile", "intake")}
-    assert persona_levers == set(_pl.editable_fields()) - {"voice", "intake"}
+    assert persona_levers == set(_pl.editable_fields()) - {"voice", "niche"}
 
 
 def test_no_surviving_account_energy_selection_reader():

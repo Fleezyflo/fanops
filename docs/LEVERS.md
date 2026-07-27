@@ -70,7 +70,7 @@ Then run `fanops lever docs` to regenerate this file.
 
 **Does:** the niche word(s) the next measurement pass searches Instagram for — the corpus it derives then LEADS the caption hashtags
 
-Free text, not an enum: `persona_research.persona_terms` tokenizes it (with the voice and name) into the tags `fanops_hashtags.refresh_store` searches Instagram for. The corpus it derives then leads caption hashtags.
+Declared subject list (`Persona.niche`): `persona_research.persona_terms` returns it verbatim (normalized, deduped) for `fanops_hashtags.refresh_store` to search. The corpus it derives then leads caption hashtags.
 
 
 ## ARCHETYPE CROSSWALK

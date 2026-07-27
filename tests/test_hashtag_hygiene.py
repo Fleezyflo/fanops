@@ -65,7 +65,7 @@ def test_structurally_junk_tag_never_enters_a_derived_corpus(tmp_path):
     from fanops.personas import Personas, add_persona
     from fanops.persona_research import derive_corpus
     cfg = Config(root=tmp_path)
-    pid = add_persona(cfg, name="Hiphop", voice="hiphop", intake={"genre": "hiphop"}, id="curator")
+    pid = add_persona(cfg, name="Hiphop", voice="any register", niche=["hiphop"], id="curator")
     at = datetime.now(timezone.utc).isoformat()
     cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.hashtags_path.write_text(json.dumps({

@@ -44,11 +44,11 @@ def _dead_router(url, params=None, timeout=None):
 
 
 def _persona(cfg, *, pid="curator"):
-    """A persona whose name/voice/genre are ONE word, so persona_terms yields exactly one anchor
+    """A persona whose niche is ONE declared term, so persona_terms yields exactly one anchor
     (#hiphop) and the harvest attribution is unambiguous. Linked to an ACTIVE account, because
     _posting_personas narrows discovery to the personas that actually post."""
     from fanops import personas as P
-    P.add_persona(cfg, name="Hiphop", voice="hiphop", intake={"genre": "hiphop"}, id=pid)
+    P.add_persona(cfg, name="Hiphop", voice="any register", niche=["hiphop"], id=pid)
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.accounts_path.write_text(json.dumps({"accounts": [
         {"handle": "a", "platforms": ["instagram"], "status": "active", "persona_id": pid}]}))
