@@ -38,7 +38,7 @@ _MUTATIONS = {
     "content_focus": (["punchlines"], ["hype"]),
     "selection_scope": ("open", "subject_locked"),
     "hook_angle": ("curiosity", "fomo"),
-    "intake": ({"genre": "hiphop"}, {"genre": "gossip"}),
+    "niche": (["hiphop"], ["gossip"]),
 }
 
 
@@ -47,7 +47,7 @@ def _output(cfg, p):
     d = compose_breakdown(cfg, p)
     return (d["casting"]["text"], d["hook"]["text"], d["caption"]["text"],
             d["cut"]["band"], d["cut"]["framing"], tuple(d["tags"]["lead"]),
-            tuple(d["tags"]["terms"]))   # the niche words Layer A searches on — intake's output channel
+            tuple(d["tags"]["terms"]))   # the niche words Layer A searches on — niche's output channel
 
 
 def test_quarantine_is_printed_every_run():
