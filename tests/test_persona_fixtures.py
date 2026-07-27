@@ -19,7 +19,7 @@ def ensure_archetype_personas(cfg: Config) -> Accounts:
         )
         for name, voice, scope, focus, angle, corpus in specs:
             pid = P.add_persona(cfg, name=name, voice=voice, selection_scope=scope,
-                                content_focus=focus, hook_angle=angle)
+                                content_focus=focus, hook_angle=angle, niche=["hiphop"])
             P.apply_auto_corpus(cfg, pid, tags=corpus, meta={})
     pids = {p.name: p.id for p in P.Personas.load(cfg).personas}
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)

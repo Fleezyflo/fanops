@@ -33,7 +33,7 @@ def _write_accounts(cfg, rows):
 
 def test_link_personas_by_voice_links_matching_accounts(tmp_path):
     cfg = Config(root=tmp_path)
-    pid = P.add_persona(cfg, name="Hip-Hop Curator", voice="underground scene evangelist")
+    pid = P.add_persona(cfg, name="Hip-Hop Curator", voice="underground scene evangelist", niche=["hiphop"])
     P.apply_auto_corpus(cfg, pid, tags=["#hiphop"], meta={})
     _write_accounts(cfg, [
         {"handle": "@hip",  "platforms": ["instagram"], "status": "active",
@@ -52,7 +52,7 @@ def test_link_personas_by_voice_links_matching_accounts(tmp_path):
 
 def test_link_personas_by_voice_skips_already_linked(tmp_path):
     cfg = Config(root=tmp_path)
-    pid = P.add_persona(cfg, name="P1", voice="exact match voice")
+    pid = P.add_persona(cfg, name="P1", voice="exact match voice", niche=["hiphop"])
     _write_accounts(cfg, [{"handle": "@a", "platforms": ["instagram"], "status": "active",
                            "persona": "exact match voice", "persona_id": pid}])
     linked = link_personas_by_voice(cfg)
@@ -61,7 +61,7 @@ def test_link_personas_by_voice_skips_already_linked(tmp_path):
 
 def test_link_personas_by_voice_requires_exact_match(tmp_path):
     cfg = Config(root=tmp_path)
-    P.add_persona(cfg, name="P1", voice="underground scene evangelist")
+    P.add_persona(cfg, name="P1", voice="underground scene evangelist", niche=["hiphop"])
     _write_accounts(cfg, [{"handle": "@a", "platforms": ["instagram"], "status": "active",
                            "persona": "Underground Scene Evangelist"}])   # different case -> no match
     linked = link_personas_by_voice(cfg)
@@ -205,7 +205,7 @@ def test_migrate_is_idempotent(tmp_path):
 
 def test_migrate_returns_all_result_keys(tmp_path):
     cfg = Config(root=tmp_path)
-    P.add_persona(cfg, name="Existing", voice="pre-existing voice")
+    P.add_persona(cfg, name="Existing", voice="pre-existing voice", niche=["hiphop"])
     _write_accounts(cfg, [
         {"handle": "@a", "platforms": ["instagram"], "status": "active",
          "persona": "pre-existing voice"},        # voice_linked path (persona already exists)

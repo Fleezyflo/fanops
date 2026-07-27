@@ -43,7 +43,7 @@ def register_personas_routes(app, cfg):
         return _personas_panel(studio_personas.create_persona(
             cfg, request.form.get("name", ""), request.form.get("voice", ""),
             content_focus=request.form.getlist("content_focus"), selection_scope=request.form.get("selection_scope", ""),
-            hook_angle=request.form.get("hook_angle", "")))
+            hook_angle=request.form.get("hook_angle", ""), niche=request.form.get("niche", "")))
 
     @app.post("/personas/edit")
     def do_personas_edit():

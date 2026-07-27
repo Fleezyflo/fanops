@@ -24,7 +24,7 @@ def _client(cfg):
 def test_persona_card_directives_match_compiler_verbatim(tmp_path):
     cfg = Config(root=tmp_path)
     pid = core.add_persona(cfg, name="Z", voice="devoted fan", content_focus=["punchlines"],
-                           selection_scope="controversy_seeking", hook_angle="curiosity")
+                           selection_scope="controversy_seeking", hook_angle="curiosity", niche=["hiphop"])
     p = core.Personas.load(cfg).get(pid)
     card = next(c for c in views.personas_page(cfg).personas if c.id == pid)
     assert card.instruction == str(casting_directive(p))
@@ -34,7 +34,7 @@ def test_persona_card_directives_match_compiler_verbatim(tmp_path):
 
 def test_lever_detail_rows_joins_option_effect(tmp_path):
     cfg = Config(root=tmp_path)
-    pid = core.add_persona(cfg, name="Z", content_focus=["punchlines"], hook_angle="curiosity")
+    pid = core.add_persona(cfg, name="Z", content_focus=["punchlines"], hook_angle="curiosity", niche=["hiphop"])
     p = core.Personas.load(cfg).get(pid)
     from fanops.personas import lever_catalog, manifest
     cat = lever_catalog()
@@ -48,7 +48,7 @@ def test_lever_detail_rows_joins_option_effect(tmp_path):
 def test_account_provenance_persona_derived_clip_profile(tmp_path):
     cfg = Config(root=tmp_path)
     _seed_accounts(cfg, [{"handle": "@a", "platforms": ["instagram"], "status": "active", "clip_profile": "long"}])
-    pid = core.add_persona(cfg, name="P", voice="v", content_focus=["punchlines"])
+    pid = core.add_persona(cfg, name="P", voice="v", content_focus=["punchlines"], niche=["hiphop"])
     link_persona(cfg, "@a", pid)
     p = core.Personas.load(cfg).get(pid)
     prov = views._account_provenance(cfg, p, ["a"])
@@ -59,7 +59,7 @@ def test_account_provenance_persona_derived_clip_profile(tmp_path):
 def test_account_provenance_account_only_clip_profile(tmp_path):
     cfg = Config(root=tmp_path)
     _seed_accounts(cfg, [{"handle": "@a", "platforms": ["instagram"], "status": "active", "clip_profile": "long"}])
-    pid = core.add_persona(cfg, name="P", voice="v")
+    pid = core.add_persona(cfg, name="P", voice="v", niche=["hiphop"])
     link_persona(cfg, "@a", pid)
     p = core.Personas.load(cfg).get(pid)
     prov = views._account_provenance(cfg, p, ["a"])
@@ -69,14 +69,14 @@ def test_account_provenance_account_only_clip_profile(tmp_path):
 
 def test_drawer_unlinked_persona_shows_drives_no_accounts(tmp_path):
     cfg = Config(root=tmp_path)
-    pid = core.add_persona(cfg, name="Lonely", voice="x")
+    pid = core.add_persona(cfg, name="Lonely", voice="x", niche=["hiphop"])
     html = _client(cfg).get(f"/personas/drawer/{pid}").data.decode()
     assert "Drives no accounts" in html
 
 
 def test_drawer_failopen_when_provenance_raises(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path)
-    pid = core.add_persona(cfg, name="Z", voice="x")
+    pid = core.add_persona(cfg, name="Z", voice="x", niche=["hiphop"])
 
     def _boom(*a, **k):
         raise RuntimeError("prov fail")
@@ -90,7 +90,7 @@ def test_drawer_failopen_when_provenance_raises(tmp_path, monkeypatch):
 
 def test_drawer_smoke_effective_persona_section(tmp_path):
     cfg = Config(root=tmp_path)
-    pid = core.add_persona(cfg, name="Z", voice="devoted fan", content_focus=["punchlines"], hook_angle="curiosity")
+    pid = core.add_persona(cfg, name="Z", voice="devoted fan", content_focus=["punchlines"], hook_angle="curiosity", niche=["hiphop"])
     html = _client(cfg).get(f"/personas/drawer/{pid}").data.decode()
     assert 'class="effective-persona"' in html
     assert "<pre" in html and "Pick" in html

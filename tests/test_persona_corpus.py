@@ -80,7 +80,7 @@ def test_corpus_normalizes_and_dedupes_model_picks():
 
 def test_account_hydrates_hashtag_corpus_from_persona(tmp_path):
     cfg = Config(root=tmp_path)
-    pid = core.add_persona(cfg, name="P1", voice="v1")
+    pid = core.add_persona(cfg, name="P1", voice="v1", niche=["hiphop"])
     core.apply_auto_corpus(cfg, pid, tags=["#detroitrap"], meta={})
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.accounts_path.write_text(json.dumps({"accounts": [

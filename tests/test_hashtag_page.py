@@ -65,7 +65,7 @@ def test_add_remove_ban_roundtrip_normalized(tmp_path):
 
 def test_page_get_is_network_inert(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path)
-    core.add_persona(cfg, name="Blogger")               # so section 1 has a row
+    core.add_persona(cfg, name="Blogger", niche=["hiphop"])               # so section 1 has a row
     # Any Graph call would go through requests.get — make it a hard failure if the GET touches the network.
     import requests
     def _boom(*a, **k):
@@ -98,7 +98,7 @@ def test_ban_beats_a_derived_corpus_write(tmp_path):
     # apply_auto_corpus is the ONLY corpus writer now (derivation replaces wholesale); a banned tag must
     # not land even when the derivation chose it — the operator veto outranks the platform measurement.
     cfg = Config(root=tmp_path)
-    pid = core.add_persona(cfg, name="P1")
+    pid = core.add_persona(cfg, name="P1", niche=["hiphop"])
     add_ban(cfg, "#banned")
     core.apply_auto_corpus(cfg, pid, tags=["#banned", "#keep"], meta={})
     corpus = core.Personas.load(cfg).get(pid).hashtag_corpus
@@ -194,7 +194,7 @@ def test_ok_cache_ranks_chips_and_flags_bans(tmp_path):
 
 def test_corpus_rows_read_only(tmp_path):
     cfg = Config(root=tmp_path)
-    pid = core.add_persona(cfg, name="Music Blogger")
+    pid = core.add_persona(cfg, name="Music Blogger", niche=["hiphop"])
     _cache(cfg, {"#rap": 100, "#hiphop": 900})
     core.apply_auto_corpus(cfg, pid, tags=["#rap", "#hiphop"], meta={
         "#rap": {METRIC_FIELD: 100.0, "measured_at": "2026-07-20T00:00:00+00:00", "from": "#rap"},
@@ -216,7 +216,7 @@ def test_corpus_rows_read_only(tmp_path):
 def test_corpus_row_size_is_byte_truth_from_personas_json(tmp_path):
     # A-11 deleted the deprecated-corpus record and its "Retired" column; `size` is the whole row story.
     cfg = Config(root=tmp_path)
-    pid = core.add_persona(cfg, name="P1")
+    pid = core.add_persona(cfg, name="P1", niche=["hiphop"])
     raw = json.loads(cfg.personas_path.read_text())
     for d in raw["personas"]:
         if d["id"] == pid: d["hashtag_corpus"] = ["#legacyone", "#legacytwo"]
