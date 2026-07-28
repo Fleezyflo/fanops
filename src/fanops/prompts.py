@@ -370,14 +370,25 @@ def caption_prompt(payload: dict) -> str:
         f"{json.dumps(transferred, ensure_ascii=False)}\n"
         if transferred else ""
     )
-    # The menu IS the measurement cache, already ranked by the platform's own number — there is no frozen
-    # pool to union in and no niche floor to pick, because a tag with no platform measurement is not a
-    # candidate. Absent cache -> an empty menu, and the surface corpus carries the line.
-    menu = [t for t in (payload.get("hashtag_store") or []) if isinstance(t, str)]
-    menu_json = json.dumps(menu, ensure_ascii=False)
-    pick_rule = ("Pick up to 4 tags by how well each fits THIS clip — the menu is already ordered by live "
-                 "platform reach, so prefer earlier entries when the fit is equal. Choose ONLY from the menu "
-                 f"UNION each surface's `corpus`; do NOT invent tags outside them: {menu_json}. ")
+    # MOL-513 (C-3): each surface carries its own `hashtag_store` (that account's persona aligned pool,
+    # metric-ranked). Absent/empty menu -> honest empty list in the pick rule; the surface corpus still
+    # carries the line. Root-level hashtag_store is gone.
+    pick_parts = []
+    for s in surfaces:
+        if not isinstance(s, dict):
+            continue
+        key = s.get("surface")
+        menu = [t for t in (s.get("hashtag_store") or []) if isinstance(t, str)]
+        pick_parts.append(
+            f"For surface {json.dumps(key)} choose ONLY from menu {json.dumps(menu, ensure_ascii=False)} "
+            "UNION that surface's `corpus`."
+        )
+    pick_body = (" ".join(pick_parts) if pick_parts else
+                 "Choose ONLY from each surface's `hashtag_store` UNION its `corpus` "
+                 "(both may be empty — ship a short honest line).")
+    pick_rule = ("Pick up to 4 tags by how well each fits THIS clip — each surface's menu is already "
+                 "ordered by live platform reach, so prefer earlier entries when the fit is equal. "
+                 f"{pick_body} Do NOT invent tags outside them. ")
     return (
         "You write captions for FAN ACCOUNTS that repost and celebrate an artist. "
         "You are a FAN hyping the artist to other fans — NEVER the artist, never an official account. "
@@ -407,7 +418,7 @@ def caption_prompt(payload: dict) -> str:
         "account (e.g. which sub-scene to lean into within the menu).\n"
         "  - When a surface carries a `corpus` (its curated, reach-vetted tag pool), PREFER the tags in "
         "that surface's `corpus` for that surface — they are its hand-picked, account-specific tags; fill "
-        "any remaining slots (up to 4) from the menu above.\n"
+        "any remaining slots (up to 4) from that surface's `hashtag_store` menu.\n"
         # ROOT FIX: the caption gate is HASHTAGS ONLY now — the on-screen hook is authored by the frame-
         # seeing MOMENT gate (m.hook), never this blind text-only gate. The per-surface
         # hook/axis/rationale ask was removed (the dormant coherence-gate machinery was deleted with it;

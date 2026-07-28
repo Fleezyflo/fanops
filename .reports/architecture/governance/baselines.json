@@ -15,7 +15,7 @@
   "approved_terminal_post_writers": [
     "src/fanops/post/run.py:343",
     "src/fanops/reconcile.py:766",
-    "src/fanops/studio/actions.py:298",
+    "src/fanops/studio/actions.py:301",
     "src/fanops/track.py:193"
   ],
   "approved_terminal_post_writers_note": "Every site WRITING PostState.published / PostState.analyzed with a LITERAL value. The R1 invariant fires at CONSTRUCTION ONLY; model_copy and setattr both bypass it, and four manual call-site guards hold the line. A FIFTH door saves cleanly and then BRICKS THE NEXT Ledger.load. This is GB-4, mechanized (rule IMPL-009). *** IT DOES NOT COVER THE DYNAMIC DOORS — PostState(<runtime>), model_copy(update=…), setattr(…). That blind spot is reported on EVERY run rather than hidden. ***",
@@ -44,6 +44,18 @@
     [
       "fanops.autopilot",
       "fanops.doctor"
+    ],
+    [
+      "fanops.canary",
+      "fanops.clip"
+    ],
+    [
+      "fanops.canary",
+      "fanops.ingest"
+    ],
+    [
+      "fanops.canary",
+      "fanops.personas"
     ],
     [
       "fanops.cli",
@@ -314,6 +326,14 @@
       "fanops.moments"
     ],
     [
+      "fanops.recaption",
+      "fanops.pipeline"
+    ],
+    [
+      "fanops.recaption",
+      "fanops.studio.views"
+    ],
+    [
       "fanops.reconcile",
       "fanops.meta_graph"
     ],
@@ -334,10 +354,6 @@
       "fanops.secret_provider"
     ],
     [
-      "fanops.signals",
-      "fanops.responder"
-    ],
-    [
       "fanops.stitch_render",
       "fanops.clip"
     ],
@@ -352,10 +368,6 @@
     [
       "fanops.studio.actions_run",
       "fanops.pipeline"
-    ],
-    [
-      "fanops.studio.actions_run",
-      "fanops.responder"
     ],
     [
       "fanops.studio.app",
@@ -436,10 +448,6 @@
     [
       "fanops.studio.views_results",
       "fanops.variant_amplify"
-    ],
-    [
-      "fanops.studio.views_review",
-      "fanops.studio.views_results"
     ],
     [
       "fanops.track",

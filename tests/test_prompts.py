@@ -3,12 +3,42 @@ from fanops.prompts import moment_pick_prompt, moment_hook_prompt, caption_promp
 from fanops.models import MomentDecision, MomentHookDecision, CaptionSet
 
 def test_caption_prompt_includes_store_only_tag_in_menu():
-    # L09: when request_captions carries a live hashtag_store, caption_prompt must surface store-only tags.
+    # L09 / MOL-513: when a surface carries a live hashtag_store, caption_prompt must surface those tags
+    # in that surface's pick rule (root-level hashtag_store is gone).
     store = ["#storeonlywinner", "#second"]
     out = caption_prompt({"clip_id": "c1", "language": "en", "guidance": "", "transcript_excerpt": "x",
-                          "hashtag_store": store,
-                          "surfaces": [{"surface": "a/instagram", "platform": "instagram"}]})
+                          "surfaces": [{"surface": "a/instagram", "platform": "instagram",
+                                        "hashtag_store": store}]})
     assert "#storeonlywinner" in out
+
+
+def test_caption_prompt_per_surface_menus_are_distinct():
+    # MOL-513: multi-surface prompt names each surface's own menu; a tag only on B must not appear in A's rule.
+    out = caption_prompt({
+        "clip_id": "c1", "language": "en", "guidance": "", "transcript_excerpt": "x",
+        "surfaces": [
+            {"surface": "a/instagram", "platform": "instagram",
+             "hashtag_store": ["#alphaonly"], "corpus": ["#acorpus"]},
+            {"surface": "b/instagram", "platform": "instagram",
+             "hashtag_store": ["#betaonly"], "corpus": ["#bcorpus"]},
+        ],
+    })
+    # Each menu tag is named (SURFACES JSON + pick rules).
+    assert "#alphaonly" in out and "#betaonly" in out
+    # Split on the per-surface pick-rule prefixes; each rule must not name the other surface's menu tag.
+    a_rule = out.split('For surface "a/instagram"', 1)[1].split('For surface "b/instagram"', 1)[0]
+    b_rule = out.split('For surface "b/instagram"', 1)[1].split("Do NOT invent", 1)[0]
+    assert "#alphaonly" in a_rule and "#betaonly" not in a_rule
+    assert "#betaonly" in b_rule and "#alphaonly" not in b_rule
+
+
+def test_caption_prompt_empty_hashtag_store_renders():
+    # MOL-513: empty / absent menu must not crash; honest empty list in the pick rule.
+    out = caption_prompt({"clip_id": "c1", "language": "en", "guidance": "", "transcript_excerpt": "x",
+                          "surfaces": [{"surface": "a/instagram", "platform": "instagram",
+                                        "hashtag_store": []}]})
+    assert 'For surface "a/instagram"' in out
+    assert "[]" in out.split('For surface "a/instagram"', 1)[1].split("UNION", 1)[0]
 
 def test_prompt_does_not_ask_for_request_id():
     # MOL-167: the model must never be asked to echo request_id/source_id — the gate stamps both.

@@ -120,8 +120,7 @@ def regenerate_caption(cfg: Config, post_id: str, guidance: str = "", *,
     `claude -p` the llm responder uses. Bounded to ONE model call per click (PRD cost mitigation).
     Does NOT publish — safe on any backend, so no confirm gate."""
     from fanops.prompts import caption_prompt
-    from fanops.caption import brand_risk_flag
-    from fanops.hashtags import load_measurements, ranked_tags
+    from fanops.caption import brand_risk_flag, _per_account_hashtag_stores
     now = _now(now)
     led = Ledger.load(cfg)                              # lock-free read: reject early, build context
     p, err = _guard_editable_post(led, post_id, now)
@@ -136,22 +135,24 @@ def regenerate_caption(cfg: Config, post_id: str, guidance: str = "", *,
     if (guidance or "").strip():                        # operator hint is highest priority for this re-roll
         full_guidance = (base + "\n\nOPERATOR INSTRUCTION FOR THIS REGENERATION (highest priority): "
                          + guidance.strip())
-    store = ranked_tags(load_measurements(cfg)) or None
     # Parity with the batch payload (caption.request_captions): the regen prompt carries the SAME
-    # per-surface persona/corpus the pipeline prompts with — a corpus-blind regen invents tags (MOL-86 class).
+    # per-surface persona/corpus/hashtag_store the pipeline prompts with — a corpus-blind regen invents
+    # tags (MOL-86 class). MOL-513: hashtag_store lives ON the surface (persona aligned pool), not root.
     from fanops.accounts import Accounts
     from fanops.personas import caption_directive
     accts = Accounts.load(cfg)
     acct = next((a for a in accts.accounts if a.handle == p.account), None)
     persona = caption_directive(acct) if acct is not None else None
     corpus = list(getattr(acct, "hashtag_corpus", []) or []) if acct is not None else []
+    stores = _per_account_hashtag_stores(cfg, accts)
+    sv = stores.get(p.account) if acct is not None else None
     payload = {"clip_id": p.parent_id, "language": src.language if src else None,
                "transcript_excerpt": moment.transcript_excerpt if moment else "",
                "guidance": full_guidance,
                "surfaces": [{"surface": surface, "platform": p.platform.value,
                              **({"persona": persona} if persona else {}),
-                             **({"corpus": corpus} if corpus else {})}],
-               **({"hashtag_store": store} if store is not None else {})}
+                             **({"corpus": corpus} if corpus else {}),
+                             **({"hashtag_store": sv} if sv else {})}]}
     if model is None:
         # NO haphazard claude (ROOT): Regenerate calls the LLM, so it obeys the SAME single switch as every
         # other gate — refuse unless the operator EXPLICITLY enabled the AI responder. Never spawn `claude`
@@ -185,7 +186,9 @@ def regenerate_caption(cfg: Config, post_id: str, guidance: str = "", *,
     # with corpus + recency threading, and the POSTED caption IS the vetted <=4-tag line — regenerate can no
     # longer write raw model tags past the cap/membership gates.
     from fanops.caption import _recent_tags, _tags_in
-    from fanops.hashtags import vet_hashtags_traced
+    # Vetting still uses the global measured menu (C-1 per-surface vet store is a separate ticket).
+    from fanops.hashtags import vet_hashtags_traced, load_measurements, ranked_tags
+    store = ranked_tags(load_measurements(cfg)) or None
     vetted, _sources = vet_hashtags_traced(list(item.hashtags or []) or _tags_in(item.caption),
                            p.platform, src.language if src else None, store=store,
                            corpus=corpus, cfg=cfg, recent=_recent_tags(led, p.account))
