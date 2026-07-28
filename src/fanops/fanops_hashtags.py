@@ -28,6 +28,11 @@ from fanops.controlio import write_json_atomic
 
 _MAX_AGE_DAYS = 90            # a measurement older than this is history, not evidence — pruned on write
 _COMPLETE_KEY = "last_complete_pass"   # sibling of tag records; gates the 12h tick (NOT file mtime)
+# Scrape is ~5–7s/tag. Unbounded co-tag enqueue (one anchor can harvest 80+) turns a 24-niche pass into
+# hundreds of calls with no mid-pass write — looks hung. Cap tries + novel co-tag measures per pass;
+# incomplete passes do NOT stamp last_complete_pass (same as throttle) so the next tick continues.
+_SCRAPE_TRY_CAP = 40          # max tags attempted per refresh_store call (~4–7 min at live scrape latency)
+_SCRAPE_COTAG_ENQUEUE_CAP = 10  # max NEW co-tags measured this pass (anchors first; discovery is incremental)
 
 
 def _read_complete_pass(cfg: Config) -> str | None:
@@ -130,13 +135,24 @@ def refresh_store(cfg: Config, *, scrape_client=None, now=None) -> dict:
     anchor_set = set(anchors)
     unmeasured_anchors = [t for t in anchors if t not in cache]
     remeasure = sorted((t for t in list(anchors) + [t for t in cache if t not in anchor_set] if t in cache),
-                       key=lambda t: cache[t].get("measured_at") or "")   # stalest first; anchors do not monopolise
-    queue: list[str] = unmeasured_anchors + remeasure
+                       key=lambda t: cache[t].get("measured_at") or "")   # stalest first
+    # Scrape is ~5–10s/tag. When niches are still dark, spend the pass ONLY on them — do not let
+    # re-measure of the old Graph cache (28+) consume the try budget before craft/burner niches land.
+    if unmeasured_anchors:
+        queue: list[str] = list(unmeasured_anchors)
+    else:
+        queue = list(remeasure)
     queued: set[str] = set(queue)
-    measured = 0; discovered = 0; throttled = False; tried = 0
+    measured = 0; discovered = 0; throttled = False; tried = 0; cotag_enqueued = 0
     unresolved: list[dict] = []
+    log = get_logger(cfg)
     i = 0
     while i < len(queue):
+        if tried >= _SCRAPE_TRY_CAP:
+            throttled = True                               # budget, not Instagram — same incomplete-pass stamp
+            log("hashtags", "-", "pass_try_cap", tried=tried, queue_left=len(queue) - i,
+                cap=_SCRAPE_TRY_CAP)
+            break
         tag = queue[i]; i += 1
         tried += 1
         metric = None; cotags: dict[str, int] = {}; hid = None
@@ -153,6 +169,8 @@ def refresh_store(cfg: Config, *, scrape_client=None, now=None) -> dict:
         except ScrapeRefused as e:
             unresolved.append({"tag": tag, "reason": "refused", "code": e.code,
                                "message": e.message})
+            log("hashtags", tag, "unresolved", reason="refused", message=(e.message or "")[:120],
+                tried=tried)
             continue
         if tag in anchor_set:
             for co, n in cotags.items():
@@ -160,8 +178,8 @@ def refresh_store(cfg: Config, *, scrape_client=None, now=None) -> dict:
                     continue                               # an anchor is its own root, not its own discovery
                 attribution.setdefault(co, {})
                 attribution[co][tag] = attribution[co].get(tag, 0) + n
-                if co not in queued:
-                    queued.add(co); queue.append(co); discovered += 1
+                if co not in queued and cotag_enqueued < _SCRAPE_COTAG_ENQUEUE_CAP:
+                    queued.add(co); queue.append(co); discovered += 1; cotag_enqueued += 1
         if metric is None:
             continue                                       # no number -> UNMEASURED -> absent
         rec = {"graph_id": hid, METRIC_FIELD: float(metric), "measured_at": stamp}
@@ -169,6 +187,9 @@ def refresh_store(cfg: Config, *, scrape_client=None, now=None) -> dict:
         if frm:
             rec["from"] = {k: int(v) for k, v in frm.items()}
         cache[tag] = rec; measured += 1
+        if tried == 1 or tried % 5 == 0:
+            log("hashtags", tag, "measured", tried=tried, measured=measured, queue_left=len(queue) - i,
+                like_count=float(metric))
     cutoff = now - timedelta(days=_MAX_AGE_DAYS)
     fresh = {t: cache[t] for t in ranked_tags(cache) if _fresh(cache[t], cutoff)}
     if not throttled:

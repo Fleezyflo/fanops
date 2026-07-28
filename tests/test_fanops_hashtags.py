@@ -183,6 +183,42 @@ def test_stalest_remeasure_reaches_known_before_fresh_anchor(tmp_path, monkeypat
     assert client.media_calls[0] == "staletail", "stalest known must be first — not the fresh anchor"
 
 
+def test_refresh_store_try_cap_ends_pass_without_complete_stamp(tmp_path, monkeypatch):
+    """Scrape pass budget: stop after _SCRAPE_TRY_CAP tries, write evidence, do NOT stamp complete."""
+    import fanops.fanops_hashtags as fh
+    monkeypatch.setattr(fh, "_SCRAPE_TRY_CAP", 2)
+    monkeypatch.setattr(fh, "_SCRAPE_COTAG_ENQUEUE_CAP", 0)   # no co-tag expansion in this proof
+    cfg = Config(root=tmp_path)
+    from fanops import personas as P
+    P.add_persona(cfg, name="A", voice="x", niche=["alpha", "beta", "gamma"], id="a")
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": [
+        {"handle": "a", "platforms": ["instagram"], "status": "active", "persona_id": "a"}]}))
+    client = _FakeClient({"#alpha": 10, "#beta": 20, "#gamma": 30})
+    out = refresh_store(cfg, scrape_client=client)
+    assert out["throttled"] is True and out["tried"] == 2 and out["measured"] == 2
+    assert "last_complete_pass" not in json.loads(cfg.hashtags_path.read_text())
+    assert len(client.media_calls) == 2
+
+
+def test_refresh_store_cotag_enqueue_cap(tmp_path, monkeypatch):
+    """One anchor can harvest dozens of co-tags; only _SCRAPE_COTAG_ENQUEUE_CAP are measured this pass."""
+    import fanops.fanops_hashtags as fh
+    monkeypatch.setattr(fh, "_SCRAPE_TRY_CAP", 50)
+    monkeypatch.setattr(fh, "_SCRAPE_COTAG_ENQUEUE_CAP", 2)
+    cfg = Config(root=tmp_path); _persona(cfg)
+    # 5 co-tags in caption — only 2 may join the queue
+    co = "#c1 #c2 #c3 #c4 #c5"
+    metrics = {"#hiphop": 100, "#c1": 1, "#c2": 2, "#c3": 3, "#c4": 4, "#c5": 5}
+    client = _FakeClient(metrics, cooccur=co)
+    out = refresh_store(cfg, scrape_client=client)
+    assert out["discovered"] == 2
+    m = load_measurements(cfg)
+    assert "#hiphop" in m
+    measured_cos = [t for t in ("#c1", "#c2", "#c3", "#c4", "#c5") if t in m]
+    assert len(measured_cos) == 2
+
+
 def datetime_for_pass():
     from datetime import datetime, timezone
     return datetime(2026, 7, 2, 0, 0, tzinfo=timezone.utc)
