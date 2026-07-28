@@ -142,6 +142,55 @@ def test_graph_id_is_cached_so_a_known_tag_never_spends_another_search(tmp_path,
     assert any("/top_media" in u for u in calls), "but it must still re-measure"
 
 
+def test_cached_tag_metric_and_stamp_move_on_every_pass(tmp_path, monkeypatch):
+    """D-1 / MOL-516 — re-measurement must keep running every pass.
+
+    A cached `graph_id` short-circuits search but MUST still hit top_media and rewrite like_count +
+    measured_at when Meta returns a new number. Frozen stamps empty every corpus ~90d later with no
+    error. Also: a novel root refused with Meta code 18 must NOT end the pass (18 is GraphRefused, not
+    GraphThrottled) — otherwise the first refused niche root would starve re-measurement of known tags.
+    """
+    from datetime import datetime, timezone, timedelta
+    _live(monkeypatch)
+    cfg = Config(root=tmp_path)
+    # lyricism first so a mistaken "code 18 = throttle → break" aborts BEFORE #hiphop is re-measured
+    pid = _persona(cfg, niche=["lyricism", "hiphop"]); _link_active(cfg, pid)
+    t0 = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
+    t1 = t0 + timedelta(hours=13)
+    media0 = {"#hiphop": [{"caption": "", "like_count": 100, "comments_count": 0}]}
+    refresh_store(cfg, get=_graph(media0), now=t0)
+    before = load_measurements(cfg)["#hiphop"]
+    assert before[METRIC_FIELD] == 100.0
+    stamp0 = before["measured_at"]
+
+    calls: list = []; searches: list = []
+    def get(url, params=None, timeout=None):
+        calls.append(url); p = params or {}
+        if "ig_hashtag_search" in url:
+            searches.append(p.get("q"))
+            if p.get("q") == "lyricism":
+                return _Resp(400, {"error": {"code": 18, "error_subcode": 2207034,
+                                             "type": "OAuthException",
+                                             "message": "This API call could not be completed due to resource limits"}})
+            return _Resp(200, {"data": [{"id": "id-" + p.get("q", "")}]})
+        if url.endswith("/top_media"):
+            tag = "#" + url.rsplit("/", 2)[-2].replace("id-", "")
+            if tag == "#hiphop":
+                return _Resp(200, {"data": [{"caption": "", "like_count": 250, "comments_count": 0}]})
+            return _Resp(200, {"data": []})
+        return _Resp(404, {"error": {"code": 100, "message": "unknown"}})
+
+    out = refresh_store(cfg, get=get, now=t1)
+    after = load_measurements(cfg)["#hiphop"]
+    assert after[METRIC_FIELD] == 250.0, "platform's new like_count must land"
+    assert after["measured_at"] != stamp0 and after["measured_at"].startswith("2026-07-02T01:00")
+    assert "hiphop" not in searches, "cached #hiphop must not re-search"
+    assert any("/id-hiphop/top_media" in u for u in calls), "but it must still re-measure"
+    refused = [u for u in (out.get("unresolved") or []) if u.get("tag") == "#lyricism"]
+    assert refused and refused[0].get("code") == 18 and refused[0].get("reason") == "refused"
+    assert out.get("throttled") is False, "code 18 must not abort the pass as GraphThrottled"
+
+
 # ---------------------------------------------------------------- 3. discovery roots in the DESCRIPTION
 
 def test_terms_come_from_the_description_never_from_the_corpus(tmp_path, monkeypatch):
