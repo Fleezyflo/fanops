@@ -245,3 +245,24 @@ def test_ingest_uses_request_hashtag_store_not_global_cache(tmp_path):
     tb = led.clips["clip_1"].meta_captions["b/instagram"]["hashtags"]
     assert "#detroitrap" in ta and "#interview" not in ta and "#globalwinner" not in ta
     assert "#interview" in tb and "#detroitrap" not in tb and "#globalwinner" not in tb
+
+
+# --- MOL-512 (C-2): persona_facts lead_tags use this persona's aligned pool --------------------
+
+def test_persona_facts_lead_tags_use_aligned_pool_not_global(tmp_path):
+    """lead_tags must not surface a foreign persona's / unaligned global-cache winner.
+    Same cache shape as C-3: hiphop-aligned vs podcast-aligned vs unaligned #globalwinner."""
+    cfg = Config(root=tmp_path)
+    pid = core.add_persona(cfg, name="Hip", voice="va", niche=["hiphop"], id="pa")
+    _write_meas(cfg, {
+        "#hiphop": (100, None),
+        "#detroitrap": (900, "#hiphop"),
+        "#podcast": (200, None),
+        "#interview": (800, "#podcast"),
+        "#globalwinner": (9999, None),
+    })
+    per = core.Personas.load(cfg).get(pid)
+    facts = core.persona_facts(cfg, per)
+    lead = facts["lead_tags"]
+    assert "#detroitrap" in lead or "#hiphop" in lead
+    assert "#interview" not in lead and "#podcast" not in lead and "#globalwinner" not in lead

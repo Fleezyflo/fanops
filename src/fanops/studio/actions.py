@@ -186,9 +186,11 @@ def regenerate_caption(cfg: Config, post_id: str, guidance: str = "", *,
     # with corpus + recency threading, and the POSTED caption IS the vetted <=4-tag line — regenerate can no
     # longer write raw model tags past the cap/membership gates.
     from fanops.caption import _recent_tags, _tags_in
-    # Vetting still uses the global measured menu (C-1 per-surface vet store is a separate ticket).
-    from fanops.hashtags import vet_hashtags_traced, load_measurements, ranked_tags
-    store = ranked_tags(load_measurements(cfg)) or None
+    # MOL-512 (C-2): vet from this account's persona aligned pool (same menu the regen prompt carried),
+    # never the global ranked_tags(load_measurements) cache — so regen cannot accept/backfill another
+    # persona's tags.
+    from fanops.hashtags import vet_hashtags_traced
+    store = sv  # from stores.get(p.account) above; None when no persona / empty pool
     vetted, _sources = vet_hashtags_traced(list(item.hashtags or []) or _tags_in(item.caption),
                            p.platform, src.language if src else None, store=store,
                            corpus=corpus, cfg=cfg, recent=_recent_tags(led, p.account))
