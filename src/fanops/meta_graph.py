@@ -8,12 +8,12 @@ metrics/insights paths; never on the publish path. Design rules:
   "no such hashtag". The token is sent as the Graph `access_token` param and is NEVER logged/echoed
   (METRICS_CLIENT_AUTH_DISCIPLINE — mirrors post/metrics.py).
 
-  META IS THE ONLY GOVERNOR of how much a hashtag pass gets through. There is no local budget: the
-  previous `_BUDGET_LIMIT = 30 unique searches / 7 days` was a hardcoded guess that logged every search
-  and then refused to re-measure anything it had logged. It starved the store for six days (21 of 1,704
-  tags measured, nothing since 2026-07-20) while Meta was in fact accepting 1,500+ searches in one run.
-  Throttle codes are absorbed with a jittered backoff and, if they persist, end the pass with whatever
-  evidence accrued; nothing here predicts or meters an allowance.
+  META IS THE ONLY GOVERNOR of how much a hashtag pass gets through. There is no local budget /
+  allowance model (a previous hard-capped local meter was deleted for cause — it starved the store
+  while Meta was still serving searches). Throttle codes are absorbed with a jittered backoff and, if
+  they persist, end the pass with whatever evidence accrued; non-throttle Meta errors raise
+  `GraphRefused` so callers see Meta's own code/subcode/message. Nothing here predicts or meters an
+  allowance.
 
   The hashtag REACH datum is Meta's own `like_count`, taken verbatim off one `top_media` item. Probed
   live 2026-07-26: the IG Hashtag node serves only `id` and `name` — `media_count` answers

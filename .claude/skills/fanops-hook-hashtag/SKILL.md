@@ -194,69 +194,40 @@ language purity). The hard cap is 4 regardless.
 
 ## Part 3 — The hashtag LIFECYCLE (where every posted tag comes from)
 
-The lifecycle is now explicit, per-persona, and closed-loop. Top to bottom:
+Authority: `docs/CODEMAPS/hashtag-lifecycle.md`. Summary:
 
-1. **A persona owns a curated corpus.** A `Persona` ([personas.py](../../../src/fanops/personas.py))
-   is a first-class record in `00_control/personas.json` — `voice`, `tag_lean`, a
-   **`hashtag_corpus`** (the per-persona pool), and the lever fields. Accounts link via
-   `Account.persona_id`; the persona's voice/lean/corpus
-   **hydrate** the account at load. Edited entirely in the Studio **Personas** tab.
-2. **Where corpus tags come from — four sources, all visible in the Personas tab:**
-   - **Live co-occurrence discovery** (`personas.discover_corpus` → `meta_graph.discover_candidates`):
-     the **Research corpus** button resolves the persona's category seeds (corpus + lean pool),
-     reads each seed's live `top_media`, and harvests the hashtags those
-     *currently-winning* posts use alongside it — ranked by co-occurrence count. This is the only
-     Graph-native way to surface a tag the system has **never named** (IG has no trending-by-topic
-     endpoint); the harvest is budget-free (one `ig_hashtag_search` slot per seed, the caption read
-     is free). FAIL-OPEN to the offline re-rank below without Meta creds. The periodic equivalent is
-     `fanops hashtags discover` (reports per persona; never writes the menu).
-   - **Offline bootstrap re-rank** (`personas.research_corpus`) — the fallback: the reach-best tags a
-     persona lacks from the live Graph-reach store (instant, no extra Graph call).
-   - **Operator recommend** (`meta_graph.tag_metrics`): type any candidate tag → the **Meta Graph API**
-     returns its live IG reach (top-media engagement), one `ig_hashtag_search` budget slot (30 / 7 days)
-     → Add to corpus. Per-tag evidence behind a curation decision.
-   - **The frozen reach-vetted set** (Part 2) is the cold-start FLOOR only.
-   Every source PROPOSES; the operator ACCEPTS into the corpus (the curation gate). Discovery never
-   auto-writes a tag into a caption — a discovered tag ships only after the operator adds it.
-3. **Selection** ([hashtags.py](../../../src/fanops/hashtags.py) `vet_hashtags`): at caption
-   ingest, the linked persona's `corpus` JOINS the vetted membership (a curated tag the
-   frozen set doesn't know now SURVIVES) and is the **priority pool** — it leads the ≤4,
-   then the reach order. Hard cap 4, deterministic, never empty.
-4. **Presentation to the model** (`caption_prompt`): each surface's `corpus` rides the
-   payload + a rule tells the model to prefer it; the deterministic gate guarantees the
-   corpus leads regardless.
-5. **The store is judged by LIVE Meta Graph reach** — NEVER by a post that used a tag (a post's
-   success/failure attributes to the hook/clip/account, never the hashtag; pinned by
-   `tests/test_hashtag_attribution_severance.py`). `fanops_hashtags.refresh_store` harvests
-   co-occurring candidates from the niche seeds, measures their Graph reach within the 30/7-day
-   budget, ranks by reach, and writes the `{tags, reach}` store (`FANOPS_HASHTAG_TRENDS` **defaults
-   ON**, fail-open to the frozen floor without a Meta token); `refresh_store_if_due` re-runs it on a
-   12h throttle inside `fanops run`.
-6. **Surfaced:** the Personas tab renders each corpus **reach-ranked**, flags currently-most-active
-   (store-present) tags ★, and shows each curated tag's **live Graph reach** — so a curation decision
-   is backed by what is actually reaching on the platform now.
+1. **A persona declares a niche** (`Persona.niche: list[str]`) in `00_control/personas.json`. Accounts
+   link via `Account.persona_id`. Edited in the Studio **Personas** tab. There is no operator
+   pin/ban/recommend lane and no global ban list.
+2. **Layer A — measurement** (`fanops_hashtags.refresh_store`, the only Graph toucher):
+   `persona_terms` returns the declared niche only → each term is searched via `ig_hashtag_search` →
+   one `top_media` fetch yields Meta's verbatim `like_count` plus co-occurring tags → written to
+   `00_control/hashtags.json` (measured tags only). Cached `graph_id` re-measures without a new search.
+   **No local budget / allowance model.** Meta's own throttle codes (4/17/32/613) end a pass via
+   `GraphThrottled`; any other Meta error raises `GraphRefused` (code/subcode/message) and the pass
+   records it in `unresolved` — never collapses to a silent miss. `fanops hashtags discover` is
+   read-only (projects the cache; zero network).
+3. **Layer B — derivation** (`persona_research.derive_corpus`, zero network): corpus = top
+   `cfg.corpus_target` of the persona's aligned measured pool. Outage / empty pool holds the previous
+   corpus. An empty corpus is honest (no padding).
+4. **Selection** (`vet_hashtags`): per-surface store = that persona's aligned pool ∪ corpus; corpus
+   leads when present; hard cap 4; composition rules only (no hand-ranked mega pools, no discovery floor,
+   no ban list). Cold empty store → empty hashtag line.
+5. **Attribution severance** — a tag's worth is its platform metric, never a post that used it
+   (`tests/test_hashtag_attribution_severance.py`).
 
 ## Wiring (where this lives in the engine)
 
-- [personas.py](../../../src/fanops/personas.py) — the `Persona` entity + registry + the
-  curated `hashtag_corpus` writers + `research_corpus` (bootstrap proposal). Accounts link
-  via `Account.persona_id`; the corpus hydrates onto the account at load.
-- [hashtags.py](../../../src/fanops/hashtags.py) — the vetted set as code constants
-  (seeded from the table above) + `vet_hashtags(tags, platform, language, max=4, *, store, corpus, content)`:
-  the corpus joins the membership + leads, then restricts to the vetted set, reach-orders,
-  caps at 4. The **hard enforcement** — whatever the model returns is filtered through this.
-- [meta_graph.py](../../../src/fanops/meta_graph.py) `tag_metrics` — on-demand live IG reach
-  for ONE tag (the operator-recommend evidence), budget-bounded; `harvest_cooccurring` /
-  `sample_trends` feed the store build.
-- [fanops_hashtags.py](../../../src/fanops/fanops_hashtags.py) — `refresh_store` (builds the store
-  from live Graph reach: harvest → measure → rank) + `refresh_store_if_due` (12h-throttled run-loop
-  refresh). The own-post-reach attribution model was deleted — a hashtag is judged only by Graph reach.
-- [studio/personas.py](../../../src/fanops/studio/personas.py) — the Studio **Personas** tab
-  actions (add/edit/connect, curate corpus, recommend, research).
-- [prompts.py](../../../src/fanops/prompts.py) `hookedit_prompt` — retention patterns
-  above; the artist-hype mandate is removed.
-- [prompts.py](../../../src/fanops/prompts.py) `caption_prompt` — the model picks ≤4
-  FROM the vetted set / the surface's corpus; it does not invent tags.
+- [personas.py](../../../src/fanops/personas.py) / [persona_store.py](../../../src/fanops/persona_store.py)
+  — `Persona` + niche/corpus writers; accounts hydrate via `persona_id`.
+- [persona_research.py](../../../src/fanops/persona_research.py) — `persona_terms` (niche only),
+  `_aligned_pool`, `derive_corpus`.
+- [hashtags.py](../../../src/fanops/hashtags.py) — `vet_hashtags` / measurement cache readers.
+- [meta_graph.py](../../../src/fanops/meta_graph.py) — `resolve_hashtag`, `measure_and_harvest`;
+  refusals are typed (`GraphRefused` / `GraphUnreachable` / `GraphThrottled`).
+- [fanops_hashtags.py](../../../src/fanops/fanops_hashtags.py) — `refresh_store` +
+  `refresh_store_if_due` (12h mtime gate inside `fanops run`).
+- [prompts.py](../../../src/fanops/prompts.py) `caption_prompt` — per-surface `hashtag_store` + corpus.
 
 ## Sources
 

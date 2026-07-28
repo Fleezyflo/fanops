@@ -122,14 +122,12 @@ resurrect a rejected post. Everything else is first-write-wins.
 
 ## B. Control files — the parallel mutation system
 
-Nine JSON files under `00_control/`, **none** of them in the ledger, each with its own flock.
+Seven JSON files under `00_control/`, **none** of them in the ledger, each with its own flock.
 
 | File | Writers | Lock | Validated at write | Read by |
 |---|---|---|---|---|
 | `accounts.json` | `add_account`, `set_backend`, `write_integration`, `set_status`, `set_persona`, `set_clip_profile`, `set_ig_user_id`, `link_persona`, `ensure_channel`, `remove_account` — **10 mutators** ([accounts.py:372-620](src/fanops/accounts.py:372)) | `accounts.lock` [accounts.py:362-369](src/fanops/accounts.py:362) | **partially** — see below | publish routing, Studio, doctor |
 | `personas.json` | `persona_store` mutators | `personas.lock` [persona_store.py:106-108](src/fanops/persona_store.py:106) | `_norm_focus` | account hydration |
-| `hashtag_budget.json` | `record_query` | `hashtag_budget.lock` [meta_graph.py:519](src/fanops/meta_graph.py:519) | — | Graph budget gate |
-| `hashtag_bans.json` | `add_ban`, `remove_ban` | `hashtag_bans.lock` [hashtags.py:125,137](src/fanops/hashtags.py:125) | — | `vet_hashtags` |
 | `hashtags.json` | `refresh_store` | **none** | — | tag selection |
 | `cutover.json` | `track._auto_validate_metrics_shape`, cutover probe | **none** | — | `learning_validated` |
 | `timing_bias.json` | `apply_timing_bias` | **none** | — | `surface_time` hour hint |
