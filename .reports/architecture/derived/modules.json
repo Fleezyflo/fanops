@@ -118,7 +118,6 @@
     "fanops.studio.app_routes_run",
     "fanops.studio.app_routes_schedule",
     "fanops.studio.golive",
-    "fanops.studio.hashtags",
     "fanops.studio.personas",
     "fanops.studio.preview_media",
     "fanops.studio.thumb_media",
@@ -261,7 +260,6 @@
     "fanops.studio.app_routes_run": "S16_studio",
     "fanops.studio.app_routes_schedule": "S16_studio",
     "fanops.studio.golive": "S16_studio",
-    "fanops.studio.hashtags": "S16_studio",
     "fanops.studio.personas": "S16_studio",
     "fanops.studio.preview_media": "S16_studio",
     "fanops.studio.thumb_media": "S16_studio",
@@ -285,9 +283,9 @@
     "fanops.vocals": "S06_media_analysis"
   },
   "totals": {
-    "assigned": 134,
+    "assigned": 133,
     "ghosts": 0,
-    "modules": 134,
+    "modules": 133,
     "unassigned": 0
   },
   "unassigned_modules": []

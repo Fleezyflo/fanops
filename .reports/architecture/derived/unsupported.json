@@ -5,7 +5,7 @@
     {
       "evidence": "os.getenv",
       "kind": "computed_env_key",
-      "line": 1112,
+      "line": 1110,
       "module": "fanops.config",
       "why": "env key is not a string literal; the variable name is not statically known"
     },

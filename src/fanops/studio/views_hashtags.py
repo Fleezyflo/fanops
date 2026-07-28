@@ -1,8 +1,8 @@
 """U11 — the Hashtags observatory read-model (pure; ZERO network on any call). Surfaces the platform
-measurement cache, the derived per-persona corpora, cross-account rotation health, and the operator's
-global ban lane. Every projection here is a LOCAL file + ledger read: `_store_status` reads the cache
-file, `_corpora_rows` reads personas.json, `rotation_health` scans the ledger. The page spends no Graph
-call by construction. The ONLY mutation on the page is ban add/remove (studio/hashtags.py), never a GET.
+measurement cache, the derived per-persona corpora, and cross-account rotation health. Every projection
+here is a LOCAL file + ledger read: `_store_status` reads the cache file, `_corpora_rows` reads
+personas.json, `rotation_health` scans the ledger. The page spends no Graph call by construction.
+Read-only: the cache is a measurement record; the operator's lever is the persona's declared niche.
 
 The old "budget meter" section is gone with the fiction it displayed — there is no local allowance to
 report. What the operator needs instead is COVERAGE: how much of the cache is measured and how fresh it
@@ -17,7 +17,7 @@ from typing import Optional
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.log import get_logger
-from fanops.hashtags import METRIC_FIELD, _norm, load_bans, load_measurements, ranked_tags
+from fanops.hashtags import METRIC_FIELD, _norm, load_measurements, ranked_tags
 from fanops.personas import Personas
 from fanops.persona_research import _persona_row
 from fanops.studio.views_results import _EXPOSURE_STATES
@@ -40,13 +40,12 @@ class CorpusRow:
 
 @dataclass
 class StoreStatus:
-    """Section 2: the measurement cache — its state, freshness, and the ranked chips (with a per-tag
-    banned flag for the struck view)."""
+    """Section 2: the measurement cache — its state, freshness, and the ranked chips."""
     state: str                         # "empty" (no cache yet) | "unreadable" (parse error) | "ok"
     metric_field: str = METRIC_FIELD    # the platform field every number below is quoted from
     age: Optional[str] = None          # cache file mtime, ISO (None when missing/unreadable)
     oldest: Optional[str] = None       # the stalest `measured_at` in the cache — the real freshness signal
-    tags: list = field(default_factory=list)   # [{tag, value, banned}] ranked by the platform metric desc
+    tags: list = field(default_factory=list)   # [{tag, value}] ranked by the platform metric desc
 
 
 @dataclass
@@ -63,15 +62,12 @@ class HashtagsPage:
     corpora: list = field(default_factory=list)
     store: Optional[StoreStatus] = None
     rotation: list = field(default_factory=list)
-    bans: list = field(default_factory=list)   # the sorted ban list (display + remove targets)
 
 
 def _store_status(cfg: Config) -> StoreStatus:
     """Section 2 read: distinguish THREE cache states — no file yet (empty), parse error (unreadable + one
-    log breadcrumb), or ok (ranked chips + mtime + the stalest measurement). Banned tags are FLAGGED for
-    the struck-through view but the cache FILE is untouched (view-only). Never raises."""
+    log breadcrumb), or ok (ranked chips + mtime + the stalest measurement). Never raises."""
     p = cfg.hashtags_path
-    bans = load_bans(cfg)
     if not p.exists():
         return StoreStatus(state="empty")
     try:
@@ -89,7 +85,7 @@ def _store_status(cfg: Config) -> StoreStatus:
     except OSError:
         age = None
     stamps = [r.get("measured_at") for r in m.values() if isinstance(r.get("measured_at"), str)]
-    rows = [{"tag": t, "value": m[t].get(METRIC_FIELD), "banned": t in bans} for t in ranked_tags(m)]
+    rows = [{"tag": t, "value": m[t].get(METRIC_FIELD)} for t in ranked_tags(m)]
     return StoreStatus(state="ok", age=age, oldest=(min(stamps) if stamps else None), tags=rows)
 
 
@@ -116,8 +112,7 @@ def rotation_health(led: Ledger, *, n: int = 5) -> list:
 
 def _corpora_rows(cfg: Config, *, edit_href: str = "") -> list:
     """Section 1 read: one row per persona — corpus size, its stalest measurement, the top 3 by the
-    platform metric, and how many pre-derivation tags were retired. Byte-truth: everything comes straight
-    from personas.json + the cache."""
+    platform metric. Byte-truth: everything comes straight from personas.json + the cache."""
     m = load_measurements(cfg)
     rows: list[CorpusRow] = []
     for per in Personas.load(cfg).all():
@@ -144,5 +139,4 @@ def hashtags_page(cfg: Config, *, led: Optional[Ledger] = None, edit_href: str =
         corpora=_corpora_rows(cfg, edit_href=edit_href),
         store=_store_status(cfg),
         rotation=rotation_health(led),
-        bans=sorted(load_bans(cfg)),
     )

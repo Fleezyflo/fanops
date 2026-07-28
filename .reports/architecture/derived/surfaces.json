@@ -910,28 +910,6 @@
       "path": "/hashtags"
     },
     {
-      "decorator": "app.post",
-      "handler": "do_hashtags_ban_add",
-      "line": 27,
-      "methods": [
-        "POST"
-      ],
-      "module": "fanops.studio.app_routes_hashtags",
-      "mutating": true,
-      "path": "/hashtags/ban/add"
-    },
-    {
-      "decorator": "app.post",
-      "handler": "do_hashtags_ban_remove",
-      "line": 31,
-      "methods": [
-        "POST"
-      ],
-      "module": "fanops.studio.app_routes_hashtags",
-      "mutating": true,
-      "path": "/hashtags/ban/remove"
-    },
-    {
       "decorator": "app.get",
       "handler": "healthz",
       "line": 385,
@@ -2049,8 +2027,8 @@
   "totals": {
     "cli_add_parser_sites": 69,
     "cli_verbs_unique": 64,
-    "route_endpoints": 147,
-    "route_endpoints_mutating": 106,
-    "route_unique_paths": 146
+    "route_endpoints": 145,
+    "route_endpoints_mutating": 104,
+    "route_unique_paths": 144
   }
 }
