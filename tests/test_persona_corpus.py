@@ -161,7 +161,7 @@ def _write_meas(cfg, rows):
     for tag, (metric, src) in rows.items():
         rec = {"graph_id": "id-" + tag.lstrip("#"), "like_count": metric, "measured_at": now}
         if src:
-            rec["from"] = {src: 1}
+            rec["from"] = {src: 2}  # MOL-665: relatedness bar needs hits>=2
         data[tag] = rec
     cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.hashtags_path.write_text(json.dumps(data))

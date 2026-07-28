@@ -223,7 +223,8 @@ def test_outbound_one_hit_never_enters_aligned_pool(tmp_path, monkeypatch):
 
 
 def test_inbound_cotag_attributes_measured_tag_to_anchor(tmp_path, monkeypatch):
-    """Inbound: niche on the candidate's own Top → membership. Outbound only enqueues."""
+    """Inbound: niche on the candidate's own Top writes from. Pool needs relatedness (MOL-665);
+    #fyp is a magnet with high metric → soft lane admits one-hit."""
     cfg = Config(root=tmp_path)
     pid = _persona(cfg, voice="x", niche=["rapbeef"]); _link_active(cfg, pid)
     media = {"#rapbeef": [{"caption": "noise #fyp", "like_count": 10}],
@@ -275,7 +276,8 @@ def test_unmeasured_candidate_never_enters_a_corpus(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path)
     pid = _persona(cfg, voice="hiphop"); _link_active(cfg, pid)
     media = {"#hiphop": [{"caption": "#measured #unmeasured", "like_count": 500, "comments_count": 0}],
-             "#measured": [{"caption": "bars #hiphop", "like_count": 400, "comments_count": 0}],
+             "#measured": [{"caption": "bars #hiphop", "like_count": 400, "comments_count": 0},
+                           {"caption": "more #hiphop", "like_count": 300, "comments_count": 0}],
              "#unmeasured": [{"caption": "", "comments_count": 9}]}
     refresh_store(cfg, scrape_client=_client(media))
     derive_corpus(cfg, pid)

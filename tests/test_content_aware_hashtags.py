@@ -175,9 +175,9 @@ def test_pipeline_model_pick_content_survives_ingest(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     write_json_atomic(cfg.hashtags_path, {
         "#loyalty": {"play_count": 100, "like_count": 10, "measured_at": "2026-07-28T00:00:00+00:00",
-                     "from": {"#loyalty": 1}},
+                     "from": {"#loyalty": 2}},
         "#hiphop": {"play_count": 50, "like_count": 5, "measured_at": "2026-07-28T00:00:00+00:00",
-                    "from": {"#hiphop": 1}}})
+                    "from": {"#hiphop": 2}}})
     led.add_source(Source(id="src_1", source_path="/s.mp4", language="en"))
     led.add_moment(Moment(id="mom_x", parent_id="src_1", content_token="mom_x", start=0, end=7,
                           reason="r", transcript_excerpt="fiery diss track about loyalty"))
@@ -308,7 +308,7 @@ def test_request_payload_hashtag_metrics_sidecar(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     write_json_atomic(cfg.hashtags_path, {
         "#hiphop": {"play_count": 5000, "like_count": 80, "media_count": 12,
-                    "measured_at": "2026-07-28T00:00:00+00:00", "from": {"#hiphop": 1}}})
+                    "measured_at": "2026-07-28T00:00:00+00:00", "from": {"#hiphop": 2}}})
     led.add_source(Source(id="src_1", source_path="/s.mp4", language="en"))
     led.add_moment(Moment(id="mom_x", parent_id="src_1", content_token="mom_x", start=0, end=7,
                           reason="r", transcript_excerpt="bars"))

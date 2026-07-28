@@ -2,7 +2,7 @@
 """Layer B — a persona's hashtag corpus, DERIVED. Zero network: a pure function of the measurement cache
 Layer A already bought (fanops_hashtags.refresh_store) and the persona's own UI surface.
 
-  terms(persona)  ->  anchors  ->  aligned pool  ->  top `corpus_target` by the platform metric
+  terms  ->  anchors  ->  relatedness candidates  ->  top `corpus_target` by metric (MOL-665)
 
 `persona_terms` is also what roots discovery in Layer A, so the two halves agree on what a persona IS by
 construction rather than by convention. The corpus is never read back as an input anywhere.
@@ -19,6 +19,49 @@ from fanops.hashtags import _norm, load_measurements, _metric
 from fanops.hashtag_hygiene import is_curatable
 
 _EVIDENCE_MAX_AGE_DAYS = 90       # older than this is history, not evidence — a dead measurement cannot curate
+TOP_GRID_N = 9                    # ig_hashtag_scrape.hashtag_medias_top amount — density = hits / TOP_GRID_N
+# Relatedness → candidate; numbers rank members (MOL-665). Magnets are classified, never vetoed.
+_MAGNET_BODIES = frozenset({
+    "fyp", "foryou", "foryoupage", "explore", "explorepage", "reels", "reel",
+    "love", "viral", "viralreels", "instagood", "trending",
+})
+MAGNET_METRIC_FLOOR = 5000.0      # soft lane: weak inbound OK when platform metric clears this
+_NORMAL_HITS = 2                  # non-anchor relatedness: inbound_hits >= 2 OR n_roots >= 2
+
+
+def inbound_hits(rec: dict, anchors: set[str]) -> int:
+    frm = rec.get("from") if isinstance(rec.get("from"), dict) else {}
+    return int(sum(frm.get(a) or 0 for a in anchors if (frm.get(a) or 0) > 0))
+
+
+def n_roots(rec: dict, anchors: set[str]) -> int:
+    frm = rec.get("from") if isinstance(rec.get("from"), dict) else {}
+    return sum(1 for a in anchors if (frm.get(a) or 0) > 0)
+
+
+def density(rec: dict, anchors: set[str]) -> float:
+    return inbound_hits(rec, anchors) / float(TOP_GRID_N)
+
+
+def is_magnet(tag: str) -> bool:
+    h = _norm(tag) if isinstance(tag, str) else ""
+    return bool(h) and h[1:] in _MAGNET_BODIES
+
+
+def _is_candidate(tag: str, rec: dict, anchors: set[str]) -> bool:
+    """Relatedness gate (MOL-665). Anchors always; else normal bar OR magnet soft lane."""
+    if tag in anchors:
+        return True
+    hits = inbound_hits(rec, anchors)
+    roots = n_roots(rec, anchors)
+    if hits <= 0:
+        return False
+    if hits >= _NORMAL_HITS or roots >= 2:
+        return True
+    # Magnet soft lane: any inbound + high metric (numbers solidify weak relatedness). Not a ban list.
+    if is_magnet(tag) and float(_metric(rec) or 0) >= MAGNET_METRIC_FLOOR:
+        return True
+    return False
 
 
 def _registry(cfg: Config):
@@ -76,26 +119,27 @@ def _is_evidence(rec: dict, *, now: datetime | None = None) -> bool:
 
 
 def _aligned_pool(per, cache: dict[str, dict], *, now=None, cfg: Config | None = None) -> list[tuple[str, float, str]]:
-    """This persona's candidate pool from the cache, as (tag, metric, from-anchor), ranked by the platform
-    metric desc (ties by tag, so a derivation is reproducible).
+    """Candidates for corpus membership, ranked by platform metric (MOL-665).
 
-    Alignment is a binary membership test, never a rank key: a tag qualifies if it IS one of the persona's
-    niche anchors, or if `from` records INBOUND evidence (the niche appears on THAT tag's Top captions).
-    Outbound "seen on a niche Top once" is discovery-only and must not appear in `from` (MOL-643)."""
+    Relatedness (`from` strength) makes a candidate; numbers solidify membership via rank+cut in
+    `derive_corpus`. Anchors always candidate. Non-anchors need inbound_hits>=2 or n_roots>=2, OR
+    (magnet + metric>=floor + any inbound). One-hit non-magnets never enter — high plays do not
+    trump weak relatedness. Magnets are classified for the soft lane, never hard-banned.
+    Outbound co-tags still must not appear in `from` (MOL-643)."""
     anchors = {_norm("#" + t) for t in persona_terms(per, cfg)}
     anchors.discard("#")
     out: list[tuple[str, float, str]] = []
     for tag, rec in cache.items():
         if not _is_evidence(rec, now=now) or not is_curatable(tag):
             continue
+        if not _is_candidate(tag, rec, anchors):
+            continue
         if tag in anchors:
             src = tag
         else:
             frm = rec.get("from") if isinstance(rec.get("from"), dict) else {}
-            hits = [a for a in frm if a in anchors]
-            if not hits:
-                continue
-            src = max(hits, key=lambda a: (frm.get(a) or 0, a))
+            live = [a for a in frm if a in anchors]
+            src = max(live, key=lambda a: (frm.get(a) or 0, a)) if live else tag
         out.append((tag, float(_metric(rec) or 0), src))
     out.sort(key=lambda r: (-r[1], r[0]))
     return out

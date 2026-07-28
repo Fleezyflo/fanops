@@ -70,7 +70,7 @@ def test_structurally_junk_tag_never_enters_a_derived_corpus(tmp_path):
     cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.hashtags_path.write_text(json.dumps({
         _FYP: {"graph_id": "id-fyp", METRIC_FIELD: 9999.0, "measured_at": at, "from": {"#hiphop": 9}},
-        "#bars": {"graph_id": "id-bars", METRIC_FIELD: 10.0, "measured_at": at, "from": {"#hiphop": 1}}}))
+        "#bars": {"graph_id": "id-bars", METRIC_FIELD: 10.0, "measured_at": at, "from": {"#hiphop": 2}}}))
     derive_corpus(cfg, pid)
     corpus = Personas.load(cfg).get(pid).hashtag_corpus
     assert corpus == ["#bars"]                           # the keysmash loses despite the higher metric
