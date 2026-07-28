@@ -26,6 +26,23 @@ from fanops.hashtags import METRIC_FIELD, _norm, load_measurements, ranked_tags
 from fanops.controlio import write_json_atomic
 
 _MAX_AGE_DAYS = 90            # a measurement older than this is history, not evidence — pruned on write
+_COMPLETE_KEY = "last_complete_pass"   # sibling of tag records; gates the 12h tick (NOT file mtime)
+
+
+def _read_complete_pass(cfg: Config) -> str | None:
+    """The ISO stamp of the last NON-throttled pass, or None. Fail-open on any read/parse miss."""
+    p = cfg.hashtags_path
+    if not p.exists():
+        return None
+    try:
+        import json
+        raw = json.loads(p.read_text())
+    except (OSError, ValueError, TypeError):
+        return None
+    if not isinstance(raw, dict):
+        return None
+    v = raw.get(_COMPLETE_KEY)
+    return v if isinstance(v, str) and v else None
 
 
 def _posting_persona_ids(cfg: Config) -> set[str]:
@@ -74,13 +91,14 @@ def _fresh(rec: dict, cutoff: datetime) -> bool:
 def refresh_store(cfg: Config, *, get=None, now=None) -> dict:
     """Run one measurement pass and rewrite the cache. Returns a summary dict.
 
-    Order of work: every persona's anchors first (they are the niche roots and the freshest thing worth
-    knowing), then everything already measured, stalest `measured_at` first, then the novel tags this
-    pass discovered. Co-occurring tags are harvested from ANCHORS only — a co-tag's own co-tags would
-    drift away from the persona's niche within two hops.
+    Order of work: never-measured anchors first (must discover), then every previously-measured tag
+    (anchors + known) ordered stalest `measured_at` first so a throttle cannot starve the tail, then
+    novel co-tags this pass discovered. Co-occurring tags are harvested from ANCHORS only — a co-tag's
+    own co-tags would drift away from the persona's niche within two hops.
 
     ABORTS without writing when personas.json is CORRUPT: a bad hand-edit to a control file must not
-    clobber the cache. A throttle ends the pass but still writes — evidence already bought is kept."""
+    clobber the cache. A throttle ends the pass but still writes — evidence already bought is kept.
+    `last_complete_pass` advances ONLY when throttled is False (the 12h tick gates on that stamp)."""
     from fanops.errors import ControlFileError
     from fanops.meta_graph import (GraphRefused, GraphThrottled, GraphUnreachable,
                                    measure_and_harvest, resolve_hashtag)
@@ -91,6 +109,7 @@ def refresh_store(cfg: Config, *, get=None, now=None) -> dict:
         personas = _posting_personas(cfg)
     except ControlFileError as e:                          # corrupt personas.json: ABORT, cache UNTOUCHED
         return {"written": False, "aborted": "corrupt_personas", "reason": str(e)}
+    prev_complete = _read_complete_pass(cfg)
     cache: dict[str, dict] = dict(load_measurements(cfg))
     ids: dict[str, str] = {t: r["graph_id"] for t, r in cache.items()}
     attribution: dict[str, dict] = {t: dict(r.get("from") or {}) for t, r in cache.items()}
@@ -101,9 +120,10 @@ def refresh_store(cfg: Config, *, get=None, now=None) -> dict:
             if a and a not in anchors:
                 anchors.append(a)
     anchor_set = set(anchors)
-    known = sorted((t for t in cache if t not in anchor_set),
-                   key=lambda t: cache[t].get("measured_at") or "")     # stalest first
-    queue: list[str] = anchors + known
+    unmeasured_anchors = [t for t in anchors if t not in cache]
+    remeasure = sorted((t for t in list(anchors) + [t for t in cache if t not in anchor_set] if t in cache),
+                       key=lambda t: cache[t].get("measured_at") or "")   # stalest first; anchors do not monopolise
+    queue: list[str] = unmeasured_anchors + remeasure
     queued: set[str] = set(queue)
     measured = 0; discovered = 0; throttled = False; tried = 0
     unresolved: list[dict] = []
@@ -146,27 +166,40 @@ def refresh_store(cfg: Config, *, get=None, now=None) -> dict:
         cache[tag] = rec; measured += 1
     cutoff = now - timedelta(days=_MAX_AGE_DAYS)
     fresh = {t: cache[t] for t in ranked_tags(cache) if _fresh(cache[t], cutoff)}
+    if not throttled:
+        fresh[_COMPLETE_KEY] = stamp                          # only a finished pass buys the 12h silence
+    elif prev_complete:
+        fresh[_COMPLETE_KEY] = prev_complete                  # preserve; never slide forward on a cut-off
     cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
     write_json_atomic(cfg.hashtags_path, fresh)
     return {"written": True, "measured": measured, "discovered": discovered,
-            "total": len(fresh), "throttled": throttled, "tried": tried, "unresolved": unresolved}
+            "total": len([t for t in fresh if t != _COMPLETE_KEY]), "throttled": throttled,
+            "tried": tried, "unresolved": unresolved}
 
 
 def refresh_store_if_due(cfg: Config, *, max_age_s: int = 43200, get=None, now=None) -> dict:
     """The constant-update hook the run loop calls each tick: refresh at most once per `max_age_s`
-    (default 12h), throttled by the cache file's mtime so a 10-minute publish cadence doesn't hammer the
-    Graph. Needs Meta creds (else a clean no-op — the cache is a platform artifact). FAIL-OPEN: any error
-    -> a reason, NEVER raises; it must not crash the unattended run. A corrupt personas.json is NOT a
-    refresh: refresh_store aborts (cache untouched) and this REPORTS the abort so the tick never logs a
-    false success on a broken control file."""
-    import time
+    (default 12h), gated on `last_complete_pass` inside the cache — NOT file mtime, because a throttled
+    pass still writes and would otherwise buy twelve hours of silence for almost no work. Needs Meta
+    creds (else a clean no-op — the cache is a platform artifact). FAIL-OPEN: any error -> a reason,
+    NEVER raises; it must not crash the unattended run. A corrupt personas.json is NOT a refresh:
+    refresh_store aborts (cache untouched) and this REPORTS the abort so the tick never logs a false
+    success on a broken control file."""
     if not (cfg.meta_graph_token and cfg.meta_ig_user_id):
         return {"refreshed": False, "reason": "no Meta creds"}
     try:
-        p = cfg.hashtags_path
-        if p.exists() and (time.time() - p.stat().st_mtime) < max_age_s:
-            return {"refreshed": False, "reason": "fresh"}
-        r = refresh_store(cfg, get=get, now=now)
+        now_dt = now or datetime.now(timezone.utc)
+        complete = _read_complete_pass(cfg)
+        if complete:
+            try:
+                ts = datetime.fromisoformat(complete)
+                if ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=timezone.utc)
+                if (now_dt - ts).total_seconds() < max_age_s:
+                    return {"refreshed": False, "reason": "fresh"}
+            except ValueError:
+                pass                                          # unparseable stamp -> treat as due
+        r = refresh_store(cfg, get=get, now=now_dt)
         if not r.get("written"):                              # corrupt-personas abort: preserve, report
             return {"refreshed": False, **r}
         return {"refreshed": True, **r}
