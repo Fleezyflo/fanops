@@ -20,8 +20,17 @@ def _clip(led, clip_id="clip_1", moment_id="mom_1"):
     led.add_clip(Clip(id=clip_id, parent_id=moment_id, path=f"/{clip_id}.mp4", state=ClipState.rendered))
 
 
-def _ingest(cfg, led, clip_id, hashtags=None, surface="a/instagram"):
+def _ingest(cfg, led, clip_id, hashtags=None, surface="a/instagram", *, hashtag_store=None):
+    # MOL-511: fixtures may pin hashtag_store on the request surface (persona-scoped vet menu).
     led = request_captions(led, cfg, clip_id, [("a", Platform.instagram)])
+    if hashtag_store is not None:
+        from fanops.agentstep import request_path
+        rp = request_path(cfg, "captions", clip_id)
+        req = json.loads(rp.read_text())
+        for s in req["surfaces"]:
+            if s["surface"] == surface:
+                s["hashtag_store"] = list(hashtag_store)
+        rp.write_text(json.dumps(req))
     rid = latest_request_id(cfg, "captions", clip_id)
     response_path(cfg, "captions", clip_id).write_text(CaptionSet(request_id=rid, items=[
         CaptionItem(surface=surface, caption="x", hashtags=hashtags or ["#hiphop"])]).model_dump_json())
@@ -157,6 +166,36 @@ def test_twelve_tag_corpus_three_passes_disjoint_leaning(tmp_path):
         if i:
             assert lines[i] != lines[i - 1]
     assert len({tuple(x) for x in lines}) >= 2
+
+
+
+def test_ingest_rotation_uses_surface_hashtag_store(tmp_path):
+    """MOL-511: rotation ingest fills from the surface hashtag_store, never a foreign persona's tags
+    even when those tags sit in the global measurements cache."""
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.hashtags_path.write_text(json.dumps({
+        "#alpha": {"graph_id": "1", "like_count": 900, "measured_at": "2026-07-01T00:00:00+00:00"},
+        "#foreign": {"graph_id": "2", "like_count": 9999, "measured_at": "2026-07-01T00:00:00+00:00"},
+    }))
+    _clip(led, "clip_1")
+    led = _ingest(cfg, led, "clip_1", hashtags=["#alpha", "#foreign"],
+                  hashtag_store=["#alpha"])
+    tags = led.clips["clip_1"].meta_captions["a/instagram"]["hashtags"]
+    assert "#alpha" in tags
+    assert "#foreign" not in tags
+
+
+def test_ingest_empty_surface_store_short_line(tmp_path):
+    """MOL-511: empty hashtag_store on the request surface -> short discovery line (not global pad)."""
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.hashtags_path.write_text(json.dumps({
+        "#hiphop": {"graph_id": "1", "like_count": 900, "measured_at": "2026-07-01T00:00:00+00:00"},
+    }))
+    _clip(led, "clip_1")
+    led = _ingest(cfg, led, "clip_1", hashtags=["#hiphop", "#rap"], hashtag_store=[])
+    assert led.clips["clip_1"].meta_captions["a/instagram"]["hashtags"] == ["#reels"]
 
 
 def test_tag_exposure_counts(tmp_path):

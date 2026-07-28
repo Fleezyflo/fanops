@@ -172,3 +172,89 @@ def test_corpus_only_keeps_a_platform_discovery_tag():
     # instead of letting curated tags eat all 4 slots.
     out = vet_hashtags([], Platform.instagram, "en", corpus=["#myscene", "#another", "#third"])
     assert "#reels" in out
+
+
+# --- MOL-511 (C-1): ingest vets from per-surface hashtag_store (not the global cache) -----------
+
+def test_ingest_scopes_vet_store_per_surface(tmp_path):
+    """Tag only under surface X's hashtag_store cannot land on Y; empty store -> short discovery line.
+    A global measurements cache that WOULD have admitted X's tag onto Y proves we no longer read it."""
+    import json
+    from fanops.config import Config
+    from fanops.ledger import Ledger
+    from fanops.models import (Clip, Moment, Source, MomentState, ClipState, Platform,
+                               CaptionSet, CaptionItem)
+    from fanops.agentstep import response_path, request_path, latest_request_id
+    from fanops.caption import request_captions, ingest_captions
+
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path="/s.mp4", language="en"))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
+                          reason="r", transcript_excerpt="they slept on me", state=MomentState.decided))
+    led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", state=ClipState.rendered))
+    # Global cache contains EVERY tag — pre-MOL-511 ingest would fill BOTH surfaces from it.
+    cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.hashtags_path.write_text(json.dumps({
+        "#alphaonly": {"graph_id": "1", "like_count": 900, "measured_at": "2026-07-01T00:00:00+00:00"},
+        "#betaonly": {"graph_id": "2", "like_count": 800, "measured_at": "2026-07-01T00:00:00+00:00"},
+        "#globalwinner": {"graph_id": "3", "like_count": 9999, "measured_at": "2026-07-01T00:00:00+00:00"},
+    }))
+    request_captions(led, cfg, "clip_1",
+                     [("a", Platform.instagram), ("b", Platform.instagram), ("c", Platform.instagram)])
+    req_path = request_path(cfg, "captions", "clip_1")
+    req = json.loads(req_path.read_text())
+    by = {s["surface"]: s for s in req["surfaces"]}
+    by["a/instagram"]["hashtag_store"] = ["#alphaonly"]
+    by["b/instagram"]["hashtag_store"] = ["#betaonly"]
+    by["c/instagram"]["hashtag_store"] = []                 # empty pool -> short line
+    req_path.write_text(json.dumps(req))
+    rid = latest_request_id(cfg, "captions", "clip_1")
+    response_path(cfg, "captions", "clip_1").write_text(CaptionSet(request_id=rid, items=[
+        CaptionItem(surface="a/instagram", caption="x",
+                    hashtags=["#alphaonly", "#betaonly", "#globalwinner"]),
+        CaptionItem(surface="b/instagram", caption="x",
+                    hashtags=["#alphaonly", "#betaonly", "#globalwinner"]),
+        CaptionItem(surface="c/instagram", caption="x",
+                    hashtags=["#alphaonly", "#betaonly", "#globalwinner"]),
+    ]).model_dump_json())
+    ingest_captions(led, cfg, "clip_1")
+    a = led.clips["clip_1"].meta_captions["a/instagram"]["hashtags"]
+    b = led.clips["clip_1"].meta_captions["b/instagram"]["hashtags"]
+    c = led.clips["clip_1"].meta_captions["c/instagram"]["hashtags"]
+    assert "#alphaonly" in a and "#betaonly" not in a and "#globalwinner" not in a
+    assert "#betaonly" in b and "#alphaonly" not in b and "#globalwinner" not in b
+    assert a != b
+    # empty hashtag_store: model picks die; only the platform discovery floor ships (short honest line)
+    assert c == ["#reels"]
+    assert "#alphaonly" not in c and "#globalwinner" not in c
+
+
+def test_ingest_absent_hashtag_store_is_short_not_global(tmp_path):
+    """No hashtag_store key on the surface (legacy request) must NOT fall back to the global cache."""
+    import json
+    from fanops.config import Config
+    from fanops.ledger import Ledger
+    from fanops.models import (Clip, Moment, Source, MomentState, ClipState, Platform,
+                               CaptionSet, CaptionItem)
+    from fanops.agentstep import response_path, request_path, latest_request_id
+    from fanops.caption import request_captions, ingest_captions
+
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path="/s.mp4", language="en"))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
+                          reason="r", transcript_excerpt="they slept on me", state=MomentState.decided))
+    led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", state=ClipState.rendered))
+    cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.hashtags_path.write_text(json.dumps({
+        "#hiphop": {"graph_id": "1", "like_count": 900, "measured_at": "2026-07-01T00:00:00+00:00"},
+    }))
+    request_captions(led, cfg, "clip_1", [("a", Platform.instagram)])
+    req_path = request_path(cfg, "captions", "clip_1")
+    req = json.loads(req_path.read_text())
+    assert "hashtag_store" not in req["surfaces"][0]        # no accounts -> key absent
+    rid = latest_request_id(cfg, "captions", "clip_1")
+    response_path(cfg, "captions", "clip_1").write_text(CaptionSet(request_id=rid, items=[
+        CaptionItem(surface="a/instagram", caption="x", hashtags=["#hiphop"])]).model_dump_json())
+    ingest_captions(led, cfg, "clip_1")
+    # Pre-MOL-511 would keep #hiphop from the global cache; scoped ingest ships discovery only.
+    assert led.clips["clip_1"].meta_captions["a/instagram"]["hashtags"] == ["#reels"]
