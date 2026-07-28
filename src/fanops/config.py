@@ -437,10 +437,10 @@ class Config:
         # How many measured tags a persona's DERIVED corpus aims to hold. A ceiling, not a quota: derivation
         # never pads to reach it, so a persona with thin platform evidence keeps a shorter corpus.
         try:
-            v = int(os.getenv("FANOPS_CORPUS_TARGET", "30"))
+            v = int(os.getenv("FANOPS_CORPUS_TARGET", "80"))
         except ValueError:
-            return 30
-        return v if v >= 1 else 30
+            return 80
+        return v if v >= 1 else 80
 
     @property
     def require_full_objective(self) -> bool:

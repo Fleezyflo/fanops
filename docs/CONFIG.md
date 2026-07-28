@@ -113,9 +113,11 @@ Speech-trust filtering is **invariant always-on** — there is no env switch for
 ## Hashtags / Meta Graph
 | Var | Default | Effect | Set |
 |---|---|---|---|
-| `FANOPS_CORPUS_TARGET` | 30 | Ceiling on a persona's DERIVED corpus (never padded to reach it) | .env |
+| `FANOPS_CORPUS_TARGET` | 80 | Ceiling on a persona's DERIVED corpus (never padded to reach it) | .env |
 | `FANOPS_IG_SCRAPE_USER` | None | Instagram username for hashtag Layer A (instagrapi) | .env |
 | `FANOPS_IG_SCRAPE_PASSWORD` | None | Instagram password for hashtag Layer A scrape-login (write-only; never logged) | .env |
+| `FANOPS_HASHTAG_SCRAPE_TRY_CAP` | 120 | Max hashtag measure attempts per Layer A scrape pass | .env |
+| `FANOPS_HASHTAG_SCRAPE_COTAG_ENQUEUE` | 40 | Max NEW co-tags enqueued to measure per Layer A scrape pass | .env |
 | `META_GRAPH_TOKEN` | None | Meta Graph token for IG insights / media verification (write-only). Not used by hashtag Layer A refresh (deferred Graph hashtag path) | .env |
 | `META_GRAPH_TOKEN__<SLUG>` | falls back to global | Per-handle Graph token (dynamic key, write-only) | S |
 | `META_IG_USER_ID` | None | IG Business account id (insights / deferred Graph hashtag helpers; set into accounts.json) | .env |

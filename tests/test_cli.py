@@ -843,17 +843,16 @@ def test_run_learn_block_logs_auth_error_with_type_name(tmp_path, monkeypatch, m
     assert "PostizAuthError" in log                         # the type name is in the breadcrumb
 
 def test_main_hashtags_refresh_writes_the_cache_failopen(tmp_path, monkeypatch, capsys):
-    # `fanops hashtags refresh` runs one measurement pass — no ledger, no doctor gate. Without Meta creds
-    # it measures NOTHING (resolve_hashtag short-circuits before any request), still writes the cache, and
-    # exits 0 cleanly (MOL-358: log not stdout).
+    # Without scrape session Layer A aborts loudly (exit 2) and leaves the cache untouched.
     from fanops.config import Config
-    monkeypatch.delenv("META_GRAPH_TOKEN", raising=False); monkeypatch.delenv("META_IG_USER_ID", raising=False)
+    monkeypatch.delenv("FANOPS_IG_SCRAPE_USER", raising=False)
+    monkeypatch.delenv("FANOPS_IG_SCRAPE_PASSWORD", raising=False)
     monkeypatch.chdir(tmp_path)
-    assert main(["hashtags", "refresh"]) == 0
+    assert main(["hashtags", "refresh"]) == 2
     log = Config(root=tmp_path).log_path.read_text().lower()
     compact = log.replace(" ", "")
-    assert '"outcome":"refreshed"' in compact and '"measured":"0"' in compact
-    assert (tmp_path / "MohFlow-FanOps" / "00_control" / "hashtags.json").exists()
+    assert "refresh_aborted" in compact or "no_scrape" in compact or "aborted" in compact
+    assert not (tmp_path / "MohFlow-FanOps" / "00_control" / "hashtags.json").exists()
 
 
 def test_main_hashtags_verbs_are_refresh_and_discover_only(tmp_path, monkeypatch, capsys):

@@ -8,7 +8,8 @@ One pass, per persona that actually posts:
 
   description -> terms -> anchor tags -> ONE medias_top fetch per tag -> {metric, co-occurring tags}
 
-`persona_terms` returns the persona's declared `niche` and NOTHING else. The corpus is never an input:
+`persona_terms` returns seeds from the full persona UI surface (interim niche tags + levers + voice
+unigrams — see persona_research). The corpus is never an input:
 it used to seed this pass, which made the store a re-ranked echo of the corpora it then fed — a closed
 loop with no external evidence anywhere in it (measured live 2026-07-16: the store was byte-identical
 to seeds + the frozen floor, 0 discovered, `reach: {}`, while every proposal it made looked like
@@ -20,6 +21,7 @@ A tag with no number is UNMEASURED and simply absent — the cache holds measure
 Missing scrape (no [igscrape] / no session / login fail) aborts LOUDLY (`written:False`, `aborted:no_scrape`)
 — there is no silent Graph fallback. A throttle ends the pass but still writes accrued evidence."""
 from __future__ import annotations
+import os
 from datetime import datetime, timedelta, timezone
 from fanops.config import Config
 from fanops.log import get_logger
@@ -28,11 +30,33 @@ from fanops.controlio import write_json_atomic
 
 _MAX_AGE_DAYS = 90            # a measurement older than this is history, not evidence — pruned on write
 _COMPLETE_KEY = "last_complete_pass"   # sibling of tag records; gates the 12h tick (NOT file mtime)
-# Scrape is ~5–7s/tag. Unbounded co-tag enqueue (one anchor can harvest 80+) turns a 24-niche pass into
-# hundreds of calls with no mid-pass write — looks hung. Cap tries + novel co-tag measures per pass;
-# incomplete passes do NOT stamp last_complete_pass (same as throttle) so the next tick continues.
-_SCRAPE_TRY_CAP = 40          # max tags attempted per refresh_store call (~4–7 min at live scrape latency)
-_SCRAPE_COTAG_ENQUEUE_CAP = 10  # max NEW co-tags measured this pass (anchors first; discovery is incremental)
+# Scrape is ~5–7s/tag. Caps bound a pass so co-tag harvest cannot run unbounded; incomplete passes do NOT
+# stamp last_complete_pass. Defaults sized so niches + a meaningful co-tag set fit one pass (F-4 / MOL-631).
+# Tests may monkeypatch these module attrs; env overrides win when set.
+_SCRAPE_TRY_CAP = 120
+_SCRAPE_COTAG_ENQUEUE_CAP = 40
+
+
+def _scrape_try_cap() -> int:
+    raw = os.getenv("FANOPS_HASHTAG_SCRAPE_TRY_CAP")
+    if raw is None:
+        return _SCRAPE_TRY_CAP
+    try:
+        v = int(raw)
+    except ValueError:
+        return _SCRAPE_TRY_CAP
+    return v if v >= 1 else _SCRAPE_TRY_CAP
+
+
+def _scrape_cotag_enqueue_cap() -> int:
+    raw = os.getenv("FANOPS_HASHTAG_SCRAPE_COTAG_ENQUEUE")
+    if raw is None:
+        return _SCRAPE_COTAG_ENQUEUE_CAP
+    try:
+        v = int(raw)
+    except ValueError:
+        return _SCRAPE_COTAG_ENQUEUE_CAP
+    return v if v >= 0 else _SCRAPE_COTAG_ENQUEUE_CAP
 
 
 def _read_complete_pass(cfg: Config) -> str | None:
@@ -136,22 +160,24 @@ def refresh_store(cfg: Config, *, scrape_client=None, now=None) -> dict:
     unmeasured_anchors = [t for t in anchors if t not in cache]
     remeasure = sorted((t for t in list(anchors) + [t for t in cache if t not in anchor_set] if t in cache),
                        key=lambda t: cache[t].get("measured_at") or "")   # stalest first
-    # Scrape is ~5–10s/tag. When niches are still dark, spend the pass ONLY on them — do not let
-    # re-measure of the old Graph cache (28+) consume the try budget before craft/burner niches land.
-    if unmeasured_anchors:
-        queue: list[str] = list(unmeasured_anchors)
-    else:
-        queue = list(remeasure)
+    # Unmeasured anchors first (discover), then remesure known tags. Do NOT drop remesure while any
+    # niche is still dark — that starved re-measure proofs (MOL-516) and left craft/burner without
+    # co-tag expansion budget after niches alone filled the try_cap.
+    queue: list[str] = list(unmeasured_anchors)
     queued: set[str] = set(queue)
+    for t in remeasure:
+        if t not in queued:
+            queued.add(t); queue.append(t)
     measured = 0; discovered = 0; throttled = False; tried = 0; cotag_enqueued = 0
     unresolved: list[dict] = []
     log = get_logger(cfg)
+    try_cap = _scrape_try_cap(); cotag_cap = _scrape_cotag_enqueue_cap()
     i = 0
     while i < len(queue):
-        if tried >= _SCRAPE_TRY_CAP:
+        if tried >= try_cap:
             throttled = True                               # budget, not Instagram — same incomplete-pass stamp
             log("hashtags", "-", "pass_try_cap", tried=tried, queue_left=len(queue) - i,
-                cap=_SCRAPE_TRY_CAP)
+                cap=try_cap)
             break
         tag = queue[i]; i += 1
         tried += 1
@@ -178,7 +204,7 @@ def refresh_store(cfg: Config, *, scrape_client=None, now=None) -> dict:
                     continue                               # an anchor is its own root, not its own discovery
                 attribution.setdefault(co, {})
                 attribution[co][tag] = attribution[co].get(tag, 0) + n
-                if co not in queued and cotag_enqueued < _SCRAPE_COTAG_ENQUEUE_CAP:
+                if co not in queued and cotag_enqueued < cotag_cap:
                     queued.add(co); queue.append(co); discovered += 1; cotag_enqueued += 1
         if metric is None:
             continue                                       # no number -> UNMEASURED -> absent

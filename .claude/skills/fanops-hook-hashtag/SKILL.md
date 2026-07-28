@@ -200,7 +200,7 @@ Authority: `docs/CODEMAPS/hashtag-lifecycle.md`. Summary:
    link via `Account.persona_id`. Edited in the Studio **Personas** tab. There is no operator
    pin/ban/recommend lane and no global ban list.
 2. **Layer A — measurement** (`fanops_hashtags.refresh_store` via `ig_hashtag_scrape` / instagrapi;
-   Graph hashtag path deferred): `persona_terms` returns the declared niche only → each term resolves
+   Graph hashtag path deferred): `persona_terms` returns the persona UI surface (voice + levers + interim niche seeds) only → each term resolves
    via `hashtag_info` → one `hashtag_medias_top` fetch yields Instagram's verbatim `like_count` plus
    co-occurring tags → written to `00_control/hashtags.json` (measured tags only). Cached `graph_id`
    skips resolve and still re-measures. **No local budget / allowance model.** Throttle cues end a pass

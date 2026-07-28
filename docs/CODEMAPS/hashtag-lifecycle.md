@@ -6,6 +6,8 @@ The end-to-end path that decides every posted hashtag. Two layers, one authority
 
 ## The single rule everything else follows
 
+Discovery direction (F / MOL-627): Layer A search seeds come from the **full Studio persona surface** (`persona_terms` — interim niche tags + structured levers + voice unigrams). "Niche" is not the sole hashtag source. Metric honesty: `like_count` on one top-media item is a visibility proxy — not impressions, not engagement rate, not lift on our posts.
+
 A hashtag's reach/visibility is **only** what the platform publishes about that hashtag, stored under the
 platform's own field name. Nothing in this subsystem computes, blends, averages or renames a reach number.
 
@@ -127,7 +129,7 @@ hook/clip/account, not the hashtag. Pinned by `tests/test_hashtag_attribution_se
 ## Config
 
 - `FANOPS_IG_SCRAPE_USER` + session (`ig_scrape_session.json`) or `FANOPS_IG_SCRAPE_PASSWORD` — instagrapi scrape. Absent ⇒ refresh aborts (`no_scrape`); the cache stands as-is (selection ships whatever is already measured, or short). Graph token is NOT used for Layer A refresh.
-- `FANOPS_CORPUS_TARGET` (default 30) — how many measured tags a derived corpus aims to hold. A ceiling, not
+- `FANOPS_CORPUS_TARGET` (default 80) — how many measured tags a derived corpus aims to hold. A ceiling, not
   a quota: derivation never pads to reach it.
 - `Account.persona_id` / `personas.json` — the per-persona link; the persona's niche is the lever.
 

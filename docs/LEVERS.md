@@ -79,9 +79,9 @@ Then run `fanops lever docs` to regenerate this file.
 
 ## niche (stage: caption)
 
-**Does:** the niche word(s) the next measurement pass searches Instagram for — the corpus it derives then LEADS the caption hashtags
+**Does:** optional tag-shaped INTERIM seeds (migration). Layer A also seeds from voice + levers — niche is not the sole hashtag source
 
-Declared subject list (`Persona.niche`): `persona_research.persona_terms` returns it verbatim (normalized, deduped) for `fanops_hashtags.refresh_store` to search. The corpus it derives then leads caption hashtags.
+Interim territory seeds (`Persona.niche`) plus voice unigrams and lever values: `persona_research.persona_terms` builds Layer A search seeds (no adjacent-voice glue). The measured corpus it derives then leads caption hashtags.
 
 
 ## ARCHETYPE CROSSWALK

@@ -69,6 +69,9 @@ def test_a_tag_with_no_like_count_anywhere_is_unmeasured_and_absent(tmp_path, mo
 # ---------------------------------------------------------------- 2. no fictional local budget
 
 def test_no_local_budget_caps_a_pass(tmp_path, monkeypatch):
+    """No Meta hashtag_budget.json. Scrape try/cotag caps are env-tunable — raise them to prove discovery."""
+    monkeypatch.setenv("FANOPS_HASHTAG_SCRAPE_TRY_CAP", "200")
+    monkeypatch.setenv("FANOPS_HASHTAG_SCRAPE_COTAG_ENQUEUE", "100")
     cfg = Config(root=tmp_path)
     pid = _persona(cfg, voice="hiphop"); _link_active(cfg, pid)
     cotags = " ".join(f"#c{i}" for i in range(100))
@@ -146,16 +149,32 @@ def test_terms_come_from_the_description_never_from_the_corpus(tmp_path, monkeyp
     assert "#poisontag" not in Personas.load(cfg).get(pid).hashtag_corpus
 
 
-def test_persona_terms_return_declared_niche_only(tmp_path):
+def test_persona_terms_include_surface_not_niche_only(tmp_path):
+    """F-2: niche + levers + voice unigrams; no adjacent-voice glue; corpus-blind."""
     from fanops.personas import Persona
     per = Persona(id="x", name="Craft Curator", voice="syrian rapper craft",
                   niche=["Lyricism", "songwriting", "lyricism", "#MusicReview"],
+                  content_focus=["punchlines"], hook_angle="curiosity",
                   hashtag_corpus=["#neverseenhere"])
     terms = persona_terms(per)
-    assert terms == ["lyricism", "songwriting", "musicreview"]
-    assert "syrian" not in terms and "craftcurator" not in terms and "hiphop" not in terms
+    assert terms[:3] == ["lyricism", "songwriting", "musicreview"]  # niche first
+    assert "punchlines" in terms and "curiosity" in terms
+    assert "syrian" in terms and "rapper" in terms and "craft" in terms  # voice unigrams
+    assert "syrianrapper" not in terms and "rappercraft" not in terms     # no pairwise glue
+    assert "craftcurator" not in terms and "hiphop" not in terms
     assert not any("neverseenhere" in t for t in terms)
     assert terms == persona_terms(per)
+
+
+def test_persona_terms_disjoint_voices_diverge(tmp_path):
+    from fanops.personas import Persona
+    a = Persona(id="a", name="A", voice="lyric craft musicianship", niche=["hiphop"])
+    b = Persona(id="b", name="B", voice="unhinged viral chaos drama", niche=["hiphop"])
+    ta, tb = set(persona_terms(a)), set(persona_terms(b))
+    assert "hiphop" in ta & tb
+    assert ta - {"hiphop"} != tb - {"hiphop"}
+    assert "musicianship" in ta and "musicianship" not in tb
+    assert "unhinged" in tb and "unhinged" not in ta
 
 
 # ---------------------------------------------------------------- 4. corpus is derived + evidence-only

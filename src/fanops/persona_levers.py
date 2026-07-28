@@ -74,9 +74,9 @@ LEVER_REGISTRY = [
     {"key": "clip_profile", "label": "Clip length", "kind": "select", "stage": "cut",
      "does": "the GLOBAL deterministic cut-length band (Go-Live default; per-persona it is derived from content_focus)",
      "options": [{"value": n} for n in _CLIP_PROFILE_BANDS]},
-    {"key": "niche", "label": "Niche", "kind": "tags", "stage": "caption",
-     "does": "the niche word(s) the next measurement pass searches Instagram for — the corpus it derives "
-             "then LEADS the caption hashtags", "options": []},
+    {"key": "niche", "label": "Territory seeds (interim)", "kind": "tags", "stage": "caption",
+     "does": "optional tag-shaped INTERIM seeds (migration). Layer A also seeds from voice + levers — "
+             "niche is not the sole hashtag source", "options": []},
 ]
 
 
@@ -100,8 +100,7 @@ PERSONA_EDITABLE_CHANNELS = {
     "intensity": ("peak-filter",),
     "selection_scope": ("casting-selection-scope",),
     "hook_angle": ("hook-angle",),
-    # `Persona.niche` is what persona_terms returns (B-6); saved by /personas/niche. Owns the `hashtags`
-    # channel (discovery no longer glues voice/name/genre prose).
+    # Interim niche seeds still own the hashtags editor channel; persona_terms ALSO reads voice+levers (F-1).
     "niche": ("hashtags",),
 }
 

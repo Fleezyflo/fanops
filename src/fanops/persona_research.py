@@ -1,6 +1,6 @@
 # src/fanops/persona_research.py
 """Layer B — a persona's hashtag corpus, DERIVED. Zero network: a pure function of the measurement cache
-Layer A already bought (fanops_hashtags.refresh_store) and the persona's own description.
+Layer A already bought (fanops_hashtags.refresh_store) and the persona's own UI surface.
 
   terms(persona)  ->  anchors  ->  aligned pool  ->  top `corpus_target` by the platform metric
 
@@ -13,12 +13,27 @@ the live system with corpora that were ~90% auto-filled tags carrying `reach: nu
 measurement at all. Admission now needs a real, unexpired platform measurement, so a corpus is either
 evidence-backed or honestly SHORT."""
 from __future__ import annotations
+import re
 from datetime import datetime, timedelta, timezone
 from fanops.config import Config
 from fanops.hashtags import METRIC_FIELD, _norm, load_measurements
 from fanops.hashtag_hygiene import is_curatable
 
 _EVIDENCE_MAX_AGE_DAYS = 90       # older than this is history, not evidence — a dead measurement cannot curate
+# Voice → seeds: UNIGRAMS only (MOL-506 killed adjacent-word glue: #hookangle / #brandsafety).
+_WORD = re.compile(r"[a-z0-9_]{2,}", re.I)
+_STOP = frozenset({
+    "a", "an", "the", "and", "or", "but", "if", "then", "else", "when", "while", "for", "to", "of", "in",
+    "on", "at", "by", "from", "with", "without", "as", "is", "are", "was", "were", "be", "been", "being",
+    "this", "that", "these", "those", "it", "its", "into", "over", "under", "about", "who", "whom", "which",
+    "what", "how", "why", "not", "no", "yes", "do", "does", "did", "done", "can", "could", "should", "would",
+    "will", "just", "also", "more", "most", "less", "very", "really", "own", "our", "your", "their", "his",
+    "her", "him", "she", "he", "they", "them", "we", "you", "i", "me", "my", "mine", "than", "too", "so",
+    "such", "via", "per", "vs", "etc", "clip", "clips", "moment", "moments", "account", "accounts", "post",
+    "posts", "viewer", "viewers", "content", "register", "prompt", "prompts", "llm",
+})
+# Structured levers that feed discovery direction (F-1). `niche` remains interim migration seeds.
+_LEVER_KEYS = ("content_focus", "selection_scope", "hook_angle", "intensity")
 
 
 def _registry(cfg: Config):
@@ -29,18 +44,46 @@ def _registry(cfg: Config):
     return Personas.load(cfg)
 
 
-def persona_terms(per) -> list[str]:
-    """The discovery/alignment vocabulary for ONE persona: its declared `niche`, normalized and deduped,
-    in declared order. Nothing else — no voice glue, no name concat, no intake.genre, no stopword filter.
+def _seed_token(raw) -> str | None:
+    """Normalize one candidate to a tag body, or None if empty / not structurally curatable."""
+    if not isinstance(raw, str):
+        return None
+    t = raw.strip().lstrip("#").lower().replace("-", "").replace(" ", "")
+    if not t or not is_curatable("#" + t):
+        return None
+    return t
 
-    Pure, deterministic, and CORPUS-BLIND. Voice is the LLM register for caption/hook prompts, not a
-    vocabulary source. Entries are operator declarations already validated by `tag_defect` at the store
-    boundary; this function does not invent or silently drop terms."""
+
+def persona_terms(per) -> list[str]:
+    """Discovery/alignment vocabulary for ONE persona from the full Studio surface (F-1 / MOL-627).
+
+    Order (deduped, first wins): interim `niche` tag list (migration) → structured lever values →
+    voice UNIGRAMS that pass structural curation. Pure, deterministic, CORPUS-BLIND.
+
+    Forbidden: niche-as-sole-source; adjacent-voice-word concatenation; reading hashtag_corpus."""
     out: list[str] = []; seen: set[str] = set()
-    for n in getattr(per, "niche", None) or []:
-        t = str(n).strip().lstrip("#").lower()
+
+    def _add(raw) -> None:
+        t = _seed_token(raw)
         if t and t not in seen:
             seen.add(t); out.append(t)
+
+    for n in getattr(per, "niche", None) or []:
+        _add(n)
+    for key in _LEVER_KEYS:
+        val = getattr(per, key, None)
+        if isinstance(val, (list, tuple)):
+            for v in val:
+                _add(v)
+        elif isinstance(val, str) and val.strip():
+            _add(val)
+    voice = getattr(per, "voice", None) or ""
+    if isinstance(voice, str) and voice.strip():
+        for m in _WORD.finditer(voice.lower()):
+            w = m.group(0)
+            if w in _STOP or len(w) < 4:
+                continue
+            _add(w)
     return out
 
 

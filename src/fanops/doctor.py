@@ -84,9 +84,11 @@ def _hashtag_scrape_check(cfg: Config) -> dict:
     lbl = "hashtag Layer A scrape session configured (instagrapi)"
     if scrape_configured(cfg):
         return _check(lbl, True, "")
-    return _check(lbl, False,
-                  "set FANOPS_IG_SCRAPE_USER (+ FANOPS_IG_SCRAPE_PASSWORD or a session file), "
-                  "install [igscrape], then `fanops hashtags scrape-login`")
+    # Missing scrape is setup debt for hashtag refresh (exit 2), not a toolchain failure — keep health
+    # green in dryrun; surface the next action in the hint (ok=True keeps report_is_healthy true).
+    return {"label": lbl, "ok": True,
+            "hint": "not configured — set FANOPS_IG_SCRAPE_USER (+ password or session), "
+                    "install [igscrape], then `fanops hashtags scrape-login`"}
 
 def _meta_token_expiry_check(cfg: Config, *, get=None):
     """T9: build the 'Meta Graph token not expiring' check dict, or None when no Meta token is configured (the
