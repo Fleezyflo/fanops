@@ -134,7 +134,7 @@ hookscore.narration_signature / hook_quality / log_hook_quality  — READ-ONLY S
 ### `hashtags.py` — reach-vetted hashtag selection (the vetting engine)
 
 - `METRIC_FIELD = "like_count"` — Meta's own field name; the cache stores it verbatim (never renamed to `reach`).
-- `_ARABIC` / `_ARABIC_SET` / `_CORPUS_LEAD_MAX = 2` (module vars) — AR language/region floor; corpus may lead at most 2 of 4 slots. Frozen `_MEGA`/`_RELEVANCE`/`_RANK`/`VETTED`/`_DISCOVERY` pools are DELETED.
+- `_ARABIC` / `_ARABIC_SET` / `_CORPUS_LEAD_MAX = 3` (module vars) — AR language/region floor; corpus may lead at most 3 of 4 slots. Frozen `_MEGA`/`_RELEVANCE`/`_RANK`/`VETTED`/`_DISCOVERY` pools are DELETED.
 - `_STOPWORDS`, `_WORD` (module vars) — stopword set and word-token regex (`[a-z][a-z0-9]{2,19}`) for `content_tag_candidates`.
 - `_norm(tag) -> str` / `_dedupe_norm(seq) -> list[str]` — canonicalize + dedupe helpers.
 - `load_measurements(cfg) -> dict[str, dict]` — THE reader for `00_control/hashtags.json` as `{tag: {graph_id, like_count, measured_at, from}}`; absent/corrupt/legacy → `{}`. Written by `fanops_hashtags.refresh_store`.

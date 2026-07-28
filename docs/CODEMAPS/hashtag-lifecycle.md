@@ -99,7 +99,7 @@ previous derived corpus stands.
 Membership = persona-scoped measured pool ∪ corpus (content may join); no bans. An invented tag dies here; so
 does an unmeasured one. What survives from before is COMPOSITION, which is format rather than a reach claim:
 
-- hard cap of 4; corpus leads but `_CORPUS_LEAD_MAX = 2` keeps half the line reachable by the clip's own picks
+- hard cap of 4; corpus leads but `_CORPUS_LEAD_MAX = 3` keeps ≥1 slot reachable by the clip's own picks
 - graded LRU (`recent`, oldest-first) so a line rotates instead of locking
 - one `_ARABIC` region tag reserved on Arabic-language clips
 - cold cache + no corpus → an **empty** line (no discovery pad — honest beats padded)

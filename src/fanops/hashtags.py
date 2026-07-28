@@ -36,7 +36,7 @@ _ARABIC = ["#arabicmusic", "#arabtiktok", "#arabicmusiclovers"]        # AR lang
 # becomes a pure function of the persona). 2-of-4 keeps the curated lead on every post while guaranteeing
 # the clip always influences half the line. NOT a cap on how many corpus tags may ship: the surplus still
 # backfills.
-_CORPUS_LEAD_MAX = 2
+_CORPUS_LEAD_MAX = 3          # of max_tags=4; 2 was too stingy, ≥4 re-monopolises the line (H1)
 
 
 def _norm(tag: str) -> str:

@@ -59,13 +59,22 @@ def test_no_vetted_picks_is_byte_identical(picks):
     assert _line(picks, UZ) == ["#freestyle", "#undergroundhiphop", "#trap", "#methodman"]
 
 
-@pytest.mark.parametrize("corpus", [["#podcast"], ["#podcast", "#interview"]])
+@pytest.mark.parametrize("corpus", [["#podcast"], ["#podcast", "#interview"],
+                                    ["#podcast", "#interview", "#facts"]])
 def test_small_corpus_leads_and_the_clip_still_ships(corpus):
     # |corpus| <= _CORPUS_LEAD_MAX cannot monopolise 4 slots, so the lead cap never fires: the whole corpus
     # still leads and the model's picks fill the rest, exactly as before the cap existed.
     out = _line(["#hiphop", "#rap"], corpus)
     assert out[:len(corpus)] == corpus
     assert "#hiphop" in out and "#rap" in out
+
+
+def test_corpus_lead_max_is_three_under_four_cap():
+    # Lead must stay < max_tags (4): 3 leaves one clip slot; ≥4 re-monopolises (H1 regression).
+    assert _CORPUS_LEAD_MAX == 3
+    out = _line(["#podcast", "#interview", "#facts"], UZ)
+    assert out[:3] == UZ[:3] and "#podcast" in out
+    assert len([t for t in out if t not in UZ]) == 1
 
 
 def test_hard_cap_still_four():

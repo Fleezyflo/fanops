@@ -45,6 +45,36 @@ def test_refresh_store_atomic_write_preserves_prior_on_crash(tmp_path, monkeypat
     assert cfg.hashtags_path.read_text() == good
 
 
+def test_refresh_store_midpass_flush_survives_later_crash(tmp_path, monkeypatch):
+    # Every 5 successful measures flushes the cache WITHOUT stamping last_complete_pass.
+    # A crash after that flush must keep the accrued tags (not roll back to empty/prior-only).
+    from fanops import controlio, personas as P
+    cfg = Config(root=tmp_path)
+    niches = [f"seed{i}" for i in range(6)]                 # 6 anchors → flush at measured=5, then final
+    P.add_persona(cfg, name="Mid", voice="x", niche=niches, id="mid")
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": [
+        {"handle": "a", "platforms": ["instagram"], "status": "active", "persona_id": "mid"}]}))
+    metrics = {f"#{n}": float(10 + i) for i, n in enumerate(niches)}
+    n_writes = {"n": 0}
+    real_replace = controlio.os.replace
+
+    def boom_after_first_flush(src, dst):
+        n_writes["n"] += 1
+        if n_writes["n"] == 1:
+            return real_replace(src, dst)                   # mid-pass flush lands
+        raise OSError("crash on later write")
+
+    monkeypatch.setattr(controlio.os, "replace", boom_after_first_flush)
+    with pytest.raises(OSError):
+        refresh_store(cfg, scrape_client=_FakeClient(metrics))
+    monkeypatch.setattr(controlio.os, "replace", real_replace)
+    raw = json.loads(cfg.hashtags_path.read_text())
+    assert "last_complete_pass" not in raw                  # partial flush must not buy 12h silence
+    tags = [k for k in raw if k.startswith("#")]
+    assert len(tags) == 5                                   # accrued through the mid-pass flush
+
+
 def test_refresh_store_takes_no_ledger_and_no_doctor_gate(tmp_path, monkeypatch):
     # The own-reach model is gone: refresh_store's signature carries NO `led`, and it writes WITHOUT any
     # learn-doctor verdict on disk (the cache does not depend on a published post).

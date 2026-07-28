@@ -213,6 +213,13 @@ def refresh_store(cfg: Config, *, scrape_client=None, now=None) -> dict:
         if frm:
             rec["from"] = {k: int(v) for k, v in frm.items()}
         cache[tag] = rec; measured += 1
+        if measured % 5 == 0:                                 # mid-pass durable flush — crash loses ≤4 tags
+            mid = {t: cache[t] for t in ranked_tags(cache)
+                   if _fresh(cache[t], now - timedelta(days=_MAX_AGE_DAYS))}
+            if prev_complete:
+                mid[_COMPLETE_KEY] = prev_complete            # never advance complete on a partial flush
+            cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
+            write_json_atomic(cfg.hashtags_path, mid)
         if tried == 1 or tried % 5 == 0:
             log("hashtags", tag, "measured", tried=tried, measured=measured, queue_left=len(queue) - i,
                 like_count=float(metric))
