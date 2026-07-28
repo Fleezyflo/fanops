@@ -14,7 +14,7 @@
        hx-include="closest form" hx-target="#persona-compose-{{ cid }}" hx-swap="innerHTML">
     <fieldset class="levers">
       <legend>Levers — each option shows what it does (from the engine)
-        <span class="lever-clears-hint muted">Leaving scope or hook angle blank clears it on save.</span></legend>
+        <span class="lever-clears-hint muted">Leaving intensity, scope, or hook angle blank clears it on save.</span></legend>
       <div class="lever-group">
         <span class="lever-label">Clips · favors moments</span>
         {% for c in levers.content_focus %}
@@ -22,6 +22,10 @@
             {{ 'checked' if p and c in p.content_focus else '' }}> {{ c }} <span class="lever-effect muted">— {{ effects.content_focus[c] }}</span></label>
         {% endfor %}
       </div>
+      <label>Intensity
+        <select name="intensity"><option value="">— none (no peak filter) —</option>
+          {% for i in levers.intensity %}<option value="{{ i }}" title="{{ effects.intensity[i] }}" {{ 'selected' if p and p.intensity == i else '' }}>{{ i }} — {{ effects.intensity[i] }}</option>{% endfor %}
+        </select></label>
       <label>Selection scope
         <select name="selection_scope"><option value="">— open —</option>
           {% for s in levers.selection_scope %}<option value="{{ s }}" title="{{ effects.selection_scope[s] }}" {{ 'selected' if p and p.selection_scope == s else '' }}>{{ s }} — {{ effects.selection_scope[s] }}</option>{% endfor %}

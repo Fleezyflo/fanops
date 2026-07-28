@@ -32,6 +32,7 @@ from fanops.persona_levers import vocab as _lever_vocab
 CONTENT_FOCUS = _lever_vocab("content_focus")
 SELECTION_SCOPE_LEVELS = _lever_vocab("selection_scope")
 HOOK_ANGLES = _lever_vocab("hook_angle")
+INTENSITY = _lever_vocab("intensity")
 
 
 class Persona(BaseModel):
@@ -46,6 +47,7 @@ class Persona(BaseModel):
     content_focus: list[str] = Field(default_factory=list)   # which moment KINDS to favor (casting): CONTENT_FOCUS
     selection_scope: Optional[str] = None         # selection constraint: open|subject_locked|... (SELECTION_SCOPE_LEVELS)
     hook_angle: Optional[str] = None              # on-screen hook strategy: curiosity|challenge|... (HOOK_ANGLES)
+    intensity: Optional[str] = None  # peak-filter tier: high|medium|low (INTENSITY); unset → None → no filter
     # M3 (2026-06-27): the per-persona clip_profile/framing PINS were RETIRED — invisible (no editor) + duplicate
     # of the content_focus-DERIVED cut (derive_cut_spec). A persona's cut LENGTH + FRAMING now derive from
     # content_focus; the Account.clip_profile/framing carriers + the global FANOPS_CLIP_PROFILE lever stay.

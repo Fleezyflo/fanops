@@ -5,45 +5,86 @@
       "name": "Credibility First",
       "voice": "restraint is the product; pass on the sensational cut",
       "selection_scope": "credibility_first",
-      "content_focus": ["emotional", "storytelling"],
+      "content_focus": [
+        "emotional",
+        "storytelling"
+      ],
       "hook_angle": "curiosity",
-      "hashtag_corpus": ["#podcast", "#interview", "#facts", "#science"]
+      "hashtag_corpus": [
+        "#podcast",
+        "#interview",
+        "#facts",
+        "#science"
+      ],
+      "intensity": "low"
     },
     {
       "id": "controversy",
       "name": "Controversy",
-      "voice": "pick the cut that starts the argument — high-arousal, never neutral",
+      "voice": "pick the cut that starts the argument \u2014 high-arousal, never neutral",
       "selection_scope": "controversy_seeking",
-      "content_focus": ["bold-statement"],
+      "content_focus": [
+        "bold-statement"
+      ],
       "hook_angle": "challenge",
-      "hashtag_corpus": ["#celebritygossip", "#drama", "#popculture", "#entertainment"]
+      "hashtag_corpus": [
+        "#celebritygossip",
+        "#drama",
+        "#popculture",
+        "#entertainment"
+      ],
+      "intensity": "high"
     },
     {
       "id": "edutainment",
       "name": "Edutainment",
-      "voice": "one teachable insight per clip — the fact has to earn attention",
+      "voice": "one teachable insight per clip \u2014 the fact has to earn attention",
       "selection_scope": "source_briefed",
-      "content_focus": ["storytelling"],
+      "content_focus": [
+        "storytelling"
+      ],
       "hook_angle": "curiosity",
-      "hashtag_corpus": ["#hiphop", "#lyrics", "#music", "#newmusic"]
+      "hashtag_corpus": [
+        "#hiphop",
+        "#lyrics",
+        "#music",
+        "#newmusic"
+      ],
+      "intensity": "low"
     },
     {
       "id": "cliffhanger",
       "name": "Cliffhanger",
-      "voice": "cut before the resolution — leave the dilemma open so they have to watch through",
+      "voice": "cut before the resolution \u2014 leave the dilemma open so they have to watch through",
       "selection_scope": "open",
-      "content_focus": ["storytelling"],
+      "content_focus": [
+        "storytelling"
+      ],
       "hook_angle": "curiosity",
-      "hashtag_corpus": ["#podcast", "#storytime", "#reels", "#viral"]
+      "hashtag_corpus": [
+        "#podcast",
+        "#storytime",
+        "#reels",
+        "#viral"
+      ],
+      "intensity": "low"
     },
     {
       "id": "hype-vibe",
       "name": "Hype / Vibe",
-      "voice": "underground energy — the hardest bar, the room going up, never mid",
+      "voice": "underground energy \u2014 the hardest bar, the room going up, never mid",
       "selection_scope": "open",
-      "content_focus": ["hype"],
+      "content_focus": [
+        "hype"
+      ],
       "hook_angle": "fomo",
-      "hashtag_corpus": ["#hiphop", "#rap", "#bars", "#undergroundhiphop"]
+      "hashtag_corpus": [
+        "#hiphop",
+        "#rap",
+        "#bars",
+        "#undergroundhiphop"
+      ],
+      "intensity": "high"
     }
   ]
 }

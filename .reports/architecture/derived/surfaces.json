@@ -1198,7 +1198,7 @@
     {
       "decorator": "app.post",
       "handler": "do_personas_connect",
-      "line": 67,
+      "line": 68,
       "methods": [
         "POST"
       ],
@@ -1209,7 +1209,7 @@
     {
       "decorator": "app.post",
       "handler": "do_personas_delete",
-      "line": 56,
+      "line": 57,
       "methods": [
         "POST"
       ],
@@ -1231,7 +1231,7 @@
     {
       "decorator": "app.post",
       "handler": "do_personas_edit",
-      "line": 49,
+      "line": 50,
       "methods": [
         "POST"
       ],
@@ -1242,7 +1242,7 @@
     {
       "decorator": "app.post",
       "handler": "do_personas_migrate",
-      "line": 72,
+      "line": 73,
       "methods": [
         "POST"
       ],
@@ -1253,7 +1253,7 @@
     {
       "decorator": "app.post",
       "handler": "do_personas_niche",
-      "line": 60,
+      "line": 61,
       "methods": [
         "POST"
       ],

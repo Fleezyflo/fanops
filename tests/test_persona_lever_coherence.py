@@ -36,6 +36,7 @@ _KNOWN_INCOHERENT = set(_ORIGINAL_SIX)
 _MUTATIONS = {
     "voice": ("a devoted fan", "a blunt critic"),
     "content_focus": (["punchlines"], ["hype"]),
+    "intensity": ("high", "low"),
     "selection_scope": ("open", "subject_locked"),
     "hook_angle": ("curiosity", "fomo"),
     "niche": (["hiphop"], ["gossip"]),
@@ -45,9 +46,11 @@ _MUTATIONS = {
 def _output(cfg, p):
     """The full compiled fingerprint a persona produces — the bytes that actually reach the pipeline."""
     d = compose_breakdown(cfg, p)
+    # intensity is the P4b peak-filter tier (moments._persona_entry) — not a compose_breakdown dim.
     return (d["casting"]["text"], d["hook"]["text"], d["caption"]["text"],
             d["cut"]["band"], d["cut"]["framing"], tuple(d["tags"]["lead"]),
-            tuple(d["tags"]["terms"]))   # the niche words Layer A searches on — niche's output channel
+            tuple(d["tags"]["terms"]),   # the niche words Layer A searches on — niche's output channel
+            getattr(p, "intensity", None))
 
 
 def test_quarantine_is_printed_every_run():

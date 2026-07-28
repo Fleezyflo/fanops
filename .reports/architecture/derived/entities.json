@@ -244,6 +244,7 @@
           "hook_angle",
           "ig_user_id",
           "integrations",
+          "intensity",
           "persona",
           "persona_id",
           "persona_owns_profile",
@@ -554,12 +555,13 @@
           "hashtag_corpus",
           "hook_angle",
           "id",
+          "intensity",
           "name",
           "niche",
           "selection_scope",
           "voice"
         ],
-        "line": 37,
+        "line": 38,
         "name": "Persona"
       }
     ]

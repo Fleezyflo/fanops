@@ -19,12 +19,13 @@ def test_every_editable_field_persists_through_the_save_route(tmp_path):
     # (B-6), saved by the /personas/niche route.
     cfg = Config(root=tmp_path)
     add_persona(cfg, name="P", voice="champions craft", niche=["hiphop"],
-                content_focus=["punchlines", "hype"],
+                content_focus=["punchlines", "hype"], intensity="high",
                 selection_scope="controversy_seeking", hook_angle="curiosity")
     p = Personas.load(cfg).get("p")
     persisted = {
         "voice": p.voice == "champions craft",
         "content_focus": p.content_focus == ["punchlines", "hype"],
+        "intensity": p.intensity == "high",
         "selection_scope": p.selection_scope == "controversy_seeking",
         "hook_angle": p.hook_angle == "curiosity",
         "niche": p.niche == ["hiphop"],
@@ -36,10 +37,11 @@ def test_every_editable_field_persists_through_the_save_route(tmp_path):
 def test_update_route_also_persists_each_editable_field(tmp_path):
     cfg = Config(root=tmp_path)
     add_persona(cfg, name="P", voice="v", niche=["hiphop"])
-    update_persona(cfg, "p", voice="changed", content_focus=["storytelling"], selection_scope="subject_locked", hook_angle="fomo")
+    update_persona(cfg, "p", voice="changed", content_focus=["storytelling"], selection_scope="subject_locked",
+                   hook_angle="fomo", intensity="low")
     p = Personas.load(cfg).get("p")
     assert p.voice == "changed" and p.content_focus == ["storytelling"]
-    assert p.selection_scope == "subject_locked" and p.hook_angle == "fomo"
+    assert p.selection_scope == "subject_locked" and p.hook_angle == "fomo" and p.intensity == "low"
 
 
 def test_no_model_field_escapes_the_editable_exempt_or_quarantine_partition():
@@ -54,6 +56,6 @@ def test_quarantined_fields_are_not_in_the_editable_set():
     assert pl.editable_fields().isdisjoint(_QUARANTINE)
 
 
-def test_editable_set_is_exactly_the_five_clean_levers():
+def test_editable_set_is_exactly_the_clean_levers():
     # pin the editable set so an accidental widening (e.g. re-admitting tag_lean as "editable") reds here.
-    assert set(pl.editable_fields()) == {"voice", "content_focus", "selection_scope", "hook_angle", "niche"}
+    assert set(pl.editable_fields()) == {"voice", "content_focus", "intensity", "selection_scope", "hook_angle", "niche"}
