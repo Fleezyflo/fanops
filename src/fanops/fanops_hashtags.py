@@ -8,12 +8,9 @@ One pass, per persona that actually posts:
 
   description -> terms -> anchor tags -> ONE medias_top fetch per tag -> {metric, co-occurring tags}
 
-`persona_terms` returns declared `niche` ONLY (MOL-637) — voice/levers stay on captions+hooks, not
-Layer A search roots:
-it used to seed this pass, which made the store a re-ranked echo of the corpora it then fed — a closed
-loop with no external evidence anywhere in it (measured live 2026-07-16: the store was byte-identical
-to seeds + the frozen floor, 0 discovered, `reach: {}`, while every proposal it made looked like
-research). Rooting discovery in the declared niche severs that edge structurally.
+`persona_terms` returns operator `niche` plus durable LLM vocab seeds (MOL-637/MOL-644) — voice/levers
+stay on captions+hooks, not Layer A search roots. Vocab expands territory without writing the corpus;
+inbound-only membership still gates admission (MOL-643).
 
 Visibility numbers are Instagram's own fields only (see ig_hashtag_scrape): Top-grid median
 `play_count` (preferred) / `like_count`, plus `media_count` from hashtag_info when served.
@@ -218,7 +215,7 @@ def refresh_store(cfg: Config, *, scrape_client=None, now=None) -> dict:
     attribution: dict[str, dict] = {t: dict(r.get("from") or {}) for t, r in cache.items()}
     anchors: list[str] = []
     for per in personas:
-        for term in persona_terms(per):
+        for term in persona_terms(per, cfg):
             a = _norm("#" + term)
             if a and a not in anchors:
                 anchors.append(a)

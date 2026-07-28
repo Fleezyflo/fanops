@@ -6,7 +6,7 @@ The end-to-end path that decides every posted hashtag. Two layers, one authority
 
 ## The single rule everything else follows
 
-Discovery direction (MOL-637): Layer A search seeds are **declared niche only** (`persona_terms`). Voice / content_focus / hook_angle / intensity stay on captions+hooks — they are not Instagram search roots.
+Discovery direction (MOL-637/MOL-644): Layer A search seeds are operator **niche** plus durable LLM **vocab** (`persona_terms`). Voice / content_focus / hook_angle / intensity stay on captions+hooks — they are not Instagram search roots. Vocab expands territory; it never writes the corpus.
 
 Metric honesty: visibility is **only** Instagram fields Layer A stores — never an invented blended `reach`, never "most visibility" from a single top-post like.
 
@@ -33,7 +33,7 @@ loop. Network source is **instagrapi** (`ig_hashtag_scrape`). Missing scrape ses
 (`meta_graph.resolve_hashtag` / `measure_and_harvest`) stay in tree for later. Per persona linked to an
 **active** account (`_posting_persona_ids`; dormant personas cannot steer discovery):
 
-1. **terms** — `persona_research.persona_terms(per)` → declared niche only. Pure, deterministic, **corpus-blind**.
+1. **terms** — `persona_research.persona_terms(per, cfg)` → niche ∪ `hashtag_vocab.json` seeds. Deterministic given durable vocab, **corpus-blind**. Vocab is refreshed by `hashtag_vocab.expand_vocab_if_due` (LLM, 12h, `FANOPS_RESPONDER=llm`).
 2. **anchors** — each term resolves via `ig_hashtag_scrape.resolve_hashtag_scrape` (`hashtag_info`).
 3. **measure + harvest, one fetch** — `measure_and_harvest_scrape(client, tag)` returns Top medians
    (`play_count`/`like_count`) AND every hashtag those same captions carry (`CAPTION_TAG_RE`). Co-occurrence discovers tags nobody named
@@ -48,7 +48,7 @@ Writes `00_control/hashtags.json` — a flat cache, **measured tags only**:
              "media_count": 1500000.0, "measured_at": "2026-07-26T12:00:00+00:00", "from": {"#rap": 3}}}
 ```
 
-`from` is harvest attribution (which anchor surfaced this tag) and is what lets Layer B run offline.
+`from` is **inbound** membership only (niche/vocab appears on THAT tag's Top — MOL-643). Outbound co-tags enqueue for measure but do not write `from`. Layer B reads `from` offline.
 Records older than 90 days are pruned on write. Reader: `hashtags.load_measurements` — a record missing the
 metric, the id or the stamp is dropped rather than repaired, which is also how every legacy `reach` record
 becomes inadmissible without a migration.
