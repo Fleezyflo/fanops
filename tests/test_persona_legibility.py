@@ -61,7 +61,7 @@ def test_blank_clears_hint_renders(tmp_path):
     core.add_persona(cfg, name="Curator", voice="champions craft", niche=["hiphop"])
     html = _panel(cfg)
     zone2 = html.split("What you can change", 1)[1].split("Derived — updates itself", 1)[0]
-    assert "Leaving scope or hook angle blank clears it on save." in zone2
+    assert "Leaving intensity, scope, or hook angle blank clears it on save." in zone2
 
 
 def test_corpus_chips_carry_the_measurement_and_its_anchor(tmp_path):
