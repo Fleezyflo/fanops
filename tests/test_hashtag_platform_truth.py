@@ -291,7 +291,8 @@ def test_derivation_is_zero_network(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path)
     pid = _persona(cfg, voice="hiphop"); _link_active(cfg, pid)
     media = {"#hiphop": [{"caption": "#bars", "like_count": 500, "comments_count": 0}],
-             "#bars": [{"caption": "x #hiphop", "like_count": 400, "comments_count": 0}]}
+             "#bars": [{"caption": "x #hiphop", "like_count": 400, "comments_count": 0},
+                       {"caption": "y #hiphop", "like_count": 350, "comments_count": 0}]}
     refresh_store(cfg, scrape_client=_client(media))
     # Layer A write path already re-derived corpora — corpus must be non-empty before the second call.
     assert Personas.load(cfg).get(pid).hashtag_corpus
@@ -307,8 +308,10 @@ def test_corpus_is_ranked_by_the_platform_field(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path)
     pid = _persona(cfg, voice="hiphop"); _link_active(cfg, pid)
     media = {"#hiphop": [{"caption": "#low #high", "like_count": 500, "comments_count": 0}],
-             "#low": [{"caption": "x #hiphop", "like_count": 1, "comments_count": 9999}],
-             "#high": [{"caption": "x #hiphop", "like_count": 900, "comments_count": 0}]}
+             "#low": [{"caption": "x #hiphop", "like_count": 1, "comments_count": 9999},
+                      {"caption": "y #hiphop", "like_count": 1, "comments_count": 9999}],
+             "#high": [{"caption": "x #hiphop", "like_count": 900, "comments_count": 0},
+                       {"caption": "y #hiphop", "like_count": 800, "comments_count": 0}]}
     refresh_store(cfg, scrape_client=_client(media))
     derive_corpus(cfg, pid)
     corpus = Personas.load(cfg).get(pid).hashtag_corpus
@@ -319,7 +322,8 @@ def test_unreachable_platform_holds_a_derived_corpus(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path)
     pid = _persona(cfg, voice="hiphop"); _link_active(cfg, pid)
     media = {"#hiphop": [{"caption": "#bars", "like_count": 500, "comments_count": 0}],
-             "#bars": [{"caption": "x #hiphop", "like_count": 400, "comments_count": 0}]}
+             "#bars": [{"caption": "x #hiphop", "like_count": 400, "comments_count": 0},
+                       {"caption": "y #hiphop", "like_count": 350, "comments_count": 0}]}
     refresh_store(cfg, scrape_client=_client(media)); derive_corpus(cfg, pid)
     before = list(Personas.load(cfg).get(pid).hashtag_corpus)
     cfg.hashtags_path.unlink()
