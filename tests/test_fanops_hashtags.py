@@ -1,46 +1,17 @@
 # tests/test_fanops_hashtags.py
-# Layer A — the ONLY code that touches the Graph for hashtags and the only writer of the measurement
-# cache (00_control/hashtags.json). One pass per POSTING persona: description -> terms -> anchor tags ->
-# ONE top_media fetch per tag -> {like_count, co-occurring tags}. NO ledger, NO doctor gate, NO local
-# budget (Meta's own refusals are the sole governor — see test_hashtag_platform_truth.py).
+# Layer A — instagrapi is the network source; the only writer of the measurement cache
+# (00_control/hashtags.json). One pass per POSTING persona: description -> terms -> anchor tags ->
+# ONE medias_top fetch per tag -> {like_count, co-occurring tags}. NO ledger, NO doctor gate, NO local
+# budget (Instagram throttle is the sole governor — see test_hashtag_platform_truth.py).
 # This file owns the DRIVER contract: the written file's shape + order, accrual, the corrupt-personas
-# abort, the 12h throttle, and the two CLI verbs.
+# abort, the 12h throttle, and the CLI verbs.
 import inspect
 import json
 import pytest
 from fanops.config import Config
 from fanops.hashtags import METRIC_FIELD, load_measurements
 from fanops.fanops_hashtags import refresh_store
-
-
-class _Resp:
-    def __init__(self, status=200, body=None): self.status_code = status; self._body = body
-    def json(self):
-        if self._body is None: raise ValueError("no json")
-        return self._body
-
-
-def _graph_router(metric_by_tag, *, cooccur=""):
-    """A fake Meta Graph `get`: ig_hashtag_search resolves '<q>'->'id-<q>'; {hid}/top_media returns the
-    co-occurring caption (for the harvest) + the tag's verbatim like_count (for the measurement). A tag
-    this router does not know returns empty top_media — Meta published nothing, so it stays UNMEASURED."""
-    def get(url, params=None, timeout=None):
-        p = params or {}
-        if "ig_hashtag_search" in url:
-            return _Resp(200, {"data": [{"id": "id-" + p.get("q", "")}]})
-        if url.endswith("/top_media"):
-            tag = "#" + url.rsplit("/", 2)[-2].replace("id-", "")
-            if tag not in metric_by_tag:
-                return _Resp(200, {"data": []})
-            return _Resp(200, {"data": [{"caption": cooccur, "like_count": metric_by_tag[tag],
-                                         "comments_count": 0}]})
-        return _Resp(200, {"data": []})
-    return get
-
-
-def _dead_router(url, params=None, timeout=None):
-    """Meta answers with a refusal body — proves the pass records it instead of inventing a silent miss."""
-    return _Resp(404, {"error": {"code": 100, "message": "dead"}})
+from hashtag_scrape_fakes import _FakeClient
 
 
 def _persona(cfg, *, pid="curator"):
@@ -55,19 +26,21 @@ def _persona(cfg, *, pid="curator"):
     return pid
 
 
+
+
 def test_refresh_store_atomic_write_preserves_prior_on_crash(tmp_path, monkeypatch):
     # L08: a crash mid-write must leave the PRIOR valid hashtags.json intact (write_json_atomic).
     from fanops import controlio
-    monkeypatch.delenv("META_GRAPH_TOKEN", raising=False); monkeypatch.delenv("META_IG_USER_ID", raising=False)
     cfg = Config(root=tmp_path)
-    refresh_store(cfg)                                      # establish a valid cache file
+    client = _FakeClient({})
+    refresh_store(cfg, scrape_client=client)                # establish a valid cache file
     good = cfg.hashtags_path.read_text()
     real_replace = controlio.os.replace
     def boom(src, dst):
         raise OSError("simulated crash during replace")
     monkeypatch.setattr(controlio.os, "replace", boom)
     with pytest.raises(OSError):
-        refresh_store(cfg)
+        refresh_store(cfg, scrape_client=client)
     monkeypatch.setattr(controlio.os, "replace", real_replace)
     assert cfg.hashtags_path.read_text() == good
 
@@ -75,22 +48,23 @@ def test_refresh_store_atomic_write_preserves_prior_on_crash(tmp_path, monkeypat
 def test_refresh_store_takes_no_ledger_and_no_doctor_gate(tmp_path, monkeypatch):
     # The own-reach model is gone: refresh_store's signature carries NO `led`, and it writes WITHOUT any
     # learn-doctor verdict on disk (the cache does not depend on a published post).
-    monkeypatch.delenv("META_GRAPH_TOKEN", raising=False); monkeypatch.delenv("META_IG_USER_ID", raising=False)
     assert "led" not in inspect.signature(refresh_store).parameters
+    assert "get" not in inspect.signature(refresh_store).parameters
+    assert "scrape_client" in inspect.signature(refresh_store).parameters
     cfg = Config(root=tmp_path)
     assert not (cfg.control / "learn_doctor.json").exists()     # no doctor verdict anywhere
-    out = refresh_store(cfg)
+    out = refresh_store(cfg, scrape_client=_FakeClient({}))
     assert out["written"] is True and cfg.hashtags_path.exists()  # still writes — no gate
+    assert out.get("backend") == "scrape"
 
 
 def test_written_file_is_the_flat_record_shape_ranked_by_the_metric(tmp_path, monkeypatch):
     # The cache is `{tag: {graph_id, like_count, measured_at, from}}` written in metric-DESC order, so a
     # reader that just iterates the file already has the menu. `last_complete_pass` is a sibling stamp,
     # not a tag record (MOL-525).
-    monkeypatch.setenv("META_GRAPH_TOKEN", "tok"); monkeypatch.setenv("META_IG_USER_ID", "ig")
     cfg = Config(root=tmp_path); _persona(cfg)
-    refresh_store(cfg, get=_graph_router({"#hiphop": 500, "#beta": 900, "#alpha": 100},
-                                         cooccur="#alpha #beta"))
+    refresh_store(cfg, scrape_client=_FakeClient(
+        {"#hiphop": 500, "#beta": 900, "#alpha": 100}, cooccur="#alpha #beta"))
     blob = json.loads(cfg.hashtags_path.read_text())
     tags = {k: v for k, v in blob.items() if isinstance(v, dict)}
     assert list(tags) == sorted(tags, key=lambda t: (-tags[t][METRIC_FIELD], t))   # metric desc on disk
@@ -101,51 +75,40 @@ def test_written_file_is_the_flat_record_shape_ranked_by_the_metric(tmp_path, mo
 
 
 def test_measurements_accrue_across_passes(tmp_path, monkeypatch):
-    # A later pass that discovers a DIFFERENT slice must ADD to the evidence, not replace it: candidates
-    # rotate as the anchor's top media change, and the cache must accumulate what each pass bought. Pass 2
-    # cannot even re-measure #alpha (Meta refuses it) — its pass-1 record must still stand.
-    monkeypatch.setenv("META_GRAPH_TOKEN", "tok"); monkeypatch.setenv("META_IG_USER_ID", "ig")
+    # A later pass that discovers a DIFFERENT slice must ADD to the evidence, not replace it.
     cfg = Config(root=tmp_path); _persona(cfg)
-    refresh_store(cfg, get=_graph_router({"#hiphop": 500, "#alpha": 100}, cooccur="#alpha"))
-    refresh_store(cfg, get=_graph_router({"#hiphop": 500, "#beta": 900}, cooccur="#beta"))
+    refresh_store(cfg, scrape_client=_FakeClient({"#hiphop": 500, "#alpha": 100}, cooccur="#alpha"))
+    refresh_store(cfg, scrape_client=_FakeClient({"#hiphop": 500, "#beta": 900}, cooccur="#beta"))
     m = load_measurements(cfg)
-    assert "#alpha" in m and "#beta" in m                    # both slices survive
-    assert m["#alpha"][METRIC_FIELD] == 100                  # an unreachable tag keeps its prior evidence
+    assert "#alpha" in m and "#beta" in m
+    assert m["#alpha"][METRIC_FIELD] == 100
     assert m["#beta"][METRIC_FIELD] == 900
 
 
-def test_refresh_store_without_creds_measures_nothing_and_never_calls_out(tmp_path, monkeypatch):
-    # No Meta creds -> resolve_hashtag short-circuits BEFORE any request, so the pass measures nothing and
-    # writes an EMPTY cache. Honest: there is no frozen floor left to pad it with.
-    monkeypatch.delenv("META_GRAPH_TOKEN", raising=False); monkeypatch.delenv("META_IG_USER_ID", raising=False)
+def test_refresh_store_no_scrape_aborts_loudly(tmp_path, monkeypatch):
+    # Missing scrape -> written:False / aborted:no_scrape. No silent Graph fallback; cache untouched.
+    monkeypatch.delenv("FANOPS_IG_SCRAPE_USER", raising=False)
+    monkeypatch.delenv("FANOPS_IG_SCRAPE_PASSWORD", raising=False)
     cfg = Config(root=tmp_path); _persona(cfg)
-    calls: list = []
-    def spy(url, params=None, timeout=None):
-        calls.append(url); return _Resp(404, None)
-    out = refresh_store(cfg, get=spy)
-    assert out["written"] is True and out["measured"] == 0
-    assert calls == []                                       # never hits the network without creds
-    assert load_measurements(cfg) == {}                      # no invented measurements
-    assert isinstance(json.loads(cfg.hashtags_path.read_text()).get("last_complete_pass"), str)
+    out = refresh_store(cfg)
+    assert out["written"] is False and out["aborted"] == "no_scrape"
+    assert not cfg.hashtags_path.exists()
 
 
-# --- `hashtags discover` is the per-persona niche REPORT: READ-ONLY and ZERO NETWORK ------------------
 def test_cmd_hashtags_discover_reports_and_writes_nothing(tmp_path, monkeypatch):
     from fanops.fanops_hashtags import cmd_hashtags_discover
-    monkeypatch.setenv("META_GRAPH_TOKEN", "tok"); monkeypatch.setenv("META_IG_USER_ID", "ig")
     from datetime import datetime, timezone
     cfg = Config(root=tmp_path); pid = _persona(cfg)
     cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.hashtags_path.write_text(json.dumps({"#detroitrap": {
         "graph_id": "id-detroitrap", METRIC_FIELD: 4200.0,
         "measured_at": datetime.now(timezone.utc).isoformat(), "from": {"#hiphop": 3}}}))
-    import requests
-    monkeypatch.setattr(requests, "get", lambda *a, **k: pytest.fail("discover must spend no Graph call"))
     before = cfg.hashtags_path.read_text()
     rc = cmd_hashtags_discover(cfg)
     blob = cfg.log_path.read_text()
     assert rc == 0 and "#detroitrap" in blob and pid in blob
-    assert cfg.hashtags_path.read_text() == before           # a report never mutates the cache
+    assert "instagrapi" in blob
+    assert cfg.hashtags_path.read_text() == before
 
 
 def test_cmd_hashtags_discover_no_personas(tmp_path):
@@ -156,71 +119,52 @@ def test_cmd_hashtags_discover_no_personas(tmp_path):
     assert rc == 0 and any(r["outcome"] == "no_personas" for r in recs)
 
 
-# --- the run loop refreshes the cache on a 12h throttle (constant update), fail-open ------------------
 def test_refresh_store_if_due_throttles_and_fail_open(tmp_path, monkeypatch):
-    # MOL-525: gate on last_complete_pass inside the cache, NOT file mtime (a throttled write still bumps mtime).
+    # MOL-525: gate on last_complete_pass inside the cache, NOT file mtime.
     from datetime import datetime, timezone, timedelta
     from fanops.fanops_hashtags import refresh_store_if_due
-    monkeypatch.delenv("META_GRAPH_TOKEN", raising=False); monkeypatch.delenv("META_IG_USER_ID", raising=False)
+    monkeypatch.delenv("FANOPS_IG_SCRAPE_USER", raising=False)
+    monkeypatch.delenv("FANOPS_IG_SCRAPE_PASSWORD", raising=False)
     cfg = Config(root=tmp_path)
-    assert refresh_store_if_due(cfg)["refreshed"] is False        # no Meta creds -> clean no-op
-    assert refresh_store_if_due(cfg)["reason"] == "no Meta creds"
+    assert refresh_store_if_due(cfg)["refreshed"] is False
+    assert refresh_store_if_due(cfg)["reason"] == "no scrape session"
     assert not cfg.hashtags_path.exists()
-    monkeypatch.setenv("META_GRAPH_TOKEN", "t"); monkeypatch.setenv("META_IG_USER_ID", "ig")
-    assert refresh_store_if_due(cfg, get=_dead_router)["refreshed"] is True   # no cache yet -> writes
+    client = _FakeClient({})
+    assert refresh_store_if_due(cfg, scrape_client=client)["refreshed"] is True
     assert cfg.hashtags_path.exists()
     assert isinstance(json.loads(cfg.hashtags_path.read_text()).get("last_complete_pass"), str)
-    assert refresh_store_if_due(cfg, max_age_s=43200, get=_dead_router)["refreshed"] is False  # fresh -> skip
-    assert refresh_store_if_due(cfg, max_age_s=43200, get=_dead_router)["reason"] == "fresh"
+    assert refresh_store_if_due(cfg, max_age_s=43200, scrape_client=client)["refreshed"] is False
+    assert refresh_store_if_due(cfg, max_age_s=43200, scrape_client=client)["reason"] == "fresh"
     blob = json.loads(cfg.hashtags_path.read_text())
     blob["last_complete_pass"] = (datetime.now(timezone.utc) - timedelta(hours=13)).isoformat()
     cfg.hashtags_path.write_text(json.dumps(blob))
-    assert refresh_store_if_due(cfg, max_age_s=10, get=_dead_router)["refreshed"] is True      # stamp stale -> refresh
+    assert refresh_store_if_due(cfg, max_age_s=10, scrape_client=client)["refreshed"] is True
 
 
 def test_throttled_pass_does_not_advance_complete_stamp(tmp_path, monkeypatch):
     """D-2 / MOL-525 (1): throttled writes must not buy (or extend) the 12h silence window."""
-    import fanops.meta_graph as mg
     from datetime import datetime, timezone, timedelta
     from fanops.fanops_hashtags import refresh_store_if_due
-    monkeypatch.setenv("META_GRAPH_TOKEN", "t"); monkeypatch.setenv("META_IG_USER_ID", "ig")
-    monkeypatch.setattr(mg, "_sleep", lambda *_: None)
-    monkeypatch.setattr(mg, "_MAX_RL_RETRIES", 0)
     cfg = Config(root=tmp_path); _persona(cfg)
-
-    def throttle_get(url, params=None, timeout=None):
-        p = params or {}
-        if "ig_hashtag_search" in url:
-            return _Resp(200, {"data": [{"id": "id-" + p.get("q", "")}]})
-        if url.endswith("/top_media"):
-            return _Resp(400, {"error": {"code": 4, "message": "rate"}})
-        return _Resp(404, {"error": {"code": 100, "message": "x"}})
-
     t0 = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
-    out0 = refresh_store(cfg, get=throttle_get, now=t0)          # first pass ever — Meta cuts off immediately
+    out0 = refresh_store(cfg, scrape_client=_FakeClient({"#hiphop": 50}, throttle_after=0), now=t0)
     assert out0["throttled"] is True and "last_complete_pass" not in json.loads(cfg.hashtags_path.read_text())
-    # Old mtime gate would skip for 12h; missing completion stamp must keep the tick due.
-    assert refresh_store_if_due(cfg, max_age_s=43200, get=_dead_router, now=t0 + timedelta(minutes=5)
-                                )["refreshed"] is True
-
-    refresh_store(cfg, get=_graph_router({"#hiphop": 50}), now=t0 + timedelta(hours=1))  # complete
+    assert refresh_store_if_due(cfg, max_age_s=43200, scrape_client=_FakeClient({}),
+                                now=t0 + timedelta(minutes=5))["refreshed"] is True
+    refresh_store(cfg, scrape_client=_FakeClient({"#hiphop": 50}), now=t0 + timedelta(hours=1))
     stamp = json.loads(cfg.hashtags_path.read_text())["last_complete_pass"]
     t_th = t0 + timedelta(hours=2)
-    out1 = refresh_store(cfg, get=throttle_get, now=t_th)         # later incomplete pass
+    out1 = refresh_store(cfg, scrape_client=_FakeClient({"#hiphop": 50}, throttle_after=0), now=t_th)
     assert out1["throttled"] is True
     assert json.loads(cfg.hashtags_path.read_text())["last_complete_pass"] == stamp
-    # Stamp must not slide forward with the throttled write (would extend silence past the real complete).
-    skip = refresh_store_if_due(cfg, max_age_s=43200, get=_dead_router, now=t_th + timedelta(minutes=1))
+    skip = refresh_store_if_due(cfg, max_age_s=43200, scrape_client=_FakeClient({}),
+                                now=t_th + timedelta(minutes=1))
     assert skip["refreshed"] is False and skip["reason"] == "fresh"
 
 
 def test_stalest_remeasure_reaches_known_before_fresh_anchor(tmp_path, monkeypatch):
     """D-2 / MOL-525 (2): under throttle, a stale known tag must beat a freshly-measured anchor."""
-    import fanops.meta_graph as mg
     from fanops import personas as P
-    monkeypatch.setenv("META_GRAPH_TOKEN", "t"); monkeypatch.setenv("META_IG_USER_ID", "ig")
-    monkeypatch.setattr(mg, "_sleep", lambda *_: None)
-    monkeypatch.setattr(mg, "_MAX_RL_RETRIES", 0)
     cfg = Config(root=tmp_path)
     P.add_persona(cfg, name="A", voice="x", niche=["freshanchor"], id="a")
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
@@ -233,20 +177,46 @@ def test_stalest_remeasure_reaches_known_before_fresh_anchor(tmp_path, monkeypat
         "#staletail": {"graph_id": "id-staletail", METRIC_FIELD: 20.0,
                        "measured_at": "2026-01-01T00:00:00+00:00", "from": {"#freshanchor": 1}},
         "last_complete_pass": "2026-07-01T12:00:00+00:00"}))
-    order: list = []
-    def get(url, params=None, timeout=None):
-        if "ig_hashtag_search" in url:
-            return _Resp(200, {"data": [{"id": "id-" + (params or {}).get("q", "")}]})
-        if url.endswith("/top_media"):
-            tag = "#" + url.rsplit("/", 2)[-2].replace("id-", "")
-            order.append(tag)
-            if len(order) >= 2:                                  # measure one, then Meta stops the pass
-                return _Resp(400, {"error": {"code": 4, "message": "rate"}})
-            return _Resp(200, {"data": [{"caption": "", "like_count": 21, "comments_count": 0}]})
-        return _Resp(404, {"error": {"code": 100}})
-    out = refresh_store(cfg, get=get, now=datetime_for_pass())
+    client = _FakeClient({"#freshanchor": 11, "#staletail": 21}, throttle_after=1)
+    out = refresh_store(cfg, scrape_client=client, now=datetime_for_pass())
     assert out["throttled"] is True
-    assert order[0] == "#staletail", "stalest known must be first — not the fresh anchor"
+    assert client.media_calls[0] == "staletail", "stalest known must be first — not the fresh anchor"
+
+
+def test_refresh_store_try_cap_ends_pass_without_complete_stamp(tmp_path, monkeypatch):
+    """Scrape pass budget: stop after _SCRAPE_TRY_CAP tries, write evidence, do NOT stamp complete."""
+    import fanops.fanops_hashtags as fh
+    monkeypatch.setattr(fh, "_SCRAPE_TRY_CAP", 2)
+    monkeypatch.setattr(fh, "_SCRAPE_COTAG_ENQUEUE_CAP", 0)   # no co-tag expansion in this proof
+    cfg = Config(root=tmp_path)
+    from fanops import personas as P
+    P.add_persona(cfg, name="A", voice="x", niche=["alpha", "beta", "gamma"], id="a")
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": [
+        {"handle": "a", "platforms": ["instagram"], "status": "active", "persona_id": "a"}]}))
+    client = _FakeClient({"#alpha": 10, "#beta": 20, "#gamma": 30})
+    out = refresh_store(cfg, scrape_client=client)
+    assert out["throttled"] is True and out["tried"] == 2 and out["measured"] == 2
+    assert "last_complete_pass" not in json.loads(cfg.hashtags_path.read_text())
+    assert len(client.media_calls) == 2
+
+
+def test_refresh_store_cotag_enqueue_cap(tmp_path, monkeypatch):
+    """One anchor can harvest dozens of co-tags; only _SCRAPE_COTAG_ENQUEUE_CAP are measured this pass."""
+    import fanops.fanops_hashtags as fh
+    monkeypatch.setattr(fh, "_SCRAPE_TRY_CAP", 50)
+    monkeypatch.setattr(fh, "_SCRAPE_COTAG_ENQUEUE_CAP", 2)
+    cfg = Config(root=tmp_path); _persona(cfg)
+    # 5 co-tags in caption — only 2 may join the queue
+    co = "#c1 #c2 #c3 #c4 #c5"
+    metrics = {"#hiphop": 100, "#c1": 1, "#c2": 2, "#c3": 3, "#c4": 4, "#c5": 5}
+    client = _FakeClient(metrics, cooccur=co)
+    out = refresh_store(cfg, scrape_client=client)
+    assert out["discovered"] == 2
+    m = load_measurements(cfg)
+    assert "#hiphop" in m
+    measured_cos = [t for t in ("#c1", "#c2", "#c3", "#c4", "#c5") if t in m]
+    assert len(measured_cos) == 2
 
 
 def datetime_for_pass():
@@ -255,75 +225,65 @@ def datetime_for_pass():
 
 
 def test_run_tick_logs_non_fresh_hashtag_skip(tmp_path, monkeypatch):
-    """D-2 / MOL-525 (3): no-creds / error skips must log; `fresh` stays quiet (same class as corpora)."""
+    """D-2 / MOL-525 (3): no-scrape / error skips must log; `fresh` stays quiet."""
     from fanops.cli import _cmd_run_pass
-    monkeypatch.delenv("META_GRAPH_TOKEN", raising=False); monkeypatch.delenv("META_IG_USER_ID", raising=False)
+    monkeypatch.delenv("FANOPS_IG_SCRAPE_USER", raising=False)
+    monkeypatch.delenv("FANOPS_IG_SCRAPE_PASSWORD", raising=False)
     monkeypatch.chdir(tmp_path)
     cfg = Config(root=tmp_path)
     _cmd_run_pass(cfg, "2026-07-02T00:00:00Z")
     recs = [json.loads(line) for line in cfg.log_path.read_text().splitlines()]
     skipped = [r for r in recs if r.get("outcome") == "store_refresh_skipped"]
-    assert skipped and skipped[0].get("reason") == "no Meta creds"
+    assert skipped and skipped[0].get("reason") == "no scrape session"
 
 
-# --- Corrupt personas.json MUST NOT clobber the accrued cache (MOL-12→15). Personas.load raises
-# ControlFileError; refresh_store turns that into a loud abort and leaves the file byte-identical, while a
-# genuinely-ABSENT personas.json is not an abort (it just measures nothing).
 def _write_corrupt_personas(cfg):
     cfg.personas_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg.personas_path.write_text('{"personas": [oops]}')    # bareword: not valid JSON -> ControlFileError
+    cfg.personas_path.write_text('{"personas": [oops]}')
 
 
 def test_refresh_store_aborts_and_preserves_cache_on_corrupt_personas(tmp_path, monkeypatch):
-    monkeypatch.setenv("META_GRAPH_TOKEN", "tok"); monkeypatch.setenv("META_IG_USER_ID", "ig")
     cfg = Config(root=tmp_path)
     cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
     accrued = json.dumps({"#measured": {"graph_id": "id-measured", METRIC_FIELD: 5000.0,
                                         "measured_at": "2026-07-20T00:00:00+00:00"}}, indent=2)
-    cfg.hashtags_path.write_text(accrued)                   # evidence already bought
+    cfg.hashtags_path.write_text(accrued)
     _write_corrupt_personas(cfg)
-    out = refresh_store(cfg, get=_graph_router({"#beta": 900}, cooccur="#beta"))
-    assert out["written"] is False and out["aborted"] == "corrupt_personas"   # loud, non-success return
-    assert "personas.json invalid:" in out["reason"]                          # the reason surfaces
-    assert cfg.hashtags_path.read_text() == accrued          # byte-identical: the evidence is UNTOUCHED
+    out = refresh_store(cfg, scrape_client=_FakeClient({"#beta": 900}, cooccur="#beta"))
+    assert out["written"] is False and out["aborted"] == "corrupt_personas"
+    assert "personas.json invalid:" in out["reason"]
+    assert cfg.hashtags_path.read_text() == accrued
 
 
 def test_refresh_store_absent_personas_is_not_an_abort(tmp_path, monkeypatch):
-    # The abort is ONLY for corrupt, never for absent: with no personas there are no anchors, so the pass
-    # measures nothing and writes cleanly.
-    monkeypatch.delenv("META_GRAPH_TOKEN", raising=False); monkeypatch.delenv("META_IG_USER_ID", raising=False)
     cfg = Config(root=tmp_path)
     assert not cfg.personas_path.exists()
-    out = refresh_store(cfg)
+    out = refresh_store(cfg, scrape_client=_FakeClient({}))
     assert out["written"] is True and "aborted" not in out and out["measured"] == 0
 
 
 def test_refresh_store_if_due_corrupt_personas_reports_reason_never_raises(tmp_path, monkeypatch):
-    # MOL-14: the unattended tick keeps its fail-open contract (never raises into the run) AND surfaces the
-    # corrupt-abort as a REPORTED reason, with the accrued cache preserved byte-identical.
     from fanops.fanops_hashtags import refresh_store_if_due
-    monkeypatch.setenv("META_GRAPH_TOKEN", "t"); monkeypatch.setenv("META_IG_USER_ID", "ig")
     cfg = Config(root=tmp_path)
     cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
     accrued = json.dumps({"#measured": {"graph_id": "id-measured", METRIC_FIELD: 1.0,
                                         "measured_at": "2026-07-20T00:00:00+00:00"}}, indent=2)
-    cfg.hashtags_path.write_text(accrued)                   # no last_complete_pass -> due every tick
-    _write_corrupt_personas(cfg)                            # the broken control file that must not clobber
-    r = refresh_store_if_due(cfg, max_age_s=10, get=_graph_router({"#beta": 900}))   # must NOT raise
+    cfg.hashtags_path.write_text(accrued)
+    _write_corrupt_personas(cfg)
+    r = refresh_store_if_due(cfg, max_age_s=10, scrape_client=_FakeClient({"#beta": 900}))
     assert r["refreshed"] is False and r["aborted"] == "corrupt_personas"
     assert "personas.json invalid:" in r["reason"]
-    assert cfg.hashtags_path.read_text() == accrued          # accrued cache preserved
+    assert cfg.hashtags_path.read_text() == accrued
 
 
 def test_cmd_hashtags_refresh_corrupt_personas_exits_2_and_no_keyerror(tmp_path, monkeypatch):
-    # MOL-13 caller contract: `fanops hashtags refresh` must NOT KeyError on the abort shape — it logs the
-    # reason loudly and exits 2. The healthy verb still logs its summary and exits 0.
     from fanops.fanops_hashtags import cmd_hashtags_refresh
-    monkeypatch.delenv("META_GRAPH_TOKEN", raising=False); monkeypatch.delenv("META_IG_USER_ID", raising=False)
+    monkeypatch.delenv("FANOPS_IG_SCRAPE_USER", raising=False)
+    monkeypatch.delenv("FANOPS_IG_SCRAPE_PASSWORD", raising=False)
     cfg = Config(root=tmp_path)
     _write_corrupt_personas(cfg)
     rc = cmd_hashtags_refresh(cfg)
     recs = [json.loads(line) for line in cfg.log_path.read_text().splitlines()]
-    assert rc == 2                                          # loud non-zero exit, no KeyError
+    assert rc == 2
     aborted = next(r for r in recs if r["outcome"] == "refresh_aborted")
     assert "personas.json invalid:" in aborted.get("reason", "")

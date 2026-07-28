@@ -109,7 +109,7 @@ def test_lever_catalog_shape_byte_identical():
     # clip_profile stays the GLOBAL band lever (5 bands); `niche` is free text, so no
     # enumerated options (it owns the hashtags channel; corpus is derived from platform measurements).
     assert [o["value"] for o in cat["clip_profile"]["options"]] == ["short", "medium", "long", "talk", "song"]
-    assert cat["niche"]["options"] == [] and cat["niche"]["label"] == "Niche"
+    assert cat["niche"]["options"] == [] and cat["niche"]["label"] == "Territory seeds (interim)"
     assert sorted(lever_catalog()[0].keys()) == ["does", "key", "kind", "label", "options", "stage"]
 
 

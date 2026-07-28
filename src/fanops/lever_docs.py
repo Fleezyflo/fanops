@@ -129,9 +129,9 @@ def render_levers(cfg: Config) -> str:  # cfg reserved for future persona-aware 
         if key == "niche":
             parts.append(f"\n## {key} (stage: {lv['stage']})\n\n"
                          f"**Does:** {lv['does']}\n\n"
-                         "Declared subject list (`Persona.niche`): `persona_research.persona_terms` returns "
-                         "it verbatim (normalized, deduped) for `fanops_hashtags.refresh_store` to search. "
-                         "The corpus it derives then leads caption hashtags.\n")
+                         "Interim territory seeds (`Persona.niche`) plus voice unigrams and lever values: "
+                         "`persona_research.persona_terms` builds Layer A search seeds (no adjacent-voice glue). "
+                         "The measured corpus it derives then leads caption hashtags.\n")
             continue
         parts.append(f"\n## {key} (stage: {lv['stage']})\n\n**Does:** {lv['does']}\n{table_hdr}")
         for opt in lv["options"]:

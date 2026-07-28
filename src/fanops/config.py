@@ -165,6 +165,7 @@ class Config:
         self.context_path = self.control / "context.md"
         self.tuning_path = self.control / "tuning.json"
         self.hashtags_path = self.control / "hashtags.json"  # the platform measurement cache {tag: {graph_id, like_count, measured_at, from}}; absent -> selection ships short
+        self.ig_scrape_session_path = self.control / "ig_scrape_session.json"  # instagrapi session for hashtag Layer A; absent -> refresh aborts until scrape-login
         self.account_stats_path = self.control / "account_stats.json"  # U3: throttled IG follower snapshot per handle; absent -> empty
         self.cutover_path = self.control / "cutover.json"   # live-cutover harness scratch state; NEVER the ledger
         self.insights_blocked_path = self.control / "insights_blocked.json"  # Leg 2: the LOUD fail-closed breadcrumb when Graph media-insights is refused for lack of the instagram_manage_insights scope; doctor + Home read it, a clean pull clears it
@@ -395,10 +396,10 @@ class Config:
 
     @property
     def meta_graph_token(self) -> str | None:
-        # Meta Graph API access token (IG Business) for the M4 hashtag TREND sampling. WRITE-ONLY —
-        # never logged/echoed (mirrors postiz_api_key); meta_graph sends it as the access_token param.
-        # Absent -> the Graph store build fails open to the frozen reach floor. Used ONLY by `hashtags
-        # refresh`, never on the publish path.
+        # Meta Graph API access token (IG Business). WRITE-ONLY — never logged/echoed (mirrors
+        # postiz_api_key); meta_graph sends it as the access_token param. Used by IG insights /
+        # media verification — NOT by hashtag Layer A refresh anymore (that path is instagrapi;
+        # Graph hashtag helpers stay in meta_graph for later).
         from fanops.secret_provider import resolve_secret
         v = os.getenv("META_GRAPH_TOKEN")
         env_val = v.strip() if v and v.strip() else None
@@ -407,8 +408,23 @@ class Config:
     @property
     def meta_ig_user_id(self) -> str | None:
         # The IG Business account id that ig_hashtag_search requires as `user_id`. Absent -> no trends.
+        # (Hashtag Layer A refresh no longer calls this path — deferred.)
         v = os.getenv("META_IG_USER_ID")
         return v.strip() if v and v.strip() else None
+
+    @property
+    def ig_scrape_user(self) -> str | None:
+        # Instagram login used by hashtag Layer A (instagrapi). Not a secret itself; the password is.
+        v = os.getenv("FANOPS_IG_SCRAPE_USER")
+        return v.strip() if v and v.strip() else None
+
+    @property
+    def ig_scrape_password(self) -> str | None:
+        # Instagram password for hashtag Layer A scrape-login. WRITE-ONLY — never logged/echoed.
+        from fanops.secret_provider import resolve_secret
+        v = os.getenv("FANOPS_IG_SCRAPE_PASSWORD")
+        env_val = v.strip() if v and v.strip() else None
+        return resolve_secret("FANOPS_IG_SCRAPE_PASSWORD", env_val)
 
     @property
     def meta_graph_url(self) -> str:
@@ -421,10 +437,10 @@ class Config:
         # How many measured tags a persona's DERIVED corpus aims to hold. A ceiling, not a quota: derivation
         # never pads to reach it, so a persona with thin platform evidence keeps a shorter corpus.
         try:
-            v = int(os.getenv("FANOPS_CORPUS_TARGET", "30"))
+            v = int(os.getenv("FANOPS_CORPUS_TARGET", "80"))
         except ValueError:
-            return 30
-        return v if v >= 1 else 30
+            return 80
+        return v if v >= 1 else 80
 
     @property
     def require_full_objective(self) -> bool:

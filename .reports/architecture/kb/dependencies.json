@@ -50,13 +50,13 @@
     }
   },
   "totals": {
-    "modules": 133,
-    "compile_edges_G1": 561,
-    "runtime_lazy_edges": 335,
+    "modules": 134,
+    "compile_edges_G1": 563,
+    "runtime_lazy_edges": 336,
     "typing_only_edges": 7,
     "lazy_edges_to_equal_or_higher_level": 111,
     "___of_which_STRICTLY_UPWARD": 65,
-    "___of_which_LATERAL_same_level": 46,
+    "___of_which_LATERAL_same_level": 47,
     "G1_non_trivial_sccs": 0,
     "G1c_levels": 11,
     "G2_module_sccs": 8,

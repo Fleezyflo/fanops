@@ -199,14 +199,14 @@ Authority: `docs/CODEMAPS/hashtag-lifecycle.md`. Summary:
 1. **A persona declares a niche** (`Persona.niche: list[str]`) in `00_control/personas.json`. Accounts
    link via `Account.persona_id`. Edited in the Studio **Personas** tab. There is no operator
    pin/ban/recommend lane and no global ban list.
-2. **Layer A — measurement** (`fanops_hashtags.refresh_store`, the only Graph toucher):
-   `persona_terms` returns the declared niche only → each term is searched via `ig_hashtag_search` →
-   one `top_media` fetch yields Meta's verbatim `like_count` plus co-occurring tags → written to
-   `00_control/hashtags.json` (measured tags only). Cached `graph_id` re-measures without a new search.
-   **No local budget / allowance model.** Meta's own throttle codes (4/17/32/613) end a pass via
-   `GraphThrottled`; any other Meta error raises `GraphRefused` (code/subcode/message) and the pass
-   records it in `unresolved` — never collapses to a silent miss. `fanops hashtags discover` is
-   read-only (projects the cache; zero network).
+2. **Layer A — measurement** (`fanops_hashtags.refresh_store` via `ig_hashtag_scrape` / instagrapi;
+   Graph hashtag path deferred): `persona_terms` returns the persona UI surface (voice + levers + interim niche seeds) only → each term resolves
+   via `hashtag_info` → one `hashtag_medias_top` fetch yields Instagram's verbatim `like_count` plus
+   co-occurring tags → written to `00_control/hashtags.json` (measured tags only). Cached `graph_id`
+   skips resolve and still re-measures. **No local budget / allowance model.** Throttle cues end a pass
+   via `ScrapeThrottled`; any other scrape error raises `ScrapeRefused` and the pass records it in
+   `unresolved` — never a silent Graph fallback. Missing scrape aborts loudly (`no_scrape`).
+   `fanops hashtags discover` is read-only (projects the cache; zero network).
 3. **Layer B — derivation** (`persona_research.derive_corpus`, zero network): corpus = top
    `cfg.corpus_target` of the persona's aligned measured pool. Outage / empty pool holds the previous
    corpus. An empty corpus is honest (no padding).
@@ -223,10 +223,12 @@ Authority: `docs/CODEMAPS/hashtag-lifecycle.md`. Summary:
 - [persona_research.py](../../../src/fanops/persona_research.py) — `persona_terms` (niche only),
   `_aligned_pool`, `derive_corpus`.
 - [hashtags.py](../../../src/fanops/hashtags.py) — `vet_hashtags` / measurement cache readers.
-- [meta_graph.py](../../../src/fanops/meta_graph.py) — `resolve_hashtag`, `measure_and_harvest`;
-  refusals are typed (`GraphRefused` / `GraphUnreachable` / `GraphThrottled`).
+- [ig_hashtag_scrape.py](../../../src/fanops/ig_hashtag_scrape.py) — Layer A network (`resolve_hashtag_scrape`,
+  `measure_and_harvest_scrape`); refusals typed (`ScrapeRefused` / `ScrapeThrottled` / `ScrapeUnavailable`).
+- [meta_graph.py](../../../src/fanops/meta_graph.py) — Graph hashtag helpers deferred (`resolve_hashtag`,
+  `measure_and_harvest` kept for later).
 - [fanops_hashtags.py](../../../src/fanops/fanops_hashtags.py) — `refresh_store` +
-  `refresh_store_if_due` (12h mtime gate inside `fanops run`).
+  `refresh_store_if_due` (12h stamp gate inside `fanops run`).
 - [prompts.py](../../../src/fanops/prompts.py) `caption_prompt` — per-surface `hashtag_store` + corpus.
 
 ## Sources

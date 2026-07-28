@@ -3,11 +3,12 @@
 into the <=4-tag line a post ships.
 
 The reach question is settled OUTSIDE this module and it is settled by the PLATFORM: `METRIC_FIELD` is
-Meta's own `like_count`, read verbatim off one `top_media` item (fanops_hashtags/meta_graph write the
-cache; this module only reads it). Nothing here ranks a tag by a number we computed, and nothing here
-carries a hand-researched reach claim — the frozen `_MEGA`/`_RELEVANCE`/`_RANK`/`VETTED` pools that used
-to be this file's authority were DELETED: they asserted reach from June-2026 desk research, which is
-exactly the manufactured assessment the system must not make.
+Instagram's own `like_count`, read verbatim off one top-media item (Layer A writer is
+fanops_hashtags/ig_hashtag_scrape — Graph hashtag path deferred; this module only reads the cache).
+Nothing here ranks a tag by a number we computed, and nothing here carries a hand-researched reach
+claim — the frozen `_MEGA`/`_RELEVANCE`/`_RANK`/`VETTED` pools that used to be this file's authority
+were DELETED: they asserted reach from June-2026 desk research, which is exactly the manufactured
+assessment the system must not make.
 
 What survives here is COMPOSITION, which is format rather than a reach claim: at most 4 tags, the
 persona's curated corpus leads but may not monopolise the line (`_CORPUS_LEAD_MAX`), graded-LRU rotation,
@@ -25,6 +26,9 @@ from fanops.models import Platform
 # post volume is genuinely unavailable and `like_count` on the hashtag's own top media is the visibility
 # datum Meta actually publishes. Stored under Meta's name, never renamed to "reach".
 METRIC_FIELD = "like_count"
+
+CAPTION_TAG_RE = re.compile(r"#[0-9A-Za-z_؀-ۿ]+")   # a hashtag in a caption: Latin + Arabic-block letters
+HARVEST_CAP = 5000                 # upper bound on distinct co-tags per harvest — untrusted-UGC guard
 
 _ARABIC = ["#arabicmusic", "#arabtiktok", "#arabicmusiclovers"]        # AR language/region floor
 # Max slots the curated corpus may LEAD in one line. The corpus is tier 0 and is seeded whole, so without

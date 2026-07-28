@@ -158,7 +158,11 @@ class Settings(BaseSettings):
     META_GRAPH_TOKEN: str | None = None
     META_IG_USER_ID: str | None = None
     META_GRAPH_URL: str = ""
-    FANOPS_CORPUS_TARGET: int = 30
+    FANOPS_CORPUS_TARGET: int = 80
+    FANOPS_HASHTAG_SCRAPE_TRY_CAP: int = 120
+    FANOPS_HASHTAG_SCRAPE_COTAG_ENQUEUE: int = 40
+    FANOPS_IG_SCRAPE_USER: str | None = None
+    FANOPS_IG_SCRAPE_PASSWORD: str | None = None
     FANOPS_REQUIRE_FULL_OBJECTIVE: str = ""
     FANOPS_RESPONDER: str = ""
     FANOPS_LLM_TRANSPORT: str = ""
@@ -214,7 +218,7 @@ class Settings(BaseSettings):
 
     @field_validator("ANTHROPIC_API_KEY", "POSTIZ_URL", "POSTIZ_API_KEY", "FANOPS_MEDIA_PUBLIC_BASE",
                      "R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET",
-                     "ZERNIO_API_KEY", "META_GRAPH_TOKEN", "META_IG_USER_ID", "FANOPS_POSTIZ_COMPOSE_DIR",
+                     "ZERNIO_API_KEY", "META_GRAPH_TOKEN", "META_IG_USER_ID", "FANOPS_IG_SCRAPE_PASSWORD", "FANOPS_POSTIZ_COMPOSE_DIR",
                      "XDG_CACHE_HOME", mode="before")
     @classmethod
     def _opt_str(cls, v): return _strip_opt(v)
@@ -222,8 +226,20 @@ class Settings(BaseSettings):
     @field_validator("FANOPS_CORPUS_TARGET", mode="before")
     @classmethod
     def _corpus_target(cls, v):
-        iv = _parse_int(v, 30)
-        return iv if iv >= 1 else 30
+        iv = _parse_int(v, 80)
+        return iv if iv >= 1 else 80
+
+    @field_validator("FANOPS_HASHTAG_SCRAPE_TRY_CAP", mode="before")
+    @classmethod
+    def _scrape_try_cap(cls, v):
+        iv = _parse_int(v, 120)
+        return iv if iv >= 1 else 120
+
+    @field_validator("FANOPS_HASHTAG_SCRAPE_COTAG_ENQUEUE", mode="before")
+    @classmethod
+    def _scrape_cotag_cap(cls, v):
+        iv = _parse_int(v, 40)
+        return iv if iv >= 0 else 40
 
     @field_validator("FANOPS_VARIANT_MIN_POSTS", mode="before")
     @classmethod

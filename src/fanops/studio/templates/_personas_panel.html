@@ -29,11 +29,11 @@
       <summary class="step-summary">+ Add a persona</summary>
       <p class="muted persona-levers-intro">Each persona's levers{{ term('lever') }} shape its clips, hooks and captions.</p>
       {{ levers_reference(lever_ref) }}
-      <p class="muted">Name it, declare its niche, write its voice, and set its levers — which moments it clips, its
+      <p class="muted">Name it, write its voice, set its levers, and optionally add interim territory seeds — which moments it clips, its
         selection scope, and its hook angle. Hashtags (and genre for research) are curated per-card after it exists.</p>
       <form hx-post="{{ url_for('do_personas_add') }}" hx-target="#personas-panel" hx-swap="outerHTML">
         <label>Name <input type="text" name="name" placeholder="e.g. Music Blogger" size="22" required></label>
-        <label>Niche <input type="text" name="niche" placeholder="e.g. hiphop, arabicrap" size="28" required
+        <label>Territory seeds (interim) <input type="text" name="niche" placeholder="optional tag seeds, e.g. hiphop" size="28" required
           title="the subject term(s) the next measurement pass searches Instagram for"></label>
         <label class="block">Voice
           <textarea name="voice" rows="2" placeholder="champions craft; clip the moments that show artistry…"></textarea></label>
@@ -113,11 +113,11 @@
           <form class="inline persona-niche-form" hx-post="{{ url_for('do_personas_niche') }}" hx-target="#personas-panel" hx-swap="outerHTML">
             <input type="hidden" name="id" value="{{ p.id }}">
             <label>Niche
-              <input type="text" name="niche" value="{{ p.niche | join(', ') }}" placeholder="term, term — commas separate"
+              <input type="text" name="niche" value="{{ p.niche | join(', ') }}" placeholder="interim seeds — commas separate; voice+levers also direct search"
                 size="36" required
-                title="{{ niche_lever.does if niche_lever else 'the niche word(s) the next measurement pass searches Instagram for' }}">
+                title="{{ niche_lever.does if niche_lever else 'interim seeds — voice + levers also seed Layer A' }}">
             </label>
-            <button type="submit" class="ghost" title="save the niche; the next pass measures it">Save niche</button>
+            <button type="submit" class="ghost" title="save interim seeds; voice + levers also seed discovery">Save seeds</button>
           </form>
         </section>
 

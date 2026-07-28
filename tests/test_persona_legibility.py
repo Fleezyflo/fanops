@@ -117,7 +117,7 @@ def test_edit_zone_offers_the_niche_lever_not_a_curation_lane(tmp_path):
     html = _panel(cfg)
     zone2 = html.split("What you can change", 1)[1].split("Derived — updates itself", 1)[0]
     zone3 = html.split("Derived — updates itself", 1)[1].split("</article>", 1)[0]
-    assert 'name="niche"' in zone2 and "Save niche" in zone2
+    assert 'name="niche"' in zone2 and "Save seeds" in zone2
     assert 'name="niche"' not in zone3 and 'name="genre"' not in zone3
     for gone in ("Force refresh now", "Check reach", "/personas/research", "/personas/corpus/add"):
         assert gone not in zone3, f"a retired curation control still renders in the derived zone: {gone}"

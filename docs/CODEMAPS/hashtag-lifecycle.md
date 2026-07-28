@@ -6,12 +6,15 @@ The end-to-end path that decides every posted hashtag. Two layers, one authority
 
 ## The single rule everything else follows
 
+Discovery direction (F / MOL-627): Layer A search seeds come from the **full Studio persona surface** (`persona_terms` — interim niche tags + structured levers + voice unigrams). "Niche" is not the sole hashtag source. Metric honesty: `like_count` on one top-media item is a visibility proxy — not impressions, not engagement rate, not lift on our posts.
+
 A hashtag's reach/visibility is **only** what the platform publishes about that hashtag, stored under the
 platform's own field name. Nothing in this subsystem computes, blends, averages or renames a reach number.
 
-`hashtags.METRIC_FIELD = "like_count"` — Instagram's own field, read verbatim off the FIRST item in Meta's
-own `top_media` ordering that carries one (`meta_graph.measure_and_harvest`). An item with likes hidden is
-skipped, not read as zero. No item carries one ⇒ the tag is UNMEASURED ⇒ inadmissible everywhere.
+`hashtags.METRIC_FIELD = "like_count"` — Instagram's own field, read verbatim off the FIRST item in
+`hashtag_medias_top` that carries one (`ig_hashtag_scrape.measure_and_harvest_scrape`). An item with likes
+hidden is skipped, not read as zero. No item carries one ⇒ the tag is UNMEASURED ⇒ inadmissible everywhere.
+(Graph `measure_and_harvest` remains in `meta_graph` for a deferred path — Layer A refresh does not call it.)
 
 **Why `like_count` and not post volume** — probed live 2026-07-26:
 `GET /{hashtag-id}?fields=id,name,media_count` → `400 "(#100) Tried accessing nonexisting field
@@ -20,18 +23,19 @@ genuinely unavailable, so `like_count` on the tag's own top media is the visibil
 publishes. The pre-2026-07-26 metric — likes **plus** comments summed across all top media, stored under a
 key we named `reach` alongside a never-read `confidence: 1.0` — was a number we invented.
 
-## Layer A — measurement (the ONLY Graph toucher)
+## Layer A — measurement (instagrapi; Graph hashtag deferred)
 
 `fanops_hashtags.refresh_store(cfg)` — driven by `refresh_store_if_due` on the 12h tick in `cli.py`'s run
-loop. Per persona linked to an **active** account (`_posting_persona_ids`; dormant personas cannot steer
-discovery — five of them once put `#science`/`#gossip`/`#drama` into a Syrian rapper's menu):
+loop. Network source is **instagrapi** (`ig_hashtag_scrape`). Missing scrape session aborts loudly
+(`written:False`, `aborted:no_scrape`) — there is **no silent Graph fallback**. Graph hashtag helpers
+(`meta_graph.resolve_hashtag` / `measure_and_harvest`) stay in tree for later. Per persona linked to an
+**active** account (`_posting_persona_ids`; dormant personas cannot steer discovery):
 
 1. **terms** — `persona_research.persona_terms(per)` → declared niche only. Pure, deterministic, **corpus-blind**.
-2. **anchors** — each term resolves to a real tag node via `meta_graph.resolve_hashtag` (`ig_hashtag_search`).
-3. **measure + harvest, one fetch** — `measure_and_harvest(cfg, hid)` returns the verbatim metric AND every
-   hashtag those same captions carry (`_TAG_RE`). Co-occurrence is the only Graph-native way to discover tags
-   nobody named (IG has no trending-by-topic endpoint) and it is where **versatility** comes from: the posts
-   winning in a niche right now carry the broad tags alongside the narrow ones.
+2. **anchors** — each term resolves via `ig_hashtag_scrape.resolve_hashtag_scrape` (`hashtag_info`).
+3. **measure + harvest, one fetch** — `measure_and_harvest_scrape(client, tag)` returns the verbatim metric
+   AND every hashtag those same captions carry (`CAPTION_TAG_RE`). Co-occurrence discovers tags nobody named
+   and is where **versatility** comes from: posts winning in a niche carry broad tags alongside narrow ones.
 4. **queue** — anchors, then everything already measured stalest-`measured_at` first, then this pass's novel
    co-tags. Co-tags are harvested from ANCHORS only; a co-tag's own co-tags drift off-niche within two hops.
 
@@ -47,20 +51,18 @@ Records older than 90 days are pruned on write. Reader: `hashtags.load_measureme
 metric, the id or the stamp is dropped rather than repaired, which is also how every legacy `reach` record
 becomes inadmissible without a migration.
 
-## Layer A has no local budget — Meta is the only governor
+## Layer A has no local budget — Instagram throttle is the only governor
 
 Deleted 2026-07-26: the local search meter (`_BUDGET_LIMIT` / `_BUDGET_WINDOW_DAYS` / `_read_queries` /
 `budget_remaining` / `record_query` / `00_control/hashtag_budget.json`). That construct logged every search
-and then **skipped every tag it had logged**, capping each pass. Live evidence it was fiction: on
-2026-07-25 it recorded 2,124 searches and produced zero new measurements, and the store sat at 21 measured
-of 1,704 tags with nothing newer than 2026-07-20 — while Meta was accepting 1,500+ searches in a single run.
+and then **skipped every tag it had logged**, capping each pass.
 
-What replaces it, all on existing mechanisms:
-- **`graph_id` cached** on every record — a known tag re-measures by id and never spends another search, so
-  the search endpoint funds novel discovery only.
-- **Throttle codes** (Meta's own 4/17/32/613) → jittered backoff (`_MAX_RL_RETRIES`, the `llm.py` idiom);
-  still refused ⇒ `GraphThrottled` ends the pass and the evidence accrued so far is written.
-- **Any other Meta error** ⇒ `GraphRefused` (code/subcode/message) recorded in the pass `unresolved` list;
+What replaces it:
+- **`graph_id` cached** on every record — a known tag skips `hashtag_info` and still re-measures via
+  `hashtag_medias_top`, so resolve funds novel discovery only.
+- **Throttle** (please_wait / rate / feedback_required) ⇒ `ScrapeThrottled` ends the pass; evidence accrued
+  so far is written.
+- **Any other scrape error** ⇒ `ScrapeRefused` (truncated message, optional code) recorded in `unresolved`;
   a later pass retries. Nothing predicts or meters an allowance.
 
 ## Layer B — derivation (ZERO network)
@@ -116,7 +118,8 @@ hook/clip/account, not the hashtag. Pinned by `tests/test_hashtag_attribution_se
 | Concern | File |
 |---|---|
 | metric constant, cache reader, selection | `src/fanops/hashtags.py` |
-| Graph transport, resolve, measure+harvest, throttle | `src/fanops/meta_graph.py` |
+| Layer A scrape (resolve, measure+harvest, throttle) | `src/fanops/ig_hashtag_scrape.py` |
+| Graph hashtag helpers (deferred) | `src/fanops/meta_graph.py` |
 | Layer A driver + CLI verbs | `src/fanops/fanops_hashtags.py` |
 | terms, alignment, Layer B derivation | `src/fanops/persona_research.py` |
 | corpus writer + deprecation cutover | `src/fanops/persona_store.py` |
@@ -125,9 +128,8 @@ hook/clip/account, not the hashtag. Pinned by `tests/test_hashtag_attribution_se
 
 ## Config
 
-- `META_GRAPH_TOKEN` + `META_IG_USER_ID` — the IG Business Graph creds. Absent ⇒ no measurement pass runs and
-  the cache stands as-is (selection ships whatever is already measured, or short).
-- `FANOPS_CORPUS_TARGET` (default 30) — how many measured tags a derived corpus aims to hold. A ceiling, not
+- `FANOPS_IG_SCRAPE_USER` + session (`ig_scrape_session.json`) or `FANOPS_IG_SCRAPE_PASSWORD` — instagrapi scrape. Absent ⇒ refresh aborts (`no_scrape`); the cache stands as-is (selection ships whatever is already measured, or short). Graph token is NOT used for Layer A refresh.
+- `FANOPS_CORPUS_TARGET` (default 80) — how many measured tags a derived corpus aims to hold. A ceiling, not
   a quota: derivation never pads to reach it.
 - `Account.persona_id` / `personas.json` — the per-persona link; the persona's niche is the lever.
 
