@@ -198,3 +198,36 @@ def test_review_card_renders_regenerate_button(tmp_path):
     app = create_app(cfg); app.config.update(TESTING=True)
     r = app.test_client().get("/review?view=list")
     assert r.status_code == 200 and b"Regenerate" in r.data
+
+
+# --- MOL-512 (C-2): regenerate vets from the account's persona aligned pool -------------------
+
+def test_regenerate_vets_from_persona_aligned_store_not_global(tmp_path):
+    """Regen must not accept/backfill another persona's tags just because they sit in the global cache.
+    Account `a` is linked to a hiphop persona; its aligned pool excludes podcast-only + unaligned tags."""
+    import json as _json
+    from fanops import personas as core
+    from datetime import timezone as _tz
+    cfg = Config(root=tmp_path)
+    pid = core.add_persona(cfg, name="Hip", voice="va", niche=["hiphop"], id="pa")
+    now = datetime.now(_tz.utc).isoformat()
+    cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.hashtags_path.write_text(_json.dumps({
+        "#hiphop": {"graph_id": "1", "like_count": 100, "measured_at": now},
+        "#detroitrap": {"graph_id": "2", "like_count": 900, "measured_at": now, "from": {"#hiphop": 1}},
+        "#podcast": {"graph_id": "3", "like_count": 200, "measured_at": now},
+        "#interview": {"graph_id": "4", "like_count": 800, "measured_at": now, "from": {"#podcast": 1}},
+        "#globalwinner": {"graph_id": "5", "like_count": 9999, "measured_at": now},
+    }))
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(_json.dumps({"accounts": [
+        {"handle": "a", "platforms": ["instagram"], "status": "active", "persona_id": pid}]}))
+    _seed(cfg)
+    res = regenerate_caption(
+        cfg, "p_edit", "",
+        model=_model("x", ["#detroitrap", "#interview", "#globalwinner", "#podcast"]),
+        now=NOW)
+    assert res.ok is True
+    tags = Ledger.load(cfg).posts["p_edit"].hashtags
+    assert "#detroitrap" in tags
+    assert "#interview" not in tags and "#podcast" not in tags and "#globalwinner" not in tags

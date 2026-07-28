@@ -224,3 +224,25 @@ def test_corpus_row_size_is_byte_truth_from_personas_json(tmp_path):
     row = next(r for r in views_hashtags._corpora_rows(cfg) if r.pid == pid)
     assert row.size == 2
     assert not hasattr(row, "deprecated")
+
+
+
+# --- MOL-512 (C-2): Studio transparency lead_tags are persona-scoped --------------------------
+
+def test_persona_facts_store_is_aligned_pool_not_global_ranked(tmp_path):
+    """Personas-page transparency (persona_facts) vets over `_aligned_pool`, not ranked_tags(load_measurements).
+    A global-cache winner unaligned to this persona must not appear in lead_tags."""
+    cfg = Config(root=tmp_path)
+    pid = core.add_persona(cfg, name="Hip", voice="va", niche=["hiphop"], id="pa")
+    now = datetime.now(timezone.utc).isoformat()
+    cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.hashtags_path.write_text(json.dumps({
+        "#hiphop": {"graph_id": "1", METRIC_FIELD: 100.0, "measured_at": now},
+        "#detroitrap": {"graph_id": "2", METRIC_FIELD: 900.0, "measured_at": now,
+                        "from": {"#hiphop": 1}},
+        "#globalwinner": {"graph_id": "3", METRIC_FIELD: 9999.0, "measured_at": now},
+    }))
+    per = core.Personas.load(cfg).get(pid)
+    lead = core.persona_facts(cfg, per)["lead_tags"]
+    assert "#globalwinner" not in lead
+    assert "#detroitrap" in lead or "#hiphop" in lead
