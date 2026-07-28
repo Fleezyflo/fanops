@@ -42,8 +42,10 @@ _STOP = frozenset({
     "next", "last", "first", "back", "down", "again", "make", "take", "give", "keep", "look", "feel",
     "brand", "safety", "voice", "voices", "persona", "personas", "studio", "caption", "captions",
 })
-# Structured levers that feed discovery direction (F-1). `niche` remains interim migration seeds.
-_LEVER_KEYS = ("content_focus", "selection_scope", "hook_angle", "intensity")
+# Hashtag discovery seeds: niche + content_focus only. intensity/hook_angle/selection_scope are
+# enum UX levers ("high", "curiosity", "challenge") — NOT Instagram tags; seeding them made every
+# persona share fake anchors and let inbound co-occurrence pollute Burner via #curiosity/#high.
+_LEVER_KEYS = ("content_focus",)
 
 
 def _registry(cfg: Config):

@@ -188,20 +188,38 @@ def test_persona_terms_drop_junk_voice_filler(tmp_path):
 
 
 def test_persona_terms_include_surface_not_niche_only(tmp_path):
-    """F-2: niche + levers + voice unigrams; no adjacent-voice glue; corpus-blind."""
+    """F-2: niche + content_focus + voice unigrams; enum levers are NOT hashtag seeds."""
     from fanops.personas import Persona
     per = Persona(id="x", name="Craft Curator", voice="syrian rapper craft",
                   niche=["Lyricism", "songwriting", "lyricism", "#MusicReview"],
-                  content_focus=["punchlines"], hook_angle="curiosity",
+                  content_focus=["punchlines"], hook_angle="curiosity", intensity="high",
                   hashtag_corpus=["#neverseenhere"])
     terms = persona_terms(per)
     assert terms[:3] == ["lyricism", "songwriting", "musicreview"]  # niche first
-    assert "punchlines" in terms and "curiosity" in terms
+    assert "punchlines" in terms
+    assert "curiosity" not in terms and "high" not in terms  # hook_angle/intensity are UX enums
     assert "syrian" in terms and "rapper" in terms and "craft" in terms  # voice unigrams
     assert "syrianrapper" not in terms and "rappercraft" not in terms     # no pairwise glue
     assert "craftcurator" not in terms and "hiphop" not in terms
     assert not any("neverseenhere" in t for t in terms)
     assert terms == persona_terms(per)
+
+
+def test_inbound_cotag_attributes_measured_tag_to_anchor(tmp_path, monkeypatch):
+    """Measuring a dense tag whose Top captions mention a persona anchor must attribute THAT tag
+    to the anchor (inbound) — outbound-only left sparse niches with empty Top lines stuck."""
+    cfg = Config(root=tmp_path)
+    pid = _persona(cfg, voice="x", niche=["rapbeef"]); _link_active(cfg, pid)
+    # Anchor Top is barren; a remesured megatag's captions name the anchor.
+    media = {"#rapbeef": [{"caption": "", "like_count": 10}],
+             "#fyp": [{"caption": "chaos #rapbeef #drama", "like_count": 9000}]}
+    refresh_store(cfg, scrape_client=_client(media))
+    rec = load_measurements(cfg)["#fyp"]
+    assert rec.get("from", {}).get("#rapbeef", 0) >= 1
+    from fanops.persona_research import _aligned_pool
+    from fanops.personas import Personas
+    pool_tags = {t for t, _, _ in _aligned_pool(Personas.load(cfg).get(pid), load_measurements(cfg))}
+    assert "#fyp" in pool_tags
 
 
 def test_persona_terms_disjoint_voices_diverge(tmp_path):
