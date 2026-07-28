@@ -44,8 +44,9 @@ def test_hashtag_lifecycle_end_to_end(tmp_path, monkeypatch):
     assert cache["#detroitrap"]["from"] == {"#hiphop": 1}
     assert ranked_tags(cache)[0] == "#detroitrap"
 
-    assert derive_corpus(cfg, pid)["changed"] is True
+    # Layer B already ran on the Layer A write — corpus is set; a second derive is idempotent.
     assert core.Personas.load(cfg).get(pid).hashtag_corpus[0] == "#detroitrap"
+    assert derive_corpus(cfg, pid)["changed"] is False
     accts = Accounts.load(cfg)
     assert "#detroitrap" in accts.accounts[0].hashtag_corpus
 

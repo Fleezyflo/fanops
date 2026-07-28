@@ -148,14 +148,39 @@ def _fresh(rec: dict, cutoff: datetime) -> bool:
     return ts >= cutoff
 
 
+
+def _records_for_write(cache: dict, *, anchor_set: set[str], cutoff) -> dict:
+    """Persist anchors + inbound-aligned tags only. Prune dead `from` keys; drop outbound-only orphans.
+
+    `from` is membership evidence (niche seen on THIS tag's Top). Discovery enqueue must not leave edges.
+    Non-anchor tags with no live-anchor `from` are evicted so remesure cannot burn budget on punchlines
+    orphans / one-hit outbound megatags."""
+    out: dict = {}
+    for t in ranked_tags(cache):
+        rec = cache.get(t)
+        if not isinstance(rec, dict) or not _fresh(rec, cutoff):
+            continue
+        raw_from = rec.get("from") if isinstance(rec.get("from"), dict) else {}
+        frm = {k: int(v) for k, v in raw_from.items()
+               if k in anchor_set and isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0}
+        if t not in anchor_set and not frm:
+            continue
+        clean = {k: v for k, v in rec.items() if k != "from"}
+        if frm:
+            clean["from"] = frm
+        out[t] = clean
+    return out
+
+
 def refresh_store(cfg: Config, *, scrape_client=None, now=None) -> dict:
     """Run one measurement pass and rewrite the cache. Returns a summary dict.
 
     Order of work: never-measured anchors first (must discover), then novel co-tags harvested from those
     anchors (inserted ahead of remesure so try_cap buys expansion), then every previously-measured tag
     (anchors + known) ordered stalest `measured_at` first so a throttle cannot starve the tail.
-    Co-occurring tags are harvested outbound from ANCHORS (enqueue novel tags) and inbound onto any
-    measured tag whose Top captions mention an anchor (so sparse niches inherit edges dense tags already pay for).
+    Co-tags harvested from ANCHOR Tops are ENQUEUED for measurement only (discovery) — they must NOT
+    write membership edges. Membership `from` is INBOUND only: a measured tag whose own Top captions
+    mention a live niche anchor. Outbound-into-`from` was the megatag magnet (one caption hit × huge plays).
 
     Network work runs in WAVES of `_scrape_parallel()` (default 4) concurrent fetches — wall time should
     track wave count, not one-tag-at-a-time. Injected `scrape_client` (tests) shares one client under a
@@ -285,18 +310,14 @@ def refresh_store(cfg: Config, *, scrape_client=None, now=None) -> dict:
             # status == ok
             ids[tag] = hid
             cotags = payload if isinstance(payload, dict) else {}
-            # Outbound: measuring an ANCHOR enqueues novel co-tags (discovery).
+            # Outbound discovery: measuring an ANCHOR enqueues novel co-tags — NEVER writes `from`.
             if tag in anchor_set:
                 for co, n in cotags.items():
                     if co in anchor_set:
                         continue
-                    attribution.setdefault(co, {})
-                    attribution[co][tag] = attribution[co].get(tag, 0) + n
                     if co not in queued and cotag_enqueued < cotag_cap:
                         queued.add(co); queue.insert(i, co); discovered += 1; cotag_enqueued += 1
-            # Inbound: measuring ANY tag whose Top captions mention a persona anchor attributes
-            # THIS tag to that anchor. Sparse niches (Burner) inherit edges the dense tags already pay for —
-            # outbound-only harvest left them stuck at "anchors with empty Top hashtag lines".
+            # Inbound membership: niche anchors appearing on THIS tag's Top → `from` (corpus admission).
             for co, n in cotags.items():
                 if co in anchor_set and co != tag:
                     attribution.setdefault(tag, {})
@@ -317,8 +338,8 @@ def refresh_store(cfg: Config, *, scrape_client=None, now=None) -> dict:
                 rec["from"] = {k: int(v) for k, v in frm.items()}
             cache[tag] = rec; measured += 1
             if measured % 5 == 0:                                 # mid-pass durable flush — crash loses ≤4 tags
-                mid = {t: cache[t] for t in ranked_tags(cache)
-                       if _fresh(cache[t], now - timedelta(days=_MAX_AGE_DAYS))}
+                mid = _records_for_write(cache, anchor_set=anchor_set,
+                                         cutoff=now - timedelta(days=_MAX_AGE_DAYS))
                 if prev_complete:
                     mid[_COMPLETE_KEY] = prev_complete
                 cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
@@ -332,7 +353,7 @@ def refresh_store(cfg: Config, *, scrape_client=None, now=None) -> dict:
         if stop:
             break
     cutoff = now - timedelta(days=_MAX_AGE_DAYS)
-    fresh = {t: cache[t] for t in ranked_tags(cache) if _fresh(cache[t], cutoff)}
+    fresh = _records_for_write(cache, anchor_set=anchor_set, cutoff=cutoff)
     if not throttled:
         fresh[_COMPLETE_KEY] = stamp                          # only a finished pass buys the 12h silence
     elif prev_complete:
