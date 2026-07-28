@@ -45,7 +45,6 @@ _OVERRIDES: dict[str, tuple[str, ...]] = {
     "src/fanops/studio/app_routes_hashtags.py": ("tests/test_hashtag_page.py",),
     "src/fanops/studio/app_routes_review.py": ("tests/test_studio_app.py",),
     "src/fanops/studio/app_routes_schedule.py": ("tests/test_studio_schedule_cockpit.py",),
-    "src/fanops/studio/hashtags.py": ("tests/test_hashtag_page.py",),
     "src/fanops/studio/views_hashtags.py": ("tests/test_hashtag_page.py",),
     "src/fanops/studio/preview_media.py": ("tests/test_studio_gaps_closure.py",),
     "src/fanops/studio/thumb_media.py": ("tests/test_thumb_routes.py", "tests/test_studio_thumb.py"),

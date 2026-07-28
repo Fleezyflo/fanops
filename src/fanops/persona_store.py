@@ -9,7 +9,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Optional
 from fanops.config import Config
-from fanops.hashtags import _norm, _strip_banned, load_bans
+from fanops.hashtags import _norm
 from fanops.controlio import load_raw_list, write_json_atomic   # shared atomic control-file IO
 # NOT `from fanops.personas import ...`: personas.py is the FACADE that re-exports this module, so a
 # module-level edge back to it is a compile-time cycle (the tree's only one, ARCH-004). The lever
@@ -214,17 +214,15 @@ def apply_auto_corpus(cfg: Config, pid: str, *, tags: list[str], meta: dict[str,
     Wholesale replacement is the point. The corpus is a derived value, so there is nothing here to
     reconcile against — no pin partition, no merge, no absent-meta-means-pinned rule. Those existed to
     protect hand-curated entries and, in doing so, froze rotation and preserved tags that no measurement
-    supported. Bans still apply at the write (an operator veto outranks a derivation). Unknown id ->
-    KeyError."""
+    supported. A derived tag is admitted purely on its measurement. Unknown id -> KeyError."""
     p = cfg.personas_path
     with _personas_txn(cfg):
         raw, plist = _load_raw(p)
         found = False
-        bans = load_bans(cfg)
         for d in plist:
             if not (isinstance(d, dict) and d.get("id") == pid): continue
             out: list[str] = []; seen: set[str] = set()
-            for t in _strip_banned(list(tags), bans):
+            for t in list(tags):
                 n = _norm(t) if isinstance(t, str) else ""
                 if n and n not in seen: seen.add(n); out.append(n)
             if len(out) > _CORPUS_CAP: out = out[:_CORPUS_CAP]

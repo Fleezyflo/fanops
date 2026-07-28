@@ -3,7 +3,9 @@
   "confidence": "CERTAIN",
   "generated_by": "tools/arch",
   "generator_version": "arch/1.0.0",
-  "ghost_modules": [],
+  "ghost_modules": [
+    "fanops.studio.hashtags"
+  ],
   "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",
   "modules": [
     "fanops",
@@ -118,7 +120,6 @@
     "fanops.studio.app_routes_run",
     "fanops.studio.app_routes_schedule",
     "fanops.studio.golive",
-    "fanops.studio.hashtags",
     "fanops.studio.personas",
     "fanops.studio.preview_media",
     "fanops.studio.thumb_media",
@@ -142,7 +143,7 @@
     "fanops.vocals"
   ],
   "note": "The subsystem partition is DECLARED in kb/subsystems.json (an analytic overlay imposed by Cycle 5, enforced by nothing in the code). The MODULE SET is DERIVED. Totality is therefore a CHECKABLE property, and this is where it is checked.",
-  "partition_is_total": true,
+  "partition_is_total": false,
   "regeneration_command": "python -m tools.arch regen",
   "source_inputs": [
     ".reports/architecture/kb/subsystems.json",
@@ -261,7 +262,6 @@
     "fanops.studio.app_routes_run": "S16_studio",
     "fanops.studio.app_routes_schedule": "S16_studio",
     "fanops.studio.golive": "S16_studio",
-    "fanops.studio.hashtags": "S16_studio",
     "fanops.studio.personas": "S16_studio",
     "fanops.studio.preview_media": "S16_studio",
     "fanops.studio.thumb_media": "S16_studio",
@@ -285,9 +285,9 @@
     "fanops.vocals": "S06_media_analysis"
   },
   "totals": {
-    "assigned": 134,
-    "ghosts": 0,
-    "modules": 134,
+    "assigned": 133,
+    "ghosts": 1,
+    "modules": 133,
     "unassigned": 0
   },
   "unassigned_modules": []

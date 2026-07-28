@@ -1,16 +1,12 @@
-{# src/fanops/studio/templates/_hashtags_panel.html — U11 the Hashtags observatory body, htmx-swapped in place
-   (#hashtags-panel). FOUR sections: (1) corpora at a glance (read-only — corpora are derived, so there is
-   nothing to edit), (2) the platform measurement cache (ranked chips, banned struck-through, VIEW-ONLY),
-   (3) rotation health (consecutive-duplicate warn per account), (4) the global ban lane (the ONLY mutation).
-   The local "budget meter" section is gone with the fiction it reported. Only the ban forms POST (they swap
-   the whole panel). Autoescape stays on (no |safe). #}
+{# src/fanops/studio/templates/_hashtags_panel.html — U11 the Hashtags observatory body.
+   THREE sections: (1) corpora at a glance (read-only — corpora are derived), (2) the platform
+   measurement cache (ranked chips, VIEW-ONLY), (3) rotation health (consecutive-duplicate warn).
+   Read-only: the cache is a measurement record; the operator's lever is the persona's declared niche.
+   Autoescape stays on (no |safe). #}
 <div id="hashtags-panel" aria-live="polite">
   {% if result %}
     <div class="result {{ 'ok' if result.ok else 'err' }}">
-      {% if result.ok %}✓
-        {%- if result.detail and result.detail.banned %} banned {{ result.detail.banned }}
-        {%- elif result.detail and result.detail.unbanned %} unbanned {{ result.detail.unbanned }}
-        {%- else %} done{% endif %}
+      {% if result.ok %}✓ done
       {% else %}✗ {{ result.error }}{% endif %}
     </div>
   {% endif %}
@@ -44,24 +40,22 @@
 
   {# ── 2 · The measurement cache ───────────────────────────────────────────────────────────────────
      Every tag the platform has given us a number for, ranked by that number. The value is Meta's own
-     field, shown under Meta's own name — nothing here is computed by us. A banned tag is struck-through
-     (chip.banned) but the cache FILE is untouched (view-only). Three states named. #}
+     field, shown under Meta's own name — nothing here is computed by us. Three states named. #}
   <section class="hashtag-section store-section">
     <h3>Measurement cache</h3>
     {% if page.store.state == 'empty' %}
-      <p class="muted">Nothing measured yet. Until the first pass lands, posts ship only their platform
-        discovery tag — short and honest rather than padded with guesses.</p>
+      <p class="muted">Nothing measured yet. Until the first pass lands, posts ship an empty hashtag line —
+        short and honest rather than padded with guesses.</p>
     {% elif page.store.state == 'unreadable' %}
       <p class="result err">✗ cache unreadable — the file could not be parsed. Selection ships short until it
         is rewritten; a breadcrumb was logged.</p>
     {% else %}
       <p class="muted">{{ page.store.tags | length }} tags · each number is Instagram's own
         <strong>{{ page.store.metric_field }}</strong> on that tag's top media · last written
-        {{ page.store.age | localdt or '—' }}{% if page.store.oldest %} · oldest measurement {{ page.store.oldest | localdt }}{% endif %}.
-        Banned tags are shown struck-through (view only — the cache is untouched).</p>
+        {{ page.store.age | localdt or '—' }}{% if page.store.oldest %} · oldest measurement {{ page.store.oldest | localdt }}{% endif %}.</p>
       <div class="store-tags">
         {% for t in page.store.tags %}
-          <span class="chip tag{% if t.banned %} banned{% endif %}">{{ t.tag }}{% if t.value is not none %}<span class="reach-n"> · {{ t.value | int }}</span>{% endif %}</span>
+          <span class="chip tag">{{ t.tag }}{% if t.value is not none %}<span class="reach-n"> · {{ t.value | int }}</span>{% endif %}</span>
         {% else %}<span class="muted">no measurements yet</span>{% endfor %}
       </div>
     {% endif %}
@@ -90,32 +84,6 @@
       {% endfor %}
     {% else %}
       <p class="muted">No shipped or queued posts yet — nothing to check.</p>
-    {% endif %}
-  </section>
-
-  {# ── 4 · Ban lane ────────────────────────────────────────────────────────────────────────────────
-     The operator's global deny-list, and the one hashtag lever left: a banned tag disappears from selection
-     (vet_hashtags) and from corpus derivation, and shows struck-through in the cache above. The ONLY
-     mutation on this page. #}
-  <section class="hashtag-section ban-section">
-    <h3>Ban lane</h3>
-    <p class="muted">A tag you never want to ship — even one that passes the brand screen and earns reach. It's
-      stripped from selection <em>and</em> the automated corpus refresh; a ban beats an operator pin.</p>
-    <form class="ban-add-form" hx-post="{{ url_for('do_hashtags_ban_add') }}" hx-target="#hashtags-panel" hx-swap="outerHTML">
-      <label>Ban a hashtag <input type="text" name="tag" placeholder="#example" size="20" required></label>
-      <button type="submit" class="primary">Ban</button>
-    </form>
-    {% if page.bans %}
-      <div class="ban-list">
-        {% for t in page.bans %}
-          <span class="chip banned">{{ t }}
-            <button type="button" class="chip-x" title="Unban {{ t }}"
-              hx-post="{{ url_for('do_hashtags_ban_remove') }}" hx-target="#hashtags-panel" hx-swap="outerHTML"
-              hx-vals='{{ {"tag": t} | tojson }}'>×</button></span>
-        {% endfor %}
-      </div>
-    {% else %}
-      <p class="muted">No bans — every reach-vetted tag is eligible.</p>
     {% endif %}
   </section>
 </div>

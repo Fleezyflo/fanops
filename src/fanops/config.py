@@ -166,8 +166,6 @@ class Config:
         self.tuning_path = self.control / "tuning.json"
         self.hashtags_path = self.control / "hashtags.json"  # the platform measurement cache {tag: {graph_id, like_count, measured_at, from}}; absent -> selection ships short
         self.account_stats_path = self.control / "account_stats.json"  # U3: throttled IG follower snapshot per handle; absent -> empty
-        self.hashtag_bans_path = self.control / "hashtag_bans.json"  # U11 operator global hashtag deny-list {"bans": [...]}; consumed at selection (vet_hashtags) + S12 auto-accept
-        self.hashtag_bans_lock = self.control / "hashtag_bans.lock"  # serializes add_ban/remove_ban's read-modify-write
         self.cutover_path = self.control / "cutover.json"   # live-cutover harness scratch state; NEVER the ledger
         self.insights_blocked_path = self.control / "insights_blocked.json"  # Leg 2: the LOUD fail-closed breadcrumb when Graph media-insights is refused for lack of the instagram_manage_insights scope; doctor + Home read it, a clean pull clears it
         self.timing_bias_path = self.control / "timing_bias.json"  # Leg 3 (timing): the reach-winning operator-local publish HOUR prior; absent -> no timing bias (byte-identical). apply_timing_bias writes it, surface_time's caller reads it (window-clamped)

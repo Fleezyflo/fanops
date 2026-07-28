@@ -103,56 +103,6 @@ def ranked_tags(measurements: dict[str, dict]) -> list[str]:
     return sorted(measurements, key=lambda t: (-(measurements[t].get(METRIC_FIELD) or 0.0), t))
 
 
-def load_bans(cfg) -> set[str]:
-    """U11: the operator's GLOBAL hashtag deny-list (00_control/hashtag_bans.json `{"bans": [...]}`),
-    normalized. A tag here NEVER ships — it is stripped from the membership, the floors, the backfill and
-    the final line. Corrupt / missing / mis-shaped -> set() (no bans, fail-open — a torn file must not
-    crash a run; the negative gate simply doesn't apply). Never raises."""
-    p = cfg.hashtag_bans_path
-    if not p.exists():
-        return set()
-    try:
-        d = json.loads(p.read_text())
-        bans = d.get("bans") if isinstance(d, dict) else None
-        return {_norm(t) for t in bans if isinstance(t, str) and _norm(t)} if isinstance(bans, list) else set()
-    except (OSError, json.JSONDecodeError, ValueError, TypeError):
-        return set()
-
-
-def _strip_banned(tags: list[str], bans: set[str]) -> list[str]:
-    """Drop every banned tag from an ordered tag list (normalization-insensitive), preserving order."""
-    if not bans:
-        return list(tags)
-    return [t for t in tags if _norm(t) not in bans]
-
-
-def add_ban(cfg, tag: str) -> None:
-    """Add ONE tag to the global ban list — normalized, deduped, atomic (flock'd read-modify-write +
-    os.replace). An empty/blank tag is a no-op. Best-effort persist: on a write/lock failure the ban simply
-    isn't recorded (the file stays as it was), never raises a run."""
-    h = _norm(tag)
-    if not h:
-        return
-    from fanops.controlio import write_json_atomic
-    from fanops.ledger import _file_lock       # lazy: reuse the proven fcntl flock without a top-level cycle
-    with _file_lock(cfg.hashtag_bans_lock):
-        bans = sorted(load_bans(cfg) | {h})
-        write_json_atomic(cfg.hashtag_bans_path, {"bans": bans})
-
-
-def remove_ban(cfg, tag: str) -> None:
-    """Remove ONE tag from the global ban list atomically (normalization-insensitive). A tag not present
-    is a clean no-op. Mirrors add_ban's flock'd read-modify-write."""
-    h = _norm(tag)
-    if not h:
-        return
-    from fanops.controlio import write_json_atomic
-    from fanops.ledger import _file_lock
-    with _file_lock(cfg.hashtag_bans_lock):
-        bans = sorted(load_bans(cfg) - {h})
-        write_json_atomic(cfg.hashtag_bans_path, {"bans": bans})
-
-
 # Word tokenizer for the per-clip content signal. A token is a latin word, 3-20 chars, starting with a
 # letter (so '12'/'###'/Arabic yield nothing). (persona_terms no longer tokenizes — it returns niche.)
 _STOPWORDS = frozenset(
@@ -217,12 +167,11 @@ def vet_hashtags(tags: list[str] | None, platform: Platform, language: str | Non
     one `_ARABIC` tag on an Arabic-language clip. Backfill is corpus -> the measured menu -> content.
 
     Cold cache + no corpus -> an empty line. That is the honest floor: there is no hand-ranked pool and no
-    discovery pad left to invent reach with. `cfg` supplies the ban list (a hard veto at every stage)."""
-    bans = load_bans(cfg) if cfg is not None else set()
-    corpus_norm = _strip_banned(_dedupe_norm(corpus), bans)
-    content_norm = _strip_banned(_screen_content(_dedupe_norm(content), cfg), bans)
-    store_norm = _strip_banned(_dedupe_norm(store), bans)          # the measured menu, already metric-ranked
-    vetted = (set(store_norm) | set(corpus_norm) | set(content_norm)) - bans
+    discovery pad left to invent reach with."""
+    corpus_norm = _dedupe_norm(corpus)
+    content_norm = _screen_content(_dedupe_norm(content), cfg)
+    store_norm = _dedupe_norm(store)                   # the measured menu, already metric-ranked
+    vetted = set(store_norm) | set(corpus_norm) | set(content_norm)
     base_rank = {t: i for i, t in enumerate(store_norm)}
     # Preference float ahead of the metric rank: corpus (the persona's derived pool) > content (clip info).
     preferred: list[str] = []
@@ -276,9 +225,9 @@ def vet_hashtags(tags: list[str] | None, platform: Platform, language: str | Non
         kept = head + reserved; seen = set(kept)
     for h in corpus_norm + store_norm + content_norm:
         if len(kept) >= max_tags: break
-        if h not in seen and _norm(h) not in bans:
+        if h not in seen:
             seen.add(h); kept.append(h)
-    return _strip_banned(kept, bans)[:max_tags]
+    return kept[:max_tags]
 
 
 _ARABIC_SET = set(_ARABIC)
