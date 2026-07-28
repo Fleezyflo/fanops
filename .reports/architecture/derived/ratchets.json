@@ -86,7 +86,7 @@
       "src/fanops/agentstep.py": 1,
       "src/fanops/artifacts.py": 1,
       "src/fanops/audit.py": 2,
-      "src/fanops/caption.py": 1,
+      "src/fanops/caption.py": 2,
       "src/fanops/cli.py": 3,
       "src/fanops/clip.py": 1,
       "src/fanops/compose.py": 4,

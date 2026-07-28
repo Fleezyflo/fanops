@@ -236,6 +236,9 @@
         "fanops.variant_transfer"
       ],
       "lazy": [
+        "fanops.accounts",
+        "fanops.persona_research",
+        "fanops.personas",
         "fanops.validation_gate"
       ],
       "optional": [],
@@ -2352,7 +2355,7 @@
   "generated_by": "tools/arch",
   "generator_version": "arch/1.0.0",
   "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",
-  "lazy_downward_count": 222,
+  "lazy_downward_count": 225,
   "lazy_lateral": [
     {
       "from": "fanops.accounts",
@@ -3574,7 +3577,7 @@
     "G2_module_sccs_total": 72,
     "G2_non_trivial_sccs": 8,
     "compile_edges_G1": 567,
-    "lazy_edges": 335,
+    "lazy_edges": 338,
     "lazy_edges_lateral": 47,
     "lazy_edges_strictly_upward": 66,
     "lazy_edges_to_equal_or_higher_level": 113,
