@@ -53,7 +53,8 @@ class _FakeClient:
         # inbound-see the niche anchors (production: niche words appear on the candidate's Top).
         others = " ".join(sorted(t for t in self.metric_by_tag if t != tag))
         cap = f"{self.cooccur} {others}".strip()
-        return [_Media(self.metric_by_tag[tag], cap)]
+        # Two Top rows so inbound `from` hits can clear MOL-665 relatedness (hits>=2).
+        return [_Media(self.metric_by_tag[tag], cap), _Media(self.metric_by_tag[tag], cap)]
 
     def hashtag_info(self, name):
         self.info_calls.append(name)

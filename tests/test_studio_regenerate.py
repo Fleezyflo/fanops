@@ -216,9 +216,9 @@ def test_regenerate_vets_from_persona_aligned_store_not_global(tmp_path):
     cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.hashtags_path.write_text(_json.dumps({
         "#hiphop": {"graph_id": "1", "like_count": 100, "measured_at": now},
-        "#detroitrap": {"graph_id": "2", "like_count": 900, "measured_at": now, "from": {"#hiphop": 1}},
+        "#detroitrap": {"graph_id": "2", "like_count": 900, "measured_at": now, "from": {"#hiphop": 2}},
         "#podcast": {"graph_id": "3", "like_count": 200, "measured_at": now},
-        "#interview": {"graph_id": "4", "like_count": 800, "measured_at": now, "from": {"#podcast": 1}},
+        "#interview": {"graph_id": "4", "like_count": 800, "measured_at": now, "from": {"#podcast": 2}},
         "#globalwinner": {"graph_id": "5", "like_count": 9999, "measured_at": now},
     }))
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)

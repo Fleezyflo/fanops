@@ -197,7 +197,7 @@ def test_persona_facts_store_is_aligned_pool_not_global_ranked(tmp_path):
     cfg.hashtags_path.write_text(json.dumps({
         "#hiphop": {"graph_id": "1", METRIC_FIELD: 100.0, "measured_at": now},
         "#detroitrap": {"graph_id": "2", METRIC_FIELD: 900.0, "measured_at": now,
-                        "from": {"#hiphop": 1}},
+                        "from": {"#hiphop": 2}},
         "#globalwinner": {"graph_id": "3", METRIC_FIELD: 9999.0, "measured_at": now},
     }))
     per = core.Personas.load(cfg).get(pid)

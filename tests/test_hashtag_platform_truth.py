@@ -223,7 +223,8 @@ def test_outbound_one_hit_never_enters_aligned_pool(tmp_path, monkeypatch):
 
 
 def test_inbound_cotag_attributes_measured_tag_to_anchor(tmp_path, monkeypatch):
-    """Inbound: niche on the candidate's own Top → membership. Outbound only enqueues."""
+    """Inbound: niche on the candidate's own Top writes from. Pool needs relatedness (MOL-665);
+    #fyp is a magnet with high metric → soft lane admits one-hit."""
     cfg = Config(root=tmp_path)
     pid = _persona(cfg, voice="x", niche=["rapbeef"]); _link_active(cfg, pid)
     media = {"#rapbeef": [{"caption": "noise #fyp", "like_count": 10}],
@@ -275,7 +276,8 @@ def test_unmeasured_candidate_never_enters_a_corpus(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path)
     pid = _persona(cfg, voice="hiphop"); _link_active(cfg, pid)
     media = {"#hiphop": [{"caption": "#measured #unmeasured", "like_count": 500, "comments_count": 0}],
-             "#measured": [{"caption": "bars #hiphop", "like_count": 400, "comments_count": 0}],
+             "#measured": [{"caption": "bars #hiphop", "like_count": 400, "comments_count": 0},
+                           {"caption": "more #hiphop", "like_count": 300, "comments_count": 0}],
              "#unmeasured": [{"caption": "", "comments_count": 9}]}
     refresh_store(cfg, scrape_client=_client(media))
     derive_corpus(cfg, pid)
@@ -289,7 +291,8 @@ def test_derivation_is_zero_network(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path)
     pid = _persona(cfg, voice="hiphop"); _link_active(cfg, pid)
     media = {"#hiphop": [{"caption": "#bars", "like_count": 500, "comments_count": 0}],
-             "#bars": [{"caption": "x #hiphop", "like_count": 400, "comments_count": 0}]}
+             "#bars": [{"caption": "x #hiphop", "like_count": 400, "comments_count": 0},
+                       {"caption": "y #hiphop", "like_count": 350, "comments_count": 0}]}
     refresh_store(cfg, scrape_client=_client(media))
     # Layer A write path already re-derived corpora — corpus must be non-empty before the second call.
     assert Personas.load(cfg).get(pid).hashtag_corpus
@@ -305,8 +308,10 @@ def test_corpus_is_ranked_by_the_platform_field(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path)
     pid = _persona(cfg, voice="hiphop"); _link_active(cfg, pid)
     media = {"#hiphop": [{"caption": "#low #high", "like_count": 500, "comments_count": 0}],
-             "#low": [{"caption": "x #hiphop", "like_count": 1, "comments_count": 9999}],
-             "#high": [{"caption": "x #hiphop", "like_count": 900, "comments_count": 0}]}
+             "#low": [{"caption": "x #hiphop", "like_count": 1, "comments_count": 9999},
+                      {"caption": "y #hiphop", "like_count": 1, "comments_count": 9999}],
+             "#high": [{"caption": "x #hiphop", "like_count": 900, "comments_count": 0},
+                       {"caption": "y #hiphop", "like_count": 800, "comments_count": 0}]}
     refresh_store(cfg, scrape_client=_client(media))
     derive_corpus(cfg, pid)
     corpus = Personas.load(cfg).get(pid).hashtag_corpus
@@ -317,7 +322,8 @@ def test_unreachable_platform_holds_a_derived_corpus(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path)
     pid = _persona(cfg, voice="hiphop"); _link_active(cfg, pid)
     media = {"#hiphop": [{"caption": "#bars", "like_count": 500, "comments_count": 0}],
-             "#bars": [{"caption": "x #hiphop", "like_count": 400, "comments_count": 0}]}
+             "#bars": [{"caption": "x #hiphop", "like_count": 400, "comments_count": 0},
+                       {"caption": "y #hiphop", "like_count": 350, "comments_count": 0}]}
     refresh_store(cfg, scrape_client=_client(media)); derive_corpus(cfg, pid)
     before = list(Personas.load(cfg).get(pid).hashtag_corpus)
     cfg.hashtags_path.unlink()

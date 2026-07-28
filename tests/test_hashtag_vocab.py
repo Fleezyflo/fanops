@@ -92,7 +92,8 @@ def test_vocab_anchor_admits_inbound_only(tmp_path, monkeypatch):
         "#hiphop": [{"caption": "x #nashville", "like_count": 10, "play_count": 100}],
         "#syrianrap": [{"caption": "home #barsoverbeats", "like_count": 20, "play_count": 200}],
         "#nashville": [{"caption": "country only", "like_count": 5000, "play_count": 90000}],
-        "#barsoverbeats": [{"caption": "craft #syrianrap", "like_count": 80, "play_count": 8000}],
+        "#barsoverbeats": [{"caption": "craft #syrianrap", "like_count": 80, "play_count": 8000},
+                         {"caption": "again #syrianrap", "like_count": 70, "play_count": 7000}],
     }
     refresh_store(cfg, scrape_client=_FakeClient(media_by_tag=media))
     m = load_measurements(cfg)

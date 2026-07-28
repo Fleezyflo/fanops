@@ -41,7 +41,7 @@ def test_hashtag_lifecycle_end_to_end(tmp_path, monkeypatch):
     refresh_store(cfg, scrape_client=client)
     cache = load_measurements(cfg)
     assert _metric(cache["#detroitrap"]) == 990
-    assert cache["#detroitrap"]["from"] == {"#hiphop": 1}
+    assert cache["#detroitrap"]["from"] == {"#hiphop": 2}
     assert ranked_tags(cache)[0] == "#detroitrap"
 
     # Layer B already ran on the Layer A write — corpus is set; a second derive is idempotent.
