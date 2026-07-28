@@ -13,27 +13,12 @@ the live system with corpora that were ~90% auto-filled tags carrying `reach: nu
 measurement at all. Admission now needs a real, unexpired platform measurement, so a corpus is either
 evidence-backed or honestly SHORT."""
 from __future__ import annotations
-import re
 from datetime import datetime, timedelta, timezone
 from fanops.config import Config
-from fanops.hashtags import METRIC_FIELD, _norm, load_measurements
+from fanops.hashtags import _norm, load_measurements, _metric
 from fanops.hashtag_hygiene import is_curatable
 
 _EVIDENCE_MAX_AGE_DAYS = 90       # older than this is history, not evidence — a dead measurement cannot curate
-# Voice → seeds: UNIGRAMS only (MOL-506 killed adjacent-word glue: #hookangle / #brandsafety).
-_WORD = re.compile(r"[a-z0-9_]{2,}", re.I)
-_STOP = frozenset({
-    "a", "an", "the", "and", "or", "but", "if", "then", "else", "when", "while", "for", "to", "of", "in",
-    "on", "at", "by", "from", "with", "without", "as", "is", "are", "was", "were", "be", "been", "being",
-    "this", "that", "these", "those", "it", "its", "into", "over", "under", "about", "who", "whom", "which",
-    "what", "how", "why", "not", "no", "yes", "do", "does", "did", "done", "can", "could", "should", "would",
-    "will", "just", "also", "more", "most", "less", "very", "really", "own", "our", "your", "their", "his",
-    "her", "him", "she", "he", "they", "them", "we", "you", "i", "me", "my", "mine", "than", "too", "so",
-    "such", "via", "per", "vs", "etc", "clip", "clips", "moment", "moments", "account", "accounts", "post",
-    "posts", "viewer", "viewers", "content", "register", "prompt", "prompts", "llm",
-})
-# Structured levers that feed discovery direction (F-1). `niche` remains interim migration seeds.
-_LEVER_KEYS = ("content_focus", "selection_scope", "hook_angle", "intensity")
 
 
 def _registry(cfg: Config):
@@ -55,47 +40,29 @@ def _seed_token(raw) -> str | None:
 
 
 def persona_terms(per) -> list[str]:
-    """Discovery/alignment vocabulary for ONE persona from the full Studio surface (F-1 / MOL-627).
+    """Layer A/B hashtag vocabulary for ONE persona: declared `niche` ONLY (MOL-637).
 
-    Order (deduped, first wins): interim `niche` tag list (migration) → structured lever values →
-    voice UNIGRAMS that pass structural curation. Pure, deterministic, CORPUS-BLIND.
+    Voice / content_focus / hook_angle / intensity stay on the persona for caption+hook directives —
+    they are NOT Instagram search roots. Seeding those turned UX prose into `#believe` / `#punchlines`
+    discovery and collapsed every persona onto one mega-tag neighborhood.
 
-    Forbidden: niche-as-sole-source; adjacent-voice-word concatenation; reading hashtag_corpus."""
+    Pure, deterministic, CORPUS-BLIND."""
     out: list[str] = []; seen: set[str] = set()
-
-    def _add(raw) -> None:
-        t = _seed_token(raw)
+    for n in getattr(per, "niche", None) or []:
+        t = _seed_token(n)
         if t and t not in seen:
             seen.add(t); out.append(t)
-
-    for n in getattr(per, "niche", None) or []:
-        _add(n)
-    for key in _LEVER_KEYS:
-        val = getattr(per, key, None)
-        if isinstance(val, (list, tuple)):
-            for v in val:
-                _add(v)
-        elif isinstance(val, str) and val.strip():
-            _add(val)
-    voice = getattr(per, "voice", None) or ""
-    if isinstance(voice, str) and voice.strip():
-        for m in _WORD.finditer(voice.lower()):
-            w = m.group(0)
-            if w in _STOP or len(w) < 4:
-                continue
-            _add(w)
     return out
 
 
 def _is_evidence(rec: dict, *, now: datetime | None = None) -> bool:
     """True when a cache record is a real, unexpired PLATFORM measurement — the admission predicate.
-    Demands the platform's own field (`METRIC_FIELD`, positive), a parseable `measured_at`, and freshness.
-    A legacy record (the invented likes+comments sum under a `reach` key) carries no METRIC_FIELD and fails
-    here exactly as it fails the cache reader: an unprovenanced number must never curate."""
+    Demands a positive visibility metric (play_count preferred, else like_count), a parseable
+    `measured_at`, and freshness. Legacy invented `reach` sums carry neither rank field and fail here."""
     if not isinstance(rec, dict):
         return False
     try:
-        if float(rec.get(METRIC_FIELD) or 0) <= 0:
+        if (_metric(rec) or 0) <= 0:
             return False
         ts = datetime.fromisoformat(rec["measured_at"])
     except (KeyError, TypeError, ValueError):
@@ -127,7 +94,7 @@ def _aligned_pool(per, cache: dict[str, dict], *, now=None) -> list[tuple[str, f
             if not hits:
                 continue
             src = max(hits, key=lambda a: (frm.get(a) or 0, a))
-        out.append((tag, float(rec[METRIC_FIELD]), src))
+        out.append((tag, float(_metric(rec) or 0), src))
     out.sort(key=lambda r: (-r[1], r[0]))
     return out
 
@@ -144,7 +111,8 @@ def derive_corpus(cfg: Config, pid: str, *, now=None) -> dict:
     if per is None:
         return {"changed": False, "reason": "unknown_persona"}
     corpus = [_norm(t) for t in (per.hashtag_corpus or []) if isinstance(t, str) and _norm(t)]
-    pool = _aligned_pool(per, load_measurements(cfg), now=now)
+    cache = load_measurements(cfg)
+    pool = _aligned_pool(per, cache, now=now)
     if not pool:
         return {"changed": False}                          # outage / cold cache: hold, never empty
     stamp = (now.isoformat() if isinstance(now, datetime) else None) or datetime.now(timezone.utc).isoformat()
@@ -152,7 +120,16 @@ def derive_corpus(cfg: Config, pid: str, *, now=None) -> dict:
     final = [t for t, _v, _s in chosen]
     if final == corpus:
         return {"changed": False}
-    meta = {t: {METRIC_FIELD: v, "measured_at": stamp, "from": s} for t, v, s in chosen}
+    meta: dict = {}
+    for t, _v, s in chosen:
+        row: dict = {"measured_at": stamp, "from": s}
+        rec = cache.get(t) or {}
+        for k in ("play_count", "like_count", "media_count"):
+            fv = rec.get(k)
+            if isinstance(fv, (int, float)) and not isinstance(fv, bool) and fv >= 0:
+                row[k] = float(fv)
+        meta[t] = row
+
     apply_auto_corpus(cfg, pid, tags=final, meta=meta)
     return {"changed": True, "added": [t for t in final if t not in set(corpus)],
             "removed": [t for t in corpus if t not in set(final)]}

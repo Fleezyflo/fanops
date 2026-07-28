@@ -28,10 +28,12 @@ def _line(picks, corpus, recent=None, lang="en", store=STORE):
 def test_model_picks_reach_the_line_under_a_full_corpus():
     # THE defect: with |corpus| >= max_tags the model's vetted picks were unreachable. Pre-fix these two are
     # byte-identical; the model's clip work was a proven no-op.
+    # With _CORPUS_LEAD_MAX=3 and max_tags=4, exactly one clip slot remains — enough to prove non-monopoly.
     blind = _line([], UZ)
     picked = _line(["#podcast", "#interview"], UZ)
     assert picked != blind
-    assert "#podcast" in picked and "#interview" in picked
+    assert ("#podcast" in picked) or ("#interview" in picked)
+    assert len([t for t in picked if t not in UZ]) == 1
 
 
 def test_corpus_picks_lead_when_the_model_endorses_them():
@@ -66,6 +68,14 @@ def test_small_corpus_leads_and_the_clip_still_ships(corpus):
     out = _line(["#hiphop", "#rap"], corpus)
     assert out[:len(corpus)] == corpus
     assert "#hiphop" in out and "#rap" in out
+
+
+def test_corpus_lead_max_is_three_under_four_cap():
+    # Lead must stay < max_tags (4): 3 leaves one clip slot; ≥4 re-monopolises (H1 regression).
+    assert _CORPUS_LEAD_MAX == 3
+    out = _line(["#podcast", "#interview", "#facts"], UZ)
+    assert out[:3] == UZ[:3] and "#podcast" in out
+    assert len([t for t in out if t not in UZ]) == 1
 
 
 def test_hard_cap_still_four():

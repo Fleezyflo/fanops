@@ -121,6 +121,7 @@ def regenerate_caption(cfg: Config, post_id: str, guidance: str = "", *,
     Does NOT publish — safe on any backend, so no confirm gate."""
     from fanops.prompts import caption_prompt
     from fanops.caption import brand_risk_flag, _per_account_hashtag_stores
+    from fanops.hashtags import content_tag_candidates, load_measurements, _norm
     now = _now(now)
     led = Ledger.load(cfg)                              # lock-free read: reject early, build context
     p, err = _guard_editable_post(led, post_id, now)
@@ -146,13 +147,33 @@ def regenerate_caption(cfg: Config, post_id: str, guidance: str = "", *,
     corpus = list(getattr(acct, "hashtag_corpus", []) or []) if acct is not None else []
     stores = _per_account_hashtag_stores(cfg, accts)
     sv = stores.get(p.account) if acct is not None else None
+    # MOL-642 / MOL-636: same content_tags + hashtag_metrics sidecar as request_captions.
+    excerpt = moment.transcript_excerpt if moment else ""
+    content_tags = content_tag_candidates(excerpt)
+    metric_tags: set[str] = set(sv or [])
+    metric_tags.update(_norm(t) for t in corpus if isinstance(t, str))
+    meas = load_measurements(cfg)
+    hashtag_metrics: dict = {}
+    for t in metric_tags:
+        rec = meas.get(t)
+        if not isinstance(rec, dict):
+            continue
+        row = {}
+        for k in ("play_count", "like_count", "media_count"):
+            v = rec.get(k)
+            if isinstance(v, (int, float)) and not isinstance(v, bool) and v >= 0:
+                row[k] = float(v)
+        if row:
+            hashtag_metrics[t] = row
     payload = {"clip_id": p.parent_id, "language": src.language if src else None,
-               "transcript_excerpt": moment.transcript_excerpt if moment else "",
+               "transcript_excerpt": excerpt,
                "guidance": full_guidance,
                "surfaces": [{"surface": surface, "platform": p.platform.value,
                              **({"persona": persona} if persona else {}),
                              **({"corpus": corpus} if corpus else {}),
-                             **({"hashtag_store": sv} if sv else {})}]}
+                             **({"hashtag_store": sv} if sv else {})}],
+               **({"content_tags": content_tags} if content_tags else {}),
+               **({"hashtag_metrics": hashtag_metrics} if hashtag_metrics else {})}
     if model is None:
         # NO haphazard claude (ROOT): Regenerate calls the LLM, so it obeys the SAME single switch as every
         # other gate — refuse unless the operator EXPLICITLY enabled the AI responder. Never spawn `claude`
@@ -193,7 +214,8 @@ def regenerate_caption(cfg: Config, post_id: str, guidance: str = "", *,
     store = sv  # from stores.get(p.account) above; None when no persona / empty pool
     vetted, _sources = vet_hashtags_traced(list(item.hashtags or []) or _tags_in(item.caption),
                            p.platform, src.language if src else None, store=store,
-                           corpus=corpus, cfg=cfg, recent=_recent_tags(led, p.account))
+                           corpus=corpus, content=content_tags or None, cfg=cfg,
+                           recent=_recent_tags(led, p.account))
     new_caption, new_tags = " ".join(vetted), vetted
     with Ledger.transaction(cfg) as led2:               # re-guard + write INSIDE a short transaction
         # fresh now: the model call may have taken ~180s, during which the post could have become

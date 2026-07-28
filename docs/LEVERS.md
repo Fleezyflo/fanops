@@ -79,9 +79,9 @@ Then run `fanops lever docs` to regenerate this file.
 
 ## niche (stage: caption)
 
-**Does:** optional tag-shaped INTERIM seeds (migration). Layer A also seeds from voice + levers — niche is not the sole hashtag source
+**Does:** declared subject terms — the ONLY Layer A hashtag search roots (MOL-637); voice/levers stay on captions+hooks, not discovery
 
-Interim territory seeds (`Persona.niche`) plus voice unigrams and lever values: `persona_research.persona_terms` builds Layer A search seeds (no adjacent-voice glue). The measured corpus it derives then leads caption hashtags.
+Declared territory (`Persona.niche`) is the ONLY Layer A search root (MOL-637): `persona_research.persona_terms` returns niche only — voice/levers stay on captions+hooks. The measured corpus it derives then leads caption hashtags.
 
 
 ## ARCHETYPE CROSSWALK

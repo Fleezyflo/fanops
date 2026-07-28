@@ -9,7 +9,7 @@ import inspect
 import json
 import pytest
 from fanops.config import Config
-from fanops.hashtags import METRIC_FIELD, load_measurements
+from fanops.hashtags import METRIC_FIELD, _metric, load_measurements
 from fanops.fanops_hashtags import refresh_store
 from hashtag_scrape_fakes import _FakeClient
 
@@ -45,6 +45,55 @@ def test_refresh_store_atomic_write_preserves_prior_on_crash(tmp_path, monkeypat
     assert cfg.hashtags_path.read_text() == good
 
 
+def test_refresh_store_midpass_flush_survives_later_crash(tmp_path, monkeypatch):
+    # Every 5 successful measures flushes the cache WITHOUT stamping last_complete_pass.
+    # A crash after that flush must keep the accrued tags (not roll back to empty/prior-only).
+    # Layer B also writes personas.json on flush — only the 2nd hashtags.json replace may boom.
+    from pathlib import Path
+    from fanops import controlio, personas as P
+    cfg = Config(root=tmp_path)
+    niches = [f"seed{i}" for i in range(6)]                 # 6 anchors → flush at measured=5, then final
+    P.add_persona(cfg, name="Mid", voice="x", niche=niches, id="mid")
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": [
+        {"handle": "a", "platforms": ["instagram"], "status": "active", "persona_id": "mid"}]}))
+    metrics = {f"#{n}": float(10 + i) for i, n in enumerate(niches)}
+    n_hash = {"n": 0}
+    real_replace = controlio.os.replace
+
+    def boom_after_first_hashtags_flush(src, dst):
+        if Path(dst).name != "hashtags.json":
+            return real_replace(src, dst)                   # personas derive writes must land
+        n_hash["n"] += 1
+        if n_hash["n"] == 1:
+            return real_replace(src, dst)                   # mid-pass flush lands
+        raise OSError("crash on later hashtags write")
+
+    monkeypatch.setattr(controlio.os, "replace", boom_after_first_hashtags_flush)
+    with pytest.raises(OSError):
+        refresh_store(cfg, scrape_client=_FakeClient(metrics))
+    monkeypatch.setattr(controlio.os, "replace", real_replace)
+    raw = json.loads(cfg.hashtags_path.read_text())
+    assert "last_complete_pass" not in raw                  # partial flush must not buy 12h silence
+    tags = [k for k in raw if k.startswith("#")]
+    assert len(tags) == 5                                   # accrued through the mid-pass flush
+    # Layer B already ran on the flush — corpus tracks the store without waiting for pass end
+    from fanops.personas import Personas
+    corp = list(Personas.load(cfg).get("mid").hashtag_corpus or [])
+    assert len(corp) >= 1 and all(t in raw for t in corp)
+
+
+def test_refresh_store_derives_corpora_on_its_own_writes(tmp_path, monkeypatch):
+    """Layer B is on the Layer A write path — refresh alone updates corpora; no separate force."""
+    cfg = Config(root=tmp_path); pid = _persona(cfg)
+    from fanops.personas import Personas
+    assert list(Personas.load(cfg).get(pid).hashtag_corpus or []) == []
+    refresh_store(cfg, scrape_client=_FakeClient(
+        {"#hiphop": 500, "#alpha": 100}, cooccur="#alpha"))
+    corp = list(Personas.load(cfg).get(pid).hashtag_corpus or [])
+    assert "#hiphop" in corp and "#alpha" in corp
+
+
 def test_refresh_store_takes_no_ledger_and_no_doctor_gate(tmp_path, monkeypatch):
     # The own-reach model is gone: refresh_store's signature carries NO `led`, and it writes WITHOUT any
     # learn-doctor verdict on disk (the cache does not depend on a published post).
@@ -67,7 +116,7 @@ def test_written_file_is_the_flat_record_shape_ranked_by_the_metric(tmp_path, mo
         {"#hiphop": 500, "#beta": 900, "#alpha": 100}, cooccur="#alpha #beta"))
     blob = json.loads(cfg.hashtags_path.read_text())
     tags = {k: v for k, v in blob.items() if isinstance(v, dict)}
-    assert list(tags) == sorted(tags, key=lambda t: (-tags[t][METRIC_FIELD], t))   # metric desc on disk
+    assert list(tags) == sorted(tags, key=lambda t: (-_metric(tags[t]), t))   # metric desc on disk
     assert blob["#beta"]["graph_id"] == "id-beta" and blob["#beta"]["measured_at"]
     assert blob["#beta"]["from"] == {"#hiphop": 1}          # the anchor whose top media surfaced it
     assert isinstance(blob.get("last_complete_pass"), str) and blob["last_complete_pass"]
@@ -81,8 +130,8 @@ def test_measurements_accrue_across_passes(tmp_path, monkeypatch):
     refresh_store(cfg, scrape_client=_FakeClient({"#hiphop": 500, "#beta": 900}, cooccur="#beta"))
     m = load_measurements(cfg)
     assert "#alpha" in m and "#beta" in m
-    assert m["#alpha"][METRIC_FIELD] == 100
-    assert m["#beta"][METRIC_FIELD] == 900
+    assert _metric(m["#alpha"]) == 100 and m["#alpha"]["like_count"] == 100
+    assert _metric(m["#beta"]) == 900 and m["#beta"]["like_count"] == 900
 
 
 def test_refresh_store_no_scrape_aborts_loudly(tmp_path, monkeypatch):
@@ -107,7 +156,7 @@ def test_cmd_hashtags_discover_reports_and_writes_nothing(tmp_path, monkeypatch)
     rc = cmd_hashtags_discover(cfg)
     blob = cfg.log_path.read_text()
     assert rc == 0 and "#detroitrap" in blob and pid in blob
-    assert "instagrapi" in blob
+    assert "play_count" in blob or "like_count" in blob
     assert cfg.hashtags_path.read_text() == before
 
 
@@ -219,6 +268,31 @@ def test_refresh_store_cotag_enqueue_cap(tmp_path, monkeypatch):
     assert len(measured_cos) == 2
 
 
+def test_refresh_store_cotags_measure_before_remeasure(tmp_path, monkeypatch):
+    """Harvested co-tags must run BEFORE stale remesure — append put them behind the whole cache and
+    starved craft/burner expansion under try_cap."""
+    import fanops.fanops_hashtags as fh
+    monkeypatch.setattr(fh, "_SCRAPE_TRY_CAP", 2)            # hiphop + cotag only; remesure must not steal
+    monkeypatch.setattr(fh, "_SCRAPE_COTAG_ENQUEUE_CAP", 5)
+    cfg = Config(root=tmp_path); _persona(cfg)
+    # Pre-seed a STALE non-anchor so remesure would eat the try_cap if cotags append at the end.
+    cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.hashtags_path.write_text(json.dumps({
+        "#oldnoise": {"graph_id": "id-oldnoise", METRIC_FIELD: 9.0,
+                      "measured_at": "2020-01-01T00:00:00+00:00"},
+        "last_complete_pass": "2020-01-01T00:00:00+00:00"}))
+    client = _FakeClient(
+        {"#hiphop": 100, "#freshco": 50, "#oldnoise": 9},
+        cooccur="#freshco",
+    )
+    out = refresh_store(cfg, scrape_client=client)
+    assert out["throttled"] is True and out["tried"] == 2
+    # Under try_cap=2 with insert-priority: hiphop then freshco. Append-priority would be hiphop, oldnoise.
+    assert client.media_calls == ["hiphop", "freshco"]
+    m = load_measurements(cfg)
+    assert "#freshco" in m and m["#freshco"].get("from", {}).get("#hiphop")
+
+
 def datetime_for_pass():
     from datetime import datetime, timezone
     return datetime(2026, 7, 2, 0, 0, tzinfo=timezone.utc)
@@ -287,3 +361,12 @@ def test_cmd_hashtags_refresh_corrupt_personas_exits_2_and_no_keyerror(tmp_path,
     assert rc == 2
     aborted = next(r for r in recs if r["outcome"] == "refresh_aborted")
     assert "personas.json invalid:" in aborted.get("reason", "")
+
+
+def test_refresh_store_reports_parallel_one_when_client_injected(tmp_path, monkeypatch):
+    """Injected scrape_client (unit fakes) forces parallel=1 so FakeClient stays single-threaded."""
+    import fanops.fanops_hashtags as fh
+    monkeypatch.setattr(fh, "_SCRAPE_PARALLEL", 8)
+    cfg = Config(root=tmp_path); _persona(cfg)
+    out = refresh_store(cfg, scrape_client=_FakeClient({"#hiphop": 10}))
+    assert out.get("parallel") == 1 and out["written"] is True

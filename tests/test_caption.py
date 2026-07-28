@@ -573,7 +573,7 @@ def test_ingest_captions_no_accounts_is_byte_identical(tmp_path):
         CaptionItem(surface="a/instagram", caption="c", hashtags=tags)]).model_dump_json())
     led = ingest_captions(led, cfg, "clip_1")
     mc = led.clips["clip_1"].meta_captions["a/instagram"]["hashtags"]
-    assert mc == vet_hashtags(tags, Platform.instagram, "en")  # no lean, no content (corpus-only pipeline)
+    assert mc == vet_hashtags(tags, Platform.instagram, "en")  # no lean; model picks not in content set
 
 
 # ---- MOL-168 / AGENT-6: caption platform is REQUEST-record-authoritative; no tail-parse or instagram-coerce ----

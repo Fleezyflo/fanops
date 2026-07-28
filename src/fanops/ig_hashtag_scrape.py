@@ -72,11 +72,42 @@ def open_client(cfg: Config, *, client_factory=None):
     return client
 
 
-def resolve_hashtag_scrape(client, tag: str) -> Optional[str]:
-    """Resolve '#tag' via instagrapi hashtag_info -> str(id), or None when no such tag."""
+def session_client(cfg: Config, *, client_factory=None):
+    """Clone a Client from the dumped session ONLY (no login). For parallel Layer A workers.
+    Raises ScrapeUnavailable when session missing / instagrapi missing / load fails."""
+    sess = cfg.ig_scrape_session_path
+    if not sess.exists():
+        raise ScrapeUnavailable("ig scrape session missing — run fanops hashtags scrape-login")
+    try:
+        if client_factory is None:
+            from instagrapi import Client
+            client_factory = Client
+    except ImportError as e:
+        raise ScrapeUnavailable("instagrapi not installed — pip install -e '.[igscrape]'") from e
+    client = client_factory()
+    try:
+        client.load_settings(str(sess))
+    except Exception as e:                                  # noqa: BLE001
+        raise ScrapeUnavailable(f"scrape session load failed: {_trunc(e)}") from e
+    return client
+
+
+def _median(vals: list[float]) -> Optional[float]:
+    """Median of a non-empty float list; None when empty. Platform numbers only — no invented blend."""
+    if not vals:
+        return None
+    s = sorted(vals)
+    n = len(s)
+    mid = n // 2
+    return float(s[mid]) if n % 2 else (s[mid - 1] + s[mid]) / 2.0
+
+
+def resolve_hashtag_scrape(client, tag: str) -> tuple[Optional[str], Optional[float]]:
+    """Resolve '#tag' via instagrapi hashtag_info -> (id, media_count).
+    `media_count` is Instagram's own tag volume when the private API serves it (None if absent)."""
     name = _norm(tag).lstrip("#")
     if not name:
-        return None
+        return None, None
     try:
         info = client.hashtag_info(name)
     except Exception as e:                                  # noqa: BLE001
@@ -87,13 +118,23 @@ def resolve_hashtag_scrape(client, tag: str) -> Optional[str]:
         raise ScrapeRefused(_trunc(e)) from e
     hid = getattr(info, "id", None)
     if hid is None:
-        return None
+        return None, None
     s = str(hid).strip()
-    return s or None
+    if not s:
+        return None, None
+    mc = getattr(info, "media_count", None)
+    media_count = float(mc) if isinstance(mc, (int, float)) and not isinstance(mc, bool) and mc >= 0 else None
+    return s, media_count
 
 
-def measure_and_harvest_scrape(client, tag: str) -> tuple[Optional[float], dict[str, int]]:
-    """ONE hashtag_medias_top fetch: first like_count (>=0 int/float) + caption co-tag harvest."""
+def measure_and_harvest_scrape(client, tag: str) -> tuple[Optional[dict], dict[str, int]]:
+    """ONE hashtag_medias_top fetch → platform metrics + caption co-tag harvest.
+
+    Metrics (only fields Instagram put on the medias — never a blended 'reach'):
+      like_count  = median of like_count across top medias that carry one
+      play_count  = median of play_count across top medias that carry one (Reels/views when present)
+
+    A tag with neither likes nor plays anywhere in the top grid is UNMEASURED (None, cotags)."""
     name = _norm(tag).lstrip("#")
     if not name:
         return None, {}
@@ -107,12 +148,15 @@ def measure_and_harvest_scrape(client, tag: str) -> tuple[Optional[float], dict[
         raise ScrapeRefused(_trunc(e)) from e
     if not medias:
         return None, {}
-    metric: Optional[float] = None
+    likes: list[float] = []; plays: list[float] = []
     cotags: dict[str, int] = {}
     for m in medias:
-        v = getattr(m, "like_count", None)
-        if metric is None and isinstance(v, (int, float)) and not isinstance(v, bool) and v >= 0:
-            metric = float(v)
+        lv = getattr(m, "like_count", None)
+        if isinstance(lv, (int, float)) and not isinstance(lv, bool) and lv >= 0:
+            likes.append(float(lv))
+        pv = getattr(m, "play_count", None)
+        if isinstance(pv, (int, float)) and not isinstance(pv, bool) and pv >= 0:
+            plays.append(float(pv))
         caption = getattr(m, "caption_text", None) or ""
         for raw in CAPTION_TAG_RE.findall(caption):
             t = _norm(raw)
@@ -121,4 +165,12 @@ def measure_and_harvest_scrape(client, tag: str) -> tuple[Optional[float], dict[
             if t not in cotags and len(cotags) >= HARVEST_CAP:
                 continue
             cotags[t] = cotags.get(t, 0) + 1
-    return metric, cotags
+    like_m = _median(likes); play_m = _median(plays)
+    if like_m is None and play_m is None:
+        return None, cotags
+    metrics: dict = {}
+    if like_m is not None:
+        metrics["like_count"] = like_m
+    if play_m is not None:
+        metrics["play_count"] = play_m
+    return metrics, cotags

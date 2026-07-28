@@ -164,7 +164,7 @@ class Config:
         self.personas_lock_path = self.control / "personas.lock"   # serializes the personas.json read-modify-write mutators
         self.context_path = self.control / "context.md"
         self.tuning_path = self.control / "tuning.json"
-        self.hashtags_path = self.control / "hashtags.json"  # the platform measurement cache {tag: {graph_id, like_count, measured_at, from}}; absent -> selection ships short
+        self.hashtags_path = self.control / "hashtags.json"  # platform cache {tag: {graph_id, play_count?, like_count?, media_count?, measured_at, from}}; absent -> selection ships short
         self.ig_scrape_session_path = self.control / "ig_scrape_session.json"  # instagrapi session for hashtag Layer A; absent -> refresh aborts until scrape-login
         self.account_stats_path = self.control / "account_stats.json"  # U3: throttled IG follower snapshot per handle; absent -> empty
         self.cutover_path = self.control / "cutover.json"   # live-cutover harness scratch state; NEVER the ledger

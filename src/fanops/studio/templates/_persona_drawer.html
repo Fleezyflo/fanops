@@ -59,7 +59,7 @@
       {% if p.lead_tags %}<p class="muted">Lead: {{ p.lead_tags | join(', ') }}</p>{% endif %}
       <div class="persona-corpus">
         {% for t in p.corpus[:4] %}
-          <span class="chip tag ro{{ ' high-reach' if t in p.reach_tags else '' }}">{{ t }}{% if p.reach_means.get(t) %}<span class="reach-n" title="Instagram like_count on this tag's top post">· {{ p.reach_means[t] | int }}</span>{% endif %}</span>
+          <span class="chip tag ro{{ ' high-reach' if t in p.reach_tags else '' }}">{{ t }}{% if p.reach_means.get(t) %}<span class="reach-n" title="Instagram Top-grid median play_count (else like_count)">· {{ p.reach_means[t] | int }}</span>{% endif %}</span>
         {% else %}<span class="muted">none yet</span>{% endfor %}
       </div>
     </section>

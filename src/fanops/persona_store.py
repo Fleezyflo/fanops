@@ -22,7 +22,7 @@ SELECTION_SCOPE_LEVELS = _lever_vocab("selection_scope")
 HOOK_ANGLES = _lever_vocab("hook_angle")
 INTENSITY = _lever_vocab("intensity")
 
-_CORPUS_CAP = 40                # max curated tags per persona — keeps captions/budget bounded (cap, not a target)
+_CORPUS_CAP = 80                # must cover FANOPS_CORPUS_TARGET default (80); was 40 and silently truncated
 _BAKED_FILE = "baked_personas.json"
 
 

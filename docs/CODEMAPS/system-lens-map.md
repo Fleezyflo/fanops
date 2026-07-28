@@ -271,7 +271,7 @@ discovery) went out with the frozen pools on 2026-07-26 (§2.2). Corpus instruct
 4. Seed the WHOLE corpus first, then honor the model's picks but ONLY vetted ones.
 5. Sort on FOUR keys: tier (corpus 0 > content 1 > cache 2), then model-picked-first, then a GRADED LRU
    (`recent` arrives oldest-first, last write wins, never-used tags lead), then the rank from step 3.
-6. **Corpus LEAD cap** `_CORPUS_LEAD_MAX = 2` (`hashtags.py:~34`): a corpus of ≥ `max_tags` would
+6. **Corpus LEAD cap** `_CORPUS_LEAD_MAX = 3` (`hashtags.py:~39`): a corpus of ≥ `max_tags` would
    monopolise the line; surplus corpus tags keep their order BEHIND the picks and still backfill.
 7. **Reserved floors** take TAIL slots so the corpus/metric lead is preserved: one `_ARABIC` tag on an
    Arabic-language clip (`hashtags.py:~28`), spliced in as `head + reserved`.
