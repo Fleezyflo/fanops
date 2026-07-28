@@ -526,7 +526,7 @@ def test_doctor_hashtag_scrape_session_check(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path)
     rep = doctor.doctor_report(cfg)
     row = next(c for c in rep["checks"] if "hashtag Layer A scrape" in c["label"])
-    assert row["ok"] is False
+    assert row["ok"] is True  # soft-ok: refresh still aborts; health stays green in dryrun
     assert "scrape-login" in row["hint"] and "FANOPS_IG_SCRAPE_USER" in row["hint"]
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
     monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")

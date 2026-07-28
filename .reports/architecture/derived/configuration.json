@@ -87,6 +87,18 @@
       ],
       "reader_count": 1
     },
+    "FANOPS_HASHTAG_SCRAPE_COTAG_ENQUEUE": {
+      "read_at": [
+        "fanops.fanops_hashtags:52"
+      ],
+      "reader_count": 1
+    },
+    "FANOPS_HASHTAG_SCRAPE_TRY_CAP": {
+      "read_at": [
+        "fanops.fanops_hashtags:41"
+      ],
+      "reader_count": 1
+    },
     "FANOPS_HOOK_ROUTER": {
       "read_at": [
         "fanops.config:708"
@@ -467,7 +479,7 @@
     "src/fanops/**/*.py"
   ],
   "totals": {
-    "env_vars_read": 73,
+    "env_vars_read": 75,
     "env_write_sites": 2
   }
 }

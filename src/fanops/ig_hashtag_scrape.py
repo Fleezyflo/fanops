@@ -80,6 +80,8 @@ def resolve_hashtag_scrape(client, tag: str) -> Optional[str]:
     try:
         info = client.hashtag_info(name)
     except Exception as e:                                  # noqa: BLE001
+        if isinstance(e, ScrapeRefused):
+            raise
         if _is_throttle(e):
             raise ScrapeThrottled(_trunc(e)) from e
         raise ScrapeRefused(_trunc(e)) from e
@@ -98,6 +100,8 @@ def measure_and_harvest_scrape(client, tag: str) -> tuple[Optional[float], dict[
     try:
         medias = client.hashtag_medias_top(name, amount=9)
     except Exception as e:                                  # noqa: BLE001
+        if isinstance(e, ScrapeRefused):
+            raise
         if _is_throttle(e):
             raise ScrapeThrottled(_trunc(e)) from e
         raise ScrapeRefused(_trunc(e)) from e
