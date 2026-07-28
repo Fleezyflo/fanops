@@ -404,6 +404,7 @@ class PersonaCard:
     content_focus: list = field(default_factory=list)
     selection_scope: Optional[str] = None
     hook_angle: Optional[str] = None
+    intensity: Optional[str] = None
     clip_profile: Optional[str] = None
     framing: Optional[str] = None
     instruction: str = ""              # the COMPILED casting directive (the headline "AI reads ->")
@@ -459,6 +460,7 @@ def _account_provenance(cfg: Config, persona, handles: list) -> list:
             fields.append({"name": "voice", "value": acc.persona or "", "source": "account"})
         fields.append({"name": "hashtag_corpus", "value": list(persona.hashtag_corpus), "source": "persona"})
         fields.append({"name": "content_focus", "value": list(persona.content_focus), "source": "persona"})
+        fields.append({"name": "intensity", "value": persona.intensity or "", "source": "persona"})
         fields.append({"name": "selection_scope", "value": persona.selection_scope or "", "source": "persona"})
         fields.append({"name": "hook_angle", "value": persona.hook_angle or "", "source": "persona"})
         if _prof:
@@ -628,6 +630,7 @@ def personas_page(cfg: Config, *, led: Optional[Ledger] = None) -> "PersonasPage
                          reach_tags=[_norm(t) for t in p.hashtag_corpus if _norm(t) in means],
                          reach_means={_norm(t): means[_norm(t)] for t in p.hashtag_corpus if _norm(t) in means},
                          content_focus=list(p.content_focus), selection_scope=p.selection_scope, hook_angle=p.hook_angle,
+                         intensity=p.intensity,
                          clip_profile=resolved_cut_spec(p)[0], framing=facts["framing"],
                          instruction=compose_persona_instruction(p),
                          length_band=facts["length_band"], lead_tags=facts["lead_tags"],

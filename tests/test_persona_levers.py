@@ -242,7 +242,7 @@ def test_studio_edit_persona_persists_levers(tmp_path):
 
 # ======================================================================================
 # MOL-170 (A1) — consolidate energy→content_focus (framing+intensity); repurpose the energy
-# lever slot as selection_scope. Still 5 levers; resolve_top_bias stays on account.framing.
+# lever slot as selection_scope. MOL-520 adds intensity (6 levers); resolve_top_bias stays on account.framing.
 # ======================================================================================
 import json as _json
 import fanops.persona_levers as _pl
@@ -252,10 +252,11 @@ from fanops.config import Config as _Cfg
 def test_selection_scope_replaces_energy_in_registry():
     keys = [lv["key"] for lv in _pl.LEVER_REGISTRY]
     assert "energy" not in keys and "selection_scope" in keys
-    assert keys == ["content_focus", "selection_scope", "hook_angle", "clip_profile", "niche"]
+    assert keys == ["content_focus", "intensity", "selection_scope", "hook_angle", "clip_profile", "niche"]
     assert set(_pl.vocab("selection_scope")) == {"open", "subject_locked", "source_briefed", "credibility_first", "controversy_seeking"}
     assert "energy" not in _pl.editable_fields()
     assert "selection_scope" in _pl.editable_fields()
+    assert "intensity" in _pl.editable_fields()
 
 
 def test_content_focus_derives_framing():
@@ -293,9 +294,22 @@ def test_legacy_energy_key_ignored_scope_unset(tmp_path):
 
 
 def test_no_new_lever_family():
-    assert len(_pl.LEVER_REGISTRY) == 5
+    assert len(_pl.LEVER_REGISTRY) == 6
     persona_levers = {lv["key"] for lv in _pl.LEVER_REGISTRY if lv["key"] not in ("clip_profile", "niche")}
     assert persona_levers == set(_pl.editable_fields()) - {"voice", "niche"}
+
+
+def test_derived_intensity_helpers_gone():
+    assert not hasattr(_pl, "derive_intensity_from_focus")
+    assert not hasattr(_pl, "intensity_map")
+
+
+def test_persona_intensity_explicit():
+    p = Persona(id="p", intensity="high", content_focus=["hype"])
+    assert p.intensity == "high"
+    # content_focus alone does NOT imply intensity (derive deleted)
+    bare = Persona(id="q", content_focus=["hype", "bold-statement"])
+    assert bare.intensity is None
 
 
 def test_no_surviving_account_energy_selection_reader():

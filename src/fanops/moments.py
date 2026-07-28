@@ -236,7 +236,6 @@ def _persona_entry(cfg: Config, a) -> dict:
     """Per-account pick spec — full fields even when casting directive is falsy (directive-less accounts
     still get their own owned moments under per-account isolation)."""
     from fanops.persona_directives import casting_directive, resolved_cut_spec
-    from fanops.persona_levers import derive_intensity_from_focus
     d = casting_directive(a)
     prof = cfg.resolve_clip_profile(a)
     band = band_for(prof)
@@ -244,7 +243,9 @@ def _persona_entry(cfg: Config, a) -> dict:
     _, derived_fr = resolved_cut_spec(a)
     framing = pin_fr or derived_fr or ("top" if cfg.resolve_top_bias(a) else "center")
     content_focus = list(getattr(a, "content_focus", None) or [])
-    intensity = derive_intensity_from_focus(content_focus)
+    intensity = (getattr(a, "intensity", None) or "")
+    if isinstance(intensity, str): intensity = intensity.strip().lower() or None
+    else: intensity = None
     return {"handle": a.handle,
             "directive": (d.select_rule or d.register) if d else "",
             "selection_scope": (d.scope_lens if d else ""),

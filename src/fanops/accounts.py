@@ -93,6 +93,7 @@ class Account(BaseModel):
     content_focus: list[str] = Field(default_factory=list)
     selection_scope: Optional[str] = None
     hook_angle: Optional[str] = None
+    intensity: Optional[str] = None
     # M3e: the 3 per-dimension OVERRIDE carriers (casting/hook/caption_directive) were RETIRED with the Persona
     # overrides — the structured levers always compile the directives now; the voice carries freeform register.
     # Provenance (S2): True only when the LINKED persona actually supplied clip_profile (resolved_cut_spec
@@ -346,6 +347,7 @@ def _hydrate_from_personas(accts: "Accounts", cfg: Config) -> None:
         acc.content_focus = list(per.content_focus)
         acc.selection_scope = per.selection_scope
         acc.hook_angle = per.hook_angle
+        acc.intensity = per.intensity
         _prof, _fr = resolved_cut_spec(per)   # P2: derived from content_focus; else None (global stands)
         if _prof: acc.clip_profile = _prof; acc.persona_owns_profile = True   # S2 provenance: the persona TRULY owns the length
         if _fr: acc.framing = _fr

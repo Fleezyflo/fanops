@@ -96,7 +96,7 @@ def test_derive_cut_spec_framing_from_content_focus():
 # ---- lever_catalog() full shape characterization ----
 def test_lever_catalog_shape_byte_identical():
     cat = {lev["key"]: lev for lev in lever_catalog()}
-    assert list(cat) == ["content_focus", "selection_scope", "hook_angle", "clip_profile", "niche"]
+    assert list(cat) == ["content_focus", "intensity", "selection_scope", "hook_angle", "clip_profile", "niche"]
     # content_focus options == the focus clause map, value+effect exact, in clause order
     cf = cat["content_focus"]
     assert [(o["value"], o["effect"]) for o in cf["options"]] == list(_GOLD_FOCUS_CLAUSE.items())

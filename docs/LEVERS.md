@@ -7,7 +7,8 @@
 
 | lever / effect | edit |
 |----------------|------|
-| content_focus options, clauses, band/framing/intensity | `src/fanops/persona_levers.py` → `_CONTENT_FOCUS_OPTIONS` / `LEVER_REGISTRY` |
+| content_focus options, clauses, band/framing | `src/fanops/persona_levers.py` → `_CONTENT_FOCUS_OPTIONS` / `LEVER_REGISTRY` |
+| intensity options (peak filter) | `src/fanops/persona_levers.py` → `_INTENSITY_OPTIONS` / `LEVER_REGISTRY` |
 | selection_scope clauses | `src/fanops/persona_levers.py` → `_SELECTION_SCOPE_OPTIONS` |
 | hook_angle clauses | `src/fanops/persona_levers.py` → `_HOOK_ANGLE_OPTIONS` |
 | clip band seconds | `src/fanops/bands.py` → `_PROFILES` / `TALK`/`SHORT`/… |
@@ -23,12 +24,22 @@ Then run `fanops lever docs` to regenerate this file.
 
 | value | what it tells the LLM | deterministic operation | cut consequence | phase/gate |
 |-------|----------------------|-------------------------|-----------------|------------|
-| `punchlines` | 'moments that land a verbal punchline — a bar with a clear setup and payoff, a quotable, rewatchable line' | intensity=high → filter_peaks_by_intensity (top tercile); derived band=short (8-15s), framing=center | short clips (8-15s), center crop | moments gate (pick) → steers frame-seeing hook author |
-| `emotional` | 'moments carrying real emotion — vulnerability, longing, devotion, a confession the viewer feels' | intensity=low → filter_peaks_by_intensity (bottom tercile); derived band=medium (16-26s), framing=top | medium clips (16-26s), top crop | moments gate (pick) → steers frame-seeing hook author |
-| `hype` | 'the highest-energy hype moments — the hardest delivery, the beat drop, the room going up' | intensity=high → filter_peaks_by_intensity (top tercile); derived band=short (8-15s), framing=center | short clips (8-15s), center crop | moments gate (pick) → steers frame-seeing hook author |
-| `storytelling` | 'moments that tell a story or reveal something — an origin, a turn, a payoff' | intensity=low → filter_peaks_by_intensity (bottom tercile); derived band=long (28-45s), framing=top | long clips (28-45s), top crop | moments gate (pick) → steers frame-seeing hook author |
-| `visual` | 'visually arresting moments — a strong scene, motion, or setting, not audio alone' | intensity=medium → filter_peaks_by_intensity (unchanged tercile); derived band=medium (16-26s), framing=center | medium clips (16-26s), center crop | moments gate (pick) → steers frame-seeing hook author |
-| `bold-statement` | 'a bold or contrarian statement that stops the scroll' | intensity=high → filter_peaks_by_intensity (top tercile); derived band=short (8-15s), framing=center | short clips (8-15s), center crop | moments gate (pick) → steers frame-seeing hook author |
+| `punchlines` | 'moments that land a verbal punchline — a bar with a clear setup and payoff, a quotable, rewatchable line' | derived band=short (8-15s), framing=center | short clips (8-15s), center crop | moments gate (pick) → steers frame-seeing hook author |
+| `emotional` | 'moments carrying real emotion — vulnerability, longing, devotion, a confession the viewer feels' | derived band=medium (16-26s), framing=top | medium clips (16-26s), top crop | moments gate (pick) → steers frame-seeing hook author |
+| `hype` | 'the highest-energy hype moments — the hardest delivery, the beat drop, the room going up' | derived band=short (8-15s), framing=center | short clips (8-15s), center crop | moments gate (pick) → steers frame-seeing hook author |
+| `storytelling` | 'moments that tell a story or reveal something — an origin, a turn, a payoff' | derived band=long (28-45s), framing=top | long clips (28-45s), top crop | moments gate (pick) → steers frame-seeing hook author |
+| `visual` | 'visually arresting moments — a strong scene, motion, or setting, not audio alone' | derived band=medium (16-26s), framing=center | medium clips (16-26s), center crop | moments gate (pick) → steers frame-seeing hook author |
+| `bold-statement` | 'a bold or contrarian statement that stops the scroll' | derived band=short (8-15s), framing=center | short clips (8-15s), center crop | moments gate (pick) → steers frame-seeing hook author |
+
+## intensity (stage: pick)
+
+**Does:** which tercile of signal peaks survive the P4b filter (high/medium/low); unset = no filter
+
+| value | what it tells the LLM | deterministic operation | cut consequence | phase/gate |
+|-------|----------------------|-------------------------|-----------------|------------|
+| `high` | 'keep the loudest tercile of peak scores' | filter_peaks_by_intensity('high') → top tercile | n/a (peak set, not cut geometry) | moments gate (P4b peak filter) |
+| `medium` | 'no peak filter — the full set stands' | filter_peaks_by_intensity('medium') → unchanged / full set | n/a (peak set, not cut geometry) | moments gate (P4b peak filter) |
+| `low` | 'keep the calmest tercile of peak scores' | filter_peaks_by_intensity('low') → bottom tercile | n/a (peak set, not cut geometry) | moments gate (P4b peak filter) |
 
 ## selection_scope (stage: casting)
 

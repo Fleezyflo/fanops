@@ -42,15 +42,20 @@ def _mod_const_line(mod, name: str) -> str:
 def _content_focus_row(opt: dict) -> str:
     prof = opt.get("profile") or "talk"
     fr = opt.get("framing") or "center"
-    tier = opt.get("intensity") or "medium"
     b = bands.band_for(prof)
     clause = opt.get("clause", "")
-    det = (f"intensity={tier} → filter_peaks_by_intensity "
-           f"({'top' if tier == 'high' else 'bottom' if tier == 'low' else 'unchanged'} tercile); "
-           f"derived band={prof} ({b.lo:g}-{b.hi:g}s), framing={fr}")
+    det = f"derived band={prof} ({b.lo:g}-{b.hi:g}s), framing={fr}"
     cut = f"{prof} clips ({b.lo:g}-{b.hi:g}s), {fr} crop"
     phase = "moments gate (pick) → steers frame-seeing hook author"
     return f"| `{opt['value']}` | {clause!r} | {det} | {cut} | {phase} |"
+
+
+def _intensity_row(opt: dict) -> str:
+    v = opt["value"]; clause = opt.get("clause", "")
+    slice_ = "top tercile" if v == "high" else "bottom tercile" if v == "low" else "unchanged / full set"
+    det = f"filter_peaks_by_intensity({v!r}) → {slice_}"
+    return (f"| `{v}` | {clause!r} | {det} | n/a (peak set, not cut geometry) | "
+            f"moments gate (P4b peak filter) |")
 
 
 def _selection_scope_row(opt: dict) -> str:
@@ -81,7 +86,7 @@ def archetype_crosswalk_rows() -> list[dict]:
                        "content_focus": list(p.content_focus or []),
                        "hook_angle": (p.hook_angle or "").strip(),
                        "selection_scope": (p.selection_scope or "open").strip(),
-                       "intensity": pl.derive_intensity_from_focus(p.content_focus) or "medium",
+                       "intensity": (getattr(p, "intensity", None) or "medium"),
                        "corpus": list(p.hashtag_corpus or [])})
     return rows
 
@@ -106,8 +111,10 @@ def render_levers(cfg: Config) -> str:  # cfg reserved for future persona-aware 
     how = ("\n## How to change an option's EFFECT\n\n"
            "| lever / effect | edit |\n"
            "|----------------|------|\n"
-           "| content_focus options, clauses, band/framing/intensity | "
+           "| content_focus options, clauses, band/framing | "
            "`src/fanops/persona_levers.py` → `_CONTENT_FOCUS_OPTIONS` / `LEVER_REGISTRY` |\n"
+           "| intensity options (peak filter) | "
+           "`src/fanops/persona_levers.py` → `_INTENSITY_OPTIONS` / `LEVER_REGISTRY` |\n"
            "| selection_scope clauses | `src/fanops/persona_levers.py` → `_SELECTION_SCOPE_OPTIONS` |\n"
            "| hook_angle clauses | `src/fanops/persona_levers.py` → `_HOOK_ANGLE_OPTIONS` |\n"
            "| clip band seconds | `src/fanops/bands.py` → `_PROFILES` / `TALK`/`SHORT`/… |\n"
@@ -130,6 +137,8 @@ def render_levers(cfg: Config) -> str:  # cfg reserved for future persona-aware 
         for opt in lv["options"]:
             if key == "content_focus":
                 parts.append(_content_focus_row(opt))
+            elif key == "intensity":
+                parts.append(_intensity_row(opt))
             elif key == "selection_scope":
                 parts.append(_selection_scope_row(opt))
             elif key == "hook_angle":

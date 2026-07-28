@@ -15,21 +15,30 @@ from collections import OrderedDict
 PROFILE_TIERS = ["long", "medium", "short"]
 INTENSITY_TIERS = ["high", "medium", "low"]
 
-# Each content_focus option: value + casting CLAUSE + cut LENGTH tier + FRAMING + INTENSITY (MOL-170).
+# Each content_focus option: value + casting CLAUSE + cut LENGTH tier + FRAMING.
+# Intensity is a FIRST-CLASS persona field (MOL-520 / E-1) — no longer fused onto these tokens.
 _CONTENT_FOCUS_OPTIONS = [
-    {"value": "punchlines", "profile": "short", "framing": "center", "intensity": "high",
+    {"value": "punchlines", "profile": "short", "framing": "center",
      "clause": "moments that land a verbal punchline — a bar with a clear setup and payoff, a quotable, rewatchable line"},
-    {"value": "emotional", "profile": "medium", "framing": "top", "intensity": "low",
+    {"value": "emotional", "profile": "medium", "framing": "top",
      "clause": "moments carrying real emotion — vulnerability, longing, devotion, a confession the viewer feels"},
-    {"value": "hype", "profile": "short", "framing": "center", "intensity": "high",
+    {"value": "hype", "profile": "short", "framing": "center",
      "clause": "the highest-energy hype moments — the hardest delivery, the beat drop, the room going up"},
-    {"value": "storytelling", "profile": "long", "framing": "top", "intensity": "low",
+    {"value": "storytelling", "profile": "long", "framing": "top",
      "clause": "moments that tell a story or reveal something — an origin, a turn, a payoff"},
-    {"value": "visual", "profile": "medium", "framing": "center", "intensity": "medium",
+    {"value": "visual", "profile": "medium", "framing": "center",
      "clause": "visually arresting moments — a strong scene, motion, or setting, not audio alone"},
-    {"value": "bold-statement", "profile": "short", "framing": "center", "intensity": "high",
+    {"value": "bold-statement", "profile": "short", "framing": "center",
      "clause": "a bold or contrarian statement that stops the scroll"},
 ]
+# Closed ordered scale for filter_peaks_by_intensity (P4b) — not a taste taxonomy.
+_INTENSITY_OPTIONS = [
+    {"value": "high", "clause": "keep the loudest tercile of peak scores"},
+    {"value": "medium", "clause": "no peak filter — the full set stands"},
+    {"value": "low", "clause": "keep the calmest tercile of peak scores"},
+]
+# MOL-170 highest-intensity-first framing order (was option.intensity); kept until E-3 removes framing_map.
+_FRAMING_PRIORITY = ("punchlines", "hype", "bold-statement", "visual", "emotional", "storytelling")
 _SELECTION_SCOPE_OPTIONS = [
     {"value": "open", "clause": ""},
     {"value": "subject_locked", "clause": "Only moments featuring the account's named subject qualify — subject presence is the filter."},
@@ -53,6 +62,9 @@ LEVER_REGISTRY = [
     {"key": "content_focus", "label": "Clips · favors moments", "kind": "multi", "stage": "casting",
      "does": "which KINDS of moments this account clips for (casting prompt) — and DERIVES cut LENGTH + FRAMING",
      "options": _CONTENT_FOCUS_OPTIONS},
+    {"key": "intensity", "label": "Peak intensity", "kind": "select", "stage": "pick",
+     "does": "which tercile of signal peaks survive the P4b filter (high/medium/low); unset = no filter",
+     "options": _INTENSITY_OPTIONS},
     {"key": "selection_scope", "label": "Selection scope", "kind": "select", "stage": "casting",
      "does": "the selection CONSTRAINT posture (open vs subject-locked vs briefed vs credibility-first vs controversy-seeking)",
      "options": _SELECTION_SCOPE_OPTIONS},
@@ -85,6 +97,7 @@ PERSONA_FIELD_EXEMPT = frozenset({"id", "name", "hashtag_corpus"})
 PERSONA_EDITABLE_CHANNELS = {
     "voice": ("voice",),
     "content_focus": ("casting-selection", "cut-length", "cut-framing"),
+    "intensity": ("peak-filter",),
     "selection_scope": ("casting-selection-scope",),
     "hook_angle": ("hook-angle",),
     # `Persona.niche` is what persona_terms returns (B-6); saved by /personas/niche. Owns the `hashtags`
@@ -151,36 +164,19 @@ def focus_profile_map() -> "OrderedDict[str, str]":
 
 
 def framing_map() -> "OrderedDict[str, str]":
-    """The derived-cut FRAMING map {content_focus: framing}, ordered HIGHEST-intensity-first so next() over it
-    picks the highest-intensity present focus (MOL-170 — replaces energy_framing_map)."""
-    opts = lever("content_focus")["options"]
+    """The derived-cut FRAMING map {content_focus: framing}, ordered highest-intensity-first (MOL-170).
+    Order is `_FRAMING_PRIORITY` (the former option.intensity tiers) so next() over it still picks the
+    highest-intensity present focus after intensity left the option dict (MOL-520)."""
+    opts = {o["value"]: o for o in lever("content_focus")["options"]}
     out: "OrderedDict[str, str]" = OrderedDict()
-    for tier in INTENSITY_TIERS:
-        for o in opts:
-            if o.get("intensity") == tier and o.get("framing"):
-                out[o["value"]] = o["framing"]
+    for v in _FRAMING_PRIORITY:
+        o = opts.get(v)
+        if o and o.get("framing"):
+            out[v] = o["framing"]
+    for o in lever("content_focus")["options"]:
+        if o["value"] not in out and o.get("framing"):
+            out[o["value"]] = o["framing"]
     return out
-
-
-def intensity_map() -> "OrderedDict[str, str]":
-    """{content_focus: intensity tier}, ordered HIGHEST-intensity-first (P4b peak filter reads this)."""
-    opts = lever("content_focus")["options"]
-    out: "OrderedDict[str, str]" = OrderedDict()
-    for tier in INTENSITY_TIERS:
-        for o in opts:
-            if o.get("intensity") == tier:
-                out[o["value"]] = tier
-    return out
-
-
-def derive_intensity_from_focus(content_focus: list[str] | None) -> str | None:
-    """The peak-filter intensity for a persona's content_focus — highest-intensity present wins; []/unknown -> None."""
-    im = intensity_map()
-    for tier in INTENSITY_TIERS:
-        for f in (content_focus or []):
-            if im.get(f) == tier:
-                return tier
-    return None
 
 
 def build_catalog() -> list[dict]:
