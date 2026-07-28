@@ -327,3 +327,33 @@ def test_cmd_hashtags_refresh_corrupt_personas_exits_2_and_no_keyerror(tmp_path,
     assert rc == 2                                          # loud non-zero exit, no KeyError
     aborted = next(r for r in recs if r["outcome"] == "refresh_aborted")
     assert "personas.json invalid:" in aborted.get("reason", "")
+
+
+def test_refresh_store_routes_novel_searches_per_persona_ig_user_id(tmp_path, monkeypatch):
+    """Two posting personas on two accounts with distinct ig_user_ids: novel searches must hit different user_id params."""
+    monkeypatch.setenv("META_GRAPH_TOKEN", "tok"); monkeypatch.setenv("META_IG_USER_ID", "GLOBAL")
+    cfg = Config(root=tmp_path)
+    from fanops import personas as P
+    P.add_persona(cfg, name="A", voice="a", niche=["alpha"], id="pa")
+    P.add_persona(cfg, name="B", voice="b", niche=["beta"], id="pb")
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": [
+        {"handle": "h_a", "platforms": ["instagram"], "status": "active", "persona_id": "pa", "ig_user_id": "IG-A"},
+        {"handle": "h_b", "platforms": ["instagram"], "status": "active", "persona_id": "pb", "ig_user_id": "IG-B"},
+    ]}))
+    calls = []
+    def get(url, params=None, timeout=None):
+        p = params or {}
+        calls.append((url, dict(p)))
+        if "recently_searched_hashtags" in url:
+            return _Resp(200, {"data": []})
+        if "ig_hashtag_search" in url:
+            return _Resp(200, {"data": [{"id": "id-" + p.get("q", "")}]})
+        if url.endswith("/top_media"):
+            return _Resp(200, {"data": [{"caption": "", "like_count": 10}]})
+        return _Resp(200, {"data": []})
+    out = refresh_store(cfg, get=get)
+    assert out["written"] is True
+    search_uids = sorted({p.get("user_id") for u, p in calls if "ig_hashtag_search" in u})
+    assert search_uids == ["IG-A", "IG-B"], search_uids
+

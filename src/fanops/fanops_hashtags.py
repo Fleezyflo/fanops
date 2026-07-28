@@ -73,6 +73,28 @@ def _posting_personas(cfg: Config) -> list:
     return personas
 
 
+
+
+def _prefer_handle_for_persona(cfg: Config, persona_id: str | None) -> str | None:
+    """First active IG account linked to `persona_id` that carries a non-empty ig_user_id, else None.
+    FAIL-OPEN: torn accounts.json / no match -> None (select_hashtag_creds still has global fallback)."""
+    if not (persona_id or "").strip():
+        return None
+    try:
+        from fanops.accounts import Accounts
+        from fanops.models import Platform
+        pid = persona_id.strip()
+        for a in Accounts.load(cfg).active():
+            if Platform.instagram not in a.platforms:
+                continue
+            if (a.persona_id or "").strip() != pid:
+                continue
+            if (a.ig_user_id or "").strip():
+                return a.handle
+    except Exception:                                      # noqa: BLE001 — fail-open by design
+        return None
+    return None
+
 def _fresh(rec: dict, cutoff: datetime) -> bool:
     """True when a record's measurement is inside the retention window. An unparseable stamp is KEPT (we
     do not delete data we cannot judge); the corpus gate rejects it on its own freshness check."""
@@ -101,7 +123,7 @@ def refresh_store(cfg: Config, *, get=None, now=None) -> dict:
     `last_complete_pass` advances ONLY when throttled is False (the 12h tick gates on that stamp)."""
     from fanops.errors import ControlFileError
     from fanops.meta_graph import (GraphRefused, GraphThrottled, GraphUnreachable,
-                                   measure_and_harvest, resolve_hashtag)
+                                   measure_and_harvest, resolve_hashtag, select_hashtag_creds)
     from fanops.persona_research import persona_terms
     now = now or datetime.now(timezone.utc)
     stamp = now.isoformat()
@@ -114,11 +136,16 @@ def refresh_store(cfg: Config, *, get=None, now=None) -> dict:
     ids: dict[str, str] = {t: r["graph_id"] for t, r in cache.items()}
     attribution: dict[str, dict] = {t: dict(r.get("from") or {}) for t, r in cache.items()}
     anchors: list[str] = []
+    anchor_owner: dict[str, str] = {}                      # #term -> persona.id (first owner wins)
     for per in personas:
         for term in persona_terms(per):
             a = _norm("#" + term)
-            if a and a not in anchors:
+            if not a:
+                continue
+            if a not in anchors:
                 anchors.append(a)
+            if a not in anchor_owner:
+                anchor_owner[a] = per.id
     anchor_set = set(anchors)
     unmeasured_anchors = [t for t in anchors if t not in cache]
     remeasure = sorted((t for t in list(anchors) + [t for t in cache if t not in anchor_set] if t in cache),
@@ -133,18 +160,23 @@ def refresh_store(cfg: Config, *, get=None, now=None) -> dict:
         tried += 1
         metric = None; cotags: dict[str, int] = {}; hid = None
         try:
-            hid = ids.get(tag) or resolve_hashtag(cfg, tag, get=get)
+            prefer = (_prefer_handle_for_persona(cfg, anchor_owner.get(tag))
+                      if tag in anchor_owner else None)
+            need_slot = tag not in ids                     # novel search spends a Meta search slot
+            creds = select_hashtag_creds(cfg, prefer_handle=prefer, need_search_slot=need_slot, get=get)
+            hid = ids.get(tag) or resolve_hashtag(cfg, tag, get=get, creds=creds)
             if not hid:
                 unresolved.append({"tag": tag, "reason": "no_match"})  # Meta 200 + empty data only
                 continue
             ids[tag] = hid
-            metric, cotags = measure_and_harvest(cfg, hid, get=get)
+            metric, cotags = measure_and_harvest(cfg, hid, get=get, creds=creds)
         except GraphThrottled:
             throttled = True                               # Meta said stop — the only governor there is
             break
         except GraphRefused as e:
             unresolved.append({"tag": tag, "reason": "refused", "code": e.code,
-                               "subcode": e.subcode, "type": e.type, "message": e.message})
+                               "subcode": e.subcode, "type": e.type, "message": e.message,
+                               "user_title": e.user_title, "user_msg": e.user_msg})
             continue
         except GraphUnreachable as e:
             unresolved.append({"tag": tag, "reason": "unreachable", "message": e.reason})
@@ -226,7 +258,9 @@ def cmd_hashtags_refresh(cfg: Config) -> int:
     for u in unresolved[:20]:                                    # cap log blast; full list is in the return
         get_logger(cfg)("hashtags", u.get("tag") or "-", "unresolved",
                         reason=u.get("reason"), code=u.get("code"), subcode=u.get("subcode"),
-                        type=u.get("type"), message=(u.get("message") or "")[:160])
+                        type=u.get("type"), message=(u.get("message") or "")[:160],
+                        user_title=(u.get("user_title") or "")[:160],
+                        user_msg=(u.get("user_msg") or "")[:160])
     return 0
 
 

@@ -194,8 +194,15 @@ def _ig_accts_cfg(tmp_path, rows):
     cfg.accounts_path.write_text(json.dumps({"accounts": accts}))
     return cfg
 
+
+def _htag_cap_check(rep):
+    return next((c for c in rep["checks"] if "hashtag search routes" in c["label"].lower()), None)
+
+
 def _igid_check(rep):
-    return next((c for c in rep["checks"] if "ig_user_id" in c["label"].lower() or "ig user id" in c["label"].lower()), None)
+    return next((c for c in rep["checks"]
+                 if ("ig_user_id" in c["label"].lower() or "ig user id" in c["label"].lower())
+                 and "hashtag search routes" not in c["label"].lower()), None)
 
 
 def test_doctor_requires_distinct_ig_user_id_per_active_account(tmp_path, monkeypatch):
@@ -229,6 +236,27 @@ def test_doctor_requires_distinct_ig_user_id_per_active_account(tmp_path, monkey
     c5 = _igid_check(doctor.doctor_report(cfg5))
     assert c5 is not None and c5["ok"] is False
     assert "markmakmouly" in c5["hint"] and "perca.late" in c5["hint"]
+
+
+def test_doctor_hashtag_capacity_wiring_ok_with_distinct_ids(tmp_path, monkeypatch):
+    """≥2 distinct credentialed IG Business ids + HASHTAG_SEARCH_ROUTES_PER_ACCOUNT -> capacity check ok."""
+    monkeypatch.setenv("META_IG_USER_ID", "global-ig")
+    monkeypatch.setenv("META_GRAPH_TOKEN", "tok")
+    cfg = _ig_accts_cfg(tmp_path, [("markmakmouly", "111"), ("@perca.late", "222"), ("cisumwolfhom", "333")])
+    c = _htag_cap_check(doctor.doctor_report(cfg))
+    assert c is not None and c["ok"] is True
+
+
+def test_doctor_hashtag_capacity_wiring_fails_when_flag_off(tmp_path, monkeypatch):
+    """Same multi-id setup but flag False -> FAIL naming the global-collapse routing fix."""
+    from fanops import meta_graph
+    monkeypatch.setenv("META_IG_USER_ID", "global-ig")
+    monkeypatch.setenv("META_GRAPH_TOKEN", "tok")
+    monkeypatch.setattr(meta_graph, "HASHTAG_SEARCH_ROUTES_PER_ACCOUNT", False)
+    cfg = _ig_accts_cfg(tmp_path, [("markmakmouly", "111"), ("@perca.late", "222"), ("cisumwolfhom", "333")])
+    c = _htag_cap_check(doctor.doctor_report(cfg))
+    assert c is not None and c["ok"] is False
+    assert "META_IG_USER_ID" in c["hint"] and "routing" in c["hint"].lower()
 
 
 # --- T9: Meta token expiry preflight (debug_token) + rotation runbook ---

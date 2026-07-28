@@ -49,6 +49,12 @@ becomes inadmissible without a migration.
 
 ## Layer A has no local budget — Meta is the only governor
 
+Meta's official **30 unique hashtag searches / 7 days** ceiling is **per IG Business user**. Layer A
+routes via `select_hashtag_creds` / `MetaCreds` (per-handle `ig_user_id` + token), peeks
+`recently_searched_hashtags` when a novel search needs a slot, and never invents a local veto — Meta
+remains the only governor. There is still no local meter.
+
+
 Deleted 2026-07-26: the local search meter (`_BUDGET_LIMIT` / `_BUDGET_WINDOW_DAYS` / `_read_queries` /
 `budget_remaining` / `record_query` / `00_control/hashtag_budget.json`). That construct logged every search
 and then **skipped every tag it had logged**, capping each pass. Live evidence it was fiction: on

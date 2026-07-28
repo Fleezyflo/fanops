@@ -539,6 +539,7 @@
         "fanops.accounts",
         "fanops.errors",
         "fanops.meta_graph",
+        "fanops.models",
         "fanops.persona_research",
         "fanops.personas"
       ],
@@ -2035,6 +2036,7 @@
       "faster_whisper",
       "flask",
       "hashlib",
+      "inspect",
       "json",
       "keyring",
       "logging",
@@ -2337,7 +2339,7 @@
   "generated_by": "tools/arch",
   "generator_version": "arch/1.0.0",
   "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",
-  "lazy_downward_count": 224,
+  "lazy_downward_count": 225,
   "lazy_lateral": [
     {
       "from": "fanops.accounts",
@@ -3541,7 +3543,7 @@
     "G2_module_sccs_total": 71,
     "G2_non_trivial_sccs": 8,
     "compile_edges_G1": 561,
-    "lazy_edges": 335,
+    "lazy_edges": 336,
     "lazy_edges_lateral": 46,
     "lazy_edges_strictly_upward": 65,
     "lazy_edges_to_equal_or_higher_level": 111,

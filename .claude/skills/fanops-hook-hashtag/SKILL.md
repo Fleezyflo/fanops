@@ -203,10 +203,13 @@ Authority: `docs/CODEMAPS/hashtag-lifecycle.md`. Summary:
    `persona_terms` returns the declared niche only → each term is searched via `ig_hashtag_search` →
    one `top_media` fetch yields Meta's verbatim `like_count` plus co-occurring tags → written to
    `00_control/hashtags.json` (measured tags only). Cached `graph_id` re-measures without a new search.
-   **No local budget / allowance model.** Meta's own throttle codes (4/17/32/613) end a pass via
-   `GraphThrottled`; any other Meta error raises `GraphRefused` (code/subcode/message) and the pass
-   records it in `unresolved` — never collapses to a silent miss. `fanops hashtags discover` is
-   read-only (projects the cache; zero network).
+   **No local budget / allowance model.** Meta's official 30 unique hashtag searches / 7 days is
+   **per IG Business user**; FanOps observes capacity via `recently_searched_hashtags` and routes each
+   search/measure through that persona's account `MetaCreds` (`user_id` + token) — never a local meter.
+   Meta's own throttle codes (4/17/32/613) end a pass via `GraphThrottled`; any other Meta error raises
+   `GraphRefused` (code/subcode/message + user_title/user_msg) and the pass records it in `unresolved` —
+   never collapses to a silent miss. `fanops hashtags discover` is read-only (projects the cache; zero
+   network).
 3. **Layer B — derivation** (`persona_research.derive_corpus`, zero network): corpus = top
    `cfg.corpus_target` of the persona's aligned measured pool. Outage / empty pool holds the previous
    corpus. An empty corpus is honest (no padding).

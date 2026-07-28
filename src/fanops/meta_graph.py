@@ -3,17 +3,21 @@
 metrics/insights paths; never on the publish path. Design rules:
 
   Hashtag LOOKUPS never swallow Meta's answer. A non-throttle error raises `GraphRefused` carrying
-  Meta's own code/subcode/type/message; a transport failure raises `GraphUnreachable`. `resolve_hashtag`
-  returns None ONLY when Meta answered HTTP 200 with an empty match list — that is the unambiguous
-  "no such hashtag". The token is sent as the Graph `access_token` param and is NEVER logged/echoed
-  (METRICS_CLIENT_AUTH_DISCIPLINE — mirrors post/metrics.py).
+  Meta's own code/subcode/type/message (+ error_user_title / error_user_msg when Meta sends them); a
+  transport failure raises `GraphUnreachable`. `resolve_hashtag` returns None ONLY when Meta answered
+  HTTP 200 with an empty match list — that is the unambiguous "no such hashtag". The token is sent as
+  the Graph `access_token` param and is NEVER logged/echoed (METRICS_CLIENT_AUTH_DISCIPLINE — mirrors
+  post/metrics.py).
 
   META IS THE ONLY GOVERNOR of how much a hashtag pass gets through. There is no local budget /
   allowance model (a previous hard-capped local meter was deleted for cause — it starved the store
-  while Meta was still serving searches). Throttle codes are absorbed with a jittered backoff and, if
-  they persist, end the pass with whatever evidence accrued; non-throttle Meta errors raise
-  `GraphRefused` so callers see Meta's own code/subcode/message. Nothing here predicts or meters an
-  allowance.
+  while Meta was still serving searches). Meta's official 30-unique-hashtag-searches / 7-day cap is
+  PER IG Business user — Layer A therefore routes each search via `MetaCreds` (per-handle
+  `ig_user_id` + token) and peeks `recently_searched_hashtags` to prefer a handle that still has a
+  slot; it NEVER invents a local veto when every candidate looks full (Meta still decides). Throttle
+  codes are absorbed with a jittered backoff and, if they persist, end the pass with whatever evidence
+  accrued; non-throttle Meta errors raise `GraphRefused` so callers see Meta's own words. Nothing here
+  predicts or meters an allowance.
 
   The hashtag REACH datum is Meta's own `like_count`, taken verbatim off one `top_media` item. Probed
   live 2026-07-26: the IG Hashtag node serves only `id` and `name` — `media_count` answers
@@ -211,14 +215,18 @@ class GraphThrottled(Exception):
 class GraphRefused(Exception):
     """Meta answered with a non-throttle error object. Carries Meta's own fields so a caller can tell
     'refused' from 'no such hashtag' — never collapse either into a bare None."""
-    def __init__(self, path: str, *, code=None, subcode=None, type=None, message: str = ""):
+    def __init__(self, path: str, *, code=None, subcode=None, type=None, message: str = "",
+                 user_title: str = "", user_msg: str = ""):
         self.path = path
         self.code = code if isinstance(code, int) and not isinstance(code, bool) else None
         self.subcode = subcode if isinstance(subcode, int) and not isinstance(subcode, bool) else None
         self.type = type if isinstance(type, str) else None
         self.message = (message or "")[:160]                  # never carry a long body / token echo
+        self.user_title = (user_title or "")[:160]
+        self.user_msg = (user_msg or "")[:160]
         super().__init__(f"Meta refused {path}: code={self.code} subcode={self.subcode} "
-                         f"type={self.type} msg={self.message}")
+                         f"type={self.type} msg={self.message}"
+                         + (f" title={self.user_title}" if self.user_title else ""))
 
 
 class GraphUnreachable(Exception):
@@ -251,24 +259,29 @@ def _refused_from_body(path: str, body) -> GraphRefused:
         return GraphRefused(path)
     msg = err.get("message")
     typ = err.get("type")
+    ut = err.get("error_user_title")
+    um = err.get("error_user_msg")
     return GraphRefused(path, code=err.get("code"), subcode=err.get("error_subcode"),
                         type=typ if isinstance(typ, str) else None,
-                        message=msg if isinstance(msg, str) else "")
+                        message=msg if isinstance(msg, str) else "",
+                        user_title=ut if isinstance(ut, str) else "",
+                        user_msg=um if isinstance(um, str) else "")
 
 
-def _hashtag_get(cfg: Config, path: str, params: dict, *, get=None):
+def _hashtag_get(cfg: Config, path: str, params: dict, *, get=None, token=None):
     """One hashtag-endpoint GET, with Meta's own refusals as the only control loop.
 
     Returns the parsed body on HTTP 200. Raises GraphThrottled when a throttle code survives the
     jittered-backoff ladder (end the pass). Raises GraphRefused for any other Meta error object — the
     caller MUST see Meta's code/subcode/message. Raises GraphUnreachable on transport / non-JSON.
+    `token` overrides the global cfg.meta_graph_token (per-handle MetaCreds); None keeps the global.
     The token rides the `access_token` param and never enters a logged or exception string."""
     get = get or _default_get
     delay = _RL_BASE_DELAY
     for attempt in range(_MAX_RL_RETRIES + 1):
         try:
             resp = get(f"{cfg.meta_graph_url}/{path}",
-                       params={**params, "access_token": cfg.meta_graph_token}, timeout=20)
+                       params={**params, "access_token": token or cfg.meta_graph_token}, timeout=20)
         except requests.exceptions.RequestException as exc:
             raise GraphUnreachable(path, reason=f"{type(exc).__name__}: {exc}") from exc
         if getattr(resp, "status_code", None) == 200:
@@ -291,12 +304,71 @@ def _hashtag_get(cfg: Config, path: str, params: dict, *, get=None):
     raise GraphThrottled(f"Meta throttled {path} after {_MAX_RL_RETRIES} retries")
 
 
-def resolve_hashtag(cfg: Config, tag: str, *, get=None) -> Optional[str]:
+def recently_searched_hashtag_ids(cfg: Config, creds: MetaCreds, *, get=None) -> list[str]:
+    """Peek Meta's `/{ig-user-id}/recently_searched_hashtags` (limit 30) for THIS creds bucket.
+
+    Returns the list of hashtag-node id strings Meta reports. FAIL-OPEN -> [] on GraphRefused /
+    Unreachable / Throttled or missing creds — a capacity peek must never invent a local veto; an empty
+    peek just means "we don't know, try this bucket anyway"."""
+    if not (creds and creds.ig_user_id and creds.token):
+        return []
+    try:
+        body = _hashtag_get(cfg, f"{creds.ig_user_id}/recently_searched_hashtags", {"limit": 30},
+                            get=get, token=creds.token)
+    except (GraphRefused, GraphUnreachable, GraphThrottled):
+        return []
+    data = body.get("data") if isinstance(body, dict) else None
+    if not isinstance(data, list):
+        return []
+    out: list[str] = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        hid = item.get("id")
+        if isinstance(hid, str) and hid:
+            out.append(hid)
+    return out
+
+
+def select_hashtag_creds(cfg: Config, *, prefer_handle: Optional[str] = None,
+                         need_search_slot: bool = False, get=None) -> MetaCreds:
+    """Pick MetaCreds for a hashtag search/measure: prefer_handle first, then credentialed IG handles,
+    then the global fallback. When `need_search_slot`, skip a candidate whose recently_searched list is
+    already at Meta's 30-unique ceiling and try the next — but if EVERY candidate looks full/skip, still
+    return resolve_meta_creds(prefer_handle) (Meta is the governor; never local-block)."""
+    candidates: list[Optional[str]] = []
+    if prefer_handle:
+        candidates.append(prefer_handle)
+    candidates.extend(credentialed_ig_handles(cfg))
+    candidates.append(None)                                   # global fallback last
+    seen: set = set(); ordered: list[Optional[str]] = []
+    for h in candidates:
+        key = h if h is not None else ""
+        if key in seen:
+            continue
+        seen.add(key); ordered.append(h)
+    fallback = resolve_meta_creds(cfg, handle=prefer_handle)
+    for h in ordered:
+        creds = resolve_meta_creds(cfg, handle=h)
+        if not (creds.ig_user_id and creds.token):
+            continue
+        if need_search_slot:
+            ids = recently_searched_hashtag_ids(cfg, creds, get=get)
+            if len(ids) >= 30:
+                continue                                      # this IG Business bucket looks full — try next
+        return creds
+    return fallback                                           # Meta still decides; do not invent a veto
+
+
+def resolve_hashtag(cfg: Config, tag: str, *, get=None, creds: Optional[MetaCreds] = None) -> Optional[str]:
     """Resolve '#tag' to its Graph hashtag-node id via ig_hashtag_search (`q` carries no leading '#').
 
-    Returns None ONLY when Meta answered and there is no such hashtag (HTTP 200, empty `data`).
-    Raises GraphRefused / GraphUnreachable / GraphThrottled for every other failure — a bare None must
-    never mean "Meta errored" or "the socket dropped".
+    Returns None ONLY when Meta answered and there is no such hashtag (HTTP 200, empty `data`), or when
+    creds lack token/ig_user_id. Raises GraphRefused / GraphUnreachable / GraphThrottled for every other
+    failure — a bare None must never mean "Meta errored" or "the socket dropped".
+
+    `creds` scopes the search to a specific IG Business user (per-account capacity); None resolves the
+    GLOBAL creds (byte-identical to a single-account setup).
 
     Node ids are STABLE and global, which is why callers cache them: a tag we have already resolved never
     spends another search, so the search endpoint funds novel discovery only.
@@ -305,12 +377,14 @@ def resolve_hashtag(cfg: Config, tag: str, *, get=None) -> Optional[str]:
     sufficient on its own — the separate 'Instagram Public Content Access' FEATURE (its OWN App Review
     submission, distinct from the permission) is ALSO mandatory. An operator granting only instagram_basic
     hits an opaque rejection; the missing piece is that App Review feature, not another scope."""
-    if not (cfg.meta_graph_token and cfg.meta_ig_user_id):
+    creds = creds if creds is not None else resolve_meta_creds(cfg)
+    if not (creds.token and creds.ig_user_id):
         return None
     q = _norm(tag).lstrip("#")
     if not q:
         return None
-    body = _hashtag_get(cfg, "ig_hashtag_search", {"user_id": cfg.meta_ig_user_id, "q": q}, get=get)
+    body = _hashtag_get(cfg, "ig_hashtag_search", {"user_id": creds.ig_user_id, "q": q},
+                        get=get, token=creds.token)
     data = body.get("data") if isinstance(body, dict) else None
     if not isinstance(data, list) or not data or not isinstance(data[0], dict):
         return None
@@ -318,7 +392,8 @@ def resolve_hashtag(cfg: Config, tag: str, *, get=None) -> Optional[str]:
     return hid if isinstance(hid, str) and hid else None
 
 
-def measure_and_harvest(cfg: Config, hid: str, *, get=None) -> tuple[Optional[float], dict[str, int]]:
+def measure_and_harvest(cfg: Config, hid: str, *, get=None,
+                        creds: Optional[MetaCreds] = None) -> tuple[Optional[float], dict[str, int]]:
     """ONE `top_media` fetch serving BOTH jobs — the measurement and the discovery harvest.
 
     metric  = the FIRST item in Meta's own top_media ordering that carries a `like_count`, verbatim. Meta
@@ -330,10 +405,17 @@ def measure_and_harvest(cfg: Config, hid: str, *, get=None) -> tuple[Optional[fl
               and it is also where versatility comes from: the posts winning in a niche right now carry
               both the niche tags and the broad ones.
 
+    `creds` scopes user_id + token to a specific IG Business user; None resolves GLOBAL (byte-identical
+    single-account). Missing creds -> `(None, {})` without a network call.
+
     Raises GraphThrottled / GraphRefused / GraphUnreachable. A 200 with empty `data` is unmeasured
     `(None, {})` — that is Meta answering, not Meta failing."""
+    creds = creds if creds is not None else resolve_meta_creds(cfg)
+    if not (creds.token and creds.ig_user_id):
+        return None, {}
     body = _hashtag_get(cfg, f"{hid}/top_media",
-                        {"user_id": cfg.meta_ig_user_id, "fields": f"caption,{METRIC_FIELD}"}, get=get)
+                        {"user_id": creds.ig_user_id, "fields": f"caption,{METRIC_FIELD}"},
+                        get=get, token=creds.token)
     data = body.get("data") if isinstance(body, dict) else None
     if not isinstance(data, list):
         return None, {}
@@ -353,6 +435,12 @@ def measure_and_harvest(cfg: Config, hid: str, *, get=None) -> tuple[Optional[fl
                 continue                                  # cap DISTINCT co-tags (untrusted-UGC guard)
             cotags[t] = cotags.get(t, 0) + 1
     return metric, cotags
+
+
+# Doctor + Layer A read this: hashtag search/measure must route via per-account MetaCreds (Meta's
+# 30-unique/7d ceiling is per IG Business user). Flip/absence is what the capacity wiring check fails on.
+HASHTAG_SEARCH_ROUTES_PER_ACCOUNT = True
+
 
 _MEDIA_FIELDS = "id,permalink,media_product_type,timestamp,caption"   # caption added (ledger-rebuild): the inverse projection mirrors a live-only media's caption (display-only); resolve ignores the extra field
 _MEDIA_PAGE_CAP = 50            # defensive: >50 pages of the IG user's OWN media is a pathological/mocked paging loop

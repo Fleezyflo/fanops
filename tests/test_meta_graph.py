@@ -173,3 +173,54 @@ def test_ipv4_adapter_forces_af_inet(monkeypatch):
 def test_ipv4_session_mounts_ipv4_adapter():
     s = meta_graph._ipv4_session()
     assert isinstance(s.get_adapter("https://graph.facebook.com/"), meta_graph._IPv4HTTPAdapter)
+
+
+def test_graph_refused_carries_user_title_and_user_msg(tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path, monkeypatch)
+    get = _router({"ig_hashtag_search": _Resp(400, {"error": {
+        "message": "limit", "type": "OAuthException", "code": 18, "error_subcode": 2207034,
+        "error_user_title": "Search limit", "error_user_msg": "Try again later"}})})
+    with pytest.raises(meta_graph.GraphRefused) as ei:
+        meta_graph.resolve_hashtag(cfg, "#a", get=get)
+    assert ei.value.user_title == "Search limit" and ei.value.user_msg == "Try again later"
+    assert "Search limit" in str(ei.value)
+
+
+def test_resolve_and_measure_use_creds_user_id_not_only_global(tmp_path, monkeypatch):
+    """Per-handle MetaCreds must drive user_id + access_token on search and top_media."""
+    cfg = _cfg(tmp_path, monkeypatch, ig="GLOBAL-IG")
+    per_tok = "acct-scoped-xyz"
+    creds = meta_graph.MetaCreds(ig_user_id="ACCT-IG-9", token=per_tok)
+    seen = []
+    def get(url, params=None, timeout=None):
+        seen.append((url, dict(params or {})))
+        if "ig_hashtag_search" in url:
+            return _Resp(200, {"data": [{"id": "hid-1"}]})
+        if "top_media" in url:
+            return _Resp(200, {"data": [{"caption": "#x", "like_count": 3}]})
+        return _Resp(404, None)
+    assert meta_graph.resolve_hashtag(cfg, "#hiphop", get=get, creds=creds) == "hid-1"
+    assert seen[0][1]["user_id"] == "ACCT-IG-9"
+    assert seen[0][1]["access_token"] == per_tok
+    metric, _ = meta_graph.measure_and_harvest(cfg, "hid-1", get=get, creds=creds)
+    assert metric == 3.0
+    assert seen[1][1]["user_id"] == "ACCT-IG-9"
+    assert seen[1][1]["access_token"] == per_tok
+
+
+def test_select_hashtag_creds_skips_full_recently_searched_bucket(tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path, monkeypatch, ig="G")
+    import json
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": [
+        {"handle": "full", "platforms": ["instagram"], "status": "active", "ig_user_id": "111"},
+        {"handle": "open", "platforms": ["instagram"], "status": "active", "ig_user_id": "222"},
+    ]}))
+    def get(url, params=None, timeout=None):
+        if "111/recently_searched_hashtags" in url:
+            return _Resp(200, {"data": [{"id": str(i)} for i in range(30)]})
+        if "222/recently_searched_hashtags" in url:
+            return _Resp(200, {"data": [{"id": "1"}]})
+        return _Resp(404, None)
+    creds = meta_graph.select_hashtag_creds(cfg, prefer_handle="full", need_search_slot=True, get=get)
+    assert creds.ig_user_id == "222"

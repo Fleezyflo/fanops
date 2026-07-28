@@ -72,6 +72,42 @@ def _ig_user_id_check(cfg: Config) -> tuple[bool, str]:
     return False, "; ".join(parts) + " -- set it per account in the Studio Go-Live tab (accounts.json ig_user_id)"
 
 
+
+def _hashtag_capacity_wiring_check(cfg: Config) -> tuple[bool, str]:
+    """When ≥2 distinct IG Business ids are credentialed, Layer A must route hashtag search per id
+    (Meta's 30 unique / 7d ceiling is per IG Business user). Single-bucket setups pass trivially."""
+    import inspect
+    from fanops import meta_graph
+    from fanops.meta_graph import credentialed_ig_handles, resolve_meta_creds
+    handles = credentialed_ig_handles(cfg)
+    ids: list[str] = []
+    for h in handles:
+        iid = (resolve_meta_creds(cfg, handle=h).ig_user_id or "").strip()
+        if iid and iid not in ids:
+            ids.append(iid)
+    if len(ids) < 2:
+        return True, ""                                         # one bucket is fine — nothing to mis-route
+    fail_hint = ("hashtag Layer A still collapses to global META_IG_USER_ID — fix routing "
+                 "(HASHTAG_SEARCH_ROUTES_PER_ACCOUNT + resolve_hashtag/measure_and_harvest creds=)")
+    if not getattr(meta_graph, "HASHTAG_SEARCH_ROUTES_PER_ACCOUNT", False):
+        return False, fail_hint
+    if "creds" not in inspect.signature(meta_graph.resolve_hashtag).parameters:
+        return False, fail_hint
+    if "creds" not in inspect.signature(meta_graph.measure_and_harvest).parameters:
+        return False, fail_hint
+    # Two credentialed handles must resolve to different ig_user_ids via resolve_meta_creds
+    by_id: dict[str, str] = {}
+    for h in handles:
+        iid = (resolve_meta_creds(cfg, handle=h).ig_user_id or "").strip()
+        if not iid:
+            continue
+        by_id.setdefault(iid, h)
+    if len(by_id) < 2:
+        return False, fail_hint
+    return True, ""
+
+
+
 _META_TOKEN_LEAD_DAYS = 10                                # WARN this many days before a Meta token expires
 
 
@@ -347,6 +383,12 @@ def _assemble_doctor_checks(cfg: Config, *, get=None, postiz_probe=None, zernio_
     # reported failing (unknown != silent pass) — the whole point is that this class of drift stays LOUD.
     ig_ok, ig_hint = _ig_user_id_check(cfg)
     checks.append(_check("active IG accounts have their OWN ig_user_id (no shared/borrowed Meta id)", ig_ok, ig_hint))
+
+    # Hashtag Layer A capacity: Meta's 30 unique searches / 7d is PER IG Business user. With ≥2 distinct
+    # credentialed ids, search/measure must thread MetaCreds (not collapse every search onto global
+    # META_IG_USER_ID). Single-bucket setups pass; wiring regress -> FAIL with the routing fix hint.
+    htag_ok, htag_hint = _hashtag_capacity_wiring_check(cfg)
+    checks.append(_check("hashtag search routes per IG Business id (Meta 30/7 capacity)", htag_ok, htag_hint))
 
     # T9: Meta token expiry preflight. When the Graph token (or a per-handle token) lapses, Postiz keeps
     # publishing via its OWN OAuth while Graph verification + metrics silently die -> a repeat of this incident
