@@ -12,10 +12,13 @@
       "fanops.config",
       "fanops.control",
       "fanops.digest",
+      "fanops.fanops_hashtags",
       "fanops.framing",
       "fanops.hashtag_hygiene",
+      "fanops.hashtag_vocab",
       "fanops.hashtags",
       "fanops.hookscore",
+      "fanops.ig_hashtag_scrape",
       "fanops.ingest",
       "fanops.keyframes",
       "fanops.ledger",
@@ -286,6 +289,7 @@
         "fanops.doctor",
         "fanops.fanops_account_stats",
         "fanops.fanops_hashtags",
+        "fanops.hashtag_vocab",
         "fanops.health",
         "fanops.health_model",
         "fanops.ingest",
@@ -583,6 +587,21 @@
       "compile": [],
       "lazy": [
         "fanops.hashtags"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.hashtag_vocab": {
+      "compile": [
+        "fanops.config",
+        "fanops.controlio",
+        "fanops.hashtag_hygiene",
+        "fanops.log"
+      ],
+      "lazy": [
+        "fanops.fanops_hashtags",
+        "fanops.llm",
+        "fanops.personas"
       ],
       "optional": [],
       "typing": []
@@ -967,6 +986,7 @@
       "lazy": [
         "fanops.controlio",
         "fanops.errors",
+        "fanops.hashtag_vocab",
         "fanops.log",
         "fanops.persona_store",
         "fanops.personas"
@@ -2095,10 +2115,10 @@
     "fanops.cli": 0,
     "fanops.clip": 6,
     "fanops.compose": 1,
-    "fanops.config": 86,
+    "fanops.config": 87,
     "fanops.config_introspect": 0,
     "fanops.control": 4,
-    "fanops.controlio": 10,
+    "fanops.controlio": 11,
     "fanops.crosspost": 1,
     "fanops.cutover": 1,
     "fanops.cutover_postiz": 0,
@@ -2113,7 +2133,8 @@
     "fanops.framing": 3,
     "fanops.framing_outcomes": 3,
     "fanops.gate_keys": 2,
-    "fanops.hashtag_hygiene": 1,
+    "fanops.hashtag_hygiene": 2,
+    "fanops.hashtag_vocab": 0,
     "fanops.hashtags": 7,
     "fanops.health": 0,
     "fanops.health_model": 1,
@@ -2133,7 +2154,7 @@
     "fanops.ledger_wipe": 1,
     "fanops.lever_docs": 0,
     "fanops.llm": 1,
-    "fanops.log": 36,
+    "fanops.log": 37,
     "fanops.meta_graph": 1,
     "fanops.metrics_schedule": 1,
     "fanops.models": 50,
@@ -2250,6 +2271,7 @@
     "fanops.framing_outcomes": 0,
     "fanops.gate_keys": 0,
     "fanops.hashtag_hygiene": 0,
+    "fanops.hashtag_vocab": 4,
     "fanops.hashtags": 1,
     "fanops.health": 2,
     "fanops.health_model": 1,
@@ -2352,7 +2374,7 @@
   "generated_by": "tools/arch",
   "generator_version": "arch/1.0.0",
   "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",
-  "lazy_downward_count": 224,
+  "lazy_downward_count": 227,
   "lazy_lateral": [
     {
       "from": "fanops.accounts",
@@ -2909,6 +2931,14 @@
       "to_level": 2
     },
     {
+      "from": "fanops.hashtag_vocab",
+      "from_level": 2,
+      "jump": 2,
+      "same_scc": false,
+      "to": "fanops.personas",
+      "to_level": 4
+    },
+    {
       "from": "fanops.health_model",
       "from_level": 1,
       "jump": 2,
@@ -3059,6 +3089,14 @@
       "same_scc": false,
       "to": "fanops.personas",
       "to_level": 4
+    },
+    {
+      "from": "fanops.hashtag_vocab",
+      "from_level": 2,
+      "jump": 1,
+      "same_scc": false,
+      "to": "fanops.fanops_hashtags",
+      "to_level": 3
     },
     {
       "from": "fanops.health_model",
@@ -3290,6 +3328,7 @@
     "fanops.framing_outcomes": 0,
     "fanops.gate_keys": 0,
     "fanops.hashtag_hygiene": 0,
+    "fanops.hashtag_vocab": 2,
     "fanops.hashtags": 2,
     "fanops.health": 2,
     "fanops.health_model": 1,
@@ -3448,6 +3487,7 @@
       "fanops.accounts",
       "fanops.agentstep",
       "fanops.batches",
+      "fanops.hashtag_vocab",
       "fanops.hashtags",
       "fanops.health",
       "fanops.hookscore",
@@ -3560,17 +3600,17 @@
   ],
   "totals": {
     "G1_non_trivial_sccs": 0,
-    "G1_sccs_total": 134,
+    "G1_sccs_total": 135,
     "G1c_levels": 11,
-    "G2_largest_scc_size": 47,
-    "G2_module_sccs_total": 72,
+    "G2_largest_scc_size": 50,
+    "G2_module_sccs_total": 70,
     "G2_non_trivial_sccs": 8,
-    "compile_edges_G1": 563,
-    "lazy_edges": 336,
+    "compile_edges_G1": 567,
+    "lazy_edges": 341,
     "lazy_edges_lateral": 47,
-    "lazy_edges_strictly_upward": 65,
-    "lazy_edges_to_equal_or_higher_level": 112,
-    "modules": 134,
+    "lazy_edges_strictly_upward": 67,
+    "lazy_edges_to_equal_or_higher_level": 114,
+    "modules": 135,
     "optional_edges": 0,
     "typing_only_edges": 7
   }

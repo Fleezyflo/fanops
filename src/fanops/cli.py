@@ -1126,6 +1126,17 @@ def _cmd_run_pass(cfg: Config, base_time: str) -> dict | None:
                 led = apply_timing_bias(led, cfg)
         except Exception as e:
             get_logger(cfg)("timing_bias", "-", "error", err=str(e)[:120])
+    # MOL-644: LLM niche-vocab expand (search roots only) — before Layer A so new seeds measure this tick.
+    # Gated on FANOPS_RESPONDER=llm inside expand_vocab_if_due; fail-open; own 12h marker.
+    try:
+        from fanops.hashtag_vocab import expand_vocab_if_due
+        vr = expand_vocab_if_due(cfg)
+        if vr.get("refreshed"):
+            get_logger(cfg)("hashtag_vocab", "-", "expanded", ok=vr.get("ok", 0), fail=vr.get("fail", 0))
+        elif vr.get("reason") and vr.get("reason") not in ("fresh", "responder_manual"):
+            get_logger(cfg)("hashtag_vocab", "-", "expand_skipped", reason=vr.get("reason", ""))
+    except Exception as e:
+        get_logger(cfg)("hashtag_vocab", "-", "expand_error", err=f"{type(e).__name__}: {str(e)[:120]}")
     # WS2: constant hashtag store update (instagrapi Layer A) — refresh at most once per cadence (12h),
     # gated on last_complete_pass (not file mtime) so a throttled write cannot buy silence. NOT gated on
     # is_live_backend (a hashtag's worth is its live platform reach, independent of whether WE publish) —

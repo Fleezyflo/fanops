@@ -165,6 +165,7 @@ class Config:
         self.context_path = self.control / "context.md"
         self.tuning_path = self.control / "tuning.json"
         self.hashtags_path = self.control / "hashtags.json"  # platform cache {tag: {graph_id, play_count?, like_count?, media_count?, measured_at, from}}; absent -> selection ships short
+        self.hashtag_vocab_path = self.control / "hashtag_vocab.json"  # MOL-644: LLM niche-vocab seeds per persona_id; folds into persona_terms; absent -> niche-only
         self.ig_scrape_session_path = self.control / "ig_scrape_session.json"  # instagrapi session for hashtag Layer A; absent -> refresh aborts until scrape-login
         self.account_stats_path = self.control / "account_stats.json"  # U3: throttled IG follower snapshot per handle; absent -> empty
         self.cutover_path = self.control / "cutover.json"   # live-cutover harness scratch state; NEVER the ledger

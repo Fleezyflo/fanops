@@ -305,7 +305,7 @@ def persona_facts(cfg: Config, p) -> dict:
     band = band_for(prof)                    # SAME spec hydration applies), so the card shows the REAL length, not
     try:                                     # the raw-unset value (which made every persona read as one global band)
         # MOL-512 (C-2): store = this persona's aligned pool as an ordered tag list (vet_hashtags membership).
-        pool = _aligned_pool(p, load_measurements(cfg))
+        pool = _aligned_pool(p, load_measurements(cfg), cfg=cfg)
         store = [t for t, _v, _s in pool] or None
     except Exception as exc:
         from fanops.log import get_logger     # a cache read-fail degrades to corpus-only — record it, don't hide it
@@ -315,4 +315,4 @@ def persona_facts(cfg: Config, p) -> dict:
                         corpus=list(getattr(p, "hashtag_corpus", None) or []), store=store,
                         cfg=cfg)   # U11: honor the global ban list here too (a banned tag must not show as a persona's "lead tag")
     return {"length_band": f"{band.lo:.0f}-{band.hi:.0f}s", "framing": fr, "lead_tags": lead,
-            "terms": persona_terms(p)}   # the words Layer A searches on — the description IS the hashtag lever
+            "terms": persona_terms(p, cfg)}   # the words Layer A searches on — the description IS the hashtag lever

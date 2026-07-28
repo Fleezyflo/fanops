@@ -39,19 +39,22 @@ def _seed_token(raw) -> str | None:
     return t
 
 
-def persona_terms(per) -> list[str]:
-    """Layer A/B hashtag vocabulary for ONE persona: declared `niche` ONLY (MOL-637).
+def persona_terms(per, cfg: Config | None = None) -> list[str]:
+    """Layer A/B search roots: operator `niche` first, then durable LLM vocab when `cfg` is given (MOL-644).
 
     Voice / content_focus / hook_angle / intensity stay on the persona for caption+hook directives —
-    they are NOT Instagram search roots. Seeding those turned UX prose into `#believe` / `#punchlines`
-    discovery and collapsed every persona onto one mega-tag neighborhood.
-
-    Pure, deterministic, CORPUS-BLIND."""
+    they are NOT Instagram search roots (MOL-637). Vocab seeds are CORPUS-BLIND extras from
+    `hashtag_vocab.json` — never written into the shipping corpus by this function."""
     out: list[str] = []; seen: set[str] = set()
     for n in getattr(per, "niche", None) or []:
         t = _seed_token(n)
         if t and t not in seen:
             seen.add(t); out.append(t)
+    if cfg is not None:
+        from fanops.hashtag_vocab import vocab_terms_for
+        for t in vocab_terms_for(cfg, getattr(per, "id", "") or ""):
+            if t and t not in seen:
+                seen.add(t); out.append(t)
     return out
 
 
@@ -72,14 +75,14 @@ def _is_evidence(rec: dict, *, now: datetime | None = None) -> bool:
     return (now or datetime.now(timezone.utc)) - ts <= timedelta(days=_EVIDENCE_MAX_AGE_DAYS)
 
 
-def _aligned_pool(per, cache: dict[str, dict], *, now=None) -> list[tuple[str, float, str]]:
+def _aligned_pool(per, cache: dict[str, dict], *, now=None, cfg: Config | None = None) -> list[tuple[str, float, str]]:
     """This persona's candidate pool from the cache, as (tag, metric, from-anchor), ranked by the platform
     metric desc (ties by tag, so a derivation is reproducible).
 
     Alignment is a binary membership test, never a rank key: a tag qualifies if it IS one of the persona's
     niche anchors, or if `from` records INBOUND evidence (the niche appears on THAT tag's Top captions).
     Outbound "seen on a niche Top once" is discovery-only and must not appear in `from` (MOL-643)."""
-    anchors = {_norm("#" + t) for t in persona_terms(per)}
+    anchors = {_norm("#" + t) for t in persona_terms(per, cfg)}
     anchors.discard("#")
     out: list[tuple[str, float, str]] = []
     for tag, rec in cache.items():
@@ -111,7 +114,7 @@ def derive_corpus(cfg: Config, pid: str, *, now=None) -> dict:
         return {"changed": False, "reason": "unknown_persona"}
     corpus = [_norm(t) for t in (per.hashtag_corpus or []) if isinstance(t, str) and _norm(t)]
     cache = load_measurements(cfg)
-    pool = _aligned_pool(per, cache, now=now)
+    pool = _aligned_pool(per, cache, now=now, cfg=cfg)
     if not pool:
         return {"changed": False}                          # outage / cold cache: hold, never empty
     stamp = (now.isoformat() if isinstance(now, datetime) else None) or datetime.now(timezone.utc).isoformat()
@@ -141,8 +144,8 @@ def derived_report(cfg: Config, pid: str, *, top_n: int = 8, now=None) -> dict:
     per = _registry(cfg).get(pid)
     if per is None:
         return {"terms": [], "measured": 0, "top": []}
-    pool = _aligned_pool(per, load_measurements(cfg), now=now)
-    return {"terms": persona_terms(per), "measured": len(pool),
+    pool = _aligned_pool(per, load_measurements(cfg), now=now, cfg=cfg)
+    return {"terms": persona_terms(per, cfg), "measured": len(pool),
             "top": [(t, v) for t, v, _s in pool[:top_n]]}
 
 
