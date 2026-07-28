@@ -26,9 +26,7 @@ key we named `reach` alongside a never-read `confidence: 1.0` — was a number w
 loop. Per persona linked to an **active** account (`_posting_persona_ids`; dormant personas cannot steer
 discovery — five of them once put `#science`/`#gossip`/`#drama` into a Syrian rapper's menu):
 
-1. **terms** — `persona_research.persona_terms(per)`: `intake.genre` first, then voice adjacent-word
-   CONCATENATIONS ("syrian rapper" → `syrianrapper`) then voice unigrams, then the name (whole-name concat
-   first). Pure, deterministic, **corpus-blind**.
+1. **terms** — `persona_research.persona_terms(per)` → declared niche only. Pure, deterministic, **corpus-blind**.
 2. **anchors** — each term resolves to a real tag node via `meta_graph.resolve_hashtag` (`ig_hashtag_search`).
 3. **measure + harvest, one fetch** — `measure_and_harvest(cfg, hid)` returns the verbatim metric AND every
    hashtag those same captions carry (`_TAG_RE`). Co-occurrence is the only Graph-native way to discover tags
@@ -88,23 +86,20 @@ previous derived corpus stands.
 | Pins, `add_corpus_tag`/`remove_corpus_tag`, `_partition_corpus` | a derived value cannot also be hand-tended; the reconciliation froze rotation and preserved unmeasured tags (live: ~90% of corpus entries carried `reach: null`) |
 | `research_corpus`, `discover_corpus`, `tag_metrics`, the Studio Research/Check-reach buttons | proposals are a curation step in a system that no longer curates |
 | `_MEGA`/`_RELEVANCE`/`_GOSSIP_*`/`_NICHE_POOLS`/`niche_floor`/`_RANK`/`VETTED`/`_composition` | hand-researched reach claims from June 2026 — the exact manufactured assessment the rule forbids |
-| `hashtag_hygiene._GENERIC_ENGAGEMENT`, `_DISCOVERY_OWNED` | a taste claim ("#love can only pad the line") the platform now answers with a number; a broad high-reach tag co-occurring with the niche is the versatility the corpus is for |
 | `FANOPS_HASHTAG_TRENDS` | with the cache as the sole reach source, an off-switch is a broken system, not an option |
 | `hashtag_migrate.py` + `fanops hashtags migrate` | a one-time migration whose job the cutover now does structurally |
 
-**Operator levers, complete:** the persona description (name / `intake.genre` / voice — Studio Personas,
-`/personas/niche`) and the global ban list (`00_control/hashtag_bans.json`, Studio Hashtags ban lane).
+**Operator lever:** declared niche via `/personas/niche` (Studio Personas). No ban list.
 
 ## Selection — `hashtags.vet_hashtags` (unchanged in shape, re-sourced)
 
-Membership = the measurement cache ∪ the surface's derived corpus, minus bans. An invented tag dies here; so
+Membership = persona-scoped measured pool ∪ corpus (content may join); no bans. An invented tag dies here; so
 does an unmeasured one. What survives from before is COMPOSITION, which is format rather than a reach claim:
 
 - hard cap of 4; corpus leads but `_CORPUS_LEAD_MAX = 2` keeps half the line reachable by the clip's own picks
 - graded LRU (`recent`, oldest-first) so a line rotates instead of locking
 - one `_ARABIC` region tag reserved on Arabic-language clips
-- bans stripped at membership, floors, backfill and the final line
-- cold cache + no corpus → an **empty** line (the platform discovery floor is deleted — honest beats padded)
+- cold cache + no corpus → an **empty** line (no discovery pad — honest beats padded)
 
 `vet_hashtags_traced` labels every shipped tag `content | corpus | region | graph-reach` and
 `caption._caption_entry` persists it as `tag_sources`; the Review tab renders it. The label set is TOTAL by
@@ -133,7 +128,7 @@ hook/clip/account, not the hashtag. Pinned by `tests/test_hashtag_attribution_se
   the cache stands as-is (selection ships whatever is already measured, or short).
 - `FANOPS_CORPUS_TARGET` (default 30) — how many measured tags a derived corpus aims to hold. A ceiling, not
   a quota: derivation never pads to reach it.
-- `Account.persona_id` / `personas.json` — the per-persona link; the persona's DESCRIPTION is the lever.
+- `Account.persona_id` / `personas.json` — the per-persona link; the persona's niche is the lever.
 
 ## Tests
 

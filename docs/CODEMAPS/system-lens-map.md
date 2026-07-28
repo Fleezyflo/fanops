@@ -204,35 +204,32 @@ which sits AFTER transcribe+signals+keyframes by construction (`pipeline._stage_
 
 ### 2.1 Sources a tag can enter from (end-to-end)
 
-1. **Composition floors** — `_ARABIC` + `_DISCOVERY` (`hashtags.py`). These are FORMAT, not reach claims:
-   one platform discovery tag per post, one region tag on Arabic clips. The frozen reach-ranked pools
-   (`_MEGA`/`_RELEVANCE`/`_RANK`/`VETTED`) were DELETED 2026-07-26 — they asserted reach from desk research.
+1. **Composition floors** — `_ARABIC` only (`hashtags.py`). FORMAT, not a reach claim: one region tag on
+   Arabic clips. The frozen reach-ranked pools (`_MEGA`/`_RELEVANCE`/`_RANK`/`VETTED`) and `_DISCOVERY` were
+   DELETED 2026-07-26 — they asserted reach from desk research.
 2. **The platform measurement cache** — `fanops_hashtags.refresh_store` derives search terms from each
-   posting persona's DESCRIPTION (`persona_research.persona_terms`), resolves them via
+   posting persona's declared niche (`persona_research.persona_terms`), resolves them via
    `meta_graph.resolve_hashtag`, and one `meta_graph.measure_and_harvest` call per tag returns both the
    verbatim `like_count` and the co-occurring tags. Writes `00_control/hashtags.json` as
    `{tag: {graph_id, like_count, measured_at, from}}` — measured tags only. Read side:
-   `hashtags.load_measurements` + `ranked_tags`. 12h throttle inside `run` via `refresh_store_if_due`.
-   No local budget: Meta's own throttle codes end a pass, and a cached `graph_id` means a known tag never
-   spends another search.
+   `hashtags.load_measurements` + `ranked_tags` (`hashtags.py:~101`). 12h throttle inside `run` via
+   `refresh_store_if_due`. No local budget: Meta's own throttle codes end a pass, and a cached `graph_id`
+   means a known tag never spends another search.
 3. **Per-persona DERIVED corpus** — `Persona.hashtag_corpus`, recomputed every tick by
    `persona_research.derive_corpus` (zero network) as the top `corpus_target` of the persona's aligned,
    measured pool; hydrated onto the account (`accounts._hydrate_from_personas`). Pre-derivation tags live
    in `hashtag_corpus_deprecated` — visible, never shipped.
-4. **Per-clip content derivation** — `hashtags.content_tag_candidates` (`hashtags.py:107`): deterministic,
+4. **Per-clip content derivation** — `hashtags.content_tag_candidates` (`hashtags.py:~117`): deterministic,
    pure, NO NLP — latin word tokens 3-20 chars, stopword-filtered, frequency-then-first-seen ordered,
    capped at 6. Blank/Arabic/numbers → `[]` (byte-identical).
-5. **Operator actions** — Studio Personas tab: `add_corpus_tag`/`remove_corpus_tag`
-   (`studio/personas.py:112,129`), `research_corpus` (Graph co-occurrence discovery → propose,
-   `studio/personas.py:185`), `recommend_tag` (live single-tag Graph reach, `studio/personas.py:165`).
-   **Discovery NEVER auto-writes a caption tag** — the operator ACCEPTS into the corpus (curation gate,
-   `fanops_hashtags.py:121-145`).
+5. **Operator actions** — Studio Personas niche edit (`/personas/niche`) roots Layer A via `persona_terms`.
+   Corpus add/remove / `research_corpus` / discovery auto-write paths are gone — the corpus is derived.
 
 ### 2.2 Persistence locations + schemas (from code)
 
-- `00_control/hashtags.json` — `{"tags": [str,...], "reach": {tag: number}}` (`fanops_hashtags.py:77`,
-  read `hashtags.py:47,63-67`). Provenance source label `graph-reach` (`fanops_hashtags.py:76` comment;
-  `hashtags._tag_source` `hashtags.py:220`).
+- `00_control/hashtags.json` — `{tag: {graph_id, like_count, measured_at, from}}` (measured cache;
+  read `hashtags.load_measurements`). Provenance source label `graph-reach` (`hashtags._tag_source`
+  `hashtags.py:~236-245`).
 - `00_control/personas.json` — `Persona.hashtag_corpus: list[str]` (`personas.py:41`).
 - `Clip.meta_captions[surface]` — `_caption_entry` (`caption.py:266`) writes
   `{"caption": " ".join(tags), "hashtags": tags, "hashtags_raw": [...verbatim model picks...],
@@ -262,44 +259,33 @@ discovery) went out with the frozen pools on 2026-07-26 (§2.2). Corpus instruct
 
 ### 2.5 Enforcement on LLM output (the full vet algorithm, step by step)
 
-`vet_hashtags` (`hashtags.py:207`), traced variant `vet_hashtags_traced` (`hashtags.py:310`). Called from
-`ingest_captions` (`caption.py:305` model path, `caption.py:324` fallback path) — **it never trusts the
-model**:
-1. Load the operator ban list, then normalize+dedupe corpus, content and store, stripping bans from EACH
-   (`hashtags.py:226-229`). Content is additionally brand-risk screened (`_screen_content`).
-2. Membership set = store ∪ corpus ∪ content, MINUS the ban list — corpus and content JOIN the gate so a
-   derived or clip-specific tag the measured cache doesn't know SURVIVES (`hashtags.py:230`). No frozen pool
-   is in the union: a tag in none of the three dies here.
-3. Rank base = the measured store's OWN order (`hashtags.py:231`) — there is NO frozen fallback, so a cold
-   cache yields an empty base rank; preference float: corpus > content ahead of the metric rank
-   (negative-indexed, `hashtags.py:233-237`).
-4. Seed the WHOLE corpus first (`hashtags.py:241-242`), then honor the model's picks but ONLY vetted ones
-   (`hashtags.py:244-247`).
-5. Sort on FOUR keys (`hashtags.py:265`): tier (corpus 0 > content 1 > cache 2, `hashtags.py:260-263`), then
-   model-picked-first, then a GRADED LRU (`recent` arrives oldest-first, last write wins, never-used tags
-   lead — `hashtags.py:251-254`), then the rank from step 3. Recency is graded, NOT a boolean: as a flag the
-   tiebreak went constant once `recent` covered the corpus, locking the line from clip 3 onward.
-6. **Corpus LEAD cap** `_CORPUS_LEAD_MAX = 2` (`hashtags.py:38`, applied `hashtags.py:269-272`): a corpus of
-   ≥ `max_tags` would monopolise the line and make the shipped tags a pure function of the persona with the
-   video not an input. Surplus corpus tags keep their order BEHIND the picks and still backfill.
-7. **Reserved floors** take TAIL slots so the corpus/metric lead is preserved, detected against the CAP
-   WINDOW rather than `seen`: one Arabic tag on an Arabic-language clip (`hashtags.py:277-278`), then ONE
-   content tag (`hashtags.py:279-280`), spliced in as `head + reserved` (`hashtags.py:281-283`).
-8. **Backfill**, corpus-first: corpus → one platform discovery tag (unconditional — the one composition
-   element that depends on no measurement, so a cold cache still ships a line) → the measured store →
-   content (`hashtags.py:286-290`).
-9. **HARD cap** with a final ban sweep: `_strip_banned(kept, bans)[:max_tags]`, `max_tags=4`
-   (`hashtags.py:291`).
+`vet_hashtags` (`hashtags.py:~153-230`), traced variant `vet_hashtags_traced`. Called from
+`ingest_captions` — **it never trusts the model**:
+1. Normalize+dedupe corpus, content and store. Content is brand-risk screened (`_screen_content`).
+2. Membership set = store ∪ corpus ∪ content — corpus and content JOIN the gate so a derived or
+   clip-specific tag the measured cache doesn't know SURVIVES. No bans; no frozen pool in the union: a
+   tag in none of the three dies here.
+3. Rank base = the measured store's OWN order (`ranked_tags`, `hashtags.py:~101`) — there is NO frozen
+   fallback, so a cold cache yields an empty base rank; preference float: corpus > content ahead of the
+   metric rank (negative-indexed).
+4. Seed the WHOLE corpus first, then honor the model's picks but ONLY vetted ones.
+5. Sort on FOUR keys: tier (corpus 0 > content 1 > cache 2), then model-picked-first, then a GRADED LRU
+   (`recent` arrives oldest-first, last write wins, never-used tags lead), then the rank from step 3.
+6. **Corpus LEAD cap** `_CORPUS_LEAD_MAX = 2` (`hashtags.py:~34`): a corpus of ≥ `max_tags` would
+   monopolise the line; surplus corpus tags keep their order BEHIND the picks and still backfill.
+7. **Reserved floors** take TAIL slots so the corpus/metric lead is preserved: one `_ARABIC` tag on an
+   Arabic-language clip (`hashtags.py:~28`), spliced in as `head + reserved`.
+8. **Backfill**, corpus-first: corpus → the measured store → content. No discovery pad.
+9. **HARD cap** `kept[:max_tags]` (`max_tags=4`) — no `_strip_banned`.
 
-Provenance (`vet_hashtags_traced` → `_tag_source` `hashtags.py:297`): each shipped tag labelled
-`content > corpus > region > graph-reach > discovery` (five labels — there is no `genre-floor`) — **never
-empty**, TOTAL by construction: membership is cache ∪ corpus ∪ content and the only tags added outside that
-are the two floors, so a tag matching none of the first four can only be the discovery slot
-(`hashtags.py:298-307`). Recorded in `meta_captions[surface].tag_sources` (`caption.py:310,328`).
+Provenance (`vet_hashtags_traced` → `_tag_source` `hashtags.py:~236-245`): each shipped tag labelled
+`content > corpus > region > graph-reach` (four labels) — TOTAL by construction: membership is cache ∪
+corpus ∪ content and the only tag added outside that is the AR region floor. Cold cache + no corpus →
+empty line. Recorded in `meta_captions[surface].tag_sources`.
 
 ### 2.6 What determines rank; feedback; caption composition
 
-- **Rank everywhere**: in the store, by the platform metric desc (`ranked_tags`, `hashtags.py:107`); in
+- **Rank everywhere**: in the store, by the platform metric desc (`ranked_tags`, `hashtags.py:~101`); in
   `vet_hashtags`, corpus > content > the measured cache's own order (`hashtags.py:231-265`). The frozen
   `_MEGA`/`_RELEVANCE`/`_RANK`/`VETTED` pools were DELETED 2026-07-26 (§2.2) — NO static class-ranking
   remains anywhere in the path.
@@ -359,7 +345,7 @@ absent pin still resolves (`persona_directives.py:46`).
 - **Live compose preview** — `preview_compose` (`studio/personas.py:23`) validates levers against
   `CONTENT_FOCUS/ENERGY_LEVELS/HOOK_ANGLES` (`studio/personas.py:32-53`); builds a TRANSIENT Persona, never
   persists.
-- **Research seed** — `research_corpus` persists `intake.genre` then runs discovery (`studio/personas.py:196`).
+- **Niche** — declared niche via `/personas/niche` roots `persona_terms` (Layer A search + Layer B alignment).
 - **Migration** — `migrate_from_accounts` lifts inline persona strings into records + links
   (`studio/personas.py:205`, `persona_store.migrate_from_accounts`).
 - **Load validation** — `Personas.load` raises `ControlFileError` on a hand-edit typo (`personas.py:73-74`);
@@ -400,7 +386,7 @@ id that falls open (`studio/personas.py:97-99`).
 | `energy` | casting energy clause + DERIVED framing | `_ENERGY_CLAUSE` → `casting_directive` (`persona_directives.py:77-78`); `_ENERGY_FRAMING` → `derive_cut_spec` framing (`:42`) → `acc.framing` → `cfg.resolve_top_bias(acct)` (`config.py:443`) → `top_bias` in `render_account_cut`/`reframe_filter` (`clip.py:310-311`), and stamped on `Post.top_bias` at mint (`crosspost.py:294`) |
 | `hook_angle` | on-screen hook strategy | `_ANGLE_CLAUSE` → `hook_directive` (`persona_directives.py:88-89`) → `hook_author_slot` → owner-only hook gate (`moments._hook_personas_for_moment` `moments.py:384`) → `Moment.hook` → burned at render (`clip.render_account_cut`) → surfaced as `variant_hook` in Studio |
 | `hashtag_corpus` | caption hashtags (deterministic post-step) | hydrated `acc.hashtag_corpus` → `corpora[handle]` in caption request (`caption.py:213`) → surface `corpus` key (`caption.py:227`) → prompt "PREFER ... corpus" (`prompts.py:429-431`) AND `vet_hashtags(corpus=...)` float+floor+backfill (`caption.py:330`, `hashtags.py:159-205`) |
-| `intake.genre` | Graph research seeds only | `_seed_tags` (`fanops_hashtags.py:32`) + `discover_corpus` — never a live caption |
+| `niche` | Graph search roots + corpus alignment | `persona_terms` → Layer A anchors + Layer B `_aligned_pool` |
 
 **Lever/vocabulary machinery + consistency.** One registry `LEVER_REGISTRY` (`persona_levers.py:45`) is the
 UPSTREAM of three projections: the validation vocabularies (`personas.CONTENT_FOCUS/ENERGY_LEVELS/HOOK_ANGLES`

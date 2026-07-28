@@ -11,10 +11,11 @@ exactly the manufactured assessment the system must not make.
 
 What survives here is COMPOSITION, which is format rather than a reach claim: at most 4 tags, the
 persona's curated corpus leads but may not monopolise the line (`_CORPUS_LEAD_MAX`), graded-LRU rotation,
-a region tag on Arabic-language clips (`_ARABIC`), and the operator's global ban list as a hard veto.
+and a region tag on Arabic-language clips (`_ARABIC`).
 
-Membership is the cache UNION the surface's corpus (minus bans): a tag the model invents cannot ship, and
-a tag nobody measured cannot ship either. A cold cache therefore yields an empty line, not a padded one."""
+Membership is the cache UNION the surface's corpus (content may join): a tag the model invents cannot
+ship, and a tag nobody measured cannot ship either. A cold cache therefore yields an empty line, not a
+padded one."""
 from __future__ import annotations
 import json, re
 from fanops.models import Platform
