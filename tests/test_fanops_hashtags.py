@@ -23,7 +23,7 @@ class _Resp:
 def _graph_router(metric_by_tag, *, cooccur=""):
     """A fake Meta Graph `get`: ig_hashtag_search resolves '<q>'->'id-<q>'; {hid}/top_media returns the
     co-occurring caption (for the harvest) + the tag's verbatim like_count (for the measurement). A tag
-    this router does not know 404s on top_media — Meta published nothing, so it stays UNMEASURED."""
+    this router does not know returns empty top_media — Meta published nothing, so it stays UNMEASURED."""
     def get(url, params=None, timeout=None):
         p = params or {}
         if "ig_hashtag_search" in url:
@@ -31,16 +31,16 @@ def _graph_router(metric_by_tag, *, cooccur=""):
         if url.endswith("/top_media"):
             tag = "#" + url.rsplit("/", 2)[-2].replace("id-", "")
             if tag not in metric_by_tag:
-                return _Resp(404, None)
+                return _Resp(200, {"data": []})
             return _Resp(200, {"data": [{"caption": cooccur, "like_count": metric_by_tag[tag],
                                          "comments_count": 0}]})
-        return _Resp(404, None)
+        return _Resp(200, {"data": []})
     return get
 
 
 def _dead_router(url, params=None, timeout=None):
-    """Meta answers nothing useful — proves a code path spends no REAL network call."""
-    return _Resp(404, None)
+    """Meta answers with a refusal body — proves the pass records it instead of inventing a silent miss."""
+    return _Resp(404, {"error": {"code": 100, "message": "dead"}})
 
 
 def _persona(cfg, *, pid="curator"):
