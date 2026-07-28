@@ -118,7 +118,7 @@ def test_written_file_is_the_flat_record_shape_ranked_by_the_metric(tmp_path, mo
     tags = {k: v for k, v in blob.items() if isinstance(v, dict)}
     assert list(tags) == sorted(tags, key=lambda t: (-_metric(tags[t]), t))   # metric desc on disk
     assert blob["#beta"]["graph_id"] == "id-beta" and blob["#beta"]["measured_at"]
-    assert blob["#beta"]["from"] == {"#hiphop": 1}          # the anchor whose top media surfaced it
+    assert blob["#beta"]["from"] == {"#hiphop": 1}          # inbound: niche on beta Top (not outbound)
     assert isinstance(blob.get("last_complete_pass"), str) and blob["last_complete_pass"]
     assert "reach" not in json.dumps(blob)                  # no invented metric key survives
 

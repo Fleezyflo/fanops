@@ -49,7 +49,11 @@ class _FakeClient:
             return out
         if tag not in self.metric_by_tag:
             return []
-        return [_Media(self.metric_by_tag[tag], self.cooccur)]
+        # Other keys in this fake's metric map ride the caption so measuring a harvested cotag can
+        # inbound-see the niche anchors (production: niche words appear on the candidate's Top).
+        others = " ".join(sorted(t for t in self.metric_by_tag if t != tag))
+        cap = f"{self.cooccur} {others}".strip()
+        return [_Media(self.metric_by_tag[tag], cap)]
 
     def hashtag_info(self, name):
         self.info_calls.append(name)

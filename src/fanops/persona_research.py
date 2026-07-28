@@ -77,9 +77,8 @@ def _aligned_pool(per, cache: dict[str, dict], *, now=None) -> list[tuple[str, f
     metric desc (ties by tag, so a derivation is reproducible).
 
     Alignment is a binary membership test, never a rank key: a tag qualifies if it IS one of the persona's
-    anchors, or if the harvest recorded it co-occurring with one. Relevance therefore comes from the
-    platform's own co-occurrence data rooted at the persona's description — not from a similarity score we
-    invented. Versatility comes free: the posts winning in a niche right now carry the broad tags too."""
+    niche anchors, or if `from` records INBOUND evidence (the niche appears on THAT tag's Top captions).
+    Outbound "seen on a niche Top once" is discovery-only and must not appear in `from` (MOL-643)."""
     anchors = {_norm("#" + t) for t in persona_terms(per)}
     anchors.discard("#")
     out: list[tuple[str, float, str]] = []
