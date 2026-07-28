@@ -1,10 +1,12 @@
 # src/fanops/fanops_hashtags.py
-"""Layer A — the ONLY code that touches the Graph for hashtags, and the only writer of the measurement
-cache (00_control/hashtags.json).
+"""Layer A — the ONLY writer of the hashtag measurement cache (00_control/hashtags.json).
+
+Network source is instagrapi (`ig_hashtag_scrape`); the Meta Graph hashtag path is deferred
+(helpers remain in meta_graph for later — refresh never falls back to Graph).
 
 One pass, per persona that actually posts:
 
-  description -> terms -> anchor tags -> ONE top_media fetch per tag -> {metric, co-occurring tags}
+  description -> terms -> anchor tags -> ONE medias_top fetch per tag -> {metric, co-occurring tags}
 
 `persona_terms` returns the persona's declared `niche` and NOTHING else. The corpus is never an input:
 it used to seed this pass, which made the store a re-ranked echo of the corpora it then fed — a closed
@@ -12,12 +14,11 @@ loop with no external evidence anywhere in it (measured live 2026-07-16: the sto
 to seeds + the frozen floor, 0 discovered, `reach: {}`, while every proposal it made looked like
 research). Rooting discovery in the declared niche severs that edge structurally.
 
-The metric is Meta's own `like_count`, verbatim (see meta_graph.measure_and_harvest). A tag Meta gives no
-number for is UNMEASURED and simply absent — the cache holds measured tags only, so the menu it feeds is
-100% evidence rather than 21 measurements padded with 1,683 guesses.
+The metric is Instagram's own `like_count`, verbatim (see ig_hashtag_scrape.measure_and_harvest_scrape).
+A tag with no number is UNMEASURED and simply absent — the cache holds measured tags only.
 
-Nothing here meters Meta. Known tags re-measure by cached `graph_id` (no search spent), novel tags are
-searched, and the pass runs until Meta throttles — at which point it stops and keeps what it accrued."""
+Missing scrape (no [igscrape] / no session / login fail) aborts LOUDLY (`written:False`, `aborted:no_scrape`)
+— there is no silent Graph fallback. A throttle ends the pass but still writes accrued evidence."""
 from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from fanops.config import Config
@@ -88,7 +89,7 @@ def _fresh(rec: dict, cutoff: datetime) -> bool:
     return ts >= cutoff
 
 
-def refresh_store(cfg: Config, *, get=None, now=None) -> dict:
+def refresh_store(cfg: Config, *, scrape_client=None, now=None) -> dict:
     """Run one measurement pass and rewrite the cache. Returns a summary dict.
 
     Order of work: never-measured anchors first (must discover), then every previously-measured tag
@@ -96,12 +97,13 @@ def refresh_store(cfg: Config, *, get=None, now=None) -> dict:
     novel co-tags this pass discovered. Co-occurring tags are harvested from ANCHORS only — a co-tag's
     own co-tags would drift away from the persona's niche within two hops.
 
-    ABORTS without writing when personas.json is CORRUPT: a bad hand-edit to a control file must not
-    clobber the cache. A throttle ends the pass but still writes — evidence already bought is kept.
+    ABORTS without writing when personas.json is CORRUPT, or when scrape cannot open (`no_scrape`).
+    A throttle ends the pass but still writes — evidence already bought is kept.
     `last_complete_pass` advances ONLY when throttled is False (the 12h tick gates on that stamp)."""
     from fanops.errors import ControlFileError
-    from fanops.meta_graph import (GraphRefused, GraphThrottled, GraphUnreachable,
-                                   measure_and_harvest, resolve_hashtag)
+    from fanops.ig_hashtag_scrape import (ScrapeRefused, ScrapeThrottled, ScrapeUnavailable,
+                                          measure_and_harvest_scrape, open_client,
+                                          resolve_hashtag_scrape)
     from fanops.persona_research import persona_terms
     now = now or datetime.now(timezone.utc)
     stamp = now.isoformat()
@@ -109,6 +111,12 @@ def refresh_store(cfg: Config, *, get=None, now=None) -> dict:
         personas = _posting_personas(cfg)
     except ControlFileError as e:                          # corrupt personas.json: ABORT, cache UNTOUCHED
         return {"written": False, "aborted": "corrupt_personas", "reason": str(e)}
+    if scrape_client is None:
+        try:
+            scrape_client = open_client(cfg)
+        except ScrapeUnavailable as e:
+            return {"written": False, "aborted": "no_scrape", "reason": str(e), "backend": "scrape"}
+    client = scrape_client
     prev_complete = _read_complete_pass(cfg)
     cache: dict[str, dict] = dict(load_measurements(cfg))
     ids: dict[str, str] = {t: r["graph_id"] for t, r in cache.items()}
@@ -133,21 +141,18 @@ def refresh_store(cfg: Config, *, get=None, now=None) -> dict:
         tried += 1
         metric = None; cotags: dict[str, int] = {}; hid = None
         try:
-            hid = ids.get(tag) or resolve_hashtag(cfg, tag, get=get)
+            hid = ids.get(tag) or resolve_hashtag_scrape(client, tag)
             if not hid:
-                unresolved.append({"tag": tag, "reason": "no_match"})  # Meta 200 + empty data only
+                unresolved.append({"tag": tag, "reason": "no_match"})
                 continue
             ids[tag] = hid
-            metric, cotags = measure_and_harvest(cfg, hid, get=get)
-        except GraphThrottled:
-            throttled = True                               # Meta said stop — the only governor there is
+            metric, cotags = measure_and_harvest_scrape(client, tag)
+        except ScrapeThrottled:
+            throttled = True                               # Instagram said stop — the only governor there is
             break
-        except GraphRefused as e:
+        except ScrapeRefused as e:
             unresolved.append({"tag": tag, "reason": "refused", "code": e.code,
-                               "subcode": e.subcode, "type": e.type, "message": e.message})
-            continue
-        except GraphUnreachable as e:
-            unresolved.append({"tag": tag, "reason": "unreachable", "message": e.reason})
+                               "message": e.message})
             continue
         if tag in anchor_set:
             for co, n in cotags.items():
@@ -158,7 +163,7 @@ def refresh_store(cfg: Config, *, get=None, now=None) -> dict:
                 if co not in queued:
                     queued.add(co); queue.append(co); discovered += 1
         if metric is None:
-            continue                                       # Meta published no number -> UNMEASURED -> absent
+            continue                                       # no number -> UNMEASURED -> absent
         rec = {"graph_id": hid, METRIC_FIELD: float(metric), "measured_at": stamp}
         frm = attribution.get(tag)
         if frm:
@@ -174,19 +179,20 @@ def refresh_store(cfg: Config, *, get=None, now=None) -> dict:
     write_json_atomic(cfg.hashtags_path, fresh)
     return {"written": True, "measured": measured, "discovered": discovered,
             "total": len([t for t in fresh if t != _COMPLETE_KEY]), "throttled": throttled,
-            "tried": tried, "unresolved": unresolved}
+            "tried": tried, "unresolved": unresolved, "backend": "scrape"}
 
 
-def refresh_store_if_due(cfg: Config, *, max_age_s: int = 43200, get=None, now=None) -> dict:
+def refresh_store_if_due(cfg: Config, *, max_age_s: int = 43200, scrape_client=None, now=None) -> dict:
     """The constant-update hook the run loop calls each tick: refresh at most once per `max_age_s`
     (default 12h), gated on `last_complete_pass` inside the cache — NOT file mtime, because a throttled
-    pass still writes and would otherwise buy twelve hours of silence for almost no work. Needs Meta
-    creds (else a clean no-op — the cache is a platform artifact). FAIL-OPEN: any error -> a reason,
-    NEVER raises; it must not crash the unattended run. A corrupt personas.json is NOT a refresh:
-    refresh_store aborts (cache untouched) and this REPORTS the abort so the tick never logs a false
-    success on a broken control file."""
-    if not (cfg.meta_graph_token and cfg.meta_ig_user_id):
-        return {"refreshed": False, "reason": "no Meta creds"}
+    pass still writes and would otherwise buy twelve hours of silence for almost no work. Needs a scrape
+    session (else a clean no-op — the cache is a platform artifact). FAIL-OPEN: any error -> a reason,
+    NEVER raises; it must not crash the unattended run. A corrupt personas.json / no_scrape abort is NOT
+    a refresh: refresh_store aborts (cache untouched) and this REPORTS the abort so the tick never logs a
+    false success on a broken control file."""
+    from fanops.ig_hashtag_scrape import scrape_configured
+    if not scrape_configured(cfg) and scrape_client is None:
+        return {"refreshed": False, "reason": "no scrape session"}
     try:
         now_dt = now or datetime.now(timezone.utc)
         complete = _read_complete_pass(cfg)
@@ -199,8 +205,8 @@ def refresh_store_if_due(cfg: Config, *, max_age_s: int = 43200, get=None, now=N
                     return {"refreshed": False, "reason": "fresh"}
             except ValueError:
                 pass                                          # unparseable stamp -> treat as due
-        r = refresh_store(cfg, get=get, now=now_dt)
-        if not r.get("written"):                              # corrupt-personas abort: preserve, report
+        r = refresh_store(cfg, scrape_client=scrape_client, now=now_dt)
+        if not r.get("written"):                              # corrupt/no_scrape abort: preserve, report
             return {"refreshed": False, **r}
         return {"refreshed": True, **r}
     except Exception as exc:                                  # noqa: BLE001 — the tick must never die here
@@ -209,31 +215,44 @@ def refresh_store_if_due(cfg: Config, *, max_age_s: int = 43200, get=None, now=N
 
 def cmd_hashtags_refresh(cfg: Config) -> int:
     """`fanops hashtags refresh` — run a measurement pass now. Writes ONLY the cache; needs no ledger.
-    Without Meta creds the pass measures nothing and the cache stands (exit 0). The ONE non-zero exit is a
-    CORRUPT personas.json: refresh_store aborts (the cache is preserved), so this says why and exits 2."""
+    Without scrape session the pass aborts loudly (exit 2). Corrupt personas.json also exits 2."""
     r = refresh_store(cfg)
     if not r.get("written"):
         get_logger(cfg)("hashtags", "-", "refresh_aborted", level="error",
                         aborted=r.get("aborted", "unknown"), reason=r.get("reason", ""),
-                        detail="00_control/hashtags.json left untouched; fix personas.json")
+                        detail=("00_control/hashtags.json left untouched; "
+                                "fanops hashtags scrape-login / fix personas.json"))
         return 2
     unresolved = r.get("unresolved") or []
     codes = sorted({u.get("code") for u in unresolved if u.get("code") is not None})
     get_logger(cfg)("hashtags", "-", "refreshed", measured=r["measured"], discovered=r["discovered"],
                     total=r["total"], throttled=r["throttled"], tried=r.get("tried", 0),
                     unresolved=len(unresolved), refusal_codes=",".join(str(c) for c in codes),
-                    path=str(cfg.hashtags_path))
+                    backend=r.get("backend", "scrape"), path=str(cfg.hashtags_path))
     for u in unresolved[:20]:                                    # cap log blast; full list is in the return
         get_logger(cfg)("hashtags", u.get("tag") or "-", "unresolved",
-                        reason=u.get("reason"), code=u.get("code"), subcode=u.get("subcode"),
-                        type=u.get("type"), message=(u.get("message") or "")[:160])
+                        reason=u.get("reason"), code=u.get("code"),
+                        message=(u.get("message") or "")[:160])
+    return 0
+
+
+def cmd_hashtags_scrape_login(cfg: Config) -> int:
+    """`fanops hashtags scrape-login` — open instagrapi, login, dump session. Never prints the password."""
+    from fanops.ig_hashtag_scrape import ScrapeUnavailable, open_client
+    try:
+        open_client(cfg)
+    except ScrapeUnavailable as e:
+        get_logger(cfg)("hashtags", "-", "scrape_login_failed", level="error", reason=str(e)[:160])
+        return 2
+    get_logger(cfg)("hashtags", "-", "scrape_login_ok", user=(cfg.ig_scrape_user or "")[:40],
+                    session=str(cfg.ig_scrape_session_path))
     return 0
 
 
 def cmd_hashtags_discover(cfg: Config) -> int:
     """`fanops hashtags discover` — the periodic "what does each persona's niche look like right now"
     report. READ-ONLY and ZERO NETWORK: it projects the cache that refresh already bought, so it can be
-    scheduled freely (launchd/cron) without spending a single Graph call. Always exits 0."""
+    scheduled freely (launchd/cron) without spending a single scrape call. Always exits 0."""
     from fanops.persona_research import derived_report
     log = get_logger(cfg)
     try:
@@ -248,5 +267,5 @@ def cmd_hashtags_discover(cfg: Config) -> int:
         log("hashtags", per.id, "niche", terms=", ".join(r["terms"][:8]), measured=r["measured"],
             top=", ".join(f"{t}({int(v)})" for t, v in r["top"]))
     log("hashtags", "-", "discover_done", field=METRIC_FIELD,
-        hint="numbers are Meta's own like_count on each tag's top media")
+        hint="numbers are Instagram like_count on top posts (instagrapi)")
     return 0

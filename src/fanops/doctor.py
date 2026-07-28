@@ -75,6 +75,19 @@ def _ig_user_id_check(cfg: Config) -> tuple[bool, str]:
 _META_TOKEN_LEAD_DAYS = 10                                # WARN this many days before a Meta token expires
 
 
+
+def _hashtag_scrape_check(cfg: Config) -> dict:
+    """Hashtag Layer A needs an instagrapi scrape session (user + session file or password). Missing
+    scrape aborts refresh loudly — surface it in doctor so the operator sees `fanops hashtags scrape-login`
+    before the 12h tick silently skips."""
+    from fanops.ig_hashtag_scrape import scrape_configured
+    lbl = "hashtag Layer A scrape session configured (instagrapi)"
+    if scrape_configured(cfg):
+        return _check(lbl, True, "")
+    return _check(lbl, False,
+                  "set FANOPS_IG_SCRAPE_USER (+ FANOPS_IG_SCRAPE_PASSWORD or a session file), "
+                  "install [igscrape], then `fanops hashtags scrape-login`")
+
 def _meta_token_expiry_check(cfg: Config, *, get=None):
     """T9: build the 'Meta Graph token not expiring' check dict, or None when no Meta token is configured (the
     check is simply N/A then — never a false alarm). Introspects EVERY distinct resolvable token (global +
@@ -347,6 +360,9 @@ def _assemble_doctor_checks(cfg: Config, *, get=None, postiz_probe=None, zernio_
     # reported failing (unknown != silent pass) — the whole point is that this class of drift stays LOUD.
     ig_ok, ig_hint = _ig_user_id_check(cfg)
     checks.append(_check("active IG accounts have their OWN ig_user_id (no shared/borrowed Meta id)", ig_ok, ig_hint))
+
+    # Hashtag Layer A scrape session (instagrapi) — refresh aborts without it; no Graph fallback.
+    checks.append(_hashtag_scrape_check(cfg))
 
     # T9: Meta token expiry preflight. When the Graph token (or a per-handle token) lapses, Postiz keeps
     # publishing via its OWN OAuth while Graph verification + metrics silently die -> a repeat of this incident

@@ -515,3 +515,21 @@ def _fake_launchctl_daemon(**spec):
         rc, out = spec.get(verb, (0, ""))
         return subprocess.CompletedProcess(cmd, rc, stdout=out, stderr="")
     return run
+
+
+# --- Hashtag Layer A scrape session (instagrapi) ---
+def test_doctor_hashtag_scrape_session_check(tmp_path, monkeypatch):
+    from fanops import doctor
+    from fanops.config import Config
+    monkeypatch.delenv("FANOPS_IG_SCRAPE_USER", raising=False)
+    monkeypatch.delenv("FANOPS_IG_SCRAPE_PASSWORD", raising=False)
+    cfg = Config(root=tmp_path)
+    rep = doctor.doctor_report(cfg)
+    row = next(c for c in rep["checks"] if "hashtag Layer A scrape" in c["label"])
+    assert row["ok"] is False
+    assert "scrape-login" in row["hint"] and "FANOPS_IG_SCRAPE_USER" in row["hint"]
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
+    rep2 = doctor.doctor_report(Config(root=tmp_path))
+    row2 = next(c for c in rep2["checks"] if "hashtag Layer A scrape" in c["label"])
+    assert row2["ok"] is True

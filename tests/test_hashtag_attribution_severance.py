@@ -1,7 +1,7 @@
 # tests/test_hashtag_attribution_severance.py
 """INVARIANT (operator 2026-06-27): a hashtag is NEVER an attributed or learned dimension. A post's success
 or failure attributes to the HOOK, the CLIP, and the ACCOUNT developed in the stitch — never to its hashtags.
-Hashtags are judged ONLY by live Meta Graph reach (fanops_hashtags.refresh_store), a path that reads no ledger
+Hashtags are judged ONLY by live Instagram reach (fanops_hashtags.refresh_store / instagrapi), a path that reads no ledger
 and no post. These tests RED-fail if anyone reintroduces a hashtag term into the lift/learning weights, makes
 lift_score depend on hashtags, or wires a learning module to read a post's hashtags to score/rank/weight it."""
 import re

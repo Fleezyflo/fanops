@@ -867,10 +867,11 @@ def main(argv: list[str] | None = None) -> int:
     p_learn = sub.add_parser("learn", help="learning-loop diagnostics (read-only)")
     learn_sub = p_learn.add_subparsers(dest="learn_cmd", required=True)
     learn_sub.add_parser("doctor", help="read-only: does live Postiz analytics carry the reach signal lift_score needs?")
-    p_hash = sub.add_parser("hashtags", help="the platform hashtag measurement cache (Meta Graph like_count)")
+    p_hash = sub.add_parser("hashtags", help="the platform hashtag measurement cache (instagrapi like_count)")
     hash_sub = p_hash.add_subparsers(dest="hashtags_cmd", required=True)
-    hash_sub.add_parser("refresh", help="measure each persona's niche now (search->measure->harvest); needs Meta creds")
-    hash_sub.add_parser("discover", help="report each persona's measured niche from the cache (read-only, zero Graph calls)")
+    hash_sub.add_parser("refresh", help="measure each persona's niche now (resolve->measure->harvest); needs scrape session")
+    hash_sub.add_parser("scrape-login", help="login via instagrapi and dump 00_control/ig_scrape_session.json")
+    hash_sub.add_parser("discover", help="report each persona's measured niche from the cache (read-only, zero network)")
     p_lever = sub.add_parser("lever", help="persona lever reference docs (generated from the live registry)")
     lever_sub = p_lever.add_subparsers(dest="lever_cmd", required=True)
     lever_sub.add_parser("docs", help="regenerate docs/LEVERS.md + docs/LEVER-THRESHOLDS.md")
@@ -1125,12 +1126,12 @@ def _cmd_run_pass(cfg: Config, base_time: str) -> dict | None:
                 led = apply_timing_bias(led, cfg)
         except Exception as e:
             get_logger(cfg)("timing_bias", "-", "error", err=str(e)[:120])
-    # WS2: constant Graph-reach hashtag store update — refresh at most once per cadence (12h), gated on
-    # last_complete_pass (not file mtime) so a throttled write cannot buy silence. NOT gated on
+    # WS2: constant hashtag store update (instagrapi Layer A) — refresh at most once per cadence (12h),
+    # gated on last_complete_pass (not file mtime) so a throttled write cannot buy silence. NOT gated on
     # is_live_backend (a hashtag's worth is its live platform reach, independent of whether WE publish) —
-    # only on Meta creds, handled inside the helper. Its OWN try/except; refresh_store_if_due never raises,
-    # so the unattended run can never break on a hashtag refresh. Non-fresh skips log (MOL-525): a missing
-    # token must not look identical to a correctly-throttled tick.
+    # only on scrape session, handled inside the helper. Its OWN try/except; refresh_store_if_due never
+    # raises, so the unattended run can never break on a hashtag refresh. Non-fresh skips log (MOL-525):
+    # a missing scrape session must not look identical to a correctly-throttled tick.
     try:
         from fanops.fanops_hashtags import refresh_store_if_due
         r = refresh_store_if_due(cfg)
@@ -1374,6 +1375,9 @@ def _dispatch(cfg: Config, args) -> int:
         if args.hashtags_cmd == "refresh":
             from fanops.fanops_hashtags import cmd_hashtags_refresh   # lazy: keeps it off the hot path
             return cmd_hashtags_refresh(cfg)
+        if args.hashtags_cmd == "scrape-login":
+            from fanops.fanops_hashtags import cmd_hashtags_scrape_login
+            return cmd_hashtags_scrape_login(cfg)
         if args.hashtags_cmd == "discover":
             from fanops.fanops_hashtags import cmd_hashtags_discover  # lazy: keeps it off the hot path
             return cmd_hashtags_discover(cfg)

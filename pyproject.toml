@@ -45,6 +45,9 @@ framing = ["opencv-python-headless>=4.9"]
 # keyring-free; only `.[keyring]` pulls it. fanops.secret_provider imports keyring lazily and degrades to
 # Settings/.env when absent or when no backend is available (headless CI/Linux).
 keyring = ["keyring>=25.0"]
+# Hashtag Layer A network (instagrapi). OPTIONAL + lazy — without the extra, `fanops hashtags refresh`
+# aborts loudly (written:False / no_scrape); there is no silent Graph fallback.
+igscrape = ["instagrapi>=2.5"]
 
 [project.scripts]
 fanops = "fanops.cli:main"

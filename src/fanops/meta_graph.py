@@ -1,6 +1,7 @@
 # src/fanops/meta_graph.py
-"""A thin, READ-ONLY Meta Graph client. Used by `hashtags refresh` (the hashtag half) and by the
-metrics/insights paths; never on the publish path. Design rules:
+"""A thin, READ-ONLY Meta Graph client. Used by metrics/insights paths; hashtag Layer A refresh is
+instagrapi (`ig_hashtag_scrape`) — Graph hashtag helpers below are deferred. Never on the publish path.
+Design rules:
 
   Hashtag LOOKUPS never swallow Meta's answer. A non-throttle error raises `GraphRefused` carrying
   Meta's own code/subcode/type/message; a transport failure raises `GraphUnreachable`. `resolve_hashtag`
@@ -32,7 +33,7 @@ from requests.adapters import HTTPAdapter
 from fanops.config import Config
 from fanops.errors import MetaInsightsScopeError
 from fanops.log import get_logger
-from fanops.hashtags import METRIC_FIELD, _norm
+from fanops.hashtags import METRIC_FIELD, _norm, CAPTION_TAG_RE, HARVEST_CAP
 
 
 # Force AF_INET for Graph HTTP only — macOS often blackholes AAAA for graph.facebook.com (~20s then
@@ -159,8 +160,8 @@ def debug_token_expiry(cfg: Config, token: str, *, get=None) -> tuple[str, objec
     return (("expired", exp) if exp <= now else ("ok", exp))
 
 
-_TAG_RE = re.compile(r"#[0-9A-Za-z_؀-ۿ]+")   # a hashtag in a caption: Latin + Arabic-block letters
-_HARVEST_CAP = 5000                 # upper bound on distinct co-tags per harvest — a guard against a pathological/mocked top_media response (untrusted UGC); unreachable under Meta's own caption+page limits
+_TAG_RE = CAPTION_TAG_RE            # shared with ig_hashtag_scrape (hashtags.CAPTION_TAG_RE)
+_HARVEST_CAP = HARVEST_CAP
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
