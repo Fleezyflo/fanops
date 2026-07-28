@@ -71,6 +71,22 @@ def _scrape_parallel() -> int:
     return v if v >= 1 else _SCRAPE_PARALLEL
 
 
+def _rederive_posting_corpora(cfg: Config, *, now=None) -> None:
+    """Layer B on the Layer A write path — corpora track the store as it lands, not after the pass ends.
+
+    Fail-open: a derive miss must never abort measurement. Uses posting personas only (same gate as
+    discovery). Called after every durable hashtags.json write (mid-pass flush + final)."""
+    from fanops.errors import fail_open
+    from fanops.persona_research import derive_corpus
+    try:
+        personas = _posting_personas(cfg)
+    except Exception:                                      # noqa: BLE001 — corrupt/absent: skip derive
+        return
+    for per in personas:
+        with fail_open(f"fanops_hashtags.rederive.{getattr(per, 'id', '?')}"):
+            derive_corpus(cfg, per.id, now=now)
+
+
 def _read_complete_pass(cfg: Config) -> str | None:
     """The ISO stamp of the last NON-throttled pass, or None. Fail-open on any read/parse miss."""
     p = cfg.hashtags_path
@@ -142,6 +158,9 @@ def refresh_store(cfg: Config, *, scrape_client=None, now=None) -> dict:
     Network work runs in WAVES of `_scrape_parallel()` (default 4) concurrent fetches — wall time should
     track wave count, not one-tag-at-a-time. Injected `scrape_client` (tests) shares one client under a
     lock so fakes stay deterministic.
+
+    Every durable `hashtags.json` write (mid-pass flush + final) re-derives posting-persona corpora
+    immediately — Layer B does not wait for the pass to finish.
 
     ABORTS without writing when personas.json is CORRUPT, or when scrape cannot open (`no_scrape`).
     A throttle ends the pass but still writes — evidence already bought is kept.
@@ -283,6 +302,7 @@ def refresh_store(cfg: Config, *, scrape_client=None, now=None) -> dict:
                     mid[_COMPLETE_KEY] = prev_complete
                 cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
                 write_json_atomic(cfg.hashtags_path, mid)
+                _rederive_posting_corpora(cfg, now=now)          # Layer B rides the flush — no end-of-pass wait
             if tried == 1 or tried % 5 == 0 or measured % 5 == 0:
                 log("hashtags", tag, "measured", tried=tried, measured=measured,
                     queue_left=len(queue) - i, like_count=float(metric), parallel=parallel)
@@ -296,6 +316,7 @@ def refresh_store(cfg: Config, *, scrape_client=None, now=None) -> dict:
         fresh[_COMPLETE_KEY] = prev_complete                  # preserve; never slide forward on a cut-off
     cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
     write_json_atomic(cfg.hashtags_path, fresh)
+    _rederive_posting_corpora(cfg, now=now)                      # final store write → corpora catch up
     return {"written": True, "measured": measured, "discovered": discovered,
             "total": len([t for t in fresh if t != _COMPLETE_KEY]), "throttled": throttled,
             "tried": tried, "unresolved": unresolved, "backend": "scrape", "parallel": parallel}

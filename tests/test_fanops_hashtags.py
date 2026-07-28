@@ -48,6 +48,8 @@ def test_refresh_store_atomic_write_preserves_prior_on_crash(tmp_path, monkeypat
 def test_refresh_store_midpass_flush_survives_later_crash(tmp_path, monkeypatch):
     # Every 5 successful measures flushes the cache WITHOUT stamping last_complete_pass.
     # A crash after that flush must keep the accrued tags (not roll back to empty/prior-only).
+    # Layer B also writes personas.json on flush — only the 2nd hashtags.json replace may boom.
+    from pathlib import Path
     from fanops import controlio, personas as P
     cfg = Config(root=tmp_path)
     niches = [f"seed{i}" for i in range(6)]                 # 6 anchors → flush at measured=5, then final
@@ -56,16 +58,18 @@ def test_refresh_store_midpass_flush_survives_later_crash(tmp_path, monkeypatch)
     cfg.accounts_path.write_text(json.dumps({"accounts": [
         {"handle": "a", "platforms": ["instagram"], "status": "active", "persona_id": "mid"}]}))
     metrics = {f"#{n}": float(10 + i) for i, n in enumerate(niches)}
-    n_writes = {"n": 0}
+    n_hash = {"n": 0}
     real_replace = controlio.os.replace
 
-    def boom_after_first_flush(src, dst):
-        n_writes["n"] += 1
-        if n_writes["n"] == 1:
+    def boom_after_first_hashtags_flush(src, dst):
+        if Path(dst).name != "hashtags.json":
+            return real_replace(src, dst)                   # personas derive writes must land
+        n_hash["n"] += 1
+        if n_hash["n"] == 1:
             return real_replace(src, dst)                   # mid-pass flush lands
-        raise OSError("crash on later write")
+        raise OSError("crash on later hashtags write")
 
-    monkeypatch.setattr(controlio.os, "replace", boom_after_first_flush)
+    monkeypatch.setattr(controlio.os, "replace", boom_after_first_hashtags_flush)
     with pytest.raises(OSError):
         refresh_store(cfg, scrape_client=_FakeClient(metrics))
     monkeypatch.setattr(controlio.os, "replace", real_replace)
@@ -73,6 +77,21 @@ def test_refresh_store_midpass_flush_survives_later_crash(tmp_path, monkeypatch)
     assert "last_complete_pass" not in raw                  # partial flush must not buy 12h silence
     tags = [k for k in raw if k.startswith("#")]
     assert len(tags) == 5                                   # accrued through the mid-pass flush
+    # Layer B already ran on the flush — corpus tracks the store without waiting for pass end
+    from fanops.personas import Personas
+    corp = list(Personas.load(cfg).get("mid").hashtag_corpus or [])
+    assert len(corp) >= 1 and all(t in raw for t in corp)
+
+
+def test_refresh_store_derives_corpora_on_its_own_writes(tmp_path, monkeypatch):
+    """Layer B is on the Layer A write path — refresh alone updates corpora; no separate force."""
+    cfg = Config(root=tmp_path); pid = _persona(cfg)
+    from fanops.personas import Personas
+    assert list(Personas.load(cfg).get(pid).hashtag_corpus or []) == []
+    refresh_store(cfg, scrape_client=_FakeClient(
+        {"#hiphop": 500, "#alpha": 100}, cooccur="#alpha"))
+    corp = list(Personas.load(cfg).get(pid).hashtag_corpus or [])
+    assert "#hiphop" in corp and "#alpha" in corp
 
 
 def test_refresh_store_takes_no_ledger_and_no_doctor_gate(tmp_path, monkeypatch):
