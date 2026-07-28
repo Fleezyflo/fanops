@@ -121,10 +121,11 @@ def _fresh(rec: dict, cutoff: datetime) -> bool:
 def refresh_store(cfg: Config, *, scrape_client=None, now=None) -> dict:
     """Run one measurement pass and rewrite the cache. Returns a summary dict.
 
-    Order of work: never-measured anchors first (must discover), then every previously-measured tag
-    (anchors + known) ordered stalest `measured_at` first so a throttle cannot starve the tail, then
-    novel co-tags this pass discovered. Co-occurring tags are harvested from ANCHORS only — a co-tag's
-    own co-tags would drift away from the persona's niche within two hops.
+    Order of work: never-measured anchors first (must discover), then novel co-tags harvested from those
+    anchors (inserted ahead of remesure so try_cap buys expansion), then every previously-measured tag
+    (anchors + known) ordered stalest `measured_at` first so a throttle cannot starve the tail.
+    Co-occurring tags are harvested from ANCHORS only — a co-tag's own co-tags would drift away from the
+    persona's niche within two hops.
 
     ABORTS without writing when personas.json is CORRUPT, or when scrape cannot open (`no_scrape`).
     A throttle ends the pass but still writes — evidence already bought is kept.
@@ -205,7 +206,8 @@ def refresh_store(cfg: Config, *, scrape_client=None, now=None) -> dict:
                 attribution.setdefault(co, {})
                 attribution[co][tag] = attribution[co].get(tag, 0) + n
                 if co not in queued and cotag_enqueued < cotag_cap:
-                    queued.add(co); queue.append(co); discovered += 1; cotag_enqueued += 1
+                    # Priority: measure harvested co-tags BEFORE remaining remesure (append starved expansion).
+                    queued.add(co); queue.insert(i, co); discovered += 1; cotag_enqueued += 1
         if metric is None:
             continue                                       # no number -> UNMEASURED -> absent
         rec = {"graph_id": hid, METRIC_FIELD: float(metric), "measured_at": stamp}

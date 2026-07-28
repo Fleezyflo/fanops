@@ -249,6 +249,31 @@ def test_refresh_store_cotag_enqueue_cap(tmp_path, monkeypatch):
     assert len(measured_cos) == 2
 
 
+def test_refresh_store_cotags_measure_before_remeasure(tmp_path, monkeypatch):
+    """Harvested co-tags must run BEFORE stale remesure — append put them behind the whole cache and
+    starved craft/burner expansion under try_cap."""
+    import fanops.fanops_hashtags as fh
+    monkeypatch.setattr(fh, "_SCRAPE_TRY_CAP", 2)            # hiphop + cotag only; remesure must not steal
+    monkeypatch.setattr(fh, "_SCRAPE_COTAG_ENQUEUE_CAP", 5)
+    cfg = Config(root=tmp_path); _persona(cfg)
+    # Pre-seed a STALE non-anchor so remesure would eat the try_cap if cotags append at the end.
+    cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.hashtags_path.write_text(json.dumps({
+        "#oldnoise": {"graph_id": "id-oldnoise", METRIC_FIELD: 9.0,
+                      "measured_at": "2020-01-01T00:00:00+00:00"},
+        "last_complete_pass": "2020-01-01T00:00:00+00:00"}))
+    client = _FakeClient(
+        {"#hiphop": 100, "#freshco": 50, "#oldnoise": 9},
+        cooccur="#freshco",
+    )
+    out = refresh_store(cfg, scrape_client=client)
+    assert out["throttled"] is True and out["tried"] == 2
+    # Under try_cap=2 with insert-priority: hiphop then freshco. Append-priority would be hiphop, oldnoise.
+    assert client.media_calls == ["hiphop", "freshco"]
+    m = load_measurements(cfg)
+    assert "#freshco" in m and m["#freshco"].get("from", {}).get("#hiphop")
+
+
 def datetime_for_pass():
     from datetime import datetime, timezone
     return datetime(2026, 7, 2, 0, 0, tzinfo=timezone.utc)
