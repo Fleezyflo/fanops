@@ -209,3 +209,39 @@ def test_request_captions_omits_hashtag_store_when_no_aligned_pool(tmp_path):
     payload = json.loads(request_path(cfg, "captions", "clip_1").read_text())
     assert "hashtag_store" not in payload
     assert "hashtag_store" not in payload["surfaces"][0]
+
+
+# --- MOL-511 (C-1): ingest consumes the per-surface hashtag_store written by C-3 -----------------
+
+def test_ingest_uses_request_hashtag_store_not_global_cache(tmp_path):
+    # End-to-end with request_captions (C-3) writing hashtag_store, then ingest (C-1) reading it.
+    # Two personas + one global cache: A's aligned-only tag must not appear on B's vetted line.
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led)
+    pid_a = core.add_persona(cfg, name="Hip", voice="va", niche=["hiphop"], id="pa")
+    pid_b = core.add_persona(cfg, name="Pod", voice="vb", niche=["podcast"], id="pb")
+    _write_meas(cfg, {
+        "#hiphop": (100, None),
+        "#detroitrap": (900, "#hiphop"),
+        "#podcast": (200, None),
+        "#interview": (800, "#podcast"),
+        "#globalwinner": (9999, None),
+    })
+    a = Accounts(cfg)
+    a.accounts = [
+        Account(handle="a", platforms=[Platform.instagram], persona_id=pid_a),
+        Account(handle="b", platforms=[Platform.instagram], persona_id=pid_b),
+    ]
+    request_captions(led, cfg, "clip_1",
+                     [("a", Platform.instagram), ("b", Platform.instagram)], accounts=a)
+    rid = latest_request_id(cfg, "captions", "clip_1")
+    response_path(cfg, "captions", "clip_1").write_text(CaptionSet(request_id=rid, items=[
+        CaptionItem(surface="a/instagram", caption="x",
+                    hashtags=["#detroitrap", "#interview", "#globalwinner"]),
+        CaptionItem(surface="b/instagram", caption="x",
+                    hashtags=["#detroitrap", "#interview", "#globalwinner"]),
+    ]).model_dump_json())
+    ingest_captions(led, cfg, "clip_1")
+    ta = led.clips["clip_1"].meta_captions["a/instagram"]["hashtags"]
+    tb = led.clips["clip_1"].meta_captions["b/instagram"]["hashtags"]
+    assert "#detroitrap" in ta and "#interview" not in ta and "#globalwinner" not in ta
+    assert "#interview" in tb and "#detroitrap" not in tb and "#globalwinner" not in tb
