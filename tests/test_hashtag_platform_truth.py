@@ -210,7 +210,8 @@ def test_inbound_cotag_attributes_measured_tag_to_anchor(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path)
     pid = _persona(cfg, voice="x", niche=["rapbeef"]); _link_active(cfg, pid)
     # Anchor Top is barren; a remesured megatag's captions name the anchor.
-    media = {"#rapbeef": [{"caption": "", "like_count": 10}],
+    # Outbound from the barren-ish anchor must enqueue the megatag, then inbound attributes it back.
+    media = {"#rapbeef": [{"caption": "noise #fyp", "like_count": 10}],
              "#fyp": [{"caption": "chaos #rapbeef #drama", "like_count": 9000}]}
     refresh_store(cfg, scrape_client=_client(media))
     rec = load_measurements(cfg)["#fyp"]
@@ -257,11 +258,14 @@ def test_derivation_is_zero_network(tmp_path, monkeypatch):
     media = {"#hiphop": [{"caption": "#bars", "like_count": 500, "comments_count": 0}],
              "#bars": [{"caption": "", "like_count": 400, "comments_count": 0}]}
     refresh_store(cfg, scrape_client=_client(media))
+    # Layer A write path already re-derived corpora — corpus must be non-empty before the second call.
+    assert Personas.load(cfg).get(pid).hashtag_corpus
     import fanops.ig_hashtag_scrape as igs
     def explode(*a, **k): raise AssertionError("derive_corpus must not touch the network")
     monkeypatch.setattr(igs, "resolve_hashtag_scrape", explode)
     monkeypatch.setattr(igs, "measure_and_harvest_scrape", explode)
-    assert derive_corpus(cfg, pid)["changed"] is True
+    # Second derive is idempotent (changed=False) and must never touch the network.
+    assert derive_corpus(cfg, pid)["changed"] is False
 
 
 def test_corpus_is_ranked_by_the_platform_field(tmp_path, monkeypatch):

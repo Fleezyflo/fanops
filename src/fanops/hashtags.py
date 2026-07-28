@@ -11,8 +11,8 @@ What survives here is COMPOSITION, which is format rather than a reach claim: at
 persona's curated corpus leads but may not monopolise the line (`_CORPUS_LEAD_MAX`), graded-LRU rotation,
 and a region tag on Arabic-language clips (`_ARABIC`).
 
-Membership is the cache UNION the surface's corpus (content may join): a tag the model invents cannot
-ship, and a tag nobody measured cannot ship either. A cold cache therefore yields an empty line, not a
+Membership is the cache UNION the surface's corpus (content may LABEL a measured tag for provenance):
+a tag the model invents cannot ship, and a tag nobody measured cannot ship either. A cold cache therefore yields an empty line, not a
 padded one."""
 from __future__ import annotations
 import json, re
@@ -182,13 +182,16 @@ def vet_hashtags(tags: list[str] | None, platform: Platform, language: str | Non
 
     Order: corpus tier, then the clip's own picks, then graded LRU (`recent`, oldest-first — never-used
     leads), then the platform metric rank. Floors take the TAIL slots so the corpus/metric lead survives:
-    one `_ARABIC` tag on an Arabic-language clip. Backfill is corpus -> the measured menu -> content.
+    one `_ARABIC` tag on an Arabic-language clip. Backfill is corpus -> the measured menu (content is preference only).
 
     Cold cache + no corpus -> an empty line. That is the honest floor: there is no hand-ranked pool and no
     discovery pad left to invent reach with."""
     corpus_norm = _dedupe_norm(corpus)
-    content_norm = _screen_content(_dedupe_norm(content), cfg)
     store_norm = _dedupe_norm(store)                   # the measured menu, already metric-ranked
+    # MOL-635 residual / MOL-642 tighten: content is a FIT signal among MEASURED tags only
+    # (store ∪ corpus). Unmeasured ASR tokens must not pad a cold/empty line (no content floor).
+    measured = set(store_norm) | set(corpus_norm)
+    content_norm = [t for t in _screen_content(_dedupe_norm(content), cfg) if t in measured]
     vetted = set(store_norm) | set(corpus_norm) | set(content_norm)
     base_rank = {t: i for i, t in enumerate(store_norm)}
     # Preference float ahead of the metric rank: corpus (the persona's derived pool) > content (clip info).
@@ -241,7 +244,8 @@ def vet_hashtags(tags: list[str] | None, platform: Platform, language: str | Non
     if reserved:
         head = [h for h in kept if h not in reserved][:max_tags - len(reserved)]
         kept = head + reserved; seen = set(kept)
-    for h in corpus_norm + store_norm + content_norm:
+    # Backfill measured material only — content is already a subset of measured (preference, not pad).
+    for h in corpus_norm + store_norm:
         if len(kept) >= max_tags: break
         if h not in seen:
             seen.add(h); kept.append(h)

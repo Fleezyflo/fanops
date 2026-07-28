@@ -81,7 +81,7 @@ def test_measure_and_harvest_reads_the_verbatim_like_count_and_the_cotags(tmp_pa
         {"caption": "bars #alpha #Beta", "like_count": 100, "comments_count": 5},
         {"caption": "#alpha", "like_count": 50, "comments_count": 1}]})})
     metric, cotags = meta_graph.measure_and_harvest(cfg, "id-x", get=get)
-    assert metric == 100.0                                         # the FIRST like_count, never a sum
+    assert metric == 100.0                                         # first play_count/like_count, never a sum
     assert cotags == {"#alpha": 2, "#beta": 1}                     # tallied + normalized
 
 def test_measure_skips_a_media_with_likes_hidden(tmp_path, monkeypatch):

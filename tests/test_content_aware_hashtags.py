@@ -40,13 +40,15 @@ def test_content_candidates_are_bounded_and_normalized():
 
 
 # ---- Task 2: vet_hashtags(content=) joins membership + reserves a slot --------------------------------
-def test_content_tag_survives_vetting():
-    # a content tag the model picked is NOT in the measurement cache; on its own it dies. `content=` joins
-    # it to the membership, which is the whole point of the channel.
+def test_content_tag_labels_measured_pick():
+    # MOL-635 residual: content ∩ measured — unmeasured ASR tokens do NOT expand membership.
+    # A measured tag that is ALSO a content candidate ships with content provenance (fit signal).
     assert "#diss" not in STORE
-    assert "#diss" not in vet_hashtags(["#diss"], Platform.instagram, None, store=STORE)
-    out = vet_hashtags(["#diss"], Platform.instagram, None, store=STORE, content=["#diss"])
-    assert "#diss" in out
+    assert "#diss" not in vet_hashtags(["#diss"], Platform.instagram, None, store=STORE, content=["#diss"])
+    out = vet_hashtags(["#newmusic"], Platform.instagram, None, store=STORE, content=["#newmusic"])
+    assert "#newmusic" in out
+    _, sources = vet_hashtags_traced(["#newmusic"], Platform.instagram, None, store=STORE, content=["#newmusic"])
+    assert sources.get("#newmusic") == "content"
 
 
 @pytest.mark.parametrize("corpus", [None, ["#lyrics", "#bars", "#newmusic"], ["#freestyle", "#undergroundhiphop", "#trap"], ["#viral", "#rapmusic", "#hiphop"], ["#customtag"]])
@@ -75,11 +77,14 @@ def test_arabic_region_floor_still_wins_over_content():
 
 # ---- Task 3: provenance -- every shipped tag traces to a real signal ----------------------------------
 def test_every_kept_tag_has_a_source():
-    tags, sources = vet_hashtags_traced(["#diss", "#rap"], Platform.tiktok, "en", store=STORE,
-                                        corpus=["#viral", "#rapmusic", "#hiphop", "#customtag"], content=["#diss"])
+    # content=#newmusic is measured (in STORE); unmeasured #diss cannot join.
+    tags, sources = vet_hashtags_traced(["#newmusic", "#rap"], Platform.tiktok, "en", store=STORE,
+                                        corpus=["#viral", "#rapmusic", "#hiphop", "#customtag"],
+                                        content=["#newmusic", "#diss"])
     assert set(sources) == set(tags)                   # one source per shipped tag
     assert all(sources[t] for t in tags)               # none empty/sourceless
     assert set(sources.values()) <= {"content", "corpus", "region", "graph-reach"}
+    assert "#diss" not in tags
 
 
 def test_source_priority_content_over_the_measured_menu():
@@ -92,9 +97,9 @@ def test_source_priority_content_over_the_measured_menu():
 def test_traced_list_matches_plain_vet():
     # DRY contract: the traced list == the plain list for identical inputs.
     kw = dict(store=STORE, corpus=["#freestyle", "#undergroundhiphop", "#trap", "#customtag"],
-              content=["#loyalty"])
-    plain = vet_hashtags(["#diss"], Platform.tiktok, "en", **kw)
-    traced, _ = vet_hashtags_traced(["#diss"], Platform.tiktok, "en", **kw)
+              content=["#bars"])  # measured
+    plain = vet_hashtags(["#bars"], Platform.tiktok, "en", **kw)
+    traced, _ = vet_hashtags_traced(["#bars"], Platform.tiktok, "en", **kw)
     assert plain == traced
 
 
@@ -120,19 +125,19 @@ def test_offbrand_content_candidate_not_admitted_to_membership():
 
 
 def test_clean_content_still_ships_when_model_picks_it():
-    # content reservation deleted: a clean content tag ships only via membership (model pick), not a floor.
-    out = vet_hashtags(["#loyalty", "#hiphop", "#rap", "#bars"], Platform.instagram, "en",
-                       store=STORE, content=["#loyalty"])
-    assert "#loyalty" in out and len(out) == 4
+    # content ∩ measured: a measured content tag the model picks ships (provenance=content); unmeasured dies.
+    out = vet_hashtags(["#bars", "#hiphop", "#rap", "#newmusic"], Platform.instagram, "en",
+                       store=STORE, content=["#bars", "#loyalty"])
+    assert "#bars" in out and "#loyalty" not in out and len(out) == 4
 
 
 def test_offbrand_screen_drops_content_from_membership():
-    # when the top content token is off-brand it is screened; without a content floor the clean runner-up
-    # only ships if the model picks it (membership), not via a reserved slot.
+    # off-brand content screened; unmeasured #loyalty cannot join even if model-picked.
     out = vet_hashtags(["#loyalty", "#hiphop", "#rap", "#bars"], Platform.instagram, "en",
-                       store=STORE, content=["#begging", "#loyalty"])
+                       store=STORE, content=["#begging", "#loyalty", "#bars"])
     assert "#begging" not in out
-    assert "#loyalty" in out                           # model-picked clean content still admits
+    assert "#loyalty" not in out                       # unmeasured — content ∩ measured
+    assert "#bars" in out                              # measured + content + model pick
 
 
 # ---- Task 4: content reaches the POSTED line through request/ingest (the crux) ------------------------
@@ -163,23 +168,37 @@ def test_request_payload_embeds_content_tags(tmp_path):
 
 
 def test_pipeline_model_pick_content_survives_ingest(tmp_path):
-    """Model-picked content tag ships with source=content when content= is wired (MOL-642)."""
+    """Model-picked MEASURED content tag ships with source=content (MOL-642 + residual tighten)."""
     from fanops.models import CaptionItem
+    from fanops.controlio import write_json_atomic
+    import json
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    write_json_atomic(cfg.hashtags_path, {
+        "#loyalty": {"play_count": 100, "like_count": 10, "measured_at": "2026-07-28T00:00:00+00:00",
+                     "from": {"#loyalty": 1}},
+        "#hiphop": {"play_count": 50, "like_count": 5, "measured_at": "2026-07-28T00:00:00+00:00",
+                    "from": {"#hiphop": 1}}})
     led.add_source(Source(id="src_1", source_path="/s.mp4", language="en"))
     led.add_moment(Moment(id="mom_x", parent_id="src_1", content_token="mom_x", start=0, end=7,
                           reason="r", transcript_excerpt="fiery diss track about loyalty"))
     led.add_clip(Clip(id="clip_x", parent_id="mom_x", path="/c.mp4", state=ClipState.rendered))
+    # Seed a surface store so membership includes #loyalty (persona-aligned menus normally do).
     led = request_captions(led, cfg, "clip_x", [("a", Platform.instagram)])
+    # Patch the request surface store to the measured menu (no persona → store omitted).
+    from fanops.agentstep import request_path
+    req = json.loads(request_path(cfg, "captions", "clip_x").read_text())
+    for s in req["surfaces"]:
+        s["hashtag_store"] = ["#loyalty", "#hiphop"]
+    request_path(cfg, "captions", "clip_x").write_text(json.dumps(req))
     rid = latest_request_id(cfg, "captions", "clip_x")
     response_path(cfg, "captions", "clip_x").write_text(
         CaptionSet(request_id=rid, items=[
-            CaptionItem(surface="a/instagram", caption="#diss #loyalty", language="en",
-                        hashtags=["#diss", "#loyalty"])]).model_dump_json())
+            CaptionItem(surface="a/instagram", caption="#loyalty #hiphop", language="en",
+                        hashtags=["#loyalty", "#hiphop"])]).model_dump_json())
     led = ingest_captions(led, cfg, "clip_x")
     entry = led.clips["clip_x"].meta_captions["a/instagram"]
-    assert "#diss" in entry["hashtags"] or "#loyalty" in entry["hashtags"]
-    assert "content" in entry.get("tag_sources", {}).values()
+    assert "#loyalty" in entry["hashtags"]
+    assert entry["tag_sources"].get("#loyalty") == "content"
 
 
 def test_caption_prompt_renders_content_block(tmp_path):

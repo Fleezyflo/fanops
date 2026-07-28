@@ -94,7 +94,7 @@
       "src/fanops/cutover.py": 1,
       "src/fanops/daemon.py": 5,
       "src/fanops/doctor.py": 8,
-      "src/fanops/fanops_hashtags.py": 3,
+      "src/fanops/fanops_hashtags.py": 2,
       "src/fanops/framing.py": 9,
       "src/fanops/health.py": 2,
       "src/fanops/health_model.py": 5,

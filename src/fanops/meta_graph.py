@@ -33,7 +33,7 @@ from requests.adapters import HTTPAdapter
 from fanops.config import Config
 from fanops.errors import MetaInsightsScopeError
 from fanops.log import get_logger
-from fanops.hashtags import METRIC_FIELD, _norm, CAPTION_TAG_RE, HARVEST_CAP
+from fanops.hashtags import _norm, CAPTION_TAG_RE, HARVEST_CAP
 
 
 # Force AF_INET for Graph HTTP only — macOS often blackholes AAAA for graph.facebook.com (~20s then
@@ -322,7 +322,7 @@ def resolve_hashtag(cfg: Config, tag: str, *, get=None) -> Optional[str]:
 def measure_and_harvest(cfg: Config, hid: str, *, get=None) -> tuple[Optional[float], dict[str, int]]:
     """ONE `top_media` fetch serving BOTH jobs — the measurement and the discovery harvest.
 
-    metric  = the FIRST item in Meta's own top_media ordering that carries a `like_count`, verbatim. Meta
+    metric  = the FIRST item in Meta's own top_media ordering that carries play_count or like_count (play preferred). Meta
               ranks the media and Meta supplies the number; this selects, it never computes. An item with
               likes hidden is SKIPPED rather than read as zero (probed live: real top media do hide them).
               No item carries one -> None -> the tag is UNMEASURED, and unmeasured is inadmissible.
@@ -333,8 +333,9 @@ def measure_and_harvest(cfg: Config, hid: str, *, get=None) -> tuple[Optional[fl
 
     Raises GraphThrottled / GraphRefused / GraphUnreachable. A 200 with empty `data` is unmeasured
     `(None, {})` — that is Meta answering, not Meta failing."""
+    # Ask for both visibility fields; prefer play_count then like_count (same compass as scrape Layer A).
     body = _hashtag_get(cfg, f"{hid}/top_media",
-                        {"user_id": cfg.meta_ig_user_id, "fields": f"caption,{METRIC_FIELD}"}, get=get)
+                        {"user_id": cfg.meta_ig_user_id, "fields": "caption,play_count,like_count"}, get=get)
     data = body.get("data") if isinstance(body, dict) else None
     if not isinstance(data, list):
         return None, {}
@@ -343,9 +344,11 @@ def measure_and_harvest(cfg: Config, hid: str, *, get=None) -> tuple[Optional[fl
     for m in data:
         if not isinstance(m, dict):
             continue
-        v = m.get(METRIC_FIELD)
-        if metric is None and isinstance(v, (int, float)) and not isinstance(v, bool) and v >= 0:
-            metric = float(v)
+        if metric is None:
+            for fk in ("play_count", "like_count"):
+                v = m.get(fk)
+                if isinstance(v, (int, float)) and not isinstance(v, bool) and v >= 0:
+                    metric = float(v); break
         for raw in _TAG_RE.findall(m.get("caption") or ""):
             t = _norm(raw)
             if not t:

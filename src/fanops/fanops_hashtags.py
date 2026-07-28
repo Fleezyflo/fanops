@@ -81,7 +81,8 @@ def _rederive_posting_corpora(cfg: Config, *, now=None) -> None:
     from fanops.persona_research import derive_corpus
     try:
         personas = _posting_personas(cfg)
-    except Exception:                                      # noqa: BLE001 — corrupt/absent: skip derive
+    except Exception as e:                                 # noqa: BLE001 — corrupt/absent: skip derive
+        get_logger(cfg)("hashtags", "-", "rederive_skip", err=str(e)[:120])
         return
     for per in personas:
         with fail_open(f"fanops_hashtags.rederive.{getattr(per, 'id', '?')}"):
