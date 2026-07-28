@@ -121,7 +121,8 @@ def expand_persona_vocab(cfg: Config, pid: str, *, model=None) -> dict:
     from fanops.personas import Personas
     try:
         per = Personas.load(cfg).get(pid)
-    except Exception as exc:                                 # noqa: BLE001
+    except Exception as exc:                                 # noqa: BLE001 — fail-open
+        get_logger(cfg)("hashtag_vocab", pid, "personas_error", err=f"{type(exc).__name__}: {str(exc)[:120]}")
         return {"ok": False, "reason": f"personas: {str(exc)[:120]}"}
     if per is None:
         return {"ok": False, "reason": "unknown_persona"}

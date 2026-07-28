@@ -12,9 +12,9 @@
     "why_this_caveat_is_load_bearing": "An initial Cycle-5 partition MANUFACTURED a 13-subsystem cycle out of three mis-filed modules. A taxonomy FEELS like description while it is quietly doing INFERENCE. Any claim made at subsystem level must be traceable to module-level edges before it is trusted (C5-SC-2).",
     "v1_errata": "The v1 index variously said '18 subsystems', '18 + Studio' and '19'. The correct and only number is 19."
   },
-    "totality": {
-    "modules_total": 134,
-    "modules_assigned": 134,
+  "totality": {
+    "modules_total": 135,
+    "modules_assigned": 135,
     "unassigned": 0,
     "double_assigned": 0,
     "ghosts": 0,
@@ -207,12 +207,13 @@
         "caption",
         "fanops_hashtags",
         "hashtag_hygiene",
+        "hashtag_vocab",
         "hashtags",
         "ig_hashtag_scrape",
         "meta_graph",
         "tagging"
       ],
-      "module_count": 7,
+      "module_count": 8,
       "compile_depends_on": [
         "S01_foundation",
         "S02_configuration",
