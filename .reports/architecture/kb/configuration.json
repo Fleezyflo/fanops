@@ -4,7 +4,7 @@
  "git_head": "fcffa73",
  "provenance": "AST census of os.getenv/os.environ.get literal keys across src/fanops, plus os.environ[...] assignment targets.",
  "totals": {
-  "env_vars_read": 72,
+  "env_vars_read": 76,
   "env_write_sites": 2
  },
  "precedence_model": {
@@ -95,13 +95,25 @@
   },
   "FANOPS_CORPUS_TARGET": {
    "read_at": [
-    "fanops.config:438"
+    "fanops.config:440"
    ],
    "reader_count": 1
   },
   "FANOPS_GC_KEEP_DAYS": {
    "read_at": [
     "fanops.config:949"
+   ],
+   "reader_count": 1
+  },
+  "FANOPS_HASHTAG_SCRAPE_COTAG_ENQUEUE": {
+   "read_at": [
+    "fanops.fanops_hashtags:52"
+   ],
+   "reader_count": 1
+  },
+  "FANOPS_HASHTAG_SCRAPE_TRY_CAP": {
+   "read_at": [
+    "fanops.fanops_hashtags:41"
    ],
    "reader_count": 1
   },
@@ -120,6 +132,18 @@
   "FANOPS_IG_RETENTION_PROOF": {
    "read_at": [
     "fanops.config:916"
+   ],
+   "reader_count": 1
+  },
+  "FANOPS_IG_SCRAPE_PASSWORD": {
+   "read_at": [
+    "fanops.config:425"
+   ],
+   "reader_count": 1
+  },
+  "FANOPS_IG_SCRAPE_USER": {
+   "read_at": [
+    "fanops.config:418"
    ],
    "reader_count": 1
   },
