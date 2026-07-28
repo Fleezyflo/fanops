@@ -1125,11 +1125,12 @@ def _cmd_run_pass(cfg: Config, base_time: str) -> dict | None:
                 led = apply_timing_bias(led, cfg)
         except Exception as e:
             get_logger(cfg)("timing_bias", "-", "error", err=str(e)[:120])
-    # WS2: constant Graph-reach hashtag store update — refresh at most once per cadence (12h), throttled by
-    # the store mtime so the 10-min publish cadence doesn't re-run a full Graph pass every tick. NOT gated on
+    # WS2: constant Graph-reach hashtag store update — refresh at most once per cadence (12h), gated on
+    # last_complete_pass (not file mtime) so a throttled write cannot buy silence. NOT gated on
     # is_live_backend (a hashtag's worth is its live platform reach, independent of whether WE publish) —
     # only on Meta creds, handled inside the helper. Its OWN try/except; refresh_store_if_due never raises,
-    # so the unattended run can never break on a hashtag refresh.
+    # so the unattended run can never break on a hashtag refresh. Non-fresh skips log (MOL-525): a missing
+    # token must not look identical to a correctly-throttled tick.
     try:
         from fanops.fanops_hashtags import refresh_store_if_due
         r = refresh_store_if_due(cfg)
@@ -1138,6 +1139,8 @@ def _cmd_run_pass(cfg: Config, base_time: str) -> dict | None:
             get_logger(cfg)("hashtags", "-", "store_refresh_aborted", aborted=r.get("aborted"), reason=r.get("reason", ""))
         elif r.get("refreshed"):
             get_logger(cfg)("hashtags", "-", "store_refreshed", measured=r.get("measured", 0), total=r.get("total", 0))
+        elif r.get("reason") and r.get("reason") != "fresh":
+            get_logger(cfg)("hashtags", "-", "store_refresh_skipped", reason=r.get("reason", ""))
     except Exception as e:
         get_logger(cfg)("hashtags", "-", "refresh_error", err=f"{type(e).__name__}: {str(e)[:120]}")
     # U3: throttled IG follower snapshot — own try/except; refresh_account_stats_if_due never raises.
