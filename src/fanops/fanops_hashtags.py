@@ -35,6 +35,7 @@ _COMPLETE_KEY = "last_complete_pass"   # sibling of tag records; gates the 12h t
 # Tests may monkeypatch these module attrs; env overrides win when set.
 _SCRAPE_TRY_CAP = 120
 _SCRAPE_COTAG_ENQUEUE_CAP = 40
+_SCRAPE_PARALLEL = 4          # concurrent medias_top workers per wave (sequential was ~6s×N wall)
 
 
 def _scrape_try_cap() -> int:
@@ -57,6 +58,17 @@ def _scrape_cotag_enqueue_cap() -> int:
     except ValueError:
         return _SCRAPE_COTAG_ENQUEUE_CAP
     return v if v >= 0 else _SCRAPE_COTAG_ENQUEUE_CAP
+
+
+def _scrape_parallel() -> int:
+    raw = os.getenv("FANOPS_HASHTAG_SCRAPE_PARALLEL")
+    if raw is None:
+        return _SCRAPE_PARALLEL
+    try:
+        v = int(raw)
+    except ValueError:
+        return _SCRAPE_PARALLEL
+    return v if v >= 1 else _SCRAPE_PARALLEL
 
 
 def _read_complete_pass(cfg: Config) -> str | None:
@@ -127,12 +139,18 @@ def refresh_store(cfg: Config, *, scrape_client=None, now=None) -> dict:
     Co-occurring tags are harvested from ANCHORS only — a co-tag's own co-tags would drift away from the
     persona's niche within two hops.
 
+    Network work runs in WAVES of `_scrape_parallel()` (default 4) concurrent fetches — wall time should
+    track wave count, not one-tag-at-a-time. Injected `scrape_client` (tests) shares one client under a
+    lock so fakes stay deterministic.
+
     ABORTS without writing when personas.json is CORRUPT, or when scrape cannot open (`no_scrape`).
     A throttle ends the pass but still writes — evidence already bought is kept.
     `last_complete_pass` advances ONLY when throttled is False (the 12h tick gates on that stamp)."""
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
     from fanops.errors import ControlFileError
     from fanops.ig_hashtag_scrape import (ScrapeRefused, ScrapeThrottled, ScrapeUnavailable,
-                                          measure_and_harvest_scrape, open_client,
+                                          measure_and_harvest_scrape, open_client, session_client,
                                           resolve_hashtag_scrape)
     from fanops.persona_research import persona_terms
     now = now or datetime.now(timezone.utc)
@@ -141,6 +159,7 @@ def refresh_store(cfg: Config, *, scrape_client=None, now=None) -> dict:
         personas = _posting_personas(cfg)
     except ControlFileError as e:                          # corrupt personas.json: ABORT, cache UNTOUCHED
         return {"written": False, "aborted": "corrupt_personas", "reason": str(e)}
+    injected = scrape_client is not None
     if scrape_client is None:
         try:
             scrape_client = open_client(cfg)
@@ -173,6 +192,39 @@ def refresh_store(cfg: Config, *, scrape_client=None, now=None) -> dict:
     unresolved: list[dict] = []
     log = get_logger(cfg)
     try_cap = _scrape_try_cap(); cotag_cap = _scrape_cotag_enqueue_cap()
+    parallel = 1 if injected else _scrape_parallel()
+    workers = [client]
+    client_lock = threading.Lock()                         # shared client (tests / single worker)
+    if parallel > 1:
+        for _ in range(parallel - 1):
+            try:
+                workers.append(session_client(cfg))
+            except ScrapeUnavailable:
+                break
+        if len(workers) > 1:
+            client_lock = None                             # one client per worker — no lock
+            parallel = len(workers)
+        else:
+            parallel = 1
+
+    def _fetch(tag: str, worker):
+        """Resolve+measure one tag. Returns (status, tag, hid|None, metric|None, cotags|exc)."""
+        def _go():
+            hid = ids.get(tag) or resolve_hashtag_scrape(worker, tag)
+            if not hid:
+                return ("no_match", tag, None, None, {})
+            metric, cotags = measure_and_harvest_scrape(worker, tag)
+            return ("ok", tag, hid, metric, cotags)
+        try:
+            if client_lock is not None:
+                with client_lock:
+                    return _go()
+            return _go()
+        except ScrapeThrottled:
+            return ("throttle", tag, None, None, {})
+        except ScrapeRefused as e:
+            return ("refused", tag, None, None, e)
+
     i = 0
     while i < len(queue):
         if tried >= try_cap:
@@ -180,51 +232,62 @@ def refresh_store(cfg: Config, *, scrape_client=None, now=None) -> dict:
             log("hashtags", "-", "pass_try_cap", tried=tried, queue_left=len(queue) - i,
                 cap=try_cap)
             break
-        tag = queue[i]; i += 1
-        tried += 1
-        metric = None; cotags: dict[str, int] = {}; hid = None
-        try:
-            hid = ids.get(tag) or resolve_hashtag_scrape(client, tag)
-            if not hid:
-                unresolved.append({"tag": tag, "reason": "no_match"})
+        batch_n = min(parallel, try_cap - tried, len(queue) - i)
+        batch = queue[i:i + batch_n]
+        i += batch_n
+        tried += batch_n
+        # Run the wave; apply results in QUEUE order so cotag insert priority stays deterministic.
+        ordered: list[tuple] = []
+        with ThreadPoolExecutor(max_workers=max(1, len(batch))) as pool:
+            futs = [pool.submit(_fetch, tag, workers[j % len(workers)]) for j, tag in enumerate(batch)]
+            by_tag = {batch[j]: futs[j] for j in range(len(batch))}
+            for tag in batch:
+                ordered.append(by_tag[tag].result())
+        stop = False
+        if any(st == "throttle" for st, *_ in ordered):
+            throttled = True; stop = True
+        for status, tag, hid, metric, payload in ordered:
+            if status == "throttle":
+                continue                                   # apply sibling successes in this wave, then stop
+            if status == "no_match":
+                unresolved.append({"tag": tag, "reason": "no_match"}); continue
+            if status == "refused":
+                e = payload
+                unresolved.append({"tag": tag, "reason": "refused", "code": getattr(e, "code", None),
+                                   "message": getattr(e, "message", str(e))})
+                log("hashtags", tag, "unresolved", reason="refused",
+                    message=(getattr(e, "message", "") or "")[:120], tried=tried)
                 continue
+            # status == ok
             ids[tag] = hid
-            metric, cotags = measure_and_harvest_scrape(client, tag)
-        except ScrapeThrottled:
-            throttled = True                               # Instagram said stop — the only governor there is
+            cotags = payload if isinstance(payload, dict) else {}
+            if tag in anchor_set:
+                for co, n in cotags.items():
+                    if co in anchor_set:
+                        continue
+                    attribution.setdefault(co, {})
+                    attribution[co][tag] = attribution[co].get(tag, 0) + n
+                    if co not in queued and cotag_enqueued < cotag_cap:
+                        queued.add(co); queue.insert(i, co); discovered += 1; cotag_enqueued += 1
+            if metric is None:
+                continue
+            rec = {"graph_id": hid, METRIC_FIELD: float(metric), "measured_at": stamp}
+            frm = attribution.get(tag)
+            if frm:
+                rec["from"] = {k: int(v) for k, v in frm.items()}
+            cache[tag] = rec; measured += 1
+            if measured % 5 == 0:                                 # mid-pass durable flush — crash loses ≤4 tags
+                mid = {t: cache[t] for t in ranked_tags(cache)
+                       if _fresh(cache[t], now - timedelta(days=_MAX_AGE_DAYS))}
+                if prev_complete:
+                    mid[_COMPLETE_KEY] = prev_complete
+                cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
+                write_json_atomic(cfg.hashtags_path, mid)
+            if tried == 1 or tried % 5 == 0 or measured % 5 == 0:
+                log("hashtags", tag, "measured", tried=tried, measured=measured,
+                    queue_left=len(queue) - i, like_count=float(metric), parallel=parallel)
+        if stop:
             break
-        except ScrapeRefused as e:
-            unresolved.append({"tag": tag, "reason": "refused", "code": e.code,
-                               "message": e.message})
-            log("hashtags", tag, "unresolved", reason="refused", message=(e.message or "")[:120],
-                tried=tried)
-            continue
-        if tag in anchor_set:
-            for co, n in cotags.items():
-                if co in anchor_set:
-                    continue                               # an anchor is its own root, not its own discovery
-                attribution.setdefault(co, {})
-                attribution[co][tag] = attribution[co].get(tag, 0) + n
-                if co not in queued and cotag_enqueued < cotag_cap:
-                    # Priority: measure harvested co-tags BEFORE remaining remesure (append starved expansion).
-                    queued.add(co); queue.insert(i, co); discovered += 1; cotag_enqueued += 1
-        if metric is None:
-            continue                                       # no number -> UNMEASURED -> absent
-        rec = {"graph_id": hid, METRIC_FIELD: float(metric), "measured_at": stamp}
-        frm = attribution.get(tag)
-        if frm:
-            rec["from"] = {k: int(v) for k, v in frm.items()}
-        cache[tag] = rec; measured += 1
-        if measured % 5 == 0:                                 # mid-pass durable flush — crash loses ≤4 tags
-            mid = {t: cache[t] for t in ranked_tags(cache)
-                   if _fresh(cache[t], now - timedelta(days=_MAX_AGE_DAYS))}
-            if prev_complete:
-                mid[_COMPLETE_KEY] = prev_complete            # never advance complete on a partial flush
-            cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
-            write_json_atomic(cfg.hashtags_path, mid)
-        if tried == 1 or tried % 5 == 0:
-            log("hashtags", tag, "measured", tried=tried, measured=measured, queue_left=len(queue) - i,
-                like_count=float(metric))
     cutoff = now - timedelta(days=_MAX_AGE_DAYS)
     fresh = {t: cache[t] for t in ranked_tags(cache) if _fresh(cache[t], cutoff)}
     if not throttled:
@@ -235,7 +298,7 @@ def refresh_store(cfg: Config, *, scrape_client=None, now=None) -> dict:
     write_json_atomic(cfg.hashtags_path, fresh)
     return {"written": True, "measured": measured, "discovered": discovered,
             "total": len([t for t in fresh if t != _COMPLETE_KEY]), "throttled": throttled,
-            "tried": tried, "unresolved": unresolved, "backend": "scrape"}
+            "tried": tried, "unresolved": unresolved, "backend": "scrape", "parallel": parallel}
 
 
 def refresh_store_if_due(cfg: Config, *, max_age_s: int = 43200, scrape_client=None, now=None) -> dict:

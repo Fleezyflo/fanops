@@ -342,3 +342,12 @@ def test_cmd_hashtags_refresh_corrupt_personas_exits_2_and_no_keyerror(tmp_path,
     assert rc == 2
     aborted = next(r for r in recs if r["outcome"] == "refresh_aborted")
     assert "personas.json invalid:" in aborted.get("reason", "")
+
+
+def test_refresh_store_reports_parallel_one_when_client_injected(tmp_path, monkeypatch):
+    """Injected scrape_client (unit fakes) forces parallel=1 so FakeClient stays single-threaded."""
+    import fanops.fanops_hashtags as fh
+    monkeypatch.setattr(fh, "_SCRAPE_PARALLEL", 8)
+    cfg = Config(root=tmp_path); _persona(cfg)
+    out = refresh_store(cfg, scrape_client=_FakeClient({"#hiphop": 10}))
+    assert out.get("parallel") == 1 and out["written"] is True

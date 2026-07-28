@@ -2039,6 +2039,7 @@
     "lazy": [
       "certifi",
       "collections",
+      "concurrent",
       "cv2",
       "datetime",
       "dotenv",
@@ -2063,6 +2064,7 @@
       "sqlite3",
       "subprocess",
       "tempfile",
+      "threading",
       "time",
       "urllib",
       "urllib3",

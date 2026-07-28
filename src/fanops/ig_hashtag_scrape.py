@@ -72,6 +72,26 @@ def open_client(cfg: Config, *, client_factory=None):
     return client
 
 
+def session_client(cfg: Config, *, client_factory=None):
+    """Clone a Client from the dumped session ONLY (no login). For parallel Layer A workers.
+    Raises ScrapeUnavailable when session missing / instagrapi missing / load fails."""
+    sess = cfg.ig_scrape_session_path
+    if not sess.exists():
+        raise ScrapeUnavailable("ig scrape session missing — run fanops hashtags scrape-login")
+    try:
+        if client_factory is None:
+            from instagrapi import Client
+            client_factory = Client
+    except ImportError as e:
+        raise ScrapeUnavailable("instagrapi not installed — pip install -e '.[igscrape]'") from e
+    client = client_factory()
+    try:
+        client.load_settings(str(sess))
+    except Exception as e:                                  # noqa: BLE001
+        raise ScrapeUnavailable(f"scrape session load failed: {_trunc(e)}") from e
+    return client
+
+
 def resolve_hashtag_scrape(client, tag: str) -> Optional[str]:
     """Resolve '#tag' via instagrapi hashtag_info -> str(id), or None when no such tag."""
     name = _norm(tag).lstrip("#")

@@ -89,13 +89,19 @@
     },
     "FANOPS_HASHTAG_SCRAPE_COTAG_ENQUEUE": {
       "read_at": [
-        "fanops.fanops_hashtags:52"
+        "fanops.fanops_hashtags:53"
+      ],
+      "reader_count": 1
+    },
+    "FANOPS_HASHTAG_SCRAPE_PARALLEL": {
+      "read_at": [
+        "fanops.fanops_hashtags:64"
       ],
       "reader_count": 1
     },
     "FANOPS_HASHTAG_SCRAPE_TRY_CAP": {
       "read_at": [
-        "fanops.fanops_hashtags:41"
+        "fanops.fanops_hashtags:42"
       ],
       "reader_count": 1
     },
@@ -479,7 +485,7 @@
     "src/fanops/**/*.py"
   ],
   "totals": {
-    "env_vars_read": 75,
+    "env_vars_read": 76,
     "env_write_sites": 2
   }
 }
