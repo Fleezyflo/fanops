@@ -34,7 +34,7 @@ def _graph(media_by_tag, *, calls=None, search_status=200):
         if url.endswith("/top_media"):
             tag = "#" + url.rsplit("/", 2)[-2].replace("id-", "")
             return _Resp(200, {"data": list(media_by_tag.get(tag, []))})
-        return _Resp(404, None)
+        return _Resp(404, {"error": {"code": 100, "message": "unknown path"}})
     return get
 
 
@@ -328,13 +328,14 @@ def test_throttle_backs_off_then_stops_the_pass_with_evidence_intact(tmp_path, m
             return _Resp(400, {"error": {"code": 4, "message": "rate limit"}})   # throttle
         if url.endswith("/top_media"):
             return _Resp(200, {"data": list(media)})
-        return _Resp(404, None)
+        return _Resp(404, {"error": {"code": 100, "message": "unknown"}})
     refresh_store(cfg, get=get)
     assert slept, "a throttle must back off before giving up"
     assert load_measurements(cfg)["#hiphop"][METRIC_FIELD] == 42, "evidence accrued before the stop persists"
 
 
-def test_ordinary_refusal_skips_the_tag_and_the_pass_continues(tmp_path, monkeypatch):
+def test_ordinary_refusal_is_recorded_and_the_pass_continues(tmp_path, monkeypatch):
+    """Meta's non-throttle error reaches the pass result — never a silent skip that invents 'no such tag'."""
     _live(monkeypatch)
     cfg = Config(root=tmp_path)
     pid = _persona(cfg, niche=["hiphop", "bars"]); _link_active(cfg, pid)
@@ -342,16 +343,22 @@ def test_ordinary_refusal_skips_the_tag_and_the_pass_continues(tmp_path, monkeyp
         p = params or {}
         if "ig_hashtag_search" in url:
             if p.get("q") == "bars":
-                return _Resp(400, {"error": {"code": 18, "message": "search window"}})
+                return _Resp(400, {"error": {"code": 18, "error_subcode": 2207034, "message": "resource limits",
+                                             "type": "OAuthException"}})
             return _Resp(200, {"data": [{"id": "id-" + p.get("q", "")}]})
         if url.endswith("/top_media"):
             tag = url.rsplit("/", 2)[-2].replace("id-", "")
             if tag == "hiphop":
                 return _Resp(200, {"data": [{"caption": "", "like_count": 7, "comments_count": 0}]})
-        return _Resp(404, None)
-    refresh_store(cfg, get=get)
+            return _Resp(200, {"data": []})
+        return _Resp(404, {"error": {"code": 100, "message": "unknown"}})
+    out = refresh_store(cfg, get=get)
     m = load_measurements(cfg)
     assert "#hiphop" in m and "#bars" not in m
+    assert out["tried"] >= 2
+    refused = [u for u in out["unresolved"] if u.get("reason") == "refused" and u.get("tag") == "#bars"]
+    assert refused and refused[0]["code"] == 18 and refused[0]["subcode"] == 2207034
+    assert "resource limits" in (refused[0].get("message") or "")
     assert not (cfg.control / "hashtag_budget.json").exists()
 
 
@@ -361,5 +368,6 @@ def test_accrual_never_clobbers_on_a_dead_pass(tmp_path, monkeypatch):
     pid = _persona(cfg, voice="hiphop"); _link_active(cfg, pid)
     media = {"#hiphop": [{"caption": "", "like_count": 42, "comments_count": 0}]}
     refresh_store(cfg, get=_graph(media))
-    refresh_store(cfg, get=lambda url, params=None, timeout=None: _Resp(500, None))
+    out = refresh_store(cfg, get=lambda url, params=None, timeout=None: _Resp(500, {"error": {"code": 1, "message": "down"}}))
     assert load_measurements(cfg)["#hiphop"][METRIC_FIELD] == 42
+    assert out["unresolved"], "a dead pass must surface Meta's refusals, not swallow them"

@@ -2,10 +2,11 @@
 """A thin, READ-ONLY Meta Graph client. Used by `hashtags refresh` (the hashtag half) and by the
 metrics/insights paths; never on the publish path. Design rules:
 
-  The TRANSPORT fails SOFT. Any per-tag fetch failure (no creds, 401, 5xx, timeout, non-JSON,
-  unresolved hashtag) returns None and the tag is skipped — a later pass retries it. The token is sent
-  as the Graph `access_token` param and is NEVER logged/echoed (METRICS_CLIENT_AUTH_DISCIPLINE —
-  mirrors post/metrics.py).
+  Hashtag LOOKUPS never swallow Meta's answer. A non-throttle error raises `GraphRefused` carrying
+  Meta's own code/subcode/type/message; a transport failure raises `GraphUnreachable`. `resolve_hashtag`
+  returns None ONLY when Meta answered HTTP 200 with an empty match list — that is the unambiguous
+  "no such hashtag". The token is sent as the Graph `access_token` param and is NEVER logged/echoed
+  (METRICS_CLIENT_AUTH_DISCIPLINE — mirrors post/metrics.py).
 
   META IS THE ONLY GOVERNOR of how much a hashtag pass gets through. There is no local budget: the
   previous `_BUDGET_LIMIT = 30 unique searches / 7 days` was a hardcoded guess that logged every search
@@ -207,6 +208,27 @@ class GraphThrottled(Exception):
     that bounds a pass — there is no local allowance model to consult."""
 
 
+class GraphRefused(Exception):
+    """Meta answered with a non-throttle error object. Carries Meta's own fields so a caller can tell
+    'refused' from 'no such hashtag' — never collapse either into a bare None."""
+    def __init__(self, path: str, *, code=None, subcode=None, type=None, message: str = ""):
+        self.path = path
+        self.code = code if isinstance(code, int) and not isinstance(code, bool) else None
+        self.subcode = subcode if isinstance(subcode, int) and not isinstance(subcode, bool) else None
+        self.type = type if isinstance(type, str) else None
+        self.message = (message or "")[:160]                  # never carry a long body / token echo
+        super().__init__(f"Meta refused {path}: code={self.code} subcode={self.subcode} "
+                         f"type={self.type} msg={self.message}")
+
+
+class GraphUnreachable(Exception):
+    """The request never reached Meta (transport / non-JSON). Carries a short reason; never the token."""
+    def __init__(self, path: str, *, reason: str = ""):
+        self.path = path
+        self.reason = (reason or "")[:160]
+        super().__init__(f"Meta unreachable {path}: {self.reason}")
+
+
 _THROTTLE_CODES = frozenset({4, 17, 32, 613})   # Meta's own rate-limit codes: app / user / page / custom
 _MAX_RL_RETRIES = 3                             # total attempts = retries + 1 (mirrors llm.py's ladder)
 _RL_BASE_DELAY = 2.0                            # seconds; doubled per attempt + jittered
@@ -222,33 +244,47 @@ def _error_code(body) -> Optional[int]:
     return code if isinstance(code, int) and not isinstance(code, bool) else None
 
 
+def _refused_from_body(path: str, body) -> GraphRefused:
+    """Build GraphRefused from Meta's error object (or an empty shell when the body carried none)."""
+    err = body.get("error") if isinstance(body, dict) else None
+    if not isinstance(err, dict):
+        return GraphRefused(path)
+    msg = err.get("message")
+    typ = err.get("type")
+    return GraphRefused(path, code=err.get("code"), subcode=err.get("error_subcode"),
+                        type=typ if isinstance(typ, str) else None,
+                        message=msg if isinstance(msg, str) else "")
+
+
 def _hashtag_get(cfg: Config, path: str, params: dict, *, get=None):
     """One hashtag-endpoint GET, with Meta's own refusals as the only control loop.
 
-    Returns the parsed body, or None when Meta refused for any reason OTHER than throttling (that tag is
-    skipped; a later pass retries it — a refusal costs nothing and predicts nothing). Raises
-    GraphThrottled when a throttle code survives the jittered-backoff ladder, which is the signal to end
-    the pass. The token rides the `access_token` param and never enters a logged string."""
+    Returns the parsed body on HTTP 200. Raises GraphThrottled when a throttle code survives the
+    jittered-backoff ladder (end the pass). Raises GraphRefused for any other Meta error object — the
+    caller MUST see Meta's code/subcode/message. Raises GraphUnreachable on transport / non-JSON.
+    The token rides the `access_token` param and never enters a logged or exception string."""
     get = get or _default_get
     delay = _RL_BASE_DELAY
     for attempt in range(_MAX_RL_RETRIES + 1):
         try:
             resp = get(f"{cfg.meta_graph_url}/{path}",
                        params={**params, "access_token": cfg.meta_graph_token}, timeout=20)
-        except requests.exceptions.RequestException:
-            return None                                  # transport hiccup: skip the tag, keep the pass
+        except requests.exceptions.RequestException as exc:
+            raise GraphUnreachable(path, reason=f"{type(exc).__name__}: {exc}") from exc
         if getattr(resp, "status_code", None) == 200:
             try:
                 body = resp.json()
-            except ValueError:
-                return None
-            return body if isinstance(body, dict) else None
+            except ValueError as exc:
+                raise GraphUnreachable(path, reason=f"non_json: {exc}") from exc
+            if not isinstance(body, dict):
+                raise GraphUnreachable(path, reason="non_object_body")
+            return body
         try:
             body = resp.json()
         except (ValueError, AttributeError):
             body = None
         if _error_code(body) not in _THROTTLE_CODES:
-            return None                                  # ordinary refusal -> skip this tag only
+            raise _refused_from_body(path, body)             # Meta's own words — never swallow to None
         if attempt < _MAX_RL_RETRIES:
             _sleep(delay + random.uniform(0, delay))     # jitter so retries don't land in lockstep
             delay *= 2
@@ -257,7 +293,10 @@ def _hashtag_get(cfg: Config, path: str, params: dict, *, get=None):
 
 def resolve_hashtag(cfg: Config, tag: str, *, get=None) -> Optional[str]:
     """Resolve '#tag' to its Graph hashtag-node id via ig_hashtag_search (`q` carries no leading '#').
-    None when the tag does not resolve or Meta refused; raises GraphThrottled on a persistent throttle.
+
+    Returns None ONLY when Meta answered and there is no such hashtag (HTTP 200, empty `data`).
+    Raises GraphRefused / GraphUnreachable / GraphThrottled for every other failure — a bare None must
+    never mean "Meta errored" or "the socket dropped".
 
     Node ids are STABLE and global, which is why callers cache them: a tag we have already resolved never
     spends another search, so the search endpoint funds novel discovery only.
@@ -291,7 +330,8 @@ def measure_and_harvest(cfg: Config, hid: str, *, get=None) -> tuple[Optional[fl
               and it is also where versatility comes from: the posts winning in a niche right now carry
               both the niche tags and the broad ones.
 
-    Raises GraphThrottled; any other refusal -> (None, {})."""
+    Raises GraphThrottled / GraphRefused / GraphUnreachable. A 200 with empty `data` is unmeasured
+    `(None, {})` — that is Meta answering, not Meta failing."""
     body = _hashtag_get(cfg, f"{hid}/top_media",
                         {"user_id": cfg.meta_ig_user_id, "fields": f"caption,{METRIC_FIELD}"}, get=get)
     data = body.get("data") if isinstance(body, dict) else None

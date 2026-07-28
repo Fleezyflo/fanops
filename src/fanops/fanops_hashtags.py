@@ -82,7 +82,8 @@ def refresh_store(cfg: Config, *, get=None, now=None) -> dict:
     ABORTS without writing when personas.json is CORRUPT: a bad hand-edit to a control file must not
     clobber the cache. A throttle ends the pass but still writes — evidence already bought is kept."""
     from fanops.errors import ControlFileError
-    from fanops.meta_graph import GraphThrottled, measure_and_harvest, resolve_hashtag
+    from fanops.meta_graph import (GraphRefused, GraphThrottled, GraphUnreachable,
+                                   measure_and_harvest, resolve_hashtag)
     from fanops.persona_research import persona_terms
     now = now or datetime.now(timezone.utc)
     stamp = now.isoformat()
@@ -104,19 +105,30 @@ def refresh_store(cfg: Config, *, get=None, now=None) -> dict:
                    key=lambda t: cache[t].get("measured_at") or "")     # stalest first
     queue: list[str] = anchors + known
     queued: set[str] = set(queue)
-    measured = 0; discovered = 0; throttled = False
+    measured = 0; discovered = 0; throttled = False; tried = 0
+    unresolved: list[dict] = []
     i = 0
     while i < len(queue):
         tag = queue[i]; i += 1
+        tried += 1
+        metric = None; cotags: dict[str, int] = {}; hid = None
         try:
             hid = ids.get(tag) or resolve_hashtag(cfg, tag, get=get)
             if not hid:
-                continue                                   # unresolvable today; a later pass retries it
+                unresolved.append({"tag": tag, "reason": "no_match"})  # Meta 200 + empty data only
+                continue
             ids[tag] = hid
             metric, cotags = measure_and_harvest(cfg, hid, get=get)
         except GraphThrottled:
             throttled = True                               # Meta said stop — the only governor there is
             break
+        except GraphRefused as e:
+            unresolved.append({"tag": tag, "reason": "refused", "code": e.code,
+                               "subcode": e.subcode, "type": e.type, "message": e.message})
+            continue
+        except GraphUnreachable as e:
+            unresolved.append({"tag": tag, "reason": "unreachable", "message": e.reason})
+            continue
         if tag in anchor_set:
             for co, n in cotags.items():
                 if co in anchor_set:
@@ -137,7 +149,7 @@ def refresh_store(cfg: Config, *, get=None, now=None) -> dict:
     cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
     write_json_atomic(cfg.hashtags_path, fresh)
     return {"written": True, "measured": measured, "discovered": discovered,
-            "total": len(fresh), "throttled": throttled}
+            "total": len(fresh), "throttled": throttled, "tried": tried, "unresolved": unresolved}
 
 
 def refresh_store_if_due(cfg: Config, *, max_age_s: int = 43200, get=None, now=None) -> dict:
@@ -172,8 +184,16 @@ def cmd_hashtags_refresh(cfg: Config) -> int:
                         aborted=r.get("aborted", "unknown"), reason=r.get("reason", ""),
                         detail="00_control/hashtags.json left untouched; fix personas.json")
         return 2
+    unresolved = r.get("unresolved") or []
+    codes = sorted({u.get("code") for u in unresolved if u.get("code") is not None})
     get_logger(cfg)("hashtags", "-", "refreshed", measured=r["measured"], discovered=r["discovered"],
-                    total=r["total"], throttled=r["throttled"], path=str(cfg.hashtags_path))
+                    total=r["total"], throttled=r["throttled"], tried=r.get("tried", 0),
+                    unresolved=len(unresolved), refusal_codes=",".join(str(c) for c in codes),
+                    path=str(cfg.hashtags_path))
+    for u in unresolved[:20]:                                    # cap log blast; full list is in the return
+        get_logger(cfg)("hashtags", u.get("tag") or "-", "unresolved",
+                        reason=u.get("reason"), code=u.get("code"), subcode=u.get("subcode"),
+                        type=u.get("type"), message=(u.get("message") or "")[:160])
     return 0
 
 

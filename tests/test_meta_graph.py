@@ -1,9 +1,10 @@
 # tests/test_meta_graph.py
 # The read-only Meta Graph HASHTAG client. Pure-fixture (mocked `get`), no real network. Covers:
-# ig_hashtag_search -> node id, top_media -> (verbatim like_count, co-occurring tags), transport
-# fail-SOFT (per-tag None, never raises), throttle backoff -> GraphThrottled (Meta's own refusal is the
-# ONLY governor — the local 30/7-day budget fiction is deleted), the token NEVER appearing in any logged
-# output (METRICS_CLIENT_AUTH_DISCIPLINE), and the IPv4-only default transport.
+# ig_hashtag_search -> node id, top_media -> (verbatim like_count, co-occurring tags), typed Meta
+# refusals (GraphRefused / GraphUnreachable — never a bare None for an error), throttle backoff ->
+# GraphThrottled (Meta's own refusal is the ONLY governor — the local 30/7-day budget fiction is
+# deleted), the token NEVER appearing in any logged / exception string (METRICS_CLIENT_AUTH_DISCIPLINE),
+# and the IPv4-only default transport.
 import pytest
 from fanops.config import Config
 from fanops import meta_graph
@@ -41,10 +42,22 @@ def test_resolve_hashtag_parses_first_data_id(tmp_path, monkeypatch):
     assert meta_graph.resolve_hashtag(cfg, "#hiphop", get=get) == "177"
     assert get.calls[0][1]["q"] == "hiphop"                        # `q` carries no leading '#'
 
-def test_resolve_hashtag_none_on_empty_or_error(tmp_path, monkeypatch):
+def test_resolve_hashtag_none_means_no_such_hashtag(tmp_path, monkeypatch):
+    """None is reserved for Meta's empty match (HTTP 200, empty data). Nothing else may collapse into it."""
     cfg = _cfg(tmp_path, monkeypatch)
     assert meta_graph.resolve_hashtag(cfg, "#x", get=_router({"ig_hashtag_search": _Resp(200, {"data": []})})) is None
-    assert meta_graph.resolve_hashtag(cfg, "#x", get=_router({"ig_hashtag_search": _Resp(400, None)})) is None
+
+def test_resolve_hashtag_raises_graph_refused_on_meta_error(tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path, monkeypatch)
+    get = _router({"ig_hashtag_search": _Resp(400, {"error": {
+        "message": "This API call could not be completed due to resource limits",
+        "type": "OAuthException", "code": 18, "error_subcode": 2207034}})})
+    with pytest.raises(meta_graph.GraphRefused) as ei:
+        meta_graph.resolve_hashtag(cfg, "#a", get=get)
+    exc = ei.value
+    assert exc.code == 18 and exc.subcode == 2207034 and exc.type == "OAuthException"
+    assert "resource limits" in exc.message
+    assert _TOKEN not in str(exc)
 
 def test_resolve_hashtag_no_creds_never_touches_the_network(tmp_path, monkeypatch):
     cfg = _cfg(tmp_path, monkeypatch, token=None)
@@ -52,11 +65,12 @@ def test_resolve_hashtag_no_creds_never_touches_the_network(tmp_path, monkeypatc
     assert meta_graph.resolve_hashtag(cfg, "#a", get=get) is None
     assert get.calls == []                                         # short-circuits BEFORE any request
 
-def test_graph_get_fail_soft_on_transport_error(tmp_path, monkeypatch):
+def test_graph_get_raises_unreachable_on_transport_error(tmp_path, monkeypatch):
     cfg = _cfg(tmp_path, monkeypatch)
     import requests
     def boom(url, params=None, timeout=None): raise requests.exceptions.ConnectionError("down")
-    assert meta_graph.resolve_hashtag(cfg, "#x", get=boom) is None  # never raises -> the tag is skipped
+    with pytest.raises(meta_graph.GraphUnreachable):
+        meta_graph.resolve_hashtag(cfg, "#x", get=boom)
 
 
 # ── measure_and_harvest: ONE top_media fetch serves the metric AND the discovery harvest ────────
@@ -77,9 +91,17 @@ def test_measure_skips_a_media_with_likes_hidden(tmp_path, monkeypatch):
                                                      {"caption": "", "like_count": 777}]})})
     assert meta_graph.measure_and_harvest(cfg, "id-x", get=get)[0] == 777.0
 
-def test_measure_and_harvest_unmeasured_on_refusal(tmp_path, monkeypatch):
+def test_measure_and_harvest_unmeasured_on_empty_media(tmp_path, monkeypatch):
     cfg = _cfg(tmp_path, monkeypatch)
-    assert meta_graph.measure_and_harvest(cfg, "id-x", get=_router({})) == (None, {})
+    get = _router({"top_media": _Resp(200, {"data": []})})
+    assert meta_graph.measure_and_harvest(cfg, "id-x", get=get) == (None, {})
+
+def test_measure_and_harvest_raises_on_meta_refusal(tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path, monkeypatch)
+    get = _router({"top_media": _Resp(400, {"error": {"code": 100, "message": "unsupported get request"}})})
+    with pytest.raises(meta_graph.GraphRefused) as ei:
+        meta_graph.measure_and_harvest(cfg, "id-x", get=get)
+    assert ei.value.code == 100
 
 
 # ── Meta's refusals are the only governor ───────────────────────────────────────────────────────
@@ -94,19 +116,28 @@ def test_throttle_code_backs_off_then_raises_graph_throttled(tmp_path, monkeypat
     assert len(slept) == meta_graph._MAX_RL_RETRIES                # backed off before giving up
     assert len(get.calls) == meta_graph._MAX_RL_RETRIES + 1
 
-def test_ordinary_refusal_is_a_skip_not_a_throttle(tmp_path, monkeypatch):
-    # code 18 (the server-side search window) is NOT a throttle: that tag is skipped, the pass continues.
+def test_non_throttle_meta_error_is_graph_refused_not_none(tmp_path, monkeypatch):
+    # code 18 is Meta's own error object — raise it; never collapse to None (that invented "no such tag").
     cfg = _cfg(tmp_path, monkeypatch)
     slept: list = []
     monkeypatch.setattr(meta_graph, "_sleep", lambda s: slept.append(s))
-    get = _router({"ig_hashtag_search": _Resp(400, {"error": {"code": 18}})})
-    assert meta_graph.resolve_hashtag(cfg, "#a", get=get) is None
+    get = _router({"ig_hashtag_search": _Resp(400, {"error": {"code": 18, "error_subcode": 2207034,
+                                                               "message": "resource limits"}})})
+    with pytest.raises(meta_graph.GraphRefused) as ei:
+        meta_graph.resolve_hashtag(cfg, "#a", get=get)
+    assert ei.value.code == 18 and ei.value.subcode == 2207034
     assert slept == [] and len(get.calls) == 1                     # no retry ladder, no wait
 
 def test_token_never_logged(tmp_path, monkeypatch):
     cfg = _cfg(tmp_path, monkeypatch)
-    meta_graph.resolve_hashtag(cfg, "#a", get=_router({}))
-    meta_graph.measure_and_harvest(cfg, "id-a", get=_router({}))
+    try:
+        meta_graph.resolve_hashtag(cfg, "#a", get=_router({}))
+    except meta_graph.GraphRefused as e:
+        assert _TOKEN not in str(e)
+    try:
+        meta_graph.measure_and_harvest(cfg, "id-a", get=_router({}))
+    except meta_graph.GraphRefused as e:
+        assert _TOKEN not in str(e)
     log_text = cfg.log_path.read_text() if cfg.log_path.exists() else ""
     assert _TOKEN not in log_text                                  # the token must never reach run.log
 
