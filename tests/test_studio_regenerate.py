@@ -40,8 +40,10 @@ def test_regenerate_rewrites_queued_post(tmp_path):
     assert res.ok is True
     p = Ledger.load(cfg).posts["p_edit"]
     # pipeline parity (ingest_captions contract): the written caption IS the vetted <=4-tag line —
-    # raw model prose/tags are never persisted past the vet.
-    assert p.caption == " ".join(p.hashtags) and 0 < len(p.hashtags) <= 4
+    # raw model prose/tags are never persisted past the vet. Cold fixture (no corpus/store): unmeasured
+    # picks die and the line is honest-empty (discovery floor deleted). Non-empty survival is covered
+    # by test_regenerate_payload_carries_corpus_and_vet_keeps_it.
+    assert p.hashtags == [] and p.caption == ""
     assert p.caption != "PUNCHIER LINE"
     assert res.detail["caption"] == p.caption
 
@@ -178,11 +180,11 @@ def test_regenerate_route_swaps_edit_field(tmp_path, monkeypatch):
     r = app.test_client().post("/regenerate/p_edit", data={"guidance": "punchier"})
     # The route re-renders the VETTED line, not the model's raw pick. With no measurement cache and no
     # derived corpus in this fixture, #hiphop carries no platform evidence and is therefore not in the
-    # membership set — what survives is the platform discovery tag. That IS the contract: a tag ships only
-    # when the platform measured it, and a thin line is correct where a padded one would be a lie.
-    assert r.status_code == 200 and b"#reels" in r.data
+    # membership set — cold path ships empty. That IS the contract: a tag ships only when the platform
+    # measured it, and an empty line is correct where a padded one would be a lie.
+    assert r.status_code == 200
     p = Ledger.load(cfg).posts["p_edit"]
-    assert p.caption == " ".join(p.hashtags) and p.hashtags == ["#reels"]
+    assert p.hashtags == [] and p.caption == ""
 
 def test_regenerate_route_unknown_post_shows_clean_error(tmp_path):
     from fanops.studio.app import create_app

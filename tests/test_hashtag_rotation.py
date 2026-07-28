@@ -120,12 +120,12 @@ def test_ar_floor_survives_rotation():
     assert len(out) == 4 and any("arab" in t for t in out)
 
 
-def test_discovery_floor_survives_rotation():
-    from fanops.hashtags import _DISCOVERY, _DISCOVERY_DEFAULT
-    disc = set(_DISCOVERY[Platform.instagram]) | set(_DISCOVERY_DEFAULT)
+def test_rotation_does_not_pad_with_discovery():
+    # discovery floor deleted: rotation stays inside the corpus; no #reels/#fyp pad.
     corpus = ["#myscene", "#another", "#third"]
     out = vet_hashtags([], Platform.instagram, "en", corpus=corpus, recent=["#myscene"])
-    assert any(t in disc for t in out)
+    assert set(out) <= set(corpus)
+    assert not any(t in ("#reels", "#fyp", "#foryou", "#viral") for t in out)
 
 
 def test_full_pool_coverage_walk():
@@ -195,7 +195,7 @@ def test_ingest_empty_surface_store_short_line(tmp_path):
     }))
     _clip(led, "clip_1")
     led = _ingest(cfg, led, "clip_1", hashtags=["#hiphop", "#rap"], hashtag_store=[])
-    assert led.clips["clip_1"].meta_captions["a/instagram"]["hashtags"] == ["#reels"]
+    assert led.clips["clip_1"].meta_captions["a/instagram"]["hashtags"] == []
 
 
 def test_tag_exposure_counts(tmp_path):

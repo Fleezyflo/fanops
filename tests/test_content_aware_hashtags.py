@@ -58,19 +58,19 @@ def test_content_none_is_byte_identical(corpus):
     assert base == withc
 
 
-def test_content_floor_reserves_one_slot_when_the_measured_menu_fills_four():
-    # model fills all 4 with measured tags; a content tag still claims exactly one slot.
+def test_content_does_not_reserve_when_the_measured_menu_fills_four():
+    # content reservation deleted: model fills all 4 with measured tags; content does not displace.
     out = vet_hashtags(["#hiphop", "#rap", "#bars", "#newmusic"], Platform.instagram, "en",
                        store=STORE, content=["#loyalty"])
-    assert "#loyalty" in out and len(out) == 4
+    assert "#loyalty" not in out and len(out) == 4
 
 
 def test_arabic_region_floor_still_wins_over_content():
-    # an Arabic clip under a corpus keeps its region tag AND gets a content tag (both floors satisfied).
+    # an Arabic clip under a corpus keeps its region tag; content no longer reserves a competing floor.
     out = vet_hashtags(["#hiphop", "#rap", "#bars", "#newmusic"], Platform.instagram, "ar",
                        store=STORE, corpus=["#viral", "#rapmusic", "#hiphop"], content=["#loyalty"])
     assert any(t in set(H._ARABIC) for t in out)       # region reach preserved
-    assert "#loyalty" in out
+    assert "#loyalty" not in out                       # content reservation deleted
 
 
 # ---- Task 3: provenance -- every shipped tag traces to a real signal ----------------------------------
@@ -79,7 +79,7 @@ def test_every_kept_tag_has_a_source():
                                         corpus=["#viral", "#rapmusic", "#hiphop", "#customtag"], content=["#diss"])
     assert set(sources) == set(tags)                   # one source per shipped tag
     assert all(sources[t] for t in tags)               # none empty/sourceless
-    assert set(sources.values()) <= {"content", "corpus", "region", "graph-reach", "discovery"}
+    assert set(sources.values()) <= {"content", "corpus", "region", "graph-reach"}
 
 
 def test_source_priority_content_over_the_measured_menu():
@@ -119,19 +119,20 @@ def test_offbrand_content_candidate_not_admitted_to_membership():
     assert "#begging" not in out
 
 
-def test_clean_content_floor_still_force_inserts_unchanged():
-    # HAPPY PATH unchanged: a clean top token still claims the content-floor slot when the model's picks
-    # don't cover a content tag (mirrors the measured-menu-fills-four case above).
-    out = vet_hashtags(["#hiphop", "#rap", "#bars", "#newmusic"], Platform.instagram, "en",
+def test_clean_content_still_ships_when_model_picks_it():
+    # content reservation deleted: a clean content tag ships only via membership (model pick), not a floor.
+    out = vet_hashtags(["#loyalty", "#hiphop", "#rap", "#bars"], Platform.instagram, "en",
                        store=STORE, content=["#loyalty"])
     assert "#loyalty" in out and len(out) == 4
 
 
-def test_offbrand_screen_leaves_next_clean_content_tag_as_floor():
-    # when the top content token is off-brand, the NEXT clean content token still reaches the line.
-    out = vet_hashtags(["#hiphop", "#rap", "#bars", "#newmusic"], Platform.instagram, "en",
+def test_offbrand_screen_drops_content_from_membership():
+    # when the top content token is off-brand it is screened; without a content floor the clean runner-up
+    # only ships if the model picks it (membership), not via a reserved slot.
+    out = vet_hashtags(["#loyalty", "#hiphop", "#rap", "#bars"], Platform.instagram, "en",
                        store=STORE, content=["#begging", "#loyalty"])
-    assert "#loyalty" in out                           # the clean runner-up content tag still floors
+    assert "#begging" not in out
+    assert "#loyalty" in out                           # model-picked clean content still admits
 
 
 # ---- Task 4: content reaches the POSTED line through request/ingest (the crux) ------------------------
@@ -203,7 +204,7 @@ def _ingest_empty(led, cfg, clip_id):
 
 
 def test_two_clips_one_persona_ship_the_same_line_without_a_corpus(tmp_path):
-    # corpus-only: with no corpus and a cold cache both clips get the same line (the discovery slot) —
+    # corpus-only: with no corpus and a cold cache both clips get the same empty line —
     # the content channel is dormant in the pipeline, so two different transcripts do NOT diverge.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path="/s.mp4", language="en"))
@@ -213,12 +214,12 @@ def test_two_clips_one_persona_ship_the_same_line_without_a_corpus(tmp_path):
     led = _ingest_empty(led, cfg, "clip_b")
     a = led.clips["clip_a"].meta_captions["a/instagram"]["hashtags"]
     b = led.clips["clip_b"].meta_captions["a/instagram"]["hashtags"]
-    assert a == b == ["#reels"]                                # the honest cold-cache floor, not a padded line
+    assert a == b == []                                        # honest cold-cache floor: empty, not padded
     assert not any(t in ("#diss", "#fiery", "#betrayal", "#tender", "#lullaby", "#devotion") for t in a)
 
 
 def test_seed_fallback_entry_carries_tag_sources(tmp_path):
-    # corpus-only: all sources are corpus/region/graph-reach/discovery — never "content".
+    # corpus-only: all sources are corpus/region/graph-reach — never "content".
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path="/s.mp4", language="en"))
     _seed(led, clip_id="clip_a", mom_id="mom_a", transcript="a fiery diss track about betrayal")
@@ -271,7 +272,7 @@ def _surface_post(**kw):
 def test_surface_edit_renders_tag_source_chips(tmp_path):
     from fanops.studio.app import create_app
     app = create_app(Config(root=tmp_path))
-    sp = _surface_post(tag_sources={"#diss": "content", "#fyp": "discovery"})
+    sp = _surface_post(tag_sources={"#diss": "content", "#hiphop": "graph-reach"})
     with app.test_request_context():
         html = app.jinja_env.get_template("_surface_edit.html").render(s=sp, backend="dryrun")
     assert "#diss" in html and "content" in html and "tag-src" in html   # the provenance chip renders

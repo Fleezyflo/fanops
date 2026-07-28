@@ -22,7 +22,7 @@ def test_drops_random_ai_words_keeps_only_measured():
     out = vet_hashtags(["#hiphop", "#totallymadeup", "#xyzzy", "#vibes2026"], Platform.instagram, "en",
                        store=STORE)
     assert "#totallymadeup" not in out and "#xyzzy" not in out and "#vibes2026" not in out
-    assert all(t in STORE or t == "#reels" for t in out)   # survivors: the cache + the one discovery slot
+    assert all(t in STORE for t in out)                    # survivors: measured cache only
 
 
 def test_store_order_is_the_rank():
@@ -49,7 +49,7 @@ def test_normalizes_and_dedupes_case_and_hash():
 def test_empty_input_backfills_from_the_measured_menu():
     out = vet_hashtags([], Platform.tiktok, "en", store=STORE)
     assert len(out) == 4
-    assert all(t in STORE or t == "#fyp" for t in out)   # never random — the cache + the discovery slot
+    assert all(t in STORE for t in out)                 # never random — measured cache only
 
 
 def test_returns_all_lowercase_hash_prefixed():
@@ -95,13 +95,11 @@ def test_load_measurements_drops_half_records_and_the_legacy_shape(tmp_path):
 
 # --- per-account hashtag CORPUS (persona differentiation) ---------------------------------------
 
-def test_corpus_account_keeps_a_platform_discovery_tag():
-    # a non-viral corpus ate all 4 slots with flavor tags and LOST its platform discovery tag
-    # (#fyp/#reels/#foryou/#viral) — a real reach loss. Guarantee one discovery tag survives.
-    from fanops.hashtags import _DISCOVERY, _DISCOVERY_DEFAULT
-    disc = set(_DISCOVERY[Platform.tiktok]) | set(_DISCOVERY_DEFAULT)
+def test_corpus_account_ships_corpus_only_without_discovery_pad():
+    # discovery floor deleted: a corpus-only account ships its curated tags, never a #fyp/#reels pad.
     out = vet_hashtags(None, Platform.tiktok, "en", corpus=["#lyrics", "#bars", "#newmusic"])
-    assert any(t in disc for t in out), f"a corpus account lost its discovery tag: {out}"
+    assert out == ["#lyrics", "#bars", "#newmusic"]
+    assert not any(t in ("#fyp", "#foryou", "#viral", "#reels") for t in out)
 
 
 def test_corpus_none_is_byte_identical_to_default():
@@ -122,7 +120,7 @@ def test_corpus_floats_its_tag_ahead_of_the_metric_rank():
 def test_corpus_leads_the_line():
     out = vet_hashtags(None, Platform.instagram, "en", store=STORE,
                        corpus=["#viral", "#rapmusic", "#hiphop"])
-    assert out[0] == "#viral"                        # corpus order leads the discovery/metric backfill
+    assert out[0] == "#viral"                        # corpus order leads the metric backfill
 
 
 def test_corpus_still_hard_caps_at_four():
@@ -160,24 +158,24 @@ def test_arabic_floor_survives_when_model_returns_arabic_past_the_cap():
     assert len(out) == 4 and any("arab" in t for t in out)
 
 
-# ---- the floors fire on CORPUS too, so a corpus-led persona keeps region + discovery reach ----
+# ---- the AR floor fires on CORPUS too, so a corpus-led persona keeps region reach ----
 def test_corpus_only_ar_clip_reserves_the_region_floor_even_when_corpus_fills_all_slots():
     # a corpus that fills all 4 slots on an AR clip: the region floor must still RESERVE a tail slot.
     out = vet_hashtags([], Platform.instagram, "ar", corpus=["#alpha", "#beta", "#gamma", "#delta"])
     assert len(out) == 4 and any("arab" in t for t in out)
 
 
-def test_corpus_only_keeps_a_platform_discovery_tag():
-    # the discovery floor (#reels/#fyp) likewise fires on a corpus, so a corpus-led persona keeps reach
-    # instead of letting curated tags eat all 4 slots.
+def test_corpus_only_does_not_pad_with_discovery():
+    # discovery floor deleted: a corpus-led persona ships its curated tags only — no #reels/#fyp pad.
     out = vet_hashtags([], Platform.instagram, "en", corpus=["#myscene", "#another", "#third"])
-    assert "#reels" in out
+    assert out == ["#myscene", "#another", "#third"]
+    assert "#reels" not in out
 
 
 # --- MOL-511 (C-1): ingest vets from per-surface hashtag_store (not the global cache) -----------
 
 def test_ingest_scopes_vet_store_per_surface(tmp_path):
-    """Tag only under surface X's hashtag_store cannot land on Y; empty store -> short discovery line.
+    """Tag only under surface X's hashtag_store cannot land on Y; empty store -> empty line.
     A global measurements cache that WOULD have admitted X's tag onto Y proves we no longer read it."""
     import json
     from fanops.config import Config
@@ -224,8 +222,8 @@ def test_ingest_scopes_vet_store_per_surface(tmp_path):
     assert "#alphaonly" in a and "#betaonly" not in a and "#globalwinner" not in a
     assert "#betaonly" in b and "#alphaonly" not in b and "#globalwinner" not in b
     assert a != b
-    # empty hashtag_store: model picks die; only the platform discovery floor ships (short honest line)
-    assert c == ["#reels"]
+    # empty hashtag_store: model picks die; cold path ships empty (honest floor, no discovery pad)
+    assert c == []
     assert "#alphaonly" not in c and "#globalwinner" not in c
 
 
@@ -256,5 +254,5 @@ def test_ingest_absent_hashtag_store_is_short_not_global(tmp_path):
     response_path(cfg, "captions", "clip_1").write_text(CaptionSet(request_id=rid, items=[
         CaptionItem(surface="a/instagram", caption="x", hashtags=["#hiphop"])]).model_dump_json())
     ingest_captions(led, cfg, "clip_1")
-    # Pre-MOL-511 would keep #hiphop from the global cache; scoped ingest ships discovery only.
-    assert led.clips["clip_1"].meta_captions["a/instagram"]["hashtags"] == ["#reels"]
+    # Pre-MOL-511 would keep #hiphop from the global cache; scoped ingest ships empty (no discovery pad).
+    assert led.clips["clip_1"].meta_captions["a/instagram"]["hashtags"] == []

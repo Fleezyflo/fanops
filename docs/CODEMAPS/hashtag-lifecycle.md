@@ -102,14 +102,13 @@ does an unmeasured one. What survives from before is COMPOSITION, which is forma
 
 - hard cap of 4; corpus leads but `_CORPUS_LEAD_MAX = 2` keeps half the line reachable by the clip's own picks
 - graded LRU (`recent`, oldest-first) so a line rotates instead of locking
-- one platform `_DISCOVERY` tag, backfilled **unconditionally** — the one element needing no measurement, and
-  therefore what keeps a cold-cache line from being empty (`["#reels"]` on IG, `["#fyp"]` on TikTok)
 - one `_ARABIC` region tag reserved on Arabic-language clips
 - bans stripped at membership, floors, backfill and the final line
+- cold cache + no corpus → an **empty** line (the platform discovery floor is deleted — honest beats padded)
 
-`vet_hashtags_traced` labels every shipped tag `content | corpus | region | graph-reach | discovery` and
+`vet_hashtags_traced` labels every shipped tag `content | corpus | region | graph-reach` and
 `caption._caption_entry` persists it as `tag_sources`; the Review tab renders it. The label set is TOTAL by
-construction — `genre-floor` retired with the pools.
+construction — `genre-floor` and `discovery` retired with the pools / discovery floor.
 
 ## Attribution severance (unchanged, still pinned)
 

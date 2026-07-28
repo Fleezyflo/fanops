@@ -64,9 +64,10 @@ def test_ingest_captions_records_raw_model_hashtags(tmp_path):
 def test_ingest_captions_missing_surface_falls_back_to_seed_not_held(tmp_path):
     # CHANGED from the old F74 hold: for hashtags-ONLY fan captions, a response missing a requested
     # surface (commonly a model SOFT-REFUSAL on edgy lyrics -> items:[]) must NOT permanently bury the
-    # clip. Synthesize the reach-vetted SEED tags + NO hook for the missing surface and let the clip
-    # through to the operator's Review queue (logged). The approval gate is the real review, so this is
-    # not an unreviewed default reaching publish (F74's actual concern).
+    # clip. Synthesize a fallback entry + NO hook for the missing surface and let the clip through to
+    # the operator's Review queue (logged). With no corpus/store the vetted line is honest-empty
+    # (discovery floor deleted). The approval gate is the real review, so this is not an unreviewed
+    # default reaching publish (F74's actual concern).
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)
     led = request_captions(led, cfg, "clip_1", [("a", Platform.instagram), ("a", Platform.tiktok)])
     rid = latest_request_id(cfg, "captions", "clip_1")
@@ -77,12 +78,12 @@ def test_ingest_captions_missing_surface_falls_back_to_seed_not_held(tmp_path):
     assert c.held is False and c.state is ClipState.captioned         # NOT buried
     fb = c.meta_captions["a/tiktok"]                                 # the missing surface got a fallback
     assert fb["hook"] is None and fb.get("fallback") is True
-    assert 1 <= len(fb["hashtags"]) <= 4 and all(t.startswith("#") for t in fb["hashtags"])
+    assert fb["hashtags"] == []                                      # cold: no corpus/store -> empty line
 
 def test_ingest_captions_empty_items_falls_back_all_surfaces(tmp_path):
     # The exact production failure: the model soft-refuses an edgy clip and returns items:[]. EVERY
-    # requested surface must get a seed-tag fallback and the clip must reach Review, not vanish held
-    # (83% of music clips were being lost to this silent hold).
+    # requested surface must get a fallback entry and the clip must reach Review, not vanish held
+    # (83% of music clips were being lost to this silent hold). Cold path: no corpus/store -> [].
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)
     led = request_captions(led, cfg, "clip_1", [("a", Platform.instagram)])
     rid = latest_request_id(cfg, "captions", "clip_1")
@@ -91,7 +92,7 @@ def test_ingest_captions_empty_items_falls_back_all_surfaces(tmp_path):
     led = ingest_captions(led, cfg, "clip_1")
     c = led.clips["clip_1"]
     assert c.held is False and c.state is ClipState.captioned
-    assert c.meta_captions["a/instagram"]["hashtags"] and c.meta_captions["a/instagram"]["hook"] is None
+    assert c.meta_captions["a/instagram"]["hashtags"] == [] and c.meta_captions["a/instagram"]["hook"] is None
 
 def test_ingest_captions_offbrand_holds(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)
@@ -132,7 +133,7 @@ def test_ingest_captions_multi_surface_clean_advances(tmp_path):
 def test_ingest_captions_vets_hashtags_max4_and_drops_random(tmp_path):
     # The operator rule: <=4 hashtags, HARD, and only PLATFORM-MEASURED tags (never random AI words).
     # ingest must filter whatever the model returns through vet_hashtags before storing. With a cold
-    # measurement cache and no corpus, EVERY model pick dies and the line is the honest discovery floor.
+    # measurement cache and no corpus, EVERY model pick dies and the line is honest-empty (no discovery pad).
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)
     led = request_captions(led, cfg, "clip_1", [("a", Platform.instagram)])
     rid = latest_request_id(cfg, "captions", "clip_1")
@@ -143,9 +144,9 @@ def test_ingest_captions_vets_hashtags_max4_and_drops_random(tmp_path):
     mc = led.clips["clip_1"].meta_captions["a/instagram"]
     assert len(mc["hashtags"]) <= 4                       # hard cap
     assert "#mohflow" not in mc["hashtags"]               # an unmeasured random word is dropped
-    assert mc["hashtags"] == ["#reels"]                   # cold cache -> the platform discovery slot only
+    assert mc["hashtags"] == []                           # cold cache -> empty (no discovery pad)
     # every survivor traces to a real signal — a tag is never a sourceless junk word.
-    assert set(mc["tag_sources"].values()) <= {"content", "corpus", "region", "graph-reach", "discovery"}
+    assert set(mc["tag_sources"].values()) <= {"content", "corpus", "region", "graph-reach"}
     assert all(mc["tag_sources"][t] for t in mc["hashtags"])   # no sourceless tag ships
     assert mc["caption"] == " ".join(mc["hashtags"])      # posted caption == the vetted tag line
 
