@@ -524,12 +524,13 @@ def _lever_detail_rows(cfg: Config, persona, manifest_rows: list, catalog: list,
 
 def _corpus_tag_rows(cfg: Config, persona) -> tuple[list, str]:
     """U9: the DERIVED-zone corpus projection. Returns (rows, refreshed_at): rows =
-    [{tag, value, measured_at, from}] one per corpus tag, where `value` is Meta's own METRIC_FIELD as
-    stamped at derivation (falling back to the live cache when a row predates the stamp) and `from` is the
-    anchor tag whose top media surfaced it — the honest "why is this here". refreshed_at = max
-    `measured_at` across the meta, else the .corpora_refresh.json marker ts. Fail-open: any trip -> ([], "")."""
+    [{tag, value, measured_at, from}] one per corpus tag, where `value` is the visibility metric
+    (play_count preferred, else like_count) stamped at derivation (falling back to the live cache when a
+    row predates the stamp) and `from` is the anchor tag whose top media surfaced it — the honest "why is
+    this here". refreshed_at = max `measured_at` across the meta, else the .corpora_refresh.json marker ts.
+    Fail-open: any trip -> ([], "")."""
     from fanops.persona_research import _persona_row
-    from fanops.hashtags import METRIC_FIELD, load_measurements, _norm
+    from fanops.hashtags import _metric, load_measurements, _norm
     try:
         row = _persona_row(cfg, persona.id) or {}
         meta = row.get("hashtag_corpus_meta") if isinstance(row.get("hashtag_corpus_meta"), dict) else {}
@@ -540,8 +541,8 @@ def _corpus_tag_rows(cfg: Config, persona) -> tuple[list, str]:
             if not n or n in seen: continue
             seen.add(n)
             m = meta.get(n) if isinstance(meta.get(n), dict) else {}
-            v = m.get(METRIC_FIELD)
-            if v is None: v = (cache.get(n) or {}).get(METRIC_FIELD)
+            v = _metric(m)
+            if v is None: v = _metric(cache.get(n) or {})
             rows.append({"tag": n, "value": v, "measured_at": m.get("measured_at"), "from": m.get("from")})
         stamps = [m.get("measured_at") for m in meta.values()
                   if isinstance(m, dict) and isinstance(m.get("measured_at"), str)]
@@ -598,15 +599,15 @@ def personas_page(cfg: Config, *, led: Optional[Ledger] = None) -> "PersonasPage
     for a in accts:
         if getattr(a, "persona_id", None):
             by_pid.setdefault(a.persona_id, []).append(a.handle)
-    # Surface each corpus ranked by the PLATFORM's own number (Meta's like_count on the tag's top media),
+    # Surface each corpus ranked by the PLATFORM visibility metric (Top median play_count, else like_count),
     # and flag the tags that actually carry one. A corpus tag should always be measured — it can only have
     # entered by being measured — but a cache entry can expire between derivations, so the ★ still gates on
     # a present measurement rather than assuming it.
-    from fanops.hashtags import METRIC_FIELD, load_measurements, ranked_tags, _norm
+    from fanops.hashtags import _metric, load_measurements, ranked_tags, _norm
     cache = load_measurements(cfg)
     store = ranked_tags(cache) or None
     rank = {t: i for i, t in enumerate(store or [])}
-    means = {t: r[METRIC_FIELD] for t, r in cache.items()}
+    means = {t: _metric(r) for t, r in cache.items() if _metric(r) is not None}
     def _ranked(corpus):
         return sorted((_norm(t) for t in corpus), key=lambda n: rank.get(n, 10 ** 6))
     from fanops.personas import lever_catalog

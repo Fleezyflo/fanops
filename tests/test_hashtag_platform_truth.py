@@ -4,12 +4,12 @@
 # budget, unmeasured corpus promotion, hand-ranked frozen pools).
 #
 # Layer A (network via instagrapi): persona description -> terms -> anchor tags -> ONE medias_top fetch
-#   per tag that yields BOTH the verbatim platform `like_count` and the co-occurring tags -> the cache.
-# Layer B (zero network): corpus = top corpus_target of the persona's aligned pool by like_count.
+#   per tag that yields Top-grid medians (play_count preferred, like_count fallback) + co-tags -> the cache.
+# Layer B (zero network): corpus = top corpus_target of the persona's aligned pool by that visibility metric.
 import json
 from fanops.config import Config
 from fanops.models import Platform
-from fanops.hashtags import METRIC_FIELD, load_measurements, ranked_tags, vet_hashtags, vet_hashtags_traced
+from fanops.hashtags import METRIC_FIELD, _metric, load_measurements, ranked_tags, vet_hashtags, vet_hashtags_traced
 from fanops.fanops_hashtags import refresh_store
 from fanops.personas import Personas, add_persona, apply_auto_corpus
 from fanops.persona_research import persona_terms, derive_corpus
@@ -36,26 +36,53 @@ def _client(media_by_tag=None, metric_by_tag=None, **kw):
 
 # ---------------------------------------------------------------- 1. verbatim platform field
 
-def test_metric_is_the_verbatim_platform_like_count_never_a_sum(tmp_path, monkeypatch):
+def test_metric_is_platform_fields_never_a_sum_or_invented_reach(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path)
     pid = _persona(cfg, voice="hiphop"); _link_active(cfg, pid)
     media = {"#hiphop": [{"caption": "", "like_count": 10, "comments_count": 90}]}
     refresh_store(cfg, scrape_client=_client(media))
     m = load_measurements(cfg)
-    assert m["#hiphop"][METRIC_FIELD] == 10
+    assert m["#hiphop"]["like_count"] == 10
+    assert _metric(m["#hiphop"]) == 10
     flat = json.dumps(json.loads(cfg.hashtags_path.read_text()))
     assert '"reach"' not in flat and '"confidence"' not in flat
-    assert METRIC_FIELD == "like_count"
+    assert METRIC_FIELD == "play_count"   # preferred rank key; like_count still admits
 
 
-def test_first_media_carrying_a_like_count_wins_not_the_first_media(tmp_path, monkeypatch):
+def test_top_grid_median_not_first_media_wins(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path)
     pid = _persona(cfg, voice="hiphop"); _link_active(cfg, pid)
     media = {"#hiphop": [{"caption": "", "comments_count": 8},
                          {"caption": "", "like_count": 777, "comments_count": 2},
                          {"caption": "", "like_count": 1, "comments_count": 0}]}
     refresh_store(cfg, scrape_client=_client(media))
-    assert load_measurements(cfg)["#hiphop"][METRIC_FIELD] == 777
+    rec = load_measurements(cfg)["#hiphop"]
+    assert rec["like_count"] == 389.0   # median of [777, 1]
+    assert _metric(rec) == 389.0
+
+
+def test_play_count_beats_like_count_when_both_present(tmp_path, monkeypatch):
+    cfg = Config(root=tmp_path)
+    pid = _persona(cfg, voice="hiphop"); _link_active(cfg, pid)
+    media = {"#hiphop": [
+        {"caption": "", "like_count": 9999, "play_count": 100},
+        {"caption": "", "like_count": 1, "play_count": 300},
+        {"caption": "", "like_count": 50, "play_count": 200}]}
+    refresh_store(cfg, scrape_client=_client(media))
+    rec = load_measurements(cfg)["#hiphop"]
+    assert rec["play_count"] == 200.0 and rec["like_count"] == 50.0
+    assert _metric(rec) == 200.0
+    assert rec[METRIC_FIELD] == 200.0
+
+
+def test_media_count_persisted_from_hashtag_info(tmp_path, monkeypatch):
+    cfg = Config(root=tmp_path)
+    pid = _persona(cfg, voice="hiphop"); _link_active(cfg, pid)
+    from hashtag_scrape_fakes import _FakeClient
+    client = _FakeClient(media_by_tag={"#hiphop": [{"caption": "", "like_count": 10}]},
+                         media_count_by_tag={"#hiphop": 50000})
+    refresh_store(cfg, scrape_client=client)
+    assert load_measurements(cfg)["#hiphop"]["media_count"] == 50000.0
 
 
 def test_a_tag_with_no_like_count_anywhere_is_unmeasured_and_absent(tmp_path, monkeypatch):
@@ -115,7 +142,7 @@ def test_cached_tag_metric_and_stamp_move_on_every_pass(tmp_path, monkeypatch):
     media0 = {"#hiphop": [{"caption": "", "like_count": 100, "comments_count": 0}]}
     refresh_store(cfg, scrape_client=_client(media0), now=t0)
     before = load_measurements(cfg)["#hiphop"]
-    assert before[METRIC_FIELD] == 100.0
+    assert before["like_count"] == 100.0 and _metric(before) == 100.0
     stamp0 = before["measured_at"]
 
     client = _FakeClient(
@@ -124,7 +151,7 @@ def test_cached_tag_metric_and_stamp_move_on_every_pass(tmp_path, monkeypatch):
     # seed hiphop id so resolve is skipped; lyricism is novel and will refuse on info
     out = refresh_store(cfg, scrape_client=client, now=t1)
     after = load_measurements(cfg)["#hiphop"]
-    assert after[METRIC_FIELD] == 250.0, "platform's new like_count must land"
+    assert after["like_count"] == 250.0 and _metric(after) == 250.0, "platform's new like_count must land"
     assert after["measured_at"] != stamp0 and after["measured_at"].startswith("2026-07-02T01:00")
     assert "hiphop" not in client.info_calls, "cached #hiphop must not re-resolve"
     assert "hiphop" in client.media_calls, "but it must still re-measure"
@@ -147,6 +174,17 @@ def test_terms_come_from_the_description_never_from_the_corpus(tmp_path, monkeyp
     assert "poisontag" not in client.info_calls and "poisontag" not in client.media_calls
     derive_corpus(cfg, pid)
     assert "#poisontag" not in Personas.load(cfg).get(pid).hashtag_corpus
+
+
+def test_persona_terms_drop_junk_voice_filler(tmp_path):
+    """Short / filler voice words must not become Layer A anchors (#within #high #hook …)."""
+    from fanops.personas import Persona
+    per = Persona(id="x", name="X", voice="within high angle hook gaps menu lyricism",
+                  niche=["hiphop"])
+    terms = set(persona_terms(per))
+    assert "hiphop" in terms and "lyricism" in terms
+    for junk in ("within", "high", "angle", "hook", "gaps", "menu"):
+        assert junk not in terms
 
 
 def test_persona_terms_include_surface_not_niche_only(tmp_path):
@@ -304,7 +342,7 @@ def test_throttle_stops_the_pass_with_evidence_intact(tmp_path, monkeypatch):
     # Measure hiphop once, then throttle on the next medias_top (bars or co-tag).
     client = _FakeClient(metric_by_tag={"#hiphop": 42, "#bars": 7}, throttle_after=1)
     refresh_store(cfg, scrape_client=client)
-    assert load_measurements(cfg)["#hiphop"][METRIC_FIELD] == 42
+    assert _metric(load_measurements(cfg)["#hiphop"]) == 42
     assert client._media_n >= 1
 
 
@@ -327,5 +365,5 @@ def test_accrual_never_clobbers_on_a_dead_pass(tmp_path, monkeypatch):
     media = {"#hiphop": [{"caption": "", "like_count": 42, "comments_count": 0}]}
     refresh_store(cfg, scrape_client=_client(media))
     out = refresh_store(cfg, scrape_client=_FakeClient(refuse=ScrapeRefused("down", code=1)))
-    assert load_measurements(cfg)["#hiphop"][METRIC_FIELD] == 42
+    assert _metric(load_measurements(cfg)["#hiphop"]) == 42
     assert out["unresolved"], "a dead pass must surface refusals, not swallow them"

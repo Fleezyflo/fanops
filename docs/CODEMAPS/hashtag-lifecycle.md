@@ -6,22 +6,24 @@ The end-to-end path that decides every posted hashtag. Two layers, one authority
 
 ## The single rule everything else follows
 
-Discovery direction (F / MOL-627): Layer A search seeds come from the **full Studio persona surface** (`persona_terms` — interim niche tags + structured levers + voice unigrams). "Niche" is not the sole hashtag source. Metric honesty: `like_count` on one top-media item is a visibility proxy — not impressions, not engagement rate, not lift on our posts.
+Discovery direction (F / MOL-627): Layer A search seeds come from the **full Studio persona surface** (`persona_terms` — interim niche tags + structured levers + voice unigrams ≥5 chars after stop-list). "Niche" is not the sole hashtag source.
 
-A hashtag's reach/visibility is **only** what the platform publishes about that hashtag, stored under the
-platform's own field name. Nothing in this subsystem computes, blends, averages or renames a reach number.
+Metric honesty: visibility is **only** Instagram fields Layer A stores — never an invented blended `reach`, never "most visibility" from a single top-post like.
 
-`hashtags.METRIC_FIELD = "like_count"` — Instagram's own field, read verbatim off the FIRST item in
-`hashtag_medias_top` that carries one (`ig_hashtag_scrape.measure_and_harvest_scrape`). An item with likes
-hidden is skipped, not read as zero. No item carries one ⇒ the tag is UNMEASURED ⇒ inadmissible everywhere.
+`hashtags.RANK_FIELDS = ("play_count", "like_count")` with preferred `METRIC_FIELD = "play_count"`.
+`ig_hashtag_scrape.measure_and_harvest_scrape` takes ONE `hashtag_medias_top` (amount=9) and stores:
+
+- `like_count` = **median** of like_count across Top medias that carry one
+- `play_count` = **median** of play_count across Top medias that carry one (Reels/views when present)
+
+`resolve_hashtag_scrape` also persists `media_count` from `hashtag_info` when the private API serves it
+(Graph Hashtag node still refuses `media_count` — probed 2026-07-26 — but scrape can). Ranking uses
+`play_count` when present, else `like_count`. Neither ⇒ UNMEASURED ⇒ inadmissible.
 (Graph `measure_and_harvest` remains in `meta_graph` for a deferred path — Layer A refresh does not call it.)
 
-**Why `like_count` and not post volume** — probed live 2026-07-26:
-`GET /{hashtag-id}?fields=id,name,media_count` → `400 "(#100) Tried accessing nonexisting field
-(media_count)"`, while `fields=id,name` → 200. Meta's docs list only `id` and `name`. Post volume is
-genuinely unavailable, so `like_count` on the tag's own top media is the visibility datum Meta actually
-publishes. The pre-2026-07-26 metric — likes **plus** comments summed across all top media, stored under a
-key we named `reach` alongside a never-read `confidence: 1.0` — was a number we invented.
+The pre-2026-07-26 metric — likes **plus** comments summed under a key we named `reach` — was invented.
+The 2026-07-26 "first like_count wins" proxy was honest-as-far-as-it-went but under-used the Top grid and
+discarded plays/volume Instagram already returned on the same fetches.
 
 ## Layer A — measurement (instagrapi; Graph hashtag deferred)
 
@@ -33,8 +35,8 @@ loop. Network source is **instagrapi** (`ig_hashtag_scrape`). Missing scrape ses
 
 1. **terms** — `persona_research.persona_terms(per)` → declared niche only. Pure, deterministic, **corpus-blind**.
 2. **anchors** — each term resolves via `ig_hashtag_scrape.resolve_hashtag_scrape` (`hashtag_info`).
-3. **measure + harvest, one fetch** — `measure_and_harvest_scrape(client, tag)` returns the verbatim metric
-   AND every hashtag those same captions carry (`CAPTION_TAG_RE`). Co-occurrence discovers tags nobody named
+3. **measure + harvest, one fetch** — `measure_and_harvest_scrape(client, tag)` returns Top medians
+   (`play_count`/`like_count`) AND every hashtag those same captions carry (`CAPTION_TAG_RE`). Co-occurrence discovers tags nobody named
    and is where **versatility** comes from: posts winning in a niche carry broad tags alongside narrow ones.
 4. **queue** — anchors, then everything already measured stalest-`measured_at` first, then this pass's novel
    co-tags. Co-tags are harvested from ANCHORS only; a co-tag's own co-tags drift off-niche within two hops.
@@ -42,8 +44,8 @@ loop. Network source is **instagrapi** (`ig_hashtag_scrape`). Missing scrape ses
 Writes `00_control/hashtags.json` — a flat cache, **measured tags only**:
 
 ```json
-{"#hiphop": {"graph_id": "17841563854111824", "like_count": 8772.0,
-             "measured_at": "2026-07-26T12:00:00+00:00", "from": {"#rap": 3}}}
+{"#hiphop": {"graph_id": "17841563854111824", "play_count": 120000.0, "like_count": 8772.0,
+             "media_count": 1500000.0, "measured_at": "2026-07-26T12:00:00+00:00", "from": {"#rap": 3}}}
 ```
 
 `from` is harvest attribution (which anchor surfaced this tag) and is what lets Layer B run offline.
@@ -77,7 +79,7 @@ What replaces it:
 3. **admit** — `_is_evidence` (metric present + positive, parseable `measured_at`, fresher than 90 days) and
    `hashtag_hygiene.is_curatable` (structural only).
 4. **write** — top `cfg.corpus_target` by the platform metric via `apply_auto_corpus`, which REPLACES the
-   corpus wholesale. Meta per tag: `{like_count, measured_at, from}`.
+   corpus wholesale. Meta per tag: `{play_count?, like_count?, media_count?, measured_at, from}`.
 
 Never padded: thin evidence ⇒ a short corpus. Empty pool (cold cache / outage) ⇒ `{changed: False}` and the
 previous derived corpus stands.

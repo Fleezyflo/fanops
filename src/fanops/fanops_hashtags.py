@@ -15,8 +15,9 @@ loop with no external evidence anywhere in it (measured live 2026-07-16: the sto
 to seeds + the frozen floor, 0 discovered, `reach: {}`, while every proposal it made looked like
 research). Rooting discovery in the declared niche severs that edge structurally.
 
-The metric is Instagram's own `like_count`, verbatim (see ig_hashtag_scrape.measure_and_harvest_scrape).
-A tag with no number is UNMEASURED and simply absent — the cache holds measured tags only.
+Visibility numbers are Instagram's own fields only (see ig_hashtag_scrape): Top-grid median
+`play_count` (preferred) / `like_count`, plus `media_count` from hashtag_info when served.
+A tag with neither plays nor likes in the Top grid is UNMEASURED and absent — measured tags only.
 
 Missing scrape (no [igscrape] / no session / login fail) aborts LOUDLY (`written:False`, `aborted:no_scrape`)
 — there is no silent Graph fallback. A throttle ends the pass but still writes accrued evidence."""
@@ -25,7 +26,7 @@ import os
 from datetime import datetime, timedelta, timezone
 from fanops.config import Config
 from fanops.log import get_logger
-from fanops.hashtags import METRIC_FIELD, _norm, load_measurements, ranked_tags
+from fanops.hashtags import METRIC_FIELD, _norm, _metric, load_measurements, ranked_tags
 from fanops.controlio import write_json_atomic
 
 _MAX_AGE_DAYS = 90            # a measurement older than this is history, not evidence — pruned on write
@@ -227,22 +228,25 @@ def refresh_store(cfg: Config, *, scrape_client=None, now=None) -> dict:
             parallel = 1
 
     def _fetch(tag: str, worker):
-        """Resolve+measure one tag. Returns (status, tag, hid|None, metric|None, cotags|exc)."""
+        """Resolve+measure one tag. Returns (status, tag, hid|None, media_count|None, metrics|None, cotags|exc)."""
         def _go():
-            hid = ids.get(tag) or resolve_hashtag_scrape(worker, tag)
+            if tag in ids:
+                hid, media_count = ids[tag], None
+            else:
+                hid, media_count = resolve_hashtag_scrape(worker, tag)
             if not hid:
-                return ("no_match", tag, None, None, {})
-            metric, cotags = measure_and_harvest_scrape(worker, tag)
-            return ("ok", tag, hid, metric, cotags)
+                return ("no_match", tag, None, None, None, {})
+            metrics, cotags = measure_and_harvest_scrape(worker, tag)
+            return ("ok", tag, hid, media_count, metrics, cotags)
         try:
             if client_lock is not None:
                 with client_lock:
                     return _go()
             return _go()
         except ScrapeThrottled:
-            return ("throttle", tag, None, None, {})
+            return ("throttle", tag, None, None, None, {})
         except ScrapeRefused as e:
-            return ("refused", tag, None, None, e)
+            return ("refused", tag, None, None, None, e)
 
     i = 0
     while i < len(queue):
@@ -265,7 +269,7 @@ def refresh_store(cfg: Config, *, scrape_client=None, now=None) -> dict:
         stop = False
         if any(st == "throttle" for st, *_ in ordered):
             throttled = True; stop = True
-        for status, tag, hid, metric, payload in ordered:
+        for status, tag, hid, media_count, metrics, payload in ordered:
             if status == "throttle":
                 continue                                   # apply sibling successes in this wave, then stop
             if status == "no_match":
@@ -288,9 +292,17 @@ def refresh_store(cfg: Config, *, scrape_client=None, now=None) -> dict:
                     attribution[co][tag] = attribution[co].get(tag, 0) + n
                     if co not in queued and cotag_enqueued < cotag_cap:
                         queued.add(co); queue.insert(i, co); discovered += 1; cotag_enqueued += 1
-            if metric is None:
+            if not isinstance(metrics, dict) or _metric(metrics) is None:
                 continue
-            rec = {"graph_id": hid, METRIC_FIELD: float(metric), "measured_at": stamp}
+            rec = {"graph_id": hid, "measured_at": stamp}
+            for fk in ("play_count", "like_count"):
+                fv = metrics.get(fk)
+                if isinstance(fv, (int, float)) and not isinstance(fv, bool) and fv >= 0:
+                    rec[fk] = float(fv)
+            if isinstance(media_count, (int, float)) and not isinstance(media_count, bool) and media_count >= 0:
+                rec["media_count"] = float(media_count)
+            elif isinstance((cache.get(tag) or {}).get("media_count"), (int, float)):
+                rec["media_count"] = float(cache[tag]["media_count"])
             frm = attribution.get(tag)
             if frm:
                 rec["from"] = {k: int(v) for k, v in frm.items()}
@@ -305,7 +317,9 @@ def refresh_store(cfg: Config, *, scrape_client=None, now=None) -> dict:
                 _rederive_posting_corpora(cfg, now=now)          # Layer B rides the flush — no end-of-pass wait
             if tried == 1 or tried % 5 == 0 or measured % 5 == 0:
                 log("hashtags", tag, "measured", tried=tried, measured=measured,
-                    queue_left=len(queue) - i, like_count=float(metric), parallel=parallel)
+                    queue_left=len(queue) - i, visibility=_metric(rec),
+                    rank_field=next((k for k in ("play_count", "like_count") if k in rec), None),
+                    media_count=rec.get("media_count"), parallel=parallel)
         if stop:
             break
     cutoff = now - timedelta(days=_MAX_AGE_DAYS)
@@ -407,5 +421,5 @@ def cmd_hashtags_discover(cfg: Config) -> int:
         log("hashtags", per.id, "niche", terms=", ".join(r["terms"][:8]), measured=r["measured"],
             top=", ".join(f"{t}({int(v)})" for t, v in r["top"]))
     log("hashtags", "-", "discover_done", field=METRIC_FIELD,
-        hint="numbers are Instagram like_count on top posts (instagrapi)")
+        hint="numbers are Top-grid median play_count (else like_count); media_count stored when served")
     return 0

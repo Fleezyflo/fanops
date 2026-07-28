@@ -9,7 +9,7 @@ import inspect
 import json
 import pytest
 from fanops.config import Config
-from fanops.hashtags import METRIC_FIELD, load_measurements
+from fanops.hashtags import METRIC_FIELD, _metric, load_measurements
 from fanops.fanops_hashtags import refresh_store
 from hashtag_scrape_fakes import _FakeClient
 
@@ -116,7 +116,7 @@ def test_written_file_is_the_flat_record_shape_ranked_by_the_metric(tmp_path, mo
         {"#hiphop": 500, "#beta": 900, "#alpha": 100}, cooccur="#alpha #beta"))
     blob = json.loads(cfg.hashtags_path.read_text())
     tags = {k: v for k, v in blob.items() if isinstance(v, dict)}
-    assert list(tags) == sorted(tags, key=lambda t: (-tags[t][METRIC_FIELD], t))   # metric desc on disk
+    assert list(tags) == sorted(tags, key=lambda t: (-_metric(tags[t]), t))   # metric desc on disk
     assert blob["#beta"]["graph_id"] == "id-beta" and blob["#beta"]["measured_at"]
     assert blob["#beta"]["from"] == {"#hiphop": 1}          # the anchor whose top media surfaced it
     assert isinstance(blob.get("last_complete_pass"), str) and blob["last_complete_pass"]
@@ -130,8 +130,8 @@ def test_measurements_accrue_across_passes(tmp_path, monkeypatch):
     refresh_store(cfg, scrape_client=_FakeClient({"#hiphop": 500, "#beta": 900}, cooccur="#beta"))
     m = load_measurements(cfg)
     assert "#alpha" in m and "#beta" in m
-    assert m["#alpha"][METRIC_FIELD] == 100
-    assert m["#beta"][METRIC_FIELD] == 900
+    assert _metric(m["#alpha"]) == 100 and m["#alpha"]["like_count"] == 100
+    assert _metric(m["#beta"]) == 900 and m["#beta"]["like_count"] == 900
 
 
 def test_refresh_store_no_scrape_aborts_loudly(tmp_path, monkeypatch):
@@ -156,7 +156,7 @@ def test_cmd_hashtags_discover_reports_and_writes_nothing(tmp_path, monkeypatch)
     rc = cmd_hashtags_discover(cfg)
     blob = cfg.log_path.read_text()
     assert rc == 0 and "#detroitrap" in blob and pid in blob
-    assert "instagrapi" in blob
+    assert "play_count" in blob or "like_count" in blob
     assert cfg.hashtags_path.read_text() == before
 
 

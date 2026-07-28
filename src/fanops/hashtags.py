@@ -2,13 +2,10 @@
 """Hashtag SELECTION — the gate that turns a persona's derived corpus + the platform measurement cache
 into the <=4-tag line a post ships.
 
-The reach question is settled OUTSIDE this module and it is settled by the PLATFORM: `METRIC_FIELD` is
-Instagram's own `like_count`, read verbatim off one top-media item (Layer A writer is
-fanops_hashtags/ig_hashtag_scrape — Graph hashtag path deferred; this module only reads the cache).
-Nothing here ranks a tag by a number we computed, and nothing here carries a hand-researched reach
-claim — the frozen `_MEGA`/`_RELEVANCE`/`_RANK`/`VETTED` pools that used to be this file's authority
-were DELETED: they asserted reach from June-2026 desk research, which is exactly the manufactured
-assessment the system must not make.
+Visibility is settled OUTSIDE this module by PLATFORM fields Layer A wrote (ig_hashtag_scrape):
+`play_count` (median across Top grid when present — Reels/views) then `like_count` (median across Top),
+plus `media_count` on the tag itself when Instagram serves it. Nothing here invents a blended "reach".
+The frozen `_MEGA`/`_RELEVANCE`/`_RANK`/`VETTED` pools were DELETED.
 
 What survives here is COMPOSITION, which is format rather than a reach claim: at most 4 tags, the
 persona's curated corpus leads but may not monopolise the line (`_CORPUS_LEAD_MAX`), graded-LRU rotation,
@@ -21,11 +18,11 @@ from __future__ import annotations
 import json, re
 from fanops.models import Platform
 
-# The platform's own field name for the reach/visibility signal. Probed live 2026-07-26: the IG Hashtag
-# node serves ONLY `id` and `name` — `media_count` returns "(#100) Tried accessing nonexisting field", so
-# post volume is genuinely unavailable and `like_count` on the hashtag's own top media is the visibility
-# datum Meta actually publishes. Stored under Meta's name, never renamed to "reach".
-METRIC_FIELD = "like_count"
+# Rank preference: Instagram's own fields only, visibility-priority order. play_count (Top-grid median)
+# beats like_count (Top-grid median). media_count is stored for operators but is not the sole rank key.
+RANK_FIELDS = ("play_count", "like_count")
+# Preferred rank key name (UI / docs). Admission uses RANK_FIELDS — legacy like_count-only rows still admit.
+METRIC_FIELD = "play_count"
 
 CAPTION_TAG_RE = re.compile(r"#[0-9A-Za-z_؀-ۿ]+")   # a hashtag in a caption: Latin + Arabic-block letters
 HARVEST_CAP = 5000                 # upper bound on distinct co-tags per harvest — untrusted-UGC guard
@@ -56,24 +53,34 @@ def _dedupe_norm(seq) -> list[str]:
 
 
 def _metric(rec) -> float | None:
-    """One record's platform metric as a float, or None when the record carries no platform measurement.
-    A legacy record (the invented likes+comments sum written under a `reach` key) has no METRIC_FIELD and
-    therefore reads as UNMEASURED — inadmissible by construction, shed on the next write. That is the
-    intended cutover: an invented number must not survive as evidence just because it is on disk."""
+    """Visibility sort key: first present RANK_FIELDS value (play_count, then like_count).
+    Legacy invented `reach` sums carry neither and read UNMEASURED."""
     if not isinstance(rec, dict): return None
-    v = rec.get(METRIC_FIELD)
-    if isinstance(v, bool) or not isinstance(v, (int, float)) or v < 0: return None
-    return float(v)
+    for k in RANK_FIELDS:
+        v = rec.get(k)
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or v < 0:
+            continue
+        if v > 0:
+            return float(v)
+    return None
+
+
+def _rank_field(rec) -> str | None:
+    """Which platform field `_metric` used — for UI honesty. None when unmeasured."""
+    if not isinstance(rec, dict): return None
+    for k in RANK_FIELDS:
+        v = rec.get(k)
+        if isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0:
+            return k
+    return None
 
 
 def load_measurements(cfg) -> dict[str, dict]:
     """THE reader for the platform measurement cache (00_control/hashtags.json):
-    `{tag: {graph_id, <METRIC_FIELD>, measured_at, from: {anchor: n}}}`.
+    `{tag: {graph_id, play_count?, like_count?, media_count?, measured_at, from}}`.
 
-    `from` is the harvest attribution — which anchor tag's top media surfaced this tag — and it is what
-    lets corpus derivation run with ZERO network. A record missing the platform metric, the graph id or
-    the timestamp is dropped rather than repaired: a half-record is not a measurement. Absent / corrupt /
-    legacy file -> {} (the selection layer then ships short, honestly). Never raises."""
+    `from` is harvest attribution. A record missing every RANK_FIELDS metric, graph id, or timestamp
+    is dropped. Absent / corrupt / legacy file -> {}. Never raises."""
     p = cfg.hashtags_path
     if not p.exists(): return {}
     try:
@@ -84,12 +91,18 @@ def load_measurements(cfg) -> dict[str, dict]:
     out: dict[str, dict] = {}
     for k, v in raw.items():
         tag = _norm(k) if isinstance(k, str) else ""
-        val = _metric(v)
-        gid = v.get("graph_id") if isinstance(v, dict) else None
-        at = v.get("measured_at") if isinstance(v, dict) else None
-        if not tag or val is None or not isinstance(gid, str) or not gid or not isinstance(at, str):
+        if not tag or not isinstance(v, dict):
             continue
-        rec = {"graph_id": gid, METRIC_FIELD: val, "measured_at": at}
+        gid = v.get("graph_id"); at = v.get("measured_at")
+        if not isinstance(gid, str) or not gid or not isinstance(at, str):
+            continue
+        rec: dict = {"graph_id": gid, "measured_at": at}
+        for fk in ("play_count", "like_count", "media_count"):
+            fv = v.get(fk)
+            if isinstance(fv, (int, float)) and not isinstance(fv, bool) and fv >= 0:
+                rec[fk] = float(fv)
+        if _metric(rec) is None:
+            continue
         src = v.get("from")
         if isinstance(src, dict):
             frm: dict[str, int] = {}
@@ -104,8 +117,8 @@ def load_measurements(cfg) -> dict[str, dict]:
 
 
 def ranked_tags(measurements: dict[str, dict]) -> list[str]:
-    """The cache as one ordered menu: platform metric DESC, ties by tag string (deterministic)."""
-    return sorted(measurements, key=lambda t: (-(measurements[t].get(METRIC_FIELD) or 0.0), t))
+    """The cache as one ordered menu: visibility metric DESC (play then like), ties by tag string."""
+    return sorted(measurements, key=lambda t: (-(_metric(measurements[t]) or 0.0), t))
 
 
 # Word tokenizer for the per-clip content signal. A token is a latin word, 3-20 chars, starting with a

@@ -15,7 +15,7 @@ from fanops.models import (Clip, Moment, Source, MomentState, ClipState, Platfor
 from fanops.accounts import Accounts
 from fanops import personas as core
 from fanops.fanops_hashtags import refresh_store
-from fanops.hashtags import METRIC_FIELD, load_measurements, ranked_tags
+from fanops.hashtags import _metric, load_measurements, ranked_tags
 from fanops.persona_research import derive_corpus
 from fanops.agentstep import response_path, latest_request_id
 from fanops.caption import request_captions, ingest_captions
@@ -40,7 +40,7 @@ def test_hashtag_lifecycle_end_to_end(tmp_path, monkeypatch):
     client = _FakeClient({"#hiphop": 500, "#detroitrap": 990}, cooccur="#detroitrap")
     refresh_store(cfg, scrape_client=client)
     cache = load_measurements(cfg)
-    assert cache["#detroitrap"][METRIC_FIELD] == 990
+    assert _metric(cache["#detroitrap"]) == 990
     assert cache["#detroitrap"]["from"] == {"#hiphop": 1}
     assert ranked_tags(cache)[0] == "#detroitrap"
 
@@ -68,6 +68,6 @@ def test_hashtag_lifecycle_end_to_end(tmp_path, monkeypatch):
     led.save()
     refresh_store(cfg, scrape_client=client)
     after = load_measurements(cfg)
-    assert after["#detroitrap"][METRIC_FIELD] == 990
-    assert after["#hiphop"][METRIC_FIELD] == 500
+    assert _metric(after["#detroitrap"]) == 990
+    assert _metric(after["#hiphop"]) == 500
     assert derive_corpus(cfg, pid)["changed"] is False

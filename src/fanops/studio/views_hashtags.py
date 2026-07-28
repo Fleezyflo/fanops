@@ -17,13 +17,14 @@ from typing import Optional
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.log import get_logger
-from fanops.hashtags import METRIC_FIELD, _norm, load_measurements, ranked_tags
+from fanops.hashtags import METRIC_FIELD, _metric, _norm, load_measurements, ranked_tags
 from fanops.personas import Personas
 from fanops.persona_research import _persona_row
 from fanops.studio.views_results import _EXPOSURE_STATES
 
-# The number next to every tag is Meta's own field, named as Meta names it — never relabelled "reach".
-METRIC_LABEL = f"{METRIC_FIELD} (top post)"
+# The number next to every tag is Instagram's own visibility field (Top median play_count,
+# else like_count) — never relabelled "reach".
+METRIC_LABEL = f"{METRIC_FIELD} (Top median; like_count fallback)"
 
 
 @dataclass
@@ -85,7 +86,7 @@ def _store_status(cfg: Config) -> StoreStatus:
     except OSError:
         age = None
     stamps = [r.get("measured_at") for r in m.values() if isinstance(r.get("measured_at"), str)]
-    rows = [{"tag": t, "value": m[t].get(METRIC_FIELD)} for t in ranked_tags(m)]
+    rows = [{"tag": t, "value": _metric(m[t])} for t in ranked_tags(m)]
     return StoreStatus(state="ok", age=age, oldest=(min(stamps) if stamps else None), tags=rows)
 
 
@@ -121,7 +122,7 @@ def _corpora_rows(cfg: Config, *, edit_href: str = "") -> list:
         corpus = [_norm(t) for t in (per.hashtag_corpus or []) if isinstance(t, str) and _norm(t)]
         stamps = [v.get("measured_at") for v in meta.values()
                   if isinstance(v, dict) and isinstance(v.get("measured_at"), str)]
-        top3 = sorted(corpus, key=lambda t: (-((m.get(t) or {}).get(METRIC_FIELD) or -1.0), t))[:3]
+        top3 = sorted(corpus, key=lambda t: (-(_metric(m.get(t) or {}) or -1.0), t))[:3]
         rows.append(CorpusRow(pid=per.id, name=per.name or per.id, size=len(corpus),
                               last_refreshed=(max(stamps) if stamps else None), top3=top3,
                               edit_href=edit_href))
