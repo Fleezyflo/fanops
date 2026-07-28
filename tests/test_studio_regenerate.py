@@ -40,8 +40,10 @@ def test_regenerate_rewrites_queued_post(tmp_path):
     assert res.ok is True
     p = Ledger.load(cfg).posts["p_edit"]
     # pipeline parity (ingest_captions contract): the written caption IS the vetted <=4-tag line —
-    # raw model prose/tags are never persisted past the vet.
-    assert p.caption == " ".join(p.hashtags) and 0 < len(p.hashtags) <= 4
+    # raw model prose/tags are never persisted past the vet. Cold fixture (no corpus/store): unmeasured
+    # picks die and the line is honest-empty (discovery floor deleted). Non-empty survival is covered
+    # by test_regenerate_payload_carries_corpus_and_vet_keeps_it.
+    assert p.hashtags == [] and p.caption == ""
     assert p.caption != "PUNCHIER LINE"
     assert res.detail["caption"] == p.caption
 
