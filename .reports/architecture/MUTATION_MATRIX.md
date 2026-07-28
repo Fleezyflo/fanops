@@ -122,7 +122,7 @@ resurrect a rejected post. Everything else is first-write-wins.
 
 ## B. Control files — the parallel mutation system
 
-Nine JSON files under `00_control/`, **none** of them in the ledger, each with its own flock.
+Seven JSON files under `00_control/`, **none** of them in the ledger, each with its own flock.
 
 | File | Writers | Lock | Validated at write | Read by |
 |---|---|---|---|---|
