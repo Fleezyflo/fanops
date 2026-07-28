@@ -52,7 +52,7 @@ Root `/Users/molhamhomsi/FanOps` (confirmed by the `com.fanops.run` plist `Worki
 |---|---|---|
 | `00_control/personas.json` | 56 corpus tags / 8 personas | **22** tags / 8 personas, all `pinned`, `reach: null` |
 | `00_control/hashtags.json` | 53 tags, `reach: {}` | **18** tags, `reach: {}` |
-| `00_control/hashtag_budget.json` | 30 queries | **unchanged** — the rebuild spent no budget |
+| `00_control/hashtag_budget.json` | (local meter, later deleted) | **present at rebuild; since deleted** — no longer read or written |
 | `00_control/accounts.json` | — | **untouched** |
 | `ledger.sqlite` | — | **untouched** — no post was rewritten |
 

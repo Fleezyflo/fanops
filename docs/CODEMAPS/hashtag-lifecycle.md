@@ -49,18 +49,19 @@ becomes inadmissible without a migration.
 
 ## Layer A has no local budget — Meta is the only governor
 
-Deleted 2026-07-26: `_BUDGET_LIMIT = 30`, `_BUDGET_WINDOW_DAYS = 7`, `_read_queries`, `budget_remaining`,
-`record_query`, `00_control/hashtag_budget.json`. That construct logged every search and then **skipped every
-tag it had logged**, capping each pass at 30 attempts. Live evidence it was fiction: on 2026-07-25 it recorded
-2,124 searches and produced zero new measurements, and the store sat at 21 measured of 1,704 tags with nothing
-newer than 2026-07-20 — while Meta was accepting 1,500+ searches in a single run.
+Deleted 2026-07-26: the local search meter (`_BUDGET_LIMIT` / `_BUDGET_WINDOW_DAYS` / `_read_queries` /
+`budget_remaining` / `record_query` / `00_control/hashtag_budget.json`). That construct logged every search
+and then **skipped every tag it had logged**, capping each pass. Live evidence it was fiction: on
+2026-07-25 it recorded 2,124 searches and produced zero new measurements, and the store sat at 21 measured
+of 1,704 tags with nothing newer than 2026-07-20 — while Meta was accepting 1,500+ searches in a single run.
 
 What replaces it, all on existing mechanisms:
 - **`graph_id` cached** on every record — a known tag re-measures by id and never spends another search, so
   the search endpoint funds novel discovery only.
 - **Throttle codes** (Meta's own 4/17/32/613) → jittered backoff (`_MAX_RL_RETRIES`, the `llm.py` idiom);
   still refused ⇒ `GraphThrottled` ends the pass and the evidence accrued so far is written.
-- **Any other refusal** ⇒ skip that tag; a later pass retries it. Nothing predicts or meters an allowance.
+- **Any other Meta error** ⇒ `GraphRefused` (code/subcode/message) recorded in the pass `unresolved` list;
+  a later pass retries. Nothing predicts or meters an allowance.
 
 ## Layer B — derivation (ZERO network)
 
