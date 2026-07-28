@@ -275,7 +275,7 @@ def test_every_shipped_non_corpus_tag_traces_to_the_measurement_cache(tmp_path):
     store = ["#alpha", "#beta", "#gamma"]
     out, sources = vet_hashtags_traced(None, Platform.instagram, None, store=store, corpus=["#own"], cfg=cfg)
     assert out
-    assert set(sources.values()) <= {"corpus", "graph-reach", "discovery", "region", "content"}
+    assert set(sources.values()) <= {"corpus", "graph-reach", "region", "content"}
     assert "genre-floor" not in sources.values()
     for t, src in sources.items():
         if src == "graph-reach":
@@ -283,17 +283,18 @@ def test_every_shipped_non_corpus_tag_traces_to_the_measurement_cache(tmp_path):
 
 
 def test_cold_cache_ships_short_not_invented(tmp_path):
-    """No measurements => a short line carrying only the platform discovery slot. Honest beats padded."""
+    """No measurements => an empty line. Honest beats padded (discovery floor deleted)."""
     cfg = Config(root=tmp_path)
-    assert vet_hashtags(None, Platform.instagram, None, store=None, corpus=None, cfg=cfg) == ["#reels"]
-    assert vet_hashtags(None, Platform.tiktok, None, store=None, corpus=None, cfg=cfg) == ["#fyp"]
+    assert vet_hashtags(None, Platform.instagram, None, store=None, corpus=None, cfg=cfg) == []
+    assert vet_hashtags(None, Platform.tiktok, None, store=None, corpus=None, cfg=cfg) == []
 
 
 def test_frozen_reach_pools_are_gone(tmp_path):
     import fanops.hashtags as h
     for dead in ("_MEGA", "_RELEVANCE", "_GOSSIP_MEGA", "_GOSSIP_RELEVANCE", "_NICHE_POOLS", "_RANK",
                  "VETTED", "niche_floor", "_normalize_genre", "_composition", "vetted_menu",
-                 "load_store", "load_store_reach", "load_store_evidence"):
+                 "load_store", "load_store_reach", "load_store_evidence",
+                 "_DISCOVERY", "_DISCOVERY_DEFAULT"):
         assert not hasattr(h, dead), f"{dead} is a manufactured-reach artifact and must be deleted"
 
 

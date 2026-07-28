@@ -143,9 +143,9 @@ def test_ingest_captions_vets_hashtags_max4_and_drops_random(tmp_path):
     mc = led.clips["clip_1"].meta_captions["a/instagram"]
     assert len(mc["hashtags"]) <= 4                       # hard cap
     assert "#mohflow" not in mc["hashtags"]               # an unmeasured random word is dropped
-    assert mc["hashtags"] == ["#reels"]                   # cold cache -> the platform discovery slot only
+    assert mc["hashtags"] == []                           # cold cache -> empty (no discovery pad)
     # every survivor traces to a real signal — a tag is never a sourceless junk word.
-    assert set(mc["tag_sources"].values()) <= {"content", "corpus", "region", "graph-reach", "discovery"}
+    assert set(mc["tag_sources"].values()) <= {"content", "corpus", "region", "graph-reach"}
     assert all(mc["tag_sources"][t] for t in mc["hashtags"])   # no sourceless tag ships
     assert mc["caption"] == " ".join(mc["hashtags"])      # posted caption == the vetted tag line
 

@@ -11,11 +11,10 @@ exactly the manufactured assessment the system must not make.
 
 What survives here is COMPOSITION, which is format rather than a reach claim: at most 4 tags, the
 persona's curated corpus leads but may not monopolise the line (`_CORPUS_LEAD_MAX`), graded-LRU rotation,
-one platform discovery tag (`_DISCOVERY` — every short-form post carries one), a region tag on
-Arabic-language clips (`_ARABIC`), and the operator's global ban list as a hard veto.
+a region tag on Arabic-language clips (`_ARABIC`), and the operator's global ban list as a hard veto.
 
 Membership is the cache UNION the surface's corpus (minus bans): a tag the model invents cannot ship, and
-a tag nobody measured cannot ship either. A cold cache therefore yields a SHORT line, not a padded one."""
+a tag nobody measured cannot ship either. A cold cache therefore yields an empty line, not a padded one."""
 from __future__ import annotations
 import json, re
 from fanops.models import Platform
@@ -27,9 +26,6 @@ from fanops.models import Platform
 METRIC_FIELD = "like_count"
 
 _ARABIC = ["#arabicmusic", "#arabtiktok", "#arabicmusiclovers"]        # AR language/region floor
-_DISCOVERY = {Platform.tiktok: ["#fyp", "#foryou", "#viral"],
-              Platform.instagram: ["#reels", "#foryou", "#viral"]}
-_DISCOVERY_DEFAULT = ["#foryou", "#viral"]                   # youtube/other -> platform-neutral
 # Max slots the curated corpus may LEAD in one line. The corpus is tier 0 and is seeded whole, so without
 # this a corpus of >= max_tags takes every slot and the model's per-clip picks can never ship (the line
 # becomes a pure function of the persona). 2-of-4 keeps the curated lead on every post while guaranteeing
@@ -218,11 +214,10 @@ def vet_hashtags(tags: list[str] | None, platform: Platform, language: str | Non
 
     Order: corpus tier, then the clip's own picks, then graded LRU (`recent`, oldest-first — never-used
     leads), then the platform metric rank. Floors take the TAIL slots so the corpus/metric lead survives:
-    one `_ARABIC` tag on an Arabic-language clip, one content tag when that dormant channel is fed.
-    Backfill is corpus -> one platform discovery tag -> the measured menu -> content.
+    one `_ARABIC` tag on an Arabic-language clip. Backfill is corpus -> the measured menu -> content.
 
-    Cold cache + no corpus -> a one-tag line (the discovery slot). That is the honest floor: there is no
-    hand-ranked pool left to pad it with. `cfg` supplies the ban list (a hard veto at every stage)."""
+    Cold cache + no corpus -> an empty line. That is the honest floor: there is no hand-ranked pool and no
+    discovery pad left to invent reach with. `cfg` supplies the ban list (a hard veto at every stage)."""
     bans = load_bans(cfg) if cfg is not None else set()
     corpus_norm = _strip_banned(_dedupe_norm(corpus), bans)
     content_norm = _strip_banned(_screen_content(_dedupe_norm(content), cfg), bans)
@@ -271,20 +266,15 @@ def vet_hashtags(tags: list[str] | None, platform: Platform, language: str | Non
         c_kept = [h for h in kept if h in cset]; o_kept = [h for h in kept if h not in cset]
         kept = c_kept[:_CORPUS_LEAD_MAX] + o_kept + c_kept[_CORPUS_LEAD_MAX:]
     # Reserved floors take the TAIL slots so the corpus/metric LEAD is preserved. Detect against the CAP
-    # WINDOW, not `seen` (the model's own AR/content tag may be in seen but sorted PAST the cap).
-    arabic = set(_ARABIC); content_set = set(content_norm)
+    # WINDOW, not `seen` (the model's own AR tag may be in seen but sorted PAST the cap).
+    arabic = set(_ARABIC)
     reserved: list[str] = []
     if lang_floor and not any(h in arabic for h in kept[:max_tags]):
         reserved.append(next((h for h in kept if h in arabic), lang_floor[0]))
-    if content_norm and not any(h in content_set for h in kept[:max_tags]):
-        reserved.append(next((h for h in kept if h in content_set), content_norm[0]))
     if reserved:
         head = [h for h in kept if h not in reserved][:max_tags - len(reserved)]
         kept = head + reserved; seen = set(kept)
-    # One platform DISCOVERY tag, unconditionally: it is the one composition element that does not depend on
-    # any measurement, so it is also what keeps a cold-cache line from being empty.
-    disc_floor = _DISCOVERY.get(platform, _DISCOVERY_DEFAULT)[:1]
-    for h in corpus_norm + disc_floor + store_norm + content_norm:
+    for h in corpus_norm + store_norm + content_norm:
         if len(kept) >= max_tags: break
         if h not in seen and _norm(h) not in bans:
             seen.add(h); kept.append(h)
@@ -296,15 +286,14 @@ _ARABIC_SET = set(_ARABIC)
 
 def _tag_source(tag: str, *, content_set: set, corpus_set: set, store_set: set) -> str:
     """The provenance label for ONE shipped tag — the real signal it traces to. Priority (highest first):
-    content > corpus > region > graph-reach > discovery. TOTAL by construction: membership is the cache
-    UNION corpus UNION content, and the only tags added outside that are the two floors, so a tag matching
-    none of the first four can only be the platform discovery slot. `graph-reach` means the tag carries a
-    live platform measurement in the cache — never a post that used it (attribution severance)."""
+    content > corpus > region > graph-reach. TOTAL by construction: membership is the cache UNION corpus
+    UNION content, and the only tag added outside that is the AR region floor. `graph-reach` means the tag
+    carries a live platform measurement in the cache — never a post that used it (attribution severance)."""
     if tag in content_set: return "content"
     if tag in corpus_set: return "corpus"
     if tag in _ARABIC_SET: return "region"
     if tag in store_set: return "graph-reach"
-    return "discovery"
+    raise AssertionError(f"unattributed hashtag {tag!r}")  # unreachable: discovery floor deleted
 
 
 def vet_hashtags_traced(tags: list[str] | None, platform: Platform, language: str | None = None,
@@ -312,8 +301,8 @@ def vet_hashtags_traced(tags: list[str] | None, platform: Platform, language: st
                         corpus: list[str] | None = None, content: list[str] | None = None,
                         cfg=None, recent: list[str] | None = None) -> tuple[list[str], dict[str, str]]:
     """vet_hashtags + a provenance `source` per shipped tag. SAME selection (DRY — it calls it), then
-    labels each kept tag by the signal it traces to (content|corpus|region|graph-reach|discovery). This
-    proves every shipped tag is evidence-backed — no tag can ride a claim we invented."""
+    labels each kept tag by the signal it traces to (content|corpus|region|graph-reach). This proves every
+    shipped tag is evidence-backed — no tag can ride a claim we invented."""
     out = vet_hashtags(tags, platform, language, max_tags,
                        store=store, corpus=corpus, content=content, cfg=cfg, recent=recent)
     content_set = set(_dedupe_norm(content)); corpus_set = set(_dedupe_norm(corpus))

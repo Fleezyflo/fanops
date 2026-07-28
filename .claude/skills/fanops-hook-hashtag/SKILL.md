@@ -18,9 +18,9 @@ grounded in what actually works, with proof.
 
 ## Drift guards (machine-readable; mirror-tested against the code)
 
-<!-- DRIFT-GUARD:hashtags — the COMPOSITION floors (hashtags._ARABIC + every hashtags._DISCOVERY pool), sorted. These are the only frozen tag lists left: format, not a reach claim. The old hand-ranked VETTED pool is deleted — a tag's worth is its live platform measurement. -->
+<!-- DRIFT-GUARD:hashtags — the COMPOSITION floors (hashtags._ARABIC only), sorted. These are the only frozen tag lists left: format, not a reach claim. The old hand-ranked VETTED pool and the platform discovery floor are deleted — a tag's worth is its live platform measurement. -->
 ```text
-#arabicmusic #arabicmusiclovers #arabtiktok #foryou #fyp #reels #viral
+#arabicmusic #arabicmusiclovers #arabtiktok
 ```
 
 <!-- DRIFT-GUARD:patterns — the proven hook MECHANISMS (4 psychological triggers + 5 evidence-rewrite mechanisms); each must appear lowercased in prompts._hook_spec -->

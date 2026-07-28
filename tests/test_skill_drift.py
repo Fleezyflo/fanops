@@ -5,11 +5,11 @@ blocks in SKILL.md and assert they match the code — mutate either side and thi
 
 The hashtag block used to mirror `hashtags.VETTED`, a hand-ranked reach pool. That pool is DELETED: a
 tag's worth is now its live platform measurement, so there is no canonical tag list to document. What
-remains frozen — and therefore documentable — are the COMPOSITION floors: the AR region tags and the
-per-platform discovery tags, neither of which is a reach claim."""
+remains frozen — and therefore documentable — is the COMPOSITION floor: the AR region tags
+(`_ARABIC`), which is format rather than a reach claim. The platform discovery floor is deleted."""
 import re
 from pathlib import Path
-from fanops.hashtags import _ARABIC, _DISCOVERY
+from fanops.hashtags import _ARABIC
 from fanops.prompts import _hook_spec
 
 _SKILL = Path(__file__).resolve().parents[1] / ".claude" / "skills" / "fanops-hook-hashtag" / "SKILL.md"
@@ -30,9 +30,9 @@ def _guard_block(name: str) -> str:
 
 
 def _composition_floors() -> list[str]:
-    """The only frozen tag lists left in hashtags.py: the AR region floor + every platform's discovery
-    pool. Sorted so the doc has ONE canonical ordering to mirror."""
-    return sorted(set(_ARABIC) | {t for pool in _DISCOVERY.values() for t in pool})
+    """The only frozen tag list left in hashtags.py: the AR region floor. Sorted so the doc has ONE
+    canonical ordering to mirror."""
+    return sorted(set(_ARABIC))
 
 
 def test_skill_composition_floors_match_code():
