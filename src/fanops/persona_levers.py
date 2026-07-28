@@ -74,9 +74,9 @@ LEVER_REGISTRY = [
     {"key": "clip_profile", "label": "Clip length", "kind": "select", "stage": "cut",
      "does": "the GLOBAL deterministic cut-length band (Go-Live default; per-persona it is derived from content_focus)",
      "options": [{"value": n} for n in _CLIP_PROFILE_BANDS]},
-    {"key": "niche", "label": "Territory seeds (interim)", "kind": "tags", "stage": "caption",
-     "does": "optional tag-shaped INTERIM seeds (migration). Layer A also seeds from voice + levers — "
-             "niche is not the sole hashtag source", "options": []},
+    {"key": "niche", "label": "Territory seeds", "kind": "tags", "stage": "caption",
+     "does": "declared subject terms — the ONLY Layer A hashtag search roots (MOL-637); voice/levers "
+             "stay on captions+hooks, not discovery", "options": []},
 ]
 
 
@@ -100,7 +100,7 @@ PERSONA_EDITABLE_CHANNELS = {
     "intensity": ("peak-filter",),
     "selection_scope": ("casting-selection-scope",),
     "hook_angle": ("hook-angle",),
-    # Interim niche seeds still own the hashtags editor channel; persona_terms ALSO reads voice+levers (F-1).
+    # niche owns the hashtags editor channel — persona_terms returns niche ONLY (MOL-637).
     "niche": ("hashtags",),
 }
 

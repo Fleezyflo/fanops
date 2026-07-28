@@ -6,7 +6,7 @@ The end-to-end path that decides every posted hashtag. Two layers, one authority
 
 ## The single rule everything else follows
 
-Discovery direction (F / MOL-627): Layer A search seeds come from the **full Studio persona surface** (`persona_terms` — interim niche tags + structured levers + voice unigrams ≥5 chars after stop-list). "Niche" is not the sole hashtag source.
+Discovery direction (MOL-637): Layer A search seeds are **declared niche only** (`persona_terms`). Voice / content_focus / hook_angle / intensity stay on captions+hooks — they are not Instagram search roots.
 
 Metric honesty: visibility is **only** Instagram fields Layer A stores — never an invented blended `reach`, never "most visibility" from a single top-post like.
 

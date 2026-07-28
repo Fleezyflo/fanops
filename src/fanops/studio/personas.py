@@ -139,8 +139,8 @@ def connect_account(cfg: Config, handle: str, persona_id: str) -> ActionResult:
 
 
 def set_niche(cfg: Config, pid: str, niche: str = "") -> ActionResult:
-    """Save interim territory seed tags — `Persona.niche` (migration). Layer A also seeds from voice/levers; the next pass
-    searches on, and therefore the operator's most direct lever over which hashtags get discovered and
+    """Save territory seed tags — `Persona.niche`. The ONLY Layer A search root (MOL-637); the next pass
+    searches on these, so this is the operator's most direct lever over which hashtags get discovered and
     measured for this persona. Parse is comma/newline only; store validation refuses defective entries."""
     pid = (pid or "").strip()
     if not pid:

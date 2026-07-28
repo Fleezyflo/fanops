@@ -373,12 +373,22 @@ def caption_prompt(payload: dict) -> str:
     # MOL-513 (C-3): each surface carries its own `hashtag_store` (that account's persona aligned pool,
     # metric-ranked). Absent/empty menu -> honest empty list in the pick rule; the surface corpus still
     # carries the line. Root-level hashtag_store is gone.
+    # MOL-636: when hashtag_metrics is present, annotate each menu tag with its visibility numbers.
+    metrics = payload.get("hashtag_metrics") if isinstance(payload.get("hashtag_metrics"), dict) else {}
+
+    def _menu_entry(tag: str) -> str | dict:
+        rec = metrics.get(tag)
+        if not isinstance(rec, dict):
+            return tag
+        row = {k: rec[k] for k in ("play_count", "like_count", "media_count") if k in rec}
+        return {"tag": tag, **row} if row else tag
+
     pick_parts = []
     for s in surfaces:
         if not isinstance(s, dict):
             continue
         key = s.get("surface")
-        menu = [t for t in (s.get("hashtag_store") or []) if isinstance(t, str)]
+        menu = [_menu_entry(t) for t in (s.get("hashtag_store") or []) if isinstance(t, str)]
         pick_parts.append(
             f"For surface {json.dumps(key)} choose ONLY from menu {json.dumps(menu, ensure_ascii=False)} "
             "UNION that surface's `corpus`."
@@ -389,6 +399,18 @@ def caption_prompt(payload: dict) -> str:
     pick_rule = ("Pick up to 4 tags by how well each fits THIS clip — each surface's menu is already "
                  "ordered by live platform reach, so prefer earlier entries when the fit is equal. "
                  f"{pick_body} Do NOT invent tags outside them. ")
+    metrics_block = (
+        "  - When clip fit is equal, prefer the tag with higher play_count (then like_count). "
+        f"Visibility numbers: {json.dumps(metrics, ensure_ascii=False)}\n"
+        if metrics else ""
+    )
+    # MOL-642: clip transcript → content_tags as a FIT signal; still pick only from measured menu∪corpus.
+    content = [t for t in (payload.get("content_tags") or []) if isinstance(t, str)]
+    content_block = (
+        "  - Clip-specific content tags (fit signal from THIS transcript — still choose ONLY from each "
+        f"surface's `hashtag_store` UNION `corpus`): {json.dumps(content, ensure_ascii=False)}\n"
+        if content else ""
+    )
     return (
         "You write captions for FAN ACCOUNTS that repost and celebrate an artist. "
         "You are a FAN hyping the artist to other fans — NEVER the artist, never an official account. "
@@ -419,6 +441,8 @@ def caption_prompt(payload: dict) -> str:
         "  - When a surface carries a `corpus` (its curated, reach-vetted tag pool), PREFER the tags in "
         "that surface's `corpus` for that surface — they are its hand-picked, account-specific tags; fill "
         "any remaining slots (up to 4) from that surface's `hashtag_store` menu.\n"
+        f"{metrics_block}"
+        f"{content_block}"
         # ROOT FIX: the caption gate is HASHTAGS ONLY now — the on-screen hook is authored by the frame-
         # seeing MOMENT gate (m.hook), never this blind text-only gate. The per-surface
         # hook/axis/rationale ask was removed (the dormant coherence-gate machinery was deleted with it;

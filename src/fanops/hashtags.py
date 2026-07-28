@@ -137,7 +137,7 @@ def content_tag_candidates(text: str | None, *, max_n: int = 6) -> list[str]:
     Deterministic + pure (NO NLP model): lowercase, latin word tokens (3-20 chars), drop stopwords,
     order by frequency then first-seen, normalize to '#tag', dedupe, cap at `max_n`. Blank / non-str /
     non-latin (Arabic) / numbers-only -> []. These are CANDIDATES that must still pass the membership
-    gate; the channel is currently dormant (no production caller passes `content=`)."""
+    gate; production callers pass them via `content=` (request_captions → ingest / Studio regen)."""
     if not isinstance(text, str) or not text.strip():
         return []
     counts: dict[str, int] = {}; order: list[str] = []

@@ -27,7 +27,7 @@ from fanops.variant_learning import ucb_rank
 # so request_captions' fail-open path is unit-patchable (tests monkeypatch fanops.caption.transferred_hooks).
 from fanops.variant_transfer import transferred_hooks
 from fanops.personas import caption_directive
-from fanops.hashtags import vet_hashtags_traced, load_measurements, _norm
+from fanops.hashtags import vet_hashtags_traced, load_measurements, _norm, content_tag_candidates
 from fanops.log import get_logger
 from fanops.control import load_guidance
 
@@ -208,6 +208,27 @@ def request_captions(led: Ledger, cfg: Config, clip_id: str,
     corpora = {a.handle: list(getattr(a, "hashtag_corpus", []) or []) for a in accounts.accounts} if accounts is not None else {}
     # MOL-513 (C-3): per-surface menu = that account's persona aligned pool (not the global cache).
     stores = _per_account_hashtag_stores(cfg, accounts)
+    # MOL-642: clip transcript → content tag candidates (dormant path wired).
+    content_tags = content_tag_candidates(moment.transcript_excerpt)
+    # MOL-636: visibility sidecar — keep hashtag_store as list[str] for vet; numbers ride separately.
+    metric_tags: set[str] = set()
+    for sv in stores.values():
+        metric_tags.update(sv or [])
+    for cv in corpora.values():
+        metric_tags.update(_norm(t) for t in (cv or []) if isinstance(t, str))
+    meas = load_measurements(cfg)
+    hashtag_metrics: dict = {}
+    for t in metric_tags:
+        rec = meas.get(t)
+        if not isinstance(rec, dict):
+            continue
+        row = {}
+        for k in ("play_count", "like_count", "media_count"):
+            v = rec.get(k)
+            if isinstance(v, (int, float)) and not isinstance(v, bool) and v >= 0:
+                row[k] = float(v)
+        if row:
+            hashtag_metrics[t] = row
     payload = {
         "clip_id": clip_id,
         "transcript_excerpt": moment.transcript_excerpt,
@@ -218,6 +239,8 @@ def request_captions(led: Ledger, cfg: Config, clip_id: str,
                       **({"corpus": cv} if (cv := corpora.get(acct)) else {}),
                       **({"hashtag_store": sv} if (sv := stores.get(acct)) else {})}
                      for acct, plat in surfaces],
+        **({"content_tags": content_tags} if content_tags else {}),
+        **({"hashtag_metrics": hashtag_metrics} if hashtag_metrics else {}),
         # variation v2: only present when a surface crossed the trust gate -> OFF/below-gate keeps
         # the payload byte-identical to pre-v2 (caption_prompt renders this block when present).
         **({"learned_hooks": learned} if learned else {}),
@@ -229,19 +252,22 @@ def request_captions(led: Ledger, cfg: Config, clip_id: str,
     led.set_clip_state(clip_id, ClipState.captions_requested)
     return led
 
-def _request_surfaces(cfg: Config, clip_id: str) -> tuple[set, dict, dict, dict]:
+def _request_surfaces(cfg: Config, clip_id: str) -> tuple[set, dict, dict, dict, list | None]:
     """The crosspost request is the source of truth for completeness: which surfaces were ASKED for, the
     per-surface derived corpus each carried (None/absent when unset) so vet_hashtags can lead on it,
     the per-surface REQUESTED platform (AGENT-6 — the vetting truth, not a re-parse of the model's echoed
-    string), and the per-surface hashtag_store (persona aligned pool from C-3 — MOL-511 ingest vet menu).
-    Returns (requested, surface_corpus, surface_platform, surface_store). Pure read."""
+    string), the per-surface hashtag_store (persona aligned pool from C-3 — MOL-511 ingest vet menu),
+    and clip-level `content_tags` (MOL-642 — None when absent).
+    Returns (requested, surface_corpus, surface_platform, surface_store, content_tags). Pure read."""
     req = json.loads(request_path(cfg, "captions", clip_id).read_text())
     surfaces = req.get("surfaces", [])
     requested = {s["surface"] for s in surfaces}
     surface_corpus = {s["surface"]: s.get("corpus") for s in surfaces}
     surface_platform = {s["surface"]: s.get("platform") for s in surfaces}   # AGENT-6: the REQUESTED platform (truth)
     surface_store = {s["surface"]: s.get("hashtag_store") for s in surfaces}  # MOL-511: persona-scoped vet menu
-    return requested, surface_corpus, surface_platform, surface_store
+    raw = req.get("content_tags")
+    content_tags = [t for t in raw if isinstance(t, str)] if isinstance(raw, list) else None
+    return requested, surface_corpus, surface_platform, surface_store, content_tags
 
 def _platform_for_surface(surface: str, surface_platform: dict) -> Platform:
     """AGENT-6 / MOL-168: the platform we ASKED to caption (from the request record), not a re-parse of
@@ -292,7 +318,7 @@ def ingest_captions(led: Ledger, cfg: Config, clip_id: str, *, pass_recent: dict
     # the clip's source language is the contract the caption must match (AUDIT H5).
     src = led.sources.get(led.moments[clip.parent_id].parent_id)
     # what surfaces did we ask for, and their per-surface curated corpus / store? (the request is the truth)
-    requested, surface_corpus, surface_platform, surface_store = _request_surfaces(cfg, clip_id)
+    requested, surface_corpus, surface_platform, surface_store, content_tags = _request_surfaces(cfg, clip_id)
     # AUDIT H6: a caption targeting a surface we never requested (e.g. a typo'd key) is held with
     # a SPECIFIC reason NAMING the bad surface(s) — diagnosed before the generic missing-caption
     # logic so a typo'd-but-present caption is not mislabelled "missing".
@@ -334,6 +360,7 @@ def ingest_captions(led: Ledger, cfg: Config, clip_id: str, *, pass_recent: dict
         tags, sources = vet_hashtags_traced(item.hashtags or _tags_in(item.caption), plat,
                             src.language if src else None, store=surface_store.get(item.surface),
                             corpus=surface_corpus.get(item.surface),   # the derived per-persona pool leads
+                            content=content_tags,                     # MOL-642: clip transcript signal
                             cfg=cfg, recent=recent)
         if pass_recent is not None: pass_recent.setdefault(handle, []).extend(tags)
         clip.meta_captions[item.surface] = _caption_entry(tags, [str(h) for h in (item.hashtags or [])], tag_sources=sources)
@@ -353,6 +380,7 @@ def ingest_captions(led: Ledger, cfg: Config, clip_id: str, *, pass_recent: dict
         tags, sources = vet_hashtags_traced(None, plat, src.language if src else None,
                             store=surface_store.get(surface),
                             corpus=surface_corpus.get(surface),   # the derived corpus leads the seed line
+                            content=content_tags,                 # MOL-642: same clip signal on fallback
                             cfg=cfg, recent=recent)
         if pass_recent is not None: pass_recent.setdefault(handle, []).extend(tags)
         clip.meta_captions[surface] = _caption_entry(tags, [], fallback=True, tag_sources=sources)

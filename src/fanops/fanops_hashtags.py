@@ -8,8 +8,8 @@ One pass, per persona that actually posts:
 
   description -> terms -> anchor tags -> ONE medias_top fetch per tag -> {metric, co-occurring tags}
 
-`persona_terms` returns seeds from the full persona UI surface (interim niche tags + levers + voice
-unigrams — see persona_research). The corpus is never an input:
+`persona_terms` returns declared `niche` ONLY (MOL-637) — voice/levers stay on captions+hooks, not
+Layer A search roots:
 it used to seed this pass, which made the store a re-ranked echo of the corpora it then fed — a closed
 loop with no external evidence anywhere in it (measured live 2026-07-16: the store was byte-identical
 to seeds + the frozen floor, 0 discovered, `reach: {}`, while every proposal it made looked like

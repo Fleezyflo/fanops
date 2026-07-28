@@ -13,39 +13,12 @@ the live system with corpora that were ~90% auto-filled tags carrying `reach: nu
 measurement at all. Admission now needs a real, unexpired platform measurement, so a corpus is either
 evidence-backed or honestly SHORT."""
 from __future__ import annotations
-import re
 from datetime import datetime, timedelta, timezone
 from fanops.config import Config
 from fanops.hashtags import _norm, load_measurements, _metric
 from fanops.hashtag_hygiene import is_curatable
 
 _EVIDENCE_MAX_AGE_DAYS = 90       # older than this is history, not evidence — a dead measurement cannot curate
-# Voice → seeds: UNIGRAMS only (MOL-506 killed adjacent-word glue: #hookangle / #brandsafety).
-# Min length 5 + expanded stop list — short filler ("high","hook","gaps","menu","within","angle")
-# used to become Layer A anchors and pollute every persona's discovery queue.
-_WORD = re.compile(r"[a-z0-9_]{2,}", re.I)
-_VOICE_MIN_LEN = 5
-_STOP = frozenset({
-    "a", "an", "the", "and", "or", "but", "if", "then", "else", "when", "while", "for", "to", "of", "in",
-    "on", "at", "by", "from", "with", "without", "as", "is", "are", "was", "were", "be", "been", "being",
-    "this", "that", "these", "those", "it", "its", "into", "over", "under", "about", "who", "whom", "which",
-    "what", "how", "why", "not", "no", "yes", "do", "does", "did", "done", "can", "could", "should", "would",
-    "will", "just", "also", "more", "most", "less", "very", "really", "own", "our", "your", "their", "his",
-    "her", "him", "she", "he", "they", "them", "we", "you", "i", "me", "my", "mine", "than", "too", "so",
-    "such", "via", "per", "vs", "etc", "clip", "clips", "moment", "moments", "account", "accounts", "post",
-    "posts", "viewer", "viewers", "content", "register", "prompt", "prompts", "llm",
-    "within", "angle", "angles", "hook", "hooks", "gaps", "menu", "high", "higher", "lowest", "through",
-    "across", "around", "before", "after", "where", "there", "here", "some", "any", "each", "both",
-    "other", "another", "thing", "things", "stuff", "kind", "type", "ways", "always", "never", "often",
-    "maybe", "almost", "enough", "rather", "quite", "pretty", "every", "still", "even", "only", "same",
-    "different", "true", "real", "full", "free", "open", "close", "hard", "soft", "long", "short",
-    "next", "last", "first", "back", "down", "again", "make", "take", "give", "keep", "look", "feel",
-    "brand", "safety", "voice", "voices", "persona", "personas", "studio", "caption", "captions",
-})
-# Hashtag discovery seeds: niche + content_focus only. intensity/hook_angle/selection_scope are
-# enum UX levers ("high", "curiosity", "challenge") — NOT Instagram tags; seeding them made every
-# persona share fake anchors and let inbound co-occurrence pollute Burner via #curiosity/#high.
-_LEVER_KEYS = ("content_focus",)
 
 
 def _registry(cfg: Config):
@@ -67,43 +40,25 @@ def _seed_token(raw) -> str | None:
 
 
 def persona_terms(per) -> list[str]:
-    """Discovery/alignment vocabulary for ONE persona from the full Studio surface (F-1 / MOL-627).
+    """Layer A/B hashtag vocabulary for ONE persona: declared `niche` ONLY (MOL-637).
 
-    Order (deduped, first wins): interim `niche` tag list (migration) → structured lever values →
-    voice UNIGRAMS that pass structural curation. Pure, deterministic, CORPUS-BLIND.
+    Voice / content_focus / hook_angle / intensity stay on the persona for caption+hook directives —
+    they are NOT Instagram search roots. Seeding those turned UX prose into `#believe` / `#punchlines`
+    discovery and collapsed every persona onto one mega-tag neighborhood.
 
-    Forbidden: niche-as-sole-source; adjacent-voice-word concatenation; reading hashtag_corpus."""
+    Pure, deterministic, CORPUS-BLIND."""
     out: list[str] = []; seen: set[str] = set()
-
-    def _add(raw) -> None:
-        t = _seed_token(raw)
+    for n in getattr(per, "niche", None) or []:
+        t = _seed_token(n)
         if t and t not in seen:
             seen.add(t); out.append(t)
-
-    for n in getattr(per, "niche", None) or []:
-        _add(n)
-    for key in _LEVER_KEYS:
-        val = getattr(per, key, None)
-        if isinstance(val, (list, tuple)):
-            for v in val:
-                _add(v)
-        elif isinstance(val, str) and val.strip():
-            _add(val)
-    voice = getattr(per, "voice", None) or ""
-    if isinstance(voice, str) and voice.strip():
-        for m in _WORD.finditer(voice.lower()):
-            w = m.group(0)
-            if w in _STOP or len(w) < _VOICE_MIN_LEN:
-                continue
-            _add(w)
     return out
 
 
 def _is_evidence(rec: dict, *, now: datetime | None = None) -> bool:
     """True when a cache record is a real, unexpired PLATFORM measurement — the admission predicate.
-    Demands the platform's own field (`METRIC_FIELD`, positive), a parseable `measured_at`, and freshness.
-    A legacy record (the invented likes+comments sum under a `reach` key) carries no METRIC_FIELD and fails
-    here exactly as it fails the cache reader: an unprovenanced number must never curate."""
+    Demands a positive visibility metric (play_count preferred, else like_count), a parseable
+    `measured_at`, and freshness. Legacy invented `reach` sums carry neither rank field and fail here."""
     if not isinstance(rec, dict):
         return False
     try:

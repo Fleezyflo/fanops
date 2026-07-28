@@ -33,7 +33,7 @@
         selection scope, and its hook angle. Hashtags (and genre for research) are curated per-card after it exists.</p>
       <form hx-post="{{ url_for('do_personas_add') }}" hx-target="#personas-panel" hx-swap="outerHTML">
         <label>Name <input type="text" name="name" placeholder="e.g. Music Blogger" size="22" required></label>
-        <label>Territory seeds (interim) <input type="text" name="niche" placeholder="optional tag seeds, e.g. hiphop" size="28" required
+        <label>Territory seeds <input type="text" name="niche" placeholder="optional tag seeds, e.g. hiphop" size="28" required
           title="the subject term(s) the next measurement pass searches Instagram for"></label>
         <label class="block">Voice
           <textarea name="voice" rows="2" placeholder="champions craft; clip the moments that show artistry…"></textarea></label>

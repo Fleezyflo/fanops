@@ -395,7 +395,7 @@ class PersonaCard:
     name: str
     voice: str
     corpus: list                       # the per-persona DERIVED hashtag pool, ordered by the platform metric
-    niche: list                        # interim territory seeds (voice+levers also direct Layer A)
+    niche: list                        # declared territory — sole Layer A search root (MOL-637)
     linked_handles: list               # accounts whose persona_id points at this persona
     reach_tags: list = field(default_factory=list)   # corpus tags carrying a live platform measurement
     reach_means: dict = field(default_factory=dict)  # {corpus tag -> Meta's own like_count} — the honest 'why this tag'
