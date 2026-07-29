@@ -594,3 +594,108 @@ def test_publish_due_calls_postiz_throttle(tmp_path, monkeypatch, mocker):
     assert throttle.call_count == 2
     assert all(c.args[1] == "postiz" for c in throttle.call_args_list)
     reset_publish_throttle()
+
+
+# ---- MOL-712: publish_due daily outbound quota (backstop for schedules the allocator never touched) ----
+# published_at is stamped with wall-clock UTC at the claim→publish transition, so the quota day's
+# `now=` MUST be that same calendar day — a frozen historical `now=` makes spent land on today while
+# the check looks at 2026-06-02 and the second pass under-counts.
+
+def _quota_now():
+    from datetime import datetime, timezone
+    from fanops.timeutil import iso_z
+    return iso_z(datetime.now(timezone.utc))
+
+
+def test_publish_due_caps_at_ten_per_account_per_local_day(tmp_path, monkeypatch, mocker):
+    from fanops.studio.views_common import _DAILY_ACCOUNT_CAP
+    _live(monkeypatch); cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    n = _DAILY_ACCOUNT_CAP + 10
+    for i in range(n):
+        _queued(led, cfg, pid=f"q{i}", cid=f"cq{i}", when="2020-01-01T00:00:00Z")
+    _http_media(led, *[f"q{i}" for i in range(n)]); _stub_ok_poster(mocker, cfg)
+    mocker.patch("fanops.postiz_lifecycle.ensure_up")
+    now = _quota_now()
+    summary = publish_due(cfg, now=now)
+    led = Ledger.load(cfg)
+    shipped = [p for p in led.posts.values() if p.state is PostState.published]
+    held = [p for p in led.posts.values() if p.state is PostState.queued]
+    assert len(shipped) == _DAILY_ACCOUNT_CAP
+    assert len(held) == 10
+    assert summary["published"] == _DAILY_ACCOUNT_CAP and summary["quota_skipped"] == 10
+    for p in held:                                     # ZERO mutation on a quota skip
+        assert p.scheduled_time == "2020-01-01T00:00:00Z" and p.submission_started_at is None
+
+def test_publish_due_second_pass_publishes_zero_more_at_cap(tmp_path, monkeypatch, mocker):
+    from fanops.studio.views_common import _DAILY_ACCOUNT_CAP
+    _live(monkeypatch); cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    for i in range(_DAILY_ACCOUNT_CAP + 5):
+        _queued(led, cfg, pid=f"q{i}", cid=f"cq{i}", when="2020-01-01T00:00:00Z")
+    _http_media(led, *[f"q{i}" for i in range(_DAILY_ACCOUNT_CAP + 5)]); _stub_ok_poster(mocker, cfg)
+    mocker.patch("fanops.postiz_lifecycle.ensure_up")
+    now = _quota_now()
+    publish_due(cfg, now=now)
+    summary = publish_due(cfg, now=now)               # same local day, immediate re-run
+    assert summary["published"] == 0 and summary["quota_skipped"] == 5
+    assert sum(1 for p in Ledger.load(cfg).posts.values() if p.state is PostState.published) == _DAILY_ACCOUNT_CAP
+
+def test_publish_due_in_flight_claim_counts_against_today(tmp_path, monkeypatch, mocker):
+    # A crash-stranded submitting post claimed TODAY still occupies a slot — otherwise a crash-and-retry
+    # loop walks past the cap by treating in-flight as free.
+    from fanops.studio.views_common import _DAILY_ACCOUNT_CAP
+    from fanops.timeutil import iso_z
+    from datetime import datetime, timezone, timedelta
+    _live(monkeypatch); cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    claim = iso_z(datetime.now(timezone.utc) - timedelta(hours=1))   # claimed earlier TODAY
+    for i in range(_DAILY_ACCOUNT_CAP):
+        _queued(led, cfg, pid=f"inf{i}", cid=f"cinf{i}", when="2020-01-01T00:00:00Z")
+        led.posts[f"inf{i}"].state = PostState.submitting
+        led.posts[f"inf{i}"].submission_started_at = claim
+    for i in range(3):
+        _queued(led, cfg, pid=f"new{i}", cid=f"cnew{i}", when="2020-01-01T00:00:00Z")
+    _http_media(led, "new0", "new1", "new2"); _stub_ok_poster(mocker, cfg)
+    mocker.patch("fanops.postiz_lifecycle.ensure_up")
+    summary = publish_due(cfg, now=_quota_now())
+    assert summary["published"] == 0 and summary["quota_skipped"] == 3
+    assert all(Ledger.load(cfg).posts[f"new{i}"].state is PostState.queued for i in range(3))
+
+def test_publish_due_old_row_without_stamps_falls_back_to_scheduled_time(tmp_path, monkeypatch, mocker):
+    # Pre-MOL-709 published rows have neither published_at nor submission_started_at on some fixtures;
+    # counting them as zero would let a legacy hand-edited schedule walk past the cap.
+    from fanops.studio.views_common import _DAILY_ACCOUNT_CAP
+    from fanops.timeutil import iso_z
+    from datetime import datetime, timezone
+    _live(monkeypatch); cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    # scheduled_time on TODAY so the fallback attributes the spent slot to the same day the run checks
+    today_slot = iso_z(datetime.now(timezone.utc).replace(hour=10, minute=0, second=0, microsecond=0))
+    for i in range(_DAILY_ACCOUNT_CAP):
+        _queued(led, cfg, pid=f"old{i}", cid=f"cold{i}", when=today_slot)
+        p = led.posts[f"old{i}"]
+        p.state = PostState.published
+        p.public_url = _LIVE_PERMALINK
+        p.published_at = None
+        p.submission_started_at = None
+    for i in range(2):
+        _queued(led, cfg, pid=f"new{i}", cid=f"cnew{i}", when="2020-01-01T00:00:00Z")
+    _http_media(led, "new0", "new1"); _stub_ok_poster(mocker, cfg)
+    mocker.patch("fanops.postiz_lifecycle.ensure_up")
+    summary = publish_due(cfg, now=_quota_now())
+    assert summary["published"] == 0 and summary["quota_skipped"] == 2
+
+def test_publish_due_quota_is_per_account(tmp_path, monkeypatch, mocker):
+    from fanops.studio.views_common import _DAILY_ACCOUNT_CAP
+    _live(monkeypatch); cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    for i in range(_DAILY_ACCOUNT_CAP + 2):
+        _queued(led, cfg, pid=f"a{i}", cid=f"ca{i}", when="2020-01-01T00:00:00Z")
+        led.posts[f"a{i}"].account = "alpha"
+    for i in range(3):
+        _queued(led, cfg, pid=f"b{i}", cid=f"cb{i}", when="2020-01-01T00:00:00Z")
+        led.posts[f"b{i}"].account = "beta"
+    ids = [f"a{i}" for i in range(_DAILY_ACCOUNT_CAP + 2)] + [f"b{i}" for i in range(3)]
+    _http_media(led, *ids); _stub_ok_poster(mocker, cfg)
+    mocker.patch("fanops.postiz_lifecycle.ensure_up")
+    summary = publish_due(cfg, now=_quota_now())
+    led = Ledger.load(cfg)
+    assert sum(1 for p in led.posts.values() if p.account == "alpha" and p.state is PostState.published) == _DAILY_ACCOUNT_CAP
+    assert sum(1 for p in led.posts.values() if p.account == "beta" and p.state is PostState.published) == 3
+    assert summary["quota_skipped"] == 2
