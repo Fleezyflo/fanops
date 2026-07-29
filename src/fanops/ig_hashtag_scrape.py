@@ -1,5 +1,6 @@
 """Hashtag Layer A network via instagrapi (Graph hashtag path deferred)."""
 from __future__ import annotations
+import os
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from fanops.config import Config
@@ -7,6 +8,28 @@ from fanops.hashtags import CAPTION_TAG_RE, HARVEST_CAP, TOP_SAMPLE_N, _norm, _n
 
 _REEL_TREND_DAYS = 7            # a Reel older than this is history, not "currently trending"
 _REEL_PRODUCT_TYPE = "clips"    # Instagram's own product_type for a Reel
+_DELAY_RANGE = (1.0, 3.0)       # instagrapi's own between-request jitter, seconds (MOL-698)
+
+
+def _scrape_delay_range():
+    """The pacing instagrapi sleeps BETWEEN private-API calls, as `[lo, hi]` seconds — or None for no
+    pacing at all. Unset before MOL-698, so a pass fired back-to-back at ~2.4 req/s from a single
+    account; that emission profile is what earned the 2026-07-29 `challenge_required`.
+    FANOPS_HASHTAG_SCRAPE_DELAY takes a `"lo,hi"` pair; `"0"` opts out entirely (fakes / tests).
+    Anything else — unparseable, negative, inverted, wrong arity — falls back to the default: a
+    fat-fingered env var must never remove the pacing or break Layer A."""
+    raw = (os.getenv("FANOPS_HASHTAG_SCRAPE_DELAY") or "").strip()
+    if not raw:
+        return list(_DELAY_RANGE)
+    if raw == "0":
+        return None
+    try:
+        vals = [float(p) for p in raw.replace(" ", "").split(",")]
+    except ValueError:
+        return list(_DELAY_RANGE)
+    if len(vals) != 2 or vals[0] < 0 or vals[1] < vals[0]:
+        return list(_DELAY_RANGE)
+    return vals
 
 
 def _trunc(msg: object, n: int = 160) -> str:
@@ -64,8 +87,10 @@ def _is_checkpoint(exc: BaseException) -> bool:
 
 
 def open_client(cfg: Config, *, client_factory=None):
-    """Open an authenticated instagrapi Client. Lazy-imports; dumps session after login.
-    Never echoes password or session contents. Raises ScrapeUnavailable on miss."""
+    """Open an authenticated instagrapi Client, PACED. Lazy-imports; dumps session after login.
+    Never echoes password or session contents. Raises ScrapeUnavailable on miss. `delay_range` is set
+    before the login call, so every request this client ever makes — the login included — carries the
+    jitter (MOL-698); the whole Layer A pass runs on this one client."""
     user = (cfg.ig_scrape_user or "").strip()
     if not user:
         raise ScrapeUnavailable("FANOPS_IG_SCRAPE_USER unset")
@@ -76,6 +101,7 @@ def open_client(cfg: Config, *, client_factory=None):
     except ImportError as e:
         raise ScrapeUnavailable("instagrapi not installed — pip install -e '.[igscrape]'") from e
     client = client_factory()
+    client.delay_range = _scrape_delay_range()
     sess = cfg.ig_scrape_session_path
     try:
         if sess.exists():
@@ -96,24 +122,11 @@ def open_client(cfg: Config, *, client_factory=None):
     return client
 
 
-def session_client(cfg: Config, *, client_factory=None):
-    """Clone a Client from the dumped session ONLY (no login). For parallel Layer A workers.
-    Raises ScrapeUnavailable when session missing / instagrapi missing / load fails."""
-    sess = cfg.ig_scrape_session_path
-    if not sess.exists():
-        raise ScrapeUnavailable("ig scrape session missing — run fanops hashtags scrape-login")
-    try:
-        if client_factory is None:
-            from instagrapi import Client
-            client_factory = Client
-    except ImportError as e:
-        raise ScrapeUnavailable("instagrapi not installed — pip install -e '.[igscrape]'") from e
-    client = client_factory()
-    try:
-        client.load_settings(str(sess))
-    except Exception as e:                                  # noqa: BLE001
-        raise ScrapeUnavailable(f"scrape session load failed: {_trunc(e)}") from e
-    return client
+# `session_client` — a Client cloned from the dumped session, no login — lived here until MOL-698.
+# It existed ONLY to fan Layer A out to _SCRAPE_PARALLEL workers, which meant N clients presenting the
+# SAME device fingerprint in simultaneous private-API calls: the emission profile that earned the
+# 2026-07-29 account lock. Layer A is single-client now, so the helper has no caller. Do not restore
+# it to add concurrency; raise FANOPS_HASHTAG_SCRAPE_DELAY-paced throughput instead.
 
 
 def _median(vals: list[float]) -> Optional[float]:
