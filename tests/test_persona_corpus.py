@@ -159,7 +159,8 @@ def _write_meas(cfg, rows):
     now = datetime.now(timezone.utc).isoformat()
     data = {}
     for tag, (metric, src) in rows.items():
-        rec = {"graph_id": "id-" + tag.lstrip("#"), "like_count": metric, "measured_at": now}
+        rec = {"graph_id": "id-" + tag.lstrip("#"), "like_count": metric, "measured_at": now,
+               "media_count": 50_000.0}  # MOL-714: non-niche needs volume floor
         if src:
             rec["from"] = {src: 2}  # MOL-665: relatedness bar needs hits>=2
         data[tag] = rec

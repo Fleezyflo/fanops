@@ -353,7 +353,7 @@ def test_inbound_cotag_attributes_measured_tag_to_anchor(tmp_path, monkeypatch):
     media = {"#rapbeef": [{"caption": "noise #fyp", "like_count": 10}],
              "#fyp": [{"caption": "chaos #rapbeef #drama", "like_count": 9000},
                       {"caption": "more #rapbeef", "like_count": 9000}]}
-    refresh_store(cfg, scrape_client=_client(media))
+    refresh_store(cfg, scrape_client=_client(media, media_count_by_tag={"#rapbeef": 50_000, "#fyp": 90_000_000}))
     rec = load_measurements(cfg)["#fyp"]
     assert rec.get("from", {}).get("#rapbeef", 0) >= 2
     from fanops.persona_research import _aligned_pool
@@ -403,7 +403,8 @@ def test_unmeasured_candidate_never_enters_a_corpus(tmp_path, monkeypatch):
              "#measured": [{"caption": "bars #hiphop", "like_count": 400, "comments_count": 0},
                            {"caption": "more #hiphop", "like_count": 300, "comments_count": 0}],
              "#unmeasured": [{"caption": "", "comments_count": 9}]}
-    refresh_store(cfg, scrape_client=_client(media))
+    refresh_store(cfg, scrape_client=_client(
+        media, media_count_by_tag={"#hiphop": 4_000_000, "#measured": 50_000, "#unmeasured": 50_000}))
     derive_corpus(cfg, pid)
     per = Personas.load(cfg).get(pid)
     assert "#measured" in per.hashtag_corpus
@@ -467,7 +468,7 @@ def test_category_scale_tag_needs_multi_root_relatedness(tmp_path):
     whale = CATEGORY_MEDIA_FLOOR + 1
     cache = {"#bars": _cat_rec(9611, frm={"#syrianrap": 4}, media_count=whale),
              "#remix": _cat_rec(10697, frm={"#syrianrap": 2, "#arabicdrill": 2}, media_count=whale),
-             "#nichetag": _cat_rec(120, frm={"#syrianrap": 2})}
+             "#nichetag": _cat_rec(120, frm={"#syrianrap": 2}, media_count=50_000)}
     tags = {t for t, _v, _s in _aligned_pool(per, cache)}
     assert "#bars" not in tags                    # single-root whale refused, however many plays
     assert "#remix" in tags                       # multi-root whale still admits — no ban list
@@ -515,7 +516,7 @@ def test_equal_size_breaks_by_recent_reel_max(tmp_path):
 
 
 def test_volumeless_tags_rank_after_every_sized_tag(tmp_path):
-    """Plays can never stand in for missing volume on the same axis — a huge median does not fake size."""
+    """MOL-714: unmeasured non-niche is refused (not ranked last). Sized related tag still admits."""
     from fanops.personas import Persona
     from fanops.persona_research import _aligned_pool
     per = Persona(id="craft", name="Craft", voice="x", niche=["syrianrap"])
@@ -523,8 +524,8 @@ def test_volumeless_tags_rank_after_every_sized_tag(tmp_path):
     novol = _cat_rec(99_999_999, frm={"#syrianrap": 2})          # no media_count at all
     pool = _aligned_pool(per, {"#sized": sized, "#novol": novol})
     order = [t for t, _v, _s in pool]
-    assert order == ["#sized", "#novol"]
-    assert dict((t, v) for t, v, _s in pool)["#novol"] == 0.0, "report value stays numeric, never None"
+    assert order == ["#sized"]
+    assert "#novol" not in order
 
 
 def test_generic_magnet_needs_real_relatedness_now(tmp_path):
