@@ -18,7 +18,7 @@ from typing import Optional
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import ClipState
-from fanops.timeutil import parse_iso
+from fanops.timeutil import parse_iso, operator_local_day, next_operator_local_midnight
 
 _log = logging.getLogger("fanops.studio.views_common")
 
@@ -147,7 +147,23 @@ def _cadence_for(cfg: Config) -> "tuple[int, int]":
     return (_BULK_APPROVE_MIN_GAP_MIN, _BULK_APPROVE_JITTER_MAX_MIN)
 
 
-def suggest_times_for_batch(cfg: Config, posts, *, now: datetime) -> dict[str, str]:
+def _occupancy_by_day(occupied, cfg) -> "dict[tuple[str, str], int]":
+    """MOL-710: {(account, operator-local day): slots already taken} for posts holding a slot OUTSIDE the
+    batch being allocated. Counts DAYS only — it deliberately does not reserve individual minutes, since
+    the pre-existing posts sit on their own cadence and the capacity question is about volume. A post with
+    no/garbage scheduled_time occupies no day (operator_local_day -> None) and is skipped: an untimed post
+    has not claimed a slot. Pure; tolerant of anything post-shaped (getattr, never an attribute error)."""
+    out: "dict[tuple[str, str], int]" = {}
+    for p in (occupied or ()):
+        day = operator_local_day(getattr(p, "scheduled_time", None), cfg)
+        if day is None:
+            continue
+        key = (getattr(p, "account", "") or "", day)
+        out[key] = out.get(key, 0) + 1
+    return out
+
+
+def suggest_times_for_batch(cfg: Config, posts, *, now: datetime, occupied=None) -> dict[str, str]:
     """M4 — ONE batch-aware spread for N posts. Returns {post_id: ISO-Z}, strictly-future,
     pairwise-distinct across the whole batch, and obeying a per-account minimum gap.
 
@@ -176,10 +192,18 @@ def suggest_times_for_batch(cfg: Config, posts, *, now: datetime) -> dict[str, s
     gaps stay >= STEP, timestamps stay pairwise distinct, and accounts stay independent (`day_used` is
     per-account, inside the per-account loop).
 
+    MOL-710: `occupied` is the posts already holding a slot OUTSIDE this batch — without it the cap only
+    ever bounds the batch in hand, so approving batch A (10/day) then batch B (10/day) put 20 on one day.
+    It seeds each account's day tally, so an already-full day is skipped rather than refilled. Default
+    None keeps every existing caller byte-identical. The caller supplies it because this function is pure
+    and lock-free: making it load the ledger would put I/O and a second lock acquisition inside the three
+    open transactions that call it. `accept_suggested_account` passes nothing by design — its batch is
+    ALREADY every queued post for the account, so its own posts would be double-counted as occupancy.
+
     Pure (no I/O beyond cfg.account_window which is a JSON read at the seam). Pinned by
     tests/test_bulk_approve_spread.py + tests/test_operator_timezone_cadence_window.py."""
     import hashlib, random
-    from fanops.timeutil import iso_z, operator_local_day, next_operator_local_midnight
+    from fanops.timeutil import iso_z
     step, jitter_max = _cadence_for(cfg)
     # Stable account order (deterministic across processes, no Python hash() salt).
     by_account: dict[str, list] = {}
@@ -187,6 +211,7 @@ def suggest_times_for_batch(cfg: Config, posts, *, now: datetime) -> dict[str, s
         by_account.setdefault(p.account, []).append(p)
     accounts_sorted = sorted(by_account)
     date_str = now.date().isoformat()
+    occ = _occupancy_by_day(occupied, cfg)        # MOL-710: slots taken outside this batch
     out: dict[str, str] = {}
     for ai, handle in enumerate(accounts_sorted):
         rng = random.Random(int(hashlib.sha1(f"{handle}|{date_str}".encode(), usedforsecurity=False).hexdigest()[:8], 16))
@@ -203,7 +228,8 @@ def suggest_times_for_batch(cfg: Config, posts, *, now: datetime) -> dict[str, s
         # would re-open the floor as a probabilistic property guarded by tests rather than an
         # invariant. The cumulative form makes the bad path unconstructable.
         cursor_min = anchor_offset + cfg.publish_lead_minutes
-        day_used: dict[str, int] = {}          # MOL-708: slots already laid per operator-local day
+        # MOL-708 slots laid per operator-local day, SEEDED (MOL-710) with this account's out-of-batch load.
+        day_used: dict[str, int] = {d: n for (h, d), n in occ.items() if h == handle}
         for p in sorted(by_account[handle], key=lambda q: q.id):
             while True:
                 t = now + timedelta(minutes=cursor_min)

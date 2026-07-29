@@ -252,6 +252,77 @@ def test_daily_cap_boundary_is_operator_local_not_utc(tmp_path, monkeypatch):
         f"otherwise a UTC-bucketed cap would pass it too (utc_days={utc_days})")
 
 
+def test_occupancy_at_capacity_pushes_the_whole_batch_to_the_next_day(tmp_path, monkeypatch):
+    """MOL-710 RED (allocator boundary): the cap only ever saw the batch in hand. Hand the allocator ten
+    posts already sitting on today for this account and the incoming batch must skip today entirely —
+    without `occupied` all three would land on a day that is already full."""
+    monkeypatch.setenv("FANOPS_POSTER", "dryrun")
+    cfg = Config(root=tmp_path); _seed_accounts(cfg)
+    from fanops.studio.views_common import suggest_times_for_batch
+    held = _bare_posts("a", 10)                                  # already queued, all on FIXED_DT's day
+    for k, p in enumerate(held):
+        p.state = PostState.queued
+        p.scheduled_time = iso_z(FIXED_DT + timedelta(minutes=31 * (k + 1)))
+    incoming = [Post(id=f"a_new_{k}", parent_id="clip_1", account="a", account_id="ia",
+                     platform=Platform.instagram, caption="c", state=PostState.awaiting_approval,
+                     media_urls=["file:///clip_1_9x16.mp4"], public_url="dryrun://sweep") for k in range(3)]
+    sched = suggest_times_for_batch(cfg, incoming, now=FIXED_DT, occupied=held)
+    days = {parse_iso(t).date() for t in sched.values()}
+    assert FIXED_DT.date() not in days, (
+        f"batch landed on a day already at capacity: {sorted(sched.values())}")
+    assert len(days) == 1 and len(sched) == 3            # all three on the SAME next open day, none dropped
+
+
+def test_an_untimed_or_garbage_occupied_post_holds_no_day(tmp_path, monkeypatch):
+    """MOL-710 — occupancy is per-DAY, so a post with no (or an unparseable) scheduled_time occupies
+    nothing: it has not claimed a slot. Fail-safe, and it keeps a torn row from silently eating capacity."""
+    monkeypatch.setenv("FANOPS_POSTER", "dryrun")
+    cfg = Config(root=tmp_path); _seed_accounts(cfg)
+    from fanops.studio.views_common import _occupancy_by_day
+    held = _bare_posts("a", 3)
+    held[0].scheduled_time = None
+    held[1].scheduled_time = "garbage"
+    held[2].scheduled_time = iso_z(FIXED_DT)
+    occ = _occupancy_by_day(held, cfg)
+    assert occ == {("a", FIXED_DT.date().isoformat()): 1}, f"unexpected occupancy: {occ}"
+    assert _occupancy_by_day(None, cfg) == {}            # default/None is empty, not a crash
+
+
+def test_a_second_bulk_approve_cannot_refill_a_full_day(tmp_path, monkeypatch):
+    """MOL-710 RED (the real hole, end to end): approve ten posts, then approve ten MORE. The second
+    batch's allocator never saw the first batch's now-queued posts, so both landed ten-on-one-day = 20.
+    Contract: across both approvals no operator-local day holds more than ten posts for the account, and
+    all twenty are still approved."""
+    monkeypatch.setenv("FANOPS_POSTER", "dryrun")
+    monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "0")
+    cfg = Config(root=tmp_path); _seed_accounts(cfg)
+    led = Ledger.load(cfg)
+    clip = _seed_clip(led)
+    stale = iso_z(FIXED_DT - timedelta(days=1))
+    def _seed(prefix: str) -> list[str]:
+        ids = []
+        for k in range(10):
+            pid = f"p_{prefix}_{k:02d}"
+            led.add_post(Post(id=pid, parent_id=clip.id, account="a", account_id="ia",
+                              platform=Platform.instagram, caption="a", state=PostState.awaiting_approval,
+                              scheduled_time=stale, media_urls=["file:///clip_1_9x16.mp4"],
+                              public_url="dryrun://sweep"))
+            ids.append(pid)
+        return ids
+    first, second = _seed("one"), _seed("two")
+    led.save()
+
+    assert approve_posts(cfg, first, now=FIXED_DT).ok is True
+    assert approve_posts(cfg, second, now=FIXED_DT).ok is True
+
+    reloaded = Ledger.load(cfg)
+    queued = [p for p in reloaded.posts.values() if p.state is PostState.queued and p.account == "a"]
+    assert len(queued) == 20, f"an approval was lost: {len(queued)} queued of 20"
+    per_day = _per_day([parse_iso(p.scheduled_time).date() for p in queued])
+    assert max(per_day) <= 10, f"a second approve refilled a full day: per_day={per_day}"
+    assert per_day == [10, 10], f"expected the overflow batch on the next day: per_day={per_day}"
+
+
 def test_bulk_approve_preserves_operator_future_time(tmp_path, monkeypatch):
     """GREEN-CONTRACT (already passes — pinned characterization): a post whose scheduled_time is
     a strictly-FUTURE operator-set value must NOT be rewritten by approval. The existing `keep`
