@@ -7,10 +7,15 @@ persona — never "viral" / high-reach tags. Seeds land in `00_control/hashtag_v
 measure + inbound-only membership (MOL-643) + play/like ranking still decide what ships.
 
 Fail-open: missing responder, LLM errors, or empty replies leave the previous vocab (or none) untouched.
+
+Expansion is INPUT-DRIVEN, not periodic (MOL-693): each row stores an `input_fp` digest of the exact
+`(name, voice, niche)` the prompt reads, and a persona is asked again only when that digest is absent or
+has moved. An untouched persona therefore costs zero LLM calls forever; a failed one keeps its prior
+digest and so stays due on the next tick.
 """
 from __future__ import annotations
+import hashlib
 import json
-import time
 from datetime import datetime, timezone
 from fanops.config import Config
 from fanops.controlio import write_json_atomic
@@ -33,6 +38,7 @@ _VOCAB_STOP = frozenset({
 })
 
 _VOCAB_CAP = 24
+_FP_V = 1                    # bump ONLY to force a one-off re-expansion of every persona (input_fp changes)
 _SCHEMA = {
     "type": "object",
     "properties": {
@@ -95,10 +101,28 @@ def vocab_terms_for(cfg: Config, pid: str) -> list[str]:
     return _sanitize_terms(row.get("terms"))
 
 
-def _prompt(per) -> str:
+def _prompt_inputs(per) -> tuple[str, str, list[str]]:
+    """The ONE normalization of the three persona fields the prompt is built from. Shared with
+    `_input_fingerprint` so the digest provably covers exactly what would change the prompt."""
     niche = [str(x) for x in (getattr(per, "niche", None) or []) if isinstance(x, str) and x.strip()]
     voice = (getattr(per, "voice", None) or "").strip()
     name = (getattr(per, "name", None) or getattr(per, "id", "") or "").strip()
+    return name, voice, niche
+
+
+def _input_fingerprint(per) -> str:
+    """Stable digest of `(name, voice, niche)` — the freshness truth for one persona's vocab (MOL-693).
+    sha256 over a canonical JSON serialization, so it is IDENTICAL across processes (`hash()` is salted
+    per-interpreter and would make every tick look changed). Niche ORDER is significant: the prompt joins
+    the list in order, so a reorder is a genuinely different prompt."""
+    name, voice, niche = _prompt_inputs(per)
+    payload = json.dumps({"v": _FP_V, "name": name, "voice": voice, "niche": niche},
+                         sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
+def _prompt(per) -> str:
+    name, voice, niche = _prompt_inputs(per)
     return (
         "You expand Instagram SEARCH ROOTS for ONE persona's content territory.\n"
         "Return relative subject / scene / format vocabulary THIS persona would actually film or talk about.\n"
@@ -134,32 +158,51 @@ def expand_persona_vocab(cfg: Config, pid: str, *, model=None) -> dict:
     terms = _sanitize_terms((dec or {}).get("terms") if isinstance(dec, dict) else None)
     if not terms:
         return {"ok": False, "reason": "empty_after_sanitize"}
+    # The fingerprint is stamped ONLY on this success path: a failure above returns early, leaving the
+    # prior row (and its prior digest) intact, so the persona is still due on the next tick (MOL-693).
     data = load_vocab(cfg)
-    data[pid] = {"terms": terms, "expanded_at": datetime.now(timezone.utc).isoformat(), "source": "llm"}
+    data[pid] = {"terms": terms, "expanded_at": datetime.now(timezone.utc).isoformat(), "source": "llm",
+                 "input_fp": _input_fingerprint(per)}
     write_vocab(cfg, data)
     return {"ok": True, "terms": terms, "n": len(terms)}
 
 
-def expand_vocab_if_due(cfg: Config, *, max_age_s: int = 43200, model=None) -> dict:
-    """12h tick hook: expand vocab for posting personas when FANOPS_RESPONDER=llm. Never raises."""
-    marker = cfg.control / ".hashtag_vocab_refresh.json"
+def vocab_due_reason(per, data: dict) -> str | None:
+    """Why this persona needs an LLM expansion, or None when its stored vocab already matches its inputs.
+    `data` is a whole loaded vocab map, so one tick reads the file once."""
+    row = data.get(per.id) if isinstance(data, dict) else None
+    if not isinstance(row, dict) or not _sanitize_terms(row.get("terms")):
+        return "no_vocab"                                    # never expanded, or the row sanitizes to nothing
+    fp = row.get("input_fp")
+    if not isinstance(fp, str) or not fp:
+        return "no_fingerprint"                              # pre-MOL-693 row: expand once to stamp one
+    return None if fp == _input_fingerprint(per) else "inputs_changed"
+
+
+def expand_vocab_if_due(cfg: Config, *, model=None) -> dict:
+    """Tick hook: expand vocab for every posting persona whose `(name, voice, niche)` inputs CHANGED (or
+    that has no usable vocab yet), when FANOPS_RESPONDER=llm. There is NO routine regeneration and no
+    global marker — the per-persona `input_fp` in `hashtag_vocab.json` is the whole freshness truth
+    (MOL-693: the old blind 12h loop re-billed every persona twice a day for zero input change, and its
+    single marker stamped even when a persona had failed). Never raises."""
     try:
         if cfg.responder_mode != "llm":
             return {"refreshed": False, "reason": "responder_manual"}
-        if marker.exists() and (time.time() - marker.stat().st_mtime) < max_age_s:
-            return {"refreshed": False, "reason": "fresh"}
         from fanops.fanops_hashtags import _posting_personas
         personas = _posting_personas(cfg)
+        data = load_vocab(cfg)
+        due = [(per, reason) for per in personas if (reason := vocab_due_reason(per, data))]
+        if not due:
+            return {"refreshed": False, "reason": "fresh", "personas": len(personas)}
         ok_n = 0; fail_n = 0
-        for per in personas:
+        for per, reason in due:
             r = expand_persona_vocab(cfg, per.id, model=model)
             if r.get("ok"):
                 ok_n += 1
             else:
                 fail_n += 1
-        write_json_atomic(marker, {"ts": datetime.now(timezone.utc).isoformat(),
-                                   "ok": ok_n, "fail": fail_n, "personas": len(personas)})
-        return {"refreshed": True, "ok": ok_n, "fail": fail_n, "personas": len(personas)}
+                get_logger(cfg)("hashtag_vocab", per.id, "expand_failed", due=reason, reason=r.get("reason", ""))
+        return {"refreshed": True, "ok": ok_n, "fail": fail_n, "personas": len(personas), "due": len(due)}
     except Exception as exc:                                 # noqa: BLE001
         get_logger(cfg)("hashtag_vocab", "-", "refresh_error", err=f"{type(exc).__name__}: {str(exc)[:120]}")
         return {"refreshed": False, "reason": f"error: {str(exc)[:120]}"}
