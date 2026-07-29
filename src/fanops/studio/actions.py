@@ -53,6 +53,8 @@ def _guard_editable_post(led: Ledger, post_id: str, now: datetime) -> tuple[Opti
 
 
 def reschedule_post(cfg: Config, post_id: str, new_time: str, *, now: Optional[datetime] = None) -> ActionResult:
+    from fanops.timeutil import operator_local_day
+    from fanops.studio.views_common import _DAILY_ACCOUNT_CAP
     now = _now(now)
     try:
         z = _normalize_z(new_time)                 # OUTSIDE the lock: reject bad input early
@@ -64,6 +66,19 @@ def reschedule_post(cfg: Config, post_id: str, new_time: str, *, now: Optional[d
         p, err = _guard_editable_post(led, post_id, now)
         if err:
             return ActionResult(ok=False, error=err)
+        # MOL-711: refuse an 11th queued post on a full operator-local day. Count OTHER queued posts
+        # only (self-moves on a full day leave the total unchanged; awaiting has not claimed a slot).
+        # Refuse loudly — silently rolling the operator's chosen time to another day is the same class
+        # of surprise as the original incident. Cap + day helper land in views_common/timeutil (MOL-708).
+        day = operator_local_day(z, cfg)
+        if day is not None:
+            n = sum(1 for q in led.posts.values()
+                    if q.id != post_id and q.account == p.account and q.state is PostState.queued
+                    and operator_local_day(q.scheduled_time, cfg) == day)
+            if n >= _DAILY_ACCOUNT_CAP:
+                return ActionResult(ok=False, error=(
+                    f"account {p.account} already has {_DAILY_ACCOUNT_CAP} queued posts on {day} "
+                    f"(operator-local) — pick another day"))
         p.scheduled_time = z
     return ActionResult(ok=True, detail={"post_id": post_id, "scheduled_time": z})
 
