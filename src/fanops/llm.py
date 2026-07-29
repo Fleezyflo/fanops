@@ -126,6 +126,43 @@ _RATELIMIT_STATUSES = {429, 503, 529}
 _MAX_RL_RETRIES = 4                                  # total attempts = retries + 1
 _RL_BASE_DELAY = 2.0                                 # seconds; doubled per attempt + jittered
 
+def _claude_strict_schema(schema: dict) -> dict:
+    """Rewrite a pydantic JSON schema for Claude Code `--json-schema` strict mode.
+
+    Pydantic emits draft-2020-12 `prefixItems` for `tuple[...]` fields (notably
+    `MomentPick.segments: list[tuple[float, float]]`). Claude Code ≥2.1.x validates the flag payload
+    in strict mode and rejects `prefixItems` as an unknown keyword — that mass-failed every `moments`
+    gate while `captions` (no tuples) kept working. Map each fixed-length prefix array to
+    `minItems`/`maxItems` + a homogeneous `items` schema so shape intent survives without the keyword.
+    Deep-copies; caller's dict is untouched."""
+    import copy
+    out = copy.deepcopy(schema) if isinstance(schema, dict) else schema
+    if not isinstance(out, dict):
+        return out
+
+    def walk(node):
+        if isinstance(node, dict):
+            prefs = node.get("prefixItems")
+            if isinstance(prefs, list):
+                node.pop("prefixItems", None)
+                n = len(prefs)
+                node.setdefault("minItems", n)
+                node.setdefault("maxItems", n)
+                types = [p.get("type") for p in prefs if isinstance(p, dict)]
+                if types and all(t == types[0] for t in types) and types[0] is not None:
+                    node.setdefault("items", {"type": types[0]})
+                else:
+                    node.setdefault("items", True)
+            for v in node.values():
+                walk(v)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v)
+
+    walk(out)
+    return out
+
+
 def _prompt_side_schema(schema: dict, base: str) -> str:
     """Prompt-side schema constraint — the transport-agnostic fallback when the CLI can't take the
     schema as a flag (cursor-agent always; claude CLIs predating --json-schema). The envelope then
@@ -166,14 +203,23 @@ def _frames_unread(env: dict) -> bool:
 def claude_json_meta(prompt: str, schema: dict, *, timeout: float = 300.0,
                      images: list[str] | None = None, model: str | None = None,
                      read_root: str | None = None) -> tuple[dict, str | None, bool]:
-    """Dispatch to claude or cursor-agent transport per FANOPS_LLM_TRANSPORT; vision falls back to claude
-    when cursor transport lacks vision support. Cursor uses its OWN auto model selection (no --model) —
-    the per-gate claude tiers (opus/sonnet) are Claude-only and are NOT forwarded to cursor-agent; the
-    operator can still force ONE cursor model via FANOPS_LLM_MODEL."""
+    """Dispatch to exactly ONE CLI per FANOPS_LLM_TRANSPORT (Studio Go-Live — the single switch).
+
+    No silent cross-transport fallback: cursor means cursor-agent for every gate; claude means
+    claude -p for every gate. If transport=cursor and a vision gate needs frames but cursor-agent
+    cannot do vision, raise ToolchainMissingError telling the operator to flip the ONE switch to
+    claude — never shell `claude` behind their back (that was the captions-vs-moments split).
+    Cursor uses its OWN auto model selection (no --model) unless FANOPS_LLM_MODEL forces one; the
+    per-gate claude tiers (opus/sonnet) are Claude-only and are NOT forwarded to cursor-agent."""
     from fanops.config import resolve_llm_transport
-    if resolve_llm_transport() == "cursor":
+    if isinstance(schema, dict):
+        schema = _claude_strict_schema(schema)           # root: strip draft-2020-12 keywords CLI strict rejects
+    transport = resolve_llm_transport()
+    if transport == "cursor":
         if images and not _CURSOR_SUPPORTS_VISION:
-            return _claude_json_meta(prompt, schema, timeout=timeout, images=images, model=model, read_root=read_root)
+            raise ToolchainMissingError(
+                "FANOPS_LLM_TRANSPORT=cursor but cursor-agent cannot run vision-grounded gates — "
+                "set LLM transport to claude in Studio Go-Live (single switch; no silent claude fallback)")
         forced = (os.getenv("FANOPS_LLM_MODEL") or "").strip() or None   # AUTO unless the operator forces one
         return _cursor_json_meta(prompt, schema, timeout=timeout, images=images, model=forced, read_root=read_root)
     return _claude_json_meta(prompt, schema, timeout=timeout, images=images, model=model, read_root=read_root)

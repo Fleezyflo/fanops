@@ -328,7 +328,8 @@ def test_preflight_blocks_cursor_when_cursor_agent_absent(tmp_path, monkeypatch,
     assert "cursor-agent" in err and "Traceback" not in err
 
 
-def test_preflight_cursor_requires_claude_for_vision_fallback(tmp_path, monkeypatch, mocker, capsys):
+def test_preflight_cursor_blocks_when_vision_unsupported(tmp_path, monkeypatch, mocker, capsys):
+    # Absolute transport: cursor cannot run vision gates — refuse until Go-Live flips to claude.
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("FANOPS_RESPONDER", "llm")
     monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "cursor")
@@ -337,8 +338,22 @@ def test_preflight_cursor_requires_claude_for_vision_fallback(tmp_path, monkeypa
     from fanops.cli import _check_preflight
     assert _check_preflight(Config(root=tmp_path)) == 2
     err = capsys.readouterr().err
-    assert "vision" in err.lower() and "claude" in err
+    assert "vision" in err.lower() and "go-live" in err.lower() and "fallback" in err.lower()
 
+
+
+
+def test_preflight_cursor_blocks_even_if_claude_present(tmp_path, monkeypatch, mocker, capsys):
+    # Having claude on PATH must NOT paper over transport=cursor — no silent dual-CLI.
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "cursor")
+    mocker.patch("shutil.which", return_value="/usr/local/bin/x")
+    from fanops.config import Config
+    from fanops.cli import _check_preflight
+    assert _check_preflight(Config(root=tmp_path)) == 2
+    err = capsys.readouterr().err.lower()
+    assert "go-live" in err and "fallback" in err
 
 def test_run_halts_cleanly_when_responder_raises(tmp_path, monkeypatch, mocker, capsys):
     # AUDIT H7: `fanops run` is the REQUIRED unattended mode. If the LLM responder raises

@@ -156,7 +156,7 @@
     "FANOPS_LLM_MODEL": {
       "read_at": [
         "fanops.config:527",
-        "fanops.llm:177"
+        "fanops.llm:223"
       ],
       "reader_count": 2
     },
