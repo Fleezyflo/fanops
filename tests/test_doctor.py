@@ -560,6 +560,26 @@ def test_doctor_hashtag_scrape_session_dead_fails_loud(tmp_path, monkeypatch):
     assert row_ok["ok"] is True and row_ok["hint"] == ""
 
 
+def test_doctor_hashtag_scrape_checkpoint_names_the_only_real_remedy(tmp_path, monkeypatch):
+    """A native challenge (`lock: true`) is NOT an expiry: scrape-login cannot clear it, so the hint
+    must send the operator to the Instagram app instead of looping on the CLI verb."""
+    from fanops import doctor
+    from fanops.config import Config
+    from fanops.ig_hashtag_scrape import ScrapeCheckpoint
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "secret-password-must-not-leak")
+    cfg = Config(root=tmp_path)
+    cfg.ig_scrape_session_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.ig_scrape_session_path.write_text("{}")
+    def locked(_cfg):
+        raise ScrapeCheckpoint("account checkpointed by Instagram — verify the login in the official "
+                               "Instagram app or web, then re-run scrape-login (challenge_required)")
+    row = doctor._hashtag_scrape_check(cfg, open_client=locked)
+    assert row["ok"] is False
+    assert "Instagram app" in row["hint"] and "checkpoint" in row["hint"]
+    assert "secret-password" not in row["hint"]
+
+
 def test_doctor_hashtag_scrape_probe_login_required_fails_loud(tmp_path, monkeypatch):
     """MOL-696: open_client can succeed while hashtag_info returns login_required — doctor must fail."""
     from fanops import doctor

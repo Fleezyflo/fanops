@@ -22,6 +22,14 @@ class ScrapeThrottled(Exception):
     """Instagram asked us to wait / rate-limited — end the pass, keep accrued evidence."""
 
 
+class ScrapeCheckpoint(ScrapeUnavailable):
+    """Instagram locked the account behind a NATIVE challenge (`lock: true`, no `step_name`): correct
+    credentials, structurally intact session, and NO api path — only in-app confirmation clears it.
+    A ScrapeUnavailable subclass so every existing abort path keeps working; the distinction exists so
+    the operator is not told to re-run scrape-login, which cannot clear a lock and only adds login
+    pressure to a checkpointed account."""
+
+
 class ScrapeRefused(Exception):
     """A non-throttle Instagram refusal for one tag. `code` is optional; message is truncated."""
     def __init__(self, message: str, code=None):
@@ -44,6 +52,15 @@ def _is_throttle(exc: BaseException) -> bool:
     msg = str(exc).lower()
     blob = f"{name} {msg}"
     return any(k in blob for k in ("please_wait", "pleasewait", "rate", "feedback_required", "waitafewminutes"))
+
+
+CHECKPOINT_HINT = "verify the login in the official Instagram app or web, then re-run scrape-login"
+
+def _is_checkpoint(exc: BaseException) -> bool:
+    """Account-lock detect (challenge / checkpoint), NOT an expired session. Narrow on purpose: a plain
+    `login_required` is an expiry the operator fixes with scrape-login and must stay classified as such."""
+    blob = f"{type(exc).__name__.lower()} {str(exc).lower()}"
+    return any(k in blob for k in ("challenge", "checkpoint", "consent_required"))
 
 
 def open_client(cfg: Config, *, client_factory=None):
@@ -72,6 +89,9 @@ def open_client(cfg: Config, *, client_factory=None):
     except Exception as e:                                  # noqa: BLE001 — login surface is opaque
         if _is_throttle(e):
             raise ScrapeThrottled(_trunc(e)) from e
+        if _is_checkpoint(e):
+            raise ScrapeCheckpoint(f"account checkpointed by Instagram — {CHECKPOINT_HINT} "
+                                   f"({_trunc(e, 80)})") from e
         raise ScrapeUnavailable(f"scrape login failed: {_trunc(e)}") from e
     return client
 
