@@ -116,7 +116,7 @@ Speech-trust filtering is **invariant always-on** — there is no env switch for
 | `FANOPS_CORPUS_TARGET` | 80 | Ceiling on a persona's DERIVED corpus (never padded to reach it) | .env |
 | `FANOPS_IG_SCRAPE_USER` | None | Instagram username for hashtag Layer A (instagrapi) | .env |
 | `FANOPS_IG_SCRAPE_PASSWORD` | None | Instagram password for hashtag Layer A scrape-login (write-only; never logged) | .env |
-| `FANOPS_HASHTAG_SCRAPE_TRY_CAP` | 120 | Max hashtag measure attempts per Layer A scrape pass | .env |
+| `FANOPS_HASHTAG_SCRAPE_TRY_CAP` | 400 | Max hashtag measure attempts per Layer A scrape pass. Must exceed the measured-tag count, or no pass ever completes and `last_complete_pass` never advances | .env |
 | `FANOPS_HASHTAG_SCRAPE_COTAG_ENQUEUE` | 40 | Max NEW co-tags enqueued to measure per Layer A scrape pass | .env |
 | `FANOPS_HASHTAG_SCRAPE_PARALLEL` | 4 | Concurrent Layer A medias_top workers per wave (session-cloned clients) | .env |
 | `META_GRAPH_TOKEN` | None | Meta Graph token for IG insights / media verification (write-only). Not used by hashtag Layer A refresh (deferred Graph hashtag path) | .env |
