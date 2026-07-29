@@ -97,7 +97,9 @@ def test_doctor_cursor_transport_checks_cursor_agent(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "cursor")
     rep = doctor.doctor_report(Config(root=tmp_path))
     assert any("cursor-agent" in c["label"].lower() for c in rep["checks"])
-    assert any("claude" in c["label"].lower() and "vision" in c["label"].lower() for c in rep["checks"])
+    # Absolute transport: no silent claude vision fallback — doctor fails the vision gate loudly.
+    vision = next(c for c in rep["checks"] if "vision" in c["label"].lower())
+    assert vision["ok"] is False and "claude" in (vision.get("hint") or "").lower()
 
 def test_doctor_notes_learning_unvalidated(tmp_path, monkeypatch):
     rep = doctor.doctor_report(Config(root=tmp_path))
