@@ -299,6 +299,11 @@ def _publish_one(cfg: Config, post_id: str, backend: str, *, accounts: "Accounts
                 _tally["skip_resubmit_existing_id"] = _tally.get("skip_resubmit_existing_id", 0) + 1
             return None                                # leave it `queued` — never claimed, never stranded
         post.state = PostState.submitting              # crash-safe intent, persisted on txn exit (F11/B4)
+        # MOL-709: anchor the outbound ATTEMPT to a durable day, in the SAME txn as the claim, so a daily
+        # volume ceiling can count in-flight posts (state alone carries no day). Re-stamped every claim —
+        # see the field comment in models.py. NOT in _NET_POST_FIELDS: claim-determined, not network-
+        # determined (same reason created_at is excluded — finalize must not rewrite it).
+        post.submission_started_at = iso_z(datetime.now(timezone.utc))
     # ---- NETWORK (no lock held) ----
     led = Ledger.load(cfg)
     post = led.posts.get(post_id)

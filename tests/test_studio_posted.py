@@ -56,6 +56,18 @@ def test_repost_stamps_created_at(tmp_path):
     np = Ledger.load(cfg).posts[new_id]
     assert np.created_at and parse_iso(np.created_at).tzinfo is not None
 
+def test_repost_does_not_inherit_the_submission_stamp(tmp_path):
+    # MOL-709: submission_started_at anchors an outbound ATTEMPT. A repost is a fresh surface that has
+    # never been claimed, so it must be born with NO stamp — inheriting the source post's would make it
+    # look like it had already spent a slot from that day's publish budget.
+    cfg = Config(root=tmp_path); _seed_published(cfg, pid="p1")
+    with Ledger.transaction(cfg) as led:
+        led.posts["p1"].submission_started_at = "2026-06-01T00:00:00Z"     # the original DID ship
+    new_id = actions.repost_post(cfg, "p1").detail["post_id"]
+    led = Ledger.load(cfg)
+    assert led.posts[new_id].submission_started_at is None
+    assert led.posts["p1"].submission_started_at == "2026-06-01T00:00:00Z"  # original untouched
+
 def test_repost_creates_fresh_awaiting_post_distinct_id(tmp_path):
     cfg = Config(root=tmp_path); _seed_published(cfg, pid="p1")
     r = actions.repost_post(cfg, "p1")

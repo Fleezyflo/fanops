@@ -41,6 +41,15 @@ def test_unit_parent_chain():
              platform=Platform.instagram, caption="x")
     assert m.parent_id == s.id and c.parent_id == m.id and p.parent_id == c.id
 
+def test_post_submission_started_at_is_additive_with_default():
+    # MOL-709: additive Optional[str]=None — an old ledger row lacking the key loads as None, so there is
+    # no migration and no SCHEMA_VERSION bump (precedent: reconcile_candidate_id / media_id / product_type).
+    p = Post(id="post_1", parent_id="clip_1", account="a", account_id="98432",
+             platform=Platform.instagram, caption="x")
+    assert p.submission_started_at is None
+    from fanops.ledger import SCHEMA_VERSION
+    assert SCHEMA_VERSION == 11, "an additive-with-default field must not bump the schema"
+
 def test_moment_requires_reason():
     with pytest.raises(ValidationError):
         Moment(id="m", parent_id="src", start=0.0, end=5.0)  # no reason

@@ -357,6 +357,19 @@ class Post(BaseModel):
                                         # run.py published transition. The Posted-archive day-anchor ("what shipped
                                         # Tuesday") — scheduled_time is INTENT day, not publish day. None until
                                         # published; old/in-flight rows fall back to scheduled_time in the grouper.
+    submission_started_at: Optional[str] = None  # MOL-709: ISO-8601 UTC of the MOST RECENT outbound CLAIM
+                                        # (queued->submitting, run.py's sole claim site). The day-anchor a
+                                        # publish-side daily quota counts IN-FLIGHT attempts by: published_at
+                                        # answers "did it ship", scheduled_time answers "when was it meant to"
+                                        # — neither answers "have we already spent a slot for this account
+                                        # today", which is what a volume ceiling needs. RE-STAMPED on every
+                                        # claim, deliberately: a post un-claimed back to `queued` (no
+                                        # integration id) and claimed again days later is a NEW outbound
+                                        # attempt and must consume the NEW day's budget — a stamp frozen at the
+                                        # first claim would let an extra post through today. A post STRANDED
+                                        # `submitting` is never re-claimed (publish_due iterates `queued`
+                                        # only), so its stamp keeps pointing at its true attempt. None on old
+                                        # ledgers and on every post that was never claimed.
     edited_at: Optional[str] = None  # ISO-8601 UTC; set on operator caption/hook edits
 
     @field_validator("account", mode="before")
