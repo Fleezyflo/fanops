@@ -322,11 +322,48 @@ def test_studio_plane_reports_not_answering_when_restart_fails_port(tmp_path, mo
     plist = tmp_path / "com.fanops.studio.plist"; plist.write_text("<plist/>")
     monkeypatch.setattr(daemon, "studio_plist_path", lambda: plist)
     monkeypatch.setattr(daemon.subprocess, "run", _fake_launchctl(kickstart=(0, "")))
-    monkeypatch.setattr(daemon, "_studio_port_answers", lambda *a, **k: False)
+    probes = {"n": 0}
+    def never(*a, **k): probes["n"] += 1; return False
+    monkeypatch.setattr(daemon, "_studio_port_answers", never)
+    monkeypatch.setattr(daemon.time, "sleep", lambda _s: None)   # bounded poll, no wall-clock wait
     cfg = Config(root=tmp_path)
     plane = daemon._plane_studio(cfg)
     assert plane["ok"] is False and plane["report_only"] is True
     assert "not answering" in plane["detail"]
+    assert probes["n"] == daemon._STUDIO_PORT_TRIES            # gave up on a BOUNDED budget
+
+
+def test_studio_plane_waits_for_port_to_come_back_after_kickstart(tmp_path, monkeypatch):
+    # MOL-700: `kickstart -k` SIGKILLs the resident, so the port is REFUSED for the first seconds
+    # (measured 2.0s live; a cold boot behind the Docker probe takes ~90s). Probing once at +0s
+    # reported a healthy restart as DOWN. The plane must POLL, like _heartbeat_fresh_since does.
+    plist = tmp_path / "com.fanops.studio.plist"; plist.write_text("<plist/>")
+    monkeypatch.setattr(daemon, "studio_plist_path", lambda: plist)
+    monkeypatch.setattr(daemon.subprocess, "run", _fake_launchctl(kickstart=(0, "")))
+    probes = {"n": 0}
+    def answers_on_third(*a, **k): probes["n"] += 1; return probes["n"] >= 3
+    monkeypatch.setattr(daemon, "_studio_port_answers", answers_on_third)
+    monkeypatch.setattr(daemon.time, "sleep", lambda _s: None)
+    plane = daemon._plane_studio(Config(root=tmp_path))
+    assert plane["ok"] is True and plane["report_only"] is True
+    assert "cycled onto current code" in plane["detail"]
+    assert probes["n"] == 3                                    # polled past the mid-restart refusals
+
+
+def test_keeper_studio_redeploy_probes_once_and_never_polls(tmp_path, monkeypatch):
+    # _kickstart_studio_if_present runs inside daemon.ensure, which the keeper fires every
+    # KEEPER_POLL_INTERVAL_S (120s) and which DISCARDS this result — a bounded 120s poll here would
+    # overlap keeper fires. The waiting poll belongs to `fanops up` ONLY; keeper timing is unchanged.
+    plist = tmp_path / "com.fanops.studio.plist"; plist.write_text("<plist/>")
+    monkeypatch.setattr(daemon, "studio_plist_path", lambda: plist)
+    monkeypatch.setattr(daemon.subprocess, "run", _fake_launchctl(kickstart=(0, "")))
+    probes = {"n": 0}
+    def never(*a, **k): probes["n"] += 1; return False
+    monkeypatch.setattr(daemon, "_studio_port_answers", never)
+    slept: list[float] = []
+    monkeypatch.setattr(daemon.time, "sleep", lambda s: slept.append(s))
+    daemon._kickstart_studio_if_present(Config(root=tmp_path))
+    assert probes["n"] == 1 and slept == []
 
 
 # ── composer: order + short-circuit + honest verdict ──────────────────────────────────────────

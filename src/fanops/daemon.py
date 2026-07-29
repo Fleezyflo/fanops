@@ -724,6 +724,8 @@ _DEFAULT_ONDEMAND = Path.home() / "postiz-selfhost" / "postiz-ondemand.sh"
 _ONDEMAND_WAIT_S = 200          # cold Postiz boot budget (script's own WAIT_S=180 + slack)
 _KICKSTART_HEARTBEAT_TRIES = 60 # confirm one fresh loop heartbeat after a restart (~2 min at 2s)
 _KICKSTART_HEARTBEAT_STEP = 2.0
+_STUDIO_PORT_TRIES = 60         # confirm the CYCLED Studio answers again (~2 min at 2s)
+_STUDIO_PORT_STEP = 2.0
 _STUDIO_LAUNCH_CMD = f"fanops studio --host {STUDIO_DEFAULT_HOST} --port {STUDIO_DEFAULT_PORT}"
 
 
@@ -802,6 +804,22 @@ def _studio_port_answers(host: str = STUDIO_DEFAULT_HOST, port: int = STUDIO_DEF
             return True
     except OSError:
         return False
+
+
+def _studio_port_answers_within(host: str = STUDIO_DEFAULT_HOST, port: int = STUDIO_DEFAULT_PORT, *,
+                                tries: int = _STUDIO_PORT_TRIES,
+                                step: float = _STUDIO_PORT_STEP) -> bool:
+    """Poll the Studio port until it ACCEPTS, bounded — the post-RESTART form of _studio_port_answers.
+    `kickstart -k` SIGKILLs the resident, so the port is refused for the first seconds of every
+    successful cycle (measured 2.0s here; a cold boot behind the launch-time Docker probe takes ~90s
+    — see AGENTS.md), which made a single immediate probe report a healthy restart as DOWN. Returns as
+    soon as the port answers; False if it never does within tries*step (Studio really didn't come
+    back). Mirrors _heartbeat_fresh_since — the same bounded-poll shape the daemon plane uses."""
+    for _ in range(max(1, tries)):
+        if _studio_port_answers(host, port):
+            return True
+        time.sleep(step)
+    return False
 
 
 def _version_signal(cfg: Config) -> tuple[str | None, str]:
@@ -919,13 +937,18 @@ def _plane_daemon(cfg: Config, *, kickstart: bool = True) -> dict:
             "detail": f"loaded ({ens.get('action')})"}
 
 
-def _redeploy_studio(cfg: Config) -> bool:
+def _redeploy_studio(cfg: Config, *, wait: bool = False) -> bool:
     """Cycle the Studio resident onto current code, iff its launchd job is installed. `kickstart -k`
     SIGKILLs the old resident (no request drain — an in-flight localhost request is dropped; tolerable
     for a single-operator cockpit) and launchd relaunches it via KeepAlive. Returns True when the job
     exists AND the port answers after the restart. Returns False when no plist is installed (nothing to
     cycle) or the restart didn't come back answering. Off-darwin / launchctl-absent -> False (fail-open;
-    the caller keeps its report-only posture). Shared by _plane_studio and _kickstart_studio_if_present."""
+    the caller keeps its report-only posture). Shared by _plane_studio and _kickstart_studio_if_present.
+
+    `wait` picks the port gate: the bounded POLL (Studio needs seconds to rebind after the SIGKILL) or
+    a single instant probe. `fanops up` waits — it reports the verdict to the operator. The keeper path
+    does NOT: _kickstart_studio_if_present discards this result and runs inside daemon.ensure, which
+    the keeper fires every KEEPER_POLL_INTERVAL_S (120s), so a poll there could overlap fires."""
     if not studio_plist_path().exists():
         return False
     try:
@@ -934,7 +957,7 @@ def _redeploy_studio(cfg: Config) -> bool:
         return False
     if kr.returncode != 0:
         return False
-    return _studio_port_answers()
+    return _studio_port_answers_within() if wait else _studio_port_answers()
 
 
 def _kickstart_studio_if_present(cfg: Config) -> None:
@@ -948,16 +971,18 @@ def _kickstart_studio_if_present(cfg: Config) -> None:
 
 def _plane_studio(cfg: Config) -> dict:
     """Studio plane — non-gating (never fails the overall verdict). When the com.fanops.studio launchd
-    job is installed, ACTUALLY cycle it onto current code via _redeploy_studio and report cycled +
-    answering; when absent (no plist to cycle), stay report-only and print the exact launch command
+    job is installed, ACTUALLY cycle it onto current code via _redeploy_studio(wait=True) — waiting out
+    the seconds Flask needs to rebind after the SIGKILL, so a healthy cycle is never reported DOWN — and
+    report cycled + answering; when absent (no plist to cycle), stay report-only (the port is probed
+    ONCE there: nothing was restarted) and print the exact launch command
     (in .claude/launch.json). Either way Studio never blocks `up`'s READY (report-only gate posture
     unchanged) — the difference is `fanops up` now cycles Studio instead of just printing a command."""
     if studio_plist_path().exists():
-        if _redeploy_studio(cfg):
+        if _redeploy_studio(cfg, wait=True):
             return {"plane": "studio", "ok": True, "report_only": True,
                     "detail": f"cycled onto current code; answering at http://{STUDIO_DEFAULT_HOST}:{STUDIO_DEFAULT_PORT}"}
         return {"plane": "studio", "ok": False, "report_only": True,
-                "detail": f"restarted but not answering on {STUDIO_DEFAULT_HOST}:{STUDIO_DEFAULT_PORT} — check 07_reports/studio.err"}
+                "detail": f"restarted but not answering on {STUDIO_DEFAULT_HOST}:{STUDIO_DEFAULT_PORT} after {int(_STUDIO_PORT_TRIES * _STUDIO_PORT_STEP)}s — check 07_reports/studio.err"}
     if _studio_port_answers():
         return {"plane": "studio", "ok": True, "report_only": True,
                 "detail": f"answering at http://{STUDIO_DEFAULT_HOST}:{STUDIO_DEFAULT_PORT}"}
