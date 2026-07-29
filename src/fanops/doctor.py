@@ -76,19 +76,28 @@ _META_TOKEN_LEAD_DAYS = 10                                # WARN this many days 
 
 
 
-def _hashtag_scrape_check(cfg: Config) -> dict:
-    """Hashtag Layer A needs an instagrapi scrape session (user + session file or password). Missing
-    scrape aborts refresh loudly — surface it in doctor so the operator sees `fanops hashtags scrape-login`
-    before the 12h tick silently skips."""
-    from fanops.ig_hashtag_scrape import scrape_configured
-    lbl = "hashtag Layer A scrape session configured (instagrapi)"
-    if scrape_configured(cfg):
-        return _check(lbl, True, "")
-    # Missing scrape is setup debt for hashtag refresh (exit 2), not a toolchain failure — keep health
-    # green in dryrun; surface the next action in the hint (ok=True keeps report_is_healthy true).
-    return {"label": lbl, "ok": True,
-            "hint": "not configured — set FANOPS_IG_SCRAPE_USER (+ password or session), "
-                    "install [igscrape], then `fanops hashtags scrape-login`"}
+def _hashtag_scrape_check(cfg: Config, *, open_client=None) -> dict:
+    """Hashtag Layer A needs a LIVE instagrapi scrape session. Missing setup stays soft-ok (refresh
+    still aborts); a session file that fails login fails LOUD so mid-ops expiry is visible (MOL-687).
+    Never echoes password or session contents. `open_client` is injectable so tests never hit Instagram."""
+    from fanops.ig_hashtag_scrape import ScrapeUnavailable, scrape_configured
+    lbl = "hashtag Layer A scrape session live (instagrapi)"
+    if not scrape_configured(cfg):
+        return {"label": lbl, "ok": True,
+                "hint": "not configured — set FANOPS_IG_SCRAPE_USER (+ password or session), "
+                        "install [igscrape], then `fanops hashtags scrape-login`"}
+    # Password alone is setup-in-progress; the expiry bug is a SESSION that LOOKS fine but is dead.
+    if not cfg.ig_scrape_session_path.exists():
+        return {"label": lbl, "ok": True,
+                "hint": "credentials set but no session file — run `fanops hashtags scrape-login`"}
+    try:
+        opener = open_client
+        if opener is None:
+            from fanops.ig_hashtag_scrape import open_client as opener
+        opener(cfg)
+    except ScrapeUnavailable as e:
+        return _check(lbl, False, f"{str(e)[:120]} — run `fanops hashtags scrape-login`")
+    return _check(lbl, True, "")
 
 def _meta_token_expiry_check(cfg: Config, *, get=None):
     """T9: build the 'Meta Graph token not expiring' check dict, or None when no Meta token is configured (the

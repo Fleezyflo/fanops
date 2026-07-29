@@ -532,6 +532,27 @@ def test_doctor_hashtag_scrape_session_check(tmp_path, monkeypatch):
     assert "scrape-login" in row["hint"] and "FANOPS_IG_SCRAPE_USER" in row["hint"]
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
     monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
+    # Credentials alone (no session file) stay soft-ok — setup-in-progress, not a dead session.
     rep2 = doctor.doctor_report(Config(root=tmp_path))
     row2 = next(c for c in rep2["checks"] if "hashtag Layer A scrape" in c["label"])
-    assert row2["ok"] is True
+    assert row2["ok"] is True and "scrape-login" in row2["hint"]
+
+
+def test_doctor_hashtag_scrape_session_dead_fails_loud(tmp_path, monkeypatch):
+    """MOL-687: a session file that fails login must fail doctor — not report green on a dead cache."""
+    from fanops import doctor
+    from fanops.config import Config
+    from fanops.ig_hashtag_scrape import ScrapeUnavailable
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "secret-password-must-not-leak")
+    cfg = Config(root=tmp_path)
+    cfg.ig_scrape_session_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.ig_scrape_session_path.write_text("{}")
+    def boom(_cfg):
+        raise ScrapeUnavailable("scrape login failed: login_required")
+    row = doctor._hashtag_scrape_check(cfg, open_client=boom)
+    assert row["ok"] is False
+    assert "scrape-login" in row["hint"] and "login_required" in row["hint"]
+    assert "secret-password" not in row["hint"] and "secret-password" not in row["label"]
+    row_ok = doctor._hashtag_scrape_check(cfg, open_client=lambda _c: object())
+    assert row_ok["ok"] is True and row_ok["hint"] == ""
