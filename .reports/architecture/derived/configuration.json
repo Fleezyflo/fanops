@@ -41,7 +41,7 @@
     },
     "FANOPS_AUTO_ADOPT": {
       "read_at": [
-        "fanops.daemon:368"
+        "fanops.daemon:372"
       ],
       "reader_count": 1
     },
@@ -217,7 +217,7 @@
     },
     "FANOPS_POSTIZ_ONDEMAND": {
       "read_at": [
-        "fanops.daemon:728"
+        "fanops.daemon:733"
       ],
       "reader_count": 1
     },

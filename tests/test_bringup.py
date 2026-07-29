@@ -167,6 +167,67 @@ def test_daemon_plane_kickstarts_running_daemon_and_confirms_fresh_heartbeat(tmp
         f"expected kickstart -k on the running daemon, calls={fake.calls}"
 
 
+def test_daemon_plane_kickstart_waits_past_throttle_interval(tmp_path, monkeypatch):
+    # MOL-697: launchd ThrottleInterval=_MIN_INTERVAL (60s). A 30s subprocess wrapper on
+    # `kickstart -k` returns rc 124 while state is still "spawn scheduled" — false NOT-READY.
+    # Kickstart must use timeout >= ThrottleInterval + slack so bring-up survives the delay.
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(daemon.sys, "platform", "darwin")
+    monkeypatch.setattr(daemon.time, "sleep", lambda _s: None)
+    uid = os.getuid()
+    main_print = f"gui/{uid}/{daemon.LABEL}"
+    cfg = Config(root=tmp_path)
+    daemon.plist_path().parent.mkdir(parents=True, exist_ok=True)
+    daemon.plist_path().write_text(daemon.render_plist(cfg, interval=600))
+    seen_kickstart_timeout: list[float] = []
+
+    def run(cmd, *a, **k):
+        timeout = k.get("timeout")
+        verb = cmd[1] if len(cmd) > 1 else ""
+        if verb == "kickstart":
+            seen_kickstart_timeout.append(float(timeout if timeout is not None else 0))
+            if timeout is None or float(timeout) < daemon._MIN_INTERVAL:
+                raise subprocess.TimeoutExpired(cmd=cmd, timeout=timeout or 0)
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        if verb == "print" and len(cmd) > 2 and cmd[2] == main_print:
+            return subprocess.CompletedProcess(cmd, 0, stdout='\t"PID" = 4321;\n', stderr="")
+        if verb == "list":
+            return subprocess.CompletedProcess(cmd, 0, stdout='\t"PID" = 4321;\n', stderr="")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(daemon.subprocess, "run", run)
+    monkeypatch.setattr(daemon, "_heartbeat_fresh_since", lambda cfg, since, **k: True)
+
+    plane = daemon._plane_daemon(cfg, kickstart=True)
+
+    assert plane["ok"] is True, plane
+    assert plane["restarted"] is True
+    assert seen_kickstart_timeout, "kickstart never invoked"
+    assert seen_kickstart_timeout[0] >= daemon._MIN_INTERVAL, \
+        f"kickstart timeout {seen_kickstart_timeout[0]} must cover ThrottleInterval={daemon._MIN_INTERVAL}"
+
+
+def test_daemon_plane_kickstart_real_failure_still_not_ready(tmp_path, monkeypatch):
+    # Real launchctl non-zero still surfaces NOT-READY (MOL-697 must not swallow failures).
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(daemon.sys, "platform", "darwin")
+    monkeypatch.setattr(daemon.time, "sleep", lambda _s: None)
+    uid = os.getuid()
+    main_print = f"gui/{uid}/{daemon.LABEL}"
+    cfg = Config(root=tmp_path)
+    daemon.plist_path().parent.mkdir(parents=True, exist_ok=True)
+    daemon.plist_path().write_text(daemon.render_plist(cfg, interval=600))
+    fake = _fake_launchctl(**{main_print: (0, '\t"PID" = 4321;\n'), "kickstart": (1, "boom")})
+    monkeypatch.setattr(daemon.subprocess, "run", fake)
+    monkeypatch.setattr(daemon, "_heartbeat_fresh_since", lambda cfg, since, **k: True)
+
+    plane = daemon._plane_daemon(cfg, kickstart=True)
+
+    assert plane["ok"] is False
+    assert plane["restarted"] is False
+    assert "kickstart failed" in plane["detail"]
+
+
 def test_daemon_plane_ensures_then_loads_when_not_running(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setattr(daemon.sys, "platform", "darwin")

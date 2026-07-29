@@ -635,23 +635,19 @@
     "fanops.daemon": [
       {
         "call": "subprocess.run",
-        "line": 199
+        "line": 203
       },
       {
         "call": "subprocess.run",
-        "line": 270
+        "line": 274
       },
       {
         "call": "subprocess.run",
-        "line": 275
+        "line": 279
       },
       {
         "call": "subprocess.run",
-        "line": 816
-      },
-      {
-        "call": "subprocess.run",
-        "line": 842
+        "line": 821
       },
       {
         "call": "subprocess.run",
@@ -659,7 +655,11 @@
       },
       {
         "call": "subprocess.run",
-        "line": 875
+        "line": 852
+      },
+      {
+        "call": "subprocess.run",
+        "line": 880
       }
     ],
     "fanops.discover": [

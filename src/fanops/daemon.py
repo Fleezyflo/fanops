@@ -30,6 +30,9 @@ STUDIO_DEFAULT_PORT = 8787
 KEEPER_POLL_INTERVAL_S = 120
 _LAUNCHCTL_TIMEOUT = 30.0
 _MIN_INTERVAL = 60                                    # launchd ThrottleInterval floor — sub-minute is meaningless
+# kickstart -k SIGTERMs then waits for relaunch; launchd may hold "spawn scheduled" for the full
+# ThrottleInterval. A 30s wrapper returns rc 124 mid-throttle → false NOT-READY (MOL-697).
+_KICKSTART_TIMEOUT = float(_MIN_INTERVAL + 30)        # ThrottleInterval + slack
 
 
 # ── pure path + render helpers (no side effects) ─────────────────────────────────────────────
@@ -194,9 +197,10 @@ def installed_interval(cfg: Config) -> int | None:
 
 # ── launchctl wrapper (mirror of ingest._run_ffprobe) ────────────────────────────────────────
 
-def _launchctl(*args: str) -> subprocess.CompletedProcess:
+def _launchctl(*args: str, timeout: float | None = None) -> subprocess.CompletedProcess:
+    wait = _LAUNCHCTL_TIMEOUT if timeout is None else float(timeout)
     try:
-        return subprocess.run(["launchctl", *args], capture_output=True, text=True, timeout=_LAUNCHCTL_TIMEOUT)
+        return subprocess.run(["launchctl", *args], capture_output=True, text=True, timeout=wait)
     except (FileNotFoundError, OSError) as e:
         raise ToolchainMissingError("launchctl not found on PATH — `fanops daemon` is macOS-only (launchd)") from e
     except subprocess.TimeoutExpired:
@@ -383,7 +387,8 @@ def ensure(cfg: Config) -> dict:
                                  "— skipping to avoid a restart storm (running=%s deployed=%s)",
                                  pid, age, settle, running, deployed)
                 else:
-                    _launchctl("kickstart", "-k", f"gui/{os.getuid()}/{LABEL}")   # cycle the PUMP onto new code
+                    _launchctl("kickstart", "-k", f"gui/{os.getuid()}/{LABEL}",
+                               timeout=_KICKSTART_TIMEOUT)   # cycle the PUMP onto new code
                     _kickstart_studio_if_present(cfg)         # Studio's only adopter now (execv path deleted)
                     if action == "none":
                         action = "kickstart_stale_code"
@@ -901,7 +906,7 @@ def _plane_daemon(cfg: Config, *, kickstart: bool = True) -> dict:
                 "detail": "daemon plist present but launchctl could not load it — run `fanops daemon status`"}
     if was_running and kickstart:
         since = datetime.now(timezone.utc)
-        kr = _launchctl("kickstart", "-k", f"gui/{os.getuid()}/{LABEL}")
+        kr = _launchctl("kickstart", "-k", f"gui/{os.getuid()}/{LABEL}", timeout=_KICKSTART_TIMEOUT)
         if kr.returncode != 0:
             return {"plane": "daemon", "ok": False, "skipped": False, "restarted": False,
                     "detail": f"kickstart failed (rc {kr.returncode}: {_tail(kr.stderr, 2) or 'no output'})"}
@@ -924,7 +929,7 @@ def _redeploy_studio(cfg: Config) -> bool:
     if not studio_plist_path().exists():
         return False
     try:
-        kr = _launchctl("kickstart", "-k", f"gui/{os.getuid()}/{STUDIO_LABEL}")
+        kr = _launchctl("kickstart", "-k", f"gui/{os.getuid()}/{STUDIO_LABEL}", timeout=_KICKSTART_TIMEOUT)
     except (RuntimeError, ToolchainMissingError):
         return False
     if kr.returncode != 0:
