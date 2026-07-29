@@ -160,7 +160,7 @@ def test_reel_less_sample_preserves_prior_trend_evidence(tmp_path, monkeypatch):
     refresh_store(cfg, scrape_client=_client(hot), now=now)
     assert load_measurements(cfg)["#hiphop"]["current_top_reel_play_max_7d"] == 4_242.0
     refresh_store(cfg, scrape_client=_client({"#hiphop": [{"caption": "", "like_count": 12}]}),
-                  now=now + timedelta(hours=13))
+                  now=now + timedelta(hours=25))
     assert load_measurements(cfg)["#hiphop"]["current_top_reel_play_max_7d"] == 4_242.0
 
 
@@ -181,7 +181,7 @@ def test_every_contract_field_survives_the_whole_file_rewrite(tmp_path, monkeypa
     # A pass that re-measures plays but serves no Reel row and no volume must not strip either.
     refresh_store(cfg, scrape_client=_client({"#hiphop": [{"caption": "", "like_count": 11,
                                                            "play_count": 4_000}]}),
-                  now=now + timedelta(hours=13))
+                  now=now + timedelta(hours=25))
     second = load_measurements(cfg)["#hiphop"]
     for f in RECORD_NUM_FIELDS + RECORD_STR_FIELDS:
         assert f in second, f"{f} was stripped by the whole-file rewrite"
@@ -226,45 +226,61 @@ def test_budget_bookkeeping_is_gone_from_the_module(tmp_path):
 
 def test_graph_id_is_cached_so_a_known_tag_never_spends_another_search(tmp_path, monkeypatch):
     """A cached id + FRESH volume spends no hashtag_info. (Missing volume does — see the test below:
-    volume only ever arrives on that call, so skipping it unconditionally stranded 131 tags. MOL-691.)"""
+    volume only ever arrives on that call, so skipping it unconditionally stranded 131 tags. MOL-691.)
+
+    MOL-695: remesure is due-tiered — age past corpus 24h so medias_top still runs while volume stays fresh."""
+    from datetime import datetime, timezone, timedelta
     cfg = Config(root=tmp_path)
     pid = _persona(cfg, name="Hiphop", voice="hiphop", niche=["hiphop"]); _link_active(cfg, pid)
     media = {"#hiphop": [{"caption": "", "like_count": 5, "comments_count": 0}]}
-    refresh_store(cfg, scrape_client=_client(media, media_count_by_tag={"#hiphop": 500}))
+    t0 = datetime(2026, 7, 1, tzinfo=timezone.utc)
+    refresh_store(cfg, scrape_client=_client(media, media_count_by_tag={"#hiphop": 500}), now=t0)
     rec = load_measurements(cfg)["#hiphop"]
     assert rec["graph_id"] == "id-hiphop" and rec["media_count"] == 500.0
     client = _client(media, media_count_by_tag={"#hiphop": 500})
-    refresh_store(cfg, scrape_client=client)
+    refresh_store(cfg, scrape_client=client, now=t0 + timedelta(hours=25))
     assert "hiphop" not in client.info_calls, "a cached graph_id with fresh volume must not re-resolve"
-    assert "hiphop" in client.media_calls, "but it must still re-measure"
+    assert "hiphop" in client.media_calls, "corpus-stale tag must still re-measure"
 
 
-def test_cached_tag_metric_and_stamp_move_on_every_pass(tmp_path, monkeypatch):
+def test_cached_tag_metric_moves_when_due_not_every_pass(tmp_path, monkeypatch):
+    """MOL-695 supersedes 'every cached tag every pass': fresh volume+corpus stays off-queue until due.
+
+    Unmeasured anchors still run; a corpus member remesures only after the 24h due floor."""
     from datetime import datetime, timezone, timedelta
     cfg = Config(root=tmp_path)
     pid = _persona(cfg, niche=["lyricism", "hiphop"]); _link_active(cfg, pid)
     t0 = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
-    t1 = t0 + timedelta(hours=13)
+    t_near = t0 + timedelta(hours=13)
+    t_due = t0 + timedelta(hours=25)
     media0 = {"#hiphop": [{"caption": "", "like_count": 100, "comments_count": 0}]}
     refresh_store(cfg, scrape_client=_client(media0, media_count_by_tag={"#hiphop": 7}), now=t0)
     before = load_measurements(cfg)["#hiphop"]
     assert before["like_count"] == 100.0 and _metric(before) == 100.0
     stamp0 = before["measured_at"]
 
-    client = _FakeClient(
+    near = _FakeClient(
         media_by_tag={"#hiphop": [{"caption": "", "like_count": 250}]},
         media_count_by_tag={"#hiphop": 7},
         refuse_tags={"#lyricism", "lyricism"})
-    # seed hiphop id so resolve is skipped; lyricism is novel and will refuse on info
-    out = refresh_store(cfg, scrape_client=client, now=t1)
-    after = load_measurements(cfg)["#hiphop"]
-    assert after["like_count"] == 250.0 and _metric(after) == 250.0, "platform's new like_count must land"
-    assert after["measured_at"] != stamp0 and after["measured_at"].startswith("2026-07-02T01:00")
-    assert "hiphop" not in client.info_calls, "cached #hiphop must not re-resolve"
-    assert "hiphop" in client.media_calls, "but it must still re-measure"
-    refused = [u for u in (out.get("unresolved") or []) if u.get("tag") == "#lyricism"]
+    out_near = refresh_store(cfg, scrape_client=near, now=t_near)
+    assert "hiphop" not in near.media_calls, "13h-fresh corpus member must not remesure"
+    assert load_measurements(cfg)["#hiphop"]["measured_at"] == stamp0
+    refused = [u for u in (out_near.get("unresolved") or []) if u.get("tag") == "#lyricism"]
     assert refused and refused[0].get("code") == 18 and refused[0].get("reason") == "refused"
-    assert out.get("throttled") is False, "code 18 must not abort the pass as ScrapeThrottled"
+    assert out_near.get("throttled") is False, "code 18 must not abort the pass as ScrapeThrottled"
+
+    due = _FakeClient(
+        media_by_tag={"#hiphop": [{"caption": "", "like_count": 250}]},
+        media_count_by_tag={"#hiphop": 7},
+        refuse_tags={"#lyricism", "lyricism"})
+    out = refresh_store(cfg, scrape_client=due, now=t_due)
+    after = load_measurements(cfg)["#hiphop"]
+    assert after["like_count"] == 250.0 and _metric(after) == 250.0, "platform's new like_count must land when due"
+    assert after["measured_at"] != stamp0 and after["measured_at"].startswith("2026-07-02T13:00")
+    assert "hiphop" not in due.info_calls, "cached #hiphop must not re-resolve while volume is fresh"
+    assert "hiphop" in due.media_calls, "corpus-due tag must re-measure"
+    assert out.get("throttled") is False
 
 
 # ---------------------------------------------------------------- 3. discovery roots in the DESCRIPTION

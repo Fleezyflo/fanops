@@ -31,14 +31,15 @@ from fanops.controlio import write_json_atomic
 _MAX_AGE_DAYS = 90            # a measurement older than this is history, not evidence — pruned on write
 _VOLUME_MAX_AGE_DAYS = 7      # `media_count` re-resolve age. Tag volume moves in months, plays in hours —
                               # the 12h trend pass must not spend a hashtag_info on every tag (MOL-691).
+_CORPUS_MAX_AGE_HOURS = 24    # current corpus members remesure when measured_at is older than this (MOL-695)
 _COMPLETE_KEY = "last_complete_pass"   # sibling of tag records; gates the 12h tick (NOT file mtime)
+_COOLDOWN_NAME = ".hashtag_scrape_cooldown.json"  # Instagram ScrapeThrottled backoff (MOL-695); never sleep
+_COOLDOWN_DELAYS_S = (30 * 60, 60 * 60, 2 * 60 * 60, 6 * 60 * 60)  # streak 1..N → 30m, 1h, 2h, 6h cap
 # Scrape is ~5–7s/tag. Caps bound a pass so co-tag harvest cannot run unbounded; incomplete passes do NOT
 # stamp last_complete_pass. Defaults sized so niches + a meaningful co-tag set fit one pass (F-4 / MOL-631).
 # Tests may monkeypatch these module attrs; env overrides win when set.
-# try_cap must exceed the QUEUE (every known tag is re-measured stalest-first, plus new anchors and co-tags),
-# or every pass ends throttled, last_complete_pass never advances, and the 12h tick degenerates into a pass
-# on every tick that only ever re-measures the same stale head. The live cache held 300 measured tags against
-# a cap of 120 (MOL-686); 400 clears it with headroom for co-tag growth.
+# try_cap must clear the DUE queue (unmeasured anchors + volume-due + stale corpus + weekly long-tail —
+# MOL-695; NOT every cached tag every pass), plus headroom for co-tag growth. 400 kept from MOL-686.
 _SCRAPE_TRY_CAP = 400
 _SCRAPE_COTAG_ENQUEUE_CAP = 40
 _SCRAPE_PARALLEL = 4          # concurrent medias_top workers per wave (sequential was ~6s×N wall)
@@ -162,6 +163,95 @@ def _volume_due(rec, cutoff: datetime) -> bool:
     return ts < cutoff
 
 
+def _measured_due(rec, cutoff: datetime) -> bool:
+    """True when `measured_at` is missing, unparseable, or older than cutoff (MOL-695 due tiers)."""
+    if not isinstance(rec, dict):
+        return True
+    at = rec.get("measured_at")
+    try:
+        ts = datetime.fromisoformat(at) if isinstance(at, str) else None
+    except ValueError:
+        return True
+    if ts is None:
+        return True
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    return ts < cutoff
+
+
+def _staleness_sort_key(tag: str, cache: dict) -> tuple:
+    """Oldest measured_at first, then tag — deterministic within a due tier (MOL-695)."""
+    rec = cache.get(tag) if isinstance(cache.get(tag), dict) else {}
+    return (rec.get("measured_at") or "", tag)
+
+
+def _cooldown_path(cfg: Config):
+    return cfg.control / _COOLDOWN_NAME
+
+
+def _cooldown_delay_s(streak: int) -> int:
+    i = min(max(int(streak), 1), len(_COOLDOWN_DELAYS_S)) - 1
+    return _COOLDOWN_DELAYS_S[i]
+
+
+def _read_active_cooldown(cfg: Config, now: datetime) -> dict | None:
+    """Return the cooldown blob when `until` is still in the future; else None.
+
+    Corrupt / unreadable / unparseable → fail OPEN (no cooldown). Never sleeps."""
+    p = _cooldown_path(cfg)
+    if not p.exists():
+        return None
+    try:
+        import json
+        raw = json.loads(p.read_text())
+    except (OSError, ValueError, TypeError):
+        return None
+    if not isinstance(raw, dict):
+        return None
+    until = raw.get("until")
+    try:
+        ts = datetime.fromisoformat(until) if isinstance(until, str) else None
+    except ValueError:
+        return None
+    if ts is None:
+        return None
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    if now < ts:
+        return raw
+    return None
+
+
+def _persist_throttle_cooldown(cfg: Config, now: datetime) -> dict:
+    """On Instagram ScrapeThrottled: bump consecutive streak and write until (30m→1h→2h→6h cap)."""
+    import json
+    p = _cooldown_path(cfg)
+    streak = 0
+    if p.exists():
+        try:
+            prev = json.loads(p.read_text())
+            if isinstance(prev, dict) and isinstance(prev.get("streak"), (int, float)):
+                streak = int(prev["streak"])
+        except (OSError, ValueError, TypeError):
+            streak = 0
+    streak = max(streak, 0) + 1
+    until = (now + timedelta(seconds=_cooldown_delay_s(streak))).isoformat()
+    blob = {"streak": streak, "until": until, "updated_at": now.isoformat()}
+    cfg.control.mkdir(parents=True, exist_ok=True)
+    write_json_atomic(p, blob)
+    return blob
+
+
+def _clear_cooldown(cfg: Config) -> None:
+    """Any pass with measured>0 resets the Instagram throttle streak."""
+    p = _cooldown_path(cfg)
+    try:
+        if p.exists():
+            p.unlink()
+    except OSError:
+        pass
+
+
 def _fresh(rec: dict, cutoff: datetime) -> bool:
     """True when a record's measurement is inside the retention window. An unparseable stamp is KEPT (we
     do not delete data we cannot judge); the corpus gate rejects it on its own freshness check."""
@@ -241,9 +331,13 @@ def refresh_store(cfg: Config, *, scrape_client=None, now=None) -> dict:
 def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
     """Run one measurement pass and rewrite the cache. Returns a summary dict.
 
-    Order of work: never-measured anchors first (must discover), then novel co-tags harvested from those
-    anchors (inserted ahead of remesure so try_cap buys expansion), then every previously-measured tag
-    (anchors + known) ordered stalest `measured_at` first so a throttle cannot starve the tail.
+    Order of work (MOL-695 due tiers — NOT every cached tag every pass):
+      1. never-measured anchors (must discover)
+      2. records missing / due `media_count` (volume backfill; measured anchors land here when due)
+      3. current posting-persona corpus members with `measured_at` older than 24h
+      4. remaining cache only when `measured_at` older than 7d
+    Within each tier: oldest `measured_at` then tag. Novel co-tags harvested from anchors are inserted
+    ahead of the remaining remesure so try_cap buys expansion.
     Co-tags harvested from ANCHOR Tops are ENQUEUED for measurement only (discovery) — they must NOT
     write membership edges. Membership `from` is INBOUND only: a measured tag whose own Top captions
     mention a live niche anchor. Outbound-into-`from` was the megatag magnet (one caption hit × huge plays).
@@ -253,11 +347,13 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
     lock so fakes stay deterministic.
 
     Every durable `hashtags.json` write (mid-pass flush + final) re-derives posting-persona corpora
-    immediately — Layer B does not wait for the pass to finish.
+    immediately — Layer B does not wait for the pass to finish. A measured==0 pass that did not mutate
+    tag records skips the write and rederive (byte/mtime-identical; prior `last_complete_pass` kept).
 
     ABORTS without writing when personas.json is CORRUPT, or when scrape cannot open (`no_scrape`).
-    A throttle ends the pass but still writes — evidence already bought is kept.
-    `last_complete_pass` advances ONLY when throttled is False (the 12h tick gates on that stamp)."""
+    An Instagram throttle ends the pass, writes accrued evidence when mutated, and persists a cooldown
+    (30m→1h→2h→6h). `last_complete_pass` advances ONLY when throttled is False (the 12h tick gates on
+    that stamp). try_cap incompleteness also sets throttled but does NOT write the Instagram cooldown."""
     import threading
     from concurrent.futures import ThreadPoolExecutor
     from fanops.errors import ControlFileError
@@ -289,21 +385,34 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
             if a and a not in anchors:
                 anchors.append(a)
     anchor_set = set(anchors)
+    corpus_set: set[str] = set()
+    for per in personas:
+        for raw in (getattr(per, "hashtag_corpus", None) or []):
+            t = _norm(raw) if isinstance(raw, str) else ""
+            if t:
+                corpus_set.add(t)
+    volume_cutoff = now - timedelta(days=_VOLUME_MAX_AGE_DAYS)
+    corpus_cutoff = now - timedelta(hours=_CORPUS_MAX_AGE_HOURS)
+    weekly_cutoff = now - timedelta(days=_VOLUME_MAX_AGE_DAYS)
+    # Snapshot the write-shaped tag map BEFORE the pass so zero-progress can prove no mutation
+    # (orphan eviction / from-prune can mutate without measured>0 — those MUST still write).
+    pre_cutoff = now - timedelta(days=_MAX_AGE_DAYS)
+    pre_write = _records_for_write(cache, anchor_set=anchor_set, cutoff=pre_cutoff)
     unmeasured_anchors = [t for t in anchors if t not in cache]
-    remeasure = sorted((t for t in list(anchors) + [t for t in cache if t not in anchor_set] if t in cache),
-                       key=lambda t: cache[t].get("measured_at") or "")   # stalest first
-    # Unmeasured anchors first (discover), then remesure known tags. Do NOT drop remesure while any
-    # niche is still dark — that starved re-measure proofs (MOL-516) and left craft/burner without
-    # co-tag expansion budget after niches alone filled the try_cap.
     queue: list[str] = list(unmeasured_anchors)
     queued: set[str] = set(queue)
-    for t in remeasure:
-        if t not in queued:
-            queued.add(t); queue.append(t)
-    measured = 0; discovered = 0; throttled = False; tried = 0; cotag_enqueued = 0
+
+    def _extend_tier(candidates: list[str]) -> None:
+        for t in sorted(candidates, key=lambda x: _staleness_sort_key(x, cache)):
+            if t not in queued:
+                queued.add(t); queue.append(t)
+
+    _extend_tier([t for t in cache if _volume_due(cache[t], volume_cutoff)])
+    _extend_tier([t for t in cache if t in corpus_set and _measured_due(cache[t], corpus_cutoff)])
+    _extend_tier([t for t in cache if _measured_due(cache[t], weekly_cutoff)])
+    measured = 0; discovered = 0; throttled = False; ig_throttled = False; tried = 0; cotag_enqueued = 0
     unresolved: list[dict] = []
     log = get_logger(cfg)
-    volume_cutoff = now - timedelta(days=_VOLUME_MAX_AGE_DAYS)
     try_cap = _scrape_try_cap(); cotag_cap = _scrape_cotag_enqueue_cap()
     parallel = 1 if injected else _scrape_parallel()
     workers = [client]
@@ -364,7 +473,7 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
                 ordered.append(by_tag[tag].result())
         stop = False
         if any(st == "throttle" for st, *_ in ordered):
-            throttled = True; stop = True
+            throttled = True; ig_throttled = True; stop = True
         for status, tag, hid, media_count, metrics, payload in ordered:
             if status == "throttle":
                 continue                                   # apply sibling successes in this wave, then stop
@@ -436,8 +545,25 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
                     media_count=rec.get("media_count"), parallel=parallel)
         if stop:
             break
+    cooldown = None
+    if measured > 0:
+        _clear_cooldown(cfg)                               # any progress resets the Instagram streak
+    elif ig_throttled:
+        cooldown = _persist_throttle_cooldown(cfg, now)
+        log("hashtags", "-", "scrape_cooldown", streak=cooldown.get("streak"),
+            until=cooldown.get("until"))
     cutoff = now - timedelta(days=_MAX_AGE_DAYS)
     fresh = _records_for_write(cache, anchor_set=anchor_set, cutoff=cutoff)
+    tag_mutated = fresh != pre_write
+    if measured == 0 and not tag_mutated:
+        # Zero-progress: leave hashtags.json byte/mtime-identical; do not rederive; keep prior stamp.
+        out = {"written": False, "measured": 0, "discovered": discovered,
+               "total": len(pre_write), "throttled": throttled, "tried": tried,
+               "unresolved": unresolved, "backend": "scrape", "parallel": parallel,
+               "reason": "no_progress"}
+        if cooldown is not None:
+            out["cooldown_until"] = cooldown.get("until"); out["cooldown_streak"] = cooldown.get("streak")
+        return out
     if not throttled:
         fresh[_COMPLETE_KEY] = stamp                          # only a finished pass buys the 12h silence
     elif prev_complete:
@@ -445,9 +571,12 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
     cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
     write_json_atomic(cfg.hashtags_path, fresh)
     _rederive_posting_corpora(cfg, now=now)                      # final store write → corpora catch up
-    return {"written": True, "measured": measured, "discovered": discovered,
-            "total": len([t for t in fresh if t != _COMPLETE_KEY]), "throttled": throttled,
-            "tried": tried, "unresolved": unresolved, "backend": "scrape", "parallel": parallel}
+    out = {"written": True, "measured": measured, "discovered": discovered,
+           "total": len([t for t in fresh if t != _COMPLETE_KEY]), "throttled": throttled,
+           "tried": tried, "unresolved": unresolved, "backend": "scrape", "parallel": parallel}
+    if cooldown is not None:
+        out["cooldown_until"] = cooldown.get("until"); out["cooldown_streak"] = cooldown.get("streak")
+    return out
 
 
 def refresh_store_if_due(cfg: Config, *, max_age_s: int = 43200, scrape_client=None, now=None) -> dict:
@@ -457,12 +586,18 @@ def refresh_store_if_due(cfg: Config, *, max_age_s: int = 43200, scrape_client=N
     session (else a clean no-op — the cache is a platform artifact). FAIL-OPEN: any error -> a reason,
     NEVER raises; it must not crash the unattended run. A corrupt personas.json / no_scrape abort is NOT
     a refresh: refresh_store aborts (cache untouched) and this REPORTS the abort so the tick never logs a
-    false success on a broken control file."""
+    false success on a broken control file.
+
+    Instagram ScrapeThrottled cooldown (MOL-695) is checked BEFORE opening scrape — never sleeps."""
     from fanops.ig_hashtag_scrape import scrape_configured
     if not scrape_configured(cfg) and scrape_client is None:
         return {"refreshed": False, "reason": "no scrape session"}
     try:
         now_dt = now or datetime.now(timezone.utc)
+        cool = _read_active_cooldown(cfg, now_dt)
+        if cool is not None:
+            return {"refreshed": False, "reason": "cooldown",
+                    "until": cool.get("until"), "streak": cool.get("streak")}
         complete = _read_complete_pass(cfg)
         if complete:
             try:
@@ -474,7 +609,7 @@ def refresh_store_if_due(cfg: Config, *, max_age_s: int = 43200, scrape_client=N
             except ValueError:
                 pass                                          # unparseable stamp -> treat as due
         r = refresh_store(cfg, scrape_client=scrape_client, now=now_dt)
-        if not r.get("written"):                              # corrupt/no_scrape abort: preserve, report
+        if not r.get("written"):                              # corrupt/no_scrape/no_progress: preserve, report
             return {"refreshed": False, **r}
         return {"refreshed": True, **r}
     except Exception as exc:                                  # noqa: BLE001 — the tick must never die here
