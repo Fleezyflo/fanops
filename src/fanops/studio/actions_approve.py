@@ -23,7 +23,14 @@ def _approve_ids_with_render(cfg: Config, *, resolve_ids: Callable[[Ledger], Seq
         with Ledger.transaction(cfg) as led:
             ids_in_batch = list(resolve_ids(led))
             batch_posts = [led.posts[i] for i in ids_in_batch if i in led.posts]
-            sched = suggest_times_for_batch(cfg, batch_posts, now=now)
+            # MOL-710: the batch is awaiting-approval posts ONLY, so the account's already-queued posts are
+            # invisible to the allocator's daily cap — approving batch after batch refilled a full day.
+            # Hand it the out-of-batch queued load for the accounts in play (same open transaction).
+            in_batch = set(ids_in_batch)
+            accts = {p.account for p in batch_posts}
+            occupied = [p for p in led.posts.values() if p.state is PostState.queued
+                        and p.id not in in_batch and p.account in accts]
+            sched = suggest_times_for_batch(cfg, batch_posts, now=now, occupied=occupied)
             for pid in ids_in_batch:
                 post = led.posts.get(pid)
                 if post is None:

@@ -377,6 +377,8 @@ def accept_suggested_account(cfg: Config, handle: str, *, now: Optional[datetime
     try:
         with Ledger.transaction(cfg) as led:
             posts = [p for p in led.posts.values() if p.state is PostState.queued and p.account == handle]
+            # MOL-710: no `occupied` here BY DESIGN — this batch is ALREADY every queued post for the
+            # account, so passing it as occupancy would double-count the very posts being re-timed.
             sched = suggest_times_for_batch(cfg, posts, now=now)
             for pid, t in sched.items():
                 p = led.posts[pid]
@@ -747,7 +749,11 @@ def reschedule_bucket(cfg: Config, *, now: Optional[datetime] = None, handle: Op
                    and not _seconds_away(p.scheduled_time, now)
                    and (handle is None or p.account == handle)]
             due.sort(key=lambda p: (p.scheduled_time or "", p.account, p.platform.value, p.id))  # stable order in
-            sched = suggest_times_for_batch(cfg, due, now=now)
+            # MOL-710: a `_seconds_away` post is deliberately NOT respread, but it still consumes a slot on
+            # its day — count it as occupancy so the respread doesn't lay a fresh post on top of it.
+            due_ids = {p.id for p in due}
+            occupied = [p for p in led.posts.values() if p.state is PostState.queued and p.id not in due_ids]
+            sched = suggest_times_for_batch(cfg, due, now=now, occupied=occupied)
             for p in due:
                 p.scheduled_time = sched[p.id]
     except Exception as exc:
