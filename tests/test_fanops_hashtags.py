@@ -664,3 +664,19 @@ def test_refresh_store_reports_parallel_one_when_client_injected(tmp_path, monke
     cfg = Config(root=tmp_path); _persona(cfg)
     out = refresh_store(cfg, scrape_client=_FakeClient({"#hiphop": 10}))
     assert out.get("parallel") == 1 and out["written"] is True
+
+
+def test_refresh_store_early_aborts_on_login_required(tmp_path, monkeypatch):
+    """MOL-696: login_required must stop the pass — not burn try_cap spinning refusals."""
+    import fanops.fanops_hashtags as fh
+    from fanops.ig_hashtag_scrape import ScrapeRefused
+    monkeypatch.setattr(fh, "_SCRAPE_TRY_CAP", 40)
+    cfg = Config(root=tmp_path); _persona(cfg)
+    client = _FakeClient({}, refuse=ScrapeRefused("login_required"))
+    out = refresh_store(cfg, scrape_client=client)
+    assert out.get("aborted") == "login_required"
+    assert out.get("reason") == "login_required"
+    assert out["written"] is False and out["measured"] == 0
+    assert out["tried"] == 1, f"must abort after first refusal, tried={out['tried']}"
+    assert not cfg.hashtags_path.exists()
+    assert len(client.info_calls) == 1
