@@ -24,8 +24,20 @@ RANK_FIELDS = ("play_count", "like_count")
 # Preferred rank key name (UI / docs). Admission uses RANK_FIELDS — legacy like_count-only rows still admit.
 METRIC_FIELD = "play_count"
 
+# THE record shape Layer A persists (MOL-691). `refresh_store` seeds its working cache from
+# `load_measurements` and then rewrites hashtags.json WHOLE, so a field absent from these tuples is
+# written in pass N and silently stripped in pass N+1. New evidence MUST land here first.
+RECORD_NUM_FIELDS = ("play_count", "like_count", "media_count",
+                     "current_top_reel_play_max_7d", "top_reel_sample_n")
+RECORD_STR_FIELDS = ("media_count_at",)
+
 CAPTION_TAG_RE = re.compile(r"#[0-9A-Za-z_؀-ۿ]+")   # a hashtag in a caption: Latin + Arabic-block letters
 HARVEST_CAP = 5000                 # upper bound on distinct co-tags per harvest — untrusted-UGC guard
+# Rows ONE Layer A Top fetch pulls. 9 was Instagram's default grid page, not a measurement floor: far too
+# thin to take a maximum over (MOL-691). 27 is instagrapi's own default for its v1/recent/reels reads —
+# same endpoint, one more page, ~3x the sample. Lives here (not in ig_hashtag_scrape) because Layer B's
+# `density()` denominator MUST be this same number, and Layer B does no network.
+TOP_SAMPLE_N = 27
 
 _ARABIC = ["#arabicmusic", "#arabtiktok", "#arabicmusiclovers"]        # AR language/region floor
 # Max slots the curated corpus may LEAD in one line. The corpus is tier 0 and is seeded whole, so without
@@ -52,6 +64,14 @@ def _dedupe_norm(seq) -> list[str]:
     return out
 
 
+def _num(v) -> float | None:
+    """One verbatim non-negative platform number, or None. Bools are never numbers here. THE coercion
+    for every field in the record contract, so reader / writer / scrape cannot disagree on what counts."""
+    if isinstance(v, bool) or not isinstance(v, (int, float)) or v < 0:
+        return None
+    return float(v)
+
+
 def _metric(rec) -> float | None:
     """Visibility sort key: first present RANK_FIELDS value (play_count, then like_count).
     Legacy invented `reach` sums carry neither and read UNMEASURED."""
@@ -76,8 +96,8 @@ def _rank_field(rec) -> str | None:
 
 
 def load_measurements(cfg) -> dict[str, dict]:
-    """THE reader for the platform measurement cache (00_control/hashtags.json):
-    `{tag: {graph_id, play_count?, like_count?, media_count?, measured_at, from}}`.
+    """THE reader for the platform measurement cache (00_control/hashtags.json). Retained keys are
+    `graph_id`, `measured_at`, `from`, and the RECORD_NUM_FIELDS / RECORD_STR_FIELDS contract.
 
     `from` is harvest attribution. A record missing every RANK_FIELDS metric, graph id, or timestamp
     is dropped. Absent / corrupt / legacy file -> {}. Never raises."""
@@ -97,10 +117,14 @@ def load_measurements(cfg) -> dict[str, dict]:
         if not isinstance(gid, str) or not gid or not isinstance(at, str):
             continue
         rec: dict = {"graph_id": gid, "measured_at": at}
-        for fk in ("play_count", "like_count", "media_count"):
+        for fk in RECORD_NUM_FIELDS:
+            fv = _num(v.get(fk))
+            if fv is not None:
+                rec[fk] = fv
+        for fk in RECORD_STR_FIELDS:
             fv = v.get(fk)
-            if isinstance(fv, (int, float)) and not isinstance(fv, bool) and fv >= 0:
-                rec[fk] = float(fv)
+            if isinstance(fv, str) and fv:
+                rec[fk] = fv
         if _metric(rec) is None:
             continue
         src = v.get("from")

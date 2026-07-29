@@ -24,10 +24,13 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from fanops.config import Config
 from fanops.log import get_logger
-from fanops.hashtags import METRIC_FIELD, _norm, _metric, load_measurements, ranked_tags
+from fanops.hashtags import (METRIC_FIELD, RECORD_NUM_FIELDS, _norm, _metric, _num,
+                             load_measurements, ranked_tags)
 from fanops.controlio import write_json_atomic
 
 _MAX_AGE_DAYS = 90            # a measurement older than this is history, not evidence — pruned on write
+_VOLUME_MAX_AGE_DAYS = 7      # `media_count` re-resolve age. Tag volume moves in months, plays in hours —
+                              # the 12h trend pass must not spend a hashtag_info on every tag (MOL-691).
 _COMPLETE_KEY = "last_complete_pass"   # sibling of tag records; gates the 12h tick (NOT file mtime)
 # Scrape is ~5–7s/tag. Caps bound a pass so co-tag harvest cannot run unbounded; incomplete passes do NOT
 # stamp last_complete_pass. Defaults sized so niches + a meaningful co-tag set fit one pass (F-4 / MOL-631).
@@ -133,6 +136,30 @@ def _posting_personas(cfg: Config) -> list:
     if live:
         personas = [p for p in personas if p.id in live] or personas   # `or personas`: never derive from nothing
     return personas
+
+
+def _volume_due(rec, cutoff: datetime) -> bool:
+    """True when Instagram's own tag VOLUME (`media_count`) must be re-resolved via hashtag_info.
+
+    Volume was previously fetched only on a tag's very first pass: once `graph_id` was cached the
+    hashtag_info call was skipped forever, so 131 of 300 live records carried no `media_count` at all
+    and could never acquire one (MOL-691). Volume now ages on its OWN `media_count_at` stamp — a legacy
+    row falls back to `measured_at`, so the first pass after this ships does not re-resolve all 300 tags
+    at once. Volume moves far slower than plays; the 12h trend pass must not drag it along."""
+    if not isinstance(rec, dict):
+        return True
+    if _num(rec.get("media_count")) is None:
+        return True                                        # never measured -> backfill
+    at = rec.get("media_count_at") or rec.get("measured_at")
+    try:
+        ts = datetime.fromisoformat(at) if isinstance(at, str) else None
+    except ValueError:
+        return True
+    if ts is None:
+        return True
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    return ts < cutoff
 
 
 def _fresh(rec: dict, cutoff: datetime) -> bool:
@@ -276,6 +303,7 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
     measured = 0; discovered = 0; throttled = False; tried = 0; cotag_enqueued = 0
     unresolved: list[dict] = []
     log = get_logger(cfg)
+    volume_cutoff = now - timedelta(days=_VOLUME_MAX_AGE_DAYS)
     try_cap = _scrape_try_cap(); cotag_cap = _scrape_cotag_enqueue_cap()
     parallel = 1 if injected else _scrape_parallel()
     workers = [client]
@@ -295,13 +323,16 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
     def _fetch(tag: str, worker):
         """Resolve+measure one tag. Returns (status, tag, hid|None, media_count|None, metrics|None, cotags|exc)."""
         def _go():
-            if tag in ids:
+            # A cached graph_id skips the hashtag_info call, but VOLUME only ever arrives on that call —
+            # so a tag whose id was already known could never acquire a media_count (MOL-691). Spend the
+            # extra resolve when volume is missing or older than its own 7-day stamp, never every pass.
+            if tag in ids and not _volume_due(cache.get(tag), volume_cutoff):
                 hid, media_count = ids[tag], None
             else:
                 hid, media_count = resolve_hashtag_scrape(worker, tag)
             if not hid:
                 return ("no_match", tag, None, None, None, {})
-            metrics, cotags = measure_and_harvest_scrape(worker, tag)
+            metrics, cotags = measure_and_harvest_scrape(worker, tag, now=now)
             return ("ok", tag, hid, media_count, metrics, cotags)
         try:
             if client_lock is not None:
@@ -363,15 +394,29 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
                     attribution[tag][co] = attribution[tag].get(co, 0) + n
             if not isinstance(metrics, dict) or _metric(metrics) is None:
                 continue
+            prev = cache.get(tag) or {}
             rec = {"graph_id": hid, "measured_at": stamp}
-            for fk in ("play_count", "like_count"):
-                fv = metrics.get(fk)
-                if isinstance(fv, (int, float)) and not isinstance(fv, bool) and fv >= 0:
-                    rec[fk] = float(fv)
-            if isinstance(media_count, (int, float)) and not isinstance(media_count, bool) and media_count >= 0:
-                rec["media_count"] = float(media_count)
-            elif isinstance((cache.get(tag) or {}).get("media_count"), (int, float)):
-                rec["media_count"] = float(cache[tag]["media_count"])
+            for fk in RECORD_NUM_FIELDS:
+                if fk == "media_count":
+                    continue                                    # volume ages on its own stamp, below
+                fv = _num(metrics.get(fk))
+                if fv is not None:
+                    rec[fk] = fv
+            # An empty / Reel-less Top sample must not ERASE trend evidence a previous pass bought:
+            # Instagram serves a photo-only grid transiently, and that is not proof of no Reels.
+            if "current_top_reel_play_max_7d" not in rec:
+                for fk in ("current_top_reel_play_max_7d", "top_reel_sample_n"):
+                    fv = _num(prev.get(fk))
+                    if fv is not None:
+                        rec[fk] = fv
+            vol = _num(media_count)
+            if vol is not None:
+                rec["media_count"] = vol; rec["media_count_at"] = stamp
+            else:                                               # resolve skipped / served nothing: carry
+                pv = _num(prev.get("media_count"))
+                if pv is not None:
+                    rec["media_count"] = pv
+                    rec["media_count_at"] = prev.get("media_count_at") or prev.get("measured_at") or stamp
             frm = attribution.get(tag)
             if frm:
                 rec["from"] = {k: int(v) for k, v in frm.items()}

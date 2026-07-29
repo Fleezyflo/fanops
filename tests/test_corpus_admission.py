@@ -70,4 +70,4 @@ def test_aligned_pool_drops_one_hit_keeps_multi_hit_and_soft_magnet():
     assert "#celia" not in pool
     assert "#love" in pool                                 # soft magnet
     assert "#fyp" not in pool                              # soft fail + not normal bar
-    assert TOP_GRID_N == 9
+    assert TOP_GRID_N == 27                                # the real Top sample (MOL-691), not the 9-grid
