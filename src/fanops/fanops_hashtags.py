@@ -336,8 +336,9 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
       2. records missing / due `media_count` (volume backfill; measured anchors land here when due)
       3. current posting-persona corpus members with `measured_at` older than 24h
       4. remaining cache only when `measured_at` older than 7d
-    Within each tier: oldest `measured_at` then tag. Novel co-tags harvested from anchors are inserted
-    ahead of the remaining remesure so try_cap buys expansion.
+    Within each tier: oldest `measured_at` then tag. NOVEL (uncached) co-tags harvested from anchors are
+    inserted ahead of the remaining remesure so try_cap buys expansion; a co-tag already in the cache is
+    left to the due tiers, never re-measured just for appearing on an anchor's Top.
     Co-tags harvested from ANCHOR Tops are ENQUEUED for measurement only (discovery) — they must NOT
     write membership edges. Membership `from` is INBOUND only: a measured tag whose own Top captions
     mention a live niche anchor. Outbound-into-`from` was the megatag magnet (one caption hit × huge plays).
@@ -347,8 +348,10 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
     lock so fakes stay deterministic.
 
     Every durable `hashtags.json` write (mid-pass flush + final) re-derives posting-persona corpora
-    immediately — Layer B does not wait for the pass to finish. A measured==0 pass that did not mutate
-    tag records skips the write and rederive (byte/mtime-identical; prior `last_complete_pass` kept).
+    immediately — Layer B does not wait for the pass to finish. A measured==0 pass whose write projection
+    equals the tag map ALREADY ON DISK skips the write and rederive (byte/mtime-identical; prior
+    `last_complete_pass` kept); a projection that differs — orphan eviction, dead-`from` prune, 90d
+    expiry — still writes even at measured==0.
 
     ABORTS without writing when personas.json is CORRUPT, or when scrape cannot open (`no_scrape`).
     An Instagram throttle ends the pass, writes accrued evidence when mutated, and persists a cooldown
@@ -394,10 +397,11 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
     volume_cutoff = now - timedelta(days=_VOLUME_MAX_AGE_DAYS)
     corpus_cutoff = now - timedelta(hours=_CORPUS_MAX_AGE_HOURS)
     weekly_cutoff = now - timedelta(days=_VOLUME_MAX_AGE_DAYS)
-    # Snapshot the write-shaped tag map BEFORE the pass so zero-progress can prove no mutation
-    # (orphan eviction / from-prune can mutate without measured>0 — those MUST still write).
-    pre_cutoff = now - timedelta(days=_MAX_AGE_DAYS)
-    pre_write = _records_for_write(cache, anchor_set=anchor_set, cutoff=pre_cutoff)
+    # Snapshot the tag map AS IT SITS ON DISK before the pass, so zero-progress can prove the file would
+    # not change. Snapshotting the WRITE PROJECTION instead hid exactly the mutations that MUST still
+    # write: orphan eviction and dead-`from` prune are performed BY that projection, so both sides carried
+    # them and a pass that evicts an orphan looked byte-identical.
+    pre_write = {t: dict(r) for t, r in cache.items()}
     unmeasured_anchors = [t for t in anchors if t not in cache]
     queue: list[str] = list(unmeasured_anchors)
     queued: set[str] = set(queue)
@@ -491,8 +495,11 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
             cotags = payload if isinstance(payload, dict) else {}
             # Outbound discovery: measuring an ANCHOR enqueues novel co-tags — NEVER writes `from`.
             if tag in anchor_set:
+                # NOVEL means UNCACHED. A co-tag already in the cache is the due tiers' business; enqueuing
+                # it here re-measured every fresh long-tail tag on every pass — the spend tiers exist to
+                # stop (MOL-695).
                 for co, n in cotags.items():
-                    if co in anchor_set:
+                    if co in anchor_set or co in cache:
                         continue
                     if co not in queued and cotag_enqueued < cotag_cap:
                         queued.add(co); queue.insert(i, co); discovered += 1; cotag_enqueued += 1

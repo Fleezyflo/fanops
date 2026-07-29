@@ -30,9 +30,11 @@ def _persona(cfg, *, pid="curator"):
 
 def test_refresh_store_atomic_write_preserves_prior_on_crash(tmp_path, monkeypatch):
     # L08: a crash mid-write must leave the PRIOR valid hashtags.json intact (write_json_atomic).
+    # The prior file must be established by a REAL measure: a pass with nothing due writes nothing
+    # at all (MOL-695 zero-progress), so an empty fake would leave no file to preserve.
     from fanops import controlio
-    cfg = Config(root=tmp_path)
-    client = _FakeClient({})
+    cfg = Config(root=tmp_path); _persona(cfg)
+    client = _FakeClient({"#hiphop": 10})                   # no media_count -> volume-due next pass
     refresh_store(cfg, scrape_client=client)                # establish a valid cache file
     good = cfg.hashtags_path.read_text()
     real_replace = controlio.os.replace
@@ -307,7 +309,10 @@ def test_zero_progress_pass_preserves_hashtags_bytes_and_skips_rederive(tmp_path
 
 
 def test_zero_progress_still_writes_when_tag_records_mutate(tmp_path, monkeypatch):
-    """measured==0 must NOT skip write when orphan eviction mutates the tag map (prove the predicate)."""
+    """measured==0 must NOT skip write when orphan eviction mutates the tag map (prove the predicate).
+
+    The zero-progress skip compares the write projection against the map ON DISK — comparing it against
+    another projection would hide eviction, since the projection is what evicts."""
     from datetime import datetime, timezone
     cfg = Config(root=tmp_path); _persona(cfg)
     now = datetime(2026, 7, 28, tzinfo=timezone.utc)
