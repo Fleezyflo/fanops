@@ -695,19 +695,40 @@ def cmd_hashtags_scrape_login(cfg: Config) -> int:
     The operator escape hatch: it deliberately IGNORES an active cooldown (an explicit human act, run
     after clearing a challenge in the app — the freeze exists to stop the unattended pump, not the
     operator) and CLEARS it on success, so a fixed account resumes on the next tick instead of sitting
-    out the remaining 12h (MOL-699)."""
+    out the remaining 12h (MOL-699).
+
+    Success requires a real login: instagrapi short-circuits `login()` when a loaded session already
+    has `user_id`, so we only clear the cooldown when `last_login` advanced past the pre-call stamp."""
+    import json
     from fanops.ig_hashtag_scrape import ScrapeCheckpoint, ScrapeUnavailable, open_client
+    before = 0.0
+    sess = cfg.ig_scrape_session_path
+    if sess.exists():
+        try:
+            before = float((json.loads(sess.read_text()) or {}).get("last_login") or 0)
+        except (OSError, json.JSONDecodeError, AttributeError, TypeError, ValueError):
+            before = 0.0
     try:
-        open_client(cfg)
+        client = open_client(cfg)
     except ScrapeCheckpoint as e:                          # a lock: retrying the login only deepens it
         get_logger(cfg)("hashtags", "-", "scrape_login_checkpoint", level="error", reason=str(e)[:200])
         return 2
     except ScrapeUnavailable as e:
         get_logger(cfg)("hashtags", "-", "scrape_login_failed", level="error", reason=str(e)[:160])
         return 2
+    try:
+        after = float(getattr(client, "last_login", None) or 0)
+    except (TypeError, ValueError):
+        after = 0.0
+    if after <= before:                                    # short-circuit reused a dead session — do not lie
+        get_logger(cfg)("hashtags", "-", "scrape_login_stale", level="error",
+                        session=str(sess), last_login=before,
+                        hint="session reused without authenticating; fix account in IG app, "
+                             "remove session file, re-run")
+        return 2
     _clear_cooldown(cfg)
     get_logger(cfg)("hashtags", "-", "scrape_login_ok", user=(cfg.ig_scrape_user or "")[:40],
-                    session=str(cfg.ig_scrape_session_path), cooldown="cleared")
+                    session=str(sess), cooldown="cleared")
     return 0
 
 

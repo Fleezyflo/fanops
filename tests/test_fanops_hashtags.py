@@ -368,6 +368,7 @@ def test_scrape_login_ignores_and_clears_an_active_freeze(tmp_path, monkeypatch)
     """The operator escape hatch: scrape-login is an explicit human act AFTER an unlock, so it must run
     with a freeze armed and clear it on success — otherwise a fixed account stays frozen for 12h."""
     from datetime import datetime, timezone
+    from types import SimpleNamespace
     import fanops.ig_hashtag_scrape as igs
     from fanops.fanops_hashtags import (cmd_hashtags_scrape_login, _cooldown_path, _persist_cooldown,
                                         _CHECKPOINT_DELAY_S)
@@ -376,9 +377,30 @@ def test_scrape_login_ignores_and_clears_an_active_freeze(tmp_path, monkeypatch)
     _persist_cooldown(cfg, datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc),
                       reason="checkpoint", delay_s=_CHECKPOINT_DELAY_S)
     assert _cooldown_path(cfg).exists()
-    monkeypatch.setattr(igs, "open_client", lambda _c, **_k: object())
+    monkeypatch.setattr(igs, "open_client",
+                        lambda _c, **_k: SimpleNamespace(last_login=1_785_248_465.0))
     assert cmd_hashtags_scrape_login(cfg) == 0              # NOT blocked by the freeze
     assert not _cooldown_path(cfg).exists()                 # and the freeze is lifted
+
+
+def test_scrape_login_refuses_short_circuit(tmp_path, monkeypatch):
+    """instagrapi returns True without authenticating when user_id is already loaded — do not clear."""
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+    import fanops.ig_hashtag_scrape as igs
+    from fanops.fanops_hashtags import (cmd_hashtags_scrape_login, _cooldown_path, _persist_cooldown,
+                                        _CHECKPOINT_DELAY_S)
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u"); monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
+    cfg = Config(root=tmp_path)
+    stamp = 1_785_248_465.490152
+    cfg.ig_scrape_session_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.ig_scrape_session_path.write_text(json.dumps({"last_login": stamp}))
+    _persist_cooldown(cfg, datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc),
+                      reason="login_required", delay_s=_CHECKPOINT_DELAY_S)
+    monkeypatch.setattr(igs, "open_client",
+                        lambda _c, **_k: SimpleNamespace(last_login=stamp))
+    assert cmd_hashtags_scrape_login(cfg) == 2
+    assert _cooldown_path(cfg).exists()                     # freeze stays armed
 
 
 def test_corrupt_cooldown_fails_open(tmp_path, monkeypatch):
