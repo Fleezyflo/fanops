@@ -697,11 +697,12 @@ def cmd_hashtags_scrape_login(cfg: Config) -> int:
     operator) and CLEARS it on success, so a fixed account resumes on the next tick instead of sitting
     out the remaining 12h (MOL-699).
 
-    Requires instagrapi>=2.18.12: `open_client`→`login()` validates a restored session via
-    `account_info()` and relogins on LoginRequired, so a returned client is an authenticated one."""
+    Sole `allow_reauth=True` call site: the unattended tick validates a restored session via
+    `account_info()` and NEVER calls `login()` (a full password re-auth on a stale session earned the
+    2026-07-29T22:01Z native checkpoint). Only this verb may re-authenticate."""
     from fanops.ig_hashtag_scrape import ScrapeCheckpoint, ScrapeUnavailable, open_client
     try:
-        open_client(cfg)
+        open_client(cfg, allow_reauth=True)
     except ScrapeCheckpoint as e:                          # a lock: retrying the login only deepens it
         get_logger(cfg)("hashtags", "-", "scrape_login_checkpoint", level="error", reason=str(e)[:200])
         return 2

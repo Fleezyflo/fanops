@@ -46,7 +46,16 @@ discarded plays/volume Instagram already returned on the same fetches.
 `fanops_hashtags.refresh_store(cfg)` — driven by `refresh_store_if_due` on the 12h tick in `cli.py`'s run
 loop. Network source is **instagrapi** (`ig_hashtag_scrape`). Missing scrape session aborts loudly
 (`written:False`, `aborted:no_scrape`) — there is **no silent Graph fallback**. Graph hashtag helpers
-(`meta_graph.resolve_hashtag` / `measure_and_harvest`) stay in tree for later. Per persona linked to an
+(`meta_graph.resolve_hashtag` / `measure_and_harvest`) stay in tree for later.
+
+**Re-authentication is operator-only.** `open_client` defaults to `allow_reauth=False`: a restored
+session is validated via `account_info()` and `login()` is never called. The Layer A tick and doctor
+probe use that default. Only `fanops hashtags scrape-login` passes `allow_reauth=True`. Cause: under
+instagrapi≥2.18.12, `login()` escalates `LoginRequired` into a full password re-auth; the unattended
+tick doing that earned the 2026-07-29T22:01Z native Instagram checkpoint. A checkpoint still needs
+in-app verification — no code path can clear it.
+
+Per persona linked to an
 **active** account (`_posting_persona_ids`; dormant personas cannot steer discovery):
 
 1. **terms** — `persona_research.persona_terms(per, cfg)` → niche ∪ `hashtag_vocab.json` seeds. Deterministic given durable vocab, **corpus-blind**. Vocab is refreshed by `hashtag_vocab.expand_vocab_if_due` (LLM, `FANOPS_RESPONDER=llm`) — INPUT-DRIVEN, never periodic: each row stores an `input_fp` digest of `(name, voice, niche)` and a persona is re-expanded only when that digest is missing or has moved (MOL-693).
