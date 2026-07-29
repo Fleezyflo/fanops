@@ -3,9 +3,44 @@ import json
 import subprocess
 import pytest
 from fanops.errors import ToolchainMissingError
-from fanops.llm import claude_json
+from fanops.llm import claude_json, _claude_strict_schema
 
 _SCHEMA = {"type": "object", "properties": {"x": {"type": "integer"}}, "required": ["x"]}
+
+
+def test_claude_strict_schema_rewrites_prefix_items():
+    # Claude Code ≥2.1 strict --json-schema rejects draft-2020-12 prefixItems (Pydantic tuple fields).
+    raw = {
+        "type": "array",
+        "prefixItems": [{"type": "number"}, {"type": "number"}],
+        "minItems": 2,
+        "maxItems": 2,
+    }
+    out = _claude_strict_schema({"properties": {"segments": {"items": raw}}})
+    dump = json.dumps(out)
+    assert "prefixItems" not in dump
+    seg = out["properties"]["segments"]["items"]
+    assert seg["items"] == {"type": "number"}
+    assert seg["minItems"] == 2 and seg["maxItems"] == 2
+
+
+def test_claude_strict_schema_clears_moment_decision_prefix_items():
+    from fanops.models import MomentDecision
+    raw = MomentDecision.model_json_schema()
+    assert "prefixItems" in json.dumps(raw)                 # precondition: pydantic still emits it
+    assert "prefixItems" not in json.dumps(_claude_strict_schema(raw))
+
+
+def test_claude_json_sends_strict_schema_without_prefix_items(mocker):
+    from fanops.models import MomentDecision
+    envelope = {"structured_output": {"picks": []}, "result": "{}", "session_id": "s"}
+    class R: returncode = 0; stdout = json.dumps(envelope); stderr = ""
+    run = mocker.patch("fanops.llm.subprocess.run", return_value=R())
+    claude_json("pick", MomentDecision.model_json_schema())
+    cmd = run.call_args[0][0]
+    i = cmd.index("--json-schema")
+    assert "prefixItems" not in cmd[i + 1]
+
 
 def test_claude_json_extracts_structured_output(mocker):
     # claude -p returns the envelope on stdout; we want structured_output.
@@ -640,8 +675,18 @@ def test_cursor_missing_binary(mocker, monkeypatch):
     with pytest.raises(ToolchainMissingError, match="cursor-agent"):
         claude_json("q", _SCHEMA)
 
-def test_dispatch_vision_fallback_claude(mocker, monkeypatch):
+def test_dispatch_cursor_vision_refuses_silent_claude_fallback(mocker, monkeypatch):
+    # Transport is absolute (Go-Live single switch): cursor + vision must NOT shell claude behind the
+    # operator's back — that split captions→cursor / moments→claude and broke consistency.
     monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "cursor")
+    run = mocker.patch("fanops.llm.subprocess.run")
+    with pytest.raises(ToolchainMissingError, match="Go-Live|single switch|vision"):
+        claude_json("judge", _SCHEMA, images=["/f/1.jpg"])
+    assert run.call_count == 0
+
+
+def test_dispatch_claude_vision_uses_claude(mocker, monkeypatch):
+    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "claude")
     envelope = {"structured_output": {"x": 5}, "num_turns": 2}
     class R: returncode = 0; stdout = json.dumps(envelope); stderr = ""
     run = mocker.patch("fanops.llm.subprocess.run", return_value=R())

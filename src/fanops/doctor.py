@@ -288,13 +288,15 @@ def _assemble_doctor_checks(cfg: Config, *, get=None, postiz_probe=None, zernio_
     if cfg.responder_mode == "llm":
         from fanops.llm import _CURSOR_SUPPORTS_VISION
         cli_bin = cfg.llm_cli_binary
-        hint = ("install Cursor CLI" if cli_bin == "cursor-agent"
+        hint = ("install Cursor CLI, or set LLM transport to claude in Studio Go-Live"
+                if cli_bin == "cursor-agent"
                 else "install Claude Code + run `claude login` (uses your subscription, no API key)")
         checks.append(_check(f"{cli_bin} on PATH (FANOPS_RESPONDER=llm)", shutil.which(cli_bin) is not None, hint))
         if cfg.llm_transport == "cursor" and not _CURSOR_SUPPORTS_VISION:
-            checks.append(_check("claude on PATH (vision fallback for cursor transport)",
-                                 shutil.which("claude") is not None,
-                                 "install Claude Code + run `claude login` (vision gates fall back to claude)"))
+            # Absolute transport: cursor cannot run vision gates — operator must flip the ONE switch.
+            checks.append(_check("LLM transport can run vision gates", False,
+                                 "set LLM transport to claude in Studio Go-Live "
+                                 "(single switch; no silent claude fallback when transport=cursor)"))
     # 2b. brand brief present + non-empty. context.md is injected verbatim into every moment +
     # caption decision (the #1 output lever); its absence used to be SILENT (load_guidance now warns,
     # but a preflight is the visible gate). Read directly + safely so the report never crashes.
