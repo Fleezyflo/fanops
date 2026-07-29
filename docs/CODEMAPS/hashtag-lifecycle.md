@@ -74,10 +74,12 @@ What replaces it:
 1. **cutover** — `persona_store.deprecate_legacy_corpus` moves every corpus tag lacking derivation meta into
    the visible `hashtag_corpus_deprecated` field and empties `hashtag_corpus`. Idempotent. Hydration and
    selection read only `hashtag_corpus`, so pre-derivation tags stop shipping the moment the code runs.
-2. **pool** — `_aligned_pool` (MOL-665): evidence + **relatedness candidate** gate, then rank by metric.
+2. **pool** — `_aligned_pool` (MOL-665 + MOL-685): evidence + **relatedness candidate** gate, then rank by metric.
    Anchors always. Non-anchors need inbound_hits≥2 or n_roots≥2 from live roots; magnets may also
    candidate on any inbound when metric ≥ `MAGNET_METRIC_FLOOR` (not a ban — soft lane). One-hit
-   non-magnets never enter even at huge plays. `derive_corpus` cuts top `corpus_target` by metric.
+   non-magnets never enter even at huge plays. Non-anchor category-scale tags (`media_count` at
+   platform volume) need multi-root relatedness and rank behind niche peers. `derive_corpus` cuts
+   top `corpus_target` by metric.
 3. **admit** — `_is_evidence` (metric present + positive, parseable `measured_at`, fresher than 90 days) and
    `hashtag_hygiene.is_curatable` (structural only).
 4. **write** — top `cfg.corpus_target` by the platform metric via `apply_auto_corpus`, which REPLACES the
