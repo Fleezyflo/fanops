@@ -672,3 +672,105 @@ def test_accrual_never_clobbers_on_a_dead_pass(tmp_path, monkeypatch):
     out = refresh_store(cfg, scrape_client=_FakeClient(refuse=ScrapeRefused("down", code=1)))
     assert _metric(load_measurements(cfg)["#hiphop"]) == 42
     assert out["unresolved"], "a dead pass must surface refusals, not swallow them"
+
+
+# ------------------------------------------- 8. the Layer B safety net is INPUT-DRIVEN (MOL-694)
+
+def _seed_cache(cfg, rows):
+    """Write hashtags.json directly — a COLD Layer A (no pass ever ran, no scrape session)."""
+    from datetime import datetime, timezone
+    stamp = datetime.now(timezone.utc).isoformat()
+    blob = {}
+    for tag, (media_count, frm) in rows.items():
+        rec = {"graph_id": "id" + tag, "play_count": 100.0, "media_count": float(media_count),
+               "media_count_at": stamp, "measured_at": stamp}
+        if frm:
+            rec["from"] = dict(frm)
+        blob[tag] = rec
+    cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.hashtags_path.write_text(json.dumps(blob))
+
+
+def _count_derives(monkeypatch):
+    import fanops.persona_research as pr
+    calls = {"n": 0}
+    real = pr.derive_corpus
+    def counted(*a, **k):
+        calls["n"] += 1; return real(*a, **k)
+    monkeypatch.setattr(pr, "derive_corpus", counted)
+    return calls
+
+
+def test_unchanged_control_files_skip_the_derive_round(tmp_path, monkeypatch):
+    """MOL-694: the tick re-derived EVERY persona every 12h off the marker's mtime, even when neither
+    personas.json nor hashtags.json had moved. The marker now carries a content fingerprint of both, so
+    an unchanged pair is `reason=unchanged` with ZERO derive_corpus calls."""
+    from fanops.persona_research import refresh_corpora_if_due
+    cfg = Config(root=tmp_path)
+    pid = _persona(cfg, niche=["hiphop"]); _link_active(cfg, pid)
+    _seed_cache(cfg, {"#hiphop": (10_000, None)})
+    calls = _count_derives(monkeypatch)
+    first = refresh_corpora_if_due(cfg)
+    assert first["refreshed"] is True and calls["n"] == 1
+    assert Personas.load(cfg).get(pid).hashtag_corpus == ["#hiphop"]
+    marker = cfg.control / ".corpora_refresh.json"
+    assert isinstance(json.loads(marker.read_text()).get("inputs_fp"), str)
+    again = refresh_corpora_if_due(cfg)
+    assert again["refreshed"] is False and again["reason"] == "unchanged"
+    assert calls["n"] == 1, "an unchanged input pair must not re-derive, however old the marker"
+
+
+def test_niche_change_re_derives_even_with_a_cold_layer_a(tmp_path, monkeypatch):
+    """The safety net is KEPT, not deleted: an operator niche edit moves the fingerprint, so the corpus
+    follows the new niche on the next tick even though Layer A never ran (no scrape session)."""
+    from fanops.persona_research import refresh_corpora_if_due
+    cfg = Config(root=tmp_path)
+    pid = _persona(cfg, niche=["hiphop"]); _link_active(cfg, pid)
+    _seed_cache(cfg, {"#hiphop": (10_000, None), "#newroot": (20_000, None)})
+    assert refresh_corpora_if_due(cfg)["refreshed"] is True
+    assert Personas.load(cfg).get(pid).hashtag_corpus == ["#hiphop"]
+    assert refresh_corpora_if_due(cfg)["reason"] == "unchanged"
+    raw = json.loads(cfg.personas_path.read_text())
+    for row in raw["personas"]:
+        if row["id"] == pid:
+            row["niche"] = ["newroot"]
+    cfg.personas_path.write_text(json.dumps(raw))
+    calls = _count_derives(monkeypatch)
+    out = refresh_corpora_if_due(cfg)
+    assert out["refreshed"] is True and calls["n"] == 1
+    assert Personas.load(cfg).get(pid).hashtag_corpus == ["#newroot"]
+
+
+def test_new_measurements_move_the_fingerprint(tmp_path, monkeypatch):
+    """A Layer A write is an input change: the tick that follows derives, then falls silent again."""
+    from fanops.persona_research import refresh_corpora_if_due
+    cfg = Config(root=tmp_path)
+    pid = _persona(cfg, niche=["hiphop"]); _link_active(cfg, pid)
+    _seed_cache(cfg, {"#hiphop": (10_000, None)})
+    assert refresh_corpora_if_due(cfg)["refreshed"] is True
+    assert refresh_corpora_if_due(cfg)["reason"] == "unchanged"
+    _seed_cache(cfg, {"#hiphop": (10_000, None), "#bars": (99_000, {"#hiphop": 3})})
+    calls = _count_derives(monkeypatch)
+    assert refresh_corpora_if_due(cfg)["refreshed"] is True and calls["n"] == 1
+    assert "#bars" in Personas.load(cfg).get(pid).hashtag_corpus
+    assert refresh_corpora_if_due(cfg)["reason"] == "unchanged"
+    assert calls["n"] == 1
+
+
+def test_a_failed_derive_leaves_the_persona_due(tmp_path, monkeypatch):
+    """No fingerprint is stamped when a persona's derive fails open — a swallowed miss must not buy
+    permanent silence (the MOL-693 lesson, applied to the corpora marker)."""
+    import fanops.persona_research as pr
+    from fanops.persona_research import refresh_corpora_if_due
+    cfg = Config(root=tmp_path)
+    pid = _persona(cfg, niche=["hiphop"]); _link_active(cfg, pid)
+    _seed_cache(cfg, {"#hiphop": (10_000, None)})
+    calls = {"n": 0}
+    def boom(*a, **k):
+        calls["n"] += 1; raise RuntimeError("derive exploded")
+    monkeypatch.setattr(pr, "derive_corpus", boom)
+    out = refresh_corpora_if_due(cfg)
+    assert out["refreshed"] is True and out.get("failed") == 1 and calls["n"] == 1
+    assert "inputs_fp" not in json.loads((cfg.control / ".corpora_refresh.json").read_text())
+    assert refresh_corpora_if_due(cfg)["refreshed"] is True   # still DUE — no fingerprint bought silence
+    assert calls["n"] == 2

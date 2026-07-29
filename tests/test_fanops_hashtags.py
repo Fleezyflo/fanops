@@ -50,7 +50,7 @@ def test_refresh_store_atomic_write_preserves_prior_on_crash(tmp_path, monkeypat
 def test_refresh_store_midpass_flush_survives_later_crash(tmp_path, monkeypatch):
     # Every 5 successful measures flushes the cache WITHOUT stamping last_complete_pass.
     # A crash after that flush must keep the accrued tags (not roll back to empty/prior-only).
-    # Layer B also writes personas.json on flush — only the 2nd hashtags.json replace may boom.
+    # Only the 2nd hashtags.json replace may boom (the flush itself must land).
     from pathlib import Path
     from fanops import controlio, personas as P
     cfg = Config(root=tmp_path)
@@ -65,7 +65,7 @@ def test_refresh_store_midpass_flush_survives_later_crash(tmp_path, monkeypatch)
 
     def boom_after_first_hashtags_flush(src, dst):
         if Path(dst).name != "hashtags.json":
-            return real_replace(src, dst)                   # personas derive writes must land
+            return real_replace(src, dst)                   # any sibling control write must land
         n_hash["n"] += 1
         if n_hash["n"] == 1:
             return real_replace(src, dst)                   # mid-pass flush lands
@@ -79,10 +79,11 @@ def test_refresh_store_midpass_flush_survives_later_crash(tmp_path, monkeypatch)
     assert "last_complete_pass" not in raw                  # partial flush must not buy 12h silence
     tags = [k for k in raw if k.startswith("#")]
     assert len(tags) == 5                                   # accrued through the mid-pass flush
-    # Layer B already ran on the flush — corpus tracks the store without waiting for pass end
+    # MOL-694: the flush is MEASUREMENT crash-safety only — Layer B no longer rides it, so a pass that
+    # dies before its end-of-pass derive leaves the corpus alone. The evidence is durable and the
+    # fingerprinted safety net (refresh_corpora_if_due) re-derives from it on the next tick.
     from fanops.personas import Personas
-    corp = list(Personas.load(cfg).get("mid").hashtag_corpus or [])
-    assert len(corp) >= 1 and all(t in raw for t in corp)
+    assert list(Personas.load(cfg).get("mid").hashtag_corpus or []) == []
 
 
 def test_refresh_store_derives_corpora_on_its_own_writes(tmp_path, monkeypatch):
@@ -329,6 +330,97 @@ def test_zero_progress_still_writes_when_tag_records_mutate(tmp_path, monkeypatc
     assert out["measured"] == 0 and out["written"] is True
     assert cfg.hashtags_path.read_text() != before
     assert "#orphan" not in load_measurements(cfg)
+
+
+def _count_rederives(monkeypatch):
+    """Count `_rederive_posting_corpora` calls while still running the real derive."""
+    import fanops.fanops_hashtags as fh
+    calls = {"n": 0}
+    real = fh._rederive_posting_corpora
+    def counted(*a, **k):
+        calls["n"] += 1; return real(*a, **k)
+    monkeypatch.setattr(fh, "_rederive_posting_corpora", counted)
+    return calls
+
+
+def _many_anchor_persona(cfg, n, *, pid="many"):
+    """A posting persona with `n` distinct niche terms → n unmeasured anchors → n measures in one pass.
+    Every co-tag a fake caption carries is itself an anchor, so nothing is discovered off-queue."""
+    from fanops import personas as P
+    niches = [f"seed{i:02d}" for i in range(n)]
+    P.add_persona(cfg, name="Many", voice="x", niche=niches, id=pid)
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": [
+        {"handle": "a", "platforms": ["instagram"], "status": "active", "persona_id": pid}]}))
+    return {f"#{n_}": float(10 + i) for i, n_ in enumerate(niches)}
+
+
+def test_rederive_runs_once_per_pass_not_once_per_midpass_flush(tmp_path, monkeypatch):
+    """MOL-694: a 20-measure pass flushes 4 times for crash safety but derives corpora exactly ONCE.
+
+    The flush is measurement durability; Layer B is a pure recompute of the WHOLE store, so running it
+    per flush re-derived every posting persona ~N/5 times per pass for one usable result."""
+    import fanops.fanops_hashtags as fh
+    cfg = Config(root=tmp_path)
+    metrics = _many_anchor_persona(cfg, 20)
+    writes = {"n": 0}
+    real_write = fh.write_json_atomic
+    def counted_write(path, *a, **k):
+        if getattr(path, "name", "") == "hashtags.json":
+            writes["n"] += 1
+        return real_write(path, *a, **k)
+    monkeypatch.setattr(fh, "write_json_atomic", counted_write)
+    calls = _count_rederives(monkeypatch)
+    out = refresh_store(cfg, scrape_client=_FakeClient(metrics))
+    assert out["written"] is True and out["measured"] == 20
+    assert writes["n"] == 5                                  # KEEP: flushes at 5/10/15/20 + the final write
+    assert calls["n"] == 1                                   # one derive round, at pass end
+    from fanops.personas import Personas
+    assert list(Personas.load(cfg).get("many").hashtag_corpus or [])   # and it actually landed
+
+
+def test_throttled_pass_with_progress_rederives_once_at_stop(tmp_path, monkeypatch):
+    """An early stop is still a pass END: measured>0 → exactly one derive round, never zero, never per-flush."""
+    cfg = Config(root=tmp_path)
+    metrics = _many_anchor_persona(cfg, 20)
+    calls = _count_rederives(monkeypatch)
+    out = refresh_store(cfg, scrape_client=_FakeClient(metrics, throttle_after=6))
+    assert out["throttled"] is True and out["measured"] == 6  # crossed one mid-pass flush, then stopped
+    assert out["written"] is True
+    assert calls["n"] == 1
+
+
+def test_try_cap_stop_with_progress_rederives_once(tmp_path, monkeypatch):
+    """try_cap incompleteness ends the pass too — same single derive round as a clean finish."""
+    import fanops.fanops_hashtags as fh
+    monkeypatch.setattr(fh, "_SCRAPE_TRY_CAP", 7)
+    cfg = Config(root=tmp_path)
+    metrics = _many_anchor_persona(cfg, 20)
+    calls = _count_rederives(monkeypatch)
+    out = refresh_store(cfg, scrape_client=_FakeClient(metrics))
+    assert out["throttled"] is True and out["tried"] == 7 and out["measured"] == 7
+    assert calls["n"] == 1
+
+
+def test_eviction_only_write_does_not_rederive(tmp_path, monkeypatch):
+    """MOL-694: rederive is keyed on measured>0, so a measured==0 pass that writes only because an orphan
+    was evicted does NOT derive. Nothing is lost: the write moved hashtags.json, so the fingerprinted
+    safety net (`persona_research.refresh_corpora_if_due`) sees changed inputs on the next tick."""
+    from datetime import datetime, timezone
+    cfg = Config(root=tmp_path); _persona(cfg)
+    now = datetime(2026, 7, 28, tzinfo=timezone.utc)
+    cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.hashtags_path.write_text(json.dumps({
+        "#hiphop": {"graph_id": "id-hiphop", "like_count": 10.0, "media_count": 100.0,
+                    "media_count_at": now.isoformat(), "measured_at": now.isoformat()},
+        "#orphan": {"graph_id": "id-orphan", "like_count": 9.0,
+                    "measured_at": now.isoformat(), "from": {"#punchlines": 4}},
+        "last_complete_pass": now.isoformat()}))
+    calls = _count_rederives(monkeypatch)
+    out = refresh_store(cfg, scrape_client=_FakeClient({}, refuse_tags={"#hiphop", "hiphop"}), now=now)
+    assert out["measured"] == 0 and out["written"] is True
+    assert "#orphan" not in load_measurements(cfg)
+    assert calls["n"] == 0
 
 
 def test_refresh_pass_priority_queue_due_tiers(tmp_path, monkeypatch):
