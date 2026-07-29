@@ -27,6 +27,11 @@ _MAGNET_BODIES = frozenset({
 })
 MAGNET_METRIC_FLOOR = 5000.0      # soft lane: weak inbound OK when platform metric clears this
 _NORMAL_HITS = 2                  # non-anchor relatedness: inbound_hits >= 2 OR n_roots >= 2
+# A CATEGORY tag (#bars, #remix, #hiphopculture) carries platform-scale post volume: it co-occurs with any
+# niche by sheer size, so the normal relatedness bar is cheap for it to clear. Floor = the live cache's p90
+# media_count (measured 2026-07-29: median 77k, p90 5.25M). Volume is Instagram's own `media_count`, so this
+# is a measured property, not a curated ban list — absent media_count fails OPEN (never a category).
+CATEGORY_MEDIA_FLOOR = 5_000_000.0
 
 
 def inbound_hits(rec: dict, anchors: set[str]) -> int:
@@ -48,14 +53,24 @@ def is_magnet(tag: str) -> bool:
     return bool(h) and h[1:] in _MAGNET_BODIES
 
 
+def is_category(rec: dict) -> bool:
+    """True when Instagram's own `media_count` puts this tag at platform-category scale (MOL-685).
+    Absent / unparseable volume -> False: an unmeasured tag is never demoted on a guess."""
+    v = rec.get("media_count") if isinstance(rec, dict) else None
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and float(v) >= CATEGORY_MEDIA_FLOOR
+
+
 def _is_candidate(tag: str, rec: dict, anchors: set[str]) -> bool:
-    """Relatedness gate (MOL-665). Anchors always; else normal bar OR magnet soft lane."""
+    """Relatedness gate (MOL-665). Anchors always; else normal bar OR magnet soft lane.
+    A CATEGORY-scale tag needs the normal bar AND multi-root relatedness (MOL-685)."""
     if tag in anchors:
         return True
     hits = inbound_hits(rec, anchors)
     roots = n_roots(rec, anchors)
     if hits <= 0:
         return False
+    if is_category(rec):
+        return hits >= _NORMAL_HITS and roots >= 2      # volume alone must not buy a seat
     if hits >= _NORMAL_HITS or roots >= 2:
         return True
     # Magnet soft lane: any inbound + high metric (numbers solidify weak relatedness). Not a ban list.
@@ -125,10 +140,11 @@ def _aligned_pool(per, cache: dict[str, dict], *, now=None, cfg: Config | None =
     `derive_corpus`. Anchors always candidate. Non-anchors need inbound_hits>=2 or n_roots>=2, OR
     (magnet + metric>=floor + any inbound). One-hit non-magnets never enter — high plays do not
     trump weak relatedness. Magnets are classified for the soft lane, never hard-banned.
+    Non-anchor CATEGORY-scale tags need multi-root relatedness and rank behind niche peers (MOL-685).
     Outbound co-tags still must not appear in `from` (MOL-643)."""
     anchors = {_norm("#" + t) for t in persona_terms(per, cfg)}
     anchors.discard("#")
-    out: list[tuple[str, float, str]] = []
+    out: list[tuple[str, float, str]] = []; demoted: set[str] = set()
     for tag, rec in cache.items():
         if not _is_evidence(rec, now=now) or not is_curatable(tag):
             continue
@@ -141,7 +157,12 @@ def _aligned_pool(per, cache: dict[str, dict], *, now=None, cfg: Config | None =
             live = [a for a in frm if a in anchors]
             src = max(live, key=lambda a: (frm.get(a) or 0, a)) if live else tag
         out.append((tag, float(_metric(rec) or 0), src))
-    out.sort(key=lambda r: (-r[1], r[0]))
+        if tag not in anchors and is_category(rec):
+            demoted.add(tag)                            # anchors are the declared niche — never demoted
+    # Category-scale tags rank BEHIND every niche-scale peer, so they fill `corpus_target` only once the
+    # niche pool is exhausted. The emitted value stays the verbatim platform metric — this is a rank tier,
+    # not an invented number.
+    out.sort(key=lambda r: (r[0] in demoted, -r[1], r[0]))
     return out
 
 

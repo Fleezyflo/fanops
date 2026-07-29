@@ -318,6 +318,46 @@ def test_corpus_is_ranked_by_the_platform_field(tmp_path, monkeypatch):
     assert corpus.index("#high") < corpus.index("#low")
 
 
+def _cat_rec(metric, *, frm, media_count=None):
+    """A fresh cache record: verbatim play_count, inbound `from`, optional platform volume."""
+    from datetime import datetime, timezone
+    r = {"graph_id": "id", "play_count": float(metric),
+         "measured_at": datetime.now(timezone.utc).isoformat(), "from": dict(frm)}
+    if media_count is not None:
+        r["media_count"] = float(media_count)
+    return r
+
+
+def test_category_scale_tag_needs_multi_root_relatedness(tmp_path):
+    """MOL-685: platform-scale post volume must not buy a corpus seat off ONE anchor's Top.
+    Refutes the MOL-665 bar, under which a single-root whale (#bars, 6.9M posts) admitted."""
+    from fanops.personas import Persona
+    from fanops.persona_research import CATEGORY_MEDIA_FLOOR, _aligned_pool
+    per = Persona(id="craft", name="Craft", voice="x", niche=["syrianrap", "arabicdrill"])
+    whale = CATEGORY_MEDIA_FLOOR + 1
+    cache = {"#bars": _cat_rec(9611, frm={"#syrianrap": 4}, media_count=whale),
+             "#remix": _cat_rec(10697, frm={"#syrianrap": 2, "#arabicdrill": 2}, media_count=whale),
+             "#nichetag": _cat_rec(120, frm={"#syrianrap": 2})}
+    tags = {t for t, _v, _s in _aligned_pool(per, cache)}
+    assert "#bars" not in tags                    # single-root whale refused, however many plays
+    assert "#remix" in tags                       # multi-root whale still admits — no ban list
+    assert "#nichetag" in tags                    # niche-scale relatedness bar unchanged
+
+
+def test_category_scale_tag_ranks_behind_niche_peers(tmp_path):
+    """MOL-685: a whale fills corpus_target only after the niche pool — and its metric stays verbatim."""
+    from fanops.personas import Persona
+    from fanops.persona_research import CATEGORY_MEDIA_FLOOR, _aligned_pool
+    per = Persona(id="craft", name="Craft", voice="x", niche=["syrianrap", "arabicdrill"])
+    cache = {"#remix": _cat_rec(999999, frm={"#syrianrap": 3, "#arabicdrill": 2},
+                                media_count=CATEGORY_MEDIA_FLOOR + 1),
+             "#nichetag": _cat_rec(120, frm={"#syrianrap": 2})}
+    pool = _aligned_pool(per, cache)
+    order = [t for t, _v, _s in pool]
+    assert order.index("#nichetag") < order.index("#remix")
+    assert dict((t, v) for t, v, _s in pool)["#remix"] == 999999.0   # rank tier, never an invented number
+
+
 def test_unreachable_platform_holds_a_derived_corpus(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path)
     pid = _persona(cfg, voice="hiphop"); _link_active(cfg, pid)
