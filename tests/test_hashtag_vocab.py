@@ -16,11 +16,25 @@ def _persona(cfg, pid="craft", niche=None, voice="syrian rap craft"):
 
 
 def _link_active(cfg, pid, handle="markmakmouly"):
+    return _link_active_many(cfg, {handle: pid})
+
+
+def _link_active_many(cfg, by_handle):
     from fanops.accounts import Accounts
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.accounts_path.write_text(json.dumps({"accounts": [
-        {"handle": handle, "platforms": ["instagram"], "status": "active", "persona_id": pid}]}))
+        {"handle": h, "platforms": ["instagram"], "status": "active", "persona_id": pid}
+        for h, pid in by_handle.items()]}))
     return Accounts.load(cfg)
+
+
+def _replying(terms):
+    """A claude_json stand-in that records every prompt it is asked and answers with fixed terms."""
+    seen: list[str] = []
+
+    def _fake(prompt, schema, **kw):
+        seen.append(prompt); return {"terms": list(terms)}
+    return _fake, seen
 
 
 def test_persona_terms_merges_durable_vocab_after_niche(tmp_path):
@@ -80,6 +94,120 @@ def test_expand_if_due_noop_when_responder_manual(tmp_path, monkeypatch):
     assert r.get("reason") in ("responder_manual", "manual", "not_llm")
     assert called == []
     assert not cfg.hashtag_vocab_path.exists()
+
+
+def test_input_fingerprint_is_stable_and_input_sensitive(tmp_path):
+    """MOL-693: the fingerprint is a stable digest of (name, voice, niche) — same inputs, same value in
+    any process (no salted hash()), and every one of the three inputs moves it."""
+    cfg = Config(root=tmp_path)
+    _persona(cfg, pid="craft", niche=["undergroundmusic"], voice="syrian rap craft")
+    per = Personas.load(cfg).get("craft")
+    fp = hv._input_fingerprint(per)
+    assert isinstance(fp, str) and fp
+    assert hv._input_fingerprint(Personas.load(cfg).get("craft")) == fp   # reload -> identical
+    assert hv._input_fingerprint(per.model_copy(update={"niche": ["basementshow"]})) != fp
+    assert hv._input_fingerprint(per.model_copy(update={"voice": "other voice"})) != fp
+    assert hv._input_fingerprint(per.model_copy(update={"name": "other name"})) != fp
+
+
+def test_expand_if_due_skips_unchanged_persona(tmp_path, monkeypatch):
+    """MOL-693: no routine regeneration — an untouched persona costs ZERO LLM calls on later ticks."""
+    cfg = Config(root=tmp_path)
+    pid = _persona(cfg, niche=["undergroundmusic"]); _link_active(cfg, pid)
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    fake, seen = _replying(["drillscene", "syrianrap"])
+    monkeypatch.setattr(hv, "claude_json", fake)
+
+    first = hv.expand_vocab_if_due(cfg)
+    assert first.get("refreshed") is True and first.get("ok") == 1
+    assert len(seen) == 1
+    row = hv.load_vocab(cfg).get(pid)
+    assert row.get("input_fp") and row.get("terms") == ["drillscene", "syrianrap"]
+
+    for _ in range(2):                                               # consecutive ticks, no input change
+        r = hv.expand_vocab_if_due(cfg)
+        assert r.get("refreshed") is False
+    assert len(seen) == 1                                            # the LLM was never asked again
+    assert hv.load_vocab(cfg).get(pid) == row                        # durable row untouched (incl. expanded_at)
+
+
+def test_niche_edit_expands_only_that_persona_once(tmp_path, monkeypatch):
+    """MOL-693: a changed persona is due; its siblings are not; and the edit re-expands exactly once."""
+    cfg = Config(root=tmp_path)
+    a = _persona(cfg, pid="craft", niche=["undergroundmusic"])
+    b = _persona(cfg, pid="street", niche=["streetinterview"])
+    _link_active_many(cfg, {"craftacct": a, "streetacct": b})
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    fake, seen = _replying(["drillscene"])
+    monkeypatch.setattr(hv, "claude_json", fake)
+    assert hv.expand_vocab_if_due(cfg).get("ok") == 2
+    assert len(seen) == 2
+    before_b = hv.load_vocab(cfg).get(b)
+    seen.clear()
+
+    from fanops.personas import update_persona
+    update_persona(cfg, a, niche=["undergroundmusic", "basementshow"])
+    r = hv.expand_vocab_if_due(cfg)
+    assert r.get("refreshed") is True and r.get("ok") == 1 and r.get("fail") == 0
+    assert len(seen) == 1 and "basementshow" in seen[0]               # only the edited persona was asked
+    assert hv.load_vocab(cfg).get(b) == before_b                      # the sibling's vocab never churned
+    seen.clear()
+
+    assert hv.expand_vocab_if_due(cfg).get("refreshed") is False      # the edit is now absorbed
+    assert seen == []
+
+
+def test_failed_expand_retains_vocab_and_stays_due(tmp_path, monkeypatch):
+    """MOL-693: an LLM error or an all-junk reply keeps the PRIOR terms AND the prior fingerprint, so the
+    persona is retried on the very next tick instead of waiting out a timer."""
+    cfg = Config(root=tmp_path)
+    pid = _persona(cfg, niche=["undergroundmusic"]); _link_active(cfg, pid)
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    good_reply, _ = _replying(["drillscene"])
+    monkeypatch.setattr(hv, "claude_json", good_reply)
+    assert hv.expand_vocab_if_due(cfg).get("ok") == 1
+    good = hv.load_vocab(cfg).get(pid)
+
+    from fanops.personas import update_persona
+    update_persona(cfg, pid, niche=["basementshow"])
+
+    def _boom(prompt, schema, **kw):
+        raise RuntimeError("llm down")
+
+    monkeypatch.setattr(hv, "claude_json", _boom)
+    r = hv.expand_vocab_if_due(cfg)
+    assert r.get("refreshed") is True and r.get("ok") == 0 and r.get("fail") == 1
+    assert hv.load_vocab(cfg).get(pid) == good                        # prior terms + prior fp preserved
+
+    junk, _ = _replying(["#fyp", "viral", "love"])                    # sanitize failure = same contract
+    monkeypatch.setattr(hv, "claude_json", junk)
+    assert hv.expand_vocab_if_due(cfg).get("fail") == 1
+    assert hv.load_vocab(cfg).get(pid) == good
+
+    recovered, seen = _replying(["basementshow"])
+    monkeypatch.setattr(hv, "claude_json", recovered)
+    assert hv.expand_vocab_if_due(cfg).get("ok") == 1                 # still due -> retried, no timer wait
+    assert len(seen) == 1
+    row = hv.load_vocab(cfg).get(pid)
+    assert row.get("terms") == ["basementshow"] and row.get("input_fp") != good.get("input_fp")
+    assert hv.expand_vocab_if_due(cfg).get("refreshed") is False
+
+
+def test_legacy_row_without_fingerprint_expands_once_then_stamps(tmp_path, monkeypatch):
+    """MOL-693: a pre-MOL-693 row carries no input_fp — expand it ONCE to stamp one, then never again."""
+    cfg = Config(root=tmp_path)
+    pid = _persona(cfg, niche=["undergroundmusic"]); _link_active(cfg, pid)
+    hv.write_vocab(cfg, {pid: {"terms": ["syrianrap"], "expanded_at": "2026-07-28T00:00:00+00:00",
+                               "source": "llm"}})
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    fake, seen = _replying(["drillscene"])
+    monkeypatch.setattr(hv, "claude_json", fake)
+
+    assert hv.expand_vocab_if_due(cfg).get("ok") == 1
+    assert len(seen) == 1
+    assert hv.load_vocab(cfg).get(pid, {}).get("input_fp")
+    assert hv.expand_vocab_if_due(cfg).get("refreshed") is False
+    assert len(seen) == 1
 
 
 def test_vocab_anchor_admits_inbound_only(tmp_path, monkeypatch):
