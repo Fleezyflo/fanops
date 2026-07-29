@@ -377,11 +377,11 @@
     "fanops.fanops_hashtags": [
       {
         "call": "fcntl.flock",
-        "line": 312
+        "line": 321
       },
       {
         "call": "fcntl.flock",
-        "line": 318
+        "line": 327
       }
     ],
     "fanops.ledger": [

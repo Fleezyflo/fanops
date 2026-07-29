@@ -313,6 +313,74 @@ def test_scrape_throttle_cooldown_backoff_and_success_reset(tmp_path, monkeypatc
     assert not _cooldown_path(cfg).exists()
 
 
+def test_checkpoint_freezes_layer_a_and_stops_reopening_scrape(tmp_path, monkeypatch):
+    """MOL-699: a lock had NO backoff — the checkpoint abort returned before writing anything, so the
+    next due tick logged in again against a locked account, which is what deepens a lock. It must arm a
+    LONG freeze (not the rate-limit ladder) and the next tick must not open a client at all."""
+    from datetime import datetime, timezone, timedelta
+    import fanops.ig_hashtag_scrape as igs
+    from fanops.fanops_hashtags import (refresh_store_if_due, _cooldown_path, _CHECKPOINT_DELAY_S)
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u"); monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
+    cfg = Config(root=tmp_path); _persona(cfg)
+    t0 = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
+    opens = {"n": 0}
+    def locked(_cfg, **_k):
+        opens["n"] += 1
+        raise igs.ScrapeCheckpoint("account checkpointed by Instagram — verify the login in the app")
+    monkeypatch.setattr(igs, "open_client", locked)
+    out = refresh_store_if_due(cfg, max_age_s=1, now=t0)
+    assert out["refreshed"] is False and out["aborted"] == "checkpoint"
+    assert opens["n"] == 1
+    cd = json.loads(_cooldown_path(cfg).read_text())
+    assert cd["reason"] == "checkpoint"
+    assert cd["until"] == (t0 + timedelta(seconds=_CHECKPOINT_DELAY_S)).isoformat()
+    # Every tick inside the freeze must skip WITHOUT touching Instagram — the whole point.
+    for mins in (1, 60, 600):
+        skip = refresh_store_if_due(cfg, max_age_s=1, now=t0 + timedelta(minutes=mins))
+        assert skip["refreshed"] is False and skip["reason"] == "cooldown"
+        assert skip["cooldown_reason"] == "checkpoint"      # run.log says WHY it is frozen
+    assert opens["n"] == 1, f"re-opened a locked account {opens['n']} times"
+    assert not cfg.hashtags_path.exists()                   # cache untouched on every abort path
+
+
+def test_login_required_arms_the_laddered_cooldown(tmp_path, monkeypatch):
+    """MOL-699: a dead session was re-probed every tick forever. It gets the normal 30m→1h→2h→6h
+    ladder (an expiry IS transient, unlike a lock), tagged with its own reason."""
+    from datetime import datetime, timezone, timedelta
+    from fanops.ig_hashtag_scrape import ScrapeRefused
+    from fanops.fanops_hashtags import _cooldown_path, _COOLDOWN_DELAYS_S
+    cfg = Config(root=tmp_path); _persona(cfg)
+    t0 = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
+    out = refresh_store(cfg, scrape_client=_FakeClient({}, refuse=ScrapeRefused("login_required")), now=t0)
+    assert out["aborted"] == "login_required" and out["written"] is False
+    cd = json.loads(_cooldown_path(cfg).read_text())
+    assert cd["reason"] == "login_required" and cd["streak"] == 1
+    assert cd["until"] == (t0 + timedelta(seconds=_COOLDOWN_DELAYS_S[0])).isoformat()
+    t1 = t0 + timedelta(hours=2)
+    refresh_store(cfg, scrape_client=_FakeClient({}, refuse=ScrapeRefused("login_required")), now=t1)
+    cd2 = json.loads(_cooldown_path(cfg).read_text())
+    assert cd2["streak"] == 2                               # decaying retry, not every-tick hammering
+    assert cd2["until"] == (t1 + timedelta(seconds=_COOLDOWN_DELAYS_S[1])).isoformat()
+    assert not cfg.hashtags_path.exists()
+
+
+def test_scrape_login_ignores_and_clears_an_active_freeze(tmp_path, monkeypatch):
+    """The operator escape hatch: scrape-login is an explicit human act AFTER an unlock, so it must run
+    with a freeze armed and clear it on success — otherwise a fixed account stays frozen for 12h."""
+    from datetime import datetime, timezone
+    import fanops.ig_hashtag_scrape as igs
+    from fanops.fanops_hashtags import (cmd_hashtags_scrape_login, _cooldown_path, _persist_cooldown,
+                                        _CHECKPOINT_DELAY_S)
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u"); monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
+    cfg = Config(root=tmp_path)
+    _persist_cooldown(cfg, datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc),
+                      reason="checkpoint", delay_s=_CHECKPOINT_DELAY_S)
+    assert _cooldown_path(cfg).exists()
+    monkeypatch.setattr(igs, "open_client", lambda _c, **_k: object())
+    assert cmd_hashtags_scrape_login(cfg) == 0              # NOT blocked by the freeze
+    assert not _cooldown_path(cfg).exists()                 # and the freeze is lifted
+
+
 def test_corrupt_cooldown_fails_open(tmp_path, monkeypatch):
     from datetime import datetime, timezone
     from fanops.fanops_hashtags import refresh_store_if_due, _cooldown_path

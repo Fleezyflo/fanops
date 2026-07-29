@@ -35,6 +35,7 @@ _CORPUS_MAX_AGE_HOURS = 24    # current corpus members remesure when measured_at
 _COMPLETE_KEY = "last_complete_pass"   # sibling of tag records; gates the 12h tick (NOT file mtime)
 _COOLDOWN_NAME = ".hashtag_scrape_cooldown.json"  # Instagram ScrapeThrottled backoff (MOL-695); never sleep
 _COOLDOWN_DELAYS_S = (30 * 60, 60 * 60, 2 * 60 * 60, 6 * 60 * 60)  # streak 1..N → 30m, 1h, 2h, 6h cap
+_CHECKPOINT_DELAY_S = 12 * 60 * 60  # a LOCK is not a rate limit: one long freeze, never the ladder (MOL-699)
 # Scrape is ~5–7s/tag. Caps bound a pass so co-tag harvest cannot run unbounded; incomplete passes do NOT
 # stamp last_complete_pass. Defaults sized so niches + a meaningful co-tag set fit one pass (F-4 / MOL-631).
 # Tests may monkeypatch these module attrs; env overrides win when set.
@@ -229,8 +230,14 @@ def _read_active_cooldown(cfg: Config, now: datetime) -> dict | None:
     return None
 
 
-def _persist_throttle_cooldown(cfg: Config, now: datetime) -> dict:
-    """On Instagram ScrapeThrottled: bump consecutive streak and write until (30m→1h→2h→6h cap)."""
+def _persist_cooldown(cfg: Config, now: datetime, *, reason: str = "throttle",
+                      delay_s: int | None = None) -> dict:
+    """Arm the read-and-skip freeze that refresh_store_if_due checks BEFORE opening scrape: bump the
+    consecutive streak and write `until` from the ladder (30m→1h→2h→6h cap), or from `delay_s` when the
+    failure is not a rate limit and the ladder would be wrong (a checkpoint LOCK — MOL-699).
+
+    `reason` records WHICH failure armed it, so the skip can say why. Additive: _read_active_cooldown
+    reads `until` only and ignores unknown keys, so a pre-MOL-699 row without a reason still gates."""
     import json
     p = _cooldown_path(cfg)
     streak = 0
@@ -242,15 +249,17 @@ def _persist_throttle_cooldown(cfg: Config, now: datetime) -> dict:
         except (OSError, ValueError, TypeError):
             streak = 0
     streak = max(streak, 0) + 1
-    until = (now + timedelta(seconds=_cooldown_delay_s(streak))).isoformat()
-    blob = {"streak": streak, "until": until, "updated_at": now.isoformat()}
+    delay = _cooldown_delay_s(streak) if delay_s is None else int(delay_s)
+    until = (now + timedelta(seconds=delay)).isoformat()
+    blob = {"streak": streak, "until": until, "updated_at": now.isoformat(), "reason": reason}
     cfg.control.mkdir(parents=True, exist_ok=True)
     write_json_atomic(p, blob)
     return blob
 
 
 def _clear_cooldown(cfg: Config) -> None:
-    """Any pass with measured>0 resets the Instagram throttle streak."""
+    """Any pass with measured>0 resets the streak — and so does an operator scrape-login, which is the
+    explicit human act that clears a lock."""
     p = _cooldown_path(cfg)
     try:
         if p.exists():
@@ -368,7 +377,12 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
     ABORTS without writing when personas.json is CORRUPT, or when scrape cannot open (`no_scrape`).
     An Instagram throttle ends the pass, writes accrued evidence when mutated, and persists a cooldown
     (30m→1h→2h→6h). `last_complete_pass` advances ONLY when throttled is False (the 12h tick gates on
-    that stamp). try_cap incompleteness also sets throttled but does NOT write the Instagram cooldown."""
+    that stamp). try_cap incompleteness also sets throttled but does NOT write the Instagram cooldown.
+
+    Every failure class that means "stop touching this account" arms that ONE cooldown file, tagged with
+    its reason (MOL-699): `throttle` and `login_required` on the ladder, `checkpoint` on a flat 12h freeze
+    because a lock is not a rate limit. Only `no_scrape` (never configured) and a corrupt control file
+    arm nothing — there is no account to protect."""
     import threading
     from concurrent.futures import ThreadPoolExecutor
     from fanops.errors import ControlFileError
@@ -387,8 +401,17 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
         try:
             scrape_client = open_client(cfg)
         except ScrapeUnavailable as e:                     # ScrapeCheckpoint (a LOCK) is a distinct abort
-            aborted = "checkpoint" if isinstance(e, ScrapeCheckpoint) else "no_scrape"
-            return {"written": False, "aborted": aborted, "reason": str(e), "backend": "scrape"}
+            if isinstance(e, ScrapeCheckpoint):
+                # FREEZE (MOL-699). Without this the abort wrote nothing, so the next due tick logged in
+                # again against a locked account — repeated failed logins are what deepen a lock. Only
+                # in-app verification (or scrape-login, which clears this) can end it.
+                cd = _persist_cooldown(cfg, now, reason="checkpoint", delay_s=_CHECKPOINT_DELAY_S)
+                get_logger(cfg)("hashtags", "-", "scrape_cooldown", level="error", reason="checkpoint",
+                                until=cd.get("until"),
+                                detail="Layer A frozen — verify in the Instagram app, then scrape-login")
+                return {"written": False, "aborted": "checkpoint", "reason": str(e), "backend": "scrape",
+                        "cooldown_until": cd.get("until"), "cooldown_streak": cd.get("streak")}
+            return {"written": False, "aborted": "no_scrape", "reason": str(e), "backend": "scrape"}
     client = scrape_client
     prev_complete = _read_complete_pass(cfg)
     cache: dict[str, dict] = dict(load_measurements(cfg))
@@ -494,7 +517,7 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
                 log("hashtags", tag, "unresolved", reason="refused",
                     message=msg[:120], tried=tried)
                 # Session can open/login while hashtag_info still returns login_required (MOL-696).
-                # Abort the pass — do NOT invent cooldown (that is for ScrapeThrottled only).
+                # Abort the pass; the laddered cooldown is armed at the end of the pass (MOL-699).
                 if "login_required" in msg.lower():
                     login_dead = True; stop = True
                     log("hashtags", "-", "pass_login_required", level="error", tried=tried,
@@ -565,8 +588,14 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
     if measured > 0:
         _clear_cooldown(cfg)                               # any progress resets the Instagram streak
     elif ig_throttled:
-        cooldown = _persist_throttle_cooldown(cfg, now)
-        log("hashtags", "-", "scrape_cooldown", streak=cooldown.get("streak"),
+        cooldown = _persist_cooldown(cfg, now, reason="throttle")
+        log("hashtags", "-", "scrape_cooldown", reason="throttle", streak=cooldown.get("streak"),
+            until=cooldown.get("until"))
+    elif login_dead:
+        # A dead session was re-probed EVERY tick before MOL-699. An expiry IS transient, so it gets the
+        # ladder (unlike a lock) — a decaying retry instead of one login attempt per tick, forever.
+        cooldown = _persist_cooldown(cfg, now, reason="login_required")
+        log("hashtags", "-", "scrape_cooldown", reason="login_required", streak=cooldown.get("streak"),
             until=cooldown.get("until"))
     cutoff = now - timedelta(days=_MAX_AGE_DAYS)
     fresh = _records_for_write(cache, anchor_set=anchor_set, cutoff=cutoff)
@@ -617,6 +646,7 @@ def refresh_store_if_due(cfg: Config, *, max_age_s: int = 43200, scrape_client=N
         cool = _read_active_cooldown(cfg, now_dt)
         if cool is not None:
             return {"refreshed": False, "reason": "cooldown",
+                    "cooldown_reason": cool.get("reason") or "throttle",
                     "until": cool.get("until"), "streak": cool.get("streak")}
         complete = _read_complete_pass(cfg)
         if complete:
@@ -660,7 +690,12 @@ def cmd_hashtags_refresh(cfg: Config) -> int:
 
 
 def cmd_hashtags_scrape_login(cfg: Config) -> int:
-    """`fanops hashtags scrape-login` — open instagrapi, login, dump session. Never prints the password."""
+    """`fanops hashtags scrape-login` — open instagrapi, login, dump session. Never prints the password.
+
+    The operator escape hatch: it deliberately IGNORES an active cooldown (an explicit human act, run
+    after clearing a challenge in the app — the freeze exists to stop the unattended pump, not the
+    operator) and CLEARS it on success, so a fixed account resumes on the next tick instead of sitting
+    out the remaining 12h (MOL-699)."""
     from fanops.ig_hashtag_scrape import ScrapeCheckpoint, ScrapeUnavailable, open_client
     try:
         open_client(cfg)
@@ -670,8 +705,9 @@ def cmd_hashtags_scrape_login(cfg: Config) -> int:
     except ScrapeUnavailable as e:
         get_logger(cfg)("hashtags", "-", "scrape_login_failed", level="error", reason=str(e)[:160])
         return 2
+    _clear_cooldown(cfg)
     get_logger(cfg)("hashtags", "-", "scrape_login_ok", user=(cfg.ig_scrape_user or "")[:40],
-                    session=str(cfg.ig_scrape_session_path))
+                    session=str(cfg.ig_scrape_session_path), cooldown="cleared")
     return 0
 
 
