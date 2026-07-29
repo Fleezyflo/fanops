@@ -906,6 +906,81 @@ def _plane_postiz(cfg: Config) -> dict:
     return {"plane": "postiz", "ok": False, "detail": tail}
 
 
+_LOCK_PIN_RE = re.compile(r"^([A-Za-z0-9_.-]+)==(\S+)")
+_CI_UNIT_LOCK = "requirements/ci-unit.txt"
+
+
+def _code_checkout_root() -> Path | None:
+    """Repo root that holds the running `fanops` package (editable checkout), or None."""
+    import fanops
+    here = Path(fanops.__file__).resolve().parent
+    for cand in (here, *here.parents):
+        if (cand / _CI_UNIT_LOCK).is_file():
+            return cand
+    return None
+
+
+def _locked_pins(lock: Path) -> dict[str, str]:
+    """`name -> version` for every `==` pin in a pip-compile lock (comments/hashes ignored)."""
+    pins: dict[str, str] = {}
+    for line in lock.read_text(encoding="utf-8").splitlines():
+        m = _LOCK_PIN_RE.match(line.strip())
+        if m:
+            pins[m.group(1).lower()] = m.group(2)
+    return pins
+
+
+def _dep_drift(pins: dict[str, str]) -> list[str]:
+    """Installed versions that differ from (or miss) the lock pins. Empty = fresh."""
+    import importlib.metadata as md
+    drifted: list[str] = []
+    for name, want in sorted(pins.items()):
+        try:
+            have = md.version(name)
+        except md.PackageNotFoundError:
+            drifted.append(f"{name}:missing->{want}")
+            continue
+        if have != want:
+            drifted.append(f"{name}:{have}->{want}")
+    return drifted
+
+
+def _sync_locked_deps() -> tuple[bool, str]:
+    """Reconcile site-packages against requirements/ci-unit.txt. Site-packages only.
+
+    Returns (ok, note). note is empty when already fresh (caller keeps its detail byte-identical).
+    ok=False means the install failed — caller must not kickstart onto a half-synced venv."""
+    root = _code_checkout_root()
+    if root is None:
+        return True, ""                                 # no lock beside the package — nothing to sync
+    lock = root / _CI_UNIT_LOCK
+    try:
+        pins = _locked_pins(lock)
+    except OSError as e:
+        return False, f"lock unreadable ({type(e).__name__}: {e})"
+    if not pins:
+        return True, ""
+    drifted = _dep_drift(pins)
+    if not drifted:
+        return True, ""
+    # One install for the whole lock (hash-verified). Cap detail so the plane line stays readable.
+    shown = ", ".join(drifted[:3])
+    if len(drifted) > 3:
+        shown += f" (+{len(drifted) - 3} more)"
+    try:
+        r = subprocess.run(
+            [sys.executable, "-m", "pip", "install", "--require-hashes", "-r", str(lock)],
+            cwd=str(root), capture_output=True, text=True, timeout=600,
+        )
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return False, f"deps sync failed for {shown} ({type(e).__name__})"
+    if r.returncode != 0:
+        err = (r.stderr or r.stdout or "").strip().splitlines()
+        tail = err[-1][:120] if err else f"exit {r.returncode}"
+        return False, f"deps sync failed for {shown}: {tail}"
+    return True, f"deps synced ({shown})"
+
+
 def _plane_daemon(cfg: Config, *, kickstart: bool = True) -> dict:
     """Daemon freshness plane. First ensure the launchd agent is LOADED via the existing
     daemon.ensure (unchanged aliveness contract — the keeper depends on it). If it was ALREADY
@@ -913,7 +988,11 @@ def _plane_daemon(cfg: Config, *, kickstart: bool = True) -> dict:
     awaiting_approval, nothing publishes on restart) and we confirm ONE fresh heartbeat newer than
     the restart. A not-yet-loaded daemon is brought up by ensure's own bootstrap (no kickstart).
     Off-darwin / launchctl-absent -> a typed honest skip (ok=False, skipped=True), never a crash —
-    freshness simply can't be proven on this platform (mirrors cmd_daemon's degrade posture)."""
+    freshness simply can't be proven on this platform (mirrors cmd_daemon's degrade posture).
+
+    Before kickstart, site-packages are reconciled against requirements/ci-unit.txt — "current code"
+    is a false claim when the lock moved and the venv did not. Sync mutates site-packages only
+    (never the tree / 00_control). A failed sync returns ok=False and skips kickstart."""
     try:
         was_running = _confirm_loaded(LABEL)
         ens = ensure(cfg)                          # aliveness: load if absent / rewrite a stale plist
@@ -922,6 +1001,10 @@ def _plane_daemon(cfg: Config, *, kickstart: bool = True) -> dict:
     if not ens.get("loaded"):
         return {"plane": "daemon", "ok": False, "skipped": False, "restarted": False,
                 "detail": "daemon plist present but launchctl could not load it — run `fanops daemon status`"}
+    sync_ok, sync_note = _sync_locked_deps()
+    if not sync_ok:
+        return {"plane": "daemon", "ok": False, "skipped": False, "restarted": False,
+                "detail": sync_note or "deps sync failed"}
     if was_running and kickstart:
         since = datetime.now(timezone.utc)
         kr = _launchctl("kickstart", "-k", f"gui/{os.getuid()}/{LABEL}", timeout=_KICKSTART_TIMEOUT)
@@ -931,10 +1014,14 @@ def _plane_daemon(cfg: Config, *, kickstart: bool = True) -> dict:
         if not _heartbeat_fresh_since(cfg, since):
             return {"plane": "daemon", "ok": False, "skipped": False, "restarted": True,
                     "detail": "restarted but no fresh heartbeat within the wait window — check 07_reports/daemon.err"}
-        return {"plane": "daemon", "ok": True, "skipped": False, "restarted": True,
-                "detail": "restarted onto current code; fresh heartbeat confirmed"}
-    return {"plane": "daemon", "ok": True, "skipped": False, "restarted": False,
-            "detail": f"loaded ({ens.get('action')})"}
+        detail = "restarted onto current code; fresh heartbeat confirmed"
+        if sync_note:
+            detail = f"{detail}; {sync_note}"
+        return {"plane": "daemon", "ok": True, "skipped": False, "restarted": True, "detail": detail}
+    detail = f"loaded ({ens.get('action')})"
+    if sync_note:
+        detail = f"{detail}; {sync_note}"
+    return {"plane": "daemon", "ok": True, "skipped": False, "restarted": False, "detail": detail}
 
 
 def _redeploy_studio(cfg: Config, *, wait: bool = False) -> bool:
