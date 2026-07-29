@@ -82,7 +82,109 @@ def test_media_count_persisted_from_hashtag_info(tmp_path, monkeypatch):
     client = _FakeClient(media_by_tag={"#hiphop": [{"caption": "", "like_count": 10}]},
                          media_count_by_tag={"#hiphop": 50000})
     refresh_store(cfg, scrape_client=client)
-    assert load_measurements(cfg)["#hiphop"]["media_count"] == 50000.0
+    rec = load_measurements(cfg)["#hiphop"]
+    assert rec["media_count"] == 50000.0
+    assert rec["media_count_at"] == rec["measured_at"], "volume carries its own age stamp (MOL-691)"
+
+
+# ------------------------------------------- 1b. volume backfill + Reels trend evidence (MOL-691)
+
+def test_cached_id_without_volume_is_backfilled_not_stranded(tmp_path, monkeypatch):
+    """The live defect: 131/300 records had no media_count because a cached graph_id skipped the ONLY
+    call that serves volume. A second pass must acquire it."""
+    cfg = Config(root=tmp_path)
+    pid = _persona(cfg, voice="hiphop", niche=["hiphop"]); _link_active(cfg, pid)
+    media = {"#hiphop": [{"caption": "", "like_count": 10}]}
+    refresh_store(cfg, scrape_client=_client(media))                       # no volume served
+    assert "media_count" not in load_measurements(cfg)["#hiphop"]
+    client = _client(media, media_count_by_tag={"#hiphop": 20_923_125})
+    refresh_store(cfg, scrape_client=client)
+    assert "hiphop" in client.info_calls, "missing volume MUST re-resolve"
+    assert load_measurements(cfg)["#hiphop"]["media_count"] == 20_923_125.0
+
+
+def test_known_volume_is_not_re_resolved_inside_seven_days_then_is_after(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    cfg = Config(root=tmp_path)
+    pid = _persona(cfg, voice="hiphop", niche=["hiphop"]); _link_active(cfg, pid)
+    media = {"#hiphop": [{"caption": "", "like_count": 10}]}
+    t0 = datetime(2026, 7, 1, tzinfo=timezone.utc)
+    refresh_store(cfg, scrape_client=_client(media, media_count_by_tag={"#hiphop": 100}), now=t0)
+    near = _client(media, media_count_by_tag={"#hiphop": 100})
+    refresh_store(cfg, scrape_client=near, now=t0 + timedelta(days=6, hours=23))
+    assert "hiphop" not in near.info_calls, "fresh volume must not spend a resolve on the 12h trend pass"
+    stale = _client(media, media_count_by_tag={"#hiphop": 175})
+    refresh_store(cfg, scrape_client=stale, now=t0 + timedelta(days=7, hours=1))
+    assert "hiphop" in stale.info_calls, "volume older than 7d must refresh"
+    assert load_measurements(cfg)["#hiphop"]["media_count"] == 175.0
+
+
+def test_top_sample_is_twenty_seven_not_nine(tmp_path, monkeypatch):
+    """9 was Instagram's default grid page, not a measurement floor — too thin to take a max over."""
+    from fanops.hashtags import TOP_SAMPLE_N
+    from fanops.persona_research import TOP_GRID_N
+    cfg = Config(root=tmp_path)
+    pid = _persona(cfg, voice="hiphop", niche=["hiphop"]); _link_active(cfg, pid)
+    client = _client({"#hiphop": [{"caption": "", "like_count": 10}]})
+    refresh_store(cfg, scrape_client=client)
+    assert TOP_SAMPLE_N == 27 and client.amounts and set(client.amounts) == {27}
+    assert TOP_GRID_N == TOP_SAMPLE_N, "the density denominator must BE the real sample"
+
+
+def test_recent_reel_play_max_persisted_and_stale_viral_reel_excluded(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    now = datetime(2026, 7, 29, tzinfo=timezone.utc)
+    cfg = Config(root=tmp_path)
+    pid = _persona(cfg, voice="hiphop", niche=["hiphop"]); _link_active(cfg, pid)
+    media = {"#hiphop": [
+        {"caption": "", "play_count": 5_000, "product_type": "clips", "taken_at": now - timedelta(days=1)},
+        {"caption": "", "play_count": 9_000, "product_type": "clips", "taken_at": now - timedelta(days=6)},
+        {"caption": "", "play_count": 99_000_000, "product_type": "clips", "taken_at": now - timedelta(days=400)},
+        {"caption": "", "play_count": 7_000_000, "product_type": "feed", "taken_at": now},
+        {"caption": "", "play_count": 8_000, "product_type": "clips"},          # undated -> not current
+    ]}
+    refresh_store(cfg, scrape_client=_client(media), now=now)
+    rec = load_measurements(cfg)["#hiphop"]
+    assert rec["current_top_reel_play_max_7d"] == 9_000.0, "max over RECENT reels only"
+    assert rec["top_reel_sample_n"] == 2.0, "sample count is the honest denominator of that max"
+
+
+def test_reel_less_sample_preserves_prior_trend_evidence(tmp_path, monkeypatch):
+    """A transiently photo-only grid is not proof that a tag has no Reels — never erase bought evidence."""
+    from datetime import datetime, timedelta, timezone
+    now = datetime(2026, 7, 29, tzinfo=timezone.utc)
+    cfg = Config(root=tmp_path)
+    pid = _persona(cfg, voice="hiphop", niche=["hiphop"]); _link_active(cfg, pid)
+    hot = {"#hiphop": [{"caption": "", "play_count": 4_242, "product_type": "clips",
+                        "taken_at": now - timedelta(days=2)}]}
+    refresh_store(cfg, scrape_client=_client(hot), now=now)
+    assert load_measurements(cfg)["#hiphop"]["current_top_reel_play_max_7d"] == 4_242.0
+    refresh_store(cfg, scrape_client=_client({"#hiphop": [{"caption": "", "like_count": 12}]}),
+                  now=now + timedelta(hours=13))
+    assert load_measurements(cfg)["#hiphop"]["current_top_reel_play_max_7d"] == 4_242.0
+
+
+def test_every_contract_field_survives_the_whole_file_rewrite(tmp_path, monkeypatch):
+    """refresh_store seeds from load_measurements and rewrites hashtags.json WHOLE, so a field the
+    reader drops is written in pass N and gone in pass N+1. Reader contract must cover the writer."""
+    from datetime import datetime, timedelta, timezone
+    from fanops.hashtags import RECORD_NUM_FIELDS, RECORD_STR_FIELDS
+    now = datetime(2026, 7, 29, tzinfo=timezone.utc)
+    cfg = Config(root=tmp_path)
+    pid = _persona(cfg, voice="hiphop", niche=["hiphop"]); _link_active(cfg, pid)
+    media = {"#hiphop": [{"caption": "", "like_count": 11, "play_count": 4_000,
+                          "product_type": "clips", "taken_at": now - timedelta(days=1)}]}
+    refresh_store(cfg, scrape_client=_client(media, media_count_by_tag={"#hiphop": 900}), now=now)
+    first = load_measurements(cfg)["#hiphop"]
+    for f in RECORD_NUM_FIELDS + RECORD_STR_FIELDS:
+        assert f in first, f"{f} must be persisted AND retained by the reader"
+    # A pass that re-measures plays but serves no Reel row and no volume must not strip either.
+    refresh_store(cfg, scrape_client=_client({"#hiphop": [{"caption": "", "like_count": 11,
+                                                           "play_count": 4_000}]}),
+                  now=now + timedelta(hours=13))
+    second = load_measurements(cfg)["#hiphop"]
+    for f in RECORD_NUM_FIELDS + RECORD_STR_FIELDS:
+        assert f in second, f"{f} was stripped by the whole-file rewrite"
 
 
 def test_a_tag_with_no_like_count_anywhere_is_unmeasured_and_absent(tmp_path, monkeypatch):
@@ -123,14 +225,17 @@ def test_budget_bookkeeping_is_gone_from_the_module(tmp_path):
 
 
 def test_graph_id_is_cached_so_a_known_tag_never_spends_another_search(tmp_path, monkeypatch):
+    """A cached id + FRESH volume spends no hashtag_info. (Missing volume does — see the test below:
+    volume only ever arrives on that call, so skipping it unconditionally stranded 131 tags. MOL-691.)"""
     cfg = Config(root=tmp_path)
     pid = _persona(cfg, name="Hiphop", voice="hiphop", niche=["hiphop"]); _link_active(cfg, pid)
     media = {"#hiphop": [{"caption": "", "like_count": 5, "comments_count": 0}]}
-    refresh_store(cfg, scrape_client=_client(media))
-    assert load_measurements(cfg)["#hiphop"]["graph_id"] == "id-hiphop"
-    client = _client(media)
+    refresh_store(cfg, scrape_client=_client(media, media_count_by_tag={"#hiphop": 500}))
+    rec = load_measurements(cfg)["#hiphop"]
+    assert rec["graph_id"] == "id-hiphop" and rec["media_count"] == 500.0
+    client = _client(media, media_count_by_tag={"#hiphop": 500})
     refresh_store(cfg, scrape_client=client)
-    assert "hiphop" not in client.info_calls, "a cached graph_id must not re-resolve"
+    assert "hiphop" not in client.info_calls, "a cached graph_id with fresh volume must not re-resolve"
     assert "hiphop" in client.media_calls, "but it must still re-measure"
 
 
@@ -141,13 +246,14 @@ def test_cached_tag_metric_and_stamp_move_on_every_pass(tmp_path, monkeypatch):
     t0 = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
     t1 = t0 + timedelta(hours=13)
     media0 = {"#hiphop": [{"caption": "", "like_count": 100, "comments_count": 0}]}
-    refresh_store(cfg, scrape_client=_client(media0), now=t0)
+    refresh_store(cfg, scrape_client=_client(media0, media_count_by_tag={"#hiphop": 7}), now=t0)
     before = load_measurements(cfg)["#hiphop"]
     assert before["like_count"] == 100.0 and _metric(before) == 100.0
     stamp0 = before["measured_at"]
 
     client = _FakeClient(
         media_by_tag={"#hiphop": [{"caption": "", "like_count": 250}]},
+        media_count_by_tag={"#hiphop": 7},
         refuse_tags={"#lyricism", "lyricism"})
     # seed hiphop id so resolve is skipped; lyricism is novel and will refuse on info
     out = refresh_store(cfg, scrape_client=client, now=t1)

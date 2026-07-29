@@ -65,6 +65,33 @@ def test_measure_play_count_median_preferred(tmp_path):
     assert metric["like_count"] == 50.0
 
 
+def test_measure_asks_for_the_full_top_sample(tmp_path):
+    from fanops.hashtags import TOP_SAMPLE_N
+    c = _FakeClient(media_by_tag={"#hiphop": [_Media(10, "")]})
+    measure_and_harvest_scrape(c, "#hiphop")
+    assert c.amounts == [TOP_SAMPLE_N] and TOP_SAMPLE_N == 27
+
+
+def test_recent_reel_max_ignores_feed_rows_and_old_reels(tmp_path):
+    from datetime import datetime, timedelta, timezone
+    now = datetime(2026, 7, 29, tzinfo=timezone.utc)
+    c = _FakeClient(media_by_tag={"#hiphop": [
+        _Media(1, "", play_count=300, product_type="clips", taken_at=now - timedelta(days=2)),
+        _Media(1, "", play_count=900, product_type="clips", taken_at=now - timedelta(hours=1)),
+        _Media(1, "", play_count=10**9, product_type="clips", taken_at=now - timedelta(days=99)),
+        _Media(1, "", play_count=10**8, product_type="feed", taken_at=now),
+    ]})
+    metric, _ = measure_and_harvest_scrape(c, "#hiphop", now=now)
+    assert metric["current_top_reel_play_max_7d"] == 900.0
+    assert metric["top_reel_sample_n"] == 2.0
+
+
+def test_no_recent_reel_means_no_trend_fields_not_a_zero(tmp_path):
+    c = _FakeClient(media_by_tag={"#hiphop": [_Media(10, "", play_count=5)]})
+    metric, _ = measure_and_harvest_scrape(c, "#hiphop")
+    assert "current_top_reel_play_max_7d" not in metric and "top_reel_sample_n" not in metric
+
+
 def test_resolve_returns_media_count(tmp_path):
     c = _FakeClient({"#hiphop": 1}, media_count_by_tag={"#hiphop": 12345})
     assert resolve_hashtag_scrape(c, "#hiphop") == ("id-hiphop", 12345.0)

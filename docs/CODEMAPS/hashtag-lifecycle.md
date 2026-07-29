@@ -11,14 +11,28 @@ Discovery direction (MOL-637/MOL-644): Layer A search seeds are operator **niche
 Metric honesty: visibility is **only** Instagram fields Layer A stores — never an invented blended `reach`, never "most visibility" from a single top-post like.
 
 `hashtags.RANK_FIELDS = ("play_count", "like_count")` with preferred `METRIC_FIELD = "play_count"`.
-`ig_hashtag_scrape.measure_and_harvest_scrape` takes ONE `hashtag_medias_top` (amount=9) and stores:
+`ig_hashtag_scrape.measure_and_harvest_scrape` takes ONE `hashtag_medias_top`
+(`hashtags.TOP_SAMPLE_N` = 27 — MOL-691 raised it from Instagram's 9-row default grid page, which is far
+too thin to take a maximum over; 27 is instagrapi's own default for its v1/recent/reels reads, so this is
+the same endpoint one page deeper, and the co-tag harvest rides the same rows) and stores:
 
 - `like_count` = **median** of like_count across Top medias that carry one
 - `play_count` = **median** of play_count across Top medias that carry one (Reels/views when present)
+- `current_top_reel_play_max_7d` = **max** play_count among rows Instagram marks `product_type=clips`
+  and dates within 7 days, with `top_reel_sample_n` as that maximum's honest denominator (MOL-691).
+  A Reel-less sample never zeroes this — prior evidence is carried, since a transiently photo-only grid
+  is not proof a tag has no Reels.
 
 `resolve_hashtag_scrape` also persists `media_count` from `hashtag_info` when the private API serves it
-(Graph Hashtag node still refuses `media_count` — probed 2026-07-26 — but scrape can). Ranking uses
-`play_count` when present, else `like_count`. Neither ⇒ UNMEASURED ⇒ inadmissible.
+(Graph Hashtag node still refuses `media_count` — probed 2026-07-26 — but scrape can). Volume ages on its
+OWN `media_count_at` stamp (`_VOLUME_MAX_AGE_DAYS` = 7): before MOL-691 a cached `graph_id` skipped the
+only call that serves volume, so 131 of 300 live records carried no `media_count` and could never get one.
+Ranking uses `play_count` when present, else `like_count`. Neither ⇒ UNMEASURED ⇒ inadmissible.
+
+The persisted record shape is ONE contract — `hashtags.RECORD_NUM_FIELDS` / `RECORD_STR_FIELDS`. It must
+stay in sync with the writer: `refresh_store` seeds its working cache from `load_measurements` and then
+rewrites `hashtags.json` **whole**, so a field the reader does not retain is written in pass N and silently
+stripped in pass N+1. Widen the reader before the writer.
 (Graph `measure_and_harvest` remains in `meta_graph` for a deferred path — Layer A refresh does not call it.)
 
 The pre-2026-07-26 metric — likes **plus** comments summed under a key we named `reach` — was invented.

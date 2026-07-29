@@ -1,8 +1,12 @@
 """Hashtag Layer A network via instagrapi (Graph hashtag path deferred)."""
 from __future__ import annotations
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 from fanops.config import Config
-from fanops.hashtags import CAPTION_TAG_RE, HARVEST_CAP, _norm
+from fanops.hashtags import CAPTION_TAG_RE, HARVEST_CAP, TOP_SAMPLE_N, _norm, _num
+
+_REEL_TREND_DAYS = 7            # a Reel older than this is history, not "currently trending"
+_REEL_PRODUCT_TYPE = "clips"    # Instagram's own product_type for a Reel
 
 
 def _trunc(msg: object, n: int = 160) -> str:
@@ -102,6 +106,19 @@ def _median(vals: list[float]) -> Optional[float]:
     return float(s[mid]) if n % 2 else (s[mid - 1] + s[mid]) / 2.0
 
 
+def _is_recent_reel(m, cutoff: datetime) -> bool:
+    """True when this Top row is a Reel Instagram says was posted after `cutoff`. Missing / unparseable
+    `taken_at` reads NOT recent: an undated row must not claim to be current evidence."""
+    if getattr(m, "product_type", None) != _REEL_PRODUCT_TYPE:
+        return False
+    at = getattr(m, "taken_at", None)
+    if not isinstance(at, datetime):
+        return False
+    if at.tzinfo is None:
+        at = at.replace(tzinfo=timezone.utc)
+    return at >= cutoff
+
+
 def resolve_hashtag_scrape(client, tag: str) -> tuple[Optional[str], Optional[float]]:
     """Resolve '#tag' via instagrapi hashtag_info -> (id, media_count).
     `media_count` is Instagram's own tag volume when the private API serves it (None if absent)."""
@@ -122,24 +139,27 @@ def resolve_hashtag_scrape(client, tag: str) -> tuple[Optional[str], Optional[fl
     s = str(hid).strip()
     if not s:
         return None, None
-    mc = getattr(info, "media_count", None)
-    media_count = float(mc) if isinstance(mc, (int, float)) and not isinstance(mc, bool) and mc >= 0 else None
-    return s, media_count
+    return s, _num(getattr(info, "media_count", None))
 
 
-def measure_and_harvest_scrape(client, tag: str) -> tuple[Optional[dict], dict[str, int]]:
+def measure_and_harvest_scrape(client, tag: str, *, now=None) -> tuple[Optional[dict], dict[str, int]]:
     """ONE hashtag_medias_top fetch → platform metrics + caption co-tag harvest.
 
     Metrics (only fields Instagram put on the medias — never a blended 'reach'):
       like_count  = median of like_count across top medias that carry one
       play_count  = median of play_count across top medias that carry one (Reels/views when present)
+      current_top_reel_play_max_7d = MAX play_count among rows Instagram marks `product_type=clips`
+                                     and dates inside the last 7 days (MOL-691)
+      top_reel_sample_n            = how many such rows carried a usable play_count — the honest
+                                     denominator of that maximum, so a 1-Reel max is not read as a trend
 
     A tag with neither likes nor plays anywhere in the top grid is UNMEASURED (None, cotags)."""
     name = _norm(tag).lstrip("#")
     if not name:
         return None, {}
+    cutoff = (now or datetime.now(timezone.utc)) - timedelta(days=_REEL_TREND_DAYS)
     try:
-        medias = client.hashtag_medias_top(name, amount=9)
+        medias = client.hashtag_medias_top(name, amount=TOP_SAMPLE_N)
     except Exception as e:                                  # noqa: BLE001
         if isinstance(e, ScrapeRefused):
             raise
@@ -149,14 +169,17 @@ def measure_and_harvest_scrape(client, tag: str) -> tuple[Optional[dict], dict[s
     if not medias:
         return None, {}
     likes: list[float] = []; plays: list[float] = []
+    reel_plays: list[float] = []
     cotags: dict[str, int] = {}
     for m in medias:
-        lv = getattr(m, "like_count", None)
-        if isinstance(lv, (int, float)) and not isinstance(lv, bool) and lv >= 0:
-            likes.append(float(lv))
-        pv = getattr(m, "play_count", None)
-        if isinstance(pv, (int, float)) and not isinstance(pv, bool) and pv >= 0:
-            plays.append(float(pv))
+        lv = _num(getattr(m, "like_count", None))
+        if lv is not None:
+            likes.append(lv)
+        pv = _num(getattr(m, "play_count", None))
+        if pv is not None:
+            plays.append(pv)
+            if pv > 0 and _is_recent_reel(m, cutoff):
+                reel_plays.append(pv)
         caption = getattr(m, "caption_text", None) or ""
         for raw in CAPTION_TAG_RE.findall(caption):
             t = _norm(raw)
@@ -173,4 +196,7 @@ def measure_and_harvest_scrape(client, tag: str) -> tuple[Optional[dict], dict[s
         metrics["like_count"] = like_m
     if play_m is not None:
         metrics["play_count"] = play_m
+    if reel_plays:
+        metrics["current_top_reel_play_max_7d"] = float(max(reel_plays))
+        metrics["top_reel_sample_n"] = float(len(reel_plays))
     return metrics, cotags

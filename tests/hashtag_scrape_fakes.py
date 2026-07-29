@@ -4,9 +4,13 @@ from fanops.ig_hashtag_scrape import ScrapeRefused, ScrapeThrottled
 
 
 class _Media:
-    def __init__(self, like_count=None, caption_text="", play_count=None):
+    """One Top row. `product_type` / `taken_at` are Instagram's own Reel markers (MOL-691): only a
+    `clips` row dated inside 7 days feeds `current_top_reel_play_max_7d`."""
+    def __init__(self, like_count=None, caption_text="", play_count=None,
+                 product_type=None, taken_at=None):
         self.like_count = like_count; self.caption_text = caption_text
         self.play_count = play_count
+        self.product_type = product_type; self.taken_at = taken_at
 
 
 class _Hashtag:
@@ -30,6 +34,7 @@ class _FakeClient:
         self.throttle_after = throttle_after
         self.info_calls: list[str] = []
         self.media_calls: list[str] = []
+        self.amounts: list[int] = []            # amount= each medias_top call asked for (MOL-691)
         self._media_n = 0
 
     def _medias_for(self, name: str):
@@ -43,7 +48,8 @@ class _FakeClient:
                     out.append(_Media(
                         m.get("like_count"),
                         m.get("caption_text") or m.get("caption") or "",
-                        m.get("play_count")))
+                        m.get("play_count"),
+                        m.get("product_type"), m.get("taken_at")))
                 else:
                     out.append(m)
             return out
@@ -68,6 +74,7 @@ class _FakeClient:
 
     def hashtag_medias_top(self, name, amount=9):
         self.media_calls.append(name)
+        self.amounts.append(amount)
         self._media_n += 1
         if self.throttle_after is not None and self._media_n > self.throttle_after:
             raise ScrapeThrottled("please_wait")

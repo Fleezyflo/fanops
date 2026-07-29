@@ -15,11 +15,11 @@ evidence-backed or honestly SHORT."""
 from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from fanops.config import Config
-from fanops.hashtags import _norm, load_measurements, _metric
+from fanops.hashtags import TOP_SAMPLE_N, _norm, load_measurements, _metric
 from fanops.hashtag_hygiene import is_curatable
 
 _EVIDENCE_MAX_AGE_DAYS = 90       # older than this is history, not evidence — a dead measurement cannot curate
-TOP_GRID_N = 9                    # ig_hashtag_scrape.hashtag_medias_top amount — density = hits / TOP_GRID_N
+TOP_GRID_N = TOP_SAMPLE_N         # density denominator IS the real Top sample — one constant, no drift
 # Relatedness → candidate; numbers rank members (MOL-665). Magnets are classified, never vetoed.
 _MAGNET_BODIES = frozenset({
     "fyp", "foryou", "foryoupage", "explore", "explorepage", "reels", "reel",
