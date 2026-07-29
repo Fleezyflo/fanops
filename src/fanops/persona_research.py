@@ -15,18 +15,17 @@ evidence-backed or honestly SHORT."""
 from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from fanops.config import Config
-from fanops.hashtags import TOP_SAMPLE_N, _norm, load_measurements, _metric
+from fanops.hashtags import (RECORD_NUM_FIELDS, TOP_SAMPLE_N, _norm, _num, has_evidence,
+                             load_measurements, size_rank_key, tag_size)
 from fanops.hashtag_hygiene import is_curatable
 
 _EVIDENCE_MAX_AGE_DAYS = 90       # older than this is history, not evidence — a dead measurement cannot curate
 TOP_GRID_N = TOP_SAMPLE_N         # density denominator IS the real Top sample — one constant, no drift
 # Relatedness → candidate; numbers rank members (MOL-665). Magnets are classified, never vetoed.
-_MAGNET_BODIES = frozenset({
-    "fyp", "foryou", "foryoupage", "explore", "explorepage", "reels", "reel",
-    "love", "viral", "viralreels", "instagood", "trending",
-})
-MAGNET_METRIC_FLOOR = 5000.0      # soft lane: weak inbound OK when platform metric clears this
 _NORMAL_HITS = 2                  # non-anchor relatedness: inbound_hits >= 2 OR n_roots >= 2
+# `is_magnet` / `_MAGNET_BODIES` are GONE with the soft lane (MOL-692). A generic magnet (#fyp, #love,
+# #viral) is category-scale by definition, so `is_category` already forces it through the multi-root bar —
+# the separate classifier guarded nothing that CATEGORY_MEDIA_FLOOR does not.
 # A CATEGORY tag (#bars, #remix, #hiphopculture) carries platform-scale post volume: it co-occurs with any
 # niche by sheer size, so the normal relatedness bar is cheap for it to clear. Floor = the live cache's p90
 # media_count (measured 2026-07-29: median 77k, p90 5.25M). Volume is Instagram's own `media_count`, so this
@@ -48,11 +47,6 @@ def density(rec: dict, anchors: set[str]) -> float:
     return inbound_hits(rec, anchors) / float(TOP_GRID_N)
 
 
-def is_magnet(tag: str) -> bool:
-    h = _norm(tag) if isinstance(tag, str) else ""
-    return bool(h) and h[1:] in _MAGNET_BODIES
-
-
 def is_category(rec: dict) -> bool:
     """True when Instagram's own `media_count` puts this tag at platform-category scale (MOL-685).
     Absent / unparseable volume -> False: an unmeasured tag is never demoted on a guess."""
@@ -61,8 +55,14 @@ def is_category(rec: dict) -> bool:
 
 
 def _is_candidate(tag: str, rec: dict, anchors: set[str]) -> bool:
-    """Relatedness gate (MOL-665). Anchors always; else normal bar OR magnet soft lane.
-    A CATEGORY-scale tag needs the normal bar AND multi-root relatedness (MOL-685)."""
+    """Relatedness gate (MOL-665) — the ONLY admission bar, and under size-first ranking (MOL-692) the
+    only safety left. Anchors always; every non-anchor must clear measured relatedness. A CATEGORY-scale
+    tag additionally needs multi-root relatedness (MOL-685): volume alone must never buy a seat, so an
+    unrelated 20M-post tag is still refused no matter how big it is.
+
+    The magnet soft lane is GONE (MOL-692): it let #fyp / #love / #viral in on ONE inbound hit plus a
+    high Top-grid median, and that median is exactly the number we no longer rank on. A generic magnet
+    now clears the same measured relatedness as any other tag or stays out."""
     if tag in anchors:
         return True
     hits = inbound_hits(rec, anchors)
@@ -71,12 +71,7 @@ def _is_candidate(tag: str, rec: dict, anchors: set[str]) -> bool:
         return False
     if is_category(rec):
         return hits >= _NORMAL_HITS and roots >= 2      # volume alone must not buy a seat
-    if hits >= _NORMAL_HITS or roots >= 2:
-        return True
-    # Magnet soft lane: any inbound + high metric (numbers solidify weak relatedness). Not a ban list.
-    if is_magnet(tag) and float(_metric(rec) or 0) >= MAGNET_METRIC_FLOOR:
-        return True
-    return False
+    return hits >= _NORMAL_HITS or roots >= 2
 
 
 def _registry(cfg: Config):
@@ -118,12 +113,14 @@ def persona_terms(per, cfg: Config | None = None) -> list[str]:
 
 def _is_evidence(rec: dict, *, now: datetime | None = None) -> bool:
     """True when a cache record is a real, unexpired PLATFORM measurement — the admission predicate.
-    Demands a positive visibility metric (play_count preferred, else like_count), a parseable
-    `measured_at`, and freshness. Legacy invented `reach` sums carry neither rank field and fail here."""
+    Demands at least one positive Instagram number (`has_evidence`: scale, current Reels popularity, or a
+    legacy Top-grid median), a parseable `measured_at`, and freshness. A size-only row must qualify or
+    size-first ranking could never see the biggest tags. Legacy invented `reach` sums carry none of the
+    three and fail here."""
     if not isinstance(rec, dict):
         return False
     try:
-        if (_metric(rec) or 0) <= 0:
+        if not has_evidence(rec):
             return False
         ts = datetime.fromisoformat(rec["measured_at"])
     except (KeyError, TypeError, ValueError):
@@ -134,17 +131,23 @@ def _is_evidence(rec: dict, *, now: datetime | None = None) -> bool:
 
 
 def _aligned_pool(per, cache: dict[str, dict], *, now=None, cfg: Config | None = None) -> list[tuple[str, float, str]]:
-    """Candidates for corpus membership, ranked by platform metric (MOL-665).
+    """Candidates for corpus membership, ordered SIZE-FIRST (MOL-692).
 
-    Relatedness (`from` strength) makes a candidate; numbers solidify membership via rank+cut in
-    `derive_corpus`. Anchors always candidate. Non-anchors need inbound_hits>=2 or n_roots>=2, OR
-    (magnet + metric>=floor + any inbound). One-hit non-magnets never enter — high plays do not
-    trump weak relatedness. Magnets are classified for the soft lane, never hard-banned.
-    Non-anchor CATEGORY-scale tags need multi-root relatedness and rank behind niche peers (MOL-685).
-    Outbound co-tags still must not appear in `from` (MOL-643)."""
+    Relatedness (`from` strength) makes a candidate; SIZE orders the candidates and `derive_corpus` cuts
+    at `corpus_target`. Anchors always candidate. Non-anchors need inbound_hits>=2 or n_roots>=2; a
+    CATEGORY-scale non-anchor needs multi-root relatedness (MOL-685). Outbound co-tags still must not
+    appear in `from` (MOL-643).
+
+    The category RANK PENALTY is gone (MOL-692). It sent every admitted large tag behind every smaller
+    one, which capped the whole corpus just under CATEGORY_MEDIA_FLOOR — the exact opposite of ranking on
+    scale. The category ADMISSION bar stays, so size still cannot buy a seat without relatedness; what
+    changed is that a tag which EARNED its seat now ranks by its true volume.
+
+    The emitted float is the PRIMARY rank number (`media_count`, 0.0 when Instagram never served volume)
+    — a verbatim platform field, and total so `fanops hashtags discover` can never receive None."""
     anchors = {_norm("#" + t) for t in persona_terms(per, cfg)}
     anchors.discard("#")
-    out: list[tuple[str, float, str]] = []; demoted: set[str] = set()
+    out: list[tuple[str, float, str]] = []
     for tag, rec in cache.items():
         if not _is_evidence(rec, now=now) or not is_curatable(tag):
             continue
@@ -156,13 +159,8 @@ def _aligned_pool(per, cache: dict[str, dict], *, now=None, cfg: Config | None =
             frm = rec.get("from") if isinstance(rec.get("from"), dict) else {}
             live = [a for a in frm if a in anchors]
             src = max(live, key=lambda a: (frm.get(a) or 0, a)) if live else tag
-        out.append((tag, float(_metric(rec) or 0), src))
-        if tag not in anchors and is_category(rec):
-            demoted.add(tag)                            # anchors are the declared niche — never demoted
-    # Category-scale tags rank BEHIND every niche-scale peer, so they fill `corpus_target` only once the
-    # niche pool is exhausted. The emitted value stays the verbatim platform metric — this is a rank tier,
-    # not an invented number.
-    out.sort(key=lambda r: (r[0] in demoted, -r[1], r[0]))
+        out.append((tag, float(tag_size(rec) or 0.0), src))
+    out.sort(key=lambda r: size_rank_key(r[0], cache[r[0]]))
     return out
 
 
@@ -191,10 +189,10 @@ def derive_corpus(cfg: Config, pid: str, *, now=None) -> dict:
     for t, _v, s in chosen:
         row: dict = {"measured_at": stamp, "from": s}
         rec = cache.get(t) or {}
-        for k in ("play_count", "like_count", "media_count"):
-            fv = rec.get(k)
-            if isinstance(fv, (int, float)) and not isinstance(fv, bool) and fv >= 0:
-                row[k] = float(fv)
+        for k in RECORD_NUM_FIELDS:
+            fv = _num(rec.get(k))
+            if fv is not None:
+                row[k] = fv
         meta[t] = row
 
     apply_auto_corpus(cfg, pid, tags=final, meta=meta)

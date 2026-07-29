@@ -410,22 +410,26 @@ def test_derivation_is_zero_network(tmp_path, monkeypatch):
     assert derive_corpus(cfg, pid)["changed"] is False
 
 
-def test_corpus_is_ranked_by_the_platform_field(tmp_path, monkeypatch):
+def test_corpus_is_ranked_by_tag_size_not_by_post_medians(tmp_path, monkeypatch):
+    """End-to-end through a real Layer A pass: `#smallbutloud` has ~900x the Top-grid median plays of
+    `#bignichetag`, and must still rank BELOW it because it has ~200x fewer posts (MOL-692)."""
     cfg = Config(root=tmp_path)
     pid = _persona(cfg, voice="hiphop"); _link_active(cfg, pid)
-    media = {"#hiphop": [{"caption": "#low #high", "like_count": 500, "comments_count": 0}],
-             "#low": [{"caption": "x #hiphop", "like_count": 1, "comments_count": 9999},
-                      {"caption": "y #hiphop", "like_count": 1, "comments_count": 9999}],
-             "#high": [{"caption": "x #hiphop", "like_count": 900, "comments_count": 0},
-                       {"caption": "y #hiphop", "like_count": 800, "comments_count": 0}]}
-    refresh_store(cfg, scrape_client=_client(media))
+    media = {"#hiphop": [{"caption": "#smallbutloud #bignichetag", "like_count": 500}],
+             "#smallbutloud": [{"caption": "x #hiphop", "play_count": 900_000},
+                               {"caption": "y #hiphop", "play_count": 900_000}],
+             "#bignichetag": [{"caption": "x #hiphop", "play_count": 1_000},
+                              {"caption": "y #hiphop", "play_count": 1_000}]}
+    refresh_store(cfg, scrape_client=_client(
+        media, media_count_by_tag={"#hiphop": 10, "#smallbutloud": 52_228, "#bignichetag": 9_095_289}))
     derive_corpus(cfg, pid)
     corpus = Personas.load(cfg).get(pid).hashtag_corpus
-    assert corpus.index("#high") < corpus.index("#low")
+    assert corpus.index("#bignichetag") < corpus.index("#smallbutloud")
 
 
 def _cat_rec(metric, *, frm, media_count=None):
-    """A fresh cache record: verbatim play_count, inbound `from`, optional platform volume."""
+    """A fresh cache record: verbatim play_count (legacy median — NOT the rank since MOL-692), inbound
+    `from`, and the optional `media_count` volume that IS the rank."""
     from datetime import datetime, timezone
     r = {"graph_id": "id", "play_count": float(metric),
          "measured_at": datetime.now(timezone.utc).isoformat(), "from": dict(frm)}
@@ -450,18 +454,85 @@ def test_category_scale_tag_needs_multi_root_relatedness(tmp_path):
     assert "#nichetag" in tags                    # niche-scale relatedness bar unchanged
 
 
-def test_category_scale_tag_ranks_behind_niche_peers(tmp_path):
-    """MOL-685: a whale fills corpus_target only after the niche pool — and its metric stays verbatim."""
+def test_category_scale_tag_that_earned_its_seat_ranks_BY_SIZE(tmp_path):
+    """MOL-692 inverts MOL-685's rank tier. The category ADMISSION bar stays (test above), but an admitted
+    large tag must now lead on volume. The old demotion sent every whale behind every niche tag, which
+    capped the corpus just under CATEGORY_MEDIA_FLOOR — the opposite of ranking on scale."""
     from fanops.personas import Persona
     from fanops.persona_research import CATEGORY_MEDIA_FLOOR, _aligned_pool
     per = Persona(id="craft", name="Craft", voice="x", niche=["syrianrap", "arabicdrill"])
-    cache = {"#remix": _cat_rec(999999, frm={"#syrianrap": 3, "#arabicdrill": 2},
-                                media_count=CATEGORY_MEDIA_FLOOR + 1),
-             "#nichetag": _cat_rec(120, frm={"#syrianrap": 2})}
+    whale = CATEGORY_MEDIA_FLOOR + 1
+    cache = {"#remix": _cat_rec(120, frm={"#syrianrap": 3, "#arabicdrill": 2}, media_count=whale),
+             "#nichetag": _cat_rec(999999, frm={"#syrianrap": 2}, media_count=50_000)}
     pool = _aligned_pool(per, cache)
     order = [t for t, _v, _s in pool]
-    assert order.index("#nichetag") < order.index("#remix")
-    assert dict((t, v) for t, v, _s in pool)["#remix"] == 999999.0   # rank tier, never an invented number
+    assert order.index("#remix") < order.index("#nichetag"), "the bigger admitted tag leads"
+    # ...and it leads DESPITE the niche tag having ~8000x the Top-grid median plays.
+    assert dict((t, v) for t, v, _s in pool)["#remix"] == float(whale)   # verbatim media_count, no blend
+
+
+def test_bigger_tag_outranks_smaller_even_when_the_smaller_trends_harder(tmp_path):
+    """The user-facing contract: media_count is the HIGHER signal, 7d Top-Reel max only the tie-break."""
+    from fanops.personas import Persona
+    from fanops.persona_research import _aligned_pool
+    per = Persona(id="craft", name="Craft", voice="x", niche=["syrianrap", "arabicdrill"])
+    big = _cat_rec(10, frm={"#syrianrap": 2, "#arabicdrill": 2}, media_count=20_000_000)
+    small = _cat_rec(10, frm={"#syrianrap": 2}, media_count=1_000_000)
+    small["current_top_reel_play_max_7d"] = 50_000_000.0        # trending hard, still smaller
+    order = [t for t, _v, _s in _aligned_pool(per, {"#big": big, "#small": small})]
+    assert order == ["#big", "#small"]
+
+
+def test_equal_size_breaks_by_recent_reel_max(tmp_path):
+    from fanops.personas import Persona
+    from fanops.persona_research import _aligned_pool
+    per = Persona(id="craft", name="Craft", voice="x", niche=["syrianrap"])
+    cold = _cat_rec(10, frm={"#syrianrap": 2}, media_count=1_000_000)
+    hot = _cat_rec(10, frm={"#syrianrap": 2}, media_count=1_000_000)
+    hot["current_top_reel_play_max_7d"] = 900_000.0
+    order = [t for t, _v, _s in _aligned_pool(per, {"#cold": cold, "#hot": hot})]
+    assert order == ["#hot", "#cold"]
+
+
+def test_volumeless_tags_rank_after_every_sized_tag(tmp_path):
+    """Plays can never stand in for missing volume on the same axis — a huge median does not fake size."""
+    from fanops.personas import Persona
+    from fanops.persona_research import _aligned_pool
+    per = Persona(id="craft", name="Craft", voice="x", niche=["syrianrap"])
+    sized = _cat_rec(1, frm={"#syrianrap": 2}, media_count=1_000)
+    novol = _cat_rec(99_999_999, frm={"#syrianrap": 2})          # no media_count at all
+    pool = _aligned_pool(per, {"#sized": sized, "#novol": novol})
+    order = [t for t, _v, _s in pool]
+    assert order == ["#sized", "#novol"]
+    assert dict((t, v) for t, v, _s in pool)["#novol"] == 0.0, "report value stays numeric, never None"
+
+
+def test_generic_magnet_needs_real_relatedness_now(tmp_path):
+    """MOL-692 deletes the magnet soft lane: #love used to enter on ONE inbound hit plus a high Top-grid
+    median — the very number we no longer rank on. It is category-scale, so it needs multi-root."""
+    from fanops.personas import Persona
+    from fanops.persona_research import CATEGORY_MEDIA_FLOOR, _aligned_pool, _is_candidate
+    per = Persona(id="craft", name="Craft", voice="x", niche=["syrianrap", "arabicdrill"])
+    anchors = {"#syrianrap", "#arabicdrill"}
+    one_hit = _cat_rec(6009, frm={"#syrianrap": 1}, media_count=CATEGORY_MEDIA_FLOOR * 40)
+    assert not _is_candidate("#love", one_hit, anchors)
+    assert "#love" not in {t for t, _v, _s in _aligned_pool(per, {"#love": one_hit})}
+    earned = _cat_rec(6009, frm={"#syrianrap": 2, "#arabicdrill": 2},
+                      media_count=CATEGORY_MEDIA_FLOOR * 40)
+    assert _is_candidate("#love", earned, anchors), "no ban list — measured relatedness still admits"
+
+
+def test_size_only_record_is_admissible_evidence(tmp_path):
+    """A row Instagram gave volume but no usable Top median must not be invisible to size-first rank."""
+    from datetime import datetime, timezone
+    from fanops.hashtags import has_evidence
+    from fanops.personas import Persona
+    from fanops.persona_research import _aligned_pool
+    per = Persona(id="craft", name="Craft", voice="x", niche=["syrianrap"])
+    rec = {"graph_id": "id", "media_count": 800_000.0, "from": {"#syrianrap": 2},
+           "measured_at": datetime.now(timezone.utc).isoformat()}
+    assert has_evidence(rec) and not has_evidence({"graph_id": "id", "reach": 12345})
+    assert "#sizeonly" in {t for t, _v, _s in _aligned_pool(per, {"#sizeonly": rec})}
 
 
 def test_unreachable_platform_holds_a_derived_corpus(tmp_path, monkeypatch):
@@ -537,9 +608,15 @@ def test_model_cannot_ship_a_tag_outside_the_cache_or_corpus(tmp_path):
     assert "#invented" not in out and "#alpha" in out
 
 
-def test_ranked_tags_orders_by_platform_field_desc(tmp_path):
-    m = {"#a": {METRIC_FIELD: 10}, "#b": {METRIC_FIELD: 900}, "#c": {METRIC_FIELD: 900}}
-    assert ranked_tags(m) == ["#b", "#c", "#a"]
+def test_ranked_tags_orders_by_size_then_trend_then_tag(tmp_path):
+    """The menu order `vet_hashtags` inherits wholesale (MOL-692)."""
+    from fanops.hashtags import SIZE_FIELD, TREND_FIELD
+    m = {"#small": {SIZE_FIELD: 52_228, METRIC_FIELD: 45_355},      # loud but tiny -> last of the sized
+         "#huge": {SIZE_FIELD: 20_923_125, METRIC_FIELD: 1_272},    # quiet but enormous -> first
+         "#tie_cold": {SIZE_FIELD: 1_000_000},
+         "#tie_hot": {SIZE_FIELD: 1_000_000, TREND_FIELD: 900_000},
+         "#novolume": {METRIC_FIELD: 99_999_999}}                   # plays cannot fake volume -> last
+    assert ranked_tags(m) == ["#huge", "#tie_hot", "#tie_cold", "#small", "#novolume"]
 
 
 # ---------------------------------------------------------------- 7. refusals are the only governor

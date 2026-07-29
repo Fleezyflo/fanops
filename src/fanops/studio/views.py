@@ -398,7 +398,7 @@ class PersonaCard:
     niche: list                        # declared territory — sole Layer A search root (MOL-637)
     linked_handles: list               # accounts whose persona_id points at this persona
     reach_tags: list = field(default_factory=list)   # corpus tags carrying a live platform measurement
-    reach_means: dict = field(default_factory=dict)  # {corpus tag -> Meta's own like_count} — the honest 'why this tag'
+    reach_means: dict = field(default_factory=dict)  # {corpus tag -> Instagram's own media_count} — 'why this tag'
     # Lever engine: the per-characteristic levers + the COMPOSED instruction the pipeline will read
     # ("what the AI will read") — so the operator sees their config's exact downstream effect on the card.
     content_focus: list = field(default_factory=list)
@@ -524,13 +524,13 @@ def _lever_detail_rows(cfg: Config, persona, manifest_rows: list, catalog: list,
 
 def _corpus_tag_rows(cfg: Config, persona) -> tuple[list, str]:
     """U9: the DERIVED-zone corpus projection. Returns (rows, refreshed_at): rows =
-    [{tag, value, measured_at, from}] one per corpus tag, where `value` is the visibility metric
-    (play_count preferred, else like_count) stamped at derivation (falling back to the live cache when a
-    row predates the stamp) and `from` is the anchor tag whose top media surfaced it — the honest "why is
+    [{tag, value, measured_at, from}] one per corpus tag, where `value` is the tag's SIZE — Instagram's own
+    `media_count`, the primary rank (MOL-692) — stamped at derivation (falling back to the live cache when
+    a row predates the stamp) and `from` is the anchor tag whose top media surfaced it — the honest "why is
     this here". refreshed_at = max `measured_at` across the meta, else the .corpora_refresh.json marker ts.
     Fail-open: any trip -> ([], "")."""
     from fanops.persona_research import _persona_row
-    from fanops.hashtags import _metric, load_measurements, _norm
+    from fanops.hashtags import load_measurements, _norm, tag_size
     try:
         row = _persona_row(cfg, persona.id) or {}
         meta = row.get("hashtag_corpus_meta") if isinstance(row.get("hashtag_corpus_meta"), dict) else {}
@@ -541,8 +541,8 @@ def _corpus_tag_rows(cfg: Config, persona) -> tuple[list, str]:
             if not n or n in seen: continue
             seen.add(n)
             m = meta.get(n) if isinstance(meta.get(n), dict) else {}
-            v = _metric(m)
-            if v is None: v = _metric(cache.get(n) or {})
+            v = tag_size(m)
+            if v is None: v = tag_size(cache.get(n) or {})
             rows.append({"tag": n, "value": v, "measured_at": m.get("measured_at"), "from": m.get("from")})
         stamps = [m.get("measured_at") for m in meta.values()
                   if isinstance(m, dict) and isinstance(m.get("measured_at"), str)]
@@ -599,15 +599,15 @@ def personas_page(cfg: Config, *, led: Optional[Ledger] = None) -> "PersonasPage
     for a in accts:
         if getattr(a, "persona_id", None):
             by_pid.setdefault(a.persona_id, []).append(a.handle)
-    # Surface each corpus ranked by the PLATFORM visibility metric (Top median play_count, else like_count),
-    # and flag the tags that actually carry one. A corpus tag should always be measured — it can only have
-    # entered by being measured — but a cache entry can expire between derivations, so the ★ still gates on
-    # a present measurement rather than assuming it.
-    from fanops.hashtags import _metric, load_measurements, ranked_tags, _norm
+    # Surface each corpus BIGGEST FIRST (`ranked_tags` is size-first — MOL-692) and flag the tags that
+    # actually carry a measurement. A corpus tag should always be measured — it can only have entered by
+    # being measured — but a cache entry can expire between derivations, so the ★ still gates on a present
+    # measurement rather than assuming it.
+    from fanops.hashtags import load_measurements, ranked_tags, _norm, tag_size
     cache = load_measurements(cfg)
     store = ranked_tags(cache) or None
     rank = {t: i for i, t in enumerate(store or [])}
-    means = {t: _metric(r) for t, r in cache.items() if _metric(r) is not None}
+    means = {t: tag_size(r) for t, r in cache.items() if tag_size(r) is not None}
     def _ranked(corpus):
         return sorted((_norm(t) for t in corpus), key=lambda n: rank.get(n, 10 ** 6))
     from fanops.personas import lever_catalog

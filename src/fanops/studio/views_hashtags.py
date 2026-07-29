@@ -17,14 +17,17 @@ from typing import Optional
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.log import get_logger
-from fanops.hashtags import METRIC_FIELD, _metric, _norm, load_measurements, ranked_tags
+from fanops.hashtags import (SIZE_FIELD, TREND_FIELD, _norm, load_measurements, ranked_tags,
+                             size_rank_key, tag_size, tag_trend)
 from fanops.personas import Personas
 from fanops.persona_research import _persona_row
 from fanops.studio.views_results import _EXPOSURE_STATES
 
-# The number next to every tag is Instagram's own visibility field (Top median play_count,
-# else like_count) — never relabelled "reach".
-METRIC_LABEL = f"{METRIC_FIELD} (Top median; like_count fallback)"
+# TWO different Instagram fields, shown separately and never merged into one "score" (MOL-692): SIZE is
+# the tag's own lifetime post volume; TREND is the best plays on a Reel it carried in the last 7 days.
+# The old single METRIC_LABEL is gone — it quoted a Top-post median as if it measured the tag.
+SIZE_LABEL = f"size ({SIZE_FIELD} — posts carrying the tag)"
+TREND_LABEL = f"7d Reels max ({TREND_FIELD})"
 
 
 @dataclass
@@ -35,7 +38,7 @@ class CorpusRow:
     name: str
     size: int
     last_refreshed: Optional[str]      # max `measured_at` across this persona's hashtag_corpus_meta
-    top3: list                         # corpus tags by the platform metric, truncated to 3
+    top3: list                         # the 3 biggest corpus tags (size-first), truncated
     edit_href: str = ""                # url_for('personas_view') — the "edit →" link
 
 
@@ -43,10 +46,11 @@ class CorpusRow:
 class StoreStatus:
     """Section 2: the measurement cache — its state, freshness, and the ranked chips."""
     state: str                         # "empty" (no cache yet) | "unreadable" (parse error) | "ok"
-    metric_field: str = METRIC_FIELD    # the platform field every number below is quoted from
+    size_label: str = SIZE_LABEL       # what the PRIMARY number is, in Instagram's own field name
+    trend_label: str = TREND_LABEL     # what the SECONDARY number is
     age: Optional[str] = None          # cache file mtime, ISO (None when missing/unreadable)
     oldest: Optional[str] = None       # the stalest `measured_at` in the cache — the real freshness signal
-    tags: list = field(default_factory=list)   # [{tag, value}] ranked by the platform metric desc
+    tags: list = field(default_factory=list)   # [{tag, size, trend}] size-first ranked (size_rank_key)
 
 
 @dataclass
@@ -86,7 +90,7 @@ def _store_status(cfg: Config) -> StoreStatus:
     except OSError:
         age = None
     stamps = [r.get("measured_at") for r in m.values() if isinstance(r.get("measured_at"), str)]
-    rows = [{"tag": t, "value": _metric(m[t])} for t in ranked_tags(m)]
+    rows = [{"tag": t, "size": tag_size(m[t]), "trend": tag_trend(m[t])} for t in ranked_tags(m)]
     return StoreStatus(state="ok", age=age, oldest=(min(stamps) if stamps else None), tags=rows)
 
 
@@ -112,8 +116,8 @@ def rotation_health(led: Ledger, *, n: int = 5) -> list:
 
 
 def _corpora_rows(cfg: Config, *, edit_href: str = "") -> list:
-    """Section 1 read: one row per persona — corpus size, its stalest measurement, the top 3 by the
-    platform metric. Byte-truth: everything comes straight from personas.json + the cache."""
+    """Section 1 read: one row per persona — corpus size, its stalest measurement, the 3 BIGGEST tags
+    (`size_rank_key`). Byte-truth: everything comes straight from personas.json + the cache."""
     m = load_measurements(cfg)
     rows: list[CorpusRow] = []
     for per in Personas.load(cfg).all():
@@ -122,7 +126,7 @@ def _corpora_rows(cfg: Config, *, edit_href: str = "") -> list:
         corpus = [_norm(t) for t in (per.hashtag_corpus or []) if isinstance(t, str) and _norm(t)]
         stamps = [v.get("measured_at") for v in meta.values()
                   if isinstance(v, dict) and isinstance(v.get("measured_at"), str)]
-        top3 = sorted(corpus, key=lambda t: (-(_metric(m.get(t) or {}) or -1.0), t))[:3]
+        top3 = sorted(corpus, key=lambda t: size_rank_key(t, m.get(t) or {}))[:3]
         rows.append(CorpusRow(pid=per.id, name=per.name or per.id, size=len(corpus),
                               last_refreshed=(max(stamps) if stamps else None), top3=top3,
                               edit_href=edit_href))

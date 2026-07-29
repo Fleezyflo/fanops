@@ -20,7 +20,7 @@
       nothing here is hand-picked. To change what a persona reaches for, edit its description on Personas.</p>
     {% if page.corpora %}
       <table class="corpora-grid">
-        <thead><tr><th>Persona</th><th>Size</th><th>Last measured</th><th>Top by {{ page.store.metric_field }}</th><th></th></tr></thead>
+        <thead><tr><th>Persona</th><th>Corpus</th><th>Last measured</th><th>Biggest tags</th><th></th></tr></thead>
         <tbody>
           {% for r in page.corpora %}
             <tr>
@@ -50,12 +50,13 @@
       <p class="result err">✗ cache unreadable — the file could not be parsed. Selection ships short until it
         is rewritten; a breadcrumb was logged.</p>
     {% else %}
-      <p class="muted">{{ page.store.tags | length }} tags · each number is Instagram's own
-        <strong>{{ page.store.metric_field }}</strong> on that tag's top media · last written
+      <p class="muted">{{ page.store.tags | length }} tags, biggest first. Each chip shows Instagram's own
+        <strong>{{ page.store.size_label }}</strong>, then <strong>{{ page.store.trend_label }}</strong> when
+        a recent Reel carried it. Two different fields — never added together. Last written
         {{ page.store.age | localdt or '—' }}{% if page.store.oldest %} · oldest measurement {{ page.store.oldest | localdt }}{% endif %}.</p>
       <div class="store-tags">
         {% for t in page.store.tags %}
-          <span class="chip tag">{{ t.tag }}{% if t.value is not none %}<span class="reach-n"> · {{ t.value | int }}</span>{% endif %}</span>
+          <span class="chip tag">{{ t.tag }}{% if t.size is not none %}<span class="reach-n"> · {{ t.size | int }} posts</span>{% endif %}{% if t.trend is not none %}<span class="reach-n"> · {{ t.trend | int }} plays/7d</span>{% endif %}</span>
         {% else %}<span class="muted">no measurements yet</span>{% endfor %}
       </div>
     {% endif %}

@@ -2,9 +2,11 @@
 """Hashtag SELECTION — the gate that turns a persona's derived corpus + the platform measurement cache
 into the <=4-tag line a post ships.
 
-Visibility is settled OUTSIDE this module by PLATFORM fields Layer A wrote (ig_hashtag_scrape):
-`play_count` (median across Top grid when present — Reels/views) then `like_count` (median across Top),
-plus `media_count` on the tag itself when Instagram serves it. Nothing here invents a blended "reach".
+Visibility is settled OUTSIDE this module by PLATFORM fields Layer A wrote (ig_hashtag_scrape). RANK is
+SIZE-FIRST (`size_rank_key`, MOL-692): Instagram's own `media_count` DESC, then `current_top_reel_play_max_7d`
+as a tie-break within equal size. The Top-grid MEDIANS (`play_count`/`like_count`) remain stored evidence
+and still admit a legacy row, but they are no longer the cross-tag order — under them a 52k-post tag
+outranked a 20.9M-post tag by ~36x. Nothing here blends the two axes into one invented score.
 The frozen `_MEGA`/`_RELEVANCE`/`_RANK`/`VETTED` pools were DELETED.
 
 What survives here is COMPOSITION, which is format rather than a reach claim: at most 4 tags, the
@@ -18,11 +20,12 @@ from __future__ import annotations
 import json, re
 from fanops.models import Platform
 
-# Rank preference: Instagram's own fields only, visibility-priority order. play_count (Top-grid median)
-# beats like_count (Top-grid median). media_count is stored for operators but is not the sole rank key.
+# The legacy Top-grid MEDIAN fields. Still stored, still enough to admit a row that predates volume
+# collection, but NO LONGER the cross-tag rank — see `size_rank_key` (MOL-692).
 RANK_FIELDS = ("play_count", "like_count")
-# Preferred rank key name (UI / docs). Admission uses RANK_FIELDS — legacy like_count-only rows still admit.
-METRIC_FIELD = "play_count"
+METRIC_FIELD = "play_count"        # which median `_metric` prefers, for provenance/UI honesty only
+SIZE_FIELD = "media_count"                          # primary rank: Instagram's own tag volume
+TREND_FIELD = "current_top_reel_play_max_7d"        # secondary rank: current Reels popularity
 
 # THE record shape Layer A persists (MOL-691). `refresh_store` seeds its working cache from
 # `load_measurements` and then rewrites hashtags.json WHOLE, so a field absent from these tuples is
@@ -95,6 +98,45 @@ def _rank_field(rec) -> str | None:
     return None
 
 
+def tag_size(rec) -> float | None:
+    """SCALE: Instagram's own `media_count` — lifetime posts carrying the tag. The PRIMARY rank (MOL-692).
+    None when volume was never served; a volumeless tag is not "small", it is unmeasured on this axis."""
+    if not isinstance(rec, dict): return None
+    v = _num(rec.get("media_count"))
+    return v if (v or 0) > 0 else None
+
+
+def tag_trend(rec) -> float | None:
+    """CURRENT REELS POPULARITY: max plays among Top rows Instagram dated inside 7 days. A strictly
+    SECONDARY tie-break (MOL-692) — it refines the size order and can never promote a smaller tag over a
+    larger one. Different unit from `tag_size`; the two are never summed or blended."""
+    if not isinstance(rec, dict): return None
+    v = _num(rec.get("current_top_reel_play_max_7d"))
+    return v if (v or 0) > 0 else None
+
+
+def has_evidence(rec) -> bool:
+    """THE admission predicate for the cache: Instagram gave us at least one positive number for this tag —
+    scale, current Reels popularity, or the legacy Top-grid medians. Legacy invented `reach` sums carry
+    none of the three and read UNMEASURED."""
+    return tag_size(rec) is not None or tag_trend(rec) is not None or _metric(rec) is not None
+
+
+def size_rank_key(tag: str, rec) -> tuple:
+    """THE menu order (MOL-692): size first, lexicographic — NOT a weighted score.
+
+    1. a positive `media_count` outranks every record lacking one (plays cannot stand in for volume);
+    2. `media_count` DESC — the dominant ordering;
+    3. `current_top_reel_play_max_7d` DESC — a tie-break WITHIN equal size only;
+    4. tag string, so the order is total and stable.
+
+    The old order was the MEDIAN of a handful of Top posts, under which a 52k-post tag outranked a
+    20.9M-post tag by ~36x. Volumeless-but-evidenced tags sort after every sized tag and use their 7-day
+    plays only among themselves."""
+    size = tag_size(rec) or 0.0
+    return (0 if size > 0 else 1, -size, -(tag_trend(rec) or 0.0), tag)
+
+
 def load_measurements(cfg) -> dict[str, dict]:
     """THE reader for the platform measurement cache (00_control/hashtags.json). Retained keys are
     `graph_id`, `measured_at`, `from`, and the RECORD_NUM_FIELDS / RECORD_STR_FIELDS contract.
@@ -125,7 +167,7 @@ def load_measurements(cfg) -> dict[str, dict]:
             fv = v.get(fk)
             if isinstance(fv, str) and fv:
                 rec[fk] = fv
-        if _metric(rec) is None:
+        if not has_evidence(rec):
             continue
         src = v.get("from")
         if isinstance(src, dict):
@@ -141,8 +183,10 @@ def load_measurements(cfg) -> dict[str, dict]:
 
 
 def ranked_tags(measurements: dict[str, dict]) -> list[str]:
-    """The cache as one ordered menu: visibility metric DESC (play then like), ties by tag string."""
-    return sorted(measurements, key=lambda t: (-(_metric(measurements[t]) or 0.0), t))
+    """The cache as one ordered menu, SIZE-FIRST: `media_count` DESC, then the 7-day Top-Reel max as a
+    tie-break, then tag (`size_rank_key`). `vet_hashtags` takes its whole metric rank from this order, so
+    this function is where "which tags are the biggest" is decided."""
+    return sorted(measurements, key=lambda t: size_rank_key(t, measurements[t]))
 
 
 # Word tokenizer for the per-clip content signal. A token is a latin word, 3-20 chars, starting with a

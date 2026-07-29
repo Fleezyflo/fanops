@@ -121,7 +121,7 @@ def regenerate_caption(cfg: Config, post_id: str, guidance: str = "", *,
     Does NOT publish — safe on any backend, so no confirm gate."""
     from fanops.prompts import caption_prompt
     from fanops.caption import brand_risk_flag, _per_account_hashtag_stores
-    from fanops.hashtags import content_tag_candidates, load_measurements, _norm
+    from fanops.hashtags import RECORD_NUM_FIELDS, content_tag_candidates, load_measurements, _norm, _num
     now = _now(now)
     led = Ledger.load(cfg)                              # lock-free read: reject early, build context
     p, err = _guard_editable_post(led, post_id, now)
@@ -159,10 +159,10 @@ def regenerate_caption(cfg: Config, post_id: str, guidance: str = "", *,
         if not isinstance(rec, dict):
             continue
         row = {}
-        for k in ("play_count", "like_count", "media_count"):
-            v = rec.get(k)
-            if isinstance(v, (int, float)) and not isinstance(v, bool) and v >= 0:
-                row[k] = float(v)
+        for k in RECORD_NUM_FIELDS:                      # MOL-692: same contract as request_captions
+            v = _num(rec.get(k))
+            if v is not None:
+                row[k] = v
         if row:
             hashtag_metrics[t] = row
     payload = {"clip_id": p.parent_id, "language": src.language if src else None,

@@ -37,10 +37,13 @@ def test_hashtag_lifecycle_end_to_end(tmp_path, monkeypatch):
     cfg.accounts_path.write_text(json.dumps({"accounts": [
         {"handle": "@a", "platforms": ["instagram"], "status": "active", "persona_id": pid}]}))
 
-    client = _FakeClient({"#hiphop": 500, "#detroitrap": 990}, cooccur="#detroitrap")
+    # #hiphop is the LOUDER tag (higher Top-grid median) but #detroitrap is the BIGGER one, so
+    # size-first rank (MOL-692) must lead with #detroitrap all the way to the shipped line.
+    client = _FakeClient({"#hiphop": 990, "#detroitrap": 500}, cooccur="#detroitrap",
+                         media_count_by_tag={"#hiphop": 10_000, "#detroitrap": 4_000_000})
     refresh_store(cfg, scrape_client=client)
     cache = load_measurements(cfg)
-    assert _metric(cache["#detroitrap"]) == 990
+    assert _metric(cache["#detroitrap"]) == 500 and cache["#detroitrap"]["media_count"] == 4_000_000.0
     assert cache["#detroitrap"]["from"] == {"#hiphop": 2}
     assert ranked_tags(cache)[0] == "#detroitrap"
 
@@ -69,6 +72,6 @@ def test_hashtag_lifecycle_end_to_end(tmp_path, monkeypatch):
     led.save()
     refresh_store(cfg, scrape_client=client)
     after = load_measurements(cfg)
-    assert _metric(after["#detroitrap"]) == 990
-    assert _metric(after["#hiphop"]) == 500
+    assert _metric(after["#detroitrap"]) == 500
+    assert _metric(after["#hiphop"]) == 990
     assert derive_corpus(cfg, pid)["changed"] is False

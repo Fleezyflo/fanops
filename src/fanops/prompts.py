@@ -373,14 +373,18 @@ def caption_prompt(payload: dict) -> str:
     # MOL-513 (C-3): each surface carries its own `hashtag_store` (that account's persona aligned pool,
     # metric-ranked). Absent/empty menu -> honest empty list in the pick rule; the surface corpus still
     # carries the line. Root-level hashtag_store is gone.
-    # MOL-636: when hashtag_metrics is present, annotate each menu tag with its visibility numbers.
+    # MOL-636: when hashtag_metrics is present, annotate each menu tag with its platform numbers.
+    # MOL-692: FORWARD whatever numeric fields the sidecar carries rather than naming them here — the
+    # sidecar is already built from the hashtags record contract, and re-listing the fields in the prompt
+    # layer is the drift that let a new measurement go unseen by the model. No import needed either.
     metrics = payload.get("hashtag_metrics") if isinstance(payload.get("hashtag_metrics"), dict) else {}
 
     def _menu_entry(tag: str) -> str | dict:
         rec = metrics.get(tag)
         if not isinstance(rec, dict):
             return tag
-        row = {k: rec[k] for k in ("play_count", "like_count", "media_count") if k in rec}
+        row = {k: v for k, v in rec.items()
+               if isinstance(v, (int, float)) and not isinstance(v, bool)}
         return {"tag": tag, **row} if row else tag
 
     pick_parts = []
@@ -397,11 +401,14 @@ def caption_prompt(payload: dict) -> str:
                  "Choose ONLY from each surface's `hashtag_store` UNION its `corpus` "
                  "(both may be empty — ship a short honest line).")
     pick_rule = ("Pick up to 4 tags by how well each fits THIS clip — each surface's menu is already "
-                 "ordered by live platform reach, so prefer earlier entries when the fit is equal. "
-                 f"{pick_body} Do NOT invent tags outside them. ")
+                 "ordered BIGGEST FIRST by Instagram's own post volume, so prefer earlier entries when "
+                 f"the fit is equal. {pick_body} Do NOT invent tags outside them. ")
     metrics_block = (
-        "  - When clip fit is equal, prefer the tag with higher play_count (then like_count). "
-        f"Visibility numbers: {json.dumps(metrics, ensure_ascii=False)}\n"
+        "  - Your job is CLIP FIT; the menu order already carries size. When two tags fit equally, keep "
+        "the earlier (larger) one. `media_count` is how many posts carry the tag; "
+        "`current_top_reel_play_max_7d` is the best plays on a Reel it carried in the last 7 days. These "
+        "are different units — do not add or average them. "
+        f"Platform numbers: {json.dumps(metrics, ensure_ascii=False)}\n"
         if metrics else ""
     )
     # MOL-642: clip transcript → content_tags as a FIT signal; still pick only from measured menu∪corpus.
