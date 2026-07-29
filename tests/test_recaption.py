@@ -43,8 +43,10 @@ class _FakeResponder:
     """Answers pending caption gates like the real sequential responder — but from canned tags."""
     def __init__(self, hashtags=("#alpha", "#hiphop"), language="en"):
         self.hashtags = list(hashtags); self.language = language; self.calls = 0
+        self.last_kinds = None; self.last_parallel = None
 
-    def answer_pending(self, cfg):
+    def answer_pending(self, cfg, *, kinds=None, parallel=None):
+        self.last_kinds = kinds; self.last_parallel = parallel
         n = 0
         for key in pending(cfg, kind="captions"):
             req = json.loads(request_path(cfg, "captions", key).read_text())
@@ -55,6 +57,16 @@ class _FakeResponder:
             n += 1
         self.calls += n
         return n
+
+
+def test_apply_answers_captions_only_in_parallel(tmp_path):
+    # Recaption must NOT drain moments/hooks, and must force a parallel captions fan-out.
+    cfg = Config(root=tmp_path); _seed(cfg)
+    fake = _FakeResponder()
+    run_recaption(cfg, apply=True, responder=fake, now=NOW)
+    assert fake.last_kinds == ("captions",)
+    assert fake.last_parallel is True
+    assert fake.calls == 1
 
 
 def test_dry_run_lists_targets_and_writes_nothing(tmp_path):

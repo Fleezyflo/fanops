@@ -54,7 +54,8 @@ _GATE_DETERMINISTIC_MAX = 3   # MOL-235: after N same-gate deterministic failure
 
 class ManualResponder:
     def __init__(self, cfg: Config): self.cfg = cfg
-    def answer_pending(self, cfg: Config) -> int:
+    def answer_pending(self, cfg: Config, *, kinds: tuple[str, ...] | list[str] | None = None,
+                       parallel: bool | None = None) -> int:
         return 0                                    # a human (or external cron) writes responses
 
 def _default_claude_model(kind: str, payload: dict, *, cfg: Config | None = None, log=None) -> dict:
@@ -208,20 +209,27 @@ class LlmResponder:
         """Back-compat shim: wraps _mark_gate_degraded with the legacy context-limit prefix."""
         self._mark_gate_degraded(cfg, kind, key, f"agent gate {kind} over context limit: {reason}")
 
-    def answer_pending(self, cfg: Config) -> int:
+    def answer_pending(self, cfg: Config, *, kinds: tuple[str, ...] | list[str] | None = None,
+                       parallel: bool | None = None) -> int:
+        """Answer pending agent gates. `kinds` scopes which gates (default: all). `parallel=True`
+        forces a worker pool even when FANOPS_CONCURRENT_SOURCES is off — used by recaption so a
+        captions-only backlog does not wait on moments/hooks or run one LLM call at a time.
+        `parallel=None` keeps the existing concurrent_sources opt-in (run-loop byte-identical)."""
         log = get_logger(cfg)
         # Snapshot every pending (kind, model_cls, key) BEFORE any work — pending() is a glob over the
         # gate dir, so it MUST be read serially (never inside a worker). The flat list is the same set
         # of work the sequential loop would visit, in the same order.
+        allow = set(kinds) if kinds is not None else None
         pairs = [(kind, model_cls, key) for kind, model_cls in _SCHEMA.items()
+                 if allow is None or kind in allow
                  for key in pending(cfg, kind=kind)]
-        if not cfg.concurrent_sources:
+        use_pool = bool(cfg.concurrent_sources) if parallel is None else bool(parallel)
+        if not use_pool:
             # DEFAULT OFF — the byte-identical sequential path: answer each gate one at a time, in
             # _SCHEMA-then-pending order, exactly as before. The pool is NOT constructed.
             return sum(self._answer_one(cfg, kind, model_cls, key, log) for kind, model_cls, key in pairs)
-        # ON — fan the gate calls out over a bounded pool (parallel-source pipeline). Each (kind, key)
-        # is a UNIQUE response_path and the TOCTOU guard is per-key local state, so concurrent writes
-        # never collide. answered = the count of True results (a fresh write); no ledger involvement.
+        # ON — fan the gate calls out over a bounded pool. Each (kind, key) is a UNIQUE response_path
+        # and the TOCTOU guard is per-key local state, so concurrent writes never collide.
         if not pairs:
             return 0
         with ThreadPoolExecutor(max_workers=cfg.concurrent_workers) as ex:   # bound = rate-limit guardrail for claude -p
