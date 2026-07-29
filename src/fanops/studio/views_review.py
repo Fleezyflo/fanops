@@ -89,6 +89,7 @@ class SurfacePost:
     batch_id: Optional[str] = None
     batch_created: Optional[str] = None
     clip_id: Optional[str] = None
+    corpus_stale: bool = False             # MOL-688: caption predates last corpus derive for this persona
 
 
 @dataclass
@@ -208,6 +209,34 @@ def _cast_cause(led: Ledger, post, affinities) -> Optional[str]:
         return f"picked for {post.account}"
     return None
 
+
+def _caption_corpus_stale(cfg: Config, post, persona_id: Optional[str]) -> bool:
+    """True when this post's caption age predates the persona's last corpus derive (MOL-688).
+    Fail-open: missing persona / stamps / unparseable times -> False (no badge, never a guess)."""
+    if not persona_id:
+        return False
+    cap_raw = getattr(post, "edited_at", None) or getattr(post, "created_at", None)
+    if not isinstance(cap_raw, str) or not cap_raw:
+        return False
+    try:
+        import json
+        from datetime import timezone
+        raw = json.loads(cfg.personas_path.read_text())
+        row = next((d for d in (raw.get("personas") or [])
+                    if isinstance(d, dict) and d.get("id") == persona_id), None) or {}
+        meta = row.get("hashtag_corpus_meta") if isinstance(row.get("hashtag_corpus_meta"), dict) else {}
+        stamps = [v.get("measured_at") for v in meta.values()
+                  if isinstance(v, dict) and isinstance(v.get("measured_at"), str)]
+        if not stamps:
+            return False
+        def _ts(s: str):
+            t = datetime.fromisoformat(s.replace("Z", "+00:00"))
+            return t if t.tzinfo else t.replace(tzinfo=timezone.utc)
+        return _ts(cap_raw) < max(_ts(s) for s in stamps)
+    except (ValueError, TypeError, KeyError, OSError, json.JSONDecodeError):
+        return False
+
+
 def _surface(post, *, persona, now: datetime, cfg: Config, led: Ledger, acct=None, affinities=()) -> SurfacePost:
     state = post.state.value
     # an awaiting_approval post is GATED — it cannot ship until approved, so it is never "imminent"
@@ -262,7 +291,8 @@ def _surface(post, *, persona, now: datetime, cfg: Config, led: Ledger, acct=Non
         hook_source=(getattr(getattr(r, "hook_source", None), "value", None) if r else None),
         length_cause=length_cause, framing_cause=framing_cause, cast_cause=cast_cause,
         tag_sources=tag_sources, thumb_url=f"/clip-thumb/{post.parent_id}",
-        ready=ready, ready_reason=ready_reason)
+        ready=ready, ready_reason=ready_reason,
+        corpus_stale=_caption_corpus_stale(cfg, post, getattr(acct, "persona_id", None)) if editable else False)
 
 def _card(led: Ledger, clip, posts, bucket: str, cfg: Config, personas: dict, now: datetime,
           active_handles: frozenset = frozenset(), acct_by_handle: Optional[dict] = None) -> ReviewCard:
