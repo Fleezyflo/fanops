@@ -1,14 +1,16 @@
 ---
 name: fanops-hook-hashtag
-description: Use when writing or reviewing on-screen HOOKS or HASHTAGS for FanOps clips. The hook's only job is RETENTION (stop the scroll, force watch-through) — never artist praise. Hashtags are capped at 4, hard, and chosen from a reach-vetted set ranked by real post volume — never words the model invents. Evidence-backed; sources cited inline.
+description: Use when writing or reviewing on-screen HOOKS or HASHTAGS for FanOps clips. The hook's only job is RETENTION (stop the scroll, force watch-through) — never artist praise. Hashtags are capped at 4, hard, and chosen from the persona's derived corpus + measured cache (relatedness→candidate, platform metric→member) — never words the model invents. Evidence-backed; sources cited inline.
 ---
 
-# FanOps Hooks & Hashtags — researched, reach-vetted
+# FanOps Hooks & Hashtags — researched, platform-measured
 
-> **Source of truth = code.** The runtime values live in `hashtags.VETTED` and
-> `prompts._hook_spec`; this file documents them. The DRIFT-GUARD blocks below are
-> mirror-tested by `tests/test_skill_drift.py` — if this doc and the code disagree,
-> that test goes red. Edit code + doc together.
+> **Source of truth = code.** Hook patterns live in `prompts._hook_spec`; hashtag
+> composition floors live in `hashtags._ARABIC` (the only frozen tag list — format,
+> not a reach claim). The DRIFT-GUARD blocks below are mirror-tested by
+> `tests/test_skill_drift.py` — if this doc and the code disagree, that test goes red.
+> Edit code + doc together. Corpus membership is derived (relatedness + metric), never
+> a hand-ranked `VETTED` pool.
 
 The knowledge that drives two things the engine generates: the **on-screen hook**
 (big text in a clip's first ~2s) and the **hashtag caption**. Both were freestyled
@@ -45,10 +47,10 @@ fomo
 2. **Max 4 hashtags. Hard.** More than 4 is forbidden. Enforced in code
    ([hashtags.py](../../../src/fanops/hashtags.py) `vet_hashtags`), not by asking
    the model nicely. General guides say "use 20–30" — ignored; the operator rule wins.
-3. **Hashtags come from the reach-vetted FLOOR + live-discovered, operator-curated tags** —
-   never words the model invents. The frozen set (below) is the cold-start FLOOR, not the
-   ceiling: per-persona corpora curated from live Graph **co-occurrence discovery** join the
-   membership and lead selection (Part 3). The frozen counts below are a class ranking, sourced.
+3. **Hashtags come from the persona's derived corpus + measured cache** —
+   never words the model invents. Relatedness makes a candidate; platform metric
+   (play_count preferred, else like_count) ranks membership (Part 3). There is no
+   hand-ranked frozen reach pool and no Graph-as-Layer-A path.
 
 ---
 
@@ -200,16 +202,17 @@ Authority: `docs/CODEMAPS/hashtag-lifecycle.md`. Summary:
    link via `Account.persona_id`. Edited in the Studio **Personas** tab. There is no operator
    pin/ban/recommend lane and no global ban list.
 2. **Layer A — measurement** (`fanops_hashtags.refresh_store` via `ig_hashtag_scrape` / instagrapi;
-   Graph hashtag path deferred): `persona_terms` returns declared niche ONLY (MOL-637) → each term resolves
-   via `hashtag_info` → one `hashtag_medias_top` fetch yields Instagram's verbatim `like_count` plus
-   co-occurring tags → written to `00_control/hashtags.json` (measured tags only). Cached `graph_id`
-   skips resolve and still re-measures. **No local budget / allowance model.** Throttle cues end a pass
-   via `ScrapeThrottled`; any other scrape error raises `ScrapeRefused` and the pass records it in
-   `unresolved` — never a silent Graph fallback. Missing scrape aborts loudly (`no_scrape`).
-   `fanops hashtags discover` is read-only (projects the cache; zero network).
-3. **Layer B — derivation** (`persona_research.derive_corpus`, zero network): corpus = top
-   `cfg.corpus_target` of the persona's aligned measured pool. Outage / empty pool holds the previous
-   corpus. An empty corpus is honest (no padding).
+   Graph hashtag path deferred — no silent fallback): `persona_terms` = declared niche ∪ durable LLM
+   vocab → each term resolves via `hashtag_info` → one `hashtag_medias_top` yields Top-grid median
+   `play_count`/`like_count` (plus `media_count` when served) and co-occurring tags →
+   `00_control/hashtags.json` (measured tags only). Exclusive writer lease on `hashtags.lock`.
+   Throttle / try_cap ends a pass without advancing `last_complete_pass`. Missing scrape aborts
+   loudly (`no_scrape`). `fanops hashtags discover` is read-only (zero network).
+3. **Layer B — derivation** (`persona_research.derive_corpus`, zero network): relatedness→candidate
+   (anchors always; else inbound_hits≥2 or n_roots≥2; magnet soft lane at `MAGNET_METRIC_FLOOR`);
+   numbers→member via rank + `corpus_target` cut. Non-anchor category-scale tags (high
+   `media_count`) need multi-root relatedness and rank behind niche peers. Outage / empty pool
+   holds the previous corpus. An empty corpus is honest (no padding).
 4. **Selection** (`vet_hashtags`): per-surface store = that persona's aligned pool ∪ corpus; corpus
    leads when present; hard cap 4; composition rules only (no hand-ranked mega pools, no discovery floor,
    no ban list). Cold empty store → empty hashtag line.
