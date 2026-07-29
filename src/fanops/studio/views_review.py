@@ -219,24 +219,21 @@ def _caption_corpus_stale(cfg: Config, post, persona_id: Optional[str]) -> bool:
     if not isinstance(cap_raw, str) or not cap_raw:
         return False
     try:
-        from fanops.persona_research import _persona_row
-        from fanops.timeutil import parse_iso
-        row = _persona_row(cfg, persona_id) or {}
+        import json
+        from datetime import timezone
+        raw = json.loads(cfg.personas_path.read_text())
+        row = next((d for d in (raw.get("personas") or [])
+                    if isinstance(d, dict) and d.get("id") == persona_id), None) or {}
         meta = row.get("hashtag_corpus_meta") if isinstance(row.get("hashtag_corpus_meta"), dict) else {}
         stamps = [v.get("measured_at") for v in meta.values()
                   if isinstance(v, dict) and isinstance(v.get("measured_at"), str)]
         if not stamps:
             return False
-        cap_ts = parse_iso(cap_raw)
-        corpus_ts = max(parse_iso(s) for s in stamps)
-        if cap_ts.tzinfo is None:
-            from datetime import timezone
-            cap_ts = cap_ts.replace(tzinfo=timezone.utc)
-        if corpus_ts.tzinfo is None:
-            from datetime import timezone
-            corpus_ts = corpus_ts.replace(tzinfo=timezone.utc)
-        return cap_ts < corpus_ts
-    except (ValueError, TypeError, KeyError, OSError):
+        def _ts(s: str):
+            t = datetime.fromisoformat(s.replace("Z", "+00:00"))
+            return t if t.tzinfo else t.replace(tzinfo=timezone.utc)
+        return _ts(cap_raw) < max(_ts(s) for s in stamps)
+    except (ValueError, TypeError, KeyError, OSError, json.JSONDecodeError):
         return False
 
 
