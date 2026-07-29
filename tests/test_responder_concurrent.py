@@ -37,6 +37,30 @@ def _responses(cfg, keys):
     return out
 
 
+def test_kinds_filter_skips_other_gates(tmp_path, monkeypatch):
+    # Recaption scopes answer_pending to captions — moments pending must stay unanswered.
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    monkeypatch.delenv("FANOPS_CONCURRENT_SOURCES", raising=False)
+    cfg = Config(root=tmp_path)
+    write_request(cfg, kind="moments", key="m1",
+                  payload={"source_id": "m1", "duration": 10.0, "transcript": [], "signal_peaks": [],
+                           "language": "en", "guidance": ""})
+    write_request(cfg, kind="captions", key="c1",
+                  payload={"clip_id": "c1", "surfaces": [{"surface": "a/instagram", "platform": "instagram"}],
+                           "language": "en", "guidance": ""})
+    seen = []
+    def model(kind, payload):
+        seen.append(kind)
+        if kind == "captions":
+            return {"items": [{"surface": "a/instagram", "caption": "x", "language": "en", "hashtags": []}]}
+        return {"source_id": payload["source_id"],
+                "picks": [{"start": 1.0, "end": 4.0, "reason": "x"}]}
+    n = LlmResponder(cfg, model=model).answer_pending(cfg, kinds=("captions",), parallel=True)
+    assert n == 1 and seen == ["captions"]
+    assert not response_path(cfg, "moments", "m1").exists()
+    assert response_path(cfg, "captions", "c1").exists()
+
+
 def test_flag_on_same_response_files_and_count(tmp_path, monkeypatch):
     # EQUIVALENCE: N gates answered flag-OFF vs flag-ON yield the SAME response files + the SAME
     # `answered`. Two independent roots seeded identically; compare answer content (rid-independent).
