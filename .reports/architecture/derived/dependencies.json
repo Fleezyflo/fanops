@@ -2065,6 +2065,7 @@
       "datetime",
       "dotenv",
       "faster_whisper",
+      "fcntl",
       "flask",
       "hashlib",
       "instagrapi",

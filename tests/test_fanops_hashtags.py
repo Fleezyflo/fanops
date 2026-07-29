@@ -250,6 +250,32 @@ def test_refresh_store_try_cap_ends_pass_without_complete_stamp(tmp_path, monkey
     assert len(client.media_calls) == 2
 
 
+def test_refresh_store_refuses_a_second_concurrent_pass(tmp_path, monkeypatch):
+    """MOL-686: a pass rewrites the whole cache from its own snapshot, so two in flight discard each
+    other's tags. A pass already holding the lease makes the second a clean abort — no network, cache
+    byte-identical — and the lease releases so the next pass runs normally."""
+    from fanops.fanops_hashtags import _pass_lease
+    cfg = Config(root=tmp_path); _persona(cfg)
+    refresh_store(cfg, scrape_client=_FakeClient({"#hiphop": 100}))
+    before = cfg.hashtags_path.read_text()
+    client = _FakeClient({"#hiphop": 999})
+    with _pass_lease(cfg) as held:
+        assert held is True
+        out = refresh_store(cfg, scrape_client=client)
+    assert out["written"] is False and out["aborted"] == "busy"
+    assert client.media_calls == []                          # not one fetch spent on a doomed pass
+    assert cfg.hashtags_path.read_text() == before
+    assert refresh_store(cfg, scrape_client=client)["written"] is True
+
+
+def test_scrape_try_cap_default_clears_a_full_cache_remeasure(tmp_path):
+    """MOL-686: the queue is every measured tag (stalest-first) plus anchors plus enqueued co-tags. A cap
+    below that count throttles EVERY pass, so last_complete_pass never advances and the 12h tick degenerates
+    into a pass per tick that only re-measures the same stale head. The live cache held 300 tags at cap 120."""
+    import fanops.fanops_hashtags as fh
+    assert fh._SCRAPE_TRY_CAP >= 300 + fh._SCRAPE_COTAG_ENQUEUE_CAP
+
+
 def test_refresh_store_cotag_enqueue_cap(tmp_path, monkeypatch):
     """One anchor can harvest dozens of co-tags; only _SCRAPE_COTAG_ENQUEUE_CAP are measured this pass."""
     import fanops.fanops_hashtags as fh
