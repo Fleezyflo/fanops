@@ -16,6 +16,14 @@ from datetime import datetime, timedelta, timezone
 from fanops.config import Config
 from fanops import daemon
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _noop_locked_deps_sync(monkeypatch):
+    """Existing plane tests must not hit a real pip install against the checkout lock."""
+    monkeypatch.setattr(daemon, "_sync_locked_deps", lambda: (True, ""))
+
 
 # ── mock helpers (mirror tests/test_daemon_keeper.py::_fake_launchctl) ────────────────────────
 
@@ -538,3 +546,70 @@ def test_no_publish_side_effect_in_bringup(tmp_path, monkeypatch):
     res = daemon.up(cfg, kickstart=True)
     assert res["ready"] is True
     assert os.getenv("FANOPS_LIVE") in (None, "")          # never set by bring-up
+
+def test_daemon_plane_no_dep_drift_leaves_detail_unchanged(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(daemon.sys, "platform", "darwin")
+    monkeypatch.setattr(daemon.time, "sleep", lambda _s: None)
+    uid = os.getuid()
+    main_print = f"gui/{uid}/{daemon.LABEL}"
+    cfg = Config(root=tmp_path)
+    daemon.plist_path().parent.mkdir(parents=True, exist_ok=True)
+    daemon.plist_path().write_text(daemon.render_plist(cfg, interval=600))
+    fake = _fake_launchctl(**{main_print: (0, '\t"PID" = 4321;\n')})
+    monkeypatch.setattr(daemon.subprocess, "run", fake)
+    monkeypatch.setattr(daemon, "_heartbeat_fresh_since", lambda cfg, since, **k: True)
+    monkeypatch.setattr(daemon, "_sync_locked_deps", lambda: (True, ""))  # no drift
+
+    plane = daemon._plane_daemon(cfg, kickstart=True)
+
+    assert plane["ok"] is True and plane["restarted"] is True
+    assert plane["detail"] == "restarted onto current code; fresh heartbeat confirmed"
+
+
+def test_daemon_plane_dep_drift_syncs_before_kickstart(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(daemon.sys, "platform", "darwin")
+    monkeypatch.setattr(daemon.time, "sleep", lambda _s: None)
+    uid = os.getuid()
+    main_print = f"gui/{uid}/{daemon.LABEL}"
+    cfg = Config(root=tmp_path)
+    daemon.plist_path().parent.mkdir(parents=True, exist_ok=True)
+    daemon.plist_path().write_text(daemon.render_plist(cfg, interval=600))
+    fake = _fake_launchctl(**{main_print: (0, '\t"PID" = 4321;\n')})
+    monkeypatch.setattr(daemon.subprocess, "run", fake)
+    monkeypatch.setattr(daemon, "_heartbeat_fresh_since", lambda cfg, since, **k: True)
+    calls: list[int] = []
+    def sync():
+        calls.append(1)
+        return True, "deps synced (instagrapi:2.18.11->2.18.12)"
+    monkeypatch.setattr(daemon, "_sync_locked_deps", sync)
+
+    plane = daemon._plane_daemon(cfg, kickstart=True)
+
+    assert calls == [1]
+    assert plane["ok"] is True and plane["restarted"] is True
+    assert "deps synced (instagrapi:2.18.11->2.18.12)" in plane["detail"]
+    assert any(c[1] == "kickstart" for c in fake.calls)
+
+
+def test_daemon_plane_dep_sync_failure_skips_kickstart(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(daemon.sys, "platform", "darwin")
+    monkeypatch.setattr(daemon.time, "sleep", lambda _s: None)
+    uid = os.getuid()
+    main_print = f"gui/{uid}/{daemon.LABEL}"
+    cfg = Config(root=tmp_path)
+    daemon.plist_path().parent.mkdir(parents=True, exist_ok=True)
+    daemon.plist_path().write_text(daemon.render_plist(cfg, interval=600))
+    fake = _fake_launchctl(**{main_print: (0, '\t"PID" = 4321;\n')})
+    monkeypatch.setattr(daemon.subprocess, "run", fake)
+    monkeypatch.setattr(daemon, "_sync_locked_deps",
+                        lambda: (False, "deps sync failed for instagrapi:2.18.11->2.18.12: boom"))
+
+    plane = daemon._plane_daemon(cfg, kickstart=True)
+
+    assert plane["ok"] is False and plane["restarted"] is False
+    assert "deps sync failed" in plane["detail"]
+    assert not any(c[1] == "kickstart" for c in fake.calls)
+

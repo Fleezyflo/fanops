@@ -24,5 +24,7 @@ python -m pip install --quiet --upgrade pip-tools
 mkdir -p requirements
 _compile() { python -m piptools compile --quiet --generate-hashes --allow-unsafe --strip-extras "$@" pyproject.toml; }
 _compile --extra dev --extra studio --extra framing --extra igscrape             --output-file requirements/ci-unit.txt
-_compile --extra dev --extra studio --extra transcribe --extra compose --extra framing --extra igscrape --output-file requirements/ci-e2e.txt
+# e2e omits igscrape: moviepy (compose) pins pillow<12; instagrapi>=2.18.12 needs Pillow>=12.2.
+# Layer A coverage lives in the unit lock; e2e hashtag tests mock the scrape client.
+_compile --extra dev --extra studio --extra transcribe --extra compose --extra framing --output-file requirements/ci-e2e.txt
 echo "[lock-deps] regenerated: ci-unit.txt ($(grep -c '==' requirements/ci-unit.txt) pkgs), ci-e2e.txt ($(grep -c '==' requirements/ci-e2e.txt) pkgs)"
