@@ -706,7 +706,7 @@ def cmd_hashtags_scrape_login(cfg: Config) -> int:
     if sess.exists():
         try:
             before = float((json.loads(sess.read_text()) or {}).get("last_login") or 0)
-        except Exception:                                  # noqa: BLE001 — absent/corrupt stamp = cold
+        except (OSError, json.JSONDecodeError, AttributeError, TypeError, ValueError):
             before = 0.0
     try:
         client = open_client(cfg)
