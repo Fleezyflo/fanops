@@ -78,6 +78,40 @@ def test_expand_persona_writes_validated_seeds_only(tmp_path, monkeypatch):
     assert list(per.hashtag_corpus) == []
 
 
+def test_expand_prompt_names_sibling_owned_terms(tmp_path, monkeypatch):
+    """MOL-716: the LLM sees sibling niche + durable vocab as territory it must not propose."""
+    cfg = Config(root=tmp_path)
+    a = _persona(cfg, pid="craft", niche=["undergroundmusic"])
+    b = _persona(cfg, pid="street", niche=["streetinterview"])
+    _link_active_many(cfg, {"craftacct": a, "streetacct": b})
+    hv.write_vocab(cfg, {b: {"terms": ["voxpop"], "expanded_at": "2026-07-28T00:00:00+00:00",
+                             "source": "llm"}})
+
+    def _fake_claude(prompt, schema, **kw):
+        assert "Do NOT propose these terms already owned by sibling personas:" in prompt
+        assert "streetinterview" in prompt and "voxpop" in prompt
+        return {"terms": ["drillscene"]}
+
+    monkeypatch.setattr(hv, "claude_json", _fake_claude)
+    assert hv.expand_persona_vocab(cfg, a).get("ok") is True
+
+
+def test_expand_filters_sibling_owned_terms_after_llm(tmp_path, monkeypatch):
+    """MOL-716: prompt disobedience cannot write a sibling's niche or durable vocab into this row."""
+    cfg = Config(root=tmp_path)
+    a = _persona(cfg, pid="craft", niche=["undergroundmusic"])
+    b = _persona(cfg, pid="street", niche=["streetinterview"])
+    _link_active_many(cfg, {"craftacct": a, "streetacct": b})
+    hv.write_vocab(cfg, {b: {"terms": ["#VoxPop"], "expanded_at": "2026-07-28T00:00:00+00:00",
+                             "source": "llm"}})
+    fake, _ = _replying(["street-interview", "VOX POP", "drillscene"])
+    monkeypatch.setattr(hv, "claude_json", fake)
+
+    r = hv.expand_persona_vocab(cfg, a)
+    assert r.get("ok") is True
+    assert hv.load_vocab(cfg).get(a, {}).get("terms") == ["drillscene"]
+
+
 def test_expand_if_due_noop_when_responder_manual(tmp_path, monkeypatch):
     """Fail-open: without FANOPS_RESPONDER=llm, vocab expand is a no-op (no LLM call)."""
     cfg = Config(root=tmp_path)
@@ -97,8 +131,7 @@ def test_expand_if_due_noop_when_responder_manual(tmp_path, monkeypatch):
 
 
 def test_input_fingerprint_is_stable_and_input_sensitive(tmp_path):
-    """MOL-693: the fingerprint is a stable digest of (name, voice, niche) — same inputs, same value in
-    any process (no salted hash()), and every one of the three inputs moves it."""
+    """MOL-693: the fingerprint is stable across reloads and sensitive to every own-persona input."""
     cfg = Config(root=tmp_path)
     _persona(cfg, pid="craft", niche=["undergroundmusic"], voice="syrian rap craft")
     per = Personas.load(cfg).get("craft")
@@ -108,6 +141,48 @@ def test_input_fingerprint_is_stable_and_input_sensitive(tmp_path):
     assert hv._input_fingerprint(per.model_copy(update={"niche": ["basementshow"]})) != fp
     assert hv._input_fingerprint(per.model_copy(update={"voice": "other voice"})) != fp
     assert hv._input_fingerprint(per.model_copy(update={"name": "other name"})) != fp
+
+
+def test_sibling_niche_edit_marks_other_persona_due(tmp_path):
+    """MOL-716: sibling territory is an input, so editing A invalidates B's current vocab fingerprint."""
+    cfg = Config(root=tmp_path)
+    a = _persona(cfg, pid="craft", niche=["undergroundmusic"])
+    b = _persona(cfg, pid="street", niche=["streetinterview"])
+    _link_active_many(cfg, {"craftacct": a, "streetacct": b})
+    personas = Personas.load(cfg).all()
+    data = {a: {"terms": ["drillscene"], "expanded_at": "2026-07-28T00:00:00+00:00", "source": "llm"},
+            b: {"terms": ["voxpop"], "expanded_at": "2026-07-28T00:00:00+00:00", "source": "llm"}}
+    for per in personas:
+        data[per.id]["input_fp"] = hv._input_fingerprint(per, siblings=personas, data=data)
+    assert hv.vocab_due_reason(next(p for p in personas if p.id == b), data, siblings=personas) is None
+
+    from fanops.personas import update_persona
+    update_persona(cfg, a, niche=["undergroundmusic", "basementshow"])
+    personas = Personas.load(cfg).all()
+    assert hv.vocab_due_reason(next(p for p in personas if p.id == b), data,
+                               siblings=personas) == "inputs_changed"
+
+
+def test_current_sibling_fingerprints_keep_unchanged_tick_call_free(tmp_path, monkeypatch):
+    """MOL-716/MOL-693: once every row carries the sibling-aware shape, unchanged inputs cost zero calls."""
+    cfg = Config(root=tmp_path)
+    a = _persona(cfg, pid="craft", niche=["undergroundmusic"])
+    b = _persona(cfg, pid="street", niche=["streetinterview"])
+    _link_active_many(cfg, {"craftacct": a, "streetacct": b})
+    personas = Personas.load(cfg).all()
+    data = {a: {"terms": ["drillscene"], "expanded_at": "2026-07-28T00:00:00+00:00", "source": "llm"},
+            b: {"terms": ["voxpop"], "expanded_at": "2026-07-28T00:00:00+00:00", "source": "llm"}}
+    for per in personas:
+        data[per.id]["input_fp"] = hv._input_fingerprint(per, siblings=personas, data=data)
+    hv.write_vocab(cfg, data)
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+
+    def _boom(*a, **k):
+        raise AssertionError("current sibling-aware fingerprints must skip the LLM")
+
+    monkeypatch.setattr(hv, "claude_json", _boom)
+    r = hv.expand_vocab_if_due(cfg)
+    assert r == {"refreshed": False, "reason": "fresh", "personas": 2}
 
 
 def test_expand_if_due_skips_unchanged_persona(tmp_path, monkeypatch):
@@ -131,15 +206,24 @@ def test_expand_if_due_skips_unchanged_persona(tmp_path, monkeypatch):
     assert hv.load_vocab(cfg).get(pid) == row                        # durable row untouched (incl. expanded_at)
 
 
-def test_niche_edit_expands_only_that_persona_once(tmp_path, monkeypatch):
-    """MOL-693: a changed persona is due; its siblings are not; and the edit re-expands exactly once."""
+def test_niche_edit_reexpands_owner_and_sibling_once(tmp_path, monkeypatch):
+    """MOL-716: a changed niche re-expands its owner and sibling, then both become current."""
     cfg = Config(root=tmp_path)
     a = _persona(cfg, pid="craft", niche=["undergroundmusic"])
     b = _persona(cfg, pid="street", niche=["streetinterview"])
     _link_active_many(cfg, {"craftacct": a, "streetacct": b})
     monkeypatch.setenv("FANOPS_RESPONDER", "llm")
-    fake, seen = _replying(["drillscene"])
-    monkeypatch.setattr(hv, "claude_json", fake)
+
+    seen: list[str] = []; calls = {"craft": 0, "street": 0}
+    def _fake(prompt, schema, **kw):
+        seen.append(prompt)
+        pid = "craft" if "Persona name: craft" in prompt else "street"
+        calls[pid] += 1
+        if pid == "craft":
+            return {"terms": ["drillscene"]}
+        return {"terms": ["voxpop" if calls[pid] == 1 else "streetculture"]}
+
+    monkeypatch.setattr(hv, "claude_json", _fake)
     assert hv.expand_vocab_if_due(cfg).get("ok") == 2
     assert len(seen) == 2
     before_b = hv.load_vocab(cfg).get(b)
@@ -148,9 +232,10 @@ def test_niche_edit_expands_only_that_persona_once(tmp_path, monkeypatch):
     from fanops.personas import update_persona
     update_persona(cfg, a, niche=["undergroundmusic", "basementshow"])
     r = hv.expand_vocab_if_due(cfg)
-    assert r.get("refreshed") is True and r.get("ok") == 1 and r.get("fail") == 0
-    assert len(seen) == 1 and "basementshow" in seen[0]               # only the edited persona was asked
-    assert hv.load_vocab(cfg).get(b) == before_b                      # the sibling's vocab never churned
+    assert r.get("refreshed") is True and r.get("ok") == 2 and r.get("fail") == 0
+    assert len(seen) == 2 and any("basementshow" in prompt for prompt in seen)
+    assert hv.load_vocab(cfg).get(b, {}).get("terms") == ["streetculture"]  # sibling output really moved
+    assert hv.load_vocab(cfg).get(b) != before_b                      # sibling re-stamped for A's new territory
     seen.clear()
 
     assert hv.expand_vocab_if_due(cfg).get("refreshed") is False      # the edit is now absorbed
@@ -223,12 +308,20 @@ def test_vocab_anchor_admits_inbound_only(tmp_path, monkeypatch):
         "#barsoverbeats": [{"caption": "craft #syrianrap", "like_count": 80, "play_count": 8000},
                          {"caption": "again #syrianrap", "like_count": 70, "play_count": 7000}],
     }
-    refresh_store(cfg, scrape_client=_FakeClient(media_by_tag=media))
+    # MOL-714: non-niche candidates need media_count ≥ MIN_MEDIA_FLOOR.
+    # Callers: pytest. Existing test file. User: implement plan to-dos.
+    refresh_store(cfg, scrape_client=_FakeClient(
+        media_by_tag=media,
+        media_count_by_tag={"#hiphop": 4_000_000, "#syrianrap": 50_000, "#nashville": 9_000_000,
+                            "#barsoverbeats": 8_000}))
     m = load_measurements(cfg)
     assert "#syrianrap" in m
     assert "#nashville" not in m                                     # outbound-only megatag evicted
     assert m.get("#barsoverbeats", {}).get("from", {}).get("#syrianrap", 0) >= 1
     per = Personas.load(cfg).get(pid)
     pool = {t for t, _, _ in _aligned_pool(per, m, cfg=cfg)}
-    assert "#syrianrap" in pool and "#barsoverbeats" in pool
+    # MOL-714: unique LLM vocab is relatedness-only — #syrianrap itself is NOT an unconditional seat;
+    # inbound tags it attributes (#barsoverbeats) still admit when media_count clears the floor.
+    assert "#syrianrap" not in pool
+    assert "#barsoverbeats" in pool
     assert "#nashville" not in pool

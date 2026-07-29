@@ -31,6 +31,9 @@ _NORMAL_HITS = 2                  # non-anchor relatedness: inbound_hits >= 2 OR
 # media_count (measured 2026-07-29: median 77k, p90 5.25M). Volume is Instagram's own `media_count`, so this
 # is a measured property, not a curated ban list — absent media_count fails OPEN (never a category).
 CATEGORY_MEDIA_FLOOR = 5_000_000.0
+# Non-niche candidates need a real volume floor (MOL-714). Unmeasured / sub-1k tags padded live
+# corpora alphabetically; niche seats stay unconditional and are exempt.
+MIN_MEDIA_FLOOR = 1_000.0
 
 
 def inbound_hits(rec: dict, anchors: set[str]) -> int:
@@ -54,19 +57,22 @@ def is_category(rec: dict) -> bool:
     return isinstance(v, (int, float)) and not isinstance(v, bool) and float(v) >= CATEGORY_MEDIA_FLOOR
 
 
-def _is_candidate(tag: str, rec: dict, anchors: set[str]) -> bool:
-    """Relatedness gate (MOL-665) — the ONLY admission bar, and under size-first ranking (MOL-692) the
-    only safety left. Anchors always; every non-anchor must clear measured relatedness. A CATEGORY-scale
-    tag additionally needs multi-root relatedness (MOL-685): volume alone must never buy a seat, so an
-    unrelated 20M-post tag is still refused no matter how big it is.
-
-    The magnet soft lane is GONE (MOL-692): it let #fyp / #love / #viral in on ONE inbound hit plus a
-    high Top-grid median, and that median is exactly the number we no longer rank on. A generic magnet
-    now clears the same measured relatedness as any other tag or stays out."""
-    if tag in anchors:
-        return True
-    hits = inbound_hits(rec, anchors)
-    roots = n_roots(rec, anchors)
+def _is_candidate(tag: str, rec: dict, relatedness_anchors: set[str], *,
+                  niche_anchors: set[str] | None = None) -> bool:
+    """Relatedness gate (MOL-665/MOL-714). Unconditional seat = operator niche ONLY. Every non-niche
+    tag needs media_count ≥ MIN_MEDIA_FLOOR and measured relatedness against `relatedness_anchors`
+    (niche ∪ unique-to-persona LLM vocab). Shared / sibling-owned LLM terms are Layer A search-only
+    and must not appear in relatedness_anchors. A CATEGORY-scale tag additionally needs multi-root
+    relatedness (MOL-685). When `niche_anchors` is omitted it equals `relatedness_anchors` (unit-test
+    compat for the relatedness arithmetic)."""
+    niche = niche_anchors if niche_anchors is not None else relatedness_anchors
+    if tag in niche:
+        return True                                         # unconditional niche seat
+    mc = rec.get("media_count") if isinstance(rec, dict) else None
+    if not (isinstance(mc, (int, float)) and not isinstance(mc, bool) and float(mc) >= MIN_MEDIA_FLOOR):
+        return False                                        # unmeasured / sub-floor non-niche refused
+    hits = inbound_hits(rec, relatedness_anchors)
+    roots = n_roots(rec, relatedness_anchors)
     if hits <= 0:
         return False
     if is_category(rec):
@@ -92,22 +98,62 @@ def _seed_token(raw) -> str | None:
     return t
 
 
-def persona_terms(per, cfg: Config | None = None) -> list[str]:
-    """Layer A/B search roots: operator `niche` first, then durable LLM vocab when `cfg` is given (MOL-644).
-
-    Voice / content_focus / hook_angle / intensity stay on the persona for caption+hook directives —
-    they are NOT Instagram search roots (MOL-637). Vocab seeds are CORPUS-BLIND extras from
-    `hashtag_vocab.json` — never written into the shipping corpus by this function."""
+def niche_terms(per) -> list[str]:
+    """Operator-declared niche bodies (Layer B unconditional seats + relatedness). Order preserved."""
     out: list[str] = []; seen: set[str] = set()
     for n in getattr(per, "niche", None) or []:
         t = _seed_token(n)
         if t and t not in seen:
             seen.add(t); out.append(t)
+    return out
+
+
+def persona_terms(per, cfg: Config | None = None) -> list[str]:
+    """Layer A search roots: operator `niche` first, then durable LLM vocab when `cfg` is given (MOL-644).
+
+    Stays WIDE on purpose — Layer A still discovers and measures generated roots, including ones that
+    are Layer B search-only (shared / sibling-owned). Layer B relatedness uses `relatedness_terms`.
+    Voice / content_focus / hook_angle / intensity stay on the persona for caption+hook directives —
+    they are NOT Instagram search roots (MOL-637)."""
+    out: list[str] = list(niche_terms(per)); seen: set[str] = set(out)
     if cfg is not None:
         from fanops.hashtag_vocab import vocab_terms_for
         for t in vocab_terms_for(cfg, getattr(per, "id", "") or ""):
             if t and t not in seen:
                 seen.add(t); out.append(t)
+    return out
+
+
+def relatedness_terms(per, cfg: Config | None = None) -> list[str]:
+    """Layer B relatedness roots (MOL-714): declared niche ∪ LLM vocab unique to this persona.
+
+    A vocab term is unique iff it appears in this persona's durable vocab and NOT in any other
+    posting persona's niche or vocab. Shared LLM terms and sibling-declared terms are Layer A
+    search-only — they may still be scraped via wide `persona_terms`, but cannot attribute a tag
+    into any corpus. Operator niche always wins a seat in this set. Without `cfg`, niche only."""
+    out: list[str] = list(niche_terms(per)); seen: set[str] = set(out)
+    if cfg is None:
+        return out
+    from fanops.hashtag_vocab import vocab_terms_for
+    try:
+        from fanops.fanops_hashtags import _posting_personas
+        siblings = _posting_personas(cfg)
+    except Exception:                                        # noqa: BLE001 — fail closed to niche-only extras
+        return out
+    pid = getattr(per, "id", "") or ""
+    owned: set[str] = set()
+    for sibling in siblings:
+        sid = getattr(sibling, "id", "") or ""
+        if not sid or sid == pid:
+            continue
+        for t in niche_terms(sibling):
+            owned.add(t)
+        for t in vocab_terms_for(cfg, sid):
+            if t:
+                owned.add(t)
+    for t in vocab_terms_for(cfg, pid):
+        if t and t not in seen and t not in owned:
+            seen.add(t); out.append(t)
     return out
 
 
@@ -131,33 +177,29 @@ def _is_evidence(rec: dict, *, now: datetime | None = None) -> bool:
 
 
 def _aligned_pool(per, cache: dict[str, dict], *, now=None, cfg: Config | None = None) -> list[tuple[str, float, str]]:
-    """Candidates for corpus membership, ordered SIZE-FIRST (MOL-692).
+    """Candidates for corpus membership, ordered SIZE-FIRST (MOL-692 / MOL-714).
 
-    Relatedness (`from` strength) makes a candidate; SIZE orders the candidates and `derive_corpus` cuts
-    at `corpus_target`. Anchors always candidate. Non-anchors need inbound_hits>=2 or n_roots>=2; a
-    CATEGORY-scale non-anchor needs multi-root relatedness (MOL-685). Outbound co-tags still must not
-    appear in `from` (MOL-643).
-
-    The category RANK PENALTY is gone (MOL-692). It sent every admitted large tag behind every smaller
-    one, which capped the whole corpus just under CATEGORY_MEDIA_FLOOR — the exact opposite of ranking on
-    scale. The category ADMISSION bar stays, so size still cannot buy a seat without relatedness; what
-    changed is that a tag which EARNED its seat now ranks by its true volume.
+    Relatedness (`from` strength against niche ∪ unique-to-persona LLM vocab) makes a candidate;
+    SIZE orders the candidates and `derive_corpus` cuts at `corpus_target`. Unconditional seat =
+    operator niche only. Non-niche needs media_count ≥ MIN_MEDIA_FLOOR plus relatedness. Shared /
+    sibling-owned LLM terms never attribute. CATEGORY-scale non-niche needs multi-root (MOL-685).
+    Outbound co-tags still must not appear in `from` (MOL-643).
 
     The emitted float is the PRIMARY rank number (`media_count`, 0.0 when Instagram never served volume)
     — a verbatim platform field, and total so `fanops hashtags discover` can never receive None."""
-    anchors = {_norm("#" + t) for t in persona_terms(per, cfg)}
-    anchors.discard("#")
+    niche = {_norm("#" + t) for t in niche_terms(per)}; niche.discard("#")
+    related = {_norm("#" + t) for t in relatedness_terms(per, cfg)}; related.discard("#")
     out: list[tuple[str, float, str]] = []
     for tag, rec in cache.items():
         if not _is_evidence(rec, now=now) or not is_curatable(tag):
             continue
-        if not _is_candidate(tag, rec, anchors):
+        if not _is_candidate(tag, rec, related, niche_anchors=niche):
             continue
-        if tag in anchors:
+        if tag in niche:
             src = tag
         else:
             frm = rec.get("from") if isinstance(rec.get("from"), dict) else {}
-            live = [a for a in frm if a in anchors]
+            live = [a for a in frm if a in related]
             src = max(live, key=lambda a: (frm.get(a) or 0, a)) if live else tag
         out.append((tag, float(tag_size(rec) or 0.0), src))
     out.sort(key=lambda r: size_rank_key(r[0], cache[r[0]]))
