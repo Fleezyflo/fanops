@@ -1012,16 +1012,18 @@ def _check_preflight(cfg: Config) -> int:
             if cli_bin == "cursor-agent":
                 problems.append(
                     "FANOPS_RESPONDER=llm but `cursor-agent` is not on PATH — the autonomous responder "
-                    "shells `cursor-agent -p`. Install Cursor CLI on this host.")
+                    "shells `cursor-agent -p`. Install Cursor CLI on this host, or set LLM transport to "
+                    "claude in Studio Go-Live (the single switch).")
             else:
                 problems.append(
                     "FANOPS_RESPONDER=llm but `claude` is not on PATH — the autonomous responder shells "
                     "`claude -p` using your existing Claude subscription. Install Claude Code and run "
                     "`claude login` on this host (no API key needed).")
-        if cfg.llm_transport == "cursor" and not _CURSOR_SUPPORTS_VISION and shutil.which("claude") is None:
+        if cfg.llm_transport == "cursor" and not _CURSOR_SUPPORTS_VISION:
             problems.append(
-                "FANOPS_LLM_TRANSPORT=cursor but `claude` is not on PATH — vision-grounded gates fall "
-                "back to `claude -p`. Install Claude Code and run `claude login` on this host.")
+                "FANOPS_LLM_TRANSPORT=cursor but cursor-agent cannot run vision-grounded gates — "
+                "set LLM transport to claude in Studio Go-Live (single switch; transport is absolute, "
+                "no silent claude fallback).")
     _raw_poster = (cfg.poster_backend_raw or "").strip().lower()
     if _raw_poster == "postiz" and (cfg.postiz_url is None or cfg.postiz_api_key is None):
         miss = " and ".join(n for n, v in (("POSTIZ_URL", cfg.postiz_url),

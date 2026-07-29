@@ -263,8 +263,8 @@
       </form>
     </div>
     <div class="account-hooks" id="llm-transport">
-      <p class="muted"><strong>LLM transport</strong> —
-        {% if status.llm_transport == 'cursor' %}<code>cursor-agent</code> (Cursor CLI headless){% else %}<code>claude</code> (Claude Code subscription login){% endif %}.</p>
+      <p class="muted"><strong>LLM transport</strong> (single switch for every gate — captions, moments, hooks) —
+        {% if status.llm_transport == 'cursor' %}<code>cursor-agent</code> (Cursor CLI headless; vision gates unsupported){% else %}<code>claude</code> (Claude Code subscription login){% endif %}.</p>
       <form hx-post="{{ url_for('do_golive_llm_transport') }}" hx-target="#golive-panel" hx-swap="outerHTML">
         {% if status.llm_transport == 'cursor' %}
           <span class="ok">● Cursor</span>
