@@ -134,6 +134,65 @@ def test_publish_one_empty_integration_counted_in_publish_due_summary(tmp_path, 
     assert out["no_integration_id"] == 1 and out["published"] == 0
     assert Ledger.load(cfg).posts["p1"].state is PostState.queued
 
+def _claim_reaching_inner_unclaim(cfg, monkeypatch, run):
+    """Let the PRE-claim integration guard pass once so the CLAIM commits, then let the real guard fire on
+    the inner path (the MOL-439 pattern). Gives a test the committed claim WITHOUT any network."""
+    real_missing = run._missing_integration_id
+    calls = {"n": 0}
+    def _defer_pre_claim(backend, account_id, post):
+        calls["n"] += 1
+        return False if calls["n"] == 1 else real_missing(backend, account_id, post)
+    monkeypatch.setattr(run, "_missing_integration_id", _defer_pre_claim)
+    monkeypatch.setattr(run, "get_poster",
+                        lambda cfg, backend=None: (_ for _ in ()).throw(AssertionError("must not POST")))
+
+def test_claim_stamps_submission_started_at_and_it_survives_an_unclaim(tmp_path, monkeypatch):
+    # MOL-709: the claim (queued->submitting) is the outbound-ATTEMPT boundary, and until now nothing
+    # recorded WHEN it happened — state carries no day, published_at is None for an in-flight post, and
+    # scheduled_time is only intent. Pin that the claim stamps submission_started_at as aware UTC, and
+    # that an un-claim back to `queued` LEAVES it: a post that was claimed today has consumed a slot
+    # from the day's budget whether or not it ended up shipping.
+    import fanops.post.run as run
+    from fanops.timeutil import parse_iso
+    monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_API_KEY", "k"); monkeypatch.setenv("POSTIZ_URL", "https://x")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _queued(led, cfg, pid="p1", cid="c1", when="2000-01-01T00:00:00Z")
+    assert Ledger.load(cfg).posts["p1"].submission_started_at is None       # nothing claimed yet
+    with Ledger.transaction(cfg) as lg: lg.posts["p1"].account_id = ""
+    _claim_reaching_inner_unclaim(cfg, monkeypatch, run)
+    publish_due(cfg, now="2000-01-02T00:00:00Z")
+    p = Ledger.load(cfg).posts["p1"]
+    assert p.state is PostState.queued                                      # un-claimed, re-driveable
+    assert p.submission_started_at, "the claim did not stamp the outbound attempt"
+    dt = parse_iso(p.submission_started_at)
+    assert dt.tzinfo is not None, "stamp must be aware UTC, like published_at"
+
+def test_a_re_claim_moves_the_stamp_to_the_new_attempt_day(tmp_path, monkeypatch):
+    # MOL-709: the stamp answers "when was the LAST outbound attempt", so a re-claim MOVES it. A stamp
+    # frozen at the first claim would let a post claimed weeks ago (then un-claimed, never sent) publish
+    # today WITHOUT consuming today's budget — the exact over-ship a volume ceiling exists to stop.
+    import fanops.post.run as run
+    from fanops.timeutil import parse_iso
+    monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_API_KEY", "k"); monkeypatch.setenv("POSTIZ_URL", "https://x")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _queued(led, cfg, pid="p1", cid="c1", when="2000-01-01T00:00:00Z")
+    stale = "2020-03-01T00:00:00Z"
+    with Ledger.transaction(cfg) as lg:
+        lg.posts["p1"].account_id = ""
+        lg.posts["p1"].submission_started_at = stale                        # an earlier, un-claimed attempt
+    _claim_reaching_inner_unclaim(cfg, monkeypatch, run)
+    publish_due(cfg, now="2000-01-02T00:00:00Z")
+    p = Ledger.load(cfg).posts["p1"]
+    assert p.submission_started_at != stale, "a re-claim must re-anchor the attempt, not keep the old day"
+    assert parse_iso(p.submission_started_at) > parse_iso(stale)
+
+def test_submission_started_at_is_not_network_determined(tmp_path, monkeypatch):
+    # MOL-709: the stamp is written in the CLAIM txn, so it must NOT ride _NET_POST_FIELDS — that union is
+    # the set finalize merges from the THROWAWAY network ledger, and anything in it can be rewritten by a
+    # late network phase. Same exclusion, same reason, as created_at (test_zernio_idempotency test_13).
+    import fanops.post.run as run
+    assert "submission_started_at" not in run._NET_POST_FIELDS
+
 def test_timeless_queued_post_does_not_auto_publish(tmp_path, monkeypatch):
     # CULM-4: a queued post with NO scheduled_time must NOT auto-publish via publish_due (defense-in-depth
     # on no-auto-publish). It parks (stays queued); publish_post (manual) is unaffected.
