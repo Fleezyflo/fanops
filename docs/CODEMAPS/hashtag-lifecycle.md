@@ -85,7 +85,18 @@ What replaces it:
 
 ## Layer B — derivation (ZERO network)
 
-`persona_research.derive_corpus(cfg, pid)` — driven by `refresh_corpora_if_due` on its own 12h tick.
+`persona_research.derive_corpus(cfg, pid)` — driven from two places, both INPUT-driven (MOL-694):
+
+- **the end of a Layer A pass** — `fanops_hashtags._rederive_posting_corpora`, ONCE per pass (complete or
+  early-stopped) and only when `measured>0`. A mid-pass flush is measurement durability alone; deriving on
+  each one recomputed every posting persona ~measures/5 times per pass for one usable result.
+- **the safety net** — `refresh_corpora_if_due` on the run tick, gated on an `inputs_fp` digest of
+  personas.json + hashtags.json stored in `00_control/.corpora_refresh.json`. A matching digest returns
+  `reason=unchanged` and costs zero derives; a moved one derives IMMEDIATELY (no age to wait out). It is
+  what catches an operator niche edit, an eviction-only Layer A write, and a pass that died before its
+  derive. The pre-MOL-694 12h mtime throttle re-derived every persona twice a day for no input change and
+  still made an edited niche wait up to twelve hours. A persona whose derive fails open stamps NO
+  fingerprint, so it stays due (same rule as `hashtag_vocab`'s `input_fp`).
 
 1. **cutover** — `persona_store.deprecate_legacy_corpus` moves every corpus tag lacking derivation meta into
    the visible `hashtag_corpus_deprecated` field and empties `hashtag_corpus`. Idempotent. Hydration and

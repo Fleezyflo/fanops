@@ -79,10 +79,14 @@ def _scrape_parallel() -> int:
 
 
 def _rederive_posting_corpora(cfg: Config, *, now=None) -> None:
-    """Layer B on the Layer A write path — corpora track the store as it lands, not after the pass ends.
+    """Layer B at the END of a Layer A pass — ONCE, and only when the pass measured something (MOL-694).
+
+    A derive is a whole-store recompute per persona, so riding every mid-pass flush ran it ~measures/5
+    times for one usable result (a 235-measure pass: 47 rounds). The flush keeps its job — durable
+    measurement — and this runs once at the pass end, complete or early-stopped.
 
     Fail-open: a derive miss must never abort measurement. Uses posting personas only (same gate as
-    discovery). Called after every durable hashtags.json write (mid-pass flush + final)."""
+    discovery)."""
     from fanops.errors import fail_open
     from fanops.persona_research import derive_corpus
     try:
@@ -347,11 +351,13 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
     track wave count, not one-tag-at-a-time. Injected `scrape_client` (tests) shares one client under a
     lock so fakes stay deterministic.
 
-    Every durable `hashtags.json` write (mid-pass flush + final) re-derives posting-persona corpora
-    immediately — Layer B does not wait for the pass to finish. A measured==0 pass whose write projection
-    equals the tag map ALREADY ON DISK skips the write and rederive (byte/mtime-identical; prior
-    `last_complete_pass` kept); a projection that differs — orphan eviction, dead-`from` prune, 90d
-    expiry — still writes even at measured==0.
+    Layer B runs ONCE, when the pass ENDS (complete or early-stopped) and only when `measured>0`
+    (MOL-694). A mid-pass flush is measurement durability alone — deriving on each one recomputed every
+    posting persona ~measures/5 times per pass. A measured==0 pass whose write projection equals the tag
+    map ALREADY ON DISK skips the write too (byte/mtime-identical; prior `last_complete_pass` kept); a
+    projection that differs — orphan eviction, dead-`from` prune, 90d expiry — still WRITES at
+    measured==0, but does not derive: the moved file changes the input fingerprint that
+    `persona_research.refresh_corpora_if_due` gates on, so the next tick derives from it.
 
     ABORTS without writing when personas.json is CORRUPT, or when scrape cannot open (`no_scrape`).
     An Instagram throttle ends the pass, writes accrued evidence when mutated, and persists a cooldown
@@ -543,8 +549,7 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
                 if prev_complete:
                     mid[_COMPLETE_KEY] = prev_complete
                 cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
-                write_json_atomic(cfg.hashtags_path, mid)
-                _rederive_posting_corpora(cfg, now=now)          # Layer B rides the flush — no end-of-pass wait
+                write_json_atomic(cfg.hashtags_path, mid)        # measurement durability ONLY — no derive here
             if tried == 1 or tried % 5 == 0 or measured % 5 == 0:
                 log("hashtags", tag, "measured", tried=tried, measured=measured,
                     queue_left=len(queue) - i, visibility=_metric(rec),
@@ -577,7 +582,8 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
         fresh[_COMPLETE_KEY] = prev_complete                  # preserve; never slide forward on a cut-off
     cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
     write_json_atomic(cfg.hashtags_path, fresh)
-    _rederive_posting_corpora(cfg, now=now)                      # final store write → corpora catch up
+    if measured > 0:
+        _rederive_posting_corpora(cfg, now=now)                  # the pass END — exactly one derive round
     out = {"written": True, "measured": measured, "discovered": discovered,
            "total": len([t for t in fresh if t != _COMPLETE_KEY]), "throttled": throttled,
            "tried": tried, "unresolved": unresolved, "backend": "scrape", "parallel": parallel}

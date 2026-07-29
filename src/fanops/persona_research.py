@@ -220,34 +220,81 @@ def _persona_row(cfg: Config, pid: str) -> dict | None:
     return next((d for d in plist if isinstance(d, dict) and d.get("id") == pid), None)
 
 
-def refresh_corpora_if_due(cfg: Config, *, max_age_s: int = 43200, now=None) -> dict:
-    """The run-loop hook: re-derive every persona's corpus at most once per `max_age_s` (default 12h),
-    throttled by .corpora_refresh.json's mtime. UNCONDITIONAL — there is no kill switch, because a
-    routinely re-derived corpus IS the system's behaviour, not an opt-in (a `FANOPS_CORPUS_AUTO=0` line in
-    the live .env once froze every persona at its seed tags for nine days). FAIL-OPEN: never raises."""
-    import time
+def _inputs_fingerprint(cfg: Config) -> str:
+    """Digest of the two control files a derive READS: personas.json + hashtags.json (MOL-694).
+
+    sha256 over their bytes, length-prefixed so content moving between the two files cannot collide, and
+    stable across processes (`hash()` is per-interpreter salted). A missing file contributes b"" — absent
+    is a state, not an error. Mirrors `hashtag_vocab._input_fingerprint`, one layer up: there the digest
+    covers one persona's prompt inputs, here it covers the whole derive's inputs."""
+    import hashlib
+    h = hashlib.sha256()
+    for p in (cfg.personas_path, cfg.hashtags_path):
+        try:
+            blob = p.read_bytes() if p.exists() else b""
+        except OSError:
+            blob = b""
+        h.update(len(blob).to_bytes(8, "big")); h.update(blob)
+    return h.hexdigest()[:16]
+
+
+def _marker_fingerprint(marker) -> str:
+    """The `inputs_fp` stamped by the last complete refresh, or "" (absent / pre-MOL-694 / unreadable)."""
+    import json
+    try:
+        raw = json.loads(marker.read_text())
+    except (OSError, ValueError, TypeError):
+        return ""
+    if not isinstance(raw, dict):
+        return ""
+    fp = raw.get("inputs_fp")
+    return fp if isinstance(fp, str) else ""
+
+
+def refresh_corpora_if_due(cfg: Config, *, now=None) -> dict:
+    """The run-loop safety net: re-derive every persona's corpus when its INPUTS changed — never on a
+    clock (MOL-694). `.corpora_refresh.json` carries an `inputs_fp` digest of personas.json +
+    hashtags.json; a matching digest is `reason=unchanged` and costs zero derives, while a changed one
+    derives IMMEDIATELY (no age to wait out — an operator niche edit lands on the very next tick even
+    with a cold Layer A). The old 12h mtime throttle re-derived every persona twice a day for nothing and
+    still made an edited niche wait up to twelve hours.
+
+    KEPT, not deleted: Layer A only derives at the end of a pass that measured something, so this is what
+    catches an eviction-only write, an operator edit, or a pass that died before its derive.
+
+    UNCONDITIONAL — there is no kill switch, because a routinely re-derived corpus IS the system's
+    behaviour, not an opt-in (a `FANOPS_CORPUS_AUTO=0` line in the live .env once froze every persona at
+    its seed tags for nine days). FAIL-OPEN: never raises."""
     from fanops.controlio import write_json_atomic
     from fanops.errors import ControlFileError, fail_open
     from fanops.log import get_logger
     marker = cfg.control / ".corpora_refresh.json"
     try:
-        if marker.exists() and (time.time() - marker.stat().st_mtime) < max_age_s:
-            return {"refreshed": False, "reason": "fresh"}
+        fp = _inputs_fingerprint(cfg)
+        if _marker_fingerprint(marker) == fp:               # "" (no marker / pre-MOL-694) can never match
+            return {"refreshed": False, "reason": "unchanged"}
         try:
             personas = _registry(cfg).all()
         except ControlFileError as e:
             return {"refreshed": False, "aborted": "corrupt_personas", "reason": str(e)}
-        changed = 0; added_n = 0; removed_n = 0
+        changed = 0; added_n = 0; removed_n = 0; failed = 0
         for per in personas:
-            r = {"changed": False}
+            r = None
             with fail_open(f"persona_research.derive_corpus.{per.id}"):
                 r = derive_corpus(cfg, per.id, now=now)
+            if r is None:
+                failed += 1; continue                      # swallowed miss: stay DUE, stamp no fingerprint
             if r.get("changed"):
                 changed += 1; added_n += len(r.get("added") or []); removed_n += len(r.get("removed") or [])
-        write_json_atomic(marker, {"ts": datetime.now(timezone.utc).isoformat(), "personas": len(personas),
-                                   "changed": changed, "added": added_n, "removed": removed_n})
+        blob = {"ts": datetime.now(timezone.utc).isoformat(), "personas": len(personas),
+                "changed": changed, "added": added_n, "removed": removed_n}
+        if not failed:
+            # Recomputed AFTER the round: a derive WRITES personas.json, so a pre-derive digest could
+            # never match on the next tick and the net would derive forever.
+            blob["inputs_fp"] = _inputs_fingerprint(cfg)
+        write_json_atomic(marker, blob)
         return {"refreshed": True, "personas": len(personas), "changed": changed,
-                "added": added_n, "removed": removed_n}
+                "added": added_n, "removed": removed_n, "failed": failed}
     except Exception as exc:                               # noqa: BLE001 — the tick must never die here
         get_logger(cfg)("corpus", "-", "refresh_error", err=f"{type(exc).__name__}: {str(exc)[:120]}")
         return {"refreshed": False, "reason": f"error: {str(exc)[:120]}"}

@@ -217,7 +217,9 @@ Authority: `docs/CODEMAPS/hashtag-lifecycle.md`. Summary:
    within equal size) + the `corpus_target` cut. Non-anchor category-scale tags (high `media_count`)
    still need multi-root relatedness to be ADMITTED, but once admitted they rank by their true volume —
    the old demotion tier capped the corpus just under `CATEGORY_MEDIA_FLOOR`. Outage / empty pool holds
-   the previous corpus. An empty corpus is honest (no padding).
+   the previous corpus. An empty corpus is honest (no padding). Runs ONCE at the end of a Layer A pass
+   that measured something, plus the input-driven safety net `refresh_corpora_if_due` — gated on a
+   personas.json+hashtags.json fingerprint in `.corpora_refresh.json`, never a clock (MOL-694).
 4. **Selection** (`vet_hashtags`): per-surface store = that persona's aligned pool ∪ corpus; corpus
    leads when present; hard cap 4; composition rules only (no hand-ranked mega pools, no discovery floor,
    no ban list). Cold empty store → empty hashtag line.
@@ -229,7 +231,7 @@ Authority: `docs/CODEMAPS/hashtag-lifecycle.md`. Summary:
 - [personas.py](../../../src/fanops/personas.py) / [persona_store.py](../../../src/fanops/persona_store.py)
   — `Persona` + niche/corpus writers; accounts hydrate via `persona_id`.
 - [persona_research.py](../../../src/fanops/persona_research.py) — `persona_terms` (niche only),
-  `_aligned_pool`, `derive_corpus`.
+  `_aligned_pool`, `derive_corpus`, `refresh_corpora_if_due` (fingerprint-gated safety net).
 - [hashtags.py](../../../src/fanops/hashtags.py) — `vet_hashtags` / measurement cache readers.
 - [ig_hashtag_scrape.py](../../../src/fanops/ig_hashtag_scrape.py) — Layer A network (`resolve_hashtag_scrape`,
   `measure_and_harvest_scrape`); refusals typed (`ScrapeRefused` / `ScrapeThrottled` / `ScrapeUnavailable`).

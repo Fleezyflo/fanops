@@ -1167,7 +1167,8 @@ def _cmd_run_pass(cfg: Config, base_time: str) -> dict | None:
             get_logger(cfg)("account_stats", "-", "refreshed", updated=r.get("updated", 0), total=r.get("total", 0))
     except Exception as e:
         get_logger(cfg)("account_stats", "-", "refresh_error", err=f"{type(e).__name__}: {str(e)[:120]}")
-    # S12: automated persona corpus refresh — own throttle (12h via .corpora_refresh.json mtime), own try/except.
+    # S12: automated persona corpus refresh — INPUT-DRIVEN (personas.json+hashtags.json fingerprint in
+    # .corpora_refresh.json, MOL-694), never a clock; own try/except.
     try:
         from fanops.persona_research import refresh_corpora_if_due
         cr = refresh_corpora_if_due(cfg)
@@ -1175,7 +1176,7 @@ def _cmd_run_pass(cfg: Config, base_time: str) -> dict | None:
             get_logger(cfg)("hashtags", "-", "corpora_refresh_aborted", aborted=cr.get("aborted"), reason=cr.get("reason", ""))
         elif cr.get("refreshed") and cr.get("changed"):
             get_logger(cfg)("hashtags", "-", "corpora_refreshed", changed=cr.get("changed", 0), added=cr.get("added", 0))
-        elif cr.get("reason") == "fresh":
+        elif cr.get("reason") == "unchanged":               # inputs never moved — the quiet, normal tick
             get_logger(cfg)("hashtags", "-", "corpora_refresh_skipped", reason=cr.get("reason", ""))
     except Exception as e:
         get_logger(cfg)("hashtags", "-", "corpora_refresh_error", err=f"{type(e).__name__}: {str(e)[:120]}")
