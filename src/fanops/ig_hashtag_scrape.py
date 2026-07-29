@@ -86,11 +86,35 @@ def _is_checkpoint(exc: BaseException) -> bool:
     return any(k in blob for k in ("challenge", "checkpoint", "consent_required"))
 
 
-def open_client(cfg: Config, *, client_factory=None):
-    """Open an authenticated instagrapi Client, PACED. Lazy-imports; dumps session after login.
-    Never echoes password or session contents. Raises ScrapeUnavailable on miss. `delay_range` is set
-    before the login call, so every request this client ever makes — the login included — carries the
-    jitter (MOL-698); the whole Layer A pass runs on this one client."""
+def _is_login_required(exc: BaseException) -> bool:
+    """Expired / invalidated session — scrape-login (allow_reauth) fixes it; the unattended tick must not."""
+    name = type(exc).__name__.lower().replace("_", "")
+    msg = str(exc).lower()
+    return "loginrequired" in name or "login_required" in msg
+
+
+def _classify_auth_exc(exc: BaseException) -> Exception:
+    """Map an opaque instagrapi auth/probe failure onto ScrapeThrottled / ScrapeCheckpoint / ScrapeUnavailable."""
+    if _is_throttle(exc):
+        return ScrapeThrottled(_trunc(exc))
+    if _is_checkpoint(exc):
+        return ScrapeCheckpoint(f"account checkpointed by Instagram — {CHECKPOINT_HINT} "
+                                f"({_trunc(exc, 80)})")
+    return ScrapeUnavailable(f"scrape login failed: {_trunc(exc)}")
+
+
+def open_client(cfg: Config, *, client_factory=None, allow_reauth: bool = False):
+    """Open an authenticated instagrapi Client, PACED. Lazy-imports; dumps session after success.
+    Never echoes password or session contents. Raises ScrapeUnavailable on miss.
+
+    `allow_reauth` defaults False: a restored session is validated via `account_info()` ONLY and
+    `login()` is never called. Unattended callers (Layer A tick, doctor) MUST leave this False —
+    instagrapi>=2.18.12 escalates LoginRequired inside `login()` into a full password re-auth, which
+    earned the 2026-07-29T22:01Z native checkpoint when the tick still called `login()` every pass.
+    Only `fanops hashtags scrape-login` passes `allow_reauth=True`.
+
+    `delay_range` is set before any network call, so every request this client ever makes — the
+    probe / login included — carries the jitter (MOL-698); the whole Layer A pass runs on this one client."""
     user = (cfg.ig_scrape_user or "").strip()
     if not user:
         raise ScrapeUnavailable("FANOPS_IG_SCRAPE_USER unset")
@@ -106,19 +130,32 @@ def open_client(cfg: Config, *, client_factory=None):
     try:
         if sess.exists():
             client.load_settings(str(sess))
-        pw = cfg.ig_scrape_password or ""
-        client.login(user, pw)
+            try:
+                client.account_info()                       # validate WITHOUT login() — no re-auth path
+            except Exception as e:                          # noqa: BLE001 — probe surface is opaque
+                classified = _classify_auth_exc(e)
+                if isinstance(classified, (ScrapeThrottled, ScrapeCheckpoint)):
+                    raise classified from e
+                if allow_reauth and _is_login_required(e):
+                    pw = cfg.ig_scrape_password or ""
+                    client.login(user, pw, relogin=True)    # explicit human re-auth only
+                elif not allow_reauth and _is_login_required(e):
+                    # Password never read — unattended tick must not re-authenticate.
+                    raise ScrapeUnavailable("session expired — run fanops hashtags scrape-login") from e
+                else:
+                    raise classified from e
+            # Valid session (or successful operator re-auth): persist and return. No login() on the happy path.
+        else:
+            if not allow_reauth:
+                raise ScrapeUnavailable("no scrape session — run fanops hashtags scrape-login")
+            pw = cfg.ig_scrape_password or ""
+            client.login(user, pw)                          # cold-start: operator scrape-login only
         sess.parent.mkdir(parents=True, exist_ok=True)
         client.dump_settings(str(sess))
-    except ScrapeUnavailable:
+    except (ScrapeUnavailable, ScrapeThrottled):
         raise
     except Exception as e:                                  # noqa: BLE001 — login surface is opaque
-        if _is_throttle(e):
-            raise ScrapeThrottled(_trunc(e)) from e
-        if _is_checkpoint(e):
-            raise ScrapeCheckpoint(f"account checkpointed by Instagram — {CHECKPOINT_HINT} "
-                                   f"({_trunc(e, 80)})") from e
-        raise ScrapeUnavailable(f"scrape login failed: {_trunc(e)}") from e
+        raise _classify_auth_exc(e) from e
     return client
 
 
