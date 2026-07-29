@@ -254,12 +254,13 @@ def test_refresh_store_refuses_a_second_concurrent_pass(tmp_path, monkeypatch):
     """MOL-686: a pass rewrites the whole cache from its own snapshot, so two in flight discard each
     other's tags. A pass already holding the lease makes the second a clean abort — no network, cache
     byte-identical — and the lease releases so the next pass runs normally."""
-    from fanops.stage_lock import stage_lock
+    from fanops.fanops_hashtags import _pass_lease
     cfg = Config(root=tmp_path); _persona(cfg)
     refresh_store(cfg, scrape_client=_FakeClient({"#hiphop": 100}))
     before = cfg.hashtags_path.read_text()
     client = _FakeClient({"#hiphop": 999})
-    with stage_lock(cfg, stage="hashtags", key="layer_a", timeout=0):
+    with _pass_lease(cfg) as held:
+        assert held is True
         out = refresh_store(cfg, scrape_client=client)
     assert out["written"] is False and out["aborted"] == "busy"
     assert client.media_calls == []                          # not one fetch spent on a doomed pass

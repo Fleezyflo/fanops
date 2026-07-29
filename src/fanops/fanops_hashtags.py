@@ -20,6 +20,7 @@ Missing scrape (no [igscrape] / no session / login fail) aborts LOUDLY (`written
 — there is no silent Graph fallback. A throttle ends the pass but still writes accrued evidence."""
 from __future__ import annotations
 import os
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from fanops.config import Config
 from fanops.log import get_logger
@@ -173,22 +174,41 @@ def _records_for_write(cache: dict, *, anchor_set: set[str], cutoff) -> dict:
     return out
 
 
+@contextmanager
+def _pass_lease(cfg: Config):
+    """Exclusive NON-BLOCKING writer lease on the cache, yielding True when held and False when another
+    pass owns it. Same primitive as stage_lock / reframe_apply: an fcntl.flock the KERNEL releases if the
+    holder dies, so a crash can never wedge measurement. The lockfile carries no data."""
+    import fcntl
+    path = cfg.control / "hashtags.lock"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(str(path), os.O_CREAT | os.O_RDWR)
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            yield False; return
+        try:
+            yield True
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
+
+
 def refresh_store(cfg: Config, *, scrape_client=None, now=None) -> dict:
     """One measurement pass under an EXCLUSIVE writer lease. See `_refresh_pass` for the pass itself.
 
     The cache is rewritten whole from an in-memory snapshot, so two concurrent passes (a run-loop tick and
     an operator `fanops hashtags refresh`, or two daemons) each overwrite the other's tags — minutes of
-    scrape bought and silently discarded. The lease is the existing per-stage flock, so the kernel releases
-    it if a holder dies and a crash cannot wedge measurement. A pass already in flight ABORTS this one
-    (cache untouched) rather than waiting: the work is idempotent and the next tick picks it up."""
-    from fanops.errors import StageBusyError
-    from fanops.stage_lock import stage_lock
-    try:
-        with stage_lock(cfg, stage="hashtags", key="layer_a", timeout=0):
-            return _refresh_pass(cfg, scrape_client=scrape_client, now=now)
-    except StageBusyError as e:
-        get_logger(cfg)("hashtags", "-", "pass_busy", reason="another measurement pass holds the lease")
-        return {"written": False, "aborted": "busy", "reason": str(e)}
+    scrape bought and silently discarded. A pass already in flight ABORTS this one (cache untouched, no
+    fetch spent) rather than waiting: the work is idempotent and the next tick picks it up."""
+    with _pass_lease(cfg) as held:
+        if not held:
+            get_logger(cfg)("hashtags", "-", "pass_busy", reason="another measurement pass holds the lease")
+            return {"written": False, "aborted": "busy",
+                    "reason": "another Layer A measurement pass holds 00_control/hashtags.lock"}
+        return _refresh_pass(cfg, scrape_client=scrape_client, now=now)
 
 
 def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:

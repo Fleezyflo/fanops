@@ -374,6 +374,16 @@
         "line": 406
       }
     ],
+    "fanops.fanops_hashtags": [
+      {
+        "call": "fcntl.flock",
+        "line": 188
+      },
+      {
+        "call": "fcntl.flock",
+        "line": 194
+      }
+    ],
     "fanops.ledger": [
       {
         "call": "fcntl.flock",
@@ -782,7 +792,7 @@
   "totals": {
     "env_write_sites": 2,
     "ledger_transaction_sites": 79,
-    "lock_sites": 20,
+    "lock_sites": 22,
     "mkdtemp_sites": 2,
     "network_sites_literal_requests": 15,
     "rmtree_sites": 6,
