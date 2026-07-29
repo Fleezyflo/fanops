@@ -30,9 +30,11 @@ def _persona(cfg, *, pid="curator"):
 
 def test_refresh_store_atomic_write_preserves_prior_on_crash(tmp_path, monkeypatch):
     # L08: a crash mid-write must leave the PRIOR valid hashtags.json intact (write_json_atomic).
+    # The prior file must be established by a REAL measure: a pass with nothing due writes nothing
+    # at all (MOL-695 zero-progress), so an empty fake would leave no file to preserve.
     from fanops import controlio
-    cfg = Config(root=tmp_path)
-    client = _FakeClient({})
+    cfg = Config(root=tmp_path); _persona(cfg)
+    client = _FakeClient({"#hiphop": 10})                   # no media_count -> volume-due next pass
     refresh_store(cfg, scrape_client=client)                # establish a valid cache file
     good = cfg.hashtags_path.read_text()
     real_replace = controlio.os.replace
@@ -100,9 +102,9 @@ def test_refresh_store_takes_no_ledger_and_no_doctor_gate(tmp_path, monkeypatch)
     assert "led" not in inspect.signature(refresh_store).parameters
     assert "get" not in inspect.signature(refresh_store).parameters
     assert "scrape_client" in inspect.signature(refresh_store).parameters
-    cfg = Config(root=tmp_path)
+    cfg = Config(root=tmp_path); _persona(cfg)
     assert not (cfg.control / "learn_doctor.json").exists()     # no doctor verdict anywhere
-    out = refresh_store(cfg, scrape_client=_FakeClient({}))
+    out = refresh_store(cfg, scrape_client=_FakeClient({"#hiphop": 10}))
     assert out["written"] is True and cfg.hashtags_path.exists()  # still writes — no gate
     assert out.get("backend") == "scrape"
 
@@ -127,9 +129,13 @@ def test_written_file_is_the_flat_record_shape_ranked_by_the_metric(tmp_path, mo
 
 def test_measurements_accrue_across_passes(tmp_path, monkeypatch):
     # A later pass that discovers a DIFFERENT slice must ADD to the evidence, not replace it.
+    # Age past the corpus 24h due tier so the anchor remesures and harvests the new co-tag (MOL-695).
+    from datetime import datetime, timezone, timedelta
     cfg = Config(root=tmp_path); _persona(cfg)
-    refresh_store(cfg, scrape_client=_FakeClient({"#hiphop": 500, "#alpha": 100}, cooccur="#alpha"))
-    refresh_store(cfg, scrape_client=_FakeClient({"#hiphop": 500, "#beta": 900}, cooccur="#beta"))
+    t0 = datetime(2026, 7, 1, tzinfo=timezone.utc)
+    refresh_store(cfg, scrape_client=_FakeClient({"#hiphop": 500, "#alpha": 100}, cooccur="#alpha"), now=t0)
+    refresh_store(cfg, scrape_client=_FakeClient({"#hiphop": 500, "#beta": 900}, cooccur="#beta"),
+                  now=t0 + timedelta(hours=25))
     m = load_measurements(cfg)
     assert "#alpha" in m and "#beta" in m
     assert _metric(m["#alpha"]) == 100 and m["#alpha"]["like_count"] == 100
@@ -180,42 +186,202 @@ def test_refresh_store_if_due_throttles_and_fail_open(tmp_path, monkeypatch):
     assert refresh_store_if_due(cfg)["refreshed"] is False
     assert refresh_store_if_due(cfg)["reason"] == "no scrape session"
     assert not cfg.hashtags_path.exists()
-    client = _FakeClient({})
-    assert refresh_store_if_due(cfg, scrape_client=client)["refreshed"] is True
+    _persona(cfg)
+    t0 = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
+    client = _FakeClient({"#hiphop": 10})
+    assert refresh_store_if_due(cfg, scrape_client=client, now=t0)["refreshed"] is True
     assert cfg.hashtags_path.exists()
     assert isinstance(json.loads(cfg.hashtags_path.read_text()).get("last_complete_pass"), str)
-    assert refresh_store_if_due(cfg, max_age_s=43200, scrape_client=client)["refreshed"] is False
-    assert refresh_store_if_due(cfg, max_age_s=43200, scrape_client=client)["reason"] == "fresh"
+    assert refresh_store_if_due(cfg, max_age_s=43200, scrape_client=client, now=t0)["refreshed"] is False
+    assert refresh_store_if_due(cfg, max_age_s=43200, scrape_client=client, now=t0)["reason"] == "fresh"
     blob = json.loads(cfg.hashtags_path.read_text())
-    blob["last_complete_pass"] = (datetime.now(timezone.utc) - timedelta(hours=13)).isoformat()
+    blob["last_complete_pass"] = (t0 - timedelta(hours=13)).isoformat()
+    blob["#hiphop"]["measured_at"] = (t0 - timedelta(hours=25)).isoformat()  # corpus-due remesure
     cfg.hashtags_path.write_text(json.dumps(blob))
-    assert refresh_store_if_due(cfg, max_age_s=10, scrape_client=client)["refreshed"] is True
+    assert refresh_store_if_due(cfg, max_age_s=10, scrape_client=client, now=t0)["refreshed"] is True
 
 
 def test_throttled_pass_does_not_advance_complete_stamp(tmp_path, monkeypatch):
-    """D-2 / MOL-525 (1): throttled writes must not buy (or extend) the 12h silence window."""
+    """D-2 / MOL-525 (1): throttled writes must not buy (or extend) the 12h silence window.
+
+    MOL-695: Instagram ScrapeThrottled also arms a cooldown — ticks before `until` must not re-open scrape."""
     from datetime import datetime, timezone, timedelta
-    from fanops.fanops_hashtags import refresh_store_if_due
+    from fanops.fanops_hashtags import refresh_store_if_due, _cooldown_path
     cfg = Config(root=tmp_path); _persona(cfg)
     t0 = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
-    out0 = refresh_store(cfg, scrape_client=_FakeClient({"#hiphop": 50}, throttle_after=0), now=t0)
-    assert out0["throttled"] is True and "last_complete_pass" not in json.loads(cfg.hashtags_path.read_text())
-    assert refresh_store_if_due(cfg, max_age_s=43200, scrape_client=_FakeClient({}),
-                                now=t0 + timedelta(minutes=5))["refreshed"] is True
-    refresh_store(cfg, scrape_client=_FakeClient({"#hiphop": 50}), now=t0 + timedelta(hours=1))
+    # First: measure successfully so we have a complete stamp + cache to preserve across a later throttle.
+    refresh_store(cfg, scrape_client=_FakeClient({"#hiphop": 50}), now=t0)
     stamp = json.loads(cfg.hashtags_path.read_text())["last_complete_pass"]
-    t_th = t0 + timedelta(hours=2)
+    t_th = t0 + timedelta(hours=25)                        # corpus-due so the pass actually opens medias_top
     out1 = refresh_store(cfg, scrape_client=_FakeClient({"#hiphop": 50}, throttle_after=0), now=t_th)
     assert out1["throttled"] is True
     assert json.loads(cfg.hashtags_path.read_text())["last_complete_pass"] == stamp
+    assert _cooldown_path(cfg).exists()
+    skip_cool = refresh_store_if_due(cfg, max_age_s=1, scrape_client=_FakeClient({"#hiphop": 50}),
+                                     now=t_th + timedelta(minutes=5))
+    assert skip_cool["refreshed"] is False and skip_cool["reason"] == "cooldown"
+    # After complete stamp is still fresh relative to a long max_age, reason stays cooldown (checked first).
     skip = refresh_store_if_due(cfg, max_age_s=43200, scrape_client=_FakeClient({}),
                                 now=t_th + timedelta(minutes=1))
-    assert skip["refreshed"] is False and skip["reason"] == "fresh"
+    assert skip["refreshed"] is False and skip["reason"] == "cooldown"
+
+
+def test_scrape_throttle_cooldown_backoff_and_success_reset(tmp_path, monkeypatch):
+    """MOL-695: throttle writes cooldown; ticks before until skip scrape; delays 30m→1h→2h→6h; success clears."""
+    from datetime import datetime, timezone, timedelta
+    from fanops.fanops_hashtags import (refresh_store_if_due, _cooldown_path, _COOLDOWN_DELAYS_S)
+    cfg = Config(root=tmp_path); _persona(cfg)
+    t0 = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
+    # Empty cache + immediate throttle → measured=0 no-progress (no hashtags.json write) but cooldown lands.
+    out0 = refresh_store(cfg, scrape_client=_FakeClient({"#hiphop": 50}, throttle_after=0), now=t0)
+    assert out0["throttled"] is True and out0.get("reason") == "no_progress"
+    assert out0["written"] is False and not cfg.hashtags_path.exists()
+    cd = json.loads(_cooldown_path(cfg).read_text())
+    assert cd["streak"] == 1
+    assert cd["until"] == (t0 + timedelta(seconds=_COOLDOWN_DELAYS_S[0])).isoformat()
+    client = _FakeClient({"#hiphop": 50}, throttle_after=0)
+    blocked = refresh_store_if_due(cfg, max_age_s=1, scrape_client=client,
+                                   now=t0 + timedelta(minutes=29))
+    assert blocked["refreshed"] is False and blocked["reason"] == "cooldown" and client.media_calls == []
+    # Expire streak-1; throttle again → streak 2 / 1h
+    t1 = t0 + timedelta(minutes=31)
+    refresh_store(cfg, scrape_client=_FakeClient({"#hiphop": 50}, throttle_after=0), now=t1)
+    cd = json.loads(_cooldown_path(cfg).read_text())
+    assert cd["streak"] == 2
+    assert cd["until"] == (t1 + timedelta(seconds=_COOLDOWN_DELAYS_S[1])).isoformat()
+    t2 = t1 + timedelta(hours=1, minutes=1)
+    refresh_store(cfg, scrape_client=_FakeClient({"#hiphop": 50}, throttle_after=0), now=t2)
+    assert json.loads(_cooldown_path(cfg).read_text())["streak"] == 3
+    assert json.loads(_cooldown_path(cfg).read_text())["until"] == (
+        t2 + timedelta(seconds=_COOLDOWN_DELAYS_S[2])).isoformat()
+    t3 = t2 + timedelta(hours=2, minutes=1)
+    refresh_store(cfg, scrape_client=_FakeClient({"#hiphop": 50}, throttle_after=0), now=t3)
+    assert json.loads(_cooldown_path(cfg).read_text())["streak"] == 4
+    assert json.loads(_cooldown_path(cfg).read_text())["until"] == (
+        t3 + timedelta(seconds=_COOLDOWN_DELAYS_S[3])).isoformat()
+    t4 = t3 + timedelta(hours=6, minutes=1)
+    refresh_store(cfg, scrape_client=_FakeClient({"#hiphop": 50}, throttle_after=0), now=t4)
+    assert json.loads(_cooldown_path(cfg).read_text())["streak"] == 5          # still capped at 6h delay
+    assert json.loads(_cooldown_path(cfg).read_text())["until"] == (
+        t4 + timedelta(seconds=_COOLDOWN_DELAYS_S[3])).isoformat()
+    # Success with measured>0 clears the file
+    t_ok = t4 + timedelta(hours=6, minutes=1)
+    ok = refresh_store(cfg, scrape_client=_FakeClient({"#hiphop": 50}), now=t_ok)
+    assert ok["written"] is True and ok["measured"] >= 1
+    assert not _cooldown_path(cfg).exists()
+
+
+def test_corrupt_cooldown_fails_open(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+    from fanops.fanops_hashtags import refresh_store_if_due, _cooldown_path
+    cfg = Config(root=tmp_path); _persona(cfg)
+    t0 = datetime(2026, 7, 1, tzinfo=timezone.utc)
+    _cooldown_path(cfg).parent.mkdir(parents=True, exist_ok=True)
+    _cooldown_path(cfg).write_text("{not-json")
+    client = _FakeClient({"#hiphop": 10})
+    out = refresh_store_if_due(cfg, max_age_s=1, scrape_client=client, now=t0)
+    assert out["refreshed"] is True and client.media_calls  # corrupt → no cooldown gate
+
+
+def test_zero_progress_pass_preserves_hashtags_bytes_and_skips_rederive(tmp_path, monkeypatch):
+    """MOL-695: measured==0 with no tag mutation → byte/mtime-identical hashtags.json; no rederive."""
+    import fanops.fanops_hashtags as fh
+    from datetime import datetime, timezone, timedelta
+    cfg = Config(root=tmp_path); _persona(cfg)
+    t0 = datetime(2026, 7, 1, tzinfo=timezone.utc)
+    refresh_store(cfg, scrape_client=_FakeClient({"#hiphop": 50}), now=t0)
+    before = cfg.hashtags_path.read_bytes()
+    mtime = cfg.hashtags_path.stat().st_mtime_ns
+    stamp = json.loads(before)["last_complete_pass"]
+    calls = {"n": 0}
+    real = fh._rederive_posting_corpora
+    def boom(*a, **k):
+        calls["n"] += 1; return real(*a, **k)
+    monkeypatch.setattr(fh, "_rederive_posting_corpora", boom)
+    # Age past complete gate but refuse the only due work → measured=0, cache unchanged.
+    out = refresh_store(cfg, scrape_client=_FakeClient({}, refuse_tags={"#hiphop", "hiphop"}),
+                        now=t0 + timedelta(hours=25))
+    assert out["measured"] == 0 and out["written"] is False and out.get("reason") == "no_progress"
+    assert cfg.hashtags_path.read_bytes() == before
+    assert cfg.hashtags_path.stat().st_mtime_ns == mtime
+    assert json.loads(cfg.hashtags_path.read_text())["last_complete_pass"] == stamp
+    assert calls["n"] == 0
+
+
+def test_zero_progress_still_writes_when_tag_records_mutate(tmp_path, monkeypatch):
+    """measured==0 must NOT skip write when orphan eviction mutates the tag map (prove the predicate).
+
+    The zero-progress skip compares the write projection against the map ON DISK — comparing it against
+    another projection would hide eviction, since the projection is what evicts."""
+    from datetime import datetime, timezone
+    cfg = Config(root=tmp_path); _persona(cfg)
+    now = datetime(2026, 7, 28, tzinfo=timezone.utc)
+    cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
+    # Orphan non-anchor with dead `from` — _records_for_write evicts it even with no new measures.
+    cfg.hashtags_path.write_text(json.dumps({
+        "#hiphop": {"graph_id": "id-hiphop", "like_count": 10.0, "media_count": 100.0,
+                    "media_count_at": now.isoformat(), "measured_at": now.isoformat()},
+        "#orphan": {"graph_id": "id-orphan", "like_count": 9.0,
+                    "measured_at": now.isoformat(), "from": {"#punchlines": 4}},
+        "last_complete_pass": now.isoformat()}))
+    before = cfg.hashtags_path.read_text()
+    out = refresh_store(cfg, scrape_client=_FakeClient({}, refuse_tags={"#hiphop", "hiphop"}), now=now)
+    assert out["measured"] == 0 and out["written"] is True
+    assert cfg.hashtags_path.read_text() != before
+    assert "#orphan" not in load_measurements(cfg)
+
+
+def test_refresh_pass_priority_queue_due_tiers(tmp_path, monkeypatch):
+    """MOL-695: unmeasured anchor → missing volume → stale corpus → weekly long-tail; fresh irrelevant skipped."""
+    from datetime import datetime, timezone, timedelta
+    from fanops import personas as P
+    now = datetime(2026, 7, 29, 12, 0, tzinfo=timezone.utc)
+    cfg = Config(root=tmp_path)
+    P.add_persona(cfg, name="A", voice="x", niche=["newroot"], id="a")
+    # Seed corpus membership on the posting persona (already-loaded; derive not required for the queue).
+    row = json.loads(cfg.personas_path.read_text())
+    for p in row["personas"]:
+        if p["id"] == "a":
+            p["hashtag_corpus"] = ["#corpustag"]
+    cfg.personas_path.write_text(json.dumps(row))
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": [
+        {"handle": "a", "platforms": ["instagram"], "status": "active", "persona_id": "a"}]}))
+    cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.hashtags_path.write_text(json.dumps({
+        "#missingvol": {"graph_id": "id-missingvol", "like_count": 11.0,
+                        "measured_at": (now - timedelta(hours=2)).isoformat(),
+                        "from": {"#newroot": 2}},
+        "#corpustag": {"graph_id": "id-corpustag", "like_count": 22.0, "media_count": 500.0,
+                       "media_count_at": (now - timedelta(hours=2)).isoformat(),
+                       "measured_at": (now - timedelta(hours=25)).isoformat(),
+                       "from": {"#newroot": 2}},
+        "#weeklytail": {"graph_id": "id-weeklytail", "like_count": 33.0, "media_count": 600.0,
+                        "media_count_at": (now - timedelta(days=1)).isoformat(),
+                        "measured_at": (now - timedelta(days=8)).isoformat(),
+                        "from": {"#newroot": 2}},
+        "#freshnoise": {"graph_id": "id-freshnoise", "like_count": 44.0, "media_count": 700.0,
+                        "media_count_at": (now - timedelta(hours=1)).isoformat(),
+                        "measured_at": (now - timedelta(hours=1)).isoformat(),
+                        "from": {"#newroot": 2}},
+        "last_complete_pass": (now - timedelta(days=2)).isoformat()}))
+    metrics = {"#newroot": 1, "#missingvol": 11, "#corpustag": 22, "#weeklytail": 33, "#freshnoise": 44}
+    client = _FakeClient(metrics, media_count_by_tag={"#missingvol": 1000, "#newroot": 50,
+                                                      "#corpustag": 500, "#weeklytail": 600,
+                                                      "#freshnoise": 700})
+    out = refresh_store(cfg, scrape_client=client, now=now)
+    assert out["written"] is True
+    assert "freshnoise" not in client.media_calls, "fresh non-corpus/non-volume tag must stay off the queue"
+    assert client.media_calls[:4] == ["newroot", "missingvol", "corpustag", "weeklytail"]
 
 
 def test_stalest_remeasure_reaches_known_before_fresh_anchor(tmp_path, monkeypatch):
-    """D-2 / MOL-525 (2): under throttle, a stale known tag must beat a freshly-measured anchor."""
+    """Superseded by MOL-695 due tiers: volume-due / weekly beats a freshly-measured anchor.
+
+    Under throttle, a missing-volume known tag must run before remesuring a fresh anchor."""
     from fanops import personas as P
+    from datetime import datetime, timezone, timedelta
+    now = datetime(2026, 7, 2, 0, 0, tzinfo=timezone.utc)
     cfg = Config(root=tmp_path)
     P.add_persona(cfg, name="A", voice="x", niche=["freshanchor"], id="a")
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
@@ -223,15 +389,18 @@ def test_stalest_remeasure_reaches_known_before_fresh_anchor(tmp_path, monkeypat
         {"handle": "a", "platforms": ["instagram"], "status": "active", "persona_id": "a"}]}))
     cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.hashtags_path.write_text(json.dumps({
-        "#freshanchor": {"graph_id": "id-freshanchor", METRIC_FIELD: 10.0,
-                         "measured_at": "2026-07-01T12:00:00+00:00"},
+        "#freshanchor": {"graph_id": "id-freshanchor", METRIC_FIELD: 10.0, "media_count": 100.0,
+                         "media_count_at": (now - timedelta(hours=1)).isoformat(),
+                         "measured_at": (now - timedelta(hours=1)).isoformat()},
         "#staletail": {"graph_id": "id-staletail", METRIC_FIELD: 20.0,
-                       "measured_at": "2026-01-01T00:00:00+00:00", "from": {"#freshanchor": 1}},
-        "last_complete_pass": "2026-07-01T12:00:00+00:00"}))
-    client = _FakeClient({"#freshanchor": 11, "#staletail": 21}, throttle_after=1)
-    out = refresh_store(cfg, scrape_client=client, now=datetime_for_pass())
+                       "measured_at": (now - timedelta(days=8)).isoformat(),
+                       "from": {"#freshanchor": 1}},
+        "last_complete_pass": (now - timedelta(days=2)).isoformat()}))
+    client = _FakeClient({"#freshanchor": 11, "#staletail": 21}, throttle_after=0,
+                         media_count_by_tag={"#staletail": 50})
+    out = refresh_store(cfg, scrape_client=client, now=now)
     assert out["throttled"] is True
-    assert client.media_calls[0] == "staletail", "stalest known must be first — not the fresh anchor"
+    assert client.media_calls[0] == "staletail", "weekly/volume-due known must beat a fresh measured anchor"
 
 
 def test_refresh_store_try_cap_ends_pass_without_complete_stamp(tmp_path, monkeypatch):
@@ -271,11 +440,14 @@ def test_refresh_store_refuses_a_second_concurrent_pass(tmp_path, monkeypatch):
 
 
 def test_scrape_try_cap_default_clears_a_full_cache_remeasure(tmp_path):
-    """MOL-686: the queue is every measured tag (stalest-first) plus anchors plus enqueued co-tags. A cap
-    below that count throttles EVERY pass, so last_complete_pass never advances and the 12h tick degenerates
-    into a pass per tick that only re-measures the same stale head. The live cache held 300 tags at cap 120."""
+    """MOL-686/MOL-695: try_cap stays large enough for niches + co-tag headroom. Queue is due-tiered
+    (not every cached tag every pass), but the default cap must still clear a heavy due set."""
     import fanops.fanops_hashtags as fh
+    assert fh._SCRAPE_TRY_CAP >= 400
     assert fh._SCRAPE_TRY_CAP >= 300 + fh._SCRAPE_COTAG_ENQUEUE_CAP
+    assert fh._SCRAPE_COTAG_ENQUEUE_CAP == 40
+    assert fh._VOLUME_MAX_AGE_DAYS == 7
+    assert fh._SCRAPE_PARALLEL == 4
 
 
 def test_refresh_store_cotag_enqueue_cap(tmp_path, monkeypatch):
@@ -361,7 +533,9 @@ def test_refresh_store_absent_personas_is_not_an_abort(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path)
     assert not cfg.personas_path.exists()
     out = refresh_store(cfg, scrape_client=_FakeClient({}))
-    assert out["written"] is True and "aborted" not in out and out["measured"] == 0
+    # No personas → empty queue → measured=0 no-progress (MOL-695); still not a corrupt abort.
+    assert out.get("aborted") != "corrupt_personas"
+    assert out["written"] is False and out.get("reason") == "no_progress" and out["measured"] == 0
 
 
 def test_refresh_store_if_due_corrupt_personas_reports_reason_never_raises(tmp_path, monkeypatch):
