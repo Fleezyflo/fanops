@@ -366,9 +366,9 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
     import threading
     from concurrent.futures import ThreadPoolExecutor
     from fanops.errors import ControlFileError
-    from fanops.ig_hashtag_scrape import (ScrapeRefused, ScrapeThrottled, ScrapeUnavailable,
-                                          measure_and_harvest_scrape, open_client, session_client,
-                                          resolve_hashtag_scrape)
+    from fanops.ig_hashtag_scrape import (ScrapeCheckpoint, ScrapeRefused, ScrapeThrottled,
+                                          ScrapeUnavailable, measure_and_harvest_scrape, open_client,
+                                          session_client, resolve_hashtag_scrape)
     from fanops.persona_research import persona_terms
     now = now or datetime.now(timezone.utc)
     stamp = now.isoformat()
@@ -380,8 +380,9 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
     if scrape_client is None:
         try:
             scrape_client = open_client(cfg)
-        except ScrapeUnavailable as e:
-            return {"written": False, "aborted": "no_scrape", "reason": str(e), "backend": "scrape"}
+        except ScrapeUnavailable as e:                     # ScrapeCheckpoint (a LOCK) is a distinct abort
+            aborted = "checkpoint" if isinstance(e, ScrapeCheckpoint) else "no_scrape"
+            return {"written": False, "aborted": aborted, "reason": str(e), "backend": "scrape"}
     client = scrape_client
     prev_complete = _read_complete_pass(cfg)
     cache: dict[str, dict] = dict(load_measurements(cfg))
@@ -665,9 +666,12 @@ def cmd_hashtags_refresh(cfg: Config) -> int:
 
 def cmd_hashtags_scrape_login(cfg: Config) -> int:
     """`fanops hashtags scrape-login` — open instagrapi, login, dump session. Never prints the password."""
-    from fanops.ig_hashtag_scrape import ScrapeUnavailable, open_client
+    from fanops.ig_hashtag_scrape import ScrapeCheckpoint, ScrapeUnavailable, open_client
     try:
         open_client(cfg)
+    except ScrapeCheckpoint as e:                          # a lock: retrying the login only deepens it
+        get_logger(cfg)("hashtags", "-", "scrape_login_checkpoint", level="error", reason=str(e)[:200])
+        return 2
     except ScrapeUnavailable as e:
         get_logger(cfg)("hashtags", "-", "scrape_login_failed", level="error", reason=str(e)[:160])
         return 2

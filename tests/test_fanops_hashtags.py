@@ -153,6 +153,47 @@ def test_refresh_store_no_scrape_aborts_loudly(tmp_path, monkeypatch):
     assert not cfg.hashtags_path.exists()
 
 
+def test_refresh_store_checkpoint_is_its_own_abort(tmp_path, monkeypatch):
+    """A locked account must abort as `checkpoint`, not `no_scrape` — the remedies differ (in-app
+    verification vs re-running scrape-login), and the cache stays untouched either way."""
+    import fanops.ig_hashtag_scrape as igs
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
+    cfg = Config(root=tmp_path); _persona(cfg)
+    def locked(_cfg, **_k):
+        raise igs.ScrapeCheckpoint("account checkpointed by Instagram — verify the login in the "
+                                   "official Instagram app or web, then re-run scrape-login")
+    monkeypatch.setattr(igs, "open_client", locked)
+    out = refresh_store(cfg)
+    assert out["written"] is False and out["aborted"] == "checkpoint"
+    assert "Instagram app" in out["reason"]
+    assert not cfg.hashtags_path.exists()
+
+
+def test_scrape_checkpoint_classification(tmp_path, monkeypatch):
+    """`_is_checkpoint` must fire on challenge/checkpoint cues and NOT on a plain expired session,
+    and ScrapeCheckpoint must stay catchable as ScrapeUnavailable (every existing abort path)."""
+    from fanops.ig_hashtag_scrape import (ScrapeCheckpoint, ScrapeUnavailable, _is_checkpoint,
+                                          open_client)
+    assert issubclass(ScrapeCheckpoint, ScrapeUnavailable)
+    class ChallengeRequired(Exception): pass
+    assert _is_checkpoint(ChallengeRequired("Manual verification required via native challenge flow"))
+    assert _is_checkpoint(Exception("checkpoint_required")) is True
+    assert _is_checkpoint(Exception("login_required")) is False   # expiry: scrape-login DOES fix it
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "secret-must-not-leak")
+    cfg = Config(root=tmp_path)
+    class _Locked:
+        def load_settings(self, _p): pass
+        def login(self, *_a, **_k): raise ChallengeRequired("challenge_required")
+        def dump_settings(self, _p): pass
+    try:
+        open_client(cfg, client_factory=_Locked)
+        raise AssertionError("expected ScrapeCheckpoint")
+    except ScrapeCheckpoint as e:
+        assert "Instagram app" in str(e) and "secret-must-not-leak" not in str(e)
+
+
 def test_cmd_hashtags_discover_reports_and_writes_nothing(tmp_path, monkeypatch):
     from fanops.fanops_hashtags import cmd_hashtags_discover
     from datetime import datetime, timezone

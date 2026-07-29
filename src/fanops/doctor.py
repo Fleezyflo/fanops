@@ -81,8 +81,8 @@ def _hashtag_scrape_check(cfg: Config, *, open_client=None, probe_resolve=None) 
     stays soft-ok (refresh still aborts); a session file that fails login OR whose hashtag_info
     returns login_required fails LOUD (MOL-687 / MOL-696). Never echoes password or session contents.
     `open_client` / `probe_resolve` are injectable so tests never hit Instagram."""
-    from fanops.ig_hashtag_scrape import (ScrapeRefused, ScrapeThrottled, ScrapeUnavailable,
-                                         scrape_configured)
+    from fanops.ig_hashtag_scrape import (ScrapeCheckpoint, ScrapeRefused, ScrapeThrottled,
+                                         ScrapeUnavailable, scrape_configured)
     lbl = "hashtag Layer A scrape session live (instagrapi)"
     if not scrape_configured(cfg):
         return {"label": lbl, "ok": True,
@@ -103,6 +103,9 @@ def _hashtag_scrape_check(cfg: Config, *, open_client=None, probe_resolve=None) 
         probe(client, "#hiphop")
     except ScrapeThrottled as e:
         return _check(lbl, True, f"scrape probe throttled ({str(e)[:80]}) — Layer A will retry")
+    except ScrapeCheckpoint as e:
+        # A LOCK, not an expiry: scrape-login alone cannot clear it, so never make that the whole remedy.
+        return _check(lbl, False, str(e)[:160])
     except (ScrapeUnavailable, ScrapeRefused) as e:
         return _check(lbl, False, f"{str(e)[:120]} — run `fanops hashtags scrape-login`")
     return _check(lbl, True, "")
