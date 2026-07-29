@@ -1129,7 +1129,9 @@ def _cmd_run_pass(cfg: Config, base_time: str) -> dict | None:
         except Exception as e:
             get_logger(cfg)("timing_bias", "-", "error", err=str(e)[:120])
     # MOL-644: LLM niche-vocab expand (search roots only) — before Layer A so new seeds measure this tick.
-    # Gated on FANOPS_RESPONDER=llm inside expand_vocab_if_due; fail-open; own 12h marker.
+    # Gated on FANOPS_RESPONDER=llm inside expand_vocab_if_due; fail-open. MOL-693: input-driven, not
+    # periodic — a persona is asked only when its (name, voice, niche) fingerprint moves, so calling this
+    # every tick is free for unchanged personas and picks an edit up on the very next tick.
     try:
         from fanops.hashtag_vocab import expand_vocab_if_due
         vr = expand_vocab_if_due(cfg)
