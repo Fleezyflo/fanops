@@ -10,7 +10,9 @@ Discovery direction (MOL-637/MOL-644): Layer A search seeds are operator **niche
 
 Metric honesty: visibility is **only** Instagram fields Layer A stores — never an invented blended `reach`, never "most visibility" from a single top-post like.
 
-`hashtags.RANK_FIELDS = ("play_count", "like_count")` with preferred `METRIC_FIELD = "play_count"`.
+RANK is `hashtags.SIZE_FIELD = "media_count"` then `TREND_FIELD = "current_top_reel_play_max_7d"` (see
+Layer B below). `RANK_FIELDS = ("play_count", "like_count")` / `METRIC_FIELD = "play_count"` are the LEGACY
+Top-grid medians — still stored, still enough to admit a row, no longer the cross-tag order.
 `ig_hashtag_scrape.measure_and_harvest_scrape` takes ONE `hashtag_medias_top`
 (`hashtags.TOP_SAMPLE_N` = 27 — MOL-691 raised it from Instagram's 9-row default grid page, which is far
 too thin to take a maximum over; 27 is instagrapi's own default for its v1/recent/reels reads, so this is
@@ -88,16 +90,26 @@ What replaces it:
 1. **cutover** — `persona_store.deprecate_legacy_corpus` moves every corpus tag lacking derivation meta into
    the visible `hashtag_corpus_deprecated` field and empties `hashtag_corpus`. Idempotent. Hydration and
    selection read only `hashtag_corpus`, so pre-derivation tags stop shipping the moment the code runs.
-2. **pool** — `_aligned_pool` (MOL-665 + MOL-685): evidence + **relatedness candidate** gate, then rank by metric.
-   Anchors always. Non-anchors need inbound_hits≥2 or n_roots≥2 from live roots; magnets may also
-   candidate on any inbound when metric ≥ `MAGNET_METRIC_FLOOR` (not a ban — soft lane). One-hit
-   non-magnets never enter even at huge plays. Non-anchor category-scale tags (`media_count` at
-   platform volume) need multi-root relatedness and rank behind niche peers. `derive_corpus` cuts
-   top `corpus_target` by metric.
-3. **admit** — `_is_evidence` (metric present + positive, parseable `measured_at`, fresher than 90 days) and
-   `hashtag_hygiene.is_curatable` (structural only).
-4. **write** — top `cfg.corpus_target` by the platform metric via `apply_auto_corpus`, which REPLACES the
-   corpus wholesale. Meta per tag: `{play_count?, like_count?, media_count?, measured_at, from}`.
+2. **pool** — `_aligned_pool` (MOL-665 + MOL-685 + MOL-692): evidence + **relatedness candidate** gate, then
+   rank SIZE-FIRST. Anchors always. Non-anchors need inbound_hits≥2 or n_roots≥2 from live roots; a
+   non-anchor category-scale tag (`media_count` ≥ `CATEGORY_MEDIA_FLOOR`) additionally needs multi-root
+   relatedness, so volume alone still cannot buy a seat. One-hit tags never enter, however big or loud.
+   `derive_corpus` cuts top `corpus_target` in that order. The emitted float per row is the tag's
+   `media_count` (0.0 when volume was never served) — total, so `fanops hashtags discover` never sees None.
+3. **admit** — `_is_evidence`: `hashtags.has_evidence` (ANY positive Instagram number — size, current Reels
+   popularity, or a legacy Top-grid median), parseable `measured_at`, fresher than 90 days, and
+   `hashtag_hygiene.is_curatable` (structural only). A size-only row MUST qualify or size-first rank could
+   never see the biggest tags.
+4. **write** — top `cfg.corpus_target` in size-first order via `apply_auto_corpus`, which REPLACES the
+   corpus wholesale. Meta per tag: the whole `RECORD_NUM_FIELDS` contract + `{measured_at, from}`.
+
+**Rank is size-first, not a blended score (MOL-692 — `hashtags.size_rank_key`).** Lexicographic:
+(1) a positive `media_count` outranks every record lacking one; (2) `media_count` DESC — the dominant
+ordering; (3) `current_top_reel_play_max_7d` DESC as a tie-break WITHIN equal size; (4) tag string.
+`ranked_tags` applies it, and `vet_hashtags` inherits its whole metric rank from that order, so this one
+function decides "which tags are biggest" everywhere. The two axes are never summed or averaged — they are
+different units. What this replaced: the MEDIAN of a handful of Top posts, under which a 52k-post tag
+outranked a 20.9M-post tag by ~36x. `_metric` survives as legacy/provenance evidence, NOT as a score.
 
 Never padded: thin evidence ⇒ a short corpus. Empty pool (cold cache / outage) ⇒ `{changed: False}` and the
 previous derived corpus stands.
@@ -111,6 +123,8 @@ previous derived corpus stands.
 | `_MEGA`/`_RELEVANCE`/`_GOSSIP_*`/`_NICHE_POOLS`/`niche_floor`/`_RANK`/`VETTED`/`_composition` | hand-researched reach claims from June 2026 — the exact manufactured assessment the rule forbids |
 | `FANOPS_HASHTAG_TRENDS` | with the cache as the sole reach source, an off-switch is a broken system, not an option |
 | `hashtag_migrate.py` + `fanops hashtags migrate` | a one-time migration whose job the cutover now does structurally |
+| `is_magnet` / `_MAGNET_BODIES` / `MAGNET_METRIC_FLOOR` (the magnet soft lane) | it admitted #fyp/#love/#viral on ONE inbound hit plus a high Top-grid median — the exact number MOL-692 stopped ranking on. A generic magnet is category-scale by definition, so `CATEGORY_MEDIA_FLOOR` already forces it through the multi-root bar |
+| the category-scale RANK PENALTY (MOL-685's demotion tier) | it sent every admitted whale behind every niche tag, capping the corpus just under `CATEGORY_MEDIA_FLOOR` — the opposite of ranking on scale. The category ADMISSION bar is KEPT |
 
 **Operator lever:** declared niche via `/personas/niche` (Studio Personas). No ban list.
 

@@ -27,7 +27,8 @@ from fanops.variant_learning import ucb_rank
 # so request_captions' fail-open path is unit-patchable (tests monkeypatch fanops.caption.transferred_hooks).
 from fanops.variant_transfer import transferred_hooks
 from fanops.personas import caption_directive
-from fanops.hashtags import vet_hashtags_traced, load_measurements, _norm, content_tag_candidates
+from fanops.hashtags import (RECORD_NUM_FIELDS, vet_hashtags_traced, load_measurements, _norm, _num,
+                             content_tag_candidates)
 from fanops.log import get_logger
 from fanops.control import load_guidance
 
@@ -223,10 +224,10 @@ def request_captions(led: Ledger, cfg: Config, clip_id: str,
         if not isinstance(rec, dict):
             continue
         row = {}
-        for k in ("play_count", "like_count", "media_count"):
-            v = rec.get(k)
-            if isinstance(v, (int, float)) and not isinstance(v, bool) and v >= 0:
-                row[k] = float(v)
+        for k in RECORD_NUM_FIELDS:                      # MOL-692: one contract, so a new field cannot
+            v = _num(rec.get(k))                         # be silently missing from the model's menu
+            if v is not None:
+                row[k] = v
         if row:
             hashtag_metrics[t] = row
     payload = {

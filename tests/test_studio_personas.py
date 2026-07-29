@@ -6,7 +6,7 @@
 import json
 from fanops.config import Config
 from fanops.accounts import Accounts
-from fanops.hashtags import METRIC_FIELD
+from fanops.hashtags import METRIC_FIELD, SIZE_FIELD
 from fanops import personas as core
 from fanops.studio import personas as sp
 from fanops.studio import views
@@ -154,10 +154,11 @@ def test_run_migration_action(tmp_path):
 # --- read-model --------------------------------------------------------------------------------
 
 def _cache(cfg, values):
-    """The platform measurement cache in its real shape: {tag: {graph_id, like_count, measured_at}}."""
+    """The platform measurement cache in its real shape. `values` are tag SIZES (`media_count`) — the
+    primary rank since MOL-692 — plus a legacy median so the row also reads as measured."""
     cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.hashtags_path.write_text(json.dumps({
-        t: {"graph_id": "id-" + t.lstrip("#"), METRIC_FIELD: float(v),
+        t: {"graph_id": "id-" + t.lstrip("#"), SIZE_FIELD: float(v), METRIC_FIELD: 1.0,
             "measured_at": "2026-07-20T00:00:00+00:00"} for t, v in values.items()}))
 
 
@@ -176,14 +177,14 @@ def test_personas_page_read_model(tmp_path):
 
 def test_personas_page_surfaces_the_platform_metric(tmp_path):
     # The card's number + ★ come from the platform MEASUREMENT CACHE, never own-post reach, and it is
-    # Meta's own like_count — not a "reach" figure we computed.
+    # Instagram's own media_count (tag SIZE, MOL-692) — not a "reach" figure we computed.
     cfg = Config(root=tmp_path)
     pid = core.add_persona(cfg, name="P1", voice="v1", niche=["hiphop"])
     core.apply_auto_corpus(cfg, pid, tags=["#detroitrap"], meta={})
     _cache(cfg, {"#detroitrap": 4200, "#hiphop": 900})
     card = next(c for c in views.personas_page(cfg).personas if c.id == pid)
     assert "#detroitrap" in card.reach_tags                 # measured -> flagged most-active (★)
-    assert card.reach_means.get("#detroitrap") == 4200.0    # Meta's own like_count, surfaced honestly
+    assert card.reach_means.get("#detroitrap") == 4200.0    # verbatim media_count, surfaced honestly
 
 
 def test_personas_page_star_is_gated_on_a_real_measurement(tmp_path):

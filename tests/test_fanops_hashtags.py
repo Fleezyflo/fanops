@@ -9,7 +9,7 @@ import inspect
 import json
 import pytest
 from fanops.config import Config
-from fanops.hashtags import METRIC_FIELD, _metric, load_measurements
+from fanops.hashtags import METRIC_FIELD, _metric, load_measurements, ranked_tags
 from fanops.fanops_hashtags import refresh_store
 from hashtag_scrape_fakes import _FakeClient
 
@@ -108,15 +108,17 @@ def test_refresh_store_takes_no_ledger_and_no_doctor_gate(tmp_path, monkeypatch)
 
 
 def test_written_file_is_the_flat_record_shape_ranked_by_the_metric(tmp_path, monkeypatch):
-    # The cache is `{tag: {graph_id, like_count, measured_at, from}}` written in metric-DESC order, so a
-    # reader that just iterates the file already has the menu. `last_complete_pass` is a sibling stamp,
-    # not a tag record (MOL-525).
+    # The cache is a flat record map written in the SAME order the selection menu uses (`ranked_tags` —
+    # size-first since MOL-692), so a reader that just iterates the file already has the menu.
+    # `last_complete_pass` is a sibling stamp, not a tag record (MOL-525).
     cfg = Config(root=tmp_path); _persona(cfg)
     refresh_store(cfg, scrape_client=_FakeClient(
-        {"#hiphop": 500, "#beta": 900, "#alpha": 100}, cooccur="#alpha #beta"))
+        {"#hiphop": 500, "#beta": 900, "#alpha": 100}, cooccur="#alpha #beta",
+        media_count_by_tag={"#hiphop": 5_000, "#beta": 900_000, "#alpha": 200}))
     blob = json.loads(cfg.hashtags_path.read_text())
     tags = {k: v for k, v in blob.items() if isinstance(v, dict)}
-    assert list(tags) == sorted(tags, key=lambda t: (-_metric(tags[t]), t))   # metric desc on disk
+    assert list(tags) == ranked_tags(tags)                       # menu order on disk
+    assert list(tags) == ["#beta", "#hiphop", "#alpha"]           # media_count desc, NOT median desc
     assert blob["#beta"]["graph_id"] == "id-beta" and blob["#beta"]["measured_at"]
     assert blob["#beta"]["from"] == {"#hiphop": 2}  # two Top medias in fake (MOL-665)          # inbound: niche on beta Top (not outbound)
     assert isinstance(blob.get("last_complete_pass"), str) and blob["last_complete_pass"]

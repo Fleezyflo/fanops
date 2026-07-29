@@ -150,7 +150,7 @@
             {% if p.corpus_refreshed_at %}<span class="corpus-refreshed muted" title="when these measurements were taken">measured {{ p.corpus_refreshed_at }}</span>{% endif %}
             {% for row in p.corpus_tags %}
               {% set t = row.tag %}
-              <span class="chip tag ro{{ ' high-reach' if t in p.reach_tags else '' }}">{{ t }}{% if row.value is not none %}<span class="reach-n" title="Instagram Top-grid median play_count (else like_count)">· {{ row.value | int }}</span>{% endif %}{% if row.from %}<span class="corpus-prov auto" title="found alongside {{ row.from }} in Instagram's top posts">via {{ row.from }}</span>{% endif %}</span>
+              <span class="chip tag ro{{ ' high-reach' if t in p.reach_tags else '' }}">{{ t }}{% if row.value is not none %}<span class="reach-n" title="Instagram's own media_count — posts carrying this tag">· {{ row.value | int }} posts</span>{% endif %}{% if row.from %}<span class="corpus-prov auto" title="found alongside {{ row.from }} in Instagram's top posts">via {{ row.from }}</span>{% endif %}</span>
             {% else %}<span class="muted">nothing measured for this persona yet</span>{% endfor %}
           </div>
         </section>

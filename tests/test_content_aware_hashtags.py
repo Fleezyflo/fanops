@@ -291,13 +291,16 @@ def test_contentless_clip_is_byte_identical(tmp_path):
 
 
 def test_prompt_annotates_menu_with_hashtag_metrics():
-    """MOL-636: when hashtag_metrics present, menu entries carry play/like numbers + prefer-play rule."""
+    """MOL-636 + MOL-692: menu entries carry the platform numbers, and the rule tells the model the menu
+    is already ordered biggest-first — it is never asked to compare unlike units itself."""
     out = caption_prompt({**_BASE_PAYLOAD,
                           "surfaces": [{"surface": "a/instagram", "platform": "instagram",
                                         "hashtag_store": ["#hiphop"]}],
-                          "hashtag_metrics": {"#hiphop": {"play_count": 9000.0, "like_count": 120.0}}})
-    assert "play_count" in out and "9000" in out
-    assert "prefer" in out.lower() and "play_count" in out
+                          "hashtag_metrics": {"#hiphop": {"media_count": 9000.0, "play_count": 120.0,
+                                                          "current_top_reel_play_max_7d": 77.0}}})
+    assert "media_count" in out and "9000" in out and "77" in out
+    assert "BIGGEST FIRST" in out
+    assert "do not add or average them" in out.lower()
 
 
 def test_request_payload_hashtag_metrics_sidecar(tmp_path):

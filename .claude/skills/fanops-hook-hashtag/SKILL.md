@@ -203,21 +203,26 @@ Authority: `docs/CODEMAPS/hashtag-lifecycle.md`. Summary:
    pin/ban/recommend lane and no global ban list.
 2. **Layer A — measurement** (`fanops_hashtags.refresh_store` via `ig_hashtag_scrape` / instagrapi;
    Graph hashtag path deferred — no silent fallback): `persona_terms` = declared niche ∪ durable LLM
-   vocab → each term resolves via `hashtag_info` → one `hashtag_medias_top` yields Top-grid median
-   `play_count`/`like_count` (plus `media_count` when served) and co-occurring tags →
-   `00_control/hashtags.json` (measured tags only). Exclusive writer lease on `hashtags.lock`.
-   Throttle / try_cap ends a pass without advancing `last_complete_pass`. Missing scrape aborts
-   loudly (`no_scrape`). `fanops hashtags discover` is read-only (zero network).
+   vocab → each term resolves via `hashtag_info` (which is ALSO the only source of `media_count`, so
+   volume re-resolves on its own 7-day `media_count_at` stamp — MOL-691) → one `hashtag_medias_top` at
+   `TOP_SAMPLE_N` = 27 rows yields Top-grid median `play_count`/`like_count`, the 7-day Reels max
+   (`current_top_reel_play_max_7d` + `top_reel_sample_n`), and co-occurring tags →
+   `00_control/hashtags.json` (measured tags only; field set = `RECORD_NUM_FIELDS`/`RECORD_STR_FIELDS`,
+   which the reader must retain or the whole-file rewrite strips it). Exclusive writer lease on
+   `hashtags.lock`. Throttle / try_cap ends a pass without advancing `last_complete_pass`. Missing scrape
+   aborts loudly (`no_scrape`). `fanops hashtags discover` is read-only (zero network).
 3. **Layer B — derivation** (`persona_research.derive_corpus`, zero network): relatedness→candidate
-   (anchors always; else inbound_hits≥2 or n_roots≥2; magnet soft lane at `MAGNET_METRIC_FLOOR`);
-   numbers→member via rank + `corpus_target` cut. Non-anchor category-scale tags (high
-   `media_count`) need multi-root relatedness and rank behind niche peers. Outage / empty pool
-   holds the previous corpus. An empty corpus is honest (no padding).
+   (anchors always; else inbound_hits≥2 or n_roots≥2 — the magnet soft lane is DELETED, MOL-692);
+   then SIZE→rank via `hashtags.size_rank_key` (`media_count` DESC, 7-day Reels max as the tie-break
+   within equal size) + the `corpus_target` cut. Non-anchor category-scale tags (high `media_count`)
+   still need multi-root relatedness to be ADMITTED, but once admitted they rank by their true volume —
+   the old demotion tier capped the corpus just under `CATEGORY_MEDIA_FLOOR`. Outage / empty pool holds
+   the previous corpus. An empty corpus is honest (no padding).
 4. **Selection** (`vet_hashtags`): per-surface store = that persona's aligned pool ∪ corpus; corpus
    leads when present; hard cap 4; composition rules only (no hand-ranked mega pools, no discovery floor,
    no ban list). Cold empty store → empty hashtag line.
-5. **Attribution severance** — a tag's worth is its platform metric, never a post that used it
-   (`tests/test_hashtag_attribution_severance.py`).
+5. **Attribution severance** — a tag's worth is Instagram's own number for the tag, never a post that
+   used it (`tests/test_hashtag_attribution_severance.py`).
 
 ## Wiring (where this lives in the engine)
 

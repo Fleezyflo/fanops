@@ -65,14 +65,14 @@ def test_blank_clears_hint_renders(tmp_path):
 
 
 def test_corpus_chips_carry_the_measurement_and_its_anchor(tmp_path):
-    # Derivation meta drives the chip: each tag shows Meta's own value and the ANCHOR tag whose top posts
-    # surfaced it ("via #hiphop") — the honest "why is this here". A tag with NO meta entry degrades to a
-    # PLAIN chip rather than inventing a number.
-    from fanops.hashtags import METRIC_FIELD
+    # Derivation meta drives the chip: each tag shows Instagram's own tag SIZE (`media_count`, the primary
+    # rank since MOL-692) and the ANCHOR tag whose top posts surfaced it ("via #hiphop") — the honest "why
+    # is this here". A tag with NO meta entry degrades to a PLAIN chip rather than inventing a number.
+    from fanops.hashtags import SIZE_FIELD
     cfg = Config(root=tmp_path)
     pid = core.add_persona(cfg, name="P1", voice="v1", niche=["hiphop"])
     core.apply_auto_corpus(cfg, pid, tags=["#derivedtag", "#barenometa"], meta={
-        "#derivedtag": {METRIC_FIELD: 1500.0, "measured_at": "2026-07-01T00:00:00+00:00", "from": "#hiphop"}})
+        "#derivedtag": {SIZE_FIELD: 1500.0, "measured_at": "2026-07-01T00:00:00+00:00", "from": "#hiphop"}})
     # the read-model carries the value + anchor per tag
     card = next(c for c in views.personas_page(cfg).personas if c.id == pid)
     by_tag = {r["tag"]: r for r in card.corpus_tags}
