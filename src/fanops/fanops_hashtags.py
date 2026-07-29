@@ -421,6 +421,7 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
     _extend_tier([t for t in cache if t in corpus_set and _measured_due(cache[t], corpus_cutoff)])
     _extend_tier([t for t in cache if _measured_due(cache[t], weekly_cutoff)])
     measured = 0; discovered = 0; throttled = False; ig_throttled = False; tried = 0; cotag_enqueued = 0
+    login_dead = False
     unresolved: list[dict] = []
     log = get_logger(cfg)
     try_cap = _scrape_try_cap(); cotag_cap = _scrape_cotag_enqueue_cap()
@@ -491,10 +492,17 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
                 unresolved.append({"tag": tag, "reason": "no_match"}); continue
             if status == "refused":
                 e = payload
+                msg = (getattr(e, "message", None) or str(e) or "")
                 unresolved.append({"tag": tag, "reason": "refused", "code": getattr(e, "code", None),
                                    "message": getattr(e, "message", str(e))})
                 log("hashtags", tag, "unresolved", reason="refused",
-                    message=(getattr(e, "message", "") or "")[:120], tried=tried)
+                    message=msg[:120], tried=tried)
+                # Session can open/login while hashtag_info still returns login_required (MOL-696).
+                # Abort the pass — do NOT invent cooldown (that is for ScrapeThrottled only).
+                if "login_required" in msg.lower():
+                    login_dead = True; stop = True
+                    log("hashtags", "-", "pass_login_required", level="error", tried=tried,
+                        detail="Layer A abort — run fanops hashtags scrape-login")
                 continue
             # status == ok
             ids[tag] = hid
@@ -569,10 +577,13 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
     tag_mutated = fresh != pre_write
     if measured == 0 and not tag_mutated:
         # Zero-progress: leave hashtags.json byte/mtime-identical; do not rederive; keep prior stamp.
+        reason = "login_required" if login_dead else "no_progress"
         out = {"written": False, "measured": 0, "discovered": discovered,
                "total": len(pre_write), "throttled": throttled, "tried": tried,
                "unresolved": unresolved, "backend": "scrape", "parallel": parallel,
-               "reason": "no_progress"}
+               "reason": reason}
+        if login_dead:
+            out["aborted"] = "login_required"
         if cooldown is not None:
             out["cooldown_until"] = cooldown.get("until"); out["cooldown_streak"] = cooldown.get("streak")
         return out

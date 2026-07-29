@@ -554,5 +554,25 @@ def test_doctor_hashtag_scrape_session_dead_fails_loud(tmp_path, monkeypatch):
     assert row["ok"] is False
     assert "scrape-login" in row["hint"] and "login_required" in row["hint"]
     assert "secret-password" not in row["hint"] and "secret-password" not in row["label"]
-    row_ok = doctor._hashtag_scrape_check(cfg, open_client=lambda _c: object())
+    # open_client alone is not enough — probe must succeed too (MOL-696)
+    row_ok = doctor._hashtag_scrape_check(cfg, open_client=lambda _c: object(),
+                                          probe_resolve=lambda _c, _t: ("1", 100.0))
     assert row_ok["ok"] is True and row_ok["hint"] == ""
+
+
+def test_doctor_hashtag_scrape_probe_login_required_fails_loud(tmp_path, monkeypatch):
+    """MOL-696: open_client can succeed while hashtag_info returns login_required — doctor must fail."""
+    from fanops import doctor
+    from fanops.config import Config
+    from fanops.ig_hashtag_scrape import ScrapeRefused
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "secret-password-must-not-leak")
+    cfg = Config(root=tmp_path)
+    cfg.ig_scrape_session_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.ig_scrape_session_path.write_text("{}")
+    def probe(_client, _tag):
+        raise ScrapeRefused("login_required")
+    row = doctor._hashtag_scrape_check(cfg, open_client=lambda _c: object(), probe_resolve=probe)
+    assert row["ok"] is False
+    assert "scrape-login" in row["hint"] and "login_required" in row["hint"]
+    assert "secret-password" not in row["hint"]
