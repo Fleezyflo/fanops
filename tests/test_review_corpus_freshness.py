@@ -5,7 +5,7 @@ from fanops.studio.views_review import _caption_corpus_stale
 
 
 def _post(**kw):
-    base = dict(id="p1", parent_id="c1", account="a", platform=Platform.instagram,
+    base = dict(id="p1", parent_id="c1", account="a", account_id="a", platform=Platform.instagram,
                 caption="x", state=PostState.awaiting_approval)
     base.update(kw)
     return Post(**base)
