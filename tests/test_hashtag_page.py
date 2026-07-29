@@ -13,7 +13,7 @@ from fanops.ledger import Ledger
 from fanops.models import Source, Moment, Clip, Post, Platform, PostState, ClipState, MomentState, Fmt
 from fanops import personas as core
 from fanops import hashtags as hashtags_mod
-from fanops.hashtags import METRIC_FIELD
+from fanops.hashtags import METRIC_FIELD, SIZE_FIELD, TREND_FIELD
 from fanops.studio import views_hashtags
 
 
@@ -29,11 +29,13 @@ def _z(dt):
 
 
 def _cache(cfg, values, *, at=None):
-    """Write the measurement cache in its real shape: {tag: {graph_id, like_count, measured_at}}."""
+    """Write the measurement cache in its real shape. `values` are tag SIZES (`media_count`) — the primary
+    rank since MOL-692 — plus a legacy median so the row also reads as measured."""
     at = at or datetime.now(timezone.utc).isoformat()
     cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.hashtags_path.write_text(json.dumps({
-        t: {"graph_id": "id-" + t.lstrip("#"), METRIC_FIELD: float(v), "measured_at": at}
+        t: {"graph_id": "id-" + t.lstrip("#"), SIZE_FIELD: float(v), METRIC_FIELD: 1.0,
+            "measured_at": at}
         for t, v in values.items()}))
 
 
@@ -142,8 +144,12 @@ def test_ok_cache_ranks_chips(tmp_path):
     at = "2026-07-20T00:00:00+00:00"
     _cache(cfg, {"#low": 10, "#high": 900, "#mid": 500}, at=at)
     status = views_hashtags._store_status(cfg)
-    assert status.state == "ok" and status.metric_field == METRIC_FIELD
-    assert [r["tag"] for r in status.tags] == ["#high", "#mid", "#low"]   # platform metric desc
+    # MOL-692: TWO fields, named separately — there is no single "metric" number on this page any more.
+    assert status.state == "ok"
+    assert SIZE_FIELD in status.size_label and TREND_FIELD in status.trend_label
+    assert not hasattr(status, "metric_field")
+    assert [r["tag"] for r in status.tags] == ["#high", "#mid", "#low"]   # media_count desc
+    assert [r["size"] for r in status.tags] == [900.0, 500.0, 10.0]
     assert all("banned" not in r for r in status.tags)
     assert status.oldest == at and status.age                                # freshness, not an allowance
 
@@ -160,7 +166,7 @@ def test_corpus_rows_read_only(tmp_path):
     rows = views_hashtags._corpora_rows(cfg)
     row = next(r for r in rows if r.pid == pid)
     assert row.size == 2                                 # byte-truth from personas.json
-    assert row.top3 == ["#hiphop", "#rap"]               # ranked by the platform metric
+    assert row.top3 == ["#hiphop", "#rap"]               # biggest first (media_count 900 vs 100)
     assert row.last_refreshed == "2026-07-21T00:00:00+00:00"   # the newest measurement stamp
     # The section-1 HTML must carry NO add/remove/research/ban controls (the corpus is DERIVED).
     html = _client(cfg).get("/hashtags").data.decode()

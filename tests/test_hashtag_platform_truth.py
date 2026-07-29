@@ -329,15 +329,17 @@ def test_outbound_one_hit_never_enters_aligned_pool(tmp_path, monkeypatch):
 
 
 def test_inbound_cotag_attributes_measured_tag_to_anchor(tmp_path, monkeypatch):
-    """Inbound: niche on the candidate's own Top writes from. Pool needs relatedness (MOL-665);
-    #fyp is a magnet with high metric → soft lane admits one-hit."""
+    """Inbound: the niche appearing on the candidate's own Top writes `from`, which is what the pool's
+    relatedness bar reads (MOL-665). Two Top rows carry the anchor, so hits>=2 admits — this no longer
+    rides the deleted magnet soft lane (MOL-692), and #fyp's own huge numbers buy it nothing."""
     cfg = Config(root=tmp_path)
     pid = _persona(cfg, voice="x", niche=["rapbeef"]); _link_active(cfg, pid)
     media = {"#rapbeef": [{"caption": "noise #fyp", "like_count": 10}],
-             "#fyp": [{"caption": "chaos #rapbeef #drama", "like_count": 9000}]}
+             "#fyp": [{"caption": "chaos #rapbeef #drama", "like_count": 9000},
+                      {"caption": "more #rapbeef", "like_count": 9000}]}
     refresh_store(cfg, scrape_client=_client(media))
     rec = load_measurements(cfg)["#fyp"]
-    assert rec.get("from", {}).get("#rapbeef", 0) >= 1
+    assert rec.get("from", {}).get("#rapbeef", 0) >= 2
     from fanops.persona_research import _aligned_pool
     from fanops.personas import Personas
     pool_tags = {t for t, _, _ in _aligned_pool(Personas.load(cfg).get(pid), load_measurements(cfg))}
@@ -412,7 +414,7 @@ def test_derivation_is_zero_network(tmp_path, monkeypatch):
 
 def test_corpus_is_ranked_by_tag_size_not_by_post_medians(tmp_path, monkeypatch):
     """End-to-end through a real Layer A pass: `#smallbutloud` has ~900x the Top-grid median plays of
-    `#bignichetag`, and must still rank BELOW it because it has ~200x fewer posts (MOL-692)."""
+    `#bignichetag`, and must still rank BELOW it because it carries ~78x fewer posts (MOL-692)."""
     cfg = Config(root=tmp_path)
     pid = _persona(cfg, voice="hiphop"); _link_active(cfg, pid)
     media = {"#hiphop": [{"caption": "#smallbutloud #bignichetag", "like_count": 500}],
@@ -420,8 +422,10 @@ def test_corpus_is_ranked_by_tag_size_not_by_post_medians(tmp_path, monkeypatch)
                                {"caption": "y #hiphop", "play_count": 900_000}],
              "#bignichetag": [{"caption": "x #hiphop", "play_count": 1_000},
                               {"caption": "y #hiphop", "play_count": 1_000}]}
+    # Both stay UNDER CATEGORY_MEDIA_FLOOR so the single-root relatedness they have is enough to admit —
+    # this test is about ORDER, not the category admission bar (proved separately above).
     refresh_store(cfg, scrape_client=_client(
-        media, media_count_by_tag={"#hiphop": 10, "#smallbutloud": 52_228, "#bignichetag": 9_095_289}))
+        media, media_count_by_tag={"#hiphop": 10, "#smallbutloud": 52_228, "#bignichetag": 4_095_289}))
     derive_corpus(cfg, pid)
     corpus = Personas.load(cfg).get(pid).hashtag_corpus
     assert corpus.index("#bignichetag") < corpus.index("#smallbutloud")
