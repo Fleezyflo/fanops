@@ -2068,6 +2068,7 @@
       "fcntl",
       "flask",
       "hashlib",
+      "importlib",
       "instagrapi",
       "json",
       "keyring",
