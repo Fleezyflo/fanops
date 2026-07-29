@@ -176,6 +176,82 @@ def test_bulk_approve_collide_path_unconstructable(tmp_path, monkeypatch):
         f"spread engine produced duplicates: {sched}")
 
 
+def _bare_posts(handle: str, n: int, *, account_id: str = "ia") -> list[Post]:
+    """N awaiting_approval Posts for ONE account, ids zero-padded so the allocator's id-sort is the
+    numeric order. Built WITHOUT the ledger: suggest_times_for_batch is pure over (id, account), so a
+    106-post capacity case needs no clip/source substrate."""
+    return [Post(id=f"{handle}_{k:03d}", parent_id="clip_1", account=handle, account_id=account_id,
+                 platform=Platform.instagram, caption="c", state=PostState.awaiting_approval,
+                 media_urls=["file:///clip_1_9x16.mp4"], public_url="dryrun://sweep") for k in range(n)]
+
+
+def _per_day(days) -> list[int]:
+    """Slot counts per day, in chronological day order."""
+    counts: dict = {}
+    for d in days:
+        counts[d] = counts.get(d, 0) + 1
+    return [counts[d] for d in sorted(counts)]
+
+
+def test_batch_spread_caps_at_ten_per_account_per_day(tmp_path, monkeypatch):
+    """MOL-708 RED — the incident, exactly: 106 queued videos for ONE account. Today the cumulative
+    walk has no notion of a calendar day, so it runs straight through midnight at cadence and piles
+    43-47 posts on a single day (the operator then re-spread all 106 by hand). The contract: ten per
+    operator-local day, then the remainder — 10x10 + 6 — with every post preserved."""
+    monkeypatch.setenv("FANOPS_POSTER", "dryrun")
+    cfg = Config(root=tmp_path); _seed_accounts(cfg)
+    from fanops.studio.views_common import suggest_times_for_batch
+    posts = _bare_posts("a", 106)
+    sched = suggest_times_for_batch(cfg, posts, now=FIXED_DT)
+    assert len(sched) == 106, "every post must get a slot — a cap must never DROP a post"
+    per_day = _per_day([parse_iso(t).date() for t in sched.values()])
+    assert per_day == [10] * 10 + [6], f"daily capacity violated: per_day={per_day}"
+
+
+def test_daily_cap_keeps_the_gap_distinctness_and_account_isolation(tmp_path, monkeypatch):
+    """MOL-708 RED — the cap must not buy its capacity by breaking the M4/M7 invariants: consecutive
+    per-account gaps stay >= STEP, timestamps stay pairwise distinct (no shared minute — the other
+    half of the incident), and two accounts allocate INDEPENDENTLY (a full day for @a never displaces
+    @b, and @b's posts never count against @a's capacity)."""
+    monkeypatch.setenv("FANOPS_POSTER", "dryrun")
+    cfg = Config(root=tmp_path); _seed_accounts(cfg)
+    from fanops.studio.views_common import suggest_times_for_batch
+    posts = _bare_posts("a", 12) + _bare_posts("b", 12, account_id="ib")
+    sched = suggest_times_for_batch(cfg, posts, now=FIXED_DT)
+    assert len(set(sched.values())) == len(sched), f"duplicate slot minute: {sched}"
+    for handle in ("a", "b"):
+        dts = sorted(parse_iso(sched[p.id]) for p in posts if p.account == handle)
+        gaps_min = [(b - a).total_seconds() / 60.0 for a, b in zip(dts, dts[1:])]
+        assert all(g >= MIN_PER_ACCOUNT_GAP_MIN for g in gaps_min), f"{handle} gap floor: {gaps_min}"
+        # Each account independently gets 10 on the first day and 2 on the next.
+        assert _per_day([d.date() for d in dts]) == [10, 2], (
+            f"{handle} not independently capped: {[iso_z(d) for d in dts]}")
+
+
+def test_daily_cap_boundary_is_operator_local_not_utc(tmp_path, monkeypatch):
+    """MOL-708 RED — the day boundary is OPERATOR-LOCAL midnight (cfg.operator_tz), matching
+    publish_buckets' operator-local hour/weekday. Pinned with a +04:00 zone where the two readings
+    genuinely disagree: from 16:00 local the first ten slots fill the LOCAL day while all twelve
+    still share ONE UTC date — so a UTC-bucketed cap would report 12-on-one-day and let an 11th
+    through, and a local-bucketed cap correctly reports 10 + 2."""
+    monkeypatch.setenv("FANOPS_POSTER", "dryrun")
+    monkeypatch.setenv("FANOPS_OPERATOR_TZ", "Asia/Dubai")          # UTC+4, no DST
+    from zoneinfo import ZoneInfo
+    cfg = Config(root=tmp_path); _seed_accounts(cfg)
+    assert cfg.operator_tz == "Asia/Dubai", "FANOPS_OPERATOR_TZ not reading through cfg"
+    from fanops.studio.views_common import suggest_times_for_batch
+    posts = _bare_posts("a", 12)
+    sched = suggest_times_for_batch(cfg, posts, now=FIXED_DT)       # 12:00Z == 16:00 local
+    zone = ZoneInfo("Asia/Dubai")
+    local_days = [parse_iso(t).astimezone(zone).date() for t in sched.values()]
+    assert _per_day(local_days) == [10, 2], (
+        f"operator-local capacity violated: {sorted(sched.values())}")
+    utc_days = _per_day([parse_iso(t).date() for t in sched.values()])
+    assert utc_days[0] > 10, (
+        "test is not discriminating: the +04:00 case must put >10 slots on ONE UTC date, "
+        f"otherwise a UTC-bucketed cap would pass it too (utc_days={utc_days})")
+
+
 def test_bulk_approve_preserves_operator_future_time(tmp_path, monkeypatch):
     """GREEN-CONTRACT (already passes — pinned characterization): a post whose scheduled_time is
     a strictly-FUTURE operator-set value must NOT be rewritten by approval. The existing `keep`
