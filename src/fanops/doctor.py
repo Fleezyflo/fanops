@@ -76,11 +76,13 @@ _META_TOKEN_LEAD_DAYS = 10                                # WARN this many days 
 
 
 
-def _hashtag_scrape_check(cfg: Config, *, open_client=None) -> dict:
-    """Hashtag Layer A needs a LIVE instagrapi scrape session. Missing setup stays soft-ok (refresh
-    still aborts); a session file that fails login fails LOUD so mid-ops expiry is visible (MOL-687).
-    Never echoes password or session contents. `open_client` is injectable so tests never hit Instagram."""
-    from fanops.ig_hashtag_scrape import ScrapeUnavailable, scrape_configured
+def _hashtag_scrape_check(cfg: Config, *, open_client=None, probe_resolve=None) -> dict:
+    """Hashtag Layer A needs a LIVE instagrapi scrape session that can RESOLVE a tag. Missing setup
+    stays soft-ok (refresh still aborts); a session file that fails login OR whose hashtag_info
+    returns login_required fails LOUD (MOL-687 / MOL-696). Never echoes password or session contents.
+    `open_client` / `probe_resolve` are injectable so tests never hit Instagram."""
+    from fanops.ig_hashtag_scrape import (ScrapeRefused, ScrapeThrottled, ScrapeUnavailable,
+                                         scrape_configured)
     lbl = "hashtag Layer A scrape session live (instagrapi)"
     if not scrape_configured(cfg):
         return {"label": lbl, "ok": True,
@@ -94,8 +96,14 @@ def _hashtag_scrape_check(cfg: Config, *, open_client=None) -> dict:
         opener = open_client
         if opener is None:
             from fanops.ig_hashtag_scrape import open_client as opener
-        opener(cfg)
-    except ScrapeUnavailable as e:
+        client = opener(cfg)
+        probe = probe_resolve
+        if probe is None:
+            from fanops.ig_hashtag_scrape import resolve_hashtag_scrape as probe
+        probe(client, "#hiphop")
+    except ScrapeThrottled as e:
+        return _check(lbl, True, f"scrape probe throttled ({str(e)[:80]}) — Layer A will retry")
+    except (ScrapeUnavailable, ScrapeRefused) as e:
         return _check(lbl, False, f"{str(e)[:120]} — run `fanops hashtags scrape-login`")
     return _check(lbl, True, "")
 
