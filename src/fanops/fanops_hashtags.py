@@ -42,7 +42,10 @@ _COOLDOWN_DELAYS_S = (30 * 60, 60 * 60, 2 * 60 * 60, 6 * 60 * 60)  # streak 1..N
 # MOL-695; NOT every cached tag every pass), plus headroom for co-tag growth. 400 kept from MOL-686.
 _SCRAPE_TRY_CAP = 400
 _SCRAPE_COTAG_ENQUEUE_CAP = 40
-_SCRAPE_PARALLEL = 4          # concurrent medias_top workers per wave (sequential was ~6s×N wall)
+_SCRAPE_PARALLEL = 1          # tags per wave. 1 = ONE in-flight private-API call, the only safe default:
+                              # 4 clone-clients on one session (MOL-698) earned a challenge_required lock,
+                              # and instagrapi is not thread-safe. Raising it only groups tags into a wave —
+                              # client_lock still serializes the wire. Pace with FANOPS_HASHTAG_SCRAPE_DELAY.
 
 
 def _scrape_try_cap() -> int:
@@ -347,9 +350,12 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
     write membership edges. Membership `from` is INBOUND only: a measured tag whose own Top captions
     mention a live niche anchor. Outbound-into-`from` was the megatag magnet (one caption hit × huge plays).
 
-    Network work runs in WAVES of `_scrape_parallel()` (default 4) concurrent fetches — wall time should
-    track wave count, not one-tag-at-a-time. Injected `scrape_client` (tests) shares one client under a
-    lock so fakes stay deterministic.
+    Network work runs in WAVES of `_scrape_parallel()` tags, ONE CLIENT for the whole pass and one
+    request in flight at a time (`client_lock`), paced by the client's own `delay_range`. The default is
+    a wave of 1: a single account issuing simultaneous private-API calls from clone-clients that share
+    one device fingerprint is what earned the 2026-07-29 lock (MOL-698), and instagrapi is not
+    thread-safe. A pass is therefore ~4× slower in wall time — irrelevant for a background 12h-cadence
+    pass that `try_cap` already bounds. Injected `scrape_client` (tests) also runs single-client.
 
     Layer B runs ONCE, when the pass ENDS (complete or early-stopped) and only when `measured>0`
     (MOL-694). A mid-pass flush is measurement durability alone — deriving on each one recomputed every
@@ -368,7 +374,7 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
     from fanops.errors import ControlFileError
     from fanops.ig_hashtag_scrape import (ScrapeCheckpoint, ScrapeRefused, ScrapeThrottled,
                                           ScrapeUnavailable, measure_and_harvest_scrape, open_client,
-                                          session_client, resolve_hashtag_scrape)
+                                          resolve_hashtag_scrape)
     from fanops.persona_research import persona_terms
     now = now or datetime.now(timezone.utc)
     stamp = now.isoformat()
@@ -428,18 +434,7 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
     try_cap = _scrape_try_cap(); cotag_cap = _scrape_cotag_enqueue_cap()
     parallel = 1 if injected else _scrape_parallel()
     workers = [client]
-    client_lock = threading.Lock()                         # shared client (tests / single worker)
-    if parallel > 1:
-        for _ in range(parallel - 1):
-            try:
-                workers.append(session_client(cfg))
-            except ScrapeUnavailable:
-                break
-        if len(workers) > 1:
-            client_lock = None                             # one client per worker — no lock
-            parallel = len(workers)
-        else:
-            parallel = 1
+    client_lock = threading.Lock()                         # ONE client, one in-flight request (MOL-698)
 
     def _fetch(tag: str, worker):
         """Resolve+measure one tag. Returns (status, tag, hid|None, media_count|None, metrics|None, cotags|exc)."""

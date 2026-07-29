@@ -89,19 +89,25 @@
     },
     "FANOPS_HASHTAG_SCRAPE_COTAG_ENQUEUE": {
       "read_at": [
-        "fanops.fanops_hashtags:60"
+        "fanops.fanops_hashtags:63"
+      ],
+      "reader_count": 1
+    },
+    "FANOPS_HASHTAG_SCRAPE_DELAY": {
+      "read_at": [
+        "fanops.ig_hashtag_scrape:21"
       ],
       "reader_count": 1
     },
     "FANOPS_HASHTAG_SCRAPE_PARALLEL": {
       "read_at": [
-        "fanops.fanops_hashtags:71"
+        "fanops.fanops_hashtags:74"
       ],
       "reader_count": 1
     },
     "FANOPS_HASHTAG_SCRAPE_TRY_CAP": {
       "read_at": [
-        "fanops.fanops_hashtags:49"
+        "fanops.fanops_hashtags:52"
       ],
       "reader_count": 1
     },
@@ -485,7 +491,7 @@
     "src/fanops/**/*.py"
   ],
   "totals": {
-    "env_vars_read": 76,
+    "env_vars_read": 77,
     "env_write_sites": 2
   }
 }

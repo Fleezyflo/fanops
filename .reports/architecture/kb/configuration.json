@@ -111,6 +111,12 @@
    ],
    "reader_count": 1
   },
+  "FANOPS_HASHTAG_SCRAPE_DELAY": {
+   "read_at": [
+    "fanops.ig_hashtag_scrape:21"
+   ],
+   "reader_count": 1
+  },
   "FANOPS_HASHTAG_SCRAPE_PARALLEL": {
    "read_at": [
     "fanops.fanops_hashtags:64"

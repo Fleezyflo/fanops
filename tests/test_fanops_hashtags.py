@@ -580,7 +580,7 @@ def test_scrape_try_cap_default_clears_a_full_cache_remeasure(tmp_path):
     assert fh._SCRAPE_TRY_CAP >= 300 + fh._SCRAPE_COTAG_ENQUEUE_CAP
     assert fh._SCRAPE_COTAG_ENQUEUE_CAP == 40
     assert fh._VOLUME_MAX_AGE_DAYS == 7
-    assert fh._SCRAPE_PARALLEL == 4
+    assert fh._SCRAPE_PARALLEL == 1              # MOL-698: one account, one in-flight request
 
 
 def test_refresh_store_cotag_enqueue_cap(tmp_path, monkeypatch):
@@ -705,6 +705,51 @@ def test_refresh_store_reports_parallel_one_when_client_injected(tmp_path, monke
     cfg = Config(root=tmp_path); _persona(cfg)
     out = refresh_store(cfg, scrape_client=_FakeClient({"#hiphop": 10}))
     assert out.get("parallel") == 1 and out["written"] is True
+
+
+def test_layer_a_emits_one_client_no_session_clones(tmp_path, monkeypatch):
+    """MOL-698: the 2026-07-29 challenge_required was earned by 4 concurrent clients sharing ONE
+    dumped session (same device fingerprint, 4 simultaneous private-API calls) — the loudest
+    anti-bot signal we emit, and instagrapi is not thread-safe. The clone fan-out is GONE: one
+    client, serialized behind client_lock, and the session-clone helper no longer exists."""
+    import fanops.fanops_hashtags as fh
+    import fanops.ig_hashtag_scrape as igs
+    assert not hasattr(igs, "session_client"), "session-clone fan-out must stay deleted"
+    assert "session_client" not in inspect.getsource(fh)
+    monkeypatch.delenv("FANOPS_HASHTAG_SCRAPE_PARALLEL", raising=False)
+    assert fh._scrape_parallel() == 1                       # serial BY DEFAULT, not by env
+
+
+def test_scrape_delay_range_paces_requests(monkeypatch):
+    """MOL-698: requests fired back-to-back at ~2.4 req/s from one account. instagrapi's own
+    delay_range is the pacing knob; it was never set. Default (1,3)s jitter, env-overridable,
+    fail-safe to the default on garbage (a bad env var must never break Layer A)."""
+    from fanops.ig_hashtag_scrape import _scrape_delay_range
+    monkeypatch.delenv("FANOPS_HASHTAG_SCRAPE_DELAY", raising=False)
+    assert _scrape_delay_range() == [1.0, 3.0]
+    monkeypatch.setenv("FANOPS_HASHTAG_SCRAPE_DELAY", "2,5")
+    assert _scrape_delay_range() == [2.0, 5.0]
+    monkeypatch.setenv("FANOPS_HASHTAG_SCRAPE_DELAY", "0")
+    assert _scrape_delay_range() is None                    # explicit opt-out (fakes / tests)
+    for junk in ("abc", "", "5,2", "-1,3", "1,2,3"):        # inverted / negative / arity are junk too
+        monkeypatch.setenv("FANOPS_HASHTAG_SCRAPE_DELAY", junk)
+        assert _scrape_delay_range() == [1.0, 3.0], junk
+
+
+def test_open_client_sets_delay_range_on_the_client(tmp_path, monkeypatch):
+    """The pacing must land ON the client instagrapi actually uses — set before any call."""
+    from fanops.ig_hashtag_scrape import open_client
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
+    monkeypatch.delenv("FANOPS_HASHTAG_SCRAPE_DELAY", raising=False)
+    seen = {}
+    class _Fake:
+        def load_settings(self, _p): pass
+        def login(self, *_a, **_k): seen["delay_at_login"] = self.delay_range
+        def dump_settings(self, _p): pass
+    c = open_client(Config(root=tmp_path), client_factory=_Fake)
+    assert c.delay_range == [1.0, 3.0]
+    assert seen["delay_at_login"] == [1.0, 3.0]             # paced through login too, not just fetches
 
 
 def test_refresh_store_early_aborts_on_login_required(tmp_path, monkeypatch):

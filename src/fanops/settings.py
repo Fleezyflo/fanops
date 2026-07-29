@@ -161,7 +161,8 @@ class Settings(BaseSettings):
     FANOPS_CORPUS_TARGET: int = 80
     FANOPS_HASHTAG_SCRAPE_TRY_CAP: int = 120
     FANOPS_HASHTAG_SCRAPE_COTAG_ENQUEUE: int = 40
-    FANOPS_HASHTAG_SCRAPE_PARALLEL: int = 4
+    FANOPS_HASHTAG_SCRAPE_PARALLEL: int = 1
+    FANOPS_HASHTAG_SCRAPE_DELAY: str = ""
     FANOPS_IG_SCRAPE_USER: str | None = None
     FANOPS_IG_SCRAPE_PASSWORD: str | None = None
     FANOPS_REQUIRE_FULL_OBJECTIVE: str = ""
@@ -245,8 +246,8 @@ class Settings(BaseSettings):
     @field_validator("FANOPS_HASHTAG_SCRAPE_PARALLEL", mode="before")
     @classmethod
     def _scrape_parallel(cls, v):
-        iv = _parse_int(v, 4)
-        return iv if iv >= 1 else 4
+        iv = _parse_int(v, 1)
+        return iv if iv >= 1 else 1
 
     @field_validator("FANOPS_VARIANT_MIN_POSTS", mode="before")
     @classmethod
