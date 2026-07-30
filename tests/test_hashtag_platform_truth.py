@@ -353,7 +353,7 @@ def test_inbound_cotag_attributes_measured_tag_to_anchor(tmp_path, monkeypatch):
     media = {"#rapbeef": [{"caption": "noise #fyp", "like_count": 10}],
              "#fyp": [{"caption": "chaos #rapbeef #drama", "like_count": 9000},
                       {"caption": "more #rapbeef", "like_count": 9000}]}
-    refresh_store(cfg, scrape_client=_client(media, media_count_by_tag={"#rapbeef": 50_000, "#fyp": 90_000_000}))
+    refresh_store(cfg, scrape_client=_client(media, media_count_by_tag={"#rapbeef": 50_000, "#fyp": 90_000}))
     rec = load_measurements(cfg)["#fyp"]
     assert rec.get("from", {}).get("#rapbeef", 0) >= 2
     from fanops.persona_research import _aligned_pool
