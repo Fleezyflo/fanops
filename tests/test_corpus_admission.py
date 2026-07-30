@@ -106,14 +106,15 @@ def test_aligned_pool_is_size_ordered_and_still_drops_one_hit():
     assert dict((t, v) for t, v, _s in pool)["#bars"] == 4_000_000.0
 
 
-def test_llm_vocab_no_unconditional_seat(tmp_path):
+def test_llm_vocab_is_not_a_root_at_all(tmp_path):
+    """MOL-719: durable vocab is neither a search root nor a relatedness anchor."""
     cfg = Config(root=tmp_path)
     add_persona(cfg, name="A", voice="v", niche=["bars"], id="a")
     _link(cfg, {"ha": "a"})
     hv.write_vocab(cfg, {"a": {"terms": ["syrianrap"], "expanded_at": NOW.isoformat(), "source": "llm"}})
     per = Personas.load(cfg).get("a")
-    assert "syrianrap" in persona_terms(per, cfg)
-    assert "syrianrap" in relatedness_terms(per, cfg)
+    assert "syrianrap" not in persona_terms(per, cfg)
+    assert "syrianrap" not in relatedness_terms(per, cfg)
     cache = {"#syrianrap": _rec(play=200, size=50_000, frm={})}
     pool = {t for t, _, _ in _aligned_pool(per, cache, now=NOW, cfg=cfg)}
     assert "#syrianrap" not in pool
@@ -129,7 +130,7 @@ def test_shared_llm_root_gives_no_relatedness(tmp_path):
         "b": {"terms": ["freestyle"], "expanded_at": NOW.isoformat(), "source": "llm"},
     })
     a, b = Personas.load(cfg).get("a"), Personas.load(cfg).get("b")
-    assert "freestyle" in persona_terms(a, cfg) and "freestyle" in persona_terms(b, cfg)
+    assert "freestyle" not in persona_terms(a, cfg) and "freestyle" not in persona_terms(b, cfg)
     assert "freestyle" not in relatedness_terms(a, cfg)
     assert "freestyle" not in relatedness_terms(b, cfg)
     cache = {"#craft": _rec(play=100, size=50_000, frm={"#freestyle": 5})}
@@ -137,14 +138,18 @@ def test_shared_llm_root_gives_no_relatedness(tmp_path):
     assert "#craft" not in {t for t, _, _ in _aligned_pool(b, cache, now=NOW, cfg=cfg)}
 
 
-def test_unique_llm_root_may_attribute(tmp_path):
+def test_unique_llm_root_no_longer_attributes(tmp_path):
+    """MOL-719: even a vocab term unique to this persona cannot attribute a tag into its corpus. A stale
+    `from` edge keyed on a retired vocab root is inert — only declared niche attributes."""
     cfg = Config(root=tmp_path)
     add_persona(cfg, name="A", voice="v", niche=["bars"], id="a")
     _link(cfg, {"ha": "a"})
     hv.write_vocab(cfg, {"a": {"terms": ["syrianrap"], "expanded_at": NOW.isoformat(), "source": "llm"}})
     per = Personas.load(cfg).get("a")
-    assert "syrianrap" in relatedness_terms(per, cfg)
+    assert relatedness_terms(per, cfg) == ["bars"]
     cache = {"#barsoverbeats": _rec(play=80, size=8_000, frm={"#syrianrap": 4})}
+    assert "#barsoverbeats" not in {t for t, _, _ in _aligned_pool(per, cache, now=NOW, cfg=cfg)}
+    cache["#barsoverbeats"]["from"] = {"#bars": 4}                    # niche root -> admitted
     assert "#barsoverbeats" in {t for t, _, _ in _aligned_pool(per, cache, now=NOW, cfg=cfg)}
 
 
@@ -158,7 +163,7 @@ def test_sibling_declared_term_attributes_only_to_declarer(tmp_path):
         "b": {"terms": ["hiphop"], "expanded_at": NOW.isoformat(), "source": "llm"},
     })
     a, b = Personas.load(cfg).get("a"), Personas.load(cfg).get("b")
-    assert "hiphop" in niche_terms(a) and "hiphop" in persona_terms(b, cfg)
+    assert "hiphop" in niche_terms(a) and "hiphop" not in persona_terms(b, cfg)
     assert "hiphop" not in relatedness_terms(b, cfg)
     cache = {
         "#hiphop": _rec(play=100, size=4_000_000),
@@ -169,7 +174,9 @@ def test_sibling_declared_term_attributes_only_to_declarer(tmp_path):
     assert "#hiphop" in {t for t, _, _ in _aligned_pool(a, cache, now=NOW, cfg=cfg)}
 
 
-def test_persona_terms_stays_wide_including_shared(tmp_path):
+def test_persona_terms_is_declared_niche_only(tmp_path):
+    """MOL-719: the search-root set collapses to declared niche — shared AND unique vocab both drop out,
+    so `persona_terms` and `relatedness_terms` are the same list."""
     cfg = Config(root=tmp_path)
     add_persona(cfg, name="A", voice="v", niche=["detroitrap"], id="a")
     add_persona(cfg, name="B", voice="v", niche=["undergroundhiphop"], id="b")
@@ -179,9 +186,36 @@ def test_persona_terms_stays_wide_including_shared(tmp_path):
         "b": {"terms": ["freestyle"], "expanded_at": NOW.isoformat(), "source": "llm"},
     })
     a = Personas.load(cfg).get("a")
-    terms = persona_terms(a, cfg)
-    assert terms[:1] == ["detroitrap"]
-    assert "freestyle" in terms and "cypher" in terms
+    assert persona_terms(a, cfg) == ["detroitrap"] == niche_terms(a)
+    assert relatedness_terms(a, cfg) == ["detroitrap"]
+
+
+def test_inputs_fingerprint_covers_policy_version(tmp_path, monkeypatch):
+    """MOL-719: the derive-freshness digest must move when the ADMISSION RULES move, not only when a
+    control file does. MOL-714/716 changed the rules in code, neither control file changed, so the live
+    marker kept matching and no corpus was ever re-derived."""
+    from fanops import persona_research as pr
+    cfg = Config(root=tmp_path)
+    add_persona(cfg, name="A", voice="v", niche=["bars"], id="a")
+    before_bytes = cfg.personas_path.read_bytes()
+    fp = pr._inputs_fingerprint(cfg)
+    monkeypatch.setattr(pr, "_POLICY_V", pr._POLICY_V + 1)
+    assert cfg.personas_path.read_bytes() == before_bytes             # inputs byte-identical
+    assert pr._inputs_fingerprint(cfg) != fp
+
+
+def test_policy_bump_makes_corpora_due(tmp_path, monkeypatch):
+    """MOL-719: a marker stamped under an older policy is DUE, not `unchanged`."""
+    from fanops import persona_research as pr
+    cfg = Config(root=tmp_path)
+    add_persona(cfg, name="A", voice="v", niche=["bars"], id="a")
+    _link(cfg, {"ha": "a"})
+    marker = cfg.control / ".corpora_refresh.json"
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text(json.dumps({"ts": NOW.isoformat(), "inputs_fp": pr._inputs_fingerprint(cfg)}))
+    assert pr.refresh_corpora_if_due(cfg, now=NOW).get("reason") == "unchanged"
+    monkeypatch.setattr(pr, "_POLICY_V", pr._POLICY_V + 1)
+    assert pr.refresh_corpora_if_due(cfg, now=NOW).get("refreshed") is True
 
 
 def test_top_grid_n_tracks_the_real_sample():

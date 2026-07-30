@@ -34,6 +34,13 @@ CATEGORY_MEDIA_FLOOR = 5_000_000.0
 # Non-niche candidates need a real volume floor (MOL-714). Unmeasured / sub-1k tags padded live
 # corpora alphabetically; niche seats stay unconditional and are exempt.
 MIN_MEDIA_FLOOR = 1_000.0
+# BUMP whenever anything above (or in `_is_candidate` / `_aligned_pool` / the root sets) changes what a
+# derive would admit or how it ranks. `_inputs_fingerprint` folds this in, so a rules-only change
+# invalidates every `.corpora_refresh.json` marker and derives once. Mirrors `hashtag_vocab._FP_V` one
+# layer up. Without it MOL-714/716 shipped and NEVER ran: the digest saw only control-file bytes, neither
+# file moved, the live marker kept matching, and the corpora stayed frozen on pre-MOL-714 output for a day
+# (cross-persona overlap 49/32/28 on disk vs 17/0/4 derivable).
+_POLICY_V = 2
 
 
 def inbound_hits(rec: dict, anchors: set[str]) -> int:
@@ -59,12 +66,11 @@ def is_category(rec: dict) -> bool:
 
 def _is_candidate(tag: str, rec: dict, relatedness_anchors: set[str], *,
                   niche_anchors: set[str] | None = None) -> bool:
-    """Relatedness gate (MOL-665/MOL-714). Unconditional seat = operator niche ONLY. Every non-niche
-    tag needs media_count ≥ MIN_MEDIA_FLOOR and measured relatedness against `relatedness_anchors`
-    (niche ∪ unique-to-persona LLM vocab). Shared / sibling-owned LLM terms are Layer A search-only
-    and must not appear in relatedness_anchors. A CATEGORY-scale tag additionally needs multi-root
-    relatedness (MOL-685). When `niche_anchors` is omitted it equals `relatedness_anchors` (unit-test
-    compat for the relatedness arithmetic)."""
+    """Relatedness gate (MOL-665/MOL-714/MOL-719). Unconditional seat = operator niche ONLY. Every
+    non-niche tag needs media_count ≥ MIN_MEDIA_FLOOR and measured relatedness against
+    `relatedness_anchors` — which since MOL-719 IS the declared niche, so no generated term can
+    attribute. A CATEGORY-scale tag additionally needs multi-root relatedness (MOL-685). When
+    `niche_anchors` is omitted it equals `relatedness_anchors` (unit-test compat for the arithmetic)."""
     niche = niche_anchors if niche_anchors is not None else relatedness_anchors
     if tag in niche:
         return True                                         # unconditional niche seat
@@ -109,52 +115,31 @@ def niche_terms(per) -> list[str]:
 
 
 def persona_terms(per, cfg: Config | None = None) -> list[str]:
-    """Layer A search roots: operator `niche` first, then durable LLM vocab when `cfg` is given (MOL-644).
+    """Layer A search roots: the operator's declared `niche`, and nothing else (MOL-719).
 
-    Stays WIDE on purpose — Layer A still discovers and measures generated roots, including ones that
-    are Layer B search-only (shared / sibling-owned). Layer B relatedness uses `relatedness_terms`.
+    Durable LLM vocab used to widen this set (MOL-644). It no longer does. Measured on the live control
+    files 2026-07-30: of 72 generated terms across 3 posting personas, 46 did not exist on Instagram at
+    all (`throwndrinkonstage`, `crowdrushesstage`, …) and 13 echoed the persona's own niche back, while
+    106 of 107 corpus admissions already attributed to a niche root. A generated root cannot be validated
+    before it is searched, so an off-territory one launders pollution into every corpus downstream.
+
+    Discovery does not depend on the root list being wide: measuring a root enqueues its novel co-tags
+    (`fanops_hashtags._refresh_pass`), so Instagram supplies the vocabulary while niche sets the
+    direction. `cfg` is retained for call-site compatibility and is deliberately unread.
+
     Voice / content_focus / hook_angle / intensity stay on the persona for caption+hook directives —
     they are NOT Instagram search roots (MOL-637)."""
-    out: list[str] = list(niche_terms(per)); seen: set[str] = set(out)
-    if cfg is not None:
-        from fanops.hashtag_vocab import vocab_terms_for
-        for t in vocab_terms_for(cfg, getattr(per, "id", "") or ""):
-            if t and t not in seen:
-                seen.add(t); out.append(t)
-    return out
+    return niche_terms(per)
 
 
 def relatedness_terms(per, cfg: Config | None = None) -> list[str]:
-    """Layer B relatedness roots (MOL-714): declared niche ∪ LLM vocab unique to this persona.
+    """Layer B relatedness roots: identical to the search roots (MOL-719).
 
-    A vocab term is unique iff it appears in this persona's durable vocab and NOT in any other
-    posting persona's niche or vocab. Shared LLM terms and sibling-declared terms are Layer A
-    search-only — they may still be scraped via wide `persona_terms`, but cannot attribute a tag
-    into any corpus. Operator niche always wins a seat in this set. Without `cfg`, niche only."""
-    out: list[str] = list(niche_terms(per)); seen: set[str] = set(out)
-    if cfg is None:
-        return out
-    from fanops.hashtag_vocab import vocab_terms_for
-    try:
-        from fanops.fanops_hashtags import _posting_personas
-        siblings = _posting_personas(cfg)
-    except Exception:                                        # noqa: BLE001 — fail closed to niche-only extras
-        return out
-    pid = getattr(per, "id", "") or ""
-    owned: set[str] = set()
-    for sibling in siblings:
-        sid = getattr(sibling, "id", "") or ""
-        if not sid or sid == pid:
-            continue
-        for t in niche_terms(sibling):
-            owned.add(t)
-        for t in vocab_terms_for(cfg, sid):
-            if t:
-                owned.add(t)
-    for t in vocab_terms_for(cfg, pid):
-        if t and t not in seen and t not in owned:
-            seen.add(t); out.append(t)
-    return out
+    Was niche ∪ unique-to-persona LLM vocab (MOL-714). With vocab out of discovery, a vocab-keyed `from`
+    edge can only be a stale record from a pass that predates this change, so honouring it would admit
+    tags on evidence no current root produced. One root set, both layers — the file-level promise that
+    the two halves agree on what a persona IS now holds by identity rather than by construction."""
+    return niche_terms(per)
 
 
 def _is_evidence(rec: dict, *, now: datetime | None = None) -> bool:
@@ -177,13 +162,13 @@ def _is_evidence(rec: dict, *, now: datetime | None = None) -> bool:
 
 
 def _aligned_pool(per, cache: dict[str, dict], *, now=None, cfg: Config | None = None) -> list[tuple[str, float, str]]:
-    """Candidates for corpus membership, ordered SIZE-FIRST (MOL-692 / MOL-714).
+    """Candidates for corpus membership, ordered SIZE-FIRST (MOL-692 / MOL-714 / MOL-719).
 
-    Relatedness (`from` strength against niche ∪ unique-to-persona LLM vocab) makes a candidate;
-    SIZE orders the candidates and `derive_corpus` cuts at `corpus_target`. Unconditional seat =
-    operator niche only. Non-niche needs media_count ≥ MIN_MEDIA_FLOOR plus relatedness. Shared /
-    sibling-owned LLM terms never attribute. CATEGORY-scale non-niche needs multi-root (MOL-685).
-    Outbound co-tags still must not appear in `from` (MOL-643).
+    Relatedness (`from` strength against the declared niche) makes a candidate; SIZE orders the
+    candidates and `derive_corpus` cuts at `corpus_target`. Unconditional seat = operator niche only.
+    Non-niche needs media_count ≥ MIN_MEDIA_FLOOR plus relatedness. No generated term attributes.
+    CATEGORY-scale non-niche needs multi-root (MOL-685). Outbound co-tags still must not appear in
+    `from` (MOL-643).
 
     The emitted float is the PRIMARY rank number (`media_count`, 0.0 when Instagram never served volume)
     — a verbatim platform field, and total so `fanops hashtags discover` can never receive None."""
@@ -263,14 +248,19 @@ def _persona_row(cfg: Config, pid: str) -> dict | None:
 
 
 def _inputs_fingerprint(cfg: Config) -> str:
-    """Digest of the two control files a derive READS: personas.json + hashtags.json (MOL-694).
+    """Digest of everything a derive READS: the admission POLICY plus personas.json + hashtags.json
+    (MOL-694, policy added MOL-719).
 
-    sha256 over their bytes, length-prefixed so content moving between the two files cannot collide, and
-    stable across processes (`hash()` is per-interpreter salted). A missing file contributes b"" — absent
-    is a state, not an error. Mirrors `hashtag_vocab._input_fingerprint`, one layer up: there the digest
-    covers one persona's prompt inputs, here it covers the whole derive's inputs."""
+    sha256 over `_POLICY_V` and the two files' bytes, length-prefixed so content moving between the two
+    files cannot collide, and stable across processes (`hash()` is per-interpreter salted). A missing file
+    contributes b"" — absent is a state, not an error. Mirrors `hashtag_vocab._input_fingerprint`, one
+    layer up: there the digest covers one persona's prompt inputs, here it covers the whole derive's.
+
+    The policy term is what makes a rules-only change (a floor, a root set, `_is_candidate`) visible to
+    `refresh_corpora_if_due`. Data alone is not the input to a derive; the rules are half of it."""
     import hashlib
     h = hashlib.sha256()
+    h.update(_POLICY_V.to_bytes(8, "big"))
     for p in (cfg.personas_path, cfg.hashtags_path):
         try:
             blob = p.read_bytes() if p.exists() else b""
