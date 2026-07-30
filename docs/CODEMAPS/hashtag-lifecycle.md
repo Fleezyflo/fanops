@@ -58,7 +58,7 @@ in-app verification — no code path can clear it.
 Per persona linked to an
 **active** account (`_posting_persona_ids`; dormant personas cannot steer discovery):
 
-1. **terms** — `persona_research.persona_terms(per, cfg)` → niche ∪ `hashtag_vocab.json` seeds. Deterministic given durable vocab, **corpus-blind**. Vocab is refreshed by `hashtag_vocab.expand_vocab_if_due` (LLM, `FANOPS_RESPONDER=llm`) — INPUT-DRIVEN, never periodic: each row stores an `input_fp` digest of `(name, voice, niche)` and a persona is re-expanded only when that digest is missing or has moved (MOL-693).
+1. **terms** — `persona_research.persona_terms(per, cfg)` → niche ∪ `hashtag_vocab.json` seeds (Layer A search, stays wide). Layer B relatedness uses `relatedness_terms` = niche ∪ **unique-to-persona** LLM vocab only — shared/sibling-owned LLM terms are search-only and cannot attribute into a corpus (MOL-714). Unconditional corpus seat = niche only; non-niche needs `media_count` ≥ `MIN_MEDIA_FLOOR` (1000). Vocab expansion is sibling-aware (MOL-716: exclusion in prompt + hard filter + fingerprint covers siblings; `_FP_V` bumped). Vocab is refreshed by `hashtag_vocab.expand_vocab_if_due` (LLM, `FANOPS_RESPONDER=llm`) — INPUT-DRIVEN, never periodic: each row stores an `input_fp` digest and a persona is re-expanded only when that digest is missing or has moved (MOL-693/716).
 2. **anchors** — each term resolves via `ig_hashtag_scrape.resolve_hashtag_scrape` (`hashtag_info`).
 3. **measure + harvest, one fetch** — `measure_and_harvest_scrape(client, tag)` returns Top medians
    (`play_count`/`like_count`) AND every hashtag those same captions carry (`CAPTION_TAG_RE`). Co-occurrence discovers tags nobody named

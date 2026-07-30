@@ -92,7 +92,8 @@ def test_refresh_store_derives_corpora_on_its_own_writes(tmp_path, monkeypatch):
     from fanops.personas import Personas
     assert list(Personas.load(cfg).get(pid).hashtag_corpus or []) == []
     refresh_store(cfg, scrape_client=_FakeClient(
-        {"#hiphop": 500, "#alpha": 100}, cooccur="#alpha"))
+        {"#hiphop": 500, "#alpha": 100}, cooccur="#alpha",
+        media_count_by_tag={"#hiphop": 4_000_000, "#alpha": 50_000}))
     corp = list(Personas.load(cfg).get(pid).hashtag_corpus or [])
     assert "#hiphop" in corp and "#alpha" in corp
 
@@ -203,7 +204,7 @@ def test_cmd_hashtags_discover_reports_and_writes_nothing(tmp_path, monkeypatch)
     cfg = Config(root=tmp_path); pid = _persona(cfg)
     cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.hashtags_path.write_text(json.dumps({"#detroitrap": {
-        "graph_id": "id-detroitrap", METRIC_FIELD: 4200.0,
+        "graph_id": "id-detroitrap", METRIC_FIELD: 4200.0, "media_count": 50_000.0,
         "measured_at": datetime.now(timezone.utc).isoformat(), "from": {"#hiphop": 3}}}))
     before = cfg.hashtags_path.read_text()
     rc = cmd_hashtags_discover(cfg)

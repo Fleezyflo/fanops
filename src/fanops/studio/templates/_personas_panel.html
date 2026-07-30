@@ -119,6 +119,14 @@
             </label>
             <button type="submit" class="ghost" title="save interim seeds; voice + levers also seed discovery">Save seeds</button>
           </form>
+          {% if p.discovery_roots %}
+          <p class="persona-discovery muted" title="LLM-generated Layer A search roots — unique ones also attribute in Layer B; search-only means shared/sibling-owned">
+            Generated roots:
+            {% for r in p.discovery_roots %}
+              <span class="chip tag ro{{ ' search-only' if r.role == 'search-only' else '' }}">#{{ r.term }}{% if r.role == 'search-only' %}<span class="corpus-prov auto" title="shared or sibling-owned — Layer A search only">search-only</span>{% endif %}</span>
+            {% endfor %}
+          </p>
+          {% endif %}
         </section>
 
         {# ── Zone 3 — What the system derives (read-only) ─────────────────────────────────────────────

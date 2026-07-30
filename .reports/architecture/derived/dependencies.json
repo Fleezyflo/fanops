@@ -986,6 +986,7 @@
       "lazy": [
         "fanops.controlio",
         "fanops.errors",
+        "fanops.fanops_hashtags",
         "fanops.hashtag_vocab",
         "fanops.log",
         "fanops.persona_store",
@@ -1763,6 +1764,7 @@
         "fanops.config",
         "fanops.daemon",
         "fanops.doctor",
+        "fanops.hashtag_vocab",
         "fanops.hashtags",
         "fanops.lever_docs",
         "fanops.log",
@@ -2377,7 +2379,7 @@
   "generated_by": "tools/arch",
   "generator_version": "arch/1.0.0",
   "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",
-  "lazy_downward_count": 227,
+  "lazy_downward_count": 228,
   "lazy_lateral": [
     {
       "from": "fanops.accounts",
@@ -2610,6 +2612,14 @@
       "same_scc": false,
       "to": "fanops.bands",
       "to_level": 0
+    },
+    {
+      "from": "fanops.persona_research",
+      "from_level": 3,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.fanops_hashtags",
+      "to_level": 3
     },
     {
       "from": "fanops.persona_research",
@@ -3609,10 +3619,10 @@
     "G2_module_sccs_total": 70,
     "G2_non_trivial_sccs": 8,
     "compile_edges_G1": 567,
-    "lazy_edges": 341,
-    "lazy_edges_lateral": 47,
+    "lazy_edges": 343,
+    "lazy_edges_lateral": 48,
     "lazy_edges_strictly_upward": 67,
-    "lazy_edges_to_equal_or_higher_level": 114,
+    "lazy_edges_to_equal_or_higher_level": 115,
     "modules": 135,
     "optional_edges": 0,
     "typing_only_edges": 7
