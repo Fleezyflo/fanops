@@ -8,9 +8,11 @@ One pass, per persona that actually posts:
 
   description -> terms -> anchor tags -> ONE medias_top fetch per tag -> {metric, co-occurring tags}
 
-`persona_terms` returns operator `niche` plus durable LLM vocab seeds (MOL-637/MOL-644) — voice/levers
-stay on captions+hooks, not Layer A search roots. Vocab expands territory without writing the corpus;
-inbound-only membership still gates admission (MOL-643).
+`persona_terms` returns the operator's declared `niche` and nothing else (MOL-637/MOL-719) — voice/levers
+stay on captions+hooks, and durable LLM vocab no longer seeds search (46 of 72 generated terms did not
+exist on Instagram; 106 of 107 admissions attributed to a niche root). Territory still expands, from the
+platform: measuring a root enqueues its novel co-tags below, and inbound-only membership gates admission
+(MOL-643).
 
 Visibility numbers are Instagram's own fields only (see ig_hashtag_scrape): Top-grid median
 `play_count` (preferred) / `like_count`, plus `media_count` from hashtag_info when served.

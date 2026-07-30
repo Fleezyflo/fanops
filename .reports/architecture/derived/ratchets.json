@@ -100,7 +100,6 @@
       "src/fanops/health_model.py": 5,
       "src/fanops/llm.py": 2,
       "src/fanops/moments.py": 3,
-      "src/fanops/persona_research.py": 1,
       "src/fanops/pipeline.py": 12,
       "src/fanops/pipeline_run.py": 2,
       "src/fanops/pipeline_status.py": 1,

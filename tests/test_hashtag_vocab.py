@@ -37,19 +37,19 @@ def _replying(terms):
     return _fake, seen
 
 
-def test_persona_terms_merges_durable_vocab_after_niche(tmp_path):
-    """MOL-644: niche first, then durable LLM vocab seeds — corpus-blind, voice still ignored."""
+def test_persona_terms_ignores_durable_vocab(tmp_path):
+    """MOL-719: durable LLM vocab NO LONGER widens the search roots. 46 of 72 live generated terms did
+    not exist on Instagram at all and 106 of 107 corpus admissions attributed to an operator niche root,
+    so the declared niche is the whole root set — with or without `cfg`."""
     cfg = Config(root=tmp_path)
     pid = _persona(cfg, niche=["hiphop"], voice="believe in yourself punchlines")
     hv.write_vocab(cfg, {pid: {"terms": ["syrianrap", "barsoverbeats", "Believe", "#fyp", ""],
                                 "expanded_at": "2026-07-28T00:00:00+00:00", "source": "llm"}})
     per = Personas.load(cfg).get(pid)
-    assert persona_terms(per) == ["hiphop"]                          # no cfg → niche only (MOL-637)
-    terms = persona_terms(per, cfg)
-    assert terms[:1] == ["hiphop"]
-    assert "syrianrap" in terms and "barsoverbeats" in terms
-    assert "believe" not in terms and "punchlines" not in terms      # voice still never seeds
-    assert "fyp" not in terms                                        # platform junk filtered at write+read
+    assert persona_terms(per) == ["hiphop"]
+    assert persona_terms(per, cfg) == ["hiphop"]                     # cfg no longer widens anything
+    assert "syrianrap" not in persona_terms(per, cfg)
+    assert "barsoverbeats" not in persona_terms(per, cfg)
 
 
 def test_expand_persona_writes_validated_seeds_only(tmp_path, monkeypatch):
@@ -295,33 +295,29 @@ def test_legacy_row_without_fingerprint_expands_once_then_stamps(tmp_path, monke
     assert len(seen) == 1
 
 
-def test_vocab_anchor_admits_inbound_only(tmp_path, monkeypatch):
-    """LLM vocab seeds become Layer A anchors; outbound co-tags still do not admit (MOL-643)."""
+def test_vocab_seeds_are_not_layer_a_anchors(tmp_path, monkeypatch):
+    """MOL-719: durable vocab is no longer searched, so an unreferenced seed is never even measured, while
+    co-tags harvested from a NICHE root still admit on inbound evidence (MOL-643 unchanged)."""
     cfg = Config(root=tmp_path)
     pid = _persona(cfg, niche=["hiphop"]); _link_active(cfg, pid)
     hv.write_vocab(cfg, {pid: {"terms": ["syrianrap"], "expanded_at": "2026-07-28T00:00:00+00:00",
                                "source": "llm"}})
     media = {
-        "#hiphop": [{"caption": "x #nashville", "like_count": 10, "play_count": 100}],
+        "#hiphop": [{"caption": "x #barsoverbeats #nashville", "like_count": 10, "play_count": 100}],
         "#syrianrap": [{"caption": "home #barsoverbeats", "like_count": 20, "play_count": 200}],
         "#nashville": [{"caption": "country only", "like_count": 5000, "play_count": 90000}],
-        "#barsoverbeats": [{"caption": "craft #syrianrap", "like_count": 80, "play_count": 8000},
-                         {"caption": "again #syrianrap", "like_count": 70, "play_count": 7000}],
+        "#barsoverbeats": [{"caption": "craft #hiphop", "like_count": 80, "play_count": 8000},
+                           {"caption": "again #hiphop", "like_count": 70, "play_count": 7000}],
     }
-    # MOL-714: non-niche candidates need media_count ≥ MIN_MEDIA_FLOOR.
-    # Callers: pytest. Existing test file. User: implement plan to-dos.
     refresh_store(cfg, scrape_client=_FakeClient(
         media_by_tag=media,
         media_count_by_tag={"#hiphop": 4_000_000, "#syrianrap": 50_000, "#nashville": 9_000_000,
                             "#barsoverbeats": 8_000}))
     m = load_measurements(cfg)
-    assert "#syrianrap" in m
+    assert "#syrianrap" not in m                                     # never a root -> never fetched
     assert "#nashville" not in m                                     # outbound-only megatag evicted
-    assert m.get("#barsoverbeats", {}).get("from", {}).get("#syrianrap", 0) >= 1
+    assert m.get("#barsoverbeats", {}).get("from", {}).get("#hiphop", 0) >= 2
     per = Personas.load(cfg).get(pid)
     pool = {t for t, _, _ in _aligned_pool(per, m, cfg=cfg)}
-    # MOL-714: unique LLM vocab is relatedness-only — #syrianrap itself is NOT an unconditional seat;
-    # inbound tags it attributes (#barsoverbeats) still admit when media_count clears the floor.
-    assert "#syrianrap" not in pool
-    assert "#barsoverbeats" in pool
+    assert "#barsoverbeats" in pool                                  # niche-rooted harvest still admits
     assert "#nashville" not in pool
