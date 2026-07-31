@@ -110,20 +110,22 @@ def test_publish_writes_06_published_archive(tmp_path, monkeypatch, mocker):
     assert rec["account"] == "a" and rec["caption"] == "ship it"   # the network-phase post carried real fields
 
 def test_archive_fail_open_write(tmp_path, monkeypatch, mocker):
-    # A write_text failure on the archive record must NOT strand the live post: it still reaches published
-    # (archive swallowed). Scope to 06_published only so the ledger's own atomic write is unaffected.
-    import pathlib
+    # A record-write failure must NOT strand the live post: it still reaches published (archive swallowed)
+    # AND the failure is LOGGED — fail-open with a breadcrumb, never a silent swallow.
+    # MOL-728 (decorative-test repair): this injected `pathlib.Path.write_text`, which _archive_published has
+    # NEVER called — it opened the final path with os.open+O_TRUNC (and now writes via write_text_atomic, which
+    # uses os.fdopen). Nothing in its call tree write_text's under 06_published either (`_moment_hook` is a dict
+    # lookup; ledger.py has zero write_text calls). The fault could not fire, so the test passed with its
+    # injection SKIPPED. Inject at the writer the archive actually calls, and assert the fault fired.
     _live(monkeypatch)                                  # live backend so the post publishes (and tries to archive)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _queued(led, cfg, pid="pw", cid="c_pw", when="2020-01-01T00:00:00Z")
     _http_media(led, "pw"); _stub_ok_poster(mocker, cfg)
-    real_write = pathlib.Path.write_text
-    def fake_write(self, *a, **k):
-        if "06_published" in str(self): raise OSError("disk full")
-        return real_write(self, *a, **k)
-    mocker.patch("pathlib.Path.write_text", fake_write)
+    boom = mocker.patch("fanops.post.run.write_text_atomic", side_effect=OSError("disk full"))
     publish_due(cfg, now="2026-06-02T18:00:00Z")
+    assert boom.called                                                 # NEGATIVE CONTROL: the fault really fired
     assert Ledger.load(cfg).posts["pw"].state is PostState.published   # archive failure did NOT flip it to failed
+    assert "archive_error" in cfg.log_path.read_text()                 # ...and it was logged, not silently swallowed
 
 def test_archive_fail_open_mkdir(tmp_path, monkeypatch, mocker):
     # A mkdir PermissionError on the published dir must also be swallowed — the post still publishes.
@@ -547,6 +549,50 @@ def test_archive_published_is_owner_only_with_no_world_readable_window(tmp_path)
     assert ap.exists()
     assert stat.S_IMODE(ap.stat().st_mode) == 0o600                  # owner-only file, created 0600 (no chmod window)
     assert stat.S_IMODE(ap.parent.stat().st_mode) == 0o700          # owner-only day dir (not world-listable)
+
+
+def _arch_post(pid: str, url: str) -> Post:
+    return Post(id=pid, parent_id="clip_1", account="a", account_id="98432", platform=Platform.instagram,
+                caption="c", state=PostState.published, created_at="2026-06-02T18:00:00Z", public_url=url)
+
+
+def test_archive_published_rewrite_replaces_inode_and_relocks_a_loose_prior_file(tmp_path):
+    # MOL-728: os.replace swaps in a FRESH 0600 inode, so a re-archive over a record left world-readable by an
+    # older build lands owner-only WITHOUT any tighten-after-write chmod, and carries the new content.
+    # (reconcile.py re-fires _archive_published on an already-archived post, so re-archive is a live path.)
+    import json, stat
+    from fanops.post.run import _archive_published
+    cfg = Config(root=tmp_path)
+    _archive_published(cfg, _arch_post("p_re", "https://example/first"))
+    ap = cfg.published / "2026-06-02" / "p_re.json"
+    ap.chmod(0o644)                                                  # a record archived by a looser, older build
+    _archive_published(cfg, _arch_post("p_re", "https://example/second"))
+    assert stat.S_IMODE(ap.stat().st_mode) == 0o600                  # replace brought its own 0600 inode
+    assert json.loads(ap.read_text())["public_url"] == "https://example/second"   # new content landed
+    assert list(ap.parent.glob("*.tmp")) == []                       # no temp residue on the happy path
+
+
+def test_archive_published_replace_failure_keeps_prior_record_and_removes_temp(tmp_path, monkeypatch):
+    # MOL-728 REGRESSION: the old writer opened the FINAL path with O_CREAT|O_WRONLY|O_TRUNC, so an interrupted
+    # re-archive destroyed the record it was rewriting (truncate lands before any byte is written). Under
+    # mkstemp+os.replace the prior record must survive a replace failure byte-for-byte, with no temp left behind
+    # and the failure still logged (fail-open, never silent).
+    from fanops import controlio
+    from fanops.post.run import _archive_published
+    cfg = Config(root=tmp_path)
+    _archive_published(cfg, _arch_post("p_int", "https://example/first"))
+    ap = cfg.published / "2026-06-02" / "p_int.json"
+    prior = ap.read_bytes()
+    real_replace = controlio.os.replace
+    def boom(src, dst, *a, **k):
+        if "06_published" in str(dst): raise OSError("simulated interruption")   # scope: never the ledger's own replace
+        return real_replace(src, dst, *a, **k)
+    monkeypatch.setattr(controlio.os, "replace", boom)
+    _archive_published(cfg, _arch_post("p_int", "https://example/second"))       # fail-open: must NOT raise
+    monkeypatch.undo()
+    assert ap.read_bytes() == prior                                  # prior record intact — no O_TRUNC husk
+    assert list(ap.parent.glob("*.tmp")) == []                       # temp cleaned up on the failure path
+    assert "archive_error" in cfg.log_path.read_text()               # failure logged, not silently swallowed
 
 
 

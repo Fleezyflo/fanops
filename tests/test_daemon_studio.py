@@ -55,6 +55,50 @@ def test_install_studio_bootstraps(tmp_path, monkeypatch):
     assert res["port"] == 8787
 
 
+def test_install_studio_writes_the_rendered_plist_verbatim(tmp_path, monkeypatch):
+    # MOL-728: the atomic writer must land the SAME bytes the direct write_text landed — plist contents unchanged.
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(daemon.sys, "platform", "darwin")
+    monkeypatch.setattr(daemon.subprocess, "run", _fake_launchctl(bootout=(1, ""), bootstrap=(0, "")))
+    cfg = Config(root=tmp_path)
+
+    daemon.install_studio(cfg)
+
+    pp = daemon.studio_plist_path()
+    assert pp.read_text() == daemon.render_studio_plist(cfg)
+    assert plistlib.loads(pp.read_bytes())["Label"] == daemon.STUDIO_LABEL   # a real, parseable plist
+    assert list(pp.parent.glob("*.tmp")) == []                               # no temp residue on the happy path
+
+
+def test_install_studio_replace_failure_keeps_prior_plist_and_skips_load(tmp_path, monkeypatch):
+    # MOL-728: install_studio is fail-CLOSED. A replace failure must propagate, leave the PRIOR plist intact
+    # (the direct write_text truncated it in place), drop the temp, and never reach the launchctl load step —
+    # loading a half-written plist is exactly what the atomic swap exists to prevent.
+    from fanops import controlio
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(daemon.sys, "platform", "darwin")
+    fake = _fake_launchctl(bootout=(1, ""), bootstrap=(0, ""))
+    monkeypatch.setattr(daemon.subprocess, "run", fake)
+    cfg = Config(root=tmp_path)
+    pp = daemon.studio_plist_path()
+    pp.parent.mkdir(parents=True, exist_ok=True)
+    pp.write_text(daemon.render_studio_plist(cfg, port=9999))     # a prior, DIFFERENT install
+    prior = pp.read_bytes()
+    real_replace = controlio.os.replace
+    def boom(src, dst, *a, **k):
+        if daemon.STUDIO_LABEL in str(dst): raise OSError("simulated interruption")
+        return real_replace(src, dst, *a, **k)
+    monkeypatch.setattr(controlio.os, "replace", boom)
+
+    with pytest.raises(OSError, match="simulated interruption"):
+        daemon.install_studio(cfg)
+    monkeypatch.undo()
+
+    assert pp.read_bytes() == prior                                           # prior plist survives byte-for-byte
+    assert list(pp.parent.glob("*.tmp")) == []                                # temp cleaned up
+    assert fake.calls == []                                                   # _load_plist (bootout/bootstrap) never ran
+
+
 def test_stop_studio_remove_unlinks_plist(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setattr(daemon.sys, "platform", "darwin")
