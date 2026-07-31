@@ -14,6 +14,7 @@ import requests
 from pathlib import Path
 from fanops.config import Config
 from fanops.accounts import Accounts
+from fanops.controlio import write_text_atomic
 from fanops.errors import AuthError, redact
 from fanops.ledger import Ledger
 from fanops.models import Post, PostState, is_real_submission_id
@@ -54,12 +55,11 @@ def _archive_published(cfg: Config, post: Post) -> None:
                "render_id": post.render_id, "hook": hook,
                "media": (post.media_urls[0] if post.media_urls else None)}
         ap = d / f"{post.id}.json"
-        # L2 (audit): create 0600 ATOMICALLY (no write-then-chmod world-readable window) — the archive carries
-        # the operator handle + live permalink + creative. Mirrors log.py's create-0600 pattern.
-        with os.fdopen(os.open(ap, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600), "w") as fh:
-            json.dump(rec, fh, indent=2, ensure_ascii=False)
-        try: os.chmod(ap, 0o600)            # tighten a re-archived file that pre-existed at a looser mode (O_TRUNC keeps it)
-        except OSError: pass
+        # L2 (audit) + MOL-728: REPLACEMENT-atomic at 0600. mkstemp is born 0600, so the L2 property holds (no
+        # write-then-chmod world-readable window), and os.replace means an interrupted re-archive — reconcile
+        # re-fires this on an already-archived post — leaves the PRIOR record whole instead of the O_TRUNC husk
+        # the final-path open produced. The swapped-in inode carries 0600 outright, so no tighten-after chmod.
+        write_text_atomic(ap, json.dumps(rec, indent=2, ensure_ascii=False), mode=0o600)
     except Exception as exc:
         try: get_logger(cfg)("publish", post.id, "archive_error", err=str(exc)[:160])
         except Exception: pass

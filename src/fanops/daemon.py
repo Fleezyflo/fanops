@@ -622,8 +622,9 @@ def install_studio(cfg: Config, *, host: str = STUDIO_DEFAULT_HOST, port: int = 
     cfg.reports.mkdir(parents=True, exist_ok=True)
     pp = studio_plist_path()
     pp.parent.mkdir(parents=True, exist_ok=True)
-    pp.write_text(render_studio_plist(cfg, host=host, port=port))
-    loaded = _load_plist(pp, STUDIO_LABEL)
+    from fanops.controlio import write_text_atomic   # MOL-728: replacement-atomic, like install/ensure/_install_keeper
+    write_text_atomic(pp, render_studio_plist(cfg, host=host, port=port))
+    loaded = _load_plist(pp, STUDIO_LABEL)           # fail-CLOSED: a raising write never reaches the load step
     return {"studio_loaded": loaded, "studio_plist": str(pp), "host": host, "port": port}
 
 def stop_studio(cfg: Config, *, remove: bool = False) -> dict:
