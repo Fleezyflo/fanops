@@ -1,4 +1,4 @@
-<!-- Edit-time rulebook for src/fanops/post/ (the sole network egress). Anchors verified 2026-07-03. Approval/dryrun semantics = root CLAUDE.md; full trace = docs/CODEMAPS/subsystem-traces/C6. -->
+<!-- Edit-time rulebook for src/fanops/post/ (the sole network egress). Line anchors are a starting point, not a promise — trust the symbol, re-find the line. Approval/tab semantics = src/fanops/studio/CLAUDE.md; full trace = docs/CODEMAPS/subsystem-traces/C6. -->
 # src/fanops/post — the publish path
 
 The only place FanOps POSTs to a network. Get the invariants below wrong and you either publish an unapproved

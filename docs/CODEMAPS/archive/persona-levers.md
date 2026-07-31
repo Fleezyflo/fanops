@@ -1,7 +1,7 @@
 # Codemap — persona levers: what each one is, what it does, and where it bites
 
 The persona is the operator's control surface over per-account output. Each **lever** is a validated field on
-`Persona` ([src/fanops/personas.py](../../src/fanops/personas.py)) that hydrates onto a linked `Account`
+`Persona` ([src/fanops/personas.py](../../../src/fanops/personas.py)) that hydrates onto a linked `Account`
 (`accounts._hydrate_from_personas`) and drives one downstream stage. This map is the source of truth for
 "what does 'bold' / 'tasteful' equal in the end result." The Studio **Personas** tab exposes it live — see
 `lever_catalog()` (the option→effect catalog) and `compose_breakdown()` (the live composed translation).
@@ -27,7 +27,7 @@ Cut length and framing are **derived** from `content_focus` at pick time (`deriv
 
 A persona with no levers compiles to the **bare voice** (`_join`/`_base_voice`), so every existing persona's
 pick/hook/caption payload stays byte-identical when levers are empty. Asserted across
-[tests/test_persona_levers.py](../../tests/test_persona_levers.py).
+[tests/test_persona_levers.py](../../../tests/test_persona_levers.py).
 
 ## The exposure surface (Studio Personas tab)
 
@@ -40,4 +40,4 @@ pick/hook/caption payload stays byte-identical when levers are empty. Asserted a
 
 **Parity guarantee:** what the operator reads is what the pipeline runs.
 `compose_breakdown(...)[dim].text == <dim>_directive(p)`; enforced by
-[tests/test_persona_lever_exposure.py](../../tests/test_persona_lever_exposure.py).
+[tests/test_persona_lever_exposure.py](../../../tests/test_persona_lever_exposure.py).

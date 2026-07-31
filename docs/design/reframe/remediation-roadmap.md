@@ -118,6 +118,6 @@ here and not to be performed until the roadmap is approved and each slice is ind
 
 ## What must be true before implementation begins
 
-This roadmap approved · [ADR-0103](../../adr/0103-reframe-subject-and-layout-aware-framing.md) accepted ·
-[`framing-spec.md`](framing-spec.md) rules confirmed. Track A may then proceed on visual evidence; Track B
-waits on B1.
+This roadmap approved · the subject-aware / layout-aware framing decision taken (it since SHIPPED; the record
+is main history) · [`framing-spec.md`](framing-spec.md) rules confirmed. Track A may then proceed on visual
+evidence; Track B waits on B1.

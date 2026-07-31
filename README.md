@@ -58,29 +58,29 @@ Full CLI surface: `fanops --help`. Environment variables and defaults: [docs/CON
 | [CLAUDE.md](CLAUDE.md) | Architecture notes for contributors |
 | [AGENTS.md](AGENTS.md) | Agent / PR workflow |
 
-## Governance & Constitution
+## Rules and how they are enforced
 
-The authoritative account of how the system is intended to be engineered, reconciled against the current
-tree. Start with the Constitution; see the Laws for what is mechanically enforced.
+A rule ships as a mechanism or it does not ship. The governance-prose layer — constitution, laws, philosophy,
+decision records — was deleted in the 2026-07 theatre census because its stated gates were backed by nothing;
+`tests/test_governance_tombstone.py` keeps those namespaces dead, so do not recreate them. Decision rationale
+now lives in the pull request that lands the change: main history is the decision record.
 
 | Doc | What it covers |
 |-----|----------------|
-| [docs/REPOSITORY_CONSTITUTION.md](docs/REPOSITORY_CONSTITUTION.md) | The rules (18 sections), each with its **true enforcement status** |
-| [docs/ENGINEERING_PHILOSOPHY.md](docs/ENGINEERING_PHILOSOPHY.md) | The design instincts — the *why* behind the rules |
-| [docs/ARCHITECTURAL_LAWS.md](docs/ARCHITECTURAL_LAWS.md) | The enforceable subset, with stable IDs + mechanisms (cross-refs the CI registry) |
-| [docs/ENGINEERING_STANDARDS.md](docs/ENGINEERING_STANDARDS.md) | The **code-craft layer** (`STD-*`): naming, layout, boundaries, versioning, flags, test craft, observability — references the Laws/ADRs/registry, never restates them |
-| [docs/adr/](docs/adr/) | Decision records (0100–0103) + the catalogue; formalization order in [FORMALIZATION_ROADMAP.md](docs/adr/FORMALIZATION_ROADMAP.md) |
-| [docs/governance/](docs/governance/) | Evidence reconciliation, maintenance-automation design, implementation + standards roadmaps, and the [engineering scorecard](docs/governance/ENGINEERING_SCORECARD.md) |
+| [docs/ENFORCEMENT.md](docs/ENFORCEMENT.md) | **The index of what actually enforces** — merge gates, unit-lane validators, runtime product gates |
+| [docs/ENGINEERING_STANDARDS.md](docs/ENGINEERING_STANDARDS.md) | The **code-craft layer** (`STD-*`): naming, layout, boundaries, versioning, flags, test craft, observability — guidance, not a gate |
 | [.github/ci-control-registry.yml](.github/ci-control-registry.yml) | The CI control plane (single owner of control rows) |
-| [docs/ARCHITECTURE_GOVERNANCE.md](docs/ARCHITECTURE_GOVERNANCE.md) | Generated architecture view (`tools/arch`) |
 
 ## Development
 
 ```bash
 ruff check .                                    # lint
-python -m pytest -q -m "not integration"        # fast unit suite (~CI)
 ./scripts/check.sh                              # scoped check before commit
 ```
+
+**Do not run the test suite locally.** `pytest` executes only in GitHub CI on a pull request — parallel local
+suites crash the operator's machine. The `unit` job is the required check; the real-tooling `e2e` job runs on
+manual dispatch and nightly only. See [AGENTS.md](AGENTS.md) and [tests/CLAUDE.md](tests/CLAUDE.md).
 
 ## License
 
