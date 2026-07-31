@@ -68,6 +68,43 @@ def test_schedule_calendar_month_chips_and_account_filter(tmp_path):
     assert len(chips_a) == 1 and chips_a[0].account == "a"
 
 
+# ---- 2b: MOL-730 month boundary — chips outside the rendered month are COUNTED, not silently dropped ----
+def test_schedule_calendar_month_reports_offscreen_chips(tmp_path):
+    # The read model behind the boundary bug: at 23:xx on the last day of a month every "now + 3h" post
+    # belongs to the NEXT month, so the current-month grid places zero chips. Rendering blank told the
+    # operator nothing; shown/offscreen/offscreen_ym say how many exist and where the queue starts.
+    cfg = Config(root=tmp_path)
+    _seed(cfg, pid="p_jul", when=_z(datetime(2099, 7, 5, 9, 0, tzinfo=timezone.utc)))
+    with Ledger.transaction(cfg) as led:
+        led.add_post(Post(id="p_aug", parent_id="clip_1", account="a", account_id="ig_integ_1",
+                          platform=Platform.instagram, caption="later", state=PostState.queued,
+                          scheduled_time=_z(datetime(2099, 8, 2, 9, 0, tzinfo=timezone.utc)),
+                          public_url="dryrun://clip_1"))
+    rows = views.schedule_rows(Ledger.load(cfg), cfg, now=_NOW)
+    empty = views.schedule_calendar_month(rows, cfg, year=2099, month=6, now=_NOW)
+    assert not [c for w in empty.weeks for d in w for c in d.chips]     # June really does place nothing
+    assert (empty.shown, empty.offscreen) == (0, 2)
+    assert empty.offscreen_ym == "2099-07"                              # the EARLIEST offscreen month, not the last
+    inm = views.schedule_calendar_month(rows, cfg, year=2099, month=7, now=_NOW)
+    assert (inm.shown, inm.offscreen, inm.offscreen_ym) == (1, 1, "2099-08")   # July shows one, August still pending
+    full = views.schedule_calendar_month(rows, cfg, year=2099, month=8, now=_NOW)
+    assert (full.shown, full.offscreen, full.offscreen_ym) == (1, 1, "2099-07")
+
+def test_schedule_empty_month_names_where_the_posts_are(tmp_path):
+    # MOL-730 (product): /schedule on a month holding none of the approved posts must not render silently
+    # blank — no chips, no per-account chip labels, and the "No approved posts yet" empty state suppressed
+    # because rows[] is non-empty. It now states the count and links to the month that holds them.
+    cfg = Config(root=tmp_path)
+    _seed(cfg, pid="p1", when=_z(datetime(2099, 7, 5, 9, 0, tzinfo=timezone.utc)))
+    html = _client(cfg).get("/schedule?month=2099-06").data.decode()
+    assert "schedule-cal-chip-acct" not in html                          # nothing placed (the reported symptom)
+    assert "schedule-cal-offscreen" in html
+    assert "1 approved post scheduled outside June 2099" in html
+    inm = _client(cfg).get("/schedule?month=2099-07").data.decode()
+    assert "schedule-cal-chip-acct" in inm                               # in-month placement unchanged
+    assert "schedule-cal-offscreen" not in inm                           # and NO banner when the month shows its chips
+
+
 # ---- 3: bucket split untimed/timed grouped by source ----
 def test_schedule_bucket_split_by_source(tmp_path):
     cfg = Config(root=tmp_path)
