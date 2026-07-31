@@ -32,7 +32,9 @@ has_findings=0
 scan_one() {   # <added-lines-text> <file> <name> <regex>
   local added="$1" file="$2" name="$3" regex="$4" hits
   [[ -z "$added" ]] && return 0
-  if hits="$(printf '%s\n' "$added" | rg -n --pcre2 "$regex" 2>/dev/null)"; then
+  # `-e` is load-bearing: the private-key regex STARTS with '-', so without it rg parses the pattern
+  # as a flag, errors (rc 2), and the swallowed error reads as "no match" — that pattern never fired.
+  if hits="$(printf '%s\n' "$added" | rg -n --pcre2 -e "$regex" 2>/dev/null)"; then
     printf '\n[scan-secrets] Potential secret (%s) in %s\n' "$name" "$file" >&2
     printf '%s\n' "$hits" | head -n 3 >&2
     has_findings=1
