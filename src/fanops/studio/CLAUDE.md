@@ -1,4 +1,4 @@
-<!-- Edit-time rulebook for src/fanops/studio/. Anchors verified 2026-07-03. Tab semantics = root CLAUDE.md; route/action/view traces = docs/CODEMAPS/subsystem-traces/C9,C10. -->
+<!-- Edit-time rulebook for src/fanops/studio/. Line anchors are a starting point, not a promise — trust the symbol, re-find the line. This file OWNS tab + approval-lifecycle semantics; route/action/view traces = docs/CODEMAPS/subsystem-traces/C9,C10. -->
 # src/fanops/studio — Flask cockpit rules
 
 Localhost single-operator UI (`fanops studio`, `127.0.0.1:8787`, no auth by design — don't add CSRF/rate-limit
@@ -21,11 +21,33 @@ actions, views) changes still require a Studio restart.
   bug). `suggest_time`/`clear_time` live in `views_common.py`/`actions.py` and are re-exported by
   `views.py`/`actions.py` — the re-export is why grep for the definition and the call site land in different files.
 
+## Approval lifecycle + tab semantics (this file owns them)
+
+Nothing auto-publishes. A crossposted post is BORN `PostState.awaiting_approval`; `publish_due`/`publish_now`
+iterate `queued` ONLY, so nothing publishes — even live, even under the daemon — until the operator approves.
+`Ledger.approve_post` promotes awaiting→queued. `queued` means "approved AND scheduled"; `rejected` is an
+operator discard. The tabs:
+
+- **Review** — the approve worklist (per-surface checkboxes → batch Approve/Reject; bulk-approve by moment
+  (`approve_clip`) or account (`approve_account`); cast chips; batch-grouped).
+- **Schedule** — the approved-posts bucket cockpit (per-row Move / Use suggested / Clear time / Publish now /
+  Send back to Review, each row's Postiz integration shown). **Reschedule all** re-spreads via
+  `crosspost.surface_time`; the 40-min auto-stagger is reachable ONLY here, never imposed on one post.
+- **Posted** — the all-time shipped library (live URL + lift) + **Post again** (`actions.repost_post` mints a
+  fresh awaiting_approval repost with an epoch-suffixed id — a repost, explicitly NOT a supersede).
+
+Per-post-per-surface scheduling is first-class: approving an UNTIMED or stale-past post must NOT bump it to
+*now* (that silently published it on the next `publish_due`) — it gets a deterministic **strictly-future**
+suggestion (`views.suggest_time` = `crosspost.surface_time` at `index=0`, never the stagger), so it waits in
+`queued` for the lead window. A still-future operator-set time is preserved verbatim. `actions.clear_time` on a
+queued post FIRST un-approves back to Review, THEN clears — a post is never left `queued`-and-timeless.
+
 ## Two local traps (the general pattern is in `src/fanops/CLAUDE.md`)
 
-- **`edit_caption` (`actions.py:87`) skips the brand-risk guard** that its sibling `regenerate_caption`
-  (`actions.py:97`) enforces via `caption.brand_risk_flag` — a manual caption edit ships unscreened (MOL-86). If
-  you add caption-editing paths, apply `brand_risk_flag`, matching `regenerate_caption`.
+- **`regenerate_caption` runs the model OUTSIDE the ledger transaction** and re-guards the post inside a short
+  one before writing — a `claude -p` call can take ~180s and holding the flock that long deadlocks a concurrent
+  run (exactly what the 60s pytest timeout catches). Keep slow calls out of the lock. (`edit_caption` applies
+  the SAME `caption.brand_risk_flag` screen its sibling does — MOL-86 closed that gap; do not "re-add" it.)
 - **Read helpers here swallow WITHOUT logging** (`preview_media.py`, `app.py:_account_arg`), breaking the
   fail-open-with-breadcrumb norm (MOL-67). When touching a read helper, log before degrading.
 
@@ -56,4 +78,7 @@ actions, views) changes still require a Studio restart.
 ## Where to look
 
 - Route/action + read-projection traces: `docs/CODEMAPS/subsystem-traces/C9_studio_backend.md`, `C10_studio_views.md`.
-- Studio-touching defects with lines: `.reports/issue-register-2026-07-03.md` (MOL-66/70/71/82/83/86).
+- Go-Live onboarding, per-(handle × platform) integration ids, and the dryrun↔live flip: `docs/GOLIVE.md`
+  (`accounts.json` `integrations` is per-platform; a legacy single `account_id` remains the fallback).
+- The Studio **Run** tab upload contract (`actions_run.save_uploads`, traversal-safe, inbox-bound, atomic, the
+  htmx-200 oversize quirk): the upload-safety audit in `C9_studio_backend.md`.

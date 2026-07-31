@@ -31,9 +31,10 @@ argparse `type=` callbacks. Every cluster trace below cross-checked its cluster'
 
 ## The 10 clusters — zero-gap coverage
 
-Every one of the 109 modules under `src/fanops/` is assigned to exactly one cluster below
-(verified programmatically: `structural_index.json`'s 109 paths − cluster union = ∅, cluster
-union − 109 paths = ∅, zero paths assigned twice).
+Every module under `src/fanops/` present WHEN THIS WAS GENERATED is assigned to exactly one cluster below
+(verified programmatically at that time: `structural_index.json` paths − cluster union = ∅, cluster union −
+`structural_index.json` paths = ∅, zero paths assigned twice). The partition is not re-verified on edit, so a
+module added since is in no cluster; re-run the extractor rather than trusting this to still be exhaustive.
 
 | # | Cluster | Files | Trace doc | Lines |
 |---|---|---|---|---|
@@ -48,7 +49,9 @@ union − 109 paths = ∅, zero paths assigned twice).
 | C9 | Studio backend (Flask routes + actions) | studio/{__init__,app,app_routes_golive,app_routes_live,app_routes_personas,app_routes_review,app_routes_run,app_routes_schedule,actions,actions_approve,actions_casting,actions_common,actions_run,actions_wipe,golive,personas,preview_media} (17) | [C9_studio_backend.md](subsystem-traces/C9_studio_backend.md) | 892 |
 | C10 | Studio views (read-only projections) | studio/{views,views_common,views_live,views_results,views_review} (5) | [C10_studio_views.md](subsystem-traces/C10_studio_views.md) | 302 |
 
-**109/109 modules covered. 3,646 total lines of per-function trace documentation.**
+**Every module present at generation time is covered; 3,646 total lines of per-function trace documentation.**
+The tree has grown since — `git ls-files 'src/fanops/**/*.py'` is the live count, and any module added after
+generation has no row above. Do not restate a frozen total here: it reads as current truth and silently rots.
 
 ## Data-flow spine (cluster → cluster)
 
@@ -174,9 +177,9 @@ are low-traffic paths (wipe-safety check, preview rendering, one persona-store l
 | C9 | 17 | ~150 (largest single cluster by trace length, 892 lines) |
 | C10 | 5 | ~60 |
 
-Totals reconcile against the deterministic count: 889 top-level functions + 178 class methods
-(113 classes) = 1,067 callables in `call_graph.json`, matching the AST extractor's structural
-index exactly (108/108 modules parsed with zero AST errors).
+Totals reconcile against the deterministic count AT GENERATION TIME: 889 top-level functions + 178 class
+methods (113 classes) = 1,067 callables in `call_graph.json`, matching the AST extractor's structural index
+exactly, with zero AST errors across every module then present.
 
 ## How to regenerate
 

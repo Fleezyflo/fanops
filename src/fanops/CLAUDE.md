@@ -1,4 +1,4 @@
-<!-- Edit-time rulebook for src/fanops/. Anchors verified against source 2026-07-03. Product semantics = root CLAUDE.md; deep reference = docs/CODEMAPS/. -->
+<!-- Edit-time rulebook for src/fanops/. Line anchors are a starting point, not a promise — trust the symbol, re-find the line. Routing = root CLAUDE.md; deep reference = docs/CODEMAPS/. -->
 # src/fanops — invariants to obey before editing
 
 ## Never break these (each has a test that goes red if you do)
@@ -51,9 +51,11 @@
 
 ## Where to look (open only what the task needs)
 
-- Every open defect with exact `file:line`, class, severity, and its MOL-* id: `.reports/issue-register-2026-07-03.md`.
-  Read this FIRST for any MOL-numbered task — it saves the re-derivation.
-- Full 108-module map / 10-cluster split / safety-verdict table: `docs/CODEMAPS/full-trace-index.md`.
+- A MOL-numbered task: read the Linear ticket body — it carries the `file:line` anchors. There is NO tracked
+  defect register (`.reports/` is gitignored apart from `.reports/architecture/`, so anything else under it is
+  one machine's local artifact and is absent from a fresh clone).
+- Module→cluster split and the safety-verdict table: `docs/CODEMAPS/full-trace-index.md` (its module COUNTS are a
+  frozen snapshot and have drifted — `git ls-files 'src/fanops/**/*.py'` is the live number).
 - Any env-var question (default, effect, Studio-settable vs shell-only): `docs/CONFIG.md`.
 - Publish / schedule / reconcile internals: `post/CLAUDE.md`. Studio routes/actions/views: `studio/CLAUDE.md`.
   Test traps: `tests/CLAUDE.md`.

@@ -32,10 +32,10 @@ unset, empty, or anything else → **ON**.
 > `Account.clip_profile`/`framing` → `Config.resolve_clip_profile`/`resolve_top_bias`, never this flag.
 
 ### `account_casting`
-- **Code:** [config.py:467](../src/fanops/config.py) (`def account_casting`). Gate predicate: `account_selection_admits` in [casting.py](../src/fanops/casting.py) — `if not cfg.account_casting: return True` (admit-all firewall).
-- **OFF contract:** the selection gate never discriminates — every (account, moment) is admitted (fan-to-all); the LLM casting request/ingest is inert.
-- **Firewall tests:** `test_gate_off_firewall_admits_all` ([test_account_selection.py:244](../tests/test_account_selection.py)), `test_off_firewall_pending_inert_and_fans_all` ([test_casting_application.py:102](../tests/test_casting_application.py)), `test_off_firewall_lanes_still_render_readonly` ([test_review_lanes.py:165](../tests/test_review_lanes.py) — the lanes read-model is config-independent: it still renders, the gate is what flips).
-- **Note:** the wired LLM path is **uncapped by design** — there is no per-account moment budget (cost guardrails are a product call, deliberately not imposed).
+- **Code:** [config.py](../src/fanops/config.py) (`def account_casting`). Gate predicate: `affinity_admits` in [casting.py](../src/fanops/casting.py) — `if not cfg.account_casting: return True` (admit-all firewall).
+- **OFF contract:** the affinity gate never discriminates — every (account, moment) is admitted (fan-to-all), and persisted `Moment.affinities` are IGNORED rather than honoured.
+- **Firewall tests:** `test_gate_off_firewall_admits_all`, `test_gate_denies_unattributed_account_on_attributed_source`, `test_gate_denies_missing_moment` ([test_p11_casting_teardown.py](../tests/test_p11_casting_teardown.py)); `test_off_firewall_lanes_still_render_readonly` ([test_review_lanes.py](../tests/test_review_lanes.py) — the lanes read-model is config-independent: it still renders, the gate is what flips).
+- **Note:** the LLM casting stage is **gone** (P11 teardown, MOL-152) — `Moment.affinities`, stamped single-owner at pick and operator-overridable in the Studio, is the sole gate input. There is no casting request/ingest to cap.
 
 ## Notable default-OFF flags (opt-in; byte-identical when off)
 
