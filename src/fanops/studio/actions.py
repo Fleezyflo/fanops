@@ -780,13 +780,21 @@ def reschedule_bucket(cfg: Config, *, now: Optional[datetime] = None, handle: Op
     return ActionResult(ok=True, detail={"rescheduled": len(due), "handle": handle})
 
 
-def shift_account_schedule(cfg: Config, handle: str, hours: float, *, now: Optional[datetime] = None) -> ActionResult:
-    """Nudge every queued post for one account by a fixed offset — preserves relative spacing."""
+def shift_account_schedule(cfg: Config, handle: str, hours: float | str, *, now: Optional[datetime] = None) -> ActionResult:
+    """Nudge every queued post for one account by a fixed offset — preserves relative spacing.
+    MOL-726: `hours` arrives raw off the Schedule form, so parse AND range-check it here — before the
+    lock, mirroring reschedule_post's `_normalize_z`. `timedelta`'s own constructor IS the
+    representable-range oracle (nan -> ValueError, ±inf / out-of-range -> OverflowError); a constant
+    derived from `timedelta.max.total_seconds()/3600` would be WRONG at the edge — that exact value
+    still raises. Previously this ran outside the try below, so bad input 500'd the route."""
+    try:
+        hours = float(hours); delta = timedelta(hours=hours)
+    except (TypeError, ValueError, OverflowError) as exc:
+        return ActionResult(ok=False, error=f"bad shift {hours!r} hours: {str(exc)[:120]}")
     handle = (handle or "").strip()
     if not handle:
         return ActionResult(ok=True, detail={"shifted": 0, "handle": None, "hours": hours})
     now = _now(now)
-    delta = timedelta(hours=hours)
     moved = 0
     try:
         with Ledger.transaction(cfg) as led:
