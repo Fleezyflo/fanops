@@ -741,3 +741,78 @@ def test_retry_oversize_skips_when_shrink_fails(tmp_path, monkeypatch, mocker):
     res = retry_oversize_failures(cfg)
     assert res.ok and res.detail["retried"] == 0 and res.detail["skipped"] == 1
     assert Ledger.load(cfg).posts["big"].state is PostState.failed
+
+
+# ---- MOL-726: the schedule-shift `hours` value is validated BEFORE the lock ------------------------
+# `timedelta(hours=hours)` used to run OUTSIDE shift_account_schedule's try, so `nan` (ValueError),
+# `±inf`/`1e400` and a big finite value like `1e18` (OverflowError) raised straight out of the action
+# and 500'd `/schedule/shift/<handle>`; unparseable text was coerced to 0.0 and reported OK.
+def _seed_shift(cfg):
+    led = Ledger.load(cfg)
+    led.add_source(Source(id="src_s", source_path="/s.mp4", language="en"))
+    led.add_moment(Moment(id="mom_s", parent_id="src_s", content_token="0-7", start=0, end=7,
+                          reason="r", state=MomentState.clipped))
+    led.add_clip(Clip(id="clip_s", parent_id="mom_s", path="/c.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
+    led.add_post(Post(id="p_a1", parent_id="clip_s", account="a", account_id="1", platform=Platform.instagram,
+                      caption="A1", state=PostState.queued, scheduled_time=_z(NOW + timedelta(hours=3))))
+    led.add_post(Post(id="p_a2", parent_id="clip_s", account="a", account_id="1", platform=Platform.tiktok,
+                      caption="A2", state=PostState.queued, scheduled_time=_z(NOW + timedelta(hours=7))))
+    led.add_post(Post(id="p_a_wait", parent_id="clip_s", account="a", account_id="1", platform=Platform.youtube,
+                      caption="AW", state=PostState.awaiting_approval, scheduled_time=_z(NOW + timedelta(hours=5))))
+    led.add_post(Post(id="p_b1", parent_id="clip_s", account="b", account_id="2", platform=Platform.instagram,
+                      caption="B1", state=PostState.queued, scheduled_time=_z(NOW + timedelta(hours=4))))
+    led.save()
+    return led
+
+def _times(cfg): return {k: v.scheduled_time for k, v in Ledger.load(cfg).posts.items()}
+
+@pytest.mark.parametrize("bad", ["nan", "inf", "-inf", "1e400", "1e18", "banana", "", "  ",
+                                 float("nan"), float("inf"), float("-inf"), 1e18, None])
+def test_shift_account_schedule_rejects_unrepresentable_hours(tmp_path, mocker, bad):
+    from fanops.studio.actions import shift_account_schedule
+    cfg = Config(root=tmp_path); _seed_shift(cfg)
+    before = _times(cfg)
+    spy = mocker.spy(Ledger, "transaction")
+    res = shift_account_schedule(cfg, "a", bad, now=NOW)
+    assert res.ok is False and res.error and res.error.startswith("bad shift")
+    assert spy.call_count == 0            # rejected BEFORE any lock is taken — never a partial mutation
+    assert _times(cfg) == before          # schedule semantically unchanged
+
+def test_shift_account_schedule_rejects_before_the_handle_noop(tmp_path):
+    # bad hours loses to nothing: even the empty-handle no-op branch must not report OK on garbage.
+    from fanops.studio.actions import shift_account_schedule
+    res = shift_account_schedule(Config(root=tmp_path), "", "nan", now=NOW)
+    assert res.ok is False and res.error.startswith("bad shift")
+
+def test_shift_account_schedule_positive_preserves_spacing_and_scope(tmp_path):
+    from fanops.studio.actions import shift_account_schedule
+    cfg = Config(root=tmp_path); _seed_shift(cfg)
+    res = shift_account_schedule(cfg, "a", "5", now=NOW)          # raw form string, +5h
+    assert res.ok is True and res.detail == {"shifted": 2, "handle": "a", "hours": 5.0}
+    out = _times(cfg)
+    assert out["p_a1"] == _z(NOW + timedelta(hours=8))
+    assert out["p_a2"] == _z(NOW + timedelta(hours=12))           # 4h gap preserved
+    assert out["p_a_wait"] == _z(NOW + timedelta(hours=5))        # awaiting_approval untouched (state scope)
+    assert out["p_b1"] == _z(NOW + timedelta(hours=4))            # other account untouched (account scope)
+
+def test_shift_account_schedule_negative_preserves_spacing_and_scope(tmp_path):
+    from fanops.studio.actions import shift_account_schedule
+    cfg = Config(root=tmp_path); _seed_shift(cfg)
+    res = shift_account_schedule(cfg, "a", -2.5, now=NOW)
+    assert res.ok is True and res.detail == {"shifted": 2, "handle": "a", "hours": -2.5}
+    out = _times(cfg)
+    assert out["p_a1"] == _z(NOW + timedelta(hours=0.5))
+    assert out["p_a2"] == _z(NOW + timedelta(hours=4.5))          # 4h gap preserved
+    assert out["p_a_wait"] == _z(NOW + timedelta(hours=5)) and out["p_b1"] == _z(NOW + timedelta(hours=4))
+
+def test_shift_account_schedule_bound_is_the_timedelta_range_not_a_constant(tmp_path):
+    # The representable edge is the CONSTRUCTOR's, not `timedelta.max.total_seconds()/3600` — that exact
+    # value still raises, so a derived-constant bound would have re-admitted the 500 at the boundary.
+    from fanops.studio.actions import shift_account_schedule
+    edge = timedelta.max.total_seconds() / 3600
+    with pytest.raises(OverflowError):
+        timedelta(hours=edge)
+    cfg = Config(root=tmp_path); _seed_shift(cfg)
+    assert shift_account_schedule(cfg, "a", edge, now=NOW).ok is False
+    assert shift_account_schedule(cfg, "a", -edge, now=NOW).ok is False
+    assert timedelta(hours=edge * (1 - 1e-15))                    # just inside: still constructible
