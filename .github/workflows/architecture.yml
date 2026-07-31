@@ -154,13 +154,6 @@ jobs:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     timeout-minutes: 20
     runs-on: ubuntu-latest
-    # `administration: read` is what the branch-protection GET requires — `contents: read` (the
-    # workflow default) returns 403 on it. Job-scoped, not workflow-scoped: no other job here reads
-    # repository settings, and a read-settings grant handed to the PR-triggered jobs would widen the
-    # token on every pull request for no reason.
-    permissions:
-      contents: read
-      administration: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -212,13 +205,15 @@ jobs:
         run: python -m tools.arch selftest
 
       # DC-3 — registry `required_contexts` vs LIVE branch protection. `--require-live` is
-      # correct HERE and only here: this is the designated authenticated job (it holds the
-      # `administration: read` grant), so an unreadable probe is a FAILURE. Everywhere else the same
-      # verb degrades to an explicit non-authoritative SKIP.
-      # PyYAML because tools/ci reads the registry; this workflow is otherwise stdlib-only (header).
+      # correct HERE and only here: this is the designated authenticated job, so an unreadable probe
+      # is a FAILURE. Everywhere else the same verb degrades to an explicit non-authoritative SKIP.
+      # tools/ci needs BOTH: PyYAML to read the registry, jsonschema to validate its shape. The
+      # jsonschema import is at module scope ON PURPOSE (tools/ci/registry.py) so an absent
+      # validator is an ImportError, not silent non-validation — install it or this step dies on
+      # import, before it can probe anything. This workflow is otherwise stdlib-only (header).
       - name: Deployed-state reconciliation (registry vs live branch protection)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          python -m pip install --quiet pyyaml
+          python -m pip install --quiet pyyaml jsonschema
           python -m tools.ci deployed --require-live
