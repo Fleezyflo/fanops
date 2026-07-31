@@ -41,6 +41,10 @@ scan_one() {   # <added-lines-text> <file> <name> <regex>
   fi
 }
 
+# macOS ships bash 3.2, where "${files[@]}" on an EMPTY array is an unbound-variable ABORT under
+# `set -u` — an empty diff must scan CLEAN (exit 0), never fail the hook/CI. Same guard as check.sh.
+[[ ${#files[@]} -gt 0 ]] || exit 0
+
 for file in "${files[@]}"; do
   [[ -z "$file" ]] && continue
   case "$file" in
