@@ -1094,7 +1094,7 @@
     {
       "decorator": "app.get",
       "handler": "lift",
-      "line": 113,
+      "line": 112,
       "methods": [
         "GET"
       ],
@@ -1270,7 +1270,7 @@
     {
       "decorator": "app.get",
       "handler": "posted",
-      "line": 163,
+      "line": 162,
       "methods": [
         "GET"
       ],
@@ -1380,7 +1380,7 @@
     {
       "decorator": "app.post",
       "handler": "do_crosspost_all",
-      "line": 197,
+      "line": 196,
       "methods": [
         "POST"
       ],
@@ -1391,7 +1391,7 @@
     {
       "decorator": "app.post",
       "handler": "do_crosspost_to_account",
-      "line": 191,
+      "line": 190,
       "methods": [
         "POST"
       ],
@@ -1402,7 +1402,7 @@
     {
       "decorator": "app.post",
       "handler": "do_recover_posts",
-      "line": 185,
+      "line": 184,
       "methods": [
         "POST"
       ],
@@ -1424,7 +1424,7 @@
     {
       "decorator": "app.post",
       "handler": "do_repost_others",
-      "line": 172,
+      "line": 171,
       "methods": [
         "POST"
       ],
@@ -1435,7 +1435,7 @@
     {
       "decorator": "app.post",
       "handler": "do_repost_post",
-      "line": 167,
+      "line": 166,
       "methods": [
         "POST"
       ],
@@ -1446,7 +1446,7 @@
     {
       "decorator": "app.post",
       "handler": "do_resolve_post",
-      "line": 179,
+      "line": 178,
       "methods": [
         "POST"
       ],
@@ -1798,7 +1798,7 @@
     {
       "decorator": "app.post",
       "handler": "do_schedule_accept_suggested",
-      "line": 94,
+      "line": 93,
       "methods": [
         "POST"
       ],
@@ -1809,7 +1809,7 @@
     {
       "decorator": "app.post",
       "handler": "do_schedule_clear",
-      "line": 70,
+      "line": 69,
       "methods": [
         "POST"
       ],
@@ -1820,7 +1820,7 @@
     {
       "decorator": "app.post",
       "handler": "do_schedule_move",
-      "line": 64,
+      "line": 63,
       "methods": [
         "POST"
       ],
@@ -1831,7 +1831,7 @@
     {
       "decorator": "app.post",
       "handler": "do_schedule_publish_due",
-      "line": 108,
+      "line": 107,
       "methods": [
         "POST"
       ],
@@ -1842,7 +1842,7 @@
     {
       "decorator": "app.post",
       "handler": "do_schedule_publish",
-      "line": 76,
+      "line": 75,
       "methods": [
         "POST"
       ],
@@ -1853,7 +1853,7 @@
     {
       "decorator": "app.post",
       "handler": "do_schedule_randomize",
-      "line": 98,
+      "line": 97,
       "methods": [
         "POST"
       ],
@@ -1864,7 +1864,7 @@
     {
       "decorator": "app.post",
       "handler": "do_schedule_reconcile",
-      "line": 84,
+      "line": 83,
       "methods": [
         "POST"
       ],
@@ -1875,7 +1875,7 @@
     {
       "decorator": "app.post",
       "handler": "do_reschedule_bucket",
-      "line": 54,
+      "line": 53,
       "methods": [
         "POST"
       ],
@@ -1897,7 +1897,7 @@
     {
       "decorator": "app.post",
       "handler": "do_schedule_unapprove",
-      "line": 59,
+      "line": 58,
       "methods": [
         "POST"
       ],
