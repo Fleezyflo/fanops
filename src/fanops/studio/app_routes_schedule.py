@@ -44,11 +44,10 @@ def register_schedule_routes(app, cfg):
 
     @app.post("/schedule/shift/<handle>")
     def do_schedule_shift(handle):
-        try:
-            hours = float(request.form.get("hours", 0))
-        except (TypeError, ValueError):
-            hours = 0.0
-        return _schedule_panel(actions.shift_account_schedule(cfg, handle, hours))
+        # MOL-726: hand the RAW form value over — the action owns parse + timedelta-range validation and
+        # returns a failed ActionResult. Coercing unparseable input to 0.0 here reported a *successful*
+        # zero-hour shift, and nan/inf/huge parsed fine then raised out of the action as a 500.
+        return _schedule_panel(actions.shift_account_schedule(cfg, handle, request.form.get("hours", 0)))
 
     @app.post("/schedule/respread")
     def do_reschedule_bucket():

@@ -51,8 +51,9 @@ def test_static_planes_have_no_blocking_divergence():
     (shape_findings + checks.run_static), so the pytest gate and the CLI can never disagree. A future
     PR that reintroduces a static divergence — a renamed required context (DC-1), an untracked job or
     phantom control (DC-2), prose calling a required context advisory (DC-4), a job that drops its
-    timeout / SHA-pin (DC-6), or an advisory job that can hard-fail the workflow (DC-7) — reddens the
-    required `unit` lane here. No network (DC-3 is deployed-state, scheduled, out of this gate)."""
+    timeout / SHA-pin or declares an unknown GITHUB_TOKEN permission (DC-6), or an advisory job that
+    can hard-fail the workflow (DC-7) — reddens the required `unit` lane here. No network (DC-3 is
+    deployed-state, scheduled, out of this gate)."""
     reg = load_registry()
     findings = shape_findings(reg) + checks.run_static(reg, discover_jobs(), PROSE_DOCS)
     blocking = [f for f in findings if f.blocking and not f.skipped]
