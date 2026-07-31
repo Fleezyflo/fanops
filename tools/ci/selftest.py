@@ -30,6 +30,7 @@ CONTROLS = [
     Control("NC-DC4-prose", "DC-4", "a doc calls a required context advisory"),
     Control("NC-DC6-timeout", "DC-6", "a job loses its timeout"),
     Control("NC-DC6-float", "DC-6", "a job uses a floating action tag"),
+    Control("NC-DC6-permission", "DC-6", "a job declares an unknown GITHUB_TOKEN permission"),
     Control("NC-DC7-hardfail", "DC-7", "an advisory job can fail the workflow"),
 ]
 
@@ -114,6 +115,37 @@ def detect(ctrl: Control):
                 break
         new = _blocking(checks.dc6_workflow_hygiene(reg, j2), "DC-6") - base
         return bool(new), "; ".join(sorted(new)) or "no new DC-6 float finding"
+
+    if ctrl.id == "NC-DC6-permission":
+        valid = """name: permission fixture
+on: push
+permissions:
+  contents: read
+jobs:
+  check:
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps: []
+"""
+        invalid_job = valid.replace("      contents: read",
+                                    "      contents: read\n      administration: read")
+        invalid_workflow = valid.replace("permissions:\n  contents: read\njobs:",
+                                         "permissions:\n  contents: read\n  administration: read\njobs:")
+        with TemporaryDirectory() as d:
+            workflow = Path(d) / "permission.yml"
+            workflow.write_text(valid, encoding="utf-8")
+            before = checks.dc6_workflow_hygiene(reg, discover_jobs(Path(d)))
+            workflow.write_text(invalid_job, encoding="utf-8")
+            after_job = checks.dc6_workflow_hygiene(reg, discover_jobs(Path(d)))
+            workflow.write_text(invalid_workflow, encoding="utf-8")
+            after_workflow = checks.dc6_workflow_hygiene(reg, discover_jobs(Path(d)))
+        base = _blocking(before, "DC-6")
+        new_job = _blocking(after_job, "DC-6") - base
+        new_workflow = _blocking(after_workflow, "DC-6") - base
+        new = new_job | new_workflow
+        return bool(new_job) and bool(new_workflow), "; ".join(sorted(new)) or "no new DC-6 permission finding"
 
     if ctrl.id == "NC-DC7-hardfail":
         # Clean baseline: every advisory job reports (continue-on-error). Then take ONE advisory job

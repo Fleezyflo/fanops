@@ -11,6 +11,13 @@ import re
 from .common import Finding
 
 _SHA40 = re.compile(r"[0-9a-f]{40}$")
+# GitHub Actions workflow syntax, `permissions` -> "Defining access for the GITHUB_TOKEN scopes",
+# verified 2026-08-01: https://docs.github.com/actions/reference/workflows-and-actions/workflow-syntax#permissions
+_GITHUB_TOKEN_PERMISSION_KEYS = frozenset({
+    "actions", "artifact-metadata", "attestations", "checks", "code-quality", "contents",
+    "deployments", "discussions", "id-token", "issues", "models", "packages", "pages",
+    "pull-requests", "security-events", "statuses", "vulnerability-alerts",
+})
 
 
 def _required_top(reg: dict) -> list[dict]:
@@ -98,9 +105,10 @@ def dc4_prose_matches_classification(reg: dict, prose_docs) -> list[Finding]:
 
 
 def dc6_workflow_hygiene(reg: dict, jobs: list[dict]) -> list[Finding]:
-    """Every job has a timeout; every action `uses:` is pinned to a 40-hex SHA."""
+    """Every job has a timeout, every action is SHA-pinned, and permission keys are valid."""
     out: list[Finding] = []
     ctx_to_id = {c.get("branch_protection_context"): c.get("id") for c in reg["controls"]}
+    checked_workflows: set[str] = set()
     for j in jobs:
         cid = ctx_to_id.get(j["name"]) or j["job_id"]
         if j["timeout"] is None:
@@ -111,6 +119,16 @@ def dc6_workflow_hygiene(reg: dict, jobs: list[dict]) -> list[Finding]:
             if not _SHA40.match(ref):
                 out.append(Finding("DC-6", cid,
                     f"job {j['job_id']} uses floating action {u!r} (not a 40-hex SHA pin)", True))
+        scopes = [(f"job {j['job_id']} in {j['workflow']}", j.get("job_permission_keys", []))]
+        if j["workflow"] not in checked_workflows:
+            checked_workflows.add(j["workflow"])
+            scopes.append((f"workflow {j['workflow']}", j.get("workflow_permission_keys", [])))
+        for scope, keys in scopes:
+            for key in keys:
+                if key not in _GITHUB_TOKEN_PERMISSION_KEYS:
+                    out.append(Finding("DC-6", cid,
+                        f"{scope} declares unknown GITHUB_TOKEN permission {key!r} — GitHub rejects "
+                        f"the workflow before creating jobs", True))
     return out
 
 
