@@ -368,6 +368,96 @@ def test_login_required_arms_the_laddered_cooldown(tmp_path, monkeypatch):
     assert not cfg.hashtags_path.exists()
 
 
+def test_expired_session_at_open_arms_the_login_cooldown(tmp_path, monkeypatch):
+    """MOL-727: the IN-PASS login_required refusal got the ladder, but an expiry raised while OPENING
+    the client returned `no_scrape` with NO backoff — so every due tick re-probed a dead session
+    forever. Same account, same failure, same remedy: same cooldown, one seam earlier."""
+    from datetime import datetime, timezone, timedelta
+    import fanops.ig_hashtag_scrape as igs
+    from fanops.fanops_hashtags import refresh_store_if_due, _cooldown_path, _COOLDOWN_DELAYS_S
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u"); monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
+    cfg = Config(root=tmp_path); _persona(cfg)
+    t0 = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
+    opens = {"n": 0}
+    def expired(_cfg, **_k):
+        opens["n"] += 1
+        raise igs.ScrapeSessionExpired("session expired — run fanops hashtags scrape-login")
+    monkeypatch.setattr(igs, "open_client", expired)
+    out = refresh_store_if_due(cfg, max_age_s=1, now=t0)
+    assert out["refreshed"] is False and out["aborted"] == "login_required"   # not `no_scrape`
+    cd = json.loads(_cooldown_path(cfg).read_text())
+    assert cd["reason"] == "login_required" and cd["streak"] == 1
+    assert cd["until"] == (t0 + timedelta(seconds=_COOLDOWN_DELAYS_S[0])).isoformat()
+    assert out["cooldown_until"] == cd["until"] and out["cooldown_streak"] == 1
+    for mins in (1, 20, 29):                               # inside the floor: no client opened at all
+        skip = refresh_store_if_due(cfg, max_age_s=1, now=t0 + timedelta(minutes=mins))
+        assert skip["refreshed"] is False and skip["reason"] == "cooldown"
+        assert skip["cooldown_reason"] == "login_required"  # run.log says WHY, and what fixes it
+    assert opens["n"] == 1, f"re-probed a dead session {opens['n']} times"
+    assert not cfg.hashtags_path.exists()                  # cache untouched on the abort path
+    # The ladder still decays: the next pass after the floor deepens the streak (never a flat retry).
+    refresh_store_if_due(cfg, max_age_s=1, now=t0 + timedelta(minutes=31))
+    cd2 = json.loads(_cooldown_path(cfg).read_text())
+    assert cd2["streak"] == 2 and opens["n"] == 2
+
+
+def test_partial_progress_then_throttle_still_arms_a_cooldown(tmp_path, monkeypatch):
+    """MOL-727: `if measured > 0: clear elif ig_throttled: arm` made ONE measured tag swallow the
+    throttle — the streak was cleared and no floor armed, so the next tick reopened scrape against the
+    account that had just throttled us. Progress resets the STREAK; the stop signal still arms."""
+    from datetime import datetime, timezone, timedelta
+    from fanops.fanops_hashtags import (refresh_store_if_due, _cooldown_path, _persist_cooldown,
+                                        _COOLDOWN_DELAYS_S)
+    cfg = Config(root=tmp_path); _persona(cfg)
+    t0 = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
+    _persist_cooldown(cfg, t0 - timedelta(hours=3), reason="throttle")
+    _persist_cooldown(cfg, t0 - timedelta(hours=2), reason="throttle")      # prior streak = 2
+    # #hiphop measures, harvests #alpha, and the co-tag's medias_top throttles: measured=1 + throttle.
+    out = refresh_store(cfg, scrape_client=_FakeClient({"#hiphop": 50, "#alpha": 100}, cooccur="#alpha",
+                                                       throttle_after=1), now=t0)
+    assert out["measured"] == 1 and out["throttled"] is True and out["written"] is True
+    raw = json.loads(cfg.hashtags_path.read_text())
+    assert "#hiphop" in raw                                # partial evidence is still durable
+    assert "last_complete_pass" not in raw                 # an early stop never buys the 12h silence
+    cd = json.loads(_cooldown_path(cfg).read_text())
+    assert cd["reason"] == "throttle"
+    assert cd["streak"] == 1                               # progress reset the streak 2 -> 1...
+    assert cd["until"] == (t0 + timedelta(seconds=_COOLDOWN_DELAYS_S[0])).isoformat()   # ...30m floor
+    assert out["cooldown_until"] == cd["until"]
+    nxt = _FakeClient({"#hiphop": 50})
+    skip = refresh_store_if_due(cfg, max_age_s=1, scrape_client=nxt, now=t0 + timedelta(minutes=29))
+    assert skip["refreshed"] is False and skip["reason"] == "cooldown"
+    assert nxt.info_calls == [] and nxt.media_calls == []   # not one request against a throttling account
+
+
+def test_partial_progress_then_login_required_still_arms_a_cooldown(tmp_path, monkeypatch):
+    """MOL-727 sibling: the same chain swallowed a dead session after partial progress. It must arm the
+    login ladder AND leave the pass marked incomplete — a queue cut short mid-way has not completed."""
+    from datetime import datetime, timezone, timedelta
+    from fanops.ig_hashtag_scrape import ScrapeRefused
+    from fanops.fanops_hashtags import _cooldown_path, _COOLDOWN_DELAYS_S
+
+    class _DeadAfterFirst(_FakeClient):
+        """First tag lands; the session dies on the next medias_top (the MOL-696 shape: the client
+        opens fine and hashtag_info still answers, but the read comes back login_required)."""
+        def hashtag_medias_top(self, name, amount=9):
+            if self.media_calls:
+                raise ScrapeRefused("login_required")
+            return super().hashtag_medias_top(name, amount=amount)
+
+    cfg = Config(root=tmp_path); _persona(cfg)
+    t0 = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
+    out = refresh_store(cfg, scrape_client=_DeadAfterFirst({"#hiphop": 50, "#alpha": 100},
+                                                           cooccur="#alpha"), now=t0)
+    assert out["measured"] == 1 and out["written"] is True
+    assert out["throttled"] is True                        # incomplete queue == incomplete pass
+    raw = json.loads(cfg.hashtags_path.read_text())
+    assert "#hiphop" in raw and "last_complete_pass" not in raw
+    cd = json.loads(_cooldown_path(cfg).read_text())
+    assert cd["reason"] == "login_required" and cd["streak"] == 1
+    assert cd["until"] == (t0 + timedelta(seconds=_COOLDOWN_DELAYS_S[0])).isoformat()
+
+
 def test_scrape_login_ignores_and_clears_an_active_freeze(tmp_path, monkeypatch):
     """The operator escape hatch: scrape-login is an explicit human act AFTER an unlock, so it must run
     with a freeze armed and clear it on success — otherwise a fixed account stays frozen for 12h."""
@@ -394,7 +484,8 @@ def test_instagrapi_floor_validates_saved_sessions(tmp_path):
 
 def test_open_client_stale_session_refuses_without_login(tmp_path, monkeypatch):
     """Unattended path: LoginRequired from account_info → ScrapeUnavailable; login() never called."""
-    from fanops.ig_hashtag_scrape import ScrapeUnavailable, open_client
+    from fanops.ig_hashtag_scrape import ScrapeSessionExpired, ScrapeUnavailable, open_client
+    assert issubclass(ScrapeSessionExpired, ScrapeUnavailable)   # every existing abort path still catches it
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
     monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
     cfg = Config(root=tmp_path)
@@ -412,6 +503,9 @@ def test_open_client_stale_session_refuses_without_login(tmp_path, monkeypatch):
         raise AssertionError("expected ScrapeUnavailable")
     except ScrapeUnavailable as e:
         assert "session expired" in str(e)
+        # MOL-727: Layer A arms the login cooldown off the TYPE, so this raise must stay the subclass
+        # — classifying by grepping the message text is what would rot on a reword.
+        assert isinstance(e, ScrapeSessionExpired)
     assert seen["login"] == 0
 
 
