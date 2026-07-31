@@ -69,8 +69,14 @@ jobs:
           set -o pipefail
           python -m pytest -q -n auto -m "not integration and not slow" \
             --durations=25 --durations-min=1.0 2>&1 | tee pytest-unit.log   # MOL-452: advisory slow-test report; MOL-199: coverage dropped (no --cov-fail-under)
+      # `success || failure` is the WHOLE point of the guard, not a verbose `!= cancelled` (MOL-720):
+      # a producer that never RAN reports outcome `skipped`, and the old form admitted it — so an
+      # install failure upstream made every log-reading step traceback on a nonexistent
+      # pytest-*.log, burying the real error under secondary noise. Only these two outcomes mean
+      # the pytest step ran and teed its log; `failure` stays in because timing a red suite is why
+      # `always()` is here at all.
       - name: CI duration report (unit)
-        if: always() && steps.unit-tests.outcome != 'cancelled'
+        if: always() && (steps.unit-tests.outcome == 'success' || steps.unit-tests.outcome == 'failure')
         continue-on-error: true
         run: |
           python scripts/ci_timing_report.py --step unit --log pytest-unit.log \
@@ -78,7 +84,7 @@ jobs:
       # Blocking on PURPOSE: without a gate the unit suite slows without bound and the
       # fast-feedback contract erodes silently — no single PR is ever the one that broke it.
       - name: Unit pytest SLO gate (blocking — MOL-460)
-        if: always() && steps.unit-tests.outcome != 'cancelled'
+        if: always() && (steps.unit-tests.outcome == 'success' || steps.unit-tests.outcome == 'failure')
         env:
           CI_UNIT_PYTEST_BUDGET_S: ${{ github.event_name == 'pull_request' && '135' || '140' }}
         run: python scripts/ci_slo_gate.py --log pytest-unit.log
@@ -208,7 +214,7 @@ jobs:
           python -m pytest -q -m "integration and not ci_hook_regression and not asr" -rs \
             --durations=25 --durations-min=1.0 2>&1 | tee pytest-e2e-integration.log   # MOL-452
       - name: CI duration report (e2e integration)
-        if: always() && steps.e2e-integration.outcome != 'cancelled'
+        if: always() && (steps.e2e-integration.outcome == 'success' || steps.e2e-integration.outcome == 'failure')
         continue-on-error: true
         run: |
           python scripts/ci_timing_report.py --step e2e_integration --log pytest-e2e-integration.log \
@@ -225,7 +231,7 @@ jobs:
           set -o pipefail
           python -m pytest -q -m slow --durations=25 --durations-min=1.0 2>&1 | tee pytest-e2e-slow.log   # MOL-452
       - name: CI duration report (e2e slow)
-        if: always() && steps.e2e-slow.outcome != 'cancelled'
+        if: always() && (steps.e2e-slow.outcome == 'success' || steps.e2e-slow.outcome == 'failure')
         continue-on-error: true
         run: |
           python scripts/ci_timing_report.py --step e2e_slow --log pytest-e2e-slow.log \

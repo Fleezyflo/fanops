@@ -32,7 +32,8 @@ captured.
 - **`tools/ci`** — CI-registry ↔ workflow reconciliation. Proof: `python -m tools.ci selftest`. Wired
   via `tests/test_ci_registry_validator.py` in the unit lane.
   - `tools/ci/checks.py`: DC-1, DC-2, DC-4, DC-6, DC-7, measured against
-    `.github/ci-control-registry.yml`. **DC-7** is the one that catches the failure below: an
+    `.github/ci-control-registry.yml`. DC-6 also rejects unknown GitHub Actions permission keys
+    before GitHub rejects the workflow. **DC-7** is the one that catches the failure below: an
     advisory job that can nonetheless FAIL the workflow. Its siblings all compare a declaration to
     another declaration; none asked what a job DOES when it fails, which is why six jobs sat in that
     state unnoticed. **DC-5 was deleted 2026-07-26** with the `duplicate_groups` block it policed:
@@ -48,7 +49,7 @@ captured.
 ## Admin probe — now automated; was operator-run, and the trigger was not honoured
 - **DC-3: `python -m tools.ci deployed --require-live`** — reconciles LIVE branch protection against
   the registry's `current`/`intended` context lists. Runs in the `reconcile` job (weekly + on
-  `workflow_dispatch`), which holds the `administration: read` grant the branch-protection GET needs.
+  `workflow_dispatch`); `--require-live` turns an unreadable branch-protection probe into a failure.
   Until 2026-07-26 this entry read "operator-run, no workflow invokes it… Defined trigger: the
   operator runs it after ANY branch-protection change." That was a deliberate decision, not an
   oversight — and it failed the way a human-memory trigger fails. Protection was changed on
