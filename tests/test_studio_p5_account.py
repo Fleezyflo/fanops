@@ -228,9 +228,14 @@ def _seed_two_accounts_all_surfaces(cfg):
     # @a + @b each get their OWN clip (so Review's card-level filter cleanly drops the non-matching card) and
     # TWO awaiting posts (so approving one leaves the account in the chip universe), plus a queued (Schedule +
     # Publish), a published (Posted), and an analyzed variant (Results).
+    # MOL-730: the queued posts keep their REAL-clock time (the Schedule/Publish lanes read `now`, so a fixed
+    # past date would change what those surfaces show), but the clock is read ONCE here and RETURNED — a
+    # caller that needs the calendar month those posts land in must not re-read it and risk straddling a
+    # month boundary between the two reads.
     _seed_accounts(cfg)
     cfg.clips.mkdir(parents=True, exist_ok=True)
     base = cfg.clips / "c.mp4"; base.write_bytes(b"\x00\x00\x00\x18ftypmp42CLIP")
+    queued_at = _z(datetime.now(timezone.utc) + timedelta(hours=3))
     with Ledger.transaction(cfg) as led:
         led.add_source(Source(id="src_1", source_path="/v/show.mp4", language="en"))
         for acct in ("a", "b"):
@@ -244,13 +249,21 @@ def _seed_two_accounts_all_surfaces(cfg):
                                   scheduled_time=_z(NOW + timedelta(hours=3))))
             led.add_post(Post(id=f"q_{tag}", parent_id=f"clip_{tag}", account=acct, account_id="1",
                               platform=Platform.instagram, caption=f"queued {tag}", state=PostState.queued,
-                              scheduled_time=_z(datetime.now(timezone.utc) + timedelta(hours=3))))
+                              scheduled_time=queued_at))
             led.add_post(Post(id=f"pub_{tag}", parent_id=f"clip_{tag}", account=acct, account_id="1",
                               platform=Platform.instagram, caption=f"posted {tag}", state=PostState.published,
                               scheduled_time="2026-06-01T00:00:00Z", public_url=f"https://insta/{tag}"))
             led.add_post(Post(id=f"var_{tag}", parent_id=f"clip_{tag}", account=acct, account_id="1",
                               platform=Platform.instagram, caption=f"variant {tag}", state=PostState.analyzed,
                               scheduled_time="2026-06-01T00:00:00Z", metrics={LIFT_SCORE: 50.0, "saves": 3}, public_url="dryrun://1"))
+    return queued_at
+
+def _queued_month(cfg, queued_at):
+    """MOL-730: the ?month= the queued posts fall in, resolved through the SAME operator zone the
+    calendar buckets by — so the month is right under any FANOPS_OPERATOR_TZ, not just UTC."""
+    from fanops.timeutil import parse_iso, _operator_zone
+    local = parse_iso(queued_at).astimezone(_operator_zone(cfg) or timezone.utc)
+    return f"{local.year:04d}-{local.month:02d}"
 
 @pytest.mark.parametrize("path,present,absent", [
     ("/review?view=list&account=@a", b"await a", b"await b"),
@@ -330,8 +343,12 @@ def test_blank_account_param_is_all(tmp_path):
     assert r.status_code == 200 and b"await a" in r.data and b"await b" in r.data
 
 def test_schedule_all_view_renders_per_account_headers(tmp_path):
-    cfg = Config(root=tmp_path); _seed_two_accounts_all_surfaces(cfg)
-    html = _client(cfg).get("/schedule").data.decode()
+    # MOL-730: ask for the month the queued posts ACTUALLY fall in. The calendar is month-scoped and a bare
+    # /schedule renders the CURRENT month, so in the last 3h of any month `now + 3h` slid into the next one,
+    # every chip was dropped and this assertion failed on the wall clock instead of on the behavior under
+    # test (it reddened five unrelated PRs on 2026-07-31). The assertion itself is unchanged.
+    cfg = Config(root=tmp_path); queued_at = _seed_two_accounts_all_surfaces(cfg)
+    html = _client(cfg).get(f"/schedule?month={_queued_month(cfg, queued_at)}").data.decode()
     assert ">a<" in html and ">b<" in html
     one = _client(cfg).get("/schedule?account=@a").data.decode()
     assert ">@b<" not in one and "q_b" not in one                       # scoped, header suppressed

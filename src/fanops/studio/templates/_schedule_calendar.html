@@ -5,6 +5,12 @@
     <h3 class="schedule-cal-title">{{ calendar.label }}</h3>
     <a class="button ghost schedule-cal-next" href="{{ url_for('schedule', month=calendar.next_ym, account=active, batch=active_batch|default(none), source=active_source|default(none)) }}">{{ calendar.next_ym }} →</a>
   </header>
+  {# MOL-730: this month shows nothing but the queue is not empty — say where it actually is. Rendered
+     ONLY when the month places zero chips, so an in-month calendar is byte-identical to before. #}
+  {% if calendar.offscreen and not calendar.shown %}
+  <p class="schedule-cal-offscreen warn">{{ calendar.offscreen }} approved post{{ 's' if calendar.offscreen != 1 else '' }} scheduled outside {{ calendar.label }} — earliest in
+    <a href="{{ url_for('schedule', month=calendar.offscreen_ym, account=active, batch=active_batch|default(none), source=active_source|default(none)) }}">{{ calendar.offscreen_ym }}</a>.</p>
+  {% endif %}
   <div class="schedule-cal-grid" role="grid" aria-label="Month days">
     <div class="schedule-cal-dow" role="row">
       <span role="columnheader">Mon</span><span role="columnheader">Tue</span><span role="columnheader">Wed</span>
