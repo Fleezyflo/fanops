@@ -441,6 +441,14 @@ class CalendarMonth:
     prev_ym: str              # YYYY-MM navigation
     next_ym: str
     month_param: str
+    # MOL-730: the chips this month does NOT show. The calendar is month-scoped, so an operator whose
+    # approved posts all sit in a neighbouring month saw an empty grid with nothing saying why (at a
+    # month boundary "now + 3h" is next month — every chip vanished). These are FACTS, not UI policy:
+    # the template decides when to surface them (today: only when `shown == 0`, so an in-month render
+    # stays byte-identical). Counted AFTER the account filter, so they match the scope on screen.
+    shown: int = 0                      # chips placed inside this month
+    offscreen: int = 0                  # chips dropped because their operator-local month differs
+    offscreen_ym: Optional[str] = None  # YYYY-MM of the EARLIEST offscreen chip (where the queue starts)
 
 
 def _schedule_chip(row: ScheduleRow, cfg: Config, *, zone) -> Optional[ScheduleChip]:
@@ -461,12 +469,15 @@ def _schedule_chip(row: ScheduleRow, cfg: Config, *, zone) -> Optional[ScheduleC
 
 def schedule_calendar_month(rows: list[ScheduleRow], cfg: Config, *, year: int, month: int,
                             account: Optional[str] = None, now: Optional[datetime] = None) -> CalendarMonth:
-    """U7: month grid of scheduled chips in operator-local days. Optional account filters chips only."""
+    """U7: month grid of scheduled chips in operator-local days. Optional account filters chips only.
+    MOL-730: also reports shown/offscreen/offscreen_ym — the chips this month drops — so a month with
+    none of them is legible instead of blank. Placement itself is unchanged."""
     from fanops.timeutil import _operator_zone
     now = now or datetime.now(timezone.utc)
     zone = _operator_zone(cfg) or timezone.utc
     today = now.astimezone(zone).date()
     chips_by_day: dict[str, list[ScheduleChip]] = {}
+    shown = 0; offscreen = 0; offscreen_first: Optional[datetime] = None
     for r in rows:
         if account is not None and r.account != account:
             continue
@@ -477,10 +488,15 @@ def schedule_calendar_month(rows: list[ScheduleRow], cfg: Config, *, year: int, 
             dt = parse_iso(r.scheduled_time)
             local = dt.astimezone(zone)
             if local.year != year or local.month != month:
+                # MOL-730: a real, schedulable chip — just not in THIS month. Count it (and remember the
+                # earliest) so the surface can say where the queue actually is instead of rendering blank.
+                offscreen += 1
+                if offscreen_first is None or local < offscreen_first: offscreen_first = local
                 continue
             dkey = local.date().isoformat()
         except (ValueError, TypeError):
             continue
+        shown += 1
         chips_by_day.setdefault(dkey, []).append(chip)
     for day_chips in chips_by_day.values():
         day_chips.sort(key=lambda c: c.time_hm)
@@ -500,9 +516,11 @@ def schedule_calendar_month(rows: list[ScheduleRow], cfg: Config, *, year: int, 
     prev_y, prev_m = (year - 1, 12) if month == 1 else (year, month - 1)
     next_y, next_m = (year + 1, 1) if month == 12 else (year, month + 1)
     label = datetime(year, month, 1).strftime("%B %Y")
+    off_ym = f"{offscreen_first.year:04d}-{offscreen_first.month:02d}" if offscreen_first is not None else None
     return CalendarMonth(year=year, month=month, label=label, weeks=weeks,
                          prev_ym=f"{prev_y:04d}-{prev_m:02d}", next_ym=f"{next_y:04d}-{next_m:02d}",
-                         month_param=f"{year:04d}-{month:02d}")
+                         month_param=f"{year:04d}-{month:02d}",
+                         shown=shown, offscreen=offscreen, offscreen_ym=off_ym)
 
 
 def schedule_bucket_split(led: Ledger, rows: list[ScheduleRow]) -> dict[str, dict[str, list[ScheduleRow]]]:
