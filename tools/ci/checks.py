@@ -11,12 +11,21 @@ import re
 from .common import Finding
 
 _SHA40 = re.compile(r"[0-9a-f]{40}$")
-# GitHub Actions workflow syntax, `permissions` -> "Defining access for the GITHUB_TOKEN scopes",
-# verified 2026-08-01: https://docs.github.com/actions/reference/workflows-and-actions/workflow-syntax#permissions
+# Valid GITHUB_TOKEN permission keys. Deliberately the UNION of every authoritative source, not any
+# one of them: this list REJECTS, so an over-narrow entry reddens the required unit lane on a
+# workflow GitHub would have accepted. Sources disagree only at the edges and never on the failure
+# this guards (`administration` is in NONE of them):
+#   docs.github.com/actions/reference/workflows-and-actions/workflow-syntax#permissions
+#     -> has artifact-metadata / code-quality / vulnerability-alerts, omits models, repository-projects
+#   docs.github.com/actions/how-tos/security-for-github-actions/security-guides/use-github_token-in-workflows
+#     -> has models
+#   schemastore.org/github-workflow.json (what actionlint and editors validate against)
+#     -> has repository-projects (classic projects: dropped from the docs, still parsed)
+# All three checked 2026-08-01.
 _GITHUB_TOKEN_PERMISSION_KEYS = frozenset({
     "actions", "artifact-metadata", "attestations", "checks", "code-quality", "contents",
     "deployments", "discussions", "id-token", "issues", "models", "packages", "pages",
-    "pull-requests", "security-events", "statuses", "vulnerability-alerts",
+    "pull-requests", "repository-projects", "security-events", "statuses", "vulnerability-alerts",
 })
 
 
