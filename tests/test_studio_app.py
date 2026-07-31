@@ -497,3 +497,23 @@ def test_reschedule_surface_local_input_stored_as_utc(tmp_path):
     r = _client(cfg).post("/reschedule-surface/p_aw", data={"new_time": to_local_input(z)})
     assert r.status_code == 200
     assert Ledger.load(cfg).posts["p_aw"].scheduled_time == z
+
+
+# ---- MOL-726: POST /schedule/shift/<handle> must never 500 on a malformed `hours` -------------------
+@pytest.mark.parametrize("bad", ["nan", "inf", "-inf", "1e400", "1e18", "banana", ""])
+def test_schedule_shift_bad_hours_is_a_clean_result_not_a_raise(tmp_path, bad):
+    # The route parsed float() (nan/inf parse FINE) and handed it to shift_account_schedule, whose
+    # `timedelta(hours=...)` sat outside its try -> ValueError/OverflowError escaped as a Flask 500.
+    # TESTING=True propagates exceptions, so a regression here raises rather than hiding behind a 500.
+    cfg = Config(root=tmp_path); _seed(cfg, tmp_path)
+    before = {k: v.scheduled_time for k, v in Ledger.load(cfg).posts.items()}
+    r = _client(cfg).post("/schedule/shift/a", data={"hours": bad})
+    assert r.status_code == 200
+    assert {k: v.scheduled_time for k, v in Ledger.load(cfg).posts.items()} == before
+
+def test_schedule_shift_applies_a_finite_offset(tmp_path):
+    cfg = Config(root=tmp_path); _seed(cfg, tmp_path)
+    assert _client(cfg).post("/schedule/shift/a", data={"hours": "2"}).status_code == 200
+    out = Ledger.load(cfg).posts
+    assert out["p_base"].scheduled_time == _z(NOW + timedelta(hours=5))
+    assert out["p_var"].scheduled_time == _z(NOW + timedelta(hours=6))   # 1h spacing preserved
