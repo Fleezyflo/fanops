@@ -5,10 +5,7 @@
       "name": "Credibility First",
       "voice": "restraint is the product; pass on the sensational cut",
       "selection_scope": "credibility_first",
-      "content_focus": [
-        "emotional",
-        "storytelling"
-      ],
+      "content_focus": "emotional, storytelling",
       "hook_angle": "curiosity",
       "hashtag_corpus": [
         "#podcast",
@@ -16,16 +13,16 @@
         "#facts",
         "#science"
       ],
-      "intensity": "low"
+      "intensity": "low",
+      "clip_profile": null,
+      "framing_bias": null
     },
     {
       "id": "controversy",
       "name": "Controversy",
       "voice": "pick the cut that starts the argument \u2014 high-arousal, never neutral",
       "selection_scope": "controversy_seeking",
-      "content_focus": [
-        "bold-statement"
-      ],
+      "content_focus": "bold-statement",
       "hook_angle": "challenge",
       "hashtag_corpus": [
         "#celebritygossip",
@@ -33,16 +30,16 @@
         "#popculture",
         "#entertainment"
       ],
-      "intensity": "high"
+      "intensity": "high",
+      "clip_profile": null,
+      "framing_bias": null
     },
     {
       "id": "edutainment",
       "name": "Edutainment",
       "voice": "one teachable insight per clip \u2014 the fact has to earn attention",
       "selection_scope": "source_briefed",
-      "content_focus": [
-        "storytelling"
-      ],
+      "content_focus": "storytelling",
       "hook_angle": "curiosity",
       "hashtag_corpus": [
         "#hiphop",
@@ -50,16 +47,16 @@
         "#music",
         "#newmusic"
       ],
-      "intensity": "low"
+      "intensity": "low",
+      "clip_profile": null,
+      "framing_bias": null
     },
     {
       "id": "cliffhanger",
       "name": "Cliffhanger",
       "voice": "cut before the resolution \u2014 leave the dilemma open so they have to watch through",
       "selection_scope": "open",
-      "content_focus": [
-        "storytelling"
-      ],
+      "content_focus": "storytelling",
       "hook_angle": "curiosity",
       "hashtag_corpus": [
         "#podcast",
@@ -67,16 +64,16 @@
         "#reels",
         "#viral"
       ],
-      "intensity": "low"
+      "intensity": "low",
+      "clip_profile": null,
+      "framing_bias": null
     },
     {
       "id": "hype-vibe",
       "name": "Hype / Vibe",
       "voice": "underground energy \u2014 the hardest bar, the room going up, never mid",
       "selection_scope": "open",
-      "content_focus": [
-        "hype"
-      ],
+      "content_focus": "hype",
       "hook_angle": "fomo",
       "hashtag_corpus": [
         "#hiphop",
@@ -84,7 +81,9 @@
         "#bars",
         "#undergroundhiphop"
       ],
-      "intensity": "high"
+      "intensity": "high",
+      "clip_profile": null,
+      "framing_bias": null
     }
   ]
 }
