@@ -748,11 +748,13 @@ def test_publish_due_old_row_without_stamps_falls_back_to_scheduled_time(tmp_pat
     # Pre-MOL-709 published rows have neither published_at nor submission_started_at on some fixtures;
     # counting them as zero would let a legacy hand-edited schedule walk past the cap.
     from fanops.studio.views_common import _DAILY_ACCOUNT_CAP
-    from fanops.timeutil import iso_z
-    from datetime import datetime, timezone
+    from fanops.timeutil import iso_z, parse_iso
+    monkeypatch.setenv("FANOPS_OPERATOR_TZ", "UTC")
     _live(monkeypatch); cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    # scheduled_time on TODAY so the fallback attributes the spent slot to the same day the run checks
-    today_slot = iso_z(datetime.now(timezone.utc).replace(hour=10, minute=0, second=0, microsecond=0))
+    # scheduled_time on the frozen day so the fallback attributes the spent slot to the day the run checks.
+    # MOL-732: nothing publishes here either, so freeze it too — `datetime.now().replace(hour=10)` agreed
+    # with `now` only while the ambient tz was UTC (under UTC-8 it is the NEXT local day for 8h a day).
+    today_slot = iso_z(parse_iso(_QUOTA_FROZEN_NOW).replace(hour=10))
     for i in range(_DAILY_ACCOUNT_CAP):
         _queued(led, cfg, pid=f"old{i}", cid=f"cold{i}", when=today_slot)
         p = led.posts[f"old{i}"]
@@ -764,7 +766,7 @@ def test_publish_due_old_row_without_stamps_falls_back_to_scheduled_time(tmp_pat
         _queued(led, cfg, pid=f"new{i}", cid=f"cnew{i}", when="2020-01-01T00:00:00Z")
     _http_media(led, "new0", "new1"); _stub_ok_poster(mocker, cfg)
     mocker.patch("fanops.postiz_lifecycle.ensure_up")
-    summary = publish_due(cfg, now=_quota_now())
+    summary = publish_due(cfg, now=_QUOTA_FROZEN_NOW)
     assert summary["published"] == 0 and summary["quota_skipped"] == 2
 
 def test_publish_due_quota_is_per_account(tmp_path, monkeypatch, mocker):
