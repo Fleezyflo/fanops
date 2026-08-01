@@ -444,6 +444,11 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
             if a and a not in anchors:
                 anchors.append(a)
     anchor_set = set(anchors)
+
+    # MOL-739: hashtag discovery MUST only proceed if niche seeds exist.
+    if not anchors:
+        get_logger(cfg)("hashtags", "-", "discovery_skip_no_niche", level="info")
+        return {"written": False, "aborted": "discovery_skip_no_niche", "reason": "no personas have a declared niche"}
     corpus_set: set[str] = set()
     for per in personas:
         for raw in (getattr(per, "hashtag_corpus", None) or []):
