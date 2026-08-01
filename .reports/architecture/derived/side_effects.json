@@ -377,11 +377,11 @@
     "fanops.fanops_hashtags": [
       {
         "call": "fcntl.flock",
-        "line": 323
+        "line": 325
       },
       {
         "call": "fcntl.flock",
-        "line": 329
+        "line": 331
       }
     ],
     "fanops.ledger": [
@@ -647,23 +647,23 @@
       },
       {
         "call": "subprocess.run",
-        "line": 839
+        "line": 840
       },
       {
         "call": "subprocess.run",
-        "line": 865
+        "line": 866
       },
       {
         "call": "subprocess.run",
-        "line": 870
+        "line": 871
       },
       {
         "call": "subprocess.run",
-        "line": 898
+        "line": 899
       },
       {
         "call": "subprocess.run",
-        "line": 971
+        "line": 972
       }
     ],
     "fanops.discover": [

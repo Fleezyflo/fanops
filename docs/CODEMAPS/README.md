@@ -12,7 +12,7 @@ Older narrative docs live in [archive/](archive/) and may be stale.
 
 | File | Read this when… |
 |---|---|
-| [full-trace-index.md](full-trace-index.md) | You need the master map: 109-module coverage, the 10-cluster split, the safety-verdict table (10 invariants, all HOLD), dead-code triage, silent-failure inventory, how to regenerate. |
+| [full-trace-index.md](full-trace-index.md) | You need the master map: whole-tree module coverage, the 10-cluster split, the safety-verdict table (10 invariants, all HOLD), dead-code triage, silent-failure inventory, how to regenerate. Coverage is a SNAPSHOT — a module added since generation has no row. |
 | [anomalies.md](anomalies.md) | You need the FLAT ledger of every anomaly/dead-code lead/silent swallow, per cluster in file:line order — incl. the 5 "dead" flags corrected to live (aliased/lazy imports) and the one real wiring bug. |
 | [system-lens-map.md](system-lens-map.md) | You need the EXHAUSTIVE 64-env-var table (13 Studio-settable / 51 shell-only), the ingestion chain stage-by-stage, the full hashtag-vet algorithm, or persona-field→downstream-consumer chains. Every claim carries a verified file:line. |
 | [hashtag-lifecycle.md](hashtag-lifecycle.md) | You are touching hashtags: persona corpus → vet → post → live Graph reach → surfaced. |

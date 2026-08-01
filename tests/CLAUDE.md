@@ -1,4 +1,4 @@
-<!-- Edit-time rulebook for tests/. Anchors verified 2026-07-03. Commands = root CLAUDE.md. -->
+<!-- Edit-time rulebook for tests/. Line anchors are a starting point, not a promise — trust the symbol, re-find the line. Commands = root CLAUDE.md. -->
 # tests — traps when writing or fixing a test
 
 ## How the suites run — CI-ONLY, never locally
@@ -11,11 +11,14 @@ to keep** (the orchestration hook gate that once enforced this is DORMANT — `.
 `./scripts/check.sh` is scoped lint + test-mapping only. `FANOPS_LOCAL_TESTS=1` is the
 operator-only override from a human terminal. What CI runs (reference, not for running):
 
-- CI `unit` job: `python -m pytest -q -m "not integration and not slow"` (hermetic, no ffmpeg/whisper/network).
-- CI `e2e` job: `python -m pytest -q -m integration -rs` (real ffmpeg/whisper/TTS; `FANOPS_REQUIRE_E2E=1`
-  turns a skip into a FAILURE) plus the `@pytest.mark.slow` cross-face UNIT proofs (`-m slow`):
-  `test_account_first_e2e.py`, `test_hashtag_lifecycle_e2e.py`, `test_review_lanes_e2e.py`,
-  `test_per_persona_e2e.py`.
+- CI `unit` job — **the only required status check, and the only job a PR runs**:
+  `python -m pytest -q -m "not integration and not slow"` (hermetic, no ffmpeg/whisper/network).
+- CI `e2e` job — **`workflow_dispatch` + nightly `schedule` ONLY, never on a push or a PR**
+  (`.github/workflows/ci.yml` job `if:`). So a green PR has NOT run it, and a `@pytest.mark.slow` or
+  `integration` test you add is unproven until the nightly. It runs
+  `python -m pytest -q -m integration -rs` (real ffmpeg/whisper/TTS; `FANOPS_REQUIRE_E2E=1` turns a skip into a
+  FAILURE) plus the `-m slow` cross-face UNIT proofs: `test_account_first_e2e.py`,
+  `test_hashtag_lifecycle_e2e.py`, `test_review_lanes_e2e.py`, `test_per_persona_e2e.py`.
 
 ## Hard rules
 
@@ -36,5 +39,6 @@ test assert against the operator's config instead of the CODE default.
 - `monkeypatch.delenv(..., raising=False)` is the safe form for a possibly-absent key (this gotcha bit the
   Go-Live tests).
 
-Defect-fix tasks: the exact `file:line` + class for each MOL-* issue is in `.reports/issue-register-2026-07-03.md`
-— write the failing regression test against that line, not a re-derived guess.
+Defect-fix tasks: take the `file:line` + class from the Linear ticket body and write the failing regression test
+against the named SYMBOL (anchors drift; the line number in a ticket is a starting point). There is no tracked
+defect register — `.reports/` is gitignored apart from `.reports/architecture/`.

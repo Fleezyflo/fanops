@@ -87,8 +87,11 @@ change in step F (and pre-commit re-proves scoped src/tests changes), and CI pro
 Do NOT rely on any push-time test gate; it doesn't exist. Conventional commit `fix(scope): …
 (MOL-xxx)`, one logical change per commit.
 
-**H. PR** — open to `main`, summarize change + test plan, wait for CI (the definitive unit + e2e gate)
-to go GREEN, merge only on green. Never merge over red or conflicts — re-sync onto fresh `origin/main`
+**H. PR** — open to `main`, summarize change + test plan, wait for CI to go GREEN, merge only on green.
+**What green means:** the `unit` job is the only required status check and the only suite a PR runs. The
+real-tooling `e2e` job is `workflow_dispatch` + nightly `schedule` only (`.github/workflows/ci.yml` job `if:`),
+so an `integration`- or `slow`-marked test you add is NOT proven by your PR — dispatch the `e2e` job by hand if
+the change needs it. Never merge over red or conflicts — re-sync onto fresh `origin/main`
 per **Re-syncing a drifted branch** below (merge, never reset/re-cut), re-run F, re-push.
 
 **I. Cleanup** — after merge: `git worktree remove ../fanops-<mol-id>`.
@@ -207,9 +210,10 @@ branches, leftover artifacts — with or without a wave.
 
 Deps are refreshed automatically on VM startup (venv + `pip install -e '.[dev,studio]'`, mirroring
 `.cursor/environment.json`). Standard dev commands live in `CLAUDE.md` (Commands) — use those:
-lint `ruff check .`, fast tests `python -m pytest -q -m "not integration"` (~6 min, all green),
-studio `fanops studio`. Optional extras (`transcribe`/`asr`/`compose`/`framing`) and the `integration`
-suite need real ffmpeg/whisper/etc. on PATH and are NOT installed by default; the unit suite skips them.
+lint `ruff check .`, studio `fanops studio`. **The CI-only test rule holds here too** (step C): a cloud VM is
+still one machine in a wave, and CI on your PR is the evidence — do not run the suite. Optional extras
+(`transcribe`/`asr`/`compose`/`framing`) and the `integration` suite need real ffmpeg/whisper/etc. on PATH and
+are NOT installed by default; the unit suite skips them.
 
 Non-obvious caveats found during setup:
 - **`fanops studio` cold-start takes ~90s here before it binds the port.** This VM has a stray

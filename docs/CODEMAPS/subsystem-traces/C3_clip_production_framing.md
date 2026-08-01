@@ -4,9 +4,20 @@
 
 > **Known framing defect + remediation (2026-07-15):** the reframe fallback for wide, off-centre subjects is
 > content-blind and mis-frames 19.3 % of the classified corpus (empty-gap / edge-pinned / dead-space). Root
-> cause, framing spec (F1–F6), and remediation roadmap: [`docs/design/reframe/`](../../design/reframe/README.md);
-> architectural decision [ADR-0103](../../adr/0103-reframe-subject-and-layout-aware-framing.md). Read that
-> set before changing the fallback composition or treatment routing.
+> cause, framing spec (F1–F6), and remediation roadmap: [`docs/design/reframe/`](../../design/reframe/README.md).
+> Read that set before changing the fallback composition or treatment routing. (The decision that once sat in a
+> separate record is now main history — the PRs that landed the subject-aware/layout-aware framing.)
+
+> **Why the crop is STATIC per shot, and must stay that way.** Each shot is ONE fixed, correctly-sized crop held
+> perfectly still, hard-cutting between speakers — a locked-off virtual camera, how a real clipper cuts it. Two
+> alternatives were built and rejected: a per-frame chase reads as a jittery hand-held cam (it tracks every
+> detection wobble and the zoom "breathes"), and a single crop per window cannot size two different speakers. The
+> static-per-shot crop is jitter-free BY CONSTRUCTION — the ffmpeg crop expression is constant within a segment,
+> with no `t` term. Do not reintroduce a time-varying crop.
+>
+> **Acceptance is the VISUAL on rendered frames, not a face-box number.** The YuNet box under-reads on caps,
+> profiles and downturned heads, so a passing metric proves little; and a single still cannot show jitter or
+> size-drift in either direction. Check that adjacent frames within a shot carry an identical crop.
 
 ## Files covered (all 8 read in full)
 

@@ -1,15 +1,16 @@
 # Reframe framing — root-cause & remediation (design set)
 
 Permanent engineering record for the `centered_multi_untracked` reframe defect class. **Investigation is
-closed; implementation is gated on approval of the roadmap + ADR-0103.** Future work on the reframe framing
-path should start here rather than re-discovering the evidence.
+closed.** Future work on the reframe framing path should start here rather than re-discovering the evidence.
+The subject-aware / layout-aware framing decision that this set was written against has since SHIPPED; its
+record is main history (the PRs that landed it) and the as-built behaviour is
+[`C3_clip_production_framing.md`](../../CODEMAPS/subsystem-traces/C3_clip_production_framing.md).
 
 | Document | What it is |
 |---|---|
 | [`RCDR-centered-multi-untracked.md`](RCDR-centered-multi-untracked.md) | Root Cause Decision Record — *what is wrong*, facts/observations/inferences/hypotheses separated. |
 | [`framing-spec.md`](framing-spec.md) | Framing Specification — objective correctness rules (F1–F6) + escalated product decisions (P1–P2) + per-defect acceptance criteria. |
 | [`remediation-roadmap.md`](remediation-roadmap.md) | Engineering plan — slices, subsystems, invariants, tests, rollout, rollback, blast radius; Track A (visual) / Track B (audio). |
-| [ADR-0103](../../adr/0103-reframe-subject-and-layout-aware-framing.md) | Architectural decision — subject-aware + layout-aware framing. |
 | [`evidence/`](evidence/) | `defect-map.json` (per-clip D1-A/D1-B/D2), `framing-metrics.json` (full-box metrics), `raw-detections.json`. |
 
 ## The defect in one line

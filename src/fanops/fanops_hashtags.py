@@ -18,8 +18,10 @@ Visibility numbers are Instagram's own fields only (see ig_hashtag_scrape): Top-
 `play_count` (preferred) / `like_count`, plus `media_count` from hashtag_info when served.
 A tag with neither plays nor likes in the Top grid is UNMEASURED and absent — measured tags only.
 
-Missing scrape (no [igscrape] / no session / login fail) aborts LOUDLY (`written:False`, `aborted:no_scrape`)
-— there is no silent Graph fallback. A throttle ends the pass but still writes accrued evidence."""
+Missing scrape (no [igscrape] / no user / no session file) aborts LOUDLY (`written:False`,
+`aborted:no_scrape`) — there is no silent Graph fallback. An EXPIRED session aborts as `login_required`
+and arms the backoff ladder, so a dead session is not re-probed every tick (MOL-727). A throttle ends the
+pass but still writes accrued evidence."""
 from __future__ import annotations
 import os
 from contextlib import contextmanager
@@ -379,18 +381,24 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
     ABORTS without writing when personas.json is CORRUPT, or when scrape cannot open (`no_scrape`).
     An Instagram throttle ends the pass, writes accrued evidence when mutated, and persists a cooldown
     (30m→1h→2h→6h). `last_complete_pass` advances ONLY when throttled is False (the 12h tick gates on
-    that stamp). try_cap incompleteness also sets throttled but does NOT write the Instagram cooldown.
+    that stamp) — try_cap incompleteness and a dead session set throttled too, because an unfinished
+    queue is an unfinished queue; of the three only try_cap writes no Instagram cooldown.
 
     Every failure class that means "stop touching this account" arms that ONE cooldown file, tagged with
     its reason (MOL-699): `throttle` and `login_required` on the ladder, `checkpoint` on a flat 12h freeze
-    because a lock is not a rate limit. Only `no_scrape` (never configured) and a corrupt control file
-    arm nothing — there is no account to protect."""
+    because a lock is not a rate limit. An expiry raised while OPENING the client arms it too
+    (`ScrapeSessionExpired`) — not only an in-pass refusal (MOL-727). Only `no_scrape` (never configured)
+    and a corrupt control file arm nothing — there is no account to protect.
+
+    PROGRESS and the STOP SIGNAL are INDEPENDENT (MOL-727): measuring a tag resets the streak, but a
+    same-pass throttle / login_required still arms a fresh cooldown from streak 1, so a partial pass
+    cannot reopen scrape on the very next tick."""
     import threading
     from concurrent.futures import ThreadPoolExecutor
     from fanops.errors import ControlFileError
-    from fanops.ig_hashtag_scrape import (ScrapeCheckpoint, ScrapeRefused, ScrapeThrottled,
-                                          ScrapeUnavailable, measure_and_harvest_scrape, open_client,
-                                          resolve_hashtag_scrape)
+    from fanops.ig_hashtag_scrape import (ScrapeCheckpoint, ScrapeRefused, ScrapeSessionExpired,
+                                          ScrapeThrottled, ScrapeUnavailable, measure_and_harvest_scrape,
+                                          open_client, resolve_hashtag_scrape)
     from fanops.persona_research import persona_terms
     now = now or datetime.now(timezone.utc)
     stamp = now.isoformat()
@@ -412,6 +420,16 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
                                 until=cd.get("until"),
                                 detail="Layer A frozen — verify in the Instagram app, then scrape-login")
                 return {"written": False, "aborted": "checkpoint", "reason": str(e), "backend": "scrape",
+                        "cooldown_until": cd.get("until"), "cooldown_streak": cd.get("streak")}
+            if isinstance(e, ScrapeSessionExpired):
+                # Same ladder the IN-PASS login_required refusal gets. Without this an expiry returned
+                # `no_scrape` with NO backoff, so every due tick re-probed a dead session forever — the
+                # exact every-tick hammering MOL-699 armed the ladder to stop, just one seam earlier.
+                cd = _persist_cooldown(cfg, now, reason="login_required")
+                get_logger(cfg)("hashtags", "-", "scrape_cooldown", level="error", reason="login_required",
+                                until=cd.get("until"),
+                                detail="Layer A abort — run fanops hashtags scrape-login")
+                return {"written": False, "aborted": "login_required", "reason": str(e), "backend": "scrape",
                         "cooldown_until": cd.get("until"), "cooldown_streak": cd.get("streak")}
             return {"written": False, "aborted": "no_scrape", "reason": str(e), "backend": "scrape"}
     client = scrape_client
@@ -521,7 +539,10 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
                 # Session can open/login while hashtag_info still returns login_required (MOL-696).
                 # Abort the pass; the laddered cooldown is armed at the end of the pass (MOL-699).
                 if "login_required" in msg.lower():
-                    login_dead = True; stop = True
+                    # `throttled` means INCOMPLETE PASS (its other writers: Instagram throttle, try_cap).
+                    # A dead session stops the queue mid-way, so the pass must NOT stamp
+                    # last_complete_pass and buy 12h of silence off the few tags it got (MOL-727).
+                    login_dead = True; stop = True; throttled = True
                     log("hashtags", "-", "pass_login_required", level="error", tried=tried,
                         detail="Layer A abort — run fanops hashtags scrape-login")
                 continue
@@ -588,8 +609,11 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
             break
     cooldown = None
     if measured > 0:
-        _clear_cooldown(cfg)                               # any progress resets the Instagram streak
-    elif ig_throttled:
+        _clear_cooldown(cfg)                               # progress resets the STREAK (back to 30m)...
+    if ig_throttled:
+        # ...but the stop signal still arms a floor. Chained as one if/elif, ONE measured tag cleared the
+        # cooldown and armed nothing, so the next tick reopened scrape against the account that had just
+        # throttled us (MOL-727). Streak depth and "Instagram said stop" are independent facts.
         cooldown = _persist_cooldown(cfg, now, reason="throttle")
         log("hashtags", "-", "scrape_cooldown", reason="throttle", streak=cooldown.get("streak"),
             until=cooldown.get("until"))

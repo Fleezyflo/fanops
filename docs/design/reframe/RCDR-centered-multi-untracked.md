@@ -2,8 +2,9 @@
 
 > Permanent engineering record. Investigation is **closed**. This document states *what is wrong*; the
 > correctness rules are in [`framing-spec.md`](framing-spec.md); the engineering plan is in
-> [`remediation-roadmap.md`](remediation-roadmap.md); the architectural decision is
-> [ADR-0103](../../adr/0103-reframe-subject-and-layout-aware-framing.md).
+> [`remediation-roadmap.md`](remediation-roadmap.md); the decision that was taken on the back of them is main
+> history, and the as-built behaviour is
+> [`C3_clip_production_framing.md`](../../CODEMAPS/subsystem-traces/C3_clip_production_framing.md).
 
 **Provenance:** produced 2026-07-15 against the live corpus at `FANOPS_ROOT=/Users/molhamhomsi/FanOps`
 (the operator's data root), source tip `main @ 0a3b503`. Accepted provisionally by the operator after a

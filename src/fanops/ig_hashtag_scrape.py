@@ -53,6 +53,14 @@ class ScrapeCheckpoint(ScrapeUnavailable):
     pressure to a checkpointed account."""
 
 
+class ScrapeSessionExpired(ScrapeUnavailable):
+    """The stored session no longer authenticates (`login_required` on the probe): TRANSIENT, and
+    `fanops hashtags scrape-login` is the remedy. A ScrapeUnavailable subclass so every existing abort
+    path keeps working; the distinction exists so Layer A can arm the SAME laddered backoff an in-pass
+    `login_required` refusal already gets, instead of re-probing a dead session every tick (MOL-727).
+    Classified by TYPE, so no caller has to grep this module's message text."""
+
+
 class ScrapeRefused(Exception):
     """A non-throttle Instagram refusal for one tag. `code` is optional; message is truncated."""
     def __init__(self, message: str, code=None):
@@ -141,7 +149,7 @@ def open_client(cfg: Config, *, client_factory=None, allow_reauth: bool = False)
                     client.login(user, pw, relogin=True)    # explicit human re-auth only
                 elif not allow_reauth and _is_login_required(e):
                     # Password never read — unattended tick must not re-authenticate.
-                    raise ScrapeUnavailable("session expired — run fanops hashtags scrape-login") from e
+                    raise ScrapeSessionExpired("session expired — run fanops hashtags scrape-login") from e
                 else:
                     raise classified from e
             # Valid session (or successful operator re-auth): persist and return. No login() on the happy path.
