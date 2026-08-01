@@ -485,6 +485,25 @@
       "optional": [],
       "typing": []
     },
+    "fanops.discover_orphans_clean": {
+      "compile": [],
+      "lazy": [
+        "fanops.meta_graph"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.discover_orphans_patch": {
+      "compile": [
+        "fanops.models",
+        "fanops.timeutil"
+      ],
+      "lazy": [
+        "fanops.meta_graph"
+      ],
+      "optional": [],
+      "typing": []
+    },
     "fanops.doctor": {
       "compile": [
         "fanops.accounts",
@@ -2126,6 +2145,8 @@
     "fanops.daemon": 1,
     "fanops.digest": 4,
     "fanops.discover": 1,
+    "fanops.discover_orphans_clean": 0,
+    "fanops.discover_orphans_patch": 0,
     "fanops.doctor": 1,
     "fanops.errors": 32,
     "fanops.fanops_account_stats": 0,
@@ -2158,7 +2179,7 @@
     "fanops.log": 37,
     "fanops.meta_graph": 1,
     "fanops.metrics_schedule": 1,
-    "fanops.models": 50,
+    "fanops.models": 51,
     "fanops.moment_hook_learning": 1,
     "fanops.moments": 4,
     "fanops.overlay": 3,
@@ -2225,7 +2246,7 @@
     "fanops.studio.views_review": 1,
     "fanops.tagging": 1,
     "fanops.text": 4,
-    "fanops.timeutil": 18,
+    "fanops.timeutil": 19,
     "fanops.timing_bias": 1,
     "fanops.track": 3,
     "fanops.transcribe": 3,
@@ -2263,6 +2284,8 @@
     "fanops.daemon": 2,
     "fanops.digest": 7,
     "fanops.discover": 5,
+    "fanops.discover_orphans_clean": 0,
+    "fanops.discover_orphans_patch": 2,
     "fanops.doctor": 3,
     "fanops.errors": 0,
     "fanops.fanops_account_stats": 5,
@@ -2828,6 +2851,14 @@
       "to_level": 3
     },
     {
+      "from": "fanops.discover_orphans_clean",
+      "from_level": 0,
+      "jump": 3,
+      "same_scc": false,
+      "to": "fanops.meta_graph",
+      "to_level": 3
+    },
+    {
       "from": "fanops.hashtags",
       "from_level": 2,
       "jump": 3,
@@ -3084,6 +3115,14 @@
       "to_level": 5
     },
     {
+      "from": "fanops.discover_orphans_patch",
+      "from_level": 2,
+      "jump": 1,
+      "same_scc": false,
+      "to": "fanops.meta_graph",
+      "to_level": 3
+    },
+    {
       "from": "fanops.fanops_hashtags",
       "from_level": 3,
       "jump": 1,
@@ -3320,6 +3359,8 @@
     "fanops.daemon": 1,
     "fanops.digest": 4,
     "fanops.discover": 4,
+    "fanops.discover_orphans_clean": 0,
+    "fanops.discover_orphans_patch": 2,
     "fanops.doctor": 3,
     "fanops.errors": 0,
     "fanops.fanops_account_stats": 4,
@@ -3437,6 +3478,7 @@
       "fanops.casting",
       "fanops.compose",
       "fanops.config",
+      "fanops.discover_orphans_clean",
       "fanops.errors",
       "fanops.frames",
       "fanops.framing_outcomes",
@@ -3488,6 +3530,7 @@
       "fanops.accounts",
       "fanops.agentstep",
       "fanops.batches",
+      "fanops.discover_orphans_patch",
       "fanops.hashtag_vocab",
       "fanops.hashtags",
       "fanops.health",
@@ -3601,17 +3644,17 @@
   ],
   "totals": {
     "G1_non_trivial_sccs": 0,
-    "G1_sccs_total": 135,
+    "G1_sccs_total": 137,
     "G1c_levels": 11,
     "G2_largest_scc_size": 47,
-    "G2_module_sccs_total": 73,
+    "G2_module_sccs_total": 75,
     "G2_non_trivial_sccs": 8,
-    "compile_edges_G1": 568,
-    "lazy_edges": 341,
+    "compile_edges_G1": 570,
+    "lazy_edges": 343,
     "lazy_edges_lateral": 47,
-    "lazy_edges_strictly_upward": 67,
-    "lazy_edges_to_equal_or_higher_level": 114,
-    "modules": 135,
+    "lazy_edges_strictly_upward": 69,
+    "lazy_edges_to_equal_or_higher_level": 116,
+    "modules": 137,
     "optional_edges": 0,
     "typing_only_edges": 7
   }
