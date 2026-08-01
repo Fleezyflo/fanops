@@ -643,14 +643,24 @@ def test_publish_due_calls_postiz_throttle(tmp_path, monkeypatch, mocker):
 
 
 # ---- MOL-712: publish_due daily outbound quota (backstop for schedules the allocator never touched) ----
-# published_at is stamped with wall-clock UTC at the claim→publish transition, so the quota day's
-# `now=` MUST be that same calendar day — a frozen historical `now=` makes spent land on today while
-# the check looks at 2026-06-02 and the second pass under-counts.
+# published_at is stamped with wall-clock UTC at the claim→publish transition, so a test that PUBLISHES
+# inside the pass must pass the quota day's `now=` on that same calendar day — a frozen historical `now=`
+# makes spent land on today while the check looks at 2026-06-02 and the second pass under-counts.
+# MOL-732: the converse also holds. A test in which NOTHING publishes stamps no wall-clock published_at,
+# so its fixture must be FROZEN (`_QUOTA_FROZEN_NOW`) and its tz pinned — deriving a "claimed earlier
+# today" stamp as `datetime.now() - 1h` puts it on the PREVIOUS operator-local day for the first hour
+# after every local midnight, where publish_due correctly declines to count it and the assertion flips.
+# Use _quota_now() only when the pass really publishes; freeze otherwise.
 
 def _quota_now():
     from datetime import datetime, timezone
     from fanops.timeutil import iso_z
     return iso_z(datetime.now(timezone.utc))
+
+
+# Midday, so a "-1h" fixture is unambiguously the SAME operator-local day and a "-13h" one is
+# unambiguously the PREVIOUS one — no wall clock, hence no hour-of-day in which either flips.
+_QUOTA_FROZEN_NOW = "2026-06-02T12:00:00Z"
 
 
 def test_publish_due_caps_at_ten_per_account_per_local_day(tmp_path, monkeypatch, mocker):
@@ -688,11 +698,15 @@ def test_publish_due_second_pass_publishes_zero_more_at_cap(tmp_path, monkeypatc
 def test_publish_due_in_flight_claim_counts_against_today(tmp_path, monkeypatch, mocker):
     # A crash-stranded submitting post claimed TODAY still occupies a slot — otherwise a crash-and-retry
     # loop walks past the cap by treating in-flight as free.
+    # MOL-732: `now` is FROZEN and the claim is derived FROM it (never from the wall clock), tz pinned.
+    # Nothing publishes here (published == 0), so no wall-clock published_at is stamped and the whole
+    # fixture is inside the frozen day — this proves the quota rule, not what hour CI happens to run at.
     from fanops.studio.views_common import _DAILY_ACCOUNT_CAP
-    from fanops.timeutil import iso_z
-    from datetime import datetime, timezone, timedelta
+    from fanops.timeutil import iso_z, parse_iso
+    from datetime import timedelta
+    monkeypatch.setenv("FANOPS_OPERATOR_TZ", "UTC")   # the day bucket is operator-local on BOTH sides
     _live(monkeypatch); cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    claim = iso_z(datetime.now(timezone.utc) - timedelta(hours=1))   # claimed earlier TODAY
+    claim = iso_z(parse_iso(_QUOTA_FROZEN_NOW) - timedelta(hours=1))   # claimed earlier the SAME local day
     for i in range(_DAILY_ACCOUNT_CAP):
         _queued(led, cfg, pid=f"inf{i}", cid=f"cinf{i}", when="2020-01-01T00:00:00Z")
         led.posts[f"inf{i}"].state = PostState.submitting
@@ -701,19 +715,46 @@ def test_publish_due_in_flight_claim_counts_against_today(tmp_path, monkeypatch,
         _queued(led, cfg, pid=f"new{i}", cid=f"cnew{i}", when="2020-01-01T00:00:00Z")
     _http_media(led, "new0", "new1", "new2"); _stub_ok_poster(mocker, cfg)
     mocker.patch("fanops.postiz_lifecycle.ensure_up")
-    summary = publish_due(cfg, now=_quota_now())
+    summary = publish_due(cfg, now=_QUOTA_FROZEN_NOW)
     assert summary["published"] == 0 and summary["quota_skipped"] == 3
     assert all(Ledger.load(cfg).posts[f"new{i}"].state is PostState.queued for i in range(3))
+
+def test_publish_due_in_flight_claim_on_previous_local_day_leaves_today_free(tmp_path, monkeypatch, mocker):
+    # MOL-732 negative control for the test above — the half of the day-bucketing rule nothing pinned,
+    # and the half the wall-clock fixture used to hit by accident for one hour after every local midnight.
+    # The SAME cap-filling in-flight claims, moved one hour EARLIER so they land on YESTERDAY: they must
+    # NOT consume today's quota, so all three due posts ship. Together the two tests prove publish_due
+    # buckets `now` and the claim stamps by the same operator-local day, not merely "counts in-flight".
+    from fanops.studio.views_common import _DAILY_ACCOUNT_CAP
+    from fanops.timeutil import iso_z, parse_iso, operator_local_day
+    from datetime import timedelta
+    monkeypatch.setenv("FANOPS_OPERATOR_TZ", "UTC")
+    _live(monkeypatch); cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    claim = iso_z(parse_iso(_QUOTA_FROZEN_NOW) - timedelta(hours=13))   # 23:00 the PREVIOUS local day
+    assert operator_local_day(claim, cfg) != operator_local_day(_QUOTA_FROZEN_NOW, cfg)   # fixture precondition
+    for i in range(_DAILY_ACCOUNT_CAP):
+        _queued(led, cfg, pid=f"inf{i}", cid=f"cinf{i}", when="2020-01-01T00:00:00Z")
+        led.posts[f"inf{i}"].state = PostState.submitting
+        led.posts[f"inf{i}"].submission_started_at = claim
+    for i in range(3):
+        _queued(led, cfg, pid=f"new{i}", cid=f"cnew{i}", when="2020-01-01T00:00:00Z")
+    _http_media(led, "new0", "new1", "new2"); _stub_ok_poster(mocker, cfg)
+    mocker.patch("fanops.postiz_lifecycle.ensure_up")
+    summary = publish_due(cfg, now=_QUOTA_FROZEN_NOW)
+    assert summary["published"] == 3 and summary["quota_skipped"] == 0
+    assert all(Ledger.load(cfg).posts[f"new{i}"].state is PostState.published for i in range(3))
 
 def test_publish_due_old_row_without_stamps_falls_back_to_scheduled_time(tmp_path, monkeypatch, mocker):
     # Pre-MOL-709 published rows have neither published_at nor submission_started_at on some fixtures;
     # counting them as zero would let a legacy hand-edited schedule walk past the cap.
     from fanops.studio.views_common import _DAILY_ACCOUNT_CAP
-    from fanops.timeutil import iso_z
-    from datetime import datetime, timezone
+    from fanops.timeutil import iso_z, parse_iso
+    monkeypatch.setenv("FANOPS_OPERATOR_TZ", "UTC")
     _live(monkeypatch); cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    # scheduled_time on TODAY so the fallback attributes the spent slot to the same day the run checks
-    today_slot = iso_z(datetime.now(timezone.utc).replace(hour=10, minute=0, second=0, microsecond=0))
+    # scheduled_time on the frozen day so the fallback attributes the spent slot to the day the run checks.
+    # MOL-732: nothing publishes here either, so freeze it too — `datetime.now().replace(hour=10)` agreed
+    # with `now` only while the ambient tz was UTC (under UTC-8 it is the NEXT local day for 8h a day).
+    today_slot = iso_z(parse_iso(_QUOTA_FROZEN_NOW).replace(hour=10))
     for i in range(_DAILY_ACCOUNT_CAP):
         _queued(led, cfg, pid=f"old{i}", cid=f"cold{i}", when=today_slot)
         p = led.posts[f"old{i}"]
@@ -725,7 +766,7 @@ def test_publish_due_old_row_without_stamps_falls_back_to_scheduled_time(tmp_pat
         _queued(led, cfg, pid=f"new{i}", cid=f"cnew{i}", when="2020-01-01T00:00:00Z")
     _http_media(led, "new0", "new1"); _stub_ok_poster(mocker, cfg)
     mocker.patch("fanops.postiz_lifecycle.ensure_up")
-    summary = publish_due(cfg, now=_quota_now())
+    summary = publish_due(cfg, now=_QUOTA_FROZEN_NOW)
     assert summary["published"] == 0 and summary["quota_skipped"] == 2
 
 def test_publish_due_quota_is_per_account(tmp_path, monkeypatch, mocker):
