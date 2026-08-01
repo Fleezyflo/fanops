@@ -15,12 +15,12 @@ from fanops.controlio import load_raw_list, write_json_atomic   # shared atomic 
 # module-level edge back to it is a compile-time cycle (the tree's only one, ARCH-004). The lever
 # vocabularies are PROJECTIONS of the one registry, so they come straight from it; `Personas`/`_slug`
 # are deferred into the four functions that need them (the `_file_lock` idiom already used below).
-from fanops.persona_levers import vocab as _lever_vocab
 
-CONTENT_FOCUS = _lever_vocab("content_focus")
-SELECTION_SCOPE_LEVELS = _lever_vocab("selection_scope")
-HOOK_ANGLES = _lever_vocab("hook_angle")
-INTENSITY = _lever_vocab("intensity")
+
+CONTENT_FOCUS = set()
+SELECTION_SCOPE_LEVELS = set()
+HOOK_ANGLES = set()
+INTENSITY = set()
 
 _CORPUS_CAP = 80                # must cover FANOPS_CORPUS_TARGET default (80); was 40 and silently truncated
 _BAKED_FILE = "baked_personas.json"

@@ -552,7 +552,9 @@
     "fanops.personas": [
       {
         "fields": [
+          "clip_profile",
           "content_focus",
+          "framing_bias",
           "hashtag_corpus",
           "hook_angle",
           "id",

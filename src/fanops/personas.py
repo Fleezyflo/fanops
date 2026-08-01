@@ -20,7 +20,7 @@ from typing import Optional
 from pydantic import BaseModel, Field
 from fanops.config import Config
 from fanops.errors import ControlFileError, reason as _reason
-from fanops.persona_levers import vocab as _lever_vocab
+
 
 # The lever-engine vocabularies (the validated control surface — one lever per persona characteristic). Each
 # is the WRITE boundary for its lever: add/update_persona refuses an unknown value (never write a typo that
@@ -29,10 +29,10 @@ from fanops.persona_levers import vocab as _lever_vocab
 # registry (fanops.persona_levers) — the same declaration the clause maps + lever_catalog derive from, so the
 # three can no longer drift. clip_profile/framing reuse the Account validators (bands.PROFILE_NAMES /
 # config.FRAMING_NAMES) so a persona pins the SAME deterministic CUT an account can.
-CONTENT_FOCUS = _lever_vocab("content_focus")
-SELECTION_SCOPE_LEVELS = _lever_vocab("selection_scope")
-HOOK_ANGLES = _lever_vocab("hook_angle")
-INTENSITY = _lever_vocab("intensity")
+CONTENT_FOCUS = set()
+SELECTION_SCOPE_LEVELS = set()
+HOOK_ANGLES = set()
+INTENSITY = set()
 
 
 class Persona(BaseModel):
@@ -44,9 +44,11 @@ class Persona(BaseModel):
     # Lever engine: explicit per-characteristic DIRECTION that compose_persona_instruction renders into the
     # one instruction the casting/hook/caption prompts read. ADDITIVE — all empty on a legacy persona, so
     # compose returns the bare `voice` (byte-identical). Validated at the write boundary (add/update_persona).
-    content_focus: list[str] = Field(default_factory=list)   # which moment KINDS to favor (casting): CONTENT_FOCUS
-    selection_scope: Optional[str] = None         # selection constraint: open|subject_locked|... (SELECTION_SCOPE_LEVELS)
-    hook_angle: Optional[str] = None              # on-screen hook strategy: curiosity|challenge|... (HOOK_ANGLES)
+    content_focus: str = "" # free-text directive for moment picking
+    selection_scope: str = "" # free-text directive for selection constraint
+    hook_angle: str = "" # free-text directive for on-screen hook strategy
+    clip_profile: Optional[str] = None # explicit clip length profile
+    framing_bias: Optional[str] = None # explicit framing bias
     intensity: Optional[str] = None  # peak-filter tier: high|medium|low (INTENSITY); unset → None → no filter
     # M3 (2026-06-27): the per-persona clip_profile/framing PINS were RETIRED — invisible (no editor) + duplicate
     # of the content_focus-DERIVED cut (derive_cut_spec). A persona's cut LENGTH + FRAMING now derive from
@@ -103,11 +105,11 @@ def _slug(s: str) -> str:
 # by hand and nothing to propose for approval.
 from fanops.persona_directives import (   # noqa: E402,F401  (facade re-export; after foundation by design)
     derive_cut_spec, resolved_cut_spec, casting_directive, hook_directive, hook_author_slot, caption_directive,
-    compose_persona_instruction, lever_catalog, compose_breakdown, produces_summary, persona_facts, manifest,
+
+    compose_persona_instruction, compose_breakdown, produces_summary, persona_facts, manifest,
     _FOCUS_CLAUSE, _SCOPE_CLAUSE, _ANGLE_CLAUSE, _FOCUS_PROFILE, _FRAMING_MAP)
 from fanops.persona_store import (   # noqa: E402,F401
     add_persona, update_persona, apply_auto_corpus,
     delete_persona, migrate_from_accounts, link_personas_by_voice,
     baked_personas, ensure_baked_personas)
 from fanops.persona_research import persona_terms, derive_corpus, derived_report   # noqa: E402,F401
-from fanops.persona_levers import LEVER_REGISTRY, build_catalog as _registry_build_catalog   # noqa: E402,F401  (facade re-export of the M1 registry)

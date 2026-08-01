@@ -1,15 +1,16 @@
 {
   "$schema": "fanops-arch/governance/baselines/v1",
   "approved_breaking_changes": [
-    "module fanops.hashtag_migrate was REMOVED — every KB claim about it is now about nothing",
-    "environment variable FANOPS_HASHTAG_TRENDS is no longer read — a deployment setting it now has NO EFFECT, silently",
+    "module fanops.hashtag_migrate was REMOVED \u2014 every KB claim about it is now about nothing",
+    "environment variable FANOPS_HASHTAG_TRENDS is no longer read \u2014 a deployment setting it now has NO EFFECT, silently",
     "route REMOVED: POST /personas/corpus/add",
     "route REMOVED: POST /personas/corpus/remove",
     "route REMOVED: POST /personas/recommend",
     "route REMOVED: POST /personas/research",
-    "CLI verb REMOVED: `migrate`"
+    "CLI verb REMOVED: `migrate`",
+    "module fanops.persona_levers was REMOVED \u2014 every KB claim about it is now about nothing"
   ],
-  "approved_breaking_changes_note": "Breaking facts a REVIEWED PR declared on purpose — each line is the reason string `impact` itself printed, verbatim. `impact --strict` fails on the breaking facts NOT listed here, so DELETING is allowed and deleting SILENTLY is not. UNKNOWN_IMPACT is never declarable. Entries self-retire: a removal reason can only be produced by the diff that performs the removal, so a stale line cannot mask a later change — it remains as the record of a deliberate break. THE ONLY AUTHOR-DECLARED KEY IN THIS FILE; every other one is derived, and `baseline --accept` carries this one forward.",
+  "approved_breaking_changes_note": "Breaking facts a REVIEWED PR declared on purpose \u2014 each line is the reason string `impact` itself printed, verbatim. `impact --strict` fails on the breaking facts NOT listed here, so DELETING is allowed and deleting SILENTLY is not. UNKNOWN_IMPACT is never declarable. Entries self-retire: a removal reason can only be produced by the diff that performs the removal, so a stale line cannot mask a later change \u2014 it remains as the record of a deliberate break. THE ONLY AUTHOR-DECLARED KEY IN THIS FILE; every other one is derived, and `baseline --accept` carries this one forward.",
   "approved_compile_cycles": [],
   "approved_compile_cycles_note": "The ONLY compile-time import cycle in the tree. Load-order sensitive and UNDEFENDED (no comment, no test, no ADR). Its intentionality is UNKNOWN (UNK-C5-1). It is baselined because it EXISTS, not because it is endorsed.",
   "approved_terminal_post_writers": [
@@ -18,8 +19,8 @@
     "src/fanops/studio/actions.py:340",
     "src/fanops/track.py:193"
   ],
-  "approved_terminal_post_writers_note": "Every site WRITING PostState.published / PostState.analyzed with a LITERAL value. The R1 invariant fires at CONSTRUCTION ONLY; model_copy and setattr both bypass it, and four manual call-site guards hold the line. A FIFTH door saves cleanly and then BRICKS THE NEXT Ledger.load. This is GB-4, mechanized (rule IMPL-009). *** IT DOES NOT COVER THE DYNAMIC DOORS — PostState(<runtime>), model_copy(update=…), setattr(…). That blind spot is reported on EVERY run rather than hidden. ***",
-  "how_to_change": "python -m tools.arch baseline --accept  — then explain WHY in the PR. This file is a RATCHET. Re-accepting it silently defeats its purpose.",
+  "approved_terminal_post_writers_note": "Every site WRITING PostState.published / PostState.analyzed with a LITERAL value. The R1 invariant fires at CONSTRUCTION ONLY; model_copy and setattr both bypass it, and four manual call-site guards hold the line. A FIFTH door saves cleanly and then BRICKS THE NEXT Ledger.load. This is GB-4, mechanized (rule IMPL-009). *** IT DOES NOT COVER THE DYNAMIC DOORS \u2014 PostState(<runtime>), model_copy(update=\u2026), setattr(\u2026). That blind spot is reported on EVERY run rather than hidden. ***",
+  "how_to_change": "python -m tools.arch baseline --accept  \u2014 then explain WHY in the PR. This file is a RATCHET. Re-accepting it silently defeats its purpose.",
   "must_stay_lazy": [
     [
       "fanops.accounts",
