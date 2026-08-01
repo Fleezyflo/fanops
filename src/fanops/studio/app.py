@@ -129,7 +129,7 @@ def _parse_gate_form(kind: str, form) -> dict:
 def _time_arg() -> str:
     # The datetime-local control submits naive LOCAL; convert to canonical UTC before the action sees it.
     # A Z/offset value passes through normalized; garbage passes through so reschedule_post raises 'bad time'.
-    return local_input_to_utc_z(request.form.get("new_time", ""))
+    from flask import current_app; cfg = current_app.config.get("FANOPS_CFG"); return local_input_to_utc_z(request.form.get("new_time", ""), cfg=cfg)
 
 def _offset_arg() -> int:
     # The grid show-more offset from ?offset=. A garbage/negative value -> 0 (paginate clamps too),
@@ -277,9 +277,9 @@ def create_app(cfg: Config) -> Flask:
     # `localinput` -> the naive-local value an <input type=datetime-local> edits. (Inverse: _time_arg below.)
     # Both return "" on None/absent/garbage, so a display cell reads `{{ t | localdt or '—' }}` (filter binds
     # tighter than `or` in Jinja, so the dash is the fallback for an empty/missing time).
-    app.jinja_env.filters["localdt"] = to_local_display
-    app.jinja_env.filters["localdt_hybrid"] = to_local_display_hybrid   # T-17/D-02: absolute leads + relative parenthetical (Schedule + Lift)
-    app.jinja_env.filters["localinput"] = to_local_input
+    app.jinja_env.filters["localdt"] = lambda ts: to_local_display(ts, cfg=cfg)
+    app.jinja_env.filters["localdt_hybrid"] = lambda ts: to_local_display_hybrid(ts, cfg=cfg, now=datetime.now(timezone.utc))
+    app.jinja_env.filters["localinput"] = lambda ts: to_local_input(ts, cfg=cfg)
     # Face 4: group the editable Review cards by their REAL Batch (Post.batch_id) for collapsible
     # per-batch <details> sections. Pure read-model helper (views), exposed as a filter so the
     # already-paginated card slice is grouped at render time without threading it through every route.
