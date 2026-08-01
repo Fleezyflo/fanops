@@ -5,8 +5,12 @@
 # verbs run) so the pytest gate and the CLI can never report different results on the same commit —
 # the drift tools/arch was bitten by. It proves the DCs DISCRIMINATE (fire on an injected defect)
 # AND — now the Phase-D remediation has landed — that the committed tree is static-clean: DC-1/2/4/6/7
-# find no blocking registry<->workflow divergence. (DC-3, deployed-state vs live GitHub, is scheduled
-# and out of this offline gate.)
+# find no blocking registry<->workflow divergence.
+#
+# The deployed-state plane (DC-3 protection, DC-8 workflow enablement, DC-9 repo security settings)
+# needs the network, so its VERDICT is scheduled and out of this offline gate. What IS pinned here:
+# each of those checks is a pure function, so this file injects live readings directly and proves
+# they discriminate and are wired into `run_deployed`. No probe runs.
 from __future__ import annotations
 
 import sys
@@ -67,10 +71,60 @@ def test_every_blocking_condition_has_a_negative_control():
     # DC-7 is IN this set now. It always had a negative control (NC-DC7-hardfail) but was never
     # REQUIRED to have one — so deleting that control would have gone unnoticed by the very test whose
     # job is to notice. DC-5 is out: the check, the duplicate_groups block it read and NC-DC5-dup were
-    # deleted together 2026-07-26.
-    expected = {"DC-1", "DC-2", "DC-3", "DC-4", "DC-6", "DC-7"}
+    # deleted together 2026-07-26. DC-8/DC-9 (deployed-state enablement + repo security settings,
+    # MOL-722) are in from birth.
+    expected = {"DC-1", "DC-2", "DC-3", "DC-4", "DC-6", "DC-7", "DC-8", "DC-9"}
     covered = {c.expect_dc for c in selftest.CONTROLS}
     assert expected <= covered, f"uncovered DCs: {sorted(expected - covered)}"
+
+
+def test_deployed_plane_wires_every_deployed_check():
+    """`run_deployed` must actually CALL DC-8 and DC-9, not merely define them.
+
+    The negative controls above invoke each check function DIRECTLY, so they stay green even if the
+    aggregator that the CLI actually runs never mentions them — a check that discriminates
+    perfectly and is wired to nothing. This feeds run_deployed the verbatim live divergence
+    (nightly disabled, Dependabot security updates off) through its public signature and asserts
+    both DCs surface. Pure and offline: every plane's input is injected, so no probe runs.
+    """
+    reg = load_registry()
+    # Generic victim, not a named workflow: pinning `nightly.yml` here would make deleting that file
+    # break a test about wiring. The nightly case is the forensic origin, not the contract.
+    states = {c["workflow"]: "active" for c in reg["controls"] if c.get("workflow")}
+    victim = sorted(states)[0]
+    states[victim] = "disabled_manually"
+    # Dependabot IS pinned by name — "its state is included in reconciliation" is the acceptance
+    # criterion, so silently dropping the row must fail rather than quietly restore the blind spot.
+    settings = {name: "enabled" for name in reg["required_security_settings"]}
+    assert "dependabot_security_updates" in settings, "registry stopped declaring Dependabot"
+    settings["dependabot_security_updates"] = "disabled"
+
+    findings = checks.run_deployed(reg, list(reg["required_contexts"]), workflow_states=states,
+                                   security_settings=settings)
+    blocking = {f.dc: f.render() for f in findings if f.blocking and not f.skipped}
+    assert "DC-8" in blocking, f"run_deployed dropped DC-8; got {sorted(blocking)}"
+    assert "DC-9" in blocking, f"run_deployed dropped DC-9; got {sorted(blocking)}"
+    assert victim in blocking["DC-8"] and "disabled_manually" in blocking["DC-8"]
+    assert "dependabot_security_updates" in blocking["DC-9"]
+
+
+def test_deployed_probe_failures_do_not_mask_each_other():
+    """One unreadable plane must never report another as clean.
+
+    A single shared `live_error` would have made DC-3's standing 403 (no grantable `administration:
+    read` scope) silence DC-8 and DC-9 as well — the check would report SKIP for everything and a
+    disabled workflow would stay invisible for exactly the reason it was invisible before. Each
+    probe carries its own error; this pins that.
+    """
+    reg = load_registry()
+    states = {c["workflow"]: "active" for c in reg["controls"] if c.get("workflow")}
+    states[sorted(states)[0]] = "disabled_manually"
+    findings = checks.run_deployed(reg, [], live_error="HTTP 403", workflow_states=states,
+                                   security_error="needs admin")
+    by_dc = {f.dc: f for f in findings}
+    assert by_dc["DC-3"].skipped and by_dc["DC-9"].skipped, "unreadable planes must SKIP, not pass"
+    assert by_dc["DC-8"].blocking and not by_dc["DC-8"].skipped, (
+        "DC-8 was readable and diverged — it must FAIL, not inherit another probe's SKIP")
 
 
 @pytest.mark.parametrize("control", selftest.CONTROLS, ids=lambda c: c.id)
