@@ -32,12 +32,25 @@ CONTROLS = [
     Control("NC-DC6-float", "DC-6", "a job uses a floating action tag"),
     Control("NC-DC6-permission", "DC-6", "a job declares an unknown GITHUB_TOKEN permission"),
     Control("NC-DC7-hardfail", "DC-7", "an advisory job can fail the workflow"),
+    Control("NC-DC8-disabled", "DC-8", "a declared workflow is disabled_manually in GitHub"),
+    Control("NC-DC8-absent", "DC-8", "a declared workflow has no live GitHub record at all"),
+    Control("NC-DC9-disabled", "DC-9", "a declared repository security setting is disabled"),
 ]
 
 
 def _blocking(findings, dc=None):
     return {f.render() for f in findings
             if f.blocking and not f.skipped and (dc is None or f.dc == dc)}
+
+
+def _info(findings, dc=None):
+    return {f.render() for f in findings
+            if not f.blocking and not f.skipped and (dc is None or f.dc == dc)}
+
+
+def _declared_workflows(reg):
+    """The DC-8 declaration: every workflow the registry commits to. All ACTIVE = a clean baseline."""
+    return {c["workflow"]: "active" for c in reg["controls"] if c.get("workflow")}
 
 
 def _first_required_ctx(reg):
@@ -166,5 +179,45 @@ jobs:
                 break
         new = _blocking(checks.dc7_advisory_must_not_hard_fail(reg, j2), "DC-7") - base
         return bool(new), "; ".join(sorted(new)) or "no new DC-7 finding"
+
+    if ctrl.id == "NC-DC8-disabled":
+        # The injected value is VERBATIM what GitHub returned for .github/workflows/nightly.yml on
+        # 2026-08-01 while it sat manually disabled and its declared daily jobs had not run since
+        # 2026-07-14. Feeding the real string is the point: a control fed a made-up sentinel proves
+        # only that the function rejects sentinels.
+        states = _declared_workflows(reg)
+        base = _blocking(checks.dc8_declared_workflow_disabled(reg, states), "DC-8")
+        states[sorted(states)[0]] = "disabled_manually"
+        new = _blocking(checks.dc8_declared_workflow_disabled(reg, states), "DC-8") - base
+        return bool(new), "; ".join(sorted(new)) or "no new DC-8 disabled finding"
+
+    if ctrl.id == "NC-DC8-absent":
+        # DISCRIMINATION, the acceptance criterion in its own right: a workflow GitHub has no record
+        # of must NOT read as disabled. Asserting only "no blocking finding" would pass if DC-8
+        # returned nothing at all for any input — the empty-container trap — so this asserts BOTH
+        # directions: a NEW INFO naming the workflow, and NO new blocking finding.
+        states = _declared_workflows(reg)
+        base_block = _blocking(checks.dc8_declared_workflow_disabled(reg, states), "DC-8")
+        base_info = _info(checks.dc8_declared_workflow_disabled(reg, states), "DC-8")
+        victim = sorted(states)[0]
+        del states[victim]
+        after = checks.dc8_declared_workflow_disabled(reg, states)
+        new_block = _blocking(after, "DC-8") - base_block
+        new_info = {f for f in _info(after, "DC-8") - base_info if victim in f}
+        fired = bool(new_info) and not new_block
+        detail = ("; ".join(sorted(new_info)) or f"no INFO finding for absent {victim}")
+        if new_block:
+            detail = f"MISGRADED as blocking: {'; '.join(sorted(new_block))}"
+        return fired, detail
+
+    if ctrl.id == "NC-DC9-disabled":
+        # Verbatim live shape: `gh api repos/<repo> --jq .security_and_analysis` returned
+        # {"dependabot_security_updates":{"status":"disabled"}, ...} on 2026-08-01.
+        declared = list(reg.get("required_security_settings") or [])
+        settings = {name: "enabled" for name in declared}
+        base = _blocking(checks.dc9_repo_security_settings(reg, settings), "DC-9")
+        settings[declared[0]] = "disabled"
+        new = _blocking(checks.dc9_repo_security_settings(reg, settings), "DC-9") - base
+        return bool(new), "; ".join(sorted(new)) or "no new DC-9 finding"
 
     return False, f"unknown control {ctrl.id}"

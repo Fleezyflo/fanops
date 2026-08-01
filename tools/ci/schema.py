@@ -63,12 +63,19 @@ _TOP_LEVEL: dict[str, tuple[bool, dict]] = {
         "minItems": 1,
         "description": "The required branch-protection contexts. DC-3 requires LIVE GitHub protection to equal this exactly — change both in the same PR. DC-1 requires each entry to match a real workflow job name, and each must be the branch_protection_context of a control classified 'required'.",
     }),
+    "required_security_settings": (True, {
+        "type": "array",
+        "items": {"type": "string", "minLength": 1},
+        "uniqueItems": True,
+        "minItems": 1,
+        "description": "Repository security settings that MUST be enabled in live GitHub, named exactly as the keys of the repo object's `security_and_analysis`. DC-9 reads each one and reports any that is not 'enabled'. This is the only declaration of a setting that lives nowhere in the tree — no static check can see it, so an operator switching one off is otherwise silent.",
+    }),
     "controls": (True, {
         "type": "array",
         "minItems": 1,
         "uniqueItems": True,
         "items": {"$ref": "#/definitions/control"},
-        "description": "One row per workflow job. DC-2 enforces the bijection in both directions, so this list is exhaustive by construction: adding a job without a row reddens the required unit lane.",
+        "description": "One row per workflow job. DC-2 enforces the bijection in both directions, so this list is exhaustive by construction: adding a job without a row reddens the required unit lane. The set of `workflow` values is ALSO the declaration DC-8 reconciles against live workflow enablement — a declared workflow disabled in GitHub is declared CI that cannot run.",
     }),
 }
 

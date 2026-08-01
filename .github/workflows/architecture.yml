@@ -152,6 +152,15 @@ jobs:
   reconcile:
     name: scheduled reconciliation
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    # `actions: read` is what DC-8 needs to list live workflow enablement, and it IS a grantable
+    # GITHUB_TOKEN scope (DC-6 validates that against the union of three authoritative sources).
+    # It is NOT the scope DC-3 wants: `administration` is grantable nowhere, which is why the
+    # protection probe still 403s here and waits on an operator-supplied fine-grained PAT. Adding a
+    # job-level block REPLACES the workflow default, so `contents: read` is restated — checkout
+    # needs it.
+    permissions:
+      contents: read
+      actions: read
     timeout-minutes: 20
     runs-on: ubuntu-latest
     steps:
@@ -204,14 +213,17 @@ jobs:
       - name: Negative controls (the validators still work)
         run: python -m tools.arch selftest
 
-      # DC-3 — registry `required_contexts` vs LIVE branch protection. `--require-live` is
-      # correct HERE and only here: this is the designated authenticated job, so an unreadable probe
-      # is a FAILURE. Everywhere else the same verb degrades to an explicit non-authoritative SKIP.
+      # DC-3 (branch protection) + DC-8 (workflow enablement) + DC-9 (repo security settings) vs
+      # LIVE GitHub. `--require-live` is correct HERE and only here: this is the designated
+      # authenticated job, so an unreadable probe is a FAILURE — for the probes it can actually
+      # authenticate. It escalates DC-3 and DC-8; DC-9's `security_and_analysis` needs repo admin,
+      # which no `permissions:` block grants, so that one reports an explicit SKIP rather than a red
+      # nobody can clear. Everywhere else all three degrade to non-authoritative SKIPs.
       # tools/ci needs BOTH: PyYAML to read the registry, jsonschema to validate its shape. The
       # jsonschema import is at module scope ON PURPOSE (tools/ci/registry.py) so an absent
       # validator is an ImportError, not silent non-validation — install it or this step dies on
       # import, before it can probe anything. This workflow is otherwise stdlib-only (header).
-      - name: Deployed-state reconciliation (registry vs live branch protection)
+      - name: Deployed-state reconciliation (registry vs live GitHub settings)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |

@@ -1,16 +1,39 @@
-"""DC-1, DC-2, DC-3, DC-4, DC-6, DC-7 — the registry-integrity divergences.
+"""DC-1, DC-2, DC-3, DC-4, DC-6, DC-7, DC-8, DC-9 — the registry-integrity divergences.
 
-Each is a PURE function of (registry, discovered jobs) [+ live contexts for DC-3], so the
-negative-control selftest can inject exactly one defect into a copy and assert the named DC fires.
-Every Finding carries the control id and the EXACT divergence (ADR requirement: actionable output).
+Each is a PURE function of (registry, discovered jobs) [+ the live GitHub reading for DC-3/8/9], so
+the negative-control selftest can inject exactly one defect into a copy and assert the named DC
+fires. Every Finding carries the control id and the EXACT divergence (actionable output).
 """
 from __future__ import annotations
 
 import re
 
-from .common import Finding
+from .common import DEFAULT_REPO, Finding
 
 _SHA40 = re.compile(r"[0-9a-f]{40}$")
+
+# GitHub's workflow `state` values, spelled out so a finding says WHO switched it off. The two that
+# matter read identically in the API and have opposite causes: `disabled_manually` is a decision,
+# `disabled_inactivity` is GitHub retiring a cron in a repo that went quiet for 60 days — which
+# would silently take a scheduled control with it.
+_WORKFLOW_STATES = {
+    "disabled_manually": "switched off by an operator",
+    "disabled_inactivity": "auto-disabled by GitHub after repository inactivity",
+    "disabled_fork": "disabled because this repository is a fork",
+}
+
+# The exact re-enable command per declared setting. Dependabot security updates REQUIRE Dependabot
+# alerts, and the alerts toggle is a separate endpoint — enabling only the fixes silently does
+# nothing on a repo whose alerts are off, so both PUTs are named.
+_SECURITY_REMEDIATION = {
+    "dependabot_security_updates":
+        f"gh api -X PUT repos/{DEFAULT_REPO}/vulnerability-alerts && "
+        f"gh api -X PUT repos/{DEFAULT_REPO}/automated-security-fixes",
+    "secret_scanning":
+        "repository Settings -> Code security -> Secret scanning -> Enable",
+    "secret_scanning_push_protection":
+        "repository Settings -> Code security -> Push protection -> Enable",
+}
 # Valid GITHUB_TOKEN permission keys. Deliberately the UNION of every authoritative source, not any
 # one of them: this list REJECTS, so an over-narrow entry reddens the required unit lane on a
 # workflow GitHub would have accepted. Sources disagree only at the edges and never on the failure
@@ -176,6 +199,81 @@ def dc7_advisory_must_not_hard_fail(reg: dict, jobs: list[dict]) -> list[Finding
     return out
 
 
+def dc8_declared_workflow_disabled(reg: dict, live_states, live_error: str | None = None) -> list[Finding]:
+    """A workflow this registry declares, held DISABLED in GitHub — declared CI that cannot run.
+
+    The declaration needs no new field: DC-2 already enforces a bijection between registry controls
+    and real workflow jobs, so `{c["workflow"]}` IS the set of workflows this repo commits to
+    running. Every control inside a disabled workflow is inert while its file still reads as live
+    governance — the exact shape of a rule that looks enforced and is not, and the one the static
+    plane structurally cannot see because it never leaves the tree.
+
+    Three verdicts, deliberately distinct:
+      state != active     BLOCKING — the workflow exists and was switched off.
+      absent from live    INFO      — GitHub holds no record (a workflow added on this branch and
+                                      never merged to the default branch reads exactly like this).
+                                      Conflating it with 'disabled' would redden every PR that adds
+                                      a workflow.
+      state == active     clean.
+
+    NOT reported: a live workflow the registry does not declare. GitHub keeps a record of every
+    workflow file ever pushed, forever — this repo carries three such ghosts from deleted files —
+    so that direction is stale remote history, not repository drift. DC-2 already owns the real
+    question (a tracked job with no control)."""
+    if live_error is not None:
+        return [Finding("DC-8", "-",
+            f"NON-AUTHORITATIVE: live workflow states unreadable ({live_error}) — enablement not verified",
+            blocking=False, skipped=True)]
+    states = live_states or {}
+    out: list[Finding] = []
+    for path in sorted({c["workflow"] for c in reg["controls"] if c.get("workflow")}):
+        ids = sorted(c["id"] for c in reg["controls"] if c.get("workflow") == path)
+        if path not in states:
+            out.append(Finding("DC-8", ",".join(ids),
+                f"declared workflow {path} has NO live GitHub record — not yet on the default "
+                f"branch, or deleted remotely. Not read as disabled.", blocking=False))
+            continue
+        state = states[path]
+        if state == "active":
+            continue
+        out.append(Finding("DC-8", ",".join(ids),
+            f"declared workflow {path} is {state!r} in GitHub ({_WORKFLOW_STATES.get(state, 'not active')}) "
+            f"— controls {ids} declare it runs, and it cannot. Re-enable with "
+            f"`gh workflow enable {path}`, or delete the rows that declare it.", True))
+    return out
+
+
+def dc9_repo_security_settings(reg: dict, live_settings, live_error: str | None = None) -> list[Finding]:
+    """A repository security setting this registry declares required, disabled in live GitHub.
+
+    Same class as DC-8 and invisible for the same reason — the state lives only in GitHub settings,
+    so no amount of reading the tree finds it. `required_security_settings` is the declaration.
+
+    A setting the live reading does not carry at all is BLOCKING, not skipped: the probe already
+    refuses a partial read (live.probe_security), so a key missing from a reading it certified
+    complete means GitHub does not offer that setting on this repo — a declaration naming something
+    unenforceable, which is the decoration this whole module exists to catch."""
+    if live_error is not None:
+        return [Finding("DC-9", "-",
+            f"NON-AUTHORITATIVE: live security settings unreadable ({live_error}) — not verified",
+            blocking=False, skipped=True)]
+    settings = live_settings or {}
+    out: list[Finding] = []
+    for name in reg.get("required_security_settings") or []:
+        status = settings.get(name)
+        if status == "enabled":
+            continue
+        if status is None:
+            out.append(Finding("DC-9", name,
+                f"declared security setting {name!r} is absent from the live reading — GitHub does "
+                f"not report it for this repository; the declaration names nothing enforceable", True))
+            continue
+        out.append(Finding("DC-9", name,
+            f"declared security setting {name!r} is {status!r} in GitHub — declared required and "
+            f"switched off. Enable it: {_SECURITY_REMEDIATION.get(name, 'repository Settings -> Code security')}", True))
+    return out
+
+
 def run_static(reg: dict, jobs: list[dict], prose_docs) -> list[Finding]:
     """Static plane: registry <-> workflow implementation (no network). DC-1/2/4/6/7."""
     return (dc1_renamed_required_context(reg, jobs)
@@ -185,6 +283,12 @@ def run_static(reg: dict, jobs: list[dict], prose_docs) -> list[Finding]:
             + dc7_advisory_must_not_hard_fail(reg, jobs))
 
 
-def run_deployed(reg: dict, live_contexts, live_error: str | None = None) -> list[Finding]:
-    """Deployed-state plane: registry <-> live GitHub protection. DC-3."""
-    return dc3_deployed_state(reg, live_contexts, live_error)
+def run_deployed(reg: dict, live_contexts, live_error: str | None = None,
+                 workflow_states=None, workflow_error: str | None = None,
+                 security_settings=None, security_error: str | None = None) -> list[Finding]:
+    """Deployed-state plane: registry <-> live GitHub. DC-3 (protection), DC-8 (workflow
+    enablement), DC-9 (repository security settings). Each probe carries its OWN error so one
+    unreadable plane never masks another as clean."""
+    return (dc3_deployed_state(reg, live_contexts, live_error)
+            + dc8_declared_workflow_disabled(reg, workflow_states, workflow_error)
+            + dc9_repo_security_settings(reg, security_settings, security_error))

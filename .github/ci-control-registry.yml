@@ -1,8 +1,9 @@
 # .github/ci-control-registry.yml
 # =====================================================================================================
 # The intended CI inventory. `tools/ci` reconciles it against .github/workflows/ (DC-1/2/4/6/7, in the
-# required unit lane via tests/test_ci_registry_validator.py) and against live GitHub branch protection
-# (DC-3, in the scheduled `reconcile` job). Shape is enforced by ci-control-registry.schema.json.
+# required unit lane via tests/test_ci_registry_validator.py) and against live GitHub settings — branch
+# protection (DC-3), workflow enablement (DC-8), repository security settings (DC-9) — in the scheduled
+# `reconcile` job. Shape is enforced by ci-control-registry.schema.json.
 #
 # Authority when planes disagree: executable source & tests > live GitHub config > this file.
 # docs/ENFORCEMENT.md indexes what actually enforces.
@@ -19,6 +20,16 @@ status: accepted
 # is a separate operator-approved settings change.
 required_contexts:
   - "unit (fast, no toolchain)"
+
+# Repository security settings that must be ON in live GitHub (DC-9). Keys are exactly those of the
+# repo object's `security_and_analysis`. Nothing in this tree can prove any of them: they are GitHub
+# settings, so an operator switching one off is invisible to every static check — which is the whole
+# reason this list exists. Deliberately a SUBSET: `secret_scanning_non_provider_patterns` and
+# `secret_scanning_validity_checks` are off and stay undeclared rather than declared-and-violated.
+required_security_settings:
+  - dependabot_security_updates
+  - secret_scanning
+  - secret_scanning_push_protection
 
 # ---------------------------------------------------------------------------------------------------
 # One row per workflow job. DC-2 enforces the bijection in both directions: a control naming a job that
