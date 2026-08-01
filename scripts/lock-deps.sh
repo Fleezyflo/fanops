@@ -19,12 +19,47 @@ set -euo pipefail
 # `docker run --platform linux/amd64 python:3.12-slim ...`; a macOS or ARM64 run cannot be called CI-faithful
 # even if `--require-hashes` happens to install (verified 2026-07-14: --generate-hashes enumerates ALL
 # platform wheels, so the amd64 and arm64 resolutions were byte-identical here — but PROVE it, don't assume).
+#
+# This is a MINIMAL-CHANGE relock: pip-compile treats the existing lock as a constraint set and keeps
+# every pin that still satisfies pyproject, so an unrelated dependency never churns. That is the right
+# default and the wrong tool for a SECURITY relock — a pin carrying a fresh advisory still "satisfies"
+# and so never moves. Drive one by adding `--upgrade-package <name>` to the SINGLE `_compile` line you
+# mean, per package, and re-running (MOL-723 did exactly that on the e2e line). Prefer that over a
+# blanket `--upgrade`, which re-resolves the whole tree so the diff stops showing which bump was the
+# point. Two traps, both hit while doing it:
+#   * `-P X` where X is ABSENT from that lock's extras ADDS X to it. `-P moviepy` on the unit line
+#     pulled moviepy + 5 deps into ci-unit.txt, which has no [compose]. Name only what is already there.
+#   * `-P X` alone is NOT enough when the newer X pins a transitive the lock also pins: every OTHER pin
+#     is still a constraint, so the resolver silently keeps the old X. torch stuck at 2.12.1 under
+#     `-P torch` because torch 2.13.0 needs cuda-toolkit==13.0.3 and the lock pinned 13.0.2 — and
+#     torch 2.12.1 is itself what caps setuptools<82, so setuptools could not move either. Name the
+#     whole cluster (here: torch + triton + every cuda-*/nvidia-*), then re-check the pin actually moved.
+#
+# PLATFORM GUARD (MOL-723). The paragraph above has said "run on linux/x86_64 + py3.12" since MOL-195,
+# and an instruction in a comment is not a mechanism: dba7e63c ran this on a Mac, pip-compile judged
+# openai-whisper's marker-gated deps inapplicable, and the lock silently lost triton + 18 cuda/nvidia
+# pins — so CI's `--require-hashes` install refused it and the nightly e2e lane was red for two days.
+# MOL-720 restored the closure; this refuses to generate that lock again. An off-platform resolve is
+# WRONG, not merely different, and it looks perfectly normal in review — so refuse, do not warn.
+_plat="$(python -c 'import platform,sys; print(f"{sys.platform}/{platform.machine()}/{sys.version_info.major}.{sys.version_info.minor}")')"
+if [[ "$_plat" != "linux/x86_64/3.12" && -z "${FANOPS_LOCK_ANY_PLATFORM:-}" ]]; then
+  echo "[lock-deps] REFUSED: this host resolves as $_plat; CI resolves on linux/x86_64/3.12." >&2
+  echo "[lock-deps] Off-platform, marker-gated deps (openai-whisper -> triton + cuda/nvidia) drop out" >&2
+  echo "[lock-deps] of the resolution and the lock stops being installable in CI. Run it there:" >&2
+  echo "[lock-deps]   docker run --rm --platform linux/amd64 -v \"\$PWD\":/w -w /w python:3.12-slim bash -c \\" >&2
+  echo "[lock-deps]     'apt-get update -qq && apt-get install -y -qq git && git config --global --add safe.directory /w && ./scripts/lock-deps.sh'" >&2
+  echo "[lock-deps] Override ONLY with proof the resolution is CI-faithful: FANOPS_LOCK_ANY_PLATFORM=1" >&2
+  exit 2
+fi
 ROOT="$(git rev-parse --show-toplevel)"; cd "$ROOT"
 python -m pip install --quiet --upgrade pip-tools
 mkdir -p requirements
 _compile() { python -m piptools compile --quiet --generate-hashes --allow-unsafe --strip-extras "$@" pyproject.toml; }
 _compile --extra dev --extra studio --extra framing --extra igscrape             --output-file requirements/ci-unit.txt
-# e2e omits igscrape: moviepy (compose) pins pillow<12; instagrapi>=2.18.12 needs Pillow>=12.2.
-# Layer A coverage lives in the unit lock; e2e hashtag tests mock the scrape client.
+# e2e omits igscrape. The original reason was a hard CONFLICT — moviepy pinned pillow<12, instagrapi
+# >=2.18.12 needs Pillow>=12.2 — and that conflict is GONE as of MOL-723 ([compose] now pins the
+# upstream commit that dropped the cap, so e2e resolves Pillow 12 too). The omission now rests only on
+# coverage: Layer A is proven in the unit lock and the e2e hashtag tests mock the scrape client, so
+# adding instagrapi here would buy nothing and lengthen the e2e install.
 _compile --extra dev --extra studio --extra transcribe --extra compose --extra framing --output-file requirements/ci-e2e.txt
 echo "[lock-deps] regenerated: ci-unit.txt ($(grep -c '==' requirements/ci-unit.txt) pkgs), ci-e2e.txt ($(grep -c '==' requirements/ci-e2e.txt) pkgs)"

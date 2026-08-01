@@ -25,7 +25,28 @@ studio = ["flask>=3.0"]
 # — `pip install -e .` stays MoviePy-free; only `.[compose]` pulls it (drags numpy/Pillow/imageio).
 # fanops.compose imports it lazily and FAILS OPEN (copies the base clip) when absent, so a
 # no-[compose] install never breaks the render path. MoviePy 2.x API only (no moviepy.editor).
-compose = ["moviepy>=2.0"]
+#
+# WHY AN IMMUTABLE COMMIT ARCHIVE INSTEAD OF `moviepy>=2.0` (MOL-723, 2026-08-01):
+# MoviePy's newest RELEASE is still 2.2.1 (2025-05-21) and it declares `pillow<12.0`. That cap was
+# the SOLE reason requirements/ci-e2e.txt resolved Pillow 11.3.0, which carries 18 known advisories
+# — the e2e lock's entire Pillow advisory surface. Upstream removed the cap in commit 97316f37
+# ("Add a custom dropped-in replacement for pillow internal _multiline_spacing", 2025-06-19), which
+# reimplements the one Pillow internal (`ImageDraw._multiline_spacing`) MoviePy relied on, but has
+# never been released. So we pin THAT COMMIT'S IMMUTABLE SOURCE ARCHIVE — a URL + sha256, not a
+# branch/tag and not `git+`, because `pip install --require-hashes` (how CI installs both locks)
+# CANNOT hash a VCS ref and refuses the install outright. The archive's version metadata is still
+# "2.2.1"; only the Pillow cap and the `_multiline_spacing` shim differ from the release.
+# The `#sha256=` FRAGMENT IS LOAD-BEARING, not decoration. Without it pip-compile resolves this to the
+# name+version it finds inside the archive ("moviepy 2.2.1"), matches that against PyPI, and emits the
+# hashes of the RELEASED 2.2.1 sdist+wheel — hashes the GitHub tarball can never satisfy, so the lock
+# stops being --require-hashes installable (proved: "Expected 6b56803f… Got 6bef8575…"). With the
+# fragment, pip-tools takes its `is_url_requirement` branch and hashes the actual artifact.
+# tests/test_moviepy_pillow12_pin.py pins that: the lock's moviepy hash must equal this fragment.
+# EXIT CONDITION — revert to a plain released pin the moment MoviePy publishes any release > 2.2.1
+# containing 97316f37 (check `pillow` in its requires_dist: the cap must be gone). Then this becomes
+# `compose = ["moviepy>=<that version>"]` and ./scripts/lock-deps.sh is re-run. Nothing else here
+# depends on the URL form.
+compose = ["moviepy @ https://github.com/Zulko/moviepy/archive/97316f37f6a8d3843abfb53eba8f3bb0ea46a008.tar.gz#sha256=6bef8575b091f6a7342ed271ff5dba97dbb07255df0a5b81fec38f8248b143d9"]
 # Accurate music transcription (the two biggest ASR-accuracy levers for rap/song): Demucs strips the
 # beat so Whisper reads the lyrics, not the instrumental; faster-whisper runs large-v3 (the proven
 # accuracy winner over turbo) at int8 so it's practical on CPU. OPTIONAL + lazy + FAIL-OPEN like the
