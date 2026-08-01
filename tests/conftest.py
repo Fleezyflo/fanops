@@ -70,7 +70,15 @@ _LEAKY_ENV = ("FANOPS_ROOT", "FANOPS_LIVE", "FANOPS_POSTER", "BLOTATO_API_KEY", 
               "FANOPS_POSTIZ_ONDEMAND",
               # self-adopt: DEFAULTS ON — a repo .env =0 (or =1) must not leak into the loop tests
               # (test_run_loop.py runs `run --loop`; adoption must be decided by the test, not the env).
-              "FANOPS_AUTO_ADOPT")
+              "FANOPS_AUTO_ADOPT",
+              # MOL-732: the operator tz decides which CALENDAR DAY (and hour) a stamp buckets into —
+              # timeutil.operator_local_day / publish_buckets, publish_due's daily quota, the allocator's
+              # day_used. The operator's live .env DOES set it, so a leak silently moves every day
+              # boundary the suite asserts across (the publish-quota "earlier today" fixtures would flip
+              # at a different wall-clock hour than the UTC code default). Tests that exercise a real zone
+              # set it explicitly via monkeypatch (test_operator_timezone_cadence_window, test_studio_views,
+              # test_bulk_approve_spread, test_studio_actions, test_home_rebuild) and are unaffected.
+              "FANOPS_OPERATOR_TZ")
 
 
 def pytest_configure(config):
