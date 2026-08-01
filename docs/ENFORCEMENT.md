@@ -30,7 +30,11 @@ captured.
   - `tools/arch/drift.py` (artifacts under `derived/` byte-identical to regeneration) ·
     `tools/arch/registries.py` (registry validity / unknown-growth).
 - **`tools/ci`** — CI-registry ↔ workflow reconciliation. Proof: `python -m tools.ci selftest`. Wired
-  via `tests/test_ci_registry_validator.py` in the unit lane.
+  via `tests/test_ci_registry_validator.py` in the unit lane. Every DC is a pure function, so the
+  unit lane proves all of them DISCRIMINATE — each negative control injects one defect and asserts
+  the named DC fires on evidence absent before — including the deployed-state DCs below, whose
+  VERDICT needs the network and is therefore scheduled. What the unit lane does NOT carry for
+  DC-3/8/9 is any claim about live GitHub; that distinction is the point, not a gap.
   - `tools/ci/checks.py`: DC-1, DC-2, DC-4, DC-6, DC-7, measured against
     `.github/ci-control-registry.yml`. DC-6 also rejects unknown GitHub Actions permission keys
     before GitHub rejects the workflow. **DC-7** is the one that catches the failure below: an
@@ -46,10 +50,36 @@ captured.
 - **`tests/test_governance_tombstone.py`** — pins the governance-prose deletion (see Tombstone below)
   and this file's existence, forever in the required lane.
 
-## Admin probe — now automated; was operator-run, and the trigger was not honoured
-- **DC-3: `python -m tools.ci deployed --require-live`** — reconciles LIVE branch protection against
-  the registry's `current`/`intended` context lists. Runs in the `reconcile` job (weekly + on
-  `workflow_dispatch`); `--require-live` turns an unreadable branch-protection probe into a failure.
+## Deployed-state probes — the plane no static check can reach
+`python -m tools.ci deployed [--require-live]`, in the `reconcile` job (weekly + `workflow_dispatch`).
+Read-only GETs; nothing here mutates, and nothing that mutates may be added — a reconciler able to
+change what it measures is not a reconciler. These measure state that exists ONLY in GitHub
+settings, so the tree can look perfect while the control is switched off. Each probe carries its
+OWN error: one unreadable plane must never report another as clean, which is how DC-3's standing
+403 would otherwise have gone on hiding DC-8 and DC-9.
+
+- **DC-8: a declared workflow held disabled in GitHub** (MOL-722). Every `workflow:` in the registry
+  is a commitment that the file runs, and DC-2 already makes that list exhaustive — so this needed
+  no new declaration. Live `state` not `active` is BLOCKING and names the state, so
+  `disabled_manually` (an operator decision) reads differently from `disabled_inactivity` (GitHub
+  retiring a cron in a repo that went quiet). A declared workflow GitHub has NO record of is INFO,
+  not a finding: a workflow added on a branch and not yet on `main` looks exactly like that, and
+  conflating the two would redden every PR that adds one. Forensic basis — `nightly.yml`, declaring
+  a daily `dependency-audit` and `asr-smoke`, was `disabled_manually` from 2026-07-14 and
+  deployed-state reconciliation reported clean for the whole of it. Needs `actions: read`, which IS
+  grantable, so this one is authoritative in CI. A live workflow the registry does not declare is
+  deliberately NOT reported: GitHub keeps a record of every workflow file ever pushed, and this repo
+  carries three such ghosts from deleted files.
+- **DC-9: a declared repository security setting disabled** (MOL-722) — `required_security_settings`
+  vs the repo object's `security_and_analysis`. **Stated cost:** that field is admin-only, admin is
+  not a grantable `GITHUB_TOKEN` scope, so in CI this reports an explicit `[SKIP]` — never a pass —
+  until the operator supplies the same fine-grained PAT DC-3 waits on. It is authoritative today on
+  an operator terminal. `--require-live` deliberately does NOT escalate its probe failure:
+  escalating a probe that structurally cannot succeed manufactures a red nobody can clear, which
+  this repo has shipped once already (`impact --strict`, unclearable on deletions). A divergence it
+  CAN see still blocks.
+- **DC-3: live branch protection vs the registry context list** — same job; `--require-live` turns
+  an unreadable branch-protection probe into a failure.
   Until 2026-07-26 this entry read "operator-run, no workflow invokes it… Defined trigger: the
   operator runs it after ANY branch-protection change." That was a deliberate decision, not an
   oversight — and it failed the way a human-memory trigger fails. Protection was changed on
@@ -91,14 +121,16 @@ from "passed silently" would rebuild the blind spot it exists to close.
 - ci.yml `ci-timing` job — post-hoc timing telemetry on main; nothing reads its result.
 - `architecture.yml` `reconcile` job — the scheduled `derived/` AUTO-REGEN leg (regenerates the
   machine artifacts and FAILS on drift with a reviewable diff; deleting it silently rots `derived/`)
-  AND the sole execution of **DC-3** (`tools.ci deployed --require-live`: registry
-  `required_contexts` vs LIVE branch protection). DC-3 is the one `tools/ci` check the
-  required unit lane cannot carry — it needs the network and an authenticated settings read — so
-  until 2026-07-26 it ran nowhere at all, and live protection silently carried three contexts the
-  registry never declared. Schedule-or-dispatch only: a red there is a signal to look, and no merge
-  is waiting on it.
+  AND the sole execution of the **deployed-state probes** (`tools.ci deployed --require-live`:
+  DC-3, DC-8, DC-9 above). Those are the `tools/ci` checks the required unit lane cannot carry —
+  they need the network and an authenticated settings read — so until 2026-07-26 DC-3 ran nowhere
+  at all, and live protection silently carried three contexts the registry never declared.
+  Schedule-or-dispatch only: a red there is a signal to look, and no merge is waiting on it. That
+  containment is WHERE the job runs, not a softened verdict — a real divergence still renders
+  `[FAIL]` and exits non-zero.
 - `.github/workflows/nightly.yml` — pip-audit (`continue-on-error: true`) + ASR smoke. Scheduled,
-  independent; never touches the e2e job.
+  independent; never touches the e2e job. Whether it is actually ENABLED in GitHub is DC-8's
+  question — from 2026-07-14 it was not, and nothing here could tell.
 
 ## Scheduled lane — cron/dispatch only; nothing of it runs on a PR
 - ci.yml `e2e` job — the real-tooling suite (real ffmpeg/whisper/espeak; `FANOPS_REQUIRE_E2E=1`

@@ -1,8 +1,9 @@
 """tools.ci CLI — three validation modes with deterministic, actionable diagnostics.
 
   static     registry <-> workflow implementation (DC-1/2/4/6/7). No network. Local + PR.
-  deployed   registry <-> live GitHub protection (DC-3). Explicit read-only probe.
-             --require-live => a probe failure FAILS (the designated authenticated job).
+  deployed   registry <-> live GitHub settings (DC-3 branch protection, DC-8 workflow enablement,
+             DC-9 repository security settings). Explicit read-only probes; nothing here mutates.
+             --require-live => a failure of a probe this job CAN authenticate FAILS (DC-3, DC-8).
              Otherwise a probe failure is an explicit NON-AUTHORITATIVE SKIP — never a false pass.
   reconcile  all three planes together (static + deployed).
   selftest   run the negative controls (each blocking condition fires on an injected defect).
@@ -17,7 +18,7 @@ import sys
 
 from . import checks, schema, selftest
 from .common import PROSE_DOCS, SCHEMA
-from .live import probe_protection, required_contexts
+from .live import probe_protection, probe_security, probe_workflows, required_contexts
 from .registry import load_registry, shape_findings
 from .workflows import discover_jobs
 
@@ -43,10 +44,28 @@ def cmd_deployed(require_live: bool) -> int:
     reg = load_registry()
     data, err = probe_protection()
     live = required_contexts(data) if data else []
-    findings = checks.run_deployed(reg, live, live_error=err)
+    states, wf_err = probe_workflows()
+    settings, sec_err = probe_security()
+    findings = checks.run_deployed(reg, live, live_error=err, workflow_states=states,
+                                   workflow_error=wf_err, security_settings=settings,
+                                   security_error=sec_err)
     rc = _emit("deployed-state (registry <-> live GitHub)", findings)
-    if err and require_live:
-        print(f"  [FAIL] DC-3 · - : --require-live set but the live probe failed ({err})")
+    # --require-live escalates an unreadable probe to a FAILURE — but ONLY for the probes this job
+    # can actually authenticate. DC-3 needs `administration: read` and DC-9 needs admin on the repo
+    # object; neither is a grantable GITHUB_TOKEN scope, so both wait on an operator-supplied PAT.
+    # DC-8 needs `actions: read`, which the job HAS — so an unreadable workflow list there is a real
+    # regression and fails.
+    #
+    # DC-9 is deliberately NOT escalated. Escalating a probe that structurally cannot succeed would
+    # manufacture a red no one can clear (this repo has shipped that defect before: `impact
+    # --strict` was unclearable on deletions), and it would fail for a reason that has nothing to do
+    # with the setting being measured. Its SKIP is non-authoritative, never a pass — the Finding
+    # renders `[SKIP]` and says so — and it becomes authoritative the moment DC-3's PAT lands.
+    hard = [("DC-3", err), ("DC-8", wf_err)]
+    failed = [(dc, e) for dc, e in hard if e]
+    if failed and require_live:
+        for dc, e in failed:
+            print(f"  [FAIL] {dc} · - : --require-live set but the live probe failed ({e})")
         return 1
     return rc
 
