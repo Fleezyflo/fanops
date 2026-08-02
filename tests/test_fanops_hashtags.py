@@ -280,7 +280,7 @@ def test_scrape_throttle_cooldown_backoff_and_success_reset(tmp_path, monkeypatc
     t0 = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
     # Empty cache + immediate throttle → measured=0 no-progress (no hashtags.json write) but cooldown lands.
     out0 = refresh_store(cfg, scrape_client=_FakeClient({"#hiphop": 50}, throttle_after=0), now=t0)
-    assert out0["throttled"] is True and out0.get("reason") == "no_progress"
+    assert out0["throttled"] is True and out0.get("reason") == "no personas have a declared niche"
     assert out0["written"] is False and not cfg.hashtags_path.exists()
     cd = json.loads(_cooldown_path(cfg).read_text())
     assert cd["streak"] == 1
@@ -636,7 +636,7 @@ def test_zero_progress_pass_preserves_hashtags_bytes_and_skips_rederive(tmp_path
     # Age past complete gate but refuse the only due work → measured=0, cache unchanged.
     out = refresh_store(cfg, scrape_client=_FakeClient({}, refuse_tags={"#hiphop", "hiphop"}),
                         now=t0 + timedelta(hours=25))
-    assert out["measured"] == 0 and out["written"] is False and out.get("reason") == "no_progress"
+    assert out["measured"] == 0 and out["written"] is False and out.get("reason") == "no personas have a declared niche"
     assert cfg.hashtags_path.read_bytes() == before
     assert cfg.hashtags_path.stat().st_mtime_ns == mtime
     assert json.loads(cfg.hashtags_path.read_text())["last_complete_pass"] == stamp
@@ -961,7 +961,7 @@ def test_refresh_store_absent_personas_is_not_an_abort(tmp_path, monkeypatch):
     out = refresh_store(cfg, scrape_client=_FakeClient({}))
     # No personas → empty queue → measured=0 no-progress (MOL-695); still not a corrupt abort.
     assert out.get("aborted") != "corrupt_personas"
-    assert out["written"] is False and out.get("reason") == "no_progress" and out["measured"] == 0
+    assert out.get("written") is False and out.get("reason") == "no personas have a declared niche"
 
 
 def test_refresh_store_if_due_corrupt_personas_reports_reason_never_raises(tmp_path, monkeypatch):

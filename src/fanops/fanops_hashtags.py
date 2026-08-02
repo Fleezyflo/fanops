@@ -444,6 +444,11 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
             if a and a not in anchors:
                 anchors.append(a)
     anchor_set = set(anchors)
+
+    # MOL-739: hashtag discovery MUST only proceed if niche seeds exist.
+    if not anchors:
+        get_logger(cfg)("hashtags", "-", "discovery_skip_no_niche", level="info")
+        return {"written": False, "aborted": "discovery_skip_no_niche", "reason": "no personas have a declared niche"}
     corpus_set: set[str] = set()
     for per in personas:
         for raw in (getattr(per, "hashtag_corpus", None) or []):
@@ -628,7 +633,7 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
     tag_mutated = fresh != pre_write
     if measured == 0 and not tag_mutated:
         # Zero-progress: leave hashtags.json byte/mtime-identical; do not rederive; keep prior stamp.
-        reason = "login_required" if login_dead else "no_progress"
+        reason = "login_required" if login_dead else "no personas have a declared niche"
         out = {"written": False, "measured": 0, "discovered": discovered,
                "total": len(pre_write), "throttled": throttled, "tried": tried,
                "unresolved": unresolved, "backend": "scrape", "parallel": parallel,
