@@ -957,10 +957,12 @@
       "lazy": [
         "fanops",
         "fanops.bands",
+        "fanops.hashtag_hygiene",
         "fanops.hashtags",
         "fanops.log",
         "fanops.models",
-        "fanops.persona_levers"
+        "fanops.persona_levers",
+        "fanops.persona_research"
       ],
       "optional": [],
       "typing": []
@@ -1007,9 +1009,11 @@
     },
     "fanops.personas": {
       "compile": [
+        "fanops",
         "fanops.config",
         "fanops.errors",
         "fanops.persona_directives",
+        "fanops.persona_levers",
         "fanops.persona_research",
         "fanops.persona_store"
       ],
@@ -2095,7 +2099,7 @@
     ]
   },
   "fan_in_compile": {
-    "fanops": 11,
+    "fanops": 12,
     "fanops._fwrun": 0,
     "fanops.accounts": 17,
     "fanops.adjust": 3,
@@ -2161,7 +2165,7 @@
     "fanops.p4_dim_bias": 1,
     "fanops.paths_rebase": 0,
     "fanops.persona_directives": 1,
-    "fanops.persona_levers": 3,
+    "fanops.persona_levers": 4,
     "fanops.persona_research": 2,
     "fanops.persona_store": 1,
     "fanops.personas": 7,
@@ -2301,7 +2305,7 @@
     "fanops.persona_levers": 0,
     "fanops.persona_research": 3,
     "fanops.persona_store": 4,
-    "fanops.personas": 5,
+    "fanops.personas": 7,
     "fanops.pipeline": 27,
     "fanops.pipeline_run": 2,
     "fanops.pipeline_status": 6,
@@ -2371,7 +2375,7 @@
   "generated_by": "tools/arch",
   "generator_version": "arch/1.0.0",
   "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",
-  "lazy_downward_count": 226,
+  "lazy_downward_count": 227,
   "lazy_lateral": [
     {
       "from": "fanops.accounts",
@@ -2965,6 +2969,14 @@
       "jump": 2,
       "same_scc": false,
       "to": "fanops.artifacts",
+      "to_level": 3
+    },
+    {
+      "from": "fanops.persona_directives",
+      "from_level": 1,
+      "jump": 2,
+      "same_scc": false,
+      "to": "fanops.persona_research",
       "to_level": 3
     },
     {
@@ -3594,11 +3606,11 @@
     "G2_largest_scc_size": 47,
     "G2_module_sccs_total": 73,
     "G2_non_trivial_sccs": 8,
-    "compile_edges_G1": 567,
-    "lazy_edges": 339,
+    "compile_edges_G1": 569,
+    "lazy_edges": 341,
     "lazy_edges_lateral": 47,
-    "lazy_edges_strictly_upward": 66,
-    "lazy_edges_to_equal_or_higher_level": 113,
+    "lazy_edges_strictly_upward": 67,
+    "lazy_edges_to_equal_or_higher_level": 114,
     "modules": 135,
     "optional_edges": 0,
     "typing_only_edges": 7

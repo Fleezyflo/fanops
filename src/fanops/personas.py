@@ -48,8 +48,8 @@ class Persona(BaseModel):
     content_focus: list[str] = Field(default_factory=list) # free-text directive for moment picking
     selection_scope: typing.Optional[str] = None # free-text directive for selection constraint
     hook_angle: typing.Optional[str] = None # free-text directive for on-screen hook strategy
-    clip_profile: typing.Optional[str] = None # explicit clip length profile
-    framing_bias: typing.Optional[str] = None # explicit framing bias
+
+
     intensity: typing.Optional[str] = None  # peak-filter tier: high|medium|low (INTENSITY); unset → None → no filter
     # M3 (2026-06-27): the per-persona clip_profile/framing PINS were RETIRED — invisible (no editor) + duplicate
     # of the content_focus-DERIVED cut (derive_cut_spec). A persona's cut LENGTH + FRAMING now derive from

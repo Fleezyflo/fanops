@@ -303,13 +303,16 @@ def persona_facts(cfg: Config, p) -> dict:
     its effect. PURE read; FAIL-OPEN to the frozen floor when no store/creds. Duck-typed (serves a Persona OR
     a hydrated Account)."""
     from fanops.bands import band_for
-    from fanops.hashtags import vet_hashtags, load_measurements, ranked_tags
+    from fanops.hashtags import vet_hashtags, load_measurements
     from fanops.models import Platform
     prof, fr = resolved_cut_spec(p)          # the EFFECTIVE cut — pin OR derived from content_focus (the
     band = band_for(prof)                    # SAME spec hydration applies), so the card shows the REAL length, not
     try:
         measurements = load_measurements(cfg)
-        store = ranked_tags(measurements)
+        from fanops.persona_research import persona_terms
+        roots = persona_terms(p, cfg)
+        from fanops.hashtag_hygiene import aligned_pool
+        store = aligned_pool(roots, measurements)
     except Exception as exc:
         from fanops.log import get_logger
         get_logger(cfg)("personas", getattr(p, "handle", "-"), "store_load_error", err=str(exc)[:160])
