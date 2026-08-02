@@ -44,9 +44,9 @@ class Persona(BaseModel):
     # Lever engine: explicit per-characteristic DIRECTION that compose_persona_instruction renders into the
     # one instruction the casting/hook/caption prompts read. ADDITIVE — all empty on a legacy persona, so
     # compose returns the bare `voice` (byte-identical). Validated at the write boundary (add/update_persona).
-    content_focus: str = "" # free-text directive for moment picking
-    selection_scope: str = "" # free-text directive for selection constraint
-    hook_angle: str = "" # free-text directive for on-screen hook strategy
+    content_focus: list[str] = Field(default_factory=list) # free-text directive for moment picking
+    selection_scope: typing.Optional[str] = None # free-text directive for selection constraint
+    hook_angle: typing.Optional[str] = None # free-text directive for on-screen hook strategy
     clip_profile: typing.Optional[str] = None # explicit clip length profile
     framing_bias: typing.Optional[str] = None # explicit framing bias
     intensity: typing.Optional[str] = None  # peak-filter tier: high|medium|low (INTENSITY); unset → None → no filter

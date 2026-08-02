@@ -35,6 +35,7 @@ _KNOWN_INCOHERENT = set(_ORIGINAL_SIX)
 # field absent here is a DEAD (output-insensitive) lever and fails the coverage gate below.
 _MUTATIONS = {
     "voice": ("a devoted fan", "a blunt critic"),
+    "hashtag_corpus": (["tag1"], ["tag2"]),
     "content_focus": (["punchlines"], ["hype"]),
     "intensity": ("high", "low"),
     "selection_scope": ("open", "subject_locked"),

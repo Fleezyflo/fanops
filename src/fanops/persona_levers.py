@@ -98,6 +98,8 @@ PERSONA_EDITABLE_CHANNELS = {
     "selection_scope": ("casting-selection-scope",),
     "hook_angle": ("hook-angle",),
     "hashtag_corpus": ("hashtags",),
+    "niche": ("hashtags-niche",),
+    "intensity": ("intensity",),
 }
 
 
