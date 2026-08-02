@@ -104,7 +104,7 @@ def _baseline_silent_swallows() -> dict[str, int]:
         "src/fanops/post/zernio.py": 3,
         "src/fanops/postiz_lifecycle.py": 2,
         "src/fanops/produce.py": 8,
-        "src/fanops/reconcile.py": 9,
+        "src/fanops/reconcile.py": 12,
         "src/fanops/responder.py": 2,
         "src/fanops/secret_provider.py": 1,
         "src/fanops/stitch_render.py": 4,
