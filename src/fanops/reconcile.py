@@ -35,7 +35,7 @@ from fanops.config import Config
 from fanops.errors import AuthError
 from fanops.ledger import Ledger
 from fanops.log import get_logger
-from fanops.models import PostState, is_real_submission_id, ImportedMedia
+from fanops.models import PostState, is_real_submission_id, ImportedMedia, Platform
 from fanops.text import safe_public_url
 from fanops.timeutil import parse_iso, iso_z, publish_buckets
 from datetime import datetime, timezone, timedelta
@@ -639,6 +639,7 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
     poll = get_status or _default_get_status(cfg, led)
     now = now or datetime.now(timezone.utc)               # clock injected by tests; real callers default to UTC now
     log = get_logger(cfg)
+    discover_orphans(led, cfg, log)
     # MOL-117: the IG liveness confirmation seam (confirm_post_live) + the Graph getter, both injectable so
     # tests never touch the network. The credentialed-handle set is read ONCE per pass (a torn accounts.json
     # degrades to [] -> every IG post treated as uncredentialed -> Postiz-rest unchanged, never stranded).
@@ -867,3 +868,70 @@ def report_terminals(led: Ledger, now: Optional[datetime] = None) -> list[dict]:
         out.append({"post_id": post.id, "state": post.state.value, "event": term["log"],
                     "would_set_state": new_state, "reason": upd.get("error_reason", "")})
     return out
+
+def discover_orphans(led, cfg, log):
+    """
+    MOL-Tracking: The Discovery Loop.
+    Identifies 'needs_reconcile' posts missing a submission_id/media_id and
+    attempts to find them on the platform via fuzzy matching.
+    """
+    orphans = [p for p in led.posts.values() 
+               if p.state == PostState.needs_reconcile 
+               and not getattr(p, 'media_id', None)
+               and p.platform == Platform.instagram]
+    
+    if not orphans:
+        return
+    
+    handles = list(set(p.account for p in orphans if p.account))
+    if not handles:
+        return
+        
+    from fanops.meta_graph import enumerate_scoped_media
+    # media is list of (media_id, product_type, timestamp, caption, permalink, username)
+    try:
+        platform_media = enumerate_scoped_media(cfg, handles)
+    except Exception as e:
+        log("reconcile", "discovery", "enumeration_failed", err=str(e))
+        return
+    
+    for post in orphans:
+        # Match candidates: same account, similar time, similar caption
+        post_time = None
+        if post.scheduled_time:
+            try: post_time = parse_iso(post.scheduled_time)
+            except Exception: pass
+        if not post_time and post.created_at:
+            try: post_time = parse_iso(post.created_at)
+            except Exception: pass
+            
+        if not post_time:
+            continue
+            
+        best_match = None
+        for m_id, m_type, m_time, m_caption, m_url, m_user in platform_media:
+            if m_user != post.account:
+                continue
+                
+            # Time window: ±4 hours (generous for manual posts or delays)
+            if abs((m_time - post_time).total_seconds()) > 4 * 3600:
+                continue
+                
+            # Caption match: normalized substring
+            p_cap = (post.caption or "").strip().lower()
+            m_cap = (m_caption or "").strip().lower()
+            
+            # Match if one is a significant substring of the other (first 50 chars)
+            if p_cap[:50] in m_cap or m_cap[:50] in p_cap:
+                best_match = (m_id, m_url)
+                break
+        
+        if best_match:
+            m_id, m_url = best_match
+            led.posts[post.id] = post.model_copy(update={
+                "state": PostState.published,
+                "media_id": m_id,
+                "public_url": m_url,
+                "error_reason": f"reconciled via discovery loop: matched platform media {m_id}"
+            })
+            log("reconcile", post.id, "discovered", media_id=m_id)
