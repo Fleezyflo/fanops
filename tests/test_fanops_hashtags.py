@@ -280,7 +280,7 @@ def test_scrape_throttle_cooldown_backoff_and_success_reset(tmp_path, monkeypatc
     t0 = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
     # Empty cache + immediate throttle → measured=0 no-progress (no hashtags.json write) but cooldown lands.
     out0 = refresh_store(cfg, scrape_client=_FakeClient({"#hiphop": 50}, throttle_after=0), now=t0)
-    assert out0["throttled"] is True and out0.get("reason") == "no_progress"
+    assert out0["throttled"] is True and out0.get("reason") == "no personas have a declared niche"
     assert out0["written"] is False and not cfg.hashtags_path.exists()
     cd = json.loads(_cooldown_path(cfg).read_text())
     assert cd["streak"] == 1
