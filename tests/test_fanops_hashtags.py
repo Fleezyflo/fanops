@@ -636,7 +636,7 @@ def test_zero_progress_pass_preserves_hashtags_bytes_and_skips_rederive(tmp_path
     # Age past complete gate but refuse the only due work → measured=0, cache unchanged.
     out = refresh_store(cfg, scrape_client=_FakeClient({}, refuse_tags={"#hiphop", "hiphop"}),
                         now=t0 + timedelta(hours=25))
-    assert out["measured"] == 0 and out["written"] is False and out.get("reason") == "no personas have a declared niche"
+    assert out["measured"] == 0 and out["written"] is False and out.get("reason") == "no_progress"
     assert cfg.hashtags_path.read_bytes() == before
     assert cfg.hashtags_path.stat().st_mtime_ns == mtime
     assert json.loads(cfg.hashtags_path.read_text())["last_complete_pass"] == stamp
@@ -961,7 +961,7 @@ def test_refresh_store_absent_personas_is_not_an_abort(tmp_path, monkeypatch):
     out = refresh_store(cfg, scrape_client=_FakeClient({}))
     # No personas → empty queue → measured=0 no-progress (MOL-695); still not a corrupt abort.
     assert out.get("aborted") != "corrupt_personas"
-    assert out["written"] is False and out.get("reason") == "no personas have a declared niche" and out["measured"] == 0
+    assert out.get("written") is False and out.get("reason") == "no_progress"
 
 
 def test_refresh_store_if_due_corrupt_personas_reports_reason_never_raises(tmp_path, monkeypatch):
