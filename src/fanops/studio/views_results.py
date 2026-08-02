@@ -745,7 +745,7 @@ def posted_archive_rows(cfg: Config, *, ledger_ids: set[str] | None = None) -> l
     root = cfg.published
     try:
         if not root.is_dir(): return []
-        paths = sorted(root.glob("*/*.json"))
+        paths = sorted(root.rglob("*.json"))
     except Exception as exc:
         from fanops.log import get_logger
         get_logger(cfg)("posted_archive", "-", "glob_error", err=str(exc)[:160])
