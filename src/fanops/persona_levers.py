@@ -212,6 +212,10 @@ def build_catalog() -> list[dict]:
             opts = [{"value": o["value"], "effect": (o["clause"] or "no change — open selection")} for o in lv["options"]]
         elif lv["key"] == "clip_profile":
             opts = [{"value": o["value"], "effect": f"{band_for(o['value']).lo:g}-{band_for(o['value']).hi:g}s cuts"} for o in lv["options"]]
+        elif lv["key"] == "intensity":
+            opts = [{"value": o["value"], "effect": f"{o["value"]} intensity filter"} for o in lv["options"]]
+        elif lv["key"] == "niche":
+            opts = []
         elif lv["key"] == "hashtag_corpus":
             opts = []
         else:
