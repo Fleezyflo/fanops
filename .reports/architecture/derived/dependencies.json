@@ -27,7 +27,6 @@
       "fanops.moment_hook_learning",
       "fanops.moments",
       "fanops.p4_dim_bias",
-      "fanops.persona_directives",
       "fanops.persona_research",
       "fanops.persona_store",
       "fanops.personas",
@@ -949,15 +948,11 @@
     },
     "fanops.persona_directives": {
       "compile": [],
-      "lazy": [
-        "fanops.bands",
-        "fanops.hashtags",
-        "fanops.models",
-        "fanops.persona_research"
-      ],
+      "lazy": [],
       "optional": [],
       "typing": [
-        "fanops.config"
+        "fanops.config",
+        "fanops.personas"
       ]
     },
     "fanops.persona_research": {
@@ -2566,14 +2561,6 @@
       "to_level": 0
     },
     {
-      "from": "fanops.persona_directives",
-      "from_level": 0,
-      "jump": 0,
-      "same_scc": false,
-      "to": "fanops.bands",
-      "to_level": 0
-    },
-    {
       "from": "fanops.persona_research",
       "from_level": 3,
       "jump": 0,
@@ -2808,14 +2795,6 @@
       "to_level": 4
     },
     {
-      "from": "fanops.persona_directives",
-      "from_level": 0,
-      "jump": 3,
-      "same_scc": false,
-      "to": "fanops.persona_research",
-      "to_level": 3
-    },
-    {
       "from": "fanops.responder",
       "from_level": 3,
       "jump": 3,
@@ -2942,14 +2921,6 @@
       "same_scc": false,
       "to": "fanops.artifacts",
       "to_level": 3
-    },
-    {
-      "from": "fanops.persona_directives",
-      "from_level": 0,
-      "jump": 2,
-      "same_scc": false,
-      "to": "fanops.hashtags",
-      "to_level": 2
     },
     {
       "from": "fanops.post.providers",
@@ -3110,14 +3081,6 @@
       "same_scc": false,
       "to": "fanops.post.metrics",
       "to_level": 4
-    },
-    {
-      "from": "fanops.persona_directives",
-      "from_level": 0,
-      "jump": 1,
-      "same_scc": false,
-      "to": "fanops.models",
-      "to_level": 1
     },
     {
       "from": "fanops.persona_research",
@@ -3573,16 +3536,16 @@
     "G1_non_trivial_sccs": 0,
     "G1_sccs_total": 134,
     "G1c_levels": 11,
-    "G2_largest_scc_size": 47,
-    "G2_module_sccs_total": 72,
+    "G2_largest_scc_size": 46,
+    "G2_module_sccs_total": 73,
     "G2_non_trivial_sccs": 8,
     "compile_edges_G1": 562,
-    "lazy_edges": 336,
-    "lazy_edges_lateral": 45,
-    "lazy_edges_strictly_upward": 68,
-    "lazy_edges_to_equal_or_higher_level": 113,
+    "lazy_edges": 332,
+    "lazy_edges_lateral": 44,
+    "lazy_edges_strictly_upward": 65,
+    "lazy_edges_to_equal_or_higher_level": 109,
     "modules": 134,
     "optional_edges": 0,
-    "typing_only_edges": 8
+    "typing_only_edges": 9
   }
 }
