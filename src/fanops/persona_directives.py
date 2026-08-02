@@ -151,3 +151,24 @@ def persona_facts(cfg: "Config", p) -> dict:
         "lead_tags": lead,
         "terms": persona_terms(p, cfg)
     }
+
+def hook_author_slot(p) -> str:
+    """The per-account hook-authoring brief for moment_hooks — ALWAYS non-empty.
+    Falls back: hook_directive -> inline persona voice -> tag_lean hint -> handle floor."""
+    instr = hook_directive(p)
+    if instr: return str(instr)
+    voice = _base_voice(p)
+    if voice: return voice
+    lean = (getattr(p, "tag_lean", None) or "").strip()
+    if lean: return f"Independent fan account - {lean} lean. Write a short hook in that voice."
+    handle = (getattr(p, "handle", None) or "").strip()
+    return f"Fan account (@{handle}). Write a short, scroll-stopping on-screen hook."
+
+_FOCUS_CLAUSE = {}
+_SCOPE_CLAUSE = {}
+_ANGLE_CLAUSE = {}
+_FOCUS_PROFILE = []
+_FRAMING_MAP = []
+
+def manifest() -> dict:
+    return {"personas": []}
