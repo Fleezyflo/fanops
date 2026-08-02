@@ -948,7 +948,10 @@
       "typing": []
     },
     "fanops.persona_directives": {
-      "compile": [],
+      "compile": [
+        "fanops",
+        "fanops.persona_levers"
+      ],
       "lazy": [
         "fanops.bands",
         "fanops.hashtags",
@@ -959,6 +962,14 @@
       "typing": [
         "fanops.config"
       ]
+    },
+    "fanops.persona_levers": {
+      "compile": [],
+      "lazy": [
+        "fanops.bands"
+      ],
+      "optional": [],
+      "typing": []
     },
     "fanops.persona_research": {
       "compile": [
@@ -2081,7 +2092,7 @@
     ]
   },
   "fan_in_compile": {
-    "fanops": 10,
+    "fanops": 11,
     "fanops._fwrun": 0,
     "fanops.accounts": 17,
     "fanops.adjust": 3,
@@ -2147,6 +2158,7 @@
     "fanops.p4_dim_bias": 1,
     "fanops.paths_rebase": 0,
     "fanops.persona_directives": 1,
+    "fanops.persona_levers": 1,
     "fanops.persona_research": 2,
     "fanops.persona_store": 1,
     "fanops.personas": 7,
@@ -2282,7 +2294,8 @@
     "fanops.overlay": 0,
     "fanops.p4_dim_bias": 7,
     "fanops.paths_rebase": 3,
-    "fanops.persona_directives": 0,
+    "fanops.persona_directives": 2,
+    "fanops.persona_levers": 0,
     "fanops.persona_research": 3,
     "fanops.persona_store": 3,
     "fanops.personas": 5,
@@ -2355,7 +2368,7 @@
   "generated_by": "tools/arch",
   "generator_version": "arch/1.0.0",
   "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",
-  "lazy_downward_count": 223,
+  "lazy_downward_count": 224,
   "lazy_lateral": [
     {
       "from": "fanops.accounts",
@@ -2567,6 +2580,14 @@
     },
     {
       "from": "fanops.persona_directives",
+      "from_level": 1,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.models",
+      "to_level": 1
+    },
+    {
+      "from": "fanops.persona_levers",
       "from_level": 0,
       "jump": 0,
       "same_scc": false,
@@ -2808,14 +2829,6 @@
       "to_level": 4
     },
     {
-      "from": "fanops.persona_directives",
-      "from_level": 0,
-      "jump": 3,
-      "same_scc": false,
-      "to": "fanops.persona_research",
-      "to_level": 3
-    },
-    {
       "from": "fanops.responder",
       "from_level": 3,
       "jump": 3,
@@ -2945,11 +2958,11 @@
     },
     {
       "from": "fanops.persona_directives",
-      "from_level": 0,
+      "from_level": 1,
       "jump": 2,
       "same_scc": false,
-      "to": "fanops.hashtags",
-      "to_level": 2
+      "to": "fanops.persona_research",
+      "to_level": 3
     },
     {
       "from": "fanops.post.providers",
@@ -3113,11 +3126,11 @@
     },
     {
       "from": "fanops.persona_directives",
-      "from_level": 0,
+      "from_level": 1,
       "jump": 1,
       "same_scc": false,
-      "to": "fanops.models",
-      "to_level": 1
+      "to": "fanops.hashtags",
+      "to_level": 2
     },
     {
       "from": "fanops.persona_research",
@@ -3330,7 +3343,8 @@
     "fanops.overlay": 0,
     "fanops.p4_dim_bias": 8,
     "fanops.paths_rebase": 4,
-    "fanops.persona_directives": 0,
+    "fanops.persona_directives": 1,
+    "fanops.persona_levers": 0,
     "fanops.persona_research": 3,
     "fanops.persona_store": 3,
     "fanops.personas": 4,
@@ -3417,7 +3431,7 @@
       "fanops.ids",
       "fanops.metrics_schedule",
       "fanops.overlay",
-      "fanops.persona_directives",
+      "fanops.persona_levers",
       "fanops.post.zernio_outcome",
       "fanops.postiz_lifecycle",
       "fanops.secret_provider",
@@ -3441,6 +3455,7 @@
       "fanops.llm",
       "fanops.log",
       "fanops.models",
+      "fanops.persona_directives",
       "fanops.pipeline_run",
       "fanops.post.providers",
       "fanops.prompts",
@@ -3571,17 +3586,17 @@
   ],
   "totals": {
     "G1_non_trivial_sccs": 0,
-    "G1_sccs_total": 134,
+    "G1_sccs_total": 135,
     "G1c_levels": 11,
     "G2_largest_scc_size": 47,
-    "G2_module_sccs_total": 72,
+    "G2_module_sccs_total": 73,
     "G2_non_trivial_sccs": 8,
-    "compile_edges_G1": 562,
-    "lazy_edges": 336,
-    "lazy_edges_lateral": 45,
-    "lazy_edges_strictly_upward": 68,
+    "compile_edges_G1": 564,
+    "lazy_edges": 337,
+    "lazy_edges_lateral": 46,
+    "lazy_edges_strictly_upward": 67,
     "lazy_edges_to_equal_or_higher_level": 113,
-    "modules": 134,
+    "modules": 135,
     "optional_edges": 0,
     "typing_only_edges": 8
   }
