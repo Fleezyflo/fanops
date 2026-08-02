@@ -30,10 +30,10 @@ from fanops import persona_levers as pl
 # registry (fanops.persona_levers) — the same declaration the clause maps + lever_catalog derive from, so the
 # three can no longer drift. clip_profile/framing reuse the Account validators (bands.PROFILE_NAMES /
 # config.FRAMING_NAMES) so a persona pins the SAME deterministic CUT an account can.
-CONTENT_FOCUS = set(pl.CONTENT_FOCUS)
-SELECTION_SCOPE_LEVELS = set(pl.SELECTION_SCOPE_LEVELS)
-HOOK_ANGLES = set(pl.HOOK_ANGLES)
-INTENSITY = set(pl.INTENSITY)
+CONTENT_FOCUS = pl.vocab("content_focus")
+SELECTION_SCOPE_LEVELS = pl.vocab("selection_scope")
+HOOK_ANGLES = pl.vocab("hook_angle")
+INTENSITY = pl.vocab("intensity")
 
 
 class Persona(BaseModel):
