@@ -93,7 +93,6 @@
       "src/fanops/crosspost.py": 1,
       "src/fanops/cutover.py": 1,
       "src/fanops/daemon.py": 5,
-      "src/fanops/discover_orphans_clean.py": 3,
       "src/fanops/doctor.py": 8,
       "src/fanops/fanops_hashtags.py": 2,
       "src/fanops/framing.py": 9,
