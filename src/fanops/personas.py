@@ -20,6 +20,7 @@ import typing
 from pydantic import BaseModel, Field
 from fanops.config import Config
 from fanops.errors import ControlFileError, reason as _reason
+from fanops import persona_levers as pl
 
 
 # The lever-engine vocabularies (the validated control surface — one lever per persona characteristic). Each
@@ -29,10 +30,10 @@ from fanops.errors import ControlFileError, reason as _reason
 # registry (fanops.persona_levers) — the same declaration the clause maps + lever_catalog derive from, so the
 # three can no longer drift. clip_profile/framing reuse the Account validators (bands.PROFILE_NAMES /
 # config.FRAMING_NAMES) so a persona pins the SAME deterministic CUT an account can.
-CONTENT_FOCUS = set()
-SELECTION_SCOPE_LEVELS = set()
-HOOK_ANGLES = set()
-INTENSITY = set()
+CONTENT_FOCUS = set(pl.CONTENT_FOCUS)
+SELECTION_SCOPE_LEVELS = set(pl.SELECTION_SCOPE_LEVELS)
+HOOK_ANGLES = set(pl.HOOK_ANGLES)
+INTENSITY = set(pl.INTENSITY)
 
 
 class Persona(BaseModel):

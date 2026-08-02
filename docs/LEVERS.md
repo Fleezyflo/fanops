@@ -31,16 +31,6 @@ Then run `fanops lever docs` to regenerate this file.
 | `visual` | 'visually arresting moments — a strong scene, motion, or setting, not audio alone' | derived band=medium (16-26s), framing=center | medium clips (16-26s), center crop | moments gate (pick) → steers frame-seeing hook author |
 | `bold-statement` | 'a bold or contrarian statement that stops the scroll' | derived band=short (8-15s), framing=center | short clips (8-15s), center crop | moments gate (pick) → steers frame-seeing hook author |
 
-## intensity (stage: pick)
-
-**Does:** which tercile of signal peaks survive the P4b filter (high/medium/low); unset = no filter
-
-| value | what it tells the LLM | deterministic operation | cut consequence | phase/gate |
-|-------|----------------------|-------------------------|-----------------|------------|
-| `high` | 'keep the loudest tercile of peak scores' | filter_peaks_by_intensity('high') → top tercile | n/a (peak set, not cut geometry) | moments gate (P4b peak filter) |
-| `medium` | 'no peak filter — the full set stands' | filter_peaks_by_intensity('medium') → unchanged / full set | n/a (peak set, not cut geometry) | moments gate (P4b peak filter) |
-| `low` | 'keep the calmest tercile of peak scores' | filter_peaks_by_intensity('low') → bottom tercile | n/a (peak set, not cut geometry) | moments gate (P4b peak filter) |
-
 ## selection_scope (stage: casting)
 
 **Does:** the selection CONSTRAINT posture (open vs subject-locked vs briefed vs credibility-first vs controversy-seeking)
@@ -79,10 +69,20 @@ Then run `fanops lever docs` to regenerate this file.
 
 ## niche (stage: caption)
 
-**Does:** declared subject terms — the ONLY Layer A hashtag search roots (MOL-637); voice/levers stay on captions+hooks, not discovery
+**Does:** niche words for discovery
 
 Declared territory (`Persona.niche`) is the ONLY Layer A search root (MOL-637): `persona_research.persona_terms` returns niche only — voice/levers stay on captions+hooks. The measured corpus it derives then leads caption hashtags.
 
+
+## intensity (stage: casting)
+
+**Does:** peak filter intensity
+
+| value | what it tells the LLM | deterministic operation | cut consequence | phase/gate |
+|-------|----------------------|-------------------------|-----------------|------------|
+| `low` | '' | filter_peaks_by_intensity('low') → bottom tercile | n/a (peak set, not cut geometry) | moments gate (P4b peak filter) |
+| `medium` | '' | filter_peaks_by_intensity('medium') → unchanged / full set | n/a (peak set, not cut geometry) | moments gate (P4b peak filter) |
+| `high` | '' | filter_peaks_by_intensity('high') → top tercile | n/a (peak set, not cut geometry) | moments gate (P4b peak filter) |
 
 ## ARCHETYPE CROSSWALK
 
@@ -90,8 +90,8 @@ Archetype EXAMPLES of lever combinations (`src/fanops/data/baked_personas.json`)
 
 | id | content_focus (select) | hook_angle | selection_scope | intensity (peak filter) |
 |----|------------------------|------------|-----------------|-------------------------|
-| `credibility-first` | emotional, storytelling | `curiosity` | `credibility_first` | low |
-| `controversy` | bold-statement | `challenge` | `controversy_seeking` | high |
-| `edutainment` | storytelling | `curiosity` | `source_briefed` | low |
-| `cliffhanger` | storytelling | `curiosity` | `open` | low |
-| `hype-vibe` | hype | `fomo` | `open` | high |
+| `credibility-first` | — | `curiosity` | `credibility_first` | low |
+| `controversy` | — | `challenge` | `controversy_seeking` | high |
+| `edutainment` | — | `curiosity` | `source_briefed` | low |
+| `cliffhanger` | — | `curiosity` | `open` | low |
+| `hype-vibe` | — | `fomo` | `open` | high |

@@ -171,7 +171,7 @@ def add_persona(cfg: Config, name: str, voice: str = "",
         if any(isinstance(d, dict) and d.get("id") == pid for d in plist):
             raise ValueError(f"duplicate persona id {pid!r} (already exists)")
         plist.append({"id": pid, "name": nm, "voice": str(voice or ""),
-                      "hashtag_corpus": list(p.hashtag_corpus or []), "niche": niche_v,
+                      "hashtag_corpus": [], "niche": niche_v,
                       "content_focus": focus,
                       "selection_scope": scope_v, "hook_angle": angle_v, "intensity": intensity_v})
         write_json_atomic(p, raw)

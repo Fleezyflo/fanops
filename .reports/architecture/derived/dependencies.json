@@ -817,6 +817,7 @@
         "fanops.bands",
         "fanops.config",
         "fanops.moments",
+        "fanops.persona_levers",
         "fanops.personas",
         "fanops.prompts"
       ],
@@ -950,18 +951,19 @@
     "fanops.persona_directives": {
       "compile": [
         "fanops",
+        "fanops.config",
         "fanops.persona_levers"
       ],
       "lazy": [
+        "fanops",
         "fanops.bands",
         "fanops.hashtags",
+        "fanops.log",
         "fanops.models",
-        "fanops.persona_research"
+        "fanops.persona_levers"
       ],
       "optional": [],
-      "typing": [
-        "fanops.config"
-      ]
+      "typing": []
     },
     "fanops.persona_levers": {
       "compile": [],
@@ -991,7 +993,8 @@
       "compile": [
         "fanops.config",
         "fanops.controlio",
-        "fanops.hashtags"
+        "fanops.hashtags",
+        "fanops.persona_levers"
       ],
       "lazy": [
         "fanops.accounts",
@@ -2109,7 +2112,7 @@
     "fanops.cli": 0,
     "fanops.clip": 6,
     "fanops.compose": 1,
-    "fanops.config": 86,
+    "fanops.config": 87,
     "fanops.config_introspect": 0,
     "fanops.control": 4,
     "fanops.controlio": 12,
@@ -2158,7 +2161,7 @@
     "fanops.p4_dim_bias": 1,
     "fanops.paths_rebase": 0,
     "fanops.persona_directives": 1,
-    "fanops.persona_levers": 1,
+    "fanops.persona_levers": 3,
     "fanops.persona_research": 2,
     "fanops.persona_store": 1,
     "fanops.personas": 7,
@@ -2283,7 +2286,7 @@
     "fanops.ledger_bridge": 5,
     "fanops.ledger_sqlite": 2,
     "fanops.ledger_wipe": 3,
-    "fanops.lever_docs": 6,
+    "fanops.lever_docs": 7,
     "fanops.llm": 1,
     "fanops.log": 1,
     "fanops.meta_graph": 4,
@@ -2294,10 +2297,10 @@
     "fanops.overlay": 0,
     "fanops.p4_dim_bias": 7,
     "fanops.paths_rebase": 3,
-    "fanops.persona_directives": 2,
+    "fanops.persona_directives": 3,
     "fanops.persona_levers": 0,
     "fanops.persona_research": 3,
-    "fanops.persona_store": 3,
+    "fanops.persona_store": 4,
     "fanops.personas": 5,
     "fanops.pipeline": 27,
     "fanops.pipeline_run": 2,
@@ -2368,7 +2371,7 @@
   "generated_by": "tools/arch",
   "generator_version": "arch/1.0.0",
   "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",
-  "lazy_downward_count": 224,
+  "lazy_downward_count": 226,
   "lazy_lateral": [
     {
       "from": "fanops.accounts",
@@ -2577,6 +2580,14 @@
       "same_scc": false,
       "to": "fanops.timeutil",
       "to_level": 0
+    },
+    {
+      "from": "fanops.persona_directives",
+      "from_level": 1,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.log",
+      "to_level": 1
     },
     {
       "from": "fanops.persona_directives",
@@ -2954,14 +2965,6 @@
       "jump": 2,
       "same_scc": false,
       "to": "fanops.artifacts",
-      "to_level": 3
-    },
-    {
-      "from": "fanops.persona_directives",
-      "from_level": 1,
-      "jump": 2,
-      "same_scc": false,
-      "to": "fanops.persona_research",
       "to_level": 3
     },
     {
@@ -3591,13 +3594,13 @@
     "G2_largest_scc_size": 47,
     "G2_module_sccs_total": 73,
     "G2_non_trivial_sccs": 8,
-    "compile_edges_G1": 564,
-    "lazy_edges": 337,
-    "lazy_edges_lateral": 46,
-    "lazy_edges_strictly_upward": 67,
+    "compile_edges_G1": 567,
+    "lazy_edges": 339,
+    "lazy_edges_lateral": 47,
+    "lazy_edges_strictly_upward": 66,
     "lazy_edges_to_equal_or_higher_level": 113,
     "modules": 135,
     "optional_edges": 0,
-    "typing_only_edges": 8
+    "typing_only_edges": 7
   }
 }
