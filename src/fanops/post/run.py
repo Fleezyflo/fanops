@@ -344,6 +344,7 @@ def _publish_one(cfg: Config, post_id: str, backend: str, *, accounts: "Accounts
                 # and the Pydantic R1 invariant would refuse the ledger save below; fail-closed BEFORE
                 # construction so the operator sees a clean needs_reconcile row, not a ValidationError 500.
                 if (post.public_url or "").strip():
+                    assert post.public_url, "GB-4: published post must have public_url"
                     post.state = PostState.published
                     post.published_at = iso_z(datetime.now(timezone.utc))   # TRUE publish time (Posted-archive day-anchor)
                     # Leg 3 (timing): bucket the true publish time into operator-local (hour, weekday) so
