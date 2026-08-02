@@ -1,4 +1,5 @@
 from __future__ import annotations
+from fanops import persona_levers as _levers
 from typing import TYPE_CHECKING
 
 
@@ -77,7 +78,7 @@ def compose_persona_instruction(p) -> str:
     return str(casting_directive(p))
 
 def lever_catalog() -> list[dict]:
-    return []
+    return _levers.build_catalog()
 
 def compose_breakdown_detail(cfg: "Config", p) -> dict:
     prof, fr = resolved_cut_spec(p)
@@ -164,11 +165,11 @@ def hook_author_slot(p) -> str:
     handle = (getattr(p, "handle", None) or "").strip()
     return f"Fan account (@{handle}). Write a short, scroll-stopping on-screen hook."
 
-_FOCUS_CLAUSE = {}
-_SCOPE_CLAUSE = {}
-_ANGLE_CLAUSE = {}
-_FOCUS_PROFILE = []
-_FRAMING_MAP = []
+_FOCUS_CLAUSE = _levers.clause_map("content_focus")
+_SCOPE_CLAUSE = _levers.clause_map("selection_scope")
+_ANGLE_CLAUSE = _levers.clause_map("hook_angle")
+_FOCUS_PROFILE = _levers.focus_profile_map()
+_FRAMING_MAP = _levers.framing_map()
 
 def manifest() -> dict:
     return {"personas": []}
