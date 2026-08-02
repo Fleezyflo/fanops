@@ -27,6 +27,7 @@
       "fanops.moment_hook_learning",
       "fanops.moments",
       "fanops.p4_dim_bias",
+      "fanops.persona_directives",
       "fanops.persona_research",
       "fanops.persona_store",
       "fanops.personas",
@@ -947,12 +948,18 @@
       "typing": []
     },
     "fanops.persona_directives": {
-      "compile": [],
-      "lazy": [],
+      "compile": [
+        "fanops.models"
+      ],
+      "lazy": [
+        "fanops.bands",
+        "fanops.hashtags",
+        "fanops.models",
+        "fanops.persona_research"
+      ],
       "optional": [],
       "typing": [
-        "fanops.config",
-        "fanops.personas"
+        "fanops.config"
       ]
     },
     "fanops.persona_research": {
@@ -2135,7 +2142,7 @@
     "fanops.log": 37,
     "fanops.meta_graph": 1,
     "fanops.metrics_schedule": 1,
-    "fanops.models": 50,
+    "fanops.models": 51,
     "fanops.moment_hook_learning": 1,
     "fanops.moments": 4,
     "fanops.overlay": 3,
@@ -2277,7 +2284,7 @@
     "fanops.overlay": 0,
     "fanops.p4_dim_bias": 7,
     "fanops.paths_rebase": 3,
-    "fanops.persona_directives": 0,
+    "fanops.persona_directives": 1,
     "fanops.persona_research": 3,
     "fanops.persona_store": 3,
     "fanops.personas": 5,
@@ -2350,7 +2357,7 @@
   "generated_by": "tools/arch",
   "generator_version": "arch/1.0.0",
   "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",
-  "lazy_downward_count": 223,
+  "lazy_downward_count": 225,
   "lazy_lateral": [
     {
       "from": "fanops.accounts",
@@ -2559,6 +2566,14 @@
       "same_scc": false,
       "to": "fanops.timeutil",
       "to_level": 0
+    },
+    {
+      "from": "fanops.persona_directives",
+      "from_level": 2,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.hashtags",
+      "to_level": 2
     },
     {
       "from": "fanops.persona_research",
@@ -3083,6 +3098,14 @@
       "to_level": 4
     },
     {
+      "from": "fanops.persona_directives",
+      "from_level": 2,
+      "jump": 1,
+      "same_scc": false,
+      "to": "fanops.persona_research",
+      "to_level": 3
+    },
+    {
       "from": "fanops.persona_research",
       "from_level": 3,
       "jump": 1,
@@ -3293,7 +3316,7 @@
     "fanops.overlay": 0,
     "fanops.p4_dim_bias": 8,
     "fanops.paths_rebase": 4,
-    "fanops.persona_directives": 0,
+    "fanops.persona_directives": 2,
     "fanops.persona_research": 3,
     "fanops.persona_store": 3,
     "fanops.personas": 4,
@@ -3380,7 +3403,6 @@
       "fanops.ids",
       "fanops.metrics_schedule",
       "fanops.overlay",
-      "fanops.persona_directives",
       "fanops.post.zernio_outcome",
       "fanops.postiz_lifecycle",
       "fanops.secret_provider",
@@ -3427,6 +3449,7 @@
       "fanops.hookscore",
       "fanops.impact_cut",
       "fanops.ledger",
+      "fanops.persona_directives",
       "fanops.post.compress",
       "fanops.router",
       "fanops.variant_learning"
@@ -3536,16 +3559,16 @@
     "G1_non_trivial_sccs": 0,
     "G1_sccs_total": 134,
     "G1c_levels": 11,
-    "G2_largest_scc_size": 46,
-    "G2_module_sccs_total": 73,
+    "G2_largest_scc_size": 47,
+    "G2_module_sccs_total": 72,
     "G2_non_trivial_sccs": 8,
-    "compile_edges_G1": 562,
-    "lazy_edges": 332,
-    "lazy_edges_lateral": 44,
-    "lazy_edges_strictly_upward": 65,
-    "lazy_edges_to_equal_or_higher_level": 109,
+    "compile_edges_G1": 563,
+    "lazy_edges": 336,
+    "lazy_edges_lateral": 45,
+    "lazy_edges_strictly_upward": 66,
+    "lazy_edges_to_equal_or_higher_level": 111,
     "modules": 134,
     "optional_edges": 0,
-    "typing_only_edges": 9
+    "typing_only_edges": 8
   }
 }
