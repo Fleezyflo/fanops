@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Optional
 from fanops.config import Config
 from fanops.hashtags import _norm
+from fanops.persona_levers import vocab as _vocab
 from fanops.controlio import load_raw_list, write_json_atomic   # shared atomic control-file IO
 # NOT `from fanops.personas import ...`: personas.py is the FACADE that re-exports this module, so a
 # module-level edge back to it is a compile-time cycle (the tree's only one, ARCH-004). The lever
@@ -17,10 +18,10 @@ from fanops.controlio import load_raw_list, write_json_atomic   # shared atomic 
 # are deferred into the four functions that need them (the `_file_lock` idiom already used below).
 
 
-CONTENT_FOCUS = set()
-SELECTION_SCOPE_LEVELS = set()
-HOOK_ANGLES = set()
-INTENSITY = set()
+CONTENT_FOCUS = _vocab("content_focus")
+SELECTION_SCOPE_LEVELS = _vocab("selection_scope")
+HOOK_ANGLES = _vocab("hook_angle")
+INTENSITY = _vocab("intensity")
 
 _CORPUS_CAP = 80                # must cover FANOPS_CORPUS_TARGET default (80); was 40 and silently truncated
 _BAKED_FILE = "baked_personas.json"
@@ -34,7 +35,7 @@ def _persona_dict(p) -> dict:
     """Serialize a Persona (or baked record) to the personas.json row shape. `hashtag_corpus` is empty on
     a fresh record by construction — it is a DERIVED value that Layer B fills from platform evidence."""
     return {"id": p.id, "name": p.name or "", "voice": p.voice or "",
-            "hashtag_corpus": [], "niche": list(getattr(p, "niche", None) or []),
+            "hashtag_corpus": list(p.hashtag_corpus or []), "niche": list(getattr(p, "niche", None) or []),
             "content_focus": list(p.content_focus or []), "selection_scope": p.selection_scope,
             "hook_angle": p.hook_angle, "intensity": p.intensity}
 
@@ -170,7 +171,7 @@ def add_persona(cfg: Config, name: str, voice: str = "",
         if any(isinstance(d, dict) and d.get("id") == pid for d in plist):
             raise ValueError(f"duplicate persona id {pid!r} (already exists)")
         plist.append({"id": pid, "name": nm, "voice": str(voice or ""),
-                      "hashtag_corpus": [], "niche": niche_v,
+                      "hashtag_corpus": list(p.hashtag_corpus or []), "niche": niche_v,
                       "content_focus": focus,
                       "selection_scope": scope_v, "hook_angle": angle_v, "intensity": intensity_v})
         write_json_atomic(p, raw)

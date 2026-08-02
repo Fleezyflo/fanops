@@ -75,8 +75,10 @@ LEVER_REGISTRY = [
     {"key": "clip_profile", "label": "Clip length", "kind": "select", "stage": "cut",
      "does": "the GLOBAL deterministic cut-length band (Go-Live default; per-persona it is derived from content_focus)",
      "options": [{"value": n} for n in _CLIP_PROFILE_BANDS]},
-    {"key": "hashtag_corpus", "label": "Corpus", "kind": "tags", "stage": "caption",
-     "does": "your curated tags LEAD the caption hashtags", "options": []},
+    {"key": "niche", "label": "Niche", "kind": "tags", "stage": "caption",
+     "does": "niche words for discovery", "options": []},
+    {"key": "intensity", "label": "Intensity", "kind": "select", "stage": "casting",
+     "does": "peak filter intensity", "options": [{"value": v} for v in ["low", "medium", "high"]]},
 ]
 
 
@@ -87,7 +89,7 @@ LEVER_REGISTRY = [
 # the exact over-claim trap (the catalog's global `clip_profile` is NOT the persona `clip_profile` pin). So
 # EDITABILITY here is defined as "the persona save route persists this field" — kept honest by the behavioral
 # editor-parity test — NOT by catalog-key presence.
-PERSONA_FIELD_EXEMPT = frozenset({"id", "name", "intake"})   # identity / research-seed metadata, not a per-clip output lever
+PERSONA_FIELD_EXEMPT = frozenset({"id", "name", "intake", "clip_profile", "framing_bias"})   # identity / research-seed metadata, not a per-clip output lever
 
 # The EDITABLE coherent levers: model field -> the output CHANNEL(s) it owns. Distinctness rule = "<=1 owner per
 # channel". content_focus owns casting-selection + cut-length + cut-framing; selection_scope owns casting-
