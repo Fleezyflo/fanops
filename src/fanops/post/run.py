@@ -30,16 +30,15 @@ def _archive_published(cfg: Config, post: Post) -> None:
     """Day-bucketed, human-browsable record of a just-published post -> 06_published/<YYYY-MM-DD>/<post_id>.json
     (the dir existed but nothing wrote it). FAIL-OPEN: any write/mkdir error is logged and swallowed — the
     archive is a convenience artifact, NEVER a publish blocker (a full disk must not strand a live post). Day =
-    post.published_at, else created_at, else scheduled_time, else now (content-lifecycle Phase 3)."""
+    operator_local_day(published_at), else created_at, else scheduled_time, else now (MOL-735)."""
+    from fanops.timeutil import operator_local_day
     try:
         day = None
         for ts in (post.published_at, post.created_at, post.scheduled_time):
             if ts:
-                try:
-                    dt = _parse(ts)
-                    if dt.tzinfo is not None: day = dt.date().isoformat(); break
-                except (ValueError, TypeError): pass
-        if day is None: day = datetime.now(timezone.utc).date().isoformat()
+                day = operator_local_day(ts, cfg)
+                if day: break
+        if day is None: day = operator_local_day(datetime.now(timezone.utc), cfg)
         d = cfg.published / day; d.mkdir(parents=True, exist_ok=True, mode=0o700)
         try: os.chmod(d, 0o700)             # L2 (audit): tighten a pre-existing world-listable day dir too
         except OSError: pass
