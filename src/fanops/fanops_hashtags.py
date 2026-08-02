@@ -633,7 +633,7 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
     tag_mutated = fresh != pre_write
     if measured == 0 and not tag_mutated:
         # Zero-progress: leave hashtags.json byte/mtime-identical; do not rederive; keep prior stamp.
-        reason = "login_required" if login_dead else "no_progress"
+        reason = "login_required" if login_dead else "no personas have a declared niche"
         out = {"written": False, "measured": 0, "discovered": discovered,
                "total": len(pre_write), "throttled": throttled, "tried": tried,
                "unresolved": unresolved, "backend": "scrape", "parallel": parallel,
