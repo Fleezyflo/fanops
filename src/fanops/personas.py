@@ -16,7 +16,7 @@ RE-EXPORTED below, so every existing `from fanops.personas import X` keeps resol
 from __future__ import annotations
 import json
 import re
-from typing import Optional
+import typing
 from pydantic import BaseModel, Field
 from fanops.config import Config
 from fanops.errors import ControlFileError, reason as _reason
@@ -47,9 +47,9 @@ class Persona(BaseModel):
     content_focus: str = "" # free-text directive for moment picking
     selection_scope: str = "" # free-text directive for selection constraint
     hook_angle: str = "" # free-text directive for on-screen hook strategy
-    clip_profile: Optional[str] = None # explicit clip length profile
-    framing_bias: Optional[str] = None # explicit framing bias
-    intensity: Optional[str] = None  # peak-filter tier: high|medium|low (INTENSITY); unset → None → no filter
+    clip_profile: typing.Optional[str] = None # explicit clip length profile
+    framing_bias: typing.Optional[str] = None # explicit framing bias
+    intensity: typing.Optional[str] = None  # peak-filter tier: high|medium|low (INTENSITY); unset → None → no filter
     # M3 (2026-06-27): the per-persona clip_profile/framing PINS were RETIRED — invisible (no editor) + duplicate
     # of the content_focus-DERIVED cut (derive_cut_spec). A persona's cut LENGTH + FRAMING now derive from
     # content_focus; the Account.clip_profile/framing carriers + the global FANOPS_CLIP_PROFILE lever stay.
@@ -84,14 +84,14 @@ class Personas:
                 raise ControlFileError(f"{p.name} invalid: {_reason(e)}") from e
         return r
 
-    def get(self, pid: Optional[str]) -> Optional[Persona]:
+    def get(self, pid: typing.Optional[str]) -> typing.Optional[Persona]:
         return next((p for p in self.personas if p.id == pid), None) if pid else None
 
     def all(self) -> list[Persona]:
         return list(self.personas)
 
 
-def _slug(s: str) -> str:
+def _slug(s: typing.Optional[str]) -> str:
     """A stable id from a name/handle: lowercase, drop a leading '@', non-alphanumerics -> single '-'."""
     s = (s or "").strip().lower().lstrip("@")
     return re.sub(r"[^a-z0-9]+", "-", s).strip("-")
