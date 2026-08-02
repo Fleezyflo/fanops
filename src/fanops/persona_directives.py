@@ -303,17 +303,18 @@ def persona_facts(cfg: Config, p) -> dict:
     its effect. PURE read; FAIL-OPEN to the frozen floor when no store/creds. Duck-typed (serves a Persona OR
     a hydrated Account)."""
     from fanops.bands import band_for
-    from fanops.hashtags import vet_hashtags, load_store
+    from fanops.hashtags import vet_hashtags, load_measurements, ranked_tags
     from fanops.models import Platform
     prof, fr = resolved_cut_spec(p)          # the EFFECTIVE cut — pin OR derived from content_focus (the
     band = band_for(prof)                    # SAME spec hydration applies), so the card shows the REAL length, not
-    try:                                     # the raw-unset value (which made every persona read as one global band)
-        store = load_store(cfg)
+    try:
+        measurements = load_measurements(cfg)
+        store = ranked_tags(measurements)
     except Exception as exc:
-        from fanops.log import get_logger     # a store read-fail falls to the frozen floor — record it, don't hide it
+        from fanops.log import get_logger
         get_logger(cfg)("personas", getattr(p, "handle", "-"), "store_load_error", err=str(exc)[:160])
-        store = None
+        store = []
     lead = vet_hashtags([], Platform.instagram,
                         corpus=list(getattr(p, "hashtag_corpus", None) or []), store=store,
-                        genre=((getattr(p, "intake", None) or {}).get("genre") or None), cfg=cfg)   # U11: honor the global ban list here too (a banned tag must not show as a persona's "lead tag")
+                        cfg=cfg)   # U11: honor the global ban list here too (a banned tag must not show as a persona's "lead tag")
     return {"length_band": f"{band.lo:.0f}-{band.hi:.0f}s", "framing": fr, "lead_tags": lead}
