@@ -14,7 +14,7 @@
   "approved_compile_cycles": [],
   "approved_compile_cycles_note": "The ONLY compile-time import cycle in the tree. Load-order sensitive and UNDEFENDED (no comment, no test, no ADR). Its intentionality is UNKNOWN (UNK-C5-1). It is baselined because it EXISTS, not because it is endorsed.",
   "approved_terminal_post_writers": [
-    "src/fanops/post/run.py:348",
+    "src/fanops/post/run.py:347",
     "src/fanops/reconcile.py:766",
     "src/fanops/studio/actions.py:340",
     "src/fanops/track.py:193"
@@ -165,6 +165,14 @@
     [
       "fanops.hashtag_hygiene",
       "fanops.hashtags"
+    ],
+    [
+      "fanops.hashtag_vocab",
+      "fanops.fanops_hashtags"
+    ],
+    [
+      "fanops.hashtag_vocab",
+      "fanops.personas"
     ],
     [
       "fanops.hashtags",
@@ -471,7 +479,7 @@
       "fanops.digest"
     ]
   ],
-  "must_stay_lazy_note": "65 strictly-upward + 47 lateral in-function imports. The SCC-condensed compile graph is an 11-level DAG ONLY because these are deferred to call time. Hoisting any one to module level LOOKS LIKE A CLEANUP and can break the process at start. This is GB-1, mechanized (rule ARCH-007).",
+  "must_stay_lazy_note": "67 strictly-upward + 47 lateral in-function imports. The SCC-condensed compile graph is an 11-level DAG ONLY because these are deferred to call time. Hoisting any one to module level LOOKS LIKE A CLEANUP and can break the process at start. This is GB-1, mechanized (rule ARCH-007).",
   "owner": "architecture governance (see governance/field_authority.json)",
   "required_verifications_note": "The tests the Cycle-6 verification matrix requires AND which currently EXIST. *** THIS IS EMPTY TODAY: no slice in the program has been implemented, so none of its ~25 required tests exists yet, and rule IMPL-006 is therefore ARMED ON NOTHING. *** Stated out loud rather than hidden. It ARMS ITSELF: the moment a slice lands and its tests appear, re-accept this baseline and their removal becomes CI-red.",
   "required_verifications_present": [

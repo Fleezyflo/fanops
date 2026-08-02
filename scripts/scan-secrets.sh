@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# MOL-737: Fail closed if ripgrep is not available
+if ! command -v rg &> /dev/null; then
+  echo "[scan-secrets] ERROR: ripgrep (rg) is not installed or not in PATH. Secret scan cannot proceed." >&2
+  exit 1
+fi
 # scan-secrets.sh — shared secret scanner for the pre-commit hook AND CI (MOL-193 / CI-13).
 #
 # Modes:
@@ -34,7 +39,7 @@ scan_one() {   # <added-lines-text> <file> <name> <regex>
   [[ -z "$added" ]] && return 0
   # `-e` is load-bearing: the private-key regex STARTS with '-', so without it rg parses the pattern
   # as a flag, errors (rc 2), and the swallowed error reads as "no match" — that pattern never fired.
-  if hits="$(printf '%s\n' "$added" | rg -n --pcre2 -e "$regex" 2>/dev/null)"; then
+  if hits="$(printf '%s\n' "$added" | rg -n --pcre2 -e "$regex")"; then
     printf '\n[scan-secrets] Potential secret (%s) in %s\n' "$name" "$file" >&2
     printf '%s\n' "$hits" | head -n 3 >&2
     has_findings=1
