@@ -1,9 +1,15 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
-from .models import Directive
+
 
 if TYPE_CHECKING:
     from fanops.config import Config
+
+class Directive:
+    def __init__(self, rendered: str = ""): self._rendered = rendered
+    def __str__(self) -> str: return self._rendered
+    def __bool__(self) -> bool: return bool(self._rendered)
+    def __repr__(self) -> str: return f"Directive({self._rendered!r})"
 
 def derive_cut_spec(p):
     """The CUT default a persona implies from its content_focus keywords."""
