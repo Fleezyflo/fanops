@@ -146,7 +146,7 @@ RULES: dict[str, Rule] = {r.id: r for r in [
     Rule("ARCH-008", "Every side effect is registered",
          "Subprocess, network, ledger-transaction, lock, mkdtemp and env-write sites are the system's "
          "blast radius. An unregistered one is an effect nobody reviewed.",
-         "kb/side_effects.json vs derived/side_effects.json", WARNING,
+         "kb/side_effects.json vs derived/side_effects.json", BLOCKING,
          "derived side-effect census matches the declared totals",
          "Update kb/side_effects.json to the derived counts, or remove the effect."),
 
