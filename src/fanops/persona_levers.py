@@ -59,8 +59,11 @@ _HOOK_ANGLE_OPTIONS = [
 _CLIP_PROFILE_BANDS = ["short", "medium", "long", "talk", "song"]
 
 LEVER_REGISTRY = [
-    {"key": "content_focus", "label": "Clips · favors moments", "kind": "multi", "stage": "casting",
-     "does": "which KINDS of moments this account clips for (casting prompt) — and DERIVES cut LENGTH + FRAMING",
+    {"key": "content_focus", "label": "Editorial focus", "kind": "text", "stage": "casting",
+     "does": "free-text editorial focus for moment selection (formerly the multi-select tokens)",
+     "options": []},
+    {"key": "cut_policy", "label": "Cut policy", "kind": "multi", "stage": "cut",
+     "does": "deterministic cut LENGTH + FRAMING derived from moment kinds (MOL-523)",
      "options": _CONTENT_FOCUS_OPTIONS},
     {"key": "intensity", "label": "Peak intensity", "kind": "select", "stage": "pick",
      "does": "which tercile of signal peaks survive the P4b filter (high/medium/low); unset = no filter",
@@ -72,7 +75,7 @@ LEVER_REGISTRY = [
      "does": "the strategy of the burned on-screen hook (free text; formerly curiosity vs challenge vs emotional vs result-first vs fomo)",
      "options": []},
     {"key": "clip_profile", "label": "Clip length", "kind": "select", "stage": "cut",
-     "does": "the GLOBAL deterministic cut-length band (Go-Live default; per-persona it is derived from content_focus)",
+     "does": "the GLOBAL deterministic cut-length band (Go-Live default; per-persona it is derived from cut_policy)",
      "options": [{"value": n} for n in _CLIP_PROFILE_BANDS]},
     {"key": "niche", "label": "Territory seeds", "kind": "tags", "stage": "caption",
      "does": "declared subject terms — the ONLY Layer A hashtag search roots (MOL-637); voice/levers "
@@ -92,11 +95,12 @@ LEVER_REGISTRY = [
 PERSONA_FIELD_EXEMPT = frozenset({"id", "name", "hashtag_corpus"})
 
 # The EDITABLE coherent levers: model field -> the output CHANNEL(s) it owns. Distinctness rule = "<=1 owner per
-# channel". content_focus owns casting-selection + cut-length + cut-framing; selection_scope owns casting-
-# selection-scope. `voice` owns the freeform register (the base of all three directives, modeled as its own channel).
+# channel". content_focus owns casting-selection; cut_policy owns cut-length + cut-framing; selection_scope owns
+# casting-selection-scope. `voice` owns the freeform register (the base of all three directives).
 PERSONA_EDITABLE_CHANNELS = {
     "voice": ("voice",),
-    "content_focus": ("casting-selection", "cut-length", "cut-framing"),
+    "content_focus": ("casting-selection",),
+    "cut_policy": ("cut-length", "cut-framing"),
     "intensity": ("peak-filter",),
     "selection_scope": ("casting-selection-scope",),
     "hook_angle": ("hook-angle",),
@@ -150,10 +154,11 @@ def clause_map(key: str) -> dict:
 
 
 def focus_profile_map() -> "OrderedDict[str, str]":
-    """The derived-cut LENGTH map {content_focus: tier}, ordered LONGEST-tier-first so next() over it picks the
+    """The derived-cut LENGTH map {cut_policy: tier}, ordered LONGEST-tier-first so next() over it picks the
     highest tier present (the longer-bias-first selection). Built from each option's `profile` + PROFILE_TIERS,
     stable within a tier on declaration order — byte-identical to the legacy _FOCUS_PROFILE."""
-    opts = lever("content_focus")["options"]
+    lv = lever("cut_policy")
+    opts = lv["options"] if lv else []
     out: "OrderedDict[str, str]" = OrderedDict()
     for tier in PROFILE_TIERS:
         for o in opts:
@@ -163,16 +168,18 @@ def focus_profile_map() -> "OrderedDict[str, str]":
 
 
 def framing_map() -> "OrderedDict[str, str]":
-    """The derived-cut FRAMING map {content_focus: framing}, ordered highest-intensity-first (MOL-170).
+    """The derived-cut FRAMING map {cut_policy: framing}, ordered highest-intensity-first (MOL-170).
     Order is `_FRAMING_PRIORITY` (the former option.intensity tiers) so next() over it still picks the
     highest-intensity present focus after intensity left the option dict (MOL-520)."""
-    opts = {o["value"]: o for o in lever("content_focus")["options"]}
+    lv = lever("cut_policy")
+    opts_list = lv["options"] if lv else []
+    opts = {o["value"]: o for o in opts_list}
     out: "OrderedDict[str, str]" = OrderedDict()
     for v in _FRAMING_PRIORITY:
         o = opts.get(v)
         if o and o.get("framing"):
             out[v] = o["framing"]
-    for o in lever("content_focus")["options"]:
+    for o in opts_list:
         if o["value"] not in out and o.get("framing"):
             out[o["value"]] = o["framing"]
     return out

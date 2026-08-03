@@ -44,7 +44,8 @@ class Persona(BaseModel):
     # Lever engine: explicit per-characteristic DIRECTION that compose_persona_instruction renders into the
     # one instruction the casting/hook/caption prompts read. ADDITIVE — all empty on a legacy persona, so
     # compose returns the bare `voice` (byte-identical). Validated at the write boundary (add/update_persona).
-    content_focus: list[str] = Field(default_factory=list)   # which moment KINDS to favor (casting): CONTENT_FOCUS
+    content_focus: Optional[str] = None         # editorial focus (free text; formerly CONTENT_FOCUS multi-select)
+    cut_policy: list[str] = Field(default_factory=list) # deterministic cut policy (tokens; MOL-523)
     selection_scope: Optional[str] = None         # selection constraint (free text; formerly SELECTION_SCOPE_LEVELS)
     hook_angle: Optional[str] = None              # on-screen hook strategy (free text; formerly HOOK_ANGLES)
     intensity: Optional[str] = None  # peak-filter tier: high|medium|low (INTENSITY); unset → None → no filter
