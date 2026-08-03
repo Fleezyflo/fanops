@@ -38,8 +38,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0          # MOL-193: full history so the PR-diff secret scan can resolve the base
-      - name: Install ripgrep
-        run: sudo apt-get install -y ripgrep
       - name: Secret scan (PR diff) — MOL-193
         if: github.event_name == 'pull_request'
         run: ./scripts/scan-secrets.sh diff-base "${{ github.event.pull_request.base.sha }}"
@@ -188,6 +186,20 @@ jobs:
           python -m pip install --upgrade pip
           pip install --require-hashes -r requirements/ci-e2e.txt
           pip install -e . --no-deps
+      - name: pip-audit (E2E environment — MOL-733)
+        # Environment mode (--desc) is required because the E2E closure contains direct-URL pins.
+        # Advisory only; findings are uploaded but do not red the job.
+        continue-on-error: true
+        run: |
+          python -m pip install pip-audit
+          pip-audit --desc | tee pip-audit-e2e-report.txt
+      - name: Upload E2E pip-audit report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-pip-audit-report
+          path: pip-audit-e2e-report.txt
+          if-no-files-found: ignore
       - name: Cache whisper 'tiny' checkpoint
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
