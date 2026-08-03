@@ -16,17 +16,36 @@ _ANGLE_CLAUSE = {
     "result-first": "open on the payoff, then reveal how it got there",
     "fomo": "carry genuine scarcity — a one-time, leaked, or unreleased drop",
 }
+# MOL-523: content_focus tokens map to clauses for editorial migration.
+_FOCUS_CLAUSE = {
+    "punchlines": "moments that land a verbal punchline — a bar with a clear setup and payoff, a quotable, rewatchable line",
+    "emotional": "moments carrying real emotion — vulnerability, longing, devotion, a confession the viewer feels",
+    "hype": "the highest-energy hype moments — the hardest delivery, the beat drop, the room going up",
+    "storytelling": "moments that tell a story or reveal something — an origin, a turn, a payoff",
+    "visual": "visually arresting moments — a strong scene, motion, or setting, not audio alone",
+    "bold-statement": "a bold or contrarian statement that stops the scroll",
+}
 
 def migrate_record(d):
-    # selection_scope
+    # MOL-521: selection_scope
     scope = d.get("selection_scope")
     if scope in _SCOPE_CLAUSE:
         d["selection_scope"] = _SCOPE_CLAUSE[scope]
     
-    # hook_angle
+    # MOL-521: hook_angle
     angle = d.get("hook_angle")
     if angle in _ANGLE_CLAUSE:
         d["hook_angle"] = _ANGLE_CLAUSE[angle]
+
+    # MOL-523: content_focus (list of tokens) -> cut_policy (list of tokens)
+    # and content_focus (new) = compiled clause string.
+    focus = d.get("content_focus")
+    if isinstance(focus, list):
+        # 1. Move old tokens to cut_policy
+        d["cut_policy"] = focus
+        # 2. Compile old tokens to the new free-text content_focus
+        clauses = [_FOCUS_CLAUSE[c] for c in focus if c in _FOCUS_CLAUSE]
+        d["content_focus"] = ("; ".join(clauses) + ".") if clauses else ""
     
     return d
 
