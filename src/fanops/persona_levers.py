@@ -65,12 +65,12 @@ LEVER_REGISTRY = [
     {"key": "intensity", "label": "Peak intensity", "kind": "select", "stage": "pick",
      "does": "which tercile of signal peaks survive the P4b filter (high/medium/low); unset = no filter",
      "options": _INTENSITY_OPTIONS},
-    {"key": "selection_scope", "label": "Selection scope", "kind": "select", "stage": "casting",
-     "does": "the selection CONSTRAINT posture (open vs subject-locked vs briefed vs credibility-first vs controversy-seeking)",
-     "options": _SELECTION_SCOPE_OPTIONS},
-    {"key": "hook_angle", "label": "Hook angle", "kind": "select", "stage": "hook",
-     "does": "the strategy of the burned on-screen hook (the register comes from the voice)",
-     "options": _HOOK_ANGLE_OPTIONS},
+    {"key": "selection_scope", "label": "Selection scope", "kind": "text", "stage": "casting",
+     "does": "the selection CONSTRAINT posture (free text; formerly open vs subject-locked vs briefed vs credibility-first vs controversy-seeking)",
+     "options": []},
+    {"key": "hook_angle", "label": "Hook angle", "kind": "text", "stage": "hook",
+     "does": "the strategy of the burned on-screen hook (free text; formerly curiosity vs challenge vs emotional vs result-first vs fomo)",
+     "options": []},
     {"key": "clip_profile", "label": "Clip length", "kind": "select", "stage": "cut",
      "does": "the GLOBAL deterministic cut-length band (Go-Live default; per-persona it is derived from content_focus)",
      "options": [{"value": n} for n in _CLIP_PROFILE_BANDS]},
@@ -186,7 +186,9 @@ def build_catalog() -> list[dict]:
     from fanops.bands import band_for
     out: list[dict] = []
     for lv in LEVER_REGISTRY:
-        if lv["key"] == "selection_scope":
+        if lv["kind"] == "text":
+            opts = []          # free text, no enumerated options
+        elif lv["key"] == "selection_scope":
             opts = [{"value": o["value"], "effect": (o["clause"] or "no change — open selection")} for o in lv["options"]]
         elif lv["key"] == "clip_profile":
             opts = [{"value": o["value"], "effect": f"{band_for(o['value']).lo:g}-{band_for(o['value']).hi:g}s cuts"} for o in lv["options"]]

@@ -90,6 +90,14 @@ def _enum_or_none(v, names, label) -> Optional[str]:
     return v or None
 
 
+def _norm_directive(v, label, max_len=200) -> Optional[str]:
+    """Normalize a free-text directive (MOL-521): stripped, length-bounded. Blank -> None."""
+    s = (v or "").strip()
+    if len(s) > max_len:
+        raise ValueError(f"{label} too long (max {max_len} chars)")
+    return s or None
+
+
 def _norm_focus(content_focus) -> list[str]:
     """Normalize + validate content_focus (the multi-select moment-kind lever): lowercase, deduped, each in
     CONTENT_FOCUS. A None/non-list -> []. An unknown kind raises (mirrors the enum levers)."""
@@ -184,8 +192,9 @@ def update_persona(cfg: Config, pid: str, *, name=_UNSET, voice=_UNSET,
     hashtags). Validates every passed lever against its vocabulary BEFORE the lock (never write a typo).
     Unknown id -> KeyError. (M3: tag_lean, the clip_profile/framing pins, and the directive overrides retired.)"""
     _focus = _norm_focus(content_focus) if content_focus is not _UNSET else _UNSET
-    _scope = _enum_or_none(selection_scope, SELECTION_SCOPE_LEVELS, "selection_scope") if selection_scope is not _UNSET else _UNSET
-    _angle = _enum_or_none(hook_angle, HOOK_ANGLES, "hook_angle") if hook_angle is not _UNSET else _UNSET
+    # MOL-521: selection_scope and hook_angle are now free text.
+    _scope = _norm_directive(selection_scope, "selection_scope") if selection_scope is not _UNSET else _UNSET
+    _angle = _norm_directive(hook_angle, "hook_angle") if hook_angle is not _UNSET else _UNSET
     _intensity = _enum_or_none(intensity, INTENSITY, "intensity") if intensity is not _UNSET else _UNSET
     _niche = _norm_niche(niche) if niche is not _UNSET else _UNSET
     if niche is not _UNSET and not _niche:

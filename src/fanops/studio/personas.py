@@ -32,7 +32,7 @@ def preview_compose(cfg: Config, form) -> ActionResult:
     500. `form` is a Werkzeug MultiDict (or any object with .get/.getlist). The five clean levers only:
     voice, content_focus, intensity, selection_scope, hook_angle (+ the saved corpus); the cut is DERIVED from content_focus."""
     try:
-        from fanops.personas import CONTENT_FOCUS, SELECTION_SCOPE_LEVELS, HOOK_ANGLES, INTENSITY
+        from fanops.personas import CONTENT_FOCUS, INTENSITY
 
         def _enum(value, allowed, label):
             v = (value or "").strip()
@@ -52,8 +52,9 @@ def preview_compose(cfg: Config, form) -> ActionResult:
             if c not in CONTENT_FOCUS: raise ValueError(f"unknown content_focus: {c}")
         per = core.Persona(
             id=(pid or "preview"), voice=form.get("voice", ""), hashtag_corpus=corpus,
-            content_focus=focus, selection_scope=_enum(form.get("selection_scope"), SELECTION_SCOPE_LEVELS, "selection_scope"),
-            hook_angle=_enum(form.get("hook_angle"), HOOK_ANGLES, "hook_angle"),
+            content_focus=focus,
+            selection_scope=(form.get("selection_scope") or "").strip() or None,
+            hook_angle=(form.get("hook_angle") or "").strip() or None,
             intensity=_enum(form.get("intensity"), INTENSITY, "intensity"))
     except ValueError as exc:
         return ActionResult(ok=False, error=str(exc))

@@ -92,7 +92,8 @@ def casting_directive(p) -> Directive:
     voice = _base_voice(p)
     foc_clauses = [_FOCUS_CLAUSE[c] for c in (getattr(p, "content_focus", None) or []) if c in _FOCUS_CLAUSE]
     select_rule = ("Clip for this account: " + "; ".join(foc_clauses) + ".") if foc_clauses else ""
-    scope_lens = _SCOPE_CLAUSE.get((getattr(p, "selection_scope", None) or "").strip().lower(), "")
+    # MOL-521: selection_scope is now free text.
+    scope_lens = (getattr(p, "selection_scope", None) or "").strip()
     body_parts = [x for x in (select_rule, scope_lens) if x]
     rendered = _join(voice, " ".join(body_parts).strip())
     return Directive(select_rule=select_rule, scope_lens=scope_lens, register=voice, _rendered=rendered)
@@ -103,7 +104,8 @@ def hook_directive(p) -> Directive:
     from hook_angle (the strategy); else the bare voice (firewall). Persona-supplied demos/ban_additions ride
     as optional duck-typed attrs (hook_demos, hook_ban_additions). Returns Directive (str(d) == today's string)."""
     voice = _base_voice(p)
-    lean = _ANGLE_CLAUSE.get((getattr(p, "hook_angle", None) or "").strip().lower(), "")
+    # MOL-521: hook_angle is now free text.
+    lean = (getattr(p, "hook_angle", None) or "").strip()
     body = ("For the on-screen hook, " + lean + ".") if lean else ""
     rendered = _join(voice, body.strip())
     demos = list(getattr(p, "hook_demos", None) or [])
@@ -160,7 +162,8 @@ def _casting_fragments(p) -> list[dict]:
     if voice: frags.append({"source": "voice", "text": voice})
     foc = [c for c in (getattr(p, "content_focus", None) or []) if c in _FOCUS_CLAUSE]
     if foc: frags.append({"source": "content_focus", "text": "Clip for this account: " + "; ".join(_FOCUS_CLAUSE[c] for c in foc) + "."})
-    sc = _SCOPE_CLAUSE.get((getattr(p, "selection_scope", None) or "").strip().lower(), "")
+    # MOL-521: selection_scope is now free text.
+    sc = (getattr(p, "selection_scope", None) or "").strip()
     if sc: frags.append({"source": "selection_scope", "text": sc})
     return frags
 
@@ -169,7 +172,8 @@ def _hook_fragments(p) -> list[dict]:
     frags: list[dict] = []
     voice = _base_voice(p)
     if voice: frags.append({"source": "voice", "text": voice})
-    a = _ANGLE_CLAUSE.get((getattr(p, "hook_angle", None) or "").strip().lower(), "")
+    # MOL-521: hook_angle is now free text.
+    a = (getattr(p, "hook_angle", None) or "").strip()
     if a: frags.append({"source": "hook_angle", "text": "For the on-screen hook, " + a + "."})
     return frags
 
@@ -222,8 +226,8 @@ def compose_breakdown(cfg: Config, p) -> dict:
             "terms": facts["terms"],                       # what the next measurement pass will search for
             "corpus": list(getattr(p, "hashtag_corpus", None) or [])}
     noops: list[str] = []
-    if (getattr(p, "selection_scope", None) or "").strip().lower() in ("", "open"):
-        noops.append("selection_scope=open has no effect on selection")
+    if not (getattr(p, "selection_scope", None) or "").strip():
+        noops.append("selection_scope is empty — no effect on selection")
     bd = {"casting": casting, "hook": hook, "caption": caption, "cut": cut, "tags": tags, "noops": noops}
     bd["produces"] = produces_summary(bd)                 # S7: the operator-facing OUTPUT lead, from this same detail
     return bd
