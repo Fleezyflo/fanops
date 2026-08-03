@@ -707,8 +707,8 @@ def account_pivot_rows(led: Ledger, accounts: Accounts, cfg: Config, *, now: dat
 def review_feed_rows(led: Ledger, accounts: Accounts, cfg: Config, *, now: datetime, account: Optional[str],
                      batch: Optional[str] = None, source: Optional[str] = None,
                      state: Optional[str] = None) -> list[SurfacePost]:
-    """U6: ONE account's editable awaiting surfaces as a flat feed list — source/batch provenance stamped,
-    sorted newest-batch-first then stable source order then post created_at desc. Pure read."""
+    """U6: ONE account's editable awaiting review-content rows — one row per clip/account, with source/batch
+    provenance stamped, sorted newest-batch-first then stable source order then post created_at desc. Pure read."""
     handle = (account or "").strip()
     if not handle:
         return []
@@ -728,7 +728,16 @@ def review_feed_rows(led: Ledger, accounts: Accounts, cfg: Config, *, now: datet
     rows.sort(key=lambda r: src_order.get(r.source_key, 999))
     rows.sort(key=lambda r: (led.posts[r.post_id].created_at or "") if r.post_id in led.posts else "", reverse=True)
     rows.sort(key=lambda r: r.batch_created or "\x00", reverse=True)
-    return rows
+
+    deduped: list[SurfacePost] = []
+    seen: set[tuple[str | None, str]] = set()
+    for r in rows:
+        key = (r.clip_id, r.account)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(r)
+    return deduped
 
 
 def group_review_by_source(rows: list) -> list:
