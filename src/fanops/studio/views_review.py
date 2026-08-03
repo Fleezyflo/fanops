@@ -649,15 +649,14 @@ def awaiting_moment_count(led: Ledger) -> int:
 
 
 def review_awaiting_by_account(cards: list[ReviewCard]) -> dict[str, int]:
-    """Editable awaiting surface count per account — powers the per-account approve strip."""
+    """Editable review-content count per account — one count per editable card/clip per account."""
     from collections import Counter
     c = Counter()
     for card in cards:
         if card.bucket != "editable":
             continue
-        for s in card.surfaces:
-            if s.editable:
-                c[s.account] += 1
+        for account in {s.account for s in card.surfaces if s.editable}:
+            c[account] += 1
     return dict(c)
 
 def review_progress(cards: list[ReviewCard]) -> dict:

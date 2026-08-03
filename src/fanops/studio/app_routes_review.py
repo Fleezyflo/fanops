@@ -70,7 +70,7 @@ def register_review_routes(app, cfg):
                                           source=source, state=state)
         awaiting_by_account = views.review_awaiting_by_account(acct_cards)
         if show_feed and feed_account:
-            awaiting_by_account = {feed_account: len([r for r in (feed_rows_full or []) if r.editable])}
+            awaiting_by_account = {feed_account: views.review_awaiting_by_account(cards).get(feed_account, 0)}
         page = views.paginate(cards, _offset_arg())
         ctx = dict(cards=page.items, page=page, tab="review", compact=compact, ultra=ultra,
                    active_view=view, awaiting_by_account=awaiting_by_account, backend=cfg.poster_backend,
