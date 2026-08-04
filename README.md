@@ -55,8 +55,8 @@ Full CLI surface: `fanops --help`. Environment variables and defaults: [docs/CON
 | [docs/RUNBOOK.md](docs/RUNBOOK.md) | First end-to-end run (canonical operator script) |
 | [docs/GOLIVE.md](docs/GOLIVE.md) | Publishing paths and safety |
 | [docs/POSTIZ_SETUP.md](docs/POSTIZ_SETUP.md) | Stand up Postiz |
-| [CLAUDE.md](CLAUDE.md) | Architecture notes for contributors |
-| [AGENTS.md](AGENTS.md) | Agent / PR workflow |
+| [docs/ENFORCEMENT.md](docs/ENFORCEMENT.md) | What actually enforces each rule |
+| [docs/ENGINEERING_STANDARDS.md](docs/ENGINEERING_STANDARDS.md) | Craft guidance (not a gate) |
 
 ## Rules and how they are enforced
 
@@ -80,7 +80,7 @@ ruff check .                                    # lint
 
 **Do not run the test suite locally.** `pytest` executes only in GitHub CI on a pull request — parallel local
 suites crash the operator's machine. The `unit` job is the required check; the real-tooling `e2e` job runs on
-manual dispatch and nightly only. See [AGENTS.md](AGENTS.md) and [tests/CLAUDE.md](tests/CLAUDE.md).
+manual dispatch and nightly only. See [docs/ENFORCEMENT.md](docs/ENFORCEMENT.md) and [tests/CLAUDE.md](tests/CLAUDE.md).
 
 ## License
 

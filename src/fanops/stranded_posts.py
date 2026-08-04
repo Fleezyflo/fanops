@@ -14,8 +14,6 @@ anything that has touched a platform keeps its state, because that record is why
 """
 from __future__ import annotations
 
-import sys
-
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import PostState
@@ -43,7 +41,7 @@ def _tally(posts) -> dict:
 
 
 def cmd_posts_reconcile_retired(cfg: Config, args) -> int:
-    unshipped = set(Ledger._UNSHIPPED_POST_STATES)
+    unshipped = set(Ledger._UNSHIPPED_POST_STATES) - set(Ledger._LIVE_POST_STATES)
     led = Ledger.load(cfg)
     posts = stranded_posts(led)
     targets = [p for p in posts if p.state in unshipped]
@@ -67,16 +65,15 @@ def cmd_posts_reconcile_retired(cfg: Config, args) -> int:
         print("\nnothing to reconcile.")
         return 0
 
-    # The daemon publishes `queued` posts on its tick. Applying underneath a live daemon races it for
-    # exactly the rows we are about to retire, so refuse by default rather than narrow the window.
-    # Both S18 imports are LAZY (apply-path only), so this module adds no compile-time edge to S18.
+    # Runs SAFELY against a live daemon — no stop, no refusal. The publisher claims a post by flipping
+    # `queued`->`submitting` INSIDE a transaction and persisting it BEFORE any network call
+    # (post/run.py, the F11 crash-safety fix), so both interleavings are already closed: if we win the
+    # lock the post is `retired` and publish_due — which iterates `queued` only — never sees it; if the
+    # publisher wins, the post is `submitting` and the re-read below skips it, because `submitting` is
+    # not in _UNSHIPPED_POST_STATES. A heartbeat refusal here would only have made a human perform the
+    # coordination the state machine already performs.
+    # The S18 import is LAZY (apply-path only), so this module adds no compile-time edge to S18.
     from fanops.audit import write_audit
-    from fanops.health_model import heartbeat_stale
-    age, stale, _iv = heartbeat_stale(cfg)
-    if not stale and not getattr(args, "force_with_daemon_running", False):
-        print(f"refusing --apply: the daemon looks ALIVE (heartbeat {age:.0f}s old) and publishes `queued` "
-              "posts. Stop it first, or pass --force-with-daemon-running.", file=sys.stderr)
-        return 2
 
     snap = Ledger.snapshot(cfg)
     print(f"\nsnapshot: {snap}")
