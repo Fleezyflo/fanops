@@ -187,7 +187,7 @@
     "fanops.stranded_posts": [
       {
         "call": "Ledger.transaction",
-        "line": 81
+        "line": 85
       }
     ],
     "fanops.studio.actions": [

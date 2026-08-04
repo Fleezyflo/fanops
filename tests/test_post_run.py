@@ -1,6 +1,6 @@
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.models import Post, Clip, PostState, ClipState, Platform
+from fanops.models import Post, Clip, Moment, PostState, ClipState, MomentState, Platform
 from fanops.post.run import publish_due
 
 # publish-out-of-lock: publish_due(cfg, *, now) self-loads the ledger and publishes each due post via a
@@ -786,3 +786,26 @@ def test_publish_due_quota_is_per_account(tmp_path, monkeypatch, mocker):
     assert sum(1 for p in led.posts.values() if p.account == "alpha" and p.state is PostState.published) == _DAILY_ACCOUNT_CAP
     assert sum(1 for p in led.posts.values() if p.account == "beta" and p.state is PostState.published) == 3
     assert summary["quota_skipped"] == 2
+
+def test_publish_due_refuses_a_post_under_retired_lineage(tmp_path, monkeypatch, mocker):
+    # THE publish-side lineage guard. review_buckets, approve_account/approve_batch, single approve and
+    # crosspost all already refuse a retired-lineage post; publish_due was the gap — and it is the only one
+    # of them that reaches a real platform. An approval granted BEFORE the pipeline dropped the moment is
+    # stale, and `queued` means "ships on the next due sweep", so without this the operator's old click still
+    # publishes lineage the pipeline abandoned. BOTH predicates are covered (retired CLIP, retired MOMENT)
+    # alongside a healthy post in the SAME pass, so a blanket refusal cannot pass this test either.
+    _live(monkeypatch); cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    for pid, cid in (("p_ok", "c_ok"), ("p_clip", "c_clip"), ("p_mom", "c_mom")):
+        _queued(led, cfg, pid=pid, cid=cid, when="2020-01-01T00:00:00Z")
+    led.add_moment(Moment(id="mom_ret", parent_id="src_1", start=0.0, end=5.0,
+                          reason="dropped by a re-decision", state=MomentState.retired))
+    led.retire_clip("c_clip")                          # predicate 1: the CLIP is retired
+    led.clips["c_mom"].parent_id = "mom_ret"           # predicate 2: the parent MOMENT is retired
+    _http_media(led, "p_ok", "p_clip", "p_mom"); _stub_ok_poster(mocker, cfg)   # _http_media saves
+    mocker.patch("fanops.postiz_lifecycle.ensure_up")
+    summary = publish_due(cfg, now=_quota_now())
+    assert summary["due"] == 1 and summary["published"] == 1 and summary["skipped_retired_lineage"] == 2
+    led = Ledger.load(cfg)
+    assert led.posts["p_ok"].state is PostState.published           # the control still ships
+    for pid in ("p_clip", "p_mom"):                                 # refused, and ZERO mutation on the skip
+        assert led.posts[pid].state is PostState.queued and led.posts[pid].submission_started_at is None
