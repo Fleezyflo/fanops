@@ -590,7 +590,13 @@ def review_buckets(led: Ledger, accounts: Accounts, cfg: Config, *, now: datetim
     editable_cards: list[ReviewCard] = []
     for clip_id, posts in queued_by_clip.items():
         clip = led.clips.get(clip_id)
-        if clip is not None and not clip.held:        # a held clip belongs ONLY in the held bucket
+        if clip is None:
+            continue
+        if led.is_retired_clip(clip.id):
+            continue
+        if led.is_retired_moment(clip.parent_id):
+            continue
+        if not clip.held:        # a held clip belongs ONLY in the held bucket
             editable_cards.append(_card(led, clip, posts, "editable", cfg, personas, now, active_handles, acct_by_handle))
     # editable cards: day-sorted (newest ingest day first, 'undated' last) so _review_body.html can emit a
     # running day-header across the paginated slice WITHOUT touching pagination (content-lifecycle Phase 3 H8).
@@ -637,13 +643,16 @@ def awaiting_moment_count(led: Ledger) -> int:
     number of MOMENTS (distinct non-held clips) with >=1 awaiting_approval post — i.e. the size of the Review
     approve-worklist (editable cards), NOT the raw awaiting-POST count. A clip fans out to many per-account
     surface posts, so counting posts overstates the worklist (the 'Home 57 vs Review 17' bug). Mirrors the
-    editable-bucket rule in review_buckets exactly (non-held existing clip with an awaiting post) so the Home
-    headline and the Review worklist can never drift. Pure, lock-free read."""
+    editable-bucket rule in review_buckets exactly (an existing, non-retired, non-held clip under a non-retired
+    moment, carrying an awaiting post) so the Home headline and the Review worklist can never drift. Pure,
+    lock-free read. Locked by the parity test — change this rule and review_buckets together or not at all."""
     seen: set[str] = set()
     for p in led.posts.values():
         if p.state is PostState.awaiting_approval:
             clip = led.clips.get(p.parent_id)
-            if clip is not None and not clip.held:
+            if clip is None or led.is_retired_clip(clip.id) or led.is_retired_moment(clip.parent_id):
+                continue                              # mirror review_buckets' retirement guards exactly
+            if not clip.held:
                 seen.add(p.parent_id)
     return len(seen)
 

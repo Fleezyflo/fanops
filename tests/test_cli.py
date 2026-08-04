@@ -718,89 +718,128 @@ def test_amplify_variants_inert_when_flag_off(tmp_path, monkeypatch):
     assert main(["amplify-variants"]) == 0               # flag OFF -> apply_variant_amplify inert
 
 
-def test_studio_subcommand_parses_and_lazy_imports(tmp_path, monkeypatch, mocker):
-    # `fanops studio` must build the app via a LAZY import and call app.run with the bound host/port,
-    # without actually serving. We patch create_app so no socket is opened.
+def test_studio_refuses_unmanaged_foreground(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    import fanops.cli as cli
+
+    assert cli.main(["studio", "--host", "127.0.0.1", "--port", "9999"]) == 2
+
+    err = capsys.readouterr().err
+    assert "unmanaged foreground Studio" in err
+    assert "--install" in err
+    assert "--dev-reload" in err
+
+
+def test_studio_managed_path_runs_without_reloader(tmp_path, monkeypatch, mocker):
     monkeypatch.chdir(tmp_path)
     import fanops.cli as cli
     fake_app = mocker.Mock()
     create_app = mocker.Mock(return_value=fake_app)
-    # the module is imported lazily inside the dispatch branch, so patch the source symbol
     mocker.patch("fanops.studio.app.create_app", create_app)
-    # #5: the studio dispatch also lazily calls fanops.health.ensure_up/system_health (cli.py:683),
-    # which boots Docker Desktop + polls it (up to 90s → the 60s pytest-timeout). Stub both at the
-    # source so this CLI-parsing unit test never contacts Docker.
     mocker.patch("fanops.health.ensure_up", return_value=[])
     mocker.patch("fanops.health.system_health", return_value=[])
-    mocker.patch.object(cli, "_studio_port_busy", return_value=False)   # hermetic: a live studio on this host must not trip the guard
-    rc = cli.main(["studio", "--host", "127.0.0.1", "--port", "9999"])
-    assert rc == 0
+    mocker.patch.object(cli, "_studio_port_busy", return_value=False)
+
+    assert cli.main([
+        "studio",
+        "--managed",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "9999",
+    ]) == 0
+
     create_app.assert_called_once()
     fake_app.run.assert_called_once()
     _, kwargs = fake_app.run.call_args
-    assert kwargs.get("host") == "127.0.0.1" and kwargs.get("port") == 9999
+    assert kwargs["host"] == "127.0.0.1"
+    assert kwargs["port"] == 9999
+    assert kwargs["debug"] is False
+    assert kwargs["threaded"] is True
+    assert kwargs["use_reloader"] is False
 
-def test_studio_defaults_host_port(tmp_path, monkeypatch, mocker):
+
+def test_studio_dev_reload_path_enables_reloader(tmp_path, monkeypatch, mocker):
     monkeypatch.chdir(tmp_path)
     import fanops.cli as cli
     fake_app = mocker.Mock()
-    mocker.patch("fanops.studio.app.create_app", mocker.Mock(return_value=fake_app))
-    mocker.patch("fanops.health.ensure_up", return_value=[])         # #5: no Docker boot in this unit test
+    mocker.patch("fanops.studio.app.create_app", return_value=fake_app)
+    mocker.patch("fanops.health.ensure_up", return_value=[])
     mocker.patch("fanops.health.system_health", return_value=[])
-    mocker.patch.object(cli, "_studio_port_busy", return_value=False)   # hermetic: the operator's real studio serves 8787
-    assert cli.main(["studio"]) == 0
+    mocker.patch.object(cli, "_studio_port_busy", return_value=False)
+
+    assert cli.main(["studio", "--dev-reload"]) == 0
+
+    fake_app.run.assert_called_once()
     _, kwargs = fake_app.run.call_args
-    assert kwargs.get("host") == "127.0.0.1" and kwargs.get("port") == 8787
-    # stage-5 audit: debug must be EXPLICITLY off (a stray FLASK_DEBUG=1 would otherwise enable
-    # the Werkzeug interactive debugger — code exec on the cockpit)
-    assert kwargs.get("debug") is False
+    assert kwargs["host"] == "127.0.0.1"
+    assert kwargs["port"] == 8787
+    assert kwargs["debug"] is False
+    assert kwargs["threaded"] is True
+    assert kwargs["use_reloader"] is True
 
 
 def test_studio_port_busy_probes_liveness(tmp_path):
-    # The guard's truth is a socket ACCEPTING on the port — nothing else.
     import socket
     import fanops.cli as cli
+
     srv = socket.socket()
     try:
-        srv.bind(("127.0.0.1", 0)); srv.listen(1)
+        srv.bind(("127.0.0.1", 0))
+        srv.listen(1)
         host, port = srv.getsockname()
         assert cli._studio_port_busy(host, port) is True
-        srv.close()                                   # close() is idempotent — the finally re-close is safe
+        srv.close()
         assert cli._studio_port_busy(host, port) is False
     finally:
         srv.close()
 
 
-def test_studio_guard_is_liveness_not_launchd(tmp_path, monkeypatch, mocker):
-    # Bricked-resident regression (2026-07-10): the launchd child saw ITSELF as "loaded", printed
-    # "already running" and exited 0; KeepAlive={SuccessfulExit:false} never restarted it. The guard
-    # must consult port liveness, NEVER launchd registration — loaded-but-silent falls through to serve.
+def test_studio_managed_guard_uses_liveness_not_launchd(
+    tmp_path,
+    monkeypatch,
+    mocker,
+):
     import sys as _sys
+
     monkeypatch.chdir(tmp_path)
     import fanops.cli as cli
+
     monkeypatch.setattr(_sys, "platform", "darwin")
     fake_app = mocker.Mock()
-    mocker.patch("fanops.studio.app.create_app", mocker.Mock(return_value=fake_app))
+    mocker.patch("fanops.studio.app.create_app", return_value=fake_app)
     mocker.patch("fanops.health.ensure_up", return_value=[])
     mocker.patch("fanops.health.system_health", return_value=[])
-    mocker.patch.object(cli.daemon, "studio_agent_status",
-                        side_effect=AssertionError("guard must not consult launchd registration"))
+    mocker.patch.object(
+        cli.daemon,
+        "studio_agent_status",
+        side_effect=AssertionError(
+            "guard must not consult launchd registration"
+        ),
+    )
     mocker.patch.object(cli, "_studio_port_busy", return_value=False)
-    assert cli.main(["studio", "--port", "9999"]) == 0
+
+    assert cli.main(["studio", "--managed", "--port", "9999"]) == 0
     fake_app.run.assert_called_once()
 
 
-def test_studio_guard_trips_when_port_serving(tmp_path, monkeypatch, mocker, capsys):
-    # Something ACCEPTING on the port (any instance — resident or foreground) → clean "already serving"
-    # exit 0 and the app is never built.
+def test_studio_managed_guard_trips_when_port_serving(
+    tmp_path,
+    monkeypatch,
+    mocker,
+    capsys,
+):
     import sys as _sys
+
     monkeypatch.chdir(tmp_path)
     import fanops.cli as cli
+
     monkeypatch.setattr(_sys, "platform", "darwin")
     create_app = mocker.Mock()
     mocker.patch("fanops.studio.app.create_app", create_app)
     mocker.patch.object(cli, "_studio_port_busy", return_value=True)
-    assert cli.main(["studio"]) == 0
+
+    assert cli.main(["studio", "--managed"]) == 0
     create_app.assert_not_called()
     assert "already serving" in capsys.readouterr().out
 

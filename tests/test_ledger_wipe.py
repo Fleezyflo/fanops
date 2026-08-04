@@ -322,7 +322,11 @@ def test_delete_moment_cascade_and_protected_states_byte_identical():
     # if this fails, _delete_moment_cascade was edited — the M4 wipe MUST be a separate verb, never a
     # change to the routine cascade. Re-verify the change is intended, then update this pin.
     # Repinned MOL-358: cascade unlink warning routes through get_logger (fail-open posture unchanged).
-    assert h == "f49651e809e50e423576e7f09d9a93f287b9945869bb47da1da8b1109191bedd", f"cascade source changed; new sha256={h}"
+    # Repinned (stranded-posts fix): preserve-and-retire now carries DOWN to the never-shipped posts
+    # (_UNSHIPPED_POST_STATES -> PostState.retired). DELETION posture is unchanged — _PROTECTED_POST_STATES is
+    # byte-identical below, nothing new is erased, and live/ambiguous posts keep their state. This closes the
+    # hole where a preserved awaiting_approval post outlived its moment and stayed bulk-approvable.
+    assert h == "d0940253e402bc16428994d054db85858453478b11b8c44ad29c39ccd4943733", f"cascade source changed; new sha256={h}"
     assert Ledger._PROTECTED_POST_STATES == (
         PostState.published, PostState.analyzed, PostState.submitted, PostState.submitting,
         PostState.needs_reconcile, PostState.awaiting_approval, PostState.queued, PostState.retired)

@@ -19,6 +19,8 @@ def _approve_ids_with_render(cfg: Config, *, resolve_ids: Callable[[Ledger], Seq
     """P9: promote awaiting->queued. Owner-moment clip is already rendered — no re-cut at approval."""
     now = _now(now); now_iso = iso_z(now)
     approved = 0
+    skipped_retired = 0
+    approved_ids: list[str] = []
     try:
         with Ledger.transaction(cfg) as led:
             ids_in_batch = list(resolve_ids(led))
@@ -36,6 +38,16 @@ def _approve_ids_with_render(cfg: Config, *, resolve_ids: Callable[[Ledger], Seq
                 if post is None:
                     continue
                 clip = led.clips.get(post.parent_id)
+                # A RETIRED lineage is never approvable. crosspost/crosspost_to_account already refuse to MINT
+                # onto one; this is the missing APPROVE-side twin — these posts were minted BEFORE their parent
+                # was retired (re-decision cascade preserves awaiting_approval posts and retires the MOMENT),
+                # so they survive with a live clip under a dead moment. Promoting one to `queued` publishes
+                # lineage the system already dropped. The moment check is the load-bearing one: the clip is
+                # usually still ClipState.queued. Counted in `skipped_retired` — never silently swallowed.
+                if clip is not None and (led.is_retired_clip(clip.id) or led.is_retired_moment(clip.parent_id)):
+                    skipped_retired += 1
+                    get_logger(cfg)("approve", pid, "skipped_retired_lineage", account=post.account)
+                    continue
                 if clip is not None:
                     cap = PLATFORM_MAX_SECONDS.get(post.platform)
                     from fanops.clip import realized_clip_seconds
@@ -48,7 +60,8 @@ def _approve_ids_with_render(cfg: Config, *, resolve_ids: Callable[[Ledger], Seq
                 sugg = sched.get(pid) or suggest_time(cfg, post, now=now)
                 led.approve_post(pid, now_iso=now_iso, suggested_iso=sugg)
                 approved += 1
-            audited_ids = [i for i in ids_in_batch if i in led.posts]
+                approved_ids.append(pid)
+            audited_ids = [i for i in approved_ids if i in led.posts]   # audit what PROMOTED, not what was offered
     except Exception as exc:
         return ActionResult(ok=False, error=f"approve failed: {str(exc)[:160]}")
     if approved and audited_ids:
@@ -64,7 +77,8 @@ def _approve_ids_with_render(cfg: Config, *, resolve_ids: Callable[[Ledger], Seq
                             "schedule_account": accts[0] if len(accts) == 1 else None}
         except Exception:
             sched_detail = {"outcome": "approved_scheduled"}
-    return ActionResult(ok=True, detail={**detail, "approved": approved, "render_pending": 0, **sched_detail})
+    return ActionResult(ok=True, detail={**detail, "approved": approved, "render_pending": 0,
+                                         "skipped_retired": skipped_retired, **sched_detail})
 
 BULK_APPROVE_CONFIRM_AT = 15
 
@@ -121,6 +135,8 @@ def approve_with_hook(cfg: Config, clip_id: str, *, now: Optional[datetime] = No
         with Ledger.transaction(cfg) as led:
             clip = led.clips.get(clip_id)
             if clip is None: return ActionResult(ok=False, error=f"no such clip: {clip_id}")
+            if led.is_retired_clip(clip.id) or led.is_retired_moment(clip.parent_id):   # same guard as the bulk engine,
+                return ActionResult(ok=False, error=f"clip {clip_id} is retired — not eligible for approval")  # loud here (one clip)
             ids = [p.id for p in led.posts.values()
                    if p.parent_id == clip_id and p.state is PostState.awaiting_approval]
             mom = led.moments.get(clip.parent_id)

@@ -669,6 +669,13 @@ class Ledger:
     # queued (approved, not-yet-shipped) / retired (M4 stitch-superseded base) posts — deliberate human/stitch
     # records. PRESERVE-and-RETIRE exactly like a live post, at BOTH checks below (post-loop AND clip-drop).
     _PROTECTED_POST_STATES = _LIVE_POST_STATES + (PostState.awaiting_approval, PostState.queued, PostState.retired)
+    # The protected posts that have NEVER touched a platform: no remote object, no lift record, nothing for the
+    # preserve rule to protect. They are protected from DELETION (the operator's un-reviewed work is not thrown
+    # away) but they must not stay ACTIONABLE under a moment the pipeline has retired — left `awaiting_approval`
+    # they are invisible to review_buckets yet still swept by approve_account/approve_batch (which read
+    # led.posts directly) and then published. Preserve-and-retire carries DOWN to these; the live/ambiguous
+    # states in _LIVE_POST_STATES keep their state, because that record is the whole reason preserve exists.
+    _UNSHIPPED_POST_STATES = (PostState.awaiting_approval, PostState.queued)
 
     def post_is_remote_or_publishable(self, post) -> bool:
         """True when this post is live on a platform, could still publish, or already carries a hosted
@@ -718,6 +725,15 @@ class Ledger:
             # keep the moment but suppress it from future rendering/crossposting
             if moment_id in self.moments:
                 self.moments[moment_id] = self.moments[moment_id].model_copy(update={"state": MomentState.retired})  # ECC fix #10
+            # ...and carry that retirement DOWN to the never-shipped posts. Preserving them WITHOUT a terminal
+            # state was the defect: the moment died, the post stayed `awaiting_approval` under it, and every
+            # reader that walks led.posts directly (approve_account/approve_batch, the raw awaiting tallies)
+            # still saw it — one bulk-approve click away from publishing re-decided-away lineage. A post that
+            # HAS touched a platform is left exactly as it is; its record is why the preserve rule exists.
+            for c in self.clips_of(moment_id):
+                for p in self.posts_of(c.id):
+                    if p.state in self._UNSHIPPED_POST_STATES:
+                        self.posts[p.id] = p.model_copy(update={"state": PostState.retired})
         else:
             self.moments.pop(moment_id, None)
 
