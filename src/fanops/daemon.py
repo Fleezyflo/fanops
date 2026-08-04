@@ -635,21 +635,22 @@ def install_studio(cfg: Config, *, host: str = STUDIO_DEFAULT_HOST, port: int = 
     _require_darwin()
     cfg.reports.mkdir(parents=True, exist_ok=True)
     
-    # 1. Capture old PID
-    old_st = studio_agent_status()
-    old_pid = old_st.get("pid")
-    
-    # 2. Own the generation invariant (MOL-728)
+    # 1. Own the generation invariant (MOL-728)
     if generation is None:
         import secrets
         generation = secrets.token_hex(16)
-    
-    # 3. Render and write new plist
+
+    # 2. Render and write new plist
     pp = studio_plist_path()
     pp.parent.mkdir(parents=True, exist_ok=True)
     from fanops.controlio import write_text_atomic
     write_text_atomic(pp, render_studio_plist(cfg, host=host, port=port, generation=generation))
-    
+
+    # 3. Capture old PID — AFTER the write, so a failed/interrupted write never reaches launchctl at all.
+    # (studio_agent_status shells `launchctl list`; reading it is harmless, but install_studio is fail-CLOSED
+    # and its contract is that a write failure touches launchctl zero times. Ordering, not severity.)
+    old_pid = studio_agent_status().get("pid")
+
     # 4. Load (bootout + bootstrap)
     loaded = _load_plist(pp, STUDIO_LABEL)
     if not loaded:
