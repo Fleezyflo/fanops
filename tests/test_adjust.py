@@ -114,6 +114,27 @@ def test_retire_suppresses_lineage_including_moment(tmp_path):
     led, clips = render_aspects_for(led, cfg, "mL", aspects={Fmt.r16x9})
     assert clips == []                                # guard fires -> no resurrected clip
 
+def test_retire_carries_down_to_never_shipped_posts(tmp_path):
+    # THE stranding root. retire_clip / set_moment_state are plain no-cascade state flips (canary depends
+    # on that), so this path suppressed the lineage and left the loser's SIBLING posts at
+    # awaiting_approval / queued underneath it — invisible to review_buckets, refused by every actionable
+    # reader, yet counted in every raw state census forever: a phantom backlog that never drains. Same rule
+    # as _delete_moment_cascade — never-shipped -> retired; anything that has TOUCHED a platform keeps its
+    # state, because that record is the whole reason the preserve rule exists.
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _analyzed_post(led, 1, "pL", "cL", "mL", "sL")
+    for pid, st in (("pAw", PostState.awaiting_approval), ("pQ", PostState.queued),
+                    ("pNR", PostState.needs_reconcile)):
+        led.add_post(Post(id=pid, parent_id="cL", account="a", account_id="1", platform=Platform.instagram,
+                          caption="x", state=st, public_url="dryrun://1"))
+    led = retire(led, ["pL"])
+    assert led.posts["pAw"].state is PostState.retired            # never shipped -> suppressed
+    assert led.posts["pQ"].state is PostState.retired             # approved but never shipped -> suppressed
+    assert led.posts["pNR"].state is PostState.needs_reconcile    # MAY be live on the platform -> preserved
+    assert led.posts["pL"].state is PostState.analyzed            # the performance record is untouched
+    retire(led, ["pL"])                                           # idempotent: a second pass changes nothing
+    assert led.posts["pNR"].state is PostState.needs_reconcile and led.posts["pL"].state is PostState.analyzed
+
 def test_amplify_respects_per_source_budget(tmp_path):
     # E1 (amplify_cap): a source that has already been amplified up to max_amplify_per_source
     # must NOT be re-requested. src.meta['amplify_count'] tracks the per-source count; at the cap
