@@ -169,3 +169,36 @@ def test_stranded_posts_finds_retired_lineage_only(tmp_path):
     assert found == {"p_bad", "p_live"}                       # everything under the dead moment...
     unshipped = set(Ledger._UNSHIPPED_POST_STATES)
     assert {p.id for p in stranded_posts(led) if p.state in unshipped} == {"p_bad"}   # ...only p_bad is retirable
+
+
+# ---- the pipeline heals it ITSELF: no operator verb, no hand-typed --apply -------------------
+
+def test_one_pass_relabels_stranded_posts_without_an_operator(tmp_path, mocker):
+    """The repair belongs to the pipeline, not to a human. A row written before the cascades existed
+    sits at awaiting_approval/queued under retired lineage: inert, but counted in every raw state
+    census, so the backlog never drains. `advance` re-asserts the invariant on EVERY pass. Anything
+    that has touched a platform is preserved, and a healthy lineage is untouched — those two are the
+    negative controls, so a blanket sweep cannot pass this test."""
+    from fanops.pipeline import advance
+    mocker.patch("fanops.produce.run_all")                    # keep the pass cheap: no subprocesses
+    cfg = Config(root=tmp_path); _seed_accounts(cfg)
+    with Ledger.transaction(cfg) as led:
+        _lineage(led, mom_id="mom_ok", clip_id="clip_ok")
+        _lineage(led, mom_id="mom_gone", clip_id="clip_gone", moment_state=MomentState.retired)
+        led.add_post(_post("p_ok", "clip_ok", PostState.awaiting_approval))     # healthy -> untouched
+        led.add_post(_post("p_await", "clip_gone", PostState.awaiting_approval))
+        led.add_post(_post("p_queued", "clip_gone", PostState.queued))
+        led.add_post(_post("p_live", "clip_gone", PostState.needs_reconcile, public_url="dryrun://p_live"))
+
+    advance(cfg, base_time="2026-06-02T18:00:00Z")            # ONE ordinary pass — nothing typed
+
+    led = Ledger.load(cfg)
+    assert led.posts["p_await"].state is PostState.retired    # stranded, never shipped -> relabelled
+    assert led.posts["p_queued"].state is PostState.retired
+    assert led.posts["p_live"].state is PostState.needs_reconcile   # MAY be live -> preserved verbatim
+    assert led.posts["p_ok"].state is PostState.awaiting_approval   # healthy lineage -> real work stays
+
+    advance(cfg, base_time="2026-06-02T18:00:00Z")            # converges: a second pass is a no-op
+    led = Ledger.load(cfg)
+    assert led.posts["p_ok"].state is PostState.awaiting_approval
+    assert led.posts["p_live"].state is PostState.needs_reconcile

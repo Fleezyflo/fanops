@@ -506,6 +506,22 @@ def advance(cfg: Config, *, base_time: str) -> RunSummary:
         from fanops.pipeline_status import heal_corrupt_gates
         note_stage(cfg, "pipeline", "-")
         heal_corrupt_gates(led, cfg)
+        # Self-healing #2 — relabel posts stranded under RETIRED lineage. `_delete_moment_cascade` (dropped
+        # moment) and `adjust.retire` (learning loser) each carry retirement DOWN to never-shipped posts at
+        # the instant they suppress the lineage, so nothing new strands. Rows written BEFORE those cascades
+        # existed still sit at awaiting_approval/queued under a retired clip/moment: inert (every actionable
+        # reader — review_buckets, approve_*, crosspost, publish_due — refuses them) yet counted in every raw
+        # state census, so the operator's backlog never drains and the status line disagrees with the Review
+        # tab. This is the SAME rule those two cascades apply, re-asserted on every pass instead of waiting on
+        # a hand-typed one-shot verb: a repair the pipeline owes itself is not operator work. Anything that has
+        # TOUCHED a platform keeps its state (that record is why preserve exists). Converges to a no-op — once
+        # clean it retires nothing — and `posts reconcile-retired` stays as the read-only inspector.
+        from fanops.stranded_posts import stranded_posts        # lazy, mirroring heal_corrupt_gates above
+        healed = [p for p in stranded_posts(led) if p.state in Ledger._UNSHIPPED_POST_STATES]
+        for p in healed:
+            led.posts[p.id] = p.model_copy(update={"state": PostState.retired})
+        if healed:
+            log("pipeline", "-", "retired_stranded_posts", n=len(healed))
         led = reconcile_source_progress(led, cfg, log)
         # B5/E2: snapshot the already-published post ids at transaction ENTRY so the summary's
         # published_in_run is a THIS-RUN delta — a post already published when the pass opened is in
