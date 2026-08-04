@@ -835,8 +835,6 @@ def main(argv: list[str] | None = None) -> int:
     p_srp.add_argument("--apply", action="store_true", help="MUTATE: snapshot first, then never-shipped -> retired; "
                        "posts that have touched a platform are left untouched")
     p_srp.add_argument("--dry-run", action="store_true", help="READ-ONLY target listing (the default)")
-    p_srp.add_argument("--force-with-daemon-running", action="store_true",
-                       help="skip the live-daemon refusal (the daemon publishes `queued` posts — stop it instead)")
     p_audit = sub.add_parser("audit", help="(R3) operator audit-trail commands")
     audit_sub = p_audit.add_subparsers(dest="audit_cmd")
     p_at = audit_sub.add_parser("tail", help="print the last N lines of 00_control/studio_audit.log")

@@ -11,7 +11,10 @@ WORKFLOWS = REPO / ".github" / "workflows"
 
 # Hand-maintained docs that may make required/advisory claims about CI contexts (DC-4).
 # Kept small and explicit — the generated inventory is covered by the byte-compare, not by DC-4.
-PROSE_DOCS = [REPO / "AGENTS.md"]
+PROSE_DOCS: list = []      # AGENTS.md was the only entry and is deleted; nothing hand-maintained makes
+                           # required/advisory claims about CI contexts today. DC-4 still WORKS — its
+                           # negative control (NC-DC4-prose) writes its own temp doc — so re-add a path
+                           # here the moment a doc starts making those claims again.
 
 DEFAULT_REPO = "Fleezyflo/fanops"
 DEFAULT_BRANCH = "main"
