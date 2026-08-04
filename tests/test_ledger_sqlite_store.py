@@ -4,7 +4,7 @@ import sqlite3, threading
 import pytest
 from fanops.config import Config
 from fanops.errors import LockBusyError
-from fanops.ledger import Ledger, LedgerStore, SCHEMA_VERSION
+from fanops.ledger import Ledger, SCHEMA_VERSION
 from fanops.ledger_sqlite import SqliteLedgerStore
 from fanops.models import (
     Batch, Clip, ClipState, Fmt, ImportedMedia, Moment, MomentState, Platform, Post, PostState,
@@ -35,8 +35,8 @@ def _populated_ledger(cfg: Config) -> Ledger:
     return led
 
 
-def test_sqlite_store_satisfies_protocol(tmp_path):
-    assert isinstance(SqliteLedgerStore(Config(root=tmp_path)), LedgerStore)
+# protocol conformance is owned by
+# test_ledger_store_interface.py::test_sqlite_ledger_store_satisfies_protocol (duplicated here).
 
 
 def test_full_doc_round_trip_all_ten_maps(tmp_path):

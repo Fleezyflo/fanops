@@ -31,14 +31,8 @@ def test_logger_level_param(tmp_path):
     assert rec["level"] == "error" and rec["err"] == "nope"
 
 
-def test_logger_sanitizes_newlines_and_tabs(tmp_path):
-    cfg = Config(root=tmp_path)
-    get_logger(cfg)("reconcile", "p_1", "poll-error", err="line1\nFORGED\tcol\rsplit")
-    lines = cfg.log_path.read_text().splitlines()
-    assert len(lines) == 1
-    rec = json.loads(lines[0])
-    assert rec["stage"] == "reconcile" and rec["unit_id"] == "p_1" and rec["outcome"] == "poll-error"
-    assert "FORGED" in rec["err"] and "\n" not in lines[0] and "\r" not in lines[0]
+# newline/tab sanitisation is owned by test_log.py::test_logger_sanitizes_newlines_and_tabs
+# (a byte-identical copy lived here and was removed).
 
 
 def test_logger_uses_o_append(tmp_path, monkeypatch):
