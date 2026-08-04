@@ -45,12 +45,7 @@ def test_auth_per_channel_postiz_without_global_poster(tmp_path, monkeypatch, mo
     assert out["ok"] is True and out["backend"] == "postiz"
 
 
-def test_auth_fails_without_postiz_creds_even_with_global_poster(tmp_path, monkeypatch):
-    monkeypatch.setenv("FANOPS_POSTER", "postiz")
-    monkeypatch.setenv("POSTIZ_URL", "https://x")
-    monkeypatch.delenv("POSTIZ_API_KEY", raising=False)
-    with pytest.raises(CutoverError, match="postiz backend only"):
-        cutover.cutover_auth(Config(root=tmp_path))
+# missing-key auth failure is proven by test_postiz_auth_requires_key below (was duplicated here).
 
 def test_post_non_postiz_fails_closed(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_POSTER", "dryrun")

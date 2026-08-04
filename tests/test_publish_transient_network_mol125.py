@@ -127,12 +127,6 @@ def test_recover_posts_retries_transient_failed(tmp_path):
     assert Ledger.load(cfg).posts["dns"].state is PostState.queued
 
 
-def test_idempotency_no_double_post_with_submission_id(tmp_path, monkeypatch, mocker):
-    _live_zernio(monkeypatch)
-    cfg = Config(root=tmp_path)
-    _queued(cfg, sub="z_existing_1")
-    import fanops.post.run as run
-    mocker.patch("fanops.post.run._ensure_media", return_value=None)
-    gp = mocker.patch.object(run, "get_poster")
-    _publish_one(cfg, "p1", "zernio")
-    gp.assert_not_called()
+# submission_id idempotency is owned by
+# test_publish_transient_retry.py::test_idempotency_skips_resubmit_when_submission_id_exists
+# (an identical copy lived here; that one seeds created_at, so it is the stronger seed).

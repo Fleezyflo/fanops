@@ -76,10 +76,9 @@ def test_cluster_scope_overrides_dup_scope():
     assert is_weak_hook("wait for the final verse", feed, cluster_scope=set()) is False  # empty scope -> no cluster
     assert is_weak_hook("wait for the final verse", feed, cluster_scope=feed) is True     # in-scope >=3 -> cluster
 
-def test_cluster_scope_defaults_to_used():
-    # byte-identical default: cluster_scope omitted -> the cluster check uses `used` exactly as before.
-    used = {"wait for the beat drop", "wait for the last line", "wait for the hometown bar"}
-    assert is_weak_hook("wait for the final verse", used=used) is True   # default path unchanged
+# The `cluster_scope` DEFAULT (omitted -> the check uses `used`) is pinned by
+# test_opening_template_cluster_is_rejected above, which omits the argument and asserts True — flip the
+# default and it goes red. A byte-identical restatement lived here and was removed.
 
 def test_dup_check_stays_feed_wide_regardless_of_cluster_scope():
     # the EXACT-duplicate guard must remain feed-wide even when cluster_scope is narrowed to empty.

@@ -97,10 +97,9 @@ def test_cross_persona_overlap_kept():
     assert len(kept) == 2
     assert {(p.personas[0], p.start, p.end) for p in kept} == {("a", 0, 18), ("b", 5, 20)}
 
-def test_drop_overlaps_blind_picks_still_deduped():
-    # persona-blind picks (no owner) all share the None owner -> within-that-owner dedup as before.
-    kept = _drop_overlaps([_mp(0, 18), _mp(5, 20), _mp(40, 58)])
-    assert [(p.start, p.end) for p in kept] == [(0, 18), (40, 58)]
+# Persona-BLIND picks (no owner) all share the None owner, so within-that-owner dedup is unchanged by
+# MOL-169 — pinned by test_drop_overlaps_keeps_first_drops_near_dupe above, which uses the same _mp()
+# no-owner picks (a byte-identical restatement lived here and was removed).
 
 def test_named_threshold_is_sole_overlap_constant():
     # The overlap threshold has exactly ONE named home; no bare 0.5 magic overlap literal elsewhere.
@@ -862,17 +861,9 @@ def test_decide_hooks_does_not_strip_perspective_from_per_account_hooks(tmp_path
     m = led.moments_of("src_1")[0]
     assert m.hook == "the part you'll replay"
 
-def test_brand_screen_runs_on_clean_text(tmp_path):
-    # MOL-166: brand_risk_flag remains a semantic gate on ALREADY-sanitized hook text.
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
-    led = request_moments(led, cfg, "src_1")
-    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=18.5, reason="punchline")])
-    led = _decide_hooks(led, cfg, "src_1", {"14.00-18.50": "sorry but you'll replay this part"})
-    m = led.moments_of("src_1")[0]
-    assert m.hook is None
-    assert m.hook_removed == "sorry but you'll replay this part"
-
 def test_decide_hooks_rejects_off_brand_hook_to_clean_clip(tmp_path):
+    # Also carries MOL-166 (brand_risk_flag stays a semantic gate on ALREADY-sanitized hook text) — that
+    # test was byte-identical to this one and was removed.
     # HIGH (audit): the BURNED on-screen hook must get the SAME brand-risk screen EN/AR captions get
     # (brand_risk_flag). A viewer-POV hook (passes the weak/narration floor) that trips the off-brand
     # bravado guardrail ("sorry") is stripped to a clean clip; the stripped text is PRESERVED for Review.

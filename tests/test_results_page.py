@@ -74,20 +74,9 @@ def test_lift_redirects_to_posted_preserving_account(tmp_path):
     assert (r.headers.get("Location") or "").endswith("/posted?account=@a")
 
 
-# ── MOL-50 degraded-lift lens still reads correctly once folded onto /posted ────────────────────────
-def test_degraded_lift_lens_on_posted(tmp_path):
-    # Ported from tests/test_studio_posted_results.py (uniform-degraded case) but asserted against /posted:
-    # the table-level note + the quiet per-row marker render on the MERGED page (loud badge dropped).
-    cfg = Config(root=tmp_path)
-    for i in range(3):
-        _seed_published(cfg, pid=f"d{i}", clip=f"clip_{i}", lift=0.1 * i, hook=f"H{i}",
-                        state=PostState.analyzed,
-                        metrics_extra={"lift_degraded": True, "lift_missing_keys": ["retention"]})
-    html = _client(cfg).get("/posted").data.decode()
-    assert "retention data missing" in html.lower()      # table-level note emitted once...
-    assert 'class="badge degraded"' not in html          # ...loud per-row badge dropped...
-    assert "degraded-quiet" in html                      # ...replaced by the quiet per-row marker (missing key)
-    assert html.count("degraded-quiet") == 3             # one quiet marker per degraded row
+# MOL-50 degraded-lift lens on /posted is owned by
+# test_studio_posted_results.py::test_lift_all_degraded_emits_table_note_and_quiet_marker
+# (a byte-identical port lived here and was removed).
 
 
 # ── What's-working: honest "collecting" state under the P4 signal threshold ─────────────────────────

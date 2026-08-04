@@ -307,16 +307,22 @@ def test_crosspost_empty_target_batch_fans_to_all(tmp_path, mocker):
     led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
     assert len(led.posts) == 4 and all(p.batch_id == "batch_all" for p in led.posts.values())
 
-def test_crosspost_affinity_skips_off_affinity_surfaces(tmp_path, mocker, monkeypatch):
-    # Face 3: with casting ON, a cast moment (affinities=['@a']) fans ONLY to @a's surfaces — the affinity skip
-    # composes with the batch-target skip; an uncast moment ([] affinities) fans to all (byte-identical).
+def test_crosspost_affinity_and_batch_target_compose(tmp_path, mocker, monkeypatch):
+    # Face 3 COMPOSITION: the batch-target gate (crosspost.py:168) and the affinity gate (:172) are
+    # INDEPENDENT — a moment cast to @a under a batch targeting only @b has an empty intersection, so NO
+    # post is born. Zero is the proof: neither gate alone yields it (batch-only -> @b's 2; affinity-only ->
+    # @a's 2). Both breadcrumbs must appear, one per gate, or a gate silently stopped running.
     monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "1")
     cfg = Config(root=tmp_path)
-    led = _two_accounts_clip(cfg, source_batch_id=None)
-    led.moments["mom_1"].affinities = ["a"]
+    led = _two_accounts_clip(cfg, source_batch_id="batch_y")
+    led.add_batch(Batch(id="batch_y", name="b-only", target_accounts=["b"]))
+    led.moments["mom_1"].affinities = ["a"]                    # cast to @a; the batch admits only @b
     _fake_ffmpeg(mocker)
     led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
-    assert {p.account for p in led.posts.values()} == {"a"} and len(led.posts) == 2
+    assert not led.posts                                        # empty intersection -> nothing minted
+    log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
+    assert log.count("batch_target_skip") == 2                  # @a x {ig, yt} refused by the batch gate
+    assert log.count('"why":"not_cast"') == 2                   # @b x {ig, yt} refused by the affinity gate
 
 def test_crosspost_affinity_ignored_when_casting_off(tmp_path, mocker, monkeypatch):
     # A2 (kill-switch): casting OFF (now an EXPLICIT off-word — the flag DEFAULTS ON) IGNORES persisted
