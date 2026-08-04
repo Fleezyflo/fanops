@@ -252,9 +252,13 @@ def report(base: str = "origin/main") -> dict:
         if ose.get(k, 0) != nse.get(k, 0):
             rep["architecture"]["changed_side_effects"].append(f"{k}: {ose.get(k,0)} -> {nse.get(k,0)}")
             if k == "network_sites_literal_requests" and nse.get(k, 0) > ose.get(k, 0):
-                bump(COMPATIBLE, "NEW network call site(s) — must be registered in kb/side_effects.json")
+                bump(UNKNOWN, "NEW network call site(s) — must be registered in kb/side_effects.json (ARCH-008)")
             elif nse.get(k, 0) != ose.get(k, 0):
-                bump(COMPATIBLE, f"side-effect census changed: {k} {ose.get(k,0)} -> {nse.get(k,0)}")
+                if nse.get(k, 0) > ose.get(k, 0):
+                    bump(UNKNOWN, f"side-effect census INCREASED: {k} {ose.get(k,0)} -> {nse.get(k,0)}. "
+                                  f"An increase without a corresponding \"read\" is a phantom effect (ARCH-008).")
+                else:
+                    bump(COMPATIBLE, f"side-effect census decreased: {k} {ose.get(k,0)} -> {nse.get(k,0)}")
 
     # ── unsupported constructs introduced ───────────────────────────────────────────────────
     ou = len(base_derived.get("unsupported", {}).get("constructs", []))

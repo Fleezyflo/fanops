@@ -115,16 +115,22 @@ def redact(text: "str | None", *secrets: "str | None", limit: int = 200) -> str:
 
 
 def reason(exc: Exception) -> str:
-    """Condense a parse/validation error into one operator-readable line.
+    """Condense a parse/validation or domain error into one operator-readable line.
     json.JSONDecodeError already stringifies tidily; pydantic's ValidationError is
-    multi-line and noisy, so we summarize it as 'N validation error(s): <first loc> — <first msg>'."""
+    multi-line and noisy, so we summarize it as 'N validation error(s): <first loc> — <first msg>'.
+    Domain errors (ToolchainMissingError, etc.) are already one-line; we strip any
+    redundant class name prefix."""
     from pydantic import ValidationError
     if isinstance(exc, ValidationError):
         errs = exc.errors()
         head = errs[0] if errs else {}
         loc = ".".join(str(x) for x in head.get("loc", ())) or "?"
         return f"{len(errs)} validation error(s): {loc} — {head.get('msg', exc)}"
-    return str(exc)
+    # Domain errors often have redundant "Error: " prefixes or class names
+    msg = str(exc)
+    for prefix in ("ToolchainMissingError: ", "CutoverError: ", "DownloadError: ", "AuthError: "):
+        if msg.startswith(prefix): msg = msg[len(prefix):]; break
+    return msg
 
 
 @contextlib.contextmanager

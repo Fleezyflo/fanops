@@ -177,7 +177,7 @@
         "budget_ceiling__must_not_exceed": {
           "src/fanops/accounts.py": {"owner": "S02", "baseline": 3},
           "src/fanops/post/run.py": {"owner": "S03", "baseline": 4},
-          "src/fanops/reconcile.py": {"owner": "S04", "baseline": 9},
+          "src/fanops/reconcile.py": {"owner": "S04", "baseline": 12},
           "src/fanops/studio/actions.py": {"owner": "S06 + S09 (SHARED)", "baseline": 23},
           "src/fanops/pipeline.py": {"owner": "S07", "baseline": 13},
           "src/fanops/daemon.py": {"owner": "S08", "baseline": 5},

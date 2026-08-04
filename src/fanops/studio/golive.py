@@ -35,7 +35,7 @@ from fanops.accounts import (Accounts, write_integration, add_account as _accoun
 from fanops.log import get_logger
 from fanops import secret_provider
 from fanops.autopilot import set_env_var, unset_env_var
-from fanops.errors import CutoverError, PostizAuthError, ToolchainMissingError, ZernioAuthError
+from fanops.errors import CutoverError, PostizAuthError, ToolchainMissingError, ZernioAuthError, reason
 from fanops.models import Platform
 from fanops.post import postiz, zernio
 from fanops.studio.actions import ActionResult
@@ -276,7 +276,7 @@ def install_daemon(cfg: Config, interval: str = "10m") -> ActionResult:
         secs = daemon.parse_interval(interval)
         res = daemon.install(cfg, interval=secs, responder="inherit")
     except (RuntimeError, ToolchainMissingError, ValueError) as exc:
-        return ActionResult(ok=False, error=f"daemon install failed: {str(exc)[:160]}")
+        return ActionResult(ok=False, error=f"daemon install failed: {reason(exc)}")
     return ActionResult(ok=res.get("loaded", False), detail={"daemon_installed": True, "interval": secs,
                         "loaded": res.get("loaded", False), "responder": res.get("responder"),
                         "discloses_llm": res.get("discloses_llm", False)})
@@ -289,7 +289,7 @@ def uninstall_daemon(cfg: Config) -> ActionResult:
     try:
         res = daemon.stop(cfg, remove=True)
     except (RuntimeError, ToolchainMissingError) as exc:
-        return ActionResult(ok=False, error=f"daemon uninstall failed: {str(exc)[:160]}")
+        return ActionResult(ok=False, error=f"daemon uninstall failed: {reason(exc)}")
     return ActionResult(ok=res.get("stopped", False), detail={"daemon_removed": True, "stopped": res.get("stopped", False)})
 
 
