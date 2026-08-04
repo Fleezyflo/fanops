@@ -78,21 +78,29 @@ def test_install_studio_verifies_pid_and_generation(cfg, monkeypatch, mocker):
     mocker.patch("fanops.daemon._studio_port_answers", return_value=True)
     mocker.patch("fanops.daemon.time.sleep", return_value=None)
     
+    # wait=True: verification is no longer fused into install_studio — writing the plist and blocking to
+    # confirm the resident came up are different jobs, and fusing them made every caller pay a ~2min poll
+    # it may not have wanted. This test IS the verification test, so it asks for the wait.
     # Case 1: Success (New PID, Correct Generation)
     get_fp.return_value = {"pid": 5678, "generation": "gen-B", "sha": "sha-X"}
-    res = daemon.install_studio(cfg, generation="gen-B")
+    res = daemon.install_studio(cfg, generation="gen-B", wait=True)
     assert res["studio_loaded"] is True
     assert res["old_pid"] == 1234
-    
+
     # Case 2: Failure (Old PID returned)
     get_fp.return_value = {"pid": 1234, "generation": "gen-B", "sha": "sha-X"}
-    res = daemon.install_studio(cfg, generation="gen-B")
+    res = daemon.install_studio(cfg, generation="gen-B", wait=True)
     assert res["studio_loaded"] is False
-    
+
     # Case 3: Failure (Wrong generation)
     get_fp.return_value = {"pid": 5678, "generation": "gen-A", "sha": "sha-X"}
-    res = daemon.install_studio(cfg, generation="gen-B")
+    res = daemon.install_studio(cfg, generation="gen-B", wait=True)
     assert res["studio_loaded"] is False
+
+    # Case 4: the wait is OPT-IN — without it, `studio_loaded` means only that launchd accepted the job,
+    # and the stale fingerprint from Case 3 is never consulted.
+    res = daemon.install_studio(cfg, generation="gen-B")
+    assert res["studio_loaded"] is True
 
 def test_studio_app_fingerprint_payload(cfg):
     # MOL-728: Verify /_fingerprint returns the full payload including generation and PID
