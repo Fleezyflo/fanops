@@ -316,12 +316,6 @@ def test_studio_plane_kickstarts_when_plist_present(tmp_path, monkeypatch):
     fake = _fake_launchctl(kickstart=(0, ""))
     monkeypatch.setattr(daemon.subprocess, "run", fake)
     monkeypatch.setattr(daemon, "_studio_port_answers", lambda *a, **k: True)
-    # MOL-728: the port gate now ALSO reads /_fingerprint. Unstubbed it returns None, so the bounded poll
-    # burns 60 x 2.0s of real sleep and trips the 60s deadlock guardrail. Satisfy freshness; the rejection
-    # cases live in test_studio_lifecycle.py.
-    monkeypatch.setattr(daemon, "_version_signal", lambda cfg: ("sha-current", "git-head"))
-    monkeypatch.setattr(daemon, "_studio_get_fingerprint",
-                        lambda *a, **k: {"sha": "sha-current", "generation": None, "pid": 4242})
     cfg = Config(root=tmp_path)
     plane = daemon._plane_studio(cfg)
     assert plane["ok"] is True and plane["report_only"] is True
@@ -357,13 +351,6 @@ def test_studio_plane_waits_for_port_to_come_back_after_kickstart(tmp_path, monk
     probes = {"n": 0}
     def answers_on_third(*a, **k): probes["n"] += 1; return probes["n"] >= 3
     monkeypatch.setattr(daemon, "_studio_port_answers", answers_on_third)
-    # MOL-728: an accepting port is no longer sufficient — _redeploy_studio(wait=True) also demands a
-    # /_fingerprint whose sha matches disk and whose pid REPLACED the old one. This test's subject is the
-    # POLLING (does the plane wait out the mid-restart refusals), so satisfy the freshness half rather than
-    # re-prove it here; test_studio_lifecycle.py owns the fingerprint rejection cases.
-    monkeypatch.setattr(daemon, "_version_signal", lambda cfg: ("sha-current", "git-head"))
-    monkeypatch.setattr(daemon, "_studio_get_fingerprint",
-                        lambda *a, **k: {"sha": "sha-current", "generation": None, "pid": 4242})
     monkeypatch.setattr(daemon.time, "sleep", lambda _s: None)
     plane = daemon._plane_studio(Config(root=tmp_path))
     assert plane["ok"] is True and plane["report_only"] is True

@@ -223,7 +223,7 @@
     },
     "FANOPS_POSTIZ_ONDEMAND": {
       "read_at": [
-        "fanops.daemon:777"
+        "fanops.daemon:787"
       ],
       "reader_count": 1
     },

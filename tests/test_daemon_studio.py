@@ -33,8 +33,8 @@ def test_render_studio_plist_keepalive_resident(tmp_path):
     assert pl["WorkingDirectory"] == str(tmp_path)
     assert pl["LSMultipleInstancesProhibited"] is True
     assert pl["ThrottleInterval"] == daemon._MIN_INTERVAL
-    # MOL-728: `--managed` is part of the launch contract now — an UNMANAGED foreground Studio is REFUSED
-    # (cli.py), because it can serve stale code indefinitely. The resident must carry the flag.
+    # MOL-728: `--managed` is part of the launch contract — an UNMANAGED foreground Studio is REFUSED
+    # (cli.py) because it can serve stale code indefinitely, so the resident must carry the flag.
     assert pl["ProgramArguments"][-6:] == ["studio", "--managed", "--host", "127.0.0.1", "--port", "8787"]
 
 
@@ -43,11 +43,6 @@ def test_install_studio_bootstraps(tmp_path, monkeypatch):
     monkeypatch.setattr(daemon.sys, "platform", "darwin")
     fake = _fake_launchctl(bootout=(1, ""), bootstrap=(0, ""))
     monkeypatch.setattr(daemon.subprocess, "run", fake)
-    # MOL-728: install_studio now WAITS for the resident to answer with the new generation
-    # (_STUDIO_PORT_TRIES x _STUDIO_PORT_STEP = 120s of real sleep). This test's subject is the plist
-    # write + the launchctl bootstrap, not the port verification — stub the wait or it blows the 60s
-    # deadlock guardrail. The verification itself is covered in tests/test_studio_lifecycle.py.
-    monkeypatch.setattr(daemon, "_studio_port_answers_within", lambda *a, **k: True)
     cfg = Config(root=tmp_path)
     uid = os.getuid()
 
@@ -67,15 +62,15 @@ def test_install_studio_writes_the_rendered_plist_verbatim(tmp_path, monkeypatch
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setattr(daemon.sys, "platform", "darwin")
     monkeypatch.setattr(daemon.subprocess, "run", _fake_launchctl(bootout=(1, ""), bootstrap=(0, "")))
-    monkeypatch.setattr(daemon, "_studio_port_answers_within", lambda *a, **k: True)   # see the note above
     cfg = Config(root=tmp_path)
 
-    # MOL-728: pin the generation. Left to default it is `secrets.token_hex(16)`, so the plist on disk could
-    # never equal a second render — the byte-identity this test exists to prove needs a FIXED nonce, not none.
-    daemon.install_studio(cfg, generation="gen-fixed")
+    res = daemon.install_studio(cfg)
 
+    # MOL-728: the plist now carries a per-install `generation` nonce, so re-rendering with no argument
+    # can never reproduce it. Compare against the generation install_studio actually minted — that still
+    # proves what this test is for: the atomic writer landed EXACTLY what render produced.
     pp = daemon.studio_plist_path()
-    assert pp.read_text() == daemon.render_studio_plist(cfg, generation="gen-fixed")
+    assert pp.read_text() == daemon.render_studio_plist(cfg, generation=res["generation"])
     assert plistlib.loads(pp.read_bytes())["Label"] == daemon.STUDIO_LABEL   # a real, parseable plist
     assert list(pp.parent.glob("*.tmp")) == []                               # no temp residue on the happy path
 

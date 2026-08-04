@@ -653,23 +653,23 @@
       },
       {
         "call": "subprocess.run",
-        "line": 909
+        "line": 933
       },
       {
         "call": "subprocess.run",
-        "line": 935
+        "line": 959
       },
       {
         "call": "subprocess.run",
-        "line": 940
+        "line": 964
       },
       {
         "call": "subprocess.run",
-        "line": 968
+        "line": 992
       },
       {
         "call": "subprocess.run",
-        "line": 1041
+        "line": 1065
       }
     ],
     "fanops.discover": [

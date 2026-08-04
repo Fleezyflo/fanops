@@ -1506,7 +1506,7 @@ def _dispatch(cfg: Config, args) -> int:
         # module top — keeps `import fanops.cli` (hence every other verb) working on a core,
         # no-[studio] install. Mirrors the discover/intake lazy-import idiom (cli.py:325,334).
         if args.install:
-            res = daemon.install_studio(cfg, host=args.host, port=args.port)
+            res = daemon.install_studio(cfg, host=args.host, port=args.port, wait=True)
             print(f"Studio service installed -> {res['studio_plist']}")
             print(f"Always-on at http://{args.host}:{args.port} (launchd KeepAlive; runs at login)")
             return 0 if res.get("studio_loaded") else 1

@@ -122,9 +122,12 @@ def test_redeploy_poll_rejection_cases(cfg, mocker):
     get_fp.return_value = {"pid": 5678, "sha": "sha-X"} # no generation
     assert daemon._studio_port_answers_within(expect_gen="gen-B") is False
     
-    # Rejects malformed response (None)
+    # An UNREACHABLE /_fingerprint is absence of evidence, not evidence of stale code. It used to reject,
+    # which meant a healthy resident without the route was reported DOWN forever and the caller burned the
+    # full ~2min budget to say so. The port is accepting; we simply cannot prove WHICH build -> not a
+    # failure. A REACHABLE endpoint that disagrees still rejects (the case above).
     get_fp.return_value = None
-    assert daemon._studio_port_answers_within(expect_gen="gen-B") is False
+    assert daemon._studio_port_answers_within(expect_gen="gen-B") is True
     
     # Rejects endpoint unavailable (port_answers=False)
     mocker.patch("fanops.daemon._studio_port_answers", return_value=False)

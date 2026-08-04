@@ -629,9 +629,16 @@ def studio_agent_status() -> dict:
             "verdict": verdict, "alarm": installed and not loaded}
 
 def install_studio(cfg: Config, *, host: str = STUDIO_DEFAULT_HOST, port: int = STUDIO_DEFAULT_PORT,
-                   generation: str | None = None) -> dict:
+                   generation: str | None = None, wait: bool = False) -> dict:
     """Write the Studio KeepAlive plist and load via launchctl. Idempotent: bootout any prior copy first.
-    MOL-728: capture old PID, generate new plist with `generation`, and verify replacement + freshness."""
+    MOL-728: mint a `generation` nonce into the plist so the resident can prove it is the process launchd
+    just started, not a survivor.
+
+    `wait` picks whether we then BLOCK to confirm it came up — same seam as _redeploy_studio(wait=...).
+    Default False, because installing and verifying are different jobs: fused, every caller paid a ~2min
+    port poll whether it wanted the answer or not, which is a 120s hang for anything that only needed the
+    plist written. `fanops studio --install` passes wait=True; it is the one caller that reports a verdict
+    to a human standing there."""
     _require_darwin()
     cfg.reports.mkdir(parents=True, exist_ok=True)
     
@@ -656,11 +663,14 @@ def install_studio(cfg: Config, *, host: str = STUDIO_DEFAULT_HOST, port: int = 
     if not loaded:
         return {"studio_loaded": False, "studio_plist": str(pp), "error": "failed to load plist"}
     
-    # 5. Verify replacement and freshness
-    ok = _studio_port_answers_within(host, port, expect_sha=None, expect_gen=generation, old_pid=old_pid)
-    
+    # 5. Verify replacement and freshness — only when the caller asked to wait for it. Without `wait`,
+    # `studio_loaded` means what it says: launchd accepted the job. `verdict` is None to say so, rather
+    # than reporting an unproven True.
+    if wait:
+        loaded = _studio_port_answers_within(host, port, expect_gen=generation, old_pid=old_pid)
+
     return {
-        "studio_loaded": ok,
+        "studio_loaded": loaded,
         "studio_plist": str(pp),
         "host": host,
         "port": port,
@@ -855,18 +865,32 @@ def _studio_port_answers_within(host: str = STUDIO_DEFAULT_HOST, port: int = STU
                                 expect_gen: str | None = None,
                                 old_pid: int | None = None) -> bool:
     """Poll the Studio port until it ACCEPTS, bounded — the post-RESTART form of _studio_port_answers.
-    MOL-728: verifies replacement (new PID != old_pid) and freshness (SHA and generation matches)."""
+    MOL-728 verifies replacement (new PID != old_pid) and freshness (sha + generation) on top.
+
+    LIVENESS and FRESHNESS are polled SEPARATELY. Fused in one loop they broke three ways: a healthy
+    resident whose /_fingerprint was unreachable could never return True, so `fanops up` called a
+    SERVING cockpit DOWN and burned the full ~2min budget doing it; the port probe kept firing long
+    after the port was up, because the loop was really waiting on the fingerprint; and any test of the
+    polling had to stub the fingerprint to get past it.
+
+    An unreachable endpoint is absence of evidence, not evidence of stale code — it does NOT fail here.
+    A REACHABLE endpoint that disagrees is evidence, and it does."""
     for _ in range(max(1, tries)):
         if _studio_port_answers(host, port):
-            fp = _studio_get_fingerprint(host, port)
-            if fp:
-                sha_ok = (expect_sha is None or fp.get("sha") == expect_sha)
-                gen_ok = (expect_gen is None or fp.get("generation") == expect_gen)
-                pid_ok = (old_pid is None or fp.get("pid") != old_pid)
-                if sha_ok and gen_ok and pid_ok:
-                    return True
+            break
         time.sleep(step)
-    return False
+    else:
+        return False                             # never came back inside the budget
+    if expect_sha is None and expect_gen is None and old_pid is None:
+        return True                              # nothing was claimed, so nothing to disprove
+    # ONE read, no retry loop: kickstart -k SIGKILLs the old resident, so whatever is accepting on the
+    # port is already the new process, and create_app registers every route before app.run binds.
+    fp = _studio_get_fingerprint(host, port)
+    if fp is None:
+        return True                              # unreachable -> unproven, NOT failed
+    return ((expect_sha is None or fp.get("sha") == expect_sha)
+            and (expect_gen is None or fp.get("generation") == expect_gen)
+            and (old_pid is None or fp.get("pid") != old_pid))
 
 def _studio_get_fingerprint(host: str = STUDIO_DEFAULT_HOST, port: int = STUDIO_DEFAULT_PORT) -> dict | None:
     """MOL-728: probe the resident's /_fingerprint endpoint. Returns the JSON payload or None on error."""
