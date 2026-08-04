@@ -223,7 +223,7 @@
     },
     "FANOPS_POSTIZ_ONDEMAND": {
       "read_at": [
-        "fanops.daemon:736"
+        "fanops.daemon:776"
       ],
       "reader_count": 1
     },
@@ -284,6 +284,12 @@
     "FANOPS_SOURCE_SHARD_MIN": {
       "read_at": [
         "fanops.config:977"
+      ],
+      "reader_count": 1
+    },
+    "FANOPS_STUDIO_GENERATION": {
+      "read_at": [
+        "fanops.studio.app:43"
       ],
       "reader_count": 1
     },
@@ -491,7 +497,7 @@
     "src/fanops/**/*.py"
   ],
   "totals": {
-    "env_vars_read": 77,
+    "env_vars_read": 78,
     "env_write_sites": 2
   }
 }

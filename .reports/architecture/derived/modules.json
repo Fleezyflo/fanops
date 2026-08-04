@@ -103,6 +103,7 @@
     "fanops.signals",
     "fanops.stage_lock",
     "fanops.stitch_render",
+    "fanops.stranded_posts",
     "fanops.studio",
     "fanops.studio.actions",
     "fanops.studio.actions_approve",
@@ -247,6 +248,7 @@
     "fanops.signals": "S06_media_analysis",
     "fanops.stage_lock": "S01_foundation",
     "fanops.stitch_render": "S09_render",
+    "fanops.stranded_posts": "S19_maintenance",
     "fanops.studio": "S16_studio",
     "fanops.studio.actions": "S16_studio",
     "fanops.studio.actions_approve": "S16_studio",
@@ -287,9 +289,9 @@
     "fanops.vocals": "S06_media_analysis"
   },
   "totals": {
-    "assigned": 135,
+    "assigned": 136,
     "ghosts": 0,
-    "modules": 135,
+    "modules": 136,
     "unassigned": 0
   },
   "unassigned_modules": []

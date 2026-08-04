@@ -578,12 +578,24 @@ def stop(cfg: Config, *, remove: bool = False) -> dict:
 def studio_plist_path() -> Path:
     return sibling_plist_path(STUDIO_LABEL)
 
-def render_studio_plist(cfg: Config, *, host: str = STUDIO_DEFAULT_HOST, port: int = STUDIO_DEFAULT_PORT) -> str:
+def render_studio_plist(cfg: Config, *, host: str = STUDIO_DEFAULT_HOST, port: int = STUDIO_DEFAULT_PORT,
+                        generation: str | None = None) -> str:
     """KeepAlive resident for the localhost Studio cockpit — direct `fanops studio` exec (keeper-style, no bash wrapper)."""
     fb, path = _fanops_bin(), _daemon_path()
+    env = {"PATH": path, "HOME": str(Path.home())}
+    if generation:
+        env["FANOPS_STUDIO_GENERATION"] = generation
     pl = {
         "Label": STUDIO_LABEL,
-        "ProgramArguments": [fb, "studio", "--host", host, "--port", str(port)],
+        "ProgramArguments": [
+            fb,
+            "studio",
+            "--managed",
+            "--host",
+            host,
+            "--port",
+            str(port),
+        ],
         "KeepAlive": {"SuccessfulExit": False},
         "RunAtLoad": True,
         "WorkingDirectory": str(cfg.root),
@@ -591,7 +603,7 @@ def render_studio_plist(cfg: Config, *, host: str = STUDIO_DEFAULT_HOST, port: i
         "StandardErrorPath": str(cfg.reports / "studio.err"),
         "ThrottleInterval": _MIN_INTERVAL,
         "LSMultipleInstancesProhibited": True,
-        "EnvironmentVariables": {"PATH": path, "HOME": str(Path.home())},
+        "EnvironmentVariables": env,
     }
     return plistlib.dumps(pl).decode()
 
@@ -616,16 +628,44 @@ def studio_agent_status() -> dict:
     return {"label": STUDIO_LABEL, "short": "Studio", "installed": installed, "loaded": loaded, "pid": pid,
             "verdict": verdict, "alarm": installed and not loaded}
 
-def install_studio(cfg: Config, *, host: str = STUDIO_DEFAULT_HOST, port: int = STUDIO_DEFAULT_PORT) -> dict:
-    """Write the Studio KeepAlive plist and load via launchctl. Idempotent: bootout any prior copy first."""
+def install_studio(cfg: Config, *, host: str = STUDIO_DEFAULT_HOST, port: int = STUDIO_DEFAULT_PORT,
+                   generation: str | None = None) -> dict:
+    """Write the Studio KeepAlive plist and load via launchctl. Idempotent: bootout any prior copy first.
+    MOL-728: capture old PID, generate new plist with `generation`, and verify replacement + freshness."""
     _require_darwin()
     cfg.reports.mkdir(parents=True, exist_ok=True)
+    
+    # 1. Capture old PID
+    old_st = studio_agent_status()
+    old_pid = old_st.get("pid")
+    
+    # 2. Own the generation invariant (MOL-728)
+    if generation is None:
+        import secrets
+        generation = secrets.token_hex(16)
+    
+    # 3. Render and write new plist
     pp = studio_plist_path()
     pp.parent.mkdir(parents=True, exist_ok=True)
-    from fanops.controlio import write_text_atomic   # MOL-728: replacement-atomic, like install/ensure/_install_keeper
-    write_text_atomic(pp, render_studio_plist(cfg, host=host, port=port))
-    loaded = _load_plist(pp, STUDIO_LABEL)           # fail-CLOSED: a raising write never reaches the load step
-    return {"studio_loaded": loaded, "studio_plist": str(pp), "host": host, "port": port}
+    from fanops.controlio import write_text_atomic
+    write_text_atomic(pp, render_studio_plist(cfg, host=host, port=port, generation=generation))
+    
+    # 4. Load (bootout + bootstrap)
+    loaded = _load_plist(pp, STUDIO_LABEL)
+    if not loaded:
+        return {"studio_loaded": False, "studio_plist": str(pp), "error": "failed to load plist"}
+    
+    # 5. Verify replacement and freshness
+    ok = _studio_port_answers_within(host, port, expect_sha=None, expect_gen=generation, old_pid=old_pid)
+    
+    return {
+        "studio_loaded": ok,
+        "studio_plist": str(pp),
+        "host": host,
+        "port": port,
+        "generation": generation,
+        "old_pid": old_pid
+    }
 
 def stop_studio(cfg: Config, *, remove: bool = False) -> dict:
     """Unload the Studio agent; confirm via launchctl list. remove=True deletes the plist."""
@@ -727,7 +767,7 @@ _KICKSTART_HEARTBEAT_TRIES = 60 # confirm one fresh loop heartbeat after a resta
 _KICKSTART_HEARTBEAT_STEP = 2.0
 _STUDIO_PORT_TRIES = 60         # confirm the CYCLED Studio answers again (~2 min at 2s)
 _STUDIO_PORT_STEP = 2.0
-_STUDIO_LAUNCH_CMD = f"fanops studio --host {STUDIO_DEFAULT_HOST} --port {STUDIO_DEFAULT_PORT}"
+_STUDIO_LAUNCH_CMD = f"fanops studio --managed --host {STUDIO_DEFAULT_HOST} --port {STUDIO_DEFAULT_PORT}"
 
 
 def _ondemand_script() -> Path:
@@ -809,18 +849,46 @@ def _studio_port_answers(host: str = STUDIO_DEFAULT_HOST, port: int = STUDIO_DEF
 
 def _studio_port_answers_within(host: str = STUDIO_DEFAULT_HOST, port: int = STUDIO_DEFAULT_PORT, *,
                                 tries: int = _STUDIO_PORT_TRIES,
-                                step: float = _STUDIO_PORT_STEP) -> bool:
+                                step: float = _STUDIO_PORT_STEP,
+                                expect_sha: str | None = None,
+                                expect_gen: str | None = None,
+                                old_pid: int | None = None) -> bool:
     """Poll the Studio port until it ACCEPTS, bounded — the post-RESTART form of _studio_port_answers.
-    `kickstart -k` SIGKILLs the resident, so the port is refused for the first seconds of every
-    successful cycle (measured 2.0s here; a cold boot behind the launch-time Docker probe takes ~90s
-    — see AGENTS.md), which made a single immediate probe report a healthy restart as DOWN. Returns as
-    soon as the port answers; False if it never does within tries*step (Studio really didn't come
-    back). Mirrors _heartbeat_fresh_since — the same bounded-poll shape the daemon plane uses."""
+    MOL-728: verifies replacement (new PID != old_pid) and freshness (SHA and generation matches)."""
     for _ in range(max(1, tries)):
         if _studio_port_answers(host, port):
-            return True
+            fp = _studio_get_fingerprint(host, port)
+            if fp:
+                sha_ok = (expect_sha is None or fp.get("sha") == expect_sha)
+                gen_ok = (expect_gen is None or fp.get("generation") == expect_gen)
+                pid_ok = (old_pid is None or fp.get("pid") != old_pid)
+                if sha_ok and gen_ok and pid_ok:
+                    return True
         time.sleep(step)
     return False
+
+def _studio_get_fingerprint(host: str = STUDIO_DEFAULT_HOST, port: int = STUDIO_DEFAULT_PORT) -> dict | None:
+    """MOL-728: probe the resident's /_fingerprint endpoint. Returns the JSON payload or None on error."""
+    import http.client, json, logging
+    from fanops.errors import fail_open
+    conn = http.client.HTTPConnection(host or STUDIO_DEFAULT_HOST, port, timeout=2.0)
+    try:
+        # DEBUG, not warning: _studio_port_answers_within polls this while the resident is still
+        # booting, so connection-refused here is the EXPECTED steady state, not an incident.
+        with fail_open("daemon._studio_get_fingerprint", log=logging.getLogger("fanops.daemon").debug):
+            conn.request("GET", "/_fingerprint")
+            resp = conn.getresponse()
+            if resp.status != 200:
+                return None
+            return json.loads(resp.read().decode())
+    finally:
+        conn.close()
+    return None
+
+def _studio_fingerprint_matches(expected: str, host: str = STUDIO_DEFAULT_HOST, port: int = STUDIO_DEFAULT_PORT) -> bool:
+    """Thin compatibility alias for _redeploy_studio."""
+    fp = _studio_get_fingerprint(host, port)
+    return bool(fp and fp.get("sha") == expected)
 
 
 def _version_signal(cfg: Config) -> tuple[str | None, str]:
@@ -1036,16 +1104,40 @@ def _redeploy_studio(cfg: Config, *, wait: bool = False) -> bool:
     `wait` picks the port gate: the bounded POLL (Studio needs seconds to rebind after the SIGKILL) or
     a single instant probe. `fanops up` waits — it reports the verdict to the operator. The keeper path
     does NOT: _kickstart_studio_if_present discards this result and runs inside daemon.ensure, which
-    the keeper fires every KEEPER_POLL_INTERVAL_S (120s), so a poll there could overlap fires."""
+    the keeper fires every KEEPER_POLL_INTERVAL_S (120s), so a poll there could overlap fires.
+
+    MOL-728: when `wait=True`, also verifies deployment freshness and PID replacement. Since a
+    `kickstart` does NOT change the plist, the `generation` invariant is preserved from the existing
+    plist (if any)."""
     if not studio_plist_path().exists():
         return False
+    
+    # Capture old PID to verify replacement
+    old_st = studio_agent_status()
+    old_pid = old_st.get("pid")
+    
     try:
         kr = _launchctl("kickstart", "-k", f"gui/{os.getuid()}/{STUDIO_LABEL}", timeout=_KICKSTART_TIMEOUT)
     except (RuntimeError, ToolchainMissingError):
         return False
     if kr.returncode != 0:
         return False
-    return _studio_port_answers_within() if wait else _studio_port_answers()
+    
+    if not wait:
+        return _studio_port_answers()
+        
+    # Freshness verification: SHA on disk must match serving code.
+    # PID replacement: serving PID must differ from old_pid.
+    # Generation: if the plist has one, it must match.
+    sha, _src = _version_signal(cfg)
+    expect_gen = None
+    from fanops.errors import fail_open
+    with fail_open("daemon._redeploy_studio.plist_generation"):   # no plist / unreadable -> skip the
+        import plistlib                                          # generation check, keep sha + pid
+        pl = plistlib.loads(studio_plist_path().read_bytes())
+        expect_gen = pl.get("EnvironmentVariables", {}).get("FANOPS_STUDIO_GENERATION")
+    
+    return _studio_port_answers_within(expect_sha=sha, expect_gen=expect_gen, old_pid=old_pid)
 
 
 def _kickstart_studio_if_present(cfg: Config) -> None:
