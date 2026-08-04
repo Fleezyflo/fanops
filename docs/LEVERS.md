@@ -7,20 +7,26 @@
 
 | lever / effect | edit |
 |----------------|------|
-| content_focus options, clauses, band/framing | `src/fanops/persona_levers.py` → `_CONTENT_FOCUS_OPTIONS` / `LEVER_REGISTRY` |
+| cut_policy options, clauses, band/framing | `src/fanops/persona_levers.py` → `_CONTENT_FOCUS_OPTIONS` / `LEVER_REGISTRY` |
+| content_focus / selection_scope / hook_angle | FREE TEXT — no vocabulary to edit; the operator's own words compile straight into the directive |
 | intensity options (peak filter) | `src/fanops/persona_levers.py` → `_INTENSITY_OPTIONS` / `LEVER_REGISTRY` |
-| selection_scope clauses | `src/fanops/persona_levers.py` → `_SELECTION_SCOPE_OPTIONS` |
-| hook_angle clauses | `src/fanops/persona_levers.py` → `_HOOK_ANGLE_OPTIONS` |
 | clip band seconds | `src/fanops/bands.py` → `_PROFILES` / `TALK`/`SHORT`/… |
 | peak intensity filter (P4b) | `src/fanops/signals.py` → `filter_peaks_by_intensity` |
-| derived cut from content_focus | `src/fanops/persona_directives.py` → `derive_cut_spec` |
+| derived cut from cut_policy | `src/fanops/persona_directives.py` → `derive_cut_spec` |
 
 Then run `fanops lever docs` to regenerate this file.
 
 
 ## content_focus (stage: casting)
 
-**Does:** which KINDS of moments this account clips for (casting prompt) — and DERIVES cut LENGTH + FRAMING
+**Does:** free-text editorial focus for moment selection (formerly the multi-select tokens)
+
+| value | what it tells the LLM | deterministic operation | cut consequence | phase/gate |
+|-------|----------------------|-------------------------|-----------------|------------|
+
+## cut_policy (stage: cut)
+
+**Does:** deterministic cut LENGTH + FRAMING derived from moment kinds (MOL-523)
 
 | value | what it tells the LLM | deterministic operation | cut consequence | phase/gate |
 |-------|----------------------|-------------------------|-----------------|------------|
@@ -43,31 +49,21 @@ Then run `fanops lever docs` to regenerate this file.
 
 ## selection_scope (stage: casting)
 
-**Does:** the selection CONSTRAINT posture (open vs subject-locked vs briefed vs credibility-first vs controversy-seeking)
+**Does:** the selection CONSTRAINT posture (free text; formerly open vs subject-locked vs briefed vs credibility-first vs controversy-seeking)
 
 | value | what it tells the LLM | deterministic operation | cut consequence | phase/gate |
 |-------|----------------------|-------------------------|-----------------|------------|
-| `open` | 'no change — open selection' | selection constraint only (no band/framing/peak filter) | inherits content_focus-derived cut (or global) | moments gate (casting prompt) |
-| `subject_locked` | "Only moments featuring the account's named subject qualify — subject presence is the filter." | selection constraint only (no band/framing/peak filter) | inherits content_focus-derived cut (or global) | moments gate (casting prompt) |
-| `source_briefed` | 'Select only moments matching the campaign brief — the brief defines footage and angle.' | selection constraint only (no band/framing/peak filter) | inherits content_focus-derived cut (or global) | moments gate (casting prompt) |
-| `credibility_first` | 'Favor clear and accurate over sensational; pass on cuts that misrepresent the source.' | selection constraint only (no band/framing/peak filter) | inherits content_focus-derived cut (or global) | moments gate (casting prompt) |
-| `controversy_seeking` | 'Prefer the most inflammatory or rivalry-coded statement in the source.' | selection constraint only (no band/framing/peak filter) | inherits content_focus-derived cut (or global) | moments gate (casting prompt) |
 
 ## hook_angle (stage: hook)
 
-**Does:** the strategy of the burned on-screen hook (the register comes from the voice)
+**Does:** the strategy of the burned on-screen hook (free text; formerly curiosity vs challenge vs emotional vs result-first vs fomo)
 
 | value | what it tells the LLM | deterministic operation | cut consequence | phase/gate |
 |-------|----------------------|-------------------------|-----------------|------------|
-| `curiosity` | 'open a curiosity gap the viewer has to close' | hook strategy only (no peak/band geometry) | n/a (hook text) | hook gate (moment_hooks) |
-| `challenge` | 'dare or challenge the viewer to react' | hook strategy only (no peak/band geometry) | n/a (hook text) | hook gate (moment_hooks) |
-| `emotional` | 'name the high-arousal feeling the clip gives the viewer' | hook strategy only (no peak/band geometry) | n/a (hook text) | hook gate (moment_hooks) |
-| `result-first` | 'open on the payoff, then reveal how it got there' | hook strategy only (no peak/band geometry) | n/a (hook text) | hook gate (moment_hooks) |
-| `fomo` | 'carry genuine scarcity — a one-time, leaked, or unreleased drop' | hook strategy only (no peak/band geometry) | n/a (hook text) | hook gate (moment_hooks) |
 
 ## clip_profile (stage: cut)
 
-**Does:** the GLOBAL deterministic cut-length band (Go-Live default; per-persona it is derived from content_focus)
+**Does:** the GLOBAL deterministic cut-length band (Go-Live default; per-persona it is derived from cut_policy)
 
 | value | what it tells the LLM | deterministic operation | cut consequence | phase/gate |
 |-------|----------------------|-------------------------|-----------------|------------|
@@ -90,8 +86,8 @@ Archetype EXAMPLES of lever combinations (`src/fanops/data/baked_personas.json`)
 
 | id | content_focus (select) | hook_angle | selection_scope | intensity (peak filter) |
 |----|------------------------|------------|-----------------|-------------------------|
-| `credibility-first` | emotional, storytelling | `curiosity` | `credibility_first` | low |
-| `controversy` | bold-statement | `challenge` | `controversy_seeking` | high |
-| `edutainment` | storytelling | `curiosity` | `source_briefed` | low |
-| `cliffhanger` | storytelling | `curiosity` | `open` | low |
-| `hype-vibe` | hype | `fomo` | `open` | high |
+| `credibility-first` | m, o, m, e, n, t, s,  , c, a, r, r, y, i, n, g,  , r, e, a, l,  , e, m, o, t, i, o, n,  , —,  , v, u, l, n, e, r, a, b, i, l, i, t, y, ,,  , l, o, n, g, i, n, g, ,,  , d, e, v, o, t, i, o, n, ,,  , a,  , c, o, n, f, e, s, s, i, o, n,  , t, h, e,  , v, i, e, w, e, r,  , f, e, e, l, s, ;,  , m, o, m, e, n, t, s,  , t, h, a, t,  , t, e, l, l,  , a,  , s, t, o, r, y,  , o, r,  , r, e, v, e, a, l,  , s, o, m, e, t, h, i, n, g,  , —,  , a, n,  , o, r, i, g, i, n, ,,  , a,  , t, u, r, n, ,,  , a,  , p, a, y, o, f, f, . | `open a curiosity gap the viewer has to close` | `Favor clear and accurate over sensational; pass on cuts that misrepresent the source.` | low |
+| `controversy` | a,  , b, o, l, d,  , o, r,  , c, o, n, t, r, a, r, i, a, n,  , s, t, a, t, e, m, e, n, t,  , t, h, a, t,  , s, t, o, p, s,  , t, h, e,  , s, c, r, o, l, l, . | `dare or challenge the viewer to react` | `Prefer the most inflammatory or rivalry-coded statement in the source.` | high |
+| `edutainment` | m, o, m, e, n, t, s,  , t, h, a, t,  , t, e, l, l,  , a,  , s, t, o, r, y,  , o, r,  , r, e, v, e, a, l,  , s, o, m, e, t, h, i, n, g,  , —,  , a, n,  , o, r, i, g, i, n, ,,  , a,  , t, u, r, n, ,,  , a,  , p, a, y, o, f, f, . | `open a curiosity gap the viewer has to close` | `Select only moments matching the campaign brief — the brief defines footage and angle.` | low |
+| `cliffhanger` | m, o, m, e, n, t, s,  , t, h, a, t,  , t, e, l, l,  , a,  , s, t, o, r, y,  , o, r,  , r, e, v, e, a, l,  , s, o, m, e, t, h, i, n, g,  , —,  , a, n,  , o, r, i, g, i, n, ,,  , a,  , t, u, r, n, ,,  , a,  , p, a, y, o, f, f, . | `open a curiosity gap the viewer has to close` | `open` | low |
+| `hype-vibe` | t, h, e,  , h, i, g, h, e, s, t, -, e, n, e, r, g, y,  , h, y, p, e,  , m, o, m, e, n, t, s,  , —,  , t, h, e,  , h, a, r, d, e, s, t,  , d, e, l, i, v, e, r, y, ,,  , t, h, e,  , b, e, a, t,  , d, r, o, p, ,,  , t, h, e,  , r, o, o, m,  , g, o, i, n, g,  , u, p, . | `carry genuine scarcity — a one-time, leaked, or unreleased drop` | `open` | high |

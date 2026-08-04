@@ -111,15 +111,15 @@ def render_levers(cfg: Config) -> str:  # cfg reserved for future persona-aware 
     how = ("\n## How to change an option's EFFECT\n\n"
            "| lever / effect | edit |\n"
            "|----------------|------|\n"
-           "| content_focus options, clauses, band/framing | "
+           "| cut_policy options, clauses, band/framing | "
            "`src/fanops/persona_levers.py` → `_CONTENT_FOCUS_OPTIONS` / `LEVER_REGISTRY` |\n"
+           "| content_focus / selection_scope / hook_angle | FREE TEXT — no vocabulary to edit; the operator's "
+           "own words compile straight into the directive |\n"
            "| intensity options (peak filter) | "
            "`src/fanops/persona_levers.py` → `_INTENSITY_OPTIONS` / `LEVER_REGISTRY` |\n"
-           "| selection_scope clauses | `src/fanops/persona_levers.py` → `_SELECTION_SCOPE_OPTIONS` |\n"
-           "| hook_angle clauses | `src/fanops/persona_levers.py` → `_HOOK_ANGLE_OPTIONS` |\n"
            "| clip band seconds | `src/fanops/bands.py` → `_PROFILES` / `TALK`/`SHORT`/… |\n"
            "| peak intensity filter (P4b) | `src/fanops/signals.py` → `filter_peaks_by_intensity` |\n"
-           "| derived cut from content_focus | `src/fanops/persona_directives.py` → `derive_cut_spec` |\n"
+           "| derived cut from cut_policy | `src/fanops/persona_directives.py` → `derive_cut_spec` |\n"
            "\nThen run `fanops lever docs` to regenerate this file.\n")
     table_hdr = ("\n| value | what it tells the LLM | deterministic operation | cut consequence | phase/gate |\n"
                  "|-------|----------------------|-------------------------|-----------------|------------|")
@@ -135,8 +135,8 @@ def render_levers(cfg: Config) -> str:  # cfg reserved for future persona-aware 
             continue
         parts.append(f"\n## {key} (stage: {lv['stage']})\n\n**Does:** {lv['does']}\n{table_hdr}")
         for opt in lv["options"]:
-            if key == "content_focus":
-                parts.append(_content_focus_row(opt))
+            if key == "cut_policy":            # MOL-523: the moment-kind tokens (value/clause/band/framing)
+                parts.append(_content_focus_row(opt))   # moved here; content_focus is free text with no options
             elif key == "intensity":
                 parts.append(_intensity_row(opt))
             elif key == "selection_scope":

@@ -86,10 +86,10 @@ def test_drawer_edit_persists_via_existing_route(tmp_path):
     cfg = Config(root=tmp_path)
     pid = core.add_persona(cfg, name="Z", voice="old", niche=["hiphop"])
     r = _client(cfg).post("/personas/edit", data={
-        "id": pid, "name": "Z2", "voice": "new voice", "content_focus": ["hype"], "hook_angle": "fomo"})
+        "id": pid, "name": "Z2", "voice": "new voice", "cut_policy": ["hype"], "hook_angle": "fomo"})
     assert r.status_code == 200
     p = core.Personas.load(cfg).get(pid)
-    assert p.name == "Z2" and p.voice == "new voice" and p.content_focus == ["hype"]
+    assert p.name == "Z2" and p.voice == "new voice" and p.cut_policy == ["hype"]
 
 
 def test_persona_with_no_levers_still_renders_drawer(tmp_path):
@@ -105,7 +105,7 @@ def test_compose_panel_shows_produces_prose(tmp_path):
     # OUTPUT (length/framing/hook/hashtags), not just the engineer-facing directive rows.
     cfg = Config(root=tmp_path)
     html = _client(cfg).post("/personas/compose", data={
-        "voice": "a devoted fan", "content_focus": "punchlines",
+        "voice": "a devoted fan", "cut_policy": "punchlines",   # MOL-523: the tokens post as cut_policy
         "hook_angle": "curiosity"}).get_data(as_text=True)
     assert "produces-line" in html                       # the styled lead sentence is rendered
     assert "curiosity hooks" in html and "clips" in html  # the hook ANGLE + the DERIVED length
@@ -124,8 +124,8 @@ def test_drawer_lever_fields_persist_via_edit(tmp_path):
     pid = core.add_persona(cfg, name="Lever Test", niche=["hiphop"])
     r = _client(cfg).post("/personas/edit", data={
         "id": pid, "name": "Lever Test", "voice": "v",
-        "content_focus": ["storytelling", "emotional"], "selection_scope": "subject_locked", "hook_angle": "curiosity"})
+        "cut_policy": ["storytelling", "emotional"], "selection_scope": "subject_locked", "hook_angle": "curiosity"})
     assert r.status_code == 200
     p = core.Personas.load(cfg).get(pid)
-    assert set(p.content_focus) == {"storytelling", "emotional"}
+    assert set(p.cut_policy) == {"storytelling", "emotional"}
     assert p.selection_scope == "subject_locked" and p.hook_angle == "curiosity"

@@ -11,15 +11,22 @@ def ensure_archetype_personas(cfg: Config) -> Accounts:
     if not cfg.personas_path.exists():
         # the corpus is DERIVED from platform evidence, so a fixture SIMULATES a completed derivation
         # (apply_auto_corpus, the only writer) rather than hand-curating tags one by one.
+        # MOL-523: selection_scope / content_focus / hook_angle are FREE TEXT; cut_policy holds the tokens.
+        # The prose here is the engine's own former clause for each archetype, so the two stay DIVERGENT —
+        # which is the whole point of this fixture (the differentiation proofs compare their prompts).
         specs = (
             ("Credibility First", "restraint is the product; pass on the sensational cut",
-             "credibility_first", ["emotional", "storytelling"], "curiosity", ["#podcast", "#facts"]),
+             "Favor clear and accurate over sensational; pass on cuts that misrepresent the source.",
+             ["emotional", "storytelling"], "open a curiosity gap the viewer has to close",
+             ["#podcast", "#facts"]),
             ("Controversy", "pick the cut that starts the argument",
-             "controversy_seeking", ["bold-statement"], "challenge", ["#drama", "#popculture"]),
+             "Prefer the most inflammatory or rivalry-coded statement in the source.",
+             ["bold-statement"], "dare or challenge the viewer to react",
+             ["#drama", "#popculture"]),
         )
-        for name, voice, scope, focus, angle, corpus in specs:
+        for name, voice, scope, policy, angle, corpus in specs:
             pid = P.add_persona(cfg, name=name, voice=voice, selection_scope=scope,
-                                content_focus=focus, hook_angle=angle, niche=["hiphop"])
+                                cut_policy=policy, hook_angle=angle, niche=["hiphop"])
             P.apply_auto_corpus(cfg, pid, tags=corpus, meta={})
     pids = {p.name: p.id for p in P.Personas.load(cfg).personas}
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)

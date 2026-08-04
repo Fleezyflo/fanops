@@ -33,7 +33,7 @@ def _seed_multi_pick_persona_accounts(cfg, handles):
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.accounts_path.write_text(json.dumps({"accounts": [
         {"handle": h, "account_id": str(i + 1), "platforms": ["instagram"], "status": "active",
-         "persona": f"voice {h}", "content_focus": ["punchlines"],
+         "persona": f"voice {h}", "cut_policy": ["punchlines"],
          "selection_scope": "credibility_first", "hook_angle": "curiosity",
          "hashtag_corpus": [f"#tag{i}"]} for i, h in enumerate(handles)]}))
     return Accounts.load(cfg)

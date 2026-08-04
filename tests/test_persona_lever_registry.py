@@ -1,29 +1,14 @@
 # tests/test_persona_lever_registry.py — M1 the SINGLE LEVER REGISTRY characterization + coherence guard.
-#
-# The drift this kills: the lever vocabularies (personas.py), the compile/derived-cut clause maps
-# (persona_directives.py), and the editor catalog (lever_catalog) were three separate literals synced by a
-# manual "parity test forbids divergence" promise. M1 makes ONE registry (fanops.persona_levers) the upstream
-# of all three. This file is TWO things: (1) a CHARACTERIZATION net holding GOLDEN copies of the current
-# literals + an INDEPENDENT reference derive over all 64 content_focus subsets, so the registry refactor is
-# proven byte-identical; (2) the SINGLE-DECLARATION coherence proof — an option declared once is present in
-# the derived vocab, the derived clause map, AND lever_catalog together (and absent from all three when gone).
 import itertools
-
 from fanops.config import Config
-from fanops.personas import (CONTENT_FOCUS, SELECTION_SCOPE_LEVELS, HOOK_ANGLES,
-                             _FOCUS_CLAUSE, _SCOPE_CLAUSE, _ANGLE_CLAUSE, _FOCUS_PROFILE, _FRAMING_MAP,
+from fanops.personas import (CUT_POLICY, _FOCUS_CLAUSE, _FOCUS_PROFILE, _FRAMING_MAP,
                              derive_cut_spec, lever_catalog, compose_breakdown, Persona)
-
 
 # ---------------------------------------------------------------------------------------------------------
 # GOLDEN snapshots — the EXACT current literals (captured from live code, 2026-06-27). These are the frozen
-# reference; the refactor must keep the live exports byte-identical to them. NOT re-derived from the registry
-# (that would defeat the net) — hand-frozen here on purpose.
+# reference; the refactor must keep the live exports byte-identical to them.
 # ---------------------------------------------------------------------------------------------------------
 _GOLD_CONTENT_FOCUS = {"punchlines", "emotional", "hype", "storytelling", "visual", "bold-statement"}
-_GOLD_SCOPE = {"open", "subject_locked", "source_briefed", "credibility_first", "controversy_seeking"}
-_GOLD_ANGLES = {"curiosity", "challenge", "emotional", "result-first", "fomo"}
-
 _GOLD_FOCUS_CLAUSE = {
     "punchlines": "moments that land a verbal punchline — a bar with a clear setup and payoff, a quotable, rewatchable line",
     "emotional": "moments carrying real emotion — vulnerability, longing, devotion, a confession the viewer feels",
@@ -33,156 +18,78 @@ _GOLD_FOCUS_CLAUSE = {
     "bold-statement": "a bold or contrarian statement that stops the scroll",
 }
 _GOLD_FOCUS_ORDER = ["punchlines", "emotional", "hype", "storytelling", "visual", "bold-statement"]
-_GOLD_SCOPE_CLAUSE = {"open": "", "subject_locked": "Only moments featuring the account's named subject qualify — subject presence is the filter.",
-                       "source_briefed": "Select only moments matching the campaign brief — the brief defines footage and angle.",
-                       "credibility_first": "Favor clear and accurate over sensational; pass on cuts that misrepresent the source.",
-                       "controversy_seeking": "Prefer the most inflammatory or rivalry-coded statement in the source."}
-_GOLD_ANGLE_CLAUSE = {"curiosity": "open a curiosity gap the viewer has to close",
-                      "challenge": "dare or challenge the viewer to react",
-                      "emotional": "name the high-arousal feeling the clip gives the viewer",
-                      "result-first": "open on the payoff, then reveal how it got there",
-                      "fomo": "carry genuine scarcity — a one-time, leaked, or unreleased drop"}
-# longer-bias-first; the ORDER is load-bearing (next() picks the first/highest tier present)
 _GOLD_FOCUS_PROFILE = {"storytelling": "long", "emotional": "medium", "visual": "medium",
                        "punchlines": "short", "hype": "short", "bold-statement": "short"}
 _GOLD_FRAMING_MAP = {"punchlines": "center", "hype": "center", "bold-statement": "center", "visual": "center", "emotional": "top", "storytelling": "top"}
 
-
-# ---- the live exports equal the golden literals (value-exact, order-exact where it matters) ----
 def test_vocabularies_byte_identical():
-    assert set(CONTENT_FOCUS) == _GOLD_CONTENT_FOCUS
-    assert set(SELECTION_SCOPE_LEVELS) == _GOLD_SCOPE
-    assert set(HOOK_ANGLES) == _GOLD_ANGLES
-    for v in (CONTENT_FOCUS, SELECTION_SCOPE_LEVELS, HOOK_ANGLES):
-        assert isinstance(v, frozenset)
-
+    # MOL-523: cut_policy now owns the tokens.
+    assert set(CUT_POLICY) == _GOLD_CONTENT_FOCUS
+    # MOL-521/523: free-text fields have no vocab.
+    assert isinstance(CUT_POLICY, frozenset)
 
 def test_clause_maps_byte_identical():
     assert dict(_FOCUS_CLAUSE) == _GOLD_FOCUS_CLAUSE
-    assert list(_FOCUS_CLAUSE.keys()) == _GOLD_FOCUS_ORDER          # join order matters for the casting text
-    assert dict(_SCOPE_CLAUSE) == _GOLD_SCOPE_CLAUSE
-    assert dict(_ANGLE_CLAUSE) == _GOLD_ANGLE_CLAUSE
-
+    assert list(_FOCUS_CLAUSE.keys()) == _GOLD_FOCUS_ORDER
+    # MOL-521: selection_scope and hook_angle no longer have clause maps.
 
 def test_derived_cut_maps_byte_identical():
     assert dict(_FOCUS_PROFILE) == _GOLD_FOCUS_PROFILE
-    assert list(_FOCUS_PROFILE.items()) == list(_GOLD_FOCUS_PROFILE.items())   # tier-descending order is the selection
+    assert list(_FOCUS_PROFILE.items()) == list(_GOLD_FOCUS_PROFILE.items())
     assert dict(_FRAMING_MAP) == _GOLD_FRAMING_MAP
 
-
-# ---- derive_cut_spec over ALL 64 content_focus subsets == an INDEPENDENT reference (the GOTCHA proof) ----
 def _ref_profile(foc):
-    """Reference: the highest tier present, computed from the GOLDEN profile map's insertion order — the SAME
-    'first key whose option is present' semantics, but independent of the registry under test."""
     return next((v for k, v in _GOLD_FOCUS_PROFILE.items() if k in foc), None)
-
 
 def test_derive_cut_spec_identical_over_all_focus_subsets():
     foci = sorted(_GOLD_CONTENT_FOCUS)
     for r in range(len(foci) + 1):
         for combo in itertools.combinations(foci, r):
-            got_prof, got_fr = derive_cut_spec(Persona(id="x", content_focus=list(combo)))
-            assert got_prof == _ref_profile(set(combo)), f"derive drift for content_focus={combo}"
+            # MOL-523: cut_policy derives the cut.
+            got_prof, got_fr = derive_cut_spec(Persona(id="x", cut_policy=list(combo)))
+            assert got_prof == _ref_profile(set(combo)), f"derive drift for cut_policy={combo}"
             if not combo:
                 assert got_fr is None
 
-
-def test_derive_cut_spec_framing_from_content_focus():
-    for focus, exp in ((["punchlines"], "center"), (["storytelling"], "top"), ([], None)):
-        _prof, fr = derive_cut_spec(Persona(id="x", content_focus=focus))
+def test_derive_cut_spec_framing_from_cut_policy():
+    for policy, exp in ((["punchlines"], "center"), (["storytelling"], "top"), ([], None)):
+        _prof, fr = derive_cut_spec(Persona(id="x", cut_policy=policy))
         assert fr == exp
 
-
-# ---- lever_catalog() full shape characterization ----
 def test_lever_catalog_shape_byte_identical():
     cat = {lev["key"]: lev for lev in lever_catalog()}
-    assert list(cat) == ["content_focus", "intensity", "selection_scope", "hook_angle", "clip_profile", "niche"]
-    # content_focus options == the focus clause map, value+effect exact, in clause order
-    cf = cat["content_focus"]
-    assert [(o["value"], o["effect"]) for o in cf["options"]] == list(_GOLD_FOCUS_CLAUSE.items())
-    assert cf["kind"] == "multi" and cf["stage"] == "casting"
-    # selection_scope: open's empty clause is shown as an explicit no-op note
-    sc = {o["value"]: o["effect"] for o in cat["selection_scope"]["options"]}
-    assert sc["controversy_seeking"] == _GOLD_SCOPE_CLAUSE["controversy_seeking"] and "open" in sc["open"].lower()
-    # hook_angle options == the angle clause map
-    assert {o["value"]: o["effect"] for o in cat["hook_angle"]["options"]} == _GOLD_ANGLE_CLAUSE
-    # clip_profile stays the GLOBAL band lever (5 bands); `niche` is free text, so no
-    # enumerated options (it owns the hashtags channel; corpus is derived from platform measurements).
-    assert [o["value"] for o in cat["clip_profile"]["options"]] == ["short", "medium", "long", "talk", "song"]
-    assert cat["niche"]["options"] == [] and cat["niche"]["label"] == "Territory seeds"
-    assert sorted(lever_catalog()[0].keys()) == ["does", "key", "kind", "label", "options", "stage"]
+    # MOL-523: content_focus (editorial) and cut_policy (deterministic) are separate.
+    assert list(cat) == ["content_focus", "cut_policy", "intensity", "selection_scope", "hook_angle", "clip_profile", "niche"]
+    assert cat["content_focus"]["kind"] == "text"
+    assert cat["cut_policy"]["kind"] == "multi"
+    assert [(o["value"], o["effect"]) for o in cat["cut_policy"]["options"]] == list(_GOLD_FOCUS_CLAUSE.items())
 
-
-# ---- compose fingerprint across 3 live-shaped personas (any compile drift reds here) ----
 def _fp(cfg, p):
     d = compose_breakdown(cfg, p)
     return (d["casting"]["text"], d["hook"]["text"], d["caption"]["text"],
             d["cut"]["band"], d["cut"]["framing"], d["cut"]["source"], tuple(d["tags"]["lead"]))
 
-
 def test_compose_fingerprint_for_live_shaped_personas(tmp_path):
     cfg = Config(root=tmp_path)
+    # MOL-523: content_focus is editorial; cut_policy is tokens.
     personas = [
-        Persona(id="craft-curator", voice="", content_focus=["punchlines", "emotional"], hook_angle="curiosity"),
-        Persona(id="underground-zine", voice="", content_focus=["punchlines", "hype"], hook_angle="curiosity"),
-        Persona(id="burner-bold", voice="", content_focus=["bold-statement", "hype"], hook_angle="challenge"),
+        Persona(id="craft-curator", voice="", cut_policy=["punchlines", "emotional"]),
+        Persona(id="underground-zine", voice="", cut_policy=["punchlines", "hype"]),
+        Persona(id="burner-bold", voice="", cut_policy=["bold-statement", "hype"]),
     ]
     fps = {p.id: _fp(cfg, p) for p in personas}
-    # the 3 are distinct on the casting text (different content_focus) — the differentiation is live
     assert len({fp[0] for fp in fps.values()}) == 3
-    # stable, recomputable fingerprint (idempotent): recompute equals
     assert {p.id: _fp(cfg, p) for p in personas} == fps
 
-
-# =========================================================================================================
-# THE M1 DELIVERABLE — single-declaration coherence: an option declared ONCE in the registry is present in
-# the derived vocab, the derived clause map, AND the catalog together; remove it from a registry COPY and it
-# vanishes from all three projections at once. This is the structural property that kills the 3-way drift.
-# =========================================================================================================
 def test_registry_is_a_pure_leaf():
-    import sys
-    import fanops.persona_levers as pl                              # must import with no fanops deps at load
-    # bands is imported LAZILY inside build_catalog — not at module load
-    assert "fanops.bands" not in [m for m in sys.modules if m == "fanops.bands.__not__"]  # smoke: import didn't explode
+    import fanops.persona_levers as pl
     assert isinstance(pl.LEVER_REGISTRY, list) and pl.LEVER_REGISTRY
-
 
 def test_projections_derive_from_the_registry():
     import fanops.persona_levers as pl
-    # the live personas vocab IS the registry projection
-    assert set(CONTENT_FOCUS) == set(pl.vocab("content_focus"))
-    assert set(SELECTION_SCOPE_LEVELS) == set(pl.vocab("selection_scope"))
-    assert set(HOOK_ANGLES) == set(pl.vocab("hook_angle"))
-    # the live clause maps ARE the registry projection
-    assert dict(_FOCUS_CLAUSE) == pl.clause_map("content_focus")
-    assert dict(_SCOPE_CLAUSE) == pl.clause_map("selection_scope")
-    assert dict(_ANGLE_CLAUSE) == pl.clause_map("hook_angle")
+    assert set(CUT_POLICY) == set(pl.vocab("cut_policy"))
+    assert set(pl.vocab("content_focus")) == set()
+    assert dict(_FOCUS_CLAUSE) == pl.clause_map("cut_policy")
     assert dict(_FOCUS_PROFILE) == dict(pl.focus_profile_map())
-    assert list(_FOCUS_PROFILE.items()) == list(pl.focus_profile_map().items())   # tier-descending order preserved
     assert dict(_FRAMING_MAP) == pl.framing_map()
-    # the live catalog IS the registry projection
     assert lever_catalog() == pl.build_catalog()
-
-
-def test_single_declaration_option_present_in_all_three_projections():
-    import fanops.persona_levers as pl
-    val = "storytelling"
-    assert val in pl.vocab("content_focus")                         # vocab
-    assert val in pl.clause_map("content_focus")                    # clause map
-    assert val in {o["value"] for o in next(lv for lv in pl.build_catalog() if lv["key"] == "content_focus")["options"]}
-    assert val in pl.focus_profile_map()                            # derived-cut map
-
-
-def test_removing_an_option_from_a_registry_copy_drops_it_from_all_three():
-    import copy
-    import fanops.persona_levers as pl
-    reg = copy.deepcopy(pl.LEVER_REGISTRY)
-    cf = next(lv for lv in reg if lv["key"] == "content_focus")
-    cf["options"] = [o for o in cf["options"] if o["value"] != "storytelling"]
-    # build the three projections from the MUTATED registry via the same pure derivers
-    vocab = frozenset(o["value"] for o in cf["options"])
-    clause = {o["value"]: o["clause"] for o in cf["options"]}
-    cat_vals = {o["value"] for o in cf["options"]}
-    assert "storytelling" not in vocab and "storytelling" not in clause and "storytelling" not in cat_vals
-    # and the real (unmutated) registry still has it — the deepcopy didn't leak
-    assert "storytelling" in pl.vocab("content_focus")

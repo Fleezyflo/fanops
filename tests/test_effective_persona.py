@@ -23,7 +23,7 @@ def _client(cfg):
 
 def test_persona_card_directives_match_compiler_verbatim(tmp_path):
     cfg = Config(root=tmp_path)
-    pid = core.add_persona(cfg, name="Z", voice="devoted fan", content_focus=["punchlines"],
+    pid = core.add_persona(cfg, name="Z", voice="devoted fan", cut_policy=["punchlines"],
                            selection_scope="controversy_seeking", hook_angle="curiosity", niche=["hiphop"])
     p = core.Personas.load(cfg).get(pid)
     card = next(c for c in views.personas_page(cfg).personas if c.id == pid)
@@ -34,21 +34,23 @@ def test_persona_card_directives_match_compiler_verbatim(tmp_path):
 
 def test_lever_detail_rows_joins_option_effect(tmp_path):
     cfg = Config(root=tmp_path)
-    pid = core.add_persona(cfg, name="Z", content_focus=["punchlines"], hook_angle="curiosity", niche=["hiphop"])
+    pid = core.add_persona(cfg, name="Z", cut_policy=["punchlines"], hook_angle="curiosity", niche=["hiphop"])
     p = core.Personas.load(cfg).get(pid)
     from fanops.personas import lever_catalog, manifest
     cat = lever_catalog()
     rows = views._lever_detail_rows(cfg, p, manifest(cfg, p), cat, _LEVER_EFFECTS)
+    # MOL-523: hook_angle/content_focus are free text and carry NO option effects — cut_policy is the
+    # lever whose set values still join to an engine-true effect, so that is what this row proves.
     hook_row = next(r for r in rows if r["key"] == "hook_angle")
-    assert hook_row["option_effect"] == _LEVER_EFFECTS["hook_angle"]["curiosity"]
-    foc_row = next(r for r in rows if r["key"] == "content_focus")
-    assert _LEVER_EFFECTS["content_focus"]["punchlines"] in foc_row["option_effect"]
+    assert hook_row["option_effect"] in ("", None, "—")   # free text -> no vocabulary effect to join
+    pol_row = next(r for r in rows if r["key"] == "cut_policy")
+    assert _LEVER_EFFECTS["cut_policy"]["punchlines"] in pol_row["option_effect"]
 
 
 def test_account_provenance_persona_derived_clip_profile(tmp_path):
     cfg = Config(root=tmp_path)
     _seed_accounts(cfg, [{"handle": "@a", "platforms": ["instagram"], "status": "active", "clip_profile": "long"}])
-    pid = core.add_persona(cfg, name="P", voice="v", content_focus=["punchlines"], niche=["hiphop"])
+    pid = core.add_persona(cfg, name="P", voice="v", cut_policy=["punchlines"], niche=["hiphop"])
     link_persona(cfg, "@a", pid)
     p = core.Personas.load(cfg).get(pid)
     prov = views._account_provenance(cfg, p, ["a"])
@@ -90,7 +92,7 @@ def test_drawer_failopen_when_provenance_raises(tmp_path, monkeypatch):
 
 def test_drawer_smoke_effective_persona_section(tmp_path):
     cfg = Config(root=tmp_path)
-    pid = core.add_persona(cfg, name="Z", voice="devoted fan", content_focus=["punchlines"], hook_angle="curiosity", niche=["hiphop"])
+    pid = core.add_persona(cfg, name="Z", voice="devoted fan", cut_policy=["punchlines"], hook_angle="curiosity", niche=["hiphop"])
     html = _client(cfg).get(f"/personas/drawer/{pid}").data.decode()
     assert 'class="effective-persona"' in html
     assert "<pre" in html and "Pick" in html

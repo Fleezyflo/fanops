@@ -30,6 +30,7 @@ from fanops.persona_levers import vocab as _lever_vocab
 # three can no longer drift. clip_profile/framing reuse the Account validators (bands.PROFILE_NAMES /
 # config.FRAMING_NAMES) so a persona pins the SAME deterministic CUT an account can.
 CONTENT_FOCUS = _lever_vocab("content_focus")
+CUT_POLICY = _lever_vocab("cut_policy")          # MOL-523: the ONE surviving token vocabulary (it derives the cut)
 SELECTION_SCOPE_LEVELS = _lever_vocab("selection_scope")
 HOOK_ANGLES = _lever_vocab("hook_angle")
 INTENSITY = _lever_vocab("intensity")
@@ -44,9 +45,10 @@ class Persona(BaseModel):
     # Lever engine: explicit per-characteristic DIRECTION that compose_persona_instruction renders into the
     # one instruction the casting/hook/caption prompts read. ADDITIVE — all empty on a legacy persona, so
     # compose returns the bare `voice` (byte-identical). Validated at the write boundary (add/update_persona).
-    content_focus: list[str] = Field(default_factory=list)   # which moment KINDS to favor (casting): CONTENT_FOCUS
-    selection_scope: Optional[str] = None         # selection constraint: open|subject_locked|... (SELECTION_SCOPE_LEVELS)
-    hook_angle: Optional[str] = None              # on-screen hook strategy: curiosity|challenge|... (HOOK_ANGLES)
+    content_focus: Optional[str] = None         # editorial focus (free text; formerly CONTENT_FOCUS multi-select)
+    cut_policy: list[str] = Field(default_factory=list) # deterministic cut policy (tokens; MOL-523)
+    selection_scope: Optional[str] = None         # selection constraint (free text; formerly SELECTION_SCOPE_LEVELS)
+    hook_angle: Optional[str] = None              # on-screen hook strategy (free text; formerly HOOK_ANGLES)
     intensity: Optional[str] = None  # peak-filter tier: high|medium|low (INTENSITY); unset → None → no filter
     # M3 (2026-06-27): the per-persona clip_profile/framing PINS were RETIRED — invisible (no editor) + duplicate
     # of the content_focus-DERIVED cut (derive_cut_spec). A persona's cut LENGTH + FRAMING now derive from

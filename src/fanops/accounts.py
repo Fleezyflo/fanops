@@ -90,7 +90,10 @@ class Account(BaseModel):
     # which personas.compose_persona_instruction renders into the surface `persona` the casting/hook/caption
     # payloads carry. ADDITIVE — empty on every legacy/unlinked account, so compose returns the bare persona
     # voice (byte-identical). content_focus/selection_scope -> casting; hook_angle -> the on-screen hook.
-    content_focus: list[str] = Field(default_factory=list)
+    # MOL-523: content_focus/selection_scope/hook_angle are FREE TEXT (a token->prose map is the only kind of
+    # lever that rots); cut_policy carries the moment-kind TOKENS that deterministically derive the cut.
+    content_focus: Optional[str] = None
+    cut_policy: list[str] = Field(default_factory=list)
     selection_scope: Optional[str] = None
     hook_angle: Optional[str] = None
     intensity: Optional[str] = None
@@ -344,11 +347,12 @@ def _hydrate_from_personas(accts: "Accounts", cfg: Config) -> None:
         acc.hashtag_corpus = list(per.hashtag_corpus)   # B1: the persona owns the curated corpus (the caption path reads it; M3 — the sole hashtag differentiator)
         # Lever engine: the persona owns each lever (empty -> compose ignores it -> byte-identical). clip_profile/
         # framing override the account's own ONLY when the persona pins them (else the account/global default stands).
-        acc.content_focus = list(per.content_focus)
+        acc.content_focus = per.content_focus            # MOL-523: free text, not a token list
+        acc.cut_policy = list(per.cut_policy or [])      # ...the tokens moved here; they derive the cut
         acc.selection_scope = per.selection_scope
         acc.hook_angle = per.hook_angle
         acc.intensity = per.intensity
-        _prof, _fr = resolved_cut_spec(per)   # P2: derived from content_focus; else None (global stands)
+        _prof, _fr = resolved_cut_spec(per)   # P2: derived from cut_policy; else None (global stands)
         if _prof: acc.clip_profile = _prof; acc.persona_owns_profile = True   # S2 provenance: the persona TRULY owns the length
         if _fr: acc.framing = _fr
         # M3e: the per-dimension directive OVERRIDES were retired — nothing to hydrate; the structured levers

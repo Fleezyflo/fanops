@@ -94,14 +94,14 @@ def test_edit_one_lever_round_trip(tmp_path):
     # seed a full lever set + a corpus so there is real state to preserve, THROUGH the same edit route
     r0 = _client(cfg).post("/personas/edit", data={
         "id": pid, "name": "Keep", "voice": "the voice",
-        "content_focus": ["punchlines"], "selection_scope": "subject_locked", "hook_angle": "curiosity"})
+        "cut_policy": ["punchlines"], "selection_scope": "subject_locked", "hook_angle": "curiosity"})
     assert r0.status_code == 200
     core.apply_auto_corpus(cfg, pid, tags=["#keeper"], meta={})
     before = json.loads(cfg.personas_path.read_text())["personas"][0]
     # change ONLY hook_angle, re-posting the same other values (the form is authoritative)
     r = _client(cfg).post("/personas/edit", data={
         "id": pid, "name": "Keep", "voice": "the voice",
-        "content_focus": ["punchlines"], "selection_scope": "subject_locked", "hook_angle": "fomo"})
+        "cut_policy": ["punchlines"], "selection_scope": "subject_locked", "hook_angle": "fomo"})
     assert r.status_code == 200
     after = json.loads(cfg.personas_path.read_text())["personas"][0]
     assert after["hook_angle"] == "fomo"                          # the one edit landed

@@ -142,11 +142,13 @@
             {% if p.caption_text %}<p class="persona-instruction"><span class="muted">caption →</span> {{ p.caption_text }}</p>{% endif %}
           </div>
 
-          {# 2 · Derived spec line — the differentiators (length is DERIVED from content focus), read-only. #}
-          <p class="persona-spec muted" title="how this voice's output differs — the cut length is DERIVED from content focus">
+          {# 2 · Derived spec line — the differentiators, read-only. MOL-523: the cut length is DERIVED from
+             cut_policy (the tokens); content_focus/selection_scope/hook_angle are free-text editorial. #}
+          <p class="persona-spec muted" title="how this voice's output differs — the cut length is DERIVED from cut policy">
             {% if p.length_band %}~{{ p.length_band }} clips{% endif %}
-            {% for c in p.content_focus %} · {{ c }}{% endfor %}
-            {% if p.selection_scope %} · {{ p.selection_scope }} scope{% endif %}
+            {% for c in p.cut_policy or [] %} · {{ c }}{% endfor %}
+            {% if p.content_focus %} · {{ p.content_focus }}{% endif %}
+            {% if p.selection_scope %} · {{ p.selection_scope }}{% endif %}
             {% if p.hook_angle %} · {{ p.hook_angle }} hook{% endif %}
           </p>
 

@@ -32,7 +32,7 @@ def preview_compose(cfg: Config, form) -> ActionResult:
     500. `form` is a Werkzeug MultiDict (or any object with .get/.getlist). The five clean levers only:
     voice, content_focus, intensity, selection_scope, hook_angle (+ the saved corpus); the cut is DERIVED from content_focus."""
     try:
-        from fanops.personas import CONTENT_FOCUS, SELECTION_SCOPE_LEVELS, HOOK_ANGLES, INTENSITY
+        from fanops.personas import CUT_POLICY, INTENSITY
 
         def _enum(value, allowed, label):
             v = (value or "").strip()
@@ -47,13 +47,15 @@ def preview_compose(cfg: Config, form) -> ActionResult:
                 if saved is not None: corpus = list(saved.hashtag_corpus)
             except Exception:
                 corpus = []
-        focus = [c for c in form.getlist("content_focus") if c]
-        for c in focus:
-            if c not in CONTENT_FOCUS: raise ValueError(f"unknown content_focus: {c}")
+        policy = [c for c in form.getlist("cut_policy") if c]
+        for c in policy:
+            if c not in CUT_POLICY: raise ValueError(f"unknown cut_policy: {c}")
         per = core.Persona(
             id=(pid or "preview"), voice=form.get("voice", ""), hashtag_corpus=corpus,
-            content_focus=focus, selection_scope=_enum(form.get("selection_scope"), SELECTION_SCOPE_LEVELS, "selection_scope"),
-            hook_angle=_enum(form.get("hook_angle"), HOOK_ANGLES, "hook_angle"),
+            content_focus=(form.get("content_focus") or "").strip() or None,
+            cut_policy=policy,
+            selection_scope=(form.get("selection_scope") or "").strip() or None,
+            hook_angle=(form.get("hook_angle") or "").strip() or None,
             intensity=_enum(form.get("intensity"), INTENSITY, "intensity"))
     except ValueError as exc:
         return ActionResult(ok=False, error=str(exc))
@@ -63,15 +65,16 @@ def preview_compose(cfg: Config, form) -> ActionResult:
 
 
 def create_persona(cfg: Config, name: str, voice: str = "",
-                   content_focus=None, selection_scope: str = "", hook_angle: str = "",
+                   content_focus: str = "", cut_policy=None, selection_scope: str = "", hook_angle: str = "",
                    intensity: str = "", niche: str = "") -> ActionResult:
-    """Create a NEW persona from the clean levers (voice + content_focus/selection_scope/hook_angle) plus a
+    """Create a NEW persona from the clean levers (voice + content_focus/cut_policy/selection_scope/hook_angle) plus a
     required declared niche. The corpus is curated on the card, genre via Research. Validates a non-blank
     name + niche + each lever value at the A1 write boundary; a duplicate id / unknown lever / blank name
-    / empty niche -> a clean one-line error, never a 500. The cut (length) is DERIVED from content_focus."""
+    / empty niche -> a clean one-line error, never a 500. The cut (length) is DERIVED from cut_policy."""
     try:
         pid = core.add_persona(cfg, name=name, voice=voice,
-                               content_focus=content_focus, selection_scope=selection_scope, hook_angle=hook_angle,
+                               content_focus=content_focus, cut_policy=cut_policy,
+                               selection_scope=selection_scope, hook_angle=hook_angle,
                                intensity=intensity, niche=_parse_niche(niche))
     except ValueError as exc:                            # blank name / empty niche / unknown lean or lever / duplicate id
         return ActionResult(ok=False, error=str(exc))
@@ -81,17 +84,18 @@ def create_persona(cfg: Config, name: str, voice: str = "",
 
 
 def edit_persona(cfg: Config, pid: str, name: str = "", voice: str = "",
-                 content_focus=None, selection_scope: str = "", hook_angle: str = "",
+                 content_focus: str = "", cut_policy=None, selection_scope: str = "", hook_angle: str = "",
                  intensity: str = "") -> ActionResult:
-    """Save edits to a persona's clean levers (name/voice + content_focus/intensity/selection_scope/hook_angle). The edit
-    form is AUTHORITATIVE: an unchecked/blank lever CLEARS it. The cut (length) is DERIVED from content_focus,
+    """Save edits to a persona's clean levers (name/voice + content_focus/cut_policy/intensity/selection_scope/hook_angle).
+    The edit form is AUTHORITATIVE: an unchecked/blank lever CLEARS it. The cut (length) is DERIVED from cut_policy,
     so there is no length/framing knob. Unknown id / unknown lever / blank name -> a clean one-line error."""
     pid = (pid or "").strip()
     if not pid:
         return ActionResult(ok=False, error="no persona selected")
     try:
         core.update_persona(cfg, pid, name=name, voice=voice,
-                            content_focus=(content_focus or []), selection_scope=selection_scope, hook_angle=hook_angle,
+                            content_focus=content_focus, cut_policy=(cut_policy or []),
+                            selection_scope=selection_scope, hook_angle=hook_angle,
                             intensity=intensity)
     except KeyError:
         return ActionResult(ok=False, error=f"no such persona: {pid}")
