@@ -7,8 +7,12 @@ post from the Review worklist, but `approve_account` / `approve_batch` / `publis
 `led.posts` directly — so it stayed one bulk-approve click away from publishing lineage the pipeline
 had already dropped, and it silently inflated every raw awaiting tally.
 
-`Ledger._delete_moment_cascade` now stops NEW ones and `actions_approve` refuses to promote one.
-This verb reconciles the rows already on disk. READ-ONLY by default; `--apply` snapshots first, then
+`Ledger._delete_moment_cascade` now stops NEW ones, `actions_approve` refuses to promote one, and
+`post.run.publish_due` refuses to SHIP one (the last of those was the real gap: it is the only reader that
+reaches a platform, so until it guarded, this verb was the safety net rather than the tidy-up it should be).
+With all three closed, a stranded row is inert wherever it is read; this verb reconciles the LABELS of the
+rows already on disk, so the tallies and the state machine agree. READ-ONLY by default; `--apply` snapshots
+first, then
 applies exactly the cascade's rule: never-shipped (`Ledger._UNSHIPPED_POST_STATES`) -> `retired`;
 anything that has touched a platform keeps its state, because that record is why preserve exists.
 """
