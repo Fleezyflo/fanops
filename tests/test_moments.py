@@ -173,7 +173,7 @@ def _seed_owner_spec_accounts(cfg, specs):
     rows = []
     for i, s in enumerate(specs):
         rows.append({"handle": s["handle"], "account_id": str(i + 1), "platforms": ["instagram"],
-                     "status": "active", "persona": f"voice {s['handle']}", "content_focus": ["punchlines"],
+                     "status": "active", "persona": f"voice {s['handle']}", "cut_policy": ["punchlines"],
                      "selection_scope": "credibility_first", "hook_angle": "curiosity",
                      "hashtag_corpus": [f"#tag{i}"],
                      **{k: v for k, v in s.items() if k in ("clip_profile", "framing")}})
@@ -366,7 +366,7 @@ def _seed_pick_persona_accounts(cfg, handle="a"):
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.accounts_path.write_text(json.dumps({"accounts": [{
         "handle": handle, "account_id": "1", "platforms": ["instagram"], "status": "active",
-        "persona": "underground grit", "content_focus": ["punchlines"],
+        "persona": "underground grit", "cut_policy": ["punchlines"],
         "selection_scope": "credibility_first", "hook_angle": "curiosity",
         "hashtag_corpus": ["#detroitrap", "#bars"]}]}))
     return Accounts.load(cfg)
@@ -376,7 +376,7 @@ def _seed_multi_pick_persona_accounts(cfg, handles):
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.accounts_path.write_text(json.dumps({"accounts": [
         {"handle": h, "account_id": str(i + 1), "platforms": ["instagram"], "status": "active",
-         "persona": f"voice {h}", "content_focus": ["punchlines"],
+         "persona": f"voice {h}", "cut_policy": ["punchlines"],
          "selection_scope": "credibility_first", "hook_angle": "curiosity",
          "hashtag_corpus": [f"#tag{i}"]} for i, h in enumerate(handles)]}))
     return Accounts.load(cfg)

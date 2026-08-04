@@ -315,7 +315,7 @@ def test_persona_terms_niche_only(tmp_path):
     from fanops.personas import Persona
     per = Persona(id="x", name="Craft Curator", voice="syrian rapper craft",
                   niche=["Lyricism", "songwriting", "lyricism", "#MusicReview"],
-                  content_focus=["punchlines"], hook_angle="curiosity", intensity="high",
+                  cut_policy=["punchlines"], hook_angle="curiosity", intensity="high",
                   hashtag_corpus=["#neverseenhere"])
     terms = persona_terms(per)
     assert terms == ["lyricism", "songwriting", "musicreview"]

@@ -38,6 +38,9 @@ _SPINE_HERE = {"index": None, "run_panel": "make", "review": "review", "schedule
 _INFLIGHT_SURFACES = set(_SPINE_HERE) | {"publish_panel"}
 
 _HERE = Path(__file__).resolve().parent
+_START_TIME = datetime.now(timezone.utc).isoformat()
+_PID = os.getpid()
+_GENERATION = os.environ.get("FANOPS_STUDIO_GENERATION")
 
 
 def _bounded(cfg: Config, candidate) -> Path | None:
@@ -390,6 +393,20 @@ def create_app(cfg: Config) -> Flask:
         body = rep.to_json_dict()
         code = 200 if body["healthy"] else 503
         return jsonify(body), code
+
+    @app.get("/_fingerprint")
+    def fingerprint():
+        """MOL-728: deployment freshness fingerprint. The managed-service lifecycle
+        uses this to verify the resident was successfully cycled onto current code."""
+        from flask import jsonify
+        from fanops.cli import _running_code_sha
+        return jsonify({
+            "sha": _running_code_sha(cfg),
+            "generation": _GENERATION,
+            "pid": _PID,
+            "start_time": _START_TIME,
+            "label": cfg.root.name
+        })
 
     @app.get("/metrics")
     def metrics():

@@ -13,8 +13,8 @@
     "v1_errata": "The v1 index variously said '18 subsystems', '18 + Studio' and '19'. The correct and only number is 19."
   },
   "totality": {
-    "modules_total": 135,
-    "modules_assigned": 135,
+    "modules_total": 136,
+    "modules_assigned": 136,
     "unassigned": 0,
     "double_assigned": 0,
     "ghosts": 0,
@@ -463,9 +463,11 @@
         "ledger_wipe",
         "lever_docs",
         "paths_rebase",
-        "reframe_apply"
+        "reframe_apply",
+        "stranded_posts"
       ],
-      "module_count": 4,
+      "module_count": 5,
+      "stranded_posts_assignment": "stranded_posts — `fanops posts reconcile-retired`, the one-time reconcile for posts left `awaiting_approval`/`queued` under a moment the re-decision cascade retired. Assigned here, not to S13_reconcile_metrics, because S13 reconciles LEDGER-vs-REMOTE state by polling a backend, and this touches no network at all: it is an out-of-band, snapshot-gated, reversible rewrite of stored state across the corpus — `paths_rebase` and `reframe_apply`'s shape exactly. Its S18 imports (audit, health_model) are LAZY, apply-path only, so no compile-time edge is added.",
       "cycle_7_assignment": "reframe_apply (added by #635) \u2014 `fanops reframe --apply`, the MUTATION phase of the reframe migration: a plan-driven, resumable, rollback-able re-render of clips that ALREADY EXIST. Assigned here, not to S09_render, because S09's members (clip, compose, produce, stitch_render) are the PRODUCTION PIPELINE that turns a moment into a new clip, and this is not in that pipeline \u2014 it is an out-of-band corpus migration that CALLS the renderer. Its closest analogue is `paths_rebase`: a one-off, careful, reversible rewrite of stored state across the whole corpus. That is S19's remit exactly. (The read-only dry-run REPORT stays in S18_health_diag; see the note there.)",
       "compile_depends_on": [
         "S01_foundation",

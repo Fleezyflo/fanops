@@ -33,7 +33,9 @@ def test_render_studio_plist_keepalive_resident(tmp_path):
     assert pl["WorkingDirectory"] == str(tmp_path)
     assert pl["LSMultipleInstancesProhibited"] is True
     assert pl["ThrottleInterval"] == daemon._MIN_INTERVAL
-    assert pl["ProgramArguments"][-5:] == ["studio", "--host", "127.0.0.1", "--port", "8787"]
+    # MOL-728: `--managed` is part of the launch contract — an UNMANAGED foreground Studio is REFUSED
+    # (cli.py) because it can serve stale code indefinitely, so the resident must carry the flag.
+    assert pl["ProgramArguments"][-6:] == ["studio", "--managed", "--host", "127.0.0.1", "--port", "8787"]
 
 
 def test_install_studio_bootstraps(tmp_path, monkeypatch):
@@ -62,10 +64,13 @@ def test_install_studio_writes_the_rendered_plist_verbatim(tmp_path, monkeypatch
     monkeypatch.setattr(daemon.subprocess, "run", _fake_launchctl(bootout=(1, ""), bootstrap=(0, "")))
     cfg = Config(root=tmp_path)
 
-    daemon.install_studio(cfg)
+    res = daemon.install_studio(cfg)
 
+    # MOL-728: the plist now carries a per-install `generation` nonce, so re-rendering with no argument
+    # can never reproduce it. Compare against the generation install_studio actually minted — that still
+    # proves what this test is for: the atomic writer landed EXACTLY what render produced.
     pp = daemon.studio_plist_path()
-    assert pp.read_text() == daemon.render_studio_plist(cfg)
+    assert pp.read_text() == daemon.render_studio_plist(cfg, generation=res["generation"])
     assert plistlib.loads(pp.read_bytes())["Label"] == daemon.STUDIO_LABEL   # a real, parseable plist
     assert list(pp.parent.glob("*.tmp")) == []                               # no temp residue on the happy path
 

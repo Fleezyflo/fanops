@@ -57,6 +57,11 @@ controls:
     job: e2e
     branch_protection_context: "real-tooling E2E (must run, not skip)"
 
+  - id: CI-E2E-PIPAUDIT
+    classification: scheduled
+    workflow: .github/workflows/ci.yml
+    job: e2e  # Audits the E2E toolchain environment without duplicating the large install
+
   - id: CI-TIMING
     classification: advisory
     workflow: .github/workflows/ci.yml

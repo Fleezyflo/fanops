@@ -235,8 +235,12 @@ def test_core_cli_imports_with_flask_absent(monkeypatch, tmp_path):
         # (a module-top import would have already failed the reload above; this catches a top-of-app
         # import that somehow still let the reload pass). The studio branch hits `from fanops.studio.app
         # import create_app` -> blocked flask -> ImportError, which main() does not swallow.
+        # MOL-728: bare `studio` is REFUSED before any import (an unmanaged foreground cockpit can serve
+        # stale code indefinitely), so it returns 2 without reaching Flask. Assert that, then drive the
+        # managed path to actually exercise the lazy import this test exists to prove.
+        assert cli.main(["studio"]) == 2
         with pytest.raises(ImportError, match="flask blocked"):
-            cli.main(["studio"])
+            cli.main(["studio", "--managed"])
     finally:
         sys.modules.update(evicted)        # put the originals back so later tests get a consistent flask/app
 

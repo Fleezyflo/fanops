@@ -33,12 +33,15 @@ _KNOWN_INCOHERENT = set(_ORIGINAL_SIX)
 # Post-M3 this is EXACTLY the editable lever set (the 6 incoherent fields were resolved end-to-end and left
 # the model): every non-exempt model field is a covered, editable, wired, distinct lever. A non-exempt model
 # field absent here is a DEAD (output-insensitive) lever and fails the coverage gate below.
+# MOL-523: content_focus/selection_scope/hook_angle are FREE TEXT, so their pairs are two distinct prose
+# settings; cut_policy is the surviving token lever and keeps a two-token pair (it derives the cut).
 _MUTATIONS = {
     "voice": ("a devoted fan", "a blunt critic"),
-    "content_focus": (["punchlines"], ["hype"]),
+    "content_focus": ("clip the punchlines", "clip the loudest hype"),
+    "cut_policy": (["punchlines"], ["hype"]),
     "intensity": ("high", "low"),
-    "selection_scope": ("open", "subject_locked"),
-    "hook_angle": ("curiosity", "fomo"),
+    "selection_scope": ("take any moment", "only moments with the named subject"),
+    "hook_angle": ("open a curiosity gap", "carry genuine scarcity"),
     "niche": (["hiphop"], ["gossip"]),
 }
 
@@ -118,12 +121,16 @@ def test_runtime_is_fail_open_on_malformed_fields():
     # RESILIENCE: a Persona carrying out-of-vocab lever values (the model itself does not enum-validate; only
     # the write boundary does) compiles to the documented DEFAULT and NEVER raises through any compile path.
     cfg = Config(root="/tmp/fanops_failopen_probe_unused")  # cfg only used for store load; compose tolerates absent store
-    bad = Persona(id="p", voice="v", selection_scope="ludicrous", hook_angle="not-an-angle", content_focus=["not-a-focus"])
-    # none of these raise; each degrades to the firewall default
-    assert str(casting_directive(bad)) == "v"                  # unknown focus/scope -> bare voice
-    assert str(hook_directive(bad)) == "v"                     # unknown angle -> bare voice
+    # MOL-523: only cut_policy still has a vocabulary, so it is the only field that can be OUT-OF-VOCAB.
+    # An unknown token must degrade silently (no clause, no derived cut) and never raise.
+    bad = Persona(id="p", voice="v", cut_policy=["not-a-focus"])
+    assert str(casting_directive(bad)) == "v"                  # unknown token -> bare voice
+    assert str(hook_directive(bad)) == "v"
     assert caption_directive(bad) == "v"
-    prof, fr = resolved_cut_spec(bad)                     # unknown focus/scope -> no derived cut
+    prof, fr = resolved_cut_spec(bad)                          # unknown token -> no derived cut
     assert prof is None and fr is None
+    # ...and free text, whatever it says, compiles in verbatim rather than being rejected or dropped.
+    free = Persona(id="q", voice="v", selection_scope="ludicrous", hook_angle="not-an-angle")
+    assert "ludicrous" in str(casting_directive(free)) and "not-an-angle" in str(hook_directive(free))
     d = compose_breakdown(cfg, bad)                       # the whole breakdown composes without raising
     assert d["casting"]["text"] == "v"

@@ -25,13 +25,13 @@ def test_compose_empty_is_empty():
 def test_compose_levers_only_renders_substantive_body():
     # M3: the casting directive (compose alias) compiles content_focus+energy into REAL selection language,
     # NOT a glued adjective. hook_angle/hook_tone belong to hook_directive, not this casting text.
-    out = str(compose_persona_instruction(Persona(id="p", content_focus=["punchlines", "emotional"])))
+    out = str(compose_persona_instruction(Persona(id="p", cut_policy=["punchlines", "emotional"])))
     assert "punchline" in out and "emotion" in out                  # substantive clauses, not "favors moments: punchlines"
     
     assert "favors moments" not in out                              # the trivial phrasing is gone
 
 def test_compose_both_body_then_voice():
-    out = str(compose_persona_instruction(Persona(id="p", voice="a devoted fan", content_focus=["punchlines", "hype"])))
+    out = str(compose_persona_instruction(Persona(id="p", voice="a devoted fan", cut_policy=["punchlines", "hype"])))
     assert out.startswith("a devoted fan") and "hype moments" in out   # voice leads, then the substantive clip-for clause
 
 def test_compose_ignores_cut_levers_in_text():
@@ -43,29 +43,37 @@ def test_compose_ignores_cut_levers_in_text():
 # ---- write boundary: levers validate + round-trip ----
 def test_add_persona_persists_levers(tmp_path):
     cfg = Config(root=tmp_path)
-    add_persona(cfg, name="Curator", voice="tasteful crate-digger", content_focus=["storytelling", "emotional"], hook_angle="emotional", niche=["hiphop"])
+    add_persona(cfg, name="Curator", voice="tasteful crate-digger", cut_policy=["storytelling", "emotional"], hook_angle="emotional", niche=["hiphop"])
     p = Personas.load(cfg).get("curator")
-    assert p.content_focus == ["storytelling", "emotional"] and p.selection_scope is None
+    assert p.cut_policy == ["storytelling", "emotional"] and p.selection_scope is None
     assert p.hook_angle == "emotional"
     assert resolved_cut_spec(p) == ("long", "top")
 
 def test_add_persona_rejects_unknown_lever(tmp_path):
+    # MOL-523: only the VOCABULARY levers can reject a value. selection_scope is free text now, so any
+    # prose is legal there — cut_policy and intensity are the two that still validate against a set.
     cfg = Config(root=tmp_path)
+    add_persona(cfg, name="Free", selection_scope="anything the operator types", niche=["hiphop"])
     with pytest.raises(ValueError):
-        add_persona(cfg, name="Bad", selection_scope="ludicrous", niche=["hiphop"])
+        add_persona(cfg, name="Bad2", cut_policy=["punchlines", "not-a-thing"], niche=["hiphop"])
     with pytest.raises(ValueError):
-        add_persona(cfg, name="Bad2", content_focus=["punchlines", "not-a-thing"], niche=["hiphop"])
+        add_persona(cfg, name="Bad3", intensity="ludicrous", niche=["hiphop"])
 
 def test_update_persona_changes_levers_only_when_passed(tmp_path):
     cfg = Config(root=tmp_path)
-    add_persona(cfg, name="P", voice="v", content_focus=["storytelling"], niche=["hiphop"])
+    add_persona(cfg, name="P", voice="v", cut_policy=["storytelling"], niche=["hiphop"])
     update_persona(cfg, "p", hook_angle="challenge")          # voice/energy untouched
     p = Personas.load(cfg).get("p")
     assert p.voice == "v" and p.selection_scope is None and p.hook_angle == "challenge"
 
 def test_lever_vocabularies_are_frozensets():
+    # MOL-523: content_focus / selection_scope / hook_angle became FREE TEXT, so their vocabularies are
+    # deliberately EMPTY. Asserting the emptiness is the load-bearing half — it reds if someone re-introduces
+    # a token->prose map for them, which is the one lever shape this system does not allow.
+    from fanops.persona_store import CUT_POLICY
     for v in (CONTENT_FOCUS, SELECTION_SCOPE_LEVELS, HOOK_ANGLES):
-        assert isinstance(v, frozenset) and v
+        assert isinstance(v, frozenset) and not v
+    assert isinstance(CUT_POLICY, frozenset) and CUT_POLICY   # the ONE surviving vocabulary: it derives the cut
 
 
 # ---- hydration: a linked persona's levers land on the account; unlinked is byte-identical ----
@@ -78,10 +86,10 @@ def test_hydrate_levers_onto_linked_account(tmp_path):
     cfg = Config(root=tmp_path)
     _write(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active",
                   "persona_id": "curator"}],
-           [{"id": "curator", "voice": "tasteful", "content_focus": ["storytelling"],
+           [{"id": "curator", "voice": "tasteful", "cut_policy": ["storytelling"],
              "hook_angle": "emotional", "selection_scope": "open"}])
     a = next(x for x in Accounts.load(cfg).accounts if x.handle == "a")
-    assert a.persona == "tasteful" and a.content_focus == ["storytelling"] and a.selection_scope == "open"
+    assert a.persona == "tasteful" and a.cut_policy == ["storytelling"] and a.selection_scope == "open"
     # M3d: clip_profile/framing DERIVE from content_focus/energy onto the account (no per-persona pin)
     assert a.hook_angle == "emotional" and a.clip_profile == "long" and a.framing == "top"
 
@@ -91,7 +99,7 @@ def test_unlinked_account_levers_stay_empty(tmp_path):
     cfg.accounts_path.write_text(json.dumps({"accounts": [
         {"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active", "persona": "x"}]}))
     a = next(x for x in Accounts.load(cfg).accounts if x.handle == "a")
-    assert a.content_focus == [] and a.selection_scope is None and compose_persona_instruction(a) == "x"
+    assert a.cut_policy == [] and a.selection_scope is None and compose_persona_instruction(a) == "x"
 
 
 # ---- directive firewall: the composed casting instruction; only-voice == byte-identical ----
@@ -102,7 +110,7 @@ def test_casting_directive_only_voice_is_byte_identical(tmp_path):
 
 def test_casting_directive_carries_lever_direction(tmp_path):
     from fanops.personas import casting_directive
-    persona_str = str(casting_directive(Persona(id="p", voice="bold fan", content_focus=["punchlines", "hype"])))
+    persona_str = str(casting_directive(Persona(id="p", voice="bold fan", cut_policy=["punchlines", "hype"])))
     assert "punchline" in persona_str and "hype moments" in persona_str  # substantive, not adjectives
 
 
@@ -110,30 +118,31 @@ def test_casting_directive_carries_lever_direction(tmp_path):
 def test_studio_create_persona_persists_levers(tmp_path):
     from fanops.studio import personas as sp
     cfg = Config(root=tmp_path)
-    r = sp.create_persona(cfg, name="Curator", voice="champions craft", content_focus=["punchlines", "hype"], hook_angle="curiosity", niche="hiphop")
+    r = sp.create_persona(cfg, name="Curator", voice="champions craft", cut_policy=["punchlines", "hype"], hook_angle="curiosity", niche="hiphop")
     assert r.ok
     p = Personas.load(cfg).get(r.detail["created"])
-    assert p.content_focus == ["punchlines", "hype"] and p.selection_scope is None or p.selection_scope == "open"
+    assert p.cut_policy == ["punchlines", "hype"] and p.selection_scope is None or p.selection_scope == "open"
     assert p.hook_angle == "curiosity"                   # cut (length/framing) is DERIVED, not a settable knob
 
 def test_studio_create_persona_bad_lever_is_clean_error(tmp_path):
     from fanops.studio import personas as sp
     cfg = Config(root=tmp_path)
-    r = sp.create_persona(cfg, name="X", selection_scope="ludicrous", niche="hiphop")
+    # MOL-523: selection_scope is free text and accepts anything — cut_policy is the validated lever now.
+    r = sp.create_persona(cfg, name="X", cut_policy=["not-a-focus"], niche="hiphop")
     assert r.ok is False and r.error                     # no raise -> the panel renders the ✗
 
 def test_personas_page_exposes_composed_instruction(tmp_path):
     from fanops.studio import views
     cfg = Config(root=tmp_path)
-    add_persona(cfg, name="P", voice="a devoted fan", content_focus=["hype"], niche=["hiphop"])
+    add_persona(cfg, name="P", voice="a devoted fan", cut_policy=["hype"], niche=["hiphop"])
     card = next(c for c in views.personas_page(cfg).personas if c.id == "p")
     assert card.instruction.startswith("a devoted fan") and "hype moments" in card.instruction   # voice + substantive clip-for
-    assert card.content_focus == ["hype"] and card.selection_scope is None
+    assert card.cut_policy == ["hype"] and card.selection_scope is None
 
 def test_personas_panel_renders_lever_controls(tmp_path):
     from fanops.studio.app import create_app
     cfg = Config(root=tmp_path)
-    add_persona(cfg, name="P", voice="v", content_focus=["punchlines"], hook_angle="curiosity", niche=["hiphop"])
+    add_persona(cfg, name="P", voice="v", cut_policy=["punchlines"], hook_angle="curiosity", niche=["hiphop"])
     app = create_app(cfg); app.config.update(TESTING=True)
     html = app.test_client().get("/personas").get_data(as_text=True)
     assert 'name="content_focus"' in html and 'name="hook_angle"' in html   # the lever controls render
@@ -155,7 +164,7 @@ def test_compose_empty_brief_is_byte_identical():
 def test_persona_facts_resolve_from_real_resolvers(tmp_path):
     from fanops.personas import persona_facts
     cfg = Config(root=tmp_path)
-    f = persona_facts(cfg, Persona(id="p", content_focus=["punchlines", "emotional"],
+    f = persona_facts(cfg, Persona(id="p", cut_policy=["punchlines", "emotional"],
                                    hashtag_corpus=["#myscene"]))
     assert f["length_band"] == "16-26s"          # emotional wins medium tier over punchlines short
     assert f["framing"] == "center"
@@ -170,7 +179,7 @@ def test_persona_facts_default_length_when_unset(tmp_path):
 def test_personas_page_exposes_facts(tmp_path):
     from fanops.studio import views
     cfg = Config(root=tmp_path)
-    add_persona(cfg, name="P", voice="v", content_focus=["storytelling"], niche=["hiphop"])   # M3d: derives long (28-45s)
+    add_persona(cfg, name="P", voice="v", cut_policy=["storytelling"], niche=["hiphop"])   # M3d: derives long (28-45s)
     card = next(c for c in views.personas_page(cfg).personas if c.id == "p")
     assert card.length_band == "28-45s"
     assert isinstance(card.lead_tags, list)
@@ -178,7 +187,7 @@ def test_personas_page_exposes_facts(tmp_path):
 def test_personas_panel_renders_transparency_facts(tmp_path):
     from fanops.studio.app import create_app
     cfg = Config(root=tmp_path)
-    add_persona(cfg, name="P", voice="v", content_focus=["punchlines"], niche=["hiphop"])   # M3d: derives short (8-15s)
+    add_persona(cfg, name="P", voice="v", cut_policy=["punchlines"], niche=["hiphop"])   # M3d: derives short (8-15s)
     app = create_app(cfg); app.config.update(TESTING=True)
     html = app.test_client().get("/personas").get_data(as_text=True)
     assert "8-15s" in html                       # the resolved length band is shown (transparency)
@@ -193,19 +202,20 @@ def test_personas_panel_renders_transparency_facts(tmp_path):
 from fanops.personas import casting_directive, hook_directive, caption_directive
 
 def test_casting_directive_is_substantive_not_adjective():
-    out = str(casting_directive(Persona(id="p", content_focus=["punchlines", "hype"])))
+    out = str(casting_directive(Persona(id="p", cut_policy=["punchlines", "hype"])))
     assert "punchline" in out and ("punchline" in out)
     assert "favors moments" not in out and "energy high" not in out      # the trivial phrasing is GONE
 
 def test_hook_directive_compiles_angle():
-    out = str(hook_directive(Persona(id="p", voice="bold fan", hook_angle="curiosity")))
+    # MOL-523: hook_angle is FREE TEXT — the operator's own words compile in verbatim (no token->clause map).
+    out = str(hook_directive(Persona(id="p", voice="bold fan", hook_angle="open a curiosity gap")))
     assert "curiosity gap" in out                                         # the angle compiles into real hook language
     assert "hook angle" not in out                                        # substantive, not "hook angle curiosity"
     assert out.startswith("bold fan")                                     # the voice leads (it carries the register)
 
 def test_hook_directive_is_separate_from_casting():
     # the on-screen hook levers shape the HOOK prompt, NOT the casting prompt (per-dimension split)
-    p = Persona(id="p", content_focus=["hype"], hook_angle="curiosity")
+    p = Persona(id="p", cut_policy=["hype"], hook_angle="open a curiosity gap")
     assert "curiosity gap" in str(hook_directive(p)) and "curiosity gap" not in str(casting_directive(p))
     assert "hype moments" in str(casting_directive(p)) and "hype moments" not in str(hook_directive(p))
 
@@ -224,7 +234,7 @@ def test_personas_panel_renders_directive_ui(tmp_path):
     # the per-persona UI: the compiled directives show per dimension (read-only "what this compiles to")
     from fanops.studio.app import create_app
     cfg = Config(root=tmp_path)
-    add_persona(cfg, name="P", voice="v", content_focus=["punchlines"], hook_angle="curiosity", niche=["hiphop"])
+    add_persona(cfg, name="P", voice="v", cut_policy=["punchlines"], hook_angle="curiosity", niche=["hiphop"])
     app = create_app(cfg); app.config.update(TESTING=True)
     html = app.test_client().get("/personas").get_data(as_text=True)
     assert "hook &#8594;" in html or "hook →" in html or "hook →" in html   # per-dimension directive shown (clips/hook/caption)
@@ -234,10 +244,10 @@ def test_studio_edit_persona_persists_levers(tmp_path):
     from fanops.studio import personas as sp
     cfg = Config(root=tmp_path)
     add_persona(cfg, name="P", voice="v", niche=["hiphop"])
-    r = sp.edit_persona(cfg, "p", name="P", voice="v", content_focus=["punchlines"], hook_angle="curiosity")
+    r = sp.edit_persona(cfg, "p", name="P", voice="v", cut_policy=["punchlines"], hook_angle="curiosity")
     assert r.ok
     p = Personas.load(cfg).get("p")
-    assert p.content_focus == ["punchlines"] and p.hook_angle == "curiosity"
+    assert p.cut_policy == ["punchlines"] and p.hook_angle == "curiosity"
 
 
 # ======================================================================================
@@ -252,8 +262,9 @@ from fanops.config import Config as _Cfg
 def test_selection_scope_replaces_energy_in_registry():
     keys = [lv["key"] for lv in _pl.LEVER_REGISTRY]
     assert "energy" not in keys and "selection_scope" in keys
-    assert keys == ["content_focus", "intensity", "selection_scope", "hook_angle", "clip_profile", "niche"]
-    assert set(_pl.vocab("selection_scope")) == {"open", "subject_locked", "source_briefed", "credibility_first", "controversy_seeking"}
+    assert keys == ["content_focus", "cut_policy", "intensity", "selection_scope", "hook_angle",
+                    "clip_profile", "niche"]
+    assert set(_pl.vocab("selection_scope")) == set()   # MOL-523: free text — no vocabulary to enumerate
     assert "energy" not in _pl.editable_fields()
     assert "selection_scope" in _pl.editable_fields()
     assert "intensity" in _pl.editable_fields()
@@ -262,9 +273,9 @@ def test_selection_scope_replaces_energy_in_registry():
 def test_content_focus_derives_framing():
     assert _pl.framing_map()["storytelling"] == "top"
     assert _pl.framing_map()["punchlines"] == "center"
-    assert resolved_cut_spec(Persona(id="p", content_focus=["storytelling"])) == ("long", "top")
-    assert resolved_cut_spec(Persona(id="p", content_focus=["punchlines"])) == ("short", "center")
-    assert resolved_cut_spec(Persona(id="p", content_focus=["punchlines", "storytelling"])) == ("long", "center")
+    assert resolved_cut_spec(Persona(id="p", cut_policy=["storytelling"])) == ("long", "top")
+    assert resolved_cut_spec(Persona(id="p", cut_policy=["punchlines"])) == ("short", "center")
+    assert resolved_cut_spec(Persona(id="p", cut_policy=["punchlines", "storytelling"])) == ("long", "center")
 
 
 def test_resolve_top_bias_still_reads_account_framing(tmp_path):
@@ -280,7 +291,7 @@ def test_legacy_energy_key_ignored_scope_unset(tmp_path):
     # MOL-502: leftover energy keys are inert (Pydantic extra=ignore); do NOT infer selection_scope=open.
     cfg = _Cfg(root=tmp_path)
     legacy = {"personas": [{"id": "curator", "name": "Curator", "voice": "tasteful",
-                            "content_focus": ["storytelling"], "energy": "low", "hook_angle": "emotional"}]}
+                            "cut_policy": ["storytelling"], "energy": "low", "hook_angle": "emotional"}]}
     cfg.personas_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.personas_path.write_text(_json.dumps(legacy))
     p = Personas.load(cfg).get("curator")
@@ -294,7 +305,7 @@ def test_legacy_energy_key_ignored_scope_unset(tmp_path):
 
 
 def test_no_new_lever_family():
-    assert len(_pl.LEVER_REGISTRY) == 6
+    assert len(_pl.LEVER_REGISTRY) == 7        # MOL-523 split content_focus -> content_focus + cut_policy
     persona_levers = {lv["key"] for lv in _pl.LEVER_REGISTRY if lv["key"] not in ("clip_profile", "niche")}
     assert persona_levers == set(_pl.editable_fields()) - {"voice", "niche"}
 
@@ -305,10 +316,10 @@ def test_derived_intensity_helpers_gone():
 
 
 def test_persona_intensity_explicit():
-    p = Persona(id="p", intensity="high", content_focus=["hype"])
+    p = Persona(id="p", intensity="high", cut_policy=["hype"])
     assert p.intensity == "high"
     # content_focus alone does NOT imply intensity (derive deleted)
-    bare = Persona(id="q", content_focus=["hype", "bold-statement"])
+    bare = Persona(id="q", cut_policy=["hype", "bold-statement"])
     assert bare.intensity is None
 
 

@@ -134,14 +134,14 @@ def test_hydration_carries_voice_corpus_levers_after_migration(tmp_path):
     pid = result["created"][0]
 
     # Operator sets the levers; the corpus arrives from a derivation (its only writer)
-    P.update_persona(cfg, pid, content_focus=["storytelling"], hook_angle="emotional",
+    P.update_persona(cfg, pid, cut_policy=["storytelling"], hook_angle="emotional",
                      selection_scope="subject_locked")
     P.apply_auto_corpus(cfg, pid, tags=["#beatmaking", "#underground"], meta={})
 
     a = Accounts.load(cfg).accounts[0]
     assert a.persona_id == pid
     assert a.persona == "beat tape archivist"           # voice from persona
-    assert a.content_focus == ["storytelling"]          # levers hydrated
+    assert a.cut_policy == ["storytelling"]          # levers hydrated
     assert a.hook_angle == "emotional"
     assert a.selection_scope == "subject_locked"
     assert "#beatmaking" in a.hashtag_corpus             # corpus hydrated

@@ -142,6 +142,13 @@ Set **`FANOPS_AUTO_ADOPT=0`** to disable the daemon's code-drift self-heal (defa
 the pump when the SHA it reports in its heartbeat differs from the SHA on disk (`daemon.ensure`). Read via a raw
 `os.getenv` (not a `Settings` field — like `FANOPS_POSTIZ_ONDEMAND`), so it lives here in prose, not the table.
 
+**`FANOPS_STUDIO_GENERATION`** is **written by the daemon, never by an operator** — do not set it in `.env`.
+`daemon.install_studio` stamps a fresh token into the Studio LaunchAgent plist's `EnvironmentVariables`; Studio
+reads it once at import (`studio.app`) and reports it on `/_fingerprint`. After a redeploy the daemon compares
+the served generation against the plist's, which is how it distinguishes a genuinely NEW resident from a
+survivor of the old one still answering the port. Raw `os.environ.get`, not a `Settings` field — prose, not the
+table.
+
 **Coverage note:** every trust-gate numeric and every Phase-2 reach-loop bias kill switch is `.env`/shell-only —
 an operator-only (Studio-only) deployment cannot turn on the bias actuators or tune their thresholds without
 shell access. This is by design (system-lens-map Finding 2).

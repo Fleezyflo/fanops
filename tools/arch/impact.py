@@ -255,8 +255,17 @@ def report(base: str = "origin/main") -> dict:
                 bump(UNKNOWN, "NEW network call site(s) — must be registered in kb/side_effects.json (ARCH-008)")
             elif nse.get(k, 0) != ose.get(k, 0):
                 if nse.get(k, 0) > ose.get(k, 0):
-                    bump(UNKNOWN, f"side-effect census INCREASED: {k} {ose.get(k,0)} -> {nse.get(k,0)}. "
-                                  f"An increase without a corresponding \"read\" is a phantom effect (ARCH-008).")
+                    # COMPATIBLE, not UNKNOWN, for the same reason a new env var is COMPATIBLE above:
+                    # the DECLARATION is enforced elsewhere and BLOCKING. ARCH-008 fails the build the
+                    # moment kb/side_effects.json disagrees with the derived census, so an unregistered
+                    # effect still cannot land — it just fails at the gate that can actually SEE the
+                    # registration. This branch compares derived-at-base to derived-at-head and never
+                    # reads the KB, so as UNKNOWN it told the author to "register it in
+                    # kb/side_effects.json" and then ignored them doing so. UNKNOWN_IMPACT is
+                    # deliberately non-declarable, which made every new Ledger.transaction, subprocess
+                    # and rmtree permanently red with no way out — an unclearable gate, not a strict one.
+                    bump(COMPATIBLE, f"side-effect census increased: {k} {ose.get(k,0)} -> {nse.get(k,0)} "
+                                     f"— must be declared in kb/side_effects.json (ARCH-008 enforces it)")
                 else:
                     bump(COMPATIBLE, f"side-effect census decreased: {k} {ose.get(k,0)} -> {nse.get(k,0)}")
 

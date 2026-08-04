@@ -29,11 +29,11 @@ def test_create_persona_is_the_clean_lever_set(tmp_path):
     # create takes the clean levers (voice + content_focus/selection_scope/hook_angle) plus a required niche;
     # tag_lean and genre are NOT create params — the corpus is DERIVED.
     cfg = Config(root=tmp_path)
-    r = sp.create_persona(cfg, name="Curator", voice="champions craft", content_focus=["punchlines"],
+    r = sp.create_persona(cfg, name="Curator", voice="champions craft", cut_policy=["punchlines"],
                           selection_scope="controversy_seeking", hook_angle="curiosity", niche="hiphop")
     assert r.ok
     p = core.Personas.load(cfg).get(r.detail["created"])
-    assert p.voice == "champions craft" and p.content_focus == ["punchlines"] and p.hook_angle == "curiosity"
+    assert p.voice == "champions craft" and p.cut_policy == ["punchlines"] and p.hook_angle == "curiosity"
     assert p.niche == ["hiphop"]
     assert p.hashtag_corpus == []                  # a fresh persona ships NO corpus — derivation fills it
 
@@ -57,10 +57,10 @@ def test_create_persona_blank_name_is_clean_error(tmp_path):
 def test_edit_persona_updates_fields(tmp_path):
     cfg = Config(root=tmp_path)
     pid = core.add_persona(cfg, name="Z", voice="old", niche=["hiphop"])
-    r = sp.edit_persona(cfg, pid, name="Z2", voice="new", content_focus=["hype"], hook_angle="fomo")
+    r = sp.edit_persona(cfg, pid, name="Z2", voice="new", cut_policy=["hype"], hook_angle="fomo")
     assert r.ok
     p = core.Personas.load(cfg).get(pid)
-    assert p.name == "Z2" and p.voice == "new" and p.content_focus == ["hype"] and p.hook_angle == "fomo"
+    assert p.name == "Z2" and p.voice == "new" and p.cut_policy == ["hype"] and p.hook_angle == "fomo"
 
 
 def test_delete_persona_action(tmp_path):

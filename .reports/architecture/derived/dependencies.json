@@ -52,6 +52,7 @@
       "fanops.vocals"
     ],
     [
+      "fanops.cli",
       "fanops.studio.app",
       "fanops.studio.app_routes_golive",
       "fanops.studio.app_routes_personas",
@@ -306,6 +307,7 @@
         "fanops.reconcile",
         "fanops.reframe",
         "fanops.reframe_apply",
+        "fanops.stranded_posts",
         "fanops.studio.actions",
         "fanops.studio.app",
         "fanops.studio.views",
@@ -1420,6 +1422,19 @@
       "optional": [],
       "typing": []
     },
+    "fanops.stranded_posts": {
+      "compile": [
+        "fanops.config",
+        "fanops.ledger",
+        "fanops.models"
+      ],
+      "lazy": [
+        "fanops.audit",
+        "fanops.health_model"
+      ],
+      "optional": [],
+      "typing": []
+    },
     "fanops.studio": {
       "compile": [],
       "lazy": [],
@@ -1569,6 +1584,7 @@
         "fanops.timeutil"
       ],
       "lazy": [
+        "fanops.cli",
         "fanops.errors",
         "fanops.health_model",
         "fanops.post.media",
@@ -2066,6 +2082,7 @@
       "fcntl",
       "flask",
       "hashlib",
+      "http",
       "importlib",
       "instagrapi",
       "json",
@@ -2076,10 +2093,12 @@
       "numpy",
       "os",
       "pathlib",
+      "plistlib",
       "pydantic",
       "random",
       "re",
       "requests",
+      "secrets",
       "shutil",
       "socket",
       "sqlite3",
@@ -2116,7 +2135,7 @@
     "fanops.cli": 0,
     "fanops.clip": 6,
     "fanops.compose": 1,
-    "fanops.config": 87,
+    "fanops.config": 88,
     "fanops.config_introspect": 0,
     "fanops.control": 4,
     "fanops.controlio": 12,
@@ -2149,7 +2168,7 @@
     "fanops.intro_match": 1,
     "fanops.keyframes": 2,
     "fanops.learn_doctor": 0,
-    "fanops.ledger": 57,
+    "fanops.ledger": 58,
     "fanops.ledger_bridge": 0,
     "fanops.ledger_sqlite": 1,
     "fanops.ledger_wipe": 1,
@@ -2158,7 +2177,7 @@
     "fanops.log": 37,
     "fanops.meta_graph": 1,
     "fanops.metrics_schedule": 1,
-    "fanops.models": 50,
+    "fanops.models": 51,
     "fanops.moment_hook_learning": 1,
     "fanops.moments": 4,
     "fanops.overlay": 3,
@@ -2196,6 +2215,7 @@
     "fanops.signals": 2,
     "fanops.stage_lock": 1,
     "fanops.stitch_render": 2,
+    "fanops.stranded_posts": 0,
     "fanops.studio": 9,
     "fanops.studio.actions": 7,
     "fanops.studio.actions_approve": 1,
@@ -2333,6 +2353,7 @@
     "fanops.signals": 7,
     "fanops.stage_lock": 2,
     "fanops.stitch_render": 7,
+    "fanops.stranded_posts": 3,
     "fanops.studio": 0,
     "fanops.studio.actions": 13,
     "fanops.studio.actions_approve": 9,
@@ -2375,7 +2396,7 @@
   "generated_by": "tools/arch",
   "generator_version": "arch/1.0.0",
   "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",
-  "lazy_downward_count": 227,
+  "lazy_downward_count": 230,
   "lazy_lateral": [
     {
       "from": "fanops.accounts",
@@ -2688,6 +2709,14 @@
       "same_scc": false,
       "to": "fanops.digest",
       "to_level": 4
+    },
+    {
+      "from": "fanops.studio.app",
+      "from_level": 9,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.cli",
+      "to_level": 9
     },
     {
       "from": "fanops.studio.app",
@@ -3390,6 +3419,7 @@
     "fanops.signals": 4,
     "fanops.stage_lock": 1,
     "fanops.stitch_render": 3,
+    "fanops.stranded_posts": 3,
     "fanops.studio": 0,
     "fanops.studio.actions": 8,
     "fanops.studio.actions_approve": 7,
@@ -3520,6 +3550,7 @@
       "fanops.reconcile",
       "fanops.responder",
       "fanops.stitch_render",
+      "fanops.stranded_posts",
       "fanops.studio.actions_casting",
       "fanops.studio.views_common",
       "fanops.studio.views_live",
@@ -3601,17 +3632,17 @@
   ],
   "totals": {
     "G1_non_trivial_sccs": 0,
-    "G1_sccs_total": 135,
+    "G1_sccs_total": 136,
     "G1c_levels": 11,
     "G2_largest_scc_size": 47,
     "G2_module_sccs_total": 73,
     "G2_non_trivial_sccs": 8,
-    "compile_edges_G1": 568,
-    "lazy_edges": 341,
-    "lazy_edges_lateral": 47,
+    "compile_edges_G1": 571,
+    "lazy_edges": 345,
+    "lazy_edges_lateral": 48,
     "lazy_edges_strictly_upward": 67,
-    "lazy_edges_to_equal_or_higher_level": 114,
-    "modules": 135,
+    "lazy_edges_to_equal_or_higher_level": 115,
+    "modules": 136,
     "optional_edges": 0,
     "typing_only_edges": 7
   }

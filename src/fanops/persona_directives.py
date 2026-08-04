@@ -16,7 +16,8 @@ from fanops import persona_levers as _levers
 # owns the words). clip_profile/framing/tag_lean/corpus stay deterministic (cut + hashtags), NOT in this text.
 # M1: the clause maps are PROJECTIONS of the single lever registry (fanops.persona_levers) — the SAME
 # declaration personas' vocabularies + lever_catalog() derive from, so the three can no longer drift.
-_FOCUS_CLAUSE = _levers.clause_map("content_focus")
+# MOL-523: cut_policy now owns the tokens formerly in content_focus.
+_FOCUS_CLAUSE = _levers.clause_map("cut_policy")
 _SCOPE_CLAUSE = _levers.clause_map("selection_scope")
 _ANGLE_CLAUSE = _levers.clause_map("hook_angle")
 
@@ -53,12 +54,12 @@ _FRAMING_MAP = dict(_levers.framing_map())
 
 
 def derive_cut_spec(p):
-    """The CUT default a persona implies from its content_focus — (clip_profile|None, framing|None).
-    content_focus picks the LENGTH (first match in _FOCUS_PROFILE's longer-bias-first order) and the FRAMING
+    """The CUT default a persona implies from its cut_policy (MOL-523) — (clip_profile|None, framing|None).
+    cut_policy picks the LENGTH (first match in _FOCUS_PROFILE's longer-bias-first order) and the FRAMING
     (first match in _FRAMING_MAP's highest-intensity-first order). Unmapped/empty -> None (global stands)."""
-    foc = list(getattr(p, "content_focus", None) or [])
-    profile = next((v for k, v in _FOCUS_PROFILE.items() if k in foc), None)
-    framing = next((v for k, v in _FRAMING_MAP.items() if k in foc), None)
+    pol = list(getattr(p, "cut_policy", None) or [])
+    profile = next((v for k, v in _FOCUS_PROFILE.items() if k in pol), None)
+    framing = next((v for k, v in _FRAMING_MAP.items() if k in pol), None)
     return profile, framing
 
 
@@ -86,16 +87,23 @@ def _join(voice: str, body: str) -> str:
 
 def casting_directive(p) -> Directive:
     """WHICH MOMENTS this account clips for — the substantive instruction injected into the casting prompt's
-    per-account slot. Compiled from content_focus + selection_scope into real selection language; else the bare voice.
-    THE FIREWALL: no levers -> the bare voice, byte-identical to today. Duck-typed (Persona or hydrated
-    Account). Returns a Directive (str(d) == today's string)."""
+    per-account slot. Compiled from content_focus + cut_policy + selection_scope into real selection language;
+    else the bare voice. THE FIREWALL: no levers -> the bare voice, byte-identical to today.
+    Duck-typed (Persona or hydrated Account). Returns a Directive (str(d) == today's string)."""
     voice = _base_voice(p)
-    foc_clauses = [_FOCUS_CLAUSE[c] for c in (getattr(p, "content_focus", None) or []) if c in _FOCUS_CLAUSE]
-    select_rule = ("Clip for this account: " + "; ".join(foc_clauses) + ".") if foc_clauses else ""
-    scope_lens = _SCOPE_CLAUSE.get((getattr(p, "selection_scope", None) or "").strip().lower(), "")
-    body_parts = [x for x in (select_rule, scope_lens) if x]
+    # MOL-523: content_focus is now free text; cut_policy tokens still compile to clauses for back-compat.
+    editorial = (getattr(p, "content_focus", None) or "").strip()
+    foc_clauses = [_FOCUS_CLAUSE[c] for c in (getattr(p, "cut_policy", None) or []) if c in _FOCUS_CLAUSE]
+    select_rule = ("; ".join(foc_clauses) + ".") if foc_clauses else ""
+    
+    parts = [x for x in (editorial, select_rule) if x]
+    full_select = ("Clip for this account: " + " ".join(parts).strip()) if parts else ""
+    
+    # MOL-521: selection_scope is now free text.
+    scope_lens = (getattr(p, "selection_scope", None) or "").strip()
+    body_parts = [x for x in (full_select, scope_lens) if x]
     rendered = _join(voice, " ".join(body_parts).strip())
-    return Directive(select_rule=select_rule, scope_lens=scope_lens, register=voice, _rendered=rendered)
+    return Directive(select_rule=full_select, scope_lens=scope_lens, register=voice, _rendered=rendered)
 
 
 def hook_directive(p) -> Directive:
@@ -103,7 +111,8 @@ def hook_directive(p) -> Directive:
     from hook_angle (the strategy); else the bare voice (firewall). Persona-supplied demos/ban_additions ride
     as optional duck-typed attrs (hook_demos, hook_ban_additions). Returns Directive (str(d) == today's string)."""
     voice = _base_voice(p)
-    lean = _ANGLE_CLAUSE.get((getattr(p, "hook_angle", None) or "").strip().lower(), "")
+    # MOL-521: hook_angle is now free text.
+    lean = (getattr(p, "hook_angle", None) or "").strip()
     body = ("For the on-screen hook, " + lean + ".") if lean else ""
     rendered = _join(voice, body.strip())
     demos = list(getattr(p, "hook_demos", None) or [])
@@ -158,9 +167,14 @@ def _casting_fragments(p) -> list[dict]:
     frags: list[dict] = []
     voice = _base_voice(p)
     if voice: frags.append({"source": "voice", "text": voice})
-    foc = [c for c in (getattr(p, "content_focus", None) or []) if c in _FOCUS_CLAUSE]
-    if foc: frags.append({"source": "content_focus", "text": "Clip for this account: " + "; ".join(_FOCUS_CLAUSE[c] for c in foc) + "."})
-    sc = _SCOPE_CLAUSE.get((getattr(p, "selection_scope", None) or "").strip().lower(), "")
+    # MOL-523: content_focus is now free text.
+    ed = (getattr(p, "content_focus", None) or "").strip()
+    if ed: frags.append({"source": "content_focus", "text": ed})
+    # MOL-523: cut_policy tokens still compile to clauses for back-compat.
+    foc = [c for c in (getattr(p, "cut_policy", None) or []) if c in _FOCUS_CLAUSE]
+    if foc: frags.append({"source": "cut_policy", "text": "Clip for this account: " + "; ".join(_FOCUS_CLAUSE[c] for c in foc) + "."})
+    # MOL-521: selection_scope is now free text.
+    sc = (getattr(p, "selection_scope", None) or "").strip()
     if sc: frags.append({"source": "selection_scope", "text": sc})
     return frags
 
@@ -169,7 +183,8 @@ def _hook_fragments(p) -> list[dict]:
     frags: list[dict] = []
     voice = _base_voice(p)
     if voice: frags.append({"source": "voice", "text": voice})
-    a = _ANGLE_CLAUSE.get((getattr(p, "hook_angle", None) or "").strip().lower(), "")
+    # MOL-521: hook_angle is now free text.
+    a = (getattr(p, "hook_angle", None) or "").strip()
     if a: frags.append({"source": "hook_angle", "text": "For the on-screen hook, " + a + "."})
     return frags
 
@@ -182,16 +197,16 @@ def _caption_fragments(p) -> list[dict]:
 
 
 def _cut_fragments(p) -> list[dict]:
-    """The CUT's pieces (M4 provenance), each tagged with the lever that DERIVES it: content_focus -> the
+    """The CUT's pieces (M4 provenance), each tagged with the lever that DERIVES it: cut_policy -> the
     length band + framing. Empty when neither derives (a global cut, or a carrier-pin-only cut with no levers)."""
     frags: list[dict] = []
     d_prof, d_fr = derive_cut_spec(p)
     if d_prof:
         from fanops.bands import band_for
         b = band_for(d_prof)
-        frags.append({"source": "content_focus", "text": f"{b.lo:g}-{b.hi:g}s ({d_prof}, derived from content_focus)"})
+        frags.append({"source": "cut_policy", "text": f"{b.lo:g}-{b.hi:g}s ({d_prof}, derived from cut_policy)"})
     if d_fr:
-        frags.append({"source": "content_focus", "text": f"{d_fr} crop (derived from content_focus)"})
+        frags.append({"source": "cut_policy", "text": f"{d_fr} crop (derived from cut_policy)"})
     return frags
 
 
@@ -216,14 +231,14 @@ def compose_breakdown(cfg: Config, p) -> dict:
     band = band_for(res_prof or "")
     cut = {"band": f"{band.lo:g}-{band.hi:g}s", "framing": res_fr,
            "source": ("persona" if pin_prof else ("derived" if res_prof else "global")),
-           "fragments": _cut_fragments(p)}                # M4: the lever(s) that DERIVE the cut (content_focus)
+           "fragments": _cut_fragments(p)}                # M4: the lever(s) that DERIVE the cut (cut_policy)
     facts = persona_facts(cfg, p)                         # reuse the EXACT lead-tags + length resolver
     tags = {"lead": facts["lead_tags"],
             "terms": facts["terms"],                       # what the next measurement pass will search for
             "corpus": list(getattr(p, "hashtag_corpus", None) or [])}
     noops: list[str] = []
-    if (getattr(p, "selection_scope", None) or "").strip().lower() in ("", "open"):
-        noops.append("selection_scope=open has no effect on selection")
+    if not (getattr(p, "selection_scope", None) or "").strip():
+        noops.append("selection_scope is empty — no effect on selection")
     bd = {"casting": casting, "hook": hook, "caption": caption, "cut": cut, "tags": tags, "noops": noops}
     bd["produces"] = produces_summary(bd)                 # S7: the operator-facing OUTPUT lead, from this same detail
     return bd
@@ -243,8 +258,12 @@ def manifest(cfg: Config, p) -> list[dict]:
     def _produces(key):
         if key == "voice":
             return next((f["text"] for f in bd["caption"]["fragments"] if f["source"] == "voice"), "")
+        # MOL-523: content_focus is the free-text CASTING clause; cut_policy is what derives the cut, so each
+        # names the fragment it actually produced (the breakdown already attributes them separately).
         if key == "content_focus":
-            return next((f["text"] for f in bd["cut"]["fragments"] if f["source"] == "content_focus"), bd["cut"]["band"])
+            return next((f["text"] for f in bd["casting"]["fragments"] if f["source"] == "content_focus"), "—")
+        if key == "cut_policy":
+            return next((f["text"] for f in bd["cut"]["fragments"] if f["source"] == "cut_policy"), bd["cut"]["band"])
         if key == "selection_scope":
             return next((f["text"] for f in bd["casting"]["fragments"] if f["source"] == "selection_scope"), "—")
         if key == "hook_angle":

@@ -402,7 +402,8 @@ class PersonaCard:
     reach_means: dict = field(default_factory=dict)  # {corpus tag -> Instagram's own media_count} — 'why this tag'
     # Lever engine: the per-characteristic levers + the COMPOSED instruction the pipeline will read
     # ("what the AI will read") — so the operator sees their config's exact downstream effect on the card.
-    content_focus: list = field(default_factory=list)
+    content_focus: Optional[str] = None              # MOL-523: free-text editorial focus (was the token multi-select)
+    cut_policy: list = field(default_factory=list)    # MOL-523: the moment-kind tokens that DERIVE cut length+framing
     selection_scope: Optional[str] = None
     hook_angle: Optional[str] = None
     intensity: Optional[str] = None
@@ -460,7 +461,9 @@ def _account_provenance(cfg: Config, persona, handles: list) -> list:
         else:
             fields.append({"name": "voice", "value": acc.persona or "", "source": "account"})
         fields.append({"name": "hashtag_corpus", "value": list(persona.hashtag_corpus), "source": "persona"})
-        fields.append({"name": "content_focus", "value": list(persona.content_focus), "source": "persona"})
+        # MOL-523: content_focus is free TEXT; the token list that derives the cut moved to cut_policy.
+        fields.append({"name": "content_focus", "value": persona.content_focus or "", "source": "persona"})
+        fields.append({"name": "cut_policy", "value": list(persona.cut_policy or []), "source": "persona"})
         fields.append({"name": "intensity", "value": persona.intensity or "", "source": "persona"})
         fields.append({"name": "selection_scope", "value": persona.selection_scope or "", "source": "persona"})
         fields.append({"name": "hook_angle", "value": persona.hook_angle or "", "source": "persona"})
@@ -497,7 +500,7 @@ def _lever_detail_rows(cfg: Config, persona, manifest_rows: list, catalog: list,
             cat = cat_by.get(key, {})
             val = row.get("value")
             eff_map = (effects or {}).get(key) or {}
-            if key == "content_focus" and isinstance(val, list):
+            if isinstance(val, list):    # MOL-523: the multi-value lever is cut_policy now, not content_focus
                 parts = [eff_map[v] for v in val if v in eff_map]
                 opt_eff = " · ".join(parts) if parts else "—"
             elif isinstance(val, str) and val.strip():
@@ -640,7 +643,8 @@ def personas_page(cfg: Config, *, led: Optional[Ledger] = None) -> "PersonasPage
                          linked_handles=by_pid.get(p.id, []),
                          reach_tags=[_norm(t) for t in p.hashtag_corpus if _norm(t) in means],
                          reach_means={_norm(t): means[_norm(t)] for t in p.hashtag_corpus if _norm(t) in means},
-                         content_focus=list(p.content_focus), selection_scope=p.selection_scope, hook_angle=p.hook_angle,
+                         content_focus=p.content_focus, cut_policy=list(p.cut_policy or []),
+                         selection_scope=p.selection_scope, hook_angle=p.hook_angle,
                          intensity=p.intensity,
                          clip_profile=resolved_cut_spec(p)[0], framing=facts["framing"],
                          instruction=compose_persona_instruction(p),

@@ -311,6 +311,12 @@
    ],
    "reader_count": 1
   },
+  "FANOPS_STUDIO_GENERATION": {
+   "read_at": [
+    "fanops.studio.app:44"
+   ],
+   "reader_count": 1
+  },
   "FANOPS_SUBTITLE_FONT": {
    "read_at": [
     "fanops.config:687"

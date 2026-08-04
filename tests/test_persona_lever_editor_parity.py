@@ -18,16 +18,18 @@ def test_every_editable_field_persists_through_the_save_route(tmp_path):
     # `hashtag_corpus` is DERIVED (exempt). `niche` owns the hashtags channel — persona_terms returns it
     # (B-6), saved by the /personas/niche route.
     cfg = Config(root=tmp_path)
+    # MOL-523: content_focus/selection_scope/hook_angle are FREE TEXT; cut_policy carries the tokens.
     add_persona(cfg, name="P", voice="champions craft", niche=["hiphop"],
-                content_focus=["punchlines", "hype"], intensity="high",
-                selection_scope="controversy_seeking", hook_angle="curiosity")
+                content_focus="punchlines that rewatch", cut_policy=["punchlines", "hype"], intensity="high",
+                selection_scope="seek controversy", hook_angle="open a curiosity gap")
     p = Personas.load(cfg).get("p")
     persisted = {
         "voice": p.voice == "champions craft",
-        "content_focus": p.content_focus == ["punchlines", "hype"],
+        "content_focus": p.content_focus == "punchlines that rewatch",
+        "cut_policy": p.cut_policy == ["punchlines", "hype"],
         "intensity": p.intensity == "high",
-        "selection_scope": p.selection_scope == "controversy_seeking",
-        "hook_angle": p.hook_angle == "curiosity",
+        "selection_scope": p.selection_scope == "seek controversy",
+        "hook_angle": p.hook_angle == "open a curiosity gap",
         "niche": p.niche == ["hiphop"],
     }
     for field in pl.editable_fields():
@@ -37,11 +39,11 @@ def test_every_editable_field_persists_through_the_save_route(tmp_path):
 def test_update_route_also_persists_each_editable_field(tmp_path):
     cfg = Config(root=tmp_path)
     add_persona(cfg, name="P", voice="v", niche=["hiphop"])
-    update_persona(cfg, "p", voice="changed", content_focus=["storytelling"], selection_scope="subject_locked",
-                   hook_angle="fomo", intensity="low")
+    update_persona(cfg, "p", voice="changed", content_focus="story turns", cut_policy=["storytelling"],
+                   selection_scope="lock to the subject", hook_angle="name the payoff", intensity="low")
     p = Personas.load(cfg).get("p")
-    assert p.voice == "changed" and p.content_focus == ["storytelling"]
-    assert p.selection_scope == "subject_locked" and p.hook_angle == "fomo" and p.intensity == "low"
+    assert p.voice == "changed" and p.content_focus == "story turns" and p.cut_policy == ["storytelling"]
+    assert p.selection_scope == "lock to the subject" and p.hook_angle == "name the payoff" and p.intensity == "low"
 
 
 def test_no_model_field_escapes_the_editable_exempt_or_quarantine_partition():
@@ -58,4 +60,6 @@ def test_quarantined_fields_are_not_in_the_editable_set():
 
 def test_editable_set_is_exactly_the_clean_levers():
     # pin the editable set so an accidental widening (e.g. re-admitting tag_lean as "editable") reds here.
-    assert set(pl.editable_fields()) == {"voice", "content_focus", "intensity", "selection_scope", "hook_angle", "niche"}
+    # MOL-523 split content_focus (free-text editorial) from cut_policy (the tokens that derive the cut).
+    assert set(pl.editable_fields()) == {"voice", "content_focus", "cut_policy", "intensity",
+                                         "selection_scope", "hook_angle", "niche"}

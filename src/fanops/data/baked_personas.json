@@ -4,87 +4,92 @@
       "id": "credibility-first",
       "name": "Credibility First",
       "voice": "restraint is the product; pass on the sensational cut",
-      "selection_scope": "credibility_first",
-      "content_focus": [
-        "emotional",
-        "storytelling"
-      ],
-      "hook_angle": "curiosity",
+      "selection_scope": "Favor clear and accurate over sensational; pass on cuts that misrepresent the source.",
+      "content_focus": "moments carrying real emotion — vulnerability, longing, devotion, a confession the viewer feels; moments that tell a story or reveal something — an origin, a turn, a payoff.",
+      "hook_angle": "open a curiosity gap the viewer has to close",
       "hashtag_corpus": [
         "#podcast",
         "#interview",
         "#facts",
         "#science"
       ],
-      "intensity": "low"
+      "intensity": "low",
+      "cut_policy": [
+        "emotional",
+        "storytelling"
+      ]
     },
     {
       "id": "controversy",
       "name": "Controversy",
-      "voice": "pick the cut that starts the argument \u2014 high-arousal, never neutral",
-      "selection_scope": "controversy_seeking",
-      "content_focus": [
-        "bold-statement"
-      ],
-      "hook_angle": "challenge",
+      "voice": "pick the cut that starts the argument — high-arousal, never neutral",
+      "selection_scope": "Prefer the most inflammatory or rivalry-coded statement in the source.",
+      "content_focus": "a bold or contrarian statement that stops the scroll.",
+      "hook_angle": "dare or challenge the viewer to react",
       "hashtag_corpus": [
         "#celebritygossip",
         "#drama",
         "#popculture",
         "#entertainment"
       ],
-      "intensity": "high"
+      "intensity": "high",
+      "cut_policy": [
+        "bold-statement"
+      ]
     },
     {
       "id": "edutainment",
       "name": "Edutainment",
-      "voice": "one teachable insight per clip \u2014 the fact has to earn attention",
-      "selection_scope": "source_briefed",
-      "content_focus": [
-        "storytelling"
-      ],
-      "hook_angle": "curiosity",
+      "voice": "one teachable insight per clip — the fact has to earn attention",
+      "selection_scope": "Select only moments matching the campaign brief — the brief defines footage and angle.",
+      "content_focus": "moments that tell a story or reveal something — an origin, a turn, a payoff.",
+      "hook_angle": "open a curiosity gap the viewer has to close",
       "hashtag_corpus": [
         "#hiphop",
         "#lyrics",
         "#music",
         "#newmusic"
       ],
-      "intensity": "low"
+      "intensity": "low",
+      "cut_policy": [
+        "storytelling"
+      ]
     },
     {
       "id": "cliffhanger",
       "name": "Cliffhanger",
-      "voice": "cut before the resolution \u2014 leave the dilemma open so they have to watch through",
-      "selection_scope": "open",
-      "content_focus": [
-        "storytelling"
-      ],
-      "hook_angle": "curiosity",
+      "voice": "cut before the resolution — leave the dilemma open so they have to watch through",
+      "selection_scope": null,
+      "content_focus": "moments that tell a story or reveal something — an origin, a turn, a payoff.",
+      "hook_angle": "open a curiosity gap the viewer has to close",
       "hashtag_corpus": [
         "#podcast",
         "#storytime",
         "#reels",
         "#viral"
       ],
-      "intensity": "low"
+      "intensity": "low",
+      "cut_policy": [
+        "storytelling"
+      ]
     },
     {
       "id": "hype-vibe",
       "name": "Hype / Vibe",
-      "voice": "underground energy \u2014 the hardest bar, the room going up, never mid",
-      "selection_scope": "open",
-      "content_focus": [
-        "hype"
-      ],
-      "hook_angle": "fomo",
+      "voice": "underground energy — the hardest bar, the room going up, never mid",
+      "selection_scope": null,
+      "content_focus": "the highest-energy hype moments — the hardest delivery, the beat drop, the room going up.",
+      "hook_angle": "carry genuine scarcity — a one-time, leaked, or unreleased drop",
       "hashtag_corpus": [
         "#hiphop",
         "#rap",
         "#bars",
         "#undergroundhiphop"
       ],
-      "intensity": "high"
+      "intensity": "high",
+      "cut_policy": [
+        "hype"
+      ]
     }
   ]
 }

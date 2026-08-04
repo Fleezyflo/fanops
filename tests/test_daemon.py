@@ -59,6 +59,22 @@ def test_parse_interval_rejects_sub_minute(raw):
         daemon.parse_interval(raw)
 
 
+def test_studio_plist_uses_managed_launch_path(tmp_path):
+    cfg = Config(root=tmp_path)
+
+    pl = plistlib.loads(daemon.render_studio_plist(cfg).encode())
+
+    assert pl["ProgramArguments"] == [
+        daemon._fanops_bin(),
+        "studio",
+        "--managed",
+        "--host",
+        daemon.STUDIO_DEFAULT_HOST,
+        "--port",
+        str(daemon.STUDIO_DEFAULT_PORT),
+    ]
+
+
 # ── Task 2: install (side-effecting, mocked launchctl) ───────────────────────────────────────
 
 def test_install_writes_files_and_bootstraps(tmp_path, monkeypatch):

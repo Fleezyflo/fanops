@@ -830,6 +830,13 @@ def main(argv: list[str] | None = None) -> int:
     p_rc.add_argument("--apply", action="store_true", help="MUTATE: request->answer->ingest->sync per seed clip; "
                       "snapshot first; resumable via 00_control/.recaption_progress.json")
     p_rc.add_argument("--dry-run", action="store_true", help="READ-ONLY target listing (the default)")
+    p_srp = posts_sub.add_parser("reconcile-retired", help="one-time: retire posts stranded under a RETIRED "
+                                 "moment/clip (awaiting_approval + queued); default = read-only dry-run")
+    p_srp.add_argument("--apply", action="store_true", help="MUTATE: snapshot first, then never-shipped -> retired; "
+                       "posts that have touched a platform are left untouched")
+    p_srp.add_argument("--dry-run", action="store_true", help="READ-ONLY target listing (the default)")
+    p_srp.add_argument("--force-with-daemon-running", action="store_true",
+                       help="skip the live-daemon refusal (the daemon publishes `queued` posts — stop it instead)")
     p_audit = sub.add_parser("audit", help="(R3) operator audit-trail commands")
     audit_sub = p_audit.add_subparsers(dest="audit_cmd")
     p_at = audit_sub.add_parser("tail", help="print the last N lines of 00_control/studio_audit.log")
@@ -840,6 +847,12 @@ def main(argv: list[str] | None = None) -> int:
     p_studio = sub.add_parser("studio", help="local content-cockpit web UI (Review/Schedule/Lift)")
     p_studio.add_argument("--host", default="127.0.0.1")   # localhost only; no auth in v1
     p_studio.add_argument("--port", type=int, default=8787)
+    p_studio.add_argument("--managed", action="store_true", help=argparse.SUPPRESS)
+    p_studio.add_argument(
+        "--dev-reload",
+        action="store_true",
+        help="UNSAFE DEV ONLY: run Studio in the foreground with automatic source reload",
+    )
     st_grp = p_studio.add_mutually_exclusive_group()
     st_grp.add_argument("--install", action="store_true", help="install + load as launchd KeepAlive resident (macOS)")
     st_grp.add_argument("--uninstall", action="store_true", help="unload the launchd Studio agent and remove its plist")
@@ -1412,6 +1425,9 @@ def _dispatch(cfg: Config, args) -> int:
         if args.posts_cmd == "recaption":
             from fanops.recaption import cmd_posts_recaption   # lazy, matching the hashtags-verb precedent
             return cmd_posts_recaption(cfg, args)
+        if args.posts_cmd == "reconcile-retired":
+            from fanops.stranded_posts import cmd_posts_reconcile_retired   # lazy, same precedent
+            return cmd_posts_reconcile_retired(cfg, args)
     if args.cmd == "daemon":   return cmd_daemon(cfg, args)
     if args.cmd == "autopilot": return cmd_autopilot(cfg, args)
     if args.cmd == "up":       return cmd_up(cfg, args)
@@ -1490,7 +1506,7 @@ def _dispatch(cfg: Config, args) -> int:
         # module top — keeps `import fanops.cli` (hence every other verb) working on a core,
         # no-[studio] install. Mirrors the discover/intake lazy-import idiom (cli.py:325,334).
         if args.install:
-            res = daemon.install_studio(cfg, host=args.host, port=args.port)
+            res = daemon.install_studio(cfg, host=args.host, port=args.port, wait=True)
             print(f"Studio service installed -> {res['studio_plist']}")
             print(f"Always-on at http://{args.host}:{args.port} (launchd KeepAlive; runs at login)")
             return 0 if res.get("studio_loaded") else 1
@@ -1498,6 +1514,14 @@ def _dispatch(cfg: Config, args) -> int:
             res = daemon.stop_studio(cfg, remove=True)
             print(f"Studio service stopped -> {res['plist']}" + (" (plist removed)" if res.get("removed") else ""))
             return 0 if res.get("stopped") else 1
+        if not args.managed and not args.dev_reload:
+            print(
+                "REFUSED: unmanaged foreground Studio can serve stale code indefinitely. "
+                "Use `fanops studio --install` for the managed service, or "
+                "`fanops studio --dev-reload` for explicit foreground development.",
+                file=sys.stderr,
+            )
+            return 2
         if sys.platform == "darwin" and _studio_port_busy(args.host, args.port):
             # Liveness, not launchd registration — a plist-loaded check self-trips from inside the
             # KeepAlive resident's own child (it IS the loaded service) and bricks it (see _studio_port_busy).
@@ -1520,7 +1544,13 @@ def _dispatch(cfg: Config, args) -> int:
         # defaults to one-request-at-a-time, so a single in-flight video stream starves every other
         # request (page loads hang → "Studio won't load"). Threading lets navigation proceed while a
         # clip streams. localhost-only, low concurrency — the dev server is adequate; no WSGI server needed.
-        app.run(host=args.host, port=args.port, debug=False, threaded=True)
+        app.run(
+            host=args.host,
+            port=args.port,
+            debug=False,
+            threaded=True,
+            use_reloader=args.dev_reload,
+        )
         return 0
     if args.cmd == "run":
         if (rc := _check_accounts(cfg)):  return rc

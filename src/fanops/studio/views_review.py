@@ -590,7 +590,13 @@ def review_buckets(led: Ledger, accounts: Accounts, cfg: Config, *, now: datetim
     editable_cards: list[ReviewCard] = []
     for clip_id, posts in queued_by_clip.items():
         clip = led.clips.get(clip_id)
-        if clip is not None and not clip.held:        # a held clip belongs ONLY in the held bucket
+        if clip is None:
+            continue
+        if led.is_retired_clip(clip.id):
+            continue
+        if led.is_retired_moment(clip.parent_id):
+            continue
+        if not clip.held:        # a held clip belongs ONLY in the held bucket
             editable_cards.append(_card(led, clip, posts, "editable", cfg, personas, now, active_handles, acct_by_handle))
     # editable cards: day-sorted (newest ingest day first, 'undated' last) so _review_body.html can emit a
     # running day-header across the paginated slice WITHOUT touching pagination (content-lifecycle Phase 3 H8).
@@ -637,27 +643,29 @@ def awaiting_moment_count(led: Ledger) -> int:
     number of MOMENTS (distinct non-held clips) with >=1 awaiting_approval post — i.e. the size of the Review
     approve-worklist (editable cards), NOT the raw awaiting-POST count. A clip fans out to many per-account
     surface posts, so counting posts overstates the worklist (the 'Home 57 vs Review 17' bug). Mirrors the
-    editable-bucket rule in review_buckets exactly (non-held existing clip with an awaiting post) so the Home
-    headline and the Review worklist can never drift. Pure, lock-free read."""
+    editable-bucket rule in review_buckets exactly (an existing, non-retired, non-held clip under a non-retired
+    moment, carrying an awaiting post) so the Home headline and the Review worklist can never drift. Pure,
+    lock-free read. Locked by the parity test — change this rule and review_buckets together or not at all."""
     seen: set[str] = set()
     for p in led.posts.values():
         if p.state is PostState.awaiting_approval:
             clip = led.clips.get(p.parent_id)
-            if clip is not None and not clip.held:
+            if clip is None or led.is_retired_clip(clip.id) or led.is_retired_moment(clip.parent_id):
+                continue                              # mirror review_buckets' retirement guards exactly
+            if not clip.held:
                 seen.add(p.parent_id)
     return len(seen)
 
 
 def review_awaiting_by_account(cards: list[ReviewCard]) -> dict[str, int]:
-    """Editable awaiting surface count per account — powers the per-account approve strip."""
+    """Editable review-content count per account — one count per editable card/clip per account."""
     from collections import Counter
     c = Counter()
     for card in cards:
         if card.bucket != "editable":
             continue
-        for s in card.surfaces:
-            if s.editable:
-                c[s.account] += 1
+        for account in {s.account for s in card.surfaces if s.editable}:
+            c[account] += 1
     return dict(c)
 
 def review_progress(cards: list[ReviewCard]) -> dict:
@@ -708,8 +716,8 @@ def account_pivot_rows(led: Ledger, accounts: Accounts, cfg: Config, *, now: dat
 def review_feed_rows(led: Ledger, accounts: Accounts, cfg: Config, *, now: datetime, account: Optional[str],
                      batch: Optional[str] = None, source: Optional[str] = None,
                      state: Optional[str] = None) -> list[SurfacePost]:
-    """U6: ONE account's editable awaiting surfaces as a flat feed list — source/batch provenance stamped,
-    sorted newest-batch-first then stable source order then post created_at desc. Pure read."""
+    """U6: ONE account's editable awaiting review-content rows — one row per clip/account, with source/batch
+    provenance stamped, sorted newest-batch-first then stable source order then post created_at desc. Pure read."""
     handle = (account or "").strip()
     if not handle:
         return []
@@ -729,7 +737,16 @@ def review_feed_rows(led: Ledger, accounts: Accounts, cfg: Config, *, now: datet
     rows.sort(key=lambda r: src_order.get(r.source_key, 999))
     rows.sort(key=lambda r: (led.posts[r.post_id].created_at or "") if r.post_id in led.posts else "", reverse=True)
     rows.sort(key=lambda r: r.batch_created or "\x00", reverse=True)
-    return rows
+
+    deduped: list[SurfacePost] = []
+    seen: set[tuple[str | None, str]] = set()
+    for r in rows:
+        key = (r.clip_id, r.account)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(r)
+    return deduped
 
 
 def group_review_by_source(rows: list) -> list:
