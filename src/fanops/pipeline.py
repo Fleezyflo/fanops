@@ -522,6 +522,20 @@ def advance(cfg: Config, *, base_time: str) -> RunSummary:
             led.posts[p.id] = p.model_copy(update={"state": PostState.retired})
         if healed:
             log("pipeline", "-", "retired_stranded_posts", n=len(healed))
+        # The same rule one level UP. `_delete_moment_cascade` preserves a clip whose protected posts kept
+        # it alive but never relabels it, so once those posts are retired the clip still reads
+        # ClipState.queued under a dead moment: inert (crosspost.py:156 refuses both predicates) yet live in
+        # every clip census, and invisible to gc, which only sweeps retired/analyzed. Gated on
+        # _LIVE_POST_STATES, NOT the protected superset — a published/needs_reconcile post still PINS its
+        # clip, because that file is what it points at. Converges to a no-op like the post sweep above.
+        dead_clips = [c for c in led.clips.values()
+                      if c.state not in Ledger._LIVE_CLIP_STATES and c.state is not ClipState.retired
+                      and led.is_retired_moment(c.parent_id)
+                      and not any(p.state in Ledger._LIVE_POST_STATES for p in led.posts_of(c.id))]
+        for c in dead_clips:
+            led.retire_clip(c.id)
+        if dead_clips:
+            log("pipeline", "-", "retired_stranded_clips", n=len(dead_clips))
         led = reconcile_source_progress(led, cfg, log)
         # B5/E2: snapshot the already-published post ids at transaction ENTRY so the summary's
         # published_in_run is a THIS-RUN delta — a post already published when the pass opened is in
