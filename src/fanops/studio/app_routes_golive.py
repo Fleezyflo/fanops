@@ -79,6 +79,11 @@ def register_golive_routes(app, cfg):
         # Phase 6: toggle variant-driven amplify (FANOPS_VARIANT_AMPLIFY) — explicit "1"==on.
         return _golive_panel(golive.set_variant_amplify(cfg, request.form.get("on") == "1"))
 
+    @app.post("/golive/learn-amplify")
+    def do_golive_learn_amplify():
+        # Toggle learn-pass amplify (FANOPS_LEARN_AMPLIFY) — the unattended moment/clip/post minter. Explicit "1"==on.
+        return _golive_panel(golive.set_learn_amplify(cfg, request.form.get("on") == "1"))
+
     @app.post("/golive/ucb")
     def do_golive_ucb():
         # Phase 6: toggle UCB1 variant ranking (FANOPS_VARIANT_UCB) — explicit "1"==on.
