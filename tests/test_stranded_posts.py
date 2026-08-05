@@ -225,8 +225,10 @@ def test_one_pass_relabels_stranded_posts_without_an_operator(tmp_path, mocker):
     # the clip half: bare clip retired, but the one a needs_reconcile post PINS stays live, and a clip
     # under a healthy moment is never touched — both are negative controls against a blanket sweep
     assert led.clips["clip_bare"].state is ClipState.retired
-    assert led.clips["clip_gone"].state is ClipState.queued
-    assert led.clips["clip_ok"].state is ClipState.queued
+    assert led.clips["clip_gone"].state is ClipState.queued          # dead moment, but a live post pins it
+    # clip_ok sits on a LIVE lineage, so the pass legitimately advances it (captions_requested, ...). Pin
+    # what this control is actually for — it was not retired — not whichever stage the pass happened to reach.
+    assert led.clips["clip_ok"].state is not ClipState.retired
 
     advance(cfg, base_time="2026-06-02T18:00:00Z")            # converges: a second pass is a no-op
     led = Ledger.load(cfg)
