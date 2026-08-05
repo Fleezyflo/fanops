@@ -335,6 +335,12 @@
    ],
    "reader_count": 1
   },
+  "FANOPS_LEARN_AMPLIFY": {
+   "read_at": [
+    "fanops.config:776"
+   ],
+   "reader_count": 1
+  },
   "FANOPS_VARIANT_AMPLIFY": {
    "read_at": [
     "fanops.config:772"

@@ -151,7 +151,23 @@ def _learn_pass(cfg: Config, *, window: str = "30d") -> None:
     with Ledger.transaction(cfg) as led:
         led = pull_metrics(led, cfg, list_posts=lambda _w: rows, window=window, resolve_media=_resolve)
         r = classify_outcomes(led, per_surface=cfg.adjust_per_surface)   # P4(a): per-surface WINNERS when on
-        led = amplify(led, cfg, r["winners"])
+        # AMPLIFY MINTS NEW WORK — a winner re-opens a moment request on its source, producing new
+        # moments -> clips -> posts with no operator involvement. It was the one learning actuator
+        # gated ONLY by `cfg.is_live_backend`, so going live to PUBLISH also switched on an
+        # autonomous content generator; it ran 7 unattended rounds across 3 sources and wrote no log
+        # line, so the only evidence was src.meta["amplify_count"]. Now it carries the same two gates
+        # its siblings do — operator INTENT (default OFF) and the validation freeze — and always
+        # leaves a breadcrumb, whichever way it goes. RETIRE is deliberately NOT gated: it only
+        # suppresses, it never generates, and freezing it would strand the lifecycle.
+        from fanops.validation_gate import learning_validated
+        if cfg.learn_amplify and learning_validated(cfg):
+            before = {sid: int(s.meta.get("amplify_count", 0)) for sid, s in led.sources.items()}
+            led = amplify(led, cfg, r["winners"])
+            fired = [sid for sid, s in led.sources.items() if int(s.meta.get("amplify_count", 0)) > before.get(sid, 0)]
+            get_logger(cfg)("learn", "-", "amplified", sources=len(fired), winners=len(r["winners"]))
+        else:
+            get_logger(cfg)("learn", "-", "amplify_skipped", winners=len(r["winners"]),
+                            intent=cfg.learn_amplify, validated=learning_validated(cfg))
         led = retire(led, r["losers"])
 
 def cmd_reconcile(cfg: Config, *, report_terminals: bool = False) -> int:

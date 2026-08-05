@@ -93,6 +93,7 @@ Speech-trust filtering is **invariant always-on** — there is no env switch for
 | `FANOPS_VARIANT_LEARNING` | off | A/B hook-learning master gate | S |
 | `FANOPS_VARIANT_MIN_POSTS` | 3 | Variant trust: min analyzed posts | .env |
 | `FANOPS_VARIANT_MIN_GAP` | 10.0 | Variant trust: min lift margin | .env |
+| `FANOPS_LEARN_AMPLIFY` | off | Learn-pass source amplify — **mints new moments/clips/posts unattended**; also frozen until `learning_validated` | S |
 | `FANOPS_VARIANT_AMPLIFY` | off | Variant-driven source amplify | S |
 | `FANOPS_VARIANT_AMPLIFY_MIN_POSTS` | 8 | Amplify trust: min posts | .env |
 | `FANOPS_VARIANT_AMPLIFY_MIN_GAP` | 25.0 | Amplify trust: min gap | .env |

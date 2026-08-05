@@ -338,6 +338,13 @@
         </form>
       </div>
       <div class="account-hooks">
+        <p class="muted"><strong>Learn-pass amplify</strong> — a measured winner re-opens a moment request on its source, minting <strong>new</strong> moments/clips/posts unattended.</p>
+        <form hx-post="{{ url_for('do_golive_learn_amplify') }}" hx-target="#golive-panel" hx-swap="outerHTML">
+          {% if status.learn_amplify %}<span class="ok">● ON</span><button type="submit" name="on" value="">Turn off</button>
+          {% else %}<span class="muted">○ off</span><button type="submit" name="on" value="1">Turn on</button>{% endif %}
+        </form>
+      </div>
+      <div class="account-hooks">
         <p class="muted"><strong>UCB ranking</strong> — deterministic UCB1 explore/exploit leader pick instead of the raw mean.</p>
         <form hx-post="{{ url_for('do_golive_ucb') }}" hx-target="#golive-panel" hx-swap="outerHTML">
           {% if status.variant_ucb %}<span class="ok">● ON</span><button type="submit" name="on" value="">Turn off</button>

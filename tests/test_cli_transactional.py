@@ -93,6 +93,45 @@ def test_learn_pass_fetch_runs_outside_the_lock(tmp_path, monkeypatch, mocker):
         "the learn-pass metrics fetch held the ledger lock — network must be OUTSIDE the transaction"
 
 
+def test_learn_pass_does_not_amplify_by_default(tmp_path, monkeypatch, mocker):
+    # THE unattended-generation gate. `amplify` MINTS new moments -> clips -> posts on a winner's
+    # source. It was gated only by cfg.is_live_backend, so going live to PUBLISH also switched on an
+    # autonomous content generator: 7 rounds across 3 sources, no log line, evidence only in
+    # src.meta["amplify_count"]. Default OFF now, like every other learning signal.
+    monkeypatch.chdir(tmp_path)
+    cfg = Config(root=tmp_path); Ledger.load(cfg).save()
+    mocker.patch("fanops.cli._default_list_posts", return_value=lambda w: [])
+    mocker.patch("fanops.cli.classify_outcomes", return_value={"winners": ["p1"], "losers": []})
+    amp = mocker.patch("fanops.cli.amplify", side_effect=lambda led, *a, **k: led)
+    ret = mocker.patch("fanops.cli.retire", side_effect=lambda led, *a, **k: led)
+
+    cli._learn_pass(cfg)                                  # flag unset -> intent is OFF
+
+    amp.assert_not_called()                               # a WINNER no longer mints work on its own
+    ret.assert_called_once()                              # ...but retire still runs: it only suppresses
+
+
+def test_learn_pass_amplifies_only_with_intent_and_validation(tmp_path, monkeypatch, mocker):
+    """Both gates required, matching variant_amplify / p4_dim_bias: the flag is operator INTENT and
+    `learning_validated` is the freeze. Either one closed keeps amplify inert — so a leaked env var
+    alone cannot restart unattended generation, and neither can auto-validation alone."""
+    monkeypatch.chdir(tmp_path)
+    cfg = Config(root=tmp_path); Ledger.load(cfg).save()
+    mocker.patch("fanops.cli._default_list_posts", return_value=lambda w: [])
+    mocker.patch("fanops.cli.classify_outcomes", return_value={"winners": ["p1"], "losers": []})
+    mocker.patch("fanops.cli.retire", side_effect=lambda led, *a, **k: led)
+    amp = mocker.patch("fanops.cli.amplify", side_effect=lambda led, *a, **k: led)
+
+    monkeypatch.setenv("FANOPS_LEARN_AMPLIFY", "1")       # intent ON, validation still CLOSED
+    mocker.patch("fanops.validation_gate.learning_validated", return_value=False)
+    cli._learn_pass(cfg)
+    amp.assert_not_called()                               # frozen: intent alone is not enough
+
+    mocker.patch("fanops.validation_gate.learning_validated", return_value=True)
+    cli._learn_pass(cfg)
+    amp.assert_called_once()                              # both open -> the opted-in path still works
+
+
 def test_cmd_map_media_uses_a_transaction(tmp_path, monkeypatch, mocker):
     monkeypatch.chdir(tmp_path)
     Ledger.load(Config(root=tmp_path)).save()
