@@ -762,6 +762,21 @@ class Config:
             return 10.0
 
     @property
+    def learn_amplify(self) -> bool:
+        # E1 learn-pass amplification (`cli._learn_pass` -> adjust.amplify): with this ON, a metric
+        # WINNER re-opens a moment request on its source, minting NEW moments -> clips -> posts.
+        # It was the ONE learning actuator with no switch of its own — gated only by
+        # `cfg.is_live_backend`, so going live to PUBLISH also silently turned on an autonomous
+        # content generator. It ran 7 unattended rounds across 3 sources and left no log line; the
+        # only evidence was src.meta["amplify_count"]. DEFAULT OFF (opt-in), matching its siblings
+        # variant_amplify / p4_dim_bias, per the house rule: a learning signal ships off by default
+        # and frozen until validated. MAX_AMPLIFY_PER_SOURCE bounds ONE source, never the fleet, so
+        # it was never the safety gate. VALIDATION-FROZEN: this flag = operator INTENT; even ON the
+        # amplify call stays INERT until `learning_validated` opens.
+        v = (os.getenv("FANOPS_LEARN_AMPLIFY") or "").strip().lower()
+        return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
+
+    @property
     def variant_amplify(self) -> bool:
         # Creative variation v3 (variant-gated amplification): with this ON, a per-account hook
         # variant that has earned a SUSTAINED, well-evidenced win auto-amplifies its source (the
