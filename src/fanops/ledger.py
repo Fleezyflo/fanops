@@ -734,6 +734,15 @@ class Ledger:
                 for p in self.posts_of(c.id):
                     if p.state in self._UNSHIPPED_POST_STATES:
                         self.posts[p.id] = p.model_copy(update={"state": PostState.retired})
+                # ...and the CLIP itself. It was preserved above only because a protected post hung off it
+                # (`survived = True`) — but preservation never relabelled it, so once those never-shipped
+                # posts are retired the clip keeps reading `queued` under a dead moment: inert (crosspost
+                # refuses both predicates) yet live in every clip census, and never reclaimable by gc, which
+                # only sweeps retired/analyzed. Gated on _LIVE_POST_STATES, not the protected superset: a
+                # published/needs_reconcile post still PINS its clip, because that file is what it points at.
+                if (c.state not in self._LIVE_CLIP_STATES
+                        and not any(p.state in self._LIVE_POST_STATES for p in self.posts_of(c.id))):
+                    self.clips[c.id] = c.model_copy(update={"state": ClipState.retired})
         else:
             self.moments.pop(moment_id, None)
 

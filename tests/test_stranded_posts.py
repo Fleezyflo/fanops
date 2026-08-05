@@ -59,6 +59,27 @@ def test_cascade_retires_unshipped_posts_but_keeps_shipped_ones(tmp_path):
     assert led.posts["p_queued"].state is PostState.retired
     # HAS touched a platform -> untouched; that record is the entire reason preserve exists
     assert led.posts["p_live"].state is PostState.analyzed
+    # ...and that live post still PINS its clip: the file is what it points at, so the clip stays live
+    assert led.clips["clip_x"].state is ClipState.queued
+
+
+def test_cascade_retires_the_clip_once_nothing_live_is_left_on_it(tmp_path):
+    """The clip half of the same rule. `survived` preserves a clip whose protected posts kept it alive but
+    never relabelled it — so once those never-shipped posts are retired it kept reading `queued` under a
+    dead moment: inert, but live in every clip census and invisible to gc (retired/analyzed only)."""
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    _lineage(led, mom_id="mom_x", clip_id="clip_x")
+    led.add_post(_post("p_await", "clip_x", PostState.awaiting_approval))
+    led.add_post(_post("p_queued", "clip_x", PostState.queued))
+
+    led._delete_moment_cascade("mom_x")
+
+    assert led.moments["mom_x"].state is MomentState.retired
+    assert led.posts["p_await"].state is PostState.retired          # nothing here ever touched a platform
+    assert led.posts["p_queued"].state is PostState.retired
+    assert led.clips["clip_x"].state is ClipState.retired           # ...so the clip is dead lineage too
+    assert "clip_x" in led.clips                                    # suppressed, NOT deleted — the row stays
 
 
 def test_cascade_still_deletes_a_moment_with_nothing_protected(tmp_path):
@@ -189,6 +210,10 @@ def test_one_pass_relabels_stranded_posts_without_an_operator(tmp_path, mocker):
         led.add_post(_post("p_await", "clip_gone", PostState.awaiting_approval))
         led.add_post(_post("p_queued", "clip_gone", PostState.queued))
         led.add_post(_post("p_live", "clip_gone", PostState.needs_reconcile, public_url="dryrun://p_live"))
+        # a SECOND clip under the same dead moment, with nothing live on it -> the clip must go too
+        led.add_clip(Clip(id="clip_bare", parent_id="mom_gone", path="/clip_bare.mp4", aspect=Fmt.r9x16,
+                          state=ClipState.queued))
+        led.add_post(_post("p_bare", "clip_bare", PostState.awaiting_approval))
 
     advance(cfg, base_time="2026-06-02T18:00:00Z")            # ONE ordinary pass — nothing typed
 
@@ -197,6 +222,13 @@ def test_one_pass_relabels_stranded_posts_without_an_operator(tmp_path, mocker):
     assert led.posts["p_queued"].state is PostState.retired
     assert led.posts["p_live"].state is PostState.needs_reconcile   # MAY be live -> preserved verbatim
     assert led.posts["p_ok"].state is PostState.awaiting_approval   # healthy lineage -> real work stays
+    # the clip half: bare clip retired, but the one a needs_reconcile post PINS stays live, and a clip
+    # under a healthy moment is never touched — both are negative controls against a blanket sweep
+    assert led.clips["clip_bare"].state is ClipState.retired
+    assert led.clips["clip_gone"].state is ClipState.queued          # dead moment, but a live post pins it
+    # clip_ok sits on a LIVE lineage, so the pass legitimately advances it (captions_requested, ...). Pin
+    # what this control is actually for — it was not retired — not whichever stage the pass happened to reach.
+    assert led.clips["clip_ok"].state is not ClipState.retired
 
     advance(cfg, base_time="2026-06-02T18:00:00Z")            # converges: a second pass is a no-op
     led = Ledger.load(cfg)

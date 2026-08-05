@@ -326,7 +326,13 @@ def test_delete_moment_cascade_and_protected_states_byte_identical():
     # (_UNSHIPPED_POST_STATES -> PostState.retired). DELETION posture is unchanged — _PROTECTED_POST_STATES is
     # byte-identical below, nothing new is erased, and live/ambiguous posts keep their state. This closes the
     # hole where a preserved awaiting_approval post outlived its moment and stayed bulk-approvable.
-    assert h == "d0940253e402bc16428994d054db85858453478b11b8c44ad29c39ccd4943733", f"cascade source changed; new sha256={h}"
+    # Repinned (retire-the-clip-once-nothing-live-remains): the retirement now also carries to the CLIP —
+    # a clip preserved by `survived` is flipped to ClipState.retired when NO _LIVE_POST_STATES post remains
+    # under it. DELETION posture is still unchanged: nothing new is erased (the flip lives in the `survived`
+    # branch, which by definition deletes nothing), _PROTECTED_POST_STATES is byte-identical below, and a
+    # live post still pins its clip. This closes the residue where a preserved clip outlived every post on
+    # it and stayed ClipState.queued — counted as live work and unreachable by gc.
+    assert h == "2864402bbd723277b57417a0291a175eeb4d4f2ec46d0d6dbba2d82a6a2c062f", f"cascade source changed; new sha256={h}"
     assert Ledger._PROTECTED_POST_STATES == (
         PostState.published, PostState.analyzed, PostState.submitted, PostState.submitting,
         PostState.needs_reconcile, PostState.awaiting_approval, PostState.queued, PostState.retired)
