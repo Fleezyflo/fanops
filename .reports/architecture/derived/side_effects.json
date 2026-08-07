@@ -45,63 +45,63 @@
       },
       {
         "call": "Ledger.transaction",
-        "line": 221
+        "line": 225
       },
       {
         "call": "Ledger.transaction",
-        "line": 258
+        "line": 262
       },
       {
         "call": "Ledger.transaction",
-        "line": 272
+        "line": 276
       },
       {
         "call": "Ledger.transaction",
-        "line": 285
+        "line": 289
       },
       {
         "call": "Ledger.transaction",
-        "line": 407
+        "line": 411
       },
       {
         "call": "Ledger.transaction",
-        "line": 1131
+        "line": 1135
       },
       {
         "call": "Ledger.transaction",
-        "line": 1143
+        "line": 1147
       },
       {
         "call": "Ledger.transaction",
-        "line": 1154
+        "line": 1158
       },
       {
         "call": "Ledger.transaction",
-        "line": 1364
+        "line": 1368
       },
       {
         "call": "Ledger.transaction",
-        "line": 1377
+        "line": 1381
       },
       {
         "call": "Ledger.transaction",
-        "line": 1463
+        "line": 1467
       },
       {
         "call": "Ledger.transaction",
-        "line": 1471
+        "line": 1475
       },
       {
         "call": "Ledger.transaction",
-        "line": 1479
+        "line": 1483
       },
       {
         "call": "Ledger.transaction",
-        "line": 1486
+        "line": 1490
       },
       {
         "call": "Ledger.transaction",
-        "line": 1495
+        "line": 1499
       }
     ],
     "fanops.ledger_wipe": [
@@ -483,7 +483,7 @@
     "fanops.cli": [
       {
         "call": "tempfile.mkdtemp",
-        "line": 1318
+        "line": 1322
       }
     ],
     "fanops.post.compress": [
@@ -497,7 +497,7 @@
     "fanops.cli": [
       {
         "call": "requests.get",
-        "line": 210
+        "line": 214
       }
     ],
     "fanops.health_model": [
@@ -576,7 +576,7 @@
     "fanops.cli": [
       {
         "call": "shutil.rmtree",
-        "line": 1350
+        "line": 1354
       }
     ],
     "fanops.post.compress": [

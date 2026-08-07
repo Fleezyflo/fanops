@@ -4,6 +4,7 @@ re-opening the exact lost-update window B4 closed for advance() — a concurrent
 transaction could be clobbered last-writer-wins. These migrate them to Ledger.transaction, with the
 HARD constraint that network / subprocess I/O stays OUTSIDE the lock (mirroring publish_due's
 in_transaction split) so the up-to-30s Blotato calls never serialize behind the ledger write lock."""
+import json
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Post, Platform, PostState
@@ -93,43 +94,77 @@ def test_learn_pass_fetch_runs_outside_the_lock(tmp_path, monkeypatch, mocker):
         "the learn-pass metrics fetch held the ledger lock — network must be OUTSIDE the transaction"
 
 
-def test_learn_pass_does_not_amplify_by_default(tmp_path, monkeypatch, mocker):
-    # THE unattended-generation gate. `amplify` MINTS new moments -> clips -> posts on a winner's
-    # source. It was gated only by cfg.is_live_backend, so going live to PUBLISH also switched on an
-    # autonomous content generator: 7 rounds across 3 sources, no log line, evidence only in
-    # src.meta["amplify_count"]. Default OFF now, like every other learning signal.
+def test_learn_pass_does_not_amplify_or_retire_by_default(tmp_path, monkeypatch, mocker):
+    # THE unattended-actuator gate, both halves. `amplify` MINTS new moments -> clips -> posts on a
+    # winner's source; `retire` DESTROYS a loser's clip, its moment when no live sibling remains, and
+    # every unshipped post of that lineage. Both were gated only by cfg.is_live_backend, so going live
+    # to PUBLISH also switched on an autonomous generator and an autonomous destroyer. Default OFF now,
+    # like every other learning signal.
     monkeypatch.chdir(tmp_path)
     cfg = Config(root=tmp_path); Ledger.load(cfg).save()
     mocker.patch("fanops.cli._default_list_posts", return_value=lambda w: [])
-    mocker.patch("fanops.cli.classify_outcomes", return_value={"winners": ["p1"], "losers": []})
+    mocker.patch("fanops.cli.classify_outcomes", return_value={"winners": ["p1"], "losers": ["p2"]})
     amp = mocker.patch("fanops.cli.amplify", side_effect=lambda led, *a, **k: led)
     ret = mocker.patch("fanops.cli.retire", side_effect=lambda led, *a, **k: led)
 
-    cli._learn_pass(cfg)                                  # flag unset -> intent is OFF
+    cli._learn_pass(cfg)                                  # both flags unset -> intent is OFF
 
     amp.assert_not_called()                               # a WINNER no longer mints work on its own
-    ret.assert_called_once()                              # ...but retire still runs: it only suppresses
+    ret.assert_not_called()                               # ...and a LOSER no longer destroys on its own
 
 
-def test_learn_pass_amplifies_only_with_intent_and_validation(tmp_path, monkeypatch, mocker):
-    """Both gates required, matching variant_amplify / p4_dim_bias: the flag is operator INTENT and
-    `learning_validated` is the freeze. Either one closed keeps amplify inert — so a leaked env var
-    alone cannot restart unattended generation, and neither can auto-validation alone."""
+def test_learn_pass_amplifies_only_with_intent(tmp_path, monkeypatch, mocker):
+    """The flag is the whole gate: OFF keeps amplify inert, ON runs it. `learning_validated` is NOT a
+    second gate here — nothing writes metrics_confirmed False, so once auto-stamped it never re-binds;
+    asserting it would pin a condition that cannot fail closed."""
     monkeypatch.chdir(tmp_path)
     cfg = Config(root=tmp_path); Ledger.load(cfg).save()
     mocker.patch("fanops.cli._default_list_posts", return_value=lambda w: [])
     mocker.patch("fanops.cli.classify_outcomes", return_value={"winners": ["p1"], "losers": []})
-    mocker.patch("fanops.cli.retire", side_effect=lambda led, *a, **k: led)
     amp = mocker.patch("fanops.cli.amplify", side_effect=lambda led, *a, **k: led)
 
-    monkeypatch.setenv("FANOPS_LEARN_AMPLIFY", "1")       # intent ON, validation still CLOSED
-    mocker.patch("fanops.validation_gate.learning_validated", return_value=False)
     cli._learn_pass(cfg)
-    amp.assert_not_called()                               # frozen: intent alone is not enough
+    amp.assert_not_called()                               # intent OFF -> inert
 
-    mocker.patch("fanops.validation_gate.learning_validated", return_value=True)
+    monkeypatch.setenv("FANOPS_LEARN_AMPLIFY", "1")
     cli._learn_pass(cfg)
-    amp.assert_called_once()                              # both open -> the opted-in path still works
+    amp.assert_called_once()                              # intent ON -> the opted-in path still works
+
+
+def test_learn_pass_retires_only_with_intent(tmp_path, monkeypatch, mocker):
+    """Mirror of the amplify firewall for the destroyer half: FANOPS_LEARN_RETIRE is the whole gate,
+    so an unattended tick cannot suppress a lineage until an operator opts in."""
+    monkeypatch.chdir(tmp_path)
+    cfg = Config(root=tmp_path); Ledger.load(cfg).save()
+    mocker.patch("fanops.cli._default_list_posts", return_value=lambda w: [])
+    mocker.patch("fanops.cli.classify_outcomes", return_value={"winners": [], "losers": ["p2"]})
+    ret = mocker.patch("fanops.cli.retire", side_effect=lambda led, *a, **k: led)
+
+    cli._learn_pass(cfg)
+    ret.assert_not_called()                               # intent OFF -> inert
+
+    monkeypatch.setenv("FANOPS_LEARN_RETIRE", "1")
+    cli._learn_pass(cfg)
+    ret.assert_called_once()                              # intent ON -> the opted-in path still works
+
+
+def test_learn_pass_with_both_flags_off_logs_skips_and_writes_nothing(tmp_path, monkeypatch, mocker):
+    """The read-only default: with both flags OFF the pass still pulls metrics and classifies, and the
+    counts reach run.log on the two skip breadcrumbs — but neither actuator is called."""
+    monkeypatch.chdir(tmp_path)
+    cfg = Config(root=tmp_path); Ledger.load(cfg).save()
+    mocker.patch("fanops.cli._default_list_posts", return_value=lambda w: [])
+    mocker.patch("fanops.cli.classify_outcomes", return_value={"winners": ["p1"], "losers": ["p2"]})
+    amp = mocker.patch("fanops.cli.amplify", side_effect=lambda led, *a, **k: led)
+    ret = mocker.patch("fanops.cli.retire", side_effect=lambda led, *a, **k: led)
+
+    cli._learn_pass(cfg)
+
+    amp.assert_not_called(); ret.assert_not_called()
+    recs = [json.loads(ln) for ln in cfg.log_path.read_text().splitlines() if ln.strip()]
+    skipped = {r["outcome"]: r for r in recs if r.get("stage") == "learn"}
+    assert skipped["amplify_skipped"]["winners"] == "1", "the classified winner count must still reach run.log"
+    assert skipped["retire_skipped"]["losers"] == "1", "the classified loser count must still reach run.log"
 
 
 def test_cmd_map_media_uses_a_transaction(tmp_path, monkeypatch, mocker):

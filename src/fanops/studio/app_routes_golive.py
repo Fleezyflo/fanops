@@ -84,6 +84,11 @@ def register_golive_routes(app, cfg):
         # Toggle learn-pass amplify (FANOPS_LEARN_AMPLIFY) — the unattended moment/clip/post minter. Explicit "1"==on.
         return _golive_panel(golive.set_learn_amplify(cfg, request.form.get("on") == "1"))
 
+    @app.post("/golive/learn-retire")
+    def do_golive_learn_retire():
+        # Toggle learn-pass retire (FANOPS_LEARN_RETIRE) — the unattended clip/moment/post destroyer. Explicit "1"==on.
+        return _golive_panel(golive.set_learn_retire(cfg, request.form.get("on") == "1"))
+
     @app.post("/golive/ucb")
     def do_golive_ucb():
         # Phase 6: toggle UCB1 variant ranking (FANOPS_VARIANT_UCB) — explicit "1"==on.
