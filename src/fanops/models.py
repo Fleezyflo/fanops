@@ -169,6 +169,58 @@ class PostState(str, Enum):
     # (re-queueable) — retired is terminal + deliberate (the stitched version replaces it).
     retired = "retired"
 
+# MOL-802 — the POST-side state sets, owned by the enum they partition, exactly as T2.9's clip-side pair
+# above is owned by ClipState. They used to live in their readers (ledger.Ledger, studio.actions), which is
+# where a state set silently rots: the reader has no reason to revisit its set when a new PostState member
+# lands, so the new member gets whatever the set's complement happens to mean. Each set below therefore
+# NAMES its complement instead of inferring it, and test_post_state_sets fails the suite — naming the
+# member — the moment a PostState exists that a pair does not classify.
+#
+# Three separate questions are asked of PostState, and they are kept separate on purpose:
+#   live?       — is this post on a platform (or possibly on one), so its row must never be deleted
+#   protected?  — may a re-decision cascade delete this row at all (the live set plus the operator's work)
+#   revertable? — may the operator send this post back to Review
+# _REVIEW_REVERT_BLOCKED currently has the same MEMBERS as _LIVE_POST_STATES. That is a coincidence of the
+# present rules, not an identity: collapsing them would make a future change to one silently change the
+# other. Two questions, two sets.
+
+# "Live on the platform / carries the performance record" — such a post is NEVER cascade-deleted (deleting
+# it orphans a live post: untrackable by track, unreclaimable by gc, and the lift signal is destroyed). A
+# dropped moment that still has any such descendant is RETIRED (suppressed from future work), not deleted.
+# needs_reconcile is IN (AUDIT C1): that post MAY be live on the platform (ambiguous publish), so deleting
+# its ledger row would orphan a possibly-live post — preserve + retire.
+# A TUPLE, not a frozenset, and in this order: `Ledger.post_is_remote_or_publishable` concatenates it, the
+# protected superset below is built by concatenation, and the pin tests assert tuple equality.
+_LIVE_POST_STATES = (PostState.published, PostState.analyzed, PostState.submitted,
+                     PostState.submitting, PostState.needs_reconcile)
+# The complement, named rather than inferred. Every member here has either never reached a platform
+# (awaiting_approval/queued/retired) or definitively failed to (failed/error/rejected).
+_NOT_LIVE_POST_STATES = frozenset({PostState.awaiting_approval, PostState.queued, PostState.retired,
+                                   PostState.failed, PostState.error, PostState.rejected})
+
+# Cascade-protection superset (content-lifecycle Phase 1). The separate tuple is for EXPLICITNESS + an
+# independent pin test, NOT because an external caller depends on the narrow set. A re-decided source's
+# cascade must NEVER silently delete the operator's awaiting_approval (un-reviewed) / queued (approved,
+# not-yet-shipped) / retired (M4 stitch-superseded base) posts — deliberate human/stitch records.
+# PRESERVE-and-RETIRE exactly like a live post, at BOTH cascade checks (post-loop AND clip-drop).
+_PROTECTED_POST_STATES = _LIVE_POST_STATES + (PostState.awaiting_approval, PostState.queued, PostState.retired)
+# The complement, named rather than inferred: the only rows a cascade may actually drop. Each is a dead end
+# with nothing to preserve — no remote object, no lift record, and no operator decision still in flight.
+_UNPROTECTED_POST_STATES = frozenset({PostState.failed, PostState.error, PostState.rejected})
+
+# Studio's bulk send-to-review refuses these: the revert clears public_url/metrics/published_at, so running
+# it on a post that IS (or may be) on a platform would erase the only local record of something still live.
+# needs_reconcile is blocked for the AUDIT C1 reason — unknown remote state is not a licence to wipe.
+_REVIEW_REVERT_BLOCKED = frozenset({
+    PostState.published, PostState.analyzed, PostState.needs_reconcile,
+    PostState.submitting, PostState.submitted,
+})
+# The complement, named rather than inferred. `retired` is revertable on purpose (an operator can pull a
+# stitch-superseded base post back into Review); `rejected` and the two dead ends are revertable because a
+# revert is how the operator undoes a discard or re-opens a failure.
+_REVIEW_REVERT_ALLOWED = frozenset({PostState.awaiting_approval, PostState.queued, PostState.retired,
+                                    PostState.failed, PostState.error, PostState.rejected})
+
 
 class Platform(str, Enum):
     instagram = "instagram"; tiktok = "tiktok"; youtube = "youtube"
