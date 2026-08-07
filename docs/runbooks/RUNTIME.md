@@ -468,19 +468,28 @@ analyzed posts and acts on the tails (`src/fanops/adjust.py`):
     learning loop inside `fanops run` cannot grow one viral source without bound. Only a
     **successful** amplify increments the count (a winner whose lineage no longer resolves to a
     source is skipped without consuming budget).
-- **Losers — retire the bottom `--retire-pct` (default 0.2) ONLY if its `lift_score` is
-  below `--lift-floor` (default 20.0).** This retirement is **conservative and decoupled
-  from winners**: a clip that clears the floor is **never** retired just for ranking low
-  relative to a hit. The intent is to drop genuine duds without **draining the artist's
+- **Losers — the floor is the trigger; `--retire-pct` is only a cap.** A post retires when it
+  scored **below a fraction of the pool's own median** (`adjust._RETIRE_LIFT_RATIO`), and
+  `--retire-pct` (default 0.2) bounds how many one pass may take. Ranking alone never retires
+  anything: `round(n * retire_pct)` over a bottom slice always names somebody, so while rank
+  decided retirement the pass could not retire *nothing*. A pool whose worst posts sit near its
+  middle now retires **nobody**. `--lift-floor` survives as an **additional operator ceiling**
+  (applied with `min()`), so it can only make a pass more conservative — raising it can no
+  longer force the whole bottom slice out.
+- **A pool, not a data point.** No retirement at all below `adjust._MIN_SCORED_N` scored posts
+  or `_MIN_DISTINCT_SCORES` distinct scores — the signal thresholds every sibling actuator
+  already carries (`validation_gate._MIN_ATTRIBUTED_N` / `_MIN_VALUES`, `variant_min_posts`). A
+  post whose lift is `lift_degraded` is spared. **Winners are gated by none of this** — amplify
+  only mints work. The intent is to drop genuine duds without **draining the artist's
   catalogue** every pass.
 - **Retiring suppresses the whole lineage.** `retire` calls `retire_clip`, and **if no
   sibling clip of that moment is still live, it retires the MOMENT too** — otherwise the
   render guard would re-render the moment into a fresh live clip on a later pass and
   silently undo the retirement.
 
-> Ranking is currently **global** across all sources, not per-source. The `lift_floor`
-> mostly neutralizes cross-source unfairness (a low-reach source's clips aren't retired
-> if they clear the floor). Per-source ranking is in the backlog.
+> Ranking is currently **global** across all sources, not per-source. Because the floor is
+> derived from the ranked pool's median, a low-reach source's clips are judged against that
+> shared median rather than their own — per-source ranking is in the backlog.
 
 ---
 
@@ -742,8 +751,8 @@ deferred from the original plan, and surfaced during the build.
   `needs_reconcile` rather than letting it escape to `publish_due`. Network errors are **not**
   retried in-ladder on purpose — a timeout after the body was sent is ambiguous, so retrying
   could double-post.)*
-- **(d) Per-source ranking in `adjust`.** Ranking is global; the `lift_floor` mostly
-  neutralizes cross-source unfairness but does not fully solve it.
+- **(d) Per-source ranking in `adjust`.** Ranking is global; the retirement floor is derived
+  from that one global median, so cross-source unfairness is damped but not solved.
 - **(e) Media size cap / size-aware upload timeout — DONE (tail).** `upload_media`
   (`src/fanops/post/media.py`) now **rejects an oversize file pre-network** (`_MAX_UPLOAD_BYTES`
   = 500 MB; raises before any HTTP call) and **scales the PUT timeout to the file size**

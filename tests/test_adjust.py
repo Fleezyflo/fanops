@@ -22,32 +22,46 @@ def _analyzed_post(led, lift, pid, cid, mid, sid):
     led.add_post(Post(id=pid, parent_id=cid, account="a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.analyzed, metrics={"lift_score": lift}, public_url="dryrun://1"))
 
-def test_classify_excludes_failed_and_ranks_by_lift(tmp_path):
-    led = Ledger.load(Config(root=tmp_path))
-    for pid, lift in [("p1", 300), ("p2", 5), ("p3", 250), ("p4", 1)]:
+# Retirement now needs a real POOL (adjust._MIN_SCORED_N / _MIN_DISTINCT_SCORES), so every fixture
+# below that asserts on losers carries at least that many distinctly-scored posts. The n=3/n=4 pools
+# these tests used to run on retired a post off a single data point — the defect, not the contract.
+def _pool(led, pairs, degraded=()):
+    for pid, lift in pairs:
+        metrics = {"lift_score": lift}
+        if pid in degraded:
+            metrics["lift_degraded"] = True
         led.add_post(Post(id=pid, parent_id="c", account="a", account_id="1",
                           platform=Platform.instagram, caption="x",
-                          state=PostState.analyzed, metrics={"lift_score": lift}, public_url="dryrun://c"))
+                          state=PostState.analyzed, metrics=metrics, public_url="dryrun://c"))
+    return led
+
+# The live shape this ticket was measured against: the whole distribution sits at or under 3.01, so
+# the shipped absolute floor of 20.0 sat >6x above every post that has ever existed on this system.
+_LIVE_SHAPE = [("t1", 3.0), ("t2", 2.5), ("t3", 2.0), ("t4", 1.8), ("t5", 1.5),
+               ("t6", 1.2), ("t7", 1.0), ("t8", 0.9), ("mid", 0.5), ("lo", 0.0)]
+
+def test_classify_excludes_failed_and_ranks_by_lift(tmp_path):
+    led = Ledger.load(Config(root=tmp_path))
+    _pool(led, [("p1", 300), ("p2", 5), ("p3", 250), ("p4", 1), ("p5", 200),
+                ("p6", 150), ("p7", 100), ("p8", 60)])
     # a failed post with no lift_score must NOT be classified (FIX F22)
     led.add_post(Post(id="pf", parent_id="c", account="a", account_id="1",
                       platform=Platform.instagram, caption="x", state=PostState.failed,
                       metrics={"error": "boom"}, public_url="dryrun://pf"))
-    # winner_pct=0.5 -> top 2 winners; retire_pct=0.5 + floor 20 -> bottom 2 that are <20
+    # winner_pct=0.5 -> top 4 winners; retire_pct=0.5 -> bottom 4, of which the two under the floor go
     r = classify_outcomes(led, winner_pct=0.5, retire_pct=0.5, lift_floor=20.0)
-    assert set(r["winners"]) == {"p1", "p3"}
-    assert set(r["losers"]) == {"p2", "p4"}        # both below floor 20 and bottom-ranked
+    assert set(r["winners"]) == {"p1", "p3", "p5", "p6"}
+    assert set(r["losers"]) == {"p2", "p4"}        # bottom-ranked AND under the floor
     assert "pf" not in r["winners"] and "pf" not in r["losers"]
 
 def test_classify_floor_protects_good_clips_from_retirement(tmp_path):
-    # A bottom-ranked post that still clears the lift_floor is NOT retired (conservative policy).
+    # A bottom-ranked post that still clears the floor is NOT retired (conservative policy).
     led = Ledger.load(Config(root=tmp_path))
-    for pid, lift in [("hi", 500), ("mid", 100), ("ok", 60)]:   # all >= floor 20
-        led.add_post(Post(id=pid, parent_id="c", account="a", account_id="1",
-                          platform=Platform.instagram, caption="x",
-                          state=PostState.analyzed, metrics={"lift_score": lift}, public_url="dryrun://c"))
+    _pool(led, [("hi", 500), ("w2", 400), ("w3", 300), ("w4", 200),
+                ("w5", 150), ("ok3", 120), ("ok2", 100), ("ok", 60)])   # all >= floor 20
     r = classify_outcomes(led, winner_pct=0.34, retire_pct=0.34, lift_floor=20.0)
     assert "hi" in r["winners"]
-    assert r["losers"] == []                        # 'ok' is bottom but lift 60 >= 20 -> spared
+    assert r["losers"] == []                        # the bottom three all clear 20 -> spared
 
 def test_classify_empty_population(tmp_path):
     led = Ledger.load(Config(root=tmp_path))
@@ -56,24 +70,64 @@ def test_classify_empty_population(tmp_path):
 
 def test_classify_spares_lift_degraded_bottom_post(tmp_path):
     led = Ledger.load(Config(root=tmp_path))
-    for pid, lift, degraded in [("hi", 300, False), ("mid", 100, False), ("lo", 0.0, True)]:
-        metrics = {"lift_score": lift}
-        if degraded:
-            metrics["lift_degraded"] = True
-        led.add_post(Post(id=pid, parent_id="c", account="a", account_id="1",
-                          platform=Platform.instagram, caption="x",
-                          state=PostState.analyzed, metrics=metrics, public_url="dryrun://c"))
-    r = classify_outcomes(led, winner_pct=0.34, retire_pct=0.34, lift_floor=20.0)
+    _pool(led, _LIVE_SHAPE, degraded={"lo"})
+    r = classify_outcomes(led)
     assert r["losers"] == []                        # degraded bottom post spared from autonomous retire()
 
 def test_classify_retires_non_degraded_bottom_post(tmp_path):
     led = Ledger.load(Config(root=tmp_path))
-    for pid, lift in [("hi", 300), ("mid", 100), ("lo", 0.0)]:
-        led.add_post(Post(id=pid, parent_id="c", account="a", account_id="1",
-                          platform=Platform.instagram, caption="x",
-                          state=PostState.analyzed, metrics={"lift_score": lift}, public_url="dryrun://c"))
-    r = classify_outcomes(led, winner_pct=0.34, retire_pct=0.34, lift_floor=20.0)
-    assert "lo" in r["losers"]                        # same fixture without lift_degraded -> bottom retires
+    _pool(led, _LIVE_SHAPE)
+    r = classify_outcomes(led)
+    assert r["losers"] == ["lo"]                    # same fixture without lift_degraded -> bottom retires
+
+# ============ MOL-795: retirement is a SIGNAL, not a ratchet (D1 floor, D2 pool, D3 trigger) ============
+def test_shipped_lift_floor_no_longer_retires_the_whole_bottom_slice(tmp_path):
+    # D1. lift_floor=20.0 is the value _learn_pass ran with on every 600s tick. On the live shape it
+    # sits above EVERY post, so the `< lift_floor` conjunct excluded nobody and the bottom slice
+    # retired whole. The derived floor (a fraction of the pool's median) now binds instead: 'mid'
+    # (0.5) survives, 'lo' (0.0) does not — the same call, the same 20.0, a strictly smaller cut.
+    led = Ledger.load(Config(root=tmp_path))
+    _pool(led, _LIVE_SHAPE)
+    r = classify_outcomes(led, winner_pct=0.3, retire_pct=0.2, lift_floor=20.0)
+    assert r["losers"] == ["lo"]                    # the bottom slice is {mid, lo}; only 'lo' is a failure
+    assert "mid" not in r["losers"]
+
+def test_lift_floor_can_still_tighten_but_never_loosen(tmp_path):
+    # D1 corollary. lift_floor survives as the operator's ADDITIONAL ceiling via min(), so it can only
+    # make a pass more conservative. Below the derived floor it binds; above it, it is inert by
+    # construction — an operator can no longer raise it to force the whole bottom slice out.
+    led = Ledger.load(Config(root=tmp_path))
+    _pool(led, _LIVE_SHAPE)
+    assert classify_outcomes(led, lift_floor=0.0)["losers"] == []          # tighter -> nothing retires
+    assert classify_outcomes(led, lift_floor=1e9) == classify_outcomes(led, lift_floor=20.0)   # looser -> no effect
+
+def test_retirement_needs_a_pool_not_a_data_point(tmp_path):
+    # D2, with its negative control: the SAME worst post is spared at n=7 and retired at n=8. Nothing
+    # about that post changes — only whether the pool clears _MIN_SCORED_N.
+    thin = [("w1", 3.0), ("w2", 2.0), ("w3", 1.5), ("w4", 1.2), ("w5", 0.9), ("w6", 0.5), ("w8", 0.0)]
+    led = _pool(Ledger.load(Config(root=tmp_path / "thin")), thin)
+    assert classify_outcomes(led)["losers"] == []           # n=7 -> below the signal floor, retire nothing
+    assert classify_outcomes(led)["winners"]                # ...while WINNERS are unaffected (amplify only mints)
+    grown = _pool(Ledger.load(Config(root=tmp_path / "grown")), thin + [("w7", 0.1)])
+    assert set(classify_outcomes(grown)["losers"]) == {"w7", "w8"}         # n=8 -> the floor is allowed to bind
+
+def test_a_pool_with_one_distinct_score_has_no_ranking_and_retires_nothing(tmp_path):
+    # D2. Ten posts that all scored identically carry a full bottom slice and zero information: which
+    # posts land in it is insertion order. _MIN_DISTINCT_SCORES refuses to call that a ranking.
+    led = Ledger.load(Config(root=tmp_path))
+    _pool(led, [(f"p{i}", 1.0) for i in range(10)])
+    assert classify_outcomes(led)["losers"] == []
+
+def test_a_tight_pool_retires_nobody_while_a_wide_one_retires(tmp_path):
+    # D3, with its negative control. Same n, same pcts, same lift_floor — only the SHAPE differs.
+    # `round(n * retire_pct)` always names a bottom slice, so while rank decided retirement the pass
+    # could never retire nothing. Now the floor is the trigger and the slice is only a cap.
+    tight = [("a", 1.04), ("b", 1.03), ("c", 1.02), ("d", 1.01), ("e", 0.95),
+             ("f", 0.94), ("g", 0.93), ("h", 0.92), ("i", 0.81), ("j", 0.80)]
+    led = _pool(Ledger.load(Config(root=tmp_path / "tight")), tight)
+    assert classify_outcomes(led)["losers"] == []           # worst posts sit near the middle -> no failures
+    wide = _pool(Ledger.load(Config(root=tmp_path / "wide")), _LIVE_SHAPE)
+    assert classify_outcomes(wide)["losers"] == ["lo"]      # a genuine collapse still retires
 
 @pytest.mark.integration
 def test_amplify_then_ingest_then_render_produces_new_clip(tmp_path):
@@ -210,14 +264,13 @@ def test_classify_winner_never_also_a_loser(tmp_path):
     # (contradictory: budget spent on a source whose representative clip is simultaneously
     # suppressed). A winner must be excluded from the loser pool regardless of pcts.
     led = Ledger.load(Config(root=tmp_path))
-    for pid, lift in [("top", 300), ("mid", 5), ("low", 1)]:   # mid is below floor 20
-        led.add_post(Post(id=pid, parent_id="c", account="a", account_id="1",
-                          platform=Platform.instagram, caption="x",
-                          state=PostState.analyzed, metrics={"lift_score": lift}, public_url="dryrun://c"))
-    r = classify_outcomes(led, winner_pct=0.67, retire_pct=0.67, lift_floor=20.0)
-    assert "mid" in r["winners"]                       # rank 2 of 3 -> in the top 67%
-    assert "mid" not in r["losers"]                    # ...so it must NOT also be retired
-    assert "low" in r["losers"]                        # the true bottom still retires
+    _pool(led, [("top", 100), ("w2", 90), ("w3", 80), ("w4", 70),
+                ("w5", 60), ("w6", 50), ("edge", 5), ("low", 0.0)])
+    # derived floor = 0.25 * median(65) = 16.25, so 'edge' (5) is both a winner and under the floor
+    r = classify_outcomes(led, winner_pct=0.9, retire_pct=0.67, lift_floor=20.0)
+    assert "edge" in r["winners"]                      # rank 7 of 8 -> inside the top 90%
+    assert "edge" not in r["losers"]                   # ...so it must NOT also be retired
+    assert r["losers"] == ["low"]                      # the true bottom still retires
 
 
 # ======================= P4(a): account-aware (per-surface) WINNER ranking =======================
@@ -226,11 +279,11 @@ def _ap(led, pid, lift, account="a", platform=Platform.instagram):
                       caption="x", state=PostState.analyzed, metrics={"lift_score": lift}, public_url="dryrun://c"))
 
 def test_per_surface_lets_a_small_accounts_best_win(tmp_path):
-    # A1: @big (4 posts) would crowd @small (2 posts) out of the GLOBAL top winner_pct. per_surface=True
+    # A1: @big (6 posts) would crowd @small (2 posts) out of the GLOBAL top winner_pct. per_surface=True
     # ranks each (account, platform) on its OWN pool, so @small's best (lift 40) wins in its bucket even
     # though it never wins globally.
     led = Ledger.load(Config(root=tmp_path))
-    for pid, lift in [("b1", 300), ("b2", 250), ("b3", 200), ("b4", 150)]:
+    for pid, lift in [("b1", 300), ("b2", 250), ("b3", 200), ("b4", 150), ("b5", 120), ("b6", 100)]:
         _ap(led, pid, lift, account="big")
     _ap(led, "s1", 40, account="small"); _ap(led, "s2", 5, account="small")
     glob = classify_outcomes(led, winner_pct=0.3, retire_pct=0.2, lift_floor=20.0)
@@ -243,7 +296,7 @@ def test_per_surface_false_is_byte_identical_to_default(tmp_path):
     # A3: per_surface defaults False and is byte-identical to the no-kwarg call (today's global path) —
     # same winners AND same losers.
     led = Ledger.load(Config(root=tmp_path))
-    for pid, lift in [("b1", 300), ("b2", 250), ("b3", 200), ("b4", 150)]:
+    for pid, lift in [("b1", 300), ("b2", 250), ("b3", 200), ("b4", 150), ("b5", 120), ("b6", 100)]:
         _ap(led, pid, lift, account="big")
     _ap(led, "s1", 40, account="small"); _ap(led, "s2", 5, account="small")
     assert classify_outcomes(led) == classify_outcomes(led, per_surface=False)
@@ -257,7 +310,7 @@ def test_per_surface_winner_is_protected_from_global_retire_D1(tmp_path):
     # global bottom slice; per_surface=True makes it a winner and SHIELDS it from retirement, while the
     # genuinely-worst post (lift 3) is still retired. The bottom slice itself is unchanged (global).
     led = Ledger.load(Config(root=tmp_path))
-    for pid, lift in [("b1", 300), ("b2", 250), ("b3", 200)]:
+    for pid, lift in [("b1", 300), ("b2", 250), ("b3", 200), ("b4", 150), ("b5", 120), ("b6", 100)]:
         _ap(led, pid, lift, account="big")
     _ap(led, "s_best", 15, account="small"); _ap(led, "s_worst", 3, account="small")
     off = classify_outcomes(led, winner_pct=0.3, retire_pct=0.5, lift_floor=20.0, per_surface=False)
@@ -270,10 +323,12 @@ def test_per_surface_single_post_surface_wins_and_is_never_a_loser(tmp_path):
     # A5: a surface with exactly ONE analyzed post -> win_cut = max(1, round(1*pct)) = 1, so that post is
     # its bucket's winner (its own best) and, being a winner, can never be forced into the global losers.
     led = Ledger.load(Config(root=tmp_path))
-    for pid, lift in [("b1", 300), ("b2", 250)]:
+    for pid, lift in [("b1", 300), ("b2", 250), ("b3", 200), ("b4", 150), ("b5", 120), ("b6", 100), ("b7", 80)]:
         _ap(led, pid, lift, account="big")
     _ap(led, "solo", 2, account="solo")                   # one post, below floor, globally the worst
+    off = classify_outcomes(led, winner_pct=0.3, retire_pct=0.5, lift_floor=20.0, per_surface=False)
     on = classify_outcomes(led, winner_pct=0.3, retire_pct=0.5, lift_floor=20.0, per_surface=True)
+    assert "solo" in off["losers"]                        # globally it WOULD be retired
     assert "solo" in on["winners"] and "solo" not in on["losers"]
 
 def test_per_surface_buckets_by_platform_not_just_account(tmp_path):
