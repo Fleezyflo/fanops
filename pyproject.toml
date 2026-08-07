@@ -112,6 +112,7 @@ markers = [
   "slow: cross-face proofs; deselect with -m 'not integration and not slow'",
   "ci_hook_regression: proves FANOPS_REQUIRE_E2E skip→fail hook; excluded from integration CI run",
   "asr: needs the heavy [asr] extra (demucs/faster-whisper/torch); nightly-only, excluded from PR CI (MOL-197)",
+  "macos_only: needs launchd; CANNOT pass on the ubuntu e2e runner, so it is deselected there (MOL-830)",
 ]
 # Global per-test timeout (pytest-timeout): a concurrency regression that self-deadlocks under the
 # ledger SQLite busy_timeout (e.g. a nested write txn inside a transaction) FAILS FAST here instead
