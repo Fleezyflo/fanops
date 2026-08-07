@@ -37,71 +37,71 @@
     "fanops.cli": [
       {
         "call": "Ledger.transaction",
-        "line": 120
+        "line": 125
       },
       {
         "call": "Ledger.transaction",
-        "line": 151
+        "line": 156
       },
       {
         "call": "Ledger.transaction",
-        "line": 225
+        "line": 230
       },
       {
         "call": "Ledger.transaction",
-        "line": 262
+        "line": 267
       },
       {
         "call": "Ledger.transaction",
-        "line": 276
+        "line": 281
       },
       {
         "call": "Ledger.transaction",
-        "line": 289
+        "line": 294
       },
       {
         "call": "Ledger.transaction",
-        "line": 411
+        "line": 416
       },
       {
         "call": "Ledger.transaction",
-        "line": 1142
+        "line": 1147
       },
       {
         "call": "Ledger.transaction",
-        "line": 1154
+        "line": 1159
       },
       {
         "call": "Ledger.transaction",
-        "line": 1165
+        "line": 1170
       },
       {
         "call": "Ledger.transaction",
-        "line": 1375
+        "line": 1380
       },
       {
         "call": "Ledger.transaction",
-        "line": 1388
+        "line": 1393
       },
       {
         "call": "Ledger.transaction",
-        "line": 1474
+        "line": 1479
       },
       {
         "call": "Ledger.transaction",
-        "line": 1482
+        "line": 1487
       },
       {
         "call": "Ledger.transaction",
-        "line": 1490
+        "line": 1495
       },
       {
         "call": "Ledger.transaction",
-        "line": 1497
+        "line": 1502
       },
       {
         "call": "Ledger.transaction",
-        "line": 1506
+        "line": 1511
       }
     ],
     "fanops.ledger_wipe": [
@@ -483,7 +483,7 @@
     "fanops.cli": [
       {
         "call": "tempfile.mkdtemp",
-        "line": 1329
+        "line": 1334
       }
     ],
     "fanops.post.compress": [
@@ -497,7 +497,7 @@
     "fanops.cli": [
       {
         "call": "requests.get",
-        "line": 214
+        "line": 219
       }
     ],
     "fanops.health_model": [
@@ -576,7 +576,7 @@
     "fanops.cli": [
       {
         "call": "shutil.rmtree",
-        "line": 1361
+        "line": 1366
       }
     ],
     "fanops.post.compress": [
