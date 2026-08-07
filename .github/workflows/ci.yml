@@ -115,6 +115,46 @@ jobs:
           set +e
           python -m pytest -q tests/test_ci_require_e2e.py
           test $? -eq 1
+      # Negative control for the `pip-audit` step in the `e2e` job (MOL-733). That step is advisory
+      # and only runs nightly / on dispatch, so on its own NOTHING establishes that a green audit
+      # means anything — a pip-audit that silently exited 0 reads exactly like a clean closure.
+      #
+      # It lives HERE, in the required lane, and not in `negative controls (validator
+      # effectiveness)`: that job is `continue-on-error: true` at the JOB level (DC-7 requires it —
+      # it is classified advisory), so a control placed there could never turn a check red, it is
+      # selection-gated so it does not run on every PR, and it is stdlib-only by design with no pip.
+      # A control that cannot fail is exactly the decoration a negative control exists to catch.
+      #
+      # LAST in the job on purpose: installing pip-audit resolves its own dependency tree into this
+      # environment, and doing that earlier would perturb the hash-pinned lock the suite ran against.
+      #
+      # A throwaway venv holding one deliberately-vulnerable pin, audited in the same environment
+      # mode the e2e step uses (no `-r`); `--path` restricts the scan to that venv so nothing else
+      # on the runner is swept in. BOTH acceptance conditions are asserted, and the NAME is the
+      # load-bearing one: a network failure, a wrong flag, or the venv's own bundled `pip` carrying
+      # an advisory each produce a non-zero exit that proves nothing about detection.
+      #
+      # jinja2 2.11.3 carries four independent advisories (measured 2026-08-08: PYSEC-2026-1471,
+      # -1473, -1474, -1475). If every one of them is ever withdrawn, this step goes RED. That is
+      # the CORRECT failure mode — loud, not silent. Repair it by re-pinning to a package that is
+      # still vulnerable and recording the new measurement here; never by deleting the assertion,
+      # which would put the e2e audit straight back to being unfalsifiable.
+      - name: Verify pip-audit detects a known-vulnerable pin (negative control — MOL-733)
+        run: |
+          NC="${RUNNER_TEMP:-/tmp}/pipaudit-nc"
+          python -m pip install --quiet pip-audit
+          python -m venv "$NC"
+          "$NC/bin/python" -m pip install --quiet --no-deps "jinja2==2.11.3"
+          SITE="$("$NC/bin/python" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
+          set +e
+          pip-audit --desc --progress-spinner off --path "$SITE" > pipaudit-negative-control.log 2>&1
+          rc=$?
+          set -e
+          cat pipaudit-negative-control.log
+          test "$rc" -ne 0 \
+            || { echo "NEGATIVE CONTROL FAILED: pip-audit exited 0 on a known-vulnerable pin"; exit 1; }
+          grep -qE '^jinja2[[:space:]]+2\.11\.3[[:space:]]' pipaudit-negative-control.log \
+            || { echo "NEGATIVE CONTROL FAILED: pip-audit exited $rc but never named jinja2 2.11.3"; exit 1; }
 
   base-install:
     # The unit job installs the [framing] extra (opencv) because smart_framing defaults ON and the render
@@ -198,10 +238,19 @@ jobs:
           pip install --require-hashes -r requirements/ci-e2e.txt
           pip install -e . --no-deps
       - name: pip-audit (E2E environment — MOL-733)
-        # Environment mode (--desc) is required because the E2E closure contains direct-URL pins.
-        # Advisory only; findings are uploaded but do not red the job.
+        # Environment mode is the DEFAULT — it is the absence of `-r`, not a flag — and it is what
+        # this lane needs: the E2E closure carries direct-URL pins that requirements mode cannot
+        # resolve, so auditing what is actually INSTALLED is the only reading that covers them.
+        # `--desc` has nothing to do with the mode; it adds the vulnerability description column.
+        #
+        # Two knobs, deliberately both set and doing different things: `continue-on-error` keeps a
+        # finding OFF the merge path (this stays advisory), while `pipefail` makes the exit code
+        # OBSERVABLE — without it `tee` returns 0 and the step reports success whether the audit
+        # was clean or found everything. The negative control in the `unit` job is what proves that
+        # exit code means something.
         continue-on-error: true
         run: |
+          set -o pipefail
           python -m pip install pip-audit
           pip-audit --desc | tee pip-audit-e2e-report.txt
       - name: Upload E2E pip-audit report
