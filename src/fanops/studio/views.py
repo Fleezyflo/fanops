@@ -79,11 +79,13 @@ class GoLiveStatus:
     llm_cli_binary: str = "claude"     # resolved binary name for operator copy (claude | cursor-agent)
     daemon: Optional[dict] = None      # launchd pipeline-driver health (verdict/loaded/interval/responder), None off-darwin
     demoted: list = field(default_factory=list)   # Phase 3: planned/demoted accounts (promotable) — golive_accounts lists only active()
-    # Phase 6: A/B learning-loop INTENT flags (default OFF). ON sets intent only — the apply paths stay
-    # learning_validated-frozen, so a flag here NEVER unfreezes learning (that gate auto-stamps on real metrics).
+    # Phase 6: A/B learning-loop INTENT flags (default OFF). For the variant_* three, ON sets intent only —
+    # their apply paths stay learning_validated-frozen (that gate auto-stamps on real metrics). The two
+    # learn_* flags below carry NO such freeze: each is the whole gate on its learn-pass actuator.
     variant_learning: bool = False     # FANOPS_VARIANT_LEARNING — the loop master switch
     variant_amplify: bool = False      # FANOPS_VARIANT_AMPLIFY — a sustained winner auto-amplifies its source
     learn_amplify: bool = False        # FANOPS_LEARN_AMPLIFY — learn-pass winner mints new moments/clips/posts
+    learn_retire: bool = False         # FANOPS_LEARN_RETIRE — learn-pass loser suppresses its clip/moment/unshipped posts
     variant_ucb: bool = False          # FANOPS_VARIANT_UCB — deterministic UCB1 explore/exploit rank
     variant_transfer: bool = False     # FANOPS_VARIANT_TRANSFER — seed a cold account from proven donors
     setup_state: str = "NOT_CONFIGURED"   # MOL-302: derived setup position (never persisted)
@@ -1409,6 +1411,7 @@ def golive_status(cfg: Config) -> GoLiveStatus:
         variant_learning=cfg.variant_learning,         # Phase 6: A/B learning-loop intent flags (default OFF)
         variant_amplify=cfg.variant_amplify, variant_ucb=cfg.variant_ucb, variant_transfer=cfg.variant_transfer,
         learn_amplify=cfg.learn_amplify,               # the learn-pass amplify intent flag (unattended minter)
+        learn_retire=cfg.learn_retire,                 # the learn-pass retire intent flag (unattended destroyer)
         setup_state=setup_state(cfg), setup_next=setup_next_action(cfg))
 
 

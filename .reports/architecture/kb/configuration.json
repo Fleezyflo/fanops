@@ -337,7 +337,13 @@
   },
   "FANOPS_LEARN_AMPLIFY": {
    "read_at": [
-    "fanops.config:776"
+    "fanops.config:777"
+   ],
+   "reader_count": 1
+  },
+  "FANOPS_LEARN_RETIRE": {
+   "read_at": [
+    "fanops.config:789"
    ],
    "reader_count": 1
   },

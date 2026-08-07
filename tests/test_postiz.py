@@ -11,6 +11,7 @@ from fanops.post.postiz import (PostizPoster, build_postiz_payload, postiz_uploa
                                 postiz_list_integrations, postiz_check_auth, PostizIntegration,
                                 _extract_postiz_id, rewrite_media_base, _mirror_media_to_r2)
 from fanops.post import get_poster, get_media_uploader
+from fanops.studio.views_common import is_transient_failure_reason
 
 
 class _R:
@@ -41,7 +42,7 @@ def _led(cfg, post):
 def test_payload_shape():
     p = build_postiz_payload(integration_id="intg_1", platform="instagram", content="fire",
                              media_urls=["https://uploads.postiz.com/x.mp4"],
-                             scheduled_time="2099-01-01T00:00:00Z")
+                             scheduled_time="2099-01-01T00:00:00Z", post_type="post")
     assert p["type"] == "schedule" and p["date"] == "2099-01-01T00:00:00Z"
     body = p["posts"][0]
     assert body["integration"]["id"] == "intg_1"
@@ -56,10 +57,49 @@ def test_payload_image_carries_id_and_path_and_post_type():
     # `post_type` of "post"/"story". The uploader feeds "id|path"; build_postiz_payload splits it.
     p = build_postiz_payload(integration_id="intg_1", platform="instagram", content="fire",
                              media_urls=["mid_9|https://uploads.postiz.com/x.mp4"],
-                             scheduled_time="2099-01-01T00:00:00Z")
+                             scheduled_time="2099-01-01T00:00:00Z", post_type="post")
     img = p["posts"][0]["value"][0]["image"][0]
     assert img["id"] == "mid_9" and img["path"] == "https://uploads.postiz.com/x.mp4"
     assert p["posts"][0]["settings"]["post_type"] == "post"
+
+
+# ---- MOL-786: post_type is RENDERED from the declaration, and validated BEFORE any network ----
+@pytest.mark.parametrize("token", ["post", "story"])
+def test_payload_renders_the_declared_post_type(token):
+    # The builder never guesses a product: whatever the caller declares is what the vendor receives.
+    p = build_postiz_payload(integration_id="intg_1", platform="instagram", content="fire",
+                             media_urls=["mid_9|https://uploads.postiz.com/x.mp4"],
+                             scheduled_time="2099-01-01T00:00:00Z", post_type=token)
+    assert p["posts"][0]["settings"] == {"__type": "instagram", "post_type": token}
+
+
+def test_payload_rejects_an_unknown_token_before_any_network(mocker):
+    # An out-of-vocabulary token is refused by the BUILDER — no request is ever constructed, let alone sent.
+    sent = mocker.patch("fanops.post.postiz.requests.post")
+    with pytest.raises(ValueError) as e:
+        build_postiz_payload(integration_id="intg_1", platform="instagram", content="fire",
+                             media_urls=["mid_9|https://uploads.postiz.com/x.mp4"],
+                             scheduled_time="2099-01-01T00:00:00Z", post_type="weird")
+    assert "expected post|story" in str(e.value)
+    assert not is_transient_failure_reason(str(e.value))   # a validation defect must classify PERMANENT
+    sent.assert_not_called()
+
+
+def test_payload_story_without_media_raises():
+    # A story is a media product — declaring one with no media is a defect, not a text post.
+    with pytest.raises(ValueError, match="story"):
+        build_postiz_payload(integration_id="intg_1", platform="instagram", content="fire",
+                             media_urls=[], scheduled_time="2099-01-01T00:00:00Z", post_type="story")
+
+
+def test_payload_post_with_empty_media_still_builds():
+    # REGRESSION: the cutover probe (cutover_postiz.postiz_post) has no Post row and deliberately builds a
+    # text-only "post" with media_urls=[]. The builder must NOT reject it — the empty-media refusal is
+    # homed at the publish boundary, where every empty-media payload really is a defect.
+    p = build_postiz_payload(integration_id="intg_1", platform="instagram", content="probe",
+                             media_urls=[], scheduled_time="2099-01-01T00:00:00Z", post_type="post")
+    assert p["posts"][0]["settings"] == {"__type": "instagram", "post_type": "post"}
+    assert p["posts"][0]["value"][0]["image"] == []
 
 
 # ---- factory wiring ----
@@ -161,6 +201,109 @@ def test_publish_429_retries_then_succeeds(tmp_path, monkeypatch, mocker):
                  side_effect=[_R(429, {}, text="rate"), _R(201, {"id": "postiz_9"})])
     led = PostizPoster(cfg).publish(led, "p1")
     assert led.posts["p1"].state is PostState.submitted and led.posts["p1"].submission_id == "postiz_9"
+
+
+# ---- MOL-786: the publish boundary declares the token and enforces the media invariants ----
+def _capture(mocker):
+    cap = {}
+    def _p(url, **kw):
+        cap["json"] = kw.get("json"); return _R(201, {"id": "postiz_1"})
+    cap["mock"] = mocker.patch("fanops.post.postiz.requests.post", side_effect=_p)
+    return cap
+
+def _settings(cap):
+    return cap["json"]["posts"][0]["settings"]
+
+
+def test_publish_legacy_undeclared_row_still_sends_post(tmp_path, monkeypatch, mocker):
+    # A legacy row predates the declaration (product_type None). The transitional `or "post"` fallback must
+    # reproduce TODAY's payload byte-for-byte — zero network-behavior change for the 300-odd queued rows.
+    cfg = _cfg(tmp_path, monkeypatch); post = _post(); assert post.product_type is None
+    led = _led(cfg, post); cap = _capture(mocker)
+    PostizPoster(cfg).publish(led, "p1")
+    assert _settings(cap) == {"__type": "instagram", "post_type": "post"}
+
+
+def test_publish_declared_story_sends_story(tmp_path, monkeypatch, mocker):
+    # The declaration — not a hardcoded literal — reaches the vendor.
+    cfg = _cfg(tmp_path, monkeypatch); post = _post(); post.product_type = "story"
+    led = _led(cfg, post); cap = _capture(mocker)
+    PostizPoster(cfg).publish(led, "p1")
+    assert _settings(cap) == {"__type": "instagram", "post_type": "story"}
+
+
+@pytest.mark.parametrize("token", [None, "post", "story"])
+def test_publish_empty_media_raises_before_any_network(tmp_path, monkeypatch, mocker, token):
+    # A LEDGER post always carries media (_ensure_media fills it pre-publish), so an empty set is a defect
+    # whatever the declared token — and the refusal happens BEFORE the request is built.
+    cfg = _cfg(tmp_path, monkeypatch); post = _post(); post.media_urls = []; post.product_type = token
+    led = _led(cfg, post); cap = _capture(mocker)
+    with pytest.raises(ValueError) as e:
+        PostizPoster(cfg).publish(led, "p1")
+    assert "no media" in str(e.value)
+    assert not is_transient_failure_reason(str(e.value))
+    cap["mock"].assert_not_called()
+
+
+@pytest.mark.parametrize("media", [
+    ["m1|https://cdn/a.mp4", "m2|https://cdn/b.mp4"],       # >1 media -> the vendor sends VIDEO, not REELS
+    ["m1|https://cdn/a.jpg"],                               # an image -> the vendor sends FEED, not REELS
+    ["m1"],                                                 # id-only: no path to prove a video from
+])
+def test_publish_ig_post_requires_exactly_one_video(tmp_path, monkeypatch, mocker, media):
+    # The single-video invariant (MOL-786, relied on by MOL-785): post_type 'post' maps to media_type=REELS
+    # ONLY for exactly one .mp4. Anything else must fail loud pre-network, or the insights boundary's
+    # post->REELS map is a guess.
+    cfg = _cfg(tmp_path, monkeypatch); post = _post(); post.media_urls = media
+    led = _led(cfg, post); cap = _capture(mocker)
+    with pytest.raises(ValueError) as e:
+        PostizPoster(cfg).publish(led, "p1")
+    assert "not a single video" in str(e.value)
+    assert not is_transient_failure_reason(str(e.value))
+    cap["mock"].assert_not_called()
+
+
+def test_publish_single_video_ig_post_passes_the_invariant(tmp_path, monkeypatch, mocker):
+    # NEGATIVE CONTROL for the test above: the sanctioned shape (one .mp4) still publishes.
+    cfg = _cfg(tmp_path, monkeypatch); post = _post(); post.media_urls = ["m1|https://cdn/a.mp4"]
+    led = _led(cfg, post); cap = _capture(mocker)
+    PostizPoster(cfg).publish(led, "p1")
+    assert led.posts["p1"].state is PostState.submitted
+    assert _settings(cap)["post_type"] == "post"
+
+
+def test_publish_story_is_not_held_to_the_single_video_rule(tmp_path, monkeypatch, mocker):
+    # The invariant is scoped to what it explains: 'post' -> REELS. A story carries whatever it carries.
+    cfg = _cfg(tmp_path, monkeypatch); post = _post()
+    post.product_type = "story"; post.media_urls = ["m1|https://cdn/a.jpg"]
+    led = _led(cfg, post); cap = _capture(mocker)
+    PostizPoster(cfg).publish(led, "p1")
+    assert _settings(cap)["post_type"] == "story"
+
+
+def test_validation_valueerror_lands_the_post_failed_via_publish_one(tmp_path, monkeypatch, mocker):
+    # CONTAINMENT (the reason a raise here is safe): _publish_one catches it — a bare ValueError is neither
+    # a fatal AuthError nor a transient — so the post lands terminally `failed` with a permanent
+    # error_reason and the pass survives. No retry storm, no crash.
+    from fanops.post.run import _publish_one
+    from fanops.models import Clip, ClipState
+    monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_URL", "https://postiz.example.com")
+    monkeypatch.setenv("POSTIZ_API_KEY", "pk"); monkeypatch.setenv("FANOPS_LIVE", "1")
+    cfg = Config(root=tmp_path)
+    f = cfg.clips / "c1.mp4"; f.parent.mkdir(parents=True, exist_ok=True); f.write_bytes(b"V")
+    with Ledger.transaction(cfg) as led:
+        led.add_clip(Clip(id="c1", parent_id="mom_1", path=str(f), state=ClipState.queued))
+        led.add_post(Post(id="p1", parent_id="c1", account="a", account_id="intg_1",
+                          platform=Platform.instagram, caption="c", state=PostState.queued,
+                          created_at="2026-07-16T13:31:00Z", scheduled_time="2020-01-01T00:00:00Z",
+                          media_urls=["m1|https://cdn/a.mp4", "m2|https://cdn/b.mp4"]))
+    mocker.patch("fanops.post.run._ensure_media", return_value=None)   # media already resolved on the row
+    sent = mocker.patch("fanops.post.postiz.requests.post")
+    _publish_one(cfg, "p1", "postiz")
+    p = Ledger.load(cfg).posts["p1"]
+    assert p.state is PostState.failed
+    assert not is_transient_failure_reason(p.error_reason)   # a validation defect is never re-queued as a blip
+    sent.assert_not_called()
 
 def test_publish_leg_drives_real_postiz_poster_not_dryrun(tmp_path, monkeypatch, mocker):
     # audit gap: the E2E publish leg runs through DryRunPoster (stamps submitted unconditionally). This drives

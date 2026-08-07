@@ -312,8 +312,7 @@
         "fanops.studio.app",
         "fanops.studio.views",
         "fanops.studio.views_results",
-        "fanops.track",
-        "fanops.validation_gate"
+        "fanops.track"
       ],
       "optional": [],
       "typing": []
@@ -2397,7 +2396,7 @@
   "generated_by": "tools/arch",
   "generator_version": "arch/1.0.0",
   "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",
-  "lazy_downward_count": 231,
+  "lazy_downward_count": 230,
   "lazy_lateral": [
     {
       "from": "fanops.accounts",
@@ -3639,7 +3638,7 @@
     "G2_module_sccs_total": 73,
     "G2_non_trivial_sccs": 8,
     "compile_edges_G1": 571,
-    "lazy_edges": 346,
+    "lazy_edges": 345,
     "lazy_edges_lateral": 48,
     "lazy_edges_strictly_upward": 67,
     "lazy_edges_to_equal_or_higher_level": 115,
