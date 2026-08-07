@@ -47,6 +47,7 @@ def cmd_status(cfg: Config) -> int:
     from fanops.models import SourceState        # local read (mirrors cmd_reconcile's local import)
     from fanops.doctor import setup_state, setup_next_action
     from fanops.pipeline_status import status_control_lines, visible_source_ids, source_wait_line, source_backlog
+    from fanops.pipeline_run import paused
     run_line, wait_line = status_control_lines(cfg, led)
     bl = source_backlog(led, cfg)
     print(f"sources={len(led.sources)} moments={len(led.moments)} clips={len(led.clips)} "
@@ -77,6 +78,9 @@ def cmd_status(cfg: Config) -> int:
           # UI-LIE-FIX: per-channel truth (M3), not the legacy global. `fanops status` is an
           # operator-facing line; lying here was the same bug as the Studio status banner.
           f"backend={cfg.effective_publish_mode()} "
+          # T1.3: the operator brake, on the headline. A paused pump that looks identical to a healthy
+          # idle one is how an operator loses an afternoon; read the ONE predicate, never the file.
+          f"paused={str(paused(cfg)).lower()} "
           # WS2 (audit xc-3): one awaiting_<kind>= per GATE_KINDS (the single source) so a stuck gate
           # is visible on `fanops status`; the surface can never omit a gate kind (it derives from GATE_KINDS).
           + " ".join(f"awaiting_{k}={len(pending(cfg, kind=k))}" for k in GATE_KINDS)
@@ -87,6 +91,15 @@ def cmd_status(cfg: Config) -> int:
         sw = source_wait_line(cfg, led, sid)
         extra = f" {sw}" if sw else ""
         print(f"  {sid} state={s.state.value}{extra}")
+    return 0
+
+def cmd_pause(cfg: Config, *, on: bool) -> int:
+    """Operator brake for the unattended pump. The marker survives restarts; operator verbs are unaffected."""
+    from fanops.pipeline_run import set_paused, _paused_path
+    set_paused(cfg, on)
+    # The confirmation routes through get_logger (-> run.log + stderr), NOT a new print(), so the
+    # load-bearing exact-equality _CLI_PRINT_COUNT budget stays intact (the route cmd_restore established).
+    get_logger(cfg)("pause", "-", "paused" if on else "resumed", marker=str(_paused_path(cfg)))
     return 0
 
 def cmd_recover_audit(cfg: Config) -> int:
@@ -791,6 +804,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="fanops")
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser("status"); sub.add_parser("ingest"); sub.add_parser("digest"); sub.add_parser("respond")
+    sub.add_parser("pause", help="stop the unattended pump (survives restarts; operator verbs still run)"); sub.add_parser("resume", help="clear the pause marker")
     p_reconcile = sub.add_parser("reconcile")
     p_reconcile.add_argument("--report-terminals", action="store_true",
                              help="S04: preview which parked posts the (state, age) ladder WOULD escalate/"
@@ -1094,7 +1108,16 @@ def _fresh_run_base_time() -> str:
 
 def _cmd_run_pass(cfg: Config, base_time: str) -> dict | None:
     """One respond+advance converge-then-learn pass. None = halted (run-halted line already on stderr)."""
-    from fanops.pipeline_run import run_lease
+    from fanops.pipeline_run import paused, run_lease
+    # T1.3: the operator brake, checked BEFORE the lease is taken — a paused pump must not even
+    # contend for the run flock, so `fanops advance` by hand stays unblocked while paused. Returning a
+    # DICT (not None) is load-bearing twice over: the --loop path still emits its heartbeat (a silent
+    # pause would freeze the recorded code SHA and the keeper would SIGTERM-kickstart every ~720s after
+    # any code change), and the one-shot path exits 0 because a pause is not a failure. `awaiting: {}`
+    # keeps _gates_blocked_note quiet — no open gates, so it returns None.
+    if paused(cfg):
+        get_logger(cfg)("run", "-", "paused")
+        return {"paused": True, "awaiting": {}}
     # unattended: respond to gates, advance, repeat until no progress.
     # BOTH the responder and advance() are inside the guard: advance()'s deterministic
     # stages are per-unit quarantined, but the responder (FIX H7 — the LLM model call or a
@@ -1252,6 +1275,9 @@ def _heartbeat(cfg: Config, s: dict, *, origin: str | None = None) -> None:
         "heartbeat": datetime.now(timezone.utc).isoformat(),
         "fanops_version": fanops.__version__,
         "published_in_run": s.get("published_in_run", 0),
+        # UNCONDITIONAL, unlike `origin`: a monitor telling "paused" from "dead" needs the key on EVERY
+        # line — a key present only when true makes its absence ambiguous between "not paused" and "old code".
+        "paused": bool(s.get("paused", False)),
         "last_published_age_hours": s.get("last_published_age_hours"),
         "code": _running_code_sha(cfg),   # SHA this PROCESS loaded (snapshot at start); the keeper compares it to disk to adopt new code
     }
@@ -1369,6 +1395,8 @@ def cmd_reframe(cfg: Config, args) -> int:
 def _dispatch(cfg: Config, args) -> int:
     if args.cmd == "reframe":  return cmd_reframe(cfg, args)
     if args.cmd == "status":   return cmd_status(cfg)
+    if args.cmd == "pause":    return cmd_pause(cfg, on=True)
+    if args.cmd == "resume":   return cmd_pause(cfg, on=False)
     if args.cmd == "recover":
         if args.recover_cmd == "audit": return cmd_recover_audit(cfg)
         return 2

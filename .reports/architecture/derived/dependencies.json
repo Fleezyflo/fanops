@@ -451,7 +451,8 @@
         "fanops.autopilot",
         "fanops.controlio",
         "fanops.errors",
-        "fanops.health_model"
+        "fanops.health_model",
+        "fanops.pipeline_run"
       ],
       "optional": [],
       "typing": []
@@ -1065,6 +1066,7 @@
     "fanops.pipeline_run": {
       "compile": [
         "fanops.config",
+        "fanops.controlio",
         "fanops.errors"
       ],
       "lazy": [],
@@ -2142,7 +2144,7 @@
     "fanops.config": 89,
     "fanops.config_introspect": 0,
     "fanops.control": 4,
-    "fanops.controlio": 12,
+    "fanops.controlio": 13,
     "fanops.crosspost": 1,
     "fanops.cutover": 1,
     "fanops.cutover_postiz": 0,
@@ -2331,7 +2333,7 @@
     "fanops.persona_store": 4,
     "fanops.personas": 6,
     "fanops.pipeline": 27,
-    "fanops.pipeline_run": 2,
+    "fanops.pipeline_run": 3,
     "fanops.pipeline_status": 6,
     "fanops.post": 2,
     "fanops.post.compress": 2,
@@ -2568,14 +2570,6 @@
       "jump": 0,
       "same_scc": false,
       "to": "fanops.models",
-      "to_level": 1
-    },
-    {
-      "from": "fanops.health_model",
-      "from_level": 1,
-      "jump": 0,
-      "same_scc": false,
-      "to": "fanops.pipeline_run",
       "to_level": 1
     },
     {
@@ -3101,6 +3095,14 @@
       "to_level": 1
     },
     {
+      "from": "fanops.daemon",
+      "from_level": 1,
+      "jump": 1,
+      "same_scc": false,
+      "to": "fanops.pipeline_run",
+      "to_level": 2
+    },
+    {
       "from": "fanops.digest",
       "from_level": 4,
       "jump": 1,
@@ -3138,6 +3140,14 @@
       "jump": 1,
       "same_scc": false,
       "to": "fanops.ledger",
+      "to_level": 2
+    },
+    {
+      "from": "fanops.health_model",
+      "from_level": 1,
+      "jump": 1,
+      "same_scc": false,
+      "to": "fanops.pipeline_run",
       "to_level": 2
     },
     {
@@ -3389,7 +3399,7 @@
     "fanops.persona_store": 3,
     "fanops.personas": 4,
     "fanops.pipeline": 7,
-    "fanops.pipeline_run": 1,
+    "fanops.pipeline_run": 2,
     "fanops.pipeline_status": 8,
     "fanops.post": 3,
     "fanops.post.compress": 2,
@@ -3495,7 +3505,6 @@
       "fanops.log",
       "fanops.models",
       "fanops.persona_directives",
-      "fanops.pipeline_run",
       "fanops.post.providers",
       "fanops.prompts",
       "fanops.settings",
@@ -3520,6 +3529,7 @@
       "fanops.hookscore",
       "fanops.impact_cut",
       "fanops.ledger",
+      "fanops.pipeline_run",
       "fanops.post.compress",
       "fanops.router",
       "fanops.variant_learning"
@@ -3633,11 +3643,11 @@
     "G2_largest_scc_size": 48,
     "G2_module_sccs_total": 72,
     "G2_non_trivial_sccs": 8,
-    "compile_edges_G1": 573,
-    "lazy_edges": 345,
-    "lazy_edges_lateral": 47,
-    "lazy_edges_strictly_upward": 67,
-    "lazy_edges_to_equal_or_higher_level": 114,
+    "compile_edges_G1": 574,
+    "lazy_edges": 346,
+    "lazy_edges_lateral": 46,
+    "lazy_edges_strictly_upward": 69,
+    "lazy_edges_to_equal_or_higher_level": 115,
     "modules": 136,
     "optional_edges": 0,
     "typing_only_edges": 7

@@ -10,9 +10,11 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from fanops.config import Config
+from fanops.controlio import write_text_atomic
 from fanops.errors import RunBusyError, fail_open
 
 _LOCK_NAME = ".run.lock"
+_PAUSED_NAME = "paused"
 _log = logging.getLogger(__name__)
 _note_stage_warned = False
 
@@ -27,6 +29,27 @@ def _note_stage_log(msg, *args, **kwargs):
 
 def _lock_path(cfg: Config) -> Path:
     return cfg.control / _LOCK_NAME
+
+
+def _paused_path(cfg: Config) -> Path:
+    return cfg.control / _PAUSED_NAME
+
+
+def paused(cfg: Config) -> bool:
+    """True iff the operator has paused the unattended pump (00_control/paused exists). The ONE predicate —
+    every surface reads this, never the file directly. A bare exists(): no swallow, nothing to fail open on."""
+    return _paused_path(cfg).exists()
+
+
+def set_paused(cfg: Config, on: bool) -> None:
+    """Create/remove the pause marker. Idempotent both ways; mkdirs 00_control like run_status_line does.
+    The body is the ISO instant the brake was pulled — advisory, for the operator reading the file."""
+    p = _paused_path(cfg)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    if on:
+        write_text_atomic(p, datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") + "\n")
+    else:
+        p.unlink(missing_ok=True)
 
 
 def _read_body(lock_path: Path) -> dict:
