@@ -125,7 +125,7 @@ def test_publish_backend_for_post_uses_channel_override(tmp_path, monkeypatch):
 
 def test_publish_due_persists_shrunk_render_path(tmp_path, monkeypatch, mocker):
     from fanops.post.run import publish_due
-    from fanops.models import Clip, ClipState
+    from fanops.models import Clip, ClipState, Moment, MomentState
     monkeypatch.setenv("FANOPS_LIVE", "1")
     monkeypatch.setenv("ZERNIO_API_KEY", "sk_test")
     monkeypatch.setenv("FANOPS_ZERNIO_MAX_UPLOAD_MB", "4")
@@ -137,6 +137,11 @@ def test_publish_due_persists_shrunk_render_path(tmp_path, monkeypatch, mocker):
     src.write_bytes(b"Z" * 8_000_000)
     shrunk.write_bytes(b"S" * 1000)
     led = Ledger.load(cfg)
+    # Materialize `m`: the clip named it but the row was never added. Harmless while the publish guard
+    # failed OPEN on a missing ancestor; publish_due now asks Ledger.can_promote, which fails CLOSED, and
+    # this test is about the SHRINK path — the lineage must not be what refuses the post.
+    led.add_moment(Moment(id="m", parent_id="src_1", start=0.0, end=7.0, reason="worth posting",
+                          state=MomentState.clipped))
     led.add_clip(Clip(id="c", parent_id="m", path=str(src), state=ClipState.queued))
     led.add_render(Render(id="r1", clip_id="c", account="tt", surface_key="tt/tiktok",
                           hook_text="h", path=str(src), state=RenderState.rendered))

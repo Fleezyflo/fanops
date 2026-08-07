@@ -6,12 +6,22 @@
 import pytest
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.models import Post, Clip, PostState, ClipState, Platform
+from fanops.models import Post, Clip, PostState, ClipState, Platform, Moment, MomentState
 from fanops.post.run import publish_post, publish_due
+
+
+def _mom1(led):
+    """Materialize `mom_1`, the moment every clip here names. It was never added, so each clip had a
+    DANGLING parent — a shape production cannot build. Harmless while every retirement predicate failed
+    OPEN on a missing row; publish_due now asks Ledger.can_promote, which fails CLOSED. add_moment is
+    setdefault, so repeat calls are a no-op."""
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", start=0.0, end=7.0, reason="worth posting",
+                          state=MomentState.clipped))
 
 
 def _queued(led, cfg, pid="p1", cid="clip_1", when="2999-01-01T00:00:00Z"):
     f = cfg.clips / f"{cid}.mp4"; f.parent.mkdir(parents=True, exist_ok=True); f.write_bytes(b"V")
+    _mom1(led)
     led.add_clip(Clip(id=cid, parent_id="mom_1", path=str(f), state=ClipState.queued))
     led.add_post(Post(id=pid, parent_id=cid, account="a", account_id="98432",
                       platform=Platform.instagram, caption="ship it",
@@ -213,6 +223,7 @@ def test_variant_render_uploaded_once_across_two_publishes(tmp_path, monkeypatch
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     rid = "render_x"; vf = cfg.clips / "v.mp4"; vf.parent.mkdir(parents=True, exist_ok=True); vf.write_bytes(b"V")
     led.add_render(Render(id=rid, clip_id="c1", account="a", surface_key="a|instagram", path=str(vf)))
+    _mom1(led)
     led.add_clip(Clip(id="c1", parent_id="mom_1", path=str(vf), state=ClipState.queued))
     led.add_post(Post(id="p1", parent_id="c1", account="a", account_id="98", platform=Platform.instagram,
                       caption="x", state=PostState.queued, scheduled_time="2000-01-01T00:00:00Z",

@@ -5,7 +5,7 @@
 from datetime import datetime, timezone
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.models import Post, Platform, PostState, Clip, ClipState
+from fanops.models import Post, Platform, PostState, Clip, ClipState, Moment, MomentState
 from fanops.timeutil import iso_z
 
 _NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -118,6 +118,11 @@ def test_publish_due_ignores_awaiting_approval(tmp_path):
     from fanops.post.run import publish_due
     cfg = Config(root=tmp_path)
     with Ledger.transaction(cfg) as led:
+        # Materialize `m1`: the clip named it but the row was never added. Harmless while the publish guard
+        # failed OPEN on a missing ancestor; publish_due now asks Ledger.can_promote, which fails CLOSED, and
+        # this test is about the APPROVAL gate — the lineage must not be what refuses the post.
+        led.add_moment(Moment(id="m1", parent_id="src_1", start=0.0, end=7.0, reason="worth posting",
+                              state=MomentState.clipped))
         led.add_clip(Clip(id="c1", parent_id="m1", path=str(cfg.clips / "c1.mp4"), state=ClipState.queued))
         led.add_post(_post(when=_PAST))               # past schedule, awaiting approval
     publish_due(cfg, now=iso_z(_NOW))
@@ -137,6 +142,11 @@ def test_publish_due_fires_approved_queued(tmp_path, monkeypatch, mocker):
     monkeypatch.setenv("POSTIZ_API_KEY", "pk")
     cfg = Config(root=tmp_path)
     with Ledger.transaction(cfg) as led:
+        # Materialize `m1`: the clip named it but the row was never added. Harmless while the publish guard
+        # failed OPEN on a missing ancestor; publish_due now asks Ledger.can_promote, which fails CLOSED, and
+        # this test is about the APPROVAL gate — the lineage must not be what refuses the post.
+        led.add_moment(Moment(id="m1", parent_id="src_1", start=0.0, end=7.0, reason="worth posting",
+                              state=MomentState.clipped))
         led.add_clip(Clip(id="c1", parent_id="m1", path=str(cfg.clips / "c1.mp4"), state=ClipState.queued))
         led.add_post(_post(state=PostState.queued, when=_PAST))
     with Ledger.transaction(cfg) as led:

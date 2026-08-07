@@ -56,7 +56,8 @@ def _seed_minimal_ledger(cfg: Config) -> Clip:
                 state=ClipState.captioned)
     clip.meta_captions = {"a/instagram": {"caption": "c", "hashtags": []}}
     led.add_clip(clip)
-    return clip
+    led.save()          # PERSIST. Without this the source/moment/clip died with this local instance and every
+    return clip         # caller's own `led.save()` wrote a post whose parent clip row did not exist.
 
 
 # ───────────────────────────────────────────────────────────────────────────
@@ -184,8 +185,8 @@ def test_dryrun_poster_writes_preview_and_no_artifacts(tmp_path):
     cfg.accounts_path.write_text(
         '{"accounts": [{"handle": "@a", "account_id": "ig_a", "platforms": ["instagram"], "status": "active"}]}'
     )
-    led = Ledger.load(cfg)
-    clip = _seed_minimal_ledger(cfg)
+    clip = _seed_minimal_ledger(cfg)          # seed FIRST: it persists the lineage...
+    led = Ledger.load(cfg)                   # ...so load AFTER it, or this save drops the clip again
     led.add_post(Post(
         id="post_t", parent_id=clip.id, account="a", account_id="ig_a",
         platform=Platform.instagram, caption="c", state=PostState.queued,
@@ -224,8 +225,8 @@ def test_publish_one_parks_post_without_url_in_needs_reconcile(tmp_path, monkeyp
     cfg.accounts_path.write_text(
         '{"accounts": [{"handle": "@a", "account_id": "ig_a", "platforms": ["instagram"], "status": "active"}]}'
     )
-    led = Ledger.load(cfg)
-    clip = _seed_minimal_ledger(cfg)
+    clip = _seed_minimal_ledger(cfg)          # seed FIRST: it persists the lineage...
+    led = Ledger.load(cfg)                   # ...so load AFTER it, or this save drops the clip again
     led.add_post(Post(
         id="post_g", parent_id=clip.id, account="a", account_id="ig_a",
         platform=Platform.instagram, caption="c", state=PostState.queued,
@@ -289,8 +290,8 @@ def test_end_to_end_dryrun_publish_holds_queued_with_preview(tmp_path, monkeypat
     cfg.accounts_path.write_text(
         '{"accounts": [{"handle": "@a", "account_id": "ig_a", "platforms": ["instagram"], "status": "active"}]}'
     )
-    led = Ledger.load(cfg)
-    clip = _seed_minimal_ledger(cfg)
+    clip = _seed_minimal_ledger(cfg)          # seed FIRST: it persists the lineage...
+    led = Ledger.load(cfg)                   # ...so load AFTER it, or this save drops the clip again
     led.add_post(Post(
         id="post_e2e", parent_id=clip.id, account="a", account_id="ig_a",
         platform=Platform.instagram, caption="c", state=PostState.queued,
@@ -321,8 +322,8 @@ def test_mark_published_rejects_empty_url(tmp_path):
     cfg.accounts_path.write_text(
         '{"accounts": [{"handle": "@a", "account_id": "ig_a", "platforms": ["instagram"], "status": "active"}]}'
     )
-    led = Ledger.load(cfg)
-    clip = _seed_minimal_ledger(cfg)
+    clip = _seed_minimal_ledger(cfg)          # seed FIRST: it persists the lineage...
+    led = Ledger.load(cfg)                   # ...so load AFTER it, or this save drops the clip again
     led.add_post(Post(
         id="post_mp", parent_id=clip.id, account="a", account_id="ig_a",
         platform=Platform.instagram, caption="c", state=PostState.queued,
@@ -346,8 +347,8 @@ def test_mark_published_rejects_none_url(tmp_path):
     cfg.accounts_path.write_text(
         '{"accounts": [{"handle": "@a", "account_id": "ig_a", "platforms": ["instagram"], "status": "active"}]}'
     )
-    led = Ledger.load(cfg)
-    clip = _seed_minimal_ledger(cfg)
+    clip = _seed_minimal_ledger(cfg)          # seed FIRST: it persists the lineage...
+    led = Ledger.load(cfg)                   # ...so load AFTER it, or this save drops the clip again
     led.add_post(Post(
         id="post_mp2", parent_id=clip.id, account="a", account_id="ig_a",
         platform=Platform.instagram, caption="c", state=PostState.queued,
@@ -369,8 +370,8 @@ def test_mark_published_accepts_real_url(tmp_path):
     cfg.accounts_path.write_text(
         '{"accounts": [{"handle": "@a", "account_id": "ig_a", "platforms": ["instagram"], "status": "active"}]}'
     )
-    led = Ledger.load(cfg)
-    clip = _seed_minimal_ledger(cfg)
+    clip = _seed_minimal_ledger(cfg)          # seed FIRST: it persists the lineage...
+    led = Ledger.load(cfg)                   # ...so load AFTER it, or this save drops the clip again
     led.add_post(Post(
         id="post_mp3", parent_id=clip.id, account="a", account_id="ig_a",
         platform=Platform.instagram, caption="c", state=PostState.queued,
@@ -398,8 +399,8 @@ def test_cli_resolve_published_requires_url_flag(tmp_path, capsys):
     cfg.accounts_path.write_text(
         '{"accounts": [{"handle": "@a", "account_id": "ig_a", "platforms": ["instagram"], "status": "active"}]}'
     )
-    led = Ledger.load(cfg)
-    clip = _seed_minimal_ledger(cfg)
+    clip = _seed_minimal_ledger(cfg)          # seed FIRST: it persists the lineage...
+    led = Ledger.load(cfg)                   # ...so load AFTER it, or this save drops the clip again
     led.add_post(Post(
         id="post_r", parent_id=clip.id, account="a", account_id="ig_a",
         platform=Platform.instagram, caption="c", state=PostState.queued,
@@ -427,8 +428,8 @@ def test_cli_resolve_published_with_url_succeeds(tmp_path):
     cfg.accounts_path.write_text(
         '{"accounts": [{"handle": "@a", "account_id": "ig_a", "platforms": ["instagram"], "status": "active"}]}'
     )
-    led = Ledger.load(cfg)
-    clip = _seed_minimal_ledger(cfg)
+    clip = _seed_minimal_ledger(cfg)          # seed FIRST: it persists the lineage...
+    led = Ledger.load(cfg)                   # ...so load AFTER it, or this save drops the clip again
     led.add_post(Post(
         id="post_r2", parent_id=clip.id, account="a", account_id="ig_a",
         platform=Platform.instagram, caption="c", state=PostState.queued,
@@ -455,8 +456,8 @@ def test_cli_resolve_to_non_published_does_not_require_url(tmp_path):
     cfg.accounts_path.write_text(
         '{"accounts": [{"handle": "@a", "account_id": "ig_a", "platforms": ["instagram"], "status": "active"}]}'
     )
-    led = Ledger.load(cfg)
-    clip = _seed_minimal_ledger(cfg)
+    clip = _seed_minimal_ledger(cfg)          # seed FIRST: it persists the lineage...
+    led = Ledger.load(cfg)                   # ...so load AFTER it, or this save drops the clip again
     led.add_post(Post(
         id="post_r3", parent_id=clip.id, account="a", account_id="ig_a",
         platform=Platform.instagram, caption="c", state=PostState.submitting,
