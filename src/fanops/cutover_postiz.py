@@ -43,9 +43,11 @@ def postiz_post(cfg: Config, integration_id: str, *, confirmed: bool, post=None)
     integration = next((i for i in postiz.postiz_list_integrations(cfg) if i.id == integration_id), None)
     if integration is None:
         raise CutoverError(f"unknown postiz integration id {integration_id!r} — pick one of your mapped channels.")
+    # post_type is declared explicitly: the probe has no Post row to declare it (and no media — the one
+    # sanctioned empty-media caller, which is why the builder does not reject "post" + no media).
     payload = build_postiz_payload(integration_id=integration_id, platform=integration.platform,
                                    content="fanops cutover probe — delete me", media_urls=[],
-                                   scheduled_time=CUTOVER_SCHEDULE)
+                                   scheduled_time=CUTOVER_SCHEDULE, post_type="post")
     poster = post or requests.post
     resp = poster(f"{_base(cfg)}{_PUBLIC}/posts",
                   headers={"Authorization": _key(cfg), "Content-Type": "application/json"},
