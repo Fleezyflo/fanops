@@ -228,10 +228,10 @@ whole of the law: a rule exists only with its enforcer. Two principles carried f
 
 ## 14 · Performance — **[OWNED]**
 
-### STD-PERF-01 — CI runtime has a measured, blocking budget; product runtime does not
-- **Rule:** the unit lane has a hard duration budget (**blocking**), derived from a measured p95 plus margin — not a guessed number. There is **no** product-runtime performance standard, deliberately: render/transcribe cost is dominated by ffmpeg/whisper, and no latency SLO has ever been the binding constraint.
-- **Rationale:** budget what is both measurable and load-bearing. The CI budget protects the developer loop; a fabricated product-latency SLO would be a standard nobody measures.
-- **Evidence:** `scripts/ci_slo_gate.py` (`check_budget`, exits non-zero over budget); the budget is set in ci.yml's unit job (`CI_UNIT_PYTEST_BUDGET_S`: 135 s PR / 140 s main — derived from a measured p95 + margin; **blocking**, not `continue-on-error`); control `CI-UNIT-SLO`.
+### STD-PERF-01 — CI runtime has a bounded, blocking budget; product runtime does not
+- **Rule:** the unit lane has a hard duration budget (**blocking**), set as an upper **bound above the measured spread of an unchanged suite** — not a p95, not an SLO, and not a guessed number. One value for pull requests and pushes alike: a gate must never be stricter on the branch that has to pass to land than on the trunk it merges into. There is **no** product-runtime performance standard, deliberately: render/transcribe cost is dominated by ffmpeg/whisper, and no latency SLO has ever been the binding constraint.
+- **Rationale:** budget what is both measurable and load-bearing. Shared-runner wall-clock carries real variance, so a threshold set *inside* that spread rules on scheduling noise and its verdict says nothing about the change under test; a bound set *above* it still catches the unbounded growth the budget exists to catch. The CI budget protects the developer loop; a fabricated product-latency SLO would be a standard nobody measures.
+- **Evidence:** `scripts/ci_slo_gate.py` (`check_budget`, exits non-zero over budget); the budget is set in ci.yml's unit job (`CI_UNIT_PYTEST_BUDGET_S`; **blocking**, not `continue-on-error`), a step inside registry control `CI-UNIT`. The number lives in ci.yml and nowhere else — MOL-829 deleted the copy that had rotted here, the "derived from a measured p95" claim that eight measurements refuted, and a citation of `CI-UNIT-SLO`, a control id absent from `.github/ci-control-registry.yml`.
 
 ---
 
