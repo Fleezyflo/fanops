@@ -7,7 +7,6 @@
 from fanops.config import Config
 from fanops.personas import (Persona, lever_catalog, compose_breakdown, produces_summary, casting_directive,
                              hook_directive, caption_directive, add_persona, Personas,
-                             CONTENT_FOCUS, SELECTION_SCOPE_LEVELS, HOOK_ANGLES,
                              _FOCUS_CLAUSE)   # MOL-523: _SCOPE_CLAUSE/_ANGLE_CLAUSE dropped with the vocabularies
 
 
@@ -42,11 +41,9 @@ def test_catalog_omits_the_removed_persona_levers():
     assert keys.isdisjoint({"tag_lean", "framing", "hook_tone", "clip_count"})
     assert "clip_profile" in keys                                  # retained as the global cut-length lever
 
-def test_catalog_covers_every_validated_vocab_no_orphan_options():
-    cat = _by_key(lever_catalog())
-    assert {o["value"] for o in cat["content_focus"]["options"]} == set(CONTENT_FOCUS)
-    assert {o["value"] for o in cat["selection_scope"]["options"]} == set(SELECTION_SCOPE_LEVELS)
-    assert {o["value"] for o in cat["hook_angle"]["options"]} == set(HOOK_ANGLES)
+# (MOL-803: test_catalog_covers_every_validated_vocab_no_orphan_options was DELETED — after the free-text
+#  migration all three of its assertions read `set() == set()`, so it passed no matter what the catalog did.
+#  test_free_text_levers_expose_no_option_vocabulary above pins the same absence with a real assertion.)
 
 
 # ---- compose_breakdown: the LIVE composed translation, parity with the real compilers ----

@@ -9,17 +9,14 @@ from __future__ import annotations
 from fanops.config import Config
 from fanops import persona_levers as _levers
 
-# THE DIRECTIVE ENGINE (M3). Each structured lever value compiles into a SUBSTANTIVE instruction CLAUSE the
-# pipeline's prompt actually acts on — real selection/hook language, NOT a glued adjective ("favors moments:
-# punchlines"). content_focus + selection_scope -> the CASTING directive; hook_angle -> the HOOK directive.
-# These clauses are the curated DEFAULT; a persona may OVERRIDE the compiled text per dimension (the operator
-# owns the words). clip_profile/framing/tag_lean/corpus stay deterministic (cut + hashtags), NOT in this text.
-# M1: the clause maps are PROJECTIONS of the single lever registry (fanops.persona_levers) — the SAME
-# declaration personas' vocabularies + lever_catalog() derive from, so the three can no longer drift.
-# MOL-523: cut_policy now owns the tokens formerly in content_focus.
+# THE DIRECTIVE ENGINE (M3). cut_policy's tokens compile into a SUBSTANTIVE instruction CLAUSE the pipeline's
+# prompt actually acts on — real selection language, NOT a glued adjective ("favors moments: punchlines").
+# content_focus + selection_scope -> the CASTING directive; hook_angle -> the HOOK directive; MOL-521/523 made
+# those three FREE TEXT, so the operator's own words compile in verbatim and only cut_policy still needs a
+# clause map. clip_profile/framing/tag_lean/corpus stay deterministic (cut + hashtags), NOT in this text.
+# M1: the clause map is a PROJECTION of the single lever registry (fanops.persona_levers) — the SAME
+# declaration personas' vocabularies + lever_catalog() derive from, so the two can no longer drift.
 _FOCUS_CLAUSE = _levers.clause_map("cut_policy")
-_SCOPE_CLAUSE = _levers.clause_map("selection_scope")
-_ANGLE_CLAUSE = _levers.clause_map("hook_angle")
 
 
 
