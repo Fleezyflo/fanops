@@ -333,11 +333,20 @@ def set_variant_amplify(cfg: Config, on: bool) -> ActionResult:
 
 def set_learn_amplify(cfg: Config, on: bool) -> ActionResult:
     """Toggle learn-pass AMPLIFY (FANOPS_LEARN_AMPLIFY) — a metric WINNER re-opens a moment request on its
-    source, minting NEW moments/clips/posts unattended. Amplify-only, validation-frozen. Default OFF."""
+    source, minting NEW moments/clips/posts unattended. This flag is the whole gate. Default OFF."""
     err = _dual_write(cfg, "FANOPS_LEARN_AMPLIFY", "1" if on else "0")
     if err:
         return ActionResult(ok=False, error=err)
     return ActionResult(ok=True, detail={"learn_amplify": bool(on)})
+
+
+def set_learn_retire(cfg: Config, on: bool) -> ActionResult:
+    """Toggle learn-pass RETIRE (FANOPS_LEARN_RETIRE) — a metric LOSER suppresses its clip, its moment when
+    no live sibling remains, and every unshipped post of that lineage. This flag is the whole gate. Default OFF."""
+    err = _dual_write(cfg, "FANOPS_LEARN_RETIRE", "1" if on else "0")
+    if err:
+        return ActionResult(ok=False, error=err)
+    return ActionResult(ok=True, detail={"learn_retire": bool(on)})
 
 
 def set_variant_ucb(cfg: Config, on: bool) -> ActionResult:

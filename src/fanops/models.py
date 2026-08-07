@@ -81,6 +81,25 @@ class MomentState(str, Enum):
                         # picked -> decided once the per-pick moment_hooks gate lands (hook, or a valid clean null).
     decided = "decided"; clipped = "clipped"; retired = "retired"; error = "error"
 
+class MomentOrigin(str, Enum):
+    # WHO asked for the moment — a CLOSED classification, so it lives here beside the state enums
+    # rather than as a free-text str. The at-rest value is `unknown`, never `operator`: an optimistic
+    # default would assert operator provenance for every row minted before this field existed,
+    # silently disarming any origin-keyed review or purge (it would select nothing and report success).
+    operator = "operator"                   # an operator-driven moment request (the `fanops run` pipeline path)
+    machine = "machine"                     # a machine-initiated request (the `adjust.amplify` path)
+    machine_inferred = "machine_inferred"   # RECONSTRUCTED after the fact by the one-shot backfill from lineage
+                                            # evidence, NOT observed at mint. Self-declaring, so a guessed label
+                                            # never passes for an authored one (no companion "was_guessed" flag).
+    unknown = "unknown"                     # never labelled — the honest value for a row the system never observed
+    # NO WRITER TODAY, by design (not an oversight): request and mint are two different pipeline stages
+    # separated by an agent round-trip — `request_moments` returns at `moments_requested`, and the sole
+    # mint (`_reconcile_valid_picks`) runs on a LATER pass via `ingest_moments` — so a request-time origin
+    # cannot reach the mint site as a parameter, and wiring one with no reader would ship a dead argument.
+    # The forward stamp is deferred to the ticket that lands when a machine path is re-enabled: all three
+    # (learn_amplify / variant_amplify / p4_dim_bias) are opt-in and OFF, so there is no live machine-mint
+    # traffic to label. The backfill supplies `machine_inferred` for the existing history.
+
 class ClipState(str, Enum):
     rendered = "rendered"; captions_requested = "captions_requested"; captioned = "captioned"
     queued = "queued"; published = "published"; analyzed = "analyzed"
@@ -257,6 +276,12 @@ class Moment(BaseModel):
                                                 # -> P9 falls back to global (byte-identical).
     framing: Optional[str] = None               # P5: owner persona's crop bias at pick birth ("top"/"center");
                                                 # None = persona-blind -> P9 falls back to global.
+    origin: MomentOrigin = MomentOrigin.unknown   # WHO asked for this moment. DEFAULTED, and defaulted to
+                                                # `unknown` specifically: old ledgers and every existing
+                                                # hand-built Moment load unchanged, and a row nothing has
+                                                # observed SAYS so instead of claiming operator provenance.
+                                                # See MomentOrigin for the vocabulary and why nothing writes
+                                                # it yet.
 
     @model_validator(mode="after")
     def _apply_segments_envelope(self) -> "Moment":

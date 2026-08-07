@@ -151,24 +151,28 @@ def _learn_pass(cfg: Config, *, window: str = "30d") -> None:
     with Ledger.transaction(cfg) as led:
         led = pull_metrics(led, cfg, list_posts=lambda _w: rows, window=window, resolve_media=_resolve)
         r = classify_outcomes(led, per_surface=cfg.adjust_per_surface)   # P4(a): per-surface WINNERS when on
-        # AMPLIFY MINTS NEW WORK — a winner re-opens a moment request on its source, producing new
-        # moments -> clips -> posts with no operator involvement. It was the one learning actuator
-        # gated ONLY by `cfg.is_live_backend`, so going live to PUBLISH also switched on an
-        # autonomous content generator; it ran 7 unattended rounds across 3 sources and wrote no log
-        # line, so the only evidence was src.meta["amplify_count"]. Now it carries the same two gates
-        # its siblings do — operator INTENT (default OFF) and the validation freeze — and always
-        # leaves a breadcrumb, whichever way it goes. RETIRE is deliberately NOT gated: it only
-        # suppresses, it never generates, and freezing it would strand the lifecycle.
-        from fanops.validation_gate import learning_validated
-        if cfg.learn_amplify and learning_validated(cfg):
+        # BOTH learn-pass actuators carry an operator-INTENT flag, default OFF, and both leave a
+        # breadcrumb whichever way they go. AMPLIFY MINTS NEW WORK — a winner re-opens a moment
+        # request on its source, producing new moments -> clips -> posts. RETIRE DESTROYS — a loser's
+        # clip is suppressed, its moment too when no live sibling remains, and every unshipped post of
+        # that lineage is rewritten to `retired`. Both ran on `cfg.is_live_backend` alone, so going
+        # live to PUBLISH switched on an autonomous generator AND an autonomous destroyer. NOTE the
+        # validation freeze is deliberately absent: nothing ever writes metrics_confirmed False, so
+        # once the first real metric auto-stamps it `learning_validated` can never re-bind — a
+        # condition that cannot bind is theatre, not a gate. With both flags OFF this pass is
+        # read-only: pull metrics, classify, log the counts, write nothing.
+        if cfg.learn_amplify:
             before = {sid: int(s.meta.get("amplify_count", 0)) for sid, s in led.sources.items()}
             led = amplify(led, cfg, r["winners"])
             fired = [sid for sid, s in led.sources.items() if int(s.meta.get("amplify_count", 0)) > before.get(sid, 0)]
             get_logger(cfg)("learn", "-", "amplified", sources=len(fired), winners=len(r["winners"]))
         else:
-            get_logger(cfg)("learn", "-", "amplify_skipped", winners=len(r["winners"]),
-                            intent=cfg.learn_amplify, validated=learning_validated(cfg))
-        led = retire(led, r["losers"])
+            get_logger(cfg)("learn", "-", "amplify_skipped", winners=len(r["winners"]))
+        if cfg.learn_retire:
+            led = retire(led, r["losers"])
+            get_logger(cfg)("learn", "-", "retired", losers=len(r["losers"]))
+        else:
+            get_logger(cfg)("learn", "-", "retire_skipped", losers=len(r["losers"]))
 
 def cmd_reconcile(cfg: Config, *, report_terminals: bool = False) -> int:
     # AUDIT H4 + M1: resolve posts stranded in submitting/needs_reconcile by polling the backend status.
