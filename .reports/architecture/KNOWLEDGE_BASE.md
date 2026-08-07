@@ -46,7 +46,7 @@ ledger key space.
 `config` `settings` `config_introspect` `secret_provider`
 
 **Purpose.** The env boundary.
-**Owns.** 73 environment variables. All secrets (keyring-first).
+**Owns.** The environment-variable surface (declared in [`kb/configuration.json`](kb/configuration.json)). All secrets (keyring-first).
 **The runtime owner is `Config`, exclusively** — every property is an `os.getenv` evaluated **per access**,
 uncached. **`Settings` never feeds it**: `Settings.runtime_load` has **zero callers** (`INV-05`). `Settings` is
 a *doctor-only strict validator* + a docs surface. Runtime is lenient; doctor is strict. **The split is
@@ -226,7 +226,7 @@ re-reads every tick. So a `.env` change made by the CLI or daemon **never reache
 | [`kb/lifecycles.json`](kb/lifecycles.json) | Per-entity lifecycle. **Defers to [`transitions.json`](transitions.json) (Cycle 2) as canonical** — re-verified, not restated. |
 | [`kb/persistence.json`](kb/persistence.json) | Every persistent artifact: owner, schema, migration, backup, restore, caches, fingerprints. |
 | [`kb/side_effects.json`](kb/side_effects.json) | Every FS / DB / network / subprocess effect, its ordering vs the durable writes, its rollback capability. |
-| [`kb/configuration.json`](kb/configuration.json) | **73 env vars**, every read site, the precedence model, the propagation asymmetry. |
+| [`kb/configuration.json`](kb/configuration.json) | The **declared env-var name set**, the precedence model, the propagation asymmetry. Read sites are a derived AST fact, not a declaration — see [`derived/configuration.json`](derived/configuration.json). |
 | [`kb/integrations.json`](kb/integrations.json) | Postiz · Zernio · Meta Graph · R2 · `claude -p` · ffmpeg · whisper · cv2 · launchd · Docker · keyring. |
 | [`kb/maintenance.json`](kb/maintenance.json) | 59 CLI verbs; every recovery op; **and the missing recovery path.** |
 | [`kb/invariants.json`](kb/invariants.json) | What is **actually** guaranteed — **classified by enforcement mechanism.** 7 are **FALSE as written.** |

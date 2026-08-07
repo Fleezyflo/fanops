@@ -332,7 +332,7 @@ strictly stronger statement than Cycles 1–4 could make. **Their business logic
 | *What states can this entity be in, and who moves it?* | [`transitions.json`](transitions.json) *(Cycle 2, canonical — re-verified by Cycle 5)* |
 | *What is persisted, and how is it recovered?* | [`kb/persistence.json`](kb/persistence.json) |
 | *What talks to the outside world?* | [`kb/side_effects.json`](kb/side_effects.json), [`kb/integrations.json`](kb/integrations.json) |
-| *What does this env var do?* | [`kb/configuration.json`](kb/configuration.json) *(73 vars, every read site)* |
+| *What does this env var do?* | [`kb/configuration.json`](kb/configuration.json) *(the declared name set + precedence model)*; read sites in [`derived/configuration.json`](derived/configuration.json) *(regenerated every pass)* |
 | *What is actually guaranteed — and by what mechanism?* | [`kb/invariants.json`](kb/invariants.json) |
 | *What is structurally fragile?* | [`kb/risks.json`](kb/risks.json) |
 | *What don't we know?* | [`kb/unknowns.json`](kb/unknowns.json) |
