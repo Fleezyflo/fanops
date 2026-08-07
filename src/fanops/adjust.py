@@ -5,6 +5,7 @@ the winning moment's signature as guidance; write_request auto-invalidates the s
 no-opped. AMPLIFY is capped per source at MAX_AMPLIFY_PER_SOURCE (default 3) so an autonomous loop
 can't grow one source endlessly. RETIRE = ledger.retire_clip, which clip/crosspost honor (FIX F55)."""
 from __future__ import annotations
+from statistics import median
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import LIFT_SCORE, MomentState, PostState
@@ -14,6 +15,26 @@ from fanops.accounts import Accounts
 # E1 per-source amplification budget — the single source of truth for the cap, shared by amplify()'s
 # default AND variant_amplify.amplify_candidates' pre-check (so the two can never drift apart).
 MAX_AMPLIFY_PER_SOURCE = 3
+
+# RETIREMENT SIGNAL floor — mirrors validation_gate._MIN_ATTRIBUTED_N / _MIN_VALUES (and
+# variant_learning.variant_min_posts=8), the thresholds every SIBLING actuator already carries and
+# this one did not. Retirement is the destructive half of the learn pass, and a rank over a handful
+# of scored posts is noise: at n=5 the old code retired a post on a single data point. A pool whose
+# scores are all IDENTICAL is worse than thin — it carries no ranking at all, so "the bottom slice"
+# degenerates to insertion order. Below either floor: NO losers. WINNERS are deliberately untouched
+# by both — amplify only mints work, so acting early there costs an extra moment request, not state.
+_MIN_SCORED_N = 8
+_MIN_DISTINCT_SCORES = 2
+
+# The floor that actually BINDS, as a fraction of the pool's own median. lift_score is an UNBOUNDED
+# weighted sum (track._W — reach alone contributes 0.001 per impression), so a fixed constant can
+# only express "low" for one audience size: the shipped lift_floor=20.0 is >6x the highest score this
+# system has ever produced, so it excluded nobody and the bottom retire_pct slice retired WHOLE on
+# every tick. A ratio is scale-free — it stays true as the account grows — and, unlike a rank, it can
+# bind on NOBODY: a pool whose worst posts sit near its middle now retires nothing, which "the bottom
+# 20%" could never express. Median, not mean, so one viral outlier cannot drag the floor up under
+# everything below it.
+_RETIRE_LIFT_RATIO = 0.25
 
 def classify_outcomes(led: Ledger, *, winner_pct: float = 0.3, retire_pct: float = 0.2,
                       lift_floor: float = 20.0, per_surface: bool = False) -> dict:
@@ -40,15 +61,25 @@ def classify_outcomes(led: Ledger, *, winner_pct: float = 0.3, retire_pct: float
             winners.extend(p.id for p in rb[:max(1, round(len(rb) * winner_pct))])
     else:
         winners = [p.id for p in ranked[:max(1, round(n * winner_pct))]]
-    # Conservative retirement: only the bottom retire_pct AND below an absolute lift_floor — GLOBAL in
-    # both modes (no per-surface loser bucketing, D1). A winner (whichever mode's set) is NEVER also a
-    # loser (stage-6 audit): with operator-raised pcts summing past 1 the slices overlapped — one post
-    # amplified AND retired in the same pass; the win_set guard prevents that for the ACTIVE winners.
+    # RETIREMENT — GLOBAL in both modes (no per-surface loser bucketing, D1). A winner (whichever
+    # mode's set) is NEVER also a loser (stage-6 audit): with operator-raised pcts summing past 1 the
+    # slices overlapped — one post amplified AND retired in the same pass; the win_set guard prevents
+    # that for the ACTIVE winners.
+    scores = [p.metrics.get(LIFT_SCORE, 0.0) for p in ranked]
+    if n < _MIN_SCORED_N or len(set(scores)) < _MIN_DISTINCT_SCORES:
+        return {"winners": winners, "losers": []}   # too thin / no ranking at all -> retire NOTHING
+    # The floor is the TRIGGER; the bottom retire_pct slice is only a CAP on how many one pass may
+    # take. That ordering is the whole point: `round(n * retire_pct)` over a bottom slice always names
+    # somebody, so as long as rank decided retirement the pass could never retire nothing — it was a
+    # ratchet, not a signal. `lift_floor` survives as the operator's ADDITIONAL ceiling (min(), so it
+    # can only ever make a pass MORE conservative — an operator raising it can no longer force the
+    # whole slice out, which is exactly what the 20.0 default was silently doing every tick).
+    floor = min(lift_floor, median(scores) * _RETIRE_LIFT_RATIO)
     lose_n = round(n * retire_pct)
     bottom = ranked[n - lose_n:] if lose_n > 0 else []
     win_set = set(winners)
     losers = [p.id for p in bottom
-              if p.id not in win_set and p.metrics.get(LIFT_SCORE, 0.0) < lift_floor
+              if p.id not in win_set and p.metrics.get(LIFT_SCORE, 0.0) < floor
               and not p.metrics.get("lift_degraded")]
     return {"winners": winners, "losers": losers}
 
