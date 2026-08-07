@@ -10,10 +10,13 @@
     {% endfor %}
   </nav>
   {% if active_delivery == 'failed' and failure_rollup and failure_rollup.total %}
+  {# T2.7: these counts are now scoped to account/batch/source (the same filters as the library below), so each
+     link must CARRY that source — dropping it would land the operator on a page whose total differs from the
+     number they just clicked. url_for drops source=None, so an unfiltered page is byte-identical. #}
   <nav class="failure-chips" aria-label="Failure bucket filter">
-    <a class="button{{ ' active' if not active_failure else '' }}" href="{{ url_for('posted', delivery='failed', account=active, batch=active_batch|default(none)) }}">All failed ({{ failure_rollup.total }})</a>
+    <a class="button{{ ' active' if not active_failure else '' }}" href="{{ url_for('posted', delivery='failed', account=active, batch=active_batch|default(none), source=active_source|default(none)) }}">All failed ({{ failure_rollup.total }})</a>
     {% for kind, label in [('rate_limit','Rate limited'),('oversize','Too large'),('bad_payload','Bad upload'),('poll_error','Link pending'),('unknown','Other')] %}
-    {% if failure_rollup.buckets.get(kind) %}<a class="button{{ ' active' if active_failure == kind else '' }}" href="{{ url_for('posted', delivery='failed', failure=kind, account=active, batch=active_batch|default(none)) }}">{{ label }} ({{ failure_rollup.buckets[kind] }})</a>{% endif %}
+    {% if failure_rollup.buckets.get(kind) %}<a class="button{{ ' active' if active_failure == kind else '' }}" href="{{ url_for('posted', delivery='failed', failure=kind, account=active, batch=active_batch|default(none), source=active_source|default(none)) }}">{{ label }} ({{ failure_rollup.buckets[kind] }})</a>{% endif %}
     {% endfor %}
   </nav>
   <div id="posted-action-dock" class="approve-bar-sticky posted-action-dock"><span id="posted-sel-count" class="sel-count muted">Select failed posts to recover</span><button type="button" class="ghost" data-posted-action="clear">Clear</button><form class="recover-bar inline" id="recover-bulk" hx-post="{{ url_for('do_recover_posts', account=active, batch=active_batch|default(none), delivery=active_delivery|default(none), failure=active_failure|default(none)) }}" hx-target="#posted-body" hx-swap="outerHTML" hx-include="#posted-body input[name='ids']">

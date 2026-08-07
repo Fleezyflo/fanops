@@ -2,15 +2,18 @@
    ITSELF every 5s (hx-swap=outerHTML re-arms the timer each tick) and NEVER swaps the worklist body, so
    ticked checkboxes / in-progress edits in #review-body are never clobbered. `shown` is read live from
    the body's data-awaiting each poll (hx-vals js), so the 'load them' button — the ONLY thing that
-   refreshes the worklist — appears only when new awaiting posts have landed, and clears once loaded. #}
-<div id="review-live" class="review-live" hx-get="{{ url_for('review_live', account=active) }}" hx-trigger="every 5s"
+   refreshes the worklist — appears only when new awaiting posts have landed, and clears once loaded.
+   T2.7: BOTH urls carry the active batch/source/state as well as the account, so the strip counts the same
+   scope the body does (an account-only poll turned any filter into a phantom "N new" alert) and the refresh
+   it triggers reloads the body under the SAME filters instead of silently clearing them. #}
+<div id="review-live" class="review-live" hx-get="{{ url_for('review_live', account=active, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none)) }}" hx-trigger="every 5s"
      hx-swap="outerHTML"
      hx-vals='js:{shown: (document.querySelector("#review-body") && document.querySelector("#review-body").dataset.awaiting) || 0}'>
   <span class="live-dot" aria-hidden="true"></span>
   <span class="muted">Live · Awaiting <strong>{{ counts.awaiting }}</strong> · Ready to prepare
     <strong>{{ counts.prepared }}</strong> · Held <strong>{{ counts.held }}</strong></span>
   {% if counts.awaiting > shown %}
-    <button type="button" class="primary" hx-get="{{ url_for('review_panel_refresh', account=active) }}"
+    <button type="button" class="primary" hx-get="{{ url_for('review_panel_refresh', account=active, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none)) }}"
             hx-target="#review-body" hx-swap="outerHTML">🔔 {{ counts.awaiting - shown }} new — load them</button>
   {% endif %}
 </div>

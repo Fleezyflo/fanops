@@ -37,7 +37,10 @@
   {% for key, label in buckets.items() %}
     {% set group = cards | selectattr('bucket','equalto',key) | list %}
     {% if group %}
-      <h3>{{ label }} ({{ group|length }})</h3>
+      {# T2.7: the header counts the FULL scoped bucket (bucket_totals, pre-pagination), not the page slice —
+         it used to read "(24)" beside a progress line saying 301. The slice is named only when it differs. #}
+      {% set bucket_total = bucket_totals[key] %}
+      <h3>{{ label }} ({{ bucket_total }}){% if group|length != bucket_total %} <span class="muted">· showing {{ group|length }}</span>{% endif %}</h3>
       {% if key == 'editable' %}
         <p class="meta review-hint">Use the action bar at the bottom — tick surfaces, or approve by moment / account / batch.</p>
       {% endif %}

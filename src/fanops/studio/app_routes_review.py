@@ -4,6 +4,7 @@ clear-time / caption / regenerate / re-burn-hook / snooze / unhold). register_re
 registers them under their ORIGINAL endpoint names (url_for byte-identical); create_app calls it.
 Shared arg-parsers + the card-chip helper come from app (loaded before create_app runs, so cycle-free)."""
 from __future__ import annotations
+from collections import Counter
 from datetime import datetime, timezone
 from flask import render_template, request
 from fanops.accounts import Accounts
@@ -71,8 +72,13 @@ def register_review_routes(app, cfg):
         awaiting_by_account = views.review_awaiting_by_account(acct_cards)
         if show_feed and feed_account:
             awaiting_by_account = {feed_account: views.review_awaiting_by_account(cards).get(feed_account, 0)}
+        # T2.7: bucket sizes over the PRE-pagination cards. `cards` becomes `page.items` below, so the
+        # per-bucket <h3> counted the 24-card SLICE while the progress line above it counted the whole scoped
+        # set — one render, two numbers, neither labelled. Same set as `counts`/`progress`, one extra pass.
+        bucket_tally = Counter(c.bucket for c in cards)
+        bucket_totals = {k: bucket_tally[k] for k in ("editable", "prepared", "held", "recent")}
         page = views.paginate(cards, _offset_arg())
-        ctx = dict(cards=page.items, page=page, tab="review", compact=compact, ultra=ultra,
+        ctx = dict(cards=page.items, page=page, bucket_totals=bucket_totals, tab="review", compact=compact, ultra=ultra,
                    active_view=view, awaiting_by_account=awaiting_by_account, backend=cfg.poster_backend,
                    counts=counts, awaiting_total=full_counts["awaiting"], active_batch=batch, progress=progress,
                    sources=sources, result=result, matrix=matrix, lanes=lanes, source_choices=choices,
@@ -115,14 +121,21 @@ def register_review_routes(app, cfg):
 
     @app.get("/review/live")
     def review_live():
+        # T2.7: the strip reports the SAME scope as the body it sits above. It used to pass `account` ONLY, so
+        # with any batch/source/state filter active its counts covered the whole account while the body's
+        # data-awaiting covered the filtered set — the strip then manufactured a "N new — load them" alert out
+        # of the filter itself. The filters now ride the poll URL (_review_live.html) and are re-applied here.
         led = Ledger.load(cfg); accounts = Accounts.load(cfg); account = _account_arg()
-        cards = views.review_buckets(led, accounts, cfg, now=datetime.now(timezone.utc), account=account)
+        batch = _batch_arg(); source = _source_arg(); state = _state_arg()
+        cards = views.review_buckets(led, accounts, cfg, now=datetime.now(timezone.utc), account=account,
+                                     batch=batch, source=source, state=state)
         counts = views.review_counts(cards)
         try:
             shown = max(0, int(request.args.get("shown", 0)))
         except (TypeError, ValueError):
             shown = 0
-        return render_template("_review_live.html", counts=counts, shown=shown, active=account)
+        return render_template("_review_live.html", counts=counts, shown=shown, active=account,
+                               active_batch=batch)
 
     @app.get("/review/refresh")
     def review_panel_refresh():

@@ -128,7 +128,9 @@ def register_schedule_routes(app, cfg):
                                  if (account is None or r.account == account)
                                  and (batch is None or r.batch_id == batch)
                                  and (source is None or views.clip_source_of(led, r.clip_id) == source)]
-        failure_rollup = views.failure_rollup(led) if (delivery == "failed") else None
+        # T2.7: scoped to the SAME account/batch/source as `rows` above — an unscoped rollup rendered its total
+        # inside chips that link back to the scoped list, so the chip count and its own destination disagreed.
+        failure_rollup = views.failure_rollup(led, account=account, batch=batch, source=source) if (delivery == "failed") else None
         rollup = views.posted_batch_rollup(rows) if batch else None     # Face 5: full scoped (pre-slice) per-batch summary
         rows = views.lineage_stats(rows)                  # S6: rank repost/crosspost siblings within the filtered set (returns NEW rows)
         page = views.paginate(rows, _offset_arg())
