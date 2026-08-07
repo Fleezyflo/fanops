@@ -50,6 +50,26 @@ def test_post_submission_started_at_is_additive_with_default():
     from fanops.ledger import SCHEMA_VERSION
     assert SCHEMA_VERSION == 11, "an additive-with-default field must not bump the schema"
 
+def test_post_postiz_state_defaults_none_on_old_ledger_rows():
+    # MOL-784: additive Optional[str]=None. A PRODUCTION row written before the field existed must load
+    # unchanged — the ledger is never wiped or migrated, so back-compat is the whole contract here.
+    p = Post(id="post_1", parent_id="clip_1", account="a", account_id="98432",
+             platform=Platform.instagram, caption="x")
+    assert p.postiz_state is None
+    old = Post.model_validate({"id": "post_2", "parent_id": "clip_1", "account": "a",
+                               "account_id": "98432", "platform": "instagram", "caption": "x"})
+    assert old.postiz_state is None                # no key on disk -> None, not a ValidationError
+
+def test_post_postiz_state_round_trips_the_raw_backend_string():
+    # the value contract: Postiz's own vocabulary verbatim, plus the "absent" sentinel (no row in the
+    # mirrored window). Stored and re-read unchanged — never re-mapped onto PostState.
+    p = Post.model_validate({"id": "post_3", "parent_id": "clip_1", "account": "a", "account_id": "98432",
+                             "platform": "instagram", "caption": "x", "postiz_state": "PUBLISHED"})
+    assert p.postiz_state == "PUBLISHED"
+    assert p.model_dump()["postiz_state"] == "PUBLISHED"
+    assert Post(id="post_4", parent_id="clip_1", account="a", account_id="98432",
+                platform=Platform.instagram, caption="x", postiz_state="absent").postiz_state == "absent"
+
 def test_moment_requires_reason():
     with pytest.raises(ValidationError):
         Moment(id="m", parent_id="src", start=0.0, end=5.0)  # no reason
