@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 from fanops.errors import AuthError, ControlFileError, CutoverError, DownloadError, LockBusyError, RunBusyError, ToolchainMissingError
 from fanops.ledger import Ledger
 from fanops.accounts import Accounts
-from fanops.models import PostState
+from fanops.models import ClipState, PostState
 from fanops.pipeline import advance, GATE_KINDS
 from fanops.ingest import download_url
 from fanops.digest import write_digest
@@ -614,14 +614,21 @@ def cmd_gc(cfg: Config, keep_days: int) -> int:
     # WIPE-SAFETY (content-lifecycle Phase 1): refuse keep_days < 1 — keep_days=0 sets cutoff=now and sweeps
     # EVERY retired/analyzed .mp4 regardless of age (a one-keystroke wipe of reusable renders, needed for
     # cross-account reuse); negative is nonsense. Clean exit 2; gc stays MANUAL (no auto-cron).
+    # T3.9: the clip sweep reclaims by DERIVED disposition (Ledger.is_suppressed), not the stored label, so a
+    # clip suppressed only by its moment's retirement is reachable — the stored label is no longer copied down.
+    # A clip a live post points at is NEVER swept: that protection used to come indirectly from the per-tick
+    # clip sweep (it only relabelled a clip `retired` when no _LIVE_POST_STATES post hung off it), and it is
+    # carried here explicitly now that the sweep is going away.
     if keep_days < 1:
         print(f"gc: refusing --keep-days {keep_days} (min 1) — would delete reusable render files", file=sys.stderr); return 2
     import os, time
     led = Ledger.load(cfg)
     removed = 0
     cutoff = time.time() - keep_days * 86400
+    pinned = {p.parent_id for p in led.posts.values() if p.state in Ledger._LIVE_POST_STATES}   # a live post OWNS its clip's file
     for c in led.clips.values():
-        if c.state.value in ("retired", "analyzed") and c.path and os.path.exists(c.path):
+        if ((led.is_suppressed(c) and c.id not in pinned)
+                or c.state is ClipState.analyzed) and c.path and os.path.exists(c.path):
             try:
                 if os.path.getmtime(c.path) < cutoff:
                     os.remove(c.path); removed += 1
