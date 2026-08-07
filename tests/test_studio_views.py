@@ -459,22 +459,103 @@ def _lineage_day(led, *, sid, mid, cid, day):
                           reason="r", state=MomentState.clipped))
     led.add_clip(Clip(id=cid, parent_id=mid, path=f"/c/{cid}.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
 
+def _awaiting(led, *, pid, cid, created_at, account="a"):
+    led.add_post(Post(id=pid, parent_id=cid, account=account, account_id="1", platform=Platform.instagram,
+                      caption="x", state=PostState.awaiting_approval, created_at=created_at,
+                      scheduled_time=_z(NOW + timedelta(hours=3))))
+
 def test_group_review_editable_sorted_by_day(tmp_path):
-    # editable cards from two ingest days come back day-sorted (newest first), card.day set; undated last.
+    # editable cards from two MINTING days come back day-sorted (newest first), card.day set; undated last.
+    # The source days are INVERTED against the minting days, so a source-keyed bucket would order these
+    # cards the other way round — the assertion names the clip, not just the day, to catch that.
     cfg = Config(root=tmp_path)
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
     led = Ledger.load(cfg)
-    _lineage_day(led, sid="src_old", mid="m_old", cid="c_old", day="2026-06-01")
-    _lineage_day(led, sid="src_new", mid="m_new", cid="c_new", day="2026-06-05")
+    _lineage_day(led, sid="src_old", mid="m_old", cid="c_old", day="2026-06-05")   # source day: NEWER
+    _lineage_day(led, sid="src_new", mid="m_new", cid="c_new", day="2026-06-01")   # source day: OLDER
     _lineage_day(led, sid="src_undated", mid="m_un", cid="c_un", day=None)
-    for cid in ("c_old", "c_new", "c_un"):
-        led.add_post(Post(id=f"p_{cid}", parent_id=cid, account="a", account_id="1",
-                          platform=Platform.instagram, caption="x", state=PostState.awaiting_approval,
-                          scheduled_time=_z(NOW + timedelta(hours=3))))
+    _awaiting(led, pid="p_c_old", cid="c_old", created_at="2026-06-01T09:00:00Z")  # minted OLDER
+    _awaiting(led, pid="p_c_new", cid="c_new", created_at="2026-06-05T09:00:00Z")  # minted NEWER
+    _awaiting(led, pid="p_c_un", cid="c_un", created_at=None)                      # no day at all
     cards = review_buckets(led, Accounts.load(cfg), cfg, now=NOW)
     editable = [c for c in cards if c.bucket == "editable"]
-    days = [c.day for c in editable]
-    assert days == ["2026-06-05", "2026-06-01", "undated"]      # newest day first, undated last
+    assert [(c.clip_id, c.day) for c in editable] == [
+        ("c_new", "2026-06-05"), ("c_old", "2026-06-01"), ("c_un", "undated")]   # newest first, undated last
+
+
+# ---- MOL-801: the day pivot buckets by the CARD's minting time, not its source's ingest time ----
+def test_review_day_buckets_by_the_card_not_by_its_shared_source(tmp_path):
+    # THE defect: every source of one ingest batch carries an identical created_at (live: all 7 sources
+    # share 2026-07-13T09:37:05.339432Z), so a source-keyed day pivot collapses every card into ONE bucket
+    # and can never separate the original lineages from the ones minted on later nights. Here TWO cards hang
+    # off ONE source and were minted three weeks apart: they must land in DIFFERENT day buckets.
+    cfg = Config(root=tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path="/v/show.mp4", language="en",
+                          created_at="2026-07-13T09:37:05.339432Z"))
+    for mid, cid in (("m_first", "c_first"), ("m_later", "c_later")):
+        led.add_moment(Moment(id=mid, parent_id="src_1", content_token=f"0-7-{mid}", start=0, end=7,
+                              reason="r", state=MomentState.clipped))
+        led.add_clip(Clip(id=cid, parent_id=mid, path=f"/c/{cid}.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
+    _awaiting(led, pid="p_first", cid="c_first", created_at="2026-07-13T10:00:00Z")   # minted at ingest
+    _awaiting(led, pid="p_later", cid="c_later", created_at="2026-08-01T02:00:00Z")   # minted a later night
+    days = {c.clip_id: c.day for c in review_buckets(led, Accounts.load(cfg), cfg, now=NOW) if c.bucket == "editable"}
+    assert days == {"c_first": "2026-07-13", "c_later": "2026-08-01"}
+    assert len(set(days.values())) == 2      # the whole point: one source, TWO day buckets
+
+def test_review_day_takes_the_earliest_surface_when_a_card_fans_out(tmp_path):
+    # a card is one clip with N surfaces; its day is when the card came into existence — the EARLIEST mint.
+    cfg = Config(root=tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"},
+                         {"handle": "@b", "account_id": "2", "platforms": ["instagram"], "status": "active"}])
+    led = Ledger.load(cfg)
+    _lineage_day(led, sid="src_1", mid="m_1", cid="c_1", day="2026-07-13")
+    _awaiting(led, pid="p_late", cid="c_1", created_at="2026-08-01T02:00:00Z")
+    led.add_post(Post(id="p_early", parent_id="c_1", account="b", account_id="2", platform=Platform.instagram,
+                      caption="x", state=PostState.awaiting_approval, created_at="2026-07-29T23:00:00Z",
+                      scheduled_time=_z(NOW + timedelta(hours=3))))
+    card = [c for c in review_buckets(led, Accounts.load(cfg), cfg, now=NOW) if c.bucket == "editable"][0]
+    assert card.day == "2026-07-29"          # the earliest surface, not the latest and not the source's day
+
+def test_review_day_source_fallback_is_marked_and_never_merges_with_a_real_day(tmp_path):
+    # a card with no mint stamp of its own may borrow the source's ingest day — but it must SAY SO. A silent
+    # inheritance is the original bug wearing a smaller mask, so the borrowed day is a DISTINCT bucket whose
+    # label carries the marker; a card genuinely minted that same day keeps the bare label.
+    from fanops.studio.views_review import SOURCE_DAY_SUFFIX
+    cfg = Config(root=tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path="/v/show.mp4", language="en", created_at="2026-07-13T08:00:00Z"))
+    for mid, cid in (("m_stamped", "c_stamped"), ("m_bare", "c_bare")):
+        led.add_moment(Moment(id=mid, parent_id="src_1", content_token=f"0-7-{mid}", start=0, end=7,
+                              reason="r", state=MomentState.clipped))
+        led.add_clip(Clip(id=cid, parent_id=mid, path=f"/c/{cid}.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
+    _awaiting(led, pid="p_stamped", cid="c_stamped", created_at="2026-07-13T10:00:00Z")   # its own mint
+    _awaiting(led, pid="p_bare", cid="c_bare", created_at=None)                           # nothing of its own
+    days = {c.clip_id: c.day for c in review_buckets(led, Accounts.load(cfg), cfg, now=NOW) if c.bucket == "editable"}
+    assert days["c_stamped"] == "2026-07-13"
+    assert days["c_bare"] == "2026-07-13" + SOURCE_DAY_SUFFIX
+    assert days["c_bare"] != days["c_stamped"]   # a derived day never merges into a real one
+
+def test_review_day_is_undated_when_neither_the_card_nor_its_source_has_one(tmp_path):
+    cfg = Config(root=tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    led = Ledger.load(cfg)
+    _lineage_day(led, sid="src_1", mid="m_1", cid="c_1", day=None)
+    _awaiting(led, pid="p_1", cid="c_1", created_at=None)
+    card = [c for c in review_buckets(led, Accounts.load(cfg), cfg, now=NOW) if c.bucket == "editable"][0]
+    assert card.day == "undated"
+
+def test_review_day_treats_an_unparseable_mint_as_absent_and_falls_back_visibly(tmp_path):
+    from fanops.studio.views_review import SOURCE_DAY_SUFFIX
+    cfg = Config(root=tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    led = Ledger.load(cfg)
+    _lineage_day(led, sid="src_1", mid="m_1", cid="c_1", day="2026-07-13")
+    _awaiting(led, pid="p_1", cid="c_1", created_at="garbage")
+    card = [c for c in review_buckets(led, Accounts.load(cfg), cfg, now=NOW) if c.bucket == "editable"][0]
+    assert card.day == "2026-07-13" + SOURCE_DAY_SUFFIX
 
 def test_review_body_poller_count_unchanged(tmp_path):
     # H8 safety: the day-sort must NOT change the awaiting count (review_counts reads count, not order).
