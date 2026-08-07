@@ -11,7 +11,7 @@
 import os, stat
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.models import Post, PostState, Platform
+from fanops.models import Post, PostState, Platform, Clip, ClipState, Moment, MomentState
 from fanops.post.run import publish_due
 
 
@@ -29,11 +29,22 @@ def _due_queued_post(pid="p1", *, plat=Platform.instagram):
                 scheduled_time="2020-01-01T00:00:00Z", state=PostState.queued)
 
 
+def _lineage(led):
+    """Materialize the moment -> clip "c1" ancestry the post names. It was never built, so the fixture made an
+    ORPHAN post — a shape production cannot produce. Harmless while the publish guard failed OPEN on a missing
+    ancestor; publish_due now asks Ledger.can_promote, which fails CLOSED. These tests pin the DRYRUN boundary,
+    so the post must be refused for having no live backend — not for having no lineage."""
+    led.add_moment(Moment(id="m1", parent_id="src_1", start=0.0, end=7.0, reason="worth posting",
+                          state=MomentState.clipped))
+    led.add_clip(Clip(id="c1", parent_id="m1", path="/c1.mp4", state=ClipState.queued))
+
+
 def test_dryrun_publish_due_leaves_queued(tmp_path, monkeypatch):
     # THE boundary: publish_due on a dryrun (not-live) system must leave an approved post `queued` — it is
     # built and scheduled, but has no live channel, so it never enters the distribution rail.
     cfg = _cfg(tmp_path, monkeypatch)
     led = Ledger.load(cfg)
+    _lineage(led)
     led.add_post(_due_queued_post("p1"))
     led.save()
 
@@ -49,6 +60,7 @@ def test_dryrun_publish_due_mints_no_distribution_artifacts(tmp_path, monkeypatc
     # dryrun:// public_url. (A dryrun post never reaches the poster, so nothing stamps them.)
     cfg = _cfg(tmp_path, monkeypatch)
     led = Ledger.load(cfg)
+    _lineage(led)
     led.add_post(_due_queued_post("p1"))
     led.save()
 
@@ -66,6 +78,7 @@ def test_dryrun_boundary_writes_preview_not_artifacts(tmp_path, monkeypatch):
     # leaving the post `queued`.
     cfg = _cfg(tmp_path, monkeypatch)
     led = Ledger.load(cfg)
+    _lineage(led)
     led.add_post(_due_queued_post("p1"))
     led.save()
 

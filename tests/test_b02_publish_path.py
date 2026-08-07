@@ -3,7 +3,7 @@ import requests as _rq
 from datetime import datetime, timezone, timedelta
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.models import Post, Clip, PostState, ClipState, Platform
+from fanops.models import Post, Clip, PostState, ClipState, Platform, Moment, MomentState
 from fanops.post.run import publish_due
 from fanops.timeutil import schedule_utc
 
@@ -24,6 +24,11 @@ def _live_zernio(monkeypatch):
 def _seed_queued(cfg, pid="p1", cid="c1", *, sched="2020-01-01T00:00:00Z", sub=None):
     f = cfg.clips / f"{cid}.mp4"; f.parent.mkdir(parents=True, exist_ok=True); f.write_bytes(b"V")
     with Ledger.transaction(cfg) as led:
+        # Materialize `mom_1`: the clip named it but no such row was ever added, leaving a DANGLING ancestor
+        # production cannot build. Harmless while the publish guard failed OPEN on a missing row; publish_due
+        # now asks Ledger.can_promote, which fails CLOSED.
+        led.add_moment(Moment(id="mom_1", parent_id="src_1", start=0.0, end=7.0, reason="worth posting",
+                              state=MomentState.clipped))
         led.add_clip(Clip(id=cid, parent_id="mom_1", path=str(f), state=ClipState.queued))
         # created_at: required to publish on the Zernio path (report 11 §8.4) — the per-incarnation
         # discriminator in the x-request-id. Harmless for the Postiz path, and it makes the fixture match

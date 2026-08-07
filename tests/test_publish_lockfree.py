@@ -9,12 +9,17 @@ per-post claim->network->finalize discipline (network lock-free)."""
 import json
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.models import Post, Clip, PostState, ClipState, Platform
+from fanops.models import Post, Clip, PostState, ClipState, Platform, Moment, MomentState
 
 
 def _persist_queued(cfg, pid="p1", cid="c1", when="2020-01-01T00:00:00Z"):
     f = cfg.clips / f"{cid}.mp4"; f.parent.mkdir(parents=True, exist_ok=True); f.write_bytes(b"V")
     with Ledger.transaction(cfg) as led:
+        # Materialize `mom_1`: the clip named it but the row was never added — a dangling ancestor production
+        # cannot build. Harmless while the publish guard failed OPEN; publish_due now asks Ledger.can_promote,
+        # which fails CLOSED. This test pins the LOCK property, so the lineage must not be what refuses it.
+        led.add_moment(Moment(id="mom_1", parent_id="src_1", start=0.0, end=7.0, reason="worth posting",
+                              state=MomentState.clipped))
         led.add_clip(Clip(id=cid, parent_id="mom_1", path=str(f), state=ClipState.queued))
         led.add_post(Post(id=pid, parent_id=cid, account="a", account_id="98432",
                           platform=Platform.instagram, caption="ship it",
