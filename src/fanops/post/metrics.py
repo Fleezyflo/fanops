@@ -134,13 +134,20 @@ class PostizStatusClient:
     row of GET /public/v1/posts. That list endpoint DEMANDS startDate/endDate ISO-8601 (the old
     `display`/`date` params are rejected with HTTP 400 — verified against the running instance
     2026-06-21), so a post at a FUTURE operator-set time, an old post, or a 2099 cutover probe is found
-    only when the query window covers its publishDate. So get_status anchors a ±35d ISO window on the
-    post's own publishDate/scheduled_time (or now when unset). Emits the SAME {status, publicUrl, releaseId?}
-    dict reconcile_posts consumes; publicUrl is the row's `releaseURL` (the real IG permalink, present on
-    PUBLISHED rows); releaseId is the IG Graph media id (present on many PUBLISHED rows) for reconcile to
-    persist as Post.media_id without a feed-enumeration permalink match. 401 -> PostizAuthError (halt, so
-    reconcile's auth-halt fires); 5xx -> RuntimeError (per-post-isolated by reconcile_posts -> parked,
-    never failed). A row absent from the page -> {"status":"unknown"} (parked, never guessed failed).
+    only when the query window covers its publishDate.
+
+    ONE fetch serves every reader: `_fetch_posts` does the windowed GET and indexes the window by row
+    id; `get_status` is a SELECTION over it (±35d anchored on the post's own publishDate/scheduled_time,
+    or now when unset) and `list_all` is the whole-corpus window for the reconcile mirror. There is no
+    second network channel to this endpoint — before this extraction get_status fetched the whole
+    window and discarded every row but one, so a pass over N parked posts issued N identical GETs.
+
+    get_status emits the SAME {status, publicUrl, releaseId?} dict reconcile_posts consumes; publicUrl
+    is the row's `releaseURL` (the real IG permalink, present on PUBLISHED rows); releaseId is the IG
+    Graph media id (present on many PUBLISHED rows) for reconcile to persist as Post.media_id without a
+    feed-enumeration permalink match. 401 -> PostizAuthError (halt, so reconcile's auth-halt fires);
+    5xx -> RuntimeError (per-post-isolated by reconcile_posts -> parked, never failed). A row absent
+    from the window -> {"status":"unknown"} (parked, never guessed failed).
 
     The `GetStatus` seam (reconcile.py) is Callable[[str], dict]; the per-post `date` window rides in
     via the optional publish_date arg, supplied by the closure _default_get_status builds (which has
@@ -149,14 +156,22 @@ class PostizStatusClient:
     def __init__(self, cfg: Config):
         self.cfg = cfg; self.base = _base(cfg); self.key = _key(cfg)  # _key raises PostizAuthError if missing
 
-    def get_status(self, submission_id: str, publish_date: Optional[str] = None) -> dict:
-        # The live endpoint demands startDate/endDate ISO-8601 (display/date -> HTTP 400). Anchor a ±35d
-        # window on the post's publishDate (or now when unset/unparseable) so a future operator-set time,
-        # an old post, and a 2099 probe all fall inside the queried page. Date-only ISO is accepted.
-        try: anchor = parse_iso(publish_date) if publish_date else datetime.now(timezone.utc)
-        except (ValueError, TypeError, AttributeError): anchor = datetime.now(timezone.utc)
-        params = {"startDate": (anchor - timedelta(days=35)).date().isoformat(),
-                  "endDate": (anchor + timedelta(days=35)).date().isoformat()}
+    def _fetch_posts(self, start: datetime, end: datetime) -> dict[str, dict]:
+        """THE Postiz posts read — every reader of GET /public/v1/posts goes through here.
+
+        WINDOW CONTRACT (verified live 2026-08-07): startDate/endDate are MANDATORY, not a curation
+        knob — omitting them returns HTTP 400 "startDate must be a valid ISO 8601 date string" — and
+        date-only ISO (YYYY-MM-DD) is the accepted form. The endpoint does NOT paginate: `page`,
+        `limit` and `take` are ignored (the response is byte-identical with and without them) and the
+        body carries no envelope key (`{"posts":[...]}` only — no page/total/nextCursor), and the
+        full-window row count matches the instance's non-deleted post count. So ONE call returns every
+        row in the window and a row's ABSENCE is a sound observation, never a missing page.
+
+        Returns the window indexed by row id: {state (the RAW Postiz token, which the mirror persists),
+        status (the backend-agnostic vocabulary via _POSTIZ_STATE_MAP), releaseURL, releaseId, raw}.
+        Both body shapes parse ({"posts":[...]} and a bare list). First row wins on a duplicate id —
+        the `next(...)` semantics get_status had before the extraction."""
+        params = {"startDate": start.date().isoformat(), "endDate": end.date().isoformat()}
         resp = requests.get(f"{self.base}/public/v1/posts", headers={"Authorization": self.key},
                             params=params, timeout=30)
         if resp.status_code == 401:
@@ -165,16 +180,39 @@ class PostizStatusClient:
             raise RuntimeError(f"postiz posts {resp.status_code}: {_safe(self.cfg, resp.text)}")
         body = _json_or_raise(resp, "postiz posts", self.cfg)
         rows = body.get("posts", []) if isinstance(body, dict) else (body if isinstance(body, list) else [])
-        row = next((r for r in rows if isinstance(r, dict) and r.get("id") == submission_id), None)
+        out: dict[str, dict] = {}
+        for r in rows:
+            if not isinstance(r, dict) or not isinstance(r.get("id"), str): continue
+            state = str(r.get("state", ""))
+            out.setdefault(r["id"], {"state": state, "status": _POSTIZ_STATE_MAP.get(state.upper(), "scheduled"),
+                                     "releaseURL": r.get("releaseURL"), "releaseId": r.get("releaseId"), "raw": r})
+        return out
+
+    def list_all(self) -> dict[str, dict]:
+        """The reconcile mirror's fetch layer: the WHOLE Postiz corpus in one call, indexed by row id.
+
+        Takes NO caller-supplied window, deliberately. startDate/endDate are the API's mandatory shape
+        (see _fetch_posts), and a NARROW window is the mechanism that manufactures a false "this post
+        is absent" — so the window is maximal and internal. Measured against the live instance
+        2026-08-07: the whole corpus is a single response of a few tens of KB, well under a second, so
+        there is no cost argument for narrowing it. Values are _fetch_posts' rows."""
+        return self._fetch_posts(datetime(2000, 1, 1, tzinfo=timezone.utc), datetime(2100, 12, 31, tzinfo=timezone.utc))
+
+    def get_status(self, submission_id: str, publish_date: Optional[str] = None) -> dict:
+        # A SELECTION over _fetch_posts, not a read of its own. Anchor a ±35d window on the post's
+        # publishDate (or now when unset/unparseable) so a future operator-set time, an old post, and a
+        # 2099 probe all fall inside the queried window, then pick this submission's row out of it.
+        try: anchor = parse_iso(publish_date) if publish_date else datetime.now(timezone.utc)
+        except (ValueError, TypeError, AttributeError): anchor = datetime.now(timezone.utc)
+        row = self._fetch_posts(anchor - timedelta(days=35), anchor + timedelta(days=35)).get(submission_id)
         if row is None:
-            return {"status": "unknown"}                    # absent from the page -> left parked, never guessed
-        status = _POSTIZ_STATE_MAP.get(str(row.get("state", "")).upper(), "scheduled")
-        out = {"status": status}
-        if status == "published":
-            out["publicUrl"] = row.get("releaseURL") or None   # the real IG permalink (present only on PUBLISHED rows)
-            rid = row.get("releaseId")
+            return {"status": "unknown"}                    # absent from the window -> left parked, never guessed
+        out = {"status": row["status"]}
+        if row["status"] == "published":
+            out["publicUrl"] = row["releaseURL"] or None   # the real IG permalink (present only on PUBLISHED rows)
+            rid = row["releaseId"]
             if isinstance(rid, str) and rid.strip():
-                out["releaseId"] = rid.strip()                 # IG Graph media id — reconcile persists on Post.media_id
+                out["releaseId"] = rid.strip()             # IG Graph media id — reconcile persists on Post.media_id
         return out
 
 
