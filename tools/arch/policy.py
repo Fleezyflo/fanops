@@ -102,12 +102,15 @@ RULES: dict[str, Rule] = {r.id: r for r in [
          "declared partition domain ⊆ derived module set",
          "Remove the module from kb/subsystems.json."),
 
-    Rule("ARCH-003", "Every environment variable read is declared",
+    Rule("ARCH-003", "The declared environment surface equals the one the code reads",
          "The env surface is a trust boundary and the operator is a documented hand-editor (AR-09). "
-         "An undeclared var is an undocumented input to a live system.",
+         "An undeclared var is an undocumented input to a live system; a declared var nothing reads "
+         "is a phantom switch an operator will try to set. Both directions are checked — the "
+         "one-directional version let FANOPS_HASHTAG_TRENDS sit declared and unread for a year.",
          "kb/configuration.json vs derived/configuration.json", BLOCKING,
-         "derived env-read set ⊆ declared env set",
-         "Add the variable to kb/configuration.json (and docs/CONFIG.md), or remove the read."),
+         "derived env-read set == declared env set",
+         "Add the variable to kb/configuration.json (and docs/CONFIG.md), or remove the read; "
+         "for a phantom, delete the name from kb/configuration.json."),
 
     Rule("ARCH-004", "No new compile-time import cycle",
          "A compile-time cycle is a HARD load-order constraint that can become an ImportError at "
@@ -326,6 +329,11 @@ def check(derived_dir: Path | None = None) -> list[Finding]:
     # ARCH-003 — env vars declared
     kb_cfg = KB / "configuration.json"
     if kb_cfg.exists():
+        # `env_vars` is a sorted ARRAY of declared names. It used to be an object whose rows mirrored
+        # `read_at`/`reader_count` from derived/ — pure AST facts, frozen at Cycle 5 and stale in 75 of 79
+        # rows within 200 commits. The duplicate was deleted rather than regenerated (a mechanism whose only
+        # job is keeping a copy correct should not exist); read sites come from derived/, which regen owns.
+        # set() over a list of names is the same set this line always built over the object's keys.
         declared_env = set(load(kb_cfg).get("env_vars", {}))
         derived_env = set(cfg["env_vars"])
         undeclared = sorted(derived_env - declared_env)
@@ -334,6 +342,17 @@ def check(derived_dir: Path | None = None) -> list[Finding]:
                           f"{len(undeclared)} environment variable(s) are READ by the code but not "
                           f"declared in kb/configuration.json.",
                           [f"{v}  read at {', '.join(cfg['env_vars'][v]['read_at'][:2])}" for v in undeclared]))
+        # The reverse direction. Without it a declared name outlives its last reader silently — exactly how
+        # FANOPS_HASHTAG_TRENDS survived with zero readers anywhere in the tree. This mirrors the stale-doc
+        # half below, which has always checked its own reverse; only the kb side was one-directional.
+        phantom = sorted(declared_env - derived_env)
+        if phantom:
+            out.append(_f("ARCH-003",
+                          f"{len(phantom)} environment variable(s) are DECLARED in kb/configuration.json "
+                          f"but read by nothing (phantom switch: the reader was removed, or the name "
+                          f"never had one).",
+                          [f"{v}  declared in kb/configuration.json, no os.getenv in the tree"
+                           for v in phantom]))
 
     # ARCH-003 (G2) — the OPERATOR doc's env surface must ALSO match the reads. kb/configuration.json is the
     # machine-declared surface (above); docs/CONFIG.md is the hand-maintained operator reference and it rots

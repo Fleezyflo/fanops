@@ -67,6 +67,7 @@ CONTROLS: list[Control] = [
     Control("NC-22", "a canonical artifact is MISSING (the gate must FAIL, not pass vacuously)", "GOV-001", "architecture"),
     Control("NC-24", "a stale _CLI_PRINT_COUNT assignment in tools/arch/ — the engine's OWN rationale (G1 widened scope)", "IMPL-007", "implementation"),
     Control("NC-25", "a stale FANOPS_ var named in docs/CONFIG.md but read nowhere (G2 operator-doc rot)", "ARCH-003", "architecture"),
+    Control("NC-26", "a phantom env var declared in kb/configuration.json but read nowhere", "ARCH-003", "architecture"),
 ]
 
 
@@ -312,6 +313,14 @@ def _inject(cid: str, root: Path, p: dict) -> None:
         md = root / "docs" / "CONFIG.md"
         md.write_text(md.read_text()
                       + "\n| `FANOPS_NC_STALE_DOC` | off | INJECTED (NC-25): named here, read nowhere | .env |\n")
+
+    elif cid == "NC-26":
+        # The REVERSE direction of the kb half: a name declared in kb/configuration.json that nothing reads.
+        # This is the shape FANOPS_HASHTAG_TRENDS had for a year while ARCH-003 checked only derived-minus-
+        # declared and reported green. NC-04 (the forward direction) cannot fail on this defect, so without
+        # this control the new half would be decorative. `env_vars` is a sorted array of names.
+        patch(kb / "configuration.json",
+              lambda d: d["env_vars"].append("FANOPS_NC_PHANTOM_DECLARED"))
 
     else:
         raise AssertionError(f"no injection defined for {cid}")
