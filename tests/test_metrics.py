@@ -269,3 +269,98 @@ def test_postiz_status_5xx_raises_runtimeerror(tmp_path, monkeypatch, mocker):
     mocker.patch("fanops.post.metrics.requests.get", return_value=_R(503, "down"))
     with pytest.raises(RuntimeError, match="503"):
         PostizStatusClient(cfg).get_status("sid1")
+
+
+# ---- MOL-783: ONE windowed /public/v1/posts fetch, shared by get_status and the mirror ----
+# get_status ALREADY fetched the whole window and threw away every row but one, so the mirror's bulk
+# read is that fetch with the discard removed — an extraction into _fetch_posts, NOT a second channel.
+# Live-verified 2026-08-07 against the running instance (http://localhost:4007/api/public/v1/posts):
+# no params → HTTP 400 "startDate must be a valid ISO 8601 date string"; the maximal window returns
+# {"posts":[…]} with NO envelope key (no page/total/nextCursor); page=2/limit=5 return byte-identical
+# bodies (both ignored) ⇒ the endpoint does NOT paginate, so one call covers the window and a row's
+# ABSENCE is a real observation. get_status's own contract is unchanged — the tests above are its pins.
+_ROWS = [{"id": "p1", "state": "PUBLISHED", "releaseURL": "https://www.instagram.com/reel/A/", "releaseId": "1784100"},
+         {"id": "p2", "state": "ERROR"},
+         {"id": "p3", "state": "QUEUE"}]
+
+def test_postiz_list_all_sends_the_mandatory_date_only_window_and_no_caller_knob(tmp_path, monkeypatch, mocker):
+    # The window is the API's MANDATORY shape, not a curation knob: list_all takes no window argument
+    # and sends a maximal date-only ISO pair, because a narrow window manufactures a false "absent".
+    from fanops.post.metrics import PostizStatusClient
+    cfg = _pcfg(tmp_path, monkeypatch)
+    g = mocker.patch("fanops.post.metrics.requests.get", return_value=_R(200, {"posts": _ROWS}))
+    PostizStatusClient(cfg).list_all()
+    params = g.call_args.kwargs.get("params", {})
+    assert len(params["startDate"]) == 10 and len(params["endDate"]) == 10      # date-only ISO, the accepted form
+    assert params["startDate"] <= "2020-01-01" and params["endDate"] >= "2099-12-31"   # maximal, not a slice
+    assert "page" not in params and "limit" not in params                       # no page walk — the endpoint ignores both
+    assert g.call_count == 1                                                    # ONE call returns the whole corpus
+
+def test_postiz_list_all_indexes_rows_and_carries_raw_state_alongside_mapped_status(tmp_path, monkeypatch, mocker):
+    # Each value carries BOTH vocabularies: the mapped backend-agnostic `status` get_status emits AND
+    # the raw Postiz `state` token (the mirror persists the raw token), plus the untouched row in `raw`.
+    from fanops.post.metrics import PostizStatusClient
+    cfg = _pcfg(tmp_path, monkeypatch)
+    mocker.patch("fanops.post.metrics.requests.get", return_value=_R(200, {"posts": _ROWS}))
+    out = PostizStatusClient(cfg).list_all()
+    assert set(out) == {"p1", "p2", "p3"}                                       # indexed by row id
+    assert (out["p1"]["status"], out["p1"]["state"]) == ("published", "PUBLISHED")
+    assert (out["p2"]["status"], out["p2"]["state"]) == ("failed", "ERROR")
+    assert (out["p3"]["status"], out["p3"]["state"]) == ("scheduled", "QUEUE")  # unknown/queued parked, never failed
+    assert out["p1"]["releaseURL"] == "https://www.instagram.com/reel/A/" and out["p1"]["releaseId"] == "1784100"
+    assert out["p2"]["releaseURL"] is None and out["p2"]["releaseId"] is None   # absent keys → None, never a KeyError
+    assert out["p1"]["raw"] is _ROWS[0]                                         # the untouched row rides along
+
+def test_postiz_list_all_parses_a_bare_list_body(tmp_path, monkeypatch, mocker):
+    # Both observed shapes parse: {"posts":[…]} (the live shape) and a bare list.
+    from fanops.post.metrics import PostizStatusClient
+    cfg = _pcfg(tmp_path, monkeypatch)
+    mocker.patch("fanops.post.metrics.requests.get", return_value=_R(200, _ROWS))
+    assert set(PostizStatusClient(cfg).list_all()) == {"p1", "p2", "p3"}
+
+def test_postiz_list_all_401_is_typed_auth_with_body_withheld(tmp_path, monkeypatch, mocker):
+    from fanops.errors import PostizAuthError
+    from fanops.post.metrics import PostizStatusClient
+    cfg = _pcfg(tmp_path, monkeypatch)
+    mocker.patch("fanops.post.metrics.requests.get", return_value=_R(401, {"e": "denied for key SENTINEL-KEY-ECHO"}))
+    with pytest.raises(PostizAuthError) as ei:
+        PostizStatusClient(cfg).list_all()
+    assert "SENTINEL-KEY-ECHO" not in str(ei.value) and "401" in str(ei.value)
+    assert cfg.postiz_api_key not in str(ei.value)              # the KEY VALUE itself must never appear
+
+def test_postiz_list_all_5xx_raises_runtimeerror(tmp_path, monkeypatch, mocker):
+    from fanops.post.metrics import PostizStatusClient
+    cfg = _pcfg(tmp_path, monkeypatch)
+    mocker.patch("fanops.post.metrics.requests.get", return_value=_R(503, "down"))
+    with pytest.raises(RuntimeError, match="503"):
+        PostizStatusClient(cfg).list_all()
+
+def test_postiz_get_status_and_list_all_share_one_fetch_of_one_endpoint(tmp_path, monkeypatch, mocker):
+    # The anti-second-channel pin: both readers issue exactly ONE GET to the SAME url, differing only in
+    # the window they ask for. A future "bulk" client with its own request would redden this.
+    from fanops.post.metrics import PostizStatusClient
+    cfg = _pcfg(tmp_path, monkeypatch)
+    g = mocker.patch("fanops.post.metrics.requests.get", return_value=_R(200, {"posts": _ROWS}))
+    client = PostizStatusClient(cfg)
+    assert client.get_status("p1", publish_date="2099-01-01T00:00:00Z")["status"] == "published"
+    assert g.call_count == 1                                    # one window fetch, then a selection over it
+    client.list_all()
+    assert g.call_count == 2
+    assert {c.args[0] for c in g.call_args_list} == {f"{cfg.postiz_url.rstrip('/')}/public/v1/posts"}
+
+def test_postiz_fetch_posts_first_row_wins_on_a_duplicate_id(tmp_path, monkeypatch, mocker):
+    # get_status used next(...) over the rows, so the FIRST match won; the id-keyed index must not
+    # silently flip that to last-wins.
+    from fanops.post.metrics import PostizStatusClient
+    cfg = _pcfg(tmp_path, monkeypatch)
+    dupes = [{"id": "p1", "state": "PUBLISHED", "releaseURL": "first"}, {"id": "p1", "state": "ERROR"}]
+    mocker.patch("fanops.post.metrics.requests.get", return_value=_R(200, {"posts": dupes}))
+    assert PostizStatusClient(cfg).get_status("p1") == {"status": "published", "publicUrl": "first"}
+
+def test_postiz_fetch_posts_skips_non_dict_and_idless_rows(tmp_path, monkeypatch, mocker):
+    # A malformed row must not abort the whole window (and must not become a None-keyed entry).
+    from fanops.post.metrics import PostizStatusClient
+    cfg = _pcfg(tmp_path, monkeypatch)
+    body = {"posts": ["junk", None, {"state": "PUBLISHED"}, {"id": 7, "state": "PUBLISHED"}, {"id": "p1", "state": "PUBLISHED"}]}
+    mocker.patch("fanops.post.metrics.requests.get", return_value=_R(200, body))
+    assert set(PostizStatusClient(cfg).list_all()) == {"p1"}
