@@ -91,11 +91,20 @@ def approve_posts(cfg: Config, ids: Sequence[str], *, now: Optional[datetime] = 
 
 def reject_posts(cfg: Config, ids: Sequence[str]) -> ActionResult:
     sel = [i for i in (ids or []) if i]
+    audited_ids: list[str] = []
     try:
         with Ledger.transaction(cfg) as led:
+            # Audit what DISCARDED, not what was offered (same rule as the approve side): reject_post silently
+            # no-ops on a missing or already-decided post, so the awaiting_approval PRE-state is the only truth
+            # about which ids this call moved. Without this line a rejection leaves no trace at all, and "the
+            # operator never rejected" is indistinguishable from "the rejection was re-minted away".
+            audited_ids = [i for i in sel if (p := led.posts.get(i)) is not None
+                           and p.state is PostState.awaiting_approval]
             for pid in sel: led.reject_post(pid)
     except Exception as exc:
         return ActionResult(ok=False, error=f"reject failed: {str(exc)[:160]}")
+    if audited_ids:
+        write_audit(cfg, "reject", audited_ids, reason="studio_reject_batch", rejected=len(audited_ids))
     return ActionResult(ok=True, detail={"rejected": len(sel)})
 
 def unapprove_post(cfg: Config, post_id: str) -> ActionResult:
