@@ -401,6 +401,99 @@ def test_expired_session_at_open_arms_the_login_cooldown(tmp_path, monkeypatch):
     assert cd2["streak"] == 2 and opens["n"] == 2
 
 
+def _log_recs(cfg, outcome=None):
+    """run.log records, optionally narrowed to one outcome. Every field value is a STRING (log._san)."""
+    if not cfg.log_path.exists():
+        return []
+    recs = [json.loads(ln) for ln in cfg.log_path.read_text().splitlines() if ln.strip()]
+    return [r for r in recs if outcome is None or r.get("outcome") == outcome]
+
+
+def test_outage_level_rises_with_the_streak_and_the_stall():
+    """MOL-794: how loud a freeze is must be a FUNCTION of how long it has held, never a constant."""
+    from fanops.fanops_hashtags import _outage_level, _COOLDOWN_DELAYS_S, _REFRESH_CADENCE_S
+    c = _REFRESH_CADENCE_S
+    assert _outage_level(1, 0.0, c) == "info"                       # one skipped tick is routine backoff
+    assert _outage_level(1, c - 1, c) == "info"
+    assert _outage_level(2, 0.0, c) == "warning"                    # it RE-armed: no longer one bad tick
+    assert _outage_level(1, c, c) == "warning"                      # outlived its own refresh cadence
+    assert _outage_level(len(_COOLDOWN_DELAYS_S), 0.0, c) == "error"  # ladder capped: retries stopped decaying
+    assert _outage_level(1, 2 * c, c) == "error"                    # two whole cadences with no complete pass
+    assert _outage_level(20, 132.7 * 3600, c) == "error"            # the live 2026-08-07 shape
+    assert _outage_level(None, None, c) == "info"                   # nothing known -> no false alarm
+
+
+def test_sustained_cooldown_skip_escalates_instead_of_fading(tmp_path):
+    """MOL-794 — the inversion. Arming logged `level:"error"`, but the DAILY CONSEQUENCE of the same
+    outage (`store_refresh_skipped reason=cooldown`) logged at info, so a five-day dead scrape session
+    got quieter the longer it lasted. A skip under a freeze that has outlived the cadence now says so at
+    its own severity, keyed only on state already on disk: the streak, and the age of the last pass."""
+    from datetime import datetime, timezone, timedelta
+    from fanops.fanops_hashtags import refresh_store_if_due, _cooldown_path
+    cfg = Config(root=tmp_path); _persona(cfg)
+    t0 = datetime(2026, 8, 7, 10, 23, tzinfo=timezone.utc)
+    _cooldown_path(cfg).parent.mkdir(parents=True, exist_ok=True)
+    _cooldown_path(cfg).write_text(json.dumps({                     # the live blob, verbatim in shape
+        "streak": 20, "until": (t0 + timedelta(hours=4)).isoformat(),
+        "updated_at": (t0 - timedelta(hours=2)).isoformat(), "reason": "login_required"}))
+    cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.hashtags_path.write_text(json.dumps({
+        "last_complete_pass": (t0 - timedelta(hours=132.7)).isoformat()}))
+    client = _FakeClient({"#hiphop": 50})
+    out = refresh_store_if_due(cfg, scrape_client=client, now=t0)
+    assert out["refreshed"] is False and out["reason"] == "cooldown" and out["level"] == "error"
+    assert client.media_calls == []                                 # still no request against the account
+    rec = _log_recs(cfg, "scrape_outage")
+    assert len(rec) == 1 and rec[0]["level"] == "error"
+    assert rec[0]["reason"] == "login_required" and rec[0]["streak"] == "20"
+    assert float(rec[0]["stalled_h"]) == pytest.approx(132.7, abs=0.1)
+    assert "scrape-login" in rec[0]["detail"]                       # the stored remedy, not a new one
+
+
+def test_a_first_cooldown_skip_stays_quiet(tmp_path):
+    """The negative control for MOL-794: escalation that fires on the FIRST skip is noise with a new
+    name. A 30m backoff behind a pass that completed an hour ago is routine and must log nothing."""
+    from datetime import datetime, timezone, timedelta
+    from fanops.fanops_hashtags import refresh_store_if_due, _cooldown_path
+    cfg = Config(root=tmp_path); _persona(cfg)
+    t0 = datetime(2026, 8, 7, 10, 23, tzinfo=timezone.utc)
+    _cooldown_path(cfg).parent.mkdir(parents=True, exist_ok=True)
+    _cooldown_path(cfg).write_text(json.dumps({
+        "streak": 1, "until": (t0 + timedelta(minutes=20)).isoformat(),
+        "updated_at": (t0 - timedelta(minutes=10)).isoformat(), "reason": "throttle"}))
+    cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.hashtags_path.write_text(json.dumps({
+        "last_complete_pass": (t0 - timedelta(hours=1)).isoformat()}))
+    out = refresh_store_if_due(cfg, scrape_client=_FakeClient({"#hiphop": 50}), now=t0)
+    assert out["refreshed"] is False and out["reason"] == "cooldown" and out["level"] == "info"
+    assert _log_recs(cfg, "scrape_outage") == []
+
+
+def test_rearming_during_a_long_stall_logs_louder_than_info(tmp_path):
+    """The other half of the inversion: the PASS-END arm sites logged at the default `info` while the
+    open-client arm sites hard-coded `error` — one event class, two severities. The first arm behind a
+    fresh pass stays `info`; the same arm behind a five-day stall is an error."""
+    from datetime import datetime, timezone, timedelta
+    from fanops.ig_hashtag_scrape import ScrapeRefused
+    cfg = Config(root=tmp_path); _persona(cfg)
+    t0 = datetime(2026, 8, 7, 10, 23, tzinfo=timezone.utc)
+    cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.hashtags_path.write_text(json.dumps({
+        "#hiphop": {"graph_id": "id-hiphop", METRIC_FIELD: 50.0,
+                    "measured_at": (t0 - timedelta(hours=1)).isoformat()},
+        "last_complete_pass": (t0 - timedelta(hours=1)).isoformat()}))
+    refresh_store(cfg, scrape_client=_FakeClient({}, refuse=ScrapeRefused("login_required")), now=t0)
+    arms = _log_recs(cfg, "scrape_cooldown")
+    assert arms and arms[-1]["streak"] == "1" and arms[-1]["level"] == "info"   # routine first arm
+    blob = json.loads(cfg.hashtags_path.read_text())
+    blob["last_complete_pass"] = (t0 - timedelta(days=5)).isoformat()
+    cfg.hashtags_path.write_text(json.dumps(blob))
+    refresh_store(cfg, scrape_client=_FakeClient({}, refuse=ScrapeRefused("login_required")),
+                  now=t0 + timedelta(hours=1))
+    arms = _log_recs(cfg, "scrape_cooldown")
+    assert arms[-1]["streak"] == "2" and arms[-1]["level"] == "error"           # same event, now an outage
+
+
 def test_partial_progress_then_throttle_still_arms_a_cooldown(tmp_path, monkeypatch):
     """MOL-727: `if measured > 0: clear elif ig_throttled: arm` made ONE measured tag swallow the
     throttle — the streak was cleared and no floor armed, so the next tick reopened scrape against the
