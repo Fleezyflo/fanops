@@ -40,6 +40,7 @@ _COMPLETE_KEY = "last_complete_pass"   # sibling of tag records; gates the 12h t
 _COOLDOWN_NAME = ".hashtag_scrape_cooldown.json"  # Instagram ScrapeThrottled backoff (MOL-695); never sleep
 _COOLDOWN_DELAYS_S = (30 * 60, 60 * 60, 2 * 60 * 60, 6 * 60 * 60)  # streak 1..N → 30m, 1h, 2h, 6h cap
 _CHECKPOINT_DELAY_S = 12 * 60 * 60  # a LOCK is not a rate limit: one long freeze, never the ladder (MOL-699)
+_REFRESH_CADENCE_S = 12 * 60 * 60   # the tick's refresh window, and the yardstick an outage is measured in
 # Scrape is ~5–7s/tag. Caps bound a pass so co-tag harvest cannot run unbounded; incomplete passes do NOT
 # stamp last_complete_pass. Defaults sized so niches + a meaningful co-tag set fit one pass (F-4 / MOL-631).
 # Tests may monkeypatch these module attrs; env overrides win when set.
@@ -121,6 +122,25 @@ def _read_complete_pass(cfg: Config) -> str | None:
         return None
     v = raw.get(_COMPLETE_KEY)
     return v if isinstance(v, str) and v else None
+
+
+def _age_s(stamp: str | None, now: datetime) -> float | None:
+    """Seconds since an ISO stamp, or None when it is absent or unparseable — "how old" is unknown, which
+    is NOT the same as zero and must never read as fresh."""
+    if not isinstance(stamp, str) or not stamp:
+        return None
+    try:
+        ts = datetime.fromisoformat(stamp)
+    except ValueError:
+        return None
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    return (now - ts).total_seconds()
+
+
+def _complete_pass_age_s(cfg: Config, now: datetime) -> float | None:
+    """Seconds since the last COMPLETE pass. None = no stamp we can read, so the tick is due."""
+    return _age_s(_read_complete_pass(cfg), now)
 
 
 def _posting_persona_ids(cfg: Config) -> set[str]:
@@ -270,6 +290,32 @@ def _clear_cooldown(cfg: Config) -> None:
             p.unlink()
     except OSError:
         pass
+
+
+_OUTAGE_REMEDY = {"login_required": "run fanops hashtags scrape-login",
+                  "checkpoint": "verify in the Instagram app, then run fanops hashtags scrape-login",
+                  "throttle": "Instagram is rate-limiting; the ladder clears it, no operator action does"}
+
+
+def _outage_level(streak, stalled_s: float | None, cadence_s: float = _REFRESH_CADENCE_S) -> str:
+    """How loud an ONGOING scrape freeze is, derived from state ALREADY on disk: the cooldown `streak`
+    and the age of `last_complete_pass`. One skipped tick is routine (`info`); a freeze that has outlived
+    its own refresh cadence is a `warning`; one that has outlived it twice over — or whose streak has
+    reached the ladder cap, where the backoff stopped decaying and is merely repeating — is an `error`.
+
+    This ends the severity INVERSION (MOL-794): arming logged `error` while the daily CONSEQUENCE logged
+    `info`, so a five-day outage got quieter the longer it lasted. Severity now only ever rises with the
+    outage; nothing here lowers a level a caller already hard-codes."""
+    try:
+        s = int(streak)
+    except (TypeError, ValueError):                            # absent/garbage streak: judge on stall alone
+        s = 0
+    age = stalled_s if isinstance(stalled_s, (int, float)) else None
+    if s >= len(_COOLDOWN_DELAYS_S) or (age is not None and age >= 2 * cadence_s):
+        return "error"
+    if s >= 2 or (age is not None and age >= cadence_s):
+        return "warning"
+    return "info"
 
 
 def _fresh(rec: dict, cutoff: datetime) -> bool:
@@ -620,14 +666,16 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
         # cooldown and armed nothing, so the next tick reopened scrape against the account that had just
         # throttled us (MOL-727). Streak depth and "Instagram said stop" are independent facts.
         cooldown = _persist_cooldown(cfg, now, reason="throttle")
-        log("hashtags", "-", "scrape_cooldown", reason="throttle", streak=cooldown.get("streak"),
-            until=cooldown.get("until"))
+        log("hashtags", "-", "scrape_cooldown",
+            level=_outage_level(cooldown.get("streak"), _age_s(prev_complete, now)),   # re-arming gets LOUDER
+            reason="throttle", streak=cooldown.get("streak"), until=cooldown.get("until"))
     elif login_dead:
         # A dead session was re-probed EVERY tick before MOL-699. An expiry IS transient, so it gets the
         # ladder (unlike a lock) — a decaying retry instead of one login attempt per tick, forever.
         cooldown = _persist_cooldown(cfg, now, reason="login_required")
-        log("hashtags", "-", "scrape_cooldown", reason="login_required", streak=cooldown.get("streak"),
-            until=cooldown.get("until"))
+        log("hashtags", "-", "scrape_cooldown",
+            level=_outage_level(cooldown.get("streak"), _age_s(prev_complete, now)),   # re-arming gets LOUDER
+            reason="login_required", streak=cooldown.get("streak"), until=cooldown.get("until"))
     cutoff = now - timedelta(days=_MAX_AGE_DAYS)
     fresh = _records_for_write(cache, anchor_set=anchor_set, cutoff=cutoff)
     tag_mutated = fresh != pre_write
@@ -659,7 +707,8 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
     return out
 
 
-def refresh_store_if_due(cfg: Config, *, max_age_s: int = 43200, scrape_client=None, now=None) -> dict:
+def refresh_store_if_due(cfg: Config, *, max_age_s: int = _REFRESH_CADENCE_S, scrape_client=None,
+                         now=None) -> dict:
     """The constant-update hook the run loop calls each tick: refresh at most once per `max_age_s`
     (default 12h), gated on `last_complete_pass` inside the cache — NOT file mtime, because a throttled
     pass still writes and would otherwise buy twelve hours of silence for almost no work. Needs a scrape
@@ -668,7 +717,10 @@ def refresh_store_if_due(cfg: Config, *, max_age_s: int = 43200, scrape_client=N
     a refresh: refresh_store aborts (cache untouched) and this REPORTS the abort so the tick never logs a
     false success on a broken control file.
 
-    Instagram ScrapeThrottled cooldown (MOL-695) is checked BEFORE opening scrape — never sleeps."""
+    Instagram ScrapeThrottled cooldown (MOL-695) is checked BEFORE opening scrape — never sleeps. A skip
+    under a freeze that has outlived the cadence also emits `scrape_outage` at `_outage_level` (MOL-794),
+    and returns that `level`: the skip is what an ongoing outage LOOKS like from here, so it cannot stay
+    quieter than the arming it repeats."""
     from fanops.ig_hashtag_scrape import scrape_configured
     if not scrape_configured(cfg) and scrape_client is None:
         return {"refreshed": False, "reason": "no scrape session"}
@@ -676,19 +728,23 @@ def refresh_store_if_due(cfg: Config, *, max_age_s: int = 43200, scrape_client=N
         now_dt = now or datetime.now(timezone.utc)
         cool = _read_active_cooldown(cfg, now_dt)
         if cool is not None:
-            return {"refreshed": False, "reason": "cooldown",
-                    "cooldown_reason": cool.get("reason") or "throttle",
+            reason = cool.get("reason") or "throttle"
+            stalled = _complete_pass_age_s(cfg, now_dt)
+            level = _outage_level(cool.get("streak"), stalled, max_age_s)
+            if level != "info":
+                # A routine skipped tick stays quiet; a freeze that has outlived the cadence says so ONCE
+                # PER TICK at its own severity. The tick's own `store_refresh_skipped` line is a fact about
+                # this tick — this is the fact about the OUTAGE, which is what an alert has to see.
+                get_logger(cfg)("hashtags", "-", "scrape_outage", level=level, reason=reason,
+                                streak=cool.get("streak"), until=cool.get("until"),
+                                stalled_h=("unknown" if stalled is None else round(stalled / 3600.0, 1)),
+                                detail="Layer A measurement stalled — " + _OUTAGE_REMEDY.get(
+                                    reason, "inspect 00_control/" + _COOLDOWN_NAME))
+            return {"refreshed": False, "reason": "cooldown", "level": level, "cooldown_reason": reason,
                     "until": cool.get("until"), "streak": cool.get("streak")}
-        complete = _read_complete_pass(cfg)
-        if complete:
-            try:
-                ts = datetime.fromisoformat(complete)
-                if ts.tzinfo is None:
-                    ts = ts.replace(tzinfo=timezone.utc)
-                if (now_dt - ts).total_seconds() < max_age_s:
-                    return {"refreshed": False, "reason": "fresh"}
-            except ValueError:
-                pass                                          # unparseable stamp -> treat as due
+        age = _complete_pass_age_s(cfg, now_dt)               # None = no readable stamp -> due
+        if age is not None and age < max_age_s:
+            return {"refreshed": False, "reason": "fresh"}
         r = refresh_store(cfg, scrape_client=scrape_client, now=now_dt)
         if not r.get("written"):                              # corrupt/no_scrape/no_progress: preserve, report
             return {"refreshed": False, **r}

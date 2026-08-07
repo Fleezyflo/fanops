@@ -61,8 +61,13 @@ def cmd_status(cfg: Config) -> int:
           # (the existing operator-gated recovery, which flips error -> catalogued + forces a re-transcribe).
           f"sources_error={len(led.sources_in_state(SourceState.error))} "
           # post-approval gate: posts waiting on the operator's review (headless operators see them here,
-          # not only in the Studio). rejected = operator-discarded.
-          f"awaiting_approval={len(led.posts_in_state(PostState.awaiting_approval))} "
+          # not only in the Studio). rejected = operator-discarded. Reads the OWNED predicate
+          # (`Ledger.review_posts` = awaiting_approval AND a live lineage, T2.4/MOL-759) — the same set
+          # `attention_counts()["posts"]` and the Studio Review worklist size, so this headline cannot
+          # drift from that worklist. The raw posts_in_state(awaiting_approval) census answered a
+          # DIFFERENT question and counted posts stranded under a retired moment: the live ledger read
+          # awaiting_approval=761 where only 493 were actionable (#827).
+          f"awaiting_approval={len(led.review_posts())} "
           f"published={len(led.posts_in_state(PostState.published))} "
           f"rejected={len(led.posts_in_state(PostState.rejected))} "
           f"failed={len(led.posts_in_state(PostState.failed))} "
