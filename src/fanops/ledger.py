@@ -19,7 +19,12 @@ from fanops.log import get_logger
 from fanops.errors import ControlFileError, LockBusyError, reason as _reason
 from fanops.models import (Source, Moment, Clip, Post, Render, validate_account_handle,
                            StitchPlan, StitchState, Batch, ImportedMedia,
-                           SourceState, MomentState, ClipState, PostState)
+                           SourceState, MomentState, ClipState, PostState,
+                           # MOL-802: the post-side state sets are DEFINED beside PostState. Aliased on
+                           # import so the class attributes below can re-export them under their own
+                           # names without shadowing, and without minting a `fanops` package edge.
+                           _LIVE_POST_STATES as _MODELS_LIVE_POST_STATES,
+                           _PROTECTED_POST_STATES as _MODELS_PROTECTED_POST_STATES)
 from fanops.ids import child_id
 
 
@@ -667,22 +672,18 @@ class Ledger:
                 continue
             self.moments[mid] = m
 
-    # Clip/Post states that mean "live on the platform / carries the performance record" —
-    # these are NEVER cascade-deleted (deleting them would orphan a live post: untrackable by
-    # track, unreclaimable by gc, and destroys the lift signal). A dropped moment that still has
-    # any such descendant is RETIRED (suppressed from future work) rather than deleted.
+    # Clip states that mean "live on the platform / carries the performance record" — these are NEVER
+    # cascade-deleted (deleting them would orphan a live post: untrackable by track, unreclaimable by
+    # gc, and destroys the lift signal). A dropped moment that still has any such descendant is RETIRED
+    # (suppressed from future work) rather than deleted.
     _LIVE_CLIP_STATES = (ClipState.published, ClipState.analyzed)
-    # needs_reconcile included (AUDIT C1): such a post MAY be live on the platform (ambiguous
-    # publish), so deleting its ledger record would orphan a possibly-live post — preserve + retire.
-    _LIVE_POST_STATES = (PostState.published, PostState.analyzed, PostState.submitted,
-                         PostState.submitting, PostState.needs_reconcile)
-    # Cascade-protection superset (content-lifecycle Phase 1). _LIVE_POST_STATES is referenced ONLY here in
-    # _delete_moment_cascade (grep-verified: no reconcile/track/learning reader) — the separate tuple is for
-    # EXPLICITNESS + an independent pin test, NOT because an external caller depends on the narrow set. A
-    # re-decided source's cascade must NEVER silently delete the operator's awaiting_approval (un-reviewed) /
-    # queued (approved, not-yet-shipped) / retired (M4 stitch-superseded base) posts — deliberate human/stitch
-    # records. PRESERVE-and-RETIRE exactly like a live post, at BOTH checks below (post-loop AND clip-drop).
-    _PROTECTED_POST_STATES = _LIVE_POST_STATES + (PostState.awaiting_approval, PostState.queued, PostState.retired)
+    # MOL-802: the POST-side halves of that rule are DEFINED beside PostState (models.py), which owns the
+    # partitions of its own enum and carries the exhaustiveness test that fails when a new member is left
+    # unclassified. These are re-exports of the same objects, not copies, so `Ledger._LIVE_POST_STATES` —
+    # read by cli/pipeline/stranded_posts and four pin tests — keeps resolving and keeps its membership,
+    # its tuple type and its order. Read the rationale for each set at its definition.
+    _LIVE_POST_STATES = _MODELS_LIVE_POST_STATES
+    _PROTECTED_POST_STATES = _MODELS_PROTECTED_POST_STATES
     # The protected posts that have NEVER touched a platform: no remote object, no lift record, nothing for the
     # preserve rule to protect. They are protected from DELETION (the operator's un-reviewed work is not thrown
     # away) but they must not stay ACTIONABLE under a moment the pipeline has retired — left `awaiting_approval`

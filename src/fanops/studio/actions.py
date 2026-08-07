@@ -13,7 +13,8 @@ from pydantic import ValidationError
 from fanops.config import Config
 from fanops.errors import AuthError, ToolchainMissingError, reason
 from fanops.ledger import Ledger
-from fanops.models import CaptionSet, ClipState, MomentDecision, MomentHookDecision, Post, PostState
+from fanops.models import (CaptionSet, ClipState, MomentDecision, MomentHookDecision, Post, PostState,
+                           _REVIEW_REVERT_BLOCKED)   # MOL-802: defined beside PostState, which owns it
 from fanops.ids import child_id, surface_key, _hash
 from fanops.timeutil import parse_iso, iso_z
 from fanops.studio.views import _imminent
@@ -914,12 +915,6 @@ def publish_due_bucket(cfg: Config, *, handle: Optional[str] = None, batch: Opti
         return ActionResult(ok=False, error=f"publish due failed: {str(exc)[:160]}")
     write_audit(cfg, "publish_due_bucket", [], reason="studio_publish_due_bucket", handle=handle, batch=batch, **summary)
     return ActionResult(ok=True, detail={**summary, "plan": plan.__dict__})
-
-
-_REVIEW_REVERT_BLOCKED = frozenset({
-    PostState.published, PostState.analyzed, PostState.needs_reconcile,
-    PostState.submitting, PostState.submitted,
-})
 
 
 def _refuse_retired(cfg: Config, led: Ledger, p) -> bool:
