@@ -118,8 +118,15 @@ def test_daemon_transient_requeue_bounded_then_stays_failed(tmp_path, monkeypatc
 
 def test_recover_posts_retries_transient_failed(tmp_path):
     from fanops.studio.actions import recover_posts
+    from fanops.models import Moment, MomentState, Source
     cfg = Config(root=tmp_path)
     led = Ledger.load(cfg)
+    # The `c1`/`mom_1` rows this seed always NAMED but never created: T3.4's re-arm guard reads lineage via
+    # `Ledger.is_suppressed`, which fails CLOSED — a post whose parent clip row is missing is suppressed.
+    led.add_source(Source(id="src_1", source_path="/v.mp4", duration=10.0))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7, reason="r",
+                          state=MomentState.clipped))
+    led.add_clip(Clip(id="c1", parent_id="mom_1", path="/c1.mp4", state=ClipState.captioned))
     led.add_post(_fail_post("dns", "publish failed: zernio.com Read timed out (read timeout=30)"))
     led.save()
     res = recover_posts(cfg, ["dns"], action="retry", reason="studio_retry_transient")

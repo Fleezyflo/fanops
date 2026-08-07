@@ -647,10 +647,23 @@ def _fail_post(pid, reason):
                 caption="x", state=PostState.failed, error_reason=reason)
 
 
+def _live_lineage(led):
+    """Give `clip_1` the moment/source rows it always named but never had. `Ledger.is_suppressed` (T3.1)
+    fails CLOSED, so a post whose parent clip row is MISSING now reads as suppressed and the re-arm verbs
+    refuse it — these fixtures were asserting recovery against a ledger shape production prevents
+    (`_delete_moment_cascade` never pops a clip while a protected post hangs off it). Assertions unchanged."""
+    led.add_source(Source(id="src_1", source_path="/v.mp4", duration=10.0))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7, reason="r",
+                          state=MomentState.clipped))
+    led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/clip_1.mp4", aspect=Fmt.r9x16,
+                      state=ClipState.captioned))
+
+
 def test_recover_posts_retry_requeues_retryable(tmp_path):
     from fanops.studio.actions import recover_posts
     cfg = Config(root=tmp_path)
     led = Ledger.load(cfg)
+    _live_lineage(led)
     led.add_post(_fail_post("ok", "postiz 429"))
     led.posts["ok"].submission_id = "old_sub"
     big = _fail_post("big", "zernio 413"); big.platform = Platform.tiktok; led.add_post(big)
@@ -672,6 +685,7 @@ def test_recover_posts_retry_lands_a_schedule_when_timeless(tmp_path):
     from fanops.studio.actions import recover_posts
     from fanops.timeutil import parse_iso
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _live_lineage(led)
     p = _fail_post("t", "postiz 429"); p.scheduled_time = None; led.add_post(p)   # a TIMELESS failed post
     led.save()
     res = recover_posts(cfg, ["t"], action="retry", reason="studio_retry")
@@ -686,6 +700,7 @@ def test_recover_posts_discard_terminal(tmp_path):
     from fanops.studio.actions import recover_posts
     cfg = Config(root=tmp_path)
     led = Ledger.load(cfg)
+    _live_lineage(led)
     led.add_post(_fail_post("gone", "zernio 413"))
     led.save()
     res = recover_posts(cfg, ["gone"], action="discard", reason="oversize discard")
@@ -697,6 +712,7 @@ def test_recover_posts_review_clears_publish_fields(tmp_path):
     from fanops.studio.actions import recover_posts
     cfg = Config(root=tmp_path)
     led = Ledger.load(cfg)
+    _live_lineage(led)
     p = _fail_post("back", "postiz 429")
     p.public_url = "https://example.com/x"
     p.scheduled_time = _z(NOW + timedelta(hours=1))
@@ -717,6 +733,7 @@ def test_retry_oversize_failures_requeues_when_shrink_ok(tmp_path, monkeypatch, 
     add_account(cfg, "@tt", [Platform.tiktok], status="active")
     set_backend(cfg, "@tt", "tiktok", "zernio")
     led = Ledger.load(cfg)
+    _live_lineage(led)
     vid = tmp_path / "big.mp4"
     vid.write_bytes(b"Z" * 100)
     led.add_post(Post(id="big", parent_id="clip_1", account="tt", account_id="z1", platform=Platform.tiktok,
@@ -734,6 +751,7 @@ def test_retry_oversize_skips_when_shrink_fails(tmp_path, monkeypatch, mocker):
     from fanops.studio.actions import retry_oversize_failures
     cfg = Config(root=tmp_path)
     led = Ledger.load(cfg)
+    _live_lineage(led)
     led.add_post(_fail_post("big", "zernio 413"))
     led.posts["big"].platform = Platform.tiktok
     led.save()
