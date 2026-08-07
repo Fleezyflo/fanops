@@ -108,6 +108,30 @@ class ClipState(str, Enum):
                                     # crosspost's captioned-selection AND _REUSABLE_CLIP_STATES) until an
                                     # operator approval transitions it to captioned. Reusing `held` is forbidden.
 
+# T2.9 — the SOURCE-side reading of ClipState, owned by the enum itself (not scattered into the reader
+# module, where a set silently rots out of date the way the terminal-state set this replaces did). The
+# question these two answer is "does this FOOTAGE still need work", NOT "do these POSTS need the operator"
+# — the post-side question is asked separately, of Post rows. Every ClipState member belongs to EXACTLY one
+# of the two, and test_source_done_predicate fails the suite if a new member joins neither.
+#
+# Clip states that still require PIPELINE or OPERATOR work on the source. Deliberately NOT the complement of
+# the terminal set (published/analyzed/retired/error) that used to key this: `queued` is a lifecycle state (it
+# can still become published) but it is DONE from the source's point of view — its posts are minted and the
+# daemon owns them; `held` is parked by the operator with its own release path (`fanops unhold`). Neither is
+# work on the source, so neither may veto the moments_decided -> inventory demotion. `stitch_draft` DOES veto:
+# it waits on an operator approval to become captioned.
+_WORK_REMAINING_CLIP = frozenset((ClipState.rendered,             # the caption request has not been written
+                                  ClipState.captions_requested,   # answer outstanding (a pending gate buckets
+                                                                  # blocked_on_gates first, so this catches a
+                                                                  # STUCK gate — actionable)
+                                  ClipState.captioned,            # crosspost has not minted its posts
+                                  ClipState.stitch_draft))        # only an operator approval moves it
+# The complement, named rather than inferred — an unclassified member must be a test failure, not a default.
+_NO_SOURCE_WORK_CLIP = frozenset((ClipState.queued,      # posts minted, daemon-owned
+                                  ClipState.held,        # operator-parked, released by `fanops unhold`
+                                  ClipState.published, ClipState.analyzed,   # the arc ran to its end
+                                  ClipState.retired, ClipState.error))       # dead / quarantined
+
 class RenderState(str, Enum):
     # Per-account Render lifecycle. CULM-9 (decided 2026-06: RESERVE, not wire): a Render is BORN `rendered`
     # and NO driver advances it today — nothing moves it to queued/published/analyzed, and no GC retires it

@@ -8,13 +8,12 @@ from fanops.gate_keys import gate_source_id
 from fanops.agentstep import pending, request_path, latest_request_id, _attempts_path
 from fanops.pipeline import GATE_KINDS
 from fanops.pipeline_run import run_status_line
-from fanops.models import SourceState, ClipState
+from fanops.models import SourceState, _WORK_REMAINING_CLIP
 
 _RECOVERABLE = (SourceState.error, SourceState.moments_empty)
 _INVENTORY_STATES = (SourceState.retired, SourceState.discovered)
 
 _GATE_DETERMINISTIC_MAX = 3   # mirrors responder._GATE_DETERMINISTIC_MAX
-_TERMINAL_CLIP = frozenset((ClipState.published, ClipState.analyzed, ClipState.retired, ClipState.error))
 
 
 def _gate_attempt(cfg: Config, kind: str, key: str) -> int:
@@ -95,12 +94,19 @@ def _source_has_pending_gate(led, source_id: str, idx: PendingIndex) -> bool:
     return source_id in idx.by_source
 
 
-def _source_has_non_terminal_clip(led, source_id: str) -> bool:
+def _source_has_open_clip(led, source_id: str) -> bool:
+    """Does this source still have clip-side work? Keyed POSITIVELY on `_WORK_REMAINING_CLIP` (models.py,
+    beside the enum that owns it) — the complement-of-terminal veto it replaces counted `queued` as work, and
+    since every clip settles at `queued` or `retired` no source could ever leave the backlog. Suppressed
+    lineage is never work: a `captioned` clip under a retired moment is inert (`crosspost._seed_clips` already
+    refuses to seed it), so counting it would be a lie. `Ledger.is_suppressed` fails CLOSED, so an orphan clip
+    reads suppressed -> not work; that is the right direction here (an orphan is not pipeline work)."""
     for c in led.clips.values():
-        if c.state not in _TERMINAL_CLIP:
-            mom = led.moments.get(c.parent_id)
-            if mom is not None and mom.parent_id == source_id:
-                return True
+        if c.state not in _WORK_REMAINING_CLIP:
+            continue
+        mom = led.moments.get(c.parent_id)
+        if mom is not None and mom.parent_id == source_id and not led.is_suppressed(c):
+            return True
     return False
 
 
@@ -112,7 +118,7 @@ def visible_source_ids(led, cfg: Config) -> list[str]:
         if s.state is SourceState.retired:
             continue
         if s.state is SourceState.moments_decided:
-            if not (_source_has_pending_gate(led, sid, idx) or _source_has_non_terminal_clip(led, sid)):
+            if not (_source_has_pending_gate(led, sid, idx) or _source_has_open_clip(led, sid)):
                 continue
         out.append(sid)
     return out
@@ -161,7 +167,7 @@ def _source_bucket(led, source_id: str, s, idx: PendingIndex) -> str:
     if s.state in _RECOVERABLE:
         return "recoverable"
     if s.state is SourceState.moments_decided:
-        if not (_source_has_pending_gate(led, source_id, idx) or _source_has_non_terminal_clip(led, source_id)):
+        if not (_source_has_pending_gate(led, source_id, idx) or _source_has_open_clip(led, source_id)):
             return "inventory"
     if _source_has_pending_gate(led, source_id, idx):
         return "blocked_on_gates"
