@@ -140,6 +140,40 @@ def resolve_llm_transport(raw: str | None = None) -> str:
         return "claude"
     return v
 
+# THE boolean-word vocabulary for every FANOPS_* flag, declared once. It used to be hand-copied into
+# twenty property bodies below and declared a third time in settings.py — a word added to one copy and
+# not the others is a flag that means different things depending on which module asked. settings.py
+# imports the parser below, so the declaration/validation boundary and the runtime read path cannot
+# drift apart. (Config still reads os.environ directly: a live read is 3 µs of os.getenv, and routing
+# it through Settings.model_validate would cost milliseconds per property and freeze env at
+# construction, which studio.golive._dual_write depends on NOT happening.)
+_ON_WORDS = frozenset({"1", "true", "yes", "on"})
+_OFF_WORDS = frozenset({"0", "false", "no", "off"})
+
+
+def bool_word(raw: str | None) -> bool | None:
+    """Parse one env boolean word: an on-word -> True, an off-word -> False, anything else -> None.
+    None means "no recognized word" — deliberately NOT the same fact as "unset". A caller that must
+    tell an unset var from a present-but-misspelled one tests the raw string for blankness FIRST and
+    only then reads this None; `Config.is_live` is that caller (the W4 false-banner guard), and
+    collapsing those two states there turns a .env typo into a real publish."""
+    s = (raw or "").strip().lower()
+    if s in _ON_WORDS:
+        return True
+    if s in _OFF_WORDS:
+        return False
+    return None
+
+
+def env_bool(raw: str | None, *, default: bool) -> bool:
+    """A FANOPS_* flag read: on-word -> True, off-word -> False, unset/blank/unrecognized -> `default`.
+    Fail-open by construction — a typo'd flag never crashes an autonomous run, it keeps the documented
+    default. Every boolean Config property is one call to this, so `default` is the only thing a
+    property body still has to state, and it states it as a value rather than as a re-spelled rule."""
+    parsed = bool_word(raw)
+    return default if parsed is None else parsed
+
+
 class Config:
     def __init__(self, root: Path | str | None = None):
         env_root = os.environ.get("FANOPS_ROOT")
@@ -296,15 +330,19 @@ class Config:
         # channel (that's per-channel — M3). Sourced from FANOPS_LIVE; when UNSET, derived from the legacy
         # FANOPS_POSTER (a recognized live backend -> live) so the running deployment keeps publishing with
         # NO .env edit. An unknown FANOPS_LIVE is never presented as live (the W4 false-banner guard).
+        # THREE-STATE on purpose, and NOT env_bool: unset and present-but-unrecognized must stay
+        # distinguishable. Blank is asked FIRST (only blank may reach the poster_backend derivation);
+        # a value that is present but not a recognized word warns and returns False. Reading this
+        # through a parser that collapses invalid into unset would let a typo'd FANOPS_LIVE fall
+        # through to the derivation and publish for real on any deployment with a live FANOPS_POSTER.
         v = (os.getenv("FANOPS_LIVE") or "").strip().lower()
         if not v:
             return self.poster_backend in _LIVE_BACKENDS          # back-compat: a live FANOPS_POSTER implies live
-        if v in ("1", "true", "yes", "on"):
-            return True
-        if v in ("0", "false", "no", "off"):
+        parsed = bool_word(v)
+        if parsed is None:
+            _log.warning("ignoring unknown FANOPS_LIVE=%r (treating as not live); use 1/0", v)
             return False
-        _log.warning("ignoring unknown FANOPS_LIVE=%r (treating as not live); use 1/0", v)
-        return False
+        return parsed
 
     @property
     def live_route_exists(self) -> bool:
@@ -449,8 +487,7 @@ class Config:
         # absent from its row -> the lift scalar is a partial objective). DEFAULT OFF (learning stays
         # conservative + the 3-window streak is already a proxy); only explicit on-words enable. Purely
         # gates variant_amplify; never recalibrates _W. Mirrors burn_subs.
-        v = (os.getenv("FANOPS_REQUIRE_FULL_OBJECTIVE") or "").strip().lower()
-        return v in {"1", "true", "yes", "on"}
+        return env_bool(os.getenv("FANOPS_REQUIRE_FULL_OBJECTIVE"), default=False)
 
     @property
     def is_live_backend(self) -> bool:
@@ -582,21 +619,18 @@ class Config:
         # or no strong frame, the start is left exactly as the band/transcript-snap chose it (today's
         # behavior). Only the explicit off-words disable it; the decision is cached per-window so the
         # in-lock commit pass re-spawns no frame-probe ffmpeg (Phase D).
-        v = (os.getenv("FANOPS_VISUAL_START") or "").strip().lower()
-        return v not in ("0", "false", "no", "off")     # DEFAULT ON; unset/empty/other -> True
+        return env_bool(os.getenv("FANOPS_VISUAL_START"), default=True)
 
     @property
     def queue_gate(self) -> bool:
         # U4: explicit run queue — new footage births pending until the operator ticks accounts, adds to
         # queue, and clicks Make clips. DEFAULT ON; FANOPS_QUEUE_GATE=0 restores byte-identical auto-ingest.
-        v = (os.getenv("FANOPS_QUEUE_GATE") or "").strip().lower()
-        return v not in ("0", "false", "no", "off")
+        return env_bool(os.getenv("FANOPS_QUEUE_GATE"), default=True)
 
     @property
     def show_extras(self) -> bool:
         # U13: FANOPS_SHOW_EXTRAS=1 reveals Footage + Stitches in the Library rail group; default OFF.
-        v = (os.getenv("FANOPS_SHOW_EXTRAS") or "").strip().lower()
-        return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
+        return env_bool(os.getenv("FANOPS_SHOW_EXTRAS"), default=False)
 
     @property
     def smart_framing(self) -> bool:
@@ -605,8 +639,7 @@ class Config:
         # the [framing] extra absent or no subject detected, subject_focus returns None and the render
         # crops centered exactly as today, so default-on is never worse than the old behavior. Only the
         # explicit off-words disable it. Mirrors visual_start (the weakest link closed by default).
-        v = (os.getenv("FANOPS_SMART_FRAMING") or "").strip().lower()
-        return v not in ("0", "false", "no", "off")     # DEFAULT ON; unset/empty/other -> True
+        return env_bool(os.getenv("FANOPS_SMART_FRAMING"), default=True)
 
     @property
     def whisper_model(self) -> str:
@@ -659,8 +692,7 @@ class Config:
         # real clips. DEFAULT ON; only the explicit off-words "0"/"false"/"no"/"off" disable it.
         # Safe to default ON: if demucs/the [asr] extra isn't installed, isolation FAILS OPEN to the
         # raw audio (today's behavior), so this never breaks a host without Demucs.
-        v = os.getenv("FANOPS_ISOLATE_VOCALS")
-        return (v or "").strip().lower() not in {"0", "false", "no", "off"}
+        return env_bool(os.getenv("FANOPS_ISOLATE_VOCALS"), default=True)
 
     @property
     def burn_subs(self) -> bool:
@@ -669,8 +701,7 @@ class Config:
         # The on-screen RETENTION HOOK (m.hook) is a SEPARATE layer that burns regardless of this flag;
         # this only adds the transcript on top. Only the explicit off-words "0"/"false"/"no"/"off"
         # disable it; unset/blank/anything else stays ON. Mirrors isolate_vocals' default-on shape.
-        v = os.getenv("FANOPS_BURN_SUBS")
-        return (v or "").strip().lower() not in {"0", "false", "no", "off"}
+        return env_bool(os.getenv("FANOPS_BURN_SUBS"), default=True)
 
     @property
     def aware_reframe(self) -> bool:
@@ -679,8 +710,7 @@ class Config:
         # evidence-gated: the artist's content is predominantly vertical (routes to the non-cropping
         # scale path), so this ships dark until an operator sees the decapitation and enables it. Only
         # the explicit on-words enable it; off -> today's centered reframe, byte-identical. Mirrors burn_subs.
-        v = (os.getenv("FANOPS_AWARE_REFRAME") or "").strip().lower()
-        return v in {"1", "true", "yes", "on"}
+        return env_bool(os.getenv("FANOPS_AWARE_REFRAME"), default=False)
 
     @property
     def subtitle_font(self) -> str:
@@ -698,16 +728,14 @@ class Config:
         # DEFAULT ON (per-account selection is the system's purpose) — set
         # FANOPS_ACCOUNT_CASTING=0 to restore the legacy fan-to-all path. NB the wired LLM path is UNCAPPED by
         # design (the operator does not want output capped for cost); there is no per-account moment budget.
-        v = (os.getenv("FANOPS_ACCOUNT_CASTING") or "").strip().lower()
-        return v not in ("0", "false", "no", "off")     # DEFAULT ON (per-account selection is the wanted path); explicit off-words disable
+        return env_bool(os.getenv("FANOPS_ACCOUNT_CASTING"), default=True)
 
     @property
     def hook_router(self) -> bool:
         # M2 structural-hooks router: a read-only Moment classifier (runs BEFORE the render loop) that
         # records hook_strategy and RENDERS NOTHING. DEFAULT OFF (opt-in): observe-only, so the annotation
         # is the SOLE delta and feature-off render/post bytes are byte-identical. Only explicit on-words enable it.
-        v = (os.getenv("FANOPS_HOOK_ROUTER") or "").strip().lower()
-        return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
+        return env_bool(os.getenv("FANOPS_HOOK_ROUTER"), default=False)
 
     @property
     def impact_cut(self) -> bool:
@@ -715,8 +743,7 @@ class Config:
         # operator-approved plans into stitch_draft clips). Per-format gate, DEFAULT OFF (the PRD risk-row
         # "impact-cut family disableable"). The router (hook_router) must also be on for moments to be
         # reserved; with this off the produce path is a no-op (no plans, no stitch renders) -> non-regression.
-        v = (os.getenv("FANOPS_IMPACT_CUT") or "").strip().lower()
-        return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
+        return env_bool(os.getenv("FANOPS_IMPACT_CUT"), default=False)
 
     @property
     def intro_tease(self) -> bool:
@@ -725,8 +752,7 @@ class Config:
         # Per-format gate, DEFAULT OFF (PRD "intro-tease family disableable"). Needs the router on (to reserve
         # clean_awaiting_strategy:intro_tease moments) AND FANOPS_RESPONDER=llm (the matcher is an agent gate);
         # with this off there is no matcher gate and no intro_tease plans/renders -> non-regression.
-        v = (os.getenv("FANOPS_INTRO_TEASE") or "").strip().lower()
-        return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
+        return env_bool(os.getenv("FANOPS_INTRO_TEASE"), default=False)
 
     @property
     def variant_learning(self) -> bool:
@@ -736,8 +762,7 @@ class Config:
         # DEFAULT OFF (opt-in), INDEPENDENT of per-account hook rendering — same off-by-default,
         # fail-open posture as that toggle. Only the explicit on-words enable it; unset, empty, or
         # anything else stays OFF (today's behavior, no hint injected, loop stays open).
-        v = (os.getenv("FANOPS_VARIANT_LEARNING") or "").strip().lower()
-        return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
+        return env_bool(os.getenv("FANOPS_VARIANT_LEARNING"), default=False)
 
     @property
     def variant_min_posts(self) -> int:
@@ -774,8 +799,7 @@ class Config:
         # THIS FLAG IS THE WHOLE GATE — no validation freeze rides along: nothing ever writes
         # cutover.json metrics_confirmed False, so once the first real metric auto-stamps it,
         # `learning_validated` is permanently True and can never re-freeze anything.
-        v = (os.getenv("FANOPS_LEARN_AMPLIFY") or "").strip().lower()
-        return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
+        return env_bool(os.getenv("FANOPS_LEARN_AMPLIFY"), default=False)
 
     @property
     def learn_retire(self) -> bool:
@@ -786,8 +810,7 @@ class Config:
         # on unattended destruction every tick. DEFAULT OFF (opt-in), symmetric with learn_amplify;
         # with both OFF the learn pass is read-only. Same reasoning on the absent validation freeze:
         # `learning_validated` has no False writer, so it could never re-bind as a second gate.
-        v = (os.getenv("FANOPS_LEARN_RETIRE") or "").strip().lower()
-        return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
+        return env_bool(os.getenv("FANOPS_LEARN_RETIRE"), default=False)
 
     @property
     def variant_amplify(self) -> bool:
@@ -800,8 +823,7 @@ class Config:
         # VALIDATION-FROZEN (Phase 2): this flag = operator INTENT; even ON, apply_variant_amplify stays
         # INERT until `learning_validated` opens — AUTO-stamped by the first real non-degraded live metric
         # (track._auto_validate_metrics_shape), or the optional early `fanops cutover metrics` probe.
-        v = (os.getenv("FANOPS_VARIANT_AMPLIFY") or "").strip().lower()
-        return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
+        return env_bool(os.getenv("FANOPS_VARIANT_AMPLIFY"), default=False)
 
     @property
     def variant_amplify_min_posts(self) -> int:
@@ -850,8 +872,7 @@ class Config:
         # actuator that consumes a winner to re-mine a source (variant_amplify.py:166), never the cheap,
         # reversible caption hint. (A degraded/unconfirmed lift can still bias a caption; that is an accepted,
         # low-stakes trade — biasing a caption is reversible, re-mining a source is not.)
-        v = (os.getenv("FANOPS_VARIANT_UCB") or "").strip().lower()
-        return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
+        return env_bool(os.getenv("FANOPS_VARIANT_UCB"), default=False)
 
     @property
     def variant_ucb_c(self) -> float:
@@ -877,8 +898,7 @@ class Config:
         # propagates noise across surfaces — stays inert until `learning_validated` opens (AUTO-stamped by
         # the first real non-degraded live metric via track._auto_validate_metrics_shape, or the optional
         # early `fanops cutover metrics` probe).
-        v = (os.getenv("FANOPS_VARIANT_TRANSFER") or "").strip().lower()
-        return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
+        return env_bool(os.getenv("FANOPS_VARIANT_TRANSFER"), default=False)
 
     @property
     def variant_transfer_min_donors(self) -> int:
@@ -908,8 +928,7 @@ class Config:
         # account's hits. The LOSER side stays GLOBAL regardless (D1) — per-surface logic never
         # re-scopes retirement, so a shared clip another surface won is never retired. DEFAULT OFF
         # (opt-in); unset/empty/other -> today's global ranking, byte-identical.
-        v = (os.getenv("FANOPS_ADJUST_PER_SURFACE") or "").strip().lower()
-        return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
+        return env_bool(os.getenv("FANOPS_ADJUST_PER_SURFACE"), default=False)
 
     @property
     def p4_dim_bias(self) -> bool:
@@ -919,8 +938,7 @@ class Config:
         # never retires. This touches the amplify/cascade machinery (audit C1), so it is a KILL SWITCH:
         # DEFAULT OFF. VALIDATION-FROZEN (Phase 2): even ON, apply_p4_dim_bias stays INERT until
         # `fanops cutover metrics` confirms the live metrics shape (validation_gate.learning_validated).
-        v = (os.getenv("FANOPS_P4_DIM_BIAS") or "").strip().lower()
-        return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
+        return env_bool(os.getenv("FANOPS_P4_DIM_BIAS"), default=False)
 
     @property
     def timing_bias(self) -> bool:
@@ -929,8 +947,7 @@ class Config:
         # posting window). A schedule-slot bias, never a publish. KILL SWITCH: DEFAULT OFF. VALIDATION-
         # FROZEN (Phase 2): even ON, apply_timing_bias stays INERT until learning_validated. No hour
         # variance in the published set -> no winner -> no-op (a fixed schedule has nothing to learn).
-        v = (os.getenv("FANOPS_TIMING_BIAS") or "").strip().lower()
-        return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
+        return env_bool(os.getenv("FANOPS_TIMING_BIAS"), default=False)
 
     @property
     def ig_retention_proof(self) -> bool:
@@ -944,8 +961,7 @@ class Config:
         # duration is unknown yields no derivable retention (_retention_fraction None, post/metrics.py
         # ~:444) — with this ON such an IG post would stop proving until a retention-bearing IG row lands.
         # That is why this is default-off and reversible, not a silent tightening of the live path.
-        v = (os.getenv("FANOPS_IG_RETENTION_PROOF") or "").strip().lower()
-        return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
+        return env_bool(os.getenv("FANOPS_IG_RETENTION_PROOF"), default=False)
 
     @property
     def moment_hook_learning(self) -> bool:
@@ -953,8 +969,7 @@ class Config:
         # the cross-surface union of gated winning hook STYLES into moment_prompt, so the vision hook
         # AUTHOR (not just captions) leans toward what has worked. STYLE cue only ("do NOT copy
         # verbatim"). DEFAULT OFF, fail-open; unset/empty/other -> today's behavior, no block injected.
-        v = (os.getenv("FANOPS_MOMENT_HOOK_LEARNING") or "").strip().lower()
-        return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
+        return env_bool(os.getenv("FANOPS_MOMENT_HOOK_LEARNING"), default=False)
 
     @property
     def p4_min_reach_gap(self) -> float:
@@ -1023,8 +1038,7 @@ class Config:
         jittered band (PRD: 'leaning jittered 2-3h for a human feel'). DEFAULT OFF preserves the
         M4 30-min floor — byte-identical to today's behaviour. Mirrors concurrent_sources's
         explicit-on-words pattern. Set via FANOPS_REALISTIC_CADENCE."""
-        v = (os.getenv("FANOPS_REALISTIC_CADENCE") or "").strip().lower()
-        return v in {"1", "true", "yes", "on"}
+        return env_bool(os.getenv("FANOPS_REALISTIC_CADENCE"), default=False)
 
     def account_window(self, handle: str) -> "tuple[int, int] | None":
         """M7 seam: the per-account daily posting window (open_hour, close_hour) in operator-local
@@ -1103,8 +1117,7 @@ class Config:
         # existing sequential path, no pool constructed. Only the explicit on-words enable it; unset,
         # empty, or anything else stays OFF. Mirrors burn_subs. (One writer rule guards correctness,
         # not the flag: workers are pure, the single main transaction is the only ledger writer.)
-        v = (os.getenv("FANOPS_CONCURRENT_SOURCES") or "").strip().lower()
-        return v in {"1", "true", "yes", "on"}
+        return env_bool(os.getenv("FANOPS_CONCURRENT_SOURCES"), default=False)
 
     @property
     def concurrent_workers(self) -> int:
@@ -1130,8 +1143,7 @@ class Config:
     def postiz_autostart(self) -> bool:
         # Auto-start the local Postiz docker-compose stack before publish (postiz_lifecycle). DEFAULT ON;
         # only explicit off-words disable.
-        v = (os.getenv("FANOPS_POSTIZ_AUTOSTART") or "").strip().lower()
-        return v not in {"0", "false", "no", "off"}
+        return env_bool(os.getenv("FANOPS_POSTIZ_AUTOSTART"), default=True)
 
     @property
     def postiz_compose_dir(self) -> str | None:
