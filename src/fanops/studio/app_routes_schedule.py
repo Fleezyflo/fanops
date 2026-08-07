@@ -23,13 +23,12 @@ def register_schedule_routes(app, cfg):
         calendar = views.schedule_calendar_month(cal_rows, cfg, year=year, month=month, account=account, now=now)
         bucket = views.schedule_bucket_split(led, [r for r in rows if r.account == account]) if account else None
         lanes = views.schedule_lanes(rows)
-        schedule_groups = views.group_schedule_by_account(rows) if not account else []
         due_plan = views.due_publish_plan(cfg, handle=account or None, batch=batch, now=now)
         cockpit = views.schedule_cockpit(led, cfg, account, now=now) if account else None
         inflight_watch = views.inflight_watch(led, cfg, account=account, now=now)
         tmpl = "schedule.html" if full else "_schedule_panel.html"
         src_chips = views.source_universe_for_clips(led, rows_full)
-        return render_template(tmpl, rows=rows, lanes=lanes, schedule_groups=schedule_groups, groups=None,
+        return render_template(tmpl, rows=rows, lanes=lanes,
                                calendar=calendar, bucket=bucket, approved_total=approved_total,
                                active_batch=batch, active_source=source, source_chips=src_chips, due_plan=due_plan, cockpit=cockpit, inflight_watch=inflight_watch, auto_ship=views.schedule_auto_ship(cfg), result=result, tab="schedule",
                                # R3-followup UI-LIE-FIX: the per-channel truth, NOT the legacy global. On a

@@ -97,15 +97,6 @@ def test_schedule_rows_none_account_unchanged(tmp_path):
     assert base == [r.post_id for r in schedule_rows(led, cfg, now=NOW, account=None)]  # identical
     assert base == ["p_a", "p_b"]                             # still pure time-sort (1h before 4h), NOT account-grouped
 
-def test_schedule_grouped_account_order(tmp_path):
-    # the grouped read sorts account-then-time so a running header can run; within an account, time order holds.
-    from fanops.studio.views import schedule_rows, group_schedule_by_account
-    cfg = Config(root=tmp_path); _seed_accounts(cfg); led = Ledger.load(cfg); _lineage(led)
-    _queued(led, "b_late", "b", 9); _queued(led, "a_late", "a", 5); _queued(led, "a_early", "a", 1)
-    groups = group_schedule_by_account(schedule_rows(led, cfg, now=NOW))
-    assert [g[0] for g in groups] == ["a", "b"]             # account-sorted headers
-    assert [r.post_id for r in dict(groups)["a"]] == ["a_early", "a_late"]   # time order within account
-
 
 # ---- T3: Posted filter + metric breakdown ----
 def _published(led, pid, account, *, metrics, when="2026-06-01T00:00:00Z"):
