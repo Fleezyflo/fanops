@@ -575,7 +575,7 @@ def review_buckets(led: Ledger, accounts: Accounts, cfg: Config, *, now: datetim
     recent_by_clip: dict[str, list] = {}
     recent_cutoff = now - timedelta(hours=RECENT_WINDOW_HOURS)
     for p in led.posts.values():
-        if p.state is PostState.awaiting_approval:
+        if p.state is PostState.awaiting_approval and led.can_promote(p):   # T2.4: the OWNED live-lineage rule
             queued_by_clip.setdefault(p.parent_id, []).append(p)
         elif p.state in (PostState.published, PostState.analyzed):
             keep = True
@@ -591,11 +591,7 @@ def review_buckets(led: Ledger, accounts: Accounts, cfg: Config, *, now: datetim
     for clip_id, posts in queued_by_clip.items():
         clip = led.clips.get(clip_id)
         if clip is None:
-            continue
-        if led.is_retired_clip(clip.id):
-            continue
-        if led.is_retired_moment(clip.parent_id):
-            continue
+            continue             # unreachable via can_promote (it fails closed on a missing clip) — kept for the type
         if not clip.held:        # a held clip belongs ONLY in the held bucket
             editable_cards.append(_card(led, clip, posts, "editable", cfg, personas, now, active_handles, acct_by_handle))
     # editable cards: day-sorted (newest ingest day first, 'undated' last) so _review_body.html can emit a
@@ -643,18 +639,13 @@ def awaiting_moment_count(led: Ledger) -> int:
     number of MOMENTS (distinct non-held clips) with >=1 awaiting_approval post — i.e. the size of the Review
     approve-worklist (editable cards), NOT the raw awaiting-POST count. A clip fans out to many per-account
     surface posts, so counting posts overstates the worklist (the 'Home 57 vs Review 17' bug). Mirrors the
-    editable-bucket rule in review_buckets exactly (an existing, non-retired, non-held clip under a non-retired
-    moment, carrying an awaiting post) so the Home headline and the Review worklist can never drift. Pure,
-    lock-free read. Locked by the parity test — change this rule and review_buckets together or not at all."""
-    seen: set[str] = set()
-    for p in led.posts.values():
-        if p.state is PostState.awaiting_approval:
-            clip = led.clips.get(p.parent_id)
-            if clip is None or led.is_retired_clip(clip.id) or led.is_retired_moment(clip.parent_id):
-                continue                              # mirror review_buckets' retirement guards exactly
-            if not clip.held:
-                seen.add(p.parent_id)
-    return len(seen)
+    editable-bucket rule in review_buckets (a non-held clip carrying an awaiting post the operator can still
+    promote) so the Home headline and the Review worklist can never drift. Pure, lock-free read.
+
+    T2.4: the rule itself now lives on the Ledger (`attention_counts`), and review_buckets' editable bucket reads
+    the same `Ledger.can_promote`, so the mirror holds BY CONSTRUCTION rather than by two hand-copies kept in
+    step. The symbol stays: it has many callers (`views.py`, `health_model.py`) and the parity test names it."""
+    return led.attention_counts()["moments"]
 
 
 def review_awaiting_by_account(cards: list[ReviewCard]) -> dict[str, int]:

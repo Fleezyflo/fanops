@@ -632,6 +632,20 @@ class Ledger:
     # under-reported a render shared via cross-account REUSE (a reused render keeps its origin `account`,
     # so a naive `r.account == handle` scan misses it). Re-add a CORRECT (surface-keyed) version if a
     # consumer ever needs it; don't resurrect the buggy scan.
+    def review_posts(self) -> list[Post]:
+        """The ONE definition of "needs the operator": an awaiting_approval post whose lineage is still live
+        (`can_promote`). No other condition. Every operator-facing surface consumes this — a raw
+        `state is awaiting_approval` tally answers a DIFFERENT question (a state census, not a worklist) and
+        counts posts stranded under a retired moment. Pure, lock-free."""
+        return [p for p in self.posts.values() if p.state is PostState.awaiting_approval and self.can_promote(p)]
+    def attention_counts(self) -> dict[str, int]:
+        """The operator worklist sized two ways over that ONE predicate: `posts` = actionable posts, `moments`
+        = distinct non-held parent CLIPS. A clip fans out to many per-account surface posts, so counting posts
+        overstates the worklist (the 'Home 57 vs Review 17' bug) — the worklist is clips. `held`/`prepared` are
+        review-CARD buckets, not ledger facts: `views_review.review_counts(cards)` owns those. Pure, lock-free."""
+        posts = self.review_posts()
+        clips = {p.parent_id: self.clips[p.parent_id] for p in posts}   # can_promote fails CLOSED, so each parent exists
+        return {"posts": len(posts), "moments": sum(1 for c in clips.values() if not c.held)}
 
     # ---- reconcile (FIX F08/F32): upsert keep-set, cascade-delete the rest for this source ----
     def reconcile_moments(self, source_id: str, keep: dict[str, Moment]) -> None:
