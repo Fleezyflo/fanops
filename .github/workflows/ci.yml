@@ -236,7 +236,13 @@ jobs:
           FANOPS_WHISPER_MODEL: "tiny"
         run: |
           set -o pipefail
-          python -m pytest -q -m "integration and not ci_hook_regression and not asr" -rs \
+          # MOL-830: `not macos_only` is a DESELECT, not a skip, and the difference is the whole
+          # point. This job runs on ubuntu and sets FANOPS_REQUIRE_E2E=1, which turns any
+          # integration-marked SKIP into a failure — so a skipif on a launchd-only test would still
+          # red the job. Deselecting never collects it, which keeps "must run, not skip" true for
+          # every test that remains. The cost is stated out loud in the marker and in MOL-830:
+          # daemon reload has NO CI coverage. Running it on a macos runner is what would close that.
+          python -m pytest -q -m "integration and not ci_hook_regression and not asr and not macos_only" -rs \
             --durations=25 --durations-min=1.0 2>&1 | tee pytest-e2e-integration.log   # MOL-452
       - name: CI duration report (e2e integration)
         if: always() && (steps.e2e-integration.outcome == 'success' || steps.e2e-integration.outcome == 'failure')

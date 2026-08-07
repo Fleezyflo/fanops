@@ -1,9 +1,25 @@
+import sys
+
 import pytest
 import secrets
 from fanops.config import Config
 from fanops import daemon
 
+# MOL-830: this test drives launchd. `daemon._require_darwin` raises unconditionally off macOS, so
+# on the ubuntu e2e runner it did not fail -- it COULD NOT PASS, and it reddened `real-tooling E2E
+# (must run, not skip)` on every nightly. A permanent red is worse than the skip that job exists to
+# forbid: it trains readers to ignore the job, hiding a genuine break in the other 25 tests.
+# Two guards, deliberately, because one is not enough:
+#   * `macos_only` is what the ubuntu job DESELECTS. A skip alone cannot work there -- that job sets
+#     FANOPS_REQUIRE_E2E=1, and conftest's pytest_runtest_makereport turns any integration-marked
+#     skip into a failure, with no allowlist (tests/_require_e2e.py).
+#   * `skipif` is for humans: a developer on Linux running `-m integration` gets a clean skip with a
+#     reason instead of a RuntimeError traceback out of daemon.py.
+# CONSEQUENCE, stated rather than buried: daemon reload has NO CI coverage anywhere. Closing that
+# needs this test on a macos runner, which MOL-830 records as the follow-up.
 @pytest.mark.integration
+@pytest.mark.macos_only
+@pytest.mark.skipif(sys.platform != "darwin", reason="MOL-830: fanops daemon is launchd/macOS-only")
 def test_studio_real_lifecycle_replacement(tmp_path):
     # MOL-728: Real lifecycle integration test on macOS.
     # This test uses a temporary launchd label and port to verify actual process replacement.
