@@ -764,7 +764,7 @@ def group_review_by_source(rows: list) -> list:
 def group_review_by_account_surface(rows: list) -> list:
     """Phase 4 pivot grouper: group the flat account-pivot SurfacePost rows by their ingest `day` for a running
     day header, FIRST-APPEARANCE order (preserves the upstream day-sort), within-day INPUT order. Pure — mirrors
-    group_review_by_batch / group_schedule_by_account. Returns [(day, [SurfacePost])]; a None day renders 'undated'."""
+    group_review_by_batch. Returns [(day, [SurfacePost])]; a None day renders 'undated'."""
     groups: dict = {}                                  # day -> [rows]; dict preserves first-appearance order
     for r in rows:
         groups.setdefault(getattr(r, "day", None), []).append(r)
@@ -786,7 +786,7 @@ def group_review_by_batch(cards: list) -> list:
     """Group editable ReviewCards by the REAL Batch (Post.batch_id) for collapsible per-batch <details>
     sections. Pure; FIRST-APPEARANCE batch order (preserves the upstream day-sort), within-batch INPUT order.
     Unbatched cards (batch_id is None) collect under ONE (None, 'Ungrouped', [...]) group that sorts LAST.
-    Mirrors group_schedule_by_account but first-appearance (NOT sorted), so the day-sort survives. Returns
+    Grouped first-appearance (NOT sorted), so the day-sort survives. Returns
     [(batch_id, batch_title, [ReviewCard])]; a None/stale batch_title renders as 'Ungrouped'."""
     groups: dict = {}                                  # batch_id -> [cards]; dict preserves first-appearance order
     titles: dict = {}

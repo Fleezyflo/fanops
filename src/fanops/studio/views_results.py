@@ -399,14 +399,6 @@ def inflight_watch(led: Ledger, cfg: Config, *, account: Optional[str] = None,
     out.sort(key=lambda r: (-r.age_minutes, r.post_id))
     return out
 
-def group_schedule_by_account(rows: list) -> list:
-    """Group already-time-sorted ScheduleRows by account for a running per-account header (P5, decision 2:
-    Schedule is a per-post <table>, so a header sits cleanly above its rows). Pure; account-sorted headers,
-    within-account TIME order preserved (the input arrives time-sorted). Mirrors group_posted_by_day."""
-    by_acct: dict[str, list] = {}
-    for r in rows: by_acct.setdefault(r.account, []).append(r)
-    return [(a, by_acct[a]) for a in sorted(by_acct)]
-
 
 @dataclass
 class ScheduleChip:
