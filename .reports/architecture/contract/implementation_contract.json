@@ -160,12 +160,12 @@
 
     "GB-6_ast_ratchet_budgets": {
       "current_owner": "CURRENT OWNER: the ratchet TESTS are authoritative (tests/test_internal_prints_routed.py -> derived/ratchets.json); docs/ARCHITECTURAL_LAWS.md LAW-FAIL-01/LAW-FAIL-02 carry the laws. tools/arch policy rule IMPL-007 holds THIS contract copy to the test. The copy below is a declared MIGRATION TARGET (see mechanism_B) — the test, never this file, is the source of truth.",
-      "evidence_class": "DERIVED_FACT (read from the test files at fcffa73)",
+      "evidence_class": "DERIVED_FACT — measured in src/fanops, declared once in the ratchet TESTS, generated into derived/ratchets.json. A commit stamp here would date the block to the day it was written and assert nothing about today, so there is none.",
       "note": "*** These are MECHANICALLY ENFORCED IN CI TODAY. Cycle 4 named the ratchets but never derived the PER-SLICE BUDGET, and never noticed that ONE OF THEM IS A SHARED, EXACT-EQUALITY BUDGET ACROSS THREE SLICES. ***",
 
       "swallow_ratchet": {
         "test": "tests/test_swallow_ratchet.py",
-        "mechanism": "a PER-FILE baseline dict (49 files). It fails on (a) a file NOT in the baseline gaining ANY silent broad `except`, or (b) a baselined file EXCEEDING its count.",
+        "mechanism": "a PER-FILE baseline dict. It fails on (a) a file NOT in the baseline gaining ANY silent broad `except`, or (b) a baselined file EXCEEDING its count.",
         "budget_zero__any_new_silent_broad_except_fails_ci_immediately": {
           "src/fanops/ledger.py": "S01",
           "src/fanops/ledger_sqlite.py": "S01",
