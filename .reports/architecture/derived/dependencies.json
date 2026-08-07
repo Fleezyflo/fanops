@@ -43,6 +43,7 @@
       "fanops.reframe",
       "fanops.reframe_apply",
       "fanops.responder",
+      "fanops.settings",
       "fanops.signals",
       "fanops.stage_lock",
       "fanops.timing_bias",
@@ -1372,7 +1373,9 @@
       "typing": []
     },
     "fanops.settings": {
-      "compile": [],
+      "compile": [
+        "fanops.config"
+      ],
       "lazy": [
         "fanops.secret_provider"
       ],
@@ -2136,7 +2139,7 @@
     "fanops.cli": 0,
     "fanops.clip": 6,
     "fanops.compose": 1,
-    "fanops.config": 88,
+    "fanops.config": 89,
     "fanops.config_introspect": 0,
     "fanops.control": 4,
     "fanops.controlio": 12,
@@ -2350,7 +2353,7 @@
     "fanops.responder": 9,
     "fanops.router": 1,
     "fanops.secret_provider": 0,
-    "fanops.settings": 0,
+    "fanops.settings": 1,
     "fanops.signals": 7,
     "fanops.stage_lock": 2,
     "fanops.stitch_render": 7,
@@ -2397,7 +2400,7 @@
   "generated_by": "tools/arch",
   "generator_version": "arch/1.0.0",
   "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",
-  "lazy_downward_count": 230,
+  "lazy_downward_count": 231,
   "lazy_lateral": [
     {
       "from": "fanops.accounts",
@@ -2694,14 +2697,6 @@
       "same_scc": false,
       "to": "fanops.meta_graph",
       "to_level": 3
-    },
-    {
-      "from": "fanops.settings",
-      "from_level": 0,
-      "jump": 0,
-      "same_scc": false,
-      "to": "fanops.secret_provider",
-      "to_level": 0
     },
     {
       "from": "fanops.studio.actions_run",
@@ -3341,7 +3336,7 @@
     "fanops.clip": 5,
     "fanops.compose": 0,
     "fanops.config": 0,
-    "fanops.config_introspect": 1,
+    "fanops.config_introspect": 2,
     "fanops.control": 1,
     "fanops.controlio": 1,
     "fanops.crosspost": 6,
@@ -3416,7 +3411,7 @@
     "fanops.responder": 3,
     "fanops.router": 2,
     "fanops.secret_provider": 0,
-    "fanops.settings": 0,
+    "fanops.settings": 1,
     "fanops.signals": 4,
     "fanops.stage_lock": 1,
     "fanops.stitch_render": 3,
@@ -3481,7 +3476,6 @@
       "fanops.post.zernio_outcome",
       "fanops.postiz_lifecycle",
       "fanops.secret_provider",
-      "fanops.settings",
       "fanops.studio",
       "fanops.studio.actions_common",
       "fanops.text",
@@ -3491,7 +3485,6 @@
       "fanops._fwrun",
       "fanops.audit",
       "fanops.autopilot",
-      "fanops.config_introspect",
       "fanops.control",
       "fanops.controlio",
       "fanops.daemon",
@@ -3505,6 +3498,7 @@
       "fanops.pipeline_run",
       "fanops.post.providers",
       "fanops.prompts",
+      "fanops.settings",
       "fanops.stage_lock",
       "fanops.validation_gate",
       "fanops.vocals"
@@ -3519,6 +3513,7 @@
       "fanops.accounts",
       "fanops.agentstep",
       "fanops.batches",
+      "fanops.config_introspect",
       "fanops.hashtag_vocab",
       "fanops.hashtags",
       "fanops.health",
@@ -3635,14 +3630,14 @@
     "G1_non_trivial_sccs": 0,
     "G1_sccs_total": 136,
     "G1c_levels": 11,
-    "G2_largest_scc_size": 47,
-    "G2_module_sccs_total": 73,
+    "G2_largest_scc_size": 48,
+    "G2_module_sccs_total": 72,
     "G2_non_trivial_sccs": 8,
-    "compile_edges_G1": 572,
+    "compile_edges_G1": 573,
     "lazy_edges": 345,
-    "lazy_edges_lateral": 48,
+    "lazy_edges_lateral": 47,
     "lazy_edges_strictly_upward": 67,
-    "lazy_edges_to_equal_or_higher_level": 115,
+    "lazy_edges_to_equal_or_higher_level": 114,
     "modules": 136,
     "optional_edges": 0,
     "typing_only_edges": 7

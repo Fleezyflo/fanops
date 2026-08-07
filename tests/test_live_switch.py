@@ -40,6 +40,20 @@ def test_is_live_unknown_value_is_not_live(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_LIVE", "maybe"); assert Config(root=tmp_path).is_live is False   # never present unknown as live
 
 
+@pytest.mark.parametrize("live,poster", [("garbage", "postiz"), ("maybe", "zernio"), ("2", "postiz")])
+def test_unknown_fanops_live_never_falls_through_to_the_poster_derivation(tmp_path, monkeypatch, live, poster):
+    """The W4 false-banner guard, pinned against the case that makes it load-bearing: a LIVE
+    FANOPS_POSTER alongside a typo'd FANOPS_LIVE. is_live is THREE-state — unset derives from the
+    poster backend, but present-and-unrecognized must warn and stop at dryrun. A parser that
+    collapses present-but-invalid into indistinguishable-from-unset reads these as LIVE and turns a
+    one-character .env typo into a real publish. The sibling test above only sets FANOPS_LIVE, so
+    the derivation it must not reach was never armed there."""
+    monkeypatch.setenv("FANOPS_LIVE", live)
+    monkeypatch.setenv("FANOPS_POSTER", poster)
+    assert Config(root=tmp_path).poster_backend == poster       # the derivation IS armed
+    assert Config(root=tmp_path).is_live is False               # ...and is not reached
+
+
 def test_is_live_truthy_spellings(tmp_path, monkeypatch):
     for v in ("1", "true", "yes", "on", "TRUE"):
         monkeypatch.setenv("FANOPS_LIVE", v); assert Config(root=tmp_path).is_live is True, v

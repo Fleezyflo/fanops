@@ -632,3 +632,46 @@ def test_corpus_target_default_80(tmp_path, monkeypatch):
     assert Settings().FANOPS_CORPUS_TARGET == 80
     monkeypatch.setenv("FANOPS_CORPUS_TARGET", "nope")
     assert Config(root=tmp_path).corpus_target == 80          # Config fail-opens; Settings raises on bad int
+
+
+def test_bool_word_is_tri_state_and_keeps_invalid_distinct_from_unset():
+    """The shared parser's whole contract. None means "no recognized word" — it is deliberately
+    NOT the same fact as "unset", because Config.is_live has to tell those apart (a present-but-
+    misspelled FANOPS_LIVE must fail to dryrun, never fall through to the poster derivation). A
+    caller distinguishes them by testing the raw string for blankness BEFORE reading this None."""
+    from fanops.config import bool_word
+    for on in ("1", "true", "yes", "on", "TRUE", "  On  "):
+        assert bool_word(on) is True, on
+    for off in ("0", "false", "no", "off", "OFF", "  oFf "):
+        assert bool_word(off) is False, off
+    for none in (None, "", "   ", "garbage", "maybe", "2", "-1", "1.5", "abc"):
+        assert bool_word(none) is None, none
+
+
+def test_env_bool_falls_back_to_the_declared_default_for_every_unrecognized_word():
+    """Every boolean Config property is one env_bool call, so this is the rule all 26 obey: an
+    on-word wins, an off-word wins, and unset/blank/garbage yields the property's declared default.
+    Fail-open by construction — a typo never crashes an autonomous run, it keeps the default."""
+    from fanops.config import env_bool
+    for default in (True, False):
+        assert env_bool("1", default=default) is True          # an explicit word always wins
+        assert env_bool("off", default=default) is False
+        for junk in (None, "", "   ", "garbage", "2", "-1", "1.5"):
+            assert env_bool(junk, default=default) is default, (junk, default)
+
+
+def test_config_and_settings_share_one_boolean_vocabulary(monkeypatch, tmp_path):
+    """The duplication this replaced: config.py hand-copied the on-word tuple into twenty property
+    bodies and settings.py declared its own frozenset, so a word added to one and not the other
+    would mean a flag read differently depending on which module asked. Both now route through the
+    same parser, so the vocabularies cannot drift apart."""
+    from fanops import settings as settings_mod
+    from fanops.config import bool_word
+    assert settings_mod.bool_word is bool_word                 # imported, not re-declared
+    for word in ("1", "true", "yes", "on", "0", "false", "no", "off"):
+        assert settings_mod._validate_bool_word(word) == word  # accepted by the typed boundary
+        assert bool_word(word) is not None                     # ...and by the runtime read path
+    for bad in ("garbage", "maybe", "2"):
+        assert bool_word(bad) is None
+        with pytest.raises(ValueError):
+            settings_mod._validate_bool_word(bad)
