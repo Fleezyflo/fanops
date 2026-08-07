@@ -166,7 +166,7 @@
         "name": "PostState"
       },
       {
-        "line": 173,
+        "line": 225,
         "members": [
           "facebook",
           "instagram",
@@ -177,7 +177,7 @@
         "name": "Platform"
       },
       {
-        "line": 183,
+        "line": 235,
         "members": [
           "r16x9",
           "r1x1",
@@ -186,7 +186,7 @@
         "name": "Fmt"
       },
       {
-        "line": 483,
+        "line": 535,
         "members": [
           "none",
           "per_account",
@@ -195,7 +195,7 @@
         "name": "HookSource"
       },
       {
-        "line": 545,
+        "line": 597,
         "members": [
           "approved",
           "dismissed",
@@ -206,7 +206,7 @@
         "name": "StitchState"
       },
       {
-        "line": 574,
+        "line": 626,
         "members": [
           "closed",
           "error",
@@ -289,7 +289,7 @@
           "transcript",
           "width"
         ],
-        "line": 220,
+        "line": 272,
         "name": "Source"
       },
       {
@@ -315,7 +315,7 @@
           "state",
           "transcript_excerpt"
         ],
-        "line": 253,
+        "line": 305,
         "name": "Moment"
       },
       {
@@ -335,7 +335,7 @@
           "state",
           "tagged_artist"
         ],
-        "line": 323,
+        "line": 375,
         "name": "Clip"
       },
       {
@@ -374,7 +374,7 @@
           "top_bias",
           "variation_axis"
         ],
-        "line": 344,
+        "line": 396,
         "name": "Post"
       },
       {
@@ -393,7 +393,7 @@
           "state",
           "surface_key"
         ],
-        "line": 489,
+        "line": 541,
         "name": "Render"
       },
       {
@@ -410,7 +410,7 @@
           "state",
           "strategy_key"
         ],
-        "line": 549,
+        "line": 601,
         "name": "StitchPlan"
       },
       {
@@ -423,7 +423,7 @@
           "state",
           "target_accounts"
         ],
-        "line": 577,
+        "line": 629,
         "name": "Batch"
       },
       {
@@ -439,7 +439,7 @@
           "product_type",
           "timestamp"
         ],
-        "line": 595,
+        "line": 647,
         "name": "ImportedMedia"
       },
       {
@@ -456,7 +456,7 @@
           "transcript",
           "transcript_total"
         ],
-        "line": 623,
+        "line": 675,
         "name": "MomentRequest"
       },
       {
@@ -469,7 +469,7 @@
           "start",
           "transcript_excerpt"
         ],
-        "line": 641,
+        "line": 693,
         "name": "MomentPick"
       },
       {
@@ -479,7 +479,7 @@
           "source_id",
           "source_title"
         ],
-        "line": 682,
+        "line": 734,
         "name": "MomentDecision"
       },
       {
@@ -500,7 +500,7 @@
           "token",
           "transcript_excerpt"
         ],
-        "line": 693,
+        "line": 745,
         "name": "MomentHookRequest"
       },
       {
@@ -509,7 +509,7 @@
           "hook_frames_unread",
           "request_id"
         ],
-        "line": 710,
+        "line": 762,
         "name": "MomentHookDecision"
       },
       {
@@ -521,7 +521,7 @@
           "surfaces",
           "transcript_excerpt"
         ],
-        "line": 717,
+        "line": 769,
         "name": "CaptionRequest"
       },
       {
@@ -531,7 +531,7 @@
           "language",
           "surface"
         ],
-        "line": 725,
+        "line": 777,
         "name": "CaptionItem"
       },
       {
@@ -539,7 +539,7 @@
           "items",
           "request_id"
         ],
-        "line": 736,
+        "line": 788,
         "name": "CaptionSet"
       },
       {
@@ -550,7 +550,7 @@
           "rationale",
           "tease_text"
         ],
-        "line": 745,
+        "line": 797,
         "name": "IntroMatchItem"
       },
       {
@@ -558,7 +558,7 @@
           "items",
           "request_id"
         ],
-        "line": 752,
+        "line": 804,
         "name": "IntroMatchDecision"
       }
     ],

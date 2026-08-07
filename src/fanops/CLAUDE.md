@@ -12,9 +12,12 @@
   site and do NOT set a post's state to `queued` anywhere except `Ledger.approve_post` (`ledger.py:503`, promotes
   at `:519`). Publish paths iterate `queued` only, so this is what makes an unapproved post structurally
   unpublishable even live.
-- **Cascade protection.** `ledger._delete_moment_cascade` (`ledger.py:614`) must keep gating deletes on
-  `_PROTECTED_POST_STATES` (`ledger.py:612` = live-states + awaiting_approval + queued + retired). Re-ingest /
-  reconcile must never drop an in-review or approved post. Don't add a delete path that skips this constant.
+- **Cascade protection.** `ledger._delete_moment_cascade` must keep gating deletes on
+  `_PROTECTED_POST_STATES` (live-states + awaiting_approval + queued + retired). Re-ingest / reconcile must
+  never drop an in-review or approved post. Don't add a delete path that skips this constant. The set — and
+  every other partition of `PostState` — is DEFINED in `models.py` beside the enum, with a named complement
+  and an exhaustiveness test (`test_post_state_sets`); `Ledger` only re-exports it. A new `PostState` member
+  must be classified there, never left to a set's unnamed complement.
 - **Dryrun/live has TWO independent gates** — keep both: `_post_provider` returns `"dryrun"` whenever
   `not cfg.is_live` (`post/run.py:120`), AND `get_poster` raises rather than build a `DryRunPoster` when live
   (`post/__init__.py:19`). `FANOPS_LIVE=1` may be set ONLY by `studio/golive.go_live`. Never add a code path
