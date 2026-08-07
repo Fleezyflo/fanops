@@ -19,7 +19,7 @@ def _approve_ids_with_render(cfg: Config, *, resolve_ids: Callable[[Ledger], Seq
     """P9: promote awaiting->queued. Owner-moment clip is already rendered — no re-cut at approval."""
     now = _now(now); now_iso = iso_z(now)
     approved = 0
-    skipped_retired = 0
+    skipped_retired = 0; cut_over_cap = 0
     approved_ids: list[str] = []
     try:
         with Ledger.transaction(cfg) as led:
@@ -55,7 +55,7 @@ def _approve_ids_with_render(cfg: Config, *, resolve_ids: Callable[[Ledger], Seq
                     clip_dur = realized_clip_seconds(clip, m)
                     if cap is not None and clip_dur is not None and clip_dur > 0 and clip_dur > cap:
                         post.error_reason = f"realized cut {round(clip_dur, 1)}s exceeds {post.platform.value} cap {cap}s"
-                        get_logger(cfg)("approve", pid, "cut_over_cap", realized=round(clip_dur, 1), cap=cap)
+                        cut_over_cap += 1; get_logger(cfg)("approve", pid, "cut_over_cap", realized=round(clip_dur, 1), cap=cap)   # counted + rendered by `_publish_outcome.html`: this `continue` used to leave NO trace, so a tick of N came back "Approved N-1". The cap's value/policy/trigger are unchanged — only its silence is.
                         continue
                 sugg = sched.get(pid) or suggest_time(cfg, post, now=now)
                 led.approve_post(pid, now_iso=now_iso, suggested_iso=sugg)
@@ -78,7 +78,7 @@ def _approve_ids_with_render(cfg: Config, *, resolve_ids: Callable[[Ledger], Seq
         except Exception:
             sched_detail = {"outcome": "approved_scheduled"}
     return ActionResult(ok=True, detail={**detail, "approved": approved, "render_pending": 0,
-                                         "skipped_retired": skipped_retired, **sched_detail})
+                                         "skipped_retired": skipped_retired, "cut_over_cap": cut_over_cap, **sched_detail})
 
 BULK_APPROVE_CONFIRM_AT = 15
 
