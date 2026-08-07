@@ -788,24 +788,28 @@ def test_publish_due_quota_is_per_account(tmp_path, monkeypatch, mocker):
     assert summary["quota_skipped"] == 2
 
 def test_publish_due_refuses_a_post_under_retired_lineage(tmp_path, monkeypatch, mocker):
-    # THE publish-side lineage guard. review_buckets, approve_account/approve_batch, single approve and
-    # crosspost all already refuse a retired-lineage post; publish_due was the gap — and it is the only one
-    # of them that reaches a real platform. An approval granted BEFORE the pipeline dropped the moment is
-    # stale, and `queued` means "ships on the next due sweep", so without this the operator's old click still
-    # publishes lineage the pipeline abandoned. BOTH predicates are covered (retired CLIP, retired MOMENT)
-    # alongside a healthy post in the SAME pass, so a blanket refusal cannot pass this test either.
+    # THE publish-side lineage guard, now asking `Ledger.can_promote` (the owner) instead of hand-copying the
+    # predicate. review_buckets, approve_account/approve_batch, single approve and crosspost refuse a
+    # retired-lineage post too; publish_due is the only one of them that reaches a real platform. An approval
+    # granted BEFORE the pipeline dropped the moment is stale, and `queued` means "ships on the next due
+    # sweep", so without this the operator's old click still publishes lineage the pipeline abandoned. All
+    # THREE refusal shapes run alongside a healthy post in the SAME pass, so a blanket refusal cannot pass this
+    # test either. The MISSING-CLIP case is class closure, not a live repro: _delete_moment_cascade refuses to
+    # pop a clip while a protected post hangs off it, so no live row reaches that shape — but the old hand-copy
+    # (`c is not None and ...`) would have SHIPPED one, and can_promote fails CLOSED on it.
     _live(monkeypatch); cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    for pid, cid in (("p_ok", "c_ok"), ("p_clip", "c_clip"), ("p_mom", "c_mom")):
+    for pid, cid in (("p_ok", "c_ok"), ("p_clip", "c_clip"), ("p_mom", "c_mom"), ("p_gone", "c_gone")):
         _queued(led, cfg, pid=pid, cid=cid, when="2020-01-01T00:00:00Z")
     led.add_moment(Moment(id="mom_ret", parent_id="src_1", start=0.0, end=5.0,
                           reason="dropped by a re-decision", state=MomentState.retired))
     led.retire_clip("c_clip")                          # predicate 1: the CLIP is retired
     led.clips["c_mom"].parent_id = "mom_ret"           # predicate 2: the parent MOMENT is retired
-    _http_media(led, "p_ok", "p_clip", "p_mom"); _stub_ok_poster(mocker, cfg)   # _http_media saves
+    led.clips.pop("c_gone")                            # predicate 3: p_gone's parent_id names NO clip row
+    _http_media(led, "p_ok", "p_clip", "p_mom", "p_gone"); _stub_ok_poster(mocker, cfg)   # _http_media saves
     mocker.patch("fanops.postiz_lifecycle.ensure_up")
     summary = publish_due(cfg, now=_quota_now())
-    assert summary["due"] == 1 and summary["published"] == 1 and summary["skipped_retired_lineage"] == 2
+    assert summary["due"] == 1 and summary["published"] == 1 and summary["skipped_retired_lineage"] == 3
     led = Ledger.load(cfg)
     assert led.posts["p_ok"].state is PostState.published           # the control still ships
-    for pid in ("p_clip", "p_mom"):                                 # refused, and ZERO mutation on the skip
+    for pid in ("p_clip", "p_mom", "p_gone"):                       # refused, and ZERO mutation on the skip
         assert led.posts[pid].state is PostState.queued and led.posts[pid].submission_started_at is None
