@@ -515,7 +515,13 @@ def status(cfg: Config, *, interval: int = 600) -> dict:
     # logs but never finishes a pass. Reuses the authoritative `stale` window (heartbeat_stale); invents
     # no new threshold and does NOT touch the alive/stale liveness decision.
     last_success_age_s = age
-    if age is None:
+    from fanops.pipeline_run import paused as _paused
+    # T1.3: a paused pump completes no passes BY DESIGN. Reporting that as "no successful pass in Ns"
+    # is a lie the operator would page on, so the brake answers FIRST. The liveness `verdict` chain below
+    # is untouched — a paused pump still logs run/paused every tick, so daemon_progress reads `alive`.
+    if _paused(cfg):
+        pass_verdict = "paused by operator"
+    elif age is None:
         pass_verdict = "no completed pass yet"
     elif stale:
         pass_verdict = f"no successful pass in {int(age)}s"
