@@ -19,6 +19,7 @@ from fanops.timeutil import parse_iso, iso_z
 from fanops.studio.views import _imminent
 from fanops.studio.actions_common import ActionResult, _now, _inherit_captions  # noqa: F401
 from fanops.audit import write_audit
+from fanops.log import get_logger
 from fanops.studio.actions_run import (run_ingest, run_pull, save_uploads, save_uploads_and_ingest, save_thirdparty_uploads, run_ingest_thirdparty, run_advance, run_prepare, upload_init, upload_chunk, upload_finalize, catalogue_inbox, bind_queue, release_batch, release_all_held)  # noqa: F401
 from fanops.studio.actions_approve import (approve_posts, reject_posts, unapprove_post, approve_with_hook, approve_clip, approve_batch, approve_account, approve_moment, approve_as_is, approve_with_edits, approve_stitches, dismiss_stitches, release_stitches)  # noqa: F401
 from fanops.studio.actions_casting import cast_add, cast_remove  # noqa: F401
@@ -921,6 +922,16 @@ _REVIEW_REVERT_BLOCKED = frozenset({
 })
 
 
+def _refuse_retired(cfg: Config, led: Ledger, p) -> bool:
+    """True when a re-arm must be REFUSED: suppressed lineage never moves forward. The five Studio re-arm
+    verbs all ask this one question of one row, so the Ledger's derived-disposition predicate owns it — this
+    is the SOLE caller here, never a hand-copied lineage walk. Refuse BEFORE the write (a re-armed retired
+    post used to be silently un-done by the per-tick sweep 600s later); every refusal is logged, never
+    swallowed. A BACKWARD move (recover_posts `discard`) is NOT gated — it re-arms nothing."""
+    if led.can_promote(p): return False
+    get_logger(cfg)("review", p.id, "skipped_retired_lineage", account=p.account); return True
+
+
 def resolve_post(cfg: Config, post_id: str, status: str, *, url: Optional[str] = None) -> ActionResult:
     """Studio twin of cmd_resolve — operator forces ground truth on stuck inflight posts."""
     from fanops.models import _POST_TERMINAL_REQUIRES_URL
@@ -1008,6 +1019,7 @@ def bulk_send_to_review(cfg: Config, post_ids: list[str], *, reason: str) -> Act
     ids = [str(i) for i in (post_ids or []) if i]
     moved: list[str] = []
     skipped: list[str] = []
+    skipped_retired: list[str] = []
     unknown: list[str] = []
     try:
         with Ledger.transaction(cfg) as led:
@@ -1017,6 +1029,8 @@ def bulk_send_to_review(cfg: Config, post_ids: list[str], *, reason: str) -> Act
                 p = led.posts[pid]
                 if p.state in _REVIEW_REVERT_BLOCKED:
                     skipped.append(pid); continue
+                if _refuse_retired(cfg, led, p):
+                    skipped_retired.append(pid); continue
                 p.state = PostState.awaiting_approval
                 p.scheduled_time = None
                 p.public_url = ""
@@ -1032,7 +1046,8 @@ def bulk_send_to_review(cfg: Config, post_ids: list[str], *, reason: str) -> Act
     if moved:
         write_audit(cfg, "bulk_send_to_review", moved, reason=reason,
                     unknown=unknown, moved=len(moved))
-    return ActionResult(ok=True, detail={"moved": len(moved), "skipped": len(skipped), "unknown": unknown,
+    return ActionResult(ok=True, detail={"moved": len(moved), "skipped": len(skipped),
+                                          "skipped_retired": len(skipped_retired), "unknown": unknown,
                                           "post_ids": moved})
 
 
@@ -1066,7 +1081,7 @@ def retry_rate_limited_failures(cfg: Config, *, reason: str = "studio_retry_rate
            if p.state in (PostState.failed, PostState.error) and classify_failure(p) == "rate_limit"]
     if not ids:
         return ActionResult(ok=True, detail={"retried": 0, "post_ids": []})
-    retried: list[str] = []
+    retried: list[str] = []; skipped_retired: list[str] = []
     now = _now(None)
     try:
         with Ledger.transaction(cfg) as led:
@@ -1074,6 +1089,8 @@ def retry_rate_limited_failures(cfg: Config, *, reason: str = "studio_retry_rate
                 p = led.posts.get(pid)
                 if p is None or p.state not in (PostState.failed, PostState.error):
                     continue
+                if _refuse_retired(cfg, led, p):
+                    skipped_retired.append(pid); continue
                 p.state = PostState.queued
                 p.submission_id = None
                 p.error_reason = None
@@ -1083,7 +1100,8 @@ def retry_rate_limited_failures(cfg: Config, *, reason: str = "studio_retry_rate
         return ActionResult(ok=False, error=f"retry_rate_limited failed: {str(exc)[:160]}")
     if retried:
         write_audit(cfg, "recover_posts", retried, reason=reason, recover_action="retry", retried=len(retried))
-    return ActionResult(ok=True, detail={"retried": len(retried), "post_ids": retried, "outcome": "retried_rate_limit", "stagger_min": stagger_min})
+    return ActionResult(ok=True, detail={"retried": len(retried), "skipped_retired": len(skipped_retired),
+                                          "post_ids": retried, "outcome": "retried_rate_limit", "stagger_min": stagger_min})
 
 
 
@@ -1095,7 +1113,7 @@ def retry_oversize_failures(cfg: Config, *, reason: str = "studio_retry_oversize
            if p.state in (PostState.failed, PostState.error) and classify_failure(p) == "oversize"]
     if not ids:
         return ActionResult(ok=True, detail={"retried": 0, "post_ids": [], "skipped": 0, "outcome": "retried_oversize"})
-    retried: list[str] = []; skipped: list[str] = []
+    retried: list[str] = []; skipped: list[str] = []; skipped_retired: list[str] = []
     now = _now(None)
     try:
         with Ledger.transaction(cfg) as led:
@@ -1103,6 +1121,8 @@ def retry_oversize_failures(cfg: Config, *, reason: str = "studio_retry_oversize
                 p = led.posts.get(pid)
                 if p is None or p.state not in (PostState.failed, PostState.error):
                     continue
+                if _refuse_retired(cfg, led, p):   # BEFORE the shrink: apply_shrink_to_post transcodes and rewrites media_urls + the render row, so guarding after it would commit a write on a REFUSED re-arm
+                    skipped_retired.append(pid); continue
                 if not apply_shrink_to_post(cfg, led, p):
                     skipped.append(pid); continue
                 p.state = PostState.queued
@@ -1115,7 +1135,8 @@ def retry_oversize_failures(cfg: Config, *, reason: str = "studio_retry_oversize
         return ActionResult(ok=False, error=f"retry_oversize failed: {str(exc)[:160]}")
     if retried:
         write_audit(cfg, "recover_posts", retried, reason=reason, recover_action="retry", retried=len(retried))
-    return ActionResult(ok=True, detail={"retried": len(retried), "skipped": len(skipped), "post_ids": retried,
+    return ActionResult(ok=True, detail={"retried": len(retried), "skipped": len(skipped),
+                                          "skipped_retired": len(skipped_retired), "post_ids": retried,
                                           "outcome": "retried_oversize", "stagger_min": stagger_min})
 
 
@@ -1126,7 +1147,7 @@ def retry_transient_failures(cfg: Config, *, reason: str = "studio_retry_transie
            if p.state in (PostState.failed, PostState.error) and is_transient_failure_reason(p.error_reason)]
     if not ids:
         return ActionResult(ok=True, detail={"retried": 0, "post_ids": []})
-    retried: list[str] = []
+    retried: list[str] = []; skipped_retired: list[str] = []
     now = _now(None)
     try:
         with Ledger.transaction(cfg) as led:
@@ -1136,6 +1157,8 @@ def retry_transient_failures(cfg: Config, *, reason: str = "studio_retry_transie
                     continue
                 if not is_transient_failure_reason(p.error_reason):
                     continue
+                if _refuse_retired(cfg, led, p):
+                    skipped_retired.append(pid); continue
                 p.state = PostState.queued
                 p.submission_id = None
                 p.error_reason = None
@@ -1145,7 +1168,8 @@ def retry_transient_failures(cfg: Config, *, reason: str = "studio_retry_transie
         return ActionResult(ok=False, error=f"retry_transient failed: {str(exc)[:160]}")
     if retried:
         write_audit(cfg, "recover_posts", retried, reason=reason, recover_action="retry", retried=len(retried))
-    return ActionResult(ok=True, detail={"retried": len(retried), "post_ids": retried, "outcome": "retried_transient",
+    return ActionResult(ok=True, detail={"retried": len(retried), "skipped_retired": len(skipped_retired),
+                                          "post_ids": retried, "outcome": "retried_transient",
                                           "stagger_min": stagger_min})
 
 
@@ -1159,7 +1183,8 @@ def recover_posts(cfg: Config, post_ids: list[str], *, action: str, reason: str 
     action = (action or "").strip().lower()
     if action == "review":
         return bulk_send_to_review(cfg, ids, reason=reason or "studio_recover_review")
-    retried: list[str] = []; discarded: list[str] = []; skipped: list[str] = []; unknown: list[str] = []
+    retried: list[str] = []; discarded: list[str] = []; skipped: list[str] = []
+    skipped_retired: list[str] = []; unknown: list[str] = []
     try:
         with Ledger.transaction(cfg) as led:
             for pid in ids:
@@ -1171,6 +1196,8 @@ def recover_posts(cfg: Config, post_ids: list[str], *, action: str, reason: str 
                 if action == "retry":
                     if classify_failure(p) not in _RETRYABLE_FAILURES:
                         skipped.append(pid); continue
+                    if _refuse_retired(cfg, led, p):   # BEFORE the oversize shrink below, which transcodes and rewrites media_urls + the render row — a refused re-arm must leave NO write behind
+                        skipped_retired.append(pid); continue
                     if classify_failure(p) == "oversize":
                         from fanops.post.compress import apply_shrink_to_post, upload_cap_bytes, publish_backend_for_post
                         backend = publish_backend_for_post(cfg, p)
@@ -1195,7 +1222,8 @@ def recover_posts(cfg: Config, post_ids: list[str], *, action: str, reason: str 
                     recover_action=action, retried=len(retried), discarded=len(discarded),
                     skipped=len(skipped), unknown=unknown)
     detail = {"retried": len(retried), "discarded": len(discarded), "reviewed": 0,
-              "skipped": len(skipped), "unknown": unknown, "post_ids": retried or discarded}
+              "skipped": len(skipped), "skipped_retired": len(skipped_retired),
+              "unknown": unknown, "post_ids": retried or discarded}
     return ActionResult(ok=True, detail=detail)
 
 
