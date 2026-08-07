@@ -796,6 +796,35 @@ class Ledger:
         s = self.sources.get(source_id)
         return bool(s and s.state is SourceState.retired)
 
+    # ---- derived disposition: the SINGLE owner of "is this lineage still live?" ----
+    def is_suppressed(self, entity) -> bool:
+        """Is this row's lineage DEAD? Walks post -> clip -> moment over the already-loaded id-keyed maps
+        (two dict gets, O(1)). Fails CLOSED: a MISSING ancestor row is suppressed, NEVER live — the fail-open
+        in is_retired_clip/is_retired_moment is exactly what let a stranded post read as live work. Only
+        `retired` suppresses; `rejected`/`failed` are workflow states this predicate does not read. The walk
+        STOPS at the moment: source retirement already cascades to moments via retire_source. Derived on every
+        read, NEVER stored — no caller writes a label from this answer."""
+        if isinstance(entity, Moment): return entity.state is MomentState.retired
+        if isinstance(entity, Clip):
+            if entity.state is ClipState.retired: return True
+            m = self.moments.get(entity.parent_id)
+            return True if m is None else self.is_suppressed(m)
+        if isinstance(entity, Post):
+            if entity.state is PostState.retired: return True
+            c = self.clips.get(entity.parent_id)
+            return True if c is None else self.is_suppressed(c)
+        raise TypeError(f"is_suppressed: unsupported entity {type(entity).__name__}")
+
+    def can_seed(self, clip) -> bool:
+        """May this clip mint NEW posts / renders? A brand-risk HOLD is not seedable, nor is suppressed lineage."""
+        return not clip.held and not self.is_suppressed(clip)
+
+    def can_promote(self, post) -> bool:
+        """May this post move FORWARD — approve -> queued, re-arm -> queued/awaiting_approval, or ship to a
+        platform? ONE rule for all three (they ask the same question of the same row). A BACKWARD move
+        (reject / discard / retire) is never gated by this."""
+        return not self.is_suppressed(post)
+
     def rebuild_catalog(self, cfg: Config) -> None:
         # Reconcile the on-disk sources dir against the ledger: an orphaned source file (a src_*.<ext>
         # with no ledger row) is surfaced as a `discovered` source — INERT to clip-production until an
