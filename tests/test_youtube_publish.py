@@ -42,7 +42,7 @@ def test_postiz_backend_admits_youtube():
 # ---- (2) payload: youtube settings carry title/type/tags, NO post_type ----
 def test_youtube_payload_settings_shape():
     p = build_postiz_payload(integration_id="yt_intg", platform="youtube", content="desc",
-                             media_urls=["m1|http://x/m.mp4"], scheduled_time=None,
+                             media_urls=["m1|http://x/m.mp4"], scheduled_time=None, post_type="post",
                              title="they slept on me", hashtags=["#alt", "wave", "#alt"])
     s = p["posts"][0]["settings"]
     assert s["__type"] == "youtube"
@@ -56,14 +56,23 @@ def test_youtube_payload_settings_shape():
 def test_youtube_title_clamped_to_100():
     long = "x" * 250
     p = build_postiz_payload(integration_id="yt_intg", platform="youtube", content="d",
-                             media_urls=[], scheduled_time=None, title=long, hashtags=None)
+                             media_urls=[], scheduled_time=None, post_type="post", title=long, hashtags=None)
     assert len(p["posts"][0]["settings"]["title"]) == 100
+
+def test_youtube_branch_ignores_post_type_entirely():
+    # MOL-786: YoutubeSettingsDto has no post_type, so the YouTube branch neither renders NOR validates the
+    # token — a token the IG branch would reject still builds a valid YouTube payload.
+    p = build_postiz_payload(integration_id="yt_intg", platform="youtube", content="d",
+                             media_urls=["m1|http://x/m.mp4"], scheduled_time=None, post_type="weird",
+                             title="hook line", hashtags=None)
+    s = p["posts"][0]["settings"]
+    assert s == {"__type": "youtube", "title": "hook line", "type": "public", "selfDeclaredMadeForKids": "no"}
 
 # ---- (3) firewall: non-youtube payload byte-identical (stub settings, no title leak) ----
 def test_instagram_payload_byte_identical():
     p = build_postiz_payload(integration_id="ig1", platform="instagram", content="c",
                              media_urls=["m1|http://x/m.mp4"], scheduled_time="2026-06-02T18:00:00Z",
-                             title="should be ignored", hashtags=["#x"])
+                             post_type="post", title="should be ignored", hashtags=["#x"])
     assert p["posts"][0]["settings"] == {"__type": "instagram", "post_type": "post"}
 
 
@@ -110,7 +119,7 @@ def test_publish_youtube_title_floor_when_artist_too_short(tmp_path, monkeypatch
 def test_youtube_payload_floors_empty_title():
     # a direct caller passing no title for youtube still gets a VALID (>=2) title, never {"title": ""}
     p = build_postiz_payload(integration_id="yt", platform="youtube", content="d",
-                             media_urls=[], scheduled_time=None, title=None, hashtags=None)
+                             media_urls=[], scheduled_time=None, post_type="post", title=None, hashtags=None)
     assert len(p["posts"][0]["settings"]["title"]) >= 2
 
 def test_publish_instagram_still_stub(tmp_path, monkeypatch, mocker):

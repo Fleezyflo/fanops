@@ -527,23 +527,23 @@
     "fanops.post.postiz": [
       {
         "call": "requests.put",
-        "line": 152
+        "line": 185
       },
       {
         "call": "requests.post",
-        "line": 182
+        "line": 215
       },
       {
         "call": "requests.post",
-        "line": 242
+        "line": 284
       },
       {
         "call": "requests.get",
-        "line": 266
+        "line": 308
       },
       {
         "call": "requests.post",
-        "line": 392
+        "line": 440
       }
     ],
     "fanops.post.zernio": [

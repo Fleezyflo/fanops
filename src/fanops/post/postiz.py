@@ -34,6 +34,8 @@ _MAX_RETRIES = 4
 _PUBLISH_TRANSIENT_MAX = _MAX_RETRIES   # MOL-115: connection/timeout retries before parking needs_reconcile
 _PUBLIC = "/public/v1"
 _YOUTUBE_TITLE_FLOOR = "New clip"   # YouTube REQUIRES a 2-100 char title; last-resort so no caller ever emits an invalid one
+_POSTIZ_POST_TYPES = ("post", "story")   # the only tokens the vendor's non-YouTube settings DTO accepts (@IsDefined post_type)
+_REELS_MEDIA_EXT = ".mp4"                # the extension the vendor's single-media REELS branch keys on (see _is_video_media)
 
 
 class PostizIntegration(NamedTuple):
@@ -97,6 +99,37 @@ def _postiz_image(u: str) -> dict:
     if "|" in u:
         mid, mpath = u.split("|", 1); return {"id": mid, "path": mpath}
     return {"path": u} if u.startswith("http") else {"id": u}
+
+
+def _is_video_media(u: str) -> bool:
+    # Read the extension off the SAME `path` Postiz itself validates (_postiz_image splits the uploader's
+    # "id|path"). An id-only legacy entry carries no path -> unprovable -> not a video, by design: the
+    # single-video invariant below must be PROVEN, never assumed.
+    path = _postiz_image(u).get("path") or ""
+    return urlparse(path).path.lower().endswith(_REELS_MEDIA_EXT)
+
+
+def _validate_ledger_media(post, post_type: str, media_urls: list[str]) -> None:
+    """Pre-network refusal for a LEDGER post, at the publish boundary. The row-less cutover probe is
+    exempt (it builds a deliberate text-only "post" through the builder), so this is the one place where
+    every empty-media payload is a defect. Two rules, both raising ValueError BEFORE any POST:
+
+    1. A ledger post always carries media — an empty set is a defect whatever the declared token.
+    2. Single-video invariant: an Instagram post declared "post" MUST carry exactly one .mp4. Postiz maps
+       post_type 'post' to media_type=REELS only for a single .mp4 (instagram.provider.js); >1 media ->
+       VIDEO, an image -> FEED. This is what makes the insights boundary's post->REELS correspondence
+       TRUE rather than lucky — the derived metric set would otherwise ask a FEED media for a reels-only
+       metric (which Meta 400s). Do not relax it without a vendor citation.
+
+    `_publish_one` contains the raise per-post (`failed` + a redacted `error_reason`), so this is loud and
+    operator-recoverable, never a crash of the pass. The wording deliberately avoids
+    `is_transient_failure_reason`'s transient substrings so a validation defect classifies PERMANENT."""
+    if not media_urls:
+        raise ValueError(f"{post.platform.value} post {post.id} reached publish with no media — refusing to submit an empty post")
+    if post.platform is Platform.instagram and post_type == "post" and not (
+            len(media_urls) == 1 and _is_video_media(media_urls[0])):
+        raise ValueError(f"instagram post {post.id} declares post_type 'post' but its media set is not a single video — "
+                         f"Postiz maps post_type 'post' to REELS only for exactly one .mp4")
 
 
 def rewrite_media_base(url: str, cfg: Config) -> str:
@@ -206,7 +239,7 @@ def _youtube_tags(hashtags) -> list[dict]:
     return out
 
 def build_postiz_payload(*, integration_id: str, platform: str, content: str,
-                         media_urls: list[str], scheduled_time: str | None,
+                         media_urls: list[str], scheduled_time: str | None, post_type: str,
                          title: str | None = None, hashtags: list[str] | None = None) -> dict:
     # image[] references media ALREADY uploaded to Postiz — this version requires BOTH the upload's
     # `id` AND its public `path`. postiz_upload_media returns them joined "id|path"; _postiz_image splits
@@ -215,6 +248,11 @@ def build_postiz_payload(*, integration_id: str, platform: str, content: str,
     # post_type ("post"/"story"); YOUTUBE is the exception — YoutubeSettingsDto has NO post_type and
     # REQUIRES title (2-100) + type (privacy). The post content becomes the video DESCRIPTION; the title
     # is the per-account hook (the caller passes it, clamped to 100 here); hashtags map to tags.
+    # `post_type` is REQUIRED and RENDERED (never hardcoded): it mirrors the vendor DTO's @IsDefined
+    # post_type, so the caller declares the product and this builder never guesses one. Validated here,
+    # BEFORE any network. Empty media is NOT rejected for "post": the cutover probe (cutover_postiz.py)
+    # deliberately builds a row-less text-only "post". A LEDGER post's empty-media refusal lives at the
+    # publish boundary (_validate_ledger_media), where it is unconditionally a defect.
     images = [_postiz_image(u) for u in (media_urls or []) if u]
     if platform == "youtube":
         yt_title = (title or "").strip()[:100]
@@ -224,7 +262,11 @@ def build_postiz_payload(*, integration_id: str, platform: str, content: str,
         tags = _youtube_tags(hashtags)
         if tags: settings["tags"] = tags
     else:
-        settings = {"__type": platform, "post_type": "post"}
+        if post_type not in _POSTIZ_POST_TYPES:
+            raise ValueError(f"invalid declared post_type {post_type!r} for {platform}: expected post|story")
+        if post_type == "story" and not images:
+            raise ValueError(f"declared post_type 'story' for {platform} carries no media — a story must carry media")
+        settings = {"__type": platform, "post_type": post_type}
     return {"type": "schedule", "date": scheduled_time, "shortLink": False, "tags": [],
             "posts": [{"integration": {"id": integration_id},
                        "value": [{"content": content, "image": images}],
@@ -382,9 +424,15 @@ class PostizPoster:
         from fanops.timeutil import iso_z
         sched = post.scheduled_time or iso_z(datetime.now(timezone.utc))
         media_urls = [rewrite_media_base(u, self.cfg) for u in (post.media_urls or [])]
+        # The payload's post_type is RENDERED from the post's own declaration. `or "post"` is TRANSITIONAL:
+        # legacy rows predate the declaration (product_type None) and every one of them published as "post",
+        # so the fallback reproduces today's payload byte-for-byte instead of stranding the queue. Tighten
+        # it to fail-loud once MOL-774's closure has landed and MOL-775 reviews the legacy population.
+        declared = post.product_type or "post"
+        _validate_ledger_media(post, declared, media_urls)
         payload = build_postiz_payload(integration_id=post.account_id, platform=post.platform.value,
                                        content=post.caption, media_urls=media_urls,
-                                       scheduled_time=sched,
+                                       scheduled_time=sched, post_type=declared,
                                        title=title, hashtags=post.hashtags)
         delay, last = 1.0, None
         for attempt in range(_MAX_RETRIES):
