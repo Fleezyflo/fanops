@@ -10,11 +10,15 @@ from dotenv import load_dotenv
 from pydantic import Field, ValidationError, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# The boolean-word vocabulary is declared ONCE, in config.py, and imported here — this module used to
+# keep its own `_ON`/`_OFF` copy, so the declaration boundary and the runtime read path could disagree
+# about what "on" means without either side being wrong on its own terms. The dependency runs THIS way
+# because config.py is stdlib-only (30 ms to import) while this module pulls pydantic (a further
+# 143 ms); the ~50 modules that import config must not pay that for a four-word frozenset.
+from fanops.config import bool_word, env_bool
+
 _log = logging.getLogger("fanops.settings")
 
-_ON = frozenset({"1", "true", "yes", "on"})
-_OFF = frozenset({"0", "false", "no", "off"})
-_VALID_BOOL = _ON | _OFF
 _VALID_BACKENDS = frozenset({"dryrun", "postiz", "zernio"})
 _VALID_RESPONDERS = frozenset({"llm", "manual"})
 _VALID_LLM_TRANSPORTS = frozenset({"claude", "cursor"})
@@ -43,18 +47,11 @@ def _strip_opt(v: object) -> str | None:
     return s or None
 
 
-def _env_on(v: object, *, default: bool) -> bool:
-    if v is None: return default
-    s = str(v).strip().lower()
-    if not s: return default
-    return s in _ON
-
-
 def _validate_bool_word(v: object) -> str:
     if v is None: return ""
     s = str(v).strip()
     if not s: return ""
-    if s.lower() not in _VALID_BOOL:
+    if bool_word(s) is None:
         raise ValueError(f"unrecognized bool value {s!r}; valid: 1/0, true/false, yes/no, on/off")
     return s
 
@@ -113,7 +110,7 @@ def _strict_validate_bool_word(v: object) -> str:
     if v is None: return ""
     s = str(v).strip()
     if not s: return ""
-    if s.lower() not in _VALID_BOOL:
+    if bool_word(s) is None:
         raise ValueError(f"unrecognized bool value {s!r}; valid: 1/0, true/false, yes/no, on/off")
     return s
 
@@ -393,7 +390,11 @@ class Settings(BaseSettings):
         return v
 
     def opt_on(self, raw: str, *, default: bool) -> bool:
-        return _env_on(raw, default=default)
+        # Delegates to the shared parser. The local copy this replaced read an UNRECOGNIZED word as
+        # `raw in _ON` — i.e. False even when `default` was True — so `opt_on(x, default=True)`
+        # silently contradicted its own default for a typo. The shared rule falls back to `default`
+        # for every unrecognized word, which is what every Config boolean property already does.
+        return env_bool(raw, default=default)
 
     @classmethod
     def runtime_load(cls, root: Path) -> tuple[Settings, dict[str, str | None]]:
