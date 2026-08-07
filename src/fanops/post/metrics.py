@@ -162,10 +162,10 @@ class PostizStatusClient:
         WINDOW CONTRACT (verified live 2026-08-07): startDate/endDate are MANDATORY, not a curation
         knob — omitting them returns HTTP 400 "startDate must be a valid ISO 8601 date string" — and
         date-only ISO (YYYY-MM-DD) is the accepted form. The endpoint does NOT paginate: `page`,
-        `limit` and `take` are ignored (the response is byte-identical with and without them) and the
-        body carries no envelope key (`{"posts":[...]}` only — no page/total/nextCursor), and the
-        full-window row count matches the instance's non-deleted post count. So ONE call returns every
-        row in the window and a row's ABSENCE is a sound observation, never a missing page.
+        `limit` and `take` are all IGNORED (the response is byte-identical with and without them) and
+        the body carries no envelope key whatsoever (`{"posts":[...]}` only — no page/total/nextCursor),
+        so there is no page mechanism to be on the wrong side of. ONE call therefore returns every row
+        in the window, and a row's ABSENCE is a sound observation rather than a missing page.
 
         Returns the window indexed by row id: {state (the RAW Postiz token, which the mirror persists),
         status (the backend-agnostic vocabulary via _POSTIZ_STATE_MAP), releaseURL, releaseId, raw}.
