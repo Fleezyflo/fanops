@@ -432,3 +432,69 @@ def test_approve_posts_large_batch_requires_confirm(tmp_path):
     assert not res.ok and "approved" in (res.error or "").lower()
     res2 = actions.approve_posts(cfg, ids, confirmed=True)
     assert res2.ok and res2.detail["approved"] == len(ids)
+
+
+# ---- MOL-797: the platform-cap drop in bulk approve is COUNTED and SHOWN, never silent ----
+# _approve_ids_with_render refuses a post whose realized cut exceeds PLATFORM_MAX_SECONDS. The refusal is
+# right — the platform would reject the upload — but it used to `continue` with no counter and no detail
+# key, so ticking N came back "Approved N-1" with nothing accounting for the missing one. These lock the
+# REPORTING; the cap's value, its policy and when it fires are deliberately untouched.
+_OVER_IG_CAP_S = 120.0                 # Instagram's cap is 90s (models.PLATFORM_MAX_SECONDS)
+_CAP_COPY = "longer than the platform allows"
+
+def _seed_cap_lineage(cfg):
+    """clip_fits: no cut_seconds -> the 7s moment envelope, under every cap. clip_long: a realized 120s cut."""
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="src_1", source_path="/v/s.mp4", language="en"))
+        led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
+                              reason="r", state=MomentState.clipped))
+        led.add_clip(Clip(id="clip_fits", parent_id="mom_1", path="/c/clip_fits.mp4", aspect=Fmt.r9x16,
+                          state=ClipState.queued))
+        led.add_clip(Clip(id="clip_long", parent_id="mom_1", path="/c/clip_long.mp4", aspect=Fmt.r9x16,
+                          state=ClipState.queued, cut_seconds=_OVER_IG_CAP_S))
+
+def test_approve_counts_the_post_the_platform_cap_dropped(tmp_path):
+    cfg = Config(root=tmp_path); _seed_two_accounts(cfg); _seed_cap_lineage(cfg)
+    with Ledger.transaction(cfg) as led:
+        _awaiting(led, "p_fits", clip="clip_fits", acct="a", aid="1")
+        _awaiting(led, "p_long", clip="clip_long", acct="a", aid="1")
+    r = actions.approve_posts(cfg, ["p_fits", "p_long"], now=_NOW)
+    assert r.ok and r.detail["approved"] == 1 and r.detail["cut_over_cap"] == 1
+    led = Ledger.load(cfg)
+    assert led.posts["p_fits"].state is PostState.queued
+    assert led.posts["p_long"].state is PostState.awaiting_approval   # the cap's BEHAVIOUR is unchanged
+
+def test_approve_reports_zero_dropped_when_nothing_is_over_cap(tmp_path):
+    # negative control: the counter must not fire on an ordinary approve, or the banner cries wolf forever.
+    cfg = Config(root=tmp_path); _seed_two_accounts(cfg); _seed_cap_lineage(cfg)
+    with Ledger.transaction(cfg) as led:
+        _awaiting(led, "p_fits", clip="clip_fits", acct="a", aid="1")
+    r = actions.approve_posts(cfg, ["p_fits"], now=_NOW)
+    assert r.ok and r.detail["approved"] == 1 and r.detail["cut_over_cap"] == 0
+
+def test_approve_route_tells_the_operator_the_cap_dropped_one(tmp_path):
+    cfg = Config(root=tmp_path); _seed_two_accounts(cfg); _seed_cap_lineage(cfg)
+    with Ledger.transaction(cfg) as led:
+        _awaiting(led, "p_fits", clip="clip_fits", acct="a", aid="1")
+        _awaiting(led, "p_long", clip="clip_long", acct="a", aid="1")
+    html = _client(cfg).post("/posts/approve", data={"ids": ["p_fits", "p_long"]}).data.decode()
+    assert "Approved 1" in html and "1 skipped" in html and _CAP_COPY in html
+
+def test_approve_route_still_reports_a_drop_that_took_the_whole_tick(tmp_path):
+    """The branch that would otherwise stay silent: `approved_scheduled` is only set when >=1 post promoted,
+    so an all-dropped tick falls to the plain `approved is defined` copy — which read 'Approved 0 — on
+    schedule.' and named nothing at all."""
+    cfg = Config(root=tmp_path); _seed_two_accounts(cfg); _seed_cap_lineage(cfg)
+    with Ledger.transaction(cfg) as led:
+        _awaiting(led, "p_long", clip="clip_long", acct="a", aid="1")
+    html = _client(cfg).post("/posts/approve", data={"ids": ["p_long"]}).data.decode()
+    assert "1 skipped" in html and _CAP_COPY in html
+
+def test_approve_route_says_nothing_about_a_cap_when_nothing_was_dropped(tmp_path):
+    # the negative control at the SURFACE: a clean approve renders no skip clause (a clause that always
+    # renders proves nothing about the one that matters).
+    cfg = Config(root=tmp_path); _seed_two_accounts(cfg); _seed_cap_lineage(cfg)
+    with Ledger.transaction(cfg) as led:
+        _awaiting(led, "p_fits", clip="clip_fits", acct="a", aid="1")
+    html = _client(cfg).post("/posts/approve", data={"ids": ["p_fits"]}).data.decode()
+    assert "Approved 1" in html and _CAP_COPY not in html
