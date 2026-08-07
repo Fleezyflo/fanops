@@ -2,8 +2,11 @@
 # content-lifecycle Phase 1 (wipe-safety): gc refuses keep_days < 1. keep_days=0 sets cutoff=now and
 # sweeps EVERY retired/analyzed .mp4 regardless of age — a one-keystroke wipe of reusable renders
 # (cross-account reuse may still need them). Negative is nonsense. Clean exit 2, no deletion.
+import pytest
+
 from fanops.config import Config
 from fanops.cli import cmd_gc
+from fanops.ledger import Ledger
 
 def test_gc_rejects_zero_keep_days(tmp_path):
     assert cmd_gc(Config(root=tmp_path), 0) == 2
@@ -44,3 +47,79 @@ def test_gc_cleans_scheduled_payloads(tmp_path):
     assert cmd_gc(cfg, 30) == 0
     assert not old.exists() and new.exists()                          # old removed, recent kept
     assert keeper.exists()                                            # published archive untouched
+
+
+# ---- T3.9: the clip sweep reclaims by DERIVED disposition, with the live-post pin carried in ----
+# gc used to key on the STORED clip label. With the write-time copy-down gone, a clip under a retired
+# moment reads `queued` forever, so its file would be permanently unreclaimable — hence Ledger.is_suppressed.
+# The pin (a live post OWNS its clip's file) used to come indirectly from the per-tick clip sweep, which
+# only relabelled a clip `retired` when no _LIVE_POST_STATES post hung off it; it is explicit here now.
+def _gc_fixture(tmp_path, *, clip_state, moment_state, post_state=None, days_old=60):
+    """One suppressed-or-live lineage with one on-disk clip file older than the cutoff. Returns (cfg, file)."""
+    import os, time
+    from fanops.models import Clip, Moment, Platform, Post
+    cfg = Config(root=tmp_path)
+    f = cfg.clips / f"{clip_state.value}-{moment_state.value}.mp4"
+    f.parent.mkdir(parents=True, exist_ok=True); f.write_bytes(b"X")
+    stamp = time.time() - days_old * 86400; os.utime(f, (stamp, stamp))
+    led = Ledger.load(cfg)
+    led.add_moment(Moment(id="m1", parent_id="s1", state=moment_state, start=0.0, end=8.0, reason="r"))
+    led.add_clip(Clip(id="c1", parent_id="m1", path=str(f), state=clip_state))
+    if post_state is not None:
+        # `published`/`analyzed` are terminal-success states the model gates on a real permalink (R1).
+        led.add_post(Post(id="p1", parent_id="c1", account="a", account_id="1", platform=Platform.instagram,
+                          caption="c", state=post_state, public_url="https://example.test/p/1"))
+    led.save()
+    return cfg, f
+
+def test_gc_reclaims_a_clip_suppressed_only_by_its_moment(tmp_path):
+    # The case that becomes UNREACHABLE without the swap: the clip's own label never says `retired`.
+    from fanops.models import ClipState, MomentState
+    cfg, f = _gc_fixture(tmp_path, clip_state=ClipState.queued, moment_state=MomentState.retired)
+    assert cmd_gc(cfg, 30) == 0
+    assert not f.exists()
+
+@pytest.mark.parametrize("live", Ledger._LIVE_POST_STATES)
+def test_gc_never_touches_a_clip_a_live_post_points_at(tmp_path, live):
+    # Parametrised over the tuple ITSELF — self-adjusting if _LIVE_POST_STATES ever changes.
+    from fanops.models import ClipState, MomentState
+    cfg, f = _gc_fixture(tmp_path, clip_state=ClipState.queued, moment_state=MomentState.retired, post_state=live)
+    assert cmd_gc(cfg, 30) == 0
+    assert f.exists()
+
+def test_gc_pin_is_scoped_to_live_states_not_to_any_post(tmp_path):
+    # Negative control for the pin: a post that is NOT in _LIVE_POST_STATES must not protect the file.
+    from fanops.models import ClipState, MomentState, PostState
+    cfg, f = _gc_fixture(tmp_path, clip_state=ClipState.queued, moment_state=MomentState.retired,
+                         post_state=PostState.rejected)
+    assert cmd_gc(cfg, 30) == 0
+    assert not f.exists()
+
+def test_gc_still_reclaims_analyzed_clips(tmp_path):
+    # Unchanged arm: an `analyzed` clip is swept on its own label, live moment and all.
+    from fanops.models import ClipState, MomentState
+    cfg, f = _gc_fixture(tmp_path, clip_state=ClipState.analyzed, moment_state=MomentState.clipped)
+    assert cmd_gc(cfg, 30) == 0
+    assert not f.exists()
+
+def test_gc_still_reclaims_a_retired_clip_with_no_live_post(tmp_path):
+    from fanops.models import ClipState, MomentState
+    cfg, f = _gc_fixture(tmp_path, clip_state=ClipState.retired, moment_state=MomentState.clipped)
+    assert cmd_gc(cfg, 30) == 0
+    assert not f.exists()
+
+def test_gc_keeps_a_retired_clip_whose_post_is_still_live(tmp_path):
+    # DISCLOSED NARROWING (this ticket, not parity): today a stored-`retired` clip's file is swept
+    # regardless of its posts, and adjust.retire() produces exactly this shape — a measured loser's clip
+    # retired while its post sits `analyzed`. The file is now kept until the post leaves the live states.
+    from fanops.models import ClipState, MomentState, PostState
+    cfg, f = _gc_fixture(tmp_path, clip_state=ClipState.retired, moment_state=MomentState.clipped,
+                         post_state=PostState.analyzed)
+    assert cmd_gc(cfg, 30) == 0
+    assert f.exists()
+
+def test_gc_leaves_a_live_lineage_alone(tmp_path):
+    from fanops.models import ClipState, MomentState
+    cfg, f = _gc_fixture(tmp_path, clip_state=ClipState.queued, moment_state=MomentState.clipped)
+    assert cmd_gc(cfg, 30) == 0
+    assert f.exists()
