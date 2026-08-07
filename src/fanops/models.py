@@ -420,6 +420,20 @@ class Post(BaseModel):
                                         # only), so its stamp keeps pointing at its true attempt. None on old
                                         # ledgers and on every post that was never claimed.
     edited_at: Optional[str] = None  # ISO-8601 UTC; set on operator caption/hook edits
+    postiz_state: Optional[str] = None  # MOL-784: the per-post mirror of the backend row's RAW `state` string, kept
+                                    # VERBATIM in Postiz's own vocabulary as LAST OBSERVED — "PUBLISHED", "QUEUE",
+                                    # "ERROR", whatever the row carries — deliberately never re-mapped onto
+                                    # PostState (a mirror that translates is a second, disagreeing source of
+                                    # truth). Deliberately NOT parked in `error_reason`: that field is
+                                    # substring-scanned by three separate parsers and must carry no new prose.
+                                    # The sentinel "absent" means the mirrored window held NO row for this post's
+                                    # submission_id. None means never mirrored: old ledgers, non-Postiz posts,
+                                    # and every row written before this field existed (back-compat: an old
+                                    # ledger row lacking the key loads as None). OBSERVABILITY ONLY — a reader
+                                    # may surface the last-seen value and nothing else. No reader may derive a
+                                    # state TRANSITION from it: each pass overwrites the previous value, so the
+                                    # field is a snapshot of one window, never an ordered history, and
+                                    # "QUEUE, therefore it was PUBLISHED later" is not a fact it can prove.
 
     @field_validator("account", mode="before")
     @classmethod
