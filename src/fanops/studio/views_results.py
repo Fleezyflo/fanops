@@ -629,11 +629,23 @@ def classify_failure(post) -> str:
     return "unknown"
 
 
-def failure_rollup(led: Ledger) -> dict:
-    """Read-only counts of failed/error posts by classify_failure bucket."""
+def failure_rollup(led: Ledger, *, account: Optional[str] = None, batch: Optional[str] = None,
+                   source: Optional[str] = None) -> dict:
+    """Read-only counts of failed/error posts by classify_failure bucket.
+
+    T2.7: the scope kwargs mirror `posted_library`'s account/batch/source filters EXACTLY (same fields, same
+    comparisons) so the Posted page's failure chips count the SAME rows the library beside them lists — the
+    rollup was whole-ledger next to a filtered list, an unlabelled global posing as the page's total. All three
+    default None -> whole-ledger, so a kwarg-less call is byte-identical (home status, delivery_audit)."""
     buckets = {k: 0 for k in _FAILURE_KINDS}
     for p in led.posts.values():
         if p.state not in (PostState.failed, PostState.error):
+            continue
+        if account is not None and p.account != account:
+            continue
+        if batch is not None and p.batch_id != batch:
+            continue
+        if source is not None and clip_source_of(led, p.parent_id) != source:
             continue
         buckets[classify_failure(p)] += 1
     return {"total": sum(buckets.values()), "buckets": buckets}
