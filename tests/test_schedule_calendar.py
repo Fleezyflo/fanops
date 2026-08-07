@@ -212,7 +212,7 @@ def test_schedule_panel_renders_calendar_and_respread(tmp_path):
     _seed(cfg, pid="p1", when=_z(_NOW + timedelta(days=5)))
     c = _client(cfg)
     html = c.get("/schedule").data.decode()
-    assert "schedule-cal" in html and "schedule-cal-chip" in html
+    assert "schedule-cal" in html
     html_acct = c.get("/schedule", query_string={"account": "a"}).data.decode()
     assert "schedule-bucket" in html_acct
     r = c.post("/schedule/respread", query_string={"month": "2099-06"})

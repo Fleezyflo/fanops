@@ -155,7 +155,7 @@
         "swallow": "*** NOT IN THE BASELINE -> 0 allowed. ANY new silent broad `except` here FAILS CI IMMEDIATELY (`new_files != []`). ***"
       },
       "exists": true,
-      "function_count": 71,
+      "function_count": 74,
       "is_partitioned": false,
       "missing": false,
       "owners": [
