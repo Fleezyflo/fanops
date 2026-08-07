@@ -167,6 +167,52 @@ def test_approve_posts_writes_audit_entry(tmp_path, monkeypatch):
         f"batch entry missing one or both post ids: {ap[0]['post_ids']}")
 
 
+def test_reject_posts_writes_audit_entry(tmp_path, monkeypatch):
+    """MOL-799: a batch reject is a state-changing action and MUST leave the same
+    breadcrumb its approve sibling does — ONE entry naming every post discarded.
+    With no entry, "the operator never rejected anything" and "every rejection was
+    silently re-minted" are indistinguishable from the stored state."""
+    monkeypatch.setenv("FANOPS_POSTER", "dryrun")
+    cfg = Config(root=tmp_path)
+    _seed_queued_post(cfg, "p1", state=PostState.awaiting_approval)
+    _seed_queued_post(cfg, "p2", state=PostState.awaiting_approval, public_url="dryrun://p2")
+    from fanops.studio.actions_approve import reject_posts
+    res = reject_posts(cfg, ["p1", "p2"])
+    assert res.ok, f"reject failed: {res}"
+    entries = [json.loads(line) for line in
+               (cfg.control / "studio_audit.log").read_text().splitlines()]
+    rj = [e for e in entries if e["action"] == "reject"]
+    assert len(rj) == 1, f"expected ONE batched reject entry, got {len(rj)}: {rj}"
+    assert sorted(rj[0]["post_ids"]) == ["p1", "p2"], (
+        f"batch entry missing one or both post ids: {rj[0]['post_ids']}")
+    assert rj[0]["reason"] == "studio_reject_batch"
+    assert rj[0].get("rejected") == 2
+
+
+def test_reject_posts_audits_only_what_it_discarded(tmp_path, monkeypatch):
+    """MOL-799 firewall: Ledger.reject_post no-ops on a post that is not
+    awaiting_approval, so a queued or unknown id in the selection must NOT appear in
+    the audit — an entry naming a post that never moved restores exactly the
+    unmeasurability the entry exists to remove. Nothing eligible -> no line at all."""
+    monkeypatch.setenv("FANOPS_POSTER", "dryrun")
+    cfg = Config(root=tmp_path)
+    _seed_queued_post(cfg, "p1", state=PostState.awaiting_approval)
+    _seed_queued_post(cfg, "p2", state=PostState.queued, public_url="dryrun://p2")
+    from fanops.studio.actions_approve import reject_posts
+    assert reject_posts(cfg, ["p1", "p2", "nope"]).ok
+    entries = [json.loads(line) for line in
+               (cfg.control / "studio_audit.log").read_text().splitlines()]
+    rj = [e for e in entries if e["action"] == "reject"]
+    assert len(rj) == 1 and rj[0]["post_ids"] == ["p1"], (
+        f"audit named a post it did not discard: {rj}")
+    assert Ledger.load(cfg).posts["p2"].state is PostState.queued
+    assert reject_posts(cfg, ["p2", "nope"]).ok
+    after = [json.loads(line) for line in
+             (cfg.control / "studio_audit.log").read_text().splitlines()]
+    assert len([e for e in after if e["action"] == "reject"]) == 1, (
+        f"a reject that discarded nothing still wrote an entry: {after}")
+
+
 def test_reschedule_bucket_writes_audit_entry(tmp_path, monkeypatch):
     """R3/D17: a respread is a state-changing action — the schedule MOVED on N
     posts. The audit names WHICH posts moved + the cadence trigger."""
