@@ -12,7 +12,7 @@ import json
 import pytest
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.models import Post, Platform, PostState
+from fanops.models import Post, Platform, PostState, Clip, ClipState, Moment, MomentState
 from fanops.accounts import Accounts
 from fanops.post.run import publish_due, publish_post
 
@@ -34,7 +34,17 @@ def _accounts(tmp_path, backend, platform="instagram"):
 
 
 def _queued(cfg, platform=Platform.instagram):
+    # The post's lineage (moment "m" -> clip "c") is MATERIALIZED. It never was: this fixture built a post
+    # whose parent clip row did not exist — a shape production cannot produce, since _delete_moment_cascade
+    # refuses to drop a clip while a protected post hangs off it. It passed only because the publish guard's
+    # hand-copied predicate failed OPEN on a missing ancestor. publish_due now asks Ledger.can_promote, which
+    # fails CLOSED, so an orphan post is (correctly) never promotable and the RC-3b parity below could never
+    # observe a producer claim. The invariant under test is BACKEND CAPABILITY, not lineage, so the fixture
+    # must supply a live lineage and let the backend state be the only variable.
     with Ledger.transaction(cfg) as led:
+        led.add_moment(Moment(id="m", parent_id="src_1", start=0.0, end=5.0, reason="worth posting",
+                              state=MomentState.clipped))
+        led.add_clip(Clip(id="c", parent_id="m", path="/c.mp4", state=ClipState.queued))
         led.add_post(Post(id="p1", parent_id="c", account="h", account_id="h1", platform=platform,
                           caption="c", state=PostState.queued, media_urls=["https://x/v.mp4"],
                           scheduled_time="2000-01-01T00:00:00Z", public_url="dryrun://c"))

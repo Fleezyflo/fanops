@@ -6,9 +6,21 @@ import json
 import pytest
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.models import Post, Platform, PostState
+from fanops.models import Post, Platform, PostState, Clip, ClipState, Moment, MomentState
 from fanops.accounts import Account, Accounts, set_backend
 from fanops.post import get_poster, get_media_uploader
+
+
+def _lineage(led, *cids):
+    """Materialize the moment -> clip ancestry these posts name. It was never built, so every post here was
+    an ORPHAN — a shape production cannot produce (_delete_moment_cascade refuses to drop a clip while a
+    protected post hangs off it). Harmless while the publish guard's predicate failed OPEN on a missing
+    ancestor; publish_due now asks Ledger.can_promote, which fails CLOSED. These tests are about BACKEND
+    ROUTING, so the lineage must be live and the backend the only variable."""
+    led.add_moment(Moment(id="m", parent_id="src_1", start=0.0, end=5.0, reason="worth posting",
+                          state=MomentState.clipped))
+    for cid in cids:
+        led.add_clip(Clip(id=cid, parent_id="m", path=f"/{cid}.mp4", state=ClipState.queued))
 
 
 def _accounts_json(tmp_path, rows):
@@ -110,6 +122,7 @@ def test_publish_due_routes_per_account(tmp_path, monkeypatch, mocker):
         {"handle": "@tk", "account_id": "acc_abc", "platforms": ["tiktok"], "status": "active",
          "backends": {"tiktok": "zernio"}}])
     with Ledger.transaction(cfg) as led:
+        _lineage(led, "c1", "c2")
         led.add_post(Post(id="pig", parent_id="c1", account="ig", account_id="ig_1", platform=Platform.instagram,
                           caption="c", state=PostState.queued, media_urls=["https://x/ig.mp4"], scheduled_time="2000-01-01T00:00:00Z", public_url="dryrun://pig"))
         led.add_post(Post(id="ptk", parent_id="c2", account="tk", account_id="acc_abc", platform=Platform.tiktok,
@@ -139,6 +152,7 @@ def test_publish_due_no_overrides_uses_global(tmp_path, monkeypatch, mocker):
     cfg = Config(root=tmp_path)
     _accounts_json(tmp_path, [{"handle": "@ig", "account_id": "ig_1", "platforms": ["instagram"], "status": "active"}])
     with Ledger.transaction(cfg) as led:
+        _lineage(led, "c1")
         led.add_post(Post(id="pig", parent_id="c1", account="ig", account_id="ig_1", platform=Platform.instagram,
                           caption="c", state=PostState.queued, media_urls=["https://x/ig.mp4"], scheduled_time="2000-01-01T00:00:00Z", public_url="dryrun://pig"))
     seen = {}

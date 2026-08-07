@@ -489,16 +489,14 @@ def publish_due(cfg: Config, *, now: str | None = None, account: str | None = No
     if batch_id:
         due = [p for p in due if p.batch_id == batch_id]
     # A queued post whose clip OR parent moment is RETIRED must never ship: the pipeline dropped that lineage,
-    # so an approval granted before the drop is stale by definition. Every other consumer already refuses one
-    # — review_buckets (studio/views_review.py), approve_account/approve_batch + single approve
-    # (studio/actions_approve.py), crosspost (studio/actions.py) — and THIS was the gap: the one path that
-    # reaches a real platform had no such guard, which is why `posts reconcile-retired` had to patch data to
-    # compensate for a missing check. Same predicate as every sibling (clip missing -> not stranded, matching
-    # stranded_posts.stranded_posts). Filtered BEFORE ensure_up/quota so an all-retired queue neither starts
-    # Postiz nor reserves a daily slot. Loud, never silent: logged per post under the SAME event name the
-    # approve-side guard uses, and counted in the summary.
-    stranded = {p.id: p for p in due if (c := led.clips.get(p.parent_id)) is not None
-                and (led.is_retired_clip(c.id) or led.is_retired_moment(c.parent_id))}
+    # so an approval granted before the drop is stale by definition. The predicate is no longer hand-copied
+    # here — the Ledger OWNS it (the call below) and every sibling reader asks that same owner, so a future
+    # retirement rule lands in ONE place. One posture change rides along: a post whose CLIP ROW IS MISSING now
+    # reads suppressed (the owner fails CLOSED) where the hand-copy's `c is not None` skipped it and shipped.
+    # Filtered BEFORE ensure_up/quota so an all-retired queue neither starts Postiz nor reserves a daily slot.
+    # Loud, never silent: logged per post under the SAME event name the approve-side guard uses, and counted in
+    # the summary — event name and summary key both unchanged.
+    stranded = {p.id: p for p in due if not led.can_promote(p)}
     for pid, p in stranded.items():
         get_logger(cfg)("publish", pid, "skipped_retired_lineage", account=p.account)
     due = [p for p in due if p.id not in stranded]
