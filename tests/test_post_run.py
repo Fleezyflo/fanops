@@ -8,8 +8,20 @@ from fanops.post.run import publish_due
 # the queued posts to disk before calling, and assertions reload from disk (the source of truth).
 
 
+def _mom1(led, mid="mom_1"):
+    """Materialize the moment a clip in this file names as its parent (`mom_1`, or `m1` for a few sites). It was never added:
+    the fixtures described a clip with a dangling ancestor, a lineage production cannot build
+    (_delete_moment_cascade refuses to drop an ancestor while a protected post hangs off it). It went
+    unnoticed only because every retirement predicate failed OPEN on a missing row. publish_due now asks
+    Ledger.can_promote, which fails CLOSED, so the fixture must describe a lineage that could exist.
+    add_moment is setdefault, so repeat calls within one test are a no-op on the first row."""
+    led.add_moment(Moment(id=mid, parent_id="src_1", start=0.0, end=7.0, reason="worth posting",
+                          state=MomentState.clipped))
+
+
 def _queued(led, cfg, pid="p1", cid="clip_1", when="2026-06-02T18:00:00Z"):
     f = cfg.clips / f"{cid}.mp4"; f.parent.mkdir(parents=True, exist_ok=True); f.write_bytes(b"V")
+    _mom1(led)
     led.add_clip(Clip(id=cid, parent_id="mom_1", path=str(f), state=ClipState.queued))
     led.add_post(Post(id=pid, parent_id=cid, account="a", account_id="98432",
                       platform=Platform.instagram, caption="ship it",
@@ -234,6 +246,7 @@ def test_publish_failure_redacts_api_key_from_error_reason(tmp_path, monkeypatch
     monkeypatch.setenv("POSTIZ_API_KEY", "SUPERSECRETKEY")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     f = cfg.clips / "c_k.mp4"; f.parent.mkdir(parents=True, exist_ok=True); f.write_bytes(b"V")
+    _mom1(led)
     led.add_clip(Clip(id="c_k", parent_id="mom_1", path=str(f), state=ClipState.queued))
     led.add_post(Post(id="pk", parent_id="c_k", account="a", account_id="1",
                       platform=Platform.instagram, caption="x",
@@ -254,6 +267,7 @@ def test_publish_no_schedule_parks_not_publishes(tmp_path, monkeypatch):
     monkeypatch.delenv("FANOPS_POSTER", raising=False)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     f = cfg.clips / "c_ns.mp4"; f.parent.mkdir(parents=True, exist_ok=True); f.write_bytes(b"V")
+    _mom1(led)
     led.add_clip(Clip(id="c_ns", parent_id="mom_1", path=str(f), state=ClipState.queued))
     led.add_post(Post(id="pns", parent_id="c_ns", account="a", account_id="1",
                       platform=Platform.instagram, caption="x", state=PostState.queued, public_url="dryrun://pns"))  # no scheduled_time
@@ -273,6 +287,7 @@ def test_publish_refreshes_account_id_from_current_mapping(tmp_path, monkeypatch
         {"handle": "@a", "account_id": "", "platforms": ["instagram"], "status": "active",
          "integrations": {"instagram": "NEW_IG_ID"}}]}))
     f = cfg.clips / "c_a.mp4"; f.parent.mkdir(parents=True, exist_ok=True); f.write_bytes(b"V")
+    _mom1(led)
     led.add_clip(Clip(id="c_a", parent_id="mom_1", path=str(f), state=ClipState.queued))
     led.add_post(Post(id="pa", parent_id="c_a", account="a", account_id="OLD_STALE_ID",   # frozen-at-crosspost id
                       platform=Platform.instagram, caption="x", media_urls=["https://h/v.mp4"],  # http -> no live upload
@@ -296,6 +311,7 @@ def test_publish_does_not_redrive_submitting_post(tmp_path, monkeypatch, mocker)
     monkeypatch.delenv("FANOPS_POSTER", raising=False)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     f = cfg.clips / "c_sub.mp4"; f.parent.mkdir(parents=True, exist_ok=True); f.write_bytes(b"V")
+    _mom1(led)
     led.add_clip(Clip(id="c_sub", parent_id="mom_1", path=str(f), state=ClipState.queued))
     led.add_post(Post(id="psub", parent_id="c_sub", account="a", account_id="1",
                       platform=Platform.instagram, caption="x",
@@ -313,6 +329,7 @@ def test_publish_one_bad_upload_does_not_block_others(tmp_path, monkeypatch, moc
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     for pid, cid in [("pa", "c_a"), ("pb", "c_b")]:
         f = cfg.clips / f"{cid}.mp4"; f.parent.mkdir(parents=True, exist_ok=True); f.write_bytes(b"V")
+        _mom1(led)
         led.add_clip(Clip(id=cid, parent_id="mom_1", path=str(f), state=ClipState.queued))
         led.add_post(Post(id=pid, parent_id=cid, account="a", account_id="1",
                           platform=Platform.instagram, caption="x",
@@ -347,6 +364,7 @@ def test_publish_needs_reconcile_does_not_halt_loop(tmp_path, monkeypatch, mocke
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     for pid, cid in [("prec", "c_rec"), ("pok", "c_ok")]:
         f = cfg.clips / f"{cid}.mp4"; f.parent.mkdir(parents=True, exist_ok=True); f.write_bytes(b"V")
+        _mom1(led)
         led.add_clip(Clip(id=cid, parent_id="mom_1", path=str(f), state=ClipState.queued))
         led.add_post(Post(id=pid, parent_id=cid, account="a", account_id="1",
                           platform=Platform.instagram, caption="x",
@@ -379,6 +397,7 @@ def test_publish_auth_error_halts_run(tmp_path, monkeypatch, mocker):
     monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_URL", "https://p.example.com"); monkeypatch.setenv("POSTIZ_API_KEY", "badkey")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     f = cfg.clips / "c_auth.mp4"; f.parent.mkdir(parents=True, exist_ok=True); f.write_bytes(b"V")
+    _mom1(led)
     led.add_clip(Clip(id="c_auth", parent_id="mom_1", path=str(f), state=ClipState.queued))
     led.add_post(Post(id="pauth", parent_id="c_auth", account="a", account_id="1",
                       platform=Platform.instagram, caption="x",
@@ -405,6 +424,7 @@ def test_publish_non_auth_error_with_401_in_text_does_not_halt(tmp_path, monkeyp
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     for pid, cid in [("pbad", "c_bad"), ("pok", "c_ok2")]:
         f = cfg.clips / f"{cid}.mp4"; f.parent.mkdir(parents=True, exist_ok=True); f.write_bytes(b"V")
+        _mom1(led)
         led.add_clip(Clip(id=cid, parent_id="mom_1", path=str(f), state=ClipState.queued))
         led.add_post(Post(id=pid, parent_id=cid, account="a", account_id="1",
                           platform=Platform.instagram, caption="x",
@@ -437,6 +457,7 @@ def test_publish_due_no_deadlock_self_manages_its_lock(tmp_path, monkeypatch, mo
     _live(monkeypatch)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     f = cfg.clips / "c1.mp4"; f.parent.mkdir(parents=True, exist_ok=True); f.write_bytes(b"x")
+    _mom1(led, "m1")
     led.add_clip(Clip(id="c1", parent_id="m1", path=str(f), state=ClipState.captioned))
     led.add_post(Post(id="p1", parent_id="c1", account="a", account_id="1",
                       platform=Platform.instagram, caption="x", state=PostState.queued, media_urls=["https://h/v.mp4"],
@@ -453,6 +474,7 @@ def test_publish_due_malformed_scheduled_time_is_per_post_failure_not_escape(tmp
     cfg = Config(root=tmp_path)
     led = Ledger.load(cfg)
     f = cfg.clips / "c1.mp4"; f.parent.mkdir(parents=True, exist_ok=True); f.write_bytes(b"V")
+    _mom1(led, "m1")
     led.add_clip(Clip(id="c1", parent_id="m1", path=str(f), state=ClipState.captioned))
     led.add_post(Post(id="bad", parent_id="c1", account="a", account_id="1",
                       platform=Platform.instagram, caption="x", state=PostState.queued,
@@ -470,6 +492,7 @@ def test_publish_due_garbage_scheduled_time_does_not_escape(tmp_path, monkeypatc
     cfg = Config(root=tmp_path)
     led = Ledger.load(cfg)
     f = cfg.clips / "c2.mp4"; f.parent.mkdir(parents=True, exist_ok=True); f.write_bytes(b"V")
+    _mom1(led, "m1")
     led.add_clip(Clip(id="c2", parent_id="m1", path=str(f), state=ClipState.captioned))
     led.add_post(Post(id="garbage", parent_id="c2", account="a", account_id="1",
                       platform=Platform.instagram, caption="x", state=PostState.queued,
@@ -490,6 +513,7 @@ def test_publish_uploads_variant_file_media_on_live_backend(tmp_path, monkeypatc
     monkeypatch.setenv("POSTIZ_API_KEY", "pk")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     vfile = cfg.clips / "clip_1_vhash.mp4"; vfile.parent.mkdir(parents=True, exist_ok=True); vfile.write_bytes(b"V")
+    _mom1(led)
     led.add_clip(Clip(id="clip_1", parent_id="mom_1", path=str(cfg.clips / "clip_1.mp4"), state=ClipState.queued))
     led.add_post(Post(id="pv", parent_id="clip_1", account="a", account_id="98432",
                       platform=Platform.instagram, caption="x", scheduled_time="2020-01-01T00:00:00Z",
@@ -788,24 +812,28 @@ def test_publish_due_quota_is_per_account(tmp_path, monkeypatch, mocker):
     assert summary["quota_skipped"] == 2
 
 def test_publish_due_refuses_a_post_under_retired_lineage(tmp_path, monkeypatch, mocker):
-    # THE publish-side lineage guard. review_buckets, approve_account/approve_batch, single approve and
-    # crosspost all already refuse a retired-lineage post; publish_due was the gap — and it is the only one
-    # of them that reaches a real platform. An approval granted BEFORE the pipeline dropped the moment is
-    # stale, and `queued` means "ships on the next due sweep", so without this the operator's old click still
-    # publishes lineage the pipeline abandoned. BOTH predicates are covered (retired CLIP, retired MOMENT)
-    # alongside a healthy post in the SAME pass, so a blanket refusal cannot pass this test either.
+    # THE publish-side lineage guard, now asking `Ledger.can_promote` (the owner) instead of hand-copying the
+    # predicate. review_buckets, approve_account/approve_batch, single approve and crosspost refuse a
+    # retired-lineage post too; publish_due is the only one of them that reaches a real platform. An approval
+    # granted BEFORE the pipeline dropped the moment is stale, and `queued` means "ships on the next due
+    # sweep", so without this the operator's old click still publishes lineage the pipeline abandoned. All
+    # THREE refusal shapes run alongside a healthy post in the SAME pass, so a blanket refusal cannot pass this
+    # test either. The MISSING-CLIP case is class closure, not a live repro: _delete_moment_cascade refuses to
+    # pop a clip while a protected post hangs off it, so no live row reaches that shape — but the old hand-copy
+    # (`c is not None and ...`) would have SHIPPED one, and can_promote fails CLOSED on it.
     _live(monkeypatch); cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    for pid, cid in (("p_ok", "c_ok"), ("p_clip", "c_clip"), ("p_mom", "c_mom")):
+    for pid, cid in (("p_ok", "c_ok"), ("p_clip", "c_clip"), ("p_mom", "c_mom"), ("p_gone", "c_gone")):
         _queued(led, cfg, pid=pid, cid=cid, when="2020-01-01T00:00:00Z")
     led.add_moment(Moment(id="mom_ret", parent_id="src_1", start=0.0, end=5.0,
                           reason="dropped by a re-decision", state=MomentState.retired))
     led.retire_clip("c_clip")                          # predicate 1: the CLIP is retired
     led.clips["c_mom"].parent_id = "mom_ret"           # predicate 2: the parent MOMENT is retired
-    _http_media(led, "p_ok", "p_clip", "p_mom"); _stub_ok_poster(mocker, cfg)   # _http_media saves
+    led.clips.pop("c_gone")                            # predicate 3: p_gone's parent_id names NO clip row
+    _http_media(led, "p_ok", "p_clip", "p_mom", "p_gone"); _stub_ok_poster(mocker, cfg)   # _http_media saves
     mocker.patch("fanops.postiz_lifecycle.ensure_up")
     summary = publish_due(cfg, now=_quota_now())
-    assert summary["due"] == 1 and summary["published"] == 1 and summary["skipped_retired_lineage"] == 2
+    assert summary["due"] == 1 and summary["published"] == 1 and summary["skipped_retired_lineage"] == 3
     led = Ledger.load(cfg)
     assert led.posts["p_ok"].state is PostState.published           # the control still ships
-    for pid in ("p_clip", "p_mom"):                                 # refused, and ZERO mutation on the skip
+    for pid in ("p_clip", "p_mom", "p_gone"):                       # refused, and ZERO mutation on the skip
         assert led.posts[pid].state is PostState.queued and led.posts[pid].submission_started_at is None

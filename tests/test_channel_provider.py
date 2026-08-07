@@ -9,7 +9,7 @@ import json
 import pytest
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.models import Post, Platform, PostState
+from fanops.models import Post, Platform, PostState, Clip, ClipState, Moment, MomentState
 from fanops.accounts import Accounts
 from fanops.post.run import publish_due, publish_post
 
@@ -28,6 +28,13 @@ def _accounts(tmp_path, rows):
 
 
 def _queued(led, pid, handle, platform, acct_id="x"):
+    # Materialize the moment -> clip "c" ancestry the post names. It was never built, so this fixture made an
+    # ORPHAN post — a shape production cannot produce. Harmless while the publish guard failed OPEN on a
+    # missing ancestor; publish_due now asks Ledger.can_promote, which fails CLOSED. These tests are about
+    # PROVIDER RESOLUTION, so the lineage must be live and the channel's provider the only variable.
+    led.add_moment(Moment(id="m", parent_id="src_1", start=0.0, end=5.0, reason="worth posting",
+                          state=MomentState.clipped))
+    led.add_clip(Clip(id="c", parent_id="m", path="/c.mp4", state=ClipState.queued))
     led.add_post(Post(id=pid, parent_id="c", account=handle, account_id=acct_id, platform=platform,
                       caption="c", state=PostState.queued, media_urls=["https://x/v.mp4"],
                       scheduled_time="2000-01-01T00:00:00Z", public_url="dryrun://c"))   # CULM-4: a due time (no-schedule now parks)
