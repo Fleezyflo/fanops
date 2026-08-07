@@ -769,11 +769,24 @@ class Config:
         # `cfg.is_live_backend`, so going live to PUBLISH also silently turned on an autonomous
         # content generator. It ran 7 unattended rounds across 3 sources and left no log line; the
         # only evidence was src.meta["amplify_count"]. DEFAULT OFF (opt-in), matching its siblings
-        # variant_amplify / p4_dim_bias, per the house rule: a learning signal ships off by default
-        # and frozen until validated. MAX_AMPLIFY_PER_SOURCE bounds ONE source, never the fleet, so
-        # it was never the safety gate. VALIDATION-FROZEN: this flag = operator INTENT; even ON the
-        # amplify call stays INERT until `learning_validated` opens.
+        # variant_amplify / p4_dim_bias, per the house rule: a learning signal ships off by default.
+        # MAX_AMPLIFY_PER_SOURCE bounds ONE source, never the fleet, so it was never the safety gate.
+        # THIS FLAG IS THE WHOLE GATE — no validation freeze rides along: nothing ever writes
+        # cutover.json metrics_confirmed False, so once the first real metric auto-stamps it,
+        # `learning_validated` is permanently True and can never re-freeze anything.
         v = (os.getenv("FANOPS_LEARN_AMPLIFY") or "").strip().lower()
+        return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
+
+    @property
+    def learn_retire(self) -> bool:
+        # E1 learn-pass retirement (`cli._learn_pass` -> adjust.retire): with this ON, a metric LOSER
+        # suppresses its CLIP, its MOMENT too when no live sibling remains, and every UNSHIPPED post
+        # of that lineage is rewritten to `retired`. It is a destroyer, not a filter, and like
+        # learn_amplify it ran on `cfg.is_live_backend` alone — going live to PUBLISH also switched
+        # on unattended destruction every tick. DEFAULT OFF (opt-in), symmetric with learn_amplify;
+        # with both OFF the learn pass is read-only. Same reasoning on the absent validation freeze:
+        # `learning_validated` has no False writer, so it could never re-bind as a second gate.
+        v = (os.getenv("FANOPS_LEARN_RETIRE") or "").strip().lower()
         return v in ("1", "true", "yes", "on")          # opt-in; unset/empty/other -> False
 
     @property
