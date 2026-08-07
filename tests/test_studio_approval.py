@@ -105,21 +105,36 @@ def test_get_review_renders_checkbox_and_approve_button(tmp_path):
     assert b'name="ids"' in html and b'value="p1"' in html
     assert b"Approve selected" in html and b"Reject selected" in html
 
-def test_get_review_renders_ingest_day_header(tmp_path):
-    # content-lifecycle Phase 3: the editable bucket emits a running ingest-day header (source.created_at).
-    cfg = Config(root=tmp_path)
+def _seed_day_lineage(cfg, *, source_day, mint):
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.accounts_path.write_text(json.dumps({"accounts": [
         {"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}]}))
     with Ledger.transaction(cfg) as led:
-        led.add_source(Source(id="src_1", source_path="/v/show.mp4", language="en", created_at="2026-06-03T08:00:00Z"))
+        led.add_source(Source(id="src_1", source_path="/v/show.mp4", language="en", created_at=source_day))
         led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
                               reason="drop", transcript_excerpt="go", state=MomentState.clipped))
         led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c/clip_1.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
-        led.add_post(Post(id="p1", parent_id="clip_1", account="a", account_id="1",
+        led.add_post(Post(id="p1", parent_id="clip_1", account="a", account_id="1", created_at=mint,
                           platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, scheduled_time=_FUTURE, public_url="dryrun://p1"))
+
+def test_get_review_renders_the_cards_own_minting_day_header(tmp_path):
+    # content-lifecycle Phase 3 / MOL-801: the editable bucket emits a running day header keyed on the CARD's
+    # minting day. The source was ingested a month earlier, so a source-keyed header would read 2026-06-03.
+    cfg = Config(root=tmp_path)
+    _seed_day_lineage(cfg, source_day="2026-06-03T08:00:00Z", mint="2026-07-02T09:00:00Z")
     html = _client(cfg).get("/review?view=list").data
-    assert b'class="day-head">2026-06-03' in html
+    assert b'class="day-head">2026-07-02</h4>' in html      # bare: the card minted this day itself
+    assert b'class="day-head">2026-06-03' not in html       # the source's ingest day never heads the group
+
+def test_get_review_renders_a_borrowed_day_with_a_visible_marker(tmp_path):
+    # a card with no mint stamp borrows the source's ingest day — and the header SAYS SO. Without the marker
+    # the operator cannot tell an inferred day from a real one, which is the original bug in miniature.
+    from fanops.studio.views_review import SOURCE_DAY_SUFFIX
+    cfg = Config(root=tmp_path)
+    _seed_day_lineage(cfg, source_day="2026-06-03T08:00:00Z", mint=None)
+    html = _client(cfg).get("/review?view=list").data
+    assert b'class="day-head">2026-06-03' + SOURCE_DAY_SUFFIX.encode() + b"</h4>" in html
+    assert b'class="day-head">2026-06-03</h4>' not in html   # never rendered as if it were the card's own day
 
 def test_review_day_header_re_emits_across_pagination_boundary(tmp_path):
     # content-lifecycle Phase 3 (H8): the editable bucket is day-sorted and the running day-header is emitted
@@ -130,7 +145,7 @@ def test_review_day_header_re_emits_across_pagination_boundary(tmp_path):
     cfg.accounts_path.write_text(json.dumps({"accounts": [
         {"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}]}))
     n_a = views.GRID_PAGE_SIZE + 4                      # day A: 24 cards fill page 1, 4 spill to page 2 (it spans)
-    with Ledger.transaction(cfg) as led:
+    with Ledger.transaction(cfg) as led:                # each day's posts are MINTED that day (the bucket key)
         for day, sid, n in (("2026-06-10T08:00:00Z", "A", n_a), ("2026-06-03T08:00:00Z", "B", 4)):
             led.add_source(Source(id=f"src_{sid}", source_path=f"/v/{sid}.mp4", language="en", created_at=day))
             led.add_moment(Moment(id=f"mom_{sid}", parent_id=f"src_{sid}", content_token="0-7", start=0, end=7,
@@ -138,7 +153,7 @@ def test_review_day_header_re_emits_across_pagination_boundary(tmp_path):
             for i in range(n):
                 cid = f"clip_{sid}_{i}"
                 led.add_clip(Clip(id=cid, parent_id=f"mom_{sid}", path=f"/c/{cid}.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
-                led.add_post(Post(id=f"p_{sid}_{i}", parent_id=cid, account="a", account_id="1",
+                led.add_post(Post(id=f"p_{sid}_{i}", parent_id=cid, account="a", account_id="1", created_at=day,
                                   platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, scheduled_time=_FUTURE, public_url="dryrun://1"))
     p1 = _client(cfg).get("/review?view=list").data
     p2 = _client(cfg).get(f"/review?view=list&offset={views.GRID_PAGE_SIZE}").data

@@ -74,8 +74,9 @@ class SurfacePost:
     length_cause: Optional[str] = None     # why this length ("persona long" | "@a long"); None = inherited global
     framing_cause: Optional[str] = None    # why this framing ("@a center"); None = inherited global
     cast_cause: Optional[str] = None       # why THIS account got it ("picked for @a"); None = uncast / fans to all
-    day: Optional[str] = None              # Phase 4 pivot: the ingest day (clip -> moment -> source.created_at), set
-                                           # only on the account-pivot flat rows for the running day header. None elsewhere.
+    day: Optional[str] = None              # Phase 4 pivot: the owning card's day LABEL (ReviewCard.day — see
+                                           # _card_day), set only on the account-pivot flat rows for the running
+                                           # day header. None elsewhere.
     tag_sources: dict = field(default_factory=dict)   # per-tag provenance {tag: source} from the clip's meta_captions
                                            # (content|corpus|region|graph-reach). {} when absent
                                            # (legacy entry / no caption yet) -> the chip row simply doesn't render.
@@ -108,9 +109,11 @@ class ReviewCard:
     surfaces: list[SurfacePost]
     bucket: str
     clip_state: Optional[str] = None     # the clip's own state — shown on a post-less 'prepared' card
-    day: Optional[str] = None            # content-lifecycle Phase 3: the ingest day (YYYY-MM-DD via source.
-                                         # created_at) this card buckets under; only set on editable cards (the
-                                         # day-sorted approve worklist). None elsewhere. 'undated' = broken lineage.
+    day: Optional[str] = None            # content-lifecycle Phase 3: the DISPLAY LABEL + group key of the day
+                                         # this card buckets under — its own minting day (YYYY-MM-DD), or
+                                         # '<day> (source day)' when derived from the source, or 'undated'
+                                         # (see _card_day). Never parsed back into a date. Only set on editable
+                                         # cards (the day-sorted approve worklist); None elsewhere.
     hook_removed: Optional[str] = None   # Moment.hook_removed: the model's hook is_weak_hook stripped. Present ->
                                          # the clip is clean but a good hook was killed; Review badges it + offers
                                          # "approve with hook". None -> nothing was stripped.
@@ -326,16 +329,32 @@ def _card(led: Ledger, clip, posts, bucket: str, cfg: Config, personas: dict, no
         batch_excluded_names=excluded_names,
         affinities=_affs, source_key=src_key)   # MOM-3: derived view, not the stored tag
 
+SOURCE_DAY_SUFFIX = " (source day)"   # the VISIBLE marker on a day the card did not mint itself (see _card_day)
+
+def _iso_day(ts: Optional[str]) -> Optional[str]:
+    """ISO-8601 stamp -> its YYYY-MM-DD day; None when absent or unparseable (an unparseable stamp is
+    indistinguishable from an absent one to an operator, so it must degrade the same way)."""
+    if not ts: return None
+    try: return parse_iso(ts).date().isoformat()
+    except (ValueError, TypeError, AttributeError): return None
+
 def _card_day(led: Ledger, card: ReviewCard) -> str:
-    """The ingest day (YYYY-MM-DD) a Review card buckets under: clip -> moment -> source.created_at.
-    'undated' when the lineage is broken or the source predates the day-anchor. Pure (content-lifecycle Phase 3)."""
+    """The day (YYYY-MM-DD) a Review card buckets under: the card's OWN minting day — the earliest
+    Post.created_at across the surfaces it carries. A card is a judgement about those posts, so its day is
+    when THEY came into existence, not when the video they were cut from was ingested: every source of one
+    ingest batch shares a created_at, which collapsed the entire pivot into a single bucket and made the day
+    question unanswerable. Falls back to the source's ingest day ONLY when no surface carries a birth stamp,
+    and then says so IN THE LABEL (`<day> (source day)`) — the label IS the group key in _review_body.html, so
+    a derived day can neither pass as a real one nor silently merge into it. 'undated' when neither exists.
+    Pure (content-lifecycle Phase 3 day-anchor, re-keyed to the card)."""
+    own = [d for s in card.surfaces
+           if (p := led.posts.get(s.post_id)) is not None and (d := _iso_day(p.created_at)) is not None]
+    if own: return min(own)
     clip = led.clips.get(card.clip_id)
     mom = led.moments.get(clip.parent_id) if clip is not None else None
     src = led.sources.get(mom.parent_id) if mom is not None else None
-    ca = src.created_at if src is not None else None
-    if not ca: return "undated"
-    try: return parse_iso(ca).date().isoformat()
-    except (ValueError, TypeError, AttributeError): return "undated"
+    day = _iso_day(src.created_at) if src is not None else None
+    return f"{day}{SOURCE_DAY_SUFFIX}" if day else "undated"
 
 # ── Slice 2: the moment × account MATRIX (per source) ─────────────────────────
 # Rows = a source's moments; columns = the (handle, platform) CHANNELS that actually have posts; a cell =
@@ -594,7 +613,7 @@ def review_buckets(led: Ledger, accounts: Accounts, cfg: Config, *, now: datetim
             continue             # unreachable via can_promote (it fails closed on a missing clip) — kept for the type
         if not clip.held:        # a held clip belongs ONLY in the held bucket
             editable_cards.append(_card(led, clip, posts, "editable", cfg, personas, now, active_handles, acct_by_handle))
-    # editable cards: day-sorted (newest ingest day first, 'undated' last) so _review_body.html can emit a
+    # editable cards: day-sorted (newest minting day first, 'undated' last) so _review_body.html can emit a
     # running day-header across the paginated slice WITHOUT touching pagination (content-lifecycle Phase 3 H8).
     for c in editable_cards: c.day = _card_day(led, c)
     editable_cards.sort(key=lambda c: (c.day != "undated", c.day), reverse=True)   # undated (False) sorts last under reverse
@@ -700,7 +719,7 @@ def account_pivot_rows(led: Ledger, accounts: Accounts, cfg: Config, *, now: dat
     for c in cards:                                    # cards arrive day-sorted; preserve that order across surfaces
         for s in c.surfaces:
             if s.account == handle:
-                rows.append(replace(s, day=c.day))     # immutable copy: stamp the card's ingest day for the header (no shared-ref mutation)
+                rows.append(replace(s, day=c.day))     # immutable copy: stamp the card's day label for the header (no shared-ref mutation)
     return rows
 
 
