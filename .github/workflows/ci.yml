@@ -85,10 +85,19 @@ jobs:
             --sha "${{ github.sha }}" --xdist --json-out ci-timing.partial.json
       # Blocking on PURPOSE: without a gate the unit suite slows without bound and the
       # fast-feedback contract erodes silently — no single PR is ever the one that broke it.
+      # MOL-829: ONE budget for PR and push alike. The old form held a PR to 135s and main to 140s,
+      # so a PR faced a TIGHTER gate than the trunk it merges into and main could sit green while
+      # every PR failed. A gate must never be stricter on the branch that has to pass to land.
+      # The value below is a BOUND, not an SLO. Measured 2026-08-07: wall-clock for an UNCHANGED
+      # suite ranged 116.20s..166.02s over eight shared-runner runs, and main exceeded its own 140s
+      # on two of three. Any threshold inside that band rules on scheduling noise, not on whether a
+      # PR made anything slower. Set above the observed maximum with margin, it still catches the
+      # unbounded growth this gate exists to catch. Re-derive it from the ci-timing artifacts, never
+      # by trimming tests: nothing attributes the spread to a test (slowest single test 4.45s, xdist).
       - name: Unit pytest SLO gate (blocking — MOL-460)
         if: always() && (steps.unit-tests.outcome == 'success' || steps.unit-tests.outcome == 'failure')
         env:
-          CI_UNIT_PYTEST_BUDGET_S: ${{ github.event_name == 'pull_request' && '135' || '140' }}
+          CI_UNIT_PYTEST_BUDGET_S: '240'
         run: python scripts/ci_slo_gate.py --log pytest-unit.log
       - name: Upload ci-timing partial (main only)
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
