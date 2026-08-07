@@ -484,7 +484,7 @@
     {
       "decorator": "app.post",
       "handler": "do_caption",
-      "line": 239,
+      "line": 252,
       "methods": [
         "POST"
       ],
@@ -495,7 +495,7 @@
     {
       "decorator": "app.post",
       "handler": "do_cast_add",
-      "line": 183,
+      "line": 196,
       "methods": [
         "POST"
       ],
@@ -506,7 +506,7 @@
     {
       "decorator": "app.post",
       "handler": "do_cast_remove",
-      "line": 190,
+      "line": 203,
       "methods": [
         "POST"
       ],
@@ -517,7 +517,7 @@
     {
       "decorator": "app.post",
       "handler": "do_clear",
-      "line": 234,
+      "line": 247,
       "methods": [
         "POST"
       ],
@@ -1309,7 +1309,7 @@
     {
       "decorator": "app.get",
       "handler": "posted",
-      "line": 161,
+      "line": 163,
       "methods": [
         "GET"
       ],
@@ -1320,7 +1320,7 @@
     {
       "decorator": "app.post",
       "handler": "do_approve_posts",
-      "line": 132,
+      "line": 145,
       "methods": [
         "POST"
       ],
@@ -1331,7 +1331,7 @@
     {
       "decorator": "app.post",
       "handler": "do_approve_account",
-      "line": 166,
+      "line": 179,
       "methods": [
         "POST"
       ],
@@ -1342,7 +1342,7 @@
     {
       "decorator": "app.post",
       "handler": "do_approve_as_is",
-      "line": 154,
+      "line": 167,
       "methods": [
         "POST"
       ],
@@ -1353,7 +1353,7 @@
     {
       "decorator": "app.post",
       "handler": "do_approve_batch",
-      "line": 158,
+      "line": 171,
       "methods": [
         "POST"
       ],
@@ -1364,7 +1364,7 @@
     {
       "decorator": "app.post",
       "handler": "do_approve_channel",
-      "line": 174,
+      "line": 187,
       "methods": [
         "POST"
       ],
@@ -1375,7 +1375,7 @@
     {
       "decorator": "app.post",
       "handler": "do_approve_clip",
-      "line": 162,
+      "line": 175,
       "methods": [
         "POST"
       ],
@@ -1386,7 +1386,7 @@
     {
       "decorator": "app.post",
       "handler": "do_approve_moment",
-      "line": 170,
+      "line": 183,
       "methods": [
         "POST"
       ],
@@ -1397,7 +1397,7 @@
     {
       "decorator": "app.post",
       "handler": "do_approve_with_edits",
-      "line": 145,
+      "line": 158,
       "methods": [
         "POST"
       ],
@@ -1408,7 +1408,7 @@
     {
       "decorator": "app.post",
       "handler": "do_approve_with_hook",
-      "line": 150,
+      "line": 163,
       "methods": [
         "POST"
       ],
@@ -1419,7 +1419,7 @@
     {
       "decorator": "app.post",
       "handler": "do_crosspost_all",
-      "line": 195,
+      "line": 197,
       "methods": [
         "POST"
       ],
@@ -1430,7 +1430,7 @@
     {
       "decorator": "app.post",
       "handler": "do_crosspost_to_account",
-      "line": 189,
+      "line": 191,
       "methods": [
         "POST"
       ],
@@ -1441,7 +1441,7 @@
     {
       "decorator": "app.post",
       "handler": "do_recover_posts",
-      "line": 183,
+      "line": 185,
       "methods": [
         "POST"
       ],
@@ -1452,7 +1452,7 @@
     {
       "decorator": "app.post",
       "handler": "do_reject_posts",
-      "line": 137,
+      "line": 150,
       "methods": [
         "POST"
       ],
@@ -1463,7 +1463,7 @@
     {
       "decorator": "app.post",
       "handler": "do_repost_others",
-      "line": 170,
+      "line": 172,
       "methods": [
         "POST"
       ],
@@ -1474,7 +1474,7 @@
     {
       "decorator": "app.post",
       "handler": "do_repost_post",
-      "line": 165,
+      "line": 167,
       "methods": [
         "POST"
       ],
@@ -1485,7 +1485,7 @@
     {
       "decorator": "app.post",
       "handler": "do_resolve_post",
-      "line": 177,
+      "line": 179,
       "methods": [
         "POST"
       ],
@@ -1496,7 +1496,7 @@
     {
       "decorator": "app.post",
       "handler": "do_unapprove_post",
-      "line": 141,
+      "line": 154,
       "methods": [
         "POST"
       ],
@@ -1540,7 +1540,7 @@
     {
       "decorator": "app.post",
       "handler": "do_reburn_hook",
-      "line": 256,
+      "line": 269,
       "methods": [
         "POST"
       ],
@@ -1562,7 +1562,7 @@
     {
       "decorator": "app.post",
       "handler": "do_regenerate",
-      "line": 246,
+      "line": 259,
       "methods": [
         "POST"
       ],
@@ -1573,7 +1573,7 @@
     {
       "decorator": "app.post",
       "handler": "do_reschedule_surface",
-      "line": 229,
+      "line": 242,
       "methods": [
         "POST"
       ],
@@ -1584,7 +1584,7 @@
     {
       "decorator": "app.post",
       "handler": "do_reschedule",
-      "line": 224,
+      "line": 237,
       "methods": [
         "POST"
       ],
@@ -1595,7 +1595,7 @@
     {
       "decorator": "app.post",
       "handler": "do_restore_persona_hook",
-      "line": 251,
+      "line": 264,
       "methods": [
         "POST"
       ],
@@ -1606,7 +1606,7 @@
     {
       "decorator": "app.get",
       "handler": "review",
-      "line": 89,
+      "line": 95,
       "methods": [
         "GET"
       ],
@@ -1628,7 +1628,7 @@
     {
       "decorator": "app.get",
       "handler": "review_feed_slice",
-      "line": 97,
+      "line": 103,
       "methods": [
         "GET"
       ],
@@ -1639,7 +1639,7 @@
     {
       "decorator": "app.get",
       "handler": "review_live",
-      "line": 117,
+      "line": 123,
       "methods": [
         "GET"
       ],
@@ -1650,7 +1650,7 @@
     {
       "decorator": "app.get",
       "handler": "review_panel_refresh",
-      "line": 128,
+      "line": 141,
       "methods": [
         "GET"
       ],
@@ -1947,7 +1947,7 @@
     {
       "decorator": "app.post",
       "handler": "do_clear_segments",
-      "line": 214,
+      "line": 227,
       "methods": [
         "POST"
       ],
@@ -1958,7 +1958,7 @@
     {
       "decorator": "app.post",
       "handler": "do_set_segments",
-      "line": 197,
+      "line": 210,
       "methods": [
         "POST"
       ],
@@ -1969,7 +1969,7 @@
     {
       "decorator": "app.post",
       "handler": "do_snooze",
-      "line": 261,
+      "line": 274,
       "methods": [
         "POST"
       ],
@@ -2057,7 +2057,7 @@
     {
       "decorator": "app.post",
       "handler": "do_unhold",
-      "line": 266,
+      "line": 279,
       "methods": [
         "POST"
       ],
