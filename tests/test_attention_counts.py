@@ -6,7 +6,9 @@
 # `attention_counts()` sizes that ONE set two ways.
 #
 # What is pinned here: the lineage cases `can_promote` fixes (a retired ancestor, a missing ancestor —
-# fail CLOSED), and the posts-vs-clips distinction that produced the "Home 57 vs Review 17" bug.
+# fail CLOSED), the posts-vs-clips distinction that produced the "Home 57 vs Review 17" bug, and (MOL-796)
+# that `fanops status`' operator headline sizes this predicate rather than a raw state census.
+from fanops.cli import cmd_status
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import (Clip, ClipState, Fmt, Moment, MomentState, Platform, Post, PostState, Source)
@@ -81,6 +83,26 @@ def test_a_held_clip_is_no_moment_but_its_post_is_still_actionable(tmp_path):
     assert sorted(p.id for p in led.review_posts()) == ["p_held", "p_open"]
     assert counts == {"posts": 2, "moments": 1}
     assert set(counts) == {"posts", "moments"}      # no held/prepared: those are card buckets, not ledger facts
+
+
+def test_fanops_status_headline_reads_the_predicate_not_a_raw_census(tmp_path, capsys):
+    """(e) The consumer that still drifted after T2.4: `fanops status`' post-approval headline was a raw
+    `posts_in_state(awaiting_approval)` census with no lineage guard, so a stranded post inflated the
+    operator's number while the Review worklist derived correctly — the live 761-vs-493 split (#827).
+    The headline now sizes `review_posts()`, so it cannot disagree with the worklist."""
+    cfg = Config(root=tmp_path)
+    with Ledger.transaction(cfg) as led:
+        _lineage(led, mom_id="mom_live", clip_id="clip_live")
+        _lineage(led, mom_id="mom_dead", clip_id="clip_stranded", moment_state=MomentState.retired)
+        led.add_post(_post("p_ok", "clip_live"))
+        led.add_post(_post("p_stranded", "clip_stranded"))
+
+    assert cmd_status(cfg) == 0
+    out = capsys.readouterr().out
+    led = Ledger.load(cfg)
+    assert len(led.posts_in_state(PostState.awaiting_approval)) == 2   # the raw census still counts the stranded post
+    assert "awaiting_approval=1 " in out                               # the headline counts only the actionable one
+    assert f"awaiting_approval={led.attention_counts()['posts']} " in out   # and equals the worklist, by construction
 
 
 def test_review_posts_ignores_every_non_awaiting_state(tmp_path):
