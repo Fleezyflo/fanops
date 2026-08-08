@@ -80,7 +80,7 @@
       "fanops.log": 1,
       "fanops.paths_rebase": 2,
       "fanops.recaption": 5,
-      "fanops.stranded_posts": 8
+      "fanops.stranded_posts": 5
     },
     "silent_broad_except_by_file": {
       "src/fanops/accounts.py": 3,
