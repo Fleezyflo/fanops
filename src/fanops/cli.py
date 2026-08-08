@@ -931,6 +931,7 @@ def main(argv: list[str] | None = None) -> int:
                          "renamed from reconcile-retired)")
     # TOP-LEVEL, not under `posts`: the row it labels is the MOMENT. The Studio Provenance panel is the
     # primary trigger — this verb is the headless twin over the same engine, so the two cannot diverge.
+    sub.add_parser("close-product-type", help="one-shot: close legacy IG product_type None|REELS → post (zero network)")
     p_ob = sub.add_parser("origin-backfill", help="one-time: reconstruct `machine_inferred` provenance for the "
                           "moments minted before Moment.origin existed; default = read-only dry-run")
     p_ob.add_argument("--day", action="append", required=True, metavar="YYYY-MM-DD",
@@ -1557,6 +1558,9 @@ def _dispatch(cfg: Config, args) -> int:
         if args.posts_cmd == "census-retired":
             from fanops.stranded_posts import cmd_posts_reconcile_retired   # lazy, same precedent
             return cmd_posts_reconcile_retired(cfg, args)
+    if args.cmd == "close-product-type":
+        from fanops.product_closure import cmd_close_product_type   # lazy, same precedent
+        return cmd_close_product_type(cfg, args)
     if args.cmd == "origin-backfill":
         from fanops.origin_backfill import cmd_origin_backfill   # lazy, same precedent
         return cmd_origin_backfill(cfg, args)

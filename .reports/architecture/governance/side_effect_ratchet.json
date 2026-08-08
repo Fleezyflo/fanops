@@ -14,6 +14,7 @@
       "fanops.pipeline",
       "fanops.post.compress",
       "fanops.post.run",
+      "fanops.product_closure",
       "fanops.recaption",
       "fanops.reconcile",
       "fanops.responder",
@@ -64,7 +65,7 @@
   },
   "ceilings": {
     "env_write_sites": 2,
-    "ledger_transaction_sites": 81,
+    "ledger_transaction_sites": 82,
     "mkdtemp_sites": 2,
     "network_sites_literal_requests": 15,
     "rmtree_sites": 6,
