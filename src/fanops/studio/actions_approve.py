@@ -14,6 +14,24 @@ from fanops.studio.views_common import suggest_times_for_batch
 from fanops.studio.actions_common import ActionResult, _now, _inherit_captions
 
 
+def _over_cap_refusal(cfg: Config, led: Ledger, post) -> Optional[str]:
+    """THE platform-duration gate on the approve side — sole owner of the `cut_over_cap` refusal, asked by
+    every approve route. Returns the operator reason (stamped on the post and logged) when the post's
+    realized cut exceeds its platform ceiling, else None. `approve_with_hook` used to carry no cap check at
+    all, so the same post on the same ledger was admissible or not purely by which button the operator
+    pressed (MOL-832); a second hand-written copy of the predicate is how that gap opened."""
+    clip = led.clips.get(post.parent_id)
+    cap = PLATFORM_MAX_SECONDS.get(post.platform)
+    if clip is None or cap is None:
+        return None
+    from fanops.clip import realized_clip_seconds
+    dur = realized_clip_seconds(clip, led.moments.get(clip.parent_id))
+    if dur is None or dur <= 0 or dur <= cap:
+        return None
+    post.error_reason = reason = f"realized cut {round(dur, 1)}s exceeds {post.platform.value} cap {cap}s"
+    get_logger(cfg)("approve", post.id, "cut_over_cap", realized=round(dur, 1), cap=cap)
+    return reason
+
 def _approve_ids_with_render(cfg: Config, *, resolve_ids: Callable[[Ledger], Sequence[str]],
                              now: Optional[datetime], detail: dict) -> ActionResult:
     """P9: promote awaiting->queued. Owner-moment clip is already rendered — no re-cut at approval."""
@@ -48,15 +66,9 @@ def _approve_ids_with_render(cfg: Config, *, resolve_ids: Callable[[Ledger], Seq
                     skipped_retired += 1
                     get_logger(cfg)("approve", pid, "skipped_retired_lineage", account=post.account)
                     continue
-                if clip is not None:
-                    cap = PLATFORM_MAX_SECONDS.get(post.platform)
-                    from fanops.clip import realized_clip_seconds
-                    m = led.moments.get(clip.parent_id)
-                    clip_dur = realized_clip_seconds(clip, m)
-                    if cap is not None and clip_dur is not None and clip_dur > 0 and clip_dur > cap:
-                        post.error_reason = f"realized cut {round(clip_dur, 1)}s exceeds {post.platform.value} cap {cap}s"
-                        cut_over_cap += 1; get_logger(cfg)("approve", pid, "cut_over_cap", realized=round(clip_dur, 1), cap=cap)   # counted + rendered by `_publish_outcome.html`: this `continue` used to leave NO trace, so a tick of N came back "Approved N-1". The cap's value/policy/trigger are unchanged — only its silence is.
-                        continue
+                if _over_cap_refusal(cfg, led, post) is not None:
+                    cut_over_cap += 1   # counted + rendered by `_publish_outcome.html`: this `continue` used to leave NO trace, so a tick of N came back "Approved N-1". The cap's value/policy/trigger are unchanged — only its silence is.
+                    continue
                 sugg = sched.get(pid) or suggest_time(cfg, post, now=now)
                 led.approve_post(pid, now_iso=now_iso, suggested_iso=sugg)
                 approved += 1
@@ -139,7 +151,7 @@ def approve_with_hook(cfg: Config, clip_id: str, *, now: Optional[datetime] = No
     removed = (m0.hook_removed if m0 is not None else None)
     if removed and not _warm_hooked_render(cfg, c0.parent_id, c0.aspect, removed):
         return ActionResult(ok=False, error="couldn't pre-render the hooked clip off the lock — retry approve")
-    approved = 0
+    approved = 0; cut_over_cap = 0
     try:
         with Ledger.transaction(cfg) as led:
             clip = led.clips.get(clip_id)
@@ -148,9 +160,14 @@ def approve_with_hook(cfg: Config, clip_id: str, *, now: Optional[datetime] = No
                 return ActionResult(ok=False, error=f"clip {clip_id} is retired — not eligible for approval")  # loud here (one clip)
             ids = [p.id for p in led.posts.values()
                    if p.parent_id == clip_id and p.state is PostState.awaiting_approval]
+            # The SAME cap the bulk engine enforces, from the SAME owner — a per-POST verdict, because one
+            # clip's surfaces can straddle two platform ceilings. Asked BEFORE the restore so a fully-dropped
+            # clip neither re-cuts nor spends its `hook_removed`, and counted so the refusal reaches the operator.
+            admitted = [pid for pid in ids if _over_cap_refusal(cfg, led, led.posts[pid]) is None]
+            cut_over_cap = len(ids) - len(admitted)
             mom = led.moments.get(clip.parent_id)
             restored = (mom.hook_removed if mom is not None else None)
-            if ids and restored:
+            if admitted and restored:
                 led.moments[clip.parent_id] = mom.model_copy(update={"hook": restored, "hook_removed": None})
                 orig = led.clips[clip_id]
                 led, rc = render_moment(led, cfg, clip.parent_id, aspect=clip.aspect)
@@ -160,14 +177,15 @@ def approve_with_hook(cfg: Config, clip_id: str, *, now: Optional[datetime] = No
                     raise RuntimeError("hook burn failed — not shipping clean")
                 led.clips[clip_id] = led.clips[clip_id].model_copy(
                     update={"state": orig.state, "meta_captions": _inherit_captions(orig.meta_captions)})
-            for pid in ids:
+            for pid in admitted:
                 post = led.posts.get(pid)
                 sugg = suggest_time(cfg, post, now=now) if post is not None else None
                 led.approve_post(pid, now_iso=now_iso, suggested_iso=sugg)
                 approved += 1
     except Exception as exc:
         return ActionResult(ok=False, error=f"approve-with-hook failed: {str(exc)[:160]}")
-    return ActionResult(ok=True, detail={"approved": approved, "clip_id": clip_id, "hook": bool(removed)})
+    return ActionResult(ok=True, detail={"approved": approved, "clip_id": clip_id, "hook": bool(removed),
+                                         "cut_over_cap": cut_over_cap})
 
 def _approve_matching(cfg: Config, pred=None, *, pred_for=None, now: Optional[datetime] = None,
                       detail: Optional[dict] = None) -> ActionResult:
