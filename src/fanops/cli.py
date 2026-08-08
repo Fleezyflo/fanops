@@ -881,6 +881,18 @@ def main(argv: list[str] | None = None) -> int:
     p_srp.add_argument("--apply", action="store_true", help="MUTATE: snapshot first, then never-shipped -> retired; "
                        "posts that have touched a platform are left untouched")
     p_srp.add_argument("--dry-run", action="store_true", help="READ-ONLY target listing (the default)")
+    # TOP-LEVEL, not under `posts`: the row it labels is the MOMENT. The Studio Provenance panel is the
+    # primary trigger — this verb is the headless twin over the same engine, so the two cannot diverge.
+    p_ob = sub.add_parser("origin-backfill", help="one-time: reconstruct `machine_inferred` provenance for the "
+                          "moments minted before Moment.origin existed; default = read-only dry-run")
+    p_ob.add_argument("--day", action="append", required=True, metavar="YYYY-MM-DD",
+                      help="post BIRTH day whose lineage to label (repeatable). An ARGUMENT, never a literal in "
+                           "the module: a calendar baked into code is a fact nobody can watch rot")
+    p_ob.add_argument("--apply", action="store_true", help="MUTATE: snapshot FIRST, then ONE transaction; "
+                      "refuses on any invariant mismatch and never adapts to what it finds")
+    p_ob.add_argument("--expect-moments", type=int, default=None,
+                      help="STOP unless the selection is exactly N moments (the operator's own census check)")
+    p_ob.add_argument("--dry-run", action="store_true", help="READ-ONLY plan (the default)")
     p_audit = sub.add_parser("audit", help="(R3) operator audit-trail commands")
     audit_sub = p_audit.add_subparsers(dest="audit_cmd")
     p_at = audit_sub.add_parser("tail", help="print the last N lines of 00_control/studio_audit.log")
@@ -1486,6 +1498,9 @@ def _dispatch(cfg: Config, args) -> int:
         if args.posts_cmd == "reconcile-retired":
             from fanops.stranded_posts import cmd_posts_reconcile_retired   # lazy, same precedent
             return cmd_posts_reconcile_retired(cfg, args)
+    if args.cmd == "origin-backfill":
+        from fanops.origin_backfill import cmd_origin_backfill   # lazy, same precedent
+        return cmd_origin_backfill(cfg, args)
     if args.cmd == "daemon":   return cmd_daemon(cfg, args)
     if args.cmd == "autopilot": return cmd_autopilot(cfg, args)
     if args.cmd == "up":       return cmd_up(cfg, args)

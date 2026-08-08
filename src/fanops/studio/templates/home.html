@@ -19,6 +19,9 @@
     {% if zero_post_clips %}
     <p class="warn zero-post-line">{{ zero_post_clips|length }} clip(s) finished processing but birthed zero posts.</p>
     {% endif %}
+    {# MOL-756: missing provenance is a ledger condition the operator must SEE, not discover by shell. The
+       panel renders itself away once no moment reads `unlabelled`. #}
+    {% include "_provenance_panel.html" %}
   </section>
 
   <section class="home-accounts-panel" aria-label="Accounts">
