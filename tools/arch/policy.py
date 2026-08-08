@@ -146,20 +146,21 @@ RULES: dict[str, Rule] = {r.id: r for r in [
          "Keep the import inside the function body. If the hoist is genuinely correct, accept a new "
          "baseline deliberately: `python -m tools.arch baseline --accept` (a reviewed change)."),
 
-    Rule("ARCH-008", "The side-effect census is never restated in a DECLARED artifact",
+    Rule("ARCH-008", "Every side effect stays under an approved ceiling",
          "Subprocess, network, ledger-transaction, mkdtemp, rmtree and env-write sites are the "
-         "system's blast radius, and derived/side_effects.json counts them on every regen. This rule "
-         "used to COMPARE that census against a hand-typed copy in kb/side_effects.json. The copy "
-         "bought nothing a reviewer could not get from the derived twin, and it cost a merge "
-         "conflict on every graph-touching PR — so the copy is forbidden instead of maintained. "
-         "*** WHAT THIS RULE NO LONGER DOES: it no longer makes a NEW side effect fail the build. "
-         "`impact` reports every census delta (`changed_side_effects`) and the reconciliation "
-         "verdicts in kb/side_effects.json remain the review record — but neither BLOCKS. Say that "
-         "out loud rather than let the rule's old name imply a gate that is gone. ***",
-         "kb/side_effects.json `counts_AST_verified`", BLOCKING,
-         "the watched block holds no JSON number at any depth, and no derived-delta changelog key",
-         "Delete the count from kb/side_effects.json and read derived/side_effects.json instead. A "
-         "reviewed verdict about a new effect belongs there as PROSE, never as a count."),
+         "system's blast radius. derived/side_effects.json counts them on every regen. "
+         "governance/side_effect_ratchet.json holds the GB-6 shape — an approved ceiling plus a "
+         "declared module allowlist — as structured fields (not prose scraped by regex). A new site "
+         "raises the census past the ceiling (or lands in an unlisted module) and fails CI until a "
+         "human raises the ceiling and lists the module in the same PR. "
+         "*** WHAT THIS RULE STILL FORBIDS: restating an AST-computable census in "
+         "kb/side_effects.json `counts_AST_verified`. The ceiling is declared POLICY; the census "
+         "stays machine-derived. Do not restore the hand-typed mirror #875 deleted. ***",
+         "governance/side_effect_ratchet.json + kb/side_effects.json `counts_AST_verified`", BLOCKING,
+         "each census total ≤ its ceiling; every module with a site is listed; counts_AST_verified "
+         "holds no JSON number at any depth",
+         "Raise the matching ceiling and list the module in governance/side_effect_ratchet.json, or "
+         "remove the site. Never copy a census total into kb/ — record reviewed verdicts as PROSE."),
 
     Rule("ARCH-009", "A DECLARED artifact never restates a derived number",
          "The repository's signature defect, found in every one of five audit cycles, is: THE DOC "
@@ -288,6 +289,7 @@ _REQUIRED_ARTIFACTS = (
     ("contract/verification_matrix.json", "the verification matrix"),
     ("contract/traceability.json", "root-cause traceability"),
     ("governance/baselines.json", "the pinned ratchet baselines"),
+    ("governance/side_effect_ratchet.json", "the side-effect ceiling + allowlist"),
     ("governance/unknowns.json", "the UNKNOWN registry"),
     ("governance/exceptions.json", "the exception registry"),
 )
@@ -485,7 +487,8 @@ def check(derived_dir: Path | None = None) -> list[Finding]:
     # IMPL-009 / IMPL-010 — the two GB boundaries that are statically checkable
     out += _gb_checks()
 
-    # ARCH-008 — the side-effect census is not restated in kb/
+    # ARCH-008 — side-effect ceiling ratchet + no census restated in kb/
+    out += _side_effect_ratchet(D("side_effects"))
     out += _declared_numbers_forbidden("ARCH-008")
 
     # ARCH-005 — UNKNOWNs may not grow past the approved ceiling
@@ -593,6 +596,77 @@ def _coverage(cs: dict) -> list[Finding]:
     return out
 
 
+# ── ARCH-008 side-effect ratchet (GB-6 shape: ceiling + allowlist vs derived census) ────────
+#
+# Ceiling keys match derived/side_effects.json → totals. Section keys are the per-module maps.
+# The ceiling is DECLARED POLICY (like governance/unknowns.json `approved_ceiling`); the census
+# stays in derived/. Do not put per-site counts in the declared file — those are AST-computable
+# and belong only in derived/.
+_SIDE_EFFECT_RATCHET_KEYS = (
+    ("subprocess_sites", "subprocess"),
+    ("network_sites_literal_requests", "network"),
+    ("ledger_transaction_sites", "ledger_transaction"),
+    ("mkdtemp_sites", "mkdtemp"),
+    ("rmtree_sites", "rmtree"),
+    ("env_write_sites", "env_writes"),
+)
+
+
+def _side_effect_ratchet(se: dict) -> list[Finding]:
+    """ARCH-008: derived census totals may not exceed the declared ceiling; every module that
+    carries a site must be listed. Raising the ceiling without listing a new module (or listing
+    without raising) still fails — both halves of the human decision must be visible in the diff.
+    """
+    path = GOVERNANCE / "side_effect_ratchet.json"
+    # No `.exists()` guard: GOV-001 short-circuits on a missing required artifact first.
+    doc = load(path)
+    ceilings = doc.get("ceilings") or {}
+    approved = doc.get("approved_sites") or {}
+    totals = se.get("totals") or {}
+    out: list[Finding] = []
+
+    missing_ceilings = [k for k, _ in _SIDE_EFFECT_RATCHET_KEYS if k not in ceilings]
+    if missing_ceilings:
+        out.append(_f("ARCH-008",
+                      f"{len(missing_ceilings)} side-effect ceiling(s) missing from "
+                      f"governance/side_effect_ratchet.json. A key without a ceiling is unenforced.",
+                      [f"missing ceiling: {k}" for k in missing_ceilings]))
+        return out
+
+    for key, section in _SIDE_EFFECT_RATCHET_KEYS:
+        ceiling = ceilings[key]
+        if not isinstance(ceiling, int) or isinstance(ceiling, bool):
+            out.append(_f("ARCH-008",
+                          f"Ceiling for {key} must be a structured integer, not prose.",
+                          [f"{key}: {ceiling!r}"]))
+            continue
+        actual = int(totals.get(key, 0))
+        modules = set((se.get(section) or {}).keys())
+        allowed_raw = approved.get(key, [])
+        allowed: set[str] = set()
+        for entry in allowed_raw:
+            if isinstance(entry, str):
+                allowed.add(entry)
+            elif isinstance(entry, dict) and isinstance(entry.get("module"), str):
+                allowed.add(entry["module"])
+        undeclared = sorted(modules - allowed)
+        if actual <= ceiling and not undeclared:
+            continue
+        evidence = [f"ceiling: {ceiling}", f"census: {actual}"]
+        if undeclared:
+            evidence += [f"undeclared module: {m}" for m in undeclared]
+        else:
+            # Over ceiling inside already-listed modules — name every module so the PR can see where.
+            evidence += [f"module: {m}" for m in sorted(modules)]
+        out.append(_f("ARCH-008",
+                      f"Side-effect census for {key} is {actual}, above the approved ceiling of "
+                      f"{ceiling}." if actual > ceiling else
+                      f"{len(undeclared)} undeclared {key} module(s) — list each new module in "
+                      f"governance/side_effect_ratchet.json when raising the ceiling.",
+                      evidence))
+    return out
+
+
 # ── ARCH-008 / ARCH-009: derived facts may not be restated in a DECLARED artifact ───────────
 #
 # (rule id, kb file, block, human label). The blocks a hand-authored artifact used to mirror a
@@ -602,6 +676,9 @@ def _coverage(cs: dict) -> list[Finding]:
 # `if declared_key in block` guard — five of kb/dependencies.json's twelve totals were never paired
 # at all (two of those five had silently rotted), and deleting a paired key deleted its enforcement
 # while the gate stayed green. A rule that stops firing is indistinguishable from one that passes.
+#
+# ARCH-008 ALSO runs `_side_effect_ratchet` above. The restatement forbid below is the half that
+# keeps a derived number out of kb/; the ratchet is the half that fails a new site.
 _FORBIDDEN_RESTATEMENT_BLOCKS = (
     ("ARCH-009", "dependencies.json", "totals", "kb/dependencies.json `totals`"),
     ("ARCH-009", "subsystems.json", "totality", "kb/subsystems.json `totality`"),

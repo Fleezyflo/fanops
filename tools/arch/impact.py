@@ -256,21 +256,14 @@ def report(base: str = "origin/main") -> dict:
                               "(no call inside the ledger lock) in kb/side_effects.json")
             elif nse.get(k, 0) != ose.get(k, 0):
                 if nse.get(k, 0) > ose.get(k, 0):
-                    # *** THIS BUMP IS NOW THE ONLY SURFACE THAT REPORTS A NEW SIDE EFFECT. ***
-                    # It was COMPATIBLE rather than UNKNOWN because ARCH-008 was BLOCKING and would
-                    # fail the build the moment kb/side_effects.json disagreed with the derived
-                    # census — a gate that could actually SEE the registration, where this branch
-                    # compares derived-at-base to derived-at-head and never reads the KB (as UNKNOWN
-                    # it told the author to register the effect and then ignored them doing so, and
-                    # UNKNOWN_IMPACT is deliberately non-declarable, so every new Ledger.transaction,
-                    # subprocess and rmtree went permanently red with no way out). That gate is gone:
-                    # ARCH-008 now FORBIDS the hand-typed census instead of comparing it, because the
-                    # copy conflicted on every graph-touching PR and rotted between conflicts. So the
-                    # severity is unchanged but the reason is not — a new effect is REPORTED here and
-                    # reviewed, and nothing blocks it. Do not read this line as a gate.
+                    # ARCH-008's ceiling ratchet in governance/side_effect_ratchet.json BLOCKS an
+                    # undeclared increase at CI time. This impact branch still REPORTS the delta
+                    # for the PR author; the gate that refuses it is the ratchet, not this bump.
+                    # A restated count in kb/ remains forbidden — record the review verdict as PROSE.
                     bump(COMPATIBLE, f"side-effect census increased: {k} {ose.get(k,0)} -> {nse.get(k,0)} "
-                                     f"— review it and record the verdict in kb/side_effects.json as "
-                                     f"PROSE (a restated count is forbidden by ARCH-008)")
+                                     f"— raise the ceiling and list the module in "
+                                     f"governance/side_effect_ratchet.json (ARCH-008); record the "
+                                     f"verdict in kb/side_effects.json as PROSE, never as a count")
                 else:
                     bump(COMPATIBLE, f"side-effect census decreased: {k} {ose.get(k,0)} -> {nse.get(k,0)}")
 

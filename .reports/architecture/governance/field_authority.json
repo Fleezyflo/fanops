@@ -84,12 +84,12 @@
    "status": "CANONICAL DECLARED (Cycle 5)",
    "owner": "architecture governance",
    "authoritative_source": "SPLIT. Every census (subprocess/mkdtemp/rmtree/locks/env) is src/fanops/**/*.py. The RISK judgements are HUMAN_DECISION.",
-   "regeneration_command": "`python -m tools.arch regen`. Do NOT copy the censuses back — that instruction is what this artifact was migrated OFF, and ARCH-008 now fails CI on a count reintroduced into counts_AST_verified. Read derived/side_effects.json.",
-   "validation_mechanism": "Rule ARCH-008 FORBIDS a count in counts_AST_verified. *** IT NO LONGER MAKES A NEW SIDE EFFECT FAIL THE BUILD. *** `impact` reports every census delta as `changed_side_effects` and the reconciliation verdicts in this file remain the review record, but neither BLOCKS. Do not read the rule's name as a gate on new effects.",
-   "permitted_manual_edits": "The DECISION TABLE (the network-ambiguity table) and the ordering narrative. Not the counts.",
+   "regeneration_command": "`python -m tools.arch regen`. Do NOT copy the censuses back into this file — ARCH-008 still fails CI on a count reintroduced into counts_AST_verified. Read derived/side_effects.json. To admit a new site, raise the ceiling and list the module in governance/side_effect_ratchet.json.",
+   "validation_mechanism": "Rule ARCH-008: (1) governance/side_effect_ratchet.json ceiling + module allowlist vs derived/side_effects.json — a new site fails CI until the ceiling is raised and the module listed; (2) FORBIDS a census number in counts_AST_verified. The reconciliation verdicts in this file remain the review record as PROSE.",
+   "permitted_manual_edits": "The DECISION TABLE (the network-ambiguity table), the ordering narrative, and dated reconciliation VERDICTS as prose. Not the counts.",
    "conflict_resolution": "The code wins on counts. The doc wins on SEMANTICS (what a 5xx MEANS for a publish).",
    "fields": {
-    "counts_AST_verified.*": "DERIVED_FROM_CODE, and therefore DELETED — migration done. derived/side_effects.json is the census. What remains under this key are the dated reconciliation VERDICTS, which are HUMAN_DECISION and carry no count.",
+    "counts_AST_verified.*": "DERIVED_FROM_CODE, and therefore DELETED as numbers — migration done. derived/side_effects.json is the census. What remains under this key are the dated reconciliation VERDICTS, which are HUMAN_DECISION and carry no count. A number reintroduced here fails ARCH-008.",
     "the_network_ambiguity_decision_table.*": "HUMAN_DECISION — the system's best engineering, and entirely non-derivable. Stands.",
     "the_publish_side_effect_ordering.*": "HUMAN_DECISION — the T0..T10 ordering and the crash-critical window."
    }
@@ -154,6 +154,20 @@
     "must_stay_lazy": "DECLARED_AND_ENFORCED — mechanizes GB-1, which NOTHING enforced before Cycle 7.",
     "approved_compile_cycles": "DECLARED_AND_ENFORCED — baselined because it EXISTS, not because it is endorsed (UNK-C5-1).",
     "approved_terminal_post_writers": "DECLARED_AND_ENFORCED — mechanizes GB-4."
+   }
+  },
+  {
+   "artifact": ".reports/architecture/governance/side_effect_ratchet.json",
+   "status": "DECLARED RATCHET — side-effect ceilings + module allowlist (MOL-841)",
+   "owner": "architecture governance",
+   "authoritative_source": "HUMAN_DECISION. Ceilings and allowlists are policy. The census they bound is derived/side_effects.json.",
+   "regeneration_command": "None — hand-authored. Raise a ceiling and list a module in the same PR that adds the site.",
+   "validation_mechanism": "Rule ARCH-008 compares this file to derived/side_effects.json at CI time.",
+   "permitted_manual_edits": "ceilings.* and approved_sites.* — deliberately, when admitting a new site. Never copy derived totals into kb/.",
+   "conflict_resolution": "The derived census wins on WHAT exists. This file wins on WHAT IS ALLOWED. A disagreement fails the build until a human edits this file.",
+   "fields": {
+    "ceilings.*": "HUMAN_DECISION — structured integer budget per census key (not prose).",
+    "approved_sites.*": "HUMAN_DECISION — module allowlist per census key."
    }
   },
   {

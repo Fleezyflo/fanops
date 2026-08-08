@@ -49,7 +49,7 @@ CONTROLS: list[Control] = [
     Control("NC-04", "undocumented environment variable", "ARCH-003", "architecture"),
     Control("NC-05", "invalid invariant (a derived number restated in kb/, contradicting the code)", "ARCH-009", "architecture"),
     Control("NC-06", "missing fingerprint input (a lazy import HOISTED to module level)", "ARCH-007", "architecture"),
-    Control("NC-07", "a side-effect census restated in kb/side_effects.json", "ARCH-008", "architecture"),
+    Control("NC-07", "a NEW undeclared subprocess call site", "ARCH-008", "architecture"),
     Control("NC-08", "generated-file edit (derived/ hand-modified)", "ARCH-006", "architecture"),
     Control("NC-09", "unauthorized slice expansion (a slice owns a file that does not exist)", "IMPL-001", "implementation"),
     Control("NC-10", "illegal slice dependency / broken implementation DAG", "IMPL-003", "implementation"),
@@ -65,6 +65,7 @@ CONTROLS: list[Control] = [
     Control("NC-20", "a slice boundary written as PROSE, not a predicate", "IMPL-002", "implementation"),
     Control("NC-21", "a required verification DISAPPEARS", "IMPL-006", "implementation"),
     Control("NC-22", "a canonical artifact is MISSING (the gate must FAIL, not pass vacuously)", "GOV-001", "architecture"),
+    Control("NC-23", "a side-effect census restated in kb/side_effects.json", "ARCH-008", "architecture"),
     Control("NC-24", "a stale _CLI_PRINT_COUNT assignment in tools/arch/ — the engine's OWN rationale (G1 widened scope)", "IMPL-007", "implementation"),
     Control("NC-25", "a stale FANOPS_ var named in docs/CONFIG.md but read nowhere (G2 operator-doc rot)", "ARCH-003", "architecture"),
     Control("NC-26", "a phantom env var declared in kb/configuration.json but read nowhere", "ARCH-003", "architecture"),
@@ -201,16 +202,21 @@ def _inject(cid: str, root: Path, p: dict) -> None:
         f = src / (s.split("fanops.", 1)[1].replace(".", "/") + ".py")
         f.write_text(f"import {t}  # INJECTED HOIST\n" + f.read_text())
 
-    elif cid == "NC-07":  # a side-effect count restated in the DECLARED artifact
-        # *** THIS CONTROL USED TO INJECT A NEW SUBPROCESS CALL SITE, AND IT NO LONGER CAN. ***
-        # ARCH-008 compared derived/side_effects.json against a hand-typed census in
-        # kb/side_effects.json, so a new effect was caught only as a DISAGREEMENT with that copy.
-        # The copy is now forbidden rather than maintained, which means no rule fails the build on a
-        # new side effect — `impact` reports the delta as `changed_side_effects` and the kb's
-        # reconciliation verdicts remain the review record, but neither BLOCKS. Injecting source
-        # here would test nothing and report NOT DETECTED, which is the honest answer for the old
-        # defect. This control now proves what ARCH-008 actually asserts: the census may not be
-        # restated. Mirrors NC-05's shape on the ARCH-009 half.
+    elif cid == "NC-07":  # a NEW undeclared subprocess call site (load-bearing ARCH-008 subject)
+        # Inject into a module with ZERO subprocess sites today so the census grows AND the module
+        # is absent from the allowlist. ARCH-008 must name the module and the ceiling.
+        # Shape matches real call sites (`import subprocess` + `subprocess.run`) — an alias would
+        # be invisible to the extractor (head must be the literal name `subprocess`).
+        # (NC-23 covers the kb restatement half — this must NOT duplicate NC-05/NC-23.)
+        (src / "log.py").write_text(
+            (src / "log.py").read_text()
+            + "\nimport subprocess\n"
+            + "def _nc_undeclared_side_effect():\n"
+            + "    subprocess.run(['true'], check=False)\n")
+
+    elif cid == "NC-23":  # a side-effect census restated in kb/ (presence, not agreement)
+        # The #875 property kept under ARCH-008: an AST-computable number in
+        # counts_AST_verified still fails the build. Distinct from NC-07 (new site).
         patch(kb / "side_effects.json",
               lambda d: d["counts_AST_verified"].update({"subprocess_call_sites": 99999}))
 
