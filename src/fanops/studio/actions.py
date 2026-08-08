@@ -669,7 +669,7 @@ def crosspost_to_account(cfg: Config, clip_id: str, target_account: str, platfor
         with Ledger.transaction(cfg) as led:
             clip = led.clips.get(clip_id)
             if clip is None: return ActionResult(ok=False, error=f"no such clip: {clip_id}")
-            if clip.held or led.is_retired_clip(clip.id) or led.is_retired_moment(clip.parent_id):
+            if not led.can_seed(clip):   # the OWNER folds held + retired lineage, and fails CLOSED on a missing moment
                 return ActionResult(ok=False, error=f"clip {clip_id} is held/retired — not eligible for cross-post")
             m = led.moments.get(clip.parent_id)
             source = led.sources.get(m.parent_id) if m is not None else None

@@ -55,14 +55,14 @@ def _approve_ids_with_render(cfg: Config, *, resolve_ids: Callable[[Ledger], Seq
                 post = led.posts.get(pid)
                 if post is None:
                     continue
-                clip = led.clips.get(post.parent_id)
                 # A RETIRED lineage is never approvable. crosspost/crosspost_to_account already refuse to MINT
                 # onto one; this is the missing APPROVE-side twin — these posts were minted BEFORE their parent
                 # was retired (re-decision cascade preserves awaiting_approval posts and retires the MOMENT),
                 # so they survive with a live clip under a dead moment. Promoting one to `queued` publishes
-                # lineage the system already dropped. The moment check is the load-bearing one: the clip is
-                # usually still ClipState.queued. Counted in `skipped_retired` — never silently swallowed.
-                if clip is not None and (led.is_retired_clip(clip.id) or led.is_retired_moment(clip.parent_id)):
+                # lineage the system already dropped. Asked of `Ledger.can_promote`, the OWNER — which closes the
+                # old `clip is not None` fail-open (a post whose clip row is GONE was approvable) because
+                # is_suppressed fails CLOSED. Counted in `skipped_retired` — never silently swallowed.
+                if not led.can_promote(post):
                     skipped_retired += 1
                     get_logger(cfg)("approve", pid, "skipped_retired_lineage", account=post.account)
                     continue
@@ -156,7 +156,9 @@ def approve_with_hook(cfg: Config, clip_id: str, *, now: Optional[datetime] = No
         with Ledger.transaction(cfg) as led:
             clip = led.clips.get(clip_id)
             if clip is None: return ActionResult(ok=False, error=f"no such clip: {clip_id}")
-            if led.is_retired_clip(clip.id) or led.is_retired_moment(clip.parent_id):   # same guard as the bulk engine,
+            # Same guard as the bulk engine, asked of the OWNER. NOT `can_seed`: this route has never refused a
+            # HELD clip and must not start — `is_suppressed` reads lineage only.
+            if led.is_suppressed(clip):
                 return ActionResult(ok=False, error=f"clip {clip_id} is retired — not eligible for approval")  # loud here (one clip)
             ids = [p.id for p in led.posts.values()
                    if p.parent_id == clip_id and p.state is PostState.awaiting_approval]
