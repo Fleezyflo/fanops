@@ -457,12 +457,12 @@ def test_approve_posts_large_batch_requires_confirm(tmp_path):
 _OVER_IG_CAP_S = 120.0                 # Instagram's cap is 90s (models.PLATFORM_MAX_SECONDS)
 _CAP_COPY = "longer than the platform allows"
 
-def _seed_cap_lineage(cfg):
+def _seed_cap_lineage(cfg, *, hook_removed=None):
     """clip_fits: no cut_seconds -> the 7s moment envelope, under every cap. clip_long: a realized 120s cut."""
     with Ledger.transaction(cfg) as led:
         led.add_source(Source(id="src_1", source_path="/v/s.mp4", language="en"))
         led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
-                              reason="r", state=MomentState.clipped))
+                              reason="r", state=MomentState.clipped, hook_removed=hook_removed))
         led.add_clip(Clip(id="clip_fits", parent_id="mom_1", path="/c/clip_fits.mp4", aspect=Fmt.r9x16,
                           state=ClipState.queued))
         led.add_clip(Clip(id="clip_long", parent_id="mom_1", path="/c/clip_long.mp4", aspect=Fmt.r9x16,
@@ -513,3 +513,72 @@ def test_approve_route_says_nothing_about_a_cap_when_nothing_was_dropped(tmp_pat
         _awaiting(led, "p_fits", clip="clip_fits", acct="a", aid="1")
     html = _client(cfg).post("/posts/approve", data={"ids": ["p_fits"]}).data.decode()
     assert "Approved 1" in html and _CAP_COPY not in html
+
+
+# ---- MOL-832: the cap is ONE predicate, and EVERY approve route asks it ----
+# `approve_with_hook` guarded retired lineage and then called `led.approve_post` with no cap check at all,
+# so the same post on the same ledger was admissible or not purely by which button the operator pressed:
+# /posts/approve refused it, /posts/approve-with-hook queued it. Both routes now go through
+# `_over_cap_refusal`, the sole owner. These tests run the SAME fixture through both — a single-route test
+# is exactly what let the two drift apart. The cap's value, policy and trigger stay untouched (MOL-797).
+def _via_bulk(cfg, clip):        return actions.approve_posts(cfg, ["p_cap"], now=_NOW)
+def _via_hook(cfg, clip):        return actions.approve_with_hook(cfg, clip, now=_NOW)
+_ROUTES = pytest.mark.parametrize("route", [_via_bulk, _via_hook], ids=["bulk", "with_hook"])
+
+@_ROUTES
+def test_every_approve_route_refuses_the_same_over_cap_post(tmp_path, route):
+    cfg = Config(root=tmp_path); _seed_two_accounts(cfg); _seed_cap_lineage(cfg)
+    with Ledger.transaction(cfg) as led:
+        _awaiting(led, "p_cap", clip="clip_long", acct="a", aid="1")
+    r = route(cfg, "clip_long")
+    assert r.ok and r.detail["approved"] == 0 and r.detail["cut_over_cap"] == 1
+    assert Ledger.load(cfg).posts["p_cap"].state is PostState.awaiting_approval
+
+@_ROUTES
+def test_every_approve_route_still_admits_the_same_under_cap_post(tmp_path, route):
+    # the negative control the parity test needs: a route that refused everything would pass the test above.
+    cfg = Config(root=tmp_path); _seed_two_accounts(cfg); _seed_cap_lineage(cfg)
+    with Ledger.transaction(cfg) as led:
+        _awaiting(led, "p_cap", clip="clip_fits", acct="a", aid="1")
+    r = route(cfg, "clip_fits")
+    assert r.ok and r.detail["approved"] == 1 and r.detail["cut_over_cap"] == 0
+    assert Ledger.load(cfg).posts["p_cap"].state is PostState.queued
+
+
+def _fake_burn(led, cfg, moment_id, *, aspect=Fmt.r9x16, **kw):
+    """render_moment stand-in (the action imports it locally, so patch `fanops.clip.render_moment`) — no
+    ffmpeg, and a clean rendered clip so the hook restore proceeds instead of rolling back."""
+    c = next(c for c in led.clips.values() if c.parent_id == moment_id and c.aspect is aspect)
+    return led, c.model_copy(update={"state": ClipState.rendered, "hook_burn_failed": False})
+
+def test_approve_with_hook_route_tells_the_operator_the_cap_dropped_one(tmp_path, mocker):
+    # the banner branch MOL-797 could not reach: a with-hook result renders `detail.hook` copy, which named
+    # no drop at all — so this button could refuse the cut and report only "Approved 0 with hook restored".
+    cfg = Config(root=tmp_path); _seed_two_accounts(cfg); _seed_cap_lineage(cfg, hook_removed="lost it all")
+    with Ledger.transaction(cfg) as led:
+        _awaiting(led, "p_cap", clip="clip_long", acct="a", aid="1")
+    mocker.patch("fanops.clip.render_moment", side_effect=_fake_burn)
+    html = _client(cfg).post("/posts/approve-with-hook/clip_long").data.decode()
+    assert "1 skipped" in html and _CAP_COPY in html
+
+def test_approve_with_hook_route_says_nothing_about_a_cap_when_nothing_was_dropped(tmp_path, mocker):
+    # the same negative control at the with-hook surface.
+    cfg = Config(root=tmp_path); _seed_two_accounts(cfg); _seed_cap_lineage(cfg, hook_removed="lost it all")
+    with Ledger.transaction(cfg) as led:
+        _awaiting(led, "p_cap", clip="clip_fits", acct="a", aid="1")
+    mocker.patch("fanops.clip.render_moment", side_effect=_fake_burn)
+    html = _client(cfg).post("/posts/approve-with-hook/clip_fits").data.decode()
+    assert "Approved 1 with hook restored" in html and _CAP_COPY not in html
+
+def test_approve_with_hook_does_not_spend_the_removed_hook_on_a_fully_dropped_clip(tmp_path, mocker):
+    # the cap is asked BEFORE the restore: a clip whose every post is over cap must not re-cut, and must
+    # keep `hook_removed` intact so the operator can still act on it after the cut is fixed.
+    cfg = Config(root=tmp_path); _seed_two_accounts(cfg); _seed_cap_lineage(cfg, hook_removed="lost it all")
+    with Ledger.transaction(cfg) as led:
+        _awaiting(led, "p_cap", clip="clip_long", acct="a", aid="1")
+    burn = mocker.patch("fanops.clip.render_moment", side_effect=_fake_burn)
+    r = actions.approve_with_hook(cfg, "clip_long", now=_NOW)
+    assert r.ok and r.detail["approved"] == 0 and r.detail["cut_over_cap"] == 1
+    assert burn.call_count == 1          # the off-lock pre-warm only — no in-transaction re-cut
+    led = Ledger.load(cfg)
+    assert led.moments["mom_1"].hook_removed == "lost it all" and led.moments["mom_1"].hook is None
