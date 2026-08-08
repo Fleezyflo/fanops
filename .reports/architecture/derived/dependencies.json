@@ -1998,7 +1998,6 @@
         "fanops.meta_graph",
         "fanops.models",
         "fanops.post.metrics",
-        "fanops.reconcile",
         "fanops.validation_gate"
       ],
       "optional": [],
@@ -2802,14 +2801,6 @@
       "jump": 0,
       "same_scc": false,
       "to": "fanops.meta_graph",
-      "to_level": 3
-    },
-    {
-      "from": "fanops.track",
-      "from_level": 3,
-      "jump": 0,
-      "same_scc": false,
-      "to": "fanops.reconcile",
       "to_level": 3
     },
     {
@@ -3706,10 +3697,10 @@
     "G2_module_sccs_total": 70,
     "G2_non_trivial_sccs": 7,
     "compile_edges_G1": 587,
-    "lazy_edges": 352,
-    "lazy_edges_lateral": 46,
+    "lazy_edges": 351,
+    "lazy_edges_lateral": 45,
     "lazy_edges_strictly_upward": 70,
-    "lazy_edges_to_equal_or_higher_level": 116,
+    "lazy_edges_to_equal_or_higher_level": 115,
     "modules": 139,
     "optional_edges": 0,
     "typing_only_edges": 7

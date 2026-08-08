@@ -303,16 +303,14 @@ def pull_metrics(led: Ledger, cfg: Config, *, list_posts: Optional[ListPosts] = 
     # series is complete (or the post predates published_at), so a finished/timeline-less post is still
     # fetched + flipped/updated but records no new row. Inert id-thread for any non-postiz backend (ignored).
     now = now or datetime.now(timezone.utc)
-    # Leg 2 (Insight): resolve each new IG post's Graph media_id AS PART of the automatic pull so the
-    # unattended daemon self-resolves — the sole-source insights read keys on media_id. FAIL-OPEN: a resolve
-    # failure (creds/transport) must never block the metrics pull (resolve_media_ids itself returns [] silently
-    # when it can't enumerate). Injectable for hermetic tests; default = the real reconcile resolver.
-    if resolve_media is None:
-        from fanops.reconcile import resolve_media_ids as resolve_media
-    try:
-        resolve_media(led, cfg)
-    except Exception as exc:
-        get_logger(cfg)("track", "resolve_media", "error", err=str(exc)[:160])   # fail-open, breadcrumb
+    # MOL-790: resolve_media=None means NO feed enumeration on the pull path (media_id arrives at
+    # promotion from Postiz releaseId; product_type at mint). The injectable seam stays for tests /
+    # explicit callers — a passed callable is still honored (fail-open). Corpse resolver = MOL-775.
+    if resolve_media is not None:
+        try:
+            resolve_media(led, cfg)
+        except Exception as exc:
+            get_logger(cfg)("track", "resolve_media", "error", err=str(exc)[:160])   # fail-open, breadcrumb
     pollable = (PostState.published, PostState.analyzed)
     fetch = list_posts or _default_list_posts(
         cfg, posts=[p for p in led.posts.values()

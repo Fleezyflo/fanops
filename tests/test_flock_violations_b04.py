@@ -26,8 +26,8 @@ def test_h10_transcribe_cold_cache_never_shells_in_lock(tmp_path, mocker, monkey
     assert led.sources["src_1"].state is SourceState.catalogued
 
 
-def test_m03_learn_pass_media_enumeration_lock_free(tmp_path, monkeypatch, mocker):
-    """M03: enumerate_scoped_media runs outside the ledger flock in _learn_pass."""
+def test_m03_learn_pass_skips_media_enumeration(tmp_path, monkeypatch, mocker):
+    """MOL-790: _learn_pass no longer prefetches/enumerates Graph feed media."""
     monkeypatch.chdir(tmp_path)
     cfg = Config(root=tmp_path)
     led = Ledger.load(cfg)
@@ -35,17 +35,11 @@ def test_m03_learn_pass_media_enumeration_lock_free(tmp_path, monkeypatch, mocke
                       caption="x", state=PostState.published, submission_id="sub_p",
                       public_url="https://instagram.com/p/abc"))
     led.save()
-    seen = {}
-
-    def scoped(cfg_, handles, *, get=None):
-        seen["lock_free"] = ledger_lock_is_free(cfg)
-        return []
-
-    mocker.patch("fanops.meta_graph.enumerate_scoped_media", side_effect=scoped)
+    enum_spy = mocker.patch("fanops.meta_graph.enumerate_scoped_media", return_value=[])
     mocker.patch("fanops.cli._default_list_posts", return_value=lambda window: [])
     import fanops.cli as cli
     cli._learn_pass(cfg)
-    assert seen.get("lock_free") is True
+    assert enum_spy.call_count == 0
 
 
 def test_m05_ingest_stage_hash_copy_lock_free_and_dedup(tmp_path, monkeypatch, mocker):
