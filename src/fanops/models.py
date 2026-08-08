@@ -428,10 +428,10 @@ class Post(BaseModel):
                                                 # resolved from /{ig_user}/media by permalink (reconcile.resolve_media_ids).
                                                 # The identity the sole-source Graph insights read keys on. None until
                                                 # resolved / for non-IG posts (back-compat: old ledgers load fine).
-    product_type: Optional[str] = None          # Leg 2 (Insight): the media's real media_product_type (AD|FEED|STORY|
-                                                # REELS), stamped from the live media at resolve alongside media_id. The
-                                                # insights request is DERIVED from it (meta_graph.insights_metrics_for) so
-                                                # a feed video is never asked for a reels-only metric. None until resolved.
+    product_type: Optional[str] = None          # Declared INPUT at mint, in the publishing service's accepted vocabulary
+                                                # (Postiz/IG: post|story). None = undeclared / legacy / non-IG (TikTok:
+                                                # Zernio createPost has no post-type enum). reconcile.resolve_media_ids
+                                                # may still overwrite IG rows from live Graph until 774-D lands.
     error_reason: Optional[str] = None
     metrics: dict = Field(default_factory=dict)
     # P3 append-only metrics time-series: one sparse row per captured cadence offset, each a superset of
