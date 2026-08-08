@@ -740,24 +740,8 @@ class Ledger:
             # keep the moment but suppress it from future rendering/crossposting
             if moment_id in self.moments:
                 self.moments[moment_id] = self.moments[moment_id].model_copy(update={"state": MomentState.retired})  # ECC fix #10
-            # ...and carry that retirement DOWN to the never-shipped posts. Preserving them WITHOUT a terminal
-            # state was the defect: the moment died, the post stayed `awaiting_approval` under it, and every
-            # reader that walks led.posts directly (approve_account/approve_batch, the raw awaiting tallies)
-            # still saw it — one bulk-approve click away from publishing re-decided-away lineage. A post that
-            # HAS touched a platform is left exactly as it is; its record is why the preserve rule exists.
-            for c in self.clips_of(moment_id):
-                for p in self.posts_of(c.id):
-                    if p.state in self._UNSHIPPED_POST_STATES:
-                        self.posts[p.id] = p.model_copy(update={"state": PostState.retired})
-                # ...and the CLIP itself. It was preserved above only because a protected post hung off it
-                # (`survived = True`) — but preservation never relabelled it, so once those never-shipped
-                # posts are retired the clip keeps reading `queued` under a dead moment: inert (crosspost
-                # refuses both predicates) yet live in every clip census, and never reclaimable by gc, which
-                # only sweeps retired/analyzed. Gated on _LIVE_POST_STATES, not the protected superset: a
-                # published/needs_reconcile post still PINS its clip, because that file is what it points at.
-                if (c.state not in self._LIVE_CLIP_STATES
-                        and not any(p.state in self._LIVE_POST_STATES for p in self.posts_of(c.id))):
-                    self.clips[c.id] = c.model_copy(update={"state": ClipState.retired})
+            # NOTHING is carried DOWN: every descendant's disposition is DERIVED from this flip at read time
+            # by `Ledger.is_suppressed`, so a preserved post keeps the state that is its reason for existing.
         else:
             self.moments.pop(moment_id, None)
 

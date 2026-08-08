@@ -5,8 +5,9 @@
 # disagreed (493 vs 761) — and worse, approve_account/approve_batch read led.posts DIRECTLY, so a
 # "112 pending" button silently promoted 176 posts, publishing lineage the pipeline had dropped.
 #
-# Three invariants are locked here: the cascade gives never-shipped posts a terminal state, the
-# approve engine refuses a retired lineage, and the two awaiting counts can never drift again.
+# Three invariants are locked here: the cascade suppresses the lineage by retiring the MOMENT and
+# relabels no descendant (every reader derives through Ledger.is_suppressed), the approve engine
+# refuses a retired lineage, and the two awaiting counts can never drift again.
 import json
 from datetime import datetime, timezone
 
@@ -41,9 +42,12 @@ def _lineage(led, *, mom_id, clip_id, moment_state=MomentState.clipped):
                       state=ClipState.queued))
 
 
-# ---- the root fix: preserve-and-retire carries DOWN to never-shipped posts -------------------
+# ---- the root fix: preserve suppresses by LINEAGE; no label is copied down -------------------
 
-def test_cascade_retires_unshipped_posts_but_keeps_shipped_ones(tmp_path):
+def test_cascade_suppresses_by_lineage_without_relabelling(tmp_path):
+    """The moment flip is the WHOLE write. Every descendant reads dead through `Ledger.is_suppressed`,
+    which walks post -> clip -> moment, so nothing is copied down and no stored label is a second source
+    of truth. The preserved live post keeps `analyzed` — that record is the entire reason preserve exists."""
     cfg = Config(root=tmp_path)
     led = Ledger.load(cfg)
     _lineage(led, mom_id="mom_x", clip_id="clip_x")
@@ -54,19 +58,19 @@ def test_cascade_retires_unshipped_posts_but_keeps_shipped_ones(tmp_path):
     led._delete_moment_cascade("mom_x")
 
     assert led.moments["mom_x"].state is MomentState.retired      # moment suppressed, not erased
-    # never touched a platform -> terminal, so no reader can act on it again
-    assert led.posts["p_await"].state is PostState.retired
-    assert led.posts["p_queued"].state is PostState.retired
-    # HAS touched a platform -> untouched; that record is the entire reason preserve exists
+    # STORED LABELS UNTOUCHED — the cascade relabels no descendant, shipped or not
+    assert led.posts["p_await"].state is PostState.awaiting_approval
+    assert led.posts["p_queued"].state is PostState.queued
     assert led.posts["p_live"].state is PostState.analyzed
-    # ...and that live post still PINS its clip: the file is what it points at, so the clip stays live
-    assert led.clips["clip_x"].state is ClipState.queued
+    # ...yet all three read dead at the owner, derived from the moment above
+    for pid in ("p_await", "p_queued", "p_live"):
+        assert led.is_suppressed(led.posts[pid]), f"{pid} must derive as suppressed under a retired moment"
 
 
-def test_cascade_retires_the_clip_once_nothing_live_is_left_on_it(tmp_path):
-    """The clip half of the same rule. `survived` preserves a clip whose protected posts kept it alive but
-    never relabelled it — so once those never-shipped posts are retired it kept reading `queued` under a
-    dead moment: inert, but live in every clip census and invisible to gc (retired/analyzed only)."""
+def test_cascade_leaves_the_clip_label_alone_and_derives_its_disposition(tmp_path):
+    """The clip half of the same rule. `survived` preserves a clip whose protected posts kept it alive;
+    its label is left exactly as the operator last wrote it, and `is_suppressed` derives the dead lineage
+    from the retired moment instead — so a stored `retired` clip is never a drift-prone copy."""
     cfg = Config(root=tmp_path)
     led = Ledger.load(cfg)
     _lineage(led, mom_id="mom_x", clip_id="clip_x")
@@ -76,10 +80,9 @@ def test_cascade_retires_the_clip_once_nothing_live_is_left_on_it(tmp_path):
     led._delete_moment_cascade("mom_x")
 
     assert led.moments["mom_x"].state is MomentState.retired
-    assert led.posts["p_await"].state is PostState.retired          # nothing here ever touched a platform
-    assert led.posts["p_queued"].state is PostState.retired
-    assert led.clips["clip_x"].state is ClipState.retired           # ...so the clip is dead lineage too
-    assert "clip_x" in led.clips                                    # suppressed, NOT deleted — the row stays
+    assert led.clips["clip_x"].state is ClipState.queued             # label untouched, NOT relabelled
+    assert led.is_suppressed(led.clips["clip_x"])                    # ...but derived dead all the same
+    assert "clip_x" in led.clips                                     # suppressed, NOT deleted — the row stays
 
 
 def test_cascade_still_deletes_a_moment_with_nothing_protected(tmp_path):
