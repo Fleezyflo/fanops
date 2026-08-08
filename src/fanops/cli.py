@@ -449,10 +449,10 @@ def cmd_resolve(cfg: Config, args) -> int:
         if getattr(args, "url", None):
             p.public_url = args.url
         try:
-            p.state = PostState(args.status)
+            led.set_post_state(args.post_id, PostState(args.status))
         except ValueError:
             # Unknown status string — back-compat: map "published" -> published, else "failed"
-            p.state = PostState.published if args.status == "published" else PostState.failed
+            led.set_post_state(args.post_id, PostState.published if args.status == "published" else PostState.failed)
     print(f"resolved {args.post_id} -> {args.status}"); return 0
 
 
@@ -1532,7 +1532,7 @@ def _dispatch(cfg: Config, args) -> int:
             if args.clip_id not in led.clips:
                 print(f"no such clip: {args.clip_id}", file=sys.stderr); return 2
             c = led.clips[args.clip_id]; c.held = False; c.held_reason = None
-            c.state = ClipState.captions_requested      # re-enter the caption gate
+            led.set_clip_state(args.clip_id, ClipState.captions_requested)  # re-enter the caption gate
         print(f"unheld {args.clip_id}"); return 0
     if args.cmd == "retry-source":
         from fanops.pipeline import resume_source

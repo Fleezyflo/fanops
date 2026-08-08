@@ -180,7 +180,8 @@ def approve_with_hook(cfg: Config, clip_id: str, *, now: Optional[datetime] = No
                 if rc.hook_burn_failed:
                     raise RuntimeError("hook burn failed — not shipping clean")
                 led.clips[clip_id] = led.clips[clip_id].model_copy(
-                    update={"state": orig.state, "meta_captions": _inherit_captions(orig.meta_captions)})
+                    update={"meta_captions": _inherit_captions(orig.meta_captions)})
+                led.set_clip_state(clip_id, orig.state)
             for pid in admitted:
                 post = led.posts.get(pid)
                 sugg = suggest_time(cfg, post, now=now) if post is not None else None
@@ -302,7 +303,7 @@ def release_stitches(cfg: Config, ids: Sequence[str]) -> ActionResult:
                 base = _best_caption_sibling(led, c)
                 if base is not None:
                     c.meta_captions = _inherit_captions(base.meta_captions)
-                c.state = ClipState.captioned
+                led.set_clip_state(cid, ClipState.captioned)
                 released += 1
     except Exception as exc:
         return ActionResult(ok=False, error=f"release failed: {str(exc)[:160]}")

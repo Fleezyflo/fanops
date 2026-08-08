@@ -180,9 +180,8 @@ class LlmResponder:
                 sid = _gate_source_id(led, kind, key)
                 src = led.sources.get(sid) if sid else None
                 if src is not None and src.state != SourceState.error:
-                    led.sources[sid] = src.model_copy(update={
-                        "state": SourceState.error,
-                        "error_reason": f"agent gate {kind} failed (deterministic ceiling {_GATE_DETERMINISTIC_MAX}/{_GATE_DETERMINISTIC_MAX}): {reason}"[:200]})
+                    led.set_source_state(sid, SourceState.error, error_reason=(
+                        f"agent gate {kind} failed (deterministic ceiling {_GATE_DETERMINISTIC_MAX}/{_GATE_DETERMINISTIC_MAX}): {reason}"[:200]))
                     saved = True
         except Exception as e:
             with contextlib.suppress(Exception):

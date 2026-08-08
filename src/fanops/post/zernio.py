@@ -554,7 +554,8 @@ class ZernioPoster:
             # Both are the SAME logical submission, so both take the SAME ledger state: `submitted` + a real
             # id. Zernio returns no permalink at create, so run.py's public_url gate parks both in
             # needs_reconcile and reconcile back-fills the URL — identical to the pre-fix success path.
-            post.state = PostState.submitted
+            led.set_post_state(post_id, PostState.submitted)
+            post = led.posts[post_id]
             post.submission_id = result.post_id
             post.public_url = safe_public_url(None) or post.public_url   # permalink captured later by ZernioStatusClient (reconcile); none on the publish 2xx — placeholder mirrors postiz.py
             if isinstance(result, IdempotentReplay):
@@ -563,14 +564,15 @@ class ZernioPoster:
                 # header, so it must be visible. Unguarded, exactly like every sibling log on this path.
                 get_logger(self.cfg)("publish", post.id, "idempotent_replay", sub=result.post_id, request_id=_request_id(post))
         elif isinstance(result, ReconciliationRequired):
-            post.state = PostState.needs_reconcile
+            cand = f" candidate={result.candidate_post_id}" if result.candidate_post_id else ""
+            led.set_post_state(post_id, PostState.needs_reconcile,
+                               error_reason=f"zernio {result.reason}:{cand} {result.evidence}"[:400])
+            post = led.posts[post_id]
             post.reconcile_candidate_id = result.candidate_post_id   # NEVER submission_id (report 11 §5)
             # Mirror the candidate into error_reason too: models.py is extra="ignore" (deliberate, pinned
             # forward-compat), so an OLDER binary loading this ledger drops the new key entirely — the
-            # mirror is then the only surviving copy.
-            cand = f" candidate={result.candidate_post_id}" if result.candidate_post_id else ""
-            post.error_reason = f"zernio {result.reason}:{cand} {result.evidence}"[:400]
+            # mirror is then the only surviving copy. (error_reason set via set_post_state above.)
         else:                                            # TerminalFailure — the ONLY re-queueable verdict
-            post.state = PostState.failed
-            post.error_reason = f"zernio {result.reason}: {result.evidence}"[:400]
+            led.set_post_state(post_id, PostState.failed,
+                               error_reason=f"zernio {result.reason}: {result.evidence}"[:400])
         return led

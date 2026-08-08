@@ -68,13 +68,12 @@ def _scan_direct_retirement_writes() -> dict[str, int]:
     return out
 
 
-# Measured at origin/main d40db562 by the AST walker above: one file, one write. `src/fanops/ledger.py`
-# holds 3 more, exempt. `canary.py:1054` is the documented exemption — it writes `state` AND
-# `error_reason` in one atomic `model_copy`, which no `set_*_state` signature expresses, and canary's
-# lineage handling is separately pinned by its own contract (the routed `set_source_state` /
-# `set_moment_state` / `retire_clip` flips at `canary.py:944-946`, which this counter must never
-# pressure). Every other non-owner writer was deleted by T3.5-T3.8.
-_BASELINE = {"src/fanops/canary.py": 1}
+# Measured after MOL-779: every non-owner retirement write routes through Ledger.set_*_state /
+# retire_clip. The canary compound write (state + error_reason) now goes through
+# set_post_state(..., error_reason=...); the exemption is gone. Census-at-zero is the regression
+# gate that keeps zero at zero (delete the ratchet only with MOL-819's frozen-model negative control
+# — that deletion is MOL-821).
+_BASELINE = {}
 
 
 def test_retirement_writes_do_not_escape_the_ledger():

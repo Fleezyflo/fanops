@@ -491,8 +491,7 @@ def _ingest_moments_dotted(led: Ledger, cfg: Config, source_id: str, keys: list[
             get_logger(cfg)("source", source_id, "overlaps_dropped", count=len(all_picks) - len(deduped))
         return _reconcile_valid_picks(led, cfg, source_id, deduped)
     if any_invalid:
-        src.state = SourceState.error
-        src.error_reason = "all per-account moment picks invalid"
+        led.set_source_state(source_id, SourceState.error, error_reason="all per-account moment picks invalid")
         return led
     if all_empty:
         get_logger(cfg)("source", source_id, "zero_moments", warn=True)
@@ -524,8 +523,8 @@ def ingest_moments(led: Ledger, cfg: Config, source_id: str) -> Ledger:
         get_logger(cfg)("source", source_id, "overlaps_dropped", count=len(valid) - len(deduped))
     if not deduped:
         if dec.picks:
-            src.state = SourceState.error
-            src.error_reason = f"all {rejected} moment picks invalid: {'; '.join(sorted(set(reasons)))[:200]}"
+            led.set_source_state(source_id, SourceState.error,
+                error_reason=f"all {rejected} moment picks invalid: {'; '.join(sorted(set(reasons)))[:200]}")
         else:
             get_logger(cfg)("source", source_id, "zero_moments", warn=True)
             led.set_source_state(source_id, SourceState.moments_empty)
@@ -668,7 +667,7 @@ def ingest_moment_hooks(led: Ledger, cfg: Config, source_id: str, accounts=None)
             used.add(hook.lower()); cluster_used.add(hook.lower())
             clear_attempts(cfg, "moment_hooks", _hook_gate_key(source_id, m))
         led.moments[m.id] = m.model_copy(update={"hook": hook, "hook_removed": hook_removed,
-                                                 "hook_frames_unread": bool(getattr(dec, "hook_frames_unread", False)),  # AGENT-9
-                                                 "state": MomentState.decided})
+                                                 "hook_frames_unread": bool(getattr(dec, "hook_frames_unread", False))})  # AGENT-9
+        led.set_moment_state(m.id, MomentState.decided)
     led.set_source_state(source_id, SourceState.moments_decided)   # every pick's hook landed atomically
     return led

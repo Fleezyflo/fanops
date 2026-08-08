@@ -945,7 +945,7 @@ def discard_canary(cfg: Config, run_id: str) -> ActionResult:
             if mom is not None and mom.state is not MomentState.retired: led.set_moment_state(mid, MomentState.retired)
             if clp is not None and clp.state is not ClipState.retired: led.retire_clip(cid)
             if bat is not None and bat.state is not BatchState.closed:
-                led.batches[bid] = bat.model_copy(update={"state": BatchState.closed})
+                led.set_batch_state(bid, BatchState.closed)
     except _Refuse as r:
         return _err(r.msg)
     removed = _remove_run_dir(cfg, run_id)
@@ -1051,7 +1051,7 @@ def cancel_canary_post(cfg: Config, post_id: str, *, reason: str) -> ActionResul
             _id2, _rd2, ferr2 = _authenticated_run_for_post(cfg, led, cur)   # ledger-dependent re-validation
             if ferr2 is not None:
                 raise _Refuse(ferr2)
-            led.posts[post_id] = cur.model_copy(update={"state": PostState.retired, "error_reason": bounded})
+            led.set_post_state(post_id, PostState.retired, error_reason=bounded)
     except _Refuse as r:
         return _err(r.msg)
     warn = None

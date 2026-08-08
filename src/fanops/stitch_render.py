@@ -313,27 +313,27 @@ def _precheck(led: Ledger, cfg: Config, p: StitchPlan):
     artist-profile one-version-per-moment feed), so an already-published base does NOT block its stitch."""
     base = led.clips.get(p.clip_id)
     if base is None:
-        p.state = StitchState.error; p.error_reason = "base clip missing"; return None
+        led.set_stitch_state(p.id, StitchState.error, error_reason="base clip missing"); return None
     if p.base_fingerprint is not None and _read_fingerprint(cfg, p.clip_id) != p.base_fingerprint:
         # stale-plan guard (correctness, NOT feed policy): the base clip was re-rendered since the cut was
         # planned, so the pinned window may no longer be valid -> drop this plan, a fresh one re-mines.
-        p.state = StitchState.dismissed; p.error_reason = "base re-rendered since planned"; return None
+        led.set_stitch_state(p.id, StitchState.dismissed, error_reason="base re-rendered since planned"); return None
     return base
 
 
 def _commit_impact(led: Ledger, cfg: Config, p: StitchPlan, base: Clip, render_moment) -> None:
     mom = led.moments.get(base.parent_id)                # base.parent_id is the moment id
     if mom is None:                                      # base orphaned from its moment -> fail VISIBLE, never
-        p.state = StitchState.error; p.error_reason = "moment missing"; return  # a KeyError that wedges the loop
+        led.set_stitch_state(p.id, StitchState.error, error_reason="moment missing"); return  # a KeyError that wedges the loop
     src = led.sources.get(mom.parent_id)
     if not _cut_in_range(p.plan_params, src):
-        p.state = StitchState.error; p.error_reason = "cut out of range"; return
+        led.set_stitch_state(p.id, StitchState.error, error_reason="cut out of range"); return
     cw = (p.plan_params["cut_start"], p.plan_params["cut_end"])
     _led, clip = render_moment(led, cfg, base.parent_id, aspect=base.aspect, cut_window=cw,
                                clip_id=_stitch_clip_id(p.id, base.aspect.value), born_state=ClipState.stitch_draft)
     if clip.state is ClipState.error:
-        p.state = StitchState.error; p.error_reason = clip.error_reason or "stitch render failed"; return
-    p.state = StitchState.in_use                          # additive: the bare base post is left to ship too
+        led.set_stitch_state(p.id, StitchState.error, error_reason=clip.error_reason or "stitch render failed"); return
+    led.set_stitch_state(p.id, StitchState.in_use)      # additive: the bare base post is left to ship too
 
 
 def _commit_intro(led: Ledger, cfg: Config, p: StitchPlan, base: Clip) -> None:
@@ -341,13 +341,13 @@ def _commit_intro(led: Ledger, cfg: Config, p: StitchPlan, base: Clip) -> None:
     `approved` and waits for the next lock-free prewarm; a missing intro asset errors the plan."""
     target = _intro_render_target(led, cfg, p)
     if target is None:
-        p.state = StitchState.error; p.error_reason = "intro asset missing"; return
+        led.set_stitch_state(p.id, StitchState.error, error_reason="intro asset missing"); return
     _base, intro, cid, out_path = target
     fp = _intro_compose_fp(led, base, intro, p.plan_params)
     if out_path.exists() and out_path.stat().st_size > 0 and _read_fingerprint(cfg, cid) == fp:
         led.clips[cid] = Clip(id=cid, parent_id=base.parent_id, state=ClipState.stitch_draft,
                               path=str(out_path), aspect=base.aspect)
-        p.state = StitchState.in_use                      # additive: the bare base post is left to ship too
+        led.set_stitch_state(p.id, StitchState.in_use)  # additive: the bare base post is left to ship too
         _clear_intro_fail(cfg, cid)                       # warm: any earlier failure marker is moot
         return
     # not warm — distinguish (audit c7-f3) a GENUINE compose failure (the lock-free prewarm ATTEMPTED
@@ -359,7 +359,7 @@ def _commit_intro(led: Ledger, cfg: Config, p: StitchPlan, base: Clip) -> None:
         get_logger(cfg)("intro_tease", p.id, "warn", err=f"compose failed (attempt {p.render_attempts + 1}/{MAX_INTRO_RENDER_ATTEMPTS})")
         p.render_attempts += 1
         if p.render_attempts >= MAX_INTRO_RENDER_ATTEMPTS:
-            p.state = StitchState.error
-            p.error_reason = f"intro compose failed after {p.render_attempts} attempts"
+            led.set_stitch_state(p.id, StitchState.error,
+                                 error_reason=f"intro compose failed after {p.render_attempts} attempts")
     else:
         get_logger(cfg)("intro_tease", p.id, "warn", err="prewarm not ready — waiting (no attempt burned)")
