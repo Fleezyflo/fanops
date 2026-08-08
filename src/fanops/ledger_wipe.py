@@ -39,7 +39,7 @@ from typing import Optional
 
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.models import PostState
+from fanops.models import MomentOrigin, PostState
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +50,39 @@ class SnapshotRequired(Exception):
 
 class WipeNotConfirmed(Exception):
     """execute_wipe was called without the explicit operator confirm — refused."""
+
+
+class PurgeScopeIncomplete(Exception):
+    """PurgeScope carries exactly one of {days, origins} — both are required together (MOL-758)."""
+
+
+class PurgeFacetDisagreement(Exception):
+    """Day-selection and origin-selection disagree — refuse rather than ask the operator to judge (MOL-758)."""
+
+
+class StalePurgePreview(Exception):
+    """execute_purge was handed a token that no longer matches a fresh preview — refused before mutation."""
+
+
+@dataclass(frozen=True)
+class PurgeScope:
+    """Scoped purge selection (MOL-758). Exactly TWO facets — `days` + `origins` — both required together.
+
+    Empty scope (both frozensets empty) selects NOTHING (fail-closed). A single non-empty facet refuses.
+    When both are set, each facet's post-id set is computed independently and the verb REFUSES unless
+    the two sets are identical. `origins` accepts MomentOrigin members only — never free strings."""
+    days: frozenset[str] = frozenset()                 # ISO yyyy-mm-dd over Post.created_at
+    origins: frozenset[MomentOrigin] = frozenset()      # Moment.origin members only
+
+    def __post_init__(self) -> None:
+        # Coerce / validate: a free string that is not a MomentOrigin member must not silently select nothing.
+        coerced: set[MomentOrigin] = set()
+        for o in self.origins:
+            if isinstance(o, MomentOrigin):
+                coerced.add(o)
+            else:
+                coerced.add(MomentOrigin(o))            # ValueError on unknown — fail closed at construction
+        object.__setattr__(self, "origins", frozenset(coerced))
 
 
 @dataclass
@@ -65,6 +98,7 @@ class WipePlan:
     tag_log_keys: set = field(default_factory=set)
     variant_streak_keys: set = field(default_factory=set)
     kept_post_ids: set = field(default_factory=set)     # the backed posts (reported; NEVER removed)
+    refused_live_post_ids: set = field(default_factory=set)  # in-scope live rows held back (purge only)
 
 
 def _is_kept_post(post, *, keep_history=True) -> bool:
@@ -78,25 +112,56 @@ def _is_kept_post(post, *, keep_history=True) -> bool:
     return bool(post.metrics)                            # a post that ever recorded metrics has real history
 
 
-def compute_wipe_set(led: Ledger, *, keep_history=True) -> WipePlan:
-    """Derive the transitive-complement wipe set. Pure over the ledger (no I/O, no mutation). The keep-set
-    is computed FIRST (kept posts + their ancestor chain + their renders); everything reachable-but-unkept
-    falls into the plan. A source/clip/moment survives iff ANY kept post lives in its descendant closure."""
-    plan = WipePlan()
-    # 1) kept posts (POST-STATE/history guard) + the clips/moments/sources they anchor.
-    kept_clips: set = set()
-    kept_moments: set = set()
-    kept_sources: set = set()
-    for p in led.posts.values():
-        if _is_kept_post(p, keep_history=keep_history):
-            plan.kept_post_ids.add(p.id)
-            kept_clips.add(p.parent_id)
-            c = led.clips.get(p.parent_id)
-            if c is not None:
-                kept_moments.add(c.parent_id)
-                m = led.moments.get(c.parent_id)
-                if m is not None:
-                    kept_sources.add(m.parent_id)
+def _post_created_day(post) -> str | None:
+    """ISO yyyy-mm-dd prefix of Post.created_at, or None when unlabelled."""
+    ca = getattr(post, "created_at", None)
+    if not ca:
+        return None
+    return str(ca)[:10]
+
+
+def _post_moment_origin(led: Ledger, post) -> MomentOrigin | None:
+    """Moment.origin for a post's ancestor moment, or None when the chain is broken."""
+    c = led.clips.get(post.parent_id)
+    if c is None:
+        return None
+    m = led.moments.get(c.parent_id)
+    if m is None:
+        return None
+    return m.origin
+
+
+def _day_selection(led: Ledger, days: frozenset[str]) -> frozenset[str]:
+    return frozenset(p.id for p in led.posts.values() if _post_created_day(p) in days)
+
+
+def _origin_selection(led: Ledger, origins: frozenset[MomentOrigin]) -> frozenset[str]:
+    return frozenset(p.id for p in led.posts.values() if _post_moment_origin(led, p) in origins)
+
+
+def resolve_purge_selection(led: Ledger, scope: PurgeScope) -> frozenset[str]:
+    """Compute the agreed in-scope post-id set for a PurgeScope (MOL-758).
+
+    Empty scope → empty set (selects NOTHING). Exactly one facet → PurgeScopeIncomplete.
+    Both facets → independent selections; PurgeFacetDisagreement unless identical."""
+    has_days = bool(scope.days)
+    has_origins = bool(scope.origins)
+    if not has_days and not has_origins:
+        return frozenset()
+    if has_days != has_origins:
+        raise PurgeScopeIncomplete(
+            "purge requires both --day and --origin together (empty scope selects nothing; a single facet refuses)")
+    day_ids = _day_selection(led, scope.days)
+    origin_ids = _origin_selection(led, scope.origins)
+    if day_ids != origin_ids:
+        raise PurgeFacetDisagreement(
+            f"day selection ({len(day_ids)} posts) and origin selection ({len(origin_ids)} posts) disagree — refused")
+    return day_ids
+
+
+def _fill_wipe_closure(led: Ledger, plan: WipePlan, kept_clips: set, kept_moments: set, kept_sources: set) -> WipePlan:
+    """Steps 2–12 of compute_wipe_set: derive the remove-set from the kept-post anchors. Shared by the
+    global wipe and the scoped purge so the closure mathematics stay one place."""
     # 2) posts: every non-kept post is removed.
     for p in led.posts.values():
         if p.id not in plan.kept_post_ids:
@@ -148,6 +213,56 @@ def compute_wipe_set(led: Ledger, *, keep_history=True) -> WipePlan:
     return plan
 
 
+def compute_wipe_set(led: Ledger, *, keep_history=True, scope: PurgeScope | None = None,
+                     force_live: frozenset[str] = frozenset()) -> WipePlan:
+    """Derive the transitive-complement wipe set. Pure over the ledger (no I/O, no mutation). The keep-set
+    is computed FIRST (kept posts + their ancestor chain + their renders); everything reachable-but-unkept
+    falls into the plan. A source/clip/moment survives iff ANY kept post lives in its descendant closure.
+
+    `scope=None` (default) is the GLOBAL wipe — keep rule is `_is_kept_post` (byte-identical to pre-MOL-758).
+    When `scope` is given, the keep rule becomes: out-of-scope OR (live AND not force-live-enumerated).
+    In-scope live rows land in `refused_live_post_ids` unless their id is in `force_live`."""
+    plan = WipePlan()
+    # 1) kept posts + the clips/moments/sources they anchor.
+    kept_clips: set = set()
+    kept_moments: set = set()
+    kept_sources: set = set()
+    if scope is None:
+        for p in led.posts.values():
+            if _is_kept_post(p, keep_history=keep_history):
+                plan.kept_post_ids.add(p.id)
+                kept_clips.add(p.parent_id)
+                c = led.clips.get(p.parent_id)
+                if c is not None:
+                    kept_moments.add(c.parent_id)
+                    m = led.moments.get(c.parent_id)
+                    if m is not None:
+                        kept_sources.add(m.parent_id)
+    else:
+        selected = resolve_purge_selection(led, scope)
+        force = set(force_live)
+        for p in led.posts.values():
+            in_scope = p.id in selected
+            is_live = p.state in Ledger._LIVE_POST_STATES
+            if in_scope and is_live and p.id not in force:
+                plan.refused_live_post_ids.add(p.id)
+                keep = True
+            elif not in_scope:
+                keep = True
+            else:
+                keep = False                                  # in-scope + (not live OR force-live)
+            if keep:
+                plan.kept_post_ids.add(p.id)
+                kept_clips.add(p.parent_id)
+                c = led.clips.get(p.parent_id)
+                if c is not None:
+                    kept_moments.add(c.parent_id)
+                    m = led.moments.get(c.parent_id)
+                    if m is not None:
+                        kept_sources.add(m.parent_id)
+    return _fill_wipe_closure(led, plan, kept_clips, kept_moments, kept_sources)
+
+
 def wipe_preview(led: Ledger, *, keep_history=True) -> dict:
     """A READ-ONLY preview (the would-remove id-set + per-entity counts + kept-post count) for the Studio
     surface BEFORE the typed confirm. Pure — computes the plan, never writes."""
@@ -167,12 +282,18 @@ def preview_token(preview_detail: dict) -> str:
     the preview it showed; confirm_wipe recomputes a FRESH preview and refuses unless the tokens match — so a
     confirm that never previewed (no token) or previewed a since-changed ledger (stale token) is server-refused
     BEFORE any snapshot/removal, without weakening the typed-word/snapshot code gates. Pure over the id-set +
-    counts + total (a ledger change flips the fingerprint); no secret/session infra needed."""
+    counts + total (a ledger change flips the fingerprint); no secret/session infra needed.
+
+    When `refused_live_post_ids` is present (purge previews), it is part of the payload so a changed refusal
+    set invalidates a stale confirm. Global wipe previews omit the key — token byte-shape unchanged."""
     import hashlib, json
-    payload = json.dumps({"post_ids": preview_detail.get("post_ids", []),
-                          "counts": preview_detail.get("counts", {}),
-                          "total": preview_detail.get("total", 0),
-                          "keep_history": preview_detail.get("keep_history", True)}, sort_keys=True)
+    payload_obj = {"post_ids": preview_detail.get("post_ids", []),
+                   "counts": preview_detail.get("counts", {}),
+                   "total": preview_detail.get("total", 0),
+                   "keep_history": preview_detail.get("keep_history", True)}
+    if "refused_live_post_ids" in preview_detail:
+        payload_obj["refused_live_post_ids"] = preview_detail.get("refused_live_post_ids", [])
+    payload = json.dumps(payload_obj, sort_keys=True)
     return hashlib.sha256(payload.encode()).hexdigest()[:32]
 
 
@@ -189,6 +310,7 @@ def _cap_plan(computed: WipePlan, ceiling: WipePlan) -> WipePlan:
         tag_log_keys=computed.tag_log_keys & ceiling.tag_log_keys,
         variant_streak_keys=computed.variant_streak_keys & ceiling.variant_streak_keys,
         kept_post_ids=computed.kept_post_ids,
+        refused_live_post_ids=computed.refused_live_post_ids,
     )
 
 
@@ -236,26 +358,35 @@ def snapshot_is_restorable(snapshot_path: "Path | str") -> bool:
 
 
 def execute_wipe(cfg: Config, *, confirmed: bool, snapshot_path: "Optional[Path | str]", keep_history=True,
-                 plan_ceiling: WipePlan | None = None) -> dict:
+                 plan_ceiling: WipePlan | None = None, delete_media: bool = False,
+                 scope: PurgeScope | None = None,
+                 force_live: frozenset[str] = frozenset()) -> dict:
     """Run the fall-away. GATED, in code:
       - WipeNotConfirmed unless `confirmed` (the explicit operator confirm — mirrors the Go-Live gate).
       - SnapshotRequired unless `snapshot_path` is a VERIFIED-restorable snapshot (MOL-32: cannot run
         without the snapshot succeeding first). The Studio surface takes the snapshot, verifies it, then
         passes it here — so a skip is impossible.
     Removes EXACTLY the capped compute_wipe_set(led) in a single transaction; returns the removed-count summary.
-    Reversible: Ledger.restore_snapshot(cfg, snapshot_path) brings back only rows present in the snapshot."""
+    Reversible: Ledger.restore_snapshot(cfg, snapshot_path) brings back only rows present in the snapshot.
+
+    `delete_media=False` (default) preserves the global wipe's behaviour: the `.files.txt` manifest is written
+    and no file is unlinked. The purge path passes `True` so removed clip/render paths ride
+    `led._deferred_unlinks` and drain post-commit (a rolled-back transaction unlinks nothing)."""
     if not confirmed:
         raise WipeNotConfirmed("the wipe requires an explicit operator confirm")
     if not snapshot_path or not snapshot_is_restorable(snapshot_path):
         raise SnapshotRequired("a verified-restorable pre-wipe snapshot is mandatory before the wipe runs")
     removed = {}
+    removed_post_ids: list[str] = []
+    refused_live: list[str] = []
+    media_deleted = 0
+    manifest = Path(str(snapshot_path) + ".files.txt")
     with Ledger.transaction(cfg) as led:
-        plan = compute_wipe_set(led, keep_history=keep_history)
+        plan = compute_wipe_set(led, keep_history=keep_history, scope=scope, force_live=force_live)
         if plan_ceiling is not None:
             plan = _cap_plan(plan, plan_ceiling)
             _guard_clip_closure(led, plan)
         manifest_paths = _wipe_file_manifest(led, plan)
-        manifest = Path(str(snapshot_path) + ".files.txt")
         try:
             manifest.write_text("\n".join(manifest_paths) + ("\n" if manifest_paths else ""))
         except Exception:
@@ -269,8 +400,54 @@ def execute_wipe(cfg: Config, *, confirmed: bool, snapshot_path: "Optional[Path 
         for bid in plan.batch_ids: led.batches.pop(bid, None)
         for k in plan.tag_log_keys: led.tag_log.pop(k, None)
         for k in plan.variant_streak_keys: led.variant_streaks.pop(k, None)
+        if delete_media:
+            for path in manifest_paths:
+                led._deferred_unlinks.append(path)
+            media_deleted = len(manifest_paths)
+        removed_post_ids = sorted(plan.post_ids)
+        refused_live = sorted(plan.refused_live_post_ids)
         removed = {"posts": len(plan.post_ids), "moments": len(plan.moment_ids), "clips": len(plan.clip_ids),
                    "sources": len(plan.source_ids), "renders": len(plan.render_ids),
                    "stitch_plans": len(plan.stitch_plan_ids), "batches": len(plan.batch_ids),
                    "tag_log": len(plan.tag_log_keys), "variant_streaks": len(plan.variant_streak_keys)}
-    return {"removed": removed, "snapshot": str(snapshot_path), "manifest": str(manifest)}
+    return {"removed": removed, "snapshot": str(snapshot_path), "manifest": str(manifest),
+            "post_ids": removed_post_ids, "refused_live_post_ids": refused_live,
+            "media_deleted": media_deleted}
+
+
+def _plan_counts(plan: WipePlan) -> dict:
+    return {"posts": len(plan.post_ids), "moments": len(plan.moment_ids), "clips": len(plan.clip_ids),
+            "sources": len(plan.source_ids), "renders": len(plan.render_ids),
+            "stitch_plans": len(plan.stitch_plan_ids), "batches": len(plan.batch_ids),
+            "tag_log": len(plan.tag_log_keys), "variant_streaks": len(plan.variant_streak_keys)}
+
+
+def purge_preview(led: Ledger, scope: PurgeScope, *, force_live: frozenset[str] = frozenset()) -> dict:
+    """Read-only scoped purge preview (MOL-758). Raises PurgeScopeIncomplete / PurgeFacetDisagreement
+    when the dual-facet contract fails. Empty scope yields an empty plan (fail-closed)."""
+    plan = compute_wipe_set(led, scope=scope, force_live=force_live)
+    counts = _plan_counts(plan)
+    detail = {"counts": counts, "post_ids": sorted(plan.post_ids), "kept_posts": len(plan.kept_post_ids),
+              "total": sum(counts.values()), "keep_history": True,
+              "refused_live_post_ids": sorted(plan.refused_live_post_ids),
+              "scope": {"days": sorted(scope.days), "origins": sorted(o.value for o in scope.origins)}}
+    detail["token"] = preview_token(detail)
+    return detail
+
+
+def execute_purge(cfg: Config, scope: PurgeScope, *, confirmed: bool, snapshot_path: "Optional[Path | str]",
+                  force_live: frozenset[str] = frozenset(), plan_ceiling: WipePlan | None = None,
+                  token: str = "") -> dict:
+    """Scoped purge: snapshot-gated, deletes rows AND clip/render media via `_deferred_unlinks`.
+    Recomputes a fresh preview; a non-empty `token` that does not match is refused BEFORE any snapshot
+    check or removal (stale-preview gate). Source files are never touched."""
+    if not confirmed:
+        raise WipeNotConfirmed("the purge requires an explicit operator confirm")
+    led = Ledger.load(cfg)
+    fresh = purge_preview(led, scope, force_live=force_live)
+    if (token or "").strip() and (token or "").strip() != fresh["token"]:
+        raise StalePurgePreview("the purge preview is stale (the ledger or refusal set changed) — nothing was removed")
+    if plan_ceiling is None:
+        plan_ceiling = compute_wipe_set(led, scope=scope, force_live=force_live)
+    return execute_wipe(cfg, confirmed=True, snapshot_path=snapshot_path, keep_history=True,
+                        plan_ceiling=plan_ceiling, delete_media=True, scope=scope, force_live=force_live)

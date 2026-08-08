@@ -140,6 +140,7 @@ Owned by real mechanisms (see `docs/ENFORCEMENT.md`):
 Owned by the runtime + its regression locks (`tests/test_publish_lockfree.py`, `tests/test_reconcile_lockfree.py`, `tests/test_ledger_sqlite_store.py`):
 - **The cardinal rule:** no network call or heavy subprocess inside the ledger lock.
 - **The ledger is never wiped implicitly** — wipe is snapshot + typed-confirm; restore serializes on the lock (fixed #653–#655).
+- **Purge is scoped, never global** — `fanops purge` requires dual-facet agreement (`--day` + `--origin`), is snapshot-gated, deletes rows AND clip media, and refuses live lineages unless explicitly enumerated via `--force-live <id>`.
 - **Migrations + forward-compat** — §16 below.
 
 ### STD-PERSIST-01 — every hand-editable control-file write routes through `controlio` — **[OWNED]**
