@@ -1,34 +1,43 @@
-"""Reconcile stage (AUDIT H4). Resolves posts stranded in `submitting` (crash mid-publish, FIX
-F11) or `needs_reconcile` (ambiguous 5xx / network timeout after the body was sent, AUDIT C1) by
-polling each backend for the post's terminal status. Zernio offers a real per-post lookup
-(GET /posts/{postSubmissionId} -> status in-progress|failed|published|scheduled + publicUrl); Postiz
-has no per-post endpoint, so it reads the `state` field off the DATE-WINDOWED GET /public/v1/posts.
-Either way the poll REQUIRES the submission id.
+"""Reconcile stage (AUDIT H4). Resolves posts stranded in `submitting` (crash mid-publish, FIX F11)
+or `needs_reconcile` (ambiguous 5xx / network timeout after the body was sent, AUDIT C1). Two
+backends, two READ shapes. Zernio has a true per-post lookup (GET /posts/{postSubmissionId} ->
+status in-progress|failed|published|scheduled + publicUrl) and is polled one post at a time. Postiz
+has no per-post endpoint at all, so it is MIRRORED: ONE bulk read of GET /public/v1/posts over the
+widest window (PostizStatusClient.list_all) is projected onto every Postiz-backed post carrying a
+REAL submission id — the pending ones AND the ones already resting published/analyzed. Either shape
+REQUIRES the submission id.
+
+The mirror is STATELESS: Postiz's row is the single truth, and a pass over unchanged rows writes
+ZERO ledger bytes. The row's `state` token is kept VERBATIM on `Post.postiz_state` (observability
+only, MOL-784) and written only when the token CHANGED. What an observation may DO is bounded:
+
+  PUBLISHED, first observation on a pending post -> promote (public_url <- releaseURL, media_id <-
+                                                    releaseId, published_at, publish buckets),
+                                                    behind the unchanged IG/TikTok liveness gates
+  ERROR, on a pending post                       -> the failed branch (incl. the candidate hold)
+  QUEUE / absent / anything else                 -> nothing but the postiz_state mirror
+  ANY later change on an ALREADY-published post  -> nothing but the postiz_state mirror
+
+No mirrored observation EVER moves a post into a re-queueable state — `failed` is re-queueable, so a
+mirror able to write it is a double-post vector; that call belongs to the operator. A post the
+backend stops resolving is LATE, not failed, and lateness is DERIVED from the row and the schedule
+at read time by the digest — never stamped into `error_reason`, because a stamp is a decision and
+this module makes none.
 
 Consequence (the honest boundary): AUDIT H1 (Phase D) stamps EVERY crossposted post with a client
-idempotency token (submission_id="fanops_..."), so a post parked after a pure network timeout is no
-longer id-less — it carries a fanops_ token and IS polled. But a fanops_ token is not a real backend
-postSubmissionId, so that poll 404s; the per-post try/except below CONTAINS that error (leaves the
-post parked, never failed — a poll error is not evidence it failed) so the pass continues. A post with
-genuinely NO submission_id at all (older data) is still SKIPPED for human reconcile (the digest
-surfaces it). A real postSubmissionId from an ambiguous-5xx body overwrites the token, making that post
-cleanly auto-reconcilable. We never guess a post's fate — a wrong guess either drops a live post
-(untrackable) or re-queues a live one (double-publish), the exact C1/cascade hazards.
+idempotency token (submission_id="fanops_..."), which is not a real backend id, so such a post can
+never appear in a Postiz window. It is never mirrored and never carries a postiz_state, but it IS
+still visited, so the (state, age) escalation can move a crash-stranded `submitting` claim into
+`needs_reconcile`. A post with genuinely NO submission_id at all (older data) is SKIPPED for human
+reconcile (the digest surfaces it). A real backend id from an ambiguous-5xx body overwrites the
+token, making that post cleanly auto-reconcilable. We never guess a post's fate — a wrong guess
+either drops a live post (untrackable) or re-queues a live one (double-publish), the exact
+C1/cascade hazards.
 
-Resolution:
-  status 'published'        -> PostState.published (+ public_url) so track can later measure it
-  status 'failed'           -> PostState.failed (definitely not live -> safe to re-queue)
-  'in-progress'/'scheduled' -> leave as-is (not yet resolved; a later pass retries)
-
-Backend-agnostic by design (P2). The poll is dispatched per backend in _default_get_status: Zernio over
-GET /posts/{id} (a bound method); Postiz over the DATE-WINDOWED GET /public/v1/posts `state` field
-(PostizStatusClient). The {status, publicUrl} dict and the state machine here are identical for both — a
-PUBLISHED Postiz row carries its real IG permalink in `releaseURL`, which PostizStatusClient surfaces as
-publicUrl (verified against the running instance 2026-06-21, metrics.py), so reconcile stamps a published
-Postiz post's public_url; `fanops resolve <id> published --url` is the manual fallback for a post genuinely
-absent from its date-window page (status 'unknown' -> left parked, never guessed). A FATAL auth failure
-from EITHER backend (the shared AuthError base) halts the pass; a single poll error is contained per-post
-(parked, never guessed failed). dryrun never reaches here (gated upstream)."""
+A FATAL auth failure from EITHER backend (the shared AuthError base) halts the pass. A TRANSPORT
+failure is a log line and nothing else: a failed bulk fetch mirrors nobody this pass, and a failed
+Zernio poll leaves its post byte-identical. `fanops resolve <id> published --url` stays the manual
+route for a post the backend never surfaces. dryrun never reaches here (gated upstream)."""
 from __future__ import annotations
 from typing import Callable, Optional
 from fanops.config import Config
@@ -40,22 +49,17 @@ from fanops.text import safe_public_url
 from fanops.timeutil import parse_iso, iso_z, publish_buckets
 from datetime import datetime, timezone, timedelta
 
-_STUCK_AFTER = timedelta(hours=6)   # H4: a still-parked post older than this past its schedule gets a breadcrumb
-# XC-1: a `submitting` post still un-poll-resolvable this long past its schedule is a crash-stranded CLAIM
+# XC-1: a `submitting` post still un-resolvable this long past its schedule is a crash-stranded CLAIM
 # (post/run.py marks submitting + persists BEFORE the network; a mid-network crash leaves it here, and
 # publish_due never re-drives a non-`queued` post). Escalate it to needs_reconcile so the digest's reconcile
 # column owns it instead of a perpetual in-flight-submit. 6h covers any real slow submit; 24h is unambiguous.
+# This is the ONE remaining age-driven write, and it is a state MOVE between two non-re-queueable states —
+# it decides nothing about whether the post is live. There is no longer any age at which the system declares
+# a post lost: waiting is not failing, and a post the backend has not resolved is LATE (a fact the digest
+# derives from the row and the schedule on every read), never terminal.
 _SUBMITTING_ESCALATE_AFTER = timedelta(hours=24)
 # Sprint 4: submitting with no submission_id cannot be polled — park needs_reconcile after grace (H02).
 _SUBMITTING_HEAL_AFTER = timedelta(minutes=15)
-# XC-2: a needs_reconcile post still only-poll-erroring this long past its schedule on a never-real token can
-# never auto-resolve (a fanops_ token 404s forever). Stamp an explicit GIVE-UP terminal marker (verify by hand)
-# rather than re-polling an id that cannot resolve. 72h = three days, well past any backend's settle window.
-_RECONCILE_GIVEUP_AFTER = timedelta(hours=72)
-# The sentinel prefix on error_reason that marks a needs_reconcile post as a labeled TERMINAL (gave-up): the
-# poll loop skips it (no further network), and the digest still surfaces it for manual verification. Distinct
-# from the transient "reconcile poll error:" / "stuck …" breadcrumbs, which do NOT stop the poll.
-_GIVEUP_PREFIX = "GAVE UP:"
 
 
 def _parked_age(post, now: datetime):
@@ -69,43 +73,30 @@ def _parked_age(post, now: datetime):
         return None
 
 
-def _is_giveup(post) -> bool:
-    """True iff this post already carries the gave-up terminal marker. A give-up post is a LABELED terminal
-    (we stopped auto-reconciling it); the poll loop skips it so it never re-polls a dead token or re-stamps an
-    identical line (XC-6). Gave-up recovery is deliberately two-step (MOL-441 deferred one-click re-drive):
-    `fanops resolve <id> failed` to clear the marker, then Studio `recover_posts` retry (failed→queued)."""
-    return bool(post.error_reason) and post.error_reason.startswith(_GIVEUP_PREFIX)
-
-
 def _apply_age_terminal(post, now) -> dict | None:
-    """RC-2 (S04): the 'this post is stuck' terminal, as a PURE FUNCTION OF (state, age).
+    """RC-2 (S04): the un-strand escalation, as a PURE FUNCTION OF (state, age).
 
-    It consults NEITHER this pass's poll outcome, NOR the token's provenance (fake vs real), NOR
+    It consults NEITHER this pass's observation, NOR the token's provenance (fake vs real), NOR
     error_reason — the three incidental conditions the old ladder gated on, each of which could veto
-    the terminal on its own: a raising poll `continue`d before ever reaching it; `_is_fake_token`
+    the move on its own: a raising poll `continue`d before ever reaching it; `_is_fake_token`
     excluded every real backend id; a stale `error_reason` suppressed the visit from pass one.
-    reconcile is the SOLE reader of `submitting` (publish_due iterates `queued` only), so if it cannot
-    terminate a post, nothing can.
+    reconcile is the SOLE reader of `submitting` (publish_due iterates `queued` only), so if it
+    cannot move a post out of the in-flight-submit lane, nothing can.
 
-    Returns {"update": <model_copy update>, "log": <event>} to apply+log, or None if the post is not
-    yet past a deadline. The predicate is the WHOLE of it — (state, age), nothing else:
+    Returns {"update": <model_copy update>, "log": <event>} to apply+log, or None when the post is
+    not past the deadline. The predicate is the WHOLE of it — (state, age), nothing else:
 
-      submitting      + age > _SUBMITTING_ESCALATE_AFTER (24h) -> needs_reconcile (a retryable state:
-                                                                  still polled, the digest's reconcile
-                                                                  column owns it, never re-queueable)
-      needs_reconcile + age > _RECONCILE_GIVEUP_AFTER    (72h) -> stamp `GAVE UP:` — a LABEL, NO state
-                                                                  change. A given-up post is NOT
-                                                                  re-queueable and therefore CANNOT
-                                                                  double-post. That is the safety
-                                                                  property the whole slice rests on.
+      submitting + age > _SUBMITTING_ESCALATE_AFTER (24h) -> needs_reconcile (still observed, the
+                                                             digest's reconcile column owns it,
+                                                             never re-queueable)
 
-    PD-2 (a): the SAME ladder applies to a REAL backend id. reconcile.py's old `_is_fake_token` gate
-    encoded 'a post carrying a real id … its status WILL resolve' — an assumption stated as a
-    guarantee, false whenever the platform deleted the post, the integration was removed, or the
-    backend reports a non-terminal state forever (Postiz's QUEUE maps to `scheduled`)."""
+    That is the ONLY rung, deliberately. The give-up rung this function used to carry declared a
+    post lost purely because it was old — a verdict about a backend it had not heard from, written
+    into `error_reason` where three substring parsers read it. Postiz's row now answers the
+    question, so no age needs to guess at it."""
     age = _parked_age(post, now)
     if age is None:
-        return None                                       # no measurable deadline -> never a false terminal
+        return None                                       # no measurable deadline -> never a false escalation
     hrs = int(age.total_seconds() // 3600)
     if post.state is PostState.submitting and age > _SUBMITTING_ESCALATE_AFTER:
         return {"update": {"state": PostState.needs_reconcile,
@@ -113,10 +104,6 @@ def _apply_age_terminal(post, now) -> dict | None:
                                             "(submit unresolved past deadline) — verify on the channel "
                                             "before any resubmit")},
                 "log": "escalated: submitting->needs_reconcile"}
-    if post.state is PostState.needs_reconcile and age > _RECONCILE_GIVEUP_AFTER:
-        return {"update": {"error_reason": (f"{_GIVEUP_PREFIX} unresolved {hrs}h past schedule — gave up "
-                                            "auto-reconcile; verify on the channel manually")},
-                "log": "gave-up: needs_reconcile terminal"}
     return None
 
 
@@ -128,8 +115,9 @@ def _apply_age_terminal(post, now) -> dict | None:
 # submission_id. (IG NO LONGER uses this prefix: with the IG-liveness fix, IG liveness is confirmed by Postiz
 # — status==published + a real releaseURL — and the Graph media_id match is opportunistic enrichment, not a
 # gate; an unmatched IG post RESTS on the Postiz confirmation and carries the non-fatal enrichment note below,
-# never this quarantine sentinel.) Distinct from _GIVEUP_PREFIX (a give-up terminal) and from the transient
-# "reconcile poll error:" / "stuck …" breadcrumbs. A TikTok post carrying it is QUARANTINED to needs_reconcile:
+# never this quarantine sentinel.) It is now the ONLY prefix reconcile writes to error_reason — the give-up
+# terminal and the "stuck …" breadcrumb that once shared the field are gone (the mirror answers what they
+# guessed at). A TikTok post carrying it is QUARANTINED to needs_reconcile:
 # reconcile_posts refuses to re-promote it while still unconfirmed, and the digest surfaces it.
 _UNVERIFIED_PREFIX = "unverified:"
 # (The former _UNVERIFIED_IG_MEDIA quarantine reason was REMOVED with the IG-liveness fix: an IG post whose
@@ -466,6 +454,14 @@ def project_imported_media(led: Ledger, cfg: Config, *, get=None) -> Ledger:
 
 # States whose true outcome is unknown and pollable: a publish was (or may have been) sent.
 _RECONCILABLE = (PostState.submitting, PostState.submitted, PostState.needs_reconcile)
+# States a post RESTS in once its publication is settled. The Postiz mirror keeps observing them for life —
+# not to re-decide them (nothing here may move a resting post; see the module header) but because the row is
+# the only place a later platform-side change is visible at all, and a mirror that stops looking the moment a
+# post succeeds can only ever report the moment of success.
+_MIRROR_RESTING = (PostState.published, PostState.analyzed)
+# The Post.postiz_state sentinel (MOL-784 vocabulary) for "the mirrored window held NO row for this post's
+# submission id". Written ONLY for a post whose id is a real backend id — an id that COULD have matched.
+_MIRROR_ABSENT = "absent"
 # INVARIANT (report 11 §5, I-7) — `Post.reconcile_candidate_id` is NEVER a poll key here, and this set is
 # exactly why. A candidate is an UNPROVEN pointer a backend handed back on a duplicate signal (a Zernio 409's
 # details.existingPostId): it names a record the BACKEND holds, which is not evidence that OUR post is that
@@ -500,22 +496,54 @@ def _status_client_for(cfg: Config, backend: str, led: Optional[Ledger]) -> GetS
     raise ValueError(f"unknown backend {backend!r}: no status client (expected postiz/zernio)")
 
 
-def _reconcilable_routing(cfg: Config, led: Optional[Ledger]) -> dict[str, str]:
+def _reconcilable_routing(cfg: Config, led: Optional[Ledger], *,
+                          states: tuple = _RECONCILABLE) -> dict[str, str]:
     # submission_id -> RESOLVED backend (accounts.json `backends` override -> else the global FANOPS_POSTER)
-    # for every reconcilable post that HAS a submission id. Empty when led is None. Accounts load is guarded:
-    # a corrupt accounts.json must NOT crash the reconcile read (publish surfaces it loudly) — degrade to
-    # the global backend for every post + log.
+    # for every post in `states` that HAS a submission id. `states` defaults to the pollable set; the mirror
+    # widens it to the resting states too, because a resting post still has a backend that owns its row.
+    # Empty when led is None. Accounts load is guarded: a corrupt accounts.json must NOT crash the reconcile
+    # read (publish surfaces it loudly) — degrade to the global backend for every post + log.
     if led is None:
         return {}
     from fanops.accounts import load_accounts_safe
     accounts, err = load_accounts_safe(cfg)
     if err: get_logger(cfg)("backend_route", "accounts", "load_failed_global_fallback", err=err)
     # H1: per-channel provider (effective_provider), NOT `resolve_backend or global` — so a live channel's
-    # status polls hit ITS provider (zernio/postiz) even when FANOPS_POSTER is unset. A post whose channel
+    # status reads hit ITS provider (zernio/postiz) even when FANOPS_POSTER is unset. A post whose channel
     # has no provider is SKIPPED (never dryrun-routed -> never silently stranded against the wrong client).
     return {p.submission_id: prov
-            for p in led.posts.values() if p.state in _RECONCILABLE and p.submission_id
+            for p in led.posts.values() if p.state in states and p.submission_id
             and (prov := accounts.effective_provider(p.account, p.platform))}
+
+
+def _mirror_info(row: Optional[dict]) -> dict:
+    """Project ONE Postiz window row (PostizStatusClient._fetch_posts' shape) into the observation dict
+    reconcile_posts consumes. `row is None` means the window — the WIDEST one the API accepts, with no
+    pagination to be on the wrong side of (metrics.list_all) — held no row for this submission id; that
+    absence is a real observation, recorded as the `absent` sentinel and NOTHING else. A row's raw `state`
+    token rides through VERBATIM for the postiz_state mirror; a blank token is no observation at all
+    (recording it would overwrite a true prior value with an empty one), so it is simply omitted."""
+    if row is None:
+        return {"status": "unknown", "postiz_state": _MIRROR_ABSENT}
+    out: dict = {"status": row["status"]}
+    raw = (row.get("state") or "").strip()
+    if raw:
+        out["postiz_state"] = raw
+    if row["status"] == "published":
+        out["publicUrl"] = row["releaseURL"] or None       # the real IG permalink (only on PUBLISHED rows)
+        rid = row["releaseId"]
+        if isinstance(rid, str) and rid.strip():
+            out["releaseId"] = rid.strip()                 # IG Graph media id -> persisted on Post.media_id
+    return out
+
+
+def _mirror_update(post, info: dict) -> dict:
+    """The postiz_state half of a post's update — `{}` when the observed token is UNCHANGED. This is the
+    zero-byte property: a pass over a corpus whose rows did not move must not rewrite a single ledger row,
+    so an identical observation is not a write. Never clears a prior value: no observation (a non-Postiz
+    post, a client token that no row can carry, a fetch that failed) leaves the last one standing."""
+    obs = info.get("postiz_state")
+    return {} if not obs or obs == post.postiz_state else {"postiz_state": obs}
 
 
 def _poll_backend_for_sid(cfg: Config, routing: dict[str, str], sid: str) -> str:
@@ -576,58 +604,118 @@ def heal_stranded_submitting(cfg: Config, *, now: Optional[datetime] = None) -> 
     return healed
 
 
-def reconcile_due(cfg: Config) -> dict[str, int]:
-    """Reconcile stranded posts with the per-post status POLLS (network) OUTSIDE the ledger flock —
-    only the apply runs inside a tight transaction (mirrors cmd_reconcile; M1, same fix as publish #89).
-    Pre-poll each reconcilable post's status against a lock-free snapshot, then hand the CACHED results
-    to reconcile_posts inside ONE Ledger.transaction (it re-checks each post's CURRENT state under the
-    lock, so a post that changed between poll and apply is handled correctly). A single poll error is
-    CAPTURED and re-raised inside the apply so reconcile_posts' per-post containment (park, set
-    error_reason, never guess failed) is preserved byte-for-byte; a FATAL AuthError halts the pass.
-    Empty/not-stranded -> no transaction. Caller gates on backend/key. Returns the resolved counts.
-    `_default_get_status` may raise (no key) — the caller decides whether that's 'skip clean'."""
-    snapshot = Ledger.load(cfg)
-    healed = heal_stranded_submitting(cfg)
-    routing = _reconcilable_routing(cfg, snapshot)
-    log = get_logger(cfg)
-    reconcilable = []
+def _reconcile_reads(cfg: Config, snapshot: Ledger, log) -> tuple[list, list, list]:
+    """Split the reconcile surface by RESOLVED BACKEND — the read SHAPES are not interchangeable, so the
+    split is the first thing the pass decides. Returns (mirrored, token_only, polled):
+
+      mirrored   — Postiz-backed, a REAL submission id, pending OR resting. One bulk window answers all
+                   of them; a resting post is here so its row keeps being observed after it succeeds.
+      token_only — Postiz-backed, pending, carrying only a `fanops_` client token. NO Postiz row can
+                   ever carry that id, so there is nothing to mirror and nothing to poll — but the post
+                   is still VISITED, because the (state, age) escalation is what un-strands it.
+      polled     — Zernio-backed and pending: the per-post GET /posts/{id}, unchanged. Zernio is NOT
+                   mirrored, so a Zernio-backed resting post is out of the surface entirely and is
+                   never written an `absent` it was never asked about.
+
+    A post whose channel resolves to no live provider is skipped; that is logged for a pending post
+    (it is work not done) and silent for a resting one (there is nothing it was owed)."""
+    routing = _reconcilable_routing(cfg, snapshot, states=_RECONCILABLE + _MIRROR_RESTING)
+    mirrored, token_only, polled = [], [], []
     for p in snapshot.posts.values():
-        if p.state not in _RECONCILABLE or not p.submission_id:
+        resting = p.state in _MIRROR_RESTING
+        if not (resting or p.state in _RECONCILABLE) or not p.submission_id:
             continue
         try:
-            _poll_backend_for_sid(cfg, routing, p.submission_id)
+            backend = _poll_backend_for_sid(cfg, routing, p.submission_id)
         except RuntimeError:
-            log("reconcile", p.id, "skipped: no live provider")
+            if not resting:
+                log("reconcile", p.id, "skipped: no live provider")
             continue
-        reconcilable.append(p)
-    if not reconcilable:
+        if backend != "postiz":
+            if not resting:
+                polled.append(p)                         # Zernio: per-post GET; resting posts are not read
+        elif is_real_submission_id(p.submission_id):
+            mirrored.append(p)
+        elif not resting:
+            token_only.append(p)                         # a client token names no row -> age ladder only
+    return mirrored, token_only, polled
+
+
+def reconcile_due(cfg: Config) -> dict[str, int]:
+    """One reconcile pass: every network READ runs OUTSIDE the ledger flock, and only the apply runs
+    inside a tight transaction (mirrors cmd_reconcile; M1, same fix as publish #89).
+
+    Postiz is read ONCE — `PostizStatusClient.list_all` returns the whole corpus in a single call — and
+    the rows are projected onto every mirrored post before the lock is taken. Zernio keeps its per-post
+    poll. Both feed reconcile_posts inside ONE Ledger.transaction, which re-checks each post's CURRENT
+    state under the lock, so a post that moved between read and apply is handled correctly.
+
+    Failure is graded, not uniform. A FATAL AuthError from either backend halts the pass (every read
+    would fail). A TRANSPORT failure of the bulk fetch mirrors NOBODY this pass — it is a log line, and
+    the ledger is untouched, because a fetch that did not happen is not evidence about any post. A
+    Zernio poll error is CAPTURED and re-raised inside the apply so its per-post containment (log,
+    leave the row alone) stays where the rest of the per-post logic lives.
+
+    Empty surface -> no transaction. Caller gates on backend/key. Returns the resolved counts."""
+    snapshot = Ledger.load(cfg)
+    healed = heal_stranded_submitting(cfg)
+    log = get_logger(cfg)
+    mirrored, token_only, polled = _reconcile_reads(cfg, snapshot, log)
+    if not (mirrored or token_only or polled):
         return {"needs_reconcile": len(snapshot.posts_in_state(PostState.needs_reconcile)),
                 "published": len(snapshot.posts_in_state(PostState.published)),
                 "healed_submitting": healed}
-    poll = _default_get_status(cfg, snapshot)            # only built when work exists; never dryrun (fails closed)
-    from fanops.postiz_lifecycle import ensure_up        # reconcilable>0: bring the local Postiz stack up to poll
+    from fanops.postiz_lifecycle import ensure_up        # work exists: bring the local Postiz stack up to read
     ensure_up(cfg)
     from fanops.meta_graph import credentialed_ig_handles, confirm_post_live
     _cred_ig = credentialed_ig_handles(cfg)
-    results: dict[str, object] = {}                      # sid -> info dict OR captured Exception
-    polled_as: dict[str, str] = {}                       # post_id -> submission_id at poll time (stale guard)
-    for p in reconcilable:
-        try:
-            info = poll(p.submission_id) or {}           # network, NO lock held
-            if (info.get("status") or "").lower() == "published":
-                _enrich_poll_liveness(cfg, p, info, cred_ig=_cred_ig, confirm=confirm_post_live, graph_get=None)
-            results[p.submission_id] = info
+    polled_as: dict[str, str] = {}                       # post_id -> submission_id at read time (stale guard)
+    mirror: dict[str, dict] = {}                         # sid -> the observation reconcile_posts applies
+    # Every PENDING post on the Postiz side starts UNOBSERVED: status unknown, no postiz_state key, so the
+    # apply writes nothing on its behalf. A successful window overwrites that with the real observation. A
+    # failed window therefore degrades to exactly this: visited, un-mirrored, un-written.
+    for p in mirrored + token_only:
+        if p.state in _RECONCILABLE:
+            mirror[p.submission_id] = {"status": "unknown"}
             polled_as[p.id] = p.submission_id
+    if mirrored:
+        window = None
+        try:
+            from fanops.post.metrics import PostizStatusClient
+            window = PostizStatusClient(cfg).list_all()   # ONE call, widest window, no lock held
         except AuthError:
-            raise                                        # bad key (Postiz OR Zernio): every poll fails -> halt
+            raise                                        # bad key: every read fails -> halt, don't grind
         except Exception as exc:
-            results[p.submission_id] = exc               # capture; re-raised in apply -> parked (never guessed failed)
+            log("reconcile", "-", "mirror_fetch_error", err=str(exc)[:200], posts=len(mirrored))
+        if window is not None:
+            for p in mirrored:
+                info = _mirror_info(window.get(p.submission_id))
+                if info["status"] == "published" and p.state in _RECONCILABLE:
+                    _enrich_poll_liveness(cfg, p, info, cred_ig=_cred_ig, confirm=confirm_post_live,
+                                          graph_get=None)
+                mirror[p.submission_id] = info
+            log("reconcile", "-", "mirror_window", rows=len(window), posts=len(mirrored))
+    results: dict[str, object] = {}                      # sid -> info dict OR captured Exception
+    if polled:
+        poll = _default_get_status(cfg, snapshot)        # only built when Zernio work exists; never dryrun
+        for p in polled:
+            polled_as[p.id] = p.submission_id
+            try:
+                info = poll(p.submission_id) or {}       # network, NO lock held
+                if (info.get("status") or "").lower() == "published":
+                    _enrich_poll_liveness(cfg, p, info, cred_ig=_cred_ig, confirm=confirm_post_live,
+                                          graph_get=None)
+                results[p.submission_id] = info
+            except AuthError:
+                raise                                    # bad key (Zernio): every poll fails -> halt
+            except Exception as exc:
+                results[p.submission_id] = exc           # captured; re-raised in the apply -> logged, no write
     def cached(sid: str) -> dict:
         r = results.get(sid, {})
-        if isinstance(r, Exception): raise r             # reconcile_posts' per-post except parks it + logs
+        if isinstance(r, Exception): raise r             # reconcile_posts' per-post except logs it
         return r
     with Ledger.transaction(cfg) as led:
-        led = reconcile_posts(led, cfg, get_status=cached, polled_as=polled_as)
+        led = reconcile_posts(led, cfg, get_status=cached, polled_as=polled_as, mirror=mirror)
         return {"needs_reconcile": len(led.posts_in_state(PostState.needs_reconcile)),
                 "published": len(led.posts_in_state(PostState.published)),
                 "healed_submitting": healed}
@@ -635,10 +723,16 @@ def reconcile_due(cfg: Config) -> dict[str, int]:
 
 def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus] = None,
                     confirm=None, graph_get=None, now: Optional[datetime] = None,
-                    polled_as: dict[str, str] | None = None) -> Ledger:
+                    polled_as: dict[str, str] | None = None,
+                    mirror: dict[str, dict] | None = None) -> Ledger:
+    """The in-lock APPLY. `mirror` is the caller's pre-fetched Postiz observations, keyed by submission
+    id — this function performs NO bulk read of its own, because the read belongs outside the flock. A
+    submission id present in `mirror` is answered from it and never polled; everything else pending goes
+    through the `get_status` seam (Zernio's per-post GET, or a direct caller's stub)."""
     poll = get_status or _default_get_status(cfg, led)
     now = now or datetime.now(timezone.utc)               # clock injected by tests; real callers default to UTC now
     log = get_logger(cfg)
+    mirror = mirror or {}
     # MOL-117: the IG liveness confirmation seam (confirm_post_live) + the Graph getter, both injectable so
     # tests never touch the network. The credentialed-handle set is read ONCE per pass (a torn accounts.json
     # degrades to [] -> every IG post treated as uncredentialed -> Postiz-rest unchanged, never stranded).
@@ -646,47 +740,55 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
         from fanops.meta_graph import confirm_post_live as confirm
     from fanops.meta_graph import credentialed_ig_handles
     _cred_ig = credentialed_ig_handles(cfg)
+    # RESTING posts (published/analyzed) the caller mirrored. The ONLY thing that may happen to one of them
+    # here is the postiz_state snapshot: a row that changed, or vanished, is RECORDED and nothing more. It
+    # is deliberately not a re-decision — `failed` is re-queueable, so a mirror allowed to move a live post
+    # into it is a double-post vector, and no backend row is evidence enough to spend a second publish on.
+    for post in [p for p in led.posts.values()
+                 if p.state in _MIRROR_RESTING and p.submission_id in mirror]:
+        upd = _mirror_update(post, mirror[post.submission_id])
+        if upd:
+            led.posts[post.id] = post.model_copy(update=upd)
+            log("reconcile", post.id, "mirrored", postiz_state=upd["postiz_state"], resting=post.state.value)
     for post in [p for p in led.posts.values() if p.state in _RECONCILABLE]:
-        if _is_giveup(post):
-            continue                       # XC-2/XC-6: a labeled-terminal post is no longer polled or re-logged
         if not post.submission_id:
             log("reconcile", post.id, "skipped: no submission_id")
-            continue                       # no id -> cannot poll (API needs it) -> human reconcile
+            continue                       # no id -> cannot be looked up at all -> human reconcile
         if polled_as is not None and polled_as.get(post.id) != post.submission_id:
             log("reconcile", post.id, "skipped: stale poll (submission_id changed)")
-            continue                       # M04: post mutated between poll and apply — skip cached row
-        # Per-post resilience (mirrors publish_due, run.py:70-76): one post's poll error must NOT
-        # abort the whole pass. AUDIT H1 made this load-bearing — D1 stamps EVERY post with a CLIENT
-        # idempotency token (submission_id = "fanops_..."), so a post parked after a pure network
-        # timeout carries a fanops_ token that is NOT a real backend postSubmissionId. Polling it
-        # 404s -> the status client's get_status raises RuntimeError. Uncaught, that raise escapes
-        # reconcile_posts and strands every genuinely-published post LATER in iteration order
-        # (order-dependent availability bug). Contain it to THIS post instead.
-        try:
-            info = poll(post.submission_id) or {}
-        except AuthError:
-            raise                          # bad key/401 (Postiz OR Zernio): EVERY poll will fail ->
+            continue                       # M04: post mutated between read and apply — skip cached row
+        if post.submission_id in mirror:
+            info = mirror[post.submission_id]
+        else:
+            # Per-post resilience (mirrors publish_due, run.py:70-76): one post's poll error must NOT
+            # abort the whole pass — uncaught, that raise strands every post LATER in iteration order
+            # (an order-dependent availability bug). Contain it to THIS post.
+            try:
+                info = poll(post.submission_id) or {}
+            except AuthError:
+                raise                      # bad key/401 (Postiz OR Zernio): EVERY read will fail ->
                                            # halt, don't grind. Type-matched on the shared AuthError
                                            # base (P2) so any backend's 401 halts.
-                                           # the ledger recording a bogus error on every parked post
-        except Exception as exc:
-            # A single poll failure (e.g. a 404 on a not-yet-real fanops_ token) is NOT evidence the
-            # post failed — it MAY be live. Honor the prime directive: never guess a post's fate.
-            # Leave it parked (state untouched, NOT failed) and surface the reason for the digest;
-            # a later pass retries. Then move on so the next post still gets reconciled. Immutable
-            # update (model_copy + dict reassignment), mirroring the ledger's own set_*_state pattern.
-            # RC-2/S04 (exclusion 1): but a raise must NOT exempt the post from the (state, age) terminal —
-            # a backend that 404s/5xx's forever would otherwise poll-error every pass and never escalate/
-            # give up (the old bare fall-through bailed out of the ladder). Apply the terminal FIRST; only
-            # if it does not fire do we park with the transient poll-error reason (never guessed failed).
-            term = _apply_age_terminal(post, now)
-            if term is not None:
-                led.posts[post.id] = post.model_copy(update=term["update"])
-                log("reconcile", post.id, term["log"])
+            except Exception as exc:
+                # A read failure is NOT evidence about the post — it MAY be live. It buys a LOG LINE
+                # and nothing else: no state, and no prose into error_reason, which three substring
+                # parsers read and which used to carry this as a permanent do-not-look-again latch.
+                # The (state, age) escalation still applies, because it never consulted the read.
+                term = _apply_age_terminal(post, now)
+                if term is not None:
+                    led.posts[post.id] = post.model_copy(update=term["update"])
+                    log("reconcile", post.id, term["log"])
+                    continue
+                log("reconcile", post.id, "poll-error", err=str(exc)[:200])   # the detail rides the log stream
                 continue
-            led.posts[post.id] = post.model_copy(update={"error_reason": f"reconcile poll error: {str(exc)[:200]}"})
-            log("reconcile", post.id, "poll-error", err=str(exc)[:200])   # detail rides the log stream, not only the ledger
-            continue
+        mirror_upd = _mirror_update(post, info)           # {} unless the observed row token actually moved
+        if mirror_upd:
+            # Land the snapshot FIRST and rebind, so it survives whichever branch runs below (each one
+            # model_copy's from `post`) and so it lands ALONE when none of them writes. Nothing else in
+            # this pass may be inferred from it: it is what the row said, not what we concluded.
+            post = post.model_copy(update=mirror_upd)
+            led.posts[post.id] = post
+            log("reconcile", post.id, "mirrored", postiz_state=mirror_upd["postiz_state"])
         status = (info.get("status") or "").lower()
         if status == "published":
             from fanops.models import Platform
@@ -815,49 +917,31 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
                 "error_reason": f"reconciled: poster reports failed ({info.get('errorMessage', 'no detail')})"})
             log("reconcile", post.id, "failed")
         else:
-            # in-progress / scheduled / unknown -> the poll could NOT advance the post this pass.
-            age = _parked_age(post, now)
-            # RC-2/S04 (exclusion 2): the (state, age) terminal, UNGATED by token provenance (the old
-            # `_is_fake_token` exclusion — a real backend id the platform can no longer resolve is just as
-            # stuck as a fake one). It runs AFTER the poll, so a published/failed poll always resolves the
-            # post FIRST; the terminal fires ONLY when the poll cannot (an unknown status here, or a raise in
-            # the except above). No incidental axis (a raise, a real token, a stale reason) can veto it, and
-            # a genuine resolution is never discarded.
+            # QUEUE / in-progress / scheduled / unknown / absent -> the observation did not RESOLVE the
+            # post, which is not the same as the post being lost. The only write left here is the (state,
+            # age) escalation out of the in-flight-submit lane; the mirror snapshot has already landed
+            # above. Nothing stamps lateness: the digest DERIVES it from this row and the schedule on
+            # every read, so it is always current, whereas a stamped "stuck 9h" is wrong an hour later
+            # and was the do-not-look-again latch that made a strand silent in the first place.
             term = _apply_age_terminal(post, now)
             if term is not None:
                 led.posts[post.id] = post.model_copy(update=term["update"])
                 log("reconcile", post.id, term["log"])
                 continue
-            # exclusion 3 (S04): the suppression key is NO LONGER 'any non-empty error_reason'. That old
-            # latch made a post carrying a TRANSIENT reason (a contained `reconcile poll error:`) silent from
-            # pass one — never breadcrumbed, never re-visited. Skip ONLY a post that is already a give-up
-            # (labeled terminal) OR already carries THIS `stuck …` breadcrumb (the XC-6 dedup: no re-stamp,
-            # no re-logged "left:" every pass). A transient-reason post falls through and IS visited.
-            if _is_giveup(post) or (post.error_reason or "").startswith("stuck "):
-                continue
-            # Stamp the stuck breadcrumb once it is well past schedule, then log the visit. A scheduleless
-            # post (age None) is never breadcrumbed (deadline unmeasurable) but the visit is still logged.
-            if age is not None and age > _STUCK_AFTER:
-                hrs = int(age.total_seconds() // 3600)
-                led.posts[post.id] = post.model_copy(update={"error_reason": (
-                    f"stuck {status or 'unknown'} ~{hrs}h past schedule — check the channel "
-                    "(publish may have silently failed)")})
             log("reconcile", post.id, f"left: {status or 'unknown'}")
     return led
 
 
 def report_terminals(led: Ledger, now: Optional[datetime] = None) -> list[dict]:
-    """REPORT-ONLY: for every reconcilable post, what the (state, age) ladder WOULD stamp THIS pass —
+    """REPORT-ONLY: for every reconcilable post, what the (state, age) escalation WOULD write THIS pass —
     consulting the SAME `_apply_age_terminal` the live pass uses, but WRITING NOTHING.
 
-    This is the permanent gate S04 ships first. The ladder acquires a real blast radius the moment an
-    approved post publishes and can strand; before it WRITES, the operator must be able to SEE which rows
-    it would escalate (submitting->needs_reconcile) or give up (the `GAVE UP:` label). One row per post
-    the ladder would touch; an empty list means the ladder would stamp nothing (the live state today)."""
+    One row per post the escalation would touch (submitting -> needs_reconcile); an empty list means it
+    would write nothing. With the give-up rung deleted this previews escalations and nothing else."""
     now = now or datetime.now(timezone.utc)
     out: list[dict] = []
     for post in led.posts.values():
-        if post.state not in _RECONCILABLE or _is_giveup(post):
+        if post.state not in _RECONCILABLE:
             continue
         term = _apply_age_terminal(post, now)
         if term is None:

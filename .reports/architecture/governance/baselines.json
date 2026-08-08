@@ -14,7 +14,7 @@
   "approved_compile_cycles_note": "The ONLY compile-time import cycle in the tree. Load-order sensitive and UNDEFENDED (no comment, no test, no ADR). Its intentionality is UNKNOWN (UNK-C5-1). It is baselined because it EXISTS, not because it is endorsed.",
   "approved_terminal_post_writers": [
     "src/fanops/post/run.py:348",
-    "src/fanops/reconcile.py:766",
+    "src/fanops/reconcile.py:868",
     "src/fanops/studio/actions.py:342",
     "src/fanops/track.py:193"
   ],
@@ -486,7 +486,7 @@
   "owner": "architecture governance (see governance/field_authority.json)",
   "required_verifications_note": "The tests the Cycle-6 verification matrix requires AND which currently EXIST. *** THIS IS EMPTY TODAY: no slice in the program has been implemented, so none of its ~25 required tests exists yet, and rule IMPL-006 is therefore ARMED ON NOTHING. *** Stated out loud rather than hidden. It ARMS ITSELF: the moment a slice lands and its tests appear, re-accept this baseline and their removal becomes CI-red.",
   "required_verifications_present": [
-    "test_giveup_is_a_label_not_a_state_change",
+    "test_an_unresolved_observation_never_writes_a_re_queueable_state",
     "test_reconcile_visits_a_post_carrying_a_transient_reason",
     "test_restore_snapshot_serializes_with_transaction",
     "test_terminal_ladder_matrix"

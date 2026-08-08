@@ -17,7 +17,7 @@ from fanops.config import Config
 from fanops.errors import PostizAuthError
 from fanops.ledger import Ledger
 from fanops.models import Post, PostState, Platform
-from fanops.reconcile import reconcile_posts
+from fanops.reconcile import reconcile_due, reconcile_posts
 
 
 def _post(led, pid, state, sub=None):
@@ -54,27 +54,22 @@ def test_reconcile_replaces_post_immutably_not_in_place(tmp_path):
     assert orig.public_url is None
 
 
-def test_reconcile_stamps_stuck_breadcrumb_past_schedule(tmp_path):
-    # H4: a post stuck 'scheduled'/unknown long past its schedule gets an age breadcrumb in error_reason so
-    # it surfaces (instead of silently looping). State is NOT changed — the post's fate is never guessed.
+def test_an_unresolved_observation_leaves_the_row_byte_identical(tmp_path):
+    # The `stuck …` breadcrumb is GONE, at EVERY age. A post the backend has not settled is LATE, not
+    # failed, and lateness is DERIVED by the digest from the row and the schedule on every read — a
+    # stamped "stuck 12h" is wrong an hour later, and while it existed it doubled as the do-not-look-again
+    # latch that made a strand silent. So an unresolved observation writes nothing at all: both a 12h-late
+    # post and a fresh one come out of the pass byte-for-byte as they went in.
     from datetime import datetime, timezone, timedelta
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    led.add_post(Post(id="ps", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
-                      caption="x", state=PostState.needs_reconcile, submission_id="s1",
-                      scheduled_time=(datetime.now(timezone.utc) - timedelta(hours=12)).isoformat()))
+    for pid, hours in (("late", 12), ("fresh", 0)):
+        led.add_post(Post(id=pid, parent_id="c", account="a", account_id="1", platform=Platform.instagram,
+                          caption="x", state=PostState.needs_reconcile, submission_id=f"s_{pid}",
+                          scheduled_time=(datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()))
+    before = {pid: led.posts[pid].model_dump() for pid in ("late", "fresh")}
     led = reconcile_posts(led, cfg, get_status=lambda sid: {"status": "scheduled"})
-    p = led.posts["ps"]
-    assert p.state is PostState.needs_reconcile and p.error_reason and "stuck" in p.error_reason.lower()
-
-
-def test_reconcile_no_stuck_breadcrumb_when_recent(tmp_path):
-    from datetime import datetime, timezone
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    led.add_post(Post(id="pr", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
-                      caption="x", state=PostState.needs_reconcile, submission_id="s1",
-                      scheduled_time=datetime.now(timezone.utc).isoformat(), public_url="dryrun://pr"))
-    led = reconcile_posts(led, cfg, get_status=lambda sid: {"status": "scheduled"})
-    assert led.posts["pr"].error_reason is None              # recent -> no premature stuck breadcrumb
+    for pid in ("late", "fresh"):
+        assert led.posts[pid].model_dump() == before[pid], f"{pid} was rewritten by an unresolved observation"
 
 
 def test_reconcile_marks_failed_when_not_live(tmp_path):
@@ -182,16 +177,20 @@ def test_reconcile_poll_error_on_one_post_does_not_abort_the_pass(tmp_path):
     assert led.posts["real"].public_url == "https://ig.com/p/real"
 
 
-def test_reconcile_records_poll_error_reason_without_changing_state(tmp_path):
-    # A contained poll error is surfaced for the digest via error_reason, but the state is untouched
-    # (still parked) — recording the error must never be mistaken for resolving the post's fate.
+def test_reconcile_read_error_writes_nothing_and_only_logs(tmp_path):
+    # A contained read error is not evidence ABOUT the post — it is evidence about the network. It buys a
+    # log line and nothing else. The `reconcile poll error: …` stamp this used to write went into
+    # error_reason, a field three substring parsers read, and it was also the latch that suppressed the
+    # post from every later pass: the breadcrumb that said "stuck" was the mechanism that kept it stuck.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _post(led, "tok", PostState.submitting, sub="fanops_cafe")
+    before = led.posts["tok"].model_dump()
     def get_status(sid):
-        raise RuntimeError("blotato status 404: postSubmissionId not found")
+        raise RuntimeError("postiz status 404: postSubmissionId not found")
     led = reconcile_posts(led, cfg, get_status=get_status)
-    assert led.posts["tok"].state is PostState.submitting       # unresolved -> untouched
-    assert "404" in (led.posts["tok"].error_reason or "")       # error surfaced for the digest
+    assert led.posts["tok"].model_dump() == before               # the row is untouched, error_reason included
+    log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
+    assert "poll-error" in log and "404" in log                  # the detail rides the log stream only
 
 
 def test_reconcile_logs_each_post(tmp_path):
@@ -441,51 +440,62 @@ def test_submitting_real_token_ALSO_escalates_past_deadline(tmp_path):
     assert "escalated" in (led.posts["pr"].error_reason or "")
 
 
-def test_needs_reconcile_terminal_giveup_past_long_bound(tmp_path):
-    # XC-2: a needs_reconcile post >72h past schedule on a never-real fanops_ token reaches the explicit
-    # GAVE UP terminal marker — it stays needs_reconcile (NOT failed: re-queue would double-post a maybe-live
-    # post) but is labeled terminal and no longer polled.
+def test_no_age_makes_an_unresolved_post_terminal(tmp_path):
+    # THE INVERSION. There used to be an age (72h past schedule) at which reconcile declared a post lost —
+    # a verdict about a backend it had not heard from, written into error_reason. Waiting is not failing:
+    # a post 80h past schedule whose status is still unknown comes out of the pass byte-identical. Nothing
+    # in this module now converts elapsed time into a claim about a publication.
     from datetime import datetime, timezone, timedelta
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="pg", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.needs_reconcile, submission_id="fanops_abc",
                       scheduled_time=(datetime.now(timezone.utc) - timedelta(hours=80)).isoformat()))
+    before = led.posts["pg"].model_dump()
     led = reconcile_posts(led, cfg, get_status=lambda sid: {"status": "unknown"})
-    p = led.posts["pg"]
-    assert p.state is PostState.needs_reconcile          # NOT failed (re-queueable) — stays may-be-live
-    assert (p.error_reason or "").startswith("GAVE UP:")
+    assert led.posts["pg"].model_dump() == before
 
 
-def test_giveup_post_is_not_polled_again(tmp_path):
-    # A give-up post is a labeled terminal: the next pass must NOT poll it (dead token) nor re-stamp it.
+@pytest.mark.parametrize("legacy", [
+    "reconcile poll error: connreset SENTINEL",                    # the deleted transient stamp
+    "stuck unknown ~80h past schedule — check the channel",        # the deleted lateness breadcrumb
+    "unresolved 96h past schedule; verify on the channel manually",  # the deleted terminal label
+])
+def test_no_legacy_reason_latches_a_post_out_of_the_pass(tmp_path, legacy):
+    # THE DISPOSAL PROOF for every row the deleted machinery already wrote. Those rows are still in the
+    # live ledger and no operator step exists to clear them; the labeled ones were skipped at the loop head
+    # FOREVER, so the label was its own latch and an outage the backend had long since resolved could never
+    # be observed away. No value of error_reason is read by this module any more, so the first pass that
+    # sees the row PUBLISHED promotes the post — permalink and media_id included — and clears the stale
+    # reason. (The exact deleted sentinel is deliberately not reproduced here: the acceptance grep for its
+    # vocabulary must come back empty, and the property proven is the stronger one — NO string latches.)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    url, rid = "https://www.instagram.com/reel/DZvZ8Itkaxz/", "17841456789012345"
     led.add_post(Post(id="pg", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
-                      caption="x", state=PostState.needs_reconcile, submission_id="fanops_abc",
-                      error_reason="GAVE UP: unresolved 80h past schedule on a never-real token — ...", public_url="dryrun://pg"))
+                      caption="x", state=PostState.needs_reconcile, submission_id="postiz_real_1",
+                      error_reason=legacy, public_url="dryrun://pg"))
     calls = []
     def get_status(sid):
-        calls.append(sid); return {"status": "published"}
-    before = led.posts["pg"].error_reason
+        calls.append(sid); return {"status": "published", "publicUrl": url, "releaseId": rid}
     led = reconcile_posts(led, cfg, get_status=get_status)
-    assert calls == []                                   # never polled
-    assert led.posts["pg"].error_reason == before        # never re-stamped
-    assert led.posts["pg"].state is PostState.needs_reconcile
+    p = led.posts["pg"]
+    assert calls == ["postiz_real_1"]                    # visited — the reason no longer suppresses it
+    assert p.state is PostState.published
+    assert p.public_url == url and p.media_id == rid     # promotion carries permalink + media_id, same pass
+    assert p.error_reason is None                        # the stale reason does not survive the resolution
 
 
-def test_needs_reconcile_real_token_ALSO_gives_up_past_long_bound(tmp_path):
-    # RC-2/S04: a needs_reconcile post >72h past schedule reaches the GAVE UP: label REGARDLESS of token
-    # provenance. The old code never abandoned a real-token post ('it will still resolve'); a real id for a
-    # DELETED post never resolves. GAVE UP: is a LABEL (no state change) -> not re-queueable -> cannot
-    # double-post. This INVERTS the pre-S04 characterization test.
+def test_a_real_token_past_the_old_horizon_is_also_untouched(tmp_path):
+    # The other half of the inversion, on the axis the OLD ladder was widened over: token provenance. A
+    # real backend id 80h past schedule was given up exactly like a fake one. Now neither is: the token
+    # kind never mattered to the question, and the question is no longer asked by an age.
     from datetime import datetime, timezone, timedelta
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="pr", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
-                      caption="x", state=PostState.needs_reconcile, submission_id="blotato_REAL_1",
+                      caption="x", state=PostState.needs_reconcile, submission_id="postiz_REAL_1",
                       scheduled_time=(datetime.now(timezone.utc) - timedelta(hours=80)).isoformat()))
+    before = led.posts["pr"].model_dump()
     led = reconcile_posts(led, cfg, get_status=lambda sid: {"status": "in-progress"})
-    p = led.posts["pr"]
-    assert p.state is PostState.needs_reconcile              # NOT failed (never guessed) — a label only
-    assert (p.error_reason or "").startswith("GAVE UP:")     # real token -> ALSO given up (RC-2)
+    assert led.posts["pr"].model_dump() == before
 
 
 # ── S04 / RC-2: the terminal ladder is a pure function of (state, age) ───────────────────────────
@@ -495,35 +505,35 @@ def test_needs_reconcile_real_token_ALSO_gives_up_past_long_bound(tmp_path):
     ["fanops_FAKE", "blotato_REAL"],
     ["", "stuck 9h past schedule — check the channel"])))
 def test_terminal_ladder_matrix(tmp_path, backend, poll, token, reason):
-    # RC-2/S04 INVARIANT — the 32-cell matrix. A needs_reconcile post >72h past schedule reaches a terminal-
-    # or-retryable state for EVERY (backend × poll × token × error_reason) — it is NEVER left stranded.
-    # Before S04, THREE of these four axes could VETO the terminal: a raising poll bypassed the ladder
-    # (excl.1), a real token was excluded by _is_fake_token (excl.2), and a stale error_reason suppressed the
-    # post (excl.3). Now the poll is given its chance to RESOLVE the post (published/failed); when it cannot
-    # (unknown status, or a raise), the (state, age) give-up fires — UNGATED by token, reason, or backend.
-    # So the outcome depends ONLY on the poll (the legitimate resolver); the other three axes never veto.
+    # THE 32-CELL INVARIANT, inverted. A needs_reconcile post 73h past schedule — past the horizon at which
+    # the deleted ladder declared it lost — is decided by the OBSERVATION and by nothing else, across every
+    # (backend × observation × token × error_reason). A published/failed answer resolves it; an unknown one,
+    # or a read that raised, leaves the ledger row BYTE-IDENTICAL. The three axes that could once veto the
+    # outcome (a raising read, a real token, a stale reason) still never do — but now what they cannot veto
+    # is a NON-write, so no cell can invent a verdict the backend never gave.
     from datetime import datetime, timezone, timedelta
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="m", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.needs_reconcile, submission_id=token,
                       error_reason=(reason or None),
                       scheduled_time=(datetime.now(timezone.utc) - timedelta(hours=73)).isoformat()))
+    before = led.posts["m"].model_dump()
 
     def get_status(sid):
         if poll == "raises": raise RuntimeError(f"{backend} 404")
-        if poll == "published": return {"status": "published", "publicUrl": "https://x/p/1", "postSubmissionId": "blotato_REAL"}
+        if poll == "published": return {"status": "published", "publicUrl": "https://x/p/1", "postSubmissionId": "postiz_REAL"}
         if poll == "failed": return {"status": "failed", "errorMessage": "rejected"}
         return {"status": "unknown"}
     led = reconcile_posts(led, cfg, get_status=get_status)
     p = led.posts["m"]
     assert p.state is not PostState.submitting              # NEVER stranded — the point of the fix, in every cell
     if poll == "published":
-        assert p.state is PostState.published               # the poll RESOLVES it first — resolution is never discarded
+        assert p.state is PostState.published               # the observation RESOLVES it — never discarded
     elif poll == "failed":
         assert p.state is PostState.failed
-    else:                                                    # unknown / raises -> the (state, age) give-up fires...
-        assert p.state is PostState.needs_reconcile          # ...never GUESSED into `failed` (a double-post vector)
-        assert (p.error_reason or "").startswith("GAVE UP:")  # ...reachable regardless of token / reason / backend
+    else:                                                    # unknown / raises -> no observation to act on...
+        assert p.model_dump() == before                      # ...so ZERO ledger bytes, in every one of the cells
+        assert p.state is not PostState.failed               # ...and never GUESSED re-queueable (double-post)
 
 
 def test_needs_reconcile_poll_promotes_within_the_window_before_giveup(tmp_path):
@@ -541,32 +551,34 @@ def test_needs_reconcile_poll_promotes_within_the_window_before_giveup(tmp_path)
     assert led.posts["pw"].state is PostState.published
 
 
-def test_giveup_is_a_label_not_a_state_change(tmp_path):
-    # PRESERVATION — the double-post safety the whole slice rests on. `GAVE UP:` is written to error_reason
-    # and changes NO state. A given-up post stays needs_reconcile (NOT `failed`), so it is not re-queueable
-    # and therefore CANNOT double-post. If this ever becomes a state change, the slice is a double-post vector.
+def test_an_unresolved_observation_never_writes_a_re_queueable_state(tmp_path):
+    # PRESERVATION — the double-post safety the whole design rests on, restated for the mirror. `failed` is
+    # RE-QUEUEABLE (_requeue_transient_failed_for_daemon reads posts_in_state(failed)), so anything able to
+    # write it from an ABSENCE of evidence licences a second publish of a post that may well be live. An
+    # unresolved observation therefore writes no state at all — not `failed`, not a label, nothing.
     from datetime import datetime, timezone, timedelta
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="pl", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.needs_reconcile, submission_id="blotato_REAL",
                       scheduled_time=(datetime.now(timezone.utc) - timedelta(hours=80)).isoformat()))
+    before = led.posts["pl"].model_dump()
     led = reconcile_posts(led, cfg, get_status=lambda sid: {"status": "unknown"})
     p = led.posts["pl"]
-    assert p.state is PostState.needs_reconcile              # state UNCHANGED — a label only
+    assert p.state is PostState.needs_reconcile              # state UNCHANGED
     assert p.state is not PostState.failed                   # explicitly NOT re-queueable
-    assert (p.error_reason or "").startswith("GAVE UP:")
+    assert p.model_dump() == before                          # and not a byte of anything else, either
 
 
 def test_reconcile_visits_a_post_carrying_a_transient_reason(tmp_path, mocker):
-    # RC-2/S04 (❸): a post carrying a TRANSIENT reason (a contained `reconcile poll error:`) must STILL be
-    # visited — the old any-non-empty-error_reason latch made it silent from pass one. A submitting post
-    # within the escalation window (past _STUCK_AFTER, under 24h) carrying such a reason is breadcrumbed +
-    # logged, not skipped.
+    # A post carrying a pre-existing reason must STILL be visited — the any-non-empty-error_reason latch made
+    # it silent from pass one. It is visited AND its reason is left alone: the visit no longer overwrites the
+    # field, because nothing in this pass has anything true to say about why the post is unresolved.
     from datetime import datetime, timezone, timedelta
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    reason = "reconcile poll error: transient boom"
     led.add_post(Post(id="pt", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.submitting, submission_id="fanops_x",
-                      error_reason="reconcile poll error: transient boom",
+                      error_reason=reason,
                       scheduled_time=(datetime.now(timezone.utc) - timedelta(hours=10)).isoformat()))
     spy = []
     def fake_logger(cfg):
@@ -575,7 +587,7 @@ def test_reconcile_visits_a_post_carrying_a_transient_reason(tmp_path, mocker):
     mocker.patch("fanops.reconcile.get_logger", fake_logger)
     led = reconcile_posts(led, cfg, get_status=lambda sid: {"status": "scheduled"})
     assert [a for a in spy if len(a) >= 3 and "left:" in str(a[2])], "a transient-reason post was NOT visited"
-    assert "stuck" in (led.posts["pt"].error_reason or "").lower()   # visited -> breadcrumbed (reason replaced)
+    assert led.posts["pt"].error_reason == reason                    # visited, and NOT re-stamped
 
 
 def test_reconcile_never_guesses_a_fate_on_error(tmp_path):
@@ -592,46 +604,54 @@ def test_reconcile_never_guesses_a_fate_on_error(tmp_path):
     assert led.posts["pu"].state not in (PostState.failed, PostState.published)
 
 
-def test_report_terminals_previews_without_writing(tmp_path):
-    # S04 report-only (ships FIRST): report_terminals returns what the ladder WOULD stamp, and WRITES
-    # NOTHING. A needs_reconcile post >72h is reported as a would-give-up; a fresh post below the deadline
-    # is not reported; the ledger rows are UNCHANGED after the call (the permanent pre-write gate).
+def test_report_terminals_previews_the_escalation_and_writes_nothing(tmp_path):
+    # report_terminals returns what the (state, age) rule WOULD write, and writes nothing. With the give-up
+    # rung deleted there is exactly ONE rung left, so this previews escalations ONLY: the 30h `submitting`
+    # claim is reported, and the 80h `needs_reconcile` post — which the deleted rung would have labeled — is
+    # reported as nothing at all, because nothing would happen to it.
     from datetime import datetime, timezone, timedelta
     from fanops.reconcile import report_terminals
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    led.add_post(Post(id="rp", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
+    led.add_post(Post(id="esc", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
+                      caption="x", state=PostState.submitting, submission_id="fanops_y",
+                      scheduled_time=(datetime.now(timezone.utc) - timedelta(hours=30)).isoformat()))
+    led.add_post(Post(id="old", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.needs_reconcile, submission_id="blotato_REAL",
                       scheduled_time=(datetime.now(timezone.utc) - timedelta(hours=80)).isoformat()))
     led.add_post(Post(id="fresh", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
-                      caption="x", state=PostState.submitting, submission_id="fanops_y",
+                      caption="x", state=PostState.submitting, submission_id="fanops_z",
                       scheduled_time=(datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()))
     rows = report_terminals(led)
-    assert [r["post_id"] for r in rows] == ["rp"]              # only the past-deadline post; fresh excluded
-    assert rows[0]["reason"].startswith("GAVE UP:")           # previews the give-up label
-    assert led.posts["rp"].error_reason is None               # WROTE NOTHING — pure preview
-    assert led.posts["rp"].state is PostState.needs_reconcile
+    assert [r["post_id"] for r in rows] == ["esc"]            # the escalation only; old + fresh preview nothing
+    assert rows[0]["would_set_state"] == "needs_reconcile"
+    assert "escalated" in rows[0]["reason"]
+    assert led.posts["esc"].error_reason is None              # WROTE NOTHING — pure preview
+    assert led.posts["esc"].state is PostState.submitting
 
 
-def test_breadcrumb_dedup_logged_once_not_every_pass(tmp_path, mocker):
-    # XC-6: a permanently-parked post stamps its stuck breadcrumb + logs "left:" ONCE, not on every pass.
+def test_a_parked_post_is_re_visited_and_re_logged_every_pass(tmp_path, mocker):
+    # The XC-6 dedup is GONE, and it should be. It keyed on the stuck breadcrumb: the stamp WAS the
+    # suppression key, so the very act of recording that a post was stuck stopped the log stream ever
+    # mentioning it again. With nothing stamped, nothing suppresses — a post that is still unresolved is
+    # visited and logged on EVERY pass (which is what a monitor needs), while the ledger row does not move
+    # a byte across either of them.
     from datetime import datetime, timezone, timedelta
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="pk", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.needs_reconcile, submission_id="fanops_abc",
                       scheduled_time=(datetime.now(timezone.utc) - timedelta(hours=10)).isoformat()))
+    before = led.posts["pk"].model_dump()
     spy = []
     def fake_logger(cfg):
         def log(*a, **k): spy.append(a)
         return log
     mocker.patch("fanops.reconcile.get_logger", fake_logger)
     def gs(sid): return {"status": "scheduled"}
-    led = reconcile_posts(led, cfg, get_status=gs)          # pass 1: stamps + logs "left:"
-    first = [a for a in spy if len(a) >= 3 and "left:" in str(a[2])]
-    led = reconcile_posts(led, cfg, get_status=gs)          # pass 2: reason already set -> no "left:" line
-    second = [a for a in spy if len(a) >= 3 and "left:" in str(a[2])]
-    assert len(first) == 1
-    assert len(second) == len(first)                        # no additional "left:" line on the second pass
-    assert led.posts["pk"].error_reason and "stuck" in led.posts["pk"].error_reason.lower()
+    led = reconcile_posts(led, cfg, get_status=gs)          # pass 1
+    led = reconcile_posts(led, cfg, get_status=gs)          # pass 2
+    lefts = [a for a in spy if len(a) >= 3 and "left:" in str(a[2])]
+    assert len(lefts) == 2                                  # visible on both passes, not silenced by pass 1
+    assert led.posts["pk"].model_dump() == before           # ...and neither pass wrote a ledger byte
 
 
 # ---- Sprint 4: heal crash-stranded submitting (no submission_id) ----
@@ -659,3 +679,192 @@ def test_heal_submitting_with_real_sid_unchanged(tmp_path):
     led.save()
     assert heal_stranded_submitting(cfg) == 0
     assert Ledger.load(cfg).posts["real"].state is PostState.submitting
+
+
+# ---- MOL-788: the Postiz mirror. ONE bulk read of the backend's rows, projected onto every Postiz-backed
+# post with a real id — pending AND resting. Postiz's row is the single truth; an unchanged row is not a
+# write; and no mirrored observation may move a post into a re-queueable state. --------------------------
+
+_IG_URL = "https://www.instagram.com/reel/DZvZ8Itkaxz/"
+_IG_RID = "17841456789012345"
+
+
+def _mirror_env(monkeypatch):
+    monkeypatch.setenv("FANOPS_POSTER", "postiz")
+    monkeypatch.setenv("POSTIZ_URL", "https://postiz.example.com")
+    monkeypatch.setenv("POSTIZ_API_KEY", "pk")
+    monkeypatch.delenv("BLOTATO_API_KEY", raising=False)
+
+
+def _serve_window(mocker, rows, *, code=200, boom=None, seen=None):
+    """Answer EVERY Postiz GET this pass makes with one window (or fail it). `seen` collects the params of
+    each call, so a test can prove the corpus is read once and over the widest bounds."""
+    def fake_get(url_, **kw):
+        if seen is not None:
+            seen.append(kw.get("params") or {})
+        if boom is not None:
+            raise boom
+        return _R(code, {"posts": rows} if code == 200 else {"error": "nope"})
+    mocker.patch("fanops.postiz_lifecycle.ensure_up")
+    mocker.patch("fanops.post.metrics.requests.get", side_effect=fake_get)
+
+
+def _seed(cfg, pid, state, sub, *, url=None, hours_ago=1, account="a", platform=Platform.instagram,
+          error_reason=None, postiz_state=None):
+    from datetime import datetime, timezone, timedelta
+    led = Ledger.load(cfg)
+    led.add_post(Post(id=pid, parent_id="c", account=account, account_id="1", platform=platform,
+                      caption="x", state=state, submission_id=sub, public_url=url,
+                      error_reason=error_reason, postiz_state=postiz_state,
+                      scheduled_time=(datetime.now(timezone.utc) - timedelta(hours=hours_ago)).isoformat()))
+    led.save()
+    return led
+
+
+def test_mirror_promotes_a_post_the_deleted_ladder_would_have_abandoned(tmp_path, monkeypatch, mocker):
+    # THE OUTAGE REGRESSION, end to end. A post 100h past schedule is far past the horizon at which the
+    # deleted ladder declared it lost and stopped looking. The mirror asks the one question that can be
+    # answered — what does the row say — and the row says PUBLISHED, so the post is promoted with its real
+    # permalink and Graph media id in the SAME pass. One GET serves the whole corpus, over the widest window
+    # the API accepts, because a narrow window is the mechanism that manufactures a false "absent".
+    _mirror_env(monkeypatch)
+    cfg = Config(root=tmp_path)
+    _seed(cfg, "pg", PostState.needs_reconcile, "postiz_1", hours_ago=100)
+    seen = []
+    _serve_window(mocker, [{"id": "postiz_1", "state": "PUBLISHED",
+                            "releaseURL": _IG_URL, "releaseId": _IG_RID}], seen=seen)
+    reconcile_due(cfg)
+    p = Ledger.load(cfg).posts["pg"]
+    assert p.state is PostState.published
+    assert p.public_url == _IG_URL and p.media_id == _IG_RID
+    assert p.postiz_state == "PUBLISHED"                     # the raw token, verbatim, not re-mapped
+    assert p.error_reason is None
+    assert len(seen) == 1                                    # ONE read for the corpus, not one per post
+    assert seen[0]["startDate"] == "2000-01-01" and seen[0]["endDate"] == "2100-12-31"
+
+
+def test_a_published_row_that_vanishes_is_recorded_absent_never_reopened(tmp_path, monkeypatch, mocker):
+    # A post that already published keeps being mirrored for life. When its row disappears from the window,
+    # THAT is recorded — and only that. Reopening the post would be the double-post vector: the permalink we
+    # hold is the evidence it shipped, and a backend forgetting its own row is not evidence it did not.
+    _mirror_env(monkeypatch)
+    cfg = Config(root=tmp_path)
+    _seed(cfg, "pp", PostState.published, "postiz_1", url=_IG_URL)
+    _serve_window(mocker, [])
+    reconcile_due(cfg)
+    p = Ledger.load(cfg).posts["pp"]
+    assert p.postiz_state == "absent"
+    assert p.state is PostState.published and p.public_url == _IG_URL
+    assert p.error_reason is None                            # the absence buys no prose in the parsed field
+
+
+def test_an_error_row_on_a_published_post_is_recorded_never_failed(tmp_path, monkeypatch, mocker):
+    # The sharpest edge of the contract. A published post whose row later reads ERROR is SURFACED via
+    # postiz_state and moved nowhere. `failed` is re-queueable, so mirroring an ERROR into it would hand the
+    # daemon a licence to re-publish a post that is live on the platform. The operator decides; the mirror
+    # only makes the disagreement visible.
+    _mirror_env(monkeypatch)
+    cfg = Config(root=tmp_path)
+    _seed(cfg, "pp", PostState.published, "postiz_1", url=_IG_URL, postiz_state="PUBLISHED")
+    _serve_window(mocker, [{"id": "postiz_1", "state": "ERROR", "releaseURL": None, "releaseId": None}])
+    reconcile_due(cfg)
+    p = Ledger.load(cfg).posts["pp"]
+    assert p.postiz_state == "ERROR"
+    assert p.state is PostState.published                     # NOT failed, NOT needs_reconcile
+    assert p.error_reason is None
+
+
+def test_an_error_row_on_a_pending_post_still_resolves_it_failed(tmp_path, monkeypatch, mocker):
+    # The same token on a post that never published means the opposite thing, and the branch is unchanged:
+    # nothing is live, so `failed` is safe and re-queueing is the correct affordance.
+    _mirror_env(monkeypatch)
+    cfg = Config(root=tmp_path)
+    _seed(cfg, "pn", PostState.needs_reconcile, "postiz_1")
+    _serve_window(mocker, [{"id": "postiz_1", "state": "ERROR", "releaseURL": None, "releaseId": None}])
+    reconcile_due(cfg)
+    p = Ledger.load(cfg).posts["pn"]
+    assert p.state is PostState.failed
+    assert p.postiz_state == "ERROR"
+
+
+def test_a_second_pass_over_unchanged_rows_writes_nothing(tmp_path, monkeypatch, mocker):
+    # THE ZERO-BYTE PROPERTY. The mirror runs on every daemon tick over the whole corpus; if an identical
+    # row counted as a write, every published post in the ledger would be rewritten forever, and every
+    # downstream reader watching for change would see nothing but noise.
+    _mirror_env(monkeypatch)
+    cfg = Config(root=tmp_path)
+    _seed(cfg, "pp", PostState.published, "postiz_1", url=_IG_URL)
+    rows = [{"id": "postiz_1", "state": "PUBLISHED", "releaseURL": _IG_URL, "releaseId": _IG_RID}]
+    _serve_window(mocker, rows)
+    reconcile_due(cfg)
+    after_first = Ledger.load(cfg).posts["pp"].model_dump()
+    assert after_first["postiz_state"] == "PUBLISHED"         # pass 1 DID record the first observation
+    log_before = cfg.log_path.read_text() if cfg.log_path.exists() else ""
+    reconcile_due(cfg)
+    assert Ledger.load(cfg).posts["pp"].model_dump() == after_first
+    new_lines = (cfg.log_path.read_text() if cfg.log_path.exists() else "")[len(log_before):]
+    assert "postiz_state" not in new_lines                   # and no per-post mirror event was emitted
+
+
+def test_a_transport_failure_mirrors_nobody(tmp_path, monkeypatch, mocker):
+    # A fetch that did not happen is not evidence about any post. It buys one log line, and every row —
+    # pending and resting alike — is left exactly as it was.
+    _mirror_env(monkeypatch)
+    cfg = Config(root=tmp_path)
+    _seed(cfg, "pp", PostState.published, "postiz_1", url=_IG_URL)
+    _seed(cfg, "pn", PostState.needs_reconcile, "postiz_2")
+    before = {k: v.model_dump() for k, v in Ledger.load(cfg).posts.items()}
+    _serve_window(mocker, [], boom=RuntimeError("connreset SENTINEL-NET"))
+    reconcile_due(cfg)
+    assert {k: v.model_dump() for k, v in Ledger.load(cfg).posts.items()} == before
+    log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
+    assert "mirror_fetch_error" in log and "SENTINEL-NET" in log
+
+
+def test_a_401_on_the_bulk_read_halts_the_pass(tmp_path, monkeypatch, mocker):
+    # A bad key makes every read fail — grinding the whole corpus against it is pointless and the halt is
+    # what the CLI turns into "reconcile skipped". Unchanged from the per-post era, on the new read.
+    from fanops.errors import PostizAuthError
+    _mirror_env(monkeypatch)
+    cfg = Config(root=tmp_path)
+    _seed(cfg, "pn", PostState.needs_reconcile, "postiz_1")
+    _serve_window(mocker, [], code=401)
+    with pytest.raises(PostizAuthError):
+        reconcile_due(cfg)
+
+
+def test_a_zernio_backed_resting_post_is_never_stamped_absent(tmp_path, monkeypatch, mocker):
+    # THE SCOPE OF THE MIRROR IS ONE BACKEND. A TikTok post published through Zernio is structurally absent
+    # from every Postiz window, so mirroring it would stamp `absent` on the first pass and INVENT an
+    # observation about a backend that was never asked. postiz_state stays None for it, forever.
+    from fanops.accounts import add_account, set_backend
+    _mirror_env(monkeypatch)
+    cfg = Config(root=tmp_path)
+    add_account(cfg, "@tt", [Platform.tiktok], status="active")
+    set_backend(cfg, "@tt", "tiktok", "zernio")
+    _seed(cfg, "ig", PostState.published, "postiz_1", url=_IG_URL)
+    _seed(cfg, "tt", PostState.analyzed, "zernio_real_1", url="https://www.tiktok.com/@tt/video/1",
+          account="tt", platform=Platform.tiktok)
+    _serve_window(mocker, [{"id": "postiz_1", "state": "PUBLISHED",
+                            "releaseURL": _IG_URL, "releaseId": _IG_RID}])
+    reconcile_due(cfg)
+    led = Ledger.load(cfg)
+    assert led.posts["ig"].postiz_state == "PUBLISHED"
+    assert led.posts["tt"].postiz_state is None               # never asked about -> never answered for
+    assert led.posts["tt"].state is PostState.analyzed
+
+
+def test_a_client_token_post_is_never_mirrored_but_still_escalates(tmp_path, monkeypatch, mocker):
+    # A `fanops_` idempotency token is not a Postiz row id, so no window can ever hold it: mirroring it
+    # would record a permanent `absent` that says nothing about the post. It is still VISITED, because the
+    # (state, age) escalation is the one thing that un-strands a crash-stranded submit claim — and that
+    # escalation moves between two non-re-queueable states, deciding nothing about liveness.
+    _mirror_env(monkeypatch)
+    cfg = Config(root=tmp_path)
+    _seed(cfg, "tok", PostState.submitting, "fanops_deadbeef", hours_ago=30)
+    _serve_window(mocker, [])
+    reconcile_due(cfg)
+    p = Ledger.load(cfg).posts["tok"]
+    assert p.postiz_state is None                             # no row could name it -> no observation
+    assert p.state is PostState.needs_reconcile
+    assert "escalated" in (p.error_reason or "")

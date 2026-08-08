@@ -193,16 +193,16 @@ def _learn_pass(cfg: Config, *, window: str = "30d") -> None:
             get_logger(cfg)("learn", "-", "retire_skipped", losers=len(r["losers"]))
 
 def cmd_reconcile(cfg: Config, *, report_terminals: bool = False) -> int:
-    # AUDIT H4 + M1: resolve posts stranded in submitting/needs_reconcile by polling the backend status.
-    # reconcile_due pre-polls each status (network) OUTSIDE the lock against a lock-free snapshot, then
-    # applies the cached results in ONE tight transaction (a single poll error is contained per-post —
-    # parked, never guessed failed). Needs a key (dryrun has no live status source) — skip cleanly if
-    # absent, like track: _default_get_status raises RuntimeError (non-postiz) / PostizAuthError (postiz)
-    # when not configured, and a mid-poll fatal AuthError likewise = "can't reconcile, skip".
+    # AUDIT H4 + M1: resolve posts stranded in submitting/needs_reconcile against the backend. reconcile_due
+    # reads OUTSIDE the lock against a lock-free snapshot (Postiz in ONE bulk window, Zernio per post), then
+    # applies the cached observations in ONE tight transaction (a read error is contained per-post — logged,
+    # the row untouched, never guessed failed). Needs a key (dryrun has no live status source) — skip cleanly
+    # if absent, like track: the read raises RuntimeError (no live provider) / PostizAuthError (no key) when
+    # not configured, and a mid-pass fatal AuthError likewise = "can't reconcile, skip".
     if report_terminals:
-        # S04 report-only (ships FIRST): preview what the (state, age) terminal ladder WOULD escalate or
-        # give up, WITHOUT writing or polling. Routed through get_logger — NOT print — so cli.py's shared
-        # print budget is UNCHANGED (GB-6/IR-4: no slice may move _CLI_PRINT_COUNT).
+        # S04 report-only (ships FIRST): preview which posts the (state, age) rule WOULD escalate, WITHOUT
+        # writing or reading the backend. Routed through get_logger — NOT print — so cli.py's shared print
+        # budget is UNCHANGED (GB-6/IR-4: no slice may move _CLI_PRINT_COUNT).
         from fanops.reconcile import report_terminals as _report
         rows = _report(Ledger.load(cfg))
         log = get_logger(cfg)
@@ -807,8 +807,8 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("pause", help="stop the unattended pump (survives restarts; operator verbs still run)"); sub.add_parser("resume", help="clear the pause marker")
     p_reconcile = sub.add_parser("reconcile")
     p_reconcile.add_argument("--report-terminals", action="store_true",
-                             help="S04: preview which parked posts the (state, age) ladder WOULD escalate/"
-                                  "give up — reads only, writes nothing (routed to the log)")
+                             help="S04: preview which parked posts the (state, age) rule WOULD escalate "
+                                  "submitting->needs_reconcile — reads only, writes nothing (to the log)")
     p_reframe = sub.add_parser("reframe", help="classify (--dry-run) or migrate (--apply) the clip corpus framing")
     p_reframe.add_argument("--dry-run", action="store_true",
                            help="READ-ONLY classification; writes only to a scratch root")

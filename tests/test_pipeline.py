@@ -808,22 +808,17 @@ def test_run_summary_every_poststate_accounted(tmp_path):
     assert state_keys == expected, f"unexpected post-state keys: {state_keys - expected} / {expected - state_keys}"
 
 
-# MOL-440: gave_up posts (needs_reconcile + GAVE UP: prefix) are split out of needs_reconcile.
-def test_run_summary_gave_up_disjoint_from_needs_reconcile(tmp_path):
+# MOL-788: the `gave_up` split is DELETED with the mechanism it counted (reconcile no longer labels a post
+# given-up), so needs_reconcile is the whole column again. The enumeration is pinned by
+# test_run_summary_every_poststate_accounted above: a re-added non-state key must be declared there.
+def test_run_summary_needs_reconcile_counts_the_whole_column(tmp_path):
     from fanops.models import Post, PostState, Platform
     from fanops.pipeline import _build_summary
-    from fanops.reconcile import _GIVEUP_PREFIX
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    led.add_post(Post(id="nr1", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
-                      caption="x", state=PostState.needs_reconcile, error_reason="timeout after send"))
-    led.add_post(Post(id="gu1", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
-                      caption="x", state=PostState.needs_reconcile,
-                      error_reason=f"{_GIVEUP_PREFIX} unresolved 72h past schedule on a fake token"))
-    led.add_post(Post(id="gu2", parent_id="c", account="a", account_id="1", platform=Platform.tiktok,
-                      caption="y", state=PostState.needs_reconcile,
-                      error_reason=f"{_GIVEUP_PREFIX} operator parked"))
+    for pid, reason in (("nr1", "timeout after send"), ("nr2", None), ("nr3", "held for an operator decision")):
+        led.add_post(Post(id=pid, parent_id="c", account="a", account_id="1", platform=Platform.instagram,
+                          caption="x", state=PostState.needs_reconcile, error_reason=reason))
     led.save()
     s = _build_summary(cfg, before=set())
-    assert s["gave_up"] == 2
-    assert s["needs_reconcile"] == 1
-    assert s["gave_up"] + s["needs_reconcile"] == 3
+    assert s["needs_reconcile"] == 3                  # no error_reason value splits the tally any more
+    assert "gave_up" not in s
