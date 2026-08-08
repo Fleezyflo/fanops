@@ -55,7 +55,7 @@ Docker+Postiz plane (see the bring-up brief `docs/design/briefs/16-one-step-brin
 | `FANOPS_CLIP_PROFILE` | `talk` | Global clip-length band | S |
 | `FANOPS_VISUAL_START` | on | Strongest-opening-frame cut refinement | .env |
 | `FANOPS_SMART_FRAMING` | on | Subject-aware reframe. ON REQUIRES the `[framing]` extra (opencv) — render REFUSES (`ToolchainMissingError`, exit 2) if cv2 absent, not a silent centre-crop. Set `0` to centre-crop without cv2 (a detection miss still fails open to centered) | .env |
-| `FANOPS_QUEUE_GATE` | on | Hold new footage as pending until operator queues + releases (`0` restores auto-ingest) | .env |
+| `FANOPS_QUEUE_GATE` | on | Hold new footage as pending until operator queues + releases; also PARKS machine-origin moment re-opens (`adjust.amplify`) on the source until the Make tab releases them (`0` restores auto-ingest and serves re-opens unparked) | .env |
 | `FANOPS_AWARE_REFRAME` | off | Global top-third crop bias | .env |
 | `FANOPS_WHISPER_MODEL` | duration-aware | Legacy whisper CLI model pin; unset = large-v3→turbo→… by timeout budget | .env |
 | `FANOPS_ASR_MODEL` | duration-aware | faster-whisper model pin; unset = large-v3→medium→… by timeout budget. A pin wins verbatim and DISABLES the timeout downgrade — the 2026-07-12 subtitle-garbage incident was a stale `small` pin | .env |

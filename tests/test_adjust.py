@@ -130,7 +130,12 @@ def test_a_tight_pool_retires_nobody_while_a_wide_one_retires(tmp_path):
     assert classify_outcomes(wide)["losers"] == ["lo"]      # a genuine collapse still retires
 
 @pytest.mark.integration
-def test_amplify_then_ingest_then_render_produces_new_clip(tmp_path):
+def test_amplify_then_ingest_then_render_produces_new_clip(tmp_path, monkeypatch):
+    # T2.3 sanctioned update: the subject here is amplify's FORWARD half (request -> ingest -> render),
+    # not admission. Under FANOPS_QUEUE_GATE (default ON) a machine-origin re-open is now PARKED for an
+    # operator release, so the gate is turned off explicitly to reach the path under test. The park
+    # itself is asserted by tests/test_machine_reopen_admission.py.
+    monkeypatch.setenv("FANOPS_QUEUE_GATE", "0")
     # FIX F60: prove the learning loop's forward half end to end.
     # CI-2/CI-1: this is an INTEGRATION test — render_aspects_for() below shells out to REAL
     # ffmpeg, which is the repo's literal definition of the `integration` marker. The no-toolchain
@@ -210,9 +215,12 @@ def test_amplify_respects_per_source_budget(tmp_path):
     # the cap is not silently bumped past the ceiling
     assert led.sources["s1"].meta.get("amplify_count") == 3
 
-def test_amplify_preserves_winners_published_lineage(tmp_path):
+def test_amplify_preserves_winners_published_lineage(tmp_path, monkeypatch):
     # CRITICAL: amplifying a winner must NOT delete the winner's own published/analyzed post.
     # The post is live on the platform; deleting its ledger record orphans it (untrackable).
+    # T2.3 sanctioned update: gate OFF, so the machine re-open is SERVED rather than parked — the
+    # lineage rule under test only fires once the request round-trips into ingest_moments.
+    monkeypatch.setenv("FANOPS_QUEUE_GATE", "0")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="s1", source_path="/s.mp4", state=SourceState.moments_decided, duration=30.0,
                           transcript=[{"start":14,"end":18,"text":"they slept on me"}], signal_peaks=[]))
@@ -236,9 +244,11 @@ def test_amplify_preserves_winners_published_lineage(tmp_path):
     assert any(m.content_token == "20.00-26.00" for m in led.moments_of("s1"))
 
 
-def test_amplify_default_guidance_unchanged_without_extra(tmp_path):
+def test_amplify_default_guidance_unchanged_without_extra(tmp_path, monkeypatch):
     # extra_guidance defaults to "" -> the written moment-request guidance must NOT contain any
     # injected hook block; behavior byte-identical to today (the existing callers pass nothing).
+    # T2.3 sanctioned update: gate OFF so the request is written at all (the subject is its CONTENT).
+    monkeypatch.setenv("FANOPS_QUEUE_GATE", "0")
     cfg = Config(root=tmp_path)
     led = Ledger.load(cfg)
     _analyzed_post(led, 90.0, "p1", "c1", "m1", "s1")
@@ -248,7 +258,9 @@ def test_amplify_default_guidance_unchanged_without_extra(tmp_path):
     assert payload["guidance"].startswith("AMPLIFY:")
 
 
-def test_amplify_injects_extra_guidance(tmp_path):
+def test_amplify_injects_extra_guidance(tmp_path, monkeypatch):
+    # T2.3 sanctioned update: gate OFF so the request is written at all (the subject is its CONTENT).
+    monkeypatch.setenv("FANOPS_QUEUE_GATE", "0")
     cfg = Config(root=tmp_path)
     led = Ledger.load(cfg)
     _analyzed_post(led, 90.0, "p1", "c1", "m1", "s1")

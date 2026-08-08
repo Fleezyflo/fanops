@@ -32,6 +32,9 @@ def _ensure_lineage(led, moment_id, clip_id, hook):
 
 
 def test_sustained_winner_amplifies_source_on_disk(tmp_path, monkeypatch):
+    # T2.3 sanctioned update: gate OFF — the subject is the streak loop reaching disk, not queue
+    # admission (with the gate on the re-open parks; see tests/test_machine_reopen_admission.py).
+    monkeypatch.setenv("FANOPS_QUEUE_GATE", "0")
     monkeypatch.setenv("FANOPS_VARIANT_AMPLIFY", "1")
     cfg = Config(root=tmp_path)
     _validate(cfg)

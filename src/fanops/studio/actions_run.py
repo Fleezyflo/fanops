@@ -142,6 +142,40 @@ def release_all_held(cfg: Config, *, confirmed: bool = True) -> ActionResult:
     return ActionResult(ok=True, detail={"released": released})
 
 
+def release_reopens(cfg: Config, *, source_ids: Sequence[str], confirmed: bool = True) -> ActionResult:
+    """T2.3 — release the machine-origin moment re-opens that request_moments' admission guard parked.
+    ONE transaction: pop each source's `meta["pending_reopen"]` and replay the request it was holding,
+    carrying the PARKED origin (relabelling it `operator` would destroy the provenance the park exists
+    to record) plus `operator_release=True` — the key that stops the replay from re-entering the same
+    guard and re-parking itself. Idempotent: a source with nothing parked is skipped, so a second call
+    releases 0."""
+    from fanops.accounts import Accounts
+    from fanops.moments import request_moments
+    if cfg.is_live and not confirmed:
+        return ActionResult(ok=False, error=f"LIVE backend ({cfg.effective_publish_mode()}): releasing "
+                            "starts clip production — tick the confirm box, then run again.")
+    released = 0
+    try:
+        with Ledger.transaction(cfg) as led:
+            accts = Accounts.load(cfg)
+            for sid in source_ids:
+                src = led.sources.get(sid)
+                if src is None:
+                    continue
+                parked = src.meta.pop("pending_reopen", None)
+                if not parked:
+                    continue
+                led = request_moments(led, cfg, sid, accounts=accts, guidance=parked.get("guidance") or "",
+                                      origin=parked.get("origin") or "amplify", operator_release=True)
+                released += 1
+    except Exception as exc:
+        from fanops.log import get_logger
+        get_logger(cfg)("run", "-", "release_reopens_failed", err=str(exc)[:160])
+        return ActionResult(ok=False, error=f"release failed: {str(exc)[:160]}")
+    if released >= 1: kick_prepare(cfg)
+    return ActionResult(ok=True, detail={"released": released})
+
+
 def run_ingest(cfg: Config, *, batch_name: str = "", target_accounts=(), burn_subs: bool | None = None) -> ActionResult:
     """Drive `fanops ingest` from the browser: catalogue 01_inbox under one transaction (the exact
     cmd_ingest path). When batch_name is non-blank, mint a named, account-targeted Batch in the SAME

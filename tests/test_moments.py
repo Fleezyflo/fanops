@@ -477,6 +477,10 @@ def test_request_adds_no_skip_state(tmp_path):
 
 def test_amplify_gate_still_read(tmp_path, monkeypatch):
     # Casting OFF / no accounts: amplify keeps the legacy bare source-keyed moments gate.
+    # T2.3 sanctioned update: the subject is WHICH gate key amplify writes, not whether the machine is
+    # admitted — gate OFF so the request is written. The gate-ON park is asserted separately in
+    # tests/test_machine_reopen_admission.py.
+    monkeypatch.setenv("FANOPS_QUEUE_GATE", "0")
     monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "0")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path="/s.mp4", state=SourceState.moments_decided,
@@ -496,6 +500,8 @@ def test_amplify_gate_still_read(tmp_path, monkeypatch):
     assert latest_request_id(cfg, "moments", "src_1") is not None
 
 def test_amplify_rewrites_per_account_gates(tmp_path, monkeypatch):
+    # T2.3 sanctioned update: gate OFF — the subject is the per-account gate FAN-OUT, not admission.
+    monkeypatch.setenv("FANOPS_QUEUE_GATE", "0")
     monkeypatch.delenv("FANOPS_ACCOUNT_CASTING", raising=False)   # casting ON (default)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _seed_multi_pick_persona_accounts(cfg, ["a", "b"])
