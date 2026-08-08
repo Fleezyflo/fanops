@@ -119,6 +119,8 @@ def test_fanops_status_headline_reads_the_predicate_not_a_raw_census(tmp_path, c
     assert len(led.posts_in_state(PostState.awaiting_approval)) == 2   # the raw census still counts the stranded post
     assert "awaiting_approval=1 " in out                               # the headline counts only the actionable one
     assert f"awaiting_approval={led.attention_counts()['posts']} " in out   # and equals the worklist, by construction
+    assert "awaiting_raw=2 " in out                                    # MOL-811: raw census restored beside the worklist
+    assert f"awaiting_raw={led.state_histogram()[PostState.awaiting_approval]} " in out
 
 
 def test_review_posts_ignores_every_non_awaiting_state(tmp_path):
@@ -169,7 +171,9 @@ def test_cli_metrics_and_runsummary_agree_on_the_actionable_count(tmp_path, caps
     assert len(led.posts_in_state(PostState.awaiting_approval)) == 2      # the raw census, deliberately larger
 
     assert cmd_status(cfg) == 0
-    assert f"awaiting_approval={actionable} " in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert f"awaiting_approval={actionable} " in out
+    assert "awaiting_raw=2 " in out                                   # MOL-811: both numbers on one line
 
     body = _metrics_body(cfg, monkeypatch)
     assert f"fanops_posts_actionable {actionable}" in body
@@ -275,3 +279,50 @@ def test_bulk_approve_still_reports_the_lineage_refusal_it_makes(tmp_path):
     again = Ledger.load(cfg)
     assert again.posts["p_ok"].state is PostState.queued
     assert again.posts["p_stranded"].state is PostState.awaiting_approval
+
+
+# ================= MOL-811: owned raw PostState census (state_histogram) =================
+
+def test_state_histogram_zeros_every_enum_member_and_counts(tmp_path):
+    """The owned raw census: every PostState key present (zeros filled), counts match posts_in_state,
+    and an account= filter scopes without inventing keys."""
+    led = Ledger.load(Config(root=tmp_path))
+    empty = led.state_histogram()
+    assert set(empty) == set(PostState)
+    assert all(v == 0 for v in empty.values())
+
+    _lineage(led, mom_id="mom_1", clip_id="clip_1")
+    led.add_post(_post("p_a", "clip_1", account="a"))
+    led.add_post(_post("p_b", "clip_1", account="b", state=PostState.failed))
+    led.add_post(_post("p_a2", "clip_1", account="a", state=PostState.queued))
+
+    hist = led.state_histogram()
+    assert set(hist) == set(PostState)
+    assert hist[PostState.awaiting_approval] == 1
+    assert hist[PostState.failed] == 1
+    assert hist[PostState.queued] == 1
+    assert hist[PostState.published] == 0
+    for st in PostState:
+        assert hist[st] == len(led.posts_in_state(st))
+
+    a = led.state_histogram(account="a")
+    assert set(a) == set(PostState)
+    assert a[PostState.awaiting_approval] == 1
+    assert a[PostState.queued] == 1
+    assert a[PostState.failed] == 0
+    b = led.state_histogram(account="b")
+    assert b[PostState.failed] == 1
+    assert b[PostState.awaiting_approval] == 0
+
+
+def test_home_and_metrics_read_state_histogram_not_a_hand_rolled_counter(tmp_path, monkeypatch):
+    """MOL-811: diagnostic surfaces consume the owned census — Home's awaiting_posts and the
+    fanops_posts{state=} family both equal state_histogram, and every PostState still appears in /metrics."""
+    cfg = Config(root=tmp_path)
+    led = _one_live_one_stranded(cfg)
+    hist = led.state_histogram()
+    from fanops.studio.views import home_status
+    assert home_status(cfg).counts["awaiting_posts"] == hist[PostState.awaiting_approval] == 2
+    body = _metrics_body(cfg, monkeypatch)
+    for state in PostState:
+        assert f'fanops_posts{{state="{state.value}"}} {hist[state]}' in body

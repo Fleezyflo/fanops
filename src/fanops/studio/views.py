@@ -940,21 +940,24 @@ def account_work_counts(cfg: Config) -> dict[str, dict]:
     out: dict[str, dict] = defaultdict(lambda: {"awaiting": 0, "scheduled": 0, "failed": 0, "inflight": 0, "review_batch": None})
     try:
         led = Ledger.load(cfg)
+        now = datetime.now(timezone.utc)
+        # awaiting stays the owned worklist predicate (can_promote); scheduled is a time predicate on
+        # queued rows — neither is a pure PostState census. inflight/failed read Ledger.state_histogram.
         for p in led.posts.values():
             h = p.account
-            # T2.5: the per-account badge is a WORKLIST, so it asks the owner the same question the Review page
-            # asks (`Ledger.review_posts` = awaiting_approval AND `can_promote`). A raw state tally here made the
-            # Home tile advertise work the Review page then refused to show — posts stranded under a retired
-            # moment. The other arms stay raw state reads: they are delivery states, not the operator's queue.
             if p.state is PostState.awaiting_approval and led.can_promote(p):
                 out[h]["awaiting"] += 1
-            elif p.state is PostState.queued:
-                if _queued_has_future_schedule(p, datetime.now(timezone.utc)):
-                    out[h]["scheduled"] += 1
-            elif p.state in (PostState.needs_reconcile, PostState.submitting, PostState.submitted):
-                out[h]["inflight"] += 1
-            elif p.state in (PostState.failed, PostState.error):
-                out[h]["failed"] += 1
+            elif p.state is PostState.queued and _queued_has_future_schedule(p, now):
+                out[h]["scheduled"] += 1
+        for h in {p.account for p in led.posts.values()}:
+            hist = led.state_histogram(account=h)
+            inflight = (hist[PostState.needs_reconcile] + hist[PostState.submitting]
+                        + hist[PostState.submitted])
+            failed = hist[PostState.failed] + hist[PostState.error]
+            if inflight:
+                out[h]["inflight"] = inflight
+            if failed:
+                out[h]["failed"] = failed
     except Exception:
         pass
     for h in out:
@@ -974,9 +977,8 @@ def home_status(cfg: Config) -> HomeStatus:
         from collections import Counter
         led = Ledger.load(cfg)
         att = led.attention_counts()        # T2.5: the OWNED worklist, loaded ONCE for this view — never per row
-        st = Counter(p.state for p in led.posts.values())
-        inflight = (st.get(PostState.needs_reconcile, 0) + st.get(PostState.submitting, 0)
-                    + st.get(PostState.submitted, 0))
+        st = led.state_histogram()
+        inflight = (st[PostState.needs_reconcile] + st[PostState.submitting] + st[PostState.submitted])
         due_soon = sum(1 for p in led.posts.values()
                        if p.state is PostState.queued and _post_is_due(p, datetime.now(timezone.utc)))
         live_today = sum(1 for p in led.posts.values()
@@ -986,21 +988,21 @@ def home_status(cfg: Config) -> HomeStatus:
         live_trackable = sum(1 for p in led.posts.values()
                              if p.state in (PostState.published, PostState.analyzed)
                              and _classify_channel(getattr(p, "public_url", None)) == "live")
-        failed = st.get(PostState.failed, 0)
+        failed = st[PostState.failed]
         from fanops.studio.views_results import failure_rollup
         fb = failure_rollup(led)["buckets"]
         counts = {"sources": sum(1 for s in led.sources.values() if s.origin_kind == "native"),
                   "batches": len(getattr(led, "batches", {})),
                   "awaiting": att["moments"],
-                  "awaiting_posts": st.get(PostState.awaiting_approval, 0),
-                  "scheduled": st.get(PostState.queued, 0),
+                  "awaiting_posts": st[PostState.awaiting_approval],
+                  "scheduled": st[PostState.queued],
                   "inflight": inflight,
                   "due_soon": due_soon,
                   "live_today": live_today,
                   "live_trackable": live_trackable,
                   "failed": failed, "failed_rate_limit": fb.get("rate_limit", 0),
                   "failed_oversize": fb.get("oversize", 0),
-                  "posted": st.get(PostState.published, 0) + st.get(PostState.analyzed, 0)}
+                  "posted": st[PostState.published] + st[PostState.analyzed]}
         by_account = dict(Counter(p.account for p in led.posts.values()))
     except Exception as exc:                          # the first page an operator sees must never 500
         from fanops.log import get_logger

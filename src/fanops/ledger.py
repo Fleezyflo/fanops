@@ -675,6 +675,16 @@ class Ledger:
         posts = self.review_posts()
         clips = {p.parent_id: self.clips[p.parent_id] for p in posts}   # can_promote fails CLOSED, so each parent exists
         return {"posts": len(posts), "moments": sum(1 for c in clips.values() if not c.held)}
+    def state_histogram(self, *, account: str | None = None) -> dict[PostState, int]:
+        """Raw per-`PostState` census over `self.posts` — zeros filled for every enum member. Optional `account`
+        filters to that handle. A state census, not a worklist (`review_posts` / `attention_counts` answer that).
+        Pure, lock-free."""
+        counts = {s: 0 for s in PostState}
+        for p in self.posts.values():
+            if account is not None and p.account != account:
+                continue
+            counts[p.state] += 1
+        return counts
 
     # ---- reconcile (FIX F08/F32): upsert keep-set, cascade-delete the rest for this source ----
     def reconcile_moments(self, source_id: str, keep: dict[str, Moment]) -> None:

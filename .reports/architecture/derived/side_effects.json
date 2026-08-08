@@ -507,7 +507,7 @@
     "fanops.health_model": [
       {
         "call": "requests.get",
-        "line": 167
+        "line": 166
       }
     ],
     "fanops.post.metrics": [
@@ -703,7 +703,7 @@
     "fanops.health_model": [
       {
         "call": "subprocess.run",
-        "line": 128
+        "line": 127
       }
     ],
     "fanops.ingest": [
