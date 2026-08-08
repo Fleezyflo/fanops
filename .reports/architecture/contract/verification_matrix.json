@@ -170,16 +170,16 @@
           "class": "INVARIANT",
           "action": "NEW",
           "must_fail_before": true,
-          "proves": "The :767 suppression key is the EXPLICIT terminal marker (`_is_giveup`), not 'error_reason is non-empty'. A post with a TRANSIENT reason is still VISITED.",
+          "proves": "NOTHING in error_reason suppresses a post. There is no suppression key at all any more: MOL-788 deleted the terminal marker that was one, so a post carrying ANY reason is still VISITED.",
           "exercises_invariant": "INT-7"
         },
         {
-          "name": "test_giveup_is_a_label_not_a_state_change",
+          "name": "test_an_unresolved_observation_never_writes_a_re_queueable_state",
           "class": "PRESERVATION",
-          "action": "NEW",
+          "action": "RETARGETED by MOL-788 (was test_giveup_is_a_label_not_a_state_change)",
           "must_fail_before": false,
-          "proves": "*** `GAVE UP:` is a LABEL written to error_reason. It changes NO state. A given-up post is NOT re-queueable, therefore it CANNOT double-post. ***",
-          "preserves_capability": "*** THE SAFETY PROPERTY THE WHOLE SLICE DEPENDS ON — and the reason PD-2's recommendation (the same ladder for a real token) is SAFE. If an implementing agent makes `GAVE UP:` a state change, this slice becomes a DOUBLE-POST VECTOR. THIS TEST IS THE ONLY THING STOPPING THAT. ***"
+          "proves": "*** An observation that does NOT resolve a post writes NO state — the ledger row is byte-identical. `failed` is re-queueable, so anything able to write it from an ABSENCE of evidence licences a second publish of a possibly-live post. ***",
+          "preserves_capability": "*** THE SAFETY PROPERTY THE WHOLE DESIGN DEPENDS ON. It used to be carried by the give-up LABEL being a label; MOL-788 deleted the label, and the property is now carried by the stronger fact that an unresolved observation writes nothing at all. RETARGETING, NOT REMOVAL: if this test disappears, the mirror can become a DOUBLE-POST VECTOR and nothing else would stop it. ***"
         },
         {
           "name": "test_reconcile_never_guesses_a_fate",

@@ -24,7 +24,7 @@ from fanops.clip import render_aspects_for
 from fanops.caption import request_captions, ingest_captions, caption_request_stale
 from fanops.crosspost import crosspost_clips
 from fanops.post.run import publish_due
-from fanops.reconcile import reconcile_due, _GIVEUP_PREFIX
+from fanops.reconcile import reconcile_due
 from fanops.digest import write_digest
 from fanops.log import get_logger
 from fanops.agentstep import pending
@@ -376,7 +376,6 @@ _RUNSUMMARY_NON_STATE_KEYS = frozenset({
     "sources", "moments", "clips", "posts",
     "published_in_run", "last_published_age_hours",
     "holds", "hook_burn_failed", "frames_unread", "errors", "awaiting",
-    "gave_up",   # MOL-440: subset of needs_reconcile — disjoint from the needs_reconcile tally
 })
 
 
@@ -399,7 +398,6 @@ class RunSummary(TypedDict):
     error: int
     rejected: int
     needs_reconcile: int
-    gave_up: int
     retired: int
     published_in_run: int
     last_published_age_hours: Optional[float]
@@ -422,8 +420,6 @@ def _build_summary(cfg: Config, before: set) -> RunSummary:
     newest = max((dt for dt in (_parse(p.scheduled_time) for p in after if p.scheduled_time) if dt is not None), default=None)
     last_published_age_hours = (None if newest is None
                                 else round((datetime.now(timezone.utc) - newest).total_seconds() / 3600, 2))
-    nr_posts = led.posts_in_state(PostState.needs_reconcile)
-    gave_up = sum(1 for p in nr_posts if p.error_reason and p.error_reason.startswith(_GIVEUP_PREFIX))
     summary: RunSummary = {
         "sources": len(led.sources), "moments": len(led.moments),
         "clips": len(led.clips), "posts": len(led.posts),
@@ -437,9 +433,10 @@ def _build_summary(cfg: Config, before: set) -> RunSummary:
         "failed": len(led.posts_in_state(PostState.failed)),
         "error": len(led.posts_in_state(PostState.error)),
         "rejected": len(led.posts_in_state(PostState.rejected)),
-        # MOL-440: gave_up is a labeled terminal subset of needs_reconcile — tallies are DISJOINT.
-        "needs_reconcile": len(nr_posts) - gave_up,
-        "gave_up": gave_up,
+        # MOL-440's `gave_up` split is GONE with the mechanism it counted: reconcile no longer labels a
+        # post given-up, so needs_reconcile is once again the whole column — every post whose publication
+        # the backend has not settled, none of them declared lost by an age.
+        "needs_reconcile": len(led.posts_in_state(PostState.needs_reconcile)),
         "retired": len(led.posts_in_state(PostState.retired)),
         # B5/E2: this-run published delta + newest published age, for the heartbeat monitor.
         "published_in_run": published_in_run,
