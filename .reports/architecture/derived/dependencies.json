@@ -301,7 +301,6 @@
         "fanops.llm",
         "fanops.meta_graph",
         "fanops.models",
-        "fanops.origin_backfill",
         "fanops.paths_rebase",
         "fanops.persona_research",
         "fanops.pipeline",
@@ -926,19 +925,6 @@
       "optional": [],
       "typing": []
     },
-    "fanops.origin_backfill": {
-      "compile": [
-        "fanops.config",
-        "fanops.ledger",
-        "fanops.models"
-      ],
-      "lazy": [
-        "fanops.audit",
-        "fanops.log"
-      ],
-      "optional": [],
-      "typing": []
-    },
     "fanops.overlay": {
       "compile": [],
       "lazy": [],
@@ -1553,18 +1539,6 @@
       "optional": [],
       "typing": []
     },
-    "fanops.studio.actions_provenance": {
-      "compile": [
-        "fanops",
-        "fanops.config",
-        "fanops.log",
-        "fanops.origin_backfill",
-        "fanops.studio.actions_common"
-      ],
-      "lazy": [],
-      "optional": [],
-      "typing": []
-    },
     "fanops.studio.actions_run": {
       "compile": [
         "fanops.config",
@@ -1632,13 +1606,10 @@
         "fanops.errors",
         "fanops.health_model",
         "fanops.post.media",
-        "fanops.studio",
-        "fanops.studio.actions_provenance",
         "fanops.studio.app_routes_golive",
         "fanops.studio.app_routes_hashtags",
         "fanops.studio.app_routes_live",
         "fanops.studio.app_routes_personas",
-        "fanops.studio.app_routes_provenance",
         "fanops.studio.app_routes_review",
         "fanops.studio.app_routes_run",
         "fanops.studio.app_routes_schedule",
@@ -1692,16 +1663,6 @@
         "fanops.studio.app",
         "fanops.studio.personas",
         "fanops.studio.views"
-      ],
-      "lazy": [],
-      "optional": [],
-      "typing": []
-    },
-    "fanops.studio.app_routes_provenance": {
-      "compile": [
-        "fanops.studio",
-        "fanops.studio.actions_common",
-        "fanops.studio.actions_provenance"
       ],
       "lazy": [],
       "optional": [],
@@ -2176,7 +2137,7 @@
     ]
   },
   "fan_in_compile": {
-    "fanops": 12,
+    "fanops": 11,
     "fanops._fwrun": 0,
     "fanops.accounts": 17,
     "fanops.adjust": 3,
@@ -2193,7 +2154,7 @@
     "fanops.cli": 0,
     "fanops.clip": 6,
     "fanops.compose": 1,
-    "fanops.config": 92,
+    "fanops.config": 90,
     "fanops.config_introspect": 0,
     "fanops.control": 4,
     "fanops.controlio": 13,
@@ -2226,19 +2187,18 @@
     "fanops.intro_match": 1,
     "fanops.keyframes": 2,
     "fanops.learn_doctor": 0,
-    "fanops.ledger": 60,
+    "fanops.ledger": 59,
     "fanops.ledger_bridge": 0,
     "fanops.ledger_sqlite": 1,
     "fanops.ledger_wipe": 1,
     "fanops.lever_docs": 0,
     "fanops.llm": 1,
-    "fanops.log": 40,
+    "fanops.log": 39,
     "fanops.meta_graph": 1,
     "fanops.metrics_schedule": 1,
-    "fanops.models": 52,
+    "fanops.models": 51,
     "fanops.moment_hook_learning": 1,
     "fanops.moments": 4,
-    "fanops.origin_backfill": 1,
     "fanops.overlay": 3,
     "fanops.p4_dim_bias": 1,
     "fanops.paths_rebase": 0,
@@ -2276,12 +2236,11 @@
     "fanops.stage_lock": 1,
     "fanops.stitch_render": 2,
     "fanops.stranded_posts": 0,
-    "fanops.studio": 10,
+    "fanops.studio": 9,
     "fanops.studio.actions": 7,
     "fanops.studio.actions_approve": 1,
     "fanops.studio.actions_casting": 1,
-    "fanops.studio.actions_common": 9,
-    "fanops.studio.actions_provenance": 1,
+    "fanops.studio.actions_common": 7,
     "fanops.studio.actions_run": 1,
     "fanops.studio.actions_segments": 1,
     "fanops.studio.actions_wipe": 2,
@@ -2290,7 +2249,6 @@
     "fanops.studio.app_routes_hashtags": 0,
     "fanops.studio.app_routes_live": 0,
     "fanops.studio.app_routes_personas": 0,
-    "fanops.studio.app_routes_provenance": 0,
     "fanops.studio.app_routes_review": 0,
     "fanops.studio.app_routes_run": 0,
     "fanops.studio.app_routes_schedule": 0,
@@ -2380,7 +2338,6 @@
     "fanops.models": 1,
     "fanops.moment_hook_learning": 3,
     "fanops.moments": 15,
-    "fanops.origin_backfill": 3,
     "fanops.overlay": 0,
     "fanops.p4_dim_bias": 7,
     "fanops.paths_rebase": 3,
@@ -2423,7 +2380,6 @@
     "fanops.studio.actions_approve": 9,
     "fanops.studio.actions_casting": 3,
     "fanops.studio.actions_common": 0,
-    "fanops.studio.actions_provenance": 5,
     "fanops.studio.actions_run": 6,
     "fanops.studio.actions_segments": 4,
     "fanops.studio.actions_wipe": 6,
@@ -2432,7 +2388,6 @@
     "fanops.studio.app_routes_hashtags": 3,
     "fanops.studio.app_routes_live": 4,
     "fanops.studio.app_routes_personas": 4,
-    "fanops.studio.app_routes_provenance": 3,
     "fanops.studio.app_routes_review": 7,
     "fanops.studio.app_routes_run": 5,
     "fanops.studio.app_routes_schedule": 6,
@@ -2462,7 +2417,7 @@
   "generated_by": "tools/arch",
   "generator_version": "arch/1.0.0",
   "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",
-  "lazy_downward_count": 238,
+  "lazy_downward_count": 232,
   "lazy_lateral": [
     {
       "from": "fanops.accounts",
@@ -3450,7 +3405,6 @@
     "fanops.models": 1,
     "fanops.moment_hook_learning": 3,
     "fanops.moments": 6,
-    "fanops.origin_backfill": 3,
     "fanops.overlay": 0,
     "fanops.p4_dim_bias": 8,
     "fanops.paths_rebase": 4,
@@ -3493,7 +3447,6 @@
     "fanops.studio.actions_approve": 7,
     "fanops.studio.actions_casting": 3,
     "fanops.studio.actions_common": 0,
-    "fanops.studio.actions_provenance": 4,
     "fanops.studio.actions_run": 4,
     "fanops.studio.actions_segments": 7,
     "fanops.studio.actions_wipe": 4,
@@ -3502,7 +3455,6 @@
     "fanops.studio.app_routes_hashtags": 6,
     "fanops.studio.app_routes_live": 7,
     "fanops.studio.app_routes_personas": 10,
-    "fanops.studio.app_routes_provenance": 5,
     "fanops.studio.app_routes_review": 10,
     "fanops.studio.app_routes_run": 9,
     "fanops.studio.app_routes_schedule": 10,
@@ -3610,7 +3562,6 @@
       "fanops.ledger_wipe",
       "fanops.meta_graph",
       "fanops.moment_hook_learning",
-      "fanops.origin_backfill",
       "fanops.persona_research",
       "fanops.persona_store",
       "fanops.post",
@@ -3645,7 +3596,6 @@
       "fanops.post.metrics",
       "fanops.post.run",
       "fanops.signals",
-      "fanops.studio.actions_provenance",
       "fanops.studio.actions_run",
       "fanops.studio.actions_wipe",
       "fanops.studio.preview_media",
@@ -3655,7 +3605,6 @@
     "5": [
       "fanops.caption",
       "fanops.clip",
-      "fanops.studio.app_routes_provenance",
       "fanops.studio.thumb_media",
       "fanops.studio.views_hashtags",
       "fanops.studio.views_review",
@@ -3706,17 +3655,17 @@
   ],
   "totals": {
     "G1_non_trivial_sccs": 0,
-    "G1_sccs_total": 140,
+    "G1_sccs_total": 137,
     "G1c_levels": 11,
     "G2_largest_scc_size": 55,
-    "G2_module_sccs_total": 71,
+    "G2_module_sccs_total": 68,
     "G2_non_trivial_sccs": 7,
-    "compile_edges_G1": 589,
-    "lazy_edges": 353,
+    "compile_edges_G1": 578,
+    "lazy_edges": 347,
     "lazy_edges_lateral": 45,
     "lazy_edges_strictly_upward": 70,
     "lazy_edges_to_equal_or_higher_level": 115,
-    "modules": 140,
+    "modules": 137,
     "optional_edges": 0,
     "typing_only_edges": 7
   }

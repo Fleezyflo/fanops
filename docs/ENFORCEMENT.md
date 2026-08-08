@@ -181,9 +181,7 @@ from "passed silently" would rebuild the blind spot it exists to close.
 - **Cascade-delete peers (MOL-809):** `Ledger.retire_source` (whole-source empty-keep-set; CLI gates
   MOL-842) and `fanops purge` / `ledger_wipe.execute_purge` (day+origin scoped; MOL-758) are both
   sanctioned — neither delegates to the other (transaction ownership + granularity).
-- **Origin-backfill deletion (MOL-808):** deferred until production `corpus_unlabelled == 0`; engine +
-  Studio provenance panel stay while Jul-13 unknowns still need labelling (`display_origin` already
-  lives in `models.py`).
+- **Origin-backfill deletion (MOL-808):** the one-shot `machine_inferred` reconstruction engine, CLI verb, and Studio provenance panel are gone after the amplify-descended purge left them with zero addressable rows. `display_origin` / `UNLABELLED_DISPLAY` remain in `models.py` for Review cards; Jul-13 `unknown` rows are operator corpus, not this migration.
 - **Doctor:** `src/fanops/doctor.py` — fail-closed operator setup checks (`fanops doctor`/`status`).
 - The live `FANOPS_*` toggles (`src/fanops/settings.py`) — reference: `docs/CONFIG.md`, `docs/FLAGS.md`.
 
