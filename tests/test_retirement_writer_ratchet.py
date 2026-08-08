@@ -68,20 +68,18 @@ def _scan_direct_retirement_writes() -> dict[str, int]:
     return out
 
 
-def _baseline_direct_retirement_writes() -> dict[str, int]:
-    """Measured at origin/main d40db562: one file, one write. `src/fanops/ledger.py` holds 3 more, exempt.
-
-    `canary.py:1054` is the documented exemption: it writes `state` AND `error_reason` in one atomic
-    `model_copy`, which no `set_*_state` signature expresses, and canary's lineage handling is
-    separately pinned by its own contract (the routed `set_*_state` / `retire_clip` flips at
-    `canary.py:944-946`). Every other non-owner writer was deleted by T3.5-T3.8.
-    """
-    return {"src/fanops/canary.py": 1}
+# Measured at origin/main d40db562 by the AST walker above: one file, one write. `src/fanops/ledger.py`
+# holds 3 more, exempt. `canary.py:1054` is the documented exemption — it writes `state` AND
+# `error_reason` in one atomic `model_copy`, which no `set_*_state` signature expresses, and canary's
+# lineage handling is separately pinned by its own contract (the routed `set_source_state` /
+# `set_moment_state` / `retire_clip` flips at `canary.py:944-946`, which this counter must never
+# pressure). Every other non-owner writer was deleted by T3.5-T3.8.
+_BASELINE = {"src/fanops/canary.py": 1}
 
 
 def test_retirement_writes_do_not_escape_the_ledger():
     actual = _scan_direct_retirement_writes()
-    baseline = _baseline_direct_retirement_writes()
+    baseline = _BASELINE
     new_files = sorted(set(actual) - set(baseline))
     assert new_files == [], f"new direct-retirement-write file(s) not in baseline: {new_files} — {_FIX}"
     regressions = {f: (actual[f], baseline[f]) for f in baseline if actual.get(f, 0) > baseline[f]}
