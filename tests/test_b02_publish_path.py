@@ -35,7 +35,7 @@ def _seed_queued(cfg, pid="p1", cid="c1", *, sched="2020-01-01T00:00:00Z", sub=N
         # what production actually mints (every mint site stamps it).
         led.add_post(Post(id=pid, parent_id=cid, account="a", account_id="1", platform=Platform.instagram,
                           caption="c", scheduled_time=sched, state=PostState.queued,
-                          created_at="2026-07-16T13:31:00Z",
+                          product_type="post", created_at="2026-07-16T13:31:00Z",
                           media_urls=["https://cdn/v.mp4"], public_url="dryrun://p1",
                           submission_id=sub))
 

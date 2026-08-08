@@ -30,8 +30,9 @@ def _cfg(tmp_path, monkeypatch):
 def _post(pid="p1", acct_id="intg_1"):
     # R1: state=submitting is non-terminal — no public_url required. Tests in this file exercise
     # the publish path that's MEANT to capture/keep public_url None on failure (D2 fail-closed).
+    # product_type is declared: MOL-822 removed the publish-path `or "post"` guess.
     return Post(id=pid, parent_id="c1", account="a", account_id=acct_id, platform=Platform.instagram,
-                caption="fire", state=PostState.submitting,
+                caption="fire", state=PostState.submitting, product_type="post",
                 media_urls=["https://uploads.postiz.com/x.mp4"], scheduled_time="2099-01-01T00:00:00Z")
 
 def _led(cfg, post):
@@ -215,14 +216,20 @@ def _settings(cap):
     return cap["json"]["posts"][0]["settings"]
 
 
-def test_publish_legacy_undeclared_row_still_sends_post(tmp_path, monkeypatch, mocker):
-    # A legacy row predates the declaration (product_type None). The transitional `or "post"` fallback must
-    # reproduce TODAY's payload byte-for-byte — zero network-behavior change for the 300-odd queued rows.
-    # MOL-789 disposition: this is NOT a mint-at-birth fixture — `_post()` is a hand-built legacy stand-in.
-    cfg = _cfg(tmp_path, monkeypatch); post = _post(); assert post.product_type is None
+def test_publish_undeclared_product_type_raises_before_any_network(tmp_path, monkeypatch, mocker):
+    # MOL-822: the transitional `or "post"` guess is gone. An undeclared row is refused pre-network so
+    # Postiz never receives a product nobody declared. `_post()` defaults to declared; this fixture is the
+    # legacy stand-in (product_type None) that used to slip through as a Reel.
+    from fanops.studio.views_results import classify_failure
+    cfg = _cfg(tmp_path, monkeypatch); post = _post(); post.product_type = None
     led = _led(cfg, post); cap = _capture(mocker)
-    PostizPoster(cfg).publish(led, "p1")
-    assert _settings(cap) == {"__type": "instagram", "post_type": "post"}
+    with pytest.raises(ValueError) as e:
+        PostizPoster(cfg).publish(led, "p1")
+    msg = str(e.value)
+    assert "undeclared product_type" in msg
+    assert not is_transient_failure_reason(msg)
+    assert classify_failure(type("P", (), {"error_reason": msg, "state": PostState.failed})()) != "transient"
+    cap["mock"].assert_not_called()
 
 
 def test_publish_declared_story_sends_story(tmp_path, monkeypatch, mocker):
@@ -233,7 +240,7 @@ def test_publish_declared_story_sends_story(tmp_path, monkeypatch, mocker):
     assert _settings(cap) == {"__type": "instagram", "post_type": "story"}
 
 
-@pytest.mark.parametrize("token", [None, "post", "story"])
+@pytest.mark.parametrize("token", ["post", "story"])
 def test_publish_empty_media_raises_before_any_network(tmp_path, monkeypatch, mocker, token):
     # A LEDGER post always carries media (_ensure_media fills it pre-publish), so an empty set is a defect
     # whatever the declared token — and the refusal happens BEFORE the request is built.
@@ -296,6 +303,7 @@ def test_validation_valueerror_lands_the_post_failed_via_publish_one(tmp_path, m
         led.add_clip(Clip(id="c1", parent_id="mom_1", path=str(f), state=ClipState.queued))
         led.add_post(Post(id="p1", parent_id="c1", account="a", account_id="intg_1",
                           platform=Platform.instagram, caption="c", state=PostState.queued,
+                          product_type="post",
                           created_at="2026-07-16T13:31:00Z", scheduled_time="2020-01-01T00:00:00Z",
                           media_urls=["m1|https://cdn/a.mp4", "m2|https://cdn/b.mp4"]))
     mocker.patch("fanops.post.run._ensure_media", return_value=None)   # media already resolved on the row
@@ -315,7 +323,7 @@ def test_publish_leg_drives_real_postiz_poster_not_dryrun(tmp_path, monkeypatch,
     with Ledger.transaction(cfg) as led:
         led.add_post(Post(id="p1", parent_id="c1", account="a", account_id="intg_1", platform=Platform.instagram,
                           caption="fire", media_urls=["https://uploads.postiz.com/x.mp4"],   # already uploaded -> no media network
-                          state=PostState.queued, public_url="dryrun://p1"))
+                          state=PostState.queued, product_type="post", public_url="dryrun://p1"))
     mocker.patch("fanops.post.postiz.requests.post", return_value=_R(201, {"id": "postiz_1"}))
     final = _publish_one(cfg, "p1", "postiz")
     led = Ledger.load(cfg)
