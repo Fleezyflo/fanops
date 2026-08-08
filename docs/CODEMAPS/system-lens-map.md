@@ -450,26 +450,38 @@ staying `queued`, never a phantom-published row (`run.py:361-370`).
 
 ### C.3 Learning/bias gating — every actuator, its kill switch, its validation gate, thresholds
 
-**Validation gate (shared):** `validation_gate.learning_validated(cfg)` = `cutover.json metrics_confirmed`
-(`validation_gate.py:22`). Auto-stamped by `track._auto_validate_metrics_shape` on the FIRST real
-non-degraded analyzed metric from a LIVE backend (`track.py:322-349`) — NOT an operator step; dryrun never
-proves it (`track.py:331-332`); a degraded row never stamps (`track.py:341-346`). `p4_unlocked(led,cfg,dim)`
-= `learning_validated` AND `enough_attributed_signal` (≥8 attributed posts across ≥2 distinct values,
-`_MIN_ATTRIBUTED_N=8`/`_MIN_VALUES=2`, `validation_gate.py:18-19,42-46`).
+**Validation gate (shared, but NOT universal):** `validation_gate.learning_validated(cfg)` =
+`cutover.json metrics_confirmed` (`validation_gate.py:22`). Auto-stamped by
+`track._auto_validate_metrics_shape` on the FIRST real non-degraded analyzed metric from a LIVE backend
+(`track.py:343-370`) — NOT an operator step; dryrun never proves it (`track.py:352`); a degraded row never
+stamps (`track.py:363-367`). It is ONE-WAY: nothing in the tree writes `metrics_confirmed` False, so once
+stamped it never re-closes. That makes it a data-quality stamp on the metric FIELD-SHAPE, never operator
+consent — consent is each actuator's own default-OFF flag. `p4_unlocked(led,cfg,dim)` =
+`learning_validated` AND `enough_attributed_signal` (≥8 attributed posts across ≥2 distinct values,
+`_MIN_ATTRIBUTED_N=8`/`_MIN_VALUES=2`, `validation_gate.py:18-19` / `enough_attributed_signal`
+`validation_gate.py:32-39`). The two `learn_*` rows below carry NO validation gate: the freeze was removed
+from those chains precisely because a condition that can never re-bind gates nothing.
 
 | Actuator (file:line) | Kill switch (default) | Validation gate | Thresholds |
 |----------------------|------------------------|-----------------|-----------|
-| `p4_dim_bias.apply_p4_dim_bias` (`p4_dim_bias.py:56`) — amplify a rep source per winning creative dim (`first_frame_kind`, `clip_profile`, `top_bias`) | `FANOPS_P4_DIM_BIAS` (OFF) | `p4_unlocked(dim)` (`p4_dim_bias.py:38`) | leader beats runner-up by ≥`p4_min_reach_gap` (default 0.0); ≥8 posts × ≥2 values |
-| `timing_bias.apply_timing_bias` (`timing_bias.py:79`) — write reach-winning `publish_hour` prior consumed by `surface_time` | `FANOPS_TIMING_BIAS` (OFF) | `p4_unlocked('publish_hour')` (`timing_bias.py:36`) | ≥`p4_min_reach_gap` lead; window-clamped to `account_window` (`timing_bias.py:64`) |
+| `adjust.amplify` via `cli._learn_pass` (`cli.py:182-186`) — re-open a moment request on a metric winner's SOURCE, minting new moments → clips → posts | `FANOPS_LEARN_AMPLIFY` (OFF) | NONE — the flag is the whole gate | top `winner_pct` of scored posts (default `0.3`, `adjust.classify_outcomes`); at most `adjust.MAX_AMPLIFY_PER_SOURCE`=3 amplifies per source |
+| `adjust.retire` via `cli._learn_pass` (`cli.py:189-193`) — suppress a metric loser's clip, its moment when no live sibling remains, and every unshipped post of that lineage | `FANOPS_LEARN_RETIRE` (OFF) | NONE — the flag is the whole gate | needs ≥`adjust._MIN_SCORED_N`=8 scored posts over ≥`_MIN_DISTINCT_SCORES`=2 distinct scores, else NO losers; the bottom `retire_pct` slice (default `0.2`) only CAPS the count — each loser must also score below `min(lift_floor=20.0, median × _RETIRE_LIFT_RATIO=0.25)`; winners and `lift_degraded` rows are excluded |
+| `p4_dim_bias.apply_p4_dim_bias` (`p4_dim_bias.py:57`) — amplify a rep source per winning creative dim (`first_frame_kind`, `clip_profile`, `top_bias`) | `FANOPS_P4_DIM_BIAS` (OFF) | `p4_unlocked(dim)` (`p4_dim_bias.py:38`) | leader beats runner-up by ≥`p4_min_reach_gap` (default 0.0); ≥8 posts × ≥2 values |
+| `timing_bias.apply_timing_bias` (`timing_bias.py:80`) — write reach-winning `publish_hour` prior consumed by `surface_time` | `FANOPS_TIMING_BIAS` (OFF) | `p4_unlocked('publish_hour')` (`timing_bias.py:36`) | ≥`p4_min_reach_gap` lead; window-clamped to `account_window` (`timing_bias.py:64`) |
 | ~~`casting_bias.casting_reach_prior`~~ | — | — | **REMOVED P11** |
-| `variant_amplify` (config.py:645; CLAUDE.md ref `variant_amplify.py:166`) — re-mine a source off a sustained hook winner | `FANOPS_VARIANT_AMPLIFY` (OFF) | `learning_validated` (validation-frozen) | ≥8 posts, ≥25.0 gap, ≥3 distinct windows |
-| `variant_learning`/`ucb_rank` caption bias (`caption.py:153-173`) | `FANOPS_VARIANT_LEARNING` (OFF), `FANOPS_VARIANT_UCB` (OFF) | NOT validation-frozen (safe reversible read side, `config.py:698-704`) | ≥3 posts, ≥10.0 gap (v2); UCB c=sqrt(2) |
-| `variant_transfer` cold-start bias (`caption.py:175-198`) | `FANOPS_VARIANT_TRANSFER` (OFF) | `learning_validated` (`caption.py:183-185`) | ≥2 donors, ≤2 borrowed |
-| `moment_hook_learning` (config.py:815) — feed winning hook STYLES to the moment author | `FANOPS_MOMENT_HOOK_LEARNING` (OFF) + `FANOPS_VARIANT_LEARNING` | (rides variant_learning) | STYLE cue only |
+| `variant_amplify.apply_variant_amplify` (`variant_amplify.py:156`; flag `config.variant_amplify`) — re-mine a source off a sustained hook winner | `FANOPS_VARIANT_AMPLIFY` (OFF) | `learning_validated` (validation-frozen, `variant_amplify.py:166`) | ≥8 posts, ≥25.0 gap, ≥3 distinct windows |
+| `variant_learning`/`ucb_rank` caption bias (`caption._learned_hooks`, `caption.py:122-141`) | `FANOPS_VARIANT_LEARNING` (OFF), `FANOPS_VARIANT_UCB` (OFF) | NOT validation-frozen (safe reversible read side, `config.variant_ucb`) | ≥3 posts, ≥10.0 gap (v2); UCB c=sqrt(2) |
+| `variant_transfer` cold-start bias (`caption._transferred_hooks`, `caption.py:144-167`) | `FANOPS_VARIANT_TRANSFER` (OFF) | `learning_validated` (`caption.py:153`) | ≥2 donors, ≤2 borrowed |
+| `moment_hook_learning` (`config.moment_hook_learning`) — feed winning hook STYLES to the moment author | `FANOPS_MOMENT_HOOK_LEARNING` (OFF) + `FANOPS_VARIANT_LEARNING` | (rides variant_learning) | STYLE cue only |
 
-Every actuator is AMPLIFY/BIAS-ONLY (audit C1: never retire/cascade/track — `p4_dim_bias.py:8-11`),
-FAIL-SAFE (exception → logged once, ledger byte-identical), and introduces NO new
-auto-publish path (biases GENERATION + SCHEDULE only).
+The `p4_dim_bias` / `timing_bias` / `variant_*` / `moment_hook_learning` family is AMPLIFY/BIAS-ONLY
+(audit C1: never retire/cascade/track — `p4_dim_bias.py:8-11`), FAIL-SAFE (exception → logged once, ledger
+byte-identical), and introduces NO new auto-publish path (biases GENERATION + SCHEDULE only). **The two
+`learn_*` rows are the exception, and are the reason the amplify-only claim can no longer be made of the
+whole table:** `learn_amplify` MINTS — new moments, clips and posts, from an autonomous loop — and
+`learn_retire` DESTROYS and CASCADES — the clip, the moment when no live sibling remains, and every
+unshipped post of that lineage. That is exactly why each carries a default-OFF flag as its whole gate;
+both previously ran on `cfg.is_live_backend` alone, so going live to PUBLISH also switched them on.
 
 **What output quality depends on before vs after these gates open:** BEFORE `learning_validated` (i.e. on
 dryrun, or before the first real non-degraded live metric), all consequential/validation-frozen actuators are
