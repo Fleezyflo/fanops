@@ -818,10 +818,24 @@ class Ledger:
 
     # ---- M1 (structural-hooks): asset memory — retire-with-cascade + disk<->ledger rebuild ----
     def retire_source(self, source_id: str) -> None:
-        # Remove a source: cascade-drop its moments/clips via reconcile with an EMPTY keep-set (a live
-        # descendant is preserved + retired, NEVER deleted — the performance record survives), then mark
-        # the source retired. The source FILE is LEFT on disk (a live post's media_url may point at it);
-        # rebuild_catalog will not re-add it (its retired row remains, blocking resurrection).
+        """Whole-source lifecycle retirement via empty keep-set cascade (MOL-809 KEEP BOTH).
+
+        Cascade-drops this source's moments/clips via `reconcile_moments(source_id, {})`. A live or
+        protected descendant (`_LIVE_CLIP_STATES` / `_PROTECTED_POST_STATES`) is preserved + retired,
+        NEVER deleted — the performance record survives. Then marks the source `retired`. The source
+        FILE is LEFT on disk (a live post's media_url may point at it); `rebuild_catalog` will not
+        re-add it (retired row blocks resurrection). Unprotected clip media still rides
+        `_deferred_unlinks` (MOL-77: a row-less `.mp4` is unreachable by `cmd_gc`).
+
+        Scoped peer — `fanops purge` / `ledger_wipe.execute_purge` (MOL-758): day+origin
+        facet-scoped irreversible delete with preview / snapshot / confirm / audit and media via the
+        same deferred-unlink drain. Sub-source granularity for amplify-burst cleanup.
+
+        Both channels stay. Do NOT make this method delegate to `execute_purge` / `execute_wipe`:
+        those open their own `Ledger.transaction`; this runs inside the caller's open transaction;
+        granularity differs (whole source vs day×origin facets). CLI retire-source safety
+        (preview / snapshot / confirm / audit) already lives on the CLI caller (MOL-842) — not here.
+        """
         self.reconcile_moments(source_id, {})
         if source_id in self.sources:
             self.sources[source_id] = self.sources[source_id].model_copy(update={"state": SourceState.retired})  # ECC fix #10
