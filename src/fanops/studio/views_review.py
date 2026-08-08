@@ -709,8 +709,8 @@ def account_pivot_rows(led: Ledger, accounts: Accounts, cfg: Config, *, now: dat
     the upstream day-sort order, ready to paginate. Reuses review_buckets (already account/batch/source/state
     filtered) + the surfaces it built — flatten every card's surfaces, keeping ONLY the chosen account (a fan-out
     card carries N surfaces; we want @x's row, not @y's). A blank/None account -> [] (the pivot is meaningless
-    without an account; the route falls back to moment-first). Each row carries its card's `day` for the running
-    day header (group_review_by_account_surface). Pure-ish (one lock-free ledger read); never raises."""
+    without an account; the route falls back to moment-first). Each row carries its card's `day` for a running
+    day header. Pure-ish (one lock-free ledger read); never raises."""
     handle = (account or "").strip()
     if not handle:
         return []
@@ -769,16 +769,6 @@ def group_review_by_source(rows: list) -> list:
         if sk not in labels:
             labels[sk] = getattr(r, "source_name", None) or sk
     return [(labels[sk], rs) for sk, rs in groups.items()]
-
-
-def group_review_by_account_surface(rows: list) -> list:
-    """Phase 4 pivot grouper: group the flat account-pivot SurfacePost rows by their ingest `day` for a running
-    day header, FIRST-APPEARANCE order (preserves the upstream day-sort), within-day INPUT order. Pure — mirrors
-    group_review_by_batch. Returns [(day, [SurfacePost])]; a None day renders 'undated'."""
-    groups: dict = {}                                  # day -> [rows]; dict preserves first-appearance order
-    for r in rows:
-        groups.setdefault(getattr(r, "day", None), []).append(r)
-    return [(d if d is not None else "undated", rs) for d, rs in groups.items()]
 
 
 def surface_for_post(led: Ledger, accounts: Accounts, post_id: str, *, now: datetime, cfg: Config) -> Optional[SurfacePost]:
