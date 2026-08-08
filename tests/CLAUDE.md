@@ -35,7 +35,10 @@ fixture (`:62`), because a test that calls `load_dotenv` pulls the OPERATOR's li
 test assert against the operator's config instead of the CODE default.
 
 - A test that WANTS a live backend or a non-default flag sets it explicitly via `monkeypatch` (clean teardown).
-- When you add a new default-ON flag or credential env var a repo `.env` might carry, ADD it to `_LEAKY_ENV`.
+- A registered `FANOPS_*` bool (a `Settings` field annotated `BoolEnv`/`BoolFlag`/`LiveSwitch`) is scrubbed
+  automatically — that half of `_LEAKY_ENV` is derived from `settings.BOOL_ENV_FIELDS`, so declaring the field
+  IS adding it here. Only a var with NO such registration (a credential, a tuning number, or one `config.py`
+  reads directly with no `Settings` field) still needs a hand-added entry, and it goes in `_NON_FLAG_LEAKY`.
 - `monkeypatch.delenv(..., raising=False)` is the safe form for a possibly-absent key (this gotcha bit the
   Go-Live tests).
 
