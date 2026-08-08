@@ -414,14 +414,12 @@ def strip_transient_daemon_prefix(error_reason: str | None) -> str:
 
 def is_transient_failure_reason(error_reason: str | None) -> bool:
     """True for DNS/read-timeout/connection blips in a stored error_reason (failed-tab recovery + daemon).
-    Permanent 4xx/auth/validation -> False. Poll errors are reconcile-column, not publish transients."""
+    Permanent 4xx/auth/validation -> False."""
     er = strip_transient_daemon_prefix(error_reason).lower()
     if not er:
         return False
     if "publish transient error" in er:
         return True
-    if "reconcile poll error" in er or "poll error" in er:
-        return False
     if any(x in er for x in ("401", "403", "unauthorized", "auth rejected", "credentials rejected")):
         return False
     if any(x in er for x in ("413", "oversize", "too large", "entity too large")):

@@ -147,138 +147,12 @@ def test_postiz_list_posts_one_failing_sid_does_not_lose_the_others(tmp_path, mo
     assert "BAD" in log                                       # breadcrumb for the failed fetch
 
 
-# ---- P2 Task 3: PostizStatusClient.get_status — the date-windowed reconcile read ----
-# Postiz has NO per-post status endpoint; the ONLY status signal is the `state` field on a row of
-# GET /public/v1/posts (verified live 2026-06-21: {posts:[{id, publishDate, state, releaseURL, ...}]}).
-# That list endpoint DEMANDS startDate/endDate ISO-8601 (the old display/date returns HTTP 400), so
-# get_status sends an ISO window bracketing the post's publishDate. A PUBLISHED row carries the real IG
-# permalink in `releaseURL`. get_status maps the state into the SAME {status, publicUrl} dict
-# reconcile_posts consumes. State map (case-insensitive): PUBLISHED→published, ERROR/FAILED→failed,
-# everything-else→scheduled (parked), missing-row→unknown.
-def test_postiz_status_published_captures_releaseURL(tmp_path, monkeypatch, mocker):
-    from fanops.post.metrics import PostizStatusClient
-    cfg = _pcfg(tmp_path, monkeypatch)
-    url = "https://www.instagram.com/reel/DZvZ8Itkaxz/"
-    page = {"posts": [{"id": "sid1", "state": "PUBLISHED", "releaseURL": url, "publishDate": "2099-01-01T00:00:00.000Z"}]}
-    mocker.patch("fanops.post.metrics.requests.get", return_value=_R(200, page))
-    out = PostizStatusClient(cfg).get_status("sid1", publish_date="2099-01-01T00:00:00Z")
-    assert out["status"] == "published"
-    assert out["publicUrl"] == url                              # the real IG permalink from the row, not None
-
-def test_postiz_status_published_captures_releaseId(tmp_path, monkeypatch, mocker):
-    # MOL-112 foundation: the Postiz row's releaseId is the IG Graph media id — surface it at poll time so
-    # reconcile can persist media_id without a feed-enumeration permalink match (MOL-113 liveness spine).
-    from fanops.post.metrics import PostizStatusClient
-    cfg = _pcfg(tmp_path, monkeypatch)
-    page = {"posts": [{"id": "sid1", "state": "PUBLISHED", "releaseURL": "https://www.instagram.com/reel/X/",
-                       "releaseId": "17841456789012345", "publishDate": "2099-01-01T00:00:00.000Z"}]}
-    mocker.patch("fanops.post.metrics.requests.get", return_value=_R(200, page))
-    out = PostizStatusClient(cfg).get_status("sid1", publish_date="2099-01-01T00:00:00Z")
-    assert out.get("releaseId") == "17841456789012345"
-
-def test_postiz_status_published_without_releaseId_omits_key(tmp_path, monkeypatch, mocker):
-    from fanops.post.metrics import PostizStatusClient
-    cfg = _pcfg(tmp_path, monkeypatch)
-    mocker.patch("fanops.post.metrics.requests.get",
-                 return_value=_R(200, {"posts": [{"id": "sid1", "state": "PUBLISHED", "releaseURL": "u"}]}))
-    out = PostizStatusClient(cfg).get_status("sid1")
-    assert "releaseId" not in out
-
-def test_postiz_status_published_without_releaseURL_is_none(tmp_path, monkeypatch, mocker):
-    # ERROR/queued rows carry no releaseURL; a published row that lacks it -> publicUrl None (never crash).
-    from fanops.post.metrics import PostizStatusClient
-    cfg = _pcfg(tmp_path, monkeypatch)
-    mocker.patch("fanops.post.metrics.requests.get",
-                 return_value=_R(200, {"posts": [{"id": "sid1", "state": "PUBLISHED"}]}))
-    assert PostizStatusClient(cfg).get_status("sid1")["publicUrl"] is None
-
-def test_postiz_status_error_state_maps_failed(tmp_path, monkeypatch, mocker):
-    from fanops.post.metrics import PostizStatusClient
-    cfg = _pcfg(tmp_path, monkeypatch)
-    mocker.patch("fanops.post.metrics.requests.get", return_value=_R(200, {"posts": [{"id": "sid1", "state": "ERROR"}]}))
-    assert PostizStatusClient(cfg).get_status("sid1")["status"] == "failed"
-
-def test_postiz_status_queue_state_left_parked(tmp_path, monkeypatch, mocker):
-    # QUEUE/DRAFT/unknown ⇒ "scheduled" so reconcile_posts LEAVES it parked — never guess failed
-    # (re-queuing a possibly-live post is the C1 double-post hazard).
-    from fanops.post.metrics import PostizStatusClient
-    cfg = _pcfg(tmp_path, monkeypatch)
-    mocker.patch("fanops.post.metrics.requests.get", return_value=_R(200, {"posts": [{"id": "sid1", "state": "QUEUE"}]}))
-    assert PostizStatusClient(cfg).get_status("sid1")["status"] == "scheduled"
-
-def test_postiz_status_missing_row_is_unknown(tmp_path, monkeypatch, mocker):
-    # Row absent from the returned page ⇒ "unknown" (left parked, never guessed failed).
-    from fanops.post.metrics import PostizStatusClient
-    cfg = _pcfg(tmp_path, monkeypatch)
-    mocker.patch("fanops.post.metrics.requests.get", return_value=_R(200, {"posts": [{"id": "other", "state": "PUBLISHED"}]}))
-    assert PostizStatusClient(cfg).get_status("sid1")["status"] == "unknown"
-
-def test_postiz_status_uses_startdate_enddate_window_not_display_date(tmp_path, monkeypatch, mocker):
-    # THE CRITICAL fix: the live /public/v1/posts endpoint REJECTS the old {display,date} with HTTP 400
-    # ("startDate must be a valid ISO 8601 date string"). The query MUST send startDate/endDate ISO dates
-    # (YYYY-MM-DD) bracketing the post's publishDate — verified against the running instance 2026-06-21.
-    from fanops.post.metrics import PostizStatusClient
-    cfg = _pcfg(tmp_path, monkeypatch)
-    g = mocker.patch("fanops.post.metrics.requests.get",
-                     return_value=_R(200, {"posts": [{"id": "sid1", "state": "PUBLISHED", "releaseURL": "u"}]}))
-    out = PostizStatusClient(cfg).get_status("sid1", publish_date="2099-01-01T00:00:00Z")
-    params = g.call_args.kwargs.get("params", {})
-    assert "display" not in params and "date" not in params           # the rejected contract is gone
-    assert params["startDate"] <= "2099-01-01" <= params["endDate"]    # ISO window brackets the post's day
-    assert len(params["startDate"]) == 10 and len(params["endDate"]) == 10   # date-only ISO, the accepted form
-    assert out["status"] == "published"                               # still found + mapped
-
-def test_postiz_status_window_anchors_on_now_when_no_publish_date(tmp_path, monkeypatch, mocker):
-    # A near-future operator-set post can have publish_date=None; the window must anchor on `now` so it
-    # still brackets a just-published post (not crash, not an empty ~1970 window).
-    from fanops.post.metrics import PostizStatusClient
-    from datetime import datetime, timezone
-    cfg = _pcfg(tmp_path, monkeypatch)
-    g = mocker.patch("fanops.post.metrics.requests.get", return_value=_R(200, {"posts": []}))
-    PostizStatusClient(cfg).get_status("sid1")                        # no publish_date
-    params = g.call_args.kwargs.get("params", {})
-    today = datetime.now(timezone.utc).date().isoformat()
-    assert params["startDate"] <= today <= params["endDate"]          # window straddles now
-
-def test_postiz_status_malformed_publish_date_falls_back_to_now(tmp_path, monkeypatch, mocker):
-    # A non-ISO publish_date must NOT raise — fall back to a now-anchored window (parse_iso failure caught).
-    from fanops.post.metrics import PostizStatusClient
-    from datetime import datetime, timezone
-    cfg = _pcfg(tmp_path, monkeypatch)
-    g = mocker.patch("fanops.post.metrics.requests.get", return_value=_R(200, {"posts": []}))
-    PostizStatusClient(cfg).get_status("sid1", publish_date="not-a-date")
-    params = g.call_args.kwargs.get("params", {})
-    today = datetime.now(timezone.utc).date().isoformat()
-    assert params["startDate"] <= today <= params["endDate"]
-
-def test_postiz_status_401_is_typed_auth_with_redacted_body(tmp_path, monkeypatch, mocker):
-    from fanops.errors import PostizAuthError
-    from fanops.post.metrics import PostizStatusClient
-    cfg = _pcfg(tmp_path, monkeypatch)
-    mocker.patch("fanops.post.metrics.requests.get",
-                 return_value=_R(401, {"e": "denied for key SENTINEL-KEY-ECHO"}))
-    with pytest.raises(PostizAuthError) as ei:
-        PostizStatusClient(cfg).get_status("sid1")
-    assert "SENTINEL-KEY-ECHO" not in str(ei.value) and "401" in str(ei.value)
-    assert cfg.postiz_api_key not in str(ei.value)             # the KEY VALUE itself must never appear
-
-def test_postiz_status_5xx_raises_runtimeerror(tmp_path, monkeypatch, mocker):
-    # 5xx → RuntimeError, per-post-isolated upstream by reconcile_posts (parked, not failed).
-    from fanops.post.metrics import PostizStatusClient
-    cfg = _pcfg(tmp_path, monkeypatch)
-    mocker.patch("fanops.post.metrics.requests.get", return_value=_R(503, "down"))
-    with pytest.raises(RuntimeError, match="503"):
-        PostizStatusClient(cfg).get_status("sid1")
-
-
-# ---- MOL-783: ONE windowed /public/v1/posts fetch, shared by get_status and the mirror ----
-# get_status ALREADY fetched the whole window and threw away every row but one, so the mirror's bulk
-# read is that fetch with the discard removed — an extraction into _fetch_posts, NOT a second channel.
+# ---- MOL-783: ONE windowed /public/v1/posts fetch for the Postiz mirror (list_all) ----
 # Live-verified 2026-08-07 against the running instance (http://localhost:4007/api/public/v1/posts):
 # no params → HTTP 400 "startDate must be a valid ISO 8601 date string"; the maximal window returns
 # {"posts":[…]} with NO envelope key (no page/total/nextCursor); page=2/limit=5 return byte-identical
 # bodies (both ignored) ⇒ the endpoint does NOT paginate, so one call covers the window and a row's
-# ABSENCE is a real observation. get_status's own contract is unchanged — the tests above are its pins.
+# ABSENCE is a real observation. Per-post get_status was deleted in MOL-820; list_all is the sole reader.
 _ROWS = [{"id": "p1", "state": "PUBLISHED", "releaseURL": "https://www.instagram.com/reel/A/", "releaseId": "1784100"},
          {"id": "p2", "state": "ERROR"},
          {"id": "p3", "state": "QUEUE"}]
@@ -297,7 +171,7 @@ def test_postiz_list_all_sends_the_mandatory_date_only_window_and_no_caller_knob
     assert g.call_count == 1                                                    # ONE call returns the whole corpus
 
 def test_postiz_list_all_indexes_rows_and_carries_raw_state_alongside_mapped_status(tmp_path, monkeypatch, mocker):
-    # Each value carries BOTH vocabularies: the mapped backend-agnostic `status` get_status emits AND
+    # Each value carries BOTH vocabularies: the mapped backend-agnostic `status` AND
     # the raw Postiz `state` token (the mirror persists the raw token), plus the untouched row in `raw`.
     from fanops.post.metrics import PostizStatusClient
     cfg = _pcfg(tmp_path, monkeypatch)
@@ -335,27 +209,23 @@ def test_postiz_list_all_5xx_raises_runtimeerror(tmp_path, monkeypatch, mocker):
     with pytest.raises(RuntimeError, match="503"):
         PostizStatusClient(cfg).list_all()
 
-def test_postiz_get_status_and_list_all_share_one_fetch_of_one_endpoint(tmp_path, monkeypatch, mocker):
-    # The anti-second-channel pin: both readers issue exactly ONE GET to the SAME url, differing only in
-    # the window they ask for. A future "bulk" client with its own request would redden this.
+def test_postiz_list_all_hits_exactly_one_endpoint(tmp_path, monkeypatch, mocker):
+    # The anti-second-channel pin: the mirror's sole reader issues exactly ONE GET to /public/v1/posts.
     from fanops.post.metrics import PostizStatusClient
     cfg = _pcfg(tmp_path, monkeypatch)
     g = mocker.patch("fanops.post.metrics.requests.get", return_value=_R(200, {"posts": _ROWS}))
-    client = PostizStatusClient(cfg)
-    assert client.get_status("p1", publish_date="2099-01-01T00:00:00Z")["status"] == "published"
-    assert g.call_count == 1                                    # one window fetch, then a selection over it
-    client.list_all()
-    assert g.call_count == 2
-    assert {c.args[0] for c in g.call_args_list} == {f"{cfg.postiz_url.rstrip('/')}/public/v1/posts"}
+    assert PostizStatusClient(cfg).list_all()["p1"]["status"] == "published"
+    assert g.call_count == 1
+    assert g.call_args.args[0] == f"{cfg.postiz_url.rstrip('/')}/public/v1/posts"
 
 def test_postiz_fetch_posts_first_row_wins_on_a_duplicate_id(tmp_path, monkeypatch, mocker):
-    # get_status used next(...) over the rows, so the FIRST match won; the id-keyed index must not
-    # silently flip that to last-wins.
+    # setdefault keeps the FIRST match; the id-keyed index must not silently flip that to last-wins.
     from fanops.post.metrics import PostizStatusClient
     cfg = _pcfg(tmp_path, monkeypatch)
     dupes = [{"id": "p1", "state": "PUBLISHED", "releaseURL": "first"}, {"id": "p1", "state": "ERROR"}]
     mocker.patch("fanops.post.metrics.requests.get", return_value=_R(200, {"posts": dupes}))
-    assert PostizStatusClient(cfg).get_status("p1") == {"status": "published", "publicUrl": "first"}
+    row = PostizStatusClient(cfg).list_all()["p1"]
+    assert row["status"] == "published" and row["releaseURL"] == "first"
 
 def test_postiz_fetch_posts_skips_non_dict_and_idless_rows(tmp_path, monkeypatch, mocker):
     # A malformed row must not abort the whole window (and must not become a None-keyed entry).

@@ -276,6 +276,8 @@ def test_pull_metrics_mixed_backends_analyzes_both(tmp_path, monkeypatch, mocker
     assert led.posts["ig"].state is PostState.analyzed and led.posts["ig"].metrics["saves"] == 20.0
 
 def test_default_get_status_mixed_routes_each_sid(tmp_path, monkeypatch, mocker):
+    # MOL-820: Postiz is mirror-only; Zernio keeps the per-post poll. Same-pass mixed corpus: IG via
+    # `mirror=`, TT via `_default_get_status` — which must NOT construct PostizStatusClient (P4).
     monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_URL", "https://p.example.com")
     monkeypatch.setenv("POSTIZ_API_KEY", "pk"); monkeypatch.setenv("ZERNIO_API_KEY", "sk_test")
     monkeypatch.delenv("BLOTATO_API_KEY", raising=False)
@@ -287,21 +289,21 @@ def test_default_get_status_mixed_routes_each_sid(tmp_path, monkeypatch, mocker)
     led.add_post(Post(id="ig", parent_id="c", account="ig", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.needs_reconcile, submission_id="psid",
                       scheduled_time="2099-01-01T00:00:00Z", public_url="dryrun://ig"))
-    # The TikTok url must oEmbed-verify to the ZERNIO-REPORTED tiktok username to rest. The real Zernio status
-    # body carries that username on post.platforms[].accountId (keyed by _id == post.account_id "z1"); get_status
-    # surfaces it, and the live oEmbed author ("tt") must equal it. This exercises the real username extraction
-    # end-to-end (no injected get_status).
     tt_url = "https://www.tiktok.com/@tt/video/7"
+    ig_url = "https://www.instagram.com/reel/X/"
     def by_url(url, **kw):
         if "oembed" in url: return _R(200, {"author_unique_id": "tt", "author_url": "https://www.tiktok.com/@tt"})
         if "zernio" in url: return _R(200, {"post": {"platforms": [{"platform": "tiktok", "status": "published",
                                                                     "platformPostUrl": tt_url,
                                                                     "accountId": {"_id": "z1", "username": "tt"}}]}})
-        return _R(200, {"posts": [{"id": "psid", "state": "PUBLISHED", "releaseURL": "https://www.instagram.com/reel/X/"}]})
+        raise AssertionError(f"Postiz list must not be hit from the per-post poller: {url}")
     mocker.patch("fanops.post.metrics.requests.get", side_effect=by_url)
-    led = reconcile_posts(led, cfg)                                       # NO injected get_status -> real per-post dispatch
+    ctor = mocker.spy(__import__("fanops.post.metrics", fromlist=["PostizStatusClient"]).PostizStatusClient, "__init__")
+    mirror = {"psid": {"status": "published", "publicUrl": ig_url, "postiz_state": "PUBLISHED"}}
+    led = reconcile_posts(led, cfg, mirror=mirror)   # TT via _default_get_status; IG via mirror
+    assert ctor.call_count == 0                      # P4: mixed corpus does not construct PostizStatusClient
     assert led.posts["tt"].state is PostState.published and led.posts["tt"].public_url == tt_url
-    assert led.posts["ig"].state is PostState.published                  # the IG post resolved through Postiz in the SAME pass
+    assert led.posts["ig"].state is PostState.published and led.posts["ig"].public_url == ig_url
 
 
 def test_default_list_posts_corrupt_accounts_degrades_to_global(tmp_path, monkeypatch, mocker):

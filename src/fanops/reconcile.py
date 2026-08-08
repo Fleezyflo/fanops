@@ -126,7 +126,7 @@ _UNVERIFIED_PREFIX = "unverified:"
 # IG-liveness fix: a NON-fatal ENRICHMENT breadcrumb — DELIBERATELY not the `_UNVERIFIED_PREFIX` sentinel, so
 # reconcile_posts never re-parks on it (that prefix is the quarantine trigger). The corrected contract splits
 # LIVENESS from ENRICHMENT for IG: liveness is authoritatively Postiz (status==published + a real releaseURL,
-# which get_status sets ONLY on a published row); the Graph media_id match is opportunistic METRICS enrichment.
+# which the mirror observation carries ONLY on a published row); the Graph media_id match is opportunistic METRICS enrichment.
 # With one global Meta credential (META_IG_USER_ID) we can enumerate only ONE account's /media, so an IG post
 # published to ANOTHER credentialed handle (perca.late, cisumwolfhom) is Postiz-confirmed-live yet can never
 # appear in the enumerable feed. resolve_media_ids used to read "not in the one feed I can see" as "not live"
@@ -480,26 +480,21 @@ _MIRROR_PUBLISHED = "PUBLISHED"
 # the never-polls / never-promotes negative controls in tests/test_zernio_idempotency.py.
 GetStatus = Callable[[str], dict]
 _LIVE_STATUS_BACKENDS = frozenset({"postiz", "zernio"})
+# Backends with a TRUE per-post status GET. Postiz is mirror-only (`list_all`); it is still a live
+# routing backend above, but `_status_client_for` / `_default_get_status` never construct it.
+_POLL_STATUS_BACKENDS = frozenset({"zernio"})
 
 
 def _status_client_for(cfg: Config, backend: str, led: Optional[Ledger]) -> GetStatus:
-    # One backend's status poller. Zernio has a TRUE per-post status endpoint (a bound get_status, no
-    # date window). Postiz has NONE: its only signal is the `state` field on a row of the DATE-WINDOWED
-    # GET /public/v1/posts, so it wraps PostizStatusClient in a closure that reads the parked post's own
-    # scheduled_time from `led` for the window (a future/old/2099 post is otherwise PERMANENTLY off the
-    # default ~week page). An unknown backend FAILS CLOSED + legibly (a stale FANOPS_POSTER already
-    # degrades to dryrun at cfg, W4). Lazy imports keep deps off the core path.
-    if backend == "postiz":
-        from fanops.post.metrics import PostizStatusClient
-        client = PostizStatusClient(cfg)
-        def poll(sid: str) -> dict:
-            post = next((p for p in led.posts.values() if p.submission_id == sid), None) if led else None
-            return client.get_status(sid, publish_date=post.scheduled_time if post else None)
-        return poll
+    # One backend's per-post status poller. Only Zernio has a TRUE per-post status endpoint (a bound
+    # get_status, no date window). Postiz is read via the bulk mirror (`PostizStatusClient.list_all`)
+    # and has no per-post poller — do not construct it here. An unknown backend FAILS CLOSED + legibly
+    # (a stale FANOPS_POSTER already degrades to dryrun at cfg, W4). Lazy imports keep deps off the
+    # core path. `led` is unused (signature kept so call sites stay uniform with the mixed dispatcher).
     if backend == "zernio":
         from fanops.post.metrics import ZernioStatusClient
         return ZernioStatusClient(cfg).get_status
-    raise ValueError(f"unknown backend {backend!r}: no status client (expected postiz/zernio)")
+    raise ValueError(f"unknown backend {backend!r}: no status client (expected zernio)")
 
 
 def _reconcilable_routing(cfg: Config, led: Optional[Ledger], *,
@@ -564,16 +559,15 @@ def _poll_backend_for_sid(cfg: Config, routing: dict[str, str], sid: str) -> str
 
 
 def _default_get_status(cfg: Config, led: Optional[Ledger] = None) -> GetStatus:
-    # Per-post backend routing (zernio). When the reconcilable posts in `led` resolve to MORE THAN ONE
-    # backend (an account override + the global), route each submission to its own backend's status client
-    # — so IG-via-Postiz and TikTok-via-Zernio reconcile in ONE pass. With one backend (or no led) this is
-    # the single-backend dispatch (Zernio bound method, Postiz date-window closure), so the Zernio
-    # bound-method check + the existing reconcile tests are byte-identical.
+    # Per-post status poller for Zernio. Postiz posts are mirrored via `list_all` and never enter this
+    # seam — filter them out of the backends set so a mixed corpus does NOT eagerly construct
+    # PostizStatusClient (whose `__init__` raises PostizAuthError when the key is missing). With one
+    # pollable backend (or no led) this is the single-backend Zernio bound-method dispatch.
     routing = _reconcilable_routing(cfg, led)
-    backends = set(routing.values())
+    backends = {b for b in routing.values() if b in _POLL_STATUS_BACKENDS}
     if not backends:
         g = cfg.poster_backend
-        if g in _LIVE_STATUS_BACKENDS:
+        if g in _POLL_STATUS_BACKENDS:
             backends = {g}
         else:
             def poll(sid: str) -> dict:

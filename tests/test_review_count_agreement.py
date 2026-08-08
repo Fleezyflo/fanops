@@ -202,7 +202,7 @@ def test_failure_rollup_scoped_tallies_match_a_hand_count(tmp_path):
     by_account = failure_rollup(led, account="a")
     assert by_account["total"] == 3
     assert by_account["buckets"] == {"rate_limit": 1, "oversize": 1, "bad_payload": 1,
-                                     "poll_error": 0, "transient": 0, "unknown": 0}
+                                     "transient": 0, "unknown": 0}
     assert failure_rollup(led, batch="bx")["total"] == 3        # f_a1, f_a3, f_b1
     assert failure_rollup(led, source="src_2")["total"] == 1     # f_a3 only (clip_2 -> src_2)
     combined = failure_rollup(led, account="a", batch="bx", source="src_1")

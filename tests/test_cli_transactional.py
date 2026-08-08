@@ -232,11 +232,8 @@ def test_cmd_reconcile_still_promotes_published(tmp_path, monkeypatch, mocker):
 
 
 def test_cmd_reconcile_postiz_date_windows_each_post(tmp_path, monkeypatch, mocker):
-    # P2 review fix: the explicit `fanops reconcile` verb must carry the date window for Postiz too.
-    # _default_get_status(cfg, snapshot) lets the Postiz poll read each post's own scheduled_time and
-    # pass a startDate/endDate window bracketing it on GET /public/v1/posts — else a future/old post is
-    # permanently off the page and never reconciles (and the live server rejects the old display/date
-    # with HTTP 400). Run the REAL Postiz dispatch (no _default_get_status mock); capture the params.
+    # `fanops reconcile` reads Postiz via the bulk mirror (`list_all` → mandatory startDate/endDate).
+    # A future/2099 post is found because the mirror window is maximal. Capture the params.
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_URL", "https://postiz.example.com")
     monkeypatch.setenv("POSTIZ_API_KEY", "pk"); monkeypatch.delenv("BLOTATO_API_KEY", raising=False)
@@ -257,9 +254,8 @@ def test_cmd_reconcile_postiz_date_windows_each_post(tmp_path, monkeypatch, mock
     assert Ledger.load(cfg).posts["p"].state is PostState.published
 
 def test_cmd_reconcile_postiz_without_key_skips_cleanly(tmp_path, monkeypatch, capsys):
-    # P2 review fix: postiz WITHOUT a key must SKIP (return 0), not raise/exit. _default_get_status
-    # builds PostizStatusClient -> _key raises PostizAuthError (an AuthError, NOT a RuntimeError), so
-    # the widened `except (RuntimeError, AuthError)` is what keeps reconcile a clean no-op (like track).
+    # postiz WITHOUT a key must SKIP (return 0), not raise/exit. Empty surface / auth paths stay a
+    # clean no-op (like track).
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_URL", "https://postiz.example.com")
     monkeypatch.delenv("POSTIZ_API_KEY", raising=False); monkeypatch.delenv("BLOTATO_API_KEY", raising=False)
