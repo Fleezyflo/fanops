@@ -503,6 +503,11 @@ def insights_metrics_for(product_type: str | None) -> list[str]:
     SOLE builder of the insights request `metric=` list. An unknown/None type intersects nothing -> [], so
     the caller must resolve the real type first (the client skips an unresolved one, never guesses). Order
     follows the table for a stable request string."""
+    # Postiz submits media_type=REELS for a SINGLE .mp4 with post_type:'post' (instagram.provider.js:393-397); >1 media → VIDEO, image → FEED. The post→REELS map below is valid only under the single-video invariant enforced pre-network at PostizPoster.publish (MOL-786). Never stored, never extended without a vendor citation.
+    if product_type == "post":
+        product_type = "REELS"
+    elif product_type == "story":
+        product_type = "STORY"
     pt = (product_type or "").upper()
     return [m for m, types in _MEDIA_METRICS.items() if pt in types]
 

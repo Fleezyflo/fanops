@@ -83,6 +83,15 @@ def test_insights_metrics_for_case_insensitive():
     assert meta_graph.insights_metrics_for("reels") == meta_graph.insights_metrics_for("REELS")
 
 
+def test_insights_metrics_for_service_tokens():
+    # Service post-type tokens (Postiz) must resolve to the same metric sets as Meta vocabulary so
+    # rows carrying them stay measurable; None/unknown still yield [] (caller skips, never guesses).
+    assert meta_graph.insights_metrics_for("post") == meta_graph.insights_metrics_for("REELS")
+    assert meta_graph.insights_metrics_for("story") == meta_graph.insights_metrics_for("STORY")
+    assert meta_graph.insights_metrics_for(None) == []
+    assert meta_graph.insights_metrics_for("weird") == []
+
+
 def test_media_insights_reels_normalizes_full_set(tmp_path, monkeypatch):
     cfg = _cfg(tmp_path, monkeypatch)
     # Meta's REAL v21 reels response uses `views` (not the deprecated `plays`).
