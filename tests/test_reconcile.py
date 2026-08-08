@@ -604,11 +604,15 @@ def test_reconcile_never_guesses_a_fate_on_error(tmp_path):
     assert led.posts["pu"].state not in (PostState.failed, PostState.published)
 
 
-def test_report_terminals_previews_the_escalation_and_writes_nothing(tmp_path):
-    # report_terminals returns what the (state, age) rule WOULD write, and writes nothing. With the give-up
-    # rung deleted there is exactly ONE rung left, so this previews escalations ONLY: the 30h `submitting`
-    # claim is reported, and the 80h `needs_reconcile` post — which the deleted rung would have labeled — is
-    # reported as nothing at all, because nothing would happen to it.
+def test_report_terminals_previews_the_escalation_and_the_lateness_and_writes_nothing(tmp_path):
+    # MOL-791: the preview carries TWO row kinds in ONE shape, told apart by would_set_state vs state.
+    #   esc   — 30h `submitting`, CLIENT token: the surviving escalation rung fires (would_set_state
+    #           MOVES). No lateness row: a fanops_ token can never match a backend row, so there is no
+    #           backend silence to report.
+    #   old   — 80h `needs_reconcile`, REAL id, never mirrored: the deleted give-up rung would have
+    #           declared it lost; now it previews as LATENESS ONLY (would_set_state == state).
+    #   fresh — 2h `submitting`, client token: previews nothing at all.
+    # And, as before, the whole call WRITES NOTHING.
     from datetime import datetime, timezone, timedelta
     from fanops.reconcile import report_terminals
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
@@ -622,11 +626,39 @@ def test_report_terminals_previews_the_escalation_and_writes_nothing(tmp_path):
                       caption="x", state=PostState.submitting, submission_id="fanops_z",
                       scheduled_time=(datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()))
     rows = report_terminals(led)
-    assert [r["post_id"] for r in rows] == ["esc"]            # the escalation only; old + fresh preview nothing
-    assert rows[0]["would_set_state"] == "needs_reconcile"
-    assert "escalated" in rows[0]["reason"]
+    writes = [r for r in rows if r["would_set_state"] != r["state"]]
+    late = [r for r in rows if r["would_set_state"] == r["state"]]
+    assert [r["post_id"] for r in writes] == ["esc"]          # the escalation, and only it, would write
+    assert writes[0]["would_set_state"] == "needs_reconcile" and "escalated" in writes[0]["reason"]
+    assert [r["post_id"] for r in late] == ["old"]            # esc (client token) + fresh (on time) are silent
+    assert late[0]["state"] == "needs_reconcile" and late[0]["event"] == "note lateness"
+    assert "80h past scheduled_time" in late[0]["reason"] and "never mirrored" in late[0]["reason"]
+    assert set(late[0]) == set(writes[0])                     # ONE row shape — cli.py's loop renders both
     assert led.posts["esc"].error_reason is None              # WROTE NOTHING — pure preview
     assert led.posts["esc"].state is PostState.submitting
+    assert led.posts["old"].error_reason is None and led.posts["old"].state is PostState.needs_reconcile
+
+
+def test_pending_lateness_excludes_a_row_the_backend_already_published(tmp_path):
+    # MOL-791: lateness is "the backend has not published", NOT "this post is old". A pending post whose
+    # MIRRORED row says PUBLISHED is held back by a liveness gate on our side — the backend answered.
+    # Claiming that as lateness would point the operator at the wrong system.
+    from datetime import datetime, timezone, timedelta
+    from fanops.reconcile import pending_lateness
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    stale = (datetime.now(timezone.utc) - timedelta(hours=30)).isoformat()
+    led.add_post(Post(id="silent", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
+                      caption="x", state=PostState.needs_reconcile, submission_id="pz_1",
+                      scheduled_time=stale, postiz_state="QUEUE"))
+    led.add_post(Post(id="answered", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
+                      caption="x", state=PostState.needs_reconcile, submission_id="pz_2",
+                      scheduled_time=stale, postiz_state="PUBLISHED"))
+    led.add_post(Post(id="future", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
+                      caption="x", state=PostState.submitting, submission_id="pz_3",
+                      scheduled_time=(datetime.now(timezone.utc) + timedelta(hours=3)).isoformat()))
+    rows = pending_lateness(led)
+    assert [r["post_id"] for r in rows] == ["silent"]
+    assert rows[0] == {"post_id": "silent", "platform": "instagram", "hours_late": 30, "postiz_state": "QUEUE"}
 
 
 def test_a_parked_post_is_re_visited_and_re_logged_every_pass(tmp_path, mocker):
