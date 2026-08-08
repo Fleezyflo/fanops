@@ -166,7 +166,24 @@ def artifact_summary(cfg: Config, source_id: str) -> str | None:
 
 
 def is_transient_error(reason: str | None) -> bool:
-    """Hybrid failure policy: auto-resume transient errors; stay manual for toolchain/corrupt/ceiling."""
+    """Classify Source/artifact *stage* reasons for auto-resume (MOL-813 leave-it).
+
+    Input is ``Source.error_reason`` (via ``pipeline.reconcile_source_progress``), not
+    ``Post.error_reason``. A ``Post.error_kind`` field cannot serve this ladder — different
+    model, different prose vocabulary (``toolchain missing`` / ``corrupt gate`` /
+    ``attempt 3/3`` / ``stagebusyerror`` never appear on posts). MOL-781's Post typing
+    work deliberately excludes this function.
+
+    Hybrid policy (unchanged): auto-resume transient stage errors; stay manual for
+    toolchain/corrupt/ceiling. Empty and unmatched reasons fall through to ``True``
+    (auto-resume) — deliberate, not a silent-recovery bug.
+
+    Branch order is load-bearing. The live canary
+    ``"whisper timed out after 5400s (attempt 3/3)"`` matches both ``"timed out"``
+    (transient) and ``"attempt 3/3"`` (non-transient); the ceiling check precedes the
+    timeout check so the verdict is non-transient. Do not reorder without updating
+    ``tests/test_transcribe_timeout.py``.
+    """
     if not reason:
         return True
     r = reason.lower()
