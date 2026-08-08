@@ -11,6 +11,7 @@
       "fanops.clip",
       "fanops.config",
       "fanops.control",
+      "fanops.crosspost",
       "fanops.digest",
       "fanops.framing",
       "fanops.hashtag_hygiene",
@@ -39,13 +40,19 @@
       "fanops.post.metrics",
       "fanops.post.postiz",
       "fanops.post.providers",
+      "fanops.post.run",
       "fanops.post.zernio",
+      "fanops.postiz_lifecycle",
+      "fanops.reconcile",
       "fanops.reframe",
       "fanops.reframe_apply",
       "fanops.responder",
       "fanops.settings",
       "fanops.signals",
       "fanops.stage_lock",
+      "fanops.studio.views_common",
+      "fanops.studio.views_results",
+      "fanops.tagging",
       "fanops.timing_bias",
       "fanops.transcribe",
       "fanops.validation_gate",
@@ -72,11 +79,6 @@
       "fanops.cutover",
       "fanops.cutover_postiz",
       "fanops.track"
-    ],
-    [
-      "fanops.post.run",
-      "fanops.studio.views_common",
-      "fanops.studio.views_results"
     ],
     [
       "fanops.pipeline",
@@ -470,6 +472,7 @@
       "lazy": [
         "fanops.accounts",
         "fanops.p4_dim_bias",
+        "fanops.reconcile",
         "fanops.timing_bias",
         "fanops.validation_gate",
         "fanops.variant_amplify"
@@ -2401,7 +2404,7 @@
   "generated_by": "tools/arch",
   "generator_version": "arch/1.0.0",
   "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",
-  "lazy_downward_count": 230,
+  "lazy_downward_count": 231,
   "lazy_lateral": [
     {
       "from": "fanops.accounts",
@@ -3639,11 +3642,11 @@
     "G1_non_trivial_sccs": 0,
     "G1_sccs_total": 136,
     "G1c_levels": 11,
-    "G2_largest_scc_size": 48,
-    "G2_module_sccs_total": 72,
-    "G2_non_trivial_sccs": 8,
+    "G2_largest_scc_size": 55,
+    "G2_module_sccs_total": 67,
+    "G2_non_trivial_sccs": 7,
     "compile_edges_G1": 574,
-    "lazy_edges": 345,
+    "lazy_edges": 346,
     "lazy_edges_lateral": 46,
     "lazy_edges_strictly_upward": 69,
     "lazy_edges_to_equal_or_higher_level": 115,
