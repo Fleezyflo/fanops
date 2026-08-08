@@ -167,7 +167,7 @@ def test_closed_loop_single_owner_lift_round_trip(tmp_path, monkeypatch, mocker)
     import fanops.post.run as run
     class _OkPoster:
         def publish(self, led_, post_id):
-            led_.posts[post_id].state = PostState.submitted
+            led_.posts[post_id] = led_.posts[post_id].model_copy(update={"state": PostState.submitted})
             led_.posts[post_id].submission_id = "sub_trust"
             led_.posts[post_id].public_url = "https://www.instagram.com/reel/TRUST/"
             return led_

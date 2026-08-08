@@ -138,7 +138,7 @@ def test_held_clip_with_queued_post_only_in_held_not_editable(tmp_path):
     cfg = Config(root=tmp_path)
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
     led = Ledger.load(cfg); _lineage(led)                   # clip_1 = queued
-    led.clips["clip_1"].held = True; led.clips["clip_1"].held_reason = "pulled back"; led.clips["clip_1"].state = ClipState.held
+    led.clips["clip_1"] = led.clips["clip_1"].model_copy(update={"held": True, "held_reason": "pulled back", "state": ClipState.held})
     led.add_post(Post(id="p_q", parent_id="clip_1", account="a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.queued, scheduled_time=_z(NOW + timedelta(hours=3))))
     cards = review_buckets(led, Accounts.load(cfg), cfg, now=NOW)

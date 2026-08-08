@@ -219,9 +219,9 @@ def test_reconcile_command_promotes_published(tmp_path, monkeypatch, capsys, moc
 
 def _promote(led):
     from fanops.models import PostState
-    for p in led.posts.values():
+    for pid, p in list(led.posts.items()):
         if p.state is PostState.needs_reconcile:
-            p.state = PostState.published
+            led.posts[pid] = p.model_copy(update={"state": PostState.published})
     return led
 
 def test_run_halts_cleanly_on_advance_error(tmp_path, monkeypatch, mocker):

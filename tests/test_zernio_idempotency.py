@@ -162,7 +162,7 @@ def test_10_daemon_transient_requeue_keeps_the_same_uuid(tmp_path, monkeypatch):
     # _requeue_transient_failed_for_daemon must therefore never touch created_at.
     cfg = _cfg(tmp_path, monkeypatch)
     p = _post(); before = _request_id(p)
-    p.state, p.error_reason = PostState.failed, "publish transient error (retries exhausted): read timed out"
+    p = p.model_copy(update={"state": PostState.failed, "error_reason": "publish transient error (retries exhausted): read timed out"})
     led = _led(cfg, p); led.save()
     run_mod._requeue_transient_failed_for_daemon(cfg)
     after = Ledger.load(cfg).posts[p.id]
@@ -404,7 +404,7 @@ def test_32_409_survives_publish_one_end_to_end(tmp_path, monkeypatch):
     # The candidate is written on the THROWAWAY network ledger — without _NET_POST_FIELDS it is silently
     # discarded at finalize and the operator loses the only pointer the 409 handed back.
     cfg = _cfg(tmp_path, monkeypatch)
-    p = _post(); p.state = PostState.queued
+    p = _post().model_copy(update={"state": PostState.queued})
     led = _led(cfg, p); led.save()
     monkeypatch.setattr(zernio.requests, "post", _Rec(_R(409, {"details": {"existingPostId": "z_other"}})))
     monkeypatch.setattr(run_mod, "_ensure_media", lambda *a, **k: None)
@@ -521,7 +521,7 @@ def test_44_reconcile_never_polls_the_candidate(tmp_path, monkeypatch):
     # candidate used as a poll key would be polled every pass.
     cfg = _cfg(tmp_path, monkeypatch)
     from fanops import reconcile as rec_mod
-    p = _post(); p.state = PostState.needs_reconcile
+    p = _post().model_copy(update={"state": PostState.needs_reconcile})
     p.submission_id = "fanops_token"; p.reconcile_candidate_id = "z_other"
     led = _led(cfg, p)
     asked = []
@@ -536,7 +536,7 @@ def test_45_reconcile_never_promotes_from_the_candidate(tmp_path, monkeypatch):
     # permalink. Here the candidate polls `published`; the post's own id does not.
     cfg = _cfg(tmp_path, monkeypatch)
     from fanops import reconcile as rec_mod
-    p = _post(); p.state = PostState.needs_reconcile
+    p = _post().model_copy(update={"state": PostState.needs_reconcile})
     p.submission_id = "fanops_token"; p.reconcile_candidate_id = "z_other"
     led = _led(cfg, p)
     def _poll(sid):
@@ -554,7 +554,7 @@ def test_45b_a_failed_poll_never_downgrades_a_candidate_bearing_row(tmp_path, mo
     # `failed` makes the row RE-QUEUEABLE and licences a re-POST while a possibly-live duplicate stands.
     cfg = _cfg(tmp_path, monkeypatch)
     from fanops import reconcile as rec_mod
-    p = _post(); p.state = PostState.needs_reconcile
+    p = _post().model_copy(update={"state": PostState.needs_reconcile})
     p.submission_id = "z_mine"; p.reconcile_candidate_id = "z_other"
     out = rec_mod.reconcile_posts(_led(cfg, p), cfg,
                                   get_status=lambda sid: {"status": "failed", "errorMessage": "rejected upstream"})
@@ -569,7 +569,7 @@ def test_45c_a_held_candidate_row_is_not_selected_by_the_transient_requeue(tmp_p
     # posts_in_state(failed) ONLY, so a held row can never be auto-re-POSTed.
     cfg = _cfg(tmp_path, monkeypatch)
     from fanops import reconcile as rec_mod
-    p = _post(); p.state = PostState.needs_reconcile
+    p = _post().model_copy(update={"state": PostState.needs_reconcile})
     p.submission_id = "z_mine"; p.reconcile_candidate_id = "z_other"
     out = rec_mod.reconcile_posts(_led(cfg, p), cfg,
                                   get_status=lambda sid: {"status": "failed", "errorMessage": "read timed out"})
@@ -585,7 +585,7 @@ def test_45d_a_failed_poll_without_a_candidate_still_fails_ordinarily(tmp_path, 
     # The B-case: no candidate => unchanged pre-existing behaviour. Negative control for 45b/45c.
     cfg = _cfg(tmp_path, monkeypatch)
     from fanops import reconcile as rec_mod
-    p = _post(); p.state = PostState.needs_reconcile
+    p = _post().model_copy(update={"state": PostState.needs_reconcile})
     p.submission_id = "z_mine"                            # no reconcile_candidate_id
     out = rec_mod.reconcile_posts(_led(cfg, p), cfg,
                                   get_status=lambda sid: {"status": "failed", "errorMessage": "rejected upstream"})
@@ -606,7 +606,7 @@ def test_47_reconcile_clears_the_candidate_on_an_explicit_identity_decision(tmp_
     cfg = _cfg(tmp_path, monkeypatch)
     from fanops import reconcile as rec_mod
     monkeypatch.setattr(rec_mod, "_tiktok_url_confirmed", lambda *a, **k: True)
-    p = _post(); p.state = PostState.needs_reconcile
+    p = _post().model_copy(update={"state": PostState.needs_reconcile})
     p.submission_id = "z_real"; p.reconcile_candidate_id = "z_other"
     led = _led(cfg, p)
     out = rec_mod.reconcile_posts(led, cfg, get_status=lambda sid: {
@@ -620,7 +620,7 @@ def test_48_ui_renders_the_candidate_distinctly_from_the_submission_id(tmp_path,
     # MIGHT be this post". The UI must not let the two read alike.
     cfg = _cfg(tmp_path, monkeypatch)
     from fanops.studio.views_results import inflight_watch
-    p = _post(); p.state = PostState.needs_reconcile
+    p = _post().model_copy(update={"state": PostState.needs_reconcile})
     p.submission_id = "fanops_token"; p.reconcile_candidate_id = "z_other"
     row = inflight_watch(_led(cfg, p), cfg)[0]
     assert row.reconcile_candidate_id == "z_other"
@@ -679,7 +679,7 @@ def test_54_claim_still_refuses_a_post_carrying_a_real_submission_id(tmp_path, m
     # The never-re-POST invariant is NOT replaced by idempotency: a ~5-min window cannot span the 600s
     # daemon interval, so the queued-only claim still carries CROSS-PASS safety.
     cfg = _cfg(tmp_path, monkeypatch)
-    p = _post(); p.state = PostState.queued; p.submission_id = "z_real"
+    p = _post().model_copy(update={"state": PostState.queued}); p.submission_id = "z_real"
     led = _led(cfg, p); led.save()
     rec = _Rec(_R(201, {"_id": "z2"}))
     monkeypatch.setattr(zernio.requests, "post", rec)
@@ -697,7 +697,7 @@ def test_56_daemon_requeue_ignores_needs_reconcile(tmp_path, monkeypatch):
     # `failed` is re-queueable; needs_reconcile must never be. A 409 landing in failed would be a licence to
     # re-post a duplicate — R-3's actual consequence.
     cfg = _cfg(tmp_path, monkeypatch)
-    p = _post(); p.state = PostState.needs_reconcile
+    p = _post().model_copy(update={"state": PostState.needs_reconcile})
     p.error_reason = "zernio duplicate_content_409: candidate=z_other ..."
     led = _led(cfg, p); led.save()
     run_mod._requeue_transient_failed_for_daemon(cfg)
@@ -706,7 +706,7 @@ def test_56_daemon_requeue_ignores_needs_reconcile(tmp_path, monkeypatch):
 def test_57_the_four_burned_failed_records_need_no_migration(tmp_path, monkeypatch):
     # A `failed` row written before this change loads with reconcile_candidate_id=None and is untouched by it.
     cfg = _cfg(tmp_path, monkeypatch)
-    p = _post(); p.state = PostState.failed
+    p = _post().model_copy(update={"state": PostState.failed})
     p.error_reason = "zernio upload failed (405)"
     led = _led(cfg, p); led.save()
     after = Ledger.load(cfg).posts[p.id]

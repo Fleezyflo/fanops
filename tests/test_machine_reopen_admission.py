@@ -305,7 +305,7 @@ def test_release_then_amplify_charges_budget_once(tmp_path, monkeypatch, mocker)
     # Clear the just-released request so amplify writes a fresh one (serve path).
     request_path(cfg, "moments", sid).unlink(missing_ok=True)
     with Ledger.transaction(cfg) as led:
-        led.sources[sid].state = SourceState.moments_decided
+        led.sources[sid] = led.sources[sid].model_copy(update={"state": SourceState.moments_decided})
         amplify(led, cfg, ["p1"])
     led = Ledger.load(cfg)
     assert int(led.sources[sid].meta.get("amplify_count", 0)) == 1

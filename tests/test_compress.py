@@ -159,7 +159,7 @@ def test_publish_due_persists_shrunk_render_path(tmp_path, monkeypatch, mocker):
 
     class FakePoster:
         def publish(self, led_, pid):
-            led_.posts[pid].state = PostState.published
+            led_.posts[pid] = led_.posts[pid].model_copy(update={"state": PostState.published})
             led_.posts[pid].public_url = "https://www.tiktok.com/@x/1"
             return led_
     mocker.patch("fanops.post.run.get_poster", return_value=FakePoster())

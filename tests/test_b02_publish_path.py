@@ -48,7 +48,7 @@ def test_postiz_connection_error_single_attempt_parks_needs_reconcile(tmp_path, 
     _seed_queued(cfg)
     led = Ledger.load(cfg)
     with Ledger.transaction(cfg) as lg:
-        lg.posts["p1"].state = PostState.submitting
+        lg.posts["p1"] = lg.posts["p1"].model_copy(update={"state": PostState.submitting})
     led = Ledger.load(cfg)
     calls = {"n": 0}
     def post_side(*a, **kw):
@@ -68,7 +68,7 @@ def test_postiz_connect_timeout_retries_then_succeeds(tmp_path, monkeypatch, moc
     _seed_queued(cfg)
     led = Ledger.load(cfg)
     with Ledger.transaction(cfg) as lg:
-        lg.posts["p1"].state = PostState.submitting
+        lg.posts["p1"] = lg.posts["p1"].model_copy(update={"state": PostState.submitting})
     led = Ledger.load(cfg)
     calls = {"n": 0}
     class _R:
@@ -93,7 +93,7 @@ def test_zernio_connection_error_single_attempt_parks_needs_reconcile(tmp_path, 
     _seed_queued(cfg)
     led = Ledger.load(cfg)
     with Ledger.transaction(cfg) as lg:
-        lg.posts["p1"].state = PostState.submitting
+        lg.posts["p1"] = lg.posts["p1"].model_copy(update={"state": PostState.submitting})
     led = Ledger.load(cfg)
     calls = {"n": 0}
     def post_side(*a, **kw):
@@ -113,7 +113,7 @@ def test_zernio_connect_timeout_retries_then_succeeds(tmp_path, monkeypatch, moc
     _seed_queued(cfg)
     led = Ledger.load(cfg)
     with Ledger.transaction(cfg) as lg:
-        lg.posts["p1"].state = PostState.submitting
+        lg.posts["p1"] = lg.posts["p1"].model_copy(update={"state": PostState.submitting})
     led = Ledger.load(cfg)
     calls = {"n": 0}
     class _R:
@@ -195,7 +195,7 @@ def test_publish_due_naive_past_publishes(tmp_path, monkeypatch, mocker):
     _seed_queued(cfg, sched="2026-06-01 09:00")
     class FakePoster:
         def publish(self, led, post_id):
-            led.posts[post_id].state = PostState.submitted
+            led.posts[post_id] = led.posts[post_id].model_copy(update={"state": PostState.submitted})
             led.posts[post_id].public_url = "https://ig.example/p/1"
             return led
     mocker.patch("fanops.post.run.get_poster", return_value=FakePoster())

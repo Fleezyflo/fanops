@@ -52,7 +52,7 @@ def _stub_ok_poster(mocker, cfg):
     class _OkPoster:
         def __init__(self, cfg): pass
         def publish(self, led_, post_id):
-            led_.posts[post_id].state = PostState.submitted; led_.posts[post_id].submission_id = "s"
+            led_.posts[post_id] = led_.posts[post_id].model_copy(update={"state": PostState.submitted}); led_.posts[post_id].submission_id = "s"
             led_.posts[post_id].public_url = _LIVE_PERMALINK   # real permalink -> submitted promotes to published
             return led_
     mocker.patch.object(run, "get_poster", return_value=_OkPoster(cfg))
@@ -199,7 +199,7 @@ def test_publish_uploads_clip_media_once_across_posts_live(tmp_path, monkeypatch
     class _OkPoster:
         def __init__(self, cfg): pass
         def publish(self, led_, post_id):
-            led_.posts[post_id].state = PostState.submitted; led_.posts[post_id].submission_id = "s"
+            led_.posts[post_id] = led_.posts[post_id].model_copy(update={"state": PostState.submitted}); led_.posts[post_id].submission_id = "s"
             return led_
     mocker.patch.object(run, "get_poster", return_value=_OkPoster(cfg))
     publish_due(cfg, now="2026-06-02T18:00:00Z")
@@ -230,7 +230,7 @@ def test_publish_failed_poster_marks_failed_durable(tmp_path, monkeypatch, mocke
     class _FailPoster:
         def __init__(self, cfg): pass
         def publish(self, led, post_id):
-            led.posts[post_id].state = PostState.failed
+            led.posts[post_id] = led.posts[post_id].model_copy(update={"state": PostState.failed})
             led.posts[post_id].error_reason = "simulated 422"
             return led
     mocker.patch.object(run, "get_poster", return_value=_FailPoster(cfg))
@@ -299,7 +299,7 @@ def test_publish_refreshes_account_id_from_current_mapping(tmp_path, monkeypatch
         def __init__(self, cfg): pass
         def publish(self, led_, post_id):
             seen["account_id"] = led_.posts[post_id].account_id    # what the poster will actually send
-            led_.posts[post_id].state = PostState.submitted; led_.posts[post_id].submission_id = "s"
+            led_.posts[post_id] = led_.posts[post_id].model_copy(update={"state": PostState.submitted}); led_.posts[post_id].submission_id = "s"
             return led_
     mocker.patch.object(run, "get_poster", return_value=_CapturePoster(cfg))
     publish_due(cfg, now="2026-06-02T18:00:00Z")
@@ -346,7 +346,7 @@ def test_publish_one_bad_upload_does_not_block_others(tmp_path, monkeypatch, moc
     class _OkPoster:
         def __init__(self, cfg): pass
         def publish(self, led_, post_id):
-            led_.posts[post_id].state = PostState.submitted
+            led_.posts[post_id] = led_.posts[post_id].model_copy(update={"state": PostState.submitted})
             led_.posts[post_id].submission_id = "s_ok"
             return led_
     mocker.patch.object(run, "get_poster", return_value=_OkPoster(cfg))
@@ -376,10 +376,10 @@ def test_publish_needs_reconcile_does_not_halt_loop(tmp_path, monkeypatch, mocke
         def __init__(self, cfg): pass
         def publish(self, led_, post_id):
             if post_id == "prec":
-                led_.posts[post_id].state = PostState.needs_reconcile
+                led_.posts[post_id] = led_.posts[post_id].model_copy(update={"state": PostState.needs_reconcile})
                 led_.posts[post_id].error_reason = "blotato 503: ambiguous, may be live"
             else:
-                led_.posts[post_id].state = PostState.submitted
+                led_.posts[post_id] = led_.posts[post_id].model_copy(update={"state": PostState.submitted})
                 led_.posts[post_id].submission_id = "s_ok"
             return led_
     mocker.patch.object(run, "get_poster", return_value=_ReconcileThenOkPoster(cfg))
@@ -439,7 +439,7 @@ def test_publish_non_auth_error_with_401_in_text_does_not_halt(tmp_path, monkeyp
     class _OkPoster:
         def __init__(self, cfg): pass
         def publish(self, led_, post_id):
-            led_.posts[post_id].state = PostState.submitted
+            led_.posts[post_id] = led_.posts[post_id].model_copy(update={"state": PostState.submitted})
             led_.posts[post_id].submission_id = "s_ok"
             return led_
     mocker.patch.object(run, "get_poster", return_value=_OkPoster(cfg))
@@ -529,7 +529,7 @@ def test_publish_uploads_variant_file_media_on_live_backend(tmp_path, monkeypatc
     class FakePoster:
         def publish(self, led_, post_id):
             sent["media_urls"] = list(led_.posts[post_id].media_urls)
-            led_.posts[post_id].state = PostState.submitted
+            led_.posts[post_id] = led_.posts[post_id].model_copy(update={"state": PostState.submitted})
             return led_
     mocker.patch("fanops.post.run.get_poster", return_value=FakePoster())
     publish_due(cfg, now="2026-06-02T18:00:00Z")
@@ -654,7 +654,7 @@ def test_publish_due_calls_postiz_throttle(tmp_path, monkeypatch, mocker):
     led.save()
     class FakePoster:
         def publish(self, led_, post_id):
-            led_.posts[post_id].state = PostState.submitted
+            led_.posts[post_id] = led_.posts[post_id].model_copy(update={"state": PostState.submitted})
             led_.posts[post_id].public_url = "https://instagram.com/x/"
             return led_
     mocker.patch("fanops.post.run.get_poster", return_value=FakePoster())
@@ -733,7 +733,7 @@ def test_publish_due_in_flight_claim_counts_against_today(tmp_path, monkeypatch,
     claim = iso_z(parse_iso(_QUOTA_FROZEN_NOW) - timedelta(hours=1))   # claimed earlier the SAME local day
     for i in range(_DAILY_ACCOUNT_CAP):
         _queued(led, cfg, pid=f"inf{i}", cid=f"cinf{i}", when="2020-01-01T00:00:00Z")
-        led.posts[f"inf{i}"].state = PostState.submitting
+        led.posts[f"inf{i}"] = led.posts[f"inf{i}"].model_copy(update={"state": PostState.submitting})
         led.posts[f"inf{i}"].submission_started_at = claim
     for i in range(3):
         _queued(led, cfg, pid=f"new{i}", cid=f"cnew{i}", when="2020-01-01T00:00:00Z")
@@ -758,7 +758,7 @@ def test_publish_due_in_flight_claim_on_previous_local_day_leaves_today_free(tmp
     assert operator_local_day(claim, cfg) != operator_local_day(_QUOTA_FROZEN_NOW, cfg)   # fixture precondition
     for i in range(_DAILY_ACCOUNT_CAP):
         _queued(led, cfg, pid=f"inf{i}", cid=f"cinf{i}", when="2020-01-01T00:00:00Z")
-        led.posts[f"inf{i}"].state = PostState.submitting
+        led.posts[f"inf{i}"] = led.posts[f"inf{i}"].model_copy(update={"state": PostState.submitting})
         led.posts[f"inf{i}"].submission_started_at = claim
     for i in range(3):
         _queued(led, cfg, pid=f"new{i}", cid=f"cnew{i}", when="2020-01-01T00:00:00Z")
@@ -781,10 +781,10 @@ def test_publish_due_old_row_without_stamps_falls_back_to_scheduled_time(tmp_pat
     today_slot = iso_z(parse_iso(_QUOTA_FROZEN_NOW).replace(hour=10))
     for i in range(_DAILY_ACCOUNT_CAP):
         _queued(led, cfg, pid=f"old{i}", cid=f"cold{i}", when=today_slot)
-        p = led.posts[f"old{i}"]
-        p.state = PostState.published
-        p.public_url = _LIVE_PERMALINK
-        p.published_at = None
+        p = led.posts[f"old{i}"].model_copy(update={"state": PostState.published,
+                                                      "public_url": _LIVE_PERMALINK,
+                                                      "published_at": None})
+        led.posts[f"old{i}"] = p
         p.submission_started_at = None
     for i in range(2):
         _queued(led, cfg, pid=f"new{i}", cid=f"cnew{i}", when="2020-01-01T00:00:00Z")

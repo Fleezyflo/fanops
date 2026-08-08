@@ -50,7 +50,7 @@ def test_preview_media_returns_playable_path(tmp_path):
 def test_retry_rate_limited_failures(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg); _seed_awaiting(cfg, hook=None)
     led = Ledger.load(cfg)
-    p = led.posts["p0"]; p.state = PostState.failed; p.error_reason = "postiz 429"; led.save()
+    p = led.posts["p0"].model_copy(update={"state": PostState.failed}); p.error_reason = "postiz 429"; led.posts["p0"] = p; led.save()
     res = actions.retry_rate_limited_failures(cfg)
     assert res.ok and res.detail["retried"] == 1
     assert Ledger.load(cfg).posts["p0"].state is PostState.queued
@@ -88,7 +88,7 @@ def test_retry_rate_limit_staggers_schedule(tmp_path):
             led.add_post(Post(id=pid, parent_id="c0", account="a", account_id="ig1", platform=Platform.instagram,
                               caption="c", state=PostState.failed, error_reason="postiz 429"))
         else:
-            led.posts[pid].state = PostState.failed; led.posts[pid].error_reason = "postiz 429"
+            led.posts[pid] = led.posts[pid].model_copy(update={"state": PostState.failed}); led.posts[pid].error_reason = "postiz 429"
     led.save()
     res = actions.retry_rate_limited_failures(cfg)
     assert res.ok and res.detail["retried"] == 2

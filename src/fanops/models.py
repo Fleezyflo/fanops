@@ -271,7 +271,9 @@ PLATFORM_MAX_SECONDS = {
 # tests/test_models_extra_ignore.py::test_unknown_field_is_ignored.
 class Source(BaseModel):
     id: str
-    state: SourceState = SourceState.catalogued
+    # MOL-819: freeze `state` so a direct `.state =` raises; owners use model_copy / Ledger.set_*_state.
+    # Field-level (not model_config frozen): non-state attrs still mutate in place elsewhere.
+    state: SourceState = Field(default=SourceState.catalogued, frozen=True)
     source_path: str
     source_origin: str = "drop"                 # drop | url | scan (HOW it arrived — intake channel)
     origin_kind: Literal["native", "third_party"] = "native"   # M1: WHOSE it is — a THIRD axis, distinct from
@@ -303,10 +305,11 @@ def source_display_title(src: Source) -> str:
     return Path(src.source_path).stem if src.source_path else src.id
 
 class Moment(BaseModel):
+    # validate_assignment kept for non-state fields (affinities, etc.); moot only under whole-model freeze.
     model_config = ConfigDict(validate_assignment=True)
     id: str
     parent_id: str                              # source id
-    state: MomentState = MomentState.decided
+    state: MomentState = Field(default=MomentState.decided, frozen=True)  # MOL-819: see Source.state
     content_token: str = ""                     # the stable token its id was built from
                                                 # (reconcile always sets it; default "" lets a
                                                 #  hand-built Moment omit it harmlessly)
@@ -375,7 +378,7 @@ class Moment(BaseModel):
 class Clip(BaseModel):
     id: str
     parent_id: str                              # moment id
-    state: ClipState = ClipState.rendered
+    state: ClipState = Field(default=ClipState.rendered, frozen=True)  # MOL-819: see Source.state
     path: str
     aspect: Fmt = Fmt.r9x16
     first_frame_kind: Optional[str] = None      # P1 provenance: "visual" if pick_visual_start moved the cut
@@ -396,7 +399,8 @@ class Clip(BaseModel):
 class Post(BaseModel):
     id: str
     parent_id: str                              # clip id
-    state: PostState = PostState.awaiting_approval   # RF1: BORN awaiting_approval (no-auto-publish invariant);
+    state: PostState = Field(default=PostState.awaiting_approval, frozen=True)  # MOL-819: see Source.state
+                                                # RF1: BORN awaiting_approval (no-auto-publish invariant);
                                                 # the prior `queued` default inverted the human gate — a Post()
                                                 # with no explicit state was publishable on the next publish_due.
     account: str                                # canonical handle, e.g. "a"
