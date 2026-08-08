@@ -78,6 +78,7 @@ class GoLiveStatus:
     llm_transport: str = "claude"      # FANOPS_LLM_TRANSPORT: claude | cursor (which CLI shells for gates)
     llm_cli_binary: str = "claude"     # resolved binary name for operator copy (claude | cursor-agent)
     daemon: Optional[dict] = None      # launchd pipeline-driver health (verdict/loaded/interval/responder), None off-darwin
+    paused: bool = False               # 00_control/paused — the operator brake on the unattended pump
     demoted: list = field(default_factory=list)   # Phase 3: planned/demoted accounts (promotable) — golive_accounts lists only active()
     # Phase 6: A/B learning-loop INTENT flags (default OFF). For the variant_* three, ON sets intent only —
     # their apply paths stay learning_validated-frozen (that gate auto-stamps on real metrics). The two
@@ -1406,6 +1407,7 @@ def golive_status(cfg: Config) -> GoLiveStatus:
         report = {"checks": [], "notes": ["readiness check unavailable"]}
     from fanops.validation_gate import learning_validated
     from fanops.doctor import setup_state, setup_next_action
+    from fanops.pipeline_run import paused as _paused
     half_live, half_live_hint = _half_live_state(cfg)
     chans = channel_readiness(cfg)
     return GoLiveStatus(
@@ -1426,6 +1428,7 @@ def golive_status(cfg: Config) -> GoLiveStatus:
         responder_mode=cfg.responder_mode,             # THE AI switch state (llm/manual) — surfaced for the toggle
         llm_transport=cfg.llm_transport, llm_cli_binary=cfg.llm_cli_binary,
         daemon=daemon_health(cfg),                     # launchd driver health for the Go-Live daemon control (None off-darwin)
+        paused=_paused(cfg),                           # 00_control/paused — operator brake on the unattended pump
         demoted=golive_demoted_accounts(cfg),          # Phase 3: promotable planned accounts
         variant_learning=cfg.variant_learning,         # Phase 6: A/B learning-loop intent flags (default OFF)
         variant_amplify=cfg.variant_amplify, variant_ucb=cfg.variant_ucb, variant_transfer=cfg.variant_transfer,

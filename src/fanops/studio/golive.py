@@ -351,6 +351,17 @@ def set_learn_retire(cfg: Config, on: bool) -> ActionResult:
     return set_flag(cfg, "FANOPS_LEARN_RETIRE", on)
 
 
+def set_pipeline_paused(cfg: Config, on: bool) -> ActionResult:
+    """Operator brake for the unattended pump — writes/removes 00_control/paused. NOT an env var: it is a
+    control FILE, so it survives restarts and carries no go-live coupling."""
+    from fanops.pipeline_run import set_paused, paused
+    try:
+        set_paused(cfg, on)
+    except OSError as exc:
+        return ActionResult(ok=False, error=f"could not write the pause marker: {str(exc)[:140]}")
+    return ActionResult(ok=True, detail={"paused": paused(cfg)})
+
+
 def set_variant_ucb(cfg: Config, on: bool) -> ActionResult:
     """Toggle UCB1 variant ranking (FANOPS_VARIANT_UCB) — replace the raw-mean leader pick with a deterministic
     UCB1 explore/exploit rank (amplify floor unchanged). Default OFF."""

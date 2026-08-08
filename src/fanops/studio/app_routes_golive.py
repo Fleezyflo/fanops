@@ -89,6 +89,11 @@ def register_golive_routes(app, cfg):
         # Toggle learn-pass retire (FANOPS_LEARN_RETIRE) — the unattended clip/moment/post destroyer. Explicit "1"==on.
         return _golive_panel(golive.set_learn_retire(cfg, request.form.get("on") == "1"))
 
+    @app.post("/golive/pause")
+    def do_golive_pause():
+        # Operator brake: pause/resume the unattended pump (00_control/paused). Explicit "1"==paused.
+        return _golive_panel(golive.set_pipeline_paused(cfg, request.form.get("on") == "1"))
+
     @app.post("/golive/ucb")
     def do_golive_ucb():
         # Phase 6: toggle UCB1 variant ranking (FANOPS_VARIANT_UCB) — explicit "1"==on.

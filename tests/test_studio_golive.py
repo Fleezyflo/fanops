@@ -845,3 +845,21 @@ def test_golive_panel_shows_hands_off_section(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path)
     html = _client(cfg).get("/golive").get_data(as_text=True)
     assert "Hands-off processing" in html and "AI responder" in html and "LLM transport" in html
+
+def test_golive_panel_renders_the_pause_control(tmp_path, monkeypatch):
+    cfg = _clean(monkeypatch, tmp_path)
+    html = _client(cfg).get("/golive").get_data(as_text=True)
+    assert 'id="pipeline-pause"' in html
+    assert "stop the unattended pump" in html
+    assert ">Pause</button>" in html                     # no marker → Pause affordance, not Resume
+
+def test_golive_pause_route_writes_and_clears_the_marker(tmp_path, monkeypatch):
+    from fanops.pipeline_run import paused
+    cfg = _clean(monkeypatch, tmp_path)
+    c = _client(cfg)
+    r_on = c.post("/golive/pause", data={"on": "1"})
+    assert r_on.status_code == 200 and paused(cfg) is True
+    assert "● PAUSED" in r_on.get_data(as_text=True)
+    r_off = c.post("/golive/pause", data={"on": ""})
+    assert r_off.status_code == 200 and paused(cfg) is False
+    assert "○ running" in r_off.get_data(as_text=True)

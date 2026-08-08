@@ -294,6 +294,14 @@
         </form>
       {% endif %}
     </div>
+    <div class="account-hooks" id="pipeline-pause">
+      <p class="muted"><strong>Pause</strong> — stop the unattended pump immediately. Survives restarts. Your own
+        Studio and CLI actions still run; only the scheduled tick stands down.</p>
+      <form hx-post="{{ url_for('do_golive_pause') }}" hx-target="#golive-panel" hx-swap="outerHTML">
+        {% if status.paused %}<span class="ok">● PAUSED</span><button type="submit" name="on" value="">Resume</button>
+        {% else %}<span class="muted">○ running</span><button type="submit" name="on" value="1">Pause</button>{% endif %}
+      </form>
+    </div>
   </section>
 
   <details class="golive-step disclosure-step">
