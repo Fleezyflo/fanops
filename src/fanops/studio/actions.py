@@ -934,6 +934,15 @@ def _refuse_retired(cfg: Config, led: Ledger, p) -> bool:
     get_logger(cfg)("review", p.id, "skipped_retired_lineage", account=p.account); return True
 
 
+def _rearm_to_queued(led: Ledger, pid: str) -> None:
+    """Sole owner of the failed→queued re-arm write (MOL-817). Clears submission_id + error_reason and
+    routes state through Ledger.set_post_state. Callers stamp scheduled_time / media_urls on led.posts[pid]
+    first when their verb requires it; _refuse_retired stays outside so oversize shrink runs only after
+    an admitted re-arm."""
+    led.posts[pid].submission_id = None
+    led.set_post_state(pid, PostState.queued, error_reason=None)
+
+
 def resolve_post(cfg: Config, post_id: str, status: str, *, url: Optional[str] = None) -> ActionResult:
     """Studio twin of cmd_resolve — operator forces ground truth on stuck inflight posts."""
     from fanops.models import _POST_TERMINAL_REQUIRES_URL
@@ -1089,9 +1098,8 @@ def retry_rate_limited_failures(cfg: Config, *, reason: str = "studio_retry_rate
                     continue
                 if _refuse_retired(cfg, led, p):
                     skipped_retired.append(pid); continue
-                p.submission_id = None
                 p.scheduled_time = iso_z(now + timedelta(minutes=stagger_min * i))
-                led.set_post_state(pid, PostState.queued, error_reason=None)
+                _rearm_to_queued(led, pid)
                 retried.append(pid)
     except Exception as exc:
         return ActionResult(ok=False, error=f"retry_rate_limited failed: {str(exc)[:160]}")
@@ -1122,10 +1130,9 @@ def retry_oversize_failures(cfg: Config, *, reason: str = "studio_retry_oversize
                     skipped_retired.append(pid); continue
                 if not apply_shrink_to_post(cfg, led, p):
                     skipped.append(pid); continue
-                p.submission_id = None
                 p.media_urls = [u for u in (p.media_urls or []) if not (u.startswith("http"))]
                 p.scheduled_time = iso_z(now + timedelta(minutes=stagger_min * i))
-                led.set_post_state(pid, PostState.queued, error_reason=None)
+                _rearm_to_queued(led, pid)
                 retried.append(pid)
     except Exception as exc:
         return ActionResult(ok=False, error=f"retry_oversize failed: {str(exc)[:160]}")
@@ -1155,9 +1162,8 @@ def retry_transient_failures(cfg: Config, *, reason: str = "studio_retry_transie
                     continue
                 if _refuse_retired(cfg, led, p):
                     skipped_retired.append(pid); continue
-                p.submission_id = None
                 p.scheduled_time = iso_z(now + timedelta(minutes=stagger_min * i))
-                led.set_post_state(pid, PostState.queued, error_reason=None)
+                _rearm_to_queued(led, pid)
                 retried.append(pid)
     except Exception as exc:
         return ActionResult(ok=False, error=f"retry_transient failed: {str(exc)[:160]}")
@@ -1199,10 +1205,9 @@ def recover_posts(cfg: Config, post_ids: list[str], *, action: str, reason: str 
                         if upload_cap_bytes(cfg, p, backend) is None or not apply_shrink_to_post(cfg, led, p, backend=backend):
                             skipped.append(pid); continue
                         p.media_urls = [u for u in (p.media_urls or []) if not u.startswith("http")]
-                    p.submission_id = None
                     if not (p.scheduled_time or "").strip():   # timeless-queued: a recovered post with no schedule (cleared/corrupt) parks FOREVER in _due_or_fail (silent). Land a time so the daemon publishes it, never never.
                         p.scheduled_time = iso_z(_now(None) + timedelta(minutes=cfg.publish_lead_minutes))
-                    led.set_post_state(pid, PostState.queued, error_reason=None)
+                    _rearm_to_queued(led, pid)
                     retried.append(pid)
                 elif action == "discard":
                     led.set_post_state(pid, PostState.rejected)
