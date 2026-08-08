@@ -424,11 +424,16 @@ class PostizPoster:
         from fanops.timeutil import iso_z
         sched = post.scheduled_time or iso_z(datetime.now(timezone.utc))
         media_urls = [rewrite_media_base(u, self.cfg) for u in (post.media_urls or [])]
-        # The payload's post_type is RENDERED from the post's own declaration. `or "post"` is TRANSITIONAL:
-        # legacy rows predate the declaration (product_type None) and every one of them published as "post",
-        # so the fallback reproduces today's payload byte-for-byte instead of stranding the queue. Tighten
-        # it to fail-loud once MOL-774's closure has landed and MOL-775 reviews the legacy population.
-        declared = post.product_type or "post"
+        # The payload's post_type is RENDERED from the post's own declaration — never guessed here.
+        # An undeclared row (product_type None/blank) is refused BEFORE any network; `_publish_one`
+        # lands it `failed` with this message as error_reason. Wording avoids the transient-substring
+        # ladders in `is_transient_failure_reason` so retry verbs cannot re-arm a permanently broken row.
+        declared = (post.product_type or "").strip()
+        if not declared:
+            raise ValueError(
+                f"{post.platform.value} post {post.id} reached publish with undeclared product_type "
+                f"— refusing to guess post|story"
+            )
         _validate_ledger_media(post, declared, media_urls)
         payload = build_postiz_payload(integration_id=post.account_id, platform=post.platform.value,
                                        content=post.caption, media_urls=media_urls,

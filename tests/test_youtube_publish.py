@@ -12,9 +12,11 @@ from fanops.post.postiz import build_postiz_payload, PostizPoster
 
 
 def _yt_post(**kw):
+    # product_type declared even for YouTube: MOL-822 refuses undeclared rows at PostizPoster.publish
+    # (YouTube settings ignore the token; the declaration is still required on the publish path).
     base = dict(id="p1", parent_id="clip_1", account="a", account_id="yt_intg",
                 platform=Platform.youtube, caption="full description here",
-                media_urls=["m1|http://x/m.mp4"])
+                product_type="post", media_urls=["m1|http://x/m.mp4"])
     base.update(kw)
     return Post(**base)
 
