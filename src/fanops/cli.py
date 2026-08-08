@@ -854,7 +854,11 @@ def main(argv: list[str] | None = None) -> int:
     p_rs = sub.add_parser("retry-source"); p_rs.add_argument("source_id")
     p_rs.add_argument("--from-stage", choices=["auto", "catalogued", "transcribed"], default="auto")   # MOL-121: AUTO preserves a good transcript
     p_rs.add_argument("--force", action="store_true", help="MOL-471: purge caches + rewind terminal sources to catalogued (requires --from-stage catalogued)")
-    p_ret = sub.add_parser("retire-source"); p_ret.add_argument("source_id")
+    p_ret = sub.add_parser("retire-source", help="preview or execute source retire (cascade-deletes unshipped media; snapshot-gated)")
+    p_ret.add_argument("source_id")
+    p_ret.add_argument("--i-understand-this-deletes-unshipped-media",
+                       dest="i_understand_this_deletes_unshipped_media", action="store_true",
+                       help="execute retire-source (requires a verified-restorable pre-retire snapshot)")
     p_prom = sub.add_parser("promote-source"); p_prom.add_argument("source_id")
     p_rm = sub.add_parser("retry-metrics"); p_rm.add_argument("post_id")
     p_disc = sub.add_parser("discover"); p_disc.add_argument("folder")
@@ -1540,11 +1544,28 @@ def _dispatch(cfg: Config, args) -> int:
                 print(f"retry-source {args.source_id}: not recoverable (state={st}; use --force --from-stage catalogued for terminal sources)", file=sys.stderr); return 2
         print(f"retry-source {args.source_id}"); return 0
     if args.cmd == "retire-source":
-        with Ledger.transaction(cfg) as led:
-            if args.source_id not in led.sources:
-                print(f"no such source: {args.source_id}", file=sys.stderr); return 2
-            led.retire_source(args.source_id)
-        print(f"retire-source {args.source_id}"); return 0
+        # MOL-842: CLI caller guards — preview by default; sentence-flag + restorable snapshot + audit
+        # before cascade. Ledger.retire_source itself is unchanged (Studio depends on it). One print()
+        # node reused for preview-or-success so _CLI_PRINT_COUNT stays exact-equality.
+        from fanops.audit import write_audit
+        from fanops import ledger_wipe
+        led_ro = Ledger.load(cfg)
+        if args.source_id not in led_ro.sources:
+            print(f"no such source: {args.source_id}", file=sys.stderr); return 2
+        preview = led_ro.preview_retire_cascade(args.source_id)
+        if not args.i_understand_this_deletes_unshipped_media:
+            line = json.dumps({"source_id": args.source_id, **preview}, indent=2)
+        else:
+            snap = Ledger.snapshot(cfg)
+            if not ledger_wipe.snapshot_is_restorable(snap):
+                get_logger(cfg)("retire-source", args.source_id, "refused_snapshot_unrestorable",
+                                snapshot=str(snap))
+                return 2
+            with Ledger.transaction(cfg) as led:
+                led.retire_source(args.source_id)
+            write_audit(cfg, "retire_source", [args.source_id], reason="cli_retire")
+            line = f"retire-source {args.source_id}"
+        print(line); return 0
     if args.cmd == "promote-source":
         from fanops.pipeline import promote_source
         with Ledger.transaction(cfg) as led:
