@@ -42,7 +42,7 @@
    "conflict_resolution": "The MODULE SET is derived and wins. The GROUPING is declared and stands. A module absent from the partition is a BLOCKING finding, not an inference.",
    "fields": {
     "subsystems.<id>.modules": "HUMAN_DECISION (the grouping) — but the DOMAIN of the map is DERIVED_FROM_CODE and enforced total.",
-    "totality.*": "DELETED — migration done. They were cached counts and they rot, and ARCH-009 compared exactly ONE of the six. derived/modules.json is the source.",
+    "totality.*": "DERIVED_FROM_CODE, and therefore DELETED — migration done. They were cached counts and they rot, and ARCH-009 compared exactly ONE of the six. derived/modules.json is the source.",
     "subsystems.<id>.compile_depends_on": "DERIVED_FROM_CODE — a cached projection of the import graph. MIGRATION TARGET.",
     "DEFINITION.*": "HUMAN_DECISION — the definition of what a subsystem IS. Stands."
    }
@@ -57,7 +57,7 @@
    "permitted_manual_edits": "The PROSE only (THE_THREE_GRAPHS, intentionality_SPLIT, the notes). Not one number.",
    "conflict_resolution": "The derived graph WINS on every number.",
    "fields": {
-    "totals.*": "DELETED — migration done. They existed in two places and this was the copy that rotted (G2_module_sccs and G2_largest_scc_modules were both wrong and unwatched). derived/dependencies.json is the only source. The `updated_at_HEAD` / `what_did_NOT_move` prose changelogs went with them: git history is the changelog and cannot conflict with itself.",
+    "totals.*": "DERIVED_FROM_CODE, and therefore DELETED — migration done. They existed in two places and this was the copy that rotted (G2_module_sccs and G2_largest_scc_modules were both wrong and unwatched). derived/dependencies.json is the only source. The `updated_at_HEAD` / `what_did_NOT_move` prose changelogs went with them: git history is the changelog and cannot conflict with itself.",
     "graph.compile_edges / runtime_lazy_edges": "DERIVED_FROM_CODE. MIGRATION TARGET.",
     "layering.levels": "DERIVED_FROM_CODE. MIGRATION TARGET.",
     "THE_THREE_GRAPHS.*": "HUMAN_DECISION — the semantic distinction between G1/G1c/G2/G3. This is the most valuable content in the file and it is NOT derivable. It stands.",
@@ -89,7 +89,7 @@
    "permitted_manual_edits": "The DECISION TABLE (the network-ambiguity table) and the ordering narrative. Not the counts.",
    "conflict_resolution": "The code wins on counts. The doc wins on SEMANTICS (what a 5xx MEANS for a publish).",
    "fields": {
-    "counts_AST_verified.*": "DELETED — migration done. derived/side_effects.json is the census. What remains under this key are the dated reconciliation VERDICTS, which are HUMAN_DECISION and carry no count.",
+    "counts_AST_verified.*": "DERIVED_FROM_CODE, and therefore DELETED — migration done. derived/side_effects.json is the census. What remains under this key are the dated reconciliation VERDICTS, which are HUMAN_DECISION and carry no count.",
     "the_network_ambiguity_decision_table.*": "HUMAN_DECISION — the system's best engineering, and entirely non-derivable. Stands.",
     "the_publish_side_effect_ordering.*": "HUMAN_DECISION — the T0..T10 ordering and the crash-critical window."
    }
