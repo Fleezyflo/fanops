@@ -858,8 +858,10 @@ def review_handoff(cfg: Config) -> dict:
     try:
         led = Ledger.load(cfg)
         by_batch: dict[str, int] = {}
-        for p in led.posts.values():
-            if p.state is PostState.awaiting_approval and p.account == best_h and p.batch_id:
+        # T2.5: pick the dominant batch off the OWNED worklist. Off a raw state tally this handoff link could
+        # point the operator at a batch made entirely of dead lineage — a Review page that then shows nothing.
+        for p in led.review_posts():
+            if p.account == best_h and p.batch_id:
                 by_batch[p.batch_id] = by_batch.get(p.batch_id, 0) + 1
         if by_batch:
             out["batch"] = max(by_batch, key=by_batch.get)
@@ -920,8 +922,8 @@ def review_nav_params(cfg: Config, account: str | None = None) -> dict:
             try:
                 led = Ledger.load(cfg)
                 by_batch: dict[str, int] = {}
-                for p in led.posts.values():
-                    if p.state is PostState.awaiting_approval and p.account == h and p.batch_id:
+                for p in led.review_posts():           # T2.5: same owned worklist as review_handoff above
+                    if p.account == h and p.batch_id:
                         by_batch[p.batch_id] = by_batch.get(p.batch_id, 0) + 1
                 if by_batch:
                     batch = max(by_batch, key=by_batch.get)
@@ -940,7 +942,11 @@ def account_work_counts(cfg: Config) -> dict[str, dict]:
         led = Ledger.load(cfg)
         for p in led.posts.values():
             h = p.account
-            if p.state is PostState.awaiting_approval:
+            # T2.5: the per-account badge is a WORKLIST, so it asks the owner the same question the Review page
+            # asks (`Ledger.review_posts` = awaiting_approval AND `can_promote`). A raw state tally here made the
+            # Home tile advertise work the Review page then refused to show — posts stranded under a retired
+            # moment. The other arms stay raw state reads: they are delivery states, not the operator's queue.
+            if p.state is PostState.awaiting_approval and led.can_promote(p):
                 out[h]["awaiting"] += 1
             elif p.state is PostState.queued:
                 if _queued_has_future_schedule(p, datetime.now(timezone.utc)):
@@ -967,6 +973,7 @@ def home_status(cfg: Config) -> HomeStatus:
     try:
         from collections import Counter
         led = Ledger.load(cfg)
+        att = led.attention_counts()        # T2.5: the OWNED worklist, loaded ONCE for this view — never per row
         st = Counter(p.state for p in led.posts.values())
         inflight = (st.get(PostState.needs_reconcile, 0) + st.get(PostState.submitting, 0)
                     + st.get(PostState.submitted, 0))
@@ -984,7 +991,7 @@ def home_status(cfg: Config) -> HomeStatus:
         fb = failure_rollup(led)["buckets"]
         counts = {"sources": sum(1 for s in led.sources.values() if s.origin_kind == "native"),
                   "batches": len(getattr(led, "batches", {})),
-                  "awaiting": awaiting_moment_count(led),
+                  "awaiting": att["moments"],
                   "awaiting_posts": st.get(PostState.awaiting_approval, 0),
                   "scheduled": st.get(PostState.queued, 0),
                   "inflight": inflight,

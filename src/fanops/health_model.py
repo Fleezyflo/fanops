@@ -43,6 +43,7 @@ class HealthReport:
 
 _PROM_HELP = {
     "fanops_posts": ("Posts by lifecycle state", "gauge"),
+    "fanops_posts_actionable": ("Awaiting-approval posts on a live lineage (the operator worklist)", "gauge"),
     "fanops_awaiting_moments": ("Distinct clips awaiting operator approval", "gauge"),
     "fanops_daemon_heartbeat_age_seconds": ("Seconds since last daemon heartbeat", "gauge"),
     "fanops_daemon_heartbeat_stale": ("1 when daemon heartbeat exceeds stale threshold", "gauge"),
@@ -74,6 +75,12 @@ def render_prometheus_metrics(cfg: Config) -> str:
         st = Counter(p.state.value for p in led.posts.values())
         for state in PostState:
             lines.append(_prom_gauge("fanops_posts", st.get(state.value, 0), {"state": state.value}))
+        # T2.5: the DERIVED companion to the raw per-state census above. `fanops_posts{state="awaiting_approval"}`
+        # is a state census; this is the operator's queue (`Ledger.review_posts` = awaiting_approval AND a live
+        # lineage), and the two differ by posts stranded under a retired moment. Sized in POSTS to be comparable
+        # with the gauge it sits beside — a HELD clip's post counts here, because releasing the hold IS operator
+        # work; `fanops_awaiting_moments` below is the clip-sized view of the same worklist and excludes it.
+        lines.append(_prom_gauge("fanops_posts_actionable", led.attention_counts()["posts"]))
         lines.append(_prom_gauge("fanops_awaiting_moments", awaiting_moment_count(led)))
     except Exception as exc:
         _log.warning("ledger read failed in /metrics (%s); degrading post gauges", exc)

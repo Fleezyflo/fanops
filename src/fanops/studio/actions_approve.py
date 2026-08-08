@@ -160,8 +160,10 @@ def approve_with_hook(cfg: Config, clip_id: str, *, now: Optional[datetime] = No
             # HELD clip and must not start — `is_suppressed` reads lineage only.
             if led.is_suppressed(clip):
                 return ActionResult(ok=False, error=f"clip {clip_id} is retired — not eligible for approval")  # loud here (one clip)
-            ids = [p.id for p in led.posts.values()
-                   if p.parent_id == clip_id and p.state is PostState.awaiting_approval]
+            # T2.5: the owned worklist, filtered to this clip. Identical set to the old hand-rolled scan — the
+            # `is_suppressed(clip)` guard three lines up already proved this lineage live, so `can_promote`
+            # admits every awaiting post under it — but the predicate now has ONE author.
+            ids = [p.id for p in led.review_posts() if p.parent_id == clip_id]
             # The SAME cap the bulk engine enforces, from the SAME owner — a per-POST verdict, because one
             # clip's surfaces can straddle two platform ceilings. Asked BEFORE the restore so a fully-dropped
             # clip neither re-cuts nor spends its `hook_removed`, and counted so the refusal reaches the operator.
@@ -193,7 +195,13 @@ def _approve_matching(cfg: Config, pred=None, *, pred_for=None, now: Optional[da
                       detail: Optional[dict] = None) -> ActionResult:
     def _resolve(led):
         p = pred_for(led) if pred_for is not None else pred
-        return [post.id for post in led.posts.values() if post.state is PostState.awaiting_approval and p(post)]
+        # T2.5: off the owned state accessor, not a hand-rolled scan of `led.posts`. The worklist's OTHER half
+        # (`can_promote` — a live lineage) is deliberately NOT applied here: `_approve_ids_with_render` asks it
+        # per post and COUNTS the refusal into `skipped_retired` + a `skipped_retired_lineage` breadcrumb.
+        # Pre-filtering to `review_posts()` would resolve to the same promotions and lose that report, so a
+        # stale Review page approving a since-retired clip would come back "approved 0" with no reason and no
+        # log line. Selection states the operator's intent; the owner states the verdict, out loud.
+        return [post.id for post in led.posts_in_state(PostState.awaiting_approval) if p(post)]
     return _approve_ids_with_render(cfg, resolve_ids=_resolve, now=now, detail=detail or {})
 
 def approve_batch(cfg: Config, batch_id: str, *, now: Optional[datetime] = None) -> ActionResult:
