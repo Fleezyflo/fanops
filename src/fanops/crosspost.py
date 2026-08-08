@@ -143,16 +143,16 @@ def render_moment_file(led: Ledger, cfg: Config, *, post, target_clip, src, call
 def _moment_is_live_target(m) -> bool:
     """MOM-1: a captioned clip may seed a post only while its moment is a live render target (`decided`/
     `clipped`). A re-pick resets a moment to `picked` (and `error`/`retired` are dead) — its surviving captioned
-    clip must NOT fan on stale casting intent until it re-decides. A MISSING moment keeps the existing fail-open
-    (seed; the fan-out loop already handles `m is None` with an unknown duration) — narrowing that orphan path
-    is out of MOM-1 scope."""
-    return m is None or m.state in (MomentState.decided, MomentState.clipped)
+    clip must NOT fan on stale casting intent until it re-decides. Caller guarantees `m` is present: `_seed_clips`
+    only evaluates this after `Ledger.can_seed`, which fails CLOSED on a missing ancestor — a None here is an
+    invariant violation (AttributeError), not a seedable orphan."""
+    return m.state in (MomentState.decided, MomentState.clipped)
 
 def _seed_clips(led: Ledger) -> list:
     """The crosspost seed set: captioned clips that pass `Ledger.can_seed` (the OWNER of "may this clip mint
     new work?" — not held, live lineage, fails CLOSED on a missing ancestor), AND whose moment is still a live
-    render target (MOM-1: decided/clipped, or absent -> existing fail-open). MOM-1: a re-pick resets a moment to
-    `picked`; its surviving captioned clip must not seed a post on stale casting intent."""
+    render target (MOM-1: decided/clipped). MOM-1: a re-pick resets a moment to `picked`; its surviving captioned
+    clip must not seed a post on stale casting intent."""
     return [c for c in led.clips_in_state(ClipState.captioned)
             if led.can_seed(c) and _moment_is_live_target(led.moments.get(c.parent_id))]
 

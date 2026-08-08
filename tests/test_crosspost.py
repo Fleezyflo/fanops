@@ -5,7 +5,9 @@ from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Clip, Moment, Source, Batch, ClipState, MomentState, Platform, Fmt
 from fanops.accounts import Accounts
-from fanops.crosspost import surface_time, crosspost_clips, _STEP_MIN, _JITTER_MAX
+from fanops.crosspost import (
+    surface_time, crosspost_clips, _STEP_MIN, _JITTER_MAX, _moment_is_live_target, _seed_clips,
+)
 from fanops.ids import _hash
 
 def _seed_accounts(cfg, accounts):
@@ -820,3 +822,35 @@ def test_stitch_draft_clip_never_crossposts(tmp_path, mocker):
     led.add_clip(stitch)
     led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
     assert not any(p.parent_id == "stitch_x" for p in led.posts.values())           # structurally unpostable
+
+
+# ---- MOL-816: drop unreachable orphan fail-open on _moment_is_live_target ----
+
+def test_moment_is_live_target_only_decided_or_clipped():
+    """MOM-1 live-target set: decided/clipped only. None is an invariant violation, not seedable."""
+    import pytest
+    live = Moment(id="m", parent_id="s", content_token="t", start=0, end=7, reason="r",
+                  state=MomentState.clipped)
+    decided = Moment(id="m2", parent_id="s", content_token="t2", start=0, end=7, reason="r",
+                     state=MomentState.decided)
+    picked = Moment(id="m3", parent_id="s", content_token="t3", start=0, end=7, reason="r",
+                    state=MomentState.picked)
+    assert _moment_is_live_target(live) is True
+    assert _moment_is_live_target(decided) is True
+    assert _moment_is_live_target(picked) is False
+    with pytest.raises(AttributeError):
+        _moment_is_live_target(None)
+
+
+def test_seed_clips_excludes_captioned_clip_with_missing_moment(tmp_path):
+    """P3: missing parent moment stays out of _seed_clips via can_seed (fails CLOSED) — deletion must not reopen it."""
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path="/s.mp4", width=1920, height=1080))
+    orphan = Clip(id="clip_orphan", parent_id="mom_missing", path="/o.mp4", aspect=Fmt.r9x16,
+                  state=ClipState.captioned)
+    orphan.meta_captions = {"a/instagram": {"caption": "c", "hashtags": ["#x"]}}
+    led.add_clip(orphan)
+    assert "mom_missing" not in led.moments
+    assert led.can_seed(orphan) is False
+    assert orphan.id not in [c.id for c in _seed_clips(led)]
