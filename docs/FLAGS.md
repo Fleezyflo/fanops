@@ -49,14 +49,21 @@ explicit on-words `1`/`true`/`yes`/`on`.
 | `impact_cut` | `FANOPS_IMPACT_CUT=1` | OFF | M4 structural-hooks: the impact-cut PRODUCER (suggest + render operator-approved plans into stitch_draft clips). Needs `hook_router` on; off → no plans, no stitch renders (non-regression) — [config.py:485](../src/fanops/config.py). Firewall: [test_impact_cut.py](../tests/test_impact_cut.py), [test_stitch_render.py](../tests/test_stitch_render.py) |
 | `intro_tease` | `FANOPS_INTRO_TEASE=1` | OFF | M6 structural-hooks: the intro-tease PRODUCER (LLM-vision matcher pairs a clean clip with an intro asset, compose-prepends a "wait for it" tease). Needs `hook_router` on + `FANOPS_RESPONDER=llm`; off → no matcher gate, no renders (non-regression) — [config.py:494](../src/fanops/config.py). Firewall: [test_router.py](../tests/test_router.py), [test_intro_match.py](../tests/test_intro_match.py) |
 
-### Validation-frozen actuators (default-OFF AND frozen until `learning_validated`)
+### Consequential actuators — default-OFF, and whether `learning_validated` ALSO freezes them
 
-A distinct safety class: even with the kill switch ON, the actuator stays inert until `learning_validated`
-opens (auto-stamped by the first real non-degraded live metric). `variant_amplify` (re-mines a source) and
-`variant_transfer` (injects a cross-surface prior into real captions) are BOTH in this class — acting on a
-`lift_score` whose live field-shape is unconfirmed propagates noise. `variant_ucb` is the exception: it only
-swaps the caption-bias SCORER on the safe read path, gated by `variant_learning` + the statistical trust gate
-(min-posts/min-gap), not `learning_validated`.
+A distinct safety class: the actuator changes ledger state, or real caption text, on its own — so the flag is
+default-OFF and OFF is byte-identical. A SUBSET is additionally VALIDATION-FROZEN: even with the kill switch
+ON it stays inert until `learning_validated` opens (auto-stamped by the first real non-degraded live metric).
+`variant_amplify` (re-mines a source) and `variant_transfer` (injects a cross-surface prior into real
+captions) are both frozen — acting on a `lift_score` whose live field-shape is unconfirmed propagates noise.
+
+Three rows are deliberately NOT frozen, for two different reasons. `variant_ucb` only swaps the caption-bias
+SCORER on the safe read path, gated by `variant_learning` + the statistical trust gate (min-posts/min-gap).
+`learn_amplify` and `learn_retire` are the learn pass's two unattended actuators — one MINTS work, the other
+DESTROYS it — and for each the flag is the WHOLE gate on its own actuator: the `learning_validated` freeze was
+removed from both chains because nothing in the tree ever writes `metrics_confirmed` False, so once the first
+real metric auto-stamps it the freeze can never re-bind. A condition that cannot bind is theatre, not a gate.
+With both learn flags OFF the pass is read-only — pull metrics, classify, log the counts, write nothing.
 
 > **Investigation-2 B2:** `variant_transfer` previously gated ONLY on its flag — its config docstring promised
 > "inert until `learning_validated`" but neither the caption injector nor the digest label enforced it (transfer
@@ -66,9 +73,11 @@ swaps the caption-bias SCORER on the safe read path, gated by `variant_learning`
 
 | Flag | Env var (ON) | Default | Frozen-until-validated? | Notes |
 |---|---|---|---|---|
-| `variant_amplify` | `FANOPS_VARIANT_AMPLIFY=1` | OFF | **YES** (enforced) | re-mines a source on a SUSTAINED variant win; gate at [variant_amplify.py:166](../src/fanops/variant_amplify.py). Firewall: `test_apply_amplify_inert_until_learning_validated` ([test_variant_amplify.py](../tests/test_variant_amplify.py)) |
-| `variant_ucb` | `FANOPS_VARIANT_UCB=1` | OFF | NO (scorer swap on the safe read path) | swaps the caption-bias scorer to a UCB1 bandit; gated by `variant_learning` + the statistical trust gate, not `learning_validated` — [config.py:582](../src/fanops/config.py) |
-| `variant_transfer` | `FANOPS_VARIANT_TRANSFER=1` | OFF | **YES** (enforced, B2) | injects a cold-start cross-surface prior into real captions; gate at [caption.py `_transferred_hooks`](../src/fanops/caption.py) + the digest label. Firewall: `test_transfer_is_validation_frozen_until_learning_validated` ([test_variant_transfer.py](../tests/test_variant_transfer.py)) — [config.py:611](../src/fanops/config.py) |
+| `learn_amplify` | `FANOPS_LEARN_AMPLIFY=1` | OFF | NO — the flag is the whole gate | the learn pass re-opens a moment request on a metric winner's SOURCE, minting new moments → clips → posts; gate at [cli.py `_learn_pass`](../src/fanops/cli.py), capped per source by `adjust.MAX_AMPLIFY_PER_SOURCE` ([adjust.py](../src/fanops/adjust.py)) — [config.py `learn_amplify`](../src/fanops/config.py). Firewall: `test_learn_pass_does_not_amplify_or_retire_by_default`, `test_learn_pass_amplifies_only_with_intent` ([test_cli_transactional.py](../tests/test_cli_transactional.py)) |
+| `learn_retire` | `FANOPS_LEARN_RETIRE=1` | OFF | NO — the flag is the whole gate | the learn pass suppresses a metric loser's clip, its moment when no live sibling remains, and every unshipped post of that lineage; gate at [cli.py `_learn_pass`](../src/fanops/cli.py), actuator [adjust.py `retire`](../src/fanops/adjust.py) — [config.py `learn_retire`](../src/fanops/config.py). Firewall: `test_learn_pass_does_not_amplify_or_retire_by_default`, `test_learn_pass_retires_only_with_intent` ([test_cli_transactional.py](../tests/test_cli_transactional.py)) |
+| `variant_amplify` | `FANOPS_VARIANT_AMPLIFY=1` | OFF | **YES** (enforced) | re-mines a source on a SUSTAINED variant win; gate at [variant_amplify.py `apply_variant_amplify`](../src/fanops/variant_amplify.py). Firewall: `test_apply_amplify_inert_until_learning_validated` ([test_variant_amplify.py](../tests/test_variant_amplify.py)) |
+| `variant_ucb` | `FANOPS_VARIANT_UCB=1` | OFF | NO (scorer swap on the safe read path) | swaps the caption-bias scorer to a UCB1 bandit; gated by `variant_learning` + the statistical trust gate, not `learning_validated` — [config.py `variant_ucb`](../src/fanops/config.py) |
+| `variant_transfer` | `FANOPS_VARIANT_TRANSFER=1` | OFF | **YES** (enforced, B2) | injects a cold-start cross-surface prior into real captions; gate at [caption.py `_transferred_hooks`](../src/fanops/caption.py) + the digest label. Firewall: `test_transfer_is_validation_frozen_until_learning_validated` ([test_variant_transfer.py](../tests/test_variant_transfer.py)) — [config.py `variant_transfer`](../src/fanops/config.py) |
 
 (Other opt-in knobs — e.g. concurrent-source processing — follow the same explicit-on-word convention; grep
 `config.py` for `os.getenv("FANOPS_` to enumerate.)

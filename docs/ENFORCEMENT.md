@@ -150,8 +150,29 @@ from "passed silently" would rebuild the blind spot it exists to close.
 ## Runtime product gates — enforce in `src/fanops`, proven live by the census
 - **Publish gate:** a crossposted post is born `PostState.awaiting_approval`; `publish_due`/`publish_now`
   iterate only `queued`, so nothing publishes until the operator approves — even on a live backend.
-- **Learning gate:** `validation_gate.learning_validated` (closed by default) + `p4_unlocked`; freezes
-  the learning actuators until a real, non-degraded metric proves the field-shape.
+- **Learning gate — data quality, NOT operator consent:** `validation_gate.learning_validated` reads
+  one key, `00_control/cutover.json` `metrics_confirmed`. It is **auto-stamped open** by
+  `track._auto_validate_metrics_shape` on the first real, non-degraded analyzed metric from a live
+  backend, and it **never re-closes** — nothing in the tree writes `metrics_confirmed` False
+  (`cutover_postiz` and the auto-stamp write only `True`). So it proves the metric FIELD-SHAPE and
+  says nothing about intent. What it actually freezes: `variant_amplify`, `variant_transfer` (at
+  `caption._transferred_hooks` plus the digest "borrowing" label), and — through `p4_unlocked`, which
+  adds an attributed-signal floor on top of it — `p4_dim_bias` and `timing_bias`. Consent is a
+  separate mechanism: each actuator's own default-OFF flag (`docs/FLAGS.md`).
+- **Unattended-actuator gate:** the learn pass (`cli._learn_pass`) reaches the two actuators that
+  change state on their own — `adjust.amplify` re-opens a moment request on a metric winner's source
+  (minting moments → clips → posts), `adjust.retire` suppresses a loser's clip, its moment when no
+  live sibling remains, and every unshipped post of that lineage. Each is gated on its OWN default-OFF
+  intent flag and nothing else: `cfg.learn_amplify` (`FANOPS_LEARN_AMPLIFY`) and `cfg.learn_retire`
+  (`FANOPS_LEARN_RETIRE`); both paths leave a breadcrumb (`amplified`/`amplify_skipped`,
+  `retired`/`retire_skipped`). `learning_validated` is deliberately **not** in either chain — with no
+  `False` writer it can never re-bind once stamped, so it would be theatre rather than a gate. Both
+  actuators previously ran on `cfg.is_live_backend` alone: going live to PUBLISH also switched on an
+  autonomous generator and an autonomous destroyer.
+- **Operator brake:** `pipeline_run.paused` — the `00_control/paused` marker written by `fanops pause`
+  — is checked at the top of `cli._cmd_run_pass`, BEFORE the run lease is taken. A paused pump logs
+  `run/paused`, still emits its heartbeat (silence would look like a dead pump), and does no pipeline
+  work; operator verbs such as `fanops advance` stay unblocked.
 - **Weak-hook gate:** `hookcheck.is_weak_hook` — rejects empty / feed-wide-duplicate / template-cluster
   hooks at the crosspost mint (`src/fanops/moments.py` call site).
 - **Doctor:** `src/fanops/doctor.py` — fail-closed operator setup checks (`fanops doctor`/`status`).
