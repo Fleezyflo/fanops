@@ -13,7 +13,7 @@ from pydantic import ValidationError
 from fanops.config import Config
 from fanops.errors import AuthError, ToolchainMissingError, reason
 from fanops.ledger import Ledger
-from fanops.models import (CaptionSet, ClipState, MomentDecision, MomentHookDecision, Post, PostState,
+from fanops.models import (CaptionSet, ClipState, MomentDecision, MomentHookDecision, Platform, Post, PostState,
                            _REVIEW_REVERT_BLOCKED)   # MOL-802: defined beside PostState, which owns it
 from fanops.ids import child_id, surface_key, _hash
 from fanops.timeutil import parse_iso, iso_z
@@ -568,11 +568,14 @@ def repost_post(cfg: Config, post_id: str) -> ActionResult:
             epoch = sum(1 for p in led.posts.values()                       # originals + prior reposts for this surface
                         if p.parent_id == src.parent_id and p.account == src.account and p.platform is src.platform)
             new_id = child_id("post", src.parent_id, f"{skey}#r{epoch}")
+            # DECLARE product_type (Postiz "post" for IG); never copy src — a legacy row may carry Meta vocab.
+            # TikTok: None — Zernio OpenAPI createPost has no post-type enum.
             led.add_post(Post(id=new_id, parent_id=src.parent_id, state=PostState.awaiting_approval,
                               account=src.account, account_id=src.account_id, platform=src.platform,
                               caption=src.caption, hashtags=list(src.hashtags or []), aspect=src.aspect,
                               media_urls=list(src.media_urls or []), scheduled_time=None,
                               created_at=iso_z(_now(None)),   # content-lifecycle: fresh birth day (aware)
+                              product_type=("post" if src.platform is Platform.instagram else None),
                               submission_id=f"fanops_{_hash('idemp', new_id)}",
                               first_frame_kind=src.first_frame_kind,
                               cut_seconds=src.cut_seconds, clip_profile=src.clip_profile,
@@ -692,10 +695,13 @@ def crosspost_to_account(cfg: Config, clip_id: str, target_account: str, platfor
             cap = clip.meta_captions.get(f"{surf.account}/{surf.platform.value}")
             caption = cap["caption"] if isinstance(cap, dict) and cap.get("caption") else ""
             hashtags = list(cap.get("hashtags", [])) if isinstance(cap, dict) else []
+            # DECLARE product_type (Postiz "post" for IG); never copy a source post's field.
+            # TikTok: None — Zernio OpenAPI createPost has no post-type enum.
             led.add_post(Post(id=pid, parent_id=target_clip.id, state=PostState.awaiting_approval,
                               account=surf.account, account_id=surf.account_id, platform=surf.platform,
                               caption=caption, hashtags=hashtags, aspect=aspect, scheduled_time=None,
                               created_at=iso_z(now), submission_id=f"fanops_{_hash('idemp', pid)}",
+                              product_type=("post" if surf.platform is Platform.instagram else None),
                               clip_profile=cfg.clip_profile, batch_id=src_batch))
     except Exception as exc:
         return ActionResult(ok=False, error=f"cross-post failed: {str(exc)[:160]}")

@@ -218,6 +218,7 @@ def _settings(cap):
 def test_publish_legacy_undeclared_row_still_sends_post(tmp_path, monkeypatch, mocker):
     # A legacy row predates the declaration (product_type None). The transitional `or "post"` fallback must
     # reproduce TODAY's payload byte-for-byte — zero network-behavior change for the 300-odd queued rows.
+    # MOL-789 disposition: this is NOT a mint-at-birth fixture — `_post()` is a hand-built legacy stand-in.
     cfg = _cfg(tmp_path, monkeypatch); post = _post(); assert post.product_type is None
     led = _led(cfg, post); cap = _capture(mocker)
     PostizPoster(cfg).publish(led, "p1")
