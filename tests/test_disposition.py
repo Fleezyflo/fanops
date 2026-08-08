@@ -9,11 +9,16 @@
 #   1. it FAILS CLOSED — a missing ancestor row reads suppressed, where is_retired_clip/is_retired_moment
 #      still fail OPEN (that fail-open is exactly what let a stranded post read as live work);
 #   2. it DERIVES — answering never writes a label, so a mislabelled row reads correctly with zero writes.
+import json
+from datetime import datetime, timezone
+
 import pytest
 
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import (Clip, ClipState, Fmt, Moment, MomentState, Platform, Post, PostState, Source)
+
+NOW = datetime(2026, 8, 4, 12, 0, tzinfo=timezone.utc)
 
 
 def _led(tmp_path):
@@ -146,3 +151,57 @@ def test_is_suppressed_rejects_unknown_type(tmp_path):
         led.is_suppressed(led.sources["src_1"])
     with pytest.raises(TypeError):
         led.is_suppressed(None)
+
+
+# ---- the consumers: what the swap actually buys at the surfaces an operator clicks -------------
+
+def _seed_accounts(cfg):
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": [
+        {"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active", "persona": "hype"}]}))
+
+
+def test_every_read_site_fails_closed_on_a_missing_clip_row(tmp_path):
+    """The fail-open the swap closes. `clip is not None and (...)` made a post whose CLIP ROW IS GONE
+    approvable — the guard's own precondition let it through. Asked of `can_promote` it fails CLOSED, and
+    the Home headline (`awaiting_moment_count`) already agreed, so the two surfaces now match. `p_ok` is the
+    negative control: a blanket refusal would pass every assertion below without it."""
+    from fanops.studio.actions_approve import approve_posts
+    from fanops.studio.views_review import awaiting_moment_count
+    cfg = Config(root=tmp_path)
+    _seed_accounts(cfg)
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="src_1", source_path="/v.mp4", language="en"))
+        _moment(led, "mom_live")
+        _clip(led, "clip_live", "mom_live")
+        _post(led, "p_ok", "clip_live")
+        _post(led, "p_orphan", "clip_gone")            # the clip row was never written / already deleted
+
+    res = approve_posts(cfg, ["p_ok", "p_orphan"], now=NOW)
+
+    assert res.ok
+    assert res.detail["approved"] == 1
+    assert res.detail["skipped_retired"] == 1
+    again = Ledger.load(cfg)
+    assert again.posts["p_ok"].state is PostState.queued
+    assert again.posts["p_orphan"].state is PostState.awaiting_approval    # never promoted
+    assert awaiting_moment_count(again) == 0            # p_ok is queued now; the orphan was never worklist
+
+
+def test_approve_with_hook_still_allows_a_held_clip(tmp_path):
+    """Negative control for the `is_suppressed`-not-`can_seed` choice. `approve_with_hook` has never
+    refused a HELD clip — a hold gates MINTING, not the operator's own approval of work already minted.
+    Swapping this site to `can_seed` would have folded `held` in and silently widened the refusal."""
+    from fanops.studio.actions_approve import approve_with_hook
+    cfg = Config(root=tmp_path)
+    _seed_accounts(cfg)
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="src_1", source_path="/v.mp4", language="en"))
+        _moment(led, "mom_live")
+        _clip(led, "clip_held", "mom_live", state=ClipState.held, held=True)
+        _post(led, "p_held", "clip_held")
+
+    res = approve_with_hook(cfg, "clip_held", now=NOW)
+
+    assert res.ok and res.detail["approved"] == 1
+    assert Ledger.load(cfg).posts["p_held"].state is PostState.queued
