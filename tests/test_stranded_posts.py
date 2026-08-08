@@ -234,9 +234,11 @@ def test_reconcile_retired_verb_writes_nothing(tmp_path, capsys):
     out = capsys.readouterr().out
     # "retire" must never name a FUTURE ACTION in this output. A `retired` STATE row in the tally is a stored
     # label and stays legal, so the phrases the apply path owned are what is pinned dead here.
-    for gone in ("-> retired", "would retire", "would be retired", "--apply", "nothing to reconcile", "snapshot"):
-        assert gone not in out, f"census output still promises to write: {gone!r}"
+    for gone in ("-> retired", "would retire", "would be retired", "--apply", "nothing to reconcile",
+                 "snapshot", "has touched a platform"):
+        assert gone not in out, f"census output still promises to write or lies about platforms: {gone!r}"
     assert "nothing to write" in out and "suppressed by lineage" in out
+    assert "own state kept" in out                           # analyzed under dead lineage: own label, not a platform claim
 
 
 def test_reconcile_retired_rejects_apply_flag(tmp_path, monkeypatch):
@@ -247,8 +249,19 @@ def test_reconcile_retired_rejects_apply_flag(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     for flag in ("--apply", "--dry-run"):
         with pytest.raises(SystemExit) as ei:
-            main(["posts", "reconcile-retired", flag])
+            main(["posts", "census-retired", flag])
         assert ei.value.code == 2                            # argparse "unrecognized arguments", not a no-op
+
+
+def test_census_retired_replaces_reconcile_retired_verb(tmp_path, monkeypatch):
+    """MOL-780: the load-bearing add_parser literal is census-retired; the old name is gone."""
+    import pytest
+    from fanops.cli import main
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit) as ei:
+        main(["posts", "reconcile-retired"])
+    assert ei.value.code == 2
+    assert main(["posts", "census-retired"]) == 0
 
 
 # ---- the pipeline writes NOTHING to dead lineage: suppression is derived, never healed -------
