@@ -1448,12 +1448,9 @@
     "fanops.stranded_posts": {
       "compile": [
         "fanops.config",
-        "fanops.ledger",
-        "fanops.models"
+        "fanops.ledger"
       ],
-      "lazy": [
-        "fanops.audit"
-      ],
+      "lazy": [],
       "optional": [],
       "typing": []
     },
@@ -2228,7 +2225,7 @@
     "fanops.log": 39,
     "fanops.meta_graph": 1,
     "fanops.metrics_schedule": 1,
-    "fanops.models": 52,
+    "fanops.models": 51,
     "fanops.moment_hook_learning": 1,
     "fanops.moments": 4,
     "fanops.origin_backfill": 2,
@@ -2408,7 +2405,7 @@
     "fanops.signals": 7,
     "fanops.stage_lock": 2,
     "fanops.stitch_render": 7,
-    "fanops.stranded_posts": 3,
+    "fanops.stranded_posts": 2,
     "fanops.studio": 0,
     "fanops.studio.actions": 14,
     "fanops.studio.actions_approve": 9,
@@ -2453,7 +2450,7 @@
   "generated_by": "tools/arch",
   "generator_version": "arch/1.0.0",
   "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",
-  "lazy_downward_count": 237,
+  "lazy_downward_count": 236,
   "lazy_lateral": [
     {
       "from": "fanops.accounts",
@@ -3708,8 +3705,8 @@
     "G2_largest_scc_size": 55,
     "G2_module_sccs_total": 70,
     "G2_non_trivial_sccs": 7,
-    "compile_edges_G1": 588,
-    "lazy_edges": 353,
+    "compile_edges_G1": 587,
+    "lazy_edges": 352,
     "lazy_edges_lateral": 46,
     "lazy_edges_strictly_upward": 70,
     "lazy_edges_to_equal_or_higher_level": 116,

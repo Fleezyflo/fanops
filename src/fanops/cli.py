@@ -884,11 +884,8 @@ def main(argv: list[str] | None = None) -> int:
     p_rc.add_argument("--apply", action="store_true", help="MUTATE: request->answer->ingest->sync per seed clip; "
                       "snapshot first; resumable via 00_control/.recaption_progress.json")
     p_rc.add_argument("--dry-run", action="store_true", help="READ-ONLY target listing (the default)")
-    p_srp = posts_sub.add_parser("reconcile-retired", help="one-time: retire posts stranded under a RETIRED "
-                                 "moment/clip (awaiting_approval + queued); default = read-only dry-run")
-    p_srp.add_argument("--apply", action="store_true", help="MUTATE: snapshot first, then never-shipped -> retired; "
-                       "posts that have touched a platform are left untouched")
-    p_srp.add_argument("--dry-run", action="store_true", help="READ-ONLY target listing (the default)")
+    posts_sub.add_parser("reconcile-retired", help="census: posts under a RETIRED lineage "
+                         "(read-only; suppression is derived, never written)")
     # TOP-LEVEL, not under `posts`: the row it labels is the MOMENT. The Studio Provenance panel is the
     # primary trigger — this verb is the headless twin over the same engine, so the two cannot diverge.
     p_ob = sub.add_parser("origin-backfill", help="one-time: reconstruct `machine_inferred` provenance for the "

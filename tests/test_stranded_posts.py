@@ -176,9 +176,13 @@ def test_awaiting_headline_equals_the_review_worklist_with_retired_lineage(tmp_p
     assert awaiting_moment_count(led) == 1        # only clip_1: retired moment, retired clip and held are all out
 
 
-# ---- the one-time reconcile's finder ---------------------------------------------------------
+# ---- the census verb: its finder, and the fact that it writes nothing -------------------------
 
 def test_stranded_posts_finds_retired_lineage_only(tmp_path):
+    """The finder is now `Ledger.is_suppressed` applied to every post — one rule, one owner. That makes it
+    a strict SUPERSET of the hand-rolled walk it replaced: `p_self` (own state `retired`) and `p_orphan`
+    (clip row missing, so the owner fails CLOSED) both count now, where the old walk skipped the orphan
+    entirely. Asserted as an exact set so a narrowing regression cannot hide as a passing subset."""
     from fanops.stranded_posts import stranded_posts
     cfg = Config(root=tmp_path)
     led = Ledger.load(cfg)
@@ -187,12 +191,64 @@ def test_stranded_posts_finds_retired_lineage_only(tmp_path):
     led.add_post(_post("p_ok", "clip_ok", PostState.awaiting_approval))
     led.add_post(_post("p_bad", "clip_gone", PostState.awaiting_approval))
     led.add_post(_post("p_live", "clip_gone", PostState.analyzed, public_url="dryrun://p_live"))
+    led.add_post(_post("p_self", "clip_ok", PostState.retired))          # live lineage, but retired ITSELF
+    led.add_post(_post("p_orphan", "clip_missing", PostState.awaiting_approval))   # no clip row -> fails CLOSED
 
     found = {p.id for p in stranded_posts(led)}
 
-    assert found == {"p_bad", "p_live"}                       # everything under the dead moment...
-    unshipped = set(Ledger._UNSHIPPED_POST_STATES)
-    assert {p.id for p in stranded_posts(led) if p.state in unshipped} == {"p_bad"}   # ...only p_bad is retirable
+    assert found == {"p_bad", "p_live", "p_self", "p_orphan"}   # everything the owner calls suppressed
+    assert "p_ok" not in found                                  # ...and the healthy lineage is the control
+
+
+def _every_state(led):
+    """Every stored `(kind, id) -> state` in the ledger. Enumerated, never hand-listed — and LOGICAL, not a
+    digest of the sqlite file, whose bytes churn on a read-only open."""
+    rows = ([("moment", m) for m in led.moments.values()] + [("clip", c) for c in led.clips.values()]
+            + [("post", p) for p in led.posts.values()] + [("source", s) for s in led.sources.values()])
+    return {(kind, r.id): r.state for kind, r in rows}
+
+
+def test_reconcile_retired_verb_writes_nothing(tmp_path, capsys):
+    """The verb is a census: read-only-ness is a TEST, not a promise in a docstring. Asserted over the whole
+    stored state re-read from disk — not the rows this fixture happens to name — so any future write, on any
+    row, reddens this. The target set is non-empty first, or a verb that found nothing would pass vacuously."""
+    import argparse
+    from fanops.stranded_posts import cmd_posts_reconcile_retired
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    _lineage(led, mom_id="mom_ok", clip_id="clip_ok")
+    _lineage(led, mom_id="mom_gone", clip_id="clip_gone", moment_state=MomentState.retired)
+    led.add_post(_post("p_ok", "clip_ok", PostState.awaiting_approval))
+    led.add_post(_post("p_await", "clip_gone", PostState.awaiting_approval))
+    led.add_post(_post("p_queued", "clip_gone", PostState.queued))
+    led.add_post(_post("p_live", "clip_gone", PostState.analyzed, public_url="dryrun://p_live"))
+    led.save()
+
+    again = Ledger.load(cfg)
+    before = _every_state(again)
+    assert {p.id for p in again.posts.values() if again.is_suppressed(p)} == {"p_await", "p_queued", "p_live"}
+
+    assert cmd_posts_reconcile_retired(cfg, argparse.Namespace()) == 0
+
+    assert _every_state(Ledger.load(cfg)) == before          # identical: the census wrote nothing
+    out = capsys.readouterr().out
+    # "retire" must never name a FUTURE ACTION in this output. A `retired` STATE row in the tally is a stored
+    # label and stays legal, so the phrases the apply path owned are what is pinned dead here.
+    for gone in ("-> retired", "would retire", "would be retired", "--apply", "nothing to reconcile", "snapshot"):
+        assert gone not in out, f"census output still promises to write: {gone!r}"
+    assert "nothing to write" in out and "suppressed by lineage" in out
+
+
+def test_reconcile_retired_rejects_apply_flag(tmp_path, monkeypatch):
+    """The mutation door is GONE, not silently ignored: argparse must reject the flag it used to accept.
+    `--dry-run` goes with it — the whole flag surface is deleted, so a census has nothing to opt into."""
+    import pytest
+    from fanops.cli import main
+    monkeypatch.chdir(tmp_path)
+    for flag in ("--apply", "--dry-run"):
+        with pytest.raises(SystemExit) as ei:
+            main(["posts", "reconcile-retired", flag])
+        assert ei.value.code == 2                            # argparse "unrecognized arguments", not a no-op
 
 
 # ---- the pipeline writes NOTHING to dead lineage: suppression is derived, never healed -------
