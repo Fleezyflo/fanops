@@ -12,6 +12,7 @@ from fanops.config import Config
 from fanops.accounts import Accounts
 from fanops.ledger import Ledger
 from fanops.models import PostState, MomentState
+from fanops.origin_backfill import display_origin   # MOL-756: ONE place decides how an origin reads to an operator
 from fanops.personas import casting_directive
 from fanops.bands import band_for
 from fanops.timeutil import parse_iso
@@ -132,6 +133,10 @@ class ReviewCard:
     source_key: Optional[str] = None     # Phase 4: the STABLE source-scoping id (clip -> moment.parent_id = Source.id),
                                          # NOT the basename (two sources can share a filename). The ?source= filter
                                          # keys on this; the chip label is the basename. None == broken source lineage.
+    origin: Optional[str] = None         # MOL-756: Moment.origin in operator wording — WHO asked for this moment.
+                                         # An unlabelled row READS `unlabelled` instead of staying invisible:
+                                         # missing provenance is a fact about the row, and Home's provenance
+                                         # panel is the button that fixes it. None == broken moment lineage.
 
 
 def _personas(accounts: Accounts) -> dict:
@@ -327,7 +332,8 @@ def _card(led: Ledger, clip, posts, bucket: str, cfg: Config, personas: dict, no
         batch_targets=tgts, batch_state=(b.state.value if b is not None else None),
         batch_created=(b.created_at if b is not None else None), batch_excluded=excluded,
         batch_excluded_names=excluded_names,
-        affinities=_affs, source_key=src_key)   # MOM-3: derived view, not the stored tag
+        affinities=_affs, source_key=src_key,   # MOM-3: derived view, not the stored tag
+        origin=(display_origin(mom.origin) if mom is not None else None))   # MOL-756
 
 SOURCE_DAY_SUFFIX = " (source day)"   # the VISIBLE marker on a day the card did not mint itself (see _card_day)
 

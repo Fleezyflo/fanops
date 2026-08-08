@@ -27,7 +27,7 @@
 
     {# P5: lineage context so the operator knows WHICH source + WHERE in it this clip came from, plus an
        optional transcript peek (collapsed) — the data was already on the card, just never surfaced. #}
-    <div class="meta clip-lineage"><span class="ro">from</span> {{ card.source_name }} <span class="ro">·</span> {{ card.moment_window }}s</div>
+    <div class="meta clip-lineage"><span class="ro">from</span> {{ card.source_name }} <span class="ro">·</span> {{ card.moment_window }}s{% if card.origin %} <span class="ro">·</span> <span class="chip ro clip-origin" data-testid="card-origin" title="who asked for this moment. `unlabelled` = minted before provenance was recorded — Home offers the backfill.">origin: {{ card.origin }}</span>{% endif %}</div>
     {% if card.transcript_excerpt %}<details class="clip-transcript"><summary>Transcript</summary><p class="meta">{{ card.transcript_excerpt }}</p></details>{% endif %}
 
     {# M3d: the shared-moment hook-removed badge + restore choice for clips whose hook was auto-stripped. #}

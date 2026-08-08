@@ -14,7 +14,7 @@
  "counts_AST_verified": {
   "subprocess_call_sites": 39,
   "network_call_sites_literal_requests": 15,
-  "ledger_transaction_sites": 81,
+  "ledger_transaction_sites": 82,
   "mkdtemp_sites": 2,
   "rmtree_sites": 6,
   "os_environ_write_sites": 2,
@@ -27,6 +27,19 @@
    "subprocess_call_sites": "32 -> 33 (#634 added one in reframe.py).",
    "mkdtemp_sites": "*** 1 -> 2, AND THIS IS A FINDING, NOT A COUNT. ***"
   },
+  "ORIGIN_BACKFILL_RECONCILIATION": {
+   "date": "2026-08-08",
+   "what_moved": "Ledger.transaction 80 -> 81. ONE new site, in the new module src/fanops/origin_backfill.py (MOL-756). subprocess (39), network (15), mkdtemp (2), rmtree (6) and os_environ (2) did not move.",
+   "method": "derived/side_effects.json regenerated on the branch and diffed against origin/main's copy; the single delta was read in source and classified below.",
+   "verdict": "Legitimate. No new authorization boundary and no new deletion power: the mutation writes ONE enum field (Moment.origin) on rows it selected, deletes nothing, and is reachable only by an explicit operator act — the Home 'Provenance' panel's plan-then-confirm, or the headless twin `fanops origin-backfill --apply`. The daemon never reaches it. Read-only by default. `Ledger.snapshot` is taken BEFORE the transaction opens, so the whole write is one restore away, and the ordering is pinned by a test that restores the returned snapshot and asserts the labels are gone. Idempotent: an already-labelled row is counted, not rewritten. It refuses rather than adapts — the selection is licensed only while the day-selected lineage is strictly 1:1:1 with no cross-window post on a selected clip, all re-measured UNDER the lock, and a plan fingerprint the confirm must carry back means a ledger that moved between plan and confirm refuses instead of writing something the operator never saw. An AUTHORED origin (operator/machine) is never overwritten by the inference.",
+   "new_ledger_transaction_sites": [
+    {
+     "site": "origin_backfill.backfill_origin",
+     "what": "labels the moments behind the posts born on the operator-named day(s) `MomentOrigin.machine_inferred` — the one-shot reconstruction of provenance for rows minted before Moment.origin existed",
+     "why_legitimate": "Short, no network, no LLM, no subprocess inside the lock. Bounded to the id-set the survey resolved and re-resolved under the lock; every STOP invariant is re-checked inside the transaction and a failure exits the block having written nothing. Guarded on both sides: `Ledger.snapshot(cfg)` immediately BEFORE gives the rollback, `write_audit` immediately AFTER gives the record — including on a refusal, so a refused attempt is as traceable as an applied one. Anchored by symbol, not line (STD-DOC-01)."
+    }
+   ]
+  },
   "RETIRED_LINEAGE_RECONCILIATION": {
    "date": "2026-08-04",
    "what_moved": "Ledger.transaction 79 -> 80. ONE new site, in the new module src/fanops/stranded_posts.py. subprocess (39), network (15), mkdtemp (2), rmtree (6) and os_environ (2) did not move.",
@@ -38,8 +51,8 @@
   },
   "MACHINE_REOPEN_ADMISSION_RECONCILIATION": {
    "date": "2026-08-08",
-   "what_moved": "Ledger.transaction 80 -> 81. ONE new site: `studio.actions_run.release_reopens`. subprocess (39), network (15), mkdtemp (2), rmtree (6) and os_environ (2) did not move.",
-   "method": "derived/side_effects.json regenerated against origin/main's copy at acf1129f; the single delta was read in source and classified below.",
+   "what_moved": "Ledger.transaction 81 -> 82. ONE new site: `studio.actions_run.release_reopens`. subprocess (39), network (15), mkdtemp (2), rmtree (6) and os_environ (2) did not move. (Written as 80 -> 81 against acf1129f, then restated when origin/main moved to 11bd39d9 mid-unit and MOL-756's origin_backfill site took 81 first — the count in prose rots, so it is stated against the base this PR actually merges into.)",
+   "method": "derived/side_effects.json regenerated against origin/main's copy at 11bd39d9; the single delta was read in source and classified below.",
    "verdict": "Legitimate, and it REMOVES authorization power rather than adding it. The unit's whole point is that `adjust.amplify` re-opened a source by calling `request_moments` directly, walking past FANOPS_QUEUE_GATE — the only admission gate the system has. The guard now parks a machine-origin re-open on `Source.meta[\"pending_reopen\"]` and writes nothing; this transaction is the OPERATOR's release of that park, reached only from a Studio POST (`/run/release-reopens`) and carrying the same live-backend confirm checkbox as its `release_batch` / `release_all_held` siblings. No network and no LLM inside the lock: `request_moments` writes an agent REQUEST file and flips the source state; the model round-trip happens on a later pass. Idempotent — a source with nothing parked is skipped, so a double-click releases 0 and re-parks nothing.",
    "new_ledger_transaction_sites": [
     {"site": "studio.actions_run.release_reopens", "what": "pops each named source's `meta[\"pending_reopen\"]` and replays the parked moment request through `request_moments(..., operator_release=True)`", "why_legitimate": "Bounded to the explicit `source_ids` the operator submitted; touches one dict key per source plus the state flip `request_moments` already owns. The parked ORIGIN is replayed verbatim rather than relabelled `operator` — the release opens the guard with a key, not by destroying the provenance the park exists to record. Every failure degrades to `ActionResult(ok=False, ...)` with a `release_reopens_failed` breadcrumb, the shape `release_all_held` already uses; an uncaught raise rolls the transaction back to the prior save."}
