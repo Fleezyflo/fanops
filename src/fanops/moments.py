@@ -5,6 +5,7 @@ moments' lineage), so amplify actually changes the set instead of silently no-op
 v1 bug). No tiers, no quotas — the agent returns as many valid picks as are worth posting."""
 from __future__ import annotations
 import math
+from datetime import datetime, timezone
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import (Moment, MomentRequest, MomentDecision, MomentPick, MomentState, SourceState,
@@ -16,6 +17,7 @@ from fanops.keyframes import extract_keyframes
 from fanops.bands import band_for
 from fanops.clip import fit_window
 from fanops.log import get_logger
+from fanops.timeutil import iso_z
 from fanops.control import load_guidance
 from fanops.moment_hook_learning import proven_hook_styles
 from fanops.personas import hook_author_slot
@@ -299,10 +301,31 @@ def _persona_peaks(peaks: list[dict], personas: list[dict]) -> list[dict]:
         pe["signal_peaks"] = filter_peaks_by_intensity(peaks, pe.get("intensity") or None)
     return personas
 
-def request_moments(led: Ledger, cfg: Config, source_id: str, accounts=None, *, guidance=None) -> Ledger:
+def request_moments(led: Ledger, cfg: Config, source_id: str, accounts=None, *, guidance=None,
+                    origin: str = "operator", operator_release: bool = False) -> Ledger:
     """M1b PASS 1 — request the WINDOWS. Per-account isolation: casting ON fans one gate per targeted
-    active account (`{source_id}.{handle}`); casting OFF keeps the legacy bare source gate."""
+    active account (`{source_id}.{handle}`); casting OFF keeps the legacy bare source gate.
+
+    `origin` names WHO asked. `operator_release=True` is the one key that opens the admission guard
+    below WITHOUT relabelling the request as operator work — the release path must keep the machine
+    provenance it is releasing."""
     src = led.sources[source_id]
+    # T2.3 ADMISSION. FANOPS_QUEUE_GATE holds NEW footage at SourceState.pending until an operator
+    # releases it — but a machine RE-OPEN of an already-catalogued source (adjust.amplify) calls this
+    # function directly, so it never meets that gate and the tick's converge loop carries it to
+    # completion in one pass. Park it on the source instead of serving it: no _source_frames read, no
+    # write_request, no set_source_state — nothing is rendered until an operator releases it via
+    # studio.actions_run.release_reopens, which re-enters here with operator_release=True (without
+    # that key the release would re-enter this same guard and re-park itself forever). Last write
+    # wins: at most one parked re-open per source, mirroring write_request's stale-request policy.
+    # BYTE-IDENTICAL on the two paths this ticket does not touch: the operator's own path
+    # (origin == "operator") short-circuits on the first term without even reading cfg, and a gate-OFF
+    # deployment (FANOPS_QUEUE_GATE=0) fails the second — both fall through to exactly the code below.
+    if origin != "operator" and cfg.queue_gate and not operator_release:
+        src.meta["pending_reopen"] = {"origin": origin, "guidance": guidance or "",
+                                      "requested_at": iso_z(datetime.now(timezone.utc))}
+        get_logger(cfg)("source", source_id, "reopen_parked", origin=origin)
+        return led
     frames = _source_frames(cfg, src)
     peaks = src.signal_peaks or []
     g = load_guidance(cfg) if guidance is None else guidance

@@ -131,6 +131,13 @@ def register_run_routes(app, cfg):
     def do_release_all():
         return _run_panel(actions.release_all_held(cfg, confirmed=bool(request.form.get("confirm"))))
 
+    @app.post("/run/release-reopens")
+    def do_release_reopens():
+        # T2.3: admit a machine-parked moment re-open. Same confirm checkbox as the queue releases —
+        # releasing starts clip production either way.
+        return _run_panel(actions.release_reopens(cfg, source_ids=request.form.getlist("source_ids"),
+                                                  confirmed=bool(request.form.get("confirm"))))
+
     @app.get("/library")
     def library():
         # M1 asset memory: every Source the system remembers, split native vs third-party. U13: ?view=live

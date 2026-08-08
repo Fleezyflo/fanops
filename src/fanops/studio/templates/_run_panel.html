@@ -201,6 +201,38 @@
   </section>
   {% endif %}
 
+  {# T2.3 — machine re-opens the admission gate parked. Absent => this whole block renders nothing. #}
+  {% if status.pending_reopens %}
+  <section class="stage-card" aria-label="Parked re-opens">
+    <header class="stage-card-head">
+      {# A glyph, not a step number: a parked re-open is an INTERRUPT in the add -> queue -> make
+         chain, not a stage of it, and this card can render beside the 02 Queue card. Same choice
+         the errored (⚠) and pending (⏳) cards above already make. #}
+      <span class="stage-card-num">↻</span>
+      <h3>Parked re-opens — {{ status.pending_reopens|length }}</h3>
+      <span class="stage-card-hint">The system asked to re-open these sources for more moments. Release starts clip production.</span>
+    </header>
+    <ul class="queue-lines">
+      {% for row in status.pending_reopens %}
+      <li class="queue-line">
+        <div class="queue-line-meta">
+          <strong>{{ row.id }}</strong>
+          <span class="muted">· {{ row.origin }}{% if row.requested_at %} · {{ row.requested_at }}{% endif %}</span>
+        </div>
+        <form hx-post="{{ url_for('do_release_reopens') }}" hx-target="#run-panel" hx-swap="outerHTML"
+              hx-disabled-elt="find button[type=submit]" hx-indicator="this" class="stage-form-inline stage-busy">
+          <input type="hidden" name="source_ids" value="{{ row.id }}">
+          {% if status.backend != 'dryrun' %}
+            <label class="confirm danger">⚠ <input type="checkbox" name="confirm" value="1"> confirm</label>
+          {% endif %}
+          <button type="submit" data-busy-label="Releasing…">Release</button>
+        </form>
+      </li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% endif %}
+
   {# ── ③ MAKE ─────────────────────────────────────────────────────────────────────────────────────── #}
   <section class="stage-card stage-card-primary">
     <header class="stage-card-head">
