@@ -261,8 +261,8 @@ def test_occupancy_at_capacity_pushes_the_whole_batch_to_the_next_day(tmp_path, 
     from fanops.studio.views_common import suggest_times_for_batch
     held = _bare_posts("a", 10)                                  # already queued, all on FIXED_DT's day
     for k, p in enumerate(held):
-        p = p.model_copy(update={"state": PostState.queued})
-        p.scheduled_time = iso_z(FIXED_DT + timedelta(minutes=31 * (k + 1)))
+        held[k] = p.model_copy(update={"state": PostState.queued,
+                                       "scheduled_time": iso_z(FIXED_DT + timedelta(minutes=31 * (k + 1)))})
     incoming = [Post(id=f"a_new_{k}", parent_id="clip_1", account="a", account_id="ia",
                      platform=Platform.instagram, caption="c", state=PostState.awaiting_approval,
                      media_urls=["file:///clip_1_9x16.mp4"], public_url="dryrun://sweep") for k in range(3)]

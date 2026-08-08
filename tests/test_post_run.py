@@ -781,10 +781,10 @@ def test_publish_due_old_row_without_stamps_falls_back_to_scheduled_time(tmp_pat
     today_slot = iso_z(parse_iso(_QUOTA_FROZEN_NOW).replace(hour=10))
     for i in range(_DAILY_ACCOUNT_CAP):
         _queued(led, cfg, pid=f"old{i}", cid=f"cold{i}", when=today_slot)
-        p = led.posts[f"old{i}"]
-        p = p.model_copy(update={"state": PostState.published})
-        p.public_url = _LIVE_PERMALINK
-        p.published_at = None
+        p = led.posts[f"old{i}"].model_copy(update={"state": PostState.published,
+                                                      "public_url": _LIVE_PERMALINK,
+                                                      "published_at": None})
+        led.posts[f"old{i}"] = p
         p.submission_started_at = None
     for i in range(2):
         _queued(led, cfg, pid=f"new{i}", cid=f"cnew{i}", when="2020-01-01T00:00:00Z")
