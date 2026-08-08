@@ -62,7 +62,6 @@ def _prom_gauge(name: str, value: int | float, labels: dict | None = None) -> st
 def render_prometheus_metrics(cfg: Config) -> str:
     """Prometheus text exposition from ledger state + HealthReport. Fail-open: never raises."""
     import logging
-    from collections import Counter
     from fanops.ledger import Ledger
     from fanops.models import PostState
     from fanops.studio.views_review import awaiting_moment_count
@@ -72,9 +71,9 @@ def render_prometheus_metrics(cfg: Config) -> str:
     led = None
     try:
         led = Ledger.load(cfg)
-        st = Counter(p.state.value for p in led.posts.values())
+        st = led.state_histogram()
         for state in PostState:
-            lines.append(_prom_gauge("fanops_posts", st.get(state.value, 0), {"state": state.value}))
+            lines.append(_prom_gauge("fanops_posts", st[state], {"state": state.value}))
         # T2.5: the DERIVED companion to the raw per-state census above. `fanops_posts{state="awaiting_approval"}`
         # is a state census; this is the operator's queue (`Ledger.review_posts` = awaiting_approval AND a live
         # lineage), and the two differ by posts stranded under a retired moment. Sized in POSTS to be comparable
