@@ -178,6 +178,9 @@ from "passed silently" would rebuild the blind spot it exists to close.
   work; operator verbs such as `fanops advance` stay unblocked.
 - **Weak-hook gate:** `hookcheck.is_weak_hook` — rejects empty / feed-wide-duplicate / template-cluster
   hooks at the crosspost mint (`src/fanops/moments.py` call site).
+- **Cascade-delete peers (MOL-809):** `Ledger.retire_source` (whole-source empty-keep-set; CLI gates
+  MOL-842) and `fanops purge` / `ledger_wipe.execute_purge` (day+origin scoped; MOL-758) are both
+  sanctioned — neither delegates to the other (transaction ownership + granularity).
 - **Doctor:** `src/fanops/doctor.py` — fail-closed operator setup checks (`fanops doctor`/`status`).
 - The live `FANOPS_*` toggles (`src/fanops/settings.py`) — reference: `docs/CONFIG.md`, `docs/FLAGS.md`.
 
