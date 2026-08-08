@@ -635,7 +635,7 @@
     {
       "decorator": "app.post",
       "handler": "do_golive_account_backend",
-      "line": 117,
+      "line": 122,
       "methods": [
         "POST"
       ],
@@ -646,7 +646,7 @@
     {
       "decorator": "app.post",
       "handler": "do_golive_account_demote",
-      "line": 140,
+      "line": 145,
       "methods": [
         "POST"
       ],
@@ -657,7 +657,7 @@
     {
       "decorator": "app.post",
       "handler": "do_golive_account_meta_creds",
-      "line": 108,
+      "line": 113,
       "methods": [
         "POST"
       ],
@@ -668,7 +668,7 @@
     {
       "decorator": "app.post",
       "handler": "do_golive_account_persona",
-      "line": 125,
+      "line": 130,
       "methods": [
         "POST"
       ],
@@ -679,7 +679,7 @@
     {
       "decorator": "app.post",
       "handler": "do_golive_account_promote",
-      "line": 130,
+      "line": 135,
       "methods": [
         "POST"
       ],
@@ -690,7 +690,7 @@
     {
       "decorator": "app.post",
       "handler": "do_golive_account_remove",
-      "line": 135,
+      "line": 140,
       "methods": [
         "POST"
       ],
@@ -701,7 +701,7 @@
     {
       "decorator": "app.get",
       "handler": "golive_accounts_page",
-      "line": 184,
+      "line": 189,
       "methods": [
         "GET"
       ],
@@ -712,7 +712,7 @@
     {
       "decorator": "app.post",
       "handler": "do_golive_adopt",
-      "line": 156,
+      "line": 161,
       "methods": [
         "POST"
       ],
@@ -767,7 +767,7 @@
     {
       "decorator": "app.get",
       "handler": "golive_connect",
-      "line": 179,
+      "line": 184,
       "methods": [
         "GET"
       ],
@@ -800,7 +800,7 @@
     {
       "decorator": "app.post",
       "handler": "do_golive_discover",
-      "line": 149,
+      "line": 154,
       "methods": [
         "POST"
       ],
@@ -811,7 +811,7 @@
     {
       "decorator": "app.post",
       "handler": "do_golive_dryrun",
-      "line": 223,
+      "line": 228,
       "methods": [
         "POST"
       ],
@@ -822,7 +822,7 @@
     {
       "decorator": "app.get",
       "handler": "do_golive_health",
-      "line": 167,
+      "line": 172,
       "methods": [
         "GET"
       ],
@@ -866,7 +866,7 @@
     {
       "decorator": "app.get",
       "handler": "golive_live_page",
-      "line": 189,
+      "line": 194,
       "methods": [
         "GET"
       ],
@@ -877,7 +877,7 @@
     {
       "decorator": "app.post",
       "handler": "do_golive_live",
-      "line": 216,
+      "line": 221,
       "methods": [
         "POST"
       ],
@@ -899,7 +899,7 @@
     {
       "decorator": "app.post",
       "handler": "do_golive_map",
-      "line": 194,
+      "line": 199,
       "methods": [
         "POST"
       ],
@@ -909,8 +909,19 @@
     },
     {
       "decorator": "app.post",
+      "handler": "do_golive_pause",
+      "line": 93,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_golive",
+      "mutating": true,
+      "path": "/golive/pause"
+    },
+    {
+      "decorator": "app.post",
       "handler": "do_golive_refresh",
-      "line": 145,
+      "line": 150,
       "methods": [
         "POST"
       ],
@@ -932,7 +943,7 @@
     {
       "decorator": "app.post",
       "handler": "do_golive_transfer",
-      "line": 98,
+      "line": 103,
       "methods": [
         "POST"
       ],
@@ -943,7 +954,7 @@
     {
       "decorator": "app.post",
       "handler": "do_golive_ucb",
-      "line": 93,
+      "line": 98,
       "methods": [
         "POST"
       ],
@@ -954,7 +965,7 @@
     {
       "decorator": "app.post",
       "handler": "do_golive_validate",
-      "line": 227,
+      "line": 232,
       "methods": [
         "POST"
       ],
@@ -965,7 +976,7 @@
     {
       "decorator": "app.post",
       "handler": "do_golive_zernio_config",
-      "line": 103,
+      "line": 108,
       "methods": [
         "POST"
       ],
@@ -2135,8 +2146,8 @@
   "totals": {
     "cli_add_parser_sites": 76,
     "cli_verbs_unique": 71,
-    "route_endpoints": 151,
-    "route_endpoints_mutating": 109,
-    "route_unique_paths": 150
+    "route_endpoints": 152,
+    "route_endpoints_mutating": 110,
+    "route_unique_paths": 151
   }
 }
