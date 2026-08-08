@@ -47,9 +47,9 @@ CONTROLS: list[Control] = [
     Control("NC-02", "missing owner (a module in no subsystem)", "ARCH-001", "architecture"),
     Control("NC-03", "ghost module (declared in the KB, absent on disk)", "ARCH-002", "architecture"),
     Control("NC-04", "undocumented environment variable", "ARCH-003", "architecture"),
-    Control("NC-05", "invalid invariant (a declared number that contradicts the code)", "ARCH-009", "architecture"),
+    Control("NC-05", "invalid invariant (a derived number restated in kb/, contradicting the code)", "ARCH-009", "architecture"),
     Control("NC-06", "missing fingerprint input (a lazy import HOISTED to module level)", "ARCH-007", "architecture"),
-    Control("NC-07", "unregistered side effect (a new subprocess call site)", "ARCH-008", "architecture"),
+    Control("NC-07", "a side-effect census restated in kb/side_effects.json", "ARCH-008", "architecture"),
     Control("NC-08", "generated-file edit (derived/ hand-modified)", "ARCH-006", "architecture"),
     Control("NC-09", "unauthorized slice expansion (a slice owns a file that does not exist)", "IMPL-001", "implementation"),
     Control("NC-10", "illegal slice dependency / broken implementation DAG", "IMPL-003", "implementation"),
@@ -201,10 +201,18 @@ def _inject(cid: str, root: Path, p: dict) -> None:
         f = src / (s.split("fanops.", 1)[1].replace(".", "/") + ".py")
         f.write_text(f"import {t}  # INJECTED HOIST\n" + f.read_text())
 
-    elif cid == "NC-07":  # a new, unregistered subprocess call site
-        (src / "text.py").write_text((src / "text.py").read_text()
-                                     + '\ndef _nc():\n    import subprocess\n'
-                                       '    return subprocess.run(["true"])\n')
+    elif cid == "NC-07":  # a side-effect count restated in the DECLARED artifact
+        # *** THIS CONTROL USED TO INJECT A NEW SUBPROCESS CALL SITE, AND IT NO LONGER CAN. ***
+        # ARCH-008 compared derived/side_effects.json against a hand-typed census in
+        # kb/side_effects.json, so a new effect was caught only as a DISAGREEMENT with that copy.
+        # The copy is now forbidden rather than maintained, which means no rule fails the build on a
+        # new side effect — `impact` reports the delta as `changed_side_effects` and the kb's
+        # reconciliation verdicts remain the review record, but neither BLOCKS. Injecting source
+        # here would test nothing and report NOT DETECTED, which is the honest answer for the old
+        # defect. This control now proves what ARCH-008 actually asserts: the census may not be
+        # restated. Mirrors NC-05's shape on the ARCH-009 half.
+        patch(kb / "side_effects.json",
+              lambda d: d["counts_AST_verified"].update({"subprocess_call_sites": 99999}))
 
     elif cid == "NC-08":  # hand-edit a GENERATED artifact
         generate.generate(src=src, out=p["DERIVED"])
