@@ -376,6 +376,7 @@ _RUNSUMMARY_NON_STATE_KEYS = frozenset({
     "sources", "moments", "clips", "posts",
     "published_in_run", "last_published_age_hours",
     "holds", "hook_burn_failed", "frames_unread", "errors", "awaiting",
+    "awaiting_actionable",      # T2.5: the DERIVED worklist beside the raw awaiting_approval census, not a state
 })
 
 
@@ -389,6 +390,7 @@ class RunSummary(TypedDict):
     clips: int
     posts: int
     awaiting_approval: int
+    awaiting_actionable: int
     queued: int
     submitting: int
     submitted: int
@@ -425,6 +427,13 @@ def _build_summary(cfg: Config, before: set) -> RunSummary:
         "clips": len(led.clips), "posts": len(led.posts),
         # MOL-443: per-PostState tallies — all 11 members unless listed in _DIGEST_EXCLUDED_STATES.
         "awaiting_approval": len(led.posts_in_state(PostState.awaiting_approval)),
+        # T2.5: the DERIVED companion to the raw tally above, labelled so a diagnostic surface can show BOTH.
+        # `awaiting_approval` answers "how many rows sit in this state"; this answers "how much of it is the
+        # operator's queue" (`Ledger.review_posts` = awaiting_approval AND a live lineage). They differ by posts
+        # stranded under a retired moment — the live 761-vs-493 split. Sized in POSTS, matching the census it
+        # sits beside; a HELD clip's post counts here (releasing the hold is the operator's call), which is why
+        # the clip-sized view (`attention_counts()["moments"]`) is a different number and is not this one.
+        "awaiting_actionable": led.attention_counts()["posts"],
         "queued": len(led.posts_in_state(PostState.queued)),
         "submitting": len(led.posts_in_state(PostState.submitting)),
         "submitted": len(led.posts_in_state(PostState.submitted)),

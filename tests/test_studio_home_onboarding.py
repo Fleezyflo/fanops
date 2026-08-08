@@ -9,7 +9,17 @@ import pytest
 pytest.importorskip("flask")
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.models import Source, Post, Platform, PostState, Clip, ClipState
+from fanops.models import Source, Moment, MomentState, Post, Platform, PostState, Clip, ClipState
+
+
+def _live_clip(led, *, sid="s_lin", mid="m", cid="c"):
+    """A COMPLETE source -> moment -> clip. The tile badge is a WORKLIST number and (T2.5) asks
+    `Ledger.can_promote`, which fails CLOSED on a missing ancestor — a clip hung off a moment row that was
+    never written reads as dead lineage and badges 0. This fixture always meant 'a live awaiting post'."""
+    led.add_source(Source(id=sid, source_path="/v.mp4", language="en"))
+    led.add_moment(Moment(id=mid, parent_id=sid, content_token=mid, start=0, end=7, reason="r",
+                          state=MomentState.clipped))
+    led.add_clip(Clip(id=cid, parent_id=mid, path="/c.mp4", state=ClipState.queued))
 
 
 def _accounts(cfg, rows):
@@ -154,7 +164,7 @@ def test_clear_account_tile_has_no_badge(tmp_path):
 def test_review_awaiting_shows_tile_badge(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg, [_active()])
     with Ledger.transaction(cfg) as led:
-        led.add_clip(Clip(id="c", parent_id="m", path="/c.mp4", state=ClipState.queued))
+        _live_clip(led)
         led.add_post(Post(id="p1", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
                           caption="x", state=PostState.awaiting_approval, public_url="dryrun://p1"))
     html = _client(cfg).get("/").data.decode()

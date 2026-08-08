@@ -125,11 +125,11 @@
     "fanops.pipeline": [
       {
         "call": "Ledger.transaction",
-        "line": 476
+        "line": 485
       },
       {
         "call": "Ledger.transaction",
-        "line": 501
+        "line": 510
       }
     ],
     "fanops.post.compress": [
@@ -317,15 +317,15 @@
       },
       {
         "call": "Ledger.transaction",
-        "line": 270
+        "line": 278
       },
       {
         "call": "Ledger.transaction",
-        "line": 279
+        "line": 287
       },
       {
         "call": "Ledger.transaction",
-        "line": 289
+        "line": 297
       }
     ],
     "fanops.studio.actions_casting": [
@@ -513,7 +513,7 @@
     "fanops.health_model": [
       {
         "call": "requests.get",
-        "line": 160
+        "line": 167
       }
     ],
     "fanops.post.metrics": [
@@ -709,7 +709,7 @@
     "fanops.health_model": [
       {
         "call": "subprocess.run",
-        "line": 121
+        "line": 128
       }
     ],
     "fanops.ingest": [
