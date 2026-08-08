@@ -194,3 +194,120 @@ def test_status_line_counts_parked_reopens(tmp_path, monkeypatch, capsys):
         request_moments(led, cfg, sid, guidance="g", origin="amplify")
     assert main(["status"]) == 0
     assert "reopens_parked=1" in capsys.readouterr().out
+
+# ---- MOL-840: a park must not spend amplify budget --------------------------------------------
+
+def _amplify_count_trace(fn, *a, **k):
+    """MOL-757-style executed-line probe: every `amplify` line that names amplify_count."""
+    import linecache
+    import sys
+    hit = []
+
+    def tracer(frame, event, arg):
+        if event == "line" and frame.f_code.co_name == "amplify":
+            line = linecache.getline(frame.f_code.co_filename, frame.f_lineno)
+            if "amplify_count" in line:
+                hit.append(line.strip())
+        return tracer
+
+    sys.settrace(tracer)
+    try:
+        out = fn(*a, **k)
+    finally:
+        sys.settrace(None)
+    return out, hit
+
+
+def _load_amplify_at(sha: str, tmp_path):
+    """Load amplify() from a historical tree without mutating the live fanops.adjust module."""
+    import importlib.util
+    import subprocess
+    src = subprocess.check_output(["git", "show", f"{sha}:src/fanops/adjust.py"], text=True)
+    path = tmp_path / f"adjust_{sha[:8]}.py"
+    path.write_text(src)
+    spec = importlib.util.spec_from_file_location(f"fanops_adjust_{sha[:8]}", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.amplify
+
+
+def test_parked_ticks_leave_amplify_count_unchanged(tmp_path, monkeypatch):
+    """Gate ON + machine origin: N consecutive parked ticks leave amplify_count untouched, and
+    amplify still fires on tick N+1 (not silenced by a spent budget)."""
+    from fanops.adjust import MAX_AMPLIFY_PER_SOURCE
+    monkeypatch.setenv("FANOPS_QUEUE_GATE", "1")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    sid = _analyzed_lineage(led)
+    start = int(led.sources[sid].meta.get("amplify_count", 0))
+    assert start == 0
+    n = MAX_AMPLIFY_PER_SOURCE  # the old bug exhausted the budget in exactly this many parks
+    for _ in range(n):
+        led = amplify(led, cfg, ["p1"])
+        assert int(led.sources[sid].meta.get("amplify_count", 0)) == start
+        assert led.sources[sid].meta.get("pending_reopen", {}).get("origin") == "amplify"
+    # tick N+1 still fires — parks again, budget still untouched
+    led = amplify(led, cfg, ["p1"])
+    assert int(led.sources[sid].meta.get("amplify_count", 0)) == start
+    assert led.sources[sid].meta["pending_reopen"]["origin"] == "amplify"
+    assert gate_keys_for(cfg, "moments", sid) == []
+
+
+def test_gate_off_amplify_count_matches_fae546e5_executed_lines(tmp_path, monkeypatch):
+    """Gate OFF (served path): amplify_count increments exactly as at fae546e5 — pinned by the same
+    executed-line comparison MOL-757 used, not a weak end-state-only assertion."""
+    monkeypatch.setenv("FANOPS_QUEUE_GATE", "0")
+    old_amplify = _load_amplify_at("fae546e5", tmp_path)
+
+    def _run(amplify_fn, root):
+        cfg = Config(root=root); led = Ledger.load(cfg)
+        _analyzed_lineage(led)
+        return _amplify_count_trace(amplify_fn, led, cfg, ["p1"])
+
+    live_root = tmp_path / "live"; live_root.mkdir()
+    old_root = tmp_path / "old"; old_root.mkdir()
+    led_live, lines_live = _run(amplify, live_root)
+    led_old, lines_old = _run(old_amplify, old_root)
+    assert int(led_live.sources["src_1"].meta["amplify_count"]) == 1
+    assert int(led_old.sources["src_1"].meta["amplify_count"]) == 1
+    # Both must EXECUTE the read + the increment (fae546e5 serve path). A future edit that drops the
+    # increment silently would keep count==1 only if something else wrote it — the line probe catches that.
+    # Exact executed-line equality for amplify_count touches — the MOL-757 pin style.
+    assert lines_live == lines_old
+    assert any("used + 1" in L for L in lines_live)
+    assert any("used =" in L for L in lines_live)
+    # Served on both sides: request written, nothing parked.
+    assert request_path(Config(root=live_root), "moments", "src_1").exists()
+    assert request_path(Config(root=old_root), "moments", "src_1").exists()
+    assert "pending_reopen" not in led_live.sources["src_1"].meta
+    assert "pending_reopen" not in led_old.sources["src_1"].meta
+
+
+def test_release_then_amplify_charges_budget_once(tmp_path, monkeypatch, mocker):
+    """Park (no charge) → release (mints the request, still no charge) → serve via amplify → charge 1."""
+    mocker.patch("fanops.studio.actions_run.kick_prepare")
+    monkeypatch.setenv("FANOPS_QUEUE_GATE", "1")
+    cfg = Config(root=tmp_path)
+    with Ledger.transaction(cfg) as led:
+        sid = _analyzed_lineage(led)
+    with Ledger.transaction(cfg) as led:
+        amplify(led, cfg, ["p1"])
+    assert int(Ledger.load(cfg).sources[sid].meta.get("amplify_count", 0)) == 0
+    assert Ledger.load(cfg).sources[sid].meta.get("pending_reopen")
+
+    assert actions.release_reopens(cfg, source_ids=[sid]).ok
+    led = Ledger.load(cfg)
+    assert "pending_reopen" not in led.sources[sid].meta
+    assert int(led.sources[sid].meta.get("amplify_count", 0)) == 0
+    assert request_path(cfg, "moments", sid).exists()
+
+    # Gate OFF so the next amplify is SERVED (the cost belongs to minted work, not the park).
+    monkeypatch.setenv("FANOPS_QUEUE_GATE", "0")
+    # Clear the just-released request so amplify writes a fresh one (serve path).
+    request_path(cfg, "moments", sid).unlink(missing_ok=True)
+    with Ledger.transaction(cfg) as led:
+        led.sources[sid].state = SourceState.moments_decided
+        amplify(led, cfg, ["p1"])
+    led = Ledger.load(cfg)
+    assert int(led.sources[sid].meta.get("amplify_count", 0)) == 1
+    assert request_path(cfg, "moments", sid).exists()
+    assert "pending_reopen" not in led.sources[sid].meta

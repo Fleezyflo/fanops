@@ -107,10 +107,15 @@ def amplify(led: Ledger, cfg: Config, winner_post_ids: list[str], *,
             guidance += f" {extra_guidance}"
         accts = Accounts.load(cfg)
         # T2.3: label the re-open as MACHINE work. This is the back door FANOPS_QUEUE_GATE never saw —
-        # request_moments now parks a non-operator origin under the gate instead of serving it. The
-        # budget below is still spent: a parked re-open is a re-open that was asked for, and releasing
-        # it must not cost a second slot.
+        # request_moments parks a non-operator origin under the gate instead of serving it.
+        # MOL-840: spend budget only when the re-open was actually served. A park mints nothing
+        # (pending_reopen is a new/replaced dict); charging parks silenced amplify after MAX ticks.
+        before_park = src.meta.get("pending_reopen")
         led = request_moments(led, cfg, src.id, accounts=accts, guidance=guidance, origin="amplify")
+        src = led.sources[src.id]
+        after_park = src.meta.get("pending_reopen")
+        if after_park is not None and after_park is not before_park:
+            continue
         src.meta["amplify_count"] = used + 1
     return led
 
