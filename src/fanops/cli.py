@@ -584,6 +584,52 @@ def cmd_wipe(cfg: Config, args) -> int:
     except (ledger_wipe.WipeNotConfirmed, ledger_wipe.SnapshotRequired) as e:
         print(str(e), file=sys.stderr); return 2
 
+def cmd_purge(cfg: Config, args) -> int:
+    # MOL-758: scoped, audited, irreversible deletion. Plan-only by default (writes
+    # 00_control/purge-plan-<utc>.json); sentence-flag executes. Dual-facet agreement (days + origins)
+    # lives in the verb. Summary via get_logger — no new print() ( _CLI_PRINT_COUNT stays put).
+    from datetime import datetime, timezone
+    from fanops import ledger_wipe
+    from fanops.audit import write_audit
+    from fanops.models import MomentOrigin
+    log = get_logger(cfg)
+    days = frozenset(args.day or [])
+    try:
+        origins = frozenset(MomentOrigin(o) for o in (args.origin or []))
+    except ValueError as e:
+        log("purge", "-", "bad_origin", err=str(e)[:160]); return 2
+    scope = ledger_wipe.PurgeScope(days=days, origins=origins)
+    force_live = frozenset(args.force_live or [])
+    execute = bool(args.i_understand_this_permanently_deletes_rows_and_media)
+    led = Ledger.load(cfg)
+    try:
+        preview = ledger_wipe.purge_preview(led, scope, force_live=force_live)
+    except ledger_wipe.PurgeScopeIncomplete as e:
+        log("purge", "-", "incomplete_scope", err=str(e)[:160]); return 2
+    except ledger_wipe.PurgeFacetDisagreement as e:
+        log("purge", "-", "facet_disagreement", err=str(e)[:160]); return 2
+    if not execute:
+        cfg.control.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        plan_path = cfg.control / f"purge-plan-{ts}.json"
+        plan_path.write_text(json.dumps(preview, indent=2) + "\n")
+        log("purge", "-", "plan", path=str(plan_path), **preview["counts"])
+        return 0
+    try:
+        snap = Ledger.snapshot(cfg)
+        result = ledger_wipe.execute_purge(
+            cfg, scope, confirmed=True, snapshot_path=snap, force_live=force_live, token=preview["token"])
+    except (ledger_wipe.WipeNotConfirmed, ledger_wipe.SnapshotRequired, ledger_wipe.StalePurgePreview,
+            ledger_wipe.PurgeScopeIncomplete, ledger_wipe.PurgeFacetDisagreement) as e:
+        log("purge", "-", "refused", err=str(e)[:160]); return 2
+    write_audit(cfg, "purge", result.get("post_ids", []), reason="scoped_purge",
+                scope=preview.get("scope"), snapshot=result.get("snapshot"),
+                manifest=result.get("manifest"),
+                refused_live=result.get("refused_live_post_ids", []),
+                media_deleted=result.get("media_deleted", 0))
+    log("purge", "-", "done", **result["removed"])
+    return 0
+
 def cmd_restore(cfg: Config, args) -> int:
     # Wave 3 / S01c: the operator half of the wipe's reversibility promise. `fanops wipe` prints its
     # pre-wipe snapshot path (the "snapshot" field of its result JSON); `fanops restore <that path>`
@@ -939,6 +985,16 @@ def main(argv: list[str] | None = None) -> int:
                         help="total wipe mode — remove shipped history too (requires both total confirm flags)")
     p_wipe.add_argument("--i-understand-this-erases-shipped-history", dest="i_understand_this_erases_shipped_history", action="store_true",
                         help="confirm total wipe — must be paired with --include-shipped-history")
+    p_purge = sub.add_parser("purge", help="scoped purge: days+origins dual-facet agreement; plan-only by default; deletes rows AND clip media")
+    p_purge.add_argument("--day", action="append", default=[], metavar="YYYY-MM-DD",
+                         help="ISO day facet over Post.created_at (repeatable; required with --origin)")
+    p_purge.add_argument("--origin", action="append", default=[], metavar="ORIGIN",
+                         help="MomentOrigin member facet (repeatable; required with --day): operator|machine|machine_inferred|unknown")
+    p_purge.add_argument("--force-live", action="append", default=[], dest="force_live", metavar="POST_ID",
+                         help="enumerated live-guard override for a specific post id (repeatable; never a bare boolean)")
+    p_purge.add_argument("--i-understand-this-permanently-deletes-rows-and-media",
+                         dest="i_understand_this_permanently_deletes_rows_and_media", action="store_true",
+                         help="execute the purge (snapshot-gated; irreversible for media)")
     p_restore = sub.add_parser("restore", help="restore the ledger from a pre-wipe snapshot (the reversible half of `fanops wipe`)")
     p_restore.add_argument("snapshot_path", help="path to a ledger.snapshot.*.sqlite (the 'snapshot' path printed by `fanops wipe`)")
     p_prb = sub.add_parser("paths-rebase", help="(R1) rebase stale absolute media paths after FANOPS_ROOT move")
@@ -1471,6 +1527,7 @@ def _dispatch(cfg: Config, args) -> int:
     if args.cmd == "p4-bias": return cmd_p4_bias(cfg)
     if args.cmd == "cutover":  return cmd_cutover(cfg, args)
     if args.cmd == "wipe":     return cmd_wipe(cfg, args)
+    if args.cmd == "purge":    return cmd_purge(cfg, args)
     if args.cmd == "restore":  return cmd_restore(cfg, args)
     if args.cmd == "paths-rebase":
         from fanops.paths_rebase import cmd_paths_rebase
