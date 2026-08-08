@@ -15,7 +15,7 @@ from fanops.accounts import Accounts
 from fanops.models import (Source, Moment, Clip, Post, Batch, Render, HookSource, Platform, PostState,
                            ClipState, MomentState, Fmt)
 from fanops.studio.views import (SurfacePost, review_buckets, review_progress,
-                                 account_pivot_rows, group_review_by_account_surface, source_universe)
+                                 account_pivot_rows, source_universe)
 
 NOW = datetime(2026, 6, 6, 12, 0, tzinfo=timezone.utc)
 def _z(dt): return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -109,7 +109,7 @@ def test_review_progress_counts_buckets(tmp_path):
     assert set(prog) == {"awaiting", "approved", "held", "prepared"}            # approved key present (0 here)
 
 
-# ============================ Task 4/5 — account pivot rows + grouper ============================
+# ============================ Task 4/5 — account pivot rows ============================
 def test_account_pivot_rows_only_selected_account(tmp_path):
     cfg = Config(root=tmp_path); _seed_accounts(cfg); led = Ledger.load(cfg); _lineage(led)
     _await(led, "p_a", "clip_1", "a"); _await(led, "p_b", "clip_1", "b"); _await(led, "p_c", "clip_1", "c")
@@ -121,21 +121,6 @@ def test_account_pivot_rows_no_account_is_empty(tmp_path):
     cfg = Config(root=tmp_path); _seed_accounts(cfg); led = Ledger.load(cfg); _lineage(led)
     _await(led, "p_a", "clip_1", "a")
     assert account_pivot_rows(led, Accounts.load(cfg), cfg, now=NOW, account=None) == []   # no account -> no pivot
-
-def test_group_review_by_account_surface_groups_by_day(tmp_path):
-    # pure grouper: flat SurfacePost rows grouped by day, first-appearance order
-    rows = [SurfacePost(post_id="p1", account="a", platform="instagram", persona=None, caption="c",
-                        hashtags=[], scheduled_time=None, media_url="/m/p1", state="awaiting_approval",
-                        imminent=False, editable=True, day="2025-06-06"),
-            SurfacePost(post_id="p2", account="a", platform="instagram", persona=None, caption="c",
-                        hashtags=[], scheduled_time=None, media_url="/m/p2", state="awaiting_approval",
-                        imminent=False, editable=True, day="2025-06-06"),
-            SurfacePost(post_id="p3", account="a", platform="instagram", persona=None, caption="c",
-                        hashtags=[], scheduled_time=None, media_url="/m/p3", state="awaiting_approval",
-                        imminent=False, editable=True, day="2025-06-05")]
-    groups = group_review_by_account_surface(rows)
-    assert [d for d, _ in groups] == ["2025-06-06", "2025-06-05"]          # first-appearance day order
-    assert [r.post_id for r in groups[0][1]] == ["p1", "p2"]
 
 
 # ============================ Task 1 GOTCHA — source_universe helper ============================
