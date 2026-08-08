@@ -43,7 +43,7 @@ def test_live_published_post_reaches_analyzed(tmp_path, monkeypatch, mocker):
     class _OkPoster:
         def __init__(self, cfg): pass
         def publish(self, led_, post_id):
-            led_.posts[post_id].state = PostState.submitted
+            led_.posts[post_id] = led_.posts[post_id].model_copy(update={"state": PostState.submitted})
             led_.posts[post_id].submission_id = "sub_p1"
             led_.posts[post_id].public_url = "https://www.instagram.com/reel/AAA/"   # real permalink -> published
             return led_

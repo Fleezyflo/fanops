@@ -115,7 +115,7 @@ def test_regenerate_payload_carries_corpus_and_vet_keeps_it(tmp_path):
 
 def test_regenerate_guards_non_queued(tmp_path):
     cfg = Config(root=tmp_path); led = _seed(cfg)
-    led.posts["p_edit"].state = PostState.published; led.save()
+    led.posts["p_edit"] = led.posts["p_edit"].model_copy(update={"state": PostState.published}); led.save()
     res = regenerate_caption(cfg, "p_edit", "", model=_model(), now=NOW)
     assert res.ok is False and "queued" in (res.error or "").lower()
 

@@ -241,7 +241,7 @@ def test_publish_one_parks_post_without_url_in_needs_reconcile(tmp_path, monkeyp
         def publish(self, led, post_id):
             p = led.posts[post_id]
             p.submission_id = "dryrun_" + post_id
-            p.state = PostState.submitted
+            p = p.model_copy(update={"state": PostState.submitted})
             # NOTE: deliberately NOT setting p.public_url
             return led
 

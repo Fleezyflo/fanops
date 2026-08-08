@@ -72,7 +72,7 @@ def test_publish_post_non_queued_is_noop(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _queued(led, cfg, pid="p1", cid="c1")
     with Ledger.transaction(cfg) as led:
-        led.posts["p1"].state = PostState.published                         # already published on disk
+        led.posts["p1"] = led.posts["p1"].model_copy(update={"state": PostState.published})                         # already published on disk
         led.posts["p1"].public_url = "https://www.instagram.com/reel/AAA/"   # R1: a published row carries a permalink
     assert publish_post(cfg, "p1") is None                                  # claim sees non-queued -> no-op
     assert Ledger.load(cfg).posts["p1"].state is PostState.published
@@ -236,12 +236,12 @@ def test_variant_render_uploaded_once_across_two_publishes(tmp_path, monkeypatch
     monkeypatch.setattr("fanops.post.get_media_uploader", up)        # ensure_render_media (media.py) path
     monkeypatch.setattr("fanops.post.run.get_media_uploader", up)    # the legacy run.py direct-upload path
     class FakePoster:
-        def publish(self, led, pid): led.posts[pid].state = PostState.submitted; return led
+        def publish(self, led, pid): led.posts[pid] = led.posts[pid].model_copy(update={"state": PostState.submitted}); return led
     monkeypatch.setattr("fanops.post.run.get_poster", lambda cfg, backend=None: FakePoster())
     assert publish_post(cfg, "p1") == "published"
     assert Ledger.load(cfg).renders[rid].media_url == "img1|https://cdn/v.mp4"   # cached on the Render
     with Ledger.transaction(cfg) as lg:
-        lg.posts["p1"].state = PostState.queued; lg.posts["p1"].media_urls = [f"file://{vf}"]   # simulate a re-approval re-stamp
+        lg.posts["p1"] = lg.posts["p1"].model_copy(update={"state": PostState.queued}); lg.posts["p1"].media_urls = [f"file://{vf}"]   # simulate a re-approval re-stamp
     publish_post(cfg, "p1")
     assert calls["n"] == 1                                            # uploaded ONCE total, not per cycle
 

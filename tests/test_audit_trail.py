@@ -114,7 +114,7 @@ def test_publish_now_writes_audit_entry(tmp_path, monkeypatch, mocker):
     _seed_queued_post(cfg, "p1")
     def _fake_publish(_cfg, pid):
         led = Ledger.load(_cfg)
-        led.posts[pid].state = PostState.published
+        led.posts[pid] = led.posts[pid].model_copy(update={"state": PostState.published})
         led.posts[pid].public_url = "https://www.instagram.com/p/audit/"
         led.save()
         return "published"

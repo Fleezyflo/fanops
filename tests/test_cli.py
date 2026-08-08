@@ -221,7 +221,7 @@ def _promote(led):
     from fanops.models import PostState
     for p in led.posts.values():
         if p.state is PostState.needs_reconcile:
-            p.state = PostState.published
+            p = p.model_copy(update={"state": PostState.published})
     return led
 
 def test_run_halts_cleanly_on_advance_error(tmp_path, monkeypatch, mocker):

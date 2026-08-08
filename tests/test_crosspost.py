@@ -155,7 +155,7 @@ def test_crosspost_idempotent_across_processes(tmp_path, mocker):
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
     led = Ledger.load(cfg); _captioned(led, cfg, mocker)
     led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
-    led.clips["clip_1"].state = ClipState.captioned   # simulate a re-run finding it captioned again
+    led.clips["clip_1"] = led.clips["clip_1"].model_copy(update={"state": ClipState.captioned})   # simulate a re-run finding it captioned again
     led.save()
     # re-run crosspost in a fresh interpreter against the SAME ledger
     code = textwrap.dedent(f"""
@@ -176,11 +176,11 @@ def test_crosspost_skips_held_and_retired(tmp_path, mocker):
     cfg = Config(root=tmp_path)
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
     led = Ledger.load(cfg); _captioned(led, cfg, mocker)
-    led.clips["clip_1"].state = ClipState.held
+    led.clips["clip_1"] = led.clips["clip_1"].model_copy(update={"state": ClipState.held})
     led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
     assert [p for p in led.posts.values()] == []
     # retired moment lineage also skipped
-    led.clips["clip_1"].state = ClipState.captioned
+    led.clips["clip_1"] = led.clips["clip_1"].model_copy(update={"state": ClipState.captioned})
     led.retire_clip("clip_1")
     led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
     assert [p for p in led.posts.values()] == []
@@ -193,7 +193,7 @@ def test_stitch_draft_clip_is_structurally_unpostable(tmp_path, mocker):
     cfg = Config(root=tmp_path)
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
     led = Ledger.load(cfg); _captioned(led, cfg, mocker)
-    led.clips["clip_1"].state = ClipState.stitch_draft         # born pre-approval
+    led.clips["clip_1"] = led.clips["clip_1"].model_copy(update={"state": ClipState.stitch_draft})         # born pre-approval
     led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
     assert [p for p in led.posts.values()] == []               # ZERO posts (structurally unpostable)
     assert ClipState.stitch_draft not in _REUSABLE_CLIP_STATES  # never reused as a render target either

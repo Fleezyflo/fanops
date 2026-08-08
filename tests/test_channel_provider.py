@@ -136,7 +136,7 @@ def test_publish_due_dryrun_posts_nothing_even_with_explicit_provider(tmp_path, 
     seen = {}
     class _Fake:
         def __init__(self, backend): self.backend = backend
-        def publish(self, led, pid): seen[pid] = self.backend; led.posts[pid].state = PostState.submitted; return led
+        def publish(self, led, pid): seen[pid] = self.backend; led.posts[pid] = led.posts[pid].model_copy(update={"state": PostState.submitted}); return led
     mocker.patch("fanops.post.run.get_poster", side_effect=lambda c, backend=None: _Fake(backend))
     res = publish_due(cfg)
     assert seen == {}                                        # the poster was NEVER invoked — dryrun never enters the rail

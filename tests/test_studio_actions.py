@@ -68,7 +68,7 @@ def test_reschedule_unknown_post_rejected(tmp_path):
 
 def test_reschedule_non_queued_rejected(tmp_path):
     cfg = Config(root=tmp_path); led = _seed(cfg)
-    led.posts["p_edit"].state = PostState.published
+    led.posts["p_edit"] = led.posts["p_edit"].model_copy(update={"state": PostState.published})
     led.posts["p_edit"].public_url = "https://www.instagram.com/reel/p_edit/"   # R1: a published row carries a permalink
     led.save()
     res = reschedule_post(cfg, "p_edit", _z(NOW + timedelta(hours=8)), now=NOW)

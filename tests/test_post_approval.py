@@ -155,7 +155,7 @@ def test_publish_due_fires_approved_queued(tmp_path, monkeypatch, mocker):
     class _OkPoster:
         def __init__(self, cfg): pass
         def publish(self, led_, post_id):
-            led_.posts[post_id].state = PostState.submitted; led_.posts[post_id].submission_id = "s"
+            led_.posts[post_id] = led_.posts[post_id].model_copy(update={"state": PostState.submitted}); led_.posts[post_id].submission_id = "s"
             led_.posts[post_id].public_url = "https://www.instagram.com/reel/AAA/"   # real permalink -> promotes to published
             return led_
     mocker.patch.object(run, "get_poster", return_value=_OkPoster(cfg))

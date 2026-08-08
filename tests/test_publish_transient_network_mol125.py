@@ -100,7 +100,7 @@ def test_daemon_transient_requeue_bounded_then_stays_failed(tmp_path, monkeypatc
     cfg = Config(root=tmp_path)
     _queued(cfg)
     with Ledger.transaction(cfg) as led:
-        led.posts["p1"].state = PostState.failed
+        led.posts["p1"] = led.posts["p1"].model_copy(update={"state": PostState.failed})
         led.posts["p1"].error_reason = "publish failed: NameResolutionError zernio.com"
     import fanops.post.run as run
     max_d = run._DAEMON_TRANSIENT_MAX
@@ -109,7 +109,7 @@ def test_daemon_transient_requeue_bounded_then_stays_failed(tmp_path, monkeypatc
         assert n == 1
         with Ledger.transaction(cfg) as led:
             assert led.posts["p1"].state is PostState.queued
-            led.posts["p1"].state = PostState.failed
+            led.posts["p1"] = led.posts["p1"].model_copy(update={"state": PostState.failed})
             led.posts["p1"].error_reason = (
                 f"transient_daemon_retry={i + 1}/{max_d}|publish failed: NameResolutionError zernio.com")
     assert _requeue_transient_failed_for_daemon(cfg) == 0

@@ -54,7 +54,7 @@ def test_advance_publishes_with_network_outside_the_lock(tmp_path, monkeypatch, 
             # if the publish loop holds the ledger write lock, this acquire raises LockBusyError (timeout)
             with Ledger.load(cfg)._store.lock(timeout=3):
                 acquired[post_id] = True
-            led_.posts[post_id].state = PostState.submitted
+            led_.posts[post_id] = led_.posts[post_id].model_copy(update={"state": PostState.submitted})
             led_.posts[post_id].submission_id = f"probe_{post_id}"
             return led_
 

@@ -133,7 +133,7 @@ def test_publish_due_routes_per_account(tmp_path, monkeypatch, mocker):
         def __init__(self, backend): self.backend = backend
         def publish(self, led, pid):
             seen[pid] = self.backend
-            led.posts[pid].state = PostState.submitted
+            led.posts[pid] = led.posts[pid].model_copy(update={"state": PostState.submitted})
             return led
     def _fake_get_poster(c, backend=None):
         backend = backend or c.poster_backend
@@ -159,7 +159,7 @@ def test_publish_due_no_overrides_uses_global(tmp_path, monkeypatch, mocker):
     class _FakePoster:
         def __init__(self, backend): self.backend = backend
         def publish(self, led, pid):
-            seen[pid] = self.backend; led.posts[pid].state = PostState.submitted; return led
+            seen[pid] = self.backend; led.posts[pid] = led.posts[pid].model_copy(update={"state": PostState.submitted}); return led
     mocker.patch("fanops.post.run.get_poster", side_effect=lambda c, backend=None: _FakePoster(backend or c.poster_backend))
     from fanops.post.run import publish_due
     publish_due(cfg)

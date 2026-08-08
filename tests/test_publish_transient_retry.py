@@ -93,7 +93,7 @@ def test_zernio_connection_error_retries_before_needs_reconcile(tmp_path, monkey
     _queued(cfg)
     led = Ledger.load(cfg)
     with Ledger.transaction(cfg) as lg:
-        lg.posts["p1"].state = PostState.submitting
+        lg.posts["p1"] = lg.posts["p1"].model_copy(update={"state": PostState.submitting})
     led = Ledger.load(cfg)
     calls = {"n": 0}
     def post_side(*a, **kw):
@@ -114,7 +114,7 @@ def test_zernio_401_fails_not_retried(tmp_path, monkeypatch, mocker):
     _queued(cfg)
     led = Ledger.load(cfg)
     with Ledger.transaction(cfg) as lg:
-        lg.posts["p1"].state = PostState.submitting
+        lg.posts["p1"] = lg.posts["p1"].model_copy(update={"state": PostState.submitting})
     led = Ledger.load(cfg)
     class _R:
         status_code = 401
