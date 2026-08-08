@@ -37,71 +37,71 @@
     "fanops.cli": [
       {
         "call": "Ledger.transaction",
-        "line": 138
+        "line": 142
       },
       {
         "call": "Ledger.transaction",
-        "line": 169
+        "line": 173
       },
       {
         "call": "Ledger.transaction",
-        "line": 247
+        "line": 251
       },
       {
         "call": "Ledger.transaction",
-        "line": 284
+        "line": 288
       },
       {
         "call": "Ledger.transaction",
-        "line": 298
+        "line": 302
       },
       {
         "call": "Ledger.transaction",
-        "line": 311
+        "line": 315
       },
       {
         "call": "Ledger.transaction",
-        "line": 433
+        "line": 437
       },
       {
         "call": "Ledger.transaction",
-        "line": 1174
+        "line": 1178
       },
       {
         "call": "Ledger.transaction",
-        "line": 1186
+        "line": 1190
       },
       {
         "call": "Ledger.transaction",
-        "line": 1197
+        "line": 1201
       },
       {
         "call": "Ledger.transaction",
-        "line": 1412
+        "line": 1416
       },
       {
         "call": "Ledger.transaction",
-        "line": 1425
+        "line": 1429
       },
       {
         "call": "Ledger.transaction",
-        "line": 1511
+        "line": 1515
       },
       {
         "call": "Ledger.transaction",
-        "line": 1519
+        "line": 1523
       },
       {
         "call": "Ledger.transaction",
-        "line": 1527
+        "line": 1531
       },
       {
         "call": "Ledger.transaction",
-        "line": 1534
+        "line": 1538
       },
       {
         "call": "Ledger.transaction",
-        "line": 1543
+        "line": 1547
       }
     ],
     "fanops.ledger_wipe": [
@@ -351,15 +351,19 @@
       },
       {
         "call": "Ledger.transaction",
-        "line": 160
+        "line": 159
       },
       {
         "call": "Ledger.transaction",
-        "line": 201
+        "line": 194
       },
       {
         "call": "Ledger.transaction",
-        "line": 446
+        "line": 235
+      },
+      {
+        "call": "Ledger.transaction",
+        "line": 480
       }
     ],
     "fanops.studio.actions_segments": [
@@ -483,7 +487,7 @@
     "fanops.cli": [
       {
         "call": "tempfile.mkdtemp",
-        "line": 1364
+        "line": 1368
       }
     ],
     "fanops.post.compress": [
@@ -497,7 +501,7 @@
     "fanops.cli": [
       {
         "call": "requests.get",
-        "line": 236
+        "line": 240
       }
     ],
     "fanops.health_model": [
@@ -576,7 +580,7 @@
     "fanops.cli": [
       {
         "call": "shutil.rmtree",
-        "line": 1396
+        "line": 1400
       }
     ],
     "fanops.post.compress": [
@@ -801,7 +805,7 @@
   },
   "totals": {
     "env_write_sites": 2,
-    "ledger_transaction_sites": 80,
+    "ledger_transaction_sites": 81,
     "lock_sites": 22,
     "mkdtemp_sites": 2,
     "network_sites_literal_requests": 15,

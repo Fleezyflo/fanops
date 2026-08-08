@@ -75,6 +75,10 @@ def cmd_status(cfg: Config) -> int:
           # AUDIT C1: parked-for-reconcile posts (may be live) are actionable — surface here
           # so the operator sees them without opening the digest.
           f"needs_reconcile={len(led.posts_in_state(PostState.needs_reconcile))} "
+          # T2.3: machine-origin moment re-opens the queue gate parked, waiting on an operator release
+          # (Studio Make tab). Headless operators would otherwise never learn the work exists — the
+          # park writes no request file and flips no state, so every other count here stays flat.
+          f"reopens_parked={sum(1 for s in led.sources.values() if s.meta.get('pending_reopen'))} "
           # UI-LIE-FIX: per-channel truth (M3), not the legacy global. `fanops status` is an
           # operator-facing line; lying here was the same bug as the Studio status banner.
           f"backend={cfg.effective_publish_mode()} "

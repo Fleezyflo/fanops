@@ -90,6 +90,9 @@ def test_reach_gap_exactly_at_threshold_emits_winner(tmp_path, monkeypatch):
 
 # ---- B3: apply_p4_dim_bias — amplify-only, never retires ----
 def test_apply_amplifies_winning_dim_source_no_retire(tmp_path, monkeypatch):
+    # T2.3 sanctioned update: gate OFF — the subject is the dim-bias guidance SUFFIX, not queue
+    # admission (with the gate on, the machine re-open parks; see test_machine_reopen_admission.py).
+    monkeypatch.setenv("FANOPS_QUEUE_GATE", "0")
     monkeypatch.setenv("FANOPS_P4_DIM_BIAS", "1")
     cfg = Config(root=tmp_path); led = _gated_led(cfg); _validate(cfg)
     apply_p4_dim_bias(led, cfg)

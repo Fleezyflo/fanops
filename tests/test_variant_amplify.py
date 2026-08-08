@@ -228,6 +228,10 @@ def _frozen(led):
 
 
 def test_apply_amplifies_when_fully_gated(tmp_path, monkeypatch):
+    # T2.3 sanctioned update: gate OFF — the subject is the LEARNING gate chain, not queue admission.
+    # With FANOPS_QUEUE_GATE on, the machine re-open this drives is parked for an operator release
+    # (asserted in tests/test_machine_reopen_admission.py) instead of writing the request read below.
+    monkeypatch.setenv("FANOPS_QUEUE_GATE", "0")
     monkeypatch.setenv("FANOPS_VARIANT_AMPLIFY", "1")
     cfg = Config(root=tmp_path)
     led = _led(cfg, _winset(8, "WIN", 90.0))
@@ -311,6 +315,7 @@ def test_apply_amplify_inert_until_learning_validated(tmp_path, monkeypatch):
 def test_apply_amplifies_once_learning_validated(tmp_path, monkeypatch):
     """Symmetric proof the gate OPENS (not a permanent block): the SAME fully-gated candidate DOES
     amplify once a real metrics row is confirmed."""
+    monkeypatch.setenv("FANOPS_QUEUE_GATE", "0")   # T2.3: learning gate under test, not queue admission
     monkeypatch.setenv("FANOPS_VARIANT_AMPLIFY", "1")
     cfg = Config(root=tmp_path)
     led = _led(cfg, _winset(8, "WIN", 90.0))
@@ -357,6 +362,7 @@ def test_apply_isolates_one_failing_candidate(tmp_path, monkeypatch):
     sorted). The middle candidate's amplify() raises; @a and @c must still flip to moments_requested
     (their mutations land) and the log must name @b's post_id — proving isolation + diagnosability,
     versus today's ONE outer guard where @a commits, @b raises, and @c is never even attempted."""
+    monkeypatch.setenv("FANOPS_QUEUE_GATE", "0")   # T2.3: per-candidate ISOLATION under test, not queue admission
     monkeypatch.setenv("FANOPS_VARIANT_AMPLIFY", "1")
     cfg = Config(root=tmp_path)
     led = Ledger.load(cfg)
@@ -513,6 +519,7 @@ def test_apply_amplify_postiz_inert_until_metrics_confirmed(tmp_path, monkeypatc
 
 def test_apply_amplify_postiz_amplifies_once_metrics_confirmed(tmp_path, monkeypatch):
     # Symmetric: the SAME postiz-backed candidate DOES amplify once cutover writes metrics_confirmed (M3).
+    monkeypatch.setenv("FANOPS_QUEUE_GATE", "0")   # T2.3: learning gate under test, not queue admission
     monkeypatch.setenv("FANOPS_VARIANT_AMPLIFY", "1")
     monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_URL", "https://postiz.example.com")
     monkeypatch.setenv("POSTIZ_API_KEY", "pk"); monkeypatch.delenv("BLOTATO_API_KEY", raising=False)

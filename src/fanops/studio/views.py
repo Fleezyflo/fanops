@@ -215,6 +215,15 @@ def pipeline_status(cfg: Config) -> dict:
                 continue
             queue_lines.append({"batch_id": bid, "name": b.name, "sources": sorted(sids),
                                 "target_accounts": b.target_accounts, "burn_subs": b.burn_subs})
+    # T2.3: machine-origin moment re-opens that request_moments parked instead of serving. Listed
+    # unconditionally — the gate can be switched off AFTER a park, and a row nobody can release is
+    # exactly the invisible backlog this ticket exists to end.
+    pending_reopens = []
+    for sid, s in sorted(led.sources.items()):
+        parked = s.meta.get("pending_reopen")
+        if isinstance(parked, dict):
+            pending_reopens.append({"id": sid, "origin": parked.get("origin") or "",
+                                    "requested_at": parked.get("requested_at") or ""})
     backlog_rows = []
     for r in bl.rows:
         row = {"id": r.id, "state": r.state, "bucket": r.bucket, "wait_line": r.wait_line,
@@ -234,6 +243,7 @@ def pipeline_status(cfg: Config) -> dict:
         "pending_unbound_count": len(pending_unbound),
         "queue_lines": queue_lines,
         "held_pending": held_pending,
+        "pending_reopens": pending_reopens,
         "queue_gate": cfg.queue_gate,
         "backlog_rows": backlog_rows,
         "run_chip": run_chip,

@@ -908,7 +908,8 @@
         "fanops.log",
         "fanops.models",
         "fanops.moment_hook_learning",
-        "fanops.personas"
+        "fanops.personas",
+        "fanops.timeutil"
       ],
       "lazy": [
         "fanops.accounts",
@@ -1550,6 +1551,7 @@
         "fanops.ingest",
         "fanops.log",
         "fanops.models",
+        "fanops.moments",
         "fanops.pipeline",
         "fanops.pipeline_run",
         "fanops.responder"
@@ -2254,7 +2256,7 @@
     "fanops.studio.views_review": 1,
     "fanops.tagging": 1,
     "fanops.text": 4,
-    "fanops.timeutil": 18,
+    "fanops.timeutil": 19,
     "fanops.timing_bias": 1,
     "fanops.track": 3,
     "fanops.transcribe": 3,
@@ -2326,7 +2328,7 @@
     "fanops.metrics_schedule": 0,
     "fanops.models": 1,
     "fanops.moment_hook_learning": 3,
-    "fanops.moments": 14,
+    "fanops.moments": 15,
     "fanops.overlay": 0,
     "fanops.p4_dim_bias": 7,
     "fanops.paths_rebase": 3,
@@ -3050,6 +3052,14 @@
       "to_level": 5
     },
     {
+      "from": "fanops.studio.actions_run",
+      "from_level": 4,
+      "jump": 2,
+      "same_scc": false,
+      "to": "fanops.moments",
+      "to_level": 6
+    },
+    {
       "from": "fanops.studio.views",
       "from_level": 6,
       "jump": 2,
@@ -3646,11 +3656,11 @@
     "G2_largest_scc_size": 55,
     "G2_module_sccs_total": 67,
     "G2_non_trivial_sccs": 7,
-    "compile_edges_G1": 574,
-    "lazy_edges": 347,
+    "compile_edges_G1": 575,
+    "lazy_edges": 348,
     "lazy_edges_lateral": 46,
-    "lazy_edges_strictly_upward": 69,
-    "lazy_edges_to_equal_or_higher_level": 115,
+    "lazy_edges_strictly_upward": 70,
+    "lazy_edges_to_equal_or_higher_level": 116,
     "modules": 136,
     "optional_edges": 0,
     "typing_only_edges": 7
