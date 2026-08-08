@@ -280,9 +280,11 @@ def reburn_hook(cfg: Config, post_id: str, hook: str, *, now: Optional[datetime]
                 led2.moments[mom_id] = m2.model_copy(update={"hook": hook, "hook_removed": None})
             c2 = led2.clips.get(rc.id)
             orig = c2
-            led2.clips[rc.id] = rc.model_copy(
-                update={"state": orig.state, "meta_captions": _inherit_captions(orig.meta_captions)}
-            ) if orig else rc
+            if orig:
+                led2.clips[rc.id] = rc.model_copy(update={"meta_captions": _inherit_captions(orig.meta_captions)})
+                led2.set_clip_state(rc.id, orig.state)
+            else:
+                led2.clips[rc.id] = rc
             _stamp_edited(led2, post_id, _now(None))
     except Exception as exc:
         return ActionResult(ok=False, error=f"re-burn failed: {str(exc)[:160]}")
@@ -339,7 +341,7 @@ def mark_published(cfg: Config, post_id: str, url: Optional[str] = None) -> Acti
         # R1: set the URL BEFORE the state flip so the @model_validator sees a consistent shape on
         # the next ledger save (Pydantic re-validates the modified instance on serialization).
         p.public_url = url.strip()
-        p.state = PostState.published
+        led.set_post_state(post_id, PostState.published)
     # R3/D17: audit the SUCCESS — 'I posted by hand' is the most opaque action; the audit gives the operator a breadcrumb.
     write_audit(cfg, "mark_published", [post_id], reason="studio_mark_published", url=url.strip())
     return ActionResult(ok=True, detail={"post_id": post_id, "url": url})
@@ -462,8 +464,7 @@ def publish_now(cfg: Config, post_id: str, *, confirmed: bool = True) -> ActionR
             with Ledger.transaction(cfg) as led:
                 p = led.posts.get(post_id)
                 if p is not None:
-                    p.state = PostState.failed
-                    p.error_reason = pf
+                    led.set_post_state(post_id, PostState.failed, error_reason=pf)
         except Exception:
             pass
         return ActionResult(ok=False, error=pf)
@@ -947,9 +948,10 @@ def resolve_post(cfg: Config, post_id: str, status: str, *, url: Optional[str] =
             p = led.posts[post_id]
             if (url or "").strip():
                 p.public_url = url.strip()
-            p.state = st
             if st is PostState.failed:
-                p.error_reason = p.error_reason or "marked failed by operator"
+                led.set_post_state(post_id, st, error_reason=p.error_reason or "marked failed by operator")
+            else:
+                led.set_post_state(post_id, st)
     except Exception as exc:
         return ActionResult(ok=False, error=f"resolve failed: {str(exc)[:160]}")
     write_audit(cfg, "resolve_post", [post_id], reason="studio_resolve", status=st.value, url=(url or "").strip())
@@ -1026,12 +1028,11 @@ def bulk_send_to_review(cfg: Config, post_ids: list[str], *, reason: str) -> Act
                     skipped.append(pid); continue
                 if _refuse_retired(cfg, led, p):
                     skipped_retired.append(pid); continue
-                p.state = PostState.awaiting_approval
                 p.scheduled_time = None
                 p.public_url = ""
                 p.metrics = {}
                 p.published_at = None
-                p.error_reason = None                       # RC-8: the failure latch is status, not lineage — clear it on revert
+                led.set_post_state(pid, PostState.awaiting_approval, error_reason=None)  # RC-8: clear failure latch on revert
                 # Don't touch submission_id / batch_id — keep the lineage so the operator can
                 # see "this post was once part of batch X" in the audit / Posted history.
                 moved.append(pid)
@@ -1086,10 +1087,9 @@ def retry_rate_limited_failures(cfg: Config, *, reason: str = "studio_retry_rate
                     continue
                 if _refuse_retired(cfg, led, p):
                     skipped_retired.append(pid); continue
-                p.state = PostState.queued
                 p.submission_id = None
-                p.error_reason = None
                 p.scheduled_time = iso_z(now + timedelta(minutes=stagger_min * i))
+                led.set_post_state(pid, PostState.queued, error_reason=None)
                 retried.append(pid)
     except Exception as exc:
         return ActionResult(ok=False, error=f"retry_rate_limited failed: {str(exc)[:160]}")
@@ -1120,11 +1120,10 @@ def retry_oversize_failures(cfg: Config, *, reason: str = "studio_retry_oversize
                     skipped_retired.append(pid); continue
                 if not apply_shrink_to_post(cfg, led, p):
                     skipped.append(pid); continue
-                p.state = PostState.queued
                 p.submission_id = None
-                p.error_reason = None
                 p.media_urls = [u for u in (p.media_urls or []) if not (u.startswith("http"))]
                 p.scheduled_time = iso_z(now + timedelta(minutes=stagger_min * i))
+                led.set_post_state(pid, PostState.queued, error_reason=None)
                 retried.append(pid)
     except Exception as exc:
         return ActionResult(ok=False, error=f"retry_oversize failed: {str(exc)[:160]}")
@@ -1154,10 +1153,9 @@ def retry_transient_failures(cfg: Config, *, reason: str = "studio_retry_transie
                     continue
                 if _refuse_retired(cfg, led, p):
                     skipped_retired.append(pid); continue
-                p.state = PostState.queued
                 p.submission_id = None
-                p.error_reason = None
                 p.scheduled_time = iso_z(now + timedelta(minutes=stagger_min * i))
+                led.set_post_state(pid, PostState.queued, error_reason=None)
                 retried.append(pid)
     except Exception as exc:
         return ActionResult(ok=False, error=f"retry_transient failed: {str(exc)[:160]}")
@@ -1199,14 +1197,13 @@ def recover_posts(cfg: Config, post_ids: list[str], *, action: str, reason: str 
                         if upload_cap_bytes(cfg, p, backend) is None or not apply_shrink_to_post(cfg, led, p, backend=backend):
                             skipped.append(pid); continue
                         p.media_urls = [u for u in (p.media_urls or []) if not u.startswith("http")]
-                    p.state = PostState.queued
                     p.submission_id = None
-                    p.error_reason = None
                     if not (p.scheduled_time or "").strip():   # timeless-queued: a recovered post with no schedule (cleared/corrupt) parks FOREVER in _due_or_fail (silent). Land a time so the daemon publishes it, never never.
                         p.scheduled_time = iso_z(_now(None) + timedelta(minutes=cfg.publish_lead_minutes))
+                    led.set_post_state(pid, PostState.queued, error_reason=None)
                     retried.append(pid)
                 elif action == "discard":
-                    p.state = PostState.rejected
+                    led.set_post_state(pid, PostState.rejected)
                     discarded.append(pid)
                 else:
                     return ActionResult(ok=False, error=f"unknown recover action: {action}")
@@ -1281,5 +1278,5 @@ def release_held_clip(cfg: Config, clip_id: str) -> ActionResult:
         if clip_id not in led.clips: return ActionResult(ok=False, error=f"no such clip: {clip_id}")
         c = led.clips[clip_id]
         if not c.held: return ActionResult(ok=False, error=f"clip {clip_id} is not held (state={c.state.value})")
-        c.held = False; c.held_reason = None; c.state = ClipState.captions_requested
+        c.held = False; c.held_reason = None; led.set_clip_state(clip_id, ClipState.captions_requested)
     return ActionResult(ok=True, detail={"clip_id": clip_id, "state": ClipState.captions_requested.value})

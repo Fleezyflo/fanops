@@ -73,7 +73,7 @@ def _force_reset_to_catalogued(led: Ledger, cfg: Config, source_id: str, s) -> N
     led.reconcile_moments(source_id, {})
     s.transcript = None; s.language = None
     s.meta["transcribed"] = False; s.meta.pop("vocals_isolated", None)
-    s.state = SourceState.catalogued; s.error_reason = None
+    led.set_source_state(source_id, SourceState.catalogued, error_reason=None)
 def resume_source(led: Ledger, source_id: str, *, from_stage: str = "auto", force: bool = False,
                   cfg: Config | None = None) -> bool:
     """Transition an errored/empty source back into the pipeline. Returns True iff a transition was
@@ -93,11 +93,11 @@ def resume_source(led: Ledger, source_id: str, *, from_stage: str = "auto", forc
     has_transcript = bool(s.transcript)                     # None or [] -> nothing to preserve
     resume_at_signals = from_stage == "transcribed" or (from_stage == "auto" and has_transcript)
     if resume_at_signals:
-        s.state = SourceState.transcribed                   # re-enter at signals; keep transcript + meta.transcribed
+        # re-enter at signals; keep transcript + meta.transcribed
+        led.set_source_state(source_id, SourceState.transcribed, error_reason=None)
     else:
-        s.state = SourceState.catalogued                    # full retry: re-transcribe from the top
         s.meta["transcribed"] = False
-    s.error_reason = None
+        led.set_source_state(source_id, SourceState.catalogued, error_reason=None)  # full retry: re-transcribe from the top
     return True
 
 def reconcile_source_progress(led: Ledger, cfg: Config, log) -> Ledger:
@@ -116,7 +116,7 @@ def reconcile_source_progress(led: Ledger, cfg: Config, log) -> Ledger:
             continue
         stage = infer_resume_stage(cfg, led, sid)
         if stage:
-            led.sources[sid] = s.model_copy(update={"state": SourceState(stage), "error_reason": None})
+            led.set_source_state(sid, SourceState(stage), error_reason=None)
             log("pipeline", sid, "auto_resume", resume_at=stage)
         elif resume_source(led, sid):
             log("pipeline", sid, "auto_resume", resume_at=led.sources[sid].state.value)
@@ -127,7 +127,7 @@ def promote_source(led: Ledger, source_id: str) -> bool:
     s = led.sources.get(source_id)
     if s is None or s.state is not SourceState.discovered:
         return False
-    led.sources[source_id] = s.model_copy(update={"state": SourceState.catalogued})
+    led.set_source_state(source_id, SourceState.catalogued)
     return True
 
 # M3 — _prewarm + _prewarm_sequential + _prewarm_concurrent + _produce_source + the
@@ -139,16 +139,18 @@ def promote_source(led: Ledger, source_id: str) -> bool:
 # A cold cache DEFERS (one tick of latency) rather than shelling whisper/ffmpeg under the flock;
 # the lock-free producer pass warms it, the next reduce adopts.
 
-def _quarantine(coll, eid, error_state, stage, exc, log) -> None:
+def _quarantine(led: Ledger, eid, error_state, stage, exc, log) -> None:
     """The per-unit failure stamp shared by the source/moment/clip stage loops (FIX F03): flip the entity
     to its error state, record the typed reason, and log — so one bad unit is skipped, never wedging the
-    whole pass. `coll` is the LIVE ledger collection passed at call time (after any in-block reassignment),
-    so the same object the stage was operating on is the one stamped. The stamp lands via an IMMUTABLE
-    model_copy(update=...) setter (audit x-f1): these are ledger records, and the day any of Source/Moment/Clip
-    gains frozen=True an in-place `obj.state = ...` would raise INSIDE this except handler and wedge the whole
-    pass — the precise failure F03 added quarantine to prevent. Replacing the collection entry keeps it safe."""
-    obj = coll[eid]
-    coll[eid] = obj.model_copy(update={"state": error_state, "error_reason": f"{type(exc).__name__}: {exc}"})
+    whole pass. Routes through Ledger.set_*_state (MOL-779) so a future frozen model cannot raise INSIDE
+    this except handler and wedge the whole pass — the precise failure F03 added quarantine to prevent."""
+    reason = f"{type(exc).__name__}: {exc}"
+    if isinstance(error_state, SourceState):
+        led.set_source_state(eid, error_state, error_reason=reason)
+    elif isinstance(error_state, MomentState):
+        led.set_moment_state(eid, error_state, error_reason=reason)
+    else:
+        led.set_clip_state(eid, error_state, error_reason=reason)
     log(stage, eid, "error", err=str(exc)[:120])
 
 
@@ -165,7 +167,7 @@ def _stage_source_to_moments(led: Ledger, cfg: Config, accts: Accounts, log) -> 
             if led.sources[s.id].state is SourceState.signalled:
                 led = request_moments(led, cfg, s.id, accounts=accts)   # P4(c): proven-hook STYLE block
         except Exception as e:
-            _quarantine(led.sources, s.id, SourceState.error, "source", e, log)
+            _quarantine(led, s.id, SourceState.error, "source", e, log)
     return led
 
 
@@ -176,7 +178,7 @@ def _stage_ingest_moments(led: Ledger, cfg: Config, log) -> Ledger:
             try:
                 led = ingest_moments(led, cfg, s.id)
             except Exception as e:
-                _quarantine(led.sources, s.id, SourceState.error, "moments", e, log)
+                _quarantine(led, s.id, SourceState.error, "moments", e, log)
     return led
 
 
@@ -192,7 +194,7 @@ def _stage_moment_hooks(led: Ledger, cfg: Config, accts: Accounts, log) -> Ledge
                 led = request_moment_hooks(led, cfg, s.id, accounts=accts)   # personas + learned hook styles ride here
                 led = ingest_moment_hooks(led, cfg, s.id, accounts=accts)   # AGENT-5: intersect author-echoed handle keys with real accounts
             except Exception as e:
-                _quarantine(led.sources, s.id, SourceState.error, "moment_hooks", e, log)
+                _quarantine(led, s.id, SourceState.error, "moment_hooks", e, log)
     return led
 
 
@@ -225,7 +227,7 @@ def _stage_render_and_caption(led: Ledger, cfg: Config, accts: Accounts, aspects
                                            _owner_caption_surfaces(cfg, m, accts),
                                            accounts=accts)
             except Exception as e:
-                _quarantine(led.moments, m.id, MomentState.error, "clip", e, log)
+                _quarantine(led, m.id, MomentState.error, "clip", e, log)
     return led
 
 
@@ -289,7 +291,7 @@ def _stage_ingest_captions(led: Ledger, cfg: Config, log) -> Ledger:
             try:
                 led = ingest_captions(led, cfg, c.id, pass_recent=pass_recent)
             except Exception as e:
-                _quarantine(led.clips, c.id, ClipState.error, "caption", e, log)
+                _quarantine(led, c.id, ClipState.error, "caption", e, log)
     return led
 
 

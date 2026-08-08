@@ -603,8 +603,7 @@ def heal_stranded_submitting(cfg: Config, *, now: Optional[datetime] = None) -> 
             age = _parked_age(p, now)
             if age is None or age < _SUBMITTING_HEAL_AFTER:
                 continue
-            led.posts[p.id] = p.model_copy(update={"state": PostState.needs_reconcile,
-                                                    "error_reason": reason})
+            led.set_post_state(p.id, PostState.needs_reconcile, error_reason=reason)
             healed += 1
             get_logger(cfg)("reconcile", p.id, "healed: submitting->needs_reconcile", reason="no_submission_id")
     return healed
@@ -802,11 +801,9 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
             if liv is not None:
                 # M04: apply reads cached liveness only — no network under the flock.
                 if liv.get("published_no_url"):
-                    led.posts[post.id] = post.model_copy(update={
-                        "state": PostState.needs_reconcile,
-                        "error_reason": ("publish_missing_url_at_reconcile: backend reports published but no valid "
-                                         "https url captured (M2 safe_public_url rejected it); re-polling next pass"),
-                    })
+                    led.set_post_state(post.id, PostState.needs_reconcile, error_reason=(
+                        "publish_missing_url_at_reconcile: backend reports published but no valid "
+                        "https url captured (M2 safe_public_url rejected it); re-polling next pass"))
                     log("reconcile", post.id, "published_no_url_parked")
                     continue
                 captured_url = liv["captured_url"]
@@ -824,8 +821,7 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
                         log("reconcile", post.id, "ig_confirm_transport_failopen")
                         continue
                 if _reason is not None:
-                    led.posts[post.id] = post.model_copy(update={
-                        "state": PostState.needs_reconcile, "error_reason": _reason})
+                    led.set_post_state(post.id, PostState.needs_reconcile, error_reason=_reason)
                     log("reconcile", post.id, "unverified_identity_parked")
                     continue
             else:
@@ -846,11 +842,9 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
                         except Exception as exc:
                             log("reconcile", post.id, "tiktok_analytics_fallback_error", err=str(exc)[:120])
                 if not (captured_url or "").strip():
-                    led.posts[post.id] = post.model_copy(update={
-                        "state": PostState.needs_reconcile,
-                        "error_reason": ("publish_missing_url_at_reconcile: backend reports published but no valid "
-                                         "https url captured (M2 safe_public_url rejected it); re-polling next pass"),
-                    })
+                    led.set_post_state(post.id, PostState.needs_reconcile, error_reason=(
+                        "publish_missing_url_at_reconcile: backend reports published but no valid "
+                        "https url captured (M2 safe_public_url rejected it); re-polling next pass"))
                     log("reconcile", post.id, "published_no_url_parked")
                     continue
                 _reason = None
@@ -867,13 +861,10 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
                         log("reconcile", post.id, "ig_confirm_transport_failopen")
                         continue
                 if _reason is not None:
-                    led.posts[post.id] = post.model_copy(update={
-                        "state": PostState.needs_reconcile, "error_reason": _reason})
+                    led.set_post_state(post.id, PostState.needs_reconcile, error_reason=_reason)
                     log("reconcile", post.id, "unverified_identity_parked")
                     continue
-            upd = {"state": PostState.published,
-                   "public_url": captured_url,
-                   "error_reason": None,                  # a transient poll-error reason must not survive a successful publish
+            upd = {"public_url": captured_url,
                    # Report 11 §5 (I-7): the identity question is now SETTLED — this row's OWN submission_id
                    # polled `published` and passed the platform liveness gate above, on evidence that never
                    # touched the candidate. Spent evidence must not outlive the ambiguity it described, or a
@@ -890,6 +881,8 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
             upd["publish_hour"], upd["publish_dow"] = _ph, _pd
             if new_sub: upd["submission_id"] = new_sub
             led.posts[post.id] = post.model_copy(update=upd)
+            # state + clear error_reason via owner (MOL-779); a transient poll-error reason must not survive a successful publish
+            led.set_post_state(post.id, PostState.published, error_reason=None)
             if new_sub is None:                           # published but still no real id -> attribution can't bind
                 log("reconcile", post.id, "published_no_real_id")   # first-class: a logged outcome, not silence
             try:                                          # CULM-Q3: archive includes reconcile-recovered posts
@@ -909,18 +902,15 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
             # an operator identity decision; the candidate stays EVIDENCE and never becomes submission_id.
             cand = (getattr(post, "reconcile_candidate_id", None) or "").strip()
             if cand:
-                led.posts[post.id] = post.model_copy(update={
-                    "state": PostState.needs_reconcile,
-                    "error_reason": (
+                led.set_post_state(post.id, PostState.needs_reconcile, error_reason=(
                         f"reconciled: this row's own submission reports failed "
                         f"({str(info.get('errorMessage', 'no detail'))[:100]}), but an UNVERIFIED duplicate "
                         f"candidate={cand} remains unchecked — held for an operator identity decision, NOT "
-                        f"re-queueable (report 11 §5)")[:400]})
+                        f"re-queueable (report 11 §5)")[:400])
                 log("reconcile", post.id, "failed_held_unverified_candidate", candidate=cand)
                 continue
-            led.posts[post.id] = post.model_copy(update={
-                "state": PostState.failed,
-                "error_reason": f"reconciled: poster reports failed ({info.get('errorMessage', 'no detail')})"})
+            led.set_post_state(post.id, PostState.failed, error_reason=(
+                f"reconciled: poster reports failed ({info.get('errorMessage', 'no detail')})"))
             log("reconcile", post.id, "failed")
         else:
             # QUEUE / in-progress / scheduled / unknown / absent -> the observation did not RESOLVE the

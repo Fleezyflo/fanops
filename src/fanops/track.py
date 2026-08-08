@@ -190,7 +190,7 @@ def record_metrics(led: Ledger, post_id: str, metrics: dict, *,
     if offset is not None and offset not in _captured_offsets(post):
         post.metrics_series = [*post.metrics_series, {**post.metrics, "offset": offset, "captured_at": captured_at}]
     if prior is PostState.published:
-        post.state = PostState.analyzed
+        led.set_post_state(post.id, PostState.analyzed)
     return led
 
 

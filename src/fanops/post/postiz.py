@@ -443,8 +443,8 @@ class PostizPoster:
                     time.sleep(delay + random.uniform(0, delay)); delay *= 2; continue
                 # Body may have landed on Postiz (the response, not the request, was lost) — ambiguous,
                 # park for reconcile, never re-POST into a possible second live post.
-                post.state = PostState.needs_reconcile
-                post.error_reason = f"postiz network error, may be live: {str(exc)[:160]}"
+                led.set_post_state(post_id, PostState.needs_reconcile,
+                                   error_reason=f"postiz network error, may be live: {str(exc)[:160]}")
                 return led
             last = resp
             if resp.status_code in (200, 201):
@@ -454,10 +454,11 @@ class PostizPoster:
                 except Exception:
                     sid = None
                 if not sid:
-                    post.state = PostState.needs_reconcile
-                    post.error_reason = "postiz 2xx but no recognizable post id (body withheld)"   # body may echo the auth header -> never persist it
+                    led.set_post_state(post_id, PostState.needs_reconcile,
+                                       error_reason="postiz 2xx but no recognizable post id (body withheld)")  # body may echo the auth header -> never persist it
                     return led
-                post.state = PostState.submitted
+                led.set_post_state(post_id, PostState.submitted)
+                post = led.posts[post_id]
                 post.submission_id = sid
                 # P2: record a public URL ONLY on the confirmed-submitted branch (no confirmed id ->
                 # no link). _postiz_permalink is None today (no URL in the API); `or post.public_url`
@@ -469,8 +470,8 @@ class PostizPoster:
                 raise PostizAuthError("Postiz 401 unauthorized — check POSTIZ_API_KEY (response body withheld)")
             if 500 <= resp.status_code < 600:
                 # Ambiguous after the body was sent (no idempotency key) — park, do NOT re-POST.
-                post.state = PostState.needs_reconcile
-                post.error_reason = f"postiz {resp.status_code}, may be live (reconcile by hand) — body withheld"   # body may echo the auth header
+                led.set_post_state(post_id, PostState.needs_reconcile,
+                                   error_reason=f"postiz {resp.status_code}, may be live (reconcile by hand) — body withheld")  # body may echo the auth header
                 return led
             if resp.status_code == 429:
                 time.sleep(delay + random.uniform(0, delay)); delay *= 2; continue
@@ -478,7 +479,7 @@ class PostizPoster:
         # ECC fix #17 (defensive): never downgrade an ambiguous-live post to `failed` (failed is
         # re-queueable -> double-post risk). Today the 5xx branch returns before here, but guard it
         # so a future edit to the retry/return flow can't strand a needs_reconcile post as failed.
-        if post.state is not PostState.needs_reconcile:
-            post.state = PostState.failed
-            post.error_reason = f"postiz {getattr(last, 'status_code', '?')} (body withheld)"   # body may echo the auth header -> never persist it
+        if led.posts[post_id].state is not PostState.needs_reconcile:
+            led.set_post_state(post_id, PostState.failed,
+                               error_reason=f"postiz {getattr(last, 'status_code', '?')} (body withheld)")  # body may echo the auth header -> never persist it
         return led

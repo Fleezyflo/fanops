@@ -238,7 +238,7 @@ def _unclaim_no_integration(cfg: Config, post_id: str, post: Post, *, unclaim: b
         with Ledger.transaction(cfg) as led2:
             p2 = led2.posts.get(post_id)
             if p2 is not None and p2.state is PostState.submitting:
-                p2.state = PostState.queued
+                led2.set_post_state(post_id, PostState.queued)
     get_logger(cfg)("publish", post_id, "no_integration_id", account=post.account, platform=post.platform.value)
 
 
@@ -297,12 +297,12 @@ def _publish_one(cfg: Config, post_id: str, backend: str, *, accounts: "Accounts
             if _tally is not None:
                 _tally["skip_resubmit_existing_id"] = _tally.get("skip_resubmit_existing_id", 0) + 1
             return None                                # leave it `queued` — never claimed, never stranded
-        post.state = PostState.submitting              # crash-safe intent, persisted on txn exit (F11/B4)
         # MOL-709: anchor the outbound ATTEMPT to a durable day, in the SAME txn as the claim, so a daily
         # volume ceiling can count in-flight posts (state alone carries no day). Re-stamped every claim —
         # see the field comment in models.py. NOT in _NET_POST_FIELDS: claim-determined, not network-
         # determined (same reason created_at is excluded — finalize must not rewrite it).
         post.submission_started_at = iso_z(datetime.now(timezone.utc))
+        led.set_post_state(post_id, PostState.submitting)  # crash-safe intent, persisted on txn exit (F11/B4)
     # ---- NETWORK (no lock held) ----
     led = Ledger.load(cfg)
     post = led.posts.get(post_id)
@@ -345,16 +345,18 @@ def _publish_one(cfg: Config, post_id: str, backend: str, *, accounts: "Accounts
                 # construction so the operator sees a clean needs_reconcile row, not a ValidationError 500.
                 if (post.public_url or "").strip():
                     assert post.public_url, "GB-4: published post must have public_url"
-                    post.state = PostState.published
                     post.published_at = iso_z(datetime.now(timezone.utc))   # TRUE publish time (Posted-archive day-anchor)
                     # Leg 3 (timing): bucket the true publish time into operator-local (hour, weekday) so
                     # timing_bias can rank reach-by-hour without every reader re-doing tz math. Single tz
                     # home (timeutil.publish_buckets); fail-safe (None,None) leaves the dim unranked.
                     post.publish_hour, post.publish_dow = _publish_buckets(post.published_at, cfg)
+                    led.set_post_state(post_id, PostState.published)
+                    post = led.posts[post_id]
                 else:
-                    post.state = PostState.needs_reconcile
-                    post.error_reason = ("publish_missing_url: backend returned submitted without a permalink — "
-                                         "reconcile will back-fill on next pass (R1/D2 gate)")
+                    led.set_post_state(post_id, PostState.needs_reconcile, error_reason=(
+                        "publish_missing_url: backend returned submitted without a permalink — "
+                        "reconcile will back-fill on next pass (R1/D2 gate)"))
+                    post = led.posts[post_id]
                     get_logger(cfg)("publish", post_id, "publish_missing_url",
                                     backend=backend, submission_id=post.submission_id)
             break                                        # poster decided (submitted/needs_reconcile/failed) or promoted
@@ -368,19 +370,20 @@ def _publish_one(cfg: Config, post_id: str, backend: str, *, accounts: "Accounts
                 if _is_transient_publish_error(exc):
                     red = redact(str(exc), cfg.postiz_api_key, cfg.zernio_api_key)
                     if is_real_submission_id(post.submission_id):
-                        post.state = PostState.needs_reconcile
-                        post.error_reason = "publish transient error (retries exhausted): " + red
+                        led.set_post_state(post_id, PostState.needs_reconcile,
+                                           error_reason="publish transient error (retries exhausted): " + red)
+                        post = led.posts[post_id]
                     else:
                         from fanops.studio.views_common import transient_daemon_retry_count
                         n = transient_daemon_retry_count(post.error_reason)
-                        post.state = PostState.failed
                         msg = "publish failed: " + red
-                        post.error_reason = (f"transient_daemon_retry={n}/{_DAEMON_TRANSIENT_MAX}|{msg}"
-                                             if n else msg)
+                        led.set_post_state(post_id, PostState.failed, error_reason=(
+                            f"transient_daemon_retry={n}/{_DAEMON_TRANSIENT_MAX}|{msg}" if n else msg))
+                        post = led.posts[post_id]
                 else:
-                    post.state = PostState.failed
-                    post.error_reason = "publish failed: " + redact(str(exc), cfg.postiz_api_key,
-                                                                    cfg.zernio_api_key)   # scrub any leaked key
+                    led.set_post_state(post_id, PostState.failed, error_reason=(
+                        "publish failed: " + redact(str(exc), cfg.postiz_api_key, cfg.zernio_api_key)))  # scrub any leaked key
+                    post = led.posts[post_id]
             break
     net = {f: getattr(post, f) for f in _NET_POST_FIELDS}
     clip = led.clips.get(post.parent_id)
@@ -428,8 +431,8 @@ def _due_or_fail(cfg: Config, post: Post, cutoff: datetime) -> bool:
         with Ledger.transaction(cfg) as led:
             p = led.posts.get(post.id)
             if p is not None and p.state is PostState.queued:
-                p.state = PostState.failed
-                p.error_reason = f"bad schedule time {post.scheduled_time!r}: unparseable"
+                led.set_post_state(post.id, PostState.failed,
+                                   error_reason=f"bad schedule time {post.scheduled_time!r}: unparseable")
         return False
     return is_scheduled_due(post, cutoff)
 
@@ -461,11 +464,11 @@ def _requeue_transient_failed_for_daemon(cfg: Config) -> int:
                 n = transient_daemon_retry_count(cur.error_reason) + 1
                 if n > _DAEMON_TRANSIENT_MAX:
                     continue
-                cur.state = PostState.queued
                 cur.submission_id = None
-                cur.error_reason = f"transient_daemon_retry={n}/{_DAEMON_TRANSIENT_MAX}|"
                 if not (cur.scheduled_time or "").strip():
                     cur.scheduled_time = iso_z(now)
+                lg.set_post_state(cur.id, PostState.queued,
+                                  error_reason=f"transient_daemon_retry={n}/{_DAEMON_TRANSIENT_MAX}|")
                 requeued += 1
     except Exception:
         return requeued

@@ -18,7 +18,7 @@ from fanops.config import Config
 from fanops.log import get_logger
 from fanops.errors import ControlFileError, LockBusyError, reason as _reason
 from fanops.models import (Source, Moment, Clip, Post, Render, validate_account_handle,
-                           StitchPlan, StitchState, Batch, ImportedMedia,
+                           StitchPlan, StitchState, Batch, BatchState, ImportedMedia,
                            SourceState, MomentState, ClipState, PostState,
                            # MOL-802: the post-side state sets are DEFINED beside PostState. Aliased on
                            # import so the class attributes below can re-export them under their own
@@ -28,6 +28,7 @@ from fanops.models import (Source, Moment, Clip, Post, Render, validate_account_
 from fanops.ids import child_id
 
 
+_UNSET = object()  # MOL-779: omit optional kwargs from set_*_state model_copy update
 _DEFAULT_LOCK_TIMEOUT = 30.0
 
 # On-disk ledger shape version. BUMP when a model field changes shape (rename/retype/required) and
@@ -582,10 +583,33 @@ class Ledger:
     # ECC fix #10: immutable update (model_copy + dict reassignment) instead of in-place `.state =`.
     # Aligns with the project's immutable-data rule and is safe if a model is ever frozen; the dict
     # reassignment makes the new object the one every later reader (and serialization) sees.
-    def set_source_state(self, uid: str, st: SourceState) -> None: self.sources[uid] = self.sources[uid].model_copy(update={"state": st})
-    def set_moment_state(self, uid: str, st: MomentState) -> None: self.moments[uid] = self.moments[uid].model_copy(update={"state": st})
-    def set_clip_state(self, uid: str, st: ClipState) -> None: self.clips[uid] = self.clips[uid].model_copy(update={"state": st})
-    def set_post_state(self, uid: str, st: PostState) -> None: self.posts[uid] = self.posts[uid].model_copy(update={"state": st})
+    # MOL-779: optional error_reason= expresses the canary compound write (and every other state+reason
+    # stamp). Kw-only + _UNSET so a bare set_*_state(id, st) leaves error_reason untouched; pass
+    # error_reason=None to clear. Shaped so MOL-781 can add error_kind= the same way without a signature break.
+    def set_source_state(self, uid: str, st: SourceState, *, error_reason=_UNSET) -> None:
+        upd: dict = {"state": st}
+        if error_reason is not _UNSET: upd["error_reason"] = error_reason
+        self.sources[uid] = self.sources[uid].model_copy(update=upd)
+    def set_moment_state(self, uid: str, st: MomentState, *, error_reason=_UNSET) -> None:
+        upd: dict = {"state": st}
+        if error_reason is not _UNSET: upd["error_reason"] = error_reason
+        self.moments[uid] = self.moments[uid].model_copy(update=upd)
+    def set_clip_state(self, uid: str, st: ClipState, *, error_reason=_UNSET) -> None:
+        upd: dict = {"state": st}
+        if error_reason is not _UNSET: upd["error_reason"] = error_reason
+        self.clips[uid] = self.clips[uid].model_copy(update=upd)
+    def set_post_state(self, uid: str, st: PostState, *, error_reason=_UNSET) -> None:
+        upd: dict = {"state": st}
+        if error_reason is not _UNSET: upd["error_reason"] = error_reason
+        self.posts[uid] = self.posts[uid].model_copy(update=upd)
+    def set_batch_state(self, uid: str, st: BatchState, *, error_reason=_UNSET) -> None:
+        upd: dict = {"state": st}
+        if error_reason is not _UNSET: upd["error_reason"] = error_reason
+        self.batches[uid] = self.batches[uid].model_copy(update=upd)
+    def set_stitch_state(self, uid: str, st: StitchState, *, error_reason=_UNSET) -> None:
+        upd: dict = {"state": st}
+        if error_reason is not _UNSET: upd["error_reason"] = error_reason
+        self.stitch_plans[uid] = self.stitch_plans[uid].model_copy(update=upd)
 
     # ---- post-approval gate (caller holds the transaction; in-lock guard => contended/wrong-state is a clean no-op) ----
     def approve_post(self, uid: str, *, now_iso: str, suggested_iso: str | None = None) -> None:

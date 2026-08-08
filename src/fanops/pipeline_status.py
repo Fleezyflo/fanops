@@ -210,9 +210,8 @@ def heal_corrupt_gates(led, cfg: Config) -> int:
             sid = gate_source_id(led, kind, key)
             if not sid or sid not in led.sources:
                 continue
-            s = led.sources[sid]
             reason = f"corrupt gate request: {kind}/{key}"
-            led.sources[sid] = s.model_copy(update={"state": SourceState.error, "error_reason": reason})
+            led.set_source_state(sid, SourceState.error, error_reason=reason)
             log("pipeline", sid, "corrupt_gate_quarantine", kind=kind, key=key)
             healed += 1
     return healed
