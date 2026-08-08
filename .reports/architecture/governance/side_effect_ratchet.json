@@ -1,0 +1,75 @@
+{
+  "$schema": "fanops-arch/governance/side_effect_ratchet/v1",
+  "approved_sites": {
+    "env_write_sites": [
+      "fanops.autopilot",
+      "fanops.studio.golive"
+    ],
+    "ledger_transaction_sites": [
+      "fanops.canary",
+      "fanops.cli",
+      "fanops.ledger_wipe",
+      "fanops.origin_backfill",
+      "fanops.paths_rebase",
+      "fanops.pipeline",
+      "fanops.post.compress",
+      "fanops.post.run",
+      "fanops.recaption",
+      "fanops.reconcile",
+      "fanops.responder",
+      "fanops.studio.actions",
+      "fanops.studio.actions_approve",
+      "fanops.studio.actions_casting",
+      "fanops.studio.actions_run",
+      "fanops.studio.actions_segments"
+    ],
+    "mkdtemp_sites": [
+      "fanops.cli",
+      "fanops.post.compress"
+    ],
+    "network_sites_literal_requests": [
+      "fanops.cli",
+      "fanops.health_model",
+      "fanops.post.metrics",
+      "fanops.post.postiz",
+      "fanops.post.zernio"
+    ],
+    "rmtree_sites": [
+      "fanops.canary",
+      "fanops.cli",
+      "fanops.post.compress",
+      "fanops.reframe_apply",
+      "fanops.transcribe"
+    ],
+    "subprocess_sites": [
+      "fanops.canary",
+      "fanops.clip",
+      "fanops.daemon",
+      "fanops.discover",
+      "fanops.health",
+      "fanops.health_model",
+      "fanops.ingest",
+      "fanops.keyframes",
+      "fanops.llm",
+      "fanops.overlay",
+      "fanops.post.compress",
+      "fanops.postiz_lifecycle",
+      "fanops.reframe",
+      "fanops.reframe_apply",
+      "fanops.signals",
+      "fanops.studio.actions_run",
+      "fanops.transcribe",
+      "fanops.vocals"
+    ]
+  },
+  "ceilings": {
+    "env_write_sites": 2,
+    "ledger_transaction_sites": 81,
+    "mkdtemp_sites": 2,
+    "network_sites_literal_requests": 15,
+    "rmtree_sites": 6,
+    "subprocess_sites": 39
+  },
+  "how_to_raise": "In the same PR that adds a site: (1) raise the matching ceiling by the number of new sites, (2) list every newly side-effecting module under approved_sites.<key>. Never copy a census total into kb/side_effects.json — ARCH-008 still forbids that restatement.",
+  "purpose": "Approved ceilings and module allowlists for AST-censused side-effect sites. The census lives only in derived/side_effects.json. This file is DECLARED POLICY: raising a ceiling (and listing a new module) is a deliberate human decision visible in the PR diff. Rule ARCH-008 checks both against the derived census at CI time."
+}
