@@ -15,7 +15,8 @@ from fanops.product_closure import close_legacy_product_type
 
 def _post(pid, *, plat=Platform.instagram, product_type=None):
     return Post(id=pid, parent_id="c1", account="a", account_id="1", platform=plat,
-                caption="c", state=PostState.published, product_type=product_type)
+                caption="c", state=PostState.published, public_url=f"https://ig/{pid}",
+                product_type=product_type)
 
 
 def _seed(cfg: Config, posts: list[Post]) -> None:
