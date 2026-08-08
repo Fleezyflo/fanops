@@ -933,19 +933,7 @@ def main(argv: list[str] | None = None) -> int:
     posts_sub.add_parser("census-retired", help="census: posts under a RETIRED lineage "
                          "(read-only; suppression is derived, never written; "
                          "renamed from reconcile-retired)")
-    # TOP-LEVEL, not under `posts`: the row it labels is the MOMENT. The Studio Provenance panel is the
-    # primary trigger — this verb is the headless twin over the same engine, so the two cannot diverge.
     sub.add_parser("close-product-type", help="one-shot: close legacy IG product_type None|REELS → post (zero network)")
-    p_ob = sub.add_parser("origin-backfill", help="one-time: reconstruct `machine_inferred` provenance for the "
-                          "moments minted before Moment.origin existed; default = read-only dry-run")
-    p_ob.add_argument("--day", action="append", required=True, metavar="YYYY-MM-DD",
-                      help="post BIRTH day whose lineage to label (repeatable). An ARGUMENT, never a literal in "
-                           "the module: a calendar baked into code is a fact nobody can watch rot")
-    p_ob.add_argument("--apply", action="store_true", help="MUTATE: snapshot FIRST, then ONE transaction; "
-                      "refuses on any invariant mismatch and never adapts to what it finds")
-    p_ob.add_argument("--expect-moments", type=int, default=None,
-                      help="STOP unless the selection is exactly N moments (the operator's own census check)")
-    p_ob.add_argument("--dry-run", action="store_true", help="READ-ONLY plan (the default)")
     p_audit = sub.add_parser("audit", help="(R3) operator audit-trail commands")
     audit_sub = p_audit.add_subparsers(dest="audit_cmd")
     p_at = audit_sub.add_parser("tail", help="print the last N lines of 00_control/studio_audit.log")
@@ -1565,9 +1553,6 @@ def _dispatch(cfg: Config, args) -> int:
     if args.cmd == "close-product-type":
         from fanops.product_closure import cmd_close_product_type   # lazy, same precedent
         return cmd_close_product_type(cfg, args)
-    if args.cmd == "origin-backfill":
-        from fanops.origin_backfill import cmd_origin_backfill   # lazy, same precedent
-        return cmd_origin_backfill(cfg, args)
     if args.cmd == "daemon":   return cmd_daemon(cfg, args)
     if args.cmd == "autopilot": return cmd_autopilot(cfg, args)
     if args.cmd == "up":       return cmd_up(cfg, args)

@@ -414,15 +414,10 @@ def create_app(cfg: Config) -> Flask:
     @app.get("/")
     def index():
         # U3: three operator panels (accounts, sources gallery, week-ahead calendar) + slim health line.
-        # MOL-756: `provenance` primes the backfill panel with a plan for NO days — the day histogram and
-        # the unlabelled count, nothing selected. Like zero_post_clips above it, dropping this kwarg makes
-        # the template block render nothing silently; the panel hides itself when the count is 0.
-        from fanops.studio import actions_provenance
         return render_template("home.html", status=views.home_status(cfg),
                                accounts_panel=views.home_accounts_panel(cfg),
                                gallery=views.home_source_gallery(cfg, page=1),
                                calendar=views.home_week_calendar(cfg),
-                               provenance=actions_provenance.preview_backfill(cfg, days=[]),
                                zero_post_clips=views.zero_post_clips(cfg), tab="home")
 
     @app.get("/home/gallery")
@@ -465,9 +460,6 @@ def create_app(cfg: Config) -> Flask:
 
     from fanops.studio.app_routes_live import register_live_routes   # MOL-27: the Live library (imported_media)
     register_live_routes(app, cfg)
-
-    from fanops.studio.app_routes_provenance import register_provenance_routes   # MOL-756: the origin backfill
-    register_provenance_routes(app, cfg)
 
     @app.get("/stitches")
     def stitches():

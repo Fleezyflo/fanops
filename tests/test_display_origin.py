@@ -1,14 +1,13 @@
-# tests/test_display_origin.py — permanent MomentOrigin → operator wording (MOL-808 prep).
+# tests/test_display_origin.py — permanent MomentOrigin → operator wording (MOL-808).
 #
-# `display_origin` / `UNLABELLED_DISPLAY` live beside `MomentOrigin` in models.py so the one-shot
-# origin_backfill module can be deleted later without breaking Review cards. These three asserts
-# moved out of test_origin_backfill.py; they pin field display, not migration.
+# `display_origin` / `UNLABELLED_DISPLAY` live beside `MomentOrigin` in models.py. These asserts pin
+# field display for Review cards (`unknown` reads as `unlabelled`); they are not migration tests.
 from fanops.models import MomentOrigin, UNLABELLED_DISPLAY, display_origin
 
 
 def test_an_unobserved_origin_reads_unlabelled_to_an_operator():
     # `unknown` is the honest at-rest value; "unlabelled" is what it MEANS on a surface. One function
-    # decides, so the Review card and the Home panel can never disagree.
+    # decides, so every operator surface that shows origin uses the same wording.
     assert UNLABELLED_DISPLAY == "unlabelled"
     assert display_origin(MomentOrigin.unknown) == "unlabelled"
     assert display_origin(MomentOrigin.machine_inferred) == "machine_inferred"
