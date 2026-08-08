@@ -1161,8 +1161,7 @@
         "fanops.log",
         "fanops.post.postiz",
         "fanops.post.zernio",
-        "fanops.text",
-        "fanops.timeutil"
+        "fanops.text"
       ],
       "lazy": [
         "fanops",
@@ -2308,7 +2307,7 @@
     "fanops.studio.views_review": 1,
     "fanops.tagging": 1,
     "fanops.text": 4,
-    "fanops.timeutil": 19,
+    "fanops.timeutil": 18,
     "fanops.timing_bias": 1,
     "fanops.track": 3,
     "fanops.transcribe": 3,
@@ -2397,7 +2396,7 @@
     "fanops.post.compress": 2,
     "fanops.post.dryrun": 3,
     "fanops.post.media": 2,
-    "fanops.post.metrics": 7,
+    "fanops.post.metrics": 6,
     "fanops.post.postiz": 5,
     "fanops.post.providers": 1,
     "fanops.post.run": 10,
@@ -3712,7 +3711,7 @@
     "G2_largest_scc_size": 55,
     "G2_module_sccs_total": 71,
     "G2_non_trivial_sccs": 7,
-    "compile_edges_G1": 591,
+    "compile_edges_G1": 590,
     "lazy_edges": 352,
     "lazy_edges_lateral": 45,
     "lazy_edges_strictly_upward": 70,

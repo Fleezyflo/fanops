@@ -179,11 +179,11 @@
     "fanops.reconcile": [
       {
         "call": "Ledger.transaction",
-        "line": 597
+        "line": 591
       },
       {
         "call": "Ledger.transaction",
-        "line": 722
+        "line": 716
       }
     ],
     "fanops.responder": [
@@ -519,19 +519,19 @@
     "fanops.post.metrics": [
       {
         "call": "requests.get",
-        "line": 89
+        "line": 88
       },
       {
         "call": "requests.get",
-        "line": 175
+        "line": 161
       },
       {
         "call": "requests.get",
-        "line": 324
+        "line": 293
       },
       {
         "call": "requests.get",
-        "line": 551
+        "line": 520
       }
     ],
     "fanops.post.postiz": [

@@ -562,16 +562,16 @@ class PostedRow:
     submission_id: Optional[str] = None   # inflight rows: backend id awaiting permalink
     error_reason: Optional[str] = None      # inflight/failed: last reconcile error (truncated in UI)
     raw_state: Optional[str] = None         # ledger PostState.value for detail rows
-    failure_kind: Optional[str] = None      # failed rows: rate_limit | oversize | bad_payload | poll_error | unknown
+    failure_kind: Optional[str] = None      # failed rows: rate_limit | oversize | bad_payload | transient | unknown
     is_archived: bool = False               # R2: row from 06_published/ supplement (read-only, no repost/crosspost)
 
 
-_FAILURE_KINDS = ("rate_limit", "oversize", "bad_payload", "poll_error", "transient", "unknown")
+_FAILURE_KINDS = ("rate_limit", "oversize", "bad_payload", "transient", "unknown")
 _RETRYABLE_FAILURES = frozenset({"rate_limit", "oversize", "bad_payload", "transient", "unknown"})
 
 
 _FAILURE_LABELS = {"rate_limit": "Rate limited", "oversize": "Too large", "bad_payload": "Bad upload",
-                   "poll_error": "Link pending", "transient": "Network blip", "unknown": "Failed"}
+                   "transient": "Network blip", "unknown": "Failed"}
 
 
 def failure_label(kind: str | None) -> str:
@@ -620,8 +620,6 @@ def classify_failure(post) -> str:
         return "rate_limit"
     if "413" in er or "oversize" in er or "too large" in er or "entity too large" in er:
         return "oversize"
-    if "poll error" in er or "reconcile poll" in er:
-        return "poll_error"
     if "400" in er or "bad request" in er or "bad media" in er or "invalid" in er:
         return "bad_payload"
     if is_transient_failure_reason(getattr(post, "error_reason", None)):

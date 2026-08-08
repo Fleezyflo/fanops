@@ -297,47 +297,30 @@ def _postiz_env(monkeypatch):
     monkeypatch.delenv("BLOTATO_API_KEY", raising=False)
 
 def test_status_client_unknown_backend_fails_closed(tmp_path):
-    # Blotato removed: the else-branch that returned BlotatoStatusClient now RAISES (fail-closed +
-    # legible) — an unknown backend must never silently construct a status poller. A stale
-    # FANOPS_POSTER=rest already degrades to dryrun at cfg (W4), so this raise is reachable only via
-    # a direct unknown backend.
+    # An unknown backend must never silently construct a status poller. Message names only the
+    # backends `_status_client_for` can serve (zernio). A stale FANOPS_POSTER=rest already degrades
+    # to dryrun at cfg (W4), so this raise is reachable only via a direct unknown backend.
     from fanops.reconcile import _status_client_for
-    with pytest.raises(ValueError, match="unknown backend"):
+    with pytest.raises(ValueError, match=r"expected zernio"):
         _status_client_for(Config(root=tmp_path), "rest", None)
 
-def test_default_get_status_postiz_resolves_end_to_end_with_date_window(tmp_path, monkeypatch, mocker):
-    # postiz + key: a parked Postiz post resolves end-to-end through the UNCHANGED reconcile_posts via
-    # the Postiz list read (proves dispatch without closure introspection), AND the closure passes the
-    # post's own scheduled_time so the startDate/endDate window brackets a future/2099 post (FOUND, not
-    # "unknown"), capturing its real IG permalink from the row's releaseURL.
-    _postiz_env(monkeypatch)
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    _post(led, "pp", PostState.needs_reconcile, sub="postiz_99")
-    led.posts["pp"].scheduled_time = "2099-01-01T00:00:00Z"
-    url = "https://www.instagram.com/reel/DZvZ8Itkaxz/"
-    page = {"posts": [{"id": "postiz_99", "state": "PUBLISHED", "releaseURL": url, "publishDate": "2099-01-01T00:00:00.000Z"}]}
-    captured = {}
-    def fake_get(url_, **kw):
-        captured["params"] = kw.get("params"); return _R(200, page)
-    mocker.patch("fanops.post.metrics.requests.get", side_effect=fake_get)
-    led = reconcile_posts(led, cfg)                # NO injected get_status → exercises _default_get_status(postiz)
-    assert led.posts["pp"].state is PostState.published
-    assert led.posts["pp"].public_url == url                          # releaseURL flowed through reconcile
-    p = captured["params"] or {}
-    assert "date" not in p and p["startDate"] <= "2099-01-01" <= p["endDate"]   # window brackets scheduled_time
+def test_status_client_postiz_is_not_a_poller(tmp_path):
+    # MOL-820: Postiz is mirror-only; the per-post arm is gone.
+    from fanops.reconcile import _status_client_for
+    with pytest.raises(ValueError, match=r"expected zernio"):
+        _status_client_for(Config(root=tmp_path), "postiz", None)
 
 def test_reconcile_postiz_persists_ig_media_id_from_releaseId(tmp_path, monkeypatch, mocker):
-    # MOL-112 foundation: reconcile stamps media_id from the Postiz row's releaseId at promote time — the IG
-    # object id is captured at source, not inferred later by permalink feed-matching.
+    # MOL-112 foundation: reconcile stamps media_id from the Postiz row's releaseId at promote time —
+    # via the mirror observation (MOL-820 deleted the per-post get_status path).
     _postiz_env(monkeypatch)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _post(led, "pp", PostState.needs_reconcile, sub="postiz_99")
     url = "https://www.instagram.com/reel/DZvZ8Itkaxz/"
     rid = "17841456789012345"
-    page = {"posts": [{"id": "postiz_99", "state": "PUBLISHED", "releaseURL": url, "releaseId": rid,
-                       "publishDate": "2099-01-01T00:00:00.000Z"}]}
-    mocker.patch("fanops.post.metrics.requests.get", return_value=_R(200, page))
-    led = reconcile_posts(led, cfg)
+    mirror = {"postiz_99": {"status": "published", "publicUrl": url, "releaseId": rid, "postiz_state": "PUBLISHED"}}
+    led = reconcile_posts(led, cfg, mirror=mirror,
+                          get_status=lambda sid: (_ for _ in ()).throw(AssertionError("postiz must not poll")))
     assert led.posts["pp"].state is PostState.published
     assert led.posts["pp"].media_id == rid
 

@@ -1,9 +1,9 @@
 """Real metrics-read client (FIX F05 — v1 had none). list_posts(window) returns rows keyed by
-postSubmissionId with a metrics dict. This file houses the Postiz (PostizMetricsClient/
-PostizStatusClient) and Zernio (ZernioMetricsClient/ZernioStatusClient) per-post read clients, each
-emitting the same {postSubmissionId, metrics} / {status, publicUrl} row contracts."""
+postSubmissionId with a metrics dict. This file houses Postiz (PostizMetricsClient + the bulk
+PostizStatusClient.list_all mirror read) and Zernio (ZernioMetricsClient/ZernioStatusClient per-post
+reads), emitting the same {postSubmissionId, metrics} / {status, publicUrl} row contracts."""
 from __future__ import annotations
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Optional
 from urllib.parse import quote
 import requests
@@ -12,7 +12,6 @@ from fanops.errors import PostizAuthError, ZernioAuthError, redact
 from fanops.post.postiz import _base, _key
 from fanops.post.zernio import _base as _zbase, _key as _zkey
 from fanops.text import safe_public_url
-from fanops.timeutil import parse_iso
 from fanops.log import get_logger
 
 def _safe(cfg, text, limit: int = 200) -> str:
@@ -129,30 +128,17 @@ class PostizMetricsClient:
 _POSTIZ_STATE_MAP = {"PUBLISHED": "published", "ERROR": "failed", "FAILED": "failed"}
 
 class PostizStatusClient:
-    """Reconcile READ for the Postiz backend (P2). Postiz has NO per-post status endpoint and NO
-    permalink in any response (Context7-verified) — the ONLY status signal is the `state` field on a
-    row of GET /public/v1/posts. That list endpoint DEMANDS startDate/endDate ISO-8601 (the old
-    `display`/`date` params are rejected with HTTP 400 — verified against the running instance
-    2026-06-21), so a post at a FUTURE operator-set time, an old post, or a 2099 cutover probe is found
-    only when the query window covers its publishDate.
+    """Reconcile READ for the Postiz backend — bulk window only. Postiz has NO per-post status
+    endpoint and NO permalink in any response (Context7-verified) — the ONLY status signal is the
+    `state` field on a row of GET /public/v1/posts. That list endpoint DEMANDS startDate/endDate
+    ISO-8601 (the old `display`/`date` params are rejected with HTTP 400 — verified against the
+    running instance 2026-06-21).
 
-    ONE fetch serves every reader: `_fetch_posts` does the windowed GET and indexes the window by row
-    id; `get_status` is a SELECTION over it (±35d anchored on the post's own publishDate/scheduled_time,
-    or now when unset) and `list_all` is the whole-corpus window for the reconcile mirror. There is no
-    second network channel to this endpoint — before this extraction get_status fetched the whole
-    window and discarded every row but one, so a pass over N parked posts issued N identical GETs.
-
-    get_status emits the SAME {status, publicUrl, releaseId?} dict reconcile_posts consumes; publicUrl
-    is the row's `releaseURL` (the real IG permalink, present on PUBLISHED rows); releaseId is the IG
-    Graph media id (present on many PUBLISHED rows) for reconcile to persist as Post.media_id without a
-    feed-enumeration permalink match. 401 -> PostizAuthError (halt, so reconcile's auth-halt fires);
-    5xx -> RuntimeError (per-post-isolated by reconcile_posts -> parked, never failed). A row absent
-    from the window -> {"status":"unknown"} (parked, never guessed failed).
-
-    The `GetStatus` seam (reconcile.py) is Callable[[str], dict]; the per-post `date` window rides in
-    via the optional publish_date arg, supplied by the closure _default_get_status builds (which has
-    the ledger in hand) — so the seam signature stays unchanged and the 30+ existing reconcile tests
-    keep passing. A direct unit call without publish_date falls back to the default (week) window."""
+    `_fetch_posts` does the windowed GET and indexes the window by row id; `list_all` is the
+    whole-corpus window the reconcile mirror consumes (`reconcile_due` → `PostizStatusClient(cfg).list_all()`).
+    There is no per-post `get_status` — that method was deleted once the mirror became the sole Postiz
+    path (MOL-820). Values carry mapped `status` plus the raw Postiz `state` token, `releaseURL`, and
+    `releaseId`. 401 -> PostizAuthError (halt); 5xx -> RuntimeError."""
     def __init__(self, cfg: Config):
         self.cfg = cfg; self.base = _base(cfg); self.key = _key(cfg)  # _key raises PostizAuthError if missing
 
@@ -169,8 +155,8 @@ class PostizStatusClient:
 
         Returns the window indexed by row id: {state (the RAW Postiz token, which the mirror persists),
         status (the backend-agnostic vocabulary via _POSTIZ_STATE_MAP), releaseURL, releaseId, raw}.
-        Both body shapes parse ({"posts":[...]} and a bare list). First row wins on a duplicate id —
-        the `next(...)` semantics get_status had before the extraction."""
+        Both body shapes parse ({"posts":[...]} and a bare list). First row wins on a duplicate id
+        (`setdefault`)."""
         params = {"startDate": start.date().isoformat(), "endDate": end.date().isoformat()}
         resp = requests.get(f"{self.base}/public/v1/posts", headers={"Authorization": self.key},
                             params=params, timeout=30)
@@ -197,23 +183,6 @@ class PostizStatusClient:
         2026-08-07: the whole corpus is a single response of a few tens of KB, well under a second, so
         there is no cost argument for narrowing it. Values are _fetch_posts' rows."""
         return self._fetch_posts(datetime(2000, 1, 1, tzinfo=timezone.utc), datetime(2100, 12, 31, tzinfo=timezone.utc))
-
-    def get_status(self, submission_id: str, publish_date: Optional[str] = None) -> dict:
-        # A SELECTION over _fetch_posts, not a read of its own. Anchor a ±35d window on the post's
-        # publishDate (or now when unset/unparseable) so a future operator-set time, an old post, and a
-        # 2099 probe all fall inside the queried window, then pick this submission's row out of it.
-        try: anchor = parse_iso(publish_date) if publish_date else datetime.now(timezone.utc)
-        except (ValueError, TypeError, AttributeError): anchor = datetime.now(timezone.utc)
-        row = self._fetch_posts(anchor - timedelta(days=35), anchor + timedelta(days=35)).get(submission_id)
-        if row is None:
-            return {"status": "unknown"}                    # absent from the window -> left parked, never guessed
-        out = {"status": row["status"]}
-        if row["status"] == "published":
-            out["publicUrl"] = row["releaseURL"] or None   # the real IG permalink (present only on PUBLISHED rows)
-            rid = row["releaseId"]
-            if isinstance(rid, str) and rid.strip():
-                out["releaseId"] = rid.strip()             # IG Graph media id — reconcile persists on Post.media_id
-        return out
 
 
 # ---- Zernio metrics + status (Slice 5) — the FREE TikTok backend's read clients. Zernio reads PER-POST
