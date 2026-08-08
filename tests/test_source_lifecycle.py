@@ -12,7 +12,8 @@ def test_cli_retire_source(tmp_path, monkeypatch):
     with Ledger.transaction(cfg) as led:
         led.add_source(Source(id="src_x", source_path="/x.mp4", state=SourceState.catalogued))
     from fanops.cli import main
-    assert main(["retire-source", "src_x"]) == 0
+    # MOL-842: mutation requires the wipe-style sentence-flag confirm
+    assert main(["retire-source", "src_x", "--i-understand-this-deletes-unshipped-media"]) == 0
     assert Ledger.load(cfg).sources["src_x"].state is SourceState.retired
 
 
