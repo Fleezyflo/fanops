@@ -49,9 +49,16 @@ def cmd_posts_reconcile_retired(cfg: Config, args) -> int:
     targets = [p for p in posts if p.state in unshipped]
 
     print(f"posts under a retired lineage: {len(posts)}")
+    unshipped_vals = {s.value for s in unshipped}
     for state, n in _tally(posts).items():
-        verdict = "suppressed by lineage" if state in {s.value for s in unshipped} else \
-            "suppressed by lineage (has touched a platform — record preserved)"
+        # Own-state `retired` short-circuits is_suppressed; every other counted label arrived via the
+        # lineage walk. Never assert platform contact — this census does not check it.
+        if state == "retired":
+            verdict = "own state"
+        elif state in unshipped_vals:
+            verdict = "suppressed by lineage"
+        else:
+            verdict = "suppressed by lineage (own state kept)"
         print(f"  {state:<18} {n:>5}   {verdict}")
     by_account: dict = {}
     for p in targets:

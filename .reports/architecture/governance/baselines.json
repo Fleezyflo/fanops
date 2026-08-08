@@ -7,7 +7,8 @@
     "route REMOVED: POST /personas/corpus/remove",
     "route REMOVED: POST /personas/recommend",
     "route REMOVED: POST /personas/research",
-    "CLI verb REMOVED: `migrate`"
+    "CLI verb REMOVED: `migrate`",
+    "CLI verb REMOVED: `reconcile-retired`"
   ],
   "approved_breaking_changes_note": "Breaking facts a REVIEWED PR declared on purpose — each line is the reason string `impact` itself printed, verbatim. `impact --strict` fails on the breaking facts NOT listed here, so DELETING is allowed and deleting SILENTLY is not. UNKNOWN_IMPACT is never declarable. Entries self-retire: a removal reason can only be produced by the diff that performs the removal, so a stale line cannot mask a later change — it remains as the record of a deliberate break. THE ONLY AUTHOR-DECLARED KEY IN THIS FILE; every other one is derived, and `baseline --accept` carries this one forward.",
   "approved_compile_cycles": [],
