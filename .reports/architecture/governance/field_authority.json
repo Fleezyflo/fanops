@@ -36,13 +36,13 @@
    "status": "CANONICAL DECLARED (Cycle 5)",
    "owner": "architecture governance",
    "authoritative_source": "SPLIT. The module list is src/fanops/**/*.py. The GROUPING into subsystems is a HUMAN_DECISION (an analytic overlay Cycle 5 imposed; nothing in the repo declares it).",
-   "regeneration_command": "NOT regenerable — the partition is a HUMAN_DECISION. Its TOTALITY is checked.",
-   "validation_mechanism": "Rules ARCH-001 (partition is total over the derived module set) + ARCH-002 (no ghosts) + ARCH-009 (its totality block matches the derived module count).",
+   "regeneration_command": "NOT regenerable — the partition is a HUMAN_DECISION. Its TOTALITY is checked against derived/modules.json, never restated here.",
+   "validation_mechanism": "Rules ARCH-001 (partition is total over the derived module set) + ARCH-002 (no ghosts) + ARCH-009 (the totality block may not RESTATE a derived number — the block is deleted, and reintroducing any number into it fails the build).",
    "permitted_manual_edits": "Assign a module to a subsystem; add/rename a subsystem. Each is a reviewed change.",
    "conflict_resolution": "The MODULE SET is derived and wins. The GROUPING is declared and stands. A module absent from the partition is a BLOCKING finding, not an inference.",
    "fields": {
     "subsystems.<id>.modules": "HUMAN_DECISION (the grouping) — but the DOMAIN of the map is DERIVED_FROM_CODE and enforced total.",
-    "totality.*": "DERIVED_FROM_CODE — a cached count. It rots. Rule ARCH-009 catches it. MIGRATION TARGET: delete these fields and point at derived/modules.json.",
+    "totality.*": "DELETED — migration done. They were cached counts and they rot, and ARCH-009 compared exactly ONE of the six. derived/modules.json is the source.",
     "subsystems.<id>.compile_depends_on": "DERIVED_FROM_CODE — a cached projection of the import graph. MIGRATION TARGET.",
     "DEFINITION.*": "HUMAN_DECISION — the definition of what a subsystem IS. Stands."
    }
@@ -53,11 +53,11 @@
    "owner": "architecture governance",
    "authoritative_source": "SPLIT. Every count is src/fanops/**/*.py (the import graph). The narrative fields are HUMAN_DECISION.",
    "regeneration_command": "python -m tools.arch regen  (the derived twin is derived/dependencies.json)",
-   "validation_mechanism": "Rule ARCH-009 cross-checks every numeric claim against derived/dependencies.json.",
+   "validation_mechanism": "Rule ARCH-009 FORBIDS a derived number in `totals`. It used to cross-check — but only seven of the twelve, under a guard on the declared key being PRESENT, so five went unwatched (two of them wrong) and deleting a watched key deleted its check.",
    "permitted_manual_edits": "The PROSE only (THE_THREE_GRAPHS, intentionality_SPLIT, the notes). Not one number.",
    "conflict_resolution": "The derived graph WINS on every number.",
    "fields": {
-    "totals.*": "DERIVED_FROM_CODE. MIGRATION TARGET — these numbers exist in two places and one of them will rot.",
+    "totals.*": "DELETED — migration done. They existed in two places and this was the copy that rotted (G2_module_sccs and G2_largest_scc_modules were both wrong and unwatched). derived/dependencies.json is the only source. The `updated_at_HEAD` / `what_did_NOT_move` prose changelogs went with them: git history is the changelog and cannot conflict with itself.",
     "graph.compile_edges / runtime_lazy_edges": "DERIVED_FROM_CODE. MIGRATION TARGET.",
     "layering.levels": "DERIVED_FROM_CODE. MIGRATION TARGET.",
     "THE_THREE_GRAPHS.*": "HUMAN_DECISION — the semantic distinction between G1/G1c/G2/G3. This is the most valuable content in the file and it is NOT derivable. It stands.",
@@ -84,12 +84,12 @@
    "status": "CANONICAL DECLARED (Cycle 5)",
    "owner": "architecture governance",
    "authoritative_source": "SPLIT. Every census (subprocess/mkdtemp/rmtree/locks/env) is src/fanops/**/*.py. The RISK judgements are HUMAN_DECISION.",
-   "regeneration_command": "`python -m tools.arch regen`, then copy the censuses from derived/side_effects.json. NOT automatic: this is a DECLARED artifact that CONTAINS derived numbers, which is exactly the shape the migration plan deletes. ARCH-008/ARCH-009 fail CI while they disagree.",
-   "validation_mechanism": "Rule ARCH-008 cross-checks counts_AST_verified against derived/side_effects.json.",
+   "regeneration_command": "`python -m tools.arch regen`. Do NOT copy the censuses back — that instruction is what this artifact was migrated OFF, and ARCH-008 now fails CI on a count reintroduced into counts_AST_verified. Read derived/side_effects.json.",
+   "validation_mechanism": "Rule ARCH-008 FORBIDS a count in counts_AST_verified. *** IT NO LONGER MAKES A NEW SIDE EFFECT FAIL THE BUILD. *** `impact` reports every census delta as `changed_side_effects` and the reconciliation verdicts in this file remain the review record, but neither BLOCKS. Do not read the rule's name as a gate on new effects.",
    "permitted_manual_edits": "The DECISION TABLE (the network-ambiguity table) and the ordering narrative. Not the counts.",
    "conflict_resolution": "The code wins on counts. The doc wins on SEMANTICS (what a 5xx MEANS for a publish).",
    "fields": {
-    "counts_AST_verified.*": "DERIVED_FROM_CODE. MIGRATION TARGET.",
+    "counts_AST_verified.*": "DELETED — migration done. derived/side_effects.json is the census. What remains under this key are the dated reconciliation VERDICTS, which are HUMAN_DECISION and carry no count.",
     "the_network_ambiguity_decision_table.*": "HUMAN_DECISION — the system's best engineering, and entirely non-derivable. Stands.",
     "the_publish_side_effect_ordering.*": "HUMAN_DECISION — the T0..T10 ordering and the crash-critical window."
    }
