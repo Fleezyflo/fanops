@@ -680,16 +680,20 @@ def cmd_gc(cfg: Config, keep_days: int) -> int:
     # cross-account reuse); negative is nonsense. Clean exit 2; gc stays MANUAL (no auto-cron).
     # T3.9: the clip sweep reclaims by DERIVED disposition (Ledger.is_suppressed), not the stored label, so a
     # clip suppressed only by its moment's retirement is reachable — the stored label is no longer copied down.
-    # A clip a live post points at is NEVER swept: that protection used to come indirectly from the per-tick
-    # clip sweep (it only relabelled a clip `retired` when no _LIVE_POST_STATES post hung off it), and it is
-    # carried here explicitly now that the sweep is going away.
+    # Pin = _LIVE_POST_STATES only (published/analyzed/submitted/submitting/needs_reconcile): those rows are
+    # (or may be) on a platform, so their clip file stays for cascade/orphan integrity — NOT because
+    # reconcile or oversize-shrink still read local bytes (reconcile reads none; shrink is failed/error-only).
+    # MOL-818: a failed/error post under suppressed lineage does NOT pin — its local media is reclaimable.
+    # Oversize retry cannot reach that file: both Studio shrink sites refuse via _refuse_retired →
+    # can_promote → not is_suppressed BEFORE apply_shrink_to_post (MOL-754). Studio /media* routes stay
+    # state-agnostic and 404 when the file is gone; that is acceptable after this sweep.
     if keep_days < 1:
         print(f"gc: refusing --keep-days {keep_days} (min 1) — would delete reusable render files", file=sys.stderr); return 2
     import os, time
     led = Ledger.load(cfg)
     removed = 0
     cutoff = time.time() - keep_days * 86400
-    pinned = {p.parent_id for p in led.posts.values() if p.state in Ledger._LIVE_POST_STATES}   # a live post OWNS its clip's file
+    pinned = {p.parent_id for p in led.posts.values() if p.state in Ledger._LIVE_POST_STATES}   # live-on-platform (or may-be) owns the file; failed/error deliberately excluded (MOL-818)
     for c in led.clips.values():
         if ((led.is_suppressed(c) and c.id not in pinned)
                 or c.state is ClipState.analyzed) and c.path and os.path.exists(c.path):

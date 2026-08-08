@@ -565,6 +565,8 @@ def create_app(cfg: Config) -> Flask:
     def do_dismiss_gate(kind, key):
         return render_template("_result.html", result=actions.dismiss_gate_studio(cfg, kind, key))
 
+    # Media serve is state-agnostic: missing file → 404. After cmd_gc reclaims a suppressed clip's .mp4
+    # (incl. under a failed/error post — MOL-818), that 404 is expected; do not special-case post state here.
     @app.get("/media/<post_id>")
     def media(post_id):
         path = _bounded(cfg, _media_path_for_post(cfg, Ledger.load(cfg), post_id))

@@ -929,7 +929,9 @@ def _refuse_retired(cfg: Config, led: Ledger, p) -> bool:
     verbs all ask this one question of one row, so the Ledger's derived-disposition predicate owns it — this
     is the SOLE caller here, never a hand-copied lineage walk. Refuse BEFORE the write (a re-armed retired
     post used to be silently un-done by the per-tick sweep 600s later); every refusal is logged, never
-    swallowed. A BACKWARD move (recover_posts `discard`) is NOT gated — it re-arms nothing."""
+    swallowed. A BACKWARD move (recover_posts `discard`) is NOT gated — it re-arms nothing.
+    MOL-818: both failed/error oversize paths call this BEFORE apply_shrink_to_post, so a suppressed
+    clip's file is unreachable by shrink — cmd_gc may reclaim it without orphaning a live retry."""
     if led.can_promote(p): return False
     get_logger(cfg)("review", p.id, "skipped_retired_lineage", account=p.account); return True
 
@@ -938,7 +940,7 @@ def _rearm_to_queued(led: Ledger, pid: str) -> None:
     """Sole owner of the failed→queued re-arm write (MOL-817). Clears submission_id + error_reason and
     routes state through Ledger.set_post_state. Callers stamp scheduled_time / media_urls on led.posts[pid]
     first when their verb requires it; _refuse_retired stays outside so oversize shrink runs only after
-    an admitted re-arm."""
+    an admitted (can_promote) re-arm — never on suppressed lineage (MOL-818 / Branch A)."""
     led.posts[pid].submission_id = None
     led.set_post_state(pid, PostState.queued, error_reason=None)
 

@@ -7,6 +7,7 @@ import pytest
 from fanops.config import Config
 from fanops.cli import cmd_gc
 from fanops.ledger import Ledger
+from fanops.models import PostState
 
 def test_gc_rejects_zero_keep_days(tmp_path):
     assert cmd_gc(Config(root=tmp_path), 0) == 2
@@ -52,8 +53,8 @@ def test_gc_cleans_scheduled_payloads(tmp_path):
 # ---- T3.9: the clip sweep reclaims by DERIVED disposition, with the live-post pin carried in ----
 # gc used to key on the STORED clip label. With the write-time copy-down gone, a clip under a retired
 # moment reads `queued` forever, so its file would be permanently unreclaimable — hence Ledger.is_suppressed.
-# The pin (a live post OWNS its clip's file) used to come indirectly from the per-tick clip sweep, which
-# only relabelled a clip `retired` when no _LIVE_POST_STATES post hung off it; it is explicit here now.
+# The pin is _LIVE_POST_STATES only (may-be-on-platform). MOL-818: failed/error deliberately do NOT pin —
+# oversize shrink cannot reach a suppressed clip's file (_refuse_retired before apply_shrink_to_post).
 def _gc_fixture(tmp_path, *, clip_state, moment_state, post_state=None, days_old=60):
     """One suppressed-or-live lineage with one on-disk clip file older than the cutoff. Returns (cfg, file)."""
     import os, time
@@ -92,6 +93,16 @@ def test_gc_pin_is_scoped_to_live_states_not_to_any_post(tmp_path):
     from fanops.models import ClipState, MomentState, PostState
     cfg, f = _gc_fixture(tmp_path, clip_state=ClipState.queued, moment_state=MomentState.retired,
                          post_state=PostState.rejected)
+    assert cmd_gc(cfg, 30) == 0
+    assert not f.exists()
+
+@pytest.mark.parametrize("dead", (PostState.failed, PostState.error))
+def test_gc_reclaims_failed_or_error_under_suppressed_lineage(tmp_path, dead):
+    # MOL-818 Branch A: failed/error do not join the pin; media under suppressed lineage is reclaimable
+    # because oversize retry is structurally refused before shrink (_refuse_retired / can_promote).
+    from fanops.models import ClipState, MomentState
+    cfg, f = _gc_fixture(tmp_path, clip_state=ClipState.queued, moment_state=MomentState.retired,
+                         post_state=dead)
     assert cmd_gc(cfg, 30) == 0
     assert not f.exists()
 
