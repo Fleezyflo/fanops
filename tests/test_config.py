@@ -675,3 +675,29 @@ def test_config_and_settings_share_one_boolean_vocabulary(monkeypatch, tmp_path)
         assert bool_word(bad) is None
         with pytest.raises(ValueError):
             settings_mod._validate_bool_word(bad)
+
+
+@pytest.mark.parametrize("raw", (None, "", "   ", " x "))
+def test_ig_scrape_user_config_settings_agree(monkeypatch, tmp_path, raw):
+    """MOL-828: doctor (Settings) and runtime (Config) agree on FANOPS_IG_SCRAPE_USER blank/pad/unset."""
+    from fanops.settings import Settings
+    if raw is None:
+        monkeypatch.delenv("FANOPS_IG_SCRAPE_USER", raising=False)
+    else:
+        monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", raw)
+    assert Config(root=tmp_path).ig_scrape_user == Settings().FANOPS_IG_SCRAPE_USER
+
+
+@pytest.mark.parametrize("raw", (None, "", "   ", " x "))
+def test_xdg_cache_home_config_settings_agree(monkeypatch, tmp_path, raw):
+    """MOL-828: Settings.XDG_CACHE_HOME and Config.whisper_cache_root resolve the same stripped root."""
+    from pathlib import Path
+    from fanops.settings import Settings
+    if raw is None:
+        monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
+    else:
+        monkeypatch.setenv("XDG_CACHE_HOME", raw)
+    s = Settings().XDG_CACHE_HOME
+    cfg_root = Config(root=tmp_path).whisper_cache_root
+    expected = (Path.home() / ".cache" / "whisper") if s is None else (Path(s).expanduser() / "whisper")
+    assert cfg_root == expected
