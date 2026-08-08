@@ -100,6 +100,19 @@ class MomentOrigin(str, Enum):
     # (learn_amplify / variant_amplify / p4_dim_bias) are opt-in and OFF, so there is no live machine-mint
     # traffic to label. The backfill supplies `machine_inferred` for the existing history.
 
+# How an unlabelled row READS to an operator. `unknown` is the enum's honest at-rest value; "unlabelled"
+# is what it MEANS on a surface — the row was never observed, not observed-as-unknown. Permanent field
+# display (Review cards, provenance surfaces), not migration machinery — lives beside MomentOrigin so
+# the one-shot origin_backfill module can be deleted later without breaking operator wording (MOL-808).
+UNLABELLED_DISPLAY = "unlabelled"
+
+
+def display_origin(origin) -> str:
+    """Operator-facing wording for a `MomentOrigin`. One place, so every surface says the same thing."""
+    value = getattr(origin, "value", origin)
+    return UNLABELLED_DISPLAY if value == MomentOrigin.unknown.value else str(value)
+
+
 class ClipState(str, Enum):
     rendered = "rendered"; captions_requested = "captions_requested"; captioned = "captioned"
     queued = "queued"; published = "published"; analyzed = "analyzed"

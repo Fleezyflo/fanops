@@ -11,8 +11,7 @@ from typing import Optional
 from fanops.config import Config
 from fanops.accounts import Accounts
 from fanops.ledger import Ledger
-from fanops.models import PostState, MomentState
-from fanops.origin_backfill import display_origin   # MOL-756: ONE place decides how an origin reads to an operator
+from fanops.models import PostState, MomentState, display_origin  # MOL-808: permanent field display beside MomentOrigin
 from fanops.personas import casting_directive
 from fanops.bands import band_for
 from fanops.timeutil import parse_iso
