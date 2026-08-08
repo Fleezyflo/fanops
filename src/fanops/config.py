@@ -1154,8 +1154,9 @@ class Config:
     @property
     def whisper_cache_root(self) -> Path:
         # Whisper checkpoint cache root ($XDG_CACHE_HOME/whisper or ~/.cache/whisper).
-        base = os.getenv("XDG_CACHE_HOME")
-        root = Path(base).expanduser() if base and str(base).strip() else Path.home() / ".cache"
+        # Strip so padded XDG_CACHE_HOME matches Settings (doctor) and Path() sees the same root.
+        base = (os.getenv("XDG_CACHE_HOME") or "").strip()
+        root = Path(base).expanduser() if base else Path.home() / ".cache"
         return root / "whisper"
 
     def _per_handle_meta_token(self, handle: str) -> str | None:
