@@ -192,45 +192,56 @@ def test_stranded_posts_finds_retired_lineage_only(tmp_path):
     assert {p.id for p in stranded_posts(led) if p.state in unshipped} == {"p_bad"}   # ...only p_bad is retirable
 
 
-# ---- the pipeline heals it ITSELF: no operator verb, no hand-typed --apply -------------------
+# ---- the pipeline writes NOTHING to dead lineage: suppression is derived, never healed -------
 
-def test_one_pass_relabels_stranded_posts_without_an_operator(tmp_path, mocker):
-    """The repair belongs to the pipeline, not to a human. A row written before the cascades existed
-    sits at awaiting_approval/queued under retired lineage: inert, but counted in every raw state
-    census, so the backlog never drains. `advance` re-asserts the invariant on EVERY pass. Anything
-    that has touched a platform is preserved, and a healthy lineage is untouched — those two are the
-    negative controls, so a blanket sweep cannot pass this test."""
+def _suppressed_states(led):
+    """Every stored `(kind, id) -> state` whose lineage `Ledger.is_suppressed` calls dead. Enumerated from
+    the ledger, never hand-listed: a hardcoded row list rots exactly like a hardcoded count."""
+    rows = ([("moment", m) for m in led.moments.values()] + [("clip", c) for c in led.clips.values()]
+            + [("post", p) for p in led.posts.values()])
+    return {(kind, r.id): r.state for kind, r in rows if led.is_suppressed(r)}
+
+
+def test_one_pass_writes_nothing_to_a_stranded_lineage(tmp_path, mocker):
+    """`advance` no longer re-asserts lineage suppression into stored labels (T3.5 deleted both per-tick
+    heal sweeps): every reader derives it at O(1) from `Ledger.is_suppressed`, so the stored rows are left
+    exactly as the operator last wrote them. Asserted as a byte-identity over the WHOLE suppressed set —
+    not five hand-named rows — so any future write to dead lineage, on any row, reddens this. The healthy
+    lineage is the negative control: it must still be live work the pass may advance, or an `advance` that
+    did nothing at all would pass."""
     from fanops.pipeline import advance
     mocker.patch("fanops.produce.run_all")                    # keep the pass cheap: no subprocesses
     cfg = Config(root=tmp_path); _seed_accounts(cfg)
     with Ledger.transaction(cfg) as led:
         _lineage(led, mom_id="mom_ok", clip_id="clip_ok")
         _lineage(led, mom_id="mom_gone", clip_id="clip_gone", moment_state=MomentState.retired)
-        led.add_post(_post("p_ok", "clip_ok", PostState.awaiting_approval))     # healthy -> untouched
+        led.add_post(_post("p_ok", "clip_ok", PostState.awaiting_approval))     # healthy -> real work
         led.add_post(_post("p_await", "clip_gone", PostState.awaiting_approval))
         led.add_post(_post("p_queued", "clip_gone", PostState.queued))
         led.add_post(_post("p_live", "clip_gone", PostState.needs_reconcile, public_url="dryrun://p_live"))
-        # a SECOND clip under the same dead moment, with nothing live on it -> the clip must go too
+        # a SECOND clip under the same dead moment, with nothing live on it — the sweep used to retire it
         led.add_clip(Clip(id="clip_bare", parent_id="mom_gone", path="/clip_bare.mp4", aspect=Fmt.r9x16,
                           state=ClipState.queued))
         led.add_post(_post("p_bare", "clip_bare", PostState.awaiting_approval))
 
-    advance(cfg, base_time="2026-06-02T18:00:00Z")            # ONE ordinary pass — nothing typed
+    led = Ledger.load(cfg)
+    before = _suppressed_states(led)
+    # the snapshot is non-vacuous, and the healthy lineage is NOT in it (an empty/over-wide set would make
+    # the identity below meaningless — this is the control on the control)
+    assert set(before) == {("moment", "mom_gone"), ("clip", "clip_gone"), ("clip", "clip_bare"),
+                           ("post", "p_await"), ("post", "p_queued"), ("post", "p_live"), ("post", "p_bare")}
+
+    advance(cfg, base_time="2026-06-02T18:00:00Z")            # ONE ordinary pass
 
     led = Ledger.load(cfg)
-    assert led.posts["p_await"].state is PostState.retired    # stranded, never shipped -> relabelled
-    assert led.posts["p_queued"].state is PostState.retired
-    assert led.posts["p_live"].state is PostState.needs_reconcile   # MAY be live -> preserved verbatim
+    assert _suppressed_states(led) == before                  # byte-identical: the pass wrote nothing here
     assert led.posts["p_ok"].state is PostState.awaiting_approval   # healthy lineage -> real work stays
-    # the clip half: bare clip retired, but the one a needs_reconcile post PINS stays live, and a clip
-    # under a healthy moment is never touched — both are negative controls against a blanket sweep
-    assert led.clips["clip_bare"].state is ClipState.retired
-    assert led.clips["clip_gone"].state is ClipState.queued          # dead moment, but a live post pins it
+    assert not led.is_suppressed(led.posts["p_ok"])                 # ...and reads active at the owner
     # clip_ok sits on a LIVE lineage, so the pass legitimately advances it (captions_requested, ...). Pin
     # what this control is actually for — it was not retired — not whichever stage the pass happened to reach.
     assert led.clips["clip_ok"].state is not ClipState.retired
 
-    advance(cfg, base_time="2026-06-02T18:00:00Z")            # converges: a second pass is a no-op
+    advance(cfg, base_time="2026-06-02T18:00:00Z")            # convergence re-run: still nothing written
     led = Ledger.load(cfg)
+    assert _suppressed_states(led) == before
     assert led.posts["p_ok"].state is PostState.awaiting_approval
-    assert led.posts["p_live"].state is PostState.needs_reconcile

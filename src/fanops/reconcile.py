@@ -462,6 +462,12 @@ _MIRROR_RESTING = (PostState.published, PostState.analyzed)
 # The Post.postiz_state sentinel (MOL-784 vocabulary) for "the mirrored window held NO row for this post's
 # submission id". Written ONLY for a post whose id is a real backend id — an id that COULD have matched.
 _MIRROR_ABSENT = "absent"
+# The one RAW Postiz token (same MOL-784 vocabulary, kept verbatim off the row) that means the backend
+# considers the row DONE. Compared case-folded because the mirror deliberately never normalises what it
+# stores. It lives HERE, beside the sentinel, because it is the SAME vocabulary and a second literal in a
+# second module is the copied-number defect class — `pending_lateness` below and the digest's mirror-drift
+# section (digest._postiz_drift) both read it from here.
+_MIRROR_PUBLISHED = "PUBLISHED"
 # INVARIANT (report 11 §5, I-7) — `Post.reconcile_candidate_id` is NEVER a poll key here, and this set is
 # exactly why. A candidate is an UNPROVEN pointer a backend handed back on a duplicate signal (a Zernio 409's
 # details.existingPostId): it names a record the BACKEND holds, which is not evidence that OUR post is that
@@ -936,8 +942,15 @@ def report_terminals(led: Ledger, now: Optional[datetime] = None) -> list[dict]:
     """REPORT-ONLY: for every reconcilable post, what the (state, age) escalation WOULD write THIS pass —
     consulting the SAME `_apply_age_terminal` the live pass uses, but WRITING NOTHING.
 
-    One row per post the escalation would touch (submitting -> needs_reconcile); an empty list means it
-    would write nothing. With the give-up rung deleted this previews escalations and nothing else."""
+    TWO kinds of row, one shape (`post_id`/`state`/`event`/`would_set_state`/`reason`), escalations first:
+
+      escalation — the one surviving ladder rung (submitting -> needs_reconcile). `would_set_state`
+                   DIFFERS from `state`: this WOULD write.
+      lateness   — `pending_lateness` below. `would_set_state` EQUALS `state`: nothing would write, the
+                   row is here so the preview shows the pending posts the backend has stopped resolving
+                   instead of leaving them invisible until an operator goes looking.
+
+    An empty list means the escalation would write nothing AND nothing pending is past its schedule."""
     now = now or datetime.now(timezone.utc)
     out: list[dict] = []
     for post in led.posts.values():
@@ -950,4 +963,54 @@ def report_terminals(led: Ledger, now: Optional[datetime] = None) -> list[dict]:
         new_state = upd["state"].value if upd.get("state") is not None else post.state.value
         out.append({"post_id": post.id, "state": post.state.value, "event": term["log"],
                     "would_set_state": new_state, "reason": upd.get("error_reason", "")})
+    for late in pending_lateness(led, now):
+        # MOL-791: lateness rides the SAME preview so `--report-terminals` shows the whole picture the
+        # ladder used to hide behind a give-up stamp. These rows are REPORT-ONLY in the strongest sense:
+        # `would_set_state` IS the current state, because nothing would happen to a late post — that is
+        # the entire point (waiting is not failing). The key set is identical to an escalation row's, so
+        # cli.py's single loop renders both without knowing there are two kinds.
+        lp = led.posts[late["post_id"]]
+        out.append({"post_id": lp.id, "state": lp.state.value, "event": "note lateness",
+                    "would_set_state": lp.state.value,
+                    "reason": (f"{late['hours_late']}h past scheduled_time; "
+                               f"postiz_state={late['postiz_state'] or 'never mirrored'}")})
+    return out
+
+
+def pending_lateness(led: Ledger, now: Optional[datetime] = None) -> list[dict]:
+    """REPORT-ONLY: every pending post whose schedule has passed and whose mirrored Postiz row has NOT
+    reported publication. This is the LATENESS the module header names — DERIVED from the row and the
+    schedule at read time, never stamped, because a stamp is a decision and this module makes none.
+
+    PURE: reads the ledger, writes nothing, and is a function of (state, schedule, submission id,
+    postiz_state) alone. One dict per late post — `post_id`, `platform`, `hours_late`, `postiz_state`
+    (None = never mirrored) — in ledger order, like every other read-only surface here.
+
+    The predicate, whole:
+
+      state in _RECONCILABLE   — the pending set. `queued` is deliberately OUT: it has no outbound
+                                 attempt and therefore no backend row to be late against.
+      real submission id       — a `fanops_` client token can never match a Postiz window row, so its
+                                 postiz_state is permanently unknowable; reporting it as late would be
+                                 a claim about a backend we cannot have heard from.
+      _parked_age > 0          — the schedule has actually passed (a future post is not late).
+      postiz_state != PUBLISHED — the row is still non-terminal. A pending post whose row DID publish is
+                                 held back by a liveness gate, not by the backend; that is a different
+                                 problem and this section must not claim it as lateness.
+
+    Deliberately NO grace window: "past schedule" is the whole test, so a post that parked
+    `needs_reconcile` moments ago reports 0h. Inventing a threshold would be this module deciding
+    when waiting becomes a problem — exactly the judgement the give-up rung was deleted for."""
+    now = now or datetime.now(timezone.utc)
+    out: list[dict] = []
+    for post in led.posts.values():
+        if post.state not in _RECONCILABLE or not is_real_submission_id(post.submission_id):
+            continue
+        age = _parked_age(post, now)
+        if age is None or age.total_seconds() <= 0:
+            continue
+        if (post.postiz_state or "").strip().upper() == _MIRROR_PUBLISHED:
+            continue
+        out.append({"post_id": post.id, "platform": post.platform.value,
+                    "hours_late": int(age.total_seconds() // 3600), "postiz_state": post.postiz_state})
     return out
