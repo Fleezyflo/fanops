@@ -130,17 +130,5 @@ def retire(led: Ledger, loser_post_ids: list[str]) -> Ledger:
             live_sibs = [c for c in led.clips_of(clip.parent_id) if not led.is_retired_clip(c.id)]
             if not live_sibs:
                 led.set_moment_state(clip.parent_id, MomentState.retired)
-            # ...and carry that retirement DOWN to the never-shipped posts — the same rule
-            # _delete_moment_cascade applies to a DROPPED moment (ledger.py), for the same reason.
-            # retire_clip / set_moment_state are plain no-cascade state flips (canary depends on that,
-            # canary.py:942), so this path suppressed the lineage and left its awaiting_approval/queued
-            # posts behind: invisible to review_buckets, refused by every actionable reader, and still
-            # counted in every raw state census — a phantom backlog that never drains. Anything that has
-            # TOUCHED a platform keeps its state; that record is why preserve exists. When the MOMENT
-            # went too, sweep all of its clips so a sibling retired by an older pass (before this cascade
-            # existed) is healed as well. Idempotent: re-running retires nothing new.
-            for c in (led.clips_of(clip.parent_id) if not live_sibs else [clip]):
-                for p in led.posts_of(c.id):
-                    if p.state in Ledger._UNSHIPPED_POST_STATES:
-                        led.posts[p.id] = p.model_copy(update={"state": PostState.retired})
+            # Retiring the clip (and the moment) is the ONLY write — descendants derive via Ledger.is_suppressed.
     return led

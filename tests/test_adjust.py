@@ -173,13 +173,12 @@ def test_retire_suppresses_lineage_including_moment(tmp_path):
     led, clips = render_aspects_for(led, cfg, "mL", aspects={Fmt.r16x9})
     assert clips == []                                # guard fires -> no resurrected clip
 
-def test_retire_carries_down_to_never_shipped_posts(tmp_path):
-    # THE stranding root. retire_clip / set_moment_state are plain no-cascade state flips (canary depends
-    # on that), so this path suppressed the lineage and left the loser's SIBLING posts at
-    # awaiting_approval / queued underneath it — invisible to review_buckets, refused by every actionable
-    # reader, yet counted in every raw state census forever: a phantom backlog that never drains. Same rule
-    # as _delete_moment_cascade — never-shipped -> retired; anything that has TOUCHED a platform keeps its
-    # state, because that record is the whole reason the preserve rule exists.
+def test_retire_suppresses_the_lineage_without_relabelling_posts(tmp_path):
+    # T3.7 sanctioned update. retire used to COPY the suppression down onto every never-shipped descendant,
+    # duplicating what Ledger.is_suppressed now derives from the retired clip on every read. Retiring the
+    # clip/moment is the ONLY write; the stored labels underneath it are left exactly as they were, so a
+    # post's own state stays a record of what it did, not a cache of its ancestor's fate. The stranding this
+    # replaced is still fixed — is_suppressed answers `suppressed` for the whole lineage either way.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _analyzed_post(led, 1, "pL", "cL", "mL", "sL")
     for pid, st in (("pAw", PostState.awaiting_approval), ("pQ", PostState.queued),
@@ -187,10 +186,12 @@ def test_retire_carries_down_to_never_shipped_posts(tmp_path):
         led.add_post(Post(id=pid, parent_id="cL", account="a", account_id="1", platform=Platform.instagram,
                           caption="x", state=st, public_url="dryrun://1"))
     led = retire(led, ["pL"])
-    assert led.posts["pAw"].state is PostState.retired            # never shipped -> suppressed
-    assert led.posts["pQ"].state is PostState.retired             # approved but never shipped -> suppressed
+    assert led.posts["pAw"].state is PostState.awaiting_approval  # stored label UNTOUCHED — no write-time copy
+    assert led.posts["pQ"].state is PostState.queued              # ditto: derivation, not relabelling
     assert led.posts["pNR"].state is PostState.needs_reconcile    # MAY be live on the platform -> preserved
     assert led.posts["pL"].state is PostState.analyzed            # the performance record is untouched
+    for pid in ("pAw", "pQ", "pNR"):
+        assert led.is_suppressed(led.posts[pid])                  # the whole lineage reads as dead anyway
     retire(led, ["pL"])                                           # idempotent: a second pass changes nothing
     assert led.posts["pNR"].state is PostState.needs_reconcile and led.posts["pL"].state is PostState.analyzed
 
