@@ -68,7 +68,6 @@ Purpose: resolves posts stranded in `submitting`/`submitted`/`needs_reconcile` b
 
 - **`_parked_age(post, now)`** — `now - parse_iso(post.scheduled_time)`, or `None` if unschedulable/unparseable. Pure. Callers: `heal_stranded_submitting`, `reconcile_posts`.
 - **`_is_fake_token(post)`** — True iff `submission_id` still starts with the birth token prefix `"fanops_"`. Pure. Callers: `reconcile_posts`.
-- **`_is_giveup(post)`** — True iff `error_reason` starts with the `GAVE UP:` sentinel. Pure. Callers: `reconcile_posts`.
 - **`_norm_permalink(url)`** — canonicalizes a public URL for matching. Pure. Callers: `resolve_media_ids`, `project_imported_media`.
 - **`_pick_media(cands, post)`** — picks nearest-timestamp Graph media candidate. Pure. Callers: `resolve_media_ids`.
 - **`resolve_media_ids(led, cfg, *, get=None)`** — network (Graph), mutates `led.posts` with `media_id`/`product_type`. Callers: `track.pull_metrics`, `cli.cmd_map_media`.

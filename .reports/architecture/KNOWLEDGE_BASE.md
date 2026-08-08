@@ -220,8 +220,8 @@ re-reads every tick. So a `.env` change made by the CLI or daemon **never reache
 
 | File | Answers |
 |---|---|
-| [`kb/subsystems.json`](kb/subsystems.json) | What exists, what's in it, what it depends on. **Total partition — 127/127.** |
-| [`kb/dependencies.json`](kb/dependencies.json) | 🔴 **The graph no prior cycle built.** The three graphs (G1 / G1c / G2), hubs, the one compile-time cycle, the 107 equal-or-higher-level lazy edges (**56 strictly upward**), and the 45-module **potential-dependency** SCC. |
+| [`kb/subsystems.json`](kb/subsystems.json) | The **declared partition** — which modules belong to which subsystem. Its totality is checked every pass against [`derived/modules.json`](derived/modules.json); per-subsystem counts and dependency edges are derived, not declared here. |
+| [`kb/dependencies.json`](kb/dependencies.json) | 🔴 **The graph no prior cycle built.** What the three graphs (G1 / G1c / G2) MEAN, which layering inversions are load-bearing, and why. The edge maps, the level assignment and the inversion census are derived AST facts — see [`derived/dependencies.json`](derived/dependencies.json). |
 | [`kb/ownership.json`](kb/ownership.json) | Who may create / mutate / read / retire every asset. Plus the **6 ownership pathologies**. |
 | [`kb/lifecycles.json`](kb/lifecycles.json) | Per-entity lifecycle. **Defers to [`transitions.json`](transitions.json) (Cycle 2) as canonical** — re-verified, not restated. |
 | [`kb/persistence.json`](kb/persistence.json) | Every persistent artifact: owner, schema, migration, backup, restore, caches, fingerprints. |

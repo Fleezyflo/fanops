@@ -106,7 +106,7 @@ def _slug(s: str) -> str:
 from fanops.persona_directives import (   # noqa: E402,F401  (facade re-export; after foundation by design)
     derive_cut_spec, resolved_cut_spec, casting_directive, hook_directive, hook_author_slot, caption_directive,
     compose_persona_instruction, lever_catalog, compose_breakdown, produces_summary, persona_facts, manifest,
-    _FOCUS_CLAUSE, _SCOPE_CLAUSE, _ANGLE_CLAUSE, _FOCUS_PROFILE, _FRAMING_MAP)
+    _FOCUS_CLAUSE, _FOCUS_PROFILE, _FRAMING_MAP)
 from fanops.persona_store import (   # noqa: E402,F401
     add_persona, update_persona, apply_auto_corpus,
     delete_persona, migrate_from_accounts, link_personas_by_voice,

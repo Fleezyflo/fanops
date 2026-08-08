@@ -1,11 +1,15 @@
 # src/fanops/persona_levers.py
-"""THE single lever registry (M1) — one ordered declaration per persona lever, the UPSTREAM of the three
-projections that used to be separate literals synced by a manual parity promise: the validation vocabularies
-(personas.CONTENT_FOCUS / SELECTION_SCOPE_LEVELS / HOOK_ANGLES), the compile + derived-cut clause maps
-(persona_directives._FOCUS_CLAUSE / _SCOPE_CLAUSE / _ANGLE_CLAUSE / _FOCUS_PROFILE / _FRAMING_MAP), and the
-operator catalog (lever_catalog). Adding/removing a lever or option is ONE edit here; the projections derive,
-so the three can no longer drift. PURE LEAF — stdlib only at module load; `bands` is imported LAZILY inside
-build_catalog exactly as lever_catalog() did. NEVER imports personas/accounts/config (one-way: this <- those)."""
+"""THE single lever registry (M1) — one ordered declaration per persona lever, the UPSTREAM every projection
+derives from instead of restating it as a literal synced by a manual parity promise: the validation
+vocabularies (persona_store.CUT_POLICY / INTENSITY), the compile + derived-cut maps
+(persona_directives._FOCUS_CLAUSE / _FOCUS_PROFILE / _FRAMING_MAP), and the operator catalog (lever_catalog).
+Adding/removing a lever or an option is ONE edit here; the projections derive, so they cannot drift.
+MOL-521/523 made content_focus, selection_scope and hook_angle FREE TEXT: they declare no options, so nothing
+projects a token->prose map for them and their vocabularies (personas.CONTENT_FOCUS /
+SELECTION_SCOPE_LEVELS / HOOK_ANGLES) derive EMPTY — re-adding one reds
+test_free_text_levers_expose_no_option_vocabulary. PURE LEAF — stdlib only at module load; `bands` is imported
+LAZILY inside build_catalog exactly as lever_catalog() did. NEVER imports personas/accounts/config (one-way:
+this <- those)."""
 from __future__ import annotations
 from collections import OrderedDict
 
@@ -39,20 +43,6 @@ _INTENSITY_OPTIONS = [
 ]
 # MOL-170 highest-intensity-first framing order (was option.intensity); kept until E-3 removes framing_map.
 _FRAMING_PRIORITY = ("punchlines", "hype", "bold-statement", "visual", "emotional", "storytelling")
-_SELECTION_SCOPE_OPTIONS = [
-    {"value": "open", "clause": ""},
-    {"value": "subject_locked", "clause": "Only moments featuring the account's named subject qualify — subject presence is the filter."},
-    {"value": "source_briefed", "clause": "Select only moments matching the campaign brief — the brief defines footage and angle."},
-    {"value": "credibility_first", "clause": "Favor clear and accurate over sensational; pass on cuts that misrepresent the source."},
-    {"value": "controversy_seeking", "clause": "Prefer the most inflammatory or rivalry-coded statement in the source."},
-]
-_HOOK_ANGLE_OPTIONS = [
-    {"value": "curiosity", "clause": "open a curiosity gap the viewer has to close"},
-    {"value": "challenge", "clause": "dare or challenge the viewer to react"},
-    {"value": "emotional", "clause": "name the high-arousal feeling the clip gives the viewer"},
-    {"value": "result-first", "clause": "open on the payoff, then reveal how it got there"},
-    {"value": "fomo", "clause": "carry genuine scarcity — a one-time, leaked, or unreleased drop"},
-]
 # clip_profile: the GLOBAL deterministic cut-length lever (Go-Live default) — catalog-only (no per-persona
 # vocab/clause; per persona the length is DERIVED from content_focus). Options are band names; the catalog
 # effect is computed from bands.band_for (lazy). niche: free text (declared subject terms), no enumerated options.
@@ -147,8 +137,9 @@ def vocab(key: str) -> frozenset:
 
 
 def clause_map(key: str) -> dict:
-    """{value: clause} for a lever whose options carry a compile clause (content_focus/selection_scope/hook_angle), in
-    declaration order (the casting/hook join order). Options without a clause are skipped."""
+    """{value: clause} for a lever whose options carry a compile clause (cut_policy — the free-text levers
+    declare no options, so they project nothing), in declaration order (the casting join order). Options
+    without a clause are skipped."""
     lv = lever(key)
     return {o["value"]: o["clause"] for o in (lv["options"] if lv else []) if "clause" in o}
 
@@ -186,17 +177,16 @@ def framing_map() -> "OrderedDict[str, str]":
 
 
 def build_catalog() -> list[dict]:
-    """lever_catalog()'s body, DERIVED from the registry. content_focus/hook_angle render value+effect from the
-    clause; selection_scope renders open's empty clause as the explicit no-op note; clip_profile renders the band
-    note; clip_profile renders the band ranges from bands.band_for (lazy, as the legacy catalog did);
-    hashtag_corpus has no options. Each lever: {key, label, kind, stage, does, options:[{value, effect}]}."""
+    """lever_catalog()'s body, DERIVED from the registry. A `text` lever (content_focus/selection_scope/
+    hook_angle) renders NO options — it is free text, so there is no vocabulary to enumerate; clip_profile
+    renders the band ranges from bands.band_for (lazy, as the legacy catalog did); niche is free text too;
+    every other lever renders value+effect from its clause (cut_policy/intensity).
+    Each lever: {key, label, kind, stage, does, options:[{value, effect}]}."""
     from fanops.bands import band_for
     out: list[dict] = []
     for lv in LEVER_REGISTRY:
         if lv["kind"] == "text":
             opts = []          # free text, no enumerated options
-        elif lv["key"] == "selection_scope":
-            opts = [{"value": o["value"], "effect": (o["clause"] or "no change — open selection")} for o in lv["options"]]
         elif lv["key"] == "clip_profile":
             opts = [{"value": o["value"], "effect": f"{band_for(o['value']).lo:g}-{band_for(o['value']).hi:g}s cuts"} for o in lv["options"]]
         elif lv["key"] == "niche":

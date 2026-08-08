@@ -66,6 +66,25 @@ def test_update_persona_changes_levers_only_when_passed(tmp_path):
     p = Personas.load(cfg).get("p")
     assert p.voice == "v" and p.selection_scope is None and p.hook_angle == "challenge"
 
+def test_free_text_directive_is_bounded_at_200_chars(tmp_path):
+    # MOL-521: with content_focus/selection_scope/hook_angle free text, persona_store._norm_directive's
+    # max_len=200 is the ENTIRE write boundary for them — no vocabulary can reject a value any more, so this
+    # bound is the only thing between the operator and an unbounded blob compiled into every casting/hook
+    # prompt. The bound is INCLUSIVE (200 lands, 201 raises), the error names the lever, and both writers
+    # enforce it — update_persona is the sibling that would silently diverge if only add_persona validated.
+    cfg = Config(root=tmp_path)
+    at_cap, over_cap = "x" * 200, "x" * 201
+    add_persona(cfg, name="Edge", content_focus=at_cap, selection_scope=at_cap, hook_angle=at_cap, niche=["hiphop"])
+    saved = Personas.load(cfg).get("edge")
+    assert saved.content_focus == at_cap and saved.selection_scope == at_cap and saved.hook_angle == at_cap
+    for lever in ("content_focus", "selection_scope", "hook_angle"):
+        with pytest.raises(ValueError, match=f"{lever} too long"):
+            add_persona(cfg, name="TooLong", niche=["hiphop"], **{lever: over_cap})
+        assert Personas.load(cfg).get("toolong") is None       # raised BEFORE the lock — no record landed
+        with pytest.raises(ValueError, match=f"{lever} too long"):
+            update_persona(cfg, "edge", **{lever: over_cap})
+        assert getattr(Personas.load(cfg).get("edge"), lever) == at_cap   # the stored value survives the reject
+
 def test_lever_vocabularies_are_frozensets():
     # MOL-523: content_focus / selection_scope / hook_angle became FREE TEXT, so their vocabularies are
     # deliberately EMPTY. Asserting the emptiness is the load-bearing half — it reds if someone re-introduces
