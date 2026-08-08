@@ -203,9 +203,12 @@
 
   {# T2.3 — machine re-opens the admission gate parked. Absent => this whole block renders nothing. #}
   {% if status.pending_reopens %}
-  <section class="stage-card">
+  <section class="stage-card" aria-label="Parked re-opens">
     <header class="stage-card-head">
-      <span class="stage-card-num">02</span>
+      {# A glyph, not a step number: a parked re-open is an INTERRUPT in the add -> queue -> make
+         chain, not a stage of it, and this card can render beside the 02 Queue card. Same choice
+         the errored (⚠) and pending (⏳) cards above already make. #}
+      <span class="stage-card-num">↻</span>
       <h3>Parked re-opens — {{ status.pending_reopens|length }}</h3>
       <span class="stage-card-hint">The system asked to re-open these sources for more moments. Release starts clip production.</span>
     </header>
