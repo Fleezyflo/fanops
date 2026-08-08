@@ -208,7 +208,11 @@ def cmd_reconcile(cfg: Config, *, report_terminals: bool = False) -> int:
         log = get_logger(cfg)
         for r in rows:
             log("reconcile", r["post_id"], f"WOULD {r['event']}", state=r["state"], reason=r["reason"][:80])
-        log("reconcile", "-", "report-terminals", would_touch=len(rows))
+        # MOL-791: the preview now carries TWO row kinds and they must not be summed into one number —
+        # a lateness row would_set_state == state, i.e. it would touch NOTHING. Counting it under
+        # `would_touch` would report writes that cannot happen. Split the tally at the same predicate.
+        writes = [r for r in rows if r["would_set_state"] != r["state"]]
+        log("reconcile", "-", "report-terminals", would_touch=len(writes), late=len(rows) - len(writes))
         return 0
     try:
         r = reconcile_due(cfg)

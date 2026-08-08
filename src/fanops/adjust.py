@@ -121,6 +121,8 @@ def retire(led: Ledger, loser_post_ids: list[str]) -> Ledger:
             # If no sibling clip of this moment is still live, retire the MOMENT too — else
             # clip.py's render guard (which checks moment state) would re-render it into a
             # fresh live clip on a later pass, silently undoing the retirement.
+            # Deliberately the INTRINSIC predicate, not the derived `is_suppressed`: this asks whether a SIBLING
+            # is retired IN ITSELF, to decide whether to retire the moment. Deriving here is circular.
             live_sibs = [c for c in led.clips_of(clip.parent_id) if not led.is_retired_clip(c.id)]
             if not live_sibs:
                 led.set_moment_state(clip.parent_id, MomentState.retired)

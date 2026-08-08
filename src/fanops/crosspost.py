@@ -149,13 +149,12 @@ def _moment_is_live_target(m) -> bool:
     return m is None or m.state in (MomentState.decided, MomentState.clipped)
 
 def _seed_clips(led: Ledger) -> list:
-    """The crosspost seed set: clips that are captioned + not held + not retired (clip or its moment), AND whose
-    moment is still a live render target (decided/clipped, or absent -> existing fail-open). MOM-1: a re-pick
-    resets a moment to `picked`; its surviving captioned clip must not seed a post on stale casting intent."""
+    """The crosspost seed set: captioned clips that pass `Ledger.can_seed` (the OWNER of "may this clip mint
+    new work?" — not held, live lineage, fails CLOSED on a missing ancestor), AND whose moment is still a live
+    render target (MOM-1: decided/clipped, or absent -> existing fail-open). MOM-1: a re-pick resets a moment to
+    `picked`; its surviving captioned clip must not seed a post on stale casting intent."""
     return [c for c in led.clips_in_state(ClipState.captioned)
-            if not c.held and not led.is_retired_clip(c.id)
-            and not led.is_retired_moment(c.parent_id)
-            and _moment_is_live_target(led.moments.get(c.parent_id))]
+            if led.can_seed(c) and _moment_is_live_target(led.moments.get(c.parent_id))]
 
 
 def _mint_surface_post(led: Ledger, cfg: Config, clip, m, surf, i: int, *,

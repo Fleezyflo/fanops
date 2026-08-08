@@ -344,3 +344,55 @@ def test_digest_marks_cold_surface_borrowing(monkeypatch, tmp_path):
     cutover._save_state(cfg, {"metrics_confirmed": True})    # transfer is VALIDATION-FROZEN — open the gate
     out = render_digest(led, cfg, accounts=accts)
     assert "borrowing platform signal" in out
+
+
+def test_digest_surfaces_reconcile_lateness(tmp_path):
+    # MOL-791: reconcile deliberately stamps NOTHING when a backend stops resolving a pending post
+    # (waiting is not failing, and the give-up rung that wrote a verdict is deleted). The fact then
+    # exists only as a derivation over the row + the schedule — so the digest MUST derive it, or the
+    # operator's only signal is a post that quietly sits in needs_reconcile forever.
+    from datetime import datetime, timezone, timedelta
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_post(Post(id="plate", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
+                      caption="x", state=PostState.needs_reconcile, submission_id="pz_real",
+                      scheduled_time=(datetime.now(timezone.utc) - timedelta(hours=30)).isoformat(),
+                      postiz_state="QUEUE"))
+    md = render_digest(led, cfg)
+    section = md.split("## Late (past schedule, backend has not published)")[1].split("\n##")[0]
+    assert "`plate`" in section and "30h past schedule" in section and "`QUEUE`" in section
+
+
+def test_digest_surfaces_postiz_mirror_drift(tmp_path):
+    # MOL-791: the mirror keeps watching a RESTING post for life but may never move it, so a row that
+    # changed or vanished (`absent`) is recorded on postiz_state and nowhere else. Surface the
+    # disagreement; a post still saying PUBLISHED is NOT drift and must stay out of the section.
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_post(Post(id="pgone", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
+                      caption="x", state=PostState.published, public_url="https://ig.test/pgone",
+                      postiz_state="absent"))
+    led.add_post(Post(id="pok", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
+                      caption="y", state=PostState.published, public_url="https://ig.test/pok",
+                      postiz_state="PUBLISHED"))
+    md = render_digest(led, cfg)
+    section = md.split("## Mirror drift (published here, backend row disagrees)")[1].split("\n##")[0]
+    assert "`pgone`" in section and "`absent`" in section
+    assert "`pok`" not in section                       # the row still agrees — not drift
+
+
+def test_digest_omits_both_reconcile_sections_when_nothing_qualifies(tmp_path):
+    # The absent-when-empty half of the contract, with negative controls so the sections cannot be
+    # decorative: an EMPTY ledger renders neither heading, and neither does a ledger holding the two
+    # near-misses — a pending post whose CLIENT token can never match a backend row (no lateness), and
+    # a published post that was never mirrored at all (postiz_state None -> no observation -> no drift).
+    from datetime import datetime, timezone, timedelta
+    _LATE, _DRIFT = "## Late (past schedule", "## Mirror drift ("
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    empty = render_digest(led, cfg)
+    assert _LATE not in empty and _DRIFT not in empty
+    led.add_post(Post(id="ptok", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
+                      caption="x", state=PostState.submitting, submission_id="fanops_client_token",
+                      scheduled_time=(datetime.now(timezone.utc) - timedelta(hours=99)).isoformat()))
+    led.add_post(Post(id="pnever", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
+                      caption="y", state=PostState.published, public_url="https://ig.test/pnever"))
+    md = render_digest(led, cfg)
+    assert _LATE not in md and _DRIFT not in md
