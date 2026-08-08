@@ -1,5 +1,7 @@
 """Human-readable digest: unit counts by state, brand-risk holds, FAILURES (posts in failed +
-units in error — FIX F51), and the agent steps awaiting a response."""
+units in error — FIX F51), the reconcile pair reconcile.py deliberately refuses to stamp — LATENESS
+(pending, past schedule, backend row not published) and MIRROR DRIFT (resting published/analyzed,
+mirrored row disagrees) — and the agent steps awaiting a response."""
 from __future__ import annotations
 import logging
 from collections import Counter
@@ -123,6 +125,49 @@ def _needs_reconcile(led: Ledger) -> list[str]:
                  for p in led.posts.values() if p.state is PostState.needs_reconcile]
     return (["\n## Needs reconcile (may be live — verify before resubmit)\n"
              + "\n".join(reconcile) + "\n"] if reconcile else [])
+
+
+def _reconcile_lateness(led: Ledger) -> list[str]:
+    # MOL-791: LATENESS — a pending post past its schedule whose backend row has not reported
+    # publication. reconcile deliberately stamps NOTHING for this (waiting is not failing, and the
+    # give-up rung that used to write a verdict into error_reason is deleted), so the fact exists
+    # ONLY as a derivation over the row and the schedule — and this section is where the operator
+    # sees it. Overlaps "Needs reconcile" on purpose: that section says WHICH posts are ambiguous,
+    # this one says HOW LONG the backend has been silent about them.
+    # Lazy import (like cli's report branch) so the digest's module-level import graph is unchanged.
+    try:
+        from fanops.reconcile import pending_lateness
+        late = [f"- post `{r['post_id']}` ({r['platform']}): {r['hours_late']}h past schedule, "
+                f"Postiz row `{r['postiz_state'] or 'never mirrored'}`"
+                for r in pending_lateness(led)]
+    except Exception:
+        logger.warning("reconcile-lateness digest section degraded (fail-open)", exc_info=True)
+        return []
+    return (["\n## Late (past schedule, backend has not published)\n" + "\n".join(late) + "\n"]
+            if late else [])
+
+
+def _postiz_drift(led: Ledger) -> list[str]:
+    # MOL-791: MIRROR DRIFT — a post RESTING published/analyzed whose mirrored Postiz row no longer
+    # says PUBLISHED: the row changed under us (deleted/errored platform-side) or vanished from the
+    # window entirely (the `absent` sentinel). The mirror keeps observing resting posts for life but
+    # may never MOVE one (reconcile's module header), so the disagreement is recorded on
+    # `Post.postiz_state` and nowhere else — this read is the only place it becomes visible.
+    # `postiz_state is None` means never mirrored (non-Postiz post, old ledger row): no observation,
+    # therefore no drift. Observability only, exactly as the field's contract demands — a bullet here
+    # is "these disagree, go look", never a verdict about which one is right.
+    try:
+        from fanops.reconcile import _MIRROR_PUBLISHED          # ONE vocabulary home (MOL-784 tokens)
+        drift = [f"- post `{p.id}` ({p.platform.value}): resting {p.state.value}, "
+                 f"Postiz row now `{p.postiz_state}`"
+                 for p in led.posts.values()
+                 if p.state in (PostState.published, PostState.analyzed) and p.postiz_state
+                 and p.postiz_state.strip().upper() != _MIRROR_PUBLISHED]
+    except Exception:
+        logger.warning("postiz-drift digest section degraded (fail-open)", exc_info=True)
+        return []
+    return (["\n## Mirror drift (published here, backend row disagrees)\n" + "\n".join(drift) + "\n"]
+            if drift else [])
 
 
 def _unmeasured(led: Ledger) -> list[str]:
@@ -284,6 +329,8 @@ def render_digest(led: Ledger, cfg: Config, accounts=None) -> str:
     out += _failures(led)
     out += _degraded(led)
     out += _needs_reconcile(led)
+    out += _reconcile_lateness(led)
+    out += _postiz_drift(led)
     out += _unmeasured(led)
     out += _variant_lift(led, cfg, accounts)
     out += _variant_amplify(led, cfg)
