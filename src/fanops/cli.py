@@ -131,19 +131,15 @@ def cmd_track(cfg: Config, window: str) -> int:
     # TikTok-via-Zernio in ONE pass); a no-override deployment is byte-identical to the old id-list path.
     pollable_posts = [p for p in led0.posts.values()
                       if p.submission_id and p.state in (PostState.published, PostState.analyzed)]
-    from fanops.reconcile import resolve_media_ids, prefetch_media_scope
-    scoped = prefetch_media_scope(led0, cfg)
     try:
         rows = list(_default_list_posts(cfg, posts=pollable_posts)(window))   # network, NO lock held
     except (RuntimeError, AuthError) as e:               # postiz no-key raises PostizAuthError, not RuntimeError -> skip cleanly (mirror cmd_reconcile)
         print(f"track skipped: {e}"); return 0
-    def _resolve(ledg, conf):
-        return resolve_media_ids(ledg, conf, scoped=scoped)
     with Ledger.transaction(cfg) as led:
         # apply the pre-fetched rows: pull_metrics matches them to still-pollable posts in THIS
         # (re-loaded) ledger, so a post that changed between fetch and apply is simply not matched.
         before = {pid: len(p.metrics_series) for pid, p in led.posts.items()}   # P3: series rows BEFORE
-        led = pull_metrics(led, cfg, list_posts=lambda _w: rows, window=window, resolve_media=_resolve)
+        led = pull_metrics(led, cfg, list_posts=lambda _w: rows, window=window)
         analyzed = len(led.posts_in_state(PostState.analyzed))
         added = deg = 0                                                          # P3: this-pass tally
         for pid, p in led.posts.items():
@@ -165,13 +161,9 @@ def _learn_pass(cfg: Config, *, window: str = "30d") -> None:
     led0 = Ledger.load(cfg)
     pollable_posts = [p for p in led0.posts.values()   # P3: published OR analyzed (re-pollable)
                       if p.submission_id and p.state in (PostState.published, PostState.analyzed)]
-    from fanops.reconcile import resolve_media_ids, prefetch_media_scope
-    scoped = prefetch_media_scope(led0, cfg)
     rows = list(_default_list_posts(cfg, posts=pollable_posts)(window))   # network, NO lock held (per-post backend routing)
-    def _resolve(ledg, conf):
-        return resolve_media_ids(ledg, conf, scoped=scoped)
     with Ledger.transaction(cfg) as led:
-        led = pull_metrics(led, cfg, list_posts=lambda _w: rows, window=window, resolve_media=_resolve)
+        led = pull_metrics(led, cfg, list_posts=lambda _w: rows, window=window)
         r = classify_outcomes(led, per_surface=cfg.adjust_per_surface)   # P4(a): per-surface WINNERS when on
         # BOTH learn-pass actuators carry an operator-INTENT flag, default OFF, and both leave a
         # breadcrumb whichever way they go. AMPLIFY MINTS NEW WORK — a winner re-opens a moment
@@ -227,10 +219,10 @@ def cmd_reconcile(cfg: Config, *, report_terminals: bool = False) -> int:
     return 0
 
 def cmd_map_media(cfg: Config) -> int:
-    # Leg 2 (Insight) ops mirror: resolve each published/analyzed IG post's Graph media_id from the live
+    # Leg 2 (Insight) on-demand: resolve each published/analyzed IG post's Graph media_id from the live
     # media list (matched by permalink). READ-ONLY w.r.t. Instagram (a GET on /{ig_user}/media, needs only
-    # instagram_basic); the daemon does this automatically inside pull_metrics, this is the on-demand mirror.
-    # Fail-open (no creds -> resolves nobody, exit 0); never fabricates an id.
+    # instagram_basic). The metrics pull path no longer auto-enumerates (MOL-790); this verb remains the
+    # explicit resolve leg until MOL-775 retires the corpse. Fail-open (no creds -> resolves nobody, exit 0).
     from fanops.reconcile import resolve_media_ids, project_imported_media
     from fanops.track import pull_imported_insights
     led0 = Ledger.load(cfg)

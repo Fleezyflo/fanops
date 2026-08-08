@@ -184,19 +184,33 @@ def test_resolve_empty_media_list_does_not_false_breadcrumb(tmp_path, monkeypatc
     assert led.posts["p1"].error_reason is None      # empty list != unmatched; no breadcrumb
 
 
-def test_pull_metrics_resolves_media_ids_in_the_pull_path(tmp_path, monkeypatch):
-    # The automatic pull path (what the daemon runs) MUST self-resolve new posts' media_ids, else the
-    # sole-source insights read can never reach them. pull_metrics threads a `resolve_media=` hook.
+def test_pull_metrics_honors_injected_resolve_media_seam(tmp_path, monkeypatch):
+    # MOL-790: the default pull path no longer self-resolves, but the injectable `resolve_media=`
+    # seam stays (tests / explicit callers). A passed callable is still honored fail-open.
     from fanops.track import pull_metrics
     cfg = _cfg(tmp_path, monkeypatch)
     led = _led(cfg, [_post("p1", "https://www.instagram.com/reel/AAA/")])
     page = _Resp(200, {"data": [{"id": "M1", "permalink": "https://www.instagram.com/reel/AAA/",
                                  "media_product_type": "REELS"}]})
     getter = _media_get([page])
-    # inject the media getter into the resolve step; list_posts stubbed empty (no metric rows this test)
     pull_metrics(led, cfg, list_posts=lambda w: [],
                  resolve_media=lambda ledg, conf: reconcile.resolve_media_ids(ledg, conf, get=getter))
-    assert led.posts["p1"].media_id == "M1"          # resolved as a side effect of the pull
+    assert led.posts["p1"].media_id == "M1"          # injected seam still stamps
+
+
+def test_pull_metrics_default_path_skips_feed_enumeration(tmp_path, monkeypatch, mocker):
+    # MOL-790 acceptance: a default pull_metrics pass must NOT call enumerate_scoped_media and must
+    # make zero Meta HTTP (no requests.get). media_id arrives at promotion; product_type at mint.
+    from fanops.track import pull_metrics
+    import requests
+    cfg = _cfg(tmp_path, monkeypatch)
+    led = _led(cfg, [_post("p1", "https://www.instagram.com/reel/AAA/")])
+    enum_spy = mocker.patch("fanops.meta_graph.enumerate_scoped_media", return_value=[])
+    http_spy = mocker.patch.object(requests, "get", side_effect=AssertionError("Meta HTTP on pull path"))
+    pull_metrics(led, cfg, list_posts=lambda w: [])
+    assert enum_spy.call_count == 0
+    assert http_spy.call_count == 0
+    assert led.posts["p1"].media_id is None          # no resolution on the default path
 
 
 def test_cmd_map_media_is_read_only_and_fail_open(tmp_path, monkeypatch, capsys):
