@@ -22,62 +22,62 @@
       "verb": "audit"
     },
     {
-      "line": 901,
+      "line": 905,
       "module": "fanops.cli",
       "verb": "audit"
     },
     {
-      "line": 922,
+      "line": 926,
       "module": "fanops.cli",
       "verb": "auth"
     },
     {
-      "line": 969,
+      "line": 973,
       "module": "fanops.cli",
       "verb": "autopilot"
     },
     {
-      "line": 984,
+      "line": 988,
       "module": "fanops.cli",
       "verb": "baseline"
     },
     {
-      "line": 905,
+      "line": 909,
       "module": "fanops.cli",
       "verb": "bulk-send-to-review"
     },
     {
-      "line": 973,
+      "line": 977,
       "module": "fanops.cli",
       "verb": "canary"
     },
     {
-      "line": 982,
+      "line": 986,
       "module": "fanops.cli",
       "verb": "cancel"
     },
     {
-      "line": 985,
+      "line": 989,
       "module": "fanops.cli",
       "verb": "compare"
     },
     {
-      "line": 862,
+      "line": 866,
       "module": "fanops.cli",
       "verb": "compose"
     },
     {
-      "line": 868,
+      "line": 872,
       "module": "fanops.cli",
       "verb": "config"
     },
     {
-      "line": 920,
+      "line": 924,
       "module": "fanops.cli",
       "verb": "cutover"
     },
     {
-      "line": 958,
+      "line": 962,
       "module": "fanops.cli",
       "verb": "daemon"
     },
@@ -87,42 +87,42 @@
       "verb": "digest"
     },
     {
-      "line": 981,
+      "line": 985,
       "module": "fanops.cli",
       "verb": "discard"
     },
     {
-      "line": 860,
+      "line": 864,
       "module": "fanops.cli",
       "verb": "discover"
     },
     {
-      "line": 948,
+      "line": 952,
       "module": "fanops.cli",
       "verb": "discover"
     },
     {
-      "line": 951,
+      "line": 955,
       "module": "fanops.cli",
       "verb": "docs"
     },
     {
-      "line": 954,
+      "line": 958,
       "module": "fanops.cli",
       "verb": "docs"
     },
     {
-      "line": 867,
+      "line": 871,
       "module": "fanops.cli",
       "verb": "doctor"
     },
     {
-      "line": 943,
+      "line": 947,
       "module": "fanops.cli",
       "verb": "doctor"
     },
     {
-      "line": 966,
+      "line": 970,
       "module": "fanops.cli",
       "verb": "ensure"
     },
@@ -132,12 +132,12 @@
       "verb": "gc"
     },
     {
-      "line": 944,
+      "line": 948,
       "module": "fanops.cli",
       "verb": "hashtags"
     },
     {
-      "line": 877,
+      "line": 881,
       "module": "fanops.cli",
       "verb": "health"
     },
@@ -147,37 +147,37 @@
       "verb": "ingest"
     },
     {
-      "line": 872,
+      "line": 876,
       "module": "fanops.cli",
       "verb": "init"
     },
     {
-      "line": 960,
+      "line": 964,
       "module": "fanops.cli",
       "verb": "install"
     },
     {
-      "line": 861,
+      "line": 865,
       "module": "fanops.cli",
       "verb": "intake"
     },
     {
-      "line": 941,
+      "line": 945,
       "module": "fanops.cli",
       "verb": "learn"
     },
     {
-      "line": 949,
+      "line": 953,
       "module": "fanops.cli",
       "verb": "lever"
     },
     {
-      "line": 928,
+      "line": 932,
       "module": "fanops.cli",
       "verb": "lift"
     },
     {
-      "line": 968,
+      "line": 972,
       "module": "fanops.cli",
       "verb": "logs"
     },
@@ -187,12 +187,12 @@
       "verb": "map-media"
     },
     {
-      "line": 926,
+      "line": 930,
       "module": "fanops.cli",
       "verb": "metrics"
     },
     {
-      "line": 891,
+      "line": 895,
       "module": "fanops.cli",
       "verb": "origin-backfill"
     },
@@ -202,7 +202,7 @@
       "verb": "p4-bias"
     },
     {
-      "line": 939,
+      "line": 943,
       "module": "fanops.cli",
       "verb": "paths-rebase"
     },
@@ -212,27 +212,27 @@
       "verb": "pause"
     },
     {
-      "line": 923,
+      "line": 927,
       "module": "fanops.cli",
       "verb": "post"
     },
     {
-      "line": 880,
+      "line": 884,
       "module": "fanops.cli",
       "verb": "posts"
     },
     {
-      "line": 975,
+      "line": 979,
       "module": "fanops.cli",
       "verb": "prepare"
     },
     {
-      "line": 858,
+      "line": 862,
       "module": "fanops.cli",
       "verb": "promote-source"
     },
     {
-      "line": 879,
+      "line": 883,
       "module": "fanops.cli",
       "verb": "publish-queue"
     },
@@ -242,7 +242,7 @@
       "verb": "pull"
     },
     {
-      "line": 882,
+      "line": 886,
       "module": "fanops.cli",
       "verb": "recaption"
     },
@@ -252,7 +252,7 @@
       "verb": "reconcile"
     },
     {
-      "line": 887,
+      "line": 891,
       "module": "fanops.cli",
       "verb": "reconcile-retired"
     },
@@ -267,7 +267,7 @@
       "verb": "reframe"
     },
     {
-      "line": 946,
+      "line": 950,
       "module": "fanops.cli",
       "verb": "refresh"
     },
@@ -282,7 +282,7 @@
       "verb": "respond"
     },
     {
-      "line": 937,
+      "line": 941,
       "module": "fanops.cli",
       "verb": "restore"
     },
@@ -297,7 +297,7 @@
       "verb": "retire-source"
     },
     {
-      "line": 859,
+      "line": 863,
       "module": "fanops.cli",
       "verb": "retry-metrics"
     },
@@ -307,12 +307,12 @@
       "verb": "retry-source"
     },
     {
-      "line": 955,
+      "line": 959,
       "module": "fanops.cli",
       "verb": "run"
     },
     {
-      "line": 947,
+      "line": 951,
       "module": "fanops.cli",
       "verb": "scrape-login"
     },
@@ -322,27 +322,27 @@
       "verb": "status"
     },
     {
-      "line": 965,
+      "line": 969,
       "module": "fanops.cli",
       "verb": "status"
     },
     {
-      "line": 967,
+      "line": 971,
       "module": "fanops.cli",
       "verb": "stop"
     },
     {
-      "line": 908,
+      "line": 912,
       "module": "fanops.cli",
       "verb": "studio"
     },
     {
-      "line": 903,
+      "line": 907,
       "module": "fanops.cli",
       "verb": "tail"
     },
     {
-      "line": 952,
+      "line": 956,
       "module": "fanops.cli",
       "verb": "threshold"
     },
@@ -357,7 +357,7 @@
       "verb": "unhold"
     },
     {
-      "line": 971,
+      "line": 975,
       "module": "fanops.cli",
       "verb": "up"
     },
@@ -367,7 +367,7 @@
       "verb": "verify-live"
     },
     {
-      "line": 930,
+      "line": 934,
       "module": "fanops.cli",
       "verb": "wipe"
     }
