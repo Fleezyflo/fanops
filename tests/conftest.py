@@ -14,6 +14,7 @@ import os
 import pytest
 from fanops.errors import LockBusyError
 from fanops.ledger import Ledger
+from fanops.settings import BOOL_ENV_FIELDS
 
 
 def ledger_lock_is_free(cfg) -> bool:
@@ -42,7 +43,13 @@ def ledger_lock_is_free(cfg) -> bool:
 # =1 leaking into the session would silently flip every test onto the pooled path (and the worker
 # count along with it). Stripping them makes each test see the OFF default; the concurrent tests
 # set them explicitly via monkeypatch and get clean teardown.
-_LEAKY_ENV = ("FANOPS_ROOT", "FANOPS_LIVE", "FANOPS_POSTER", "BLOTATO_API_KEY", "POSTIZ_API_KEY", "POSTIZ_URL", "FANOPS_MEDIA_PUBLIC_BASE",
+#
+# EVERY registered boolean flag is scrubbed, and that half of the list is DERIVED, not typed: a flag
+# whose leak flips a code default is exactly what `settings.BOOL_ENV_FIELDS` enumerates, so a newly
+# registered flag is hermetic on the commit that registers it instead of on the commit where someone
+# notices. `_NON_FLAG_LEAKY` below is the remainder — vars that are not registered boolean flags
+# (credentials, tuning numbers, and the four read directly by config.py with no Settings field).
+_NON_FLAG_LEAKY = ("FANOPS_ROOT", "FANOPS_POSTER", "BLOTATO_API_KEY", "POSTIZ_API_KEY", "POSTIZ_URL", "FANOPS_MEDIA_PUBLIC_BASE",
               "R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET", "FANOPS_HOOK_JUDGE",
               "FANOPS_RESPONDER",   # defaults to llm when `claude` is on PATH — must not leak across tests/CI
               # LLM transport/model: the operator persists FANOPS_LLM_TRANSPORT=cursor (+ an optional
@@ -51,18 +58,10 @@ _LEAKY_ENV = ("FANOPS_ROOT", "FANOPS_LIVE", "FANOPS_POSTER", "BLOTATO_API_KEY", 
               "META_GRAPH_TOKEN", "META_IG_USER_ID", "FANOPS_CORPUS_TARGET", "FANOPS_HASHTAG_SCRAPE_TRY_CAP", "FANOPS_HASHTAG_SCRAPE_COTAG_ENQUEUE", "FANOPS_IG_SCRAPE_USER", "FANOPS_IG_SCRAPE_PASSWORD", "META_GRAPH_URL",
               "FANOPS_GC_KEEP_DAYS",   # content-lifecycle Phase 3: a repo .env value must not leak into the gc-window tests
               "FANOPS_CONCURRENT_SOURCES", "FANOPS_CONCURRENT_WORKERS",
-              # persona/learning behavior flags (default OFF): once the operator persists e.g.
-              # FANOPS_CREATIVE_VARIATION=1 to the repo .env (the supported "system default"), it must not
-              # leak into tests that assume the code default — same class as FANOPS_HOOK_JUDGE above.
-              "FANOPS_CREATIVE_VARIATION", "FANOPS_VARIANT_LEARNING", "FANOPS_VARIANT_AMPLIFY", "FANOPS_LEARN_AMPLIFY", "FANOPS_LEARN_RETIRE", "FANOPS_P4_DIM_BIAS",
-              # Account-First Studio casting (Face 3): a repo .env value must not leak into tests that assume
-              # the code default (same class as FANOPS_CREATIVE_VARIATION above).
-              "FANOPS_ACCOUNT_CASTING",
-              # burn_subs DEFAULTS ON (transcript captions); a repo .env =0 must not leak into tests
-              # that assume the code default — same class as FANOPS_HOOK_JUDGE above.
-              "FANOPS_BURN_SUBS",
-              "FANOPS_QUEUE_GATE",   # U4: default ON — repo .env =0 must not leak into gate-ON tests
-              "FANOPS_SHOW_EXTRAS",   # U13: default OFF — repo .env =1 must not leak into the extras-hidden nav tests
+              # FANOPS_CREATIVE_VARIATION is a persona/learning flag with NO Settings field (config.py reads
+              # it directly), so BOOL_ENV_FIELDS cannot carry it — once the operator persists =1 to the repo
+              # .env (the supported "system default") it must not leak into tests that assume the code default.
+              "FANOPS_CREATIVE_VARIATION",
               # S03 source sharding: a repo .env value must not leak into tests that assume the code default.
               "FANOPS_SOURCE_SHARD_MIN",
               # bringup: the `fanops up` on-demand-script path override — a repo .env value must not leak
@@ -79,6 +78,7 @@ _LEAKY_ENV = ("FANOPS_ROOT", "FANOPS_LIVE", "FANOPS_POSTER", "BLOTATO_API_KEY", 
               # set it explicitly via monkeypatch (test_operator_timezone_cadence_window, test_studio_views,
               # test_bulk_approve_spread, test_studio_actions, test_home_rebuild) and are unaffected.
               "FANOPS_OPERATOR_TZ")
+_LEAKY_ENV = tuple(dict.fromkeys(BOOL_ENV_FIELDS + _NON_FLAG_LEAKY))
 
 
 def pytest_configure(config):
@@ -122,18 +122,19 @@ def _no_real_publish_sleep(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _hermetic_publish_env():
+    # `saved` covers the two force-set vars below too: both are registered bool flags, so BOOL_ENV_FIELDS
+    # puts them in _LEAKY_ENV and the restore loop puts the operator's real value back. They used to need
+    # their own save/restore pair because the hand-typed list happened not to name FANOPS_ISOLATE_VOCALS.
     saved = {k: os.environ.get(k) for k in _LEAKY_ENV}
     for k in _LEAKY_ENV:
         os.environ.pop(k, None)
     # Force vocal isolation OFF for the unit suite: it DEFAULTS ON (the music transcription fix), but
     # transcribe_source would then shell real `demucs` on fixture audio — slow + non-hermetic. Tests
     # that exercise the isolation wiring opt back in explicitly (and monkeypatch isolate_vocals).
-    iso_saved = os.environ.get("FANOPS_ISOLATE_VOCALS")
     os.environ["FANOPS_ISOLATE_VOCALS"] = "0"
     # Force transcript-caption burn OFF for the unit suite: burn_subs DEFAULTS ON, but most clip tests
     # isolate reframe/fingerprint/hook wiring and must not write .ass files. Tests that exercise subs
     # opt back in explicitly (monkeypatch delenv/setenv burn_subs).
-    burn_saved = os.environ.get("FANOPS_BURN_SUBS")
     os.environ["FANOPS_BURN_SUBS"] = "0"
     try:
         yield
@@ -143,14 +144,6 @@ def _hermetic_publish_env():
                 os.environ.pop(k, None)
             else:
                 os.environ[k] = v
-        if iso_saved is None:
-            os.environ.pop("FANOPS_ISOLATE_VOCALS", None)
-        else:
-            os.environ["FANOPS_ISOLATE_VOCALS"] = iso_saved
-        if burn_saved is None:
-            os.environ.pop("FANOPS_BURN_SUBS", None)
-        else:
-            os.environ["FANOPS_BURN_SUBS"] = burn_saved
 
 
 # ── VCR: source external API shapes from the REAL call, never a guess ──────────────────────────────

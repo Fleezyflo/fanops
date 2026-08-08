@@ -3,11 +3,12 @@ from __future__ import annotations
 import logging
 import math
 import os
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
 from dotenv import load_dotenv
-from pydantic import Field, ValidationError, field_validator
+from pydantic import BeforeValidator, Field, ValidationError, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # The boolean-word vocabulary is declared ONCE, in config.py, and imported here — this module used to
@@ -23,17 +24,6 @@ _VALID_BACKENDS = frozenset({"dryrun", "postiz", "zernio"})
 _VALID_RESPONDERS = frozenset({"llm", "manual"})
 _VALID_LLM_TRANSPORTS = frozenset({"claude", "cursor"})
 PosterBackend = Literal["dryrun", "postiz", "zernio"]
-_BOOL_ENV_FIELDS = (
-    "FANOPS_LIVE", "FANOPS_REQUIRE_FULL_OBJECTIVE", "FANOPS_SMART_FRAMING",
-    "FANOPS_QUEUE_GATE", "FANOPS_SHOW_EXTRAS",
-    "FANOPS_VISUAL_START", "FANOPS_ISOLATE_VOCALS", "FANOPS_BURN_SUBS", "FANOPS_AWARE_REFRAME",
-    "FANOPS_ACCOUNT_CASTING", "FANOPS_HOOK_ROUTER", "FANOPS_IMPACT_CUT", "FANOPS_INTRO_TEASE",
-    "FANOPS_VARIANT_LEARNING", "FANOPS_VARIANT_AMPLIFY", "FANOPS_VARIANT_UCB", "FANOPS_VARIANT_TRANSFER",
-    "FANOPS_LEARN_AMPLIFY", "FANOPS_LEARN_RETIRE",
-    "FANOPS_ADJUST_PER_SURFACE", "FANOPS_P4_DIM_BIAS", "FANOPS_TIMING_BIAS", "FANOPS_IG_RETENTION_PROOF",
-    "FANOPS_MOMENT_HOOK_LEARNING", "FANOPS_REALISTIC_CADENCE", "FANOPS_CONCURRENT_SOURCES",
-    "FANOPS_POSTIZ_AUTOSTART",
-)
 _STRIP_STR_FIELDS = (
     "FANOPS_POSTER", "FANOPS_LIVE", "FANOPS_RESPONDER", "FANOPS_LLM_TRANSPORT", "FANOPS_LLM_MODEL", "FANOPS_ARTIST_NAME",
     "FANOPS_CLIP_PROFILE", "FANOPS_WHISPER_MODEL", "FANOPS_ASR_MODEL", "FANOPS_ASR_LANGUAGE",
@@ -54,6 +44,41 @@ def _validate_bool_word(v: object) -> str:
     if bool_word(s) is None:
         raise ValueError(f"unrecognized bool value {s!r}; valid: 1/0, true/false, yes/no, on/off")
     return s
+
+
+@dataclass(frozen=True)
+class EnvVar:
+    """THE registration record for one env var, declared ON its `Settings` field via `Annotated`.
+
+    Adding a FANOPS_* flag used to mean editing nine hand-maintained sites that each restated the same
+    name: a `_BOOL_ENV_FIELDS` tuple here, `config_introspect._STUDIO_SETTABLE`, a bespoke
+    `golive.set_*` setter, the conftest scrub list, and so on. Every one was a copy that could rot
+    independently — the same defect class as `_CLI_PRINT_COUNT`'s seven copies, with no scanner. The field
+    declaration below is now the ONLY place these facts are stated; the sets at the bottom of this
+    module DERIVE from `Settings.model_fields[...].metadata`, so a copy cannot drift out of agreement
+    with the declaration because there is no copy left to drift.
+
+    Not derivable from here, by construction (each needs a fact this record does not carry):
+      - `config.py`'s read site — it states the flag's SEMANTIC default (`env_bool(..., default=)`),
+        which this record cannot hold: `config` is imported BY this module, so the dependency cannot
+        run the other way, and `ARCH-003` reads the env surface out of the AST, which needs a literal
+        `os.getenv("NAME")` to see the var at all.
+      - a Go-Live ROUTE + its template button (a URL and an endpoint name), and a `GoLiveStatus`
+        field (a template contract). Both are hand-written per flag; `golive.set_flag` is the
+        registry-gated writer they share.
+    """
+    bool_word: bool = False     # value is a boolean word (1/0, true/false, yes/no, on/off) -> BOOL_ENV_FIELDS
+    studio: bool = False        # shown as operator-settable in `fanops config` / Studio -> STUDIO_SETTABLE
+    operator_flag: bool = False # `golive.set_flag` may dual-write it -> OPERATOR_FLAGS. Deliberately FALSE
+                                # for FANOPS_LIVE: go_live is its ONLY setter (confirm-gated, golive
+                                # invariant #2), so the generic toggle must never reach it.
+
+
+BoolEnv = Annotated[str, BeforeValidator(_validate_bool_word), EnvVar(bool_word=True)]
+BoolFlag = Annotated[str, BeforeValidator(_validate_bool_word), EnvVar(bool_word=True, studio=True, operator_flag=True)]
+LiveSwitch = Annotated[str, BeforeValidator(_validate_bool_word), EnvVar(bool_word=True, studio=True)]
+StudioStr = Annotated[str, EnvVar(studio=True)]
+StudioOpt = Annotated[str | None, EnvVar(studio=True)]
 
 
 def _validate_poster(v: object) -> str:
@@ -137,23 +162,26 @@ def _parse_float(v: object, default: float) -> float:
 
 
 class Settings(BaseSettings):
-    """Every FANOPS_* / credential env key with explicit type + default. Built fresh per Config()
-    after load_dotenv(override=True) so go-live dual-writes are visible on the next Config()."""
+    """Every FANOPS_* / credential env key with explicit type + default, and — via the `EnvVar` marker
+    each field's annotation carries — THE single registration point for the var: `BOOL_ENV_FIELDS`,
+    `STUDIO_SETTABLE` and `OPERATOR_FLAGS` are derived from these declarations, never restated.
+    Built fresh per Config() after load_dotenv(override=True) so go-live dual-writes are visible on
+    the next Config()."""
     model_config = SettingsConfigDict(extra="ignore")
 
     ANTHROPIC_API_KEY: str | None = None
     FANOPS_POSTER: str = ""
-    FANOPS_LIVE: str = ""
-    POSTIZ_URL: str | None = None
-    POSTIZ_API_KEY: str | None = None
+    FANOPS_LIVE: LiveSwitch = ""
+    POSTIZ_URL: StudioOpt = None
+    POSTIZ_API_KEY: StudioOpt = None
     FANOPS_MEDIA_PUBLIC_BASE: str | None = None
     R2_ACCOUNT_ID: str | None = None
     R2_ACCESS_KEY_ID: str | None = None
     R2_SECRET_ACCESS_KEY: str | None = None
     R2_BUCKET: str | None = None
     ZERNIO_API_URL: str = ""
-    ZERNIO_API_KEY: str | None = None
-    META_GRAPH_TOKEN: str | None = None
+    ZERNIO_API_KEY: StudioOpt = None
+    META_GRAPH_TOKEN: StudioOpt = None
     META_IG_USER_ID: str | None = None
     META_GRAPH_URL: str = ""
     FANOPS_CORPUS_TARGET: int = 80
@@ -163,58 +191,58 @@ class Settings(BaseSettings):
     FANOPS_HASHTAG_SCRAPE_DELAY: str = ""
     FANOPS_IG_SCRAPE_USER: str | None = None
     FANOPS_IG_SCRAPE_PASSWORD: str | None = None
-    FANOPS_REQUIRE_FULL_OBJECTIVE: str = ""
-    FANOPS_RESPONDER: str = ""
+    FANOPS_REQUIRE_FULL_OBJECTIVE: BoolEnv = ""
+    FANOPS_RESPONDER: StudioStr = ""
     FANOPS_LLM_TRANSPORT: str = ""
     FANOPS_LLM_MODEL: str = ""
     FANOPS_ARTIST_NAME: str = ""
-    FANOPS_CLIP_PROFILE: str = ""
-    FANOPS_VISUAL_START: str = ""
-    FANOPS_SMART_FRAMING: str = ""
-    FANOPS_QUEUE_GATE: str = ""
-    FANOPS_SHOW_EXTRAS: str = ""
+    FANOPS_CLIP_PROFILE: StudioStr = ""
+    FANOPS_VISUAL_START: BoolEnv = ""
+    FANOPS_SMART_FRAMING: BoolEnv = ""
+    FANOPS_QUEUE_GATE: BoolEnv = ""
+    FANOPS_SHOW_EXTRAS: BoolEnv = ""
     FANOPS_WHISPER_MODEL: str = ""
     FANOPS_ASR_MODEL: str = ""
     FANOPS_ASR_LANGUAGE: str = ""
-    FANOPS_ISOLATE_VOCALS: str = ""
-    FANOPS_BURN_SUBS: str = ""
-    FANOPS_AWARE_REFRAME: str = ""
+    FANOPS_ISOLATE_VOCALS: BoolEnv = ""
+    FANOPS_BURN_SUBS: BoolEnv = ""
+    FANOPS_AWARE_REFRAME: BoolEnv = ""
     FANOPS_SUBTITLE_FONT: str = ""
-    FANOPS_ACCOUNT_CASTING: str = ""
-    FANOPS_HOOK_ROUTER: str = ""
-    FANOPS_IMPACT_CUT: str = ""
-    FANOPS_INTRO_TEASE: str = ""
-    FANOPS_VARIANT_LEARNING: str = ""
+    FANOPS_ACCOUNT_CASTING: BoolFlag = ""
+    FANOPS_HOOK_ROUTER: BoolEnv = ""
+    FANOPS_IMPACT_CUT: BoolEnv = ""
+    FANOPS_INTRO_TEASE: BoolEnv = ""
+    FANOPS_VARIANT_LEARNING: BoolFlag = ""
     FANOPS_VARIANT_MIN_POSTS: int = 3
     FANOPS_VARIANT_MIN_GAP: float = 10.0
-    FANOPS_LEARN_AMPLIFY: str = ""
-    FANOPS_LEARN_RETIRE: str = ""
-    FANOPS_VARIANT_AMPLIFY: str = ""
+    FANOPS_LEARN_AMPLIFY: BoolFlag = ""
+    FANOPS_LEARN_RETIRE: BoolFlag = ""
+    FANOPS_VARIANT_AMPLIFY: BoolFlag = ""
     FANOPS_VARIANT_AMPLIFY_MIN_POSTS: int = 8
     FANOPS_VARIANT_AMPLIFY_MIN_GAP: float = 25.0
     FANOPS_VARIANT_AMPLIFY_MIN_STREAK: int = 3
-    FANOPS_VARIANT_UCB: str = ""
+    FANOPS_VARIANT_UCB: BoolFlag = ""
     FANOPS_VARIANT_UCB_C: float = Field(default_factory=lambda: math.sqrt(2))
-    FANOPS_VARIANT_TRANSFER: str = ""
+    FANOPS_VARIANT_TRANSFER: BoolFlag = ""
     FANOPS_VARIANT_TRANSFER_MIN_DONORS: int = 2
     FANOPS_VARIANT_TRANSFER_MAX_HOOKS: int = 2
-    FANOPS_ADJUST_PER_SURFACE: str = ""
-    FANOPS_P4_DIM_BIAS: str = ""
-    FANOPS_TIMING_BIAS: str = ""
-    FANOPS_IG_RETENTION_PROOF: str = ""
-    FANOPS_MOMENT_HOOK_LEARNING: str = ""
+    FANOPS_ADJUST_PER_SURFACE: BoolEnv = ""
+    FANOPS_P4_DIM_BIAS: BoolEnv = ""
+    FANOPS_TIMING_BIAS: BoolEnv = ""
+    FANOPS_IG_RETENTION_PROOF: BoolEnv = ""
+    FANOPS_MOMENT_HOOK_LEARNING: BoolEnv = ""
     FANOPS_P4_MIN_REACH_GAP: float = 0.0
     FANOPS_GC_KEEP_DAYS: int = 30
     FANOPS_UPLOAD_MAX_MB: int = 2048
     FANOPS_SOURCE_SHARD_MIN: int = 45
     FANOPS_OPERATOR_TZ: str = ""
-    FANOPS_REALISTIC_CADENCE: str = ""
+    FANOPS_REALISTIC_CADENCE: BoolEnv = ""
     FANOPS_PUBLISH_LEAD_MINUTES: int = 0
     FANOPS_ZERNIO_MAX_UPLOAD_MB: int = 4
     FANOPS_POSTIZ_PUBLISH_PER_MIN: int = 4
-    FANOPS_CONCURRENT_SOURCES: str = ""
+    FANOPS_CONCURRENT_SOURCES: BoolEnv = ""
     FANOPS_CONCURRENT_WORKERS: int = 4
-    FANOPS_POSTIZ_AUTOSTART: str = ""
+    FANOPS_POSTIZ_AUTOSTART: BoolEnv = ""
     FANOPS_POSTIZ_COMPOSE_DIR: str | None = None
     XDG_CACHE_HOME: str | None = None
 
@@ -360,9 +388,9 @@ class Settings(BaseSettings):
     @classmethod
     def _llm_transport(cls, v): return _validate_llm_transport(v)
 
-    @field_validator(*_BOOL_ENV_FIELDS, mode="before")
-    @classmethod
-    def _bool_word(cls, v): return _validate_bool_word(v)
+    # The bool-word check that used to live here as `@field_validator(*_BOOL_ENV_FIELDS)` now rides on
+    # the `BoolEnv`/`BoolFlag`/`LiveSwitch` annotations themselves, so declaring a field bool and
+    # validating it bool are the same act — a name can no longer be in one and missing from the other.
 
     def poster_backend(self) -> PosterBackend:
         v = (self.FANOPS_POSTER or "").strip()
@@ -417,10 +445,38 @@ class Settings(BaseSettings):
             data["FANOPS_RESPONDER"] = _strict_field("FANOPS_RESPONDER", _strict_validate_responder, v)
         if (v := data.get("FANOPS_LLM_TRANSPORT")):
             data["FANOPS_LLM_TRANSPORT"] = _strict_field("FANOPS_LLM_TRANSPORT", _strict_validate_llm_transport, v)
-        for name in _BOOL_ENV_FIELDS:
+        for name in BOOL_ENV_FIELDS:
             if (v := data.get(name)):
                 data[name] = _strict_field(name, _strict_validate_bool_word, v)
         return cls.model_validate(data)
+
+
+def env_registry(model: type[BaseSettings] = Settings) -> dict[str, EnvVar]:
+    """{field name -> its `EnvVar` record} for every field of `model` that carries one. THE reader the
+    three sets below are projected through; parameterised by model so a test can register a synthetic
+    var on a Settings subclass and prove each projection picks it up (and, removed, drops it) without
+    reaching into pydantic internals. A field with no marker is simply absent — unregistered."""
+    out: dict[str, EnvVar] = {}
+    for name, field in model.model_fields.items():
+        for m in field.metadata:
+            if isinstance(m, EnvVar):
+                out[name] = m
+                break
+    return out
+
+
+def _project(pred, registry: dict[str, EnvVar]) -> tuple[str, ...]:
+    return tuple(n for n, m in registry.items() if pred(m))
+
+
+# The three derived surfaces. Each was a hand-maintained literal in a different module; each is now a
+# projection of the field declarations above, so a newly registered var lands in all of them at once
+# and a removed one leaves all of them at once. Order is declaration order (every consumer treats
+# them as sets; only `strict_validate`'s loop iterates, and it is order-independent).
+_REGISTRY = env_registry()
+BOOL_ENV_FIELDS = _project(lambda m: m.bool_word, _REGISTRY)      # settings: strict_validate's bool-word pass
+STUDIO_SETTABLE = frozenset(_project(lambda m: m.studio, _REGISTRY))       # config_introspect: the STUDIO column
+OPERATOR_FLAGS = frozenset(_project(lambda m: m.operator_flag, _REGISTRY)) # golive.set_flag: what it may dual-write
 
 
 def _strict_field(name: str, fn, v: object) -> str:

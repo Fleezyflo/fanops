@@ -38,6 +38,7 @@ from fanops.autopilot import set_env_var, unset_env_var
 from fanops.errors import CutoverError, PostizAuthError, ToolchainMissingError, ZernioAuthError, reason
 from fanops.models import Platform
 from fanops.post import postiz, zernio
+from fanops.settings import OPERATOR_FLAGS
 from fanops.studio.actions import ActionResult
 
 _PLATFORM_VALUES = frozenset(p.value for p in Platform)   # the platforms FanOps can route (M3)
@@ -229,15 +230,28 @@ def add_account(cfg: Config, handle: str, platforms: list, persona: str = "") ->
     return ActionResult(ok=True, detail={"added": handle, "platforms": platforms})
 
 
+def set_flag(cfg: Config, key: str, on: bool) -> ActionResult:
+    """Dual-write ONE registered operator flag. THE writer every boolean Go-Live toggle below routes
+    through: which keys are toggleable is `settings.OPERATOR_FLAGS` — projected from the `EnvVar`
+    marker on each Settings field — so a flag becomes operator-settable by being REGISTERED, not by
+    someone remembering to keep a seventh near-identical setter body in step. An unregistered key is
+    refused and NOTHING is written; that refusal is what keeps FANOPS_LIVE out (registered
+    studio-settable but NOT an operator_flag, because go_live is its only setter — invariant #2). The
+    detail key is derived from the var name, so the ActionResult shape follows the registration too."""
+    if key not in OPERATOR_FLAGS:
+        return ActionResult(ok=False, error=f"{key} is not an operator-settable flag")
+    err = _dual_write(cfg, key, "1" if on else "0")
+    if err:
+        return ActionResult(ok=False, error=err)
+    return ActionResult(ok=True, detail={key.removeprefix("FANOPS_").lower(): bool(on)})
+
+
 def set_account_casting(cfg: Config, on: bool) -> ActionResult:
     """Toggle per-account moment casting (FANOPS_ACCOUNT_CASTING) from the Go-Live tab — ON casts each account
     its OWN LLM-selected moments (default OFF = every moment fans to all accounts). Dual-written so it takes
     effect immediately AND persists. Works in dryrun OR live (it changes which posts are BORN, not whether they
     publish). No secret -> no key-leak surface. A durable-write failure -> clean error."""
-    err = _dual_write(cfg, "FANOPS_ACCOUNT_CASTING", "1" if on else "0")
-    if err:
-        return ActionResult(ok=False, error=err)
-    return ActionResult(ok=True, detail={"account_casting": bool(on)})
+    return set_flag(cfg, "FANOPS_ACCOUNT_CASTING", on)
 
 
 def set_ai_responder(cfg: Config, on: bool) -> ActionResult:
@@ -316,55 +330,37 @@ def set_clip_profile(cfg: Config, profile: str) -> ActionResult:
 def set_variant_learning(cfg: Config, on: bool) -> ActionResult:
     """Toggle the A/B hook-learning loop master switch (FANOPS_VARIANT_LEARNING). OFF (default) = no variant
     leader is ever selected; ON = the loop MAY act once learning_validated unfreezes it. Intent only."""
-    err = _dual_write(cfg, "FANOPS_VARIANT_LEARNING", "1" if on else "0")
-    if err:
-        return ActionResult(ok=False, error=err)
-    return ActionResult(ok=True, detail={"variant_learning": bool(on)})
+    return set_flag(cfg, "FANOPS_VARIANT_LEARNING", on)
 
 
 def set_variant_amplify(cfg: Config, on: bool) -> ActionResult:
     """Toggle variant-driven AMPLIFY (FANOPS_VARIANT_AMPLIFY) — a SUSTAINED proven winner auto-amplifies its
     source moment-guidance. Amplify-only (never retire), streak-gated, validation-frozen. Default OFF."""
-    err = _dual_write(cfg, "FANOPS_VARIANT_AMPLIFY", "1" if on else "0")
-    if err:
-        return ActionResult(ok=False, error=err)
-    return ActionResult(ok=True, detail={"variant_amplify": bool(on)})
+    return set_flag(cfg, "FANOPS_VARIANT_AMPLIFY", on)
 
 
 def set_learn_amplify(cfg: Config, on: bool) -> ActionResult:
     """Toggle learn-pass AMPLIFY (FANOPS_LEARN_AMPLIFY) — a metric WINNER re-opens a moment request on its
     source, minting NEW moments/clips/posts unattended. This flag is the whole gate. Default OFF."""
-    err = _dual_write(cfg, "FANOPS_LEARN_AMPLIFY", "1" if on else "0")
-    if err:
-        return ActionResult(ok=False, error=err)
-    return ActionResult(ok=True, detail={"learn_amplify": bool(on)})
+    return set_flag(cfg, "FANOPS_LEARN_AMPLIFY", on)
 
 
 def set_learn_retire(cfg: Config, on: bool) -> ActionResult:
     """Toggle learn-pass RETIRE (FANOPS_LEARN_RETIRE) — a metric LOSER suppresses its clip, its moment when
     no live sibling remains, and every unshipped post of that lineage. This flag is the whole gate. Default OFF."""
-    err = _dual_write(cfg, "FANOPS_LEARN_RETIRE", "1" if on else "0")
-    if err:
-        return ActionResult(ok=False, error=err)
-    return ActionResult(ok=True, detail={"learn_retire": bool(on)})
+    return set_flag(cfg, "FANOPS_LEARN_RETIRE", on)
 
 
 def set_variant_ucb(cfg: Config, on: bool) -> ActionResult:
     """Toggle UCB1 variant ranking (FANOPS_VARIANT_UCB) — replace the raw-mean leader pick with a deterministic
     UCB1 explore/exploit rank (amplify floor unchanged). Default OFF."""
-    err = _dual_write(cfg, "FANOPS_VARIANT_UCB", "1" if on else "0")
-    if err:
-        return ActionResult(ok=False, error=err)
-    return ActionResult(ok=True, detail={"variant_ucb": bool(on)})
+    return set_flag(cfg, "FANOPS_VARIANT_UCB", on)
 
 
 def set_variant_transfer(cfg: Config, on: bool) -> ActionResult:
     """Toggle cross-account hook TRANSFER (FANOPS_VARIANT_TRANSFER) — seed a cold account's variant pool with
     hooks proven on donor accounts. Default OFF."""
-    err = _dual_write(cfg, "FANOPS_VARIANT_TRANSFER", "1" if on else "0")
-    if err:
-        return ActionResult(ok=False, error=err)
-    return ActionResult(ok=True, detail={"variant_transfer": bool(on)})
+    return set_flag(cfg, "FANOPS_VARIANT_TRANSFER", on)
 
 
 def map_account(cfg: Config, handle: str, platform: str, integration_id: str) -> ActionResult:

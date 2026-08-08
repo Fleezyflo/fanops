@@ -8,15 +8,12 @@ from pydantic import ValidationError
 
 from fanops.config import Config
 from fanops.secret_provider import get_secret, is_secret_env_key
-from fanops.settings import Settings, _enriched_env
+from fanops.settings import STUDIO_SETTABLE, Settings, _enriched_env
 
-# Studio-settable via Go-Live tab (_dual_write) — mirrors docs/CONFIG.md §Set=S (static keys only).
-_STUDIO_SETTABLE = frozenset({
-    "FANOPS_LIVE", "POSTIZ_URL", "POSTIZ_API_KEY", "ZERNIO_API_KEY", "FANOPS_RESPONDER",
-    "FANOPS_CLIP_PROFILE", "FANOPS_ACCOUNT_CASTING", "FANOPS_VARIANT_LEARNING",
-    "FANOPS_VARIANT_AMPLIFY", "FANOPS_VARIANT_UCB", "FANOPS_VARIANT_TRANSFER", "FANOPS_LEARN_AMPLIFY",
-    "FANOPS_LEARN_RETIRE", "META_GRAPH_TOKEN",
-})
+# Studio-settable via the Go-Live tab (_dual_write) — mirrors docs/CONFIG.md §Set=S. This used to be a
+# hand-kept frozenset of fourteen names beside the fourteen Settings fields it named; STUDIO_SETTABLE is
+# the same set PROJECTED from those fields' `EnvVar(studio=True)` markers, so the column cannot claim a
+# var is operator-settable that the registration never marked (or miss one that it did).
 _SECRET_SUFFIX = ("_API_KEY", "_SECRET", "_TOKEN", "_ACCESS_KEY", "_SECRET_ACCESS_KEY")
 
 
@@ -93,7 +90,7 @@ def config_rows(cfg: Config) -> list[dict]:
             "default": _display_value(name, default),
             "effective": _display_value(name, effective),
             "source": _source_layer(name, cfg, dotenv_keys=dotenv_keys),
-            "studio": name in _STUDIO_SETTABLE,
+            "studio": name in STUDIO_SETTABLE,
         })
     return rows
 
