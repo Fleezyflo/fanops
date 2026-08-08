@@ -43,15 +43,6 @@ from fanops.models import MomentOrigin
 BACKFILL_ORIGIN = MomentOrigin.machine_inferred
 # Authored provenance: observed, not inferred. An inference may never overwrite one of these.
 _AUTHORED = (MomentOrigin.operator, MomentOrigin.machine)
-# How an unlabelled row READS to an operator. `unknown` is the enum's honest at-rest value; "unlabelled"
-# is what it MEANS on a surface — the row was never observed, not observed-as-unknown.
-UNLABELLED_DISPLAY = "unlabelled"
-
-
-def display_origin(origin) -> str:
-    """Operator-facing wording for a `MomentOrigin`. One place, so every surface says the same thing."""
-    value = getattr(origin, "value", origin)
-    return UNLABELLED_DISPLAY if value == MomentOrigin.unknown.value else str(value)
 
 
 def survey_amplify_descended(led: Ledger, *, days: frozenset[str], expect_moments: int | None = None) -> dict:

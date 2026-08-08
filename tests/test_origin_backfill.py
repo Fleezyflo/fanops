@@ -10,7 +10,7 @@ from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import (Clip, ClipState, Moment, MomentOrigin, Platform, Post, PostState, Source)
 from fanops import origin_backfill
-from fanops.origin_backfill import backfill_origin, display_origin, survey_amplify_descended
+from fanops.origin_backfill import backfill_origin, survey_amplify_descended
 
 IN = ["2026-07-29", "2026-07-30"]
 OUT_DAY = "2026-07-13"
@@ -192,15 +192,6 @@ def test_the_survey_never_writes(tmp_path):
     s = survey_amplify_descended(Ledger.load(cfg), days=frozenset(IN))
     assert s["moments"] == 2 and s["corpus_moments"] == 3 and s["corpus_unlabelled"] == 3
     assert cfg.ledger_path.read_bytes() == before
-
-
-# ---- the operator wording -----------------------------------------------------------------------
-def test_an_unobserved_origin_reads_unlabelled_to_an_operator():
-    # `unknown` is the honest at-rest value; "unlabelled" is what it MEANS on a surface. One function
-    # decides, so the Review card and the Home panel can never disagree.
-    assert display_origin(MomentOrigin.unknown) == "unlabelled"
-    assert display_origin(MomentOrigin.machine_inferred) == "machine_inferred"
-    assert display_origin(MomentOrigin.operator) == "operator"
 
 
 # ---- the audit record ----------------------------------------------------------------------------
