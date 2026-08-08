@@ -239,10 +239,9 @@ def test_publish_one_parks_post_without_url_in_needs_reconcile(tmp_path, monkeyp
     # might do.
     class _GhostPoster:
         def publish(self, led, post_id):
-            p = led.posts[post_id]
-            p.submission_id = "dryrun_" + post_id
-            p = p.model_copy(update={"state": PostState.submitted})
-            # NOTE: deliberately NOT setting p.public_url
+            # NOTE: deliberately NOT setting public_url — park at needs_reconcile.
+            led.posts[post_id] = led.posts[post_id].model_copy(update={
+                "state": PostState.submitted, "submission_id": "dryrun_" + post_id})
             return led
 
     from fanops import post as _post_pkg

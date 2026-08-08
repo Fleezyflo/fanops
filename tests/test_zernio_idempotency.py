@@ -162,7 +162,7 @@ def test_10_daemon_transient_requeue_keeps_the_same_uuid(tmp_path, monkeypatch):
     # _requeue_transient_failed_for_daemon must therefore never touch created_at.
     cfg = _cfg(tmp_path, monkeypatch)
     p = _post(); before = _request_id(p)
-    p.state, p.error_reason = PostState.failed, "publish transient error (retries exhausted): read timed out"
+    p = p.model_copy(update={"state": PostState.failed, "error_reason": "publish transient error (retries exhausted): read timed out"})
     led = _led(cfg, p); led.save()
     run_mod._requeue_transient_failed_for_daemon(cfg)
     after = Ledger.load(cfg).posts[p.id]
