@@ -49,6 +49,9 @@ captured.
   blocking) — all steps of the `unit` job.
 - **`tests/test_governance_tombstone.py`** — pins the governance-prose deletion (see Tombstone below)
   and this file's existence, forever in the required lane.
+- **`tests/test_post_state_census_ratchet.py`** (MOL-815) — binary AST gate: zero
+  `Counter(… .state …)` over `led.posts` / `posts.values()` outside `ledger.py`. Negative control
+  plants that Counter and asserts the finder fires. Removal condition: permanent by policy.
 
 ## Deployed-state probes — the plane no static check can reach
 `python -m tools.ci deployed [--require-live]`, in the `reconcile` job (weekly + `workflow_dispatch`).
