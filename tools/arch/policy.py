@@ -146,20 +146,35 @@ RULES: dict[str, Rule] = {r.id: r for r in [
          "Keep the import inside the function body. If the hoist is genuinely correct, accept a new "
          "baseline deliberately: `python -m tools.arch baseline --accept` (a reviewed change)."),
 
-    Rule("ARCH-008", "Every side effect is registered",
-         "Subprocess, network, ledger-transaction, lock, mkdtemp and env-write sites are the system's "
-         "blast radius. An unregistered one is an effect nobody reviewed.",
-         "kb/side_effects.json vs derived/side_effects.json", BLOCKING,
-         "derived side-effect census matches the declared totals",
-         "Update kb/side_effects.json to the derived counts, or remove the effect."),
+    Rule("ARCH-008", "The side-effect census is never restated in a DECLARED artifact",
+         "Subprocess, network, ledger-transaction, mkdtemp, rmtree and env-write sites are the "
+         "system's blast radius, and derived/side_effects.json counts them on every regen. This rule "
+         "used to COMPARE that census against a hand-typed copy in kb/side_effects.json. The copy "
+         "bought nothing a reviewer could not get from the derived twin, and it cost a merge "
+         "conflict on every graph-touching PR — so the copy is forbidden instead of maintained. "
+         "*** WHAT THIS RULE NO LONGER DOES: it no longer makes a NEW side effect fail the build. "
+         "`impact` reports every census delta (`changed_side_effects`) and the reconciliation "
+         "verdicts in kb/side_effects.json remain the review record — but neither BLOCKS. Say that "
+         "out loud rather than let the rule's old name imply a gate that is gone. ***",
+         "kb/side_effects.json `counts_AST_verified`", BLOCKING,
+         "the watched block holds no JSON number at any depth, and no derived-delta changelog key",
+         "Delete the count from kb/side_effects.json and read derived/side_effects.json instead. A "
+         "reviewed verdict about a new effect belongs there as PROSE, never as a count."),
 
-    Rule("ARCH-009", "A derived numeric claim in a DECLARED artifact must match the derived fact",
+    Rule("ARCH-009", "A DECLARED artifact never restates a derived number",
          "The repository's signature defect, found in every one of five audit cycles, is: THE DOC "
          "NAMES A MECHANISM THAT DOES NOT EXIST. A number copied from code into prose is that "
-         "defect in its cheapest form. Implementation wins over prose.",
-         "kb/**, contract/** vs derived/**", BLOCKING,
-         "every cross-checked numeric claim equals its derived counterpart",
-         "Regenerate and update the declared artifact. The CODE is authoritative."),
+         "defect in its cheapest form. This rule used to CROSS-CHECK seven hand-paired numbers and "
+         "fail when they disagreed — which kept the copy alive, conflicting on every graph-touching "
+         "PR, and (because the comparison was guarded on the key being PRESENT) let anyone disarm a "
+         "pair by deleting it. Forbidding the copy is the only version that cannot be quietly "
+         "narrowed. The same forbidding covers a number narrated as PROSE — an append-only changelog "
+         "of derived deltas is a copy that every graph-touching PR must edit, so it conflicts every "
+         "time and rots between conflicts. Implementation wins over prose; derived/ is the only "
+         "reader.",
+         "kb/dependencies.json `totals`, kb/subsystems.json `totality`", BLOCKING,
+         "the watched block holds no JSON number at any depth, and no derived-delta changelog key",
+         "Delete the number from the declared artifact and read the derived twin."),
 
     Rule("ARCH-010", "Unsupported constructs are recorded, never omitted",
          "A census is only as good as its query. An omitted construct is indistinguishable from an "
@@ -402,8 +417,8 @@ def check(derived_dir: Path | None = None) -> list[Finding]:
                           f"The 11-level DAG exists only because these are deferred to call time.",
                           [f"{s} -> {t}  (HOISTED)" for s, t in hoisted]))
 
-    # ARCH-009 — declared numbers must match derived facts
-    out += _numeric_drift(deps, mods, cfg)
+    # ARCH-009 — a declared artifact may not restate a derived number
+    out += _declared_numbers_forbidden("ARCH-009")
 
     # ARCH-010 — unsupported constructs (informational, but never hidden)
     if uns["totals"]["unsupported_constructs"]:
@@ -470,8 +485,8 @@ def check(derived_dir: Path | None = None) -> list[Finding]:
     # IMPL-009 / IMPL-010 — the two GB boundaries that are statically checkable
     out += _gb_checks()
 
-    # ARCH-008 — every side effect registered
-    out += _side_effects_registered(D("side_effects"))
+    # ARCH-008 — the side-effect census is not restated in kb/
+    out += _declared_numbers_forbidden("ARCH-008")
 
     # ARCH-005 — UNKNOWNs may not grow past the approved ceiling
     from .registries import unknown_growth
@@ -578,63 +593,75 @@ def _coverage(cs: dict) -> list[Finding]:
     return out
 
 
-def _side_effects_registered(se: dict) -> list[Finding]:
-    """ARCH-008: the declared side-effect census must match the code."""
-    out: list[Finding] = []
-    kb_se = KB / "side_effects.json"
-    if not kb_se.exists():
+# ── ARCH-008 / ARCH-009: derived facts may not be restated in a DECLARED artifact ───────────
+#
+# (rule id, kb file, block, human label). The blocks a hand-authored artifact used to mirror a
+# derived census in. There is deliberately NO table of which numbers to check: whatever number the
+# block contains is the violation, so the rule's coverage is the block's contents and cannot be
+# narrowed by editing the block. What this replaced compared seven hand-paired keys under an
+# `if declared_key in block` guard — five of kb/dependencies.json's twelve totals were never paired
+# at all (two of those five had silently rotted), and deleting a paired key deleted its enforcement
+# while the gate stayed green. A rule that stops firing is indistinguishable from one that passes.
+_FORBIDDEN_RESTATEMENT_BLOCKS = (
+    ("ARCH-009", "dependencies.json", "totals", "kb/dependencies.json `totals`"),
+    ("ARCH-009", "subsystems.json", "totality", "kb/subsystems.json `totality`"),
+    ("ARCH-008", "side_effects.json", "counts_AST_verified",
+     "kb/side_effects.json `counts_AST_verified`"),
+)
+
+# Keys whose CONTENT is a derived number narrated as prose, which the numeric test above cannot see.
+# `updated_at_HEAD` was a single-line append-only changelog of graph deltas: every graph-touching PR
+# appended a sentence to the same line, so it conflicted on every one of them and the resolution was
+# semantic. `what_did_NOT_move` asserted a set of counts had held — and had already rotted uncaught
+# ("lateral stays 51" against a derived 46). Git history is the changelog and cannot conflict with
+# itself. An EXPLICITLY NAMED list, never a wildcard: a name added here only widens this rule, so
+# unlike the pair table it replaced it has no failure mode where the rule quietly checks less.
+_FORBIDDEN_DELTA_KEYS = frozenset({"updated_at_HEAD", "what_did_NOT_move"})
+
+
+def _restated_facts(node: object, path: str) -> list[tuple[str, str]]:
+    """Every place `node` restates a derived fact, as (dotted path, what it is)."""
+    if isinstance(node, dict):
+        out: list[tuple[str, str]] = []
+        for k, v in node.items():
+            here = f"{path}.{k}"
+            if k in _FORBIDDEN_DELTA_KEYS:
+                out.append((here, "a prose changelog of derived deltas"))
+            else:
+                out += _restated_facts(v, here)
         return out
-    declared = load(kb_se).get("counts_AST_verified", {})
-    got = se["totals"]
-    pairs = [("subprocess_call_sites", "subprocess_sites", "subprocess call sites"),
-             ("network_call_sites_literal_requests", "network_sites_literal_requests",
-              "literal requests.* network sites"),
-             ("ledger_transaction_sites", "ledger_transaction_sites", "Ledger.transaction sites"),
-             ("mkdtemp_sites", "mkdtemp_sites", "tempfile.mkdtemp sites"),
-             ("rmtree_sites", "rmtree_sites", "shutil.rmtree sites"),
-             ("os_environ_write_sites", "env_write_sites", "os.environ write sites")]
-    bad = [(lbl, declared[dk], got[gk]) for dk, gk, lbl in pairs
-           if dk in declared and declared[dk] != got.get(gk)]
-    if bad:
-        out.append(_f("ARCH-008",
-                      f"{len(bad)} side-effect census(es) in kb/side_effects.json no longer match "
-                      f"the code. An unregistered effect is an effect nobody reviewed.",
-                      [f"{lbl}: KB says {a}, code says {b}" for lbl, a, b in bad]))
-    return out
+    if isinstance(node, list):
+        return [hit for i, v in enumerate(node) for hit in _restated_facts(v, f"{path}[{i}]")]
+    if isinstance(node, bool):
+        return []                                 # a JSON literal, not a census
+    if isinstance(node, (int, float)):
+        return [(path, f"a derived number ({node})")]
+    return []
 
 
-def _numeric_drift(deps: dict, mods: dict, cfg: dict) -> list[Finding]:
-    """ARCH-009: every numeric claim a DECLARED artifact makes about the code, cross-checked."""
+def _declared_numbers_forbidden(rule_id: str) -> list[Finding]:
+    """ARCH-008 / ARCH-009: a DECLARED artifact may not restate a number the regen derives.
+
+    The predicate is PRESENCE, not agreement. A comparison keeps the copy alive — it has to, or it
+    has nothing to compare — and a live copy conflicts on every PR that moves the graph and rots
+    between conflicts. Absence has neither failure mode, and it cannot be disarmed by deleting the
+    field it guards, because the field's absence IS the passing state.
+
+    No `.exists()` guard: GOV-001 evaluates first and short-circuits on a missing canonical
+    artifact, so a skip here could only re-introduce the vacuous pass this whole rule set exists to
+    make impossible.
+    """
     out: list[Finding] = []
-    kb_dep = KB / "dependencies.json"
-    if not kb_dep.exists():
-        return out
-    d5 = load(kb_dep).get("totals", {})
-    got = deps["totals"]
-    # (declared key, derived key, human label)
-    pairs = [
-        ("modules", "modules", "module count"),
-        ("compile_edges_G1", "compile_edges_G1", "compile-time import edges"),
-        ("runtime_lazy_edges", "lazy_edges", "lazy (in-function) import edges"),
-        ("G1_non_trivial_sccs", "G1_non_trivial_sccs", "non-trivial compile-time SCCs"),
-        ("G1c_levels", "G1c_levels", "layer levels"),
-        ("___of_which_STRICTLY_UPWARD", "lazy_edges_strictly_upward", "strictly-upward lazy edges"),
-        ("___of_which_LATERAL_same_level", "lazy_edges_lateral", "lateral lazy edges"),
-    ]
-    bad = [(lbl, d5[dk], got[gk]) for dk, gk, lbl in pairs if dk in d5 and d5[dk] != got[gk]]
-    if bad:
-        out.append(_f("ARCH-009",
-                      f"{len(bad)} numeric claim(s) in kb/dependencies.json no longer match the code.",
-                      [f"{lbl}: KB says {a}, code says {b}" for lbl, a, b in bad]))
-
-    kb_sub = KB / "subsystems.json"
-    if kb_sub.exists():
-        tot = load(kb_sub).get("totality", {})
-        if tot.get("modules_total") != mods["totals"]["modules"]:
-            out.append(_f("ARCH-009",
-                          "kb/subsystems.json's totality block no longer matches the tree.",
-                          [f"modules_total: KB says {tot.get('modules_total')}, "
-                           f"code says {mods['totals']['modules']}"]))
+    for rid, fname, block, label in _FORBIDDEN_RESTATEMENT_BLOCKS:
+        if rid != rule_id:
+            continue
+        bad = _restated_facts(load(KB / fname).get(block, {}), block)
+        if bad:
+            out.append(_f(rid,
+                          f"{len(bad)} derived fact(s) restated in {label}. A number copied out of "
+                          f"the code is wrong the moment the code moves, and it conflicts on every "
+                          f"PR that moves it. The derived twin does neither.",
+                          [f"{where}: {what}" for where, what in sorted(bad)]))
     return out
 
 

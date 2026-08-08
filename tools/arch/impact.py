@@ -252,20 +252,25 @@ def report(base: str = "origin/main") -> dict:
         if ose.get(k, 0) != nse.get(k, 0):
             rep["architecture"]["changed_side_effects"].append(f"{k}: {ose.get(k,0)} -> {nse.get(k,0)}")
             if k == "network_sites_literal_requests" and nse.get(k, 0) > ose.get(k, 0):
-                bump(UNKNOWN, "NEW network call site(s) — must be registered in kb/side_effects.json (ARCH-008)")
+                bump(UNKNOWN, "NEW network call site(s) — classify against the network invariant "
+                              "(no call inside the ledger lock) in kb/side_effects.json")
             elif nse.get(k, 0) != ose.get(k, 0):
                 if nse.get(k, 0) > ose.get(k, 0):
-                    # COMPATIBLE, not UNKNOWN, for the same reason a new env var is COMPATIBLE above:
-                    # the DECLARATION is enforced elsewhere and BLOCKING. ARCH-008 fails the build the
-                    # moment kb/side_effects.json disagrees with the derived census, so an unregistered
-                    # effect still cannot land — it just fails at the gate that can actually SEE the
-                    # registration. This branch compares derived-at-base to derived-at-head and never
-                    # reads the KB, so as UNKNOWN it told the author to "register it in
-                    # kb/side_effects.json" and then ignored them doing so. UNKNOWN_IMPACT is
-                    # deliberately non-declarable, which made every new Ledger.transaction, subprocess
-                    # and rmtree permanently red with no way out — an unclearable gate, not a strict one.
+                    # *** THIS BUMP IS NOW THE ONLY SURFACE THAT REPORTS A NEW SIDE EFFECT. ***
+                    # It was COMPATIBLE rather than UNKNOWN because ARCH-008 was BLOCKING and would
+                    # fail the build the moment kb/side_effects.json disagreed with the derived
+                    # census — a gate that could actually SEE the registration, where this branch
+                    # compares derived-at-base to derived-at-head and never reads the KB (as UNKNOWN
+                    # it told the author to register the effect and then ignored them doing so, and
+                    # UNKNOWN_IMPACT is deliberately non-declarable, so every new Ledger.transaction,
+                    # subprocess and rmtree went permanently red with no way out). That gate is gone:
+                    # ARCH-008 now FORBIDS the hand-typed census instead of comparing it, because the
+                    # copy conflicted on every graph-touching PR and rotted between conflicts. So the
+                    # severity is unchanged but the reason is not — a new effect is REPORTED here and
+                    # reviewed, and nothing blocks it. Do not read this line as a gate.
                     bump(COMPATIBLE, f"side-effect census increased: {k} {ose.get(k,0)} -> {nse.get(k,0)} "
-                                     f"— must be declared in kb/side_effects.json (ARCH-008 enforces it)")
+                                     f"— review it and record the verdict in kb/side_effects.json as "
+                                     f"PROSE (a restated count is forbidden by ARCH-008)")
                 else:
                     bump(COMPATIBLE, f"side-effect census decreased: {k} {ose.get(k,0)} -> {nse.get(k,0)}")
 
