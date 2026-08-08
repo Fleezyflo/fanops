@@ -163,7 +163,7 @@ Hard rules, mechanically held (see `docs/ENFORCEMENT.md` and `tests/CLAUDE.md`):
 - **Evidence:** `scripts/check_scope.py` (`_OVERRIDES` + `_convention_candidates` + `orphan_src_modules`); `scripts/check.sh` (fails closed on an orphan).
 
 ### STD-TEST-02 — the test environment is hermetic by construction — **[OWNED]**
-- **Rule:** a test never reads the operator's live `.env`. The autouse `_hermetic_publish_env` fixture strips the `_LEAKY_ENV` allowlist before every test. **When you add a default-ON flag or a credential env var a repo `.env` might carry, add it to `_LEAKY_ENV`.** A test that *wants* a non-default value sets it via `monkeypatch` (`delenv(..., raising=False)` for a possibly-absent key).
+- **Rule:** a test never reads the operator's live `.env`. The autouse `_hermetic_publish_env` fixture strips the `_LEAKY_ENV` allowlist before every test. **A registered `FANOPS_*` bool is in that allowlist by DERIVATION — `_LEAKY_ENV` projects `settings.BOOL_ENV_FIELDS`, so annotating the `Settings` field `BoolEnv`/`BoolFlag` is what makes it hermetic. A credential, a tuning number, or a var with no `Settings` field is still hand-added, to `_NON_FLAG_LEAKY`.** A test that *wants* a non-default value sets it via `monkeypatch` (`delenv(..., raising=False)` for a possibly-absent key).
 - **Rationale:** `load_dotenv` does not override an already-set var, so a leaked value silently makes a test assert against the operator's config instead of the code default — a green test proving nothing.
 - **Evidence:** `tests/conftest.py` (`_LEAKY_ENV`, `_hermetic_publish_env`, `_no_real_publish_sleep`); `tests/CLAUDE.md` (the gotcha, with the causal explanation).
 

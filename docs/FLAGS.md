@@ -87,5 +87,7 @@ With both learn flags OFF the pass is read-only — pull metrics, classify, log 
 - A new improvement flag MUST land with: a `config.py` property documenting its default + OFF/ON words, an OFF
   code path (early return — never a parallel implementation), a firewall test pinning the OFF contract, and a row
   in this table.
-- If the flag can leak from a repo `.env` into a unit test and flip behavior, add it to `_LEAKY_ENV` in
-  `tests/conftest.py`.
+- A flag that can leak from a repo `.env` into a unit test and flip behavior is scrubbed by `_LEAKY_ENV` in
+  `tests/conftest.py`. Declaring its `Settings` field `BoolEnv`/`BoolFlag` is what puts it there — that half of
+  the list is derived from `settings.BOOL_ENV_FIELDS`. A flag with no `Settings` field goes in `_NON_FLAG_LEAKY`
+  by hand.
