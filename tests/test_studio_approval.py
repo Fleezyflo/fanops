@@ -6,15 +6,27 @@ pytest.importorskip("flask")
 from datetime import datetime, timezone
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.models import Post, Platform, PostState
+from fanops.models import Clip, ClipState, Fmt, Moment, MomentState, Post, Platform, PostState, Source
 from fanops.studio import actions
 
 _NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
 _FUTURE = "2099-01-01T00:00:00Z"
 
 
+def _c1_lineage(led):
+    """Give `c1` the moment/source rows every post below already names. It never had them — harmless while
+    the approve guard read `clip is not None and (...)`, which failed OPEN on a missing clip row; the guard
+    now asks `Ledger.can_promote`, which fails CLOSED, so a fixture must describe a lineage that could exist."""
+    if "src_1" in led.sources: return
+    led.add_source(Source(id="src_1", source_path="/v/s.mp4", language="en"))
+    led.add_moment(Moment(id="mom_c1", parent_id="src_1", content_token="0-7", start=0, end=7,
+                          reason="r", state=MomentState.clipped))
+    led.add_clip(Clip(id="c1", parent_id="mom_c1", path="/c/c1.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
+
+
 def _seed(cfg, pid, state=PostState.awaiting_approval, when=_FUTURE):
     with Ledger.transaction(cfg) as led:
+        _c1_lineage(led)
         led.add_post(Post(id=pid, parent_id="c1", account="a", account_id="1",
                           platform=Platform.instagram, caption="fire", state=state, scheduled_time=when, public_url="dryrun://c1"))
 
@@ -55,7 +67,6 @@ def test_publish_now_rejects_awaiting_approval(tmp_path):
 
 # ---- checkpoint 2: Review approval UI (views + routes) ----
 import json
-from fanops.models import Clip, ClipState, Source, Moment, MomentState, Fmt
 from fanops.accounts import Accounts
 from fanops.studio import views
 
@@ -268,7 +279,7 @@ def _seed_review_lineage(cfg):     # two clips on one moment so the route tests 
             led.add_clip(Clip(id=cid, parent_id="mom_1", path=f"/c/{cid}.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
 
 def test_approve_clip_approves_all_surfaces_of_one_moment(tmp_path):
-    cfg = Config(root=tmp_path); _seed_two_accounts(cfg)
+    cfg = Config(root=tmp_path); _seed_two_accounts(cfg); _seed_review_lineage(cfg)
     with Ledger.transaction(cfg) as led:
         _awaiting(led, "p_a", clip="clip_1", acct="a", aid="1")
         _awaiting(led, "p_b", clip="clip_1", acct="b", aid="2")
@@ -285,7 +296,7 @@ def test_approve_clip_noop_when_no_awaiting(tmp_path):
     assert r.ok and r.detail["approved"] == 0
 
 def test_approve_account_approves_one_account_across_clips(tmp_path):
-    cfg = Config(root=tmp_path); _seed_two_accounts(cfg)
+    cfg = Config(root=tmp_path); _seed_two_accounts(cfg); _seed_review_lineage(cfg)
     with Ledger.transaction(cfg) as led:
         _awaiting(led, "p_a1", clip="clip_1", acct="a", aid="1")
         _awaiting(led, "p_a2", clip="clip_2", acct="a", aid="1")
@@ -297,7 +308,7 @@ def test_approve_account_approves_one_account_across_clips(tmp_path):
     assert led.posts["p_b1"].state is PostState.awaiting_approval     # a DIFFERENT account is untouched
 
 def test_approve_account_scoped_to_batch(tmp_path):
-    cfg = Config(root=tmp_path); _seed_two_accounts(cfg)
+    cfg = Config(root=tmp_path); _seed_two_accounts(cfg); _seed_review_lineage(cfg)
     with Ledger.transaction(cfg) as led:
         _awaiting(led, "p_b1", clip="clip_1", acct="a", aid="1", batch="B1")
         _awaiting(led, "p_b2", clip="clip_2", acct="a", aid="1", batch="B2")
@@ -314,7 +325,7 @@ def test_approve_account_blank_handle_is_noop(tmp_path):
 
 def test_approve_account_untimed_gets_suggestion_not_now(tmp_path):
     from fanops.timeutil import iso_z, parse_iso
-    cfg = Config(root=tmp_path); now = _approval_now(); now_iso = iso_z(now); _seed_two_accounts(cfg)
+    cfg = Config(root=tmp_path); now = _approval_now(); now_iso = iso_z(now); _seed_two_accounts(cfg); _seed_review_lineage(cfg)
     with Ledger.transaction(cfg) as led:
         _awaiting(led, "p_u", acct="a", aid="1", when=None)
     r = actions.approve_account(cfg, "a", now=now)
@@ -440,6 +451,7 @@ def test_approve_posts_large_batch_requires_confirm(tmp_path):
     cfg = Config(root=tmp_path)
     ids = [f"p{i}" for i in range(BULK_APPROVE_CONFIRM_AT + 1)]
     with Ledger.transaction(cfg) as led:
+        _c1_lineage(led)
         for i, pid in enumerate(ids):
             led.add_post(Post(id=pid, parent_id="c1", account="a", account_id="x",
                               platform=Platform.instagram, caption="c", state=PostState.awaiting_approval))

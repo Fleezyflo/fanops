@@ -1073,7 +1073,7 @@ def render_moment(led: Ledger, cfg: Config, moment_id: str, *,
 def render_aspects_for(led: Ledger, cfg: Config, moment_id: str, *,
                        aspects: set[Fmt]) -> tuple[Ledger, list[Clip]]:
     m = led.moments[moment_id]
-    if m.state is MomentState.retired or led.is_retired_moment(moment_id):
+    if led.is_suppressed(m):   # the OWNER; `m` IS led.moments[moment_id], so the old second check was self-redundant
         return led, []
     out: list[Clip] = []
     for asp in sorted(aspects, key=lambda a: a.value):
