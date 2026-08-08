@@ -287,9 +287,6 @@ def create_app(cfg: Config) -> Flask:
     # per-batch <details> sections. Pure read-model helper (views), exposed as a filter so the
     # already-paginated card slice is grouped at render time without threading it through every route.
     app.jinja_env.filters["group_review_by_batch"] = views.group_review_by_batch
-    # Phase 4: the account-first PIVOT grouper — group one account's flat SurfacePost rows by ingest day for a
-    # running day header, exposed as a filter so the already-paginated row slice is grouped at render time.
-    app.jinja_env.filters["group_review_by_account_surface"] = views.group_review_by_account_surface
     app.jinja_env.filters["group_review_by_source"] = views.group_review_by_source
     # S2/S4: the provenance projection (a surface -> ordered "value ← cause" ProvChips), exposed as a Jinja
     # GLOBAL so _card.html can render the surface-spec via the shared _prov cause_chip macro (one renderer, no
