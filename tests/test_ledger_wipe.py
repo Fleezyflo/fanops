@@ -332,7 +332,11 @@ def test_delete_moment_cascade_and_protected_states_byte_identical():
     # branch, which by definition deletes nothing), _PROTECTED_POST_STATES is byte-identical below, and a
     # live post still pins its clip. This closes the residue where a preserved clip outlived every post on
     # it and stayed ClipState.queued — counted as live work and unreachable by gc.
-    assert h == "2864402bbd723277b57417a0291a175eeb4d4f2ec46d0d6dbba2d82a6a2c062f", f"cascade source changed; new sha256={h}"
+    # Repinned (derive-not-copy-in-the-cascade): the preserve-and-retire COPY-DOWN to posts and clips is deleted —
+    # lineage suppression is now DERIVED at read time by `Ledger.is_suppressed`. DELETION posture is unchanged:
+    # _PROTECTED_POST_STATES is byte-identical below, the delete/preserve loop above is untouched, and nothing new
+    # is erased.
+    assert h == "af64cf6053810f506f8e46b5180e571206199ee19282d08d93dd7bd3c1668215", f"cascade source changed; new sha256={h}"
     assert Ledger._PROTECTED_POST_STATES == (
         PostState.published, PostState.analyzed, PostState.submitted, PostState.submitting,
         PostState.needs_reconcile, PostState.awaiting_approval, PostState.queued, PostState.retired)
