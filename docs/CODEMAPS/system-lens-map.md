@@ -59,128 +59,23 @@ locked-off static crop per shot) / subject FOCUS / motion SALIENCY / centered. Z
 (`_adaptive_zoom_max` `clip.py:427`). Entirely gated by `cfg.smart_framing` (default ON) and FAIL-OPEN at
 every step to the centered crop (`clip.py:533,550`).
 
-### 1.2 Configuration layer — EXHAUSTIVE environment variable table
+### 1.2 Configuration layer — environment surface
 
-Every `os.getenv`/`os.environ` read in `src/fanops/` (verified via `grep -rEn "os\.getenv|os\.environ"`).
-**64 distinct environment variables** are read across the tree, listed in the 63 table rows below (row 63
-holds TWO variables). Table is complete (no sampling):
-
-| # | Variable | Read at (file:line) | Default | Controls |
-|---|----------|---------------------|---------|----------|
-| 1 | `ANTHROPIC_API_KEY` | config.py:160 | None | VESTIGIAL — responder uses `claude` subscription; not required |
-| 2 | `FANOPS_POSTER` | config.py:174 (also 643,456; accounts.py:151) | `dryrun` | Legacy global poster backend; unknown→dryrun+warn |
-| 3 | `FANOPS_LIVE` | config.py:237 | derived from POSTER | THE dryrun↔live switch |
-| 4 | `POSTIZ_URL` | config.py:275 | None | Postiz instance base URL |
-| 5 | `POSTIZ_API_KEY` | config.py:283 | None | Postiz public API key (write-only) |
-| 6 | `ZERNIO_API_URL` | config.py:291 | `https://zernio.com/api/v1` | Zernio API base |
-| 7 | `ZERNIO_API_KEY` | config.py:300 | None | Zernio API key (write-only) |
-| 8 | `META_GRAPH_TOKEN` | config.py:309 | None | Meta Graph token for hashtag trends (write-only) |
-| 9 | `META_IG_USER_ID` | config.py:315 | None | IG Business account id for `ig_hashtag_search` |
-| 10 | `META_GRAPH_URL` | config.py:321 | `https://graph.facebook.com/v21.0` | Graph base (overridable) |
-| 12 | `FANOPS_REQUIRE_FULL_OBJECTIVE` | config.py:341 | OFF | Refuse to amplify a lift-degraded winner |
-| 13 | `FANOPS_RESPONDER` | config.py:392 (also doctor.py:31, autopilot.py:76, actions_run.py:36) | `manual` | THE explicit AI switch (llm/manual) |
-| 14 | `FANOPS_LLM_MODEL` | config.py:408 | per-gate defaults | Force ONE model across all gates |
-| 15 | `FANOPS_ARTIST_NAME` | config.py:421 | `Moh Flow` | YouTube title fallback display name |
-| 16 | `FANOPS_CLIP_PROFILE` | config.py:430 | `talk` | Global clip-length band |
-| 17 | `FANOPS_VISUAL_START` | config.py:466 | ON | Strongest-opening-frame cut refinement |
-| 18 | `FANOPS_SMART_FRAMING` | config.py:476 | ON | Subject-aware reframe |
-| 19 | `FANOPS_WHISPER_MODEL` | config.py:484 (also 511, 501-check) | `turbo` | Legacy whisper CLI model |
-| 20 | `FANOPS_ASR_MODEL` | config.py:492 (also 501) | `medium` | faster-whisper model |
-| 21 | `FANOPS_ASR_LANGUAGE` | config.py:519 | `en,ar` | Whisper candidate languages |
-| 22 | `FANOPS_ISOLATE_VOCALS` | config.py:530 | ON | Demucs beat-stripping before Whisper |
-| 23 | `FANOPS_BURN_SUBS` | config.py:541 | OFF | Burn transcript captions (hook is separate) |
-| 24 | `FANOPS_AWARE_REFRAME` | config.py:551 | OFF | Global top-third crop bias |
-| 25 | `FANOPS_SUBTITLE_FONT` | config.py:559 | `Arial Unicode MS` | .ass subtitle font |
-| 26 | ~~`FANOPS_CREATIVE_VARIATION`~~ | — | — | **Documentation-only in `config.py`** (no `getenv`); Go-Live still dual-writes `.env` (`golive.py:225`) but per-account hook/render differentiation is intrinsic when `account_casting` is ON — see [archive/fresh-ingestion-trace.md](archive/fresh-ingestion-trace.md) §4 |
-| 27 | `FANOPS_ACCOUNT_CASTING` | config.py:581 | ON | Per-account moment casting |
-| 28 | `FANOPS_HOOK_ROUTER` | config.py:589 | OFF | Observe-only hook_strategy classifier |
-| 29 | `FANOPS_IMPACT_CUT` | config.py:598 | OFF | Impact-cut stitch producer |
-| 30 | `FANOPS_INTRO_TEASE` | config.py:608 | OFF | Intro-tease stitch producer |
-| 31 | `FANOPS_VARIANT_LEARNING` | config.py:619 | OFF | A/B hook-learning master gate |
-| 32 | `FANOPS_VARIANT_MIN_POSTS` | config.py:629 | 3 | Variant trust: min analyzed posts |
-| 33 | `FANOPS_VARIANT_MIN_GAP` | config.py:640 | 10.0 | Variant trust: min lift margin |
-| 34 | `FANOPS_VARIANT_AMPLIFY` | config.py:655 | OFF | Variant-driven source amplify |
-| 35 | `FANOPS_VARIANT_AMPLIFY_MIN_POSTS` | config.py:664 | 8 | Amplify trust: min posts |
-| 36 | `FANOPS_VARIANT_AMPLIFY_MIN_GAP` | config.py:674 | 25.0 | Amplify trust: min gap |
-| 37 | `FANOPS_VARIANT_AMPLIFY_MIN_STREAK` | config.py:685 | 3 | Amplify trust: min distinct windows |
-| 38 | `FANOPS_VARIANT_UCB` | config.py:705 | OFF | UCB1 bandit caption bias |
-| 39 | `FANOPS_VARIANT_UCB_C` | config.py:716 | sqrt(2) | UCB exploration weight |
-| 40 | `FANOPS_VARIANT_TRANSFER` | config.py:732 | OFF | Cross-surface hook-style transfer |
-| 41 | `FANOPS_VARIANT_TRANSFER_MIN_DONORS` | config.py:742 | 2 | Transfer: min donor surfaces |
-| 42 | `FANOPS_VARIANT_TRANSFER_MAX_HOOKS` | config.py:752 | 2 | Transfer: max borrowed styles/caption |
-| 43 | `FANOPS_ADJUST_PER_SURFACE` | config.py:763 | OFF | Per-surface winner ranking |
-| 44 | `FANOPS_P4_DIM_BIAS` | config.py:774 | OFF | Creative-dim reach amplify |
-| 45 | `FANOPS_TIMING_BIAS` | config.py:784 | OFF | Reach-winning publish-hour schedule bias |
-| 46 | ~~`FANOPS_CASTING_BIAS`~~ | — | — | **REMOVED P11** (`casting_bias.py` deleted with LLM casting teardown) |
-| 47 | `FANOPS_IG_RETENTION_PROOF` | config.py:811 | OFF | Require IG retention to prove learning |
-| 48 | `FANOPS_MOMENT_HOOK_LEARNING` | config.py:820 | OFF | Feed winning hook styles to moment author |
-| 49 | `FANOPS_P4_MIN_REACH_GAP` | config.py:832 | 0.0 | P4/timing comparative reach margin |
-| 50 | `FANOPS_GC_KEEP_DAYS` | config.py:844 | 30 | Manual-gc retention (clamped ≥1) |
-| 51 | `FANOPS_UPLOAD_MAX_MB` | config.py:855 | 2048 | Studio upload body ceiling (clamped ≥1) |
-| 52 | `FANOPS_OPERATOR_TZ` | config.py:867 | `UTC` | Operator timezone for scheduling/buckets |
-| 53 | `FANOPS_REALISTIC_CADENCE` | config.py:876 | OFF | 2-3h jittered cadence band |
-| 54 | `FANOPS_PUBLISH_LEAD_MINUTES` | config.py:912 | 0 | Editorial lead window (clamped ≥0) |
-| 55 | `FANOPS_ZERNIO_MAX_UPLOAD_MB` | config.py:922 | 4 | Zernio TikTok upload preflight cap |
-| 56 | `FANOPS_POSTIZ_PUBLISH_PER_MIN` | config.py:932 | 4 | Postiz publish throttle (0=off) |
-| 57 | `FANOPS_CONCURRENT_SOURCES` | config.py:947 | OFF | Parallel per-source pipeline |
-| 58 | `FANOPS_CONCURRENT_WORKERS` | config.py:959 | 4 | Concurrency pool size (clamped ≥1) |
-| 59 | `FANOPS_POSTIZ_AUTOSTART` | postiz_lifecycle.py:51 | `1` (on) | Auto-start local Postiz stack |
-| 60 | `FANOPS_POSTIZ_COMPOSE_DIR` | health.py:96 | (blank) | Postiz docker-compose dir for health |
-| 61 | `META_GRAPH_TOKEN__<SLUG>` | meta_graph.py:68 (via per_account_token_env_key) | falls back to global | Per-handle Graph token (dynamic key, write-only) |
-| 62 | `XDG_CACHE_HOME` | transcribe.py:43 | `~/.cache` | Whisper checkpoint cache root |
-| 63 | `SSL_CERT_FILE` / `REQUESTS_CA_BUNDLE` | _fwrun.py:27-28 | certifi | TLS bundle for the fw runner (setdefault) |
-
-**True count, re-derived from the table itself: 64 distinct environment variables** across 63 rows (row 63
-holds both `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE`). Counting decision, stated explicitly: the dynamic
-per-handle pattern `META_GRAPH_TOKEN__<SLUG>` (row 61 — one env-key FAMILY, one read site
-`meta_graph.py:68`, N concrete keys at runtime) is counted as **ONE distinct variable slot**.
-
-Split, from the table rows: **FANOPS_\* = 52** (rows 2, 3, and 11–60 — 2 + 50 rows, all FANOPS-prefixed).
-**Non-FANOPS = 12**: `ANTHROPIC_API_KEY` (row 1), `POSTIZ_URL`, `POSTIZ_API_KEY`, `ZERNIO_API_URL`,
-`ZERNIO_API_KEY`, `META_GRAPH_TOKEN`, `META_IG_USER_ID`, `META_GRAPH_URL` (rows 4–10),
-`META_GRAPH_TOKEN__<SLUG>` (row 61, the one dynamic slot), `XDG_CACHE_HOME` (row 62), `SSL_CERT_FILE` and
-`REQUESTS_CA_BUNDLE` (row 63). **52 + 12 = 64.**
-
-Grep cross-check: `grep -rhoE 'FANOPS_[A-Z_]+' src/fanops --include='*.py' | sort -u` yields 52 lines, but
-that is NOT 52 real vars directly — subtract `FANOPS_CFG` (a Flask `app.config` KEY at `studio/app.py:249`,
-not an env var) and the fragment `FANOPS_P` (the `[A-Z_]+` regex stops at the digit, truncating BOTH
-`FANOPS_P4_DIM_BIAS` `config.py:774` AND `FANOPS_P4_MIN_REACH_GAP` `config.py:832` into one fragment), then
-add those 2 real P4 variables back: 52 − 2 + 2 = **52 distinct FANOPS_\* env vars** — matching the table.
+The env surface is machine-derived. Every `os.getenv` / `os.environ` read under `src/fanops/` is censused
+in [`.reports/architecture/derived/configuration.json`](../../.reports/architecture/derived/configuration.json)
+(regenerated by `python -m tools.arch regen`). Operator-facing names, defaults, and meanings live in
+[`docs/CONFIG.md`](../CONFIG.md). This map does not hand-copy either — a prose per-var table and any hard
+env count rot the day after they are written.
 
 ### 1.3 Cross-reference — Studio-settable vs .env-only
 
 The ONLY Studio setter of environment variables is the Go-Live tab via `golive._dual_write`
-(`studio/golive.py:44`), which writes BOTH `.env` and `os.environ`. Verified via
-`grep -oE '_dual_write\(cfg, "..."'`:
-
-**Studio-settable env vars (12 total = 8 + 3 + 1):**
-- `FANOPS_*` (8): `FANOPS_LIVE` (golive.py:632, via `go_live`), `FANOPS_ACCOUNT_CASTING` (237),
-  `FANOPS_RESPONDER` (250), `FANOPS_CLIP_PROFILE` (292),
-  `FANOPS_VARIANT_LEARNING` (306), `FANOPS_VARIANT_AMPLIFY` (315), `FANOPS_VARIANT_UCB` (322),
-  `FANOPS_VARIANT_TRANSFER` (333). (`FANOPS_CREATIVE_VARIATION` is dual-written by Go-Live but has no
-  `config.py` reader — documentation-only runtime switch; see archive/fresh-ingestion-trace §4.)
-- Non-FANOPS creds (3 static): `POSTIZ_URL` (91), `POSTIZ_API_KEY` (96), `ZERNIO_API_KEY` (136).
-- Dynamic (1): the per-handle `META_GRAPH_TOKEN__<SLUG>` slot (golive.py:390) — counted as one settable
-  variable, consistent with the one-slot counting decision in §1.2. `META_IG_USER_ID` is set per-account
-  NOT via env but into accounts.json (`set_ig_user_id`, golive.py:366 comment). `FANOPS_POSTER` is
-  Studio-UNSET-only (a stale-value scrape via `_dual_unset`, golive.py:645) — a clear, not a set, so it is
-  NOT counted settable.
-
-**.env/shell-ONLY (51 of the 64 — never settable from any Studio route):** all trust-gate numerics
-(`FANOPS_VARIANT_*_MIN_*`, `FANOPS_VARIANT_UCB_C`, `FANOPS_P4_MIN_REACH_GAP`), all Phase-2 bias kill switches
-(`FANOPS_P4_DIM_BIAS`, `FANOPS_TIMING_BIAS`, `FANOPS_MOMENT_HOOK_LEARNING`,
-`FANOPS_ADJUST_PER_SURFACE`, `FANOPS_IG_RETENTION_PROOF`), the stitch producers (`FANOPS_IMPACT_CUT`,
-`FANOPS_INTRO_TEASE`, `FANOPS_HOOK_ROUTER`), all ASR/framing knobs (`FANOPS_ASR_*`, `FANOPS_WHISPER_MODEL`,
-`FANOPS_ISOLATE_VOCALS`, `FANOPS_BURN_SUBS`, `FANOPS_AWARE_REFRAME`, `FANOPS_SUBTITLE_FONT`,
-`FANOPS_VISUAL_START`), scheduling (`FANOPS_OPERATOR_TZ`, `FANOPS_REALISTIC_CADENCE`,
-`FANOPS_PUBLISH_LEAD_MINUTES`), infra (`FANOPS_CONCURRENT_*`, `FANOPS_GC_KEEP_DAYS`, `FANOPS_UPLOAD_MAX_MB`,
-`FANOPS_*_PER_MIN`, `FANOPS_ZERNIO_MAX_UPLOAD_MB`, `FANOPS_POSTIZ_*`,
-`FANOPS_REQUIRE_FULL_OBJECTIVE`, `FANOPS_LLM_MODEL`, `FANOPS_ARTIST_NAME`, `FANOPS_POSTER`), the Meta/TLS
-creds (`META_GRAPH_TOKEN`, `META_IG_USER_ID`, `META_GRAPH_URL`, `ANTHROPIC_API_KEY`, `XDG_CACHE_HOME`,
-`SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`).
-
-**Exact counts: 13 Studio-settable, 51 .env/shell-only — 13 + 51 = 64 distinct variables**, matching the
-§1.2 table total.
+(`studio/golive`), which writes BOTH `.env` and `os.environ`. Membership of the Studio-settable set is
+`fanops.settings.STUDIO_SETTABLE` (a projection of the `EnvVar` marker on each `Settings` field).
+Everything else in the derived census is `.env`/shell-only from Studio's perspective — including trust-gate
+numerics and Phase-2 bias kill switches. Census:
+[`.reports/architecture/derived/configuration.json`](../../.reports/architecture/derived/configuration.json).
+Operator surface: [`docs/CONFIG.md`](../CONFIG.md).
 
 ### 1.4 First quality/content judgment in the chain, and compute spent by then
 
@@ -501,12 +396,10 @@ generation and schedule toward measured reach, but never past the operator appro
    `pipeline.py:82-87`). A dead-footage source burns the entire transcribe+signals+keyframes compute before
    any "is this worth posting" judgment. Evidence: `pipeline._stage_source_to_moments` ordering.
 
-2. **Studio exposes only 13 of 64 distinct env variables; every trust-gate numeric and Phase-2 bias kill
-   switch is .env/shell-only.** `_dual_write` covers 9 FANOPS_* + 3 static creds + the dynamic per-handle
-   token slot (`studio/golive.py`), so `FANOPS_P4_DIM_BIAS`, `FANOPS_TIMING_BIAS`,
-   all `FANOPS_VARIANT_*_MIN_*`, `FANOPS_OPERATOR_TZ`, etc. have no UI. An operator-only deployment cannot
-   turn on the reach-loop bias actuators or tune their thresholds without shell access. Evidence: §1.3
-   itemization vs the 64-variable table in §1.2.
+2. **Studio does not expose every env var; trust-gate numerics and Phase-2 bias kill switches are
+   .env/shell-only.** Membership is `settings.STUDIO_SETTABLE` against the derived census
+   (`.reports/architecture/derived/configuration.json`); see §1.3. An operator-only deployment cannot
+   turn on the reach-loop bias actuators or tune their thresholds without shell access.
 
 3. **A persona-link resolution failure is silent at the point of failure and only surfaces indirectly.**
    `_hydrate_from_personas` swallows every exception with `return` (`accounts.py:250-251`); a dangling
