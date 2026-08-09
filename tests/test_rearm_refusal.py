@@ -10,7 +10,7 @@ import json
 
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.models import (Clip, ClipState, Fmt, Moment, MomentState, Platform, Post, PostState, Source)
+from fanops.models import (Clip, ClipState, ErrorKind, Fmt, Moment, MomentState, Platform, Post, PostState, Source)
 from fanops.studio import actions
 
 import pytest
@@ -20,7 +20,8 @@ _OVERSIZE = "zernio upload 413 entity too large"
 _TRANSIENT = "publish failed: NameResolutionError zernio.com"
 
 
-def _chain(led, tag, *, retire=None, state=PostState.failed, error_reason=_RATE_LIMIT):
+def _chain(led, tag, *, retire=None, state=PostState.failed, error_reason=_RATE_LIMIT,
+           error_kind=ErrorKind.rate_limit):
     """Seed one full (source, moment, clip, post) chain. `retire` marks 'moment' or 'clip' retired — a post
     is NEVER orphaned, because `Ledger.is_suppressed` fails closed and a missing ancestor row would refuse
     for the wrong reason (the cascade in `_delete_moment_cascade` prevents that shape in production)."""
@@ -30,7 +31,7 @@ def _chain(led, tag, *, retire=None, state=PostState.failed, error_reason=_RATE_
     led.add_clip(Clip(id=f"c_{tag}", parent_id=f"m_{tag}", path=f"/{tag}.mp4", aspect=Fmt.r9x16,
                       state=ClipState.retired if retire == "clip" else ClipState.captioned))
     led.add_post(Post(id=tag, parent_id=f"c_{tag}", account="a", account_id="1", platform=Platform.instagram,
-                      caption="c", state=state, error_reason=error_reason))
+                      caption="c", state=state, error_reason=error_reason, error_kind=error_kind))
     return tag
 
 
@@ -39,8 +40,8 @@ def test_bulk_send_to_review_refuses_retired_lineage(tmp_path):
     it only re-queues work the system already dropped. The live sibling still moves (negative control)."""
     cfg = Config(root=tmp_path)
     led = Ledger.load(cfg)
-    _chain(led, "live", state=PostState.queued, error_reason=None)
-    _chain(led, "dead", retire="moment", state=PostState.queued, error_reason=None)
+    _chain(led, "live", state=PostState.queued, error_reason=None, error_kind=None)
+    _chain(led, "dead", retire="moment", state=PostState.queued, error_reason=None, error_kind=None)
     led.save()
     res = actions.bulk_send_to_review(cfg, ["live", "dead"], reason="test")
     assert res.ok, res
@@ -55,7 +56,7 @@ def test_refusal_writes_a_breadcrumb(tmp_path):
     The event name matches what `post/run.py` and `actions_approve.py` already emit."""
     cfg = Config(root=tmp_path)
     led = Ledger.load(cfg)
-    _chain(led, "dead", retire="clip", state=PostState.queued, error_reason=None)
+    _chain(led, "dead", retire="clip", state=PostState.queued, error_reason=None, error_kind=None)
     led.save()
     assert actions.bulk_send_to_review(cfg, ["dead"], reason="test").ok
     recs = [json.loads(x) for x in cfg.log_path.read_text().splitlines() if x.strip()]
@@ -93,19 +94,19 @@ def test_recover_posts_discard_still_works_on_retired_lineage(tmp_path):
     assert Ledger.load(cfg).posts["dead"].state is PostState.rejected
 
 
-@pytest.mark.parametrize("verb,reason_text,retire", [
-    ("retry_rate_limited_failures", _RATE_LIMIT, "clip"),
-    ("retry_oversize_failures", _OVERSIZE, "moment"),
-    ("retry_transient_failures", _TRANSIENT, "clip"),
+@pytest.mark.parametrize("verb,reason_text,kind,retire", [
+    ("retry_rate_limited_failures", _RATE_LIMIT, ErrorKind.rate_limit, "clip"),
+    ("retry_oversize_failures", _OVERSIZE, ErrorKind.oversize, "moment"),
+    ("retry_transient_failures", _TRANSIENT, ErrorKind.transient, "clip"),
 ])
-def test_each_retry_verb_refuses_retired_lineage(tmp_path, mocker, verb, reason_text, retire):
+def test_each_retry_verb_refuses_retired_lineage(tmp_path, mocker, verb, reason_text, kind, retire):
     """All three sweep-the-whole-ledger retry verbs carry the same guard. Each run has one retired-lineage
     and one live-lineage candidate, so a verb that refused everything would fail on `retried == 1`."""
     mocker.patch("fanops.post.compress.apply_shrink_to_post", return_value=True)   # only retry_oversize calls it
     cfg = Config(root=tmp_path)
     led = Ledger.load(cfg)
-    _chain(led, "live", error_reason=reason_text)
-    _chain(led, "dead", retire=retire, error_reason=reason_text)
+    _chain(led, "live", error_reason=reason_text, error_kind=kind)
+    _chain(led, "dead", retire=retire, error_reason=reason_text, error_kind=kind)
     led.save()
     res = getattr(actions, verb)(cfg)
     assert res.ok, res
@@ -121,7 +122,7 @@ def test_stored_retired_post_is_not_revertible(tmp_path):
     added to `_REVIEW_REVERT_BLOCKED`, because the refusal mechanism owns this, not a frozenset."""
     cfg = Config(root=tmp_path)
     led = Ledger.load(cfg)
-    _chain(led, "self", state=PostState.retired, error_reason=None)
+    _chain(led, "self", state=PostState.retired, error_reason=None, error_kind=None)
     led.save()
     res = actions.bulk_send_to_review(cfg, ["self"], reason="test")
     assert res.ok, res
@@ -135,7 +136,7 @@ def test_retry_oversize_does_not_transcode_a_refused_post(tmp_path, mocker):
     shrink = mocker.patch("fanops.post.compress.apply_shrink_to_post", return_value=True)
     cfg = Config(root=tmp_path)
     led = Ledger.load(cfg)
-    _chain(led, "dead", retire="clip", error_reason=_OVERSIZE)
+    _chain(led, "dead", retire="clip", error_reason=_OVERSIZE, error_kind=ErrorKind.oversize)
     led.save()
     res = actions.retry_oversize_failures(cfg)
     assert res.ok and res.detail["skipped_retired"] == 1 and res.detail["retried"] == 0
