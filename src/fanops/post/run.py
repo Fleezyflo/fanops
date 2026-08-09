@@ -119,8 +119,8 @@ def _is_fatal_auth_error(exc: Exception) -> bool:
 # Report 11 §5: reconcile_candidate_id rides here for ONE reason — a poster writes it on the throwaway
 # network ledger, so without it in this union the write is silently DISCARDED at finalize and the operator
 # loses the only pointer a 409 handed back. It is propagation only; run.py never reads or acts on it.
-_NET_POST_FIELDS = ("state", "submission_id", "error_reason", "error_kind", "public_url", "media_urls", "published_at", "account_id",
-                    "reconcile_candidate_id")
+_NET_POST_FIELDS = ("state", "submission_id", "error_reason", "error_kind", "daemon_transient_retry",
+                    "public_url", "media_urls", "published_at", "account_id", "reconcile_candidate_id")
 
 # Sprint 2: per-(backend, integration) publish throttle — in-process only (daemon is single-process).
 _publish_throttle_last: dict[tuple[str, str], float] = {}
@@ -374,12 +374,9 @@ def _publish_one(cfg: Config, post_id: str, backend: str, *, accounts: "Accounts
                                            error_reason="publish transient error (retries exhausted): " + red)
                         post = led.posts[post_id]
                     else:
-                        from fanops.studio.views_common import transient_daemon_retry_count
-                        n = transient_daemon_retry_count(post.error_reason)
-                        msg = "publish failed: " + red
+                        # MOL-812: retry count lives on Post.daemon_transient_retry — error_reason is prose only.
                         led.set_post_state(post_id, PostState.failed, error_kind=ErrorKind.transient,
-                                           error_reason=(
-                            f"transient_daemon_retry={n}/{_DAEMON_TRANSIENT_MAX}|{msg}" if n else msg))
+                                           error_reason="publish failed: " + red)
                         post = led.posts[post_id]
                 else:
                     kind = ErrorKind.bad_payload if isinstance(exc, ValueError) else ErrorKind.unknown
@@ -445,14 +442,14 @@ def _due_or_fail(cfg: Config, post: Post, cutoff: datetime) -> bool:
 def _requeue_transient_failed_for_daemon(cfg: Config) -> int:
     """MOL-125: before publish_due, re-queue failed transient posts (no real submission_id) for another
     daemon attempt. Bounded by _DAEMON_TRANSIENT_MAX — after that they stay terminal failed."""
-    from fanops.studio.views_common import is_transient_failure, transient_daemon_retry_count
+    from fanops.studio.views_common import is_transient_failure
     from fanops.timeutil import iso_z
     requeued = 0
     led = Ledger.load(cfg)
     candidates = [p for p in led.posts_in_state(PostState.failed)
                   if not is_real_submission_id(p.submission_id)
                   and is_transient_failure(p)
-                  and transient_daemon_retry_count(p.error_reason) < _DAEMON_TRANSIENT_MAX]
+                  and int(getattr(p, "daemon_transient_retry", 0) or 0) < _DAEMON_TRANSIENT_MAX]
     if not candidates:
         return 0
     now = datetime.now(timezone.utc)
@@ -466,14 +463,15 @@ def _requeue_transient_failed_for_daemon(cfg: Config) -> int:
                     continue
                 if not is_transient_failure(cur):
                     continue
-                n = transient_daemon_retry_count(cur.error_reason) + 1
+                n = int(getattr(cur, "daemon_transient_retry", 0) or 0) + 1
                 if n > _DAEMON_TRANSIENT_MAX:
                     continue
                 cur.submission_id = None
                 if not (cur.scheduled_time or "").strip():
                     cur.scheduled_time = iso_z(now)
-                lg.set_post_state(cur.id, PostState.queued, error_kind=None,
-                                  error_reason=f"transient_daemon_retry={n}/{_DAEMON_TRANSIENT_MAX}|")
+                # MOL-812: counter is a field; clear the old counter-only prose so Studio never shows it.
+                lg.set_post_state(cur.id, PostState.queued, error_kind=None, error_reason=None,
+                                  daemon_transient_retry=n)
                 requeued += 1
     except Exception:
         return requeued

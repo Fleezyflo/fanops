@@ -8,7 +8,6 @@ cheap GET, cached ~30s) — the Postiz backend health probe the Studio banner de
 new module) because it's a global-strip read like the others, and it imports only fanops.post.postiz."""
 from __future__ import annotations
 import logging
-import re as _re
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -396,21 +395,8 @@ def postiz_autostart_hint(cfg: Config, *, now: "float | None" = None) -> dict:
             "show": bool(banner.get("show")), "status": banner.get("status")}
 
 
-# MOL-125 / MOL-812: daemon retry-count still lives in the error_reason prefix until MOL-812 moves it.
 # MOL-781: transient classification reads Post.error_kind — never substring-scans error_reason.
-
-_TRANSIENT_DAEMON_PREFIX = _re.compile(r"^transient_daemon_retry=(\d+)/(\d+)\|", _re.I)
-
-def transient_daemon_retry_count(error_reason: str | None) -> int:
-    """How many daemon-level transient re-queue cycles this post has consumed (0 when unset)."""
-    m = _TRANSIENT_DAEMON_PREFIX.match((error_reason or "").strip())
-    return int(m.group(1)) if m else 0
-
-
-def strip_transient_daemon_prefix(error_reason: str | None) -> str:
-    er = (error_reason or "").strip()
-    return _TRANSIENT_DAEMON_PREFIX.sub("", er, count=1) if er else ""
-
+# MOL-812: daemon retry count is Post.daemon_transient_retry (int field), not an error_reason prefix.
 
 def is_transient_failure(post) -> bool:
     """True when the failure site stamped ErrorKind.transient (Studio recovery + daemon re-queue)."""
