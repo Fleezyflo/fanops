@@ -117,7 +117,8 @@ def reject_posts(cfg: Config, ids: Sequence[str]) -> ActionResult:
         return ActionResult(ok=False, error=f"reject failed: {str(exc)[:160]}")
     if audited_ids:
         write_audit(cfg, "reject", audited_ids, reason="studio_reject_batch", rejected=len(audited_ids))
-    return ActionResult(ok=True, detail={"rejected": len(sel)})
+    # MOL-834: banner count = discarded set (audited_ids), not offered selection (sel).
+    return ActionResult(ok=True, detail={"rejected": len(audited_ids)})
 
 def unapprove_post(cfg: Config, post_id: str) -> ActionResult:
     try:

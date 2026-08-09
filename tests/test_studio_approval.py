@@ -52,6 +52,21 @@ def test_reject_posts_marks_rejected(tmp_path):
     assert r.ok and Ledger.load(cfg).posts["p1"].state is PostState.rejected
 
 
+def test_reject_posts_reports_only_what_it_discarded(tmp_path):
+    # MOL-834: banner count must match audit — Ledger.reject_post no-ops on queued/unknown ids,
+    # so detail["rejected"] is len(audited_ids), not the offered selection size.
+    cfg = Config(root=tmp_path)
+    _seed(cfg, "p1", state=PostState.awaiting_approval)
+    _seed(cfg, "p2", state=PostState.queued)
+    r = actions.reject_posts(cfg, ["p1", "p2", "nope"])
+    assert r.ok and r.detail["rejected"] == 1
+    led = Ledger.load(cfg)
+    assert led.posts["p1"].state is PostState.rejected
+    assert led.posts["p2"].state is PostState.queued
+    r2 = actions.reject_posts(cfg, ["p2", "nope"])
+    assert r2.ok and r2.detail["rejected"] == 0
+
+
 def test_unapprove_post_sends_back_to_review(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg, "p1", state=PostState.queued)
     r = actions.unapprove_post(cfg, "p1")
