@@ -108,7 +108,9 @@ def _hashtag_scrape_check(cfg: Config, *, open_client=None, probe_resolve=None) 
     except ScrapeCheckpoint as e:
         # A LOCK, not an expiry: scrape-login alone cannot clear it, so never make that the whole remedy.
         return _check(lbl, False, str(e)[:160])
-    except (ScrapeUnavailable, ScrapeRefused) as e:
+    except ScrapeRefused as e:
+        return _check(lbl, False, str(e)[:120])
+    except ScrapeUnavailable as e:
         return _check(lbl, False, f"{str(e)[:120]} — run `fanops hashtags scrape-login`")
     return _check(lbl, True, "")
 
