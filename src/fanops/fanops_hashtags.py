@@ -629,7 +629,7 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
                                        user=scrape_user)
                 get_logger(cfg)("hashtags", "-", "scrape_cooldown", level="error", reason="checkpoint",
                                 until=cd.get("until"), user=(scrape_user or "")[:40],
-                                detail="Layer A frozen — verify in the Instagram app, then scrape-login")
+                                err=str(e)[:160])
                 return {"written": False, "aborted": "checkpoint", "reason": str(e), "backend": "scrape",
                         "cooldown_until": cd.get("until"), "cooldown_streak": cd.get("streak")}
             if isinstance(e, ScrapeSessionExpired):
@@ -639,7 +639,7 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
                 cd = _persist_cooldown(cfg, now, reason="login_required", user=scrape_user)
                 get_logger(cfg)("hashtags", "-", "scrape_cooldown", level="error", reason="login_required",
                                 until=cd.get("until"), user=(scrape_user or "")[:40],
-                                detail="Layer A abort — run fanops hashtags scrape-login")
+                                err=str(e)[:160])
                 return {"written": False, "aborted": "login_required", "reason": str(e), "backend": "scrape",
                         "cooldown_until": cd.get("until"), "cooldown_streak": cd.get("streak")}
             return {"written": False, "aborted": "no_scrape", "reason": str(e), "backend": "scrape"}
