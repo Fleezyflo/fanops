@@ -10,7 +10,10 @@ running the codebase-wide suite under the wrong interpreter.
 ## Wire the hooks (per repo)
 
 ```bash
-git config --local core.hooksPath .githooks
+./scripts/setup-hooks.sh
+# equivalent manual form:
+#   git config --local core.hooksPath .githooks
+#   git config --local merge.ours.driver true   # MOL-833: arm .gitattributes merge=ours
 ```
 
 ⚠️ Re-pointing `core.hooksPath` means git looks **only** in `.githooks/` for this repo, so any
@@ -38,6 +41,18 @@ Refuses:
 That's the whole hook. It runs no ruff and no pytest, so there is **no `FANOPS_SKIP_PREPUSH` /
 `ECC_SKIP_PREPUSH` bypass** — nothing here is skippable because nothing here is slow. The only override
 is the human-only `FANOPS_ALLOW_MAIN_PUSH=1` for a deliberate main push.
+
+## `post-merge` — regen architecture derived artifacts (MOL-833)
+
+Paired with `.gitattributes` `merge=ours` on `.reports/architecture/derived/**`. Concurrent PRs that
+each shift a scanned source line both rewrite those generated files; `merge=ours` keeps the merge
+clean, and this hook runs `python -m tools.arch regen` against the **merged** source so the working
+tree holds a fresh artifact. It does **not** auto-commit — review and commit the refresh (or CI's
+drift gate fails loudly if the commit is skipped).
+
+`post-merge` runs only after a *clean* merge. A real source conflict still fails loudly; this hook
+does not fire and cannot regenerate the conflict away. Emergency skip: `FANOPS_SKIP_POST_MERGE_ARCH_REGEN=1`
+(or `ECC_SKIP_GIT_HOOKS=1`).
 
 ## Where tests actually run
 

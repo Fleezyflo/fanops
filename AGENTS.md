@@ -10,9 +10,9 @@ Operator docs live in [README.md](README.md) — install, quickstart, the `fanop
 
 **Disjoint hot files.** Lanes own files; a change that edits a hot file owned by another lane is refused. Ownership is declared in [.agents/lanes.json](.agents/lanes.json) and enforced by `scripts/lane_guard.py` (pre-push + the `lane-guard` CI job) and `scripts/pr_collision_guard.py` (refuses a PR whose hot file is open in another PR). Need a file another lane owns → stop and report; do not edit `lanes.json` to take it.
 
-**One ticket, one worktree, its own venv.** `git worktree add`, then a fresh `.venv` per worktree, then `git config --local core.hooksPath .githooks` (or `./scripts/setup-hooks.sh`). Worktrees do not share a venv or an index.
+**One ticket, one worktree, its own venv.** `git worktree add`, then a fresh `.venv` per worktree, then `./scripts/setup-hooks.sh` (wires `core.hooksPath=.githooks` and, for MOL-833, `merge.ours.driver=true` so architecture `derived/` `merge=ours` resolves). Worktrees do not share a venv or an index.
 
-**Drift is normal — re-sync, never reset.** Commit or stash → `git fetch origin` → `git merge origin/main` → resolve keeping both sides → re-check → push. Never `git reset --hard`, never `git checkout -B … origin/main`, never abandon a worktree mid-ticket, never force-push. Unreconcilable conflict → stop and report.
+**Drift is normal — re-sync, never reset.** Commit or stash → `git fetch origin` → `git merge origin/main` → resolve keeping both sides → re-check → push. With hooks wired, a clean merge refreshes `.reports/architecture/derived/` via `post-merge` (MOL-833) — commit that working-tree regen; do not hand-merge the hashes. Never `git reset --hard`, never `git checkout -B … origin/main`, never abandon a worktree mid-ticket, never force-push. Unreconcilable conflict → stop and report.
 
 **Never wipe or reset the ledger.** Ledger state is production data; destructive ledger operations are not a repair path.
 

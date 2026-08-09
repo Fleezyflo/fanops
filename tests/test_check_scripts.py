@@ -378,7 +378,11 @@ def test_check_warns_but_does_not_wire_hookspath(sandbox):
 
 
 def test_setup_hooks_wires_hookspath_idempotently(sandbox):
-    """MOL-198: setup-hooks.sh is the explicit, idempotent wiring step check.sh no longer does."""
+    """MOL-198: setup-hooks.sh is the explicit, idempotent wiring step check.sh no longer does.
+
+    MOL-833 also arms `merge.ours.driver=true` so `.gitattributes` `merge=ours` on architecture
+    derived/ actually resolves (the attribute alone still conflicts). Callers: CI unit lane.
+    """
     repo = sandbox
     setup = str(repo / "scripts" / "setup-hooks.sh")
 
@@ -386,6 +390,8 @@ def test_setup_hooks_wires_hookspath_idempotently(sandbox):
     assert r1.returncode == 0, f"{r1.stdout}\n{r1.stderr}"
     post = _run(["git", "-C", str(repo), "config", "--local", "core.hooksPath"], cwd="/")
     assert post.stdout.strip() == ".githooks", "setup-hooks.sh must wire core.hooksPath"
+    driver = _run(["git", "-C", str(repo), "config", "--local", "merge.ours.driver"], cwd="/")
+    assert driver.stdout.strip() == "true", "setup-hooks.sh must arm merge.ours.driver (MOL-833)"
 
     r2 = _run(["bash", setup], repo)                       # idempotent: second run is a clean no-op
     assert r2.returncode == 0

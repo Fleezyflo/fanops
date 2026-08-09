@@ -149,6 +149,14 @@ from "passed silently" would rebuild the blind spot it exists to close.
 - `./scripts/check.sh` — the local lint-only runner (ruff + scoped checks; never pytest —
   the test suite is CI-only in this repo).
 - `scripts/repo_sweep.py` — read-only inventory sweep, consumed by `scripts/orchestrate.py`.
+- **Architecture derived merge hygiene (MOL-833):** `.gitattributes` sets `merge=ours` on
+  `.reports/architecture/derived/**` so concurrent PRs that each regen those tracked artifacts do
+  not conflict. `./scripts/setup-hooks.sh` arms both `core.hooksPath=.githooks` and
+  `merge.ours.driver=true` (the attribute is inert without the driver). `.githooks/post-merge` then
+  runs `python -m tools.arch regen` on the merged source and leaves the working tree refreshed —
+  not auto-committed. Proof: `tests/test_arch_merge_regen.py` (clean dual-branch merge + byte-identical
+  regen; negative control that a real source conflict still fails and is not regenerated away).
+  Drift/CI still catch a forgotten follow-up commit (loud/late).
 
 ## Runtime product gates — enforce in `src/fanops`, proven live by the census
 - **Publish gate:** a crossposted post is born `PostState.awaiting_approval`; `publish_due`/`publish_now`
