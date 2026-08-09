@@ -5,21 +5,20 @@ on infra errors) and .github/workflows/lane-guard.yml (CI, authoritative). Sourc
 hot-file ownership is .agents/lanes.json.
 
 Contract (kept green by tests/test_lane_guard.py):
-  * OPT-IN by branch prefix. A branch whose name matches no lane prefix is IGNORED (exit 0) — normal
-    branches (cursor/*, bycreamco/mol-*, human branches) are never blocked.
+  * Lane resolution (first hit): explicit --lane  >  branch prefix (`<lane>/`)  >  embedded MOL id
+    listed under a lane's `tickets` in lanes.json  >  (with --use-linear or LINEAR_API_KEY) Linear
+    label/project via each lane's `linear` block. So `cursor/mol-751-…` and `bycreamco/mol-751-…`
+    both engage when MOL-751 is mapped (tickets or Linear) — no lane-prefix required.
+  * Ticket-shaped branches (`mol-<digits>` in the name) with NO lane after that resolution FAIL
+    CLOSED (exit 1) — never a quiet SKIP.
+  * Non-ticket ad-hoc branches with no lane WARN loudly that hot-file ownership was NOT checked,
+    then proceed (exit 0). Infra errors (no git, missing/broken manifest) still FAIL OPEN with SKIP.
   * Only paths listed in guard.hot_files are restricted; every other path is unrestricted.
   * A change is a STRAY iff it edits a hot file whose owner lane(s) do NOT include the branch's lane.
     (A hot file may have a LIST of owners — a file shared between lanes and coordinated in TIME by the
     orchestrator, which this static guard cannot see.)
-  * Infra errors (no git, missing/broken manifest) FAIL OPEN with a warning; a detected stray FAILS
-    CLOSED (exit 1). Mirrors the repo norm: local hooks degrade, CI is the hard gate.
-
-Lane resolution order (first hit wins): explicit --lane  >  branch prefix (`<lane>/`)  >  (with
---use-linear) the branch's MOL id looked up in Linear -> its label/project -> lane. The Linear step is
-what lets this engage on your real per-ticket branches (`cursor/mol-156-…`, `fix/mol-169-…`) that carry
-no lane prefix. It is BEST-EFFORT: no LINEAR_API_KEY / any network error -> lane stays unresolved and the
-guard SKIPs (fail-open); the cross-PR collision guard (scripts/pr_collision_guard.py) is the always-on
-protection that needs no Linear.
+  * A detected stray FAILS CLOSED (exit 1). Mirrors the repo norm: local hooks degrade on infra,
+    ownership misses do not.
 
 Usage:
   lane_guard.py [--branch REF] [--base REF] [--lane NAME] [--manifest PATH] [--changed a,b,c] [--use-linear]
@@ -44,7 +43,7 @@ def load_manifest(path=None) -> dict:
 
 
 def lane_for_branch(branch: str, manifest: dict):
-    """First lane whose branch_prefix is a prefix of `branch`; None if none match (guard no-ops)."""
+    """First lane whose branch_prefix is a prefix of `branch`; None if none match."""
     if not branch: return None
     for name, cfg in manifest.get("lanes", {}).items():
         for pref in cfg.get("branch_prefixes", []):
@@ -57,6 +56,15 @@ def mol_id_from_branch(branch: str):
     if not branch: return None
     m = _MOL_RE.search(branch)
     return f"MOL-{m.group(1)}" if m else None
+
+
+def lane_for_ticket(mol_id: str, manifest: dict):
+    """First lane whose `tickets` list contains mol_id (e.g. 'MOL-751'); None if none."""
+    if not mol_id: return None
+    for name, cfg in manifest.get("lanes", {}).items():
+        if mol_id in (cfg.get("tickets") or []):
+            return name
+    return None
 
 
 def _lane_from_issue_fields(labels, project, manifest: dict):
@@ -117,8 +125,12 @@ def strays(changed, lane: str, manifest: dict) -> list:
 
 
 def evaluate(changed, branch: str, manifest: dict, lane_override=None):
-    """Return (lane, strays). lane is None (=> no-op, empty strays) when the branch matches no lane."""
+    """Return (lane, strays). lane is None when prefix + tickets both miss (caller decides fail/warn)."""
     lane = lane_override or lane_for_branch(branch, manifest)
+    if lane is None:
+        mol = mol_id_from_branch(branch)
+        if mol:
+            lane = lane_for_ticket(mol, manifest)
     if lane is None: return None, []
     return lane, strays(changed, lane, manifest)
 
@@ -153,8 +165,8 @@ def main(argv=None) -> int:
     ap.add_argument("--manifest", default=None, help="path to lanes.json (default: <repo>/.agents/lanes.json)")
     ap.add_argument("--changed", default=None, help="comma/space/newline list of changed paths (skip git)")
     ap.add_argument("--use-linear", action="store_true",
-                    help="if no lane from --lane/branch-prefix, resolve via the branch's MOL id in Linear "
-                         "(needs LINEAR_API_KEY; best-effort, fail-open)")
+                    help="if no lane from --lane/prefix/tickets, resolve via the branch's MOL id in Linear "
+                         "(needs LINEAR_API_KEY; also auto-attempted when that env var is set)")
     args = ap.parse_args(argv)
 
     # --- Infra layer: FAIL OPEN. A broken manifest or absent git must never brick a push. ---
@@ -165,12 +177,28 @@ def main(argv=None) -> int:
         return 0
 
     branch = args.branch or _current_branch()
+    mol = mol_id_from_branch(branch)
     lane = args.lane or lane_for_branch(branch, manifest)
-    if lane is None and args.use_linear:
-        lane = lane_from_linear(branch, manifest, os.environ.get("LINEAR_API_KEY", ""))
-        if lane: print(f"[lane-guard] resolved lane={lane} from Linear via {mol_id_from_branch(branch)}")
+    if lane is None and mol:
+        lane = lane_for_ticket(mol, manifest)
+        if lane:
+            print(f"[lane-guard] resolved lane={lane} from tickets via {mol}")
+    api_key = os.environ.get("LINEAR_API_KEY", "")
+    if lane is None and (args.use_linear or api_key):
+        lane = lane_from_linear(branch, manifest, api_key)
+        if lane:
+            print(f"[lane-guard] resolved lane={lane} from Linear via {mol_id_from_branch(branch)}")
     if lane is None:
-        print(f"[lane-guard] SKIP: branch {branch!r} maps to no lane (no prefix / no Linear match) — nothing to enforce.")
+        if mol:
+            print(f"[lane-guard] REFUSED: branch {branch!r} looks ticket-shaped ({mol}) but maps to no lane.",
+                  file=sys.stderr)
+            print("[lane-guard] Expected a `<lane>/` prefix (publish/|pick/|picking/|rfd/|ci/), "
+                  f"or list {mol} under that lane's `tickets` in .agents/lanes.json, "
+                  "or a Linear label/project match via the lane's `linear` block "
+                  "(LINEAR_API_KEY; CI passes --use-linear).", file=sys.stderr)
+            return 1
+        print(f"[lane-guard] WARNING: branch {branch!r} maps to no lane — "
+              "hot-file ownership was NOT checked.", file=sys.stderr)
         return 0
 
     if args.changed is not None:

@@ -16,10 +16,12 @@ Review`, no unmet blocker. Your lane→Linear mapping (label/project) lives in `
 
 ```bash
 git fetch origin
-# Branch name: your platform's per-ticket name is fine (cursor/mol-<id>-…, fix/mol-<id>-…) — CI resolves
-# your lane from the MOL id via Linear. A `<lane>/…` prefix (publish/ picking/ rfd/ ci/) additionally
-# engages the OFFLINE pre-push guard. Either way the MOL id MUST be in the branch or PR title.
-git worktree add ../fanops-<mol-id> -b <lane>/<mol-id>-<slug> origin/main
+# Branch name (ONE convention): embed `mol-<id>` — Linear gitBranchName, cursor/mol-<id>-<slug>,
+# bycreamco/mol-<id>-…, or `<lane>/mol-<id>-…`. The pre-push guard resolves the lane from a
+# `<lane>/` prefix, a `tickets` entry in .agents/lanes.json, or (LINEAR_API_KEY) the issue's
+# Linear label/project. Ticket-shaped branches with no mapping FAIL CLOSED; ad-hoc names without
+# mol-<id> WARN that ownership was NOT checked.
+git worktree add ../fanops-<mol-id> -b cursor/mol-<id>-<slug> origin/main
 cd ../fanops-<mol-id>
 python3 -m venv .venv && ./.venv/bin/pip install -e '.[dev,studio]'   # each worktree gets its OWN venv
 git config --local core.hooksPath .githooks                            # wire the policy hooks
@@ -47,7 +49,8 @@ orchestrator) merges. The hook that once refused an unverified merge is DORMANT
 Edit only your lane's files. The **hot files** in `.agents/lanes.json` are owned per-lane; enforcement is
 two-layer:
 - **`scripts/lane_guard.py`** (pre-push + `lane-guard` CI job) refuses a change that edits a hot file
-  owned by ANOTHER lane. Your lane is read from a `<lane>/` prefix or from your branch's MOL id via Linear.
+  owned by ANOTHER lane. Your lane is read from a `<lane>/` prefix, a `tickets` entry for your MOL id
+  in `.agents/lanes.json`, or (with `LINEAR_API_KEY`) Linear label/project.
 - **`scripts/pr_collision_guard.py`** (CI) refuses your PR if a hot file it touches is ALSO open in
   another PR to `main`. So even two same-lane tickets can't silently race the same hot file — land one,
   re-sync the other.
