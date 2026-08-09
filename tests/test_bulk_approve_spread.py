@@ -273,6 +273,43 @@ def test_occupancy_at_capacity_pushes_the_whole_batch_to_the_next_day(tmp_path, 
     assert len(days) == 1 and len(sched) == 3            # all three on the SAME next open day, none dropped
 
 
+def test_window_day_cap_overflow_does_not_stack_at_open(tmp_path, monkeypatch):
+    """Re-spread / batch overflow with daily_window: after the 10/day cap, _roll_into_window snaps
+    candidates to local open (09:00). Cursor must sync to that rolled `t` or every overflow slot
+    collapses onto the same 09:00:00 (operator calendar piles on days 2+)."""
+    monkeypatch.setenv("FANOPS_POSTER", "dryrun")
+    monkeypatch.setenv("FANOPS_OPERATOR_TZ", "Asia/Dubai")
+    cfg = Config(root=tmp_path)
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": [
+        {"handle": "@a", "account_id": "ia", "platforms": ["instagram"], "status": "active",
+         "daily_window": [9, 23]}]}))
+    assert cfg.account_window("a") == (9, 23)
+    from zoneinfo import ZoneInfo
+    from collections import Counter
+    from fanops.studio.views_common import suggest_times_for_batch, _DAILY_ACCOUNT_CAP
+    n = _DAILY_ACCOUNT_CAP + 8
+    posts = _bare_posts("a", n)
+    sched = suggest_times_for_batch(cfg, posts, now=FIXED_DT)
+    assert len(sched) == n and len(set(sched.values())) == n, (
+        f"duplicate ISO after window+cap overflow: {sorted(sched.values())}")
+    zone = ZoneInfo("Asia/Dubai")
+    by_day: dict[str, list] = {}
+    for t in sched.values():
+        local = parse_iso(t).astimezone(zone)
+        by_day.setdefault(local.date().isoformat(), []).append(local)
+    assert len(by_day) >= 2, f"expected overflow onto a second local day: {sorted(by_day)}"
+    for day, dts in sorted(by_day.items()):
+        open_hits = sum(1 for d in dts if d.hour == 9 and d.minute == 0 and d.second == 0)
+        assert open_hits <= 1, f"{day}: stacked at 09:00:00 ({open_hits} posts)"
+        dts_sorted = sorted(dts)
+        gaps = [(b - a).total_seconds() / 60.0 for a, b in zip(dts_sorted, dts_sorted[1:])]
+        assert all(g >= MIN_PER_ACCOUNT_GAP_MIN for g in gaps), f"{day} gaps: {gaps}"
+    overflow_day = sorted(by_day)[1]
+    hm = Counter(d.strftime("%H:%M:%S") for d in by_day[overflow_day])
+    assert hm.get("09:00:00", 0) <= 1, f"overflow pile: {hm}"
+
+
 def test_an_untimed_or_garbage_occupied_post_holds_no_day(tmp_path, monkeypatch):
     """MOL-710 — occupancy is per-DAY, so a post with no (or an unparseable) scheduled_time occupies
     nothing: it has not claimed a slot. Fail-safe, and it keeps a torn row from silently eating capacity."""

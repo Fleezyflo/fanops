@@ -252,6 +252,10 @@ def suggest_times_for_batch(cfg: Config, posts, *, now: datetime, occupied=None)
             out[p.id] = iso_z(t)
             if day is not None:
                 day_used[day] = day_used.get(day, 0) + 1
+            # Window / day-cap roll can snap `t` far ahead of cursor_min (e.g. midnight → 09:00
+            # open). Without syncing, the next N candidates stay pre-open and all collapse onto
+            # the same local open minute — Re-spread's overflow-day 09:00 pile.
+            cursor_min = max(cursor_min, int((t - now).total_seconds() // 60))
             jitter = rng.randint(0, jitter_max - 1)
             cursor_min += step + jitter   # forward-only walk: gap >= STEP
     return out
