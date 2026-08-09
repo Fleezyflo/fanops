@@ -733,7 +733,7 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
                 # last_complete_pass and buy 12h of silence off the few tags it got (MOL-727).
                 login_dead = True; stop = True; throttled = True
                 log("hashtags", "-", "pass_login_required", level="error", tried=tried,
-                    detail="Layer A abort — run fanops hashtags scrape-login")
+                    err=msg[:120])
         else:
             # status == ok
             ids[tag] = hid
