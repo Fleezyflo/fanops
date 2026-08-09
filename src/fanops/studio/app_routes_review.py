@@ -35,8 +35,12 @@ def register_review_routes(app, cfg):
             feed_account = next(iter(pending_full))
         show_feed = feed_account is not None and not switcher_only
         mixed_view = account_all or (bare_entry and len(pending_full) == 0)
-        scoped = bool(account or batch or source or state or account_all)
-        cards = (views.review_buckets(led, accounts, cfg, now=now, account=account, batch=batch,
+        # Single-bare feed: feed_account is already the strip's active scope (_card_chips below). Include
+        # it in scoped + card selection so body counts match the poll (prepared/held drop under an account
+        # filter — post-less cards have no surfaces). MOL-835; do not touch Ledger.attention_counts/can_promote.
+        scope_account = account or feed_account
+        scoped = bool(scope_account or batch or source or state or account_all)
+        cards = (views.review_buckets(led, accounts, cfg, now=now, account=scope_account, batch=batch,
                                       source=source, state=state) if scoped else cards_full)
         if switcher_only:
             cards = []

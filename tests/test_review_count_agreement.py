@@ -88,21 +88,24 @@ def test_bucket_header_omits_the_slice_marker_when_nothing_is_paginated(tmp_path
 
 
 def test_every_bucket_header_reports_its_own_total(tmp_path):
-    # One entry per bucket key the template iterates. Kept under one page ON PURPOSE: a bucket with no card
-    # in the slice renders no header at all (pre-existing pagination behaviour, untouched here), so a
-    # multi-bucket assertion only means something while everything fits.
+    # Fill page 1 with editable cards so the held card is off-slice. Gate is bucket_totals (pre-pagination),
+    # not whether the page slice has cards — otherwise "Held for review" vanishes from page 1 and the
+    # operator cannot tell "no held work" from "held work on page 2" (MOL-835).
+    n_editable = GRID_PAGE_SIZE
     cfg = Config(root=tmp_path); _seed_accounts(cfg)
     with Ledger.transaction(cfg) as led:
         _source(led, "src_1")
-        for i in range(10):
+        for i in range(n_editable):
             _clip(led, f"clip_{i}"); _awaiting(led, f"p_{i}", f"clip_{i}", "a")
         _clip(led, "clip_held", held=True)                     # -> the 'held' bucket, post-less
     cards = review_buckets(Ledger.load(cfg), Accounts.load(cfg), cfg, now=NOW)
-    expected = {"editable": 10, "prepared": 0, "held": 1, "recent": 0}
+    expected = {"editable": n_editable, "prepared": 0, "held": 1, "recent": 0}
     assert {k: sum(1 for c in cards if c.bucket == k) for k in expected} == expected
-    assert len(cards) <= GRID_PAGE_SIZE                        # the premise the header assertions rest on
+    assert len(cards) > GRID_PAGE_SIZE                         # held lands off page 1 (editable fills the slice)
     html = _client(cfg).get("/review?account=all").data.decode()
-    assert "Awaiting approval (10)" in html and "Held for review (1)" in html
+    assert f"Awaiting approval ({n_editable})" in html
+    assert "Held for review (1)" in html                       # header from bucket_totals, not the page slice
+    assert "· showing 0" in html                               # held total is 1; slice has none of them
 
 
 # ============ (b) the live strip reports the same scope as the body it sits above ============
@@ -238,3 +241,32 @@ def test_posted_failure_chips_carry_the_source_filter(tmp_path):
     chips = re.findall(r'href="([^"]+)"', nav.group(0))
     assert chips and all("source=src_2" in h for h in chips), chips
     assert "All failed (1)" in html                              # scoped to src_2, not the whole ledger's 4
+
+
+def test_posted_delivery_tabs_carry_the_source_filter(tmp_path):
+    # Sibling of the failure-chip leak: switching All/Live/In flight/Dryrun/Failed used to drop source=.
+    cfg = Config(root=tmp_path); _seed_failures(cfg)
+    html = _client(cfg).get("/posted?source=src_2").data.decode()
+    nav = re.search(r'<nav class="delivery-tabs".*?</nav>', html, re.S)
+    assert nav is not None, "no delivery tabs rendered"
+    hrefs = re.findall(r'href="([^"]+)"', nav.group(0))
+    assert hrefs and all("source=src_2" in h for h in hrefs), hrefs
+
+
+def test_single_bare_feed_scopes_body_like_the_strip(tmp_path):
+    # One account with pending work + a post-less held clip, no ?account=: strip polls account=<handle>
+    # while the body used to stay unscoped (held/prepared leaked). Both sides must answer the same scope.
+    cfg = Config(root=tmp_path); _seed_accounts(cfg, handles=("a", "b"))
+    with Ledger.transaction(cfg) as led:
+        _source(led, "src_1")
+        _clip(led, "clip_1"); _awaiting(led, "p_1", "clip_1", "a")
+        _clip(led, "clip_held", held=True)
+    c = _client(cfg)
+    body = c.get("/review").data.decode()
+    strip = c.get("/review/live?account=a").data.decode()
+    assert 'hx-get="' in body and "account=a" in re.search(
+        r'id="review-live"[^>]*hx-get="([^"]+)"', body).group(1)
+    assert _strip_awaiting(strip) == 1
+    assert 'data-awaiting="1"' in body
+    assert "Held <strong>0</strong>" in strip                  # account filter drops post-less held
+    assert re.search(r"\b0 held\b", body)                      # body progress matches the strip

@@ -6,7 +6,7 @@
   {% include "_publish_outcome.html" %}
   <nav class="delivery-tabs" aria-label="Delivery filter">
     {% for d, label in [('all','All'),('live','Live'),('inflight','In flight'),('dryrun','Dryrun local'),('failed','Failed')] %}
-    <a class="button{{ ' active' if (active_delivery or '') == d else '' }}" href="{{ url_for('posted', delivery=(d or none), account=active, batch=active_batch|default(none)) }}">{{ label }}</a>
+    <a class="button{{ ' active' if (active_delivery or '') == d else '' }}" href="{{ url_for('posted', delivery=(d or none), account=active, batch=active_batch|default(none), source=active_source|default(none)) }}">{{ label }}</a>
     {% endfor %}
   </nav>
   {% if active_delivery == 'failed' and failure_rollup and failure_rollup.total %}
