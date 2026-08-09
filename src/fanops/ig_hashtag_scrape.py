@@ -224,7 +224,7 @@ def open_client(cfg: Config, *, client_factory=None, allow_reauth: bool = False,
                     client.login(user, pw, relogin=True)    # explicit human re-auth only
                 elif not allow_reauth and _is_login_required(e):
                     # Password never read — unattended tick must not re-authenticate.
-                    raise ScrapeSessionExpired("session expired — run fanops hashtags scrape-login") from e
+                    raise ScrapeSessionExpired(f"session expired — run fanops hashtags scrape-login: {_trunc(e)}") from e
                 else:
                     raise classified from e
             # Valid session (or successful operator re-auth): persist and return. No login() on the happy path.
