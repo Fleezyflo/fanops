@@ -460,13 +460,12 @@ class Post(BaseModel):
                                                 # ledgers and on every non-duplicate path.
     public_url: Optional[str] = None
     media_id: Optional[str] = None              # Leg 2 (Insight): the Instagram Graph media id of THIS live post,
-                                                # resolved from /{ig_user}/media by permalink (reconcile.resolve_media_ids).
-                                                # The identity the sole-source Graph insights read keys on. None until
-                                                # resolved / for non-IG posts (back-compat: old ledgers load fine).
+                                                # stamped at Postiz promotion from releaseId (IG). The identity the
+                                                # sole-source Graph insights read keys on. None until promoted / for
+                                                # non-IG posts (back-compat: old ledgers load fine).
     post_type: Optional[str] = None             # Declared INPUT at mint; service vocabulary post|story (mirrors vendor
                                                 # post_type / _POSTIZ_POST_TYPES). None = undeclared / non-IG (TikTok:
-                                                # Zernio createPost has no post-type enum). reconcile.resolve_media_ids
-                                                # may still re-stamp Meta tokens into this field until MOL-775.
+                                                # Zernio createPost has no post-type enum).
     error_reason: Optional[str] = None          # Display-only prose. NOTHING classifies from this field (MOL-781).
     error_kind: Optional[ErrorKind] = None      # MOL-781: typed failure kind; written with failed/error via set_post_state
     daemon_transient_retry: int = 0             # MOL-812: daemon re-queue cycles consumed for failed-transient (no submission_id).

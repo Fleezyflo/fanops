@@ -10,7 +10,7 @@
       "src/fanops/post/zernio.py": "publish",
       "src/fanops/post/__init__.py": "publish",
       "src/fanops/studio/views_common.py": "publish",
-      "src/fanops/models.py": "picking",
+      "src/fanops/models.py": ["picking", "publish"],
       "src/fanops/crosspost.py": "picking",
       "src/fanops/ledger.py": "picking",
       "src/fanops/casting.py": "picking",
@@ -32,8 +32,8 @@
     },
     "picking": {
       "branch_prefixes": ["picking/", "pick/"],
-      "tickets": ["MOL-824"],
-      "owns_note": "Clip/moment/casting generation core (models, crosspost, ledger, casting, clip, moments, prompts).",
+      "tickets": ["MOL-824", "MOL-775"],
+      "owns_note": "Clip/moment/casting generation core (models, crosspost, ledger, casting, clip, moments, prompts). MOL-775: models.py temporarily co-owned with publish for comment scrub of deleted feed-match symbols.",
       "linear": {
         "labels": ["PRD:hook-viewer-pov"],
         "project": "",
