@@ -131,13 +131,13 @@ def test_written_file_is_the_flat_record_shape_ranked_by_the_metric(tmp_path, mo
 
 def test_measurements_accrue_across_passes(tmp_path, monkeypatch):
     # A later pass that discovers a DIFFERENT slice must ADD to the evidence, not replace it.
-    # Age past the corpus 24h due tier so the anchor remesures and harvests the new co-tag (MOL-695).
+    # Age past the 30d remesure floor so the anchor remesures and harvests the new co-tag (MOL-855).
     from datetime import datetime, timezone, timedelta
     cfg = Config(root=tmp_path); _persona(cfg)
     t0 = datetime(2026, 7, 1, tzinfo=timezone.utc)
     refresh_store(cfg, scrape_client=_FakeClient({"#hiphop": 500, "#alpha": 100}, cooccur="#alpha"), now=t0)
     refresh_store(cfg, scrape_client=_FakeClient({"#hiphop": 500, "#beta": 900}, cooccur="#beta"),
-                  now=t0 + timedelta(hours=25))
+                  now=t0 + timedelta(days=31))
     m = load_measurements(cfg)
     assert "#alpha" in m and "#beta" in m
     assert _metric(m["#alpha"]) == 100 and m["#alpha"]["like_count"] == 100
@@ -244,7 +244,7 @@ def test_refresh_store_if_due_throttles_and_fail_open(tmp_path, monkeypatch):
     assert refresh_store_if_due(cfg, max_age_s=43200, scrape_client=client, now=t0)["reason"] == "fresh"
     blob = json.loads(cfg.hashtags_path.read_text())
     blob["last_complete_pass"] = (t0 - timedelta(hours=13)).isoformat()
-    blob["#hiphop"]["measured_at"] = (t0 - timedelta(hours=25)).isoformat()  # corpus-due remesure
+    blob["#hiphop"]["measured_at"] = (t0 - timedelta(days=31)).isoformat()  # remesure-due (≥30d)
     cfg.hashtags_path.write_text(json.dumps(blob))
     assert refresh_store_if_due(cfg, max_age_s=10, scrape_client=client, now=t0)["refreshed"] is True
 
@@ -260,7 +260,7 @@ def test_throttled_pass_does_not_advance_complete_stamp(tmp_path, monkeypatch):
     # First: measure successfully so we have a complete stamp + cache to preserve across a later throttle.
     refresh_store(cfg, scrape_client=_FakeClient({"#hiphop": 50}), now=t0)
     stamp = json.loads(cfg.hashtags_path.read_text())["last_complete_pass"]
-    t_th = t0 + timedelta(hours=25)                        # corpus-due so the pass actually opens medias_top
+    t_th = t0 + timedelta(days=31)                         # remesure-due so the pass actually opens medias_top
     out1 = refresh_store(cfg, scrape_client=_FakeClient({"#hiphop": 50}, throttle_after=0), now=t_th)
     assert out1["throttled"] is True
     assert json.loads(cfg.hashtags_path.read_text())["last_complete_pass"] == stamp
@@ -316,7 +316,12 @@ def test_scrape_throttle_cooldown_backoff_and_success_reset(tmp_path, monkeypatc
     t_ok = t4 + timedelta(hours=6, minutes=1)
     ok = refresh_store(cfg, scrape_client=_FakeClient({"#hiphop": 50}), now=t_ok)
     assert ok["written"] is True and ok["measured"] >= 1
-    assert not _cooldown_path(cfg).exists()
+    # Streak/until/reason cleared; day/used/accounts may remain (MOL-854 day budget).
+    if _cooldown_path(cfg).exists():
+        left = json.loads(_cooldown_path(cfg).read_text())
+        assert "until" not in left and "streak" not in left and "reason" not in left
+    else:
+        left = {}
 
 
 def test_checkpoint_freezes_layer_a_and_stops_reopening_scrape(tmp_path, monkeypatch):
@@ -338,8 +343,10 @@ def test_checkpoint_freezes_layer_a_and_stops_reopening_scrape(tmp_path, monkeyp
     assert out["refreshed"] is False and out["aborted"] == "checkpoint"
     assert opens["n"] == 1
     cd = json.loads(_cooldown_path(cfg).read_text())
-    assert cd["reason"] == "checkpoint"
-    assert cd["until"] == (t0 + timedelta(seconds=_CHECKPOINT_DELAY_S)).isoformat()
+    # MOL-858: freeze nests under accounts[user]; legacy top-level only when no user.
+    rec = (cd.get("accounts") or {}).get("u") or cd
+    assert rec["reason"] == "checkpoint"
+    assert rec["until"] == (t0 + timedelta(seconds=_CHECKPOINT_DELAY_S)).isoformat()
     # Every tick inside the freeze must skip WITHOUT touching Instagram — the whole point.
     for mins in (1, 60, 600):
         skip = refresh_store_if_due(cfg, max_age_s=1, now=t0 + timedelta(minutes=mins))
@@ -388,9 +395,10 @@ def test_expired_session_at_open_arms_the_login_cooldown(tmp_path, monkeypatch):
     out = refresh_store_if_due(cfg, max_age_s=1, now=t0)
     assert out["refreshed"] is False and out["aborted"] == "login_required"   # not `no_scrape`
     cd = json.loads(_cooldown_path(cfg).read_text())
-    assert cd["reason"] == "login_required" and cd["streak"] == 1
-    assert cd["until"] == (t0 + timedelta(seconds=_COOLDOWN_DELAYS_S[0])).isoformat()
-    assert out["cooldown_until"] == cd["until"] and out["cooldown_streak"] == 1
+    rec = (cd.get("accounts") or {}).get("u") or cd
+    assert rec["reason"] == "login_required" and rec["streak"] == 1
+    assert rec["until"] == (t0 + timedelta(seconds=_COOLDOWN_DELAYS_S[0])).isoformat()
+    assert out["cooldown_until"] == rec["until"] and out["cooldown_streak"] == 1
     for mins in (1, 20, 29):                               # inside the floor: no client opened at all
         skip = refresh_store_if_due(cfg, max_age_s=1, now=t0 + timedelta(minutes=mins))
         assert skip["refreshed"] is False and skip["reason"] == "cooldown"
@@ -400,7 +408,8 @@ def test_expired_session_at_open_arms_the_login_cooldown(tmp_path, monkeypatch):
     # The ladder still decays: the next pass after the floor deepens the streak (never a flat retry).
     refresh_store_if_due(cfg, max_age_s=1, now=t0 + timedelta(minutes=31))
     cd2 = json.loads(_cooldown_path(cfg).read_text())
-    assert cd2["streak"] == 2 and opens["n"] == 2
+    rec2 = (cd2.get("accounts") or {}).get("u") or cd2
+    assert rec2["streak"] == 2 and opens["n"] == 2
 
 
 def _log_recs(cfg, outcome=None):
@@ -887,18 +896,12 @@ def test_eviction_only_write_does_not_rederive(tmp_path, monkeypatch):
 
 
 def test_refresh_pass_priority_queue_due_tiers(tmp_path, monkeypatch):
-    """MOL-695: unmeasured anchor → missing volume → stale corpus → weekly long-tail; fresh irrelevant skipped."""
+    """MOL-855: unmeasured anchor → missing volume → ≥30d remesure (oldest first); <30d skipped."""
     from datetime import datetime, timezone, timedelta
     from fanops import personas as P
     now = datetime(2026, 7, 29, 12, 0, tzinfo=timezone.utc)
     cfg = Config(root=tmp_path)
     P.add_persona(cfg, name="A", voice="x", niche=["newroot"], id="a")
-    # Seed corpus membership on the posting persona (already-loaded; derive not required for the queue).
-    row = json.loads(cfg.personas_path.read_text())
-    for p in row["personas"]:
-        if p["id"] == "a":
-            p["hashtag_corpus"] = ["#corpustag"]
-    cfg.personas_path.write_text(json.dumps(row))
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.accounts_path.write_text(json.dumps({"accounts": [
         {"handle": "a", "platforms": ["instagram"], "status": "active", "persona_id": "a"}]}))
@@ -907,31 +910,31 @@ def test_refresh_pass_priority_queue_due_tiers(tmp_path, monkeypatch):
         "#missingvol": {"graph_id": "id-missingvol", "like_count": 11.0,
                         "measured_at": (now - timedelta(hours=2)).isoformat(),
                         "from": {"#newroot": 2}},
-        "#corpustag": {"graph_id": "id-corpustag", "like_count": 22.0, "media_count": 500.0,
-                       "media_count_at": (now - timedelta(hours=2)).isoformat(),
-                       "measured_at": (now - timedelta(hours=25)).isoformat(),
-                       "from": {"#newroot": 2}},
-        "#weeklytail": {"graph_id": "id-weeklytail", "like_count": 33.0, "media_count": 600.0,
-                        "media_count_at": (now - timedelta(days=1)).isoformat(),
-                        "measured_at": (now - timedelta(days=8)).isoformat(),
-                        "from": {"#newroot": 2}},
+        "#oldermeasure": {"graph_id": "id-oldermeasure", "like_count": 22.0, "media_count": 500.0,
+                          "media_count_at": (now - timedelta(days=2)).isoformat(),
+                          "measured_at": (now - timedelta(days=40)).isoformat(),
+                          "from": {"#newroot": 2}},
+        "#newermeasure": {"graph_id": "id-newermeasure", "like_count": 33.0, "media_count": 600.0,
+                          "media_count_at": (now - timedelta(days=2)).isoformat(),
+                          "measured_at": (now - timedelta(days=31)).isoformat(),
+                          "from": {"#newroot": 2}},
         "#freshnoise": {"graph_id": "id-freshnoise", "like_count": 44.0, "media_count": 700.0,
                         "media_count_at": (now - timedelta(hours=1)).isoformat(),
-                        "measured_at": (now - timedelta(hours=1)).isoformat(),
+                        "measured_at": (now - timedelta(days=8)).isoformat(),
                         "from": {"#newroot": 2}},
         "last_complete_pass": (now - timedelta(days=2)).isoformat()}))
-    metrics = {"#newroot": 1, "#missingvol": 11, "#corpustag": 22, "#weeklytail": 33, "#freshnoise": 44}
+    metrics = {"#newroot": 1, "#missingvol": 11, "#oldermeasure": 22, "#newermeasure": 33, "#freshnoise": 44}
     client = _FakeClient(metrics, media_count_by_tag={"#missingvol": 1000, "#newroot": 50,
-                                                      "#corpustag": 500, "#weeklytail": 600,
+                                                      "#oldermeasure": 500, "#newermeasure": 600,
                                                       "#freshnoise": 700})
     out = refresh_store(cfg, scrape_client=client, now=now)
     assert out["written"] is True
-    assert "freshnoise" not in client.media_calls, "fresh non-corpus/non-volume tag must stay off the queue"
-    assert client.media_calls[:4] == ["newroot", "missingvol", "corpustag", "weeklytail"]
+    assert "freshnoise" not in client.media_calls, "sub-30d measured tag must stay off the remesure queue"
+    assert client.media_calls[:4] == ["newroot", "missingvol", "oldermeasure", "newermeasure"]
 
 
 def test_stalest_remeasure_reaches_known_before_fresh_anchor(tmp_path, monkeypatch):
-    """Superseded by MOL-695 due tiers: volume-due / weekly beats a freshly-measured anchor.
+    """MOL-855 due tiers: missing-volume known beats a freshly-measured anchor.
 
     Under throttle, a missing-volume known tag must run before remesuring a fresh anchor."""
     from fanops import personas as P
@@ -955,7 +958,7 @@ def test_stalest_remeasure_reaches_known_before_fresh_anchor(tmp_path, monkeypat
                          media_count_by_tag={"#staletail": 50})
     out = refresh_store(cfg, scrape_client=client, now=now)
     assert out["throttled"] is True
-    assert client.media_calls[0] == "staletail", "weekly/volume-due known must beat a fresh measured anchor"
+    assert client.media_calls[0] == "staletail", "volume-due known must beat a fresh measured anchor"
 
 
 def test_refresh_store_try_cap_ends_pass_without_complete_stamp(tmp_path, monkeypatch):
@@ -995,15 +998,17 @@ def test_refresh_store_refuses_a_second_concurrent_pass(tmp_path, monkeypatch):
 
 
 def test_scrape_try_cap_default_clears_a_full_cache_remeasure(tmp_path):
-    """MOL-854: per-pass try_cap is a small ceiling; UTC day budget is the local governor."""
+    """MOL-854 + MOL-855: per-pass try_cap is a small ceiling; UTC day budget is the local governor.
+    Due-tiered queue means the small cap need not clear every cached tag each pass."""
     import fanops.fanops_hashtags as fh
     from fanops.settings import Settings
     assert fh._SCRAPE_TRY_CAP == 25
     assert fh._SCRAPE_DAY_BUDGET == 40
     assert Settings.model_fields["FANOPS_HASHTAG_SCRAPE_TRY_CAP"].default == 25
     assert fh._SCRAPE_COTAG_ENQUEUE_CAP == 40
-    assert fh._VOLUME_MAX_AGE_DAYS == 7
-    assert fh._SCRAPE_PARALLEL == 1              # MOL-698: one account, one in-flight request
+    assert fh._VOLUME_MAX_AGE_DAYS == 30
+    assert fh._MEASURE_MAX_AGE_DAYS == 30
+    assert not hasattr(fh, "_CORPUS_MAX_AGE_HOURS")
 
 
 
@@ -1149,7 +1154,7 @@ def test_cmd_hashtags_refresh_corrupt_personas_exits_2_and_no_keyerror(tmp_path,
 
 
 def test_refresh_store_reports_parallel_one_when_client_injected(tmp_path, monkeypatch):
-    """Injected scrape_client (unit fakes) forces parallel=1 so FakeClient stays single-threaded."""
+    """MOL-855: fetch is sequential — summary parallel stays 1 even if the legacy knob is raised."""
     import fanops.fanops_hashtags as fh
     monkeypatch.setattr(fh, "_SCRAPE_PARALLEL", 8)
     cfg = Config(root=tmp_path); _persona(cfg)
@@ -1158,16 +1163,16 @@ def test_refresh_store_reports_parallel_one_when_client_injected(tmp_path, monke
 
 
 def test_layer_a_emits_one_client_no_session_clones(tmp_path, monkeypatch):
-    """MOL-698: the 2026-07-29 challenge_required was earned by 4 concurrent clients sharing ONE
-    dumped session (same device fingerprint, 4 simultaneous private-API calls) — the loudest
-    anti-bot signal we emit, and instagrapi is not thread-safe. The clone fan-out is GONE: one
-    client, serialized behind client_lock, and the session-clone helper no longer exists."""
+    """MOL-698/MOL-855: no session clones; _refresh_pass is sequential (no ThreadPool / Lock / waves)."""
     import fanops.fanops_hashtags as fh
     import fanops.ig_hashtag_scrape as igs
     assert not hasattr(igs, "session_client"), "session-clone fan-out must stay deleted"
-    assert "session_client" not in inspect.getsource(fh)
+    src = inspect.getsource(fh._refresh_pass)
+    assert "session_client" not in src
+    assert "ThreadPoolExecutor" not in src
+    assert "threading" not in src
     monkeypatch.delenv("FANOPS_HASHTAG_SCRAPE_PARALLEL", raising=False)
-    assert fh._scrape_parallel() == 1                       # serial BY DEFAULT, not by env
+    assert fh._scrape_parallel() == 1                       # legacy knob default; unused by fetch
 
 
 def test_scrape_delay_range_paces_requests(monkeypatch):

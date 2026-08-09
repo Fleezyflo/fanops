@@ -10,13 +10,6 @@
       "why": "env key is not a string literal; the variable name is not statically known"
     },
     {
-      "evidence": "os.getenv",
-      "kind": "computed_env_key",
-      "line": 100,
-      "module": "fanops.ig_hashtag_scrape",
-      "why": "env key is not a string literal; the variable name is not statically known"
-    },
-    {
       "evidence": "__import__",
       "kind": "dynamic_import",
       "line": 277,
@@ -55,6 +48,6 @@
     "src/fanops/**/*.py"
   ],
   "totals": {
-    "unsupported_constructs": 4
+    "unsupported_constructs": 3
   }
 }

@@ -111,11 +111,11 @@ def test_known_volume_is_not_re_resolved_inside_seven_days_then_is_after(tmp_pat
     t0 = datetime(2026, 7, 1, tzinfo=timezone.utc)
     refresh_store(cfg, scrape_client=_client(media, media_count_by_tag={"#hiphop": 100}), now=t0)
     near = _client(media, media_count_by_tag={"#hiphop": 100})
-    refresh_store(cfg, scrape_client=near, now=t0 + timedelta(days=6, hours=23))
+    refresh_store(cfg, scrape_client=near, now=t0 + timedelta(days=29, hours=23))
     assert "hiphop" not in near.info_calls, "fresh volume must not spend a resolve on the 12h trend pass"
     stale = _client(media, media_count_by_tag={"#hiphop": 175})
-    refresh_store(cfg, scrape_client=stale, now=t0 + timedelta(days=7, hours=1))
-    assert "hiphop" in stale.info_calls, "volume older than 7d must refresh"
+    refresh_store(cfg, scrape_client=stale, now=t0 + timedelta(days=30, hours=1))
+    assert "hiphop" in stale.info_calls, "volume older than 30d must refresh"
     assert load_measurements(cfg)["#hiphop"]["media_count"] == 175.0
 
 
@@ -160,7 +160,7 @@ def test_reel_less_sample_preserves_prior_trend_evidence(tmp_path, monkeypatch):
     refresh_store(cfg, scrape_client=_client(hot), now=now)
     assert load_measurements(cfg)["#hiphop"]["current_top_reel_play_max_7d"] == 4_242.0
     refresh_store(cfg, scrape_client=_client({"#hiphop": [{"caption": "", "like_count": 12}]}),
-                  now=now + timedelta(hours=25))
+                  now=now + timedelta(days=31))
     assert load_measurements(cfg)["#hiphop"]["current_top_reel_play_max_7d"] == 4_242.0
 
 
@@ -181,7 +181,7 @@ def test_every_contract_field_survives_the_whole_file_rewrite(tmp_path, monkeypa
     # A pass that re-measures plays but serves no Reel row and no volume must not strip either.
     refresh_store(cfg, scrape_client=_client({"#hiphop": [{"caption": "", "like_count": 11,
                                                            "play_count": 4_000}]}),
-                  now=now + timedelta(hours=25))
+                  now=now + timedelta(days=31))
     second = load_measurements(cfg)["#hiphop"]
     for f in RECORD_NUM_FIELDS + RECORD_STR_FIELDS:
         assert f in second, f"{f} was stripped by the whole-file rewrite"
@@ -228,31 +228,38 @@ def test_graph_id_is_cached_so_a_known_tag_never_spends_another_search(tmp_path,
     """A cached id + FRESH volume spends no hashtag_info. (Missing volume does — see the test below:
     volume only ever arrives on that call, so skipping it unconditionally stranded 131 tags. MOL-691.)
 
-    MOL-695: remesure is due-tiered — age past corpus 24h so medias_top still runs while volume stays fresh."""
+    MOL-855: remesure at ≥30d while volume stamp stays fresh — medias_top without hashtag_info."""
     from datetime import datetime, timezone, timedelta
+    import json
     cfg = Config(root=tmp_path)
     pid = _persona(cfg, name="Hiphop", voice="hiphop", niche=["hiphop"]); _link_active(cfg, pid)
     media = {"#hiphop": [{"caption": "", "like_count": 5, "comments_count": 0}]}
     t0 = datetime(2026, 7, 1, tzinfo=timezone.utc)
+    t_due = t0 + timedelta(days=31)
     refresh_store(cfg, scrape_client=_client(media, media_count_by_tag={"#hiphop": 500}), now=t0)
+    blob = json.loads(cfg.hashtags_path.read_text())
+    blob["#hiphop"]["measured_at"] = (t_due - timedelta(days=31)).isoformat()
+    blob["#hiphop"]["media_count_at"] = (t_due - timedelta(days=1)).isoformat()  # volume still fresh
+    blob["last_complete_pass"] = (t_due - timedelta(days=2)).isoformat()
+    cfg.hashtags_path.write_text(json.dumps(blob))
     rec = load_measurements(cfg)["#hiphop"]
     assert rec["graph_id"] == "id-hiphop" and rec["media_count"] == 500.0
     client = _client(media, media_count_by_tag={"#hiphop": 500})
-    refresh_store(cfg, scrape_client=client, now=t0 + timedelta(hours=25))
+    refresh_store(cfg, scrape_client=client, now=t_due)
     assert "hiphop" not in client.info_calls, "a cached graph_id with fresh volume must not re-resolve"
-    assert "hiphop" in client.media_calls, "corpus-stale tag must still re-measure"
+    assert "hiphop" in client.media_calls, "≥30d-stale tag must still re-measure"
 
 
 def test_cached_tag_metric_moves_when_due_not_every_pass(tmp_path, monkeypatch):
-    """MOL-695 supersedes 'every cached tag every pass': fresh volume+corpus stays off-queue until due.
+    """MOL-855 supersedes 'every cached tag every pass': fresh volume+measure stays off-queue until due.
 
-    Unmeasured anchors still run; a corpus member remesures only after the 24h due floor."""
+    Unmeasured anchors still run; a cached tag remesures only after the 30d due floor."""
     from datetime import datetime, timezone, timedelta
     cfg = Config(root=tmp_path)
     pid = _persona(cfg, niche=["lyricism", "hiphop"]); _link_active(cfg, pid)
     t0 = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
-    t_near = t0 + timedelta(hours=13)
-    t_due = t0 + timedelta(hours=25)
+    t_near = t0 + timedelta(days=13)
+    t_due = t0 + timedelta(days=31)
     media0 = {"#hiphop": [{"caption": "", "like_count": 100, "comments_count": 0}]}
     refresh_store(cfg, scrape_client=_client(media0, media_count_by_tag={"#hiphop": 7}), now=t0)
     before = load_measurements(cfg)["#hiphop"]
@@ -264,12 +271,19 @@ def test_cached_tag_metric_moves_when_due_not_every_pass(tmp_path, monkeypatch):
         media_count_by_tag={"#hiphop": 7},
         refuse_tags={"#lyricism", "lyricism"})
     out_near = refresh_store(cfg, scrape_client=near, now=t_near)
-    assert "hiphop" not in near.media_calls, "13h-fresh corpus member must not remesure"
+    assert "hiphop" not in near.media_calls, "sub-30d measured tag must not remesure"
     assert load_measurements(cfg)["#hiphop"]["measured_at"] == stamp0
     refused = [u for u in (out_near.get("unresolved") or []) if u.get("tag") == "#lyricism"]
     assert refused and refused[0].get("code") == 18 and refused[0].get("reason") == "refused"
     assert out_near.get("throttled") is False, "code 18 must not abort the pass as ScrapeThrottled"
 
+    # Keep volume fresh while aging measured_at so remesure does not drag a hashtag_info (aligned 30d ages).
+    import json
+    blob = json.loads(cfg.hashtags_path.read_text())
+    blob["#hiphop"]["measured_at"] = (t_due - timedelta(days=31)).isoformat()
+    blob["#hiphop"]["media_count_at"] = (t_due - timedelta(days=1)).isoformat()
+    blob["last_complete_pass"] = (t_due - timedelta(days=2)).isoformat()
+    cfg.hashtags_path.write_text(json.dumps(blob))
     due = _FakeClient(
         media_by_tag={"#hiphop": [{"caption": "", "like_count": 250}]},
         media_count_by_tag={"#hiphop": 7},
@@ -277,9 +291,9 @@ def test_cached_tag_metric_moves_when_due_not_every_pass(tmp_path, monkeypatch):
     out = refresh_store(cfg, scrape_client=due, now=t_due)
     after = load_measurements(cfg)["#hiphop"]
     assert after["like_count"] == 250.0 and _metric(after) == 250.0, "platform's new like_count must land when due"
-    assert after["measured_at"] != stamp0 and after["measured_at"].startswith("2026-07-02T13:00")
+    assert after["measured_at"] != stamp0 and after["measured_at"].startswith("2026-08-01T12:00")
     assert "hiphop" not in due.info_calls, "cached #hiphop must not re-resolve while volume is fresh"
-    assert "hiphop" in due.media_calls, "corpus-due tag must re-measure"
+    assert "hiphop" in due.media_calls, "≥30d-due tag must re-measure"
     assert out.get("throttled") is False
 
 

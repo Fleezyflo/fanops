@@ -97,7 +97,7 @@ def scrape_password_for(user: str) -> str | None:
     """Per-user password env, then shared FANOPS_IG_SCRAPE_PASSWORD. Never logged."""
     from fanops.secret_provider import resolve_secret
     specific_key = _scrape_password_env_key(user)
-    raw = os.getenv(specific_key)
+    raw = os.environ[specific_key] if specific_key in os.environ else None
     specific = resolve_secret(specific_key, raw.strip() if raw and raw.strip() else None)
     if specific:
         return specific
@@ -238,10 +238,7 @@ def open_client(cfg: Config, *, client_factory=None, allow_reauth: bool = False,
         raise
     except Exception as e:                                  # noqa: BLE001 — login surface is opaque
         raise _classify_auth_exc(e) from e
-    try:
-        client._fanops_scrape_user = user                   # Layer A persist/clear target (MOL-858)
-    except Exception:                                       # noqa: BLE001 — fakes may be slots-less
-        pass
+    setattr(client, "_fanops_scrape_user", user)            # Layer A persist/clear target (MOL-858); fakes OK
     return client
 
 
