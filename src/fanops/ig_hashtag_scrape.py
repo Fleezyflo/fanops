@@ -285,8 +285,8 @@ def resolve_hashtag_scrape(client, tag: str) -> tuple[Optional[str], Optional[fl
         if isinstance(e, ScrapeRefused):
             raise
         if _is_throttle(e):
-            raise ScrapeThrottled(_trunc(e)) from e
-        raise ScrapeRefused(_trunc(e)) from e
+            raise ScrapeThrottled(f"{type(e).__name__}: {_trunc(e)}") from e
+        raise ScrapeRefused(f"{type(e).__name__}: {_trunc(e)}") from e
     hid = getattr(info, "id", None)
     if hid is None:
         return None, None
@@ -318,8 +318,8 @@ def measure_and_harvest_scrape(client, tag: str, *, now=None) -> tuple[Optional[
         if isinstance(e, ScrapeRefused):
             raise
         if _is_throttle(e):
-            raise ScrapeThrottled(_trunc(e)) from e
-        raise ScrapeRefused(_trunc(e)) from e
+            raise ScrapeThrottled(f"{type(e).__name__}: {_trunc(e)}") from e
+        raise ScrapeRefused(f"{type(e).__name__}: {_trunc(e)}") from e
     if not medias:
         return None, {}
     likes: list[float] = []; plays: list[float] = []
