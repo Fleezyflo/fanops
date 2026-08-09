@@ -185,7 +185,7 @@ class Settings(BaseSettings):
     META_IG_USER_ID: str | None = None
     META_GRAPH_URL: str = ""
     FANOPS_CORPUS_TARGET: int = 80
-    FANOPS_HASHTAG_SCRAPE_TRY_CAP: int = 120
+    FANOPS_HASHTAG_SCRAPE_TRY_CAP: int = 25
     FANOPS_HASHTAG_SCRAPE_COTAG_ENQUEUE: int = 40
     FANOPS_HASHTAG_SCRAPE_PARALLEL: int = 1
     FANOPS_HASHTAG_SCRAPE_DELAY: str = ""
@@ -264,8 +264,8 @@ class Settings(BaseSettings):
     @field_validator("FANOPS_HASHTAG_SCRAPE_TRY_CAP", mode="before")
     @classmethod
     def _scrape_try_cap(cls, v):
-        iv = _parse_int(v, 120)
-        return iv if iv >= 1 else 120
+        iv = _parse_int(v, 25)
+        return iv if iv >= 1 else 25
 
     @field_validator("FANOPS_HASHTAG_SCRAPE_COTAG_ENQUEUE", mode="before")
     @classmethod
