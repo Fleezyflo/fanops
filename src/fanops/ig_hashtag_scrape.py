@@ -94,7 +94,11 @@ def _scrape_password_env_key(user: str) -> str:
 
 
 def scrape_password_for(user: str) -> str | None:
-    """Per-user password env, then shared FANOPS_IG_SCRAPE_PASSWORD. Never logged."""
+    """Per-user password env, then shared FANOPS_IG_SCRAPE_PASSWORD. Never logged.
+
+    Per-user lookup uses `os.environ` membership + subscript (not `os.getenv(computed)`): the arch
+    extractor treats a non-literal getenv key as UNKNOWN_IMPACT (MOL-857). Same secret resolution.
+    """
     from fanops.secret_provider import resolve_secret
     specific_key = _scrape_password_env_key(user)
     raw = os.environ[specific_key] if specific_key in os.environ else None
