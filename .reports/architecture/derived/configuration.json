@@ -89,7 +89,7 @@
     },
     "FANOPS_HASHTAG_SCRAPE_COTAG_ENQUEUE": {
       "read_at": [
-        "fanops.fanops_hashtags:69"
+        "fanops.fanops_hashtags:67"
       ],
       "reader_count": 1
     },
@@ -101,13 +101,13 @@
     },
     "FANOPS_HASHTAG_SCRAPE_PARALLEL": {
       "read_at": [
-        "fanops.fanops_hashtags:80"
+        "fanops.fanops_hashtags:78"
       ],
       "reader_count": 1
     },
     "FANOPS_HASHTAG_SCRAPE_TRY_CAP": {
       "read_at": [
-        "fanops.fanops_hashtags:58"
+        "fanops.fanops_hashtags:56"
       ],
       "reader_count": 1
     },
@@ -126,7 +126,7 @@
     "FANOPS_IG_SCRAPE_PASSWORD": {
       "read_at": [
         "fanops.config:464",
-        "fanops.ig_hashtag_scrape:104"
+        "fanops.ig_hashtag_scrape:108"
       ],
       "reader_count": 2
     },
