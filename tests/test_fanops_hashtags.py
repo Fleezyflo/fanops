@@ -495,9 +495,9 @@ def test_rearming_during_a_long_stall_logs_louder_than_info(tmp_path):
 
 
 def test_partial_progress_then_throttle_still_arms_a_cooldown(tmp_path, monkeypatch):
-    """MOL-727: `if measured > 0: clear elif ig_throttled: arm` made ONE measured tag swallow the
-    throttle — the streak was cleared and no floor armed, so the next tick reopened scrape against the
-    account that had just throttled us. Progress resets the STREAK; the stop signal still arms."""
+    """MOL-854 (was MOL-727): never `_clear_cooldown` when `ig_throttled` — clear-then-rearm reset the
+    streak to 1 (cooldown sawtooth) and wiped day-budget keys. Partial progress still writes evidence;
+    the stop signal arms AND the prior streak keeps climbing."""
     from datetime import datetime, timezone, timedelta
     from fanops.fanops_hashtags import (refresh_store_if_due, _cooldown_path, _persist_cooldown,
                                         _COOLDOWN_DELAYS_S)
@@ -514,8 +514,9 @@ def test_partial_progress_then_throttle_still_arms_a_cooldown(tmp_path, monkeypa
     assert "last_complete_pass" not in raw                 # an early stop never buys the 12h silence
     cd = json.loads(_cooldown_path(cfg).read_text())
     assert cd["reason"] == "throttle"
-    assert cd["streak"] == 1                               # progress reset the streak 2 -> 1...
-    assert cd["until"] == (t0 + timedelta(seconds=_COOLDOWN_DELAYS_S[0])).isoformat()   # ...30m floor
+    assert cd["streak"] == 3                               # prior 2 NOT cleared — bump to 3 (no sawtooth)
+    assert cd["until"] == (t0 + timedelta(seconds=_COOLDOWN_DELAYS_S[2])).isoformat()   # 2h rung
+    assert cd["day"] == "2026-07-01" and cd["used"] >= 1 and isinstance(cd.get("accounts"), dict)
     assert out["cooldown_until"] == cd["until"]
     nxt = _FakeClient({"#hiphop": 50})
     skip = refresh_store_if_due(cfg, max_age_s=1, scrape_client=nxt, now=t0 + timedelta(minutes=29))
@@ -549,6 +550,7 @@ def test_partial_progress_then_login_required_still_arms_a_cooldown(tmp_path, mo
     cd = json.loads(_cooldown_path(cfg).read_text())
     assert cd["reason"] == "login_required" and cd["streak"] == 1
     assert cd["until"] == (t0 + timedelta(seconds=_COOLDOWN_DELAYS_S[0])).isoformat()
+    assert cd["day"] == "2026-07-01" and cd["used"] >= 1
 
 
 def test_scrape_login_ignores_and_clears_an_active_freeze(tmp_path, monkeypatch):
@@ -565,7 +567,12 @@ def test_scrape_login_ignores_and_clears_an_active_freeze(tmp_path, monkeypatch)
     assert _cooldown_path(cfg).exists()
     monkeypatch.setattr(igs, "open_client", lambda _c, **_k: object())
     assert cmd_hashtags_scrape_login(cfg) == 0              # NOT blocked by the freeze
-    assert not _cooldown_path(cfg).exists()                 # and the freeze is lifted
+    # Streak/until/reason cleared; day/used/accounts may remain (MOL-854 day budget).
+    if _cooldown_path(cfg).exists():
+        left = json.loads(_cooldown_path(cfg).read_text())
+        assert "until" not in left and "streak" not in left and "reason" not in left
+    else:
+        left = {}
 
 
 def test_instagrapi_floor_validates_saved_sessions(tmp_path):
@@ -959,14 +966,42 @@ def test_refresh_store_refuses_a_second_concurrent_pass(tmp_path, monkeypatch):
 
 
 def test_scrape_try_cap_default_clears_a_full_cache_remeasure(tmp_path):
-    """MOL-686/MOL-695: try_cap stays large enough for niches + co-tag headroom. Queue is due-tiered
-    (not every cached tag every pass), but the default cap must still clear a heavy due set."""
+    """MOL-854: per-pass try_cap is a small ceiling; UTC day budget is the local governor."""
     import fanops.fanops_hashtags as fh
-    assert fh._SCRAPE_TRY_CAP >= 400
-    assert fh._SCRAPE_TRY_CAP >= 300 + fh._SCRAPE_COTAG_ENQUEUE_CAP
+    from fanops.settings import Settings
+    assert fh._SCRAPE_TRY_CAP == 25
+    assert fh._SCRAPE_DAY_BUDGET == 40
+    assert Settings.model_fields["FANOPS_HASHTAG_SCRAPE_TRY_CAP"].default == 25
     assert fh._SCRAPE_COTAG_ENQUEUE_CAP == 40
     assert fh._VOLUME_MAX_AGE_DAYS == 7
     assert fh._SCRAPE_PARALLEL == 1              # MOL-698: one account, one in-flight request
+
+
+
+def test_day_budget_exhaustion_skips_refresh(tmp_path, monkeypatch):
+    """MOL-854: when cooldown blob day/used hits `_SCRAPE_DAY_BUDGET`, refresh_store_if_due skips
+    with reason=budget and opens no scrape — even with no ladder `until` armed."""
+    from datetime import datetime, timezone, timedelta
+    import fanops.fanops_hashtags as fh
+    from fanops.fanops_hashtags import refresh_store_if_due, _cooldown_path
+    from fanops.controlio import write_json_atomic
+    cfg = Config(root=tmp_path); _persona(cfg)
+    t0 = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
+    cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.hashtags_path.write_text(json.dumps({
+        "last_complete_pass": (t0 - timedelta(hours=13)).isoformat(),
+        "#hiphop": {"graph_id": "1", "play_count": 10.0,
+                    "measured_at": (t0 - timedelta(hours=13)).isoformat()},
+    }))
+    cfg.control.mkdir(parents=True, exist_ok=True)
+    write_json_atomic(_cooldown_path(cfg),
+                      {"day": "2026-07-01", "used": fh._SCRAPE_DAY_BUDGET, "accounts": {}})
+    nxt = _FakeClient({"#hiphop": 50})
+    skip = refresh_store_if_due(cfg, max_age_s=1, scrape_client=nxt, now=t0)
+    assert skip["refreshed"] is False and skip["reason"] == "cooldown"
+    assert skip.get("cooldown_reason") == "budget"
+    assert nxt.info_calls == [] and nxt.media_calls == []
+
 
 
 def test_refresh_store_cotag_enqueue_cap(tmp_path, monkeypatch):
