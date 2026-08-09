@@ -78,19 +78,26 @@ Records older than 90 days are pruned on write. Reader: `hashtags.load_measureme
 metric, the id or the stamp is dropped rather than repaired, which is also how every legacy `reach` record
 becomes inadmissible without a migration.
 
-## Layer A has no local budget — Instagram throttle is the only governor
+## Layer A local governors — per-pass try_cap + UTC day budget
 
-Deleted 2026-07-26: the local search meter (`_BUDGET_LIMIT` / `_BUDGET_WINDOW_DAYS` / `_read_queries` /
+Deleted 2026-07-26: the old local search meter (`_BUDGET_LIMIT` / `_BUDGET_WINDOW_DAYS` / `_read_queries` /
 `budget_remaining` / `record_query` / `00_control/hashtag_budget.json`). That construct logged every search
 and then **skipped every tag it had logged**, capping each pass.
 
-What replaces it:
+What governs spend now (MOL-854):
+- **`_SCRAPE_TRY_CAP` (default 25, env `FANOPS_HASHTAG_SCRAPE_TRY_CAP`)** — hard ceiling on measure attempts
+  in one pass. Hitting it ends the pass incomplete (no `last_complete_pass` advance).
+- **UTC day budget on `.hashtag_scrape_cooldown.json`** — additive `day` / `used` (and reserved `accounts{}`
+  for MOL-858). Cap is `_SCRAPE_DAY_BUDGET` (~40 request-units). When `used >=` cap for today's UTC date,
+  `refresh_store_if_due` skips with `reason=budget` until the next UTC day. Clean success clears streak
+  fields only — day budget keys are preserved.
 - **`graph_id` cached** on every record — a known tag skips `hashtag_info` and still re-measures via
   `hashtag_medias_top`, so resolve funds novel discovery only.
 - **Throttle** (please_wait / rate / feedback_required) ⇒ `ScrapeThrottled` ends the pass; evidence accrued
-  so far is written.
+  so far is written. `_refresh_pass` never `_clear_cooldown` when `ig_throttled` or `login_dead` (that
+  clear-on-progress sawtooth reset the ladder and wiped day-budget keys).
 - **Any other scrape error** ⇒ `ScrapeRefused` (truncated message, optional code) recorded in `unresolved`;
-  a later pass retries. Nothing predicts or meters an allowance.
+  a later pass retries.
 
 ## Layer B — derivation (ZERO network)
 

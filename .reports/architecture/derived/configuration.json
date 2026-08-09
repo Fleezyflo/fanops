@@ -89,7 +89,7 @@
     },
     "FANOPS_HASHTAG_SCRAPE_COTAG_ENQUEUE": {
       "read_at": [
-        "fanops.fanops_hashtags:67"
+        "fanops.fanops_hashtags:68"
       ],
       "reader_count": 1
     },
@@ -101,13 +101,13 @@
     },
     "FANOPS_HASHTAG_SCRAPE_PARALLEL": {
       "read_at": [
-        "fanops.fanops_hashtags:78"
+        "fanops.fanops_hashtags:79"
       ],
       "reader_count": 1
     },
     "FANOPS_HASHTAG_SCRAPE_TRY_CAP": {
       "read_at": [
-        "fanops.fanops_hashtags:56"
+        "fanops.fanops_hashtags:57"
       ],
       "reader_count": 1
     },

@@ -42,11 +42,12 @@ _COOLDOWN_DELAYS_S = (30 * 60, 60 * 60, 2 * 60 * 60, 6 * 60 * 60)  # streak 1..N
 _CHECKPOINT_DELAY_S = 12 * 60 * 60  # a LOCK is not a rate limit: one long freeze, never the ladder (MOL-699)
 _REFRESH_CADENCE_S = 12 * 60 * 60   # the tick's refresh window, and the yardstick an outage is measured in
 # Scrape is ~5–7s/tag. Caps bound a pass so co-tag harvest cannot run unbounded; incomplete passes do NOT
-# stamp last_complete_pass. Defaults sized so niches + a meaningful co-tag set fit one pass (F-4 / MOL-631).
-# Tests may monkeypatch these module attrs; env overrides win when set.
-# try_cap must clear the DUE queue (unmeasured anchors + missing/aged volume + ≥30d remesure —
-# MOL-855; NOT every cached tag every pass), plus headroom for co-tag growth. 400 kept from MOL-686.
-_SCRAPE_TRY_CAP = 400
+# stamp last_complete_pass. Tests may monkeypatch these module attrs; env overrides win when set.
+# MOL-854: try_cap is a small per-pass ceiling (25); the UTC day budget on the cooldown blob is the
+# local governor (~40 request-units/day). Due-tiered queue (MOL-855) means the cap need not clear every
+# cached tag each pass — only unmeasured anchors + aged volume + ≥30d remesure + co-tag headroom.
+_SCRAPE_TRY_CAP = 25
+_SCRAPE_DAY_BUDGET = 40        # request-units per UTC day (global until MOL-858 nests under accounts{})
 _SCRAPE_COTAG_ENQUEUE_CAP = 40
 _SCRAPE_PARALLEL = 1          # legacy env knob (FANOPS_HASHTAG_SCRAPE_PARALLEL). MOL-855 fetch is sequential;
                               # this no longer sizes a wave. Pace with FANOPS_HASHTAG_SCRAPE_DELAY.
@@ -225,9 +226,8 @@ def _cooldown_delay_s(streak: int) -> int:
 
 
 def _read_active_cooldown(cfg: Config, now: datetime) -> dict | None:
-    """Return the cooldown blob when `until` is still in the future; else None.
-
-    Corrupt / unreadable / unparseable → fail OPEN (no cooldown). Never sleeps."""
+    """Return the cooldown blob when `until` is still in the future, or when the UTC day budget is
+    exhausted (reason=budget). Corrupt / unreadable / unparseable → fail OPEN. Never sleeps."""
     p = _cooldown_path(cfg)
     if not p.exists():
         return None
@@ -242,49 +242,104 @@ def _read_active_cooldown(cfg: Config, now: datetime) -> dict | None:
     try:
         ts = datetime.fromisoformat(until) if isinstance(until, str) else None
     except ValueError:
-        return None
-    if ts is None:
-        return None
-    if ts.tzinfo is None:
-        ts = ts.replace(tzinfo=timezone.utc)
-    if now < ts:
-        return raw
+        ts = None
+    if ts is not None:
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        if now < ts:
+            return raw
+    # Ladder clear — still gate on the local UTC day budget (MOL-854). Additive schema: day/used at
+    # top level; accounts{} reserved for MOL-858 per-account nesting.
+    today = now.astimezone(timezone.utc).date().isoformat()
+    used = raw.get("used")
+    if raw.get("day") == today and isinstance(used, (int, float)) and int(used) >= _SCRAPE_DAY_BUDGET:
+        end = datetime(now.astimezone(timezone.utc).year, now.astimezone(timezone.utc).month,
+                       now.astimezone(timezone.utc).day, tzinfo=timezone.utc) + timedelta(days=1)
+        out = dict(raw)
+        out["reason"] = "budget"
+        out["until"] = end.isoformat()
+        return out
     return None
 
 
 def _persist_cooldown(cfg: Config, now: datetime, *, reason: str = "throttle",
-                      delay_s: int | None = None) -> dict:
+                      delay_s: int | None = None, used_delta: int = 0) -> dict:
     """Arm the read-and-skip freeze that refresh_store_if_due checks BEFORE opening scrape: bump the
     consecutive streak and write `until` from the ladder (30m→1h→2h→6h cap), or from `delay_s` when the
     failure is not a rate limit and the ladder would be wrong (a checkpoint LOCK — MOL-699).
 
-    `reason` records WHICH failure armed it, so the skip can say why. Additive: _read_active_cooldown
-    reads `until` only and ignores unknown keys, so a pre-MOL-699 row without a reason still gates."""
+    `reason` records WHICH failure armed it, so the skip can say why. Additive: day/used/accounts ride
+    along (MOL-854 local day budget; MOL-858 may nest spend under accounts{}). Pre-MOL-699 rows without
+    those keys still gate on `until` alone."""
     import json
     p = _cooldown_path(cfg)
     streak = 0
+    today = now.astimezone(timezone.utc).date().isoformat()
+    used = 0
+    accounts: dict = {}
     if p.exists():
         try:
             prev = json.loads(p.read_text())
-            if isinstance(prev, dict) and isinstance(prev.get("streak"), (int, float)):
-                streak = int(prev["streak"])
+            if isinstance(prev, dict):
+                if isinstance(prev.get("streak"), (int, float)):
+                    streak = int(prev["streak"])
+                if prev.get("day") == today and isinstance(prev.get("used"), (int, float)):
+                    used = int(prev["used"])
+                if isinstance(prev.get("accounts"), dict):
+                    accounts = prev["accounts"]
         except (OSError, ValueError, TypeError):
             streak = 0
     streak = max(streak, 0) + 1
+    used = max(used, 0) + max(int(used_delta), 0)
     delay = _cooldown_delay_s(streak) if delay_s is None else int(delay_s)
     until = (now + timedelta(seconds=delay)).isoformat()
-    blob = {"streak": streak, "until": until, "updated_at": now.isoformat(), "reason": reason}
+    blob = {"streak": streak, "until": until, "updated_at": now.isoformat(), "reason": reason,
+            "day": today, "used": used, "accounts": accounts}
     cfg.control.mkdir(parents=True, exist_ok=True)
     write_json_atomic(p, blob)
     return blob
 
 
-def _clear_cooldown(cfg: Config) -> None:
-    """Any pass with measured>0 resets the streak — and so does an operator scrape-login, which is the
-    explicit human act that clears a lock."""
+def _clear_cooldown(cfg: Config, *, now: datetime | None = None, used_delta: int = 0) -> None:
+    """Clear streak/until/reason. Preserve day/used/accounts so a clean success cannot wipe the UTC
+    day budget (MOL-854). Operator scrape-login also lands here — same preservation. When `now` is
+    given, `used_delta` request-units are charged to today's budget before the streak fields drop."""
+    import json
     p = _cooldown_path(cfg)
+    today = None
+    used = 0
+    accounts: dict = {}
+    if p.exists():
+        try:
+            prev = json.loads(p.read_text())
+            if isinstance(prev, dict):
+                if now is not None:
+                    today = now.astimezone(timezone.utc).date().isoformat()
+                    if prev.get("day") == today and isinstance(prev.get("used"), (int, float)):
+                        used = int(prev["used"])
+                elif isinstance(prev.get("day"), str):
+                    today = prev["day"]
+                    if isinstance(prev.get("used"), (int, float)):
+                        used = int(prev["used"])
+                if isinstance(prev.get("accounts"), dict):
+                    accounts = prev["accounts"]
+        except (OSError, ValueError, TypeError):
+            pass
+    if now is not None:
+        today = now.astimezone(timezone.utc).date().isoformat()
+        used = max(used, 0) + max(int(used_delta), 0)
+    kept: dict = {}
+    if today is not None:
+        kept["day"] = today
+        kept["used"] = max(used, 0)
+        kept["accounts"] = accounts
+    elif accounts:
+        kept["accounts"] = accounts
     try:
-        if p.exists():
+        if kept:
+            cfg.control.mkdir(parents=True, exist_ok=True)
+            write_json_atomic(p, kept)
+        elif p.exists():
             p.unlink()
     except OSError:
         pass
@@ -292,7 +347,8 @@ def _clear_cooldown(cfg: Config) -> None:
 
 _OUTAGE_REMEDY = {"login_required": "run fanops hashtags scrape-login",
                   "checkpoint": "verify in the Instagram app, then run fanops hashtags scrape-login",
-                  "throttle": "Instagram is rate-limiting; the ladder clears it, no operator action does"}
+                  "throttle": "Instagram is rate-limiting; the ladder clears it, no operator action does",
+                  "budget": "local UTC day scrape budget exhausted; waits for next UTC day"}
 
 
 def _outage_level(streak, stalled_s: float | None, cadence_s: float = _REFRESH_CADENCE_S) -> str:
@@ -623,23 +679,24 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
         if stop:
             break
     cooldown = None
-    if measured > 0:
-        _clear_cooldown(cfg)                               # progress resets the STREAK (back to 30m)...
+    # MOL-854: NEVER clear when ig_throttled / login_dead — clear-then-rearm reset the streak to 1 and
+    # wiped day-budget keys (cooldown sawtooth). Clean success / scrape-login remain the only clears.
     if ig_throttled:
-        # ...but the stop signal still arms a floor. Chained as one if/elif, ONE measured tag cleared the
-        # cooldown and armed nothing, so the next tick reopened scrape against the account that had just
-        # throttled us (MOL-727). Streak depth and "Instagram said stop" are independent facts.
-        cooldown = _persist_cooldown(cfg, now, reason="throttle")
+        cooldown = _persist_cooldown(cfg, now, reason="throttle", used_delta=tried)
         log("hashtags", "-", "scrape_cooldown",
             level=_outage_level(cooldown.get("streak"), _age_s(prev_complete, now)),   # re-arming gets LOUDER
             reason="throttle", streak=cooldown.get("streak"), until=cooldown.get("until"))
     elif login_dead:
         # A dead session was re-probed EVERY tick before MOL-699. An expiry IS transient, so it gets the
         # ladder (unlike a lock) — a decaying retry instead of one login attempt per tick, forever.
-        cooldown = _persist_cooldown(cfg, now, reason="login_required")
+        cooldown = _persist_cooldown(cfg, now, reason="login_required", used_delta=tried)
         log("hashtags", "-", "scrape_cooldown",
             level=_outage_level(cooldown.get("streak"), _age_s(prev_complete, now)),   # re-arming gets LOUDER
             reason="login_required", streak=cooldown.get("streak"), until=cooldown.get("until"))
+    elif measured > 0:
+        _clear_cooldown(cfg, now=now, used_delta=tried)    # clean progress only — streak reset, budget kept
+    elif tried > 0:
+        _clear_cooldown(cfg, now=now, used_delta=tried)    # charge day budget; no streak to clear
     cutoff = now - timedelta(days=_MAX_AGE_DAYS)
     fresh = _records_for_write(cache, anchor_set=anchor_set, cutoff=cutoff)
     tag_mutated = fresh != pre_write
