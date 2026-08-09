@@ -450,6 +450,8 @@ def _produce_transcript(led: Ledger, cfg: Config, source_id: str, src, out_dir: 
         # starts, which check=False does not cover (it only suppresses a nonzero RETURNCODE).
         # Record SourceState.error gracefully — mirroring the no-JSON branch below — rather than
         # letting the raise escape to the pipeline as an opaque "FileNotFoundError: whisper".
+        # MOL-814: toolchain never reached whisper — demucs stems (if any) are not a whisper-only miss.
+        src.meta["preserve_vocals_on_retry"] = False
         led.set_source_state(source_id, SourceState.error,
                               error_reason=f"toolchain missing: {cmd[0]} ({type(e).__name__})")
         return led
@@ -459,6 +461,8 @@ def _produce_transcript(led: Ledger, cfg: Config, source_id: str, src, out_dir: 
         # re-runs on the next pass. The stage_lock in the caller releases on this return.
         kills = attempts + 1
         src.meta["whisper_timeout_attempts"] = kills
+        # MOL-814 / MOL-482: whisper-only failure — keep demucs stems across force-reset.
+        src.meta["preserve_vocals_on_retry"] = True
         get_logger(cfg)("transcribe", source_id, "timeout_killed", model=used_model, timeout_s=timeout_s,
                         duration=src.duration or "")
         suffix = " (attempt 3/3)" if kills >= 3 else ""
@@ -467,6 +471,8 @@ def _produce_transcript(led: Ledger, cfg: Config, source_id: str, src, out_dir: 
         return led
     js = out_dir / f"{Path(audio).stem}.json"        # whisper names its json by the INPUT stem
     if not js.exists():
+        # MOL-814 / MOL-482: whisper ran but emitted nothing — stems from a prior isolate are still good.
+        src.meta["preserve_vocals_on_retry"] = True
         led.set_source_state(source_id, SourceState.error,
                               error_reason=f"whisper produced no JSON (rc={r.returncode}): {(r.stderr or '')[:200]}")
         return led
@@ -478,6 +484,8 @@ def _produce_transcript(led: Ledger, cfg: Config, source_id: str, src, out_dir: 
         # whisper killed mid-write (disk full, OOM) leaves TRUNCATED JSON; a schema drift loses
         # start/end/text keys. Same per-source shape as the absent/timeout/no-JSON branches above —
         # a bare JSONDecodeError named neither whisper nor the file (stage-6 audit).
+        # MOL-814: deliberate — same as the old substring reader, malformed JSON does NOT preserve stems.
+        src.meta["preserve_vocals_on_retry"] = False
         led.set_source_state(source_id, SourceState.error,
                               error_reason=f"whisper JSON malformed ({js.name}): {type(e).__name__}: {str(e)[:160]}")
         return led

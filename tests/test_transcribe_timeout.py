@@ -69,9 +69,11 @@ def test_repeated_whisper_timeouts_stop_auto_resume(tmp_path, mocker, monkeypatc
     cfg = Config(root=tmp_path)
     path = str(tmp_path / "vid.mp4"); Path(path).write_bytes(b"V")
     with Ledger.transaction(cfg) as led:
+        # error_reason is display prose for the stage ladder (MOL-813 leave-it); stem policy is the meta flag.
         led.add_source(Source(id="s1", source_path=path, state=SourceState.error,
                               error_reason="whisper timed out after 5400s (attempt 3/3)",
-                              meta={"transcribed": False, "whisper_timeout_attempts": 3}))
+                              meta={"transcribed": False, "whisper_timeout_attempts": 3,
+                                    "preserve_vocals_on_retry": True}))
     from fanops.artifacts import is_transient_error
     from fanops.pipeline import reconcile_source_progress
     from fanops.log import get_logger

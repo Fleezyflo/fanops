@@ -267,6 +267,7 @@ def test_missing_json_goes_to_error_not_crash(tmp_path, mocker):
     led = transcribe_source(led, cfg, "src_1")     # no json written
     assert led.sources["src_1"].state is SourceState.error
     assert "boom" in (led.sources["src_1"].error_reason or "")
+    assert led.sources["src_1"].meta.get("preserve_vocals_on_retry") is True  # MOL-814: whisper-only
 
 def test_whisper_absent_goes_to_error_not_crash(tmp_path, mocker):
     # whisper binary off PATH -> subprocess.run raises FileNotFoundError before the process
@@ -283,6 +284,7 @@ def test_whisper_absent_goes_to_error_not_crash(tmp_path, mocker):
     led = transcribe_source(led, cfg, "src_1")     # must NOT raise
     assert led.sources["src_1"].state is SourceState.error
     assert "toolchain missing: whisper" in (led.sources["src_1"].error_reason or "")
+    assert led.sources["src_1"].meta.get("preserve_vocals_on_retry") is False  # MOL-814: not whisper-only
 
 def test_transcribe_idempotent_when_already_done(tmp_path, mocker):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
@@ -310,6 +312,7 @@ def test_whisper_hang_goes_to_error_not_crash(tmp_path, mocker):
     assert led.sources["src_1"].state is SourceState.error
     assert "timed out" in (led.sources["src_1"].error_reason or "")
     assert led.sources["src_1"].meta.get("transcribed") is not True   # a re-run actually retries
+    assert led.sources["src_1"].meta.get("preserve_vocals_on_retry") is True  # MOL-814 / MOL-482
     from fanops.transcribe import _WHISPER_TIMEOUT
     assert seen.get("timeout") == _WHISPER_TIMEOUT                    # the bound is actually wired (2700s)
 
@@ -395,3 +398,4 @@ def test_malformed_whisper_json_is_per_source_error_not_crash(tmp_path, mocker):
     assert s.state is SourceState.error
     assert "whisper JSON malformed" in (s.error_reason or "")
     assert s.meta.get("transcribed") is not True   # a re-run actually retries
+    assert s.meta.get("preserve_vocals_on_retry") is False  # MOL-814: deliberate asymmetry vs timeout/no-JSON
