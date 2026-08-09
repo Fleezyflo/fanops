@@ -26,7 +26,7 @@ import requests
 from fanops.config import Config
 from fanops.errors import PostizAuthError, redact
 from fanops.ledger import Ledger
-from fanops.models import Platform, PostState
+from fanops.models import ErrorKind, Platform, PostState, error_kind_for_http_status
 from fanops.text import safe_public_url
 
 _log = logging.getLogger("fanops.post.postiz")
@@ -121,9 +121,8 @@ def _validate_ledger_media(post, post_type: str, media_urls: list[str]) -> None:
        TRUE rather than lucky — the derived metric set would otherwise ask a FEED media for a reels-only
        metric (which Meta 400s). Do not relax it without a vendor citation.
 
-    `_publish_one` contains the raise per-post (`failed` + a redacted `error_reason`), so this is loud and
-    operator-recoverable, never a crash of the pass. The wording deliberately avoids
-    `is_transient_failure_reason`'s transient substrings so a validation defect classifies PERMANENT."""
+    `_publish_one` contains the raise per-post (`failed` + ErrorKind.bad_payload), so this is loud and
+    operator-recoverable, never a crash of the pass. Classification is typed at the write site (MOL-781)."""
     if not media_urls:
         raise ValueError(f"{post.platform.value} post {post.id} reached publish with no media — refusing to submit an empty post")
     if post.platform is Platform.instagram and post_type == "post" and not (
@@ -426,8 +425,7 @@ class PostizPoster:
         media_urls = [rewrite_media_base(u, self.cfg) for u in (post.media_urls or [])]
         # The payload's post_type is RENDERED from the post's own declaration — never guessed here.
         # An undeclared row (product_type None/blank) is refused BEFORE any network; `_publish_one`
-        # lands it `failed` with this message as error_reason. Wording avoids the transient-substring
-        # ladders in `is_transient_failure_reason` so retry verbs cannot re-arm a permanently broken row.
+        # lands it `failed` with ErrorKind.bad_payload (MOL-781).
         declared = (post.product_type or "").strip()
         if not declared:
             raise ValueError(
@@ -485,6 +483,8 @@ class PostizPoster:
         # re-queueable -> double-post risk). Today the 5xx branch returns before here, but guard it
         # so a future edit to the retry/return flow can't strand a needs_reconcile post as failed.
         if led.posts[post_id].state is not PostState.needs_reconcile:
-            led.set_post_state(post_id, PostState.failed,
-                               error_reason=f"postiz {getattr(last, 'status_code', '?')} (body withheld)")  # body may echo the auth header -> never persist it
+            code = getattr(last, "status_code", None)
+            kind = error_kind_for_http_status(code) if isinstance(code, int) else ErrorKind.unknown
+            led.set_post_state(post_id, PostState.failed, error_kind=kind,
+                               error_reason=f"postiz {code if code is not None else '?'} (body withheld)")  # body may echo the auth header -> never persist it
         return led

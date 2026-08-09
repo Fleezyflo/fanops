@@ -1825,6 +1825,7 @@
       "lazy": [
         "fanops.accounts",
         "fanops.crosspost",
+        "fanops.models",
         "fanops.post.postiz",
         "fanops.postiz_lifecycle",
         "fanops.studio.views_results",
@@ -1891,9 +1892,9 @@
         "fanops.crosspost",
         "fanops.digest",
         "fanops.log",
+        "fanops.models",
         "fanops.post.compress",
         "fanops.post.run",
-        "fanops.studio.views_common",
         "fanops.timeutil",
         "fanops.validation_gate",
         "fanops.variant_amplify"
@@ -2417,7 +2418,7 @@
   "generated_by": "tools/arch",
   "generator_version": "arch/1.0.0",
   "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",
-  "lazy_downward_count": 232,
+  "lazy_downward_count": 233,
   "lazy_lateral": [
     {
       "from": "fanops.accounts",
@@ -3661,7 +3662,7 @@
     "G2_module_sccs_total": 68,
     "G2_non_trivial_sccs": 7,
     "compile_edges_G1": 578,
-    "lazy_edges": 347,
+    "lazy_edges": 348,
     "lazy_edges_lateral": 45,
     "lazy_edges_strictly_upward": 70,
     "lazy_edges_to_equal_or_higher_level": 115,

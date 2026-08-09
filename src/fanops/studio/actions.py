@@ -13,8 +13,8 @@ from pydantic import ValidationError
 from fanops.config import Config
 from fanops.errors import AuthError, ToolchainMissingError, reason
 from fanops.ledger import Ledger
-from fanops.models import (CaptionSet, ClipState, MomentDecision, MomentHookDecision, Platform, Post, PostState,
-                           _REVIEW_REVERT_BLOCKED)   # MOL-802: defined beside PostState, which owns it
+from fanops.models import (CaptionSet, ClipState, ErrorKind, MomentDecision, MomentHookDecision, Platform, Post,
+                           PostState, _REVIEW_REVERT_BLOCKED)   # MOL-802: defined beside PostState, which owns it
 from fanops.ids import child_id, surface_key, _hash
 from fanops.timeutil import parse_iso, iso_z
 from fanops.studio.views import _imminent
@@ -464,7 +464,8 @@ def publish_now(cfg: Config, post_id: str, *, confirmed: bool = True) -> ActionR
             with Ledger.transaction(cfg) as led:
                 p = led.posts.get(post_id)
                 if p is not None:
-                    led.set_post_state(post_id, PostState.failed, error_reason=pf)
+                    led.set_post_state(post_id, PostState.failed, error_kind=ErrorKind.bad_payload,
+                                       error_reason=pf)
         except Exception:
             pass
         return ActionResult(ok=False, error=pf)
@@ -942,7 +943,7 @@ def _rearm_to_queued(led: Ledger, pid: str) -> None:
     first when their verb requires it; _refuse_retired stays outside so oversize shrink runs only after
     an admitted (can_promote) re-arm — never on suppressed lineage (MOL-818 / Branch A)."""
     led.posts[pid].submission_id = None
-    led.set_post_state(pid, PostState.queued, error_reason=None)
+    led.set_post_state(pid, PostState.queued, error_reason=None, error_kind=None)
 
 
 def resolve_post(cfg: Config, post_id: str, status: str, *, url: Optional[str] = None) -> ActionResult:
@@ -966,9 +967,10 @@ def resolve_post(cfg: Config, post_id: str, status: str, *, url: Optional[str] =
             if (url or "").strip():
                 p.public_url = url.strip()
             if st is PostState.failed:
-                led.set_post_state(post_id, st, error_reason=p.error_reason or "marked failed by operator")
+                led.set_post_state(post_id, st, error_kind=ErrorKind.unknown,
+                                  error_reason=p.error_reason or "marked failed by operator")
             else:
-                led.set_post_state(post_id, st)
+                led.set_post_state(post_id, st, error_kind=None)
     except Exception as exc:
         return ActionResult(ok=False, error=f"resolve failed: {str(exc)[:160]}")
     write_audit(cfg, "resolve_post", [post_id], reason="studio_resolve", status=st.value, url=(url or "").strip())
@@ -1045,7 +1047,7 @@ def bulk_send_to_review(cfg: Config, post_ids: list[str], *, reason: str) -> Act
                 p.public_url = ""
                 p.metrics = {}
                 p.published_at = None
-                led.set_post_state(pid, PostState.awaiting_approval, error_reason=None)  # RC-8: clear failure latch on revert
+                led.set_post_state(pid, PostState.awaiting_approval, error_reason=None, error_kind=None)  # RC-8: clear failure latch on revert
                 # Don't touch submission_id / batch_id — keep the lineage so the operator can
                 # see "this post was once part of batch X" in the audit / Posted history.
                 moved.append(pid)
@@ -1146,10 +1148,10 @@ def retry_oversize_failures(cfg: Config, *, reason: str = "studio_retry_oversize
 
 
 def retry_transient_failures(cfg: Config, *, reason: str = "studio_retry_transient", stagger_min: int = 2) -> ActionResult:
-    """Queue all failed posts whose error_reason is a transient network blip for daemon retry."""
-    from fanops.studio.views_common import is_transient_failure_reason
+    """Queue all failed posts stamped ErrorKind.transient for daemon retry."""
+    from fanops.studio.views_common import is_transient_failure
     ids = [pid for pid, p in Ledger.load(cfg).posts.items()
-           if p.state in (PostState.failed, PostState.error) and is_transient_failure_reason(p.error_reason)]
+           if p.state in (PostState.failed, PostState.error) and is_transient_failure(p)]
     if not ids:
         return ActionResult(ok=True, detail={"retried": 0, "post_ids": []})
     retried: list[str] = []; skipped_retired: list[str] = []
@@ -1160,7 +1162,7 @@ def retry_transient_failures(cfg: Config, *, reason: str = "studio_retry_transie
                 p = led.posts.get(pid)
                 if p is None or p.state not in (PostState.failed, PostState.error):
                     continue
-                if not is_transient_failure_reason(p.error_reason):
+                if not is_transient_failure(p):
                     continue
                 if _refuse_retired(cfg, led, p):
                     skipped_retired.append(pid); continue

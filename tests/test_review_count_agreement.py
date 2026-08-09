@@ -12,7 +12,8 @@ pytest.importorskip("flask")
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.accounts import Accounts
-from fanops.models import (Source, Moment, Clip, Post, Platform, PostState, ClipState, MomentState, Fmt)
+from fanops.models import (Source, Moment, Clip, Post, Platform, PostState, ClipState, MomentState, Fmt,
+                           ErrorKind)
 from fanops.studio.views_common import GRID_PAGE_SIZE
 from fanops.studio.views_results import failure_rollup
 from fanops.studio.views_review import review_buckets, review_counts, review_progress
@@ -51,10 +52,10 @@ def _awaiting(led, pid, cid, account, *, batch_id=None):
                       scheduled_time=_z(NOW + timedelta(hours=3))))
 
 
-def _failed(led, pid, cid, account, reason, *, batch_id=None):
+def _failed(led, pid, cid, account, reason, *, batch_id=None, error_kind=None):
     led.add_post(Post(id=pid, parent_id=cid, account=account, account_id="1", platform=Platform.instagram,
-                      caption="c", state=PostState.failed, error_reason=reason, batch_id=batch_id,
-                      scheduled_time=_z(NOW - timedelta(hours=3))))
+                      caption="c", state=PostState.failed, error_reason=reason, error_kind=error_kind,
+                      batch_id=batch_id, scheduled_time=_z(NOW - timedelta(hours=3))))
 
 
 # ============ (a) the bucket header counts the FULL scoped bucket, not the page slice ============
@@ -180,10 +181,10 @@ def _seed_failures(cfg):
     with Ledger.transaction(cfg) as led:
         _source(led, "src_1"); _source(led, "src_2")
         _clip(led, "clip_1", sid="src_1"); _clip(led, "clip_2", sid="src_2")
-        _failed(led, "f_a1", "clip_1", "a", "postiz 429", batch_id="bx")
-        _failed(led, "f_a2", "clip_1", "a", "zernio 413", batch_id="by")
-        _failed(led, "f_a3", "clip_2", "a", "postiz 400", batch_id="bx")
-        _failed(led, "f_b1", "clip_1", "b", "postiz 429", batch_id="bx")
+        _failed(led, "f_a1", "clip_1", "a", "postiz 429", batch_id="bx", error_kind=ErrorKind.rate_limit)
+        _failed(led, "f_a2", "clip_1", "a", "zernio 413", batch_id="by", error_kind=ErrorKind.oversize)
+        _failed(led, "f_a3", "clip_2", "a", "postiz 400", batch_id="bx", error_kind=ErrorKind.bad_payload)
+        _failed(led, "f_b1", "clip_1", "b", "postiz 429", batch_id="bx", error_kind=ErrorKind.rate_limit)
 
 
 def test_failure_rollup_scopes_never_exceed_the_unscoped_total(tmp_path):

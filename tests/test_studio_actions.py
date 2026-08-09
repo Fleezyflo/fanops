@@ -4,7 +4,8 @@ import pytest
 from datetime import datetime, timezone, timedelta
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.models import Source, Moment, Clip, Post, Platform, PostState, ClipState, MomentState, Fmt
+from fanops.models import (Source, Moment, Clip, Post, Platform, PostState, ClipState, MomentState, Fmt,
+                           ErrorKind)
 from fanops.studio.actions import reschedule_post, edit_caption, snooze_clip, release_held_clip, ActionResult
 
 
@@ -642,9 +643,9 @@ def test_crosspost_warms_target_aspect_before_opening_the_lock(tmp_path, monkeyp
 
 
 # ---- Sprint 1: recover_posts (failed-tab bulk recovery) ----
-def _fail_post(pid, reason):
+def _fail_post(pid, reason, *, kind=None):
     return Post(id=pid, parent_id="clip_1", account="a", account_id="1", platform=Platform.instagram,
-                caption="x", state=PostState.failed, error_reason=reason)
+                caption="x", state=PostState.failed, error_reason=reason, error_kind=kind)
 
 
 def _live_lineage(led):
@@ -664,9 +665,9 @@ def test_recover_posts_retry_requeues_retryable(tmp_path):
     cfg = Config(root=tmp_path)
     led = Ledger.load(cfg)
     _live_lineage(led)
-    led.add_post(_fail_post("ok", "postiz 429"))
+    led.add_post(_fail_post("ok", "postiz 429", kind=ErrorKind.rate_limit))
     led.posts["ok"].submission_id = "old_sub"
-    big = _fail_post("big", "zernio 413"); big.platform = Platform.tiktok; led.add_post(big)
+    big = _fail_post("big", "zernio 413", kind=ErrorKind.oversize); big.platform = Platform.tiktok; led.add_post(big)
     led.save()
     res = recover_posts(cfg, ["ok", "big"], action="retry", reason="studio_retry")
     assert res.ok
@@ -686,7 +687,7 @@ def test_recover_posts_retry_lands_a_schedule_when_timeless(tmp_path):
     from fanops.timeutil import parse_iso
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _live_lineage(led)
-    p = _fail_post("t", "postiz 429"); p.scheduled_time = None; led.add_post(p)   # a TIMELESS failed post
+    p = _fail_post("t", "postiz 429", kind=ErrorKind.rate_limit); p.scheduled_time = None; led.add_post(p)   # a TIMELESS failed post
     led.save()
     res = recover_posts(cfg, ["t"], action="retry", reason="studio_retry")
     assert res.ok
@@ -701,7 +702,7 @@ def test_recover_posts_discard_terminal(tmp_path):
     cfg = Config(root=tmp_path)
     led = Ledger.load(cfg)
     _live_lineage(led)
-    led.add_post(_fail_post("gone", "zernio 413"))
+    led.add_post(_fail_post("gone", "zernio 413", kind=ErrorKind.oversize))
     led.save()
     res = recover_posts(cfg, ["gone"], action="discard", reason="oversize discard")
     assert res.ok
@@ -713,7 +714,7 @@ def test_recover_posts_review_clears_publish_fields(tmp_path):
     cfg = Config(root=tmp_path)
     led = Ledger.load(cfg)
     _live_lineage(led)
-    p = _fail_post("back", "postiz 429")
+    p = _fail_post("back", "postiz 429", kind=ErrorKind.rate_limit)
     p.public_url = "https://example.com/x"
     p.scheduled_time = _z(NOW + timedelta(hours=1))
     led.add_post(p)
@@ -738,7 +739,7 @@ def test_retry_oversize_failures_requeues_when_shrink_ok(tmp_path, monkeypatch, 
     vid.write_bytes(b"Z" * 100)
     led.add_post(Post(id="big", parent_id="clip_1", account="tt", account_id="z1", platform=Platform.tiktok,
                       caption="x", state=PostState.failed, error_reason="zernio upload 413 entity too large",
-                      media_urls=[f"file://{vid}"]))
+                      error_kind=ErrorKind.oversize, media_urls=[f"file://{vid}"]))
     led.save()
     mocker.patch("fanops.post.compress.apply_shrink_to_post", return_value=True)
     res = retry_oversize_failures(cfg)
@@ -752,7 +753,7 @@ def test_retry_oversize_skips_when_shrink_fails(tmp_path, monkeypatch, mocker):
     cfg = Config(root=tmp_path)
     led = Ledger.load(cfg)
     _live_lineage(led)
-    led.add_post(_fail_post("big", "zernio 413"))
+    led.add_post(_fail_post("big", "zernio 413", kind=ErrorKind.oversize))
     led.posts["big"].platform = Platform.tiktok
     led.save()
     mocker.patch("fanops.post.compress.apply_shrink_to_post", return_value=False)

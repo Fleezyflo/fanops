@@ -5,7 +5,8 @@ pytest.importorskip("flask")
 from datetime import datetime, timezone, timedelta
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.models import Source, Moment, Clip, Post, Platform, PostState, ClipState, MomentState, Fmt
+from fanops.models import (Source, Moment, Clip, Post, Platform, PostState, ClipState, MomentState, Fmt,
+                           ErrorKind)
 from fanops.studio import actions, views
 
 _NOW = datetime(2026, 6, 15, 12, 0, tzinfo=timezone.utc)
@@ -165,7 +166,8 @@ def test_posted_failure_chip_uses_label(tmp_path):
     (cdir / "c0.mp4").write_bytes(b"V")
     led.add_clip(Clip(id="c0", parent_id="m1", path=str(cdir / "c0.mp4"), aspect=Fmt.r9x16, state=ClipState.queued))
     led.add_post(Post(id="p0", parent_id="c0", account="a", account_id="ig1", platform=Platform.instagram,
-                      caption="c", state=PostState.failed, error_reason="postiz 429", public_url="dryrun://p"))
+                      caption="c", state=PostState.failed, error_reason="postiz 429",
+                      error_kind=ErrorKind.rate_limit, public_url="dryrun://p"))
     led.save()
     html = _client(cfg).get("/posted?delivery=failed").data.decode()
     assert "Rate limited" in html and "rate_limit" not in html.split("posted-head")[1][:200]

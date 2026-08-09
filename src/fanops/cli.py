@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 from fanops.errors import AuthError, ControlFileError, CutoverError, DownloadError, LockBusyError, RunBusyError, ToolchainMissingError
 from fanops.ledger import Ledger
 from fanops.accounts import Accounts
-from fanops.models import ClipState, PostState
+from fanops.models import ClipState, PostState, ErrorKind
 from fanops.pipeline import advance, GATE_KINDS
 from fanops.ingest import download_url
 from fanops.digest import write_digest
@@ -441,10 +441,17 @@ def cmd_resolve(cfg: Config, args) -> int:
         if getattr(args, "url", None):
             p.public_url = args.url
         try:
-            led.set_post_state(args.post_id, PostState(args.status))
+            st = PostState(args.status)
+            if st is PostState.failed:
+                led.set_post_state(args.post_id, st, error_kind=ErrorKind.unknown)
+            else:
+                led.set_post_state(args.post_id, st, error_kind=None)
         except ValueError:
             # Unknown status string — back-compat: map "published" -> published, else "failed"
-            led.set_post_state(args.post_id, PostState.published if args.status == "published" else PostState.failed)
+            if args.status == "published":
+                led.set_post_state(args.post_id, PostState.published, error_kind=None)
+            else:
+                led.set_post_state(args.post_id, PostState.failed, error_kind=ErrorKind.unknown)
     print(f"resolved {args.post_id} -> {args.status}"); return 0
 
 

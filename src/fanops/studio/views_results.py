@@ -579,52 +579,39 @@ def failure_label(kind: str | None) -> str:
 
 
 def operator_error(msg: str | None, *, kind: str | None = None) -> str:
-    """Plain-language error for Studio surfaces — no backend names, ids, or status dumps."""
+    """Plain-language error for Studio surfaces — no backend names, ids, or status dumps.
+
+    Failure bucketing is NOT done here (MOL-781): pass `kind=` from Post.error_kind / classify_failure.
+    Without kind, this is display-only cleanup of raw prose (strip backend tags, truncate)."""
     if kind:
         return failure_label(kind)
     if not msg:
         return ""
-    er = msg.lower()
-    if "429" in er or "rate limit" in er or "too many requests" in er:
-        return "Rate limited — wait and retry."
-    if "413" in er or "oversize" in er or "too large" in er or "entity too large" in er:
-        return "Video too large for this platform."
-    if "401" in er or "403" in er or "unauthorized" in er or "auth" in er:
-        return "Credentials rejected — check Go Live."
-    if "400" in er or "bad media" in er or "bad request" in er or "invalid" in er:
-        return "Platform rejected the upload."
-    if "connection" in er or "refused" in er or "unreachable" in er or "timed out" in er:
-        return "Could not reach the publisher — try again."
-    if "published_no_url" in er or "no permalink" in er or "no_url" in er:
-        return "Published — waiting for link."
-    if "not live" in er or "dryrun" in er:
-        return "Publishing is off until you go live."
     clean = msg.strip()
+    low = clean.lower()
+    if "published_no_url" in low or "no permalink" in low or "no_url" in low:
+        return "Published — waiting for link."
+    if "not live" in low or "dryrun" in low:
+        return "Publishing is off until you go live."
     for tag in ("postiz", "zernio"):
-        if clean.lower().startswith(tag + " "):
+        if low.startswith(tag + " "):
             rest = clean.split(None, 1)[-1] if " " in clean else ""
             if rest[:3].isdigit():
                 tail = rest.split(None, 1)[-1] if " " in rest else ""
                 return operator_error(tail) if tail else "Platform error."
+            return operator_error(rest) if rest else "Platform error."
     return (clean[:97] + "…") if len(clean) > 100 else clean
 
 
 
 def classify_failure(post) -> str:
-    """Bucket a failed/error post's error_reason for the Posted recovery cockpit."""
-    from fanops.studio.views_common import is_transient_failure_reason
-    er = (getattr(post, "error_reason", None) or "").lower()
-    if not er:
+    """Bucket a failed/error post from its typed error_kind (MOL-781). Untyped rows → unknown."""
+    from fanops.models import ErrorKind
+    kind = getattr(post, "error_kind", None)
+    if kind is None:
         return "unknown"
-    if "429" in er or "rate limit" in er or "too many requests" in er:
-        return "rate_limit"
-    if "413" in er or "oversize" in er or "too large" in er or "entity too large" in er:
-        return "oversize"
-    if "400" in er or "bad request" in er or "bad media" in er or "invalid" in er:
-        return "bad_payload"
-    if is_transient_failure_reason(getattr(post, "error_reason", None)):
-        return "transient"
-    return "unknown"
+    val = kind.value if isinstance(kind, ErrorKind) else str(kind)
+    return val if val in _FAILURE_KINDS else "unknown"
 
 
 def failure_rollup(led: Ledger, *, account: Optional[str] = None, batch: Optional[str] = None,

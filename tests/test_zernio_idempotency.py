@@ -17,7 +17,7 @@ import requests
 from fanops.config import Config
 from fanops.errors import ZernioAuthError
 from fanops.ledger import Ledger
-from fanops.models import Post, Platform, PostState, is_real_submission_id
+from fanops.models import ErrorKind, Post, Platform, PostState, is_real_submission_id
 from fanops.post import Poster
 from fanops.post import run as run_mod
 from fanops.post import zernio
@@ -25,7 +25,7 @@ from fanops.post.zernio import (ZernioPoster, _request_id, _require_request_iden
                                 _extract_409_candidate, _retry_after_s, _ZERNIO_REQ_NS, _REQ_NAME_V,
                                 _RETRY_DEADLINE_S, _IDEMPOTENCY_WINDOW_S, _MAX_RETRIES)
 from fanops.post.zernio_outcome import Created, IdempotentReplay, ReconciliationRequired, TerminalFailure
-from fanops.studio.views_common import is_transient_failure_reason
+from fanops.studio.views_common import is_transient_failure
 
 _BIRTH = "2026-07-16T13:31:00Z"          # incarnation 1 — the burned-record population
 _REBIRTH = "2026-07-17T11:20:00Z"        # incarnation 2 — same post.id, popped + reminted by crosspost
@@ -257,12 +257,12 @@ def test_15_missing_account_id_refuses_before_any_network(tmp_path, monkeypatch)
     assert p.state is PostState.failed and "account_id" in p.error_reason
 
 def test_15b_missing_request_identity_is_not_classified_transient():
-    # The reason string feeds is_transient_failure_reason, which SUBSTRING-scans English ("timeout",
-    # "network error", "(5xx)"). If this reason matched, the daemon would re-queue a row that cannot succeed
-    # until its data is repaired — an endless loop. Pin the classification, not the wording's good intentions.
+    # MOL-781: missing identity stamps ErrorKind.bad_payload at the write site — never transient.
+    from fanops.post.zernio import _error_kind_for_terminal
     r = _require_request_identity(_post(created_at=None))
-    reason = f"zernio {r.reason}: {r.evidence}"
-    assert is_transient_failure_reason(reason) is False
+    assert r is not None
+    assert _error_kind_for_terminal(r) is ErrorKind.bad_payload
+    assert is_transient_failure(type("P", (), {"error_kind": ErrorKind.bad_payload})()) is False
 
 def test_16_request_id_and_payload_account_id_always_agree(tmp_path, monkeypatch):
     # The id names the account it was derived for; the payload names the account Zernio will post to. If they
@@ -356,8 +356,8 @@ def test_28b_409_with_an_unreadable_body_says_so_rather_than_swallowing_it(tmp_p
     assert "unreadable" in p.error_reason and "a candidate may exist" in p.error_reason
     body = cfg.log_path.read_text()
     assert "zernio_409_body_unparsed" in body and "zernio.409.parse" in body
-    # and the new wording must not read as transient ("unreachable" IS in the classifier's substring list)
-    assert is_transient_failure_reason(p.error_reason) is False
+    # needs_reconcile carries no error_kind — not a failed-row requeue candidate
+    assert is_transient_failure(p) is False
 
 def test_28c_a_readable_409_with_no_candidate_is_distinct_from_an_unreadable_one(tmp_path, monkeypatch):
     # The distinction the sentinel preserves: both yield candidate=None, but only ONE means "a pointer may
@@ -577,9 +577,9 @@ def test_45c_a_held_candidate_row_is_not_selected_by_the_transient_requeue(tmp_p
     assert run_mod._requeue_transient_failed_for_daemon(cfg) == 0
     after = Ledger.load(cfg).posts[p.id]
     assert after.state is PostState.needs_reconcile
-    # NB the errorMessage says "read timed out" — a phrase is_transient_failure_reason MATCHES. Holding the
-    # row out of `failed` is what makes that harmless; a downgrade would have re-queued it on that wording.
-    assert is_transient_failure_reason(after.error_reason) is True
+    # Holding the row out of `failed` (no error_kind) is what makes prose harmless under MOL-781.
+    assert after.error_kind is None
+    assert is_transient_failure(after) is False
 
 def test_45d_a_failed_poll_without_a_candidate_still_fails_ordinarily(tmp_path, monkeypatch):
     # The B-case: no candidate => unchanged pre-existing behaviour. Negative control for 45b/45c.
@@ -592,6 +592,7 @@ def test_45d_a_failed_poll_without_a_candidate_still_fails_ordinarily(tmp_path, 
     after = out.posts[p.id]
     assert after.state is PostState.failed
     assert "poster reports failed" in after.error_reason
+    assert after.error_kind is ErrorKind.unknown
     assert after.reconcile_candidate_id is None
 
 def test_46_candidate_is_mirrored_into_error_reason(tmp_path, monkeypatch):
@@ -647,13 +648,13 @@ def test_50_5xx_parks_needs_reconcile(tmp_path, monkeypatch):
     assert p.state is PostState.needs_reconcile and "http_5xx" in p.error_reason
 
 def test_51_other_4xx_fails_with_the_body_withheld(tmp_path, monkeypatch):
-    # The body stays withheld (as before this fix): this reason is scanned by is_transient_failure_reason,
-    # and a response body echoing "timeout"/"(503)" would flip a terminal 4xx into a re-queue loop.
+    # Body withheld; typed kind is bad_payload so prose cannot flip the row into a transient re-queue.
     cfg = _cfg(tmp_path, monkeypatch)
     p = _publish(cfg, _post(), _Rec(_R(400, {"error": "read timed out upstream (503)"})), monkeypatch)
     assert p.state is PostState.failed
     assert "read timed out" not in p.error_reason
-    assert is_transient_failure_reason(p.error_reason) is False
+    assert p.error_kind is ErrorKind.bad_payload
+    assert is_transient_failure(p) is False
 
 def test_52_connecttimeout_is_retried(tmp_path, monkeypatch):
     cfg = _cfg(tmp_path, monkeypatch)

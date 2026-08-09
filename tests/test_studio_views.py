@@ -34,7 +34,7 @@ import json
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.accounts import Accounts
-from fanops.models import Source, Moment, Clip, Post, Platform, PostState, ClipState, MomentState, Fmt, Render, RenderState
+from fanops.models import ErrorKind, Source, Moment, Clip, Post, Platform, PostState, ClipState, MomentState, Fmt, Render, RenderState
 from fanops.studio.views import review_buckets
 from fanops.timeutil import parse_iso
 
@@ -967,26 +967,26 @@ def test_posted_library_delivery_filter(tmp_path):
 from fanops.studio.views_results import classify_failure, failure_rollup
 
 
-def _fail_post(pid, reason):
+def _fail_post(pid, reason, *, kind=None):
     return Post(id=pid, parent_id="c1", account="a", account_id="1", platform=Platform.instagram,
-                caption="x", state=PS.failed, error_reason=reason)
+                caption="x", state=PS.failed, error_reason=reason, error_kind=kind)
 
 
 def test_classify_failure_buckets():
-    assert classify_failure(_fail_post("r1", "postiz 429 too many requests")) == "rate_limit"
-    assert classify_failure(_fail_post("r2", "zernio upload 413 entity too large")) == "oversize"
-    assert classify_failure(_fail_post("r3", "postiz 400 bad media url")) == "bad_payload"
-    assert classify_failure(_fail_post("r4", "reconcile poll error: connection refused")) == "transient"
-    assert classify_failure(_fail_post("r5", "publish failed: zernio.com Read timed out (read timeout=30)")) == "transient"
+    assert classify_failure(_fail_post("r1", "postiz 429 too many requests", kind=ErrorKind.rate_limit)) == "rate_limit"
+    assert classify_failure(_fail_post("r2", "zernio upload 413 entity too large", kind=ErrorKind.oversize)) == "oversize"
+    assert classify_failure(_fail_post("r3", "postiz 400 bad media url", kind=ErrorKind.bad_payload)) == "bad_payload"
+    assert classify_failure(_fail_post("r4", "reconcile poll error: connection refused", kind=ErrorKind.transient)) == "transient"
+    assert classify_failure(_fail_post("r5", "publish failed: zernio.com Read timed out (read timeout=30)", kind=ErrorKind.transient)) == "transient"
     assert classify_failure(_fail_post("r6", "something weird")) == "unknown"
 
 
 def test_failure_rollup_counts_failed_posts(tmp_path):
     cfg = Config(root=tmp_path)
     led = Ledger.load(cfg)
-    led.add_post(_fail_post("f429", "postiz 429"))
-    led.add_post(_fail_post("f413", "zernio 413"))
-    led.add_post(_fail_post("f400", "postiz 400"))
+    led.add_post(_fail_post("f429", "postiz 429", kind=ErrorKind.rate_limit))
+    led.add_post(_fail_post("f413", "zernio 413", kind=ErrorKind.oversize))
+    led.add_post(_fail_post("f400", "postiz 400", kind=ErrorKind.bad_payload))
     led.save()
     roll = failure_rollup(led)
     assert roll["total"] == 3
@@ -998,17 +998,27 @@ def test_failure_rollup_counts_failed_posts(tmp_path):
 def test_posted_library_stamps_failure_kind(tmp_path):
     cfg = Config(root=tmp_path)
     led = Ledger.load(cfg)
-    led.add_post(_fail_post("fx", "postiz 429"))
+    led.add_post(_fail_post("fx", "postiz 429", kind=ErrorKind.rate_limit))
     from fanops.studio.views_results import posted_library
     row = posted_library(led, cfg, delivery="failed")[0]
     assert row.failure_kind == "rate_limit"
 
 
+def test_error_kind_ignores_digits_in_error_reason():
+    """MOL-781 negative control: prose containing 400/429 cannot override typed error_kind."""
+    from fanops.studio.views_common import is_transient_failure
+    from fanops.studio.views_results import operator_error
+    p = _fail_post("neg", "operator note mentions 400 and 429 deliberately", kind=ErrorKind.transient)
+    assert classify_failure(p) == "transient"
+    assert is_transient_failure(p) is True
+    assert operator_error(p.error_reason, kind=classify_failure(p)) == "Network blip"
+
+
 def test_posted_library_failure_kind_filter(tmp_path):
     cfg = Config(root=tmp_path)
     led = Ledger.load(cfg)
-    led.add_post(_fail_post("a", "postiz 429"))
-    led.add_post(_fail_post("b", "zernio 413"))
+    led.add_post(_fail_post("a", "postiz 429", kind=ErrorKind.rate_limit))
+    led.add_post(_fail_post("b", "zernio 413", kind=ErrorKind.oversize))
     from fanops.studio.views_results import posted_library
     assert len(posted_library(led, cfg, delivery="failed", failure_kind="rate_limit")) == 1
     assert posted_library(led, cfg, delivery="failed", failure_kind="rate_limit")[0].post_id == "a"
@@ -1021,7 +1031,7 @@ def test_delivery_audit_counts_buckets(tmp_path):
     led.add_post(Post(id="pl", parent_id="c1", account="a", account_id="1", platform=Platform.instagram,
                       caption="live", state=PS.published, public_url="https://instagram.com/x/"))
     led.add_post(Post(id="pf", parent_id="c1", account="a", account_id="1", platform=Platform.instagram,
-                      caption="fail", state=PS.failed, error_reason="postiz 429"))
+                      caption="fail", state=PS.failed, error_reason="postiz 429", error_kind=ErrorKind.rate_limit))
     led.add_post(Post(id="pi", parent_id="c1", account="a", account_id="1", platform=Platform.instagram,
                       caption="wait", state=PS.needs_reconcile, submission_id="cmqzabc"))
     aud = delivery_audit(led)
