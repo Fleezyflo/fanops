@@ -88,9 +88,10 @@ class MomentOrigin(str, Enum):
     # silently disarming any origin-keyed review or purge (it would select nothing and report success).
     operator = "operator"                   # an operator-driven moment request (the `fanops run` pipeline path)
     machine = "machine"                     # a machine-initiated request (the `adjust.amplify` path)
-    machine_inferred = "machine_inferred"   # RECONSTRUCTED after the fact by the one-shot backfill from lineage
-                                            # evidence, NOT observed at mint. Self-declaring, so a guessed label
-                                            # never passes for an authored one (no companion "was_guessed" flag).
+    machine_inferred = "machine_inferred"   # historically RECONSTRUCTED after the fact from lineage evidence,
+                                            # NOT observed at mint. Self-declaring, so a guessed label never
+                                            # passes for an authored one (no companion "was_guessed" flag).
+                                            # The one-shot origin_backfill that wrote this is gone (MOL-808).
     unknown = "unknown"                     # never labelled — the honest value for a row the system never observed
     # NO WRITER TODAY, by design (not an oversight): request and mint are two different pipeline stages
     # separated by an agent round-trip — `request_moments` returns at `moments_requested`, and the sole
@@ -98,12 +99,13 @@ class MomentOrigin(str, Enum):
     # cannot reach the mint site as a parameter, and wiring one with no reader would ship a dead argument.
     # The forward stamp is deferred to the ticket that lands when a machine path is re-enabled: all three
     # (learn_amplify / variant_amplify / p4_dim_bias) are opt-in and OFF, so there is no live machine-mint
-    # traffic to label. The backfill supplies `machine_inferred` for the existing history.
+    # traffic to label. Historical rows may still carry `machine_inferred` from the retired backfill; nothing
+    # writes that label today.
 
 # How an unlabelled row READS to an operator. `unknown` is the enum's honest at-rest value; "unlabelled"
 # is what it MEANS on a surface — the row was never observed, not observed-as-unknown. Permanent field
-# display (Review cards, provenance surfaces), not migration machinery — lives beside MomentOrigin so
-# the one-shot origin_backfill module can be deleted later without breaking operator wording (MOL-808).
+# display (Review cards), not migration machinery — lives beside MomentOrigin so operator wording stays
+# stable after origin_backfill was deleted (MOL-808).
 UNLABELLED_DISPLAY = "unlabelled"
 
 

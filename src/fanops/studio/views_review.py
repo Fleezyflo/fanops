@@ -134,8 +134,7 @@ class ReviewCard:
                                          # keys on this; the chip label is the basename. None == broken source lineage.
     origin: Optional[str] = None         # MOL-756: Moment.origin in operator wording — WHO asked for this moment.
                                          # An unlabelled row READS `unlabelled` instead of staying invisible:
-                                         # missing provenance is a fact about the row, and Home's provenance
-                                         # panel is the button that fixes it. None == broken moment lineage.
+                                         # missing provenance is a fact about the row. None == broken moment lineage.
 
 
 def _personas(accounts: Accounts) -> dict:
