@@ -33,9 +33,9 @@ from fanops.hashtags import (METRIC_FIELD, RECORD_NUM_FIELDS, _norm, _metric, _n
 from fanops.controlio import write_json_atomic
 
 _MAX_AGE_DAYS = 90            # a measurement older than this is history, not evidence — pruned on write
-_VOLUME_MAX_AGE_DAYS = 7      # `media_count` re-resolve age. Tag volume moves in months, plays in hours —
-                              # the 12h trend pass must not spend a hashtag_info on every tag (MOL-691).
-_CORPUS_MAX_AGE_HOURS = 24    # current corpus members remesure when measured_at is older than this (MOL-695)
+_VOLUME_MAX_AGE_DAYS = 30     # `media_count` re-resolve age (aligned with remesure; MOL-855). Volume moves
+                              # slowly — the 12h trend pass must not spend hashtag_info every tick (MOL-691).
+_MEASURE_MAX_AGE_DAYS = 30    # remesure (medias_top) only when measured_at is older than this (MOL-855)
 _COMPLETE_KEY = "last_complete_pass"   # sibling of tag records; gates the 12h tick (NOT file mtime)
 _COOLDOWN_NAME = ".hashtag_scrape_cooldown.json"  # Instagram ScrapeThrottled backoff (MOL-695); never sleep
 _COOLDOWN_DELAYS_S = (30 * 60, 60 * 60, 2 * 60 * 60, 6 * 60 * 60)  # streak 1..N → 30m, 1h, 2h, 6h cap
@@ -44,14 +44,13 @@ _REFRESH_CADENCE_S = 12 * 60 * 60   # the tick's refresh window, and the yardsti
 # Scrape is ~5–7s/tag. Caps bound a pass so co-tag harvest cannot run unbounded; incomplete passes do NOT
 # stamp last_complete_pass. Tests may monkeypatch these module attrs; env overrides win when set.
 # MOL-854: try_cap is a small per-pass ceiling (25); the UTC day budget on the cooldown blob is the
-# local governor (~40 request-units/day). Queue rewrite / dual-call / multi-account are later tickets.
+# local governor (~40 request-units/day). Due-tiered queue (MOL-855) means the cap need not clear every
+# cached tag each pass — only unmeasured anchors + aged volume + ≥30d remesure + co-tag headroom.
 _SCRAPE_TRY_CAP = 25
 _SCRAPE_DAY_BUDGET = 40        # request-units per UTC day (global until MOL-858 nests under accounts{})
 _SCRAPE_COTAG_ENQUEUE_CAP = 40
-_SCRAPE_PARALLEL = 1          # tags per wave. 1 = ONE in-flight private-API call, the only safe default:
-                              # 4 clone-clients on one session (MOL-698) earned a challenge_required lock,
-                              # and instagrapi is not thread-safe. Raising it only groups tags into a wave —
-                              # client_lock still serializes the wire. Pace with FANOPS_HASHTAG_SCRAPE_DELAY.
+_SCRAPE_PARALLEL = 1          # legacy env knob (FANOPS_HASHTAG_SCRAPE_PARALLEL). MOL-855 fetch is sequential;
+                              # this no longer sizes a wave. Pace with FANOPS_HASHTAG_SCRAPE_DELAY.
 
 
 def _scrape_try_cap() -> int:
@@ -452,24 +451,21 @@ def refresh_store(cfg: Config, *, scrape_client=None, now=None) -> dict:
 def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
     """Run one measurement pass and rewrite the cache. Returns a summary dict.
 
-    Order of work (MOL-695 due tiers — NOT every cached tag every pass):
+    Order of work (MOL-855 due tiers — NOT every cached tag every pass):
       1. never-measured anchors (must discover)
-      2. records missing / due `media_count` (volume backfill; measured anchors land here when due)
-      3. current posting-persona corpus members with `measured_at` older than 24h
-      4. remaining cache only when `measured_at` older than 7d
-    Within each tier: oldest `measured_at` then tag. NOVEL (uncached) co-tags harvested from anchors are
-    inserted ahead of the remaining remesure so try_cap buys expansion; a co-tag already in the cache is
-    left to the due tiers, never re-measured just for appearing on an anchor's Top.
+      2. records missing / due `media_count` (rare volume backfill; `_VOLUME_MAX_AGE_DAYS`)
+      3. remesure only when `measured_at` is older than `_MEASURE_MAX_AGE_DAYS` (oldest first)
+      4. novel (uncached) co-tags inserted mid-pass ahead of remaining remesure (existing cotag cap)
+    Within each pre-built tier: oldest `measured_at` then tag. A co-tag already in the cache is left
+    to the due tiers, never re-measured just for appearing on an anchor's Top.
     Co-tags harvested from ANCHOR Tops are ENQUEUED for measurement only (discovery) — they must NOT
     write membership edges. Membership `from` is INBOUND only: a measured tag whose own Top captions
     mention a live niche anchor. Outbound-into-`from` was the megatag magnet (one caption hit × huge plays).
 
-    Network work runs in WAVES of `_scrape_parallel()` tags, ONE CLIENT for the whole pass and one
-    request in flight at a time (`client_lock`), paced by the client's own `delay_range`. The default is
-    a wave of 1: a single account issuing simultaneous private-API calls from clone-clients that share
-    one device fingerprint is what earned the 2026-07-29 lock (MOL-698), and instagrapi is not
-    thread-safe. A pass is therefore ~4× slower in wall time — irrelevant for a background 12h-cadence
-    pass that `try_cap` already bounds. Injected `scrape_client` (tests) also runs single-client.
+    Network work is STRICTLY SEQUENTIAL (MOL-855): one client, one tag at a time, no ThreadPool /
+    Lock / wave batching. Pace with the client's own `delay_range`. Concurrent private-API calls from
+    clone-clients that share one device fingerprint earned the 2026-07-29 lock (MOL-698); instagrapi
+    is not thread-safe.
 
     Layer B runs ONCE, when the pass ENDS (complete or early-stopped) and only when `measured>0`
     (MOL-694). A mid-pass flush is measurement durability alone — deriving on each one recomputed every
@@ -494,8 +490,6 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
     PROGRESS and the STOP SIGNAL are INDEPENDENT (MOL-727): measuring a tag resets the streak, but a
     same-pass throttle / login_required still arms a fresh cooldown from streak 1, so a partial pass
     cannot reopen scrape on the very next tick."""
-    import threading
-    from concurrent.futures import ThreadPoolExecutor
     from fanops.errors import ControlFileError
     from fanops.ig_hashtag_scrape import (ScrapeCheckpoint, ScrapeRefused, ScrapeSessionExpired,
                                           ScrapeThrottled, ScrapeUnavailable, measure_and_harvest_scrape,
@@ -507,7 +501,6 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
         personas = _posting_personas(cfg)
     except ControlFileError as e:                          # corrupt personas.json: ABORT, cache UNTOUCHED
         return {"written": False, "aborted": "corrupt_personas", "reason": str(e)}
-    injected = scrape_client is not None
     if scrape_client is None:
         try:
             scrape_client = open_client(cfg)
@@ -550,15 +543,8 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
     if not anchors:
         get_logger(cfg)("hashtags", "-", "discovery_skip_no_niche", level="info")
         return {"written": False, "aborted": "discovery_skip_no_niche", "reason": "no personas have a declared niche"}
-    corpus_set: set[str] = set()
-    for per in personas:
-        for raw in (getattr(per, "hashtag_corpus", None) or []):
-            t = _norm(raw) if isinstance(raw, str) else ""
-            if t:
-                corpus_set.add(t)
     volume_cutoff = now - timedelta(days=_VOLUME_MAX_AGE_DAYS)
-    corpus_cutoff = now - timedelta(hours=_CORPUS_MAX_AGE_HOURS)
-    weekly_cutoff = now - timedelta(days=_VOLUME_MAX_AGE_DAYS)
+    measure_cutoff = now - timedelta(days=_MEASURE_MAX_AGE_DAYS)
     # Snapshot the tag map AS IT SITS ON DISK before the pass, so zero-progress can prove the file would
     # not change. Snapshotting the WRITE PROJECTION instead hid exactly the mutations that MUST still
     # write: orphan eviction and dead-`from` prune are performed BY that projection, so both sides carried
@@ -574,36 +560,28 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
                 queued.add(t); queue.append(t)
 
     _extend_tier([t for t in cache if _volume_due(cache[t], volume_cutoff)])
-    _extend_tier([t for t in cache if t in corpus_set and _measured_due(cache[t], corpus_cutoff)])
-    _extend_tier([t for t in cache if _measured_due(cache[t], weekly_cutoff)])
+    _extend_tier([t for t in cache if _measured_due(cache[t], measure_cutoff)])
     measured = 0; discovered = 0; throttled = False; ig_throttled = False; tried = 0; cotag_enqueued = 0
     login_dead = False
     unresolved: list[dict] = []
     log = get_logger(cfg)
     try_cap = _scrape_try_cap(); cotag_cap = _scrape_cotag_enqueue_cap()
-    parallel = 1 if injected else _scrape_parallel()
-    workers = [client]
-    client_lock = threading.Lock()                         # ONE client, one in-flight request (MOL-698)
+    parallel = 1                                               # sequential fetch (MOL-855); retained in summary
 
-    def _fetch(tag: str, worker):
+    def _fetch(tag: str):
         """Resolve+measure one tag. Returns (status, tag, hid|None, media_count|None, metrics|None, cotags|exc)."""
-        def _go():
+        try:
             # A cached graph_id skips the hashtag_info call, but VOLUME only ever arrives on that call —
             # so a tag whose id was already known could never acquire a media_count (MOL-691). Spend the
-            # extra resolve when volume is missing or older than its own 7-day stamp, never every pass.
+            # extra resolve when volume is missing or older than its own stamp, never every pass.
             if tag in ids and not _volume_due(cache.get(tag), volume_cutoff):
                 hid, media_count = ids[tag], None
             else:
-                hid, media_count = resolve_hashtag_scrape(worker, tag)
+                hid, media_count = resolve_hashtag_scrape(client, tag)
             if not hid:
                 return ("no_match", tag, None, None, None, {})
-            metrics, cotags = measure_and_harvest_scrape(worker, tag, now=now)
+            metrics, cotags = measure_and_harvest_scrape(client, tag, now=now)
             return ("ok", tag, hid, media_count, metrics, cotags)
-        try:
-            if client_lock is not None:
-                with client_lock:
-                    return _go()
-            return _go()
         except ScrapeThrottled:
             return ("throttle", tag, None, None, None, {})
         except ScrapeRefused as e:
@@ -616,42 +594,32 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
             log("hashtags", "-", "pass_try_cap", tried=tried, queue_left=len(queue) - i,
                 cap=try_cap)
             break
-        batch_n = min(parallel, try_cap - tried, len(queue) - i)
-        batch = queue[i:i + batch_n]
-        i += batch_n
-        tried += batch_n
-        # Run the wave; apply results in QUEUE order so cotag insert priority stays deterministic.
-        ordered: list[tuple] = []
-        with ThreadPoolExecutor(max_workers=max(1, len(batch))) as pool:
-            futs = [pool.submit(_fetch, tag, workers[j % len(workers)]) for j, tag in enumerate(batch)]
-            by_tag = {batch[j]: futs[j] for j in range(len(batch))}
-            for tag in batch:
-                ordered.append(by_tag[tag].result())
+        tag = queue[i]
+        i += 1
+        tried += 1
+        status, tag, hid, media_count, metrics, payload = _fetch(tag)
         stop = False
-        if any(st == "throttle" for st, *_ in ordered):
+        if status == "throttle":
             throttled = True; ig_throttled = True; stop = True
-        for status, tag, hid, media_count, metrics, payload in ordered:
-            if status == "throttle":
-                continue                                   # apply sibling successes in this wave, then stop
-            if status == "no_match":
-                unresolved.append({"tag": tag, "reason": "no_match"}); continue
-            if status == "refused":
-                e = payload
-                msg = (getattr(e, "message", None) or str(e) or "")
-                unresolved.append({"tag": tag, "reason": "refused", "code": getattr(e, "code", None),
-                                   "message": getattr(e, "message", str(e))})
-                log("hashtags", tag, "unresolved", reason="refused",
-                    message=msg[:120], tried=tried)
-                # Session can open/login while hashtag_info still returns login_required (MOL-696).
-                # Abort the pass; the laddered cooldown is armed at the end of the pass (MOL-699).
-                if "login_required" in msg.lower():
-                    # `throttled` means INCOMPLETE PASS (its other writers: Instagram throttle, try_cap).
-                    # A dead session stops the queue mid-way, so the pass must NOT stamp
-                    # last_complete_pass and buy 12h of silence off the few tags it got (MOL-727).
-                    login_dead = True; stop = True; throttled = True
-                    log("hashtags", "-", "pass_login_required", level="error", tried=tried,
-                        detail="Layer A abort — run fanops hashtags scrape-login")
-                continue
+        elif status == "no_match":
+            unresolved.append({"tag": tag, "reason": "no_match"})
+        elif status == "refused":
+            e = payload
+            msg = (getattr(e, "message", None) or str(e) or "")
+            unresolved.append({"tag": tag, "reason": "refused", "code": getattr(e, "code", None),
+                               "message": getattr(e, "message", str(e))})
+            log("hashtags", tag, "unresolved", reason="refused",
+                message=msg[:120], tried=tried)
+            # Session can open/login while hashtag_info still returns login_required (MOL-696).
+            # Abort the pass; the laddered cooldown is armed at the end of the pass (MOL-699).
+            if "login_required" in msg.lower():
+                # `throttled` means INCOMPLETE PASS (its other writers: Instagram throttle, try_cap).
+                # A dead session stops the queue mid-way, so the pass must NOT stamp
+                # last_complete_pass and buy 12h of silence off the few tags it got (MOL-727).
+                login_dead = True; stop = True; throttled = True
+                log("hashtags", "-", "pass_login_required", level="error", tried=tried,
+                    detail="Layer A abort — run fanops hashtags scrape-login")
+        else:
             # status == ok
             ids[tag] = hid
             cotags = payload if isinstance(payload, dict) else {}
@@ -670,47 +638,46 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
                 if co in anchor_set and co != tag:
                     attribution.setdefault(tag, {})
                     attribution[tag][co] = attribution[tag].get(co, 0) + n
-            if not isinstance(metrics, dict) or _metric(metrics) is None:
-                continue
-            prev = cache.get(tag) or {}
-            rec = {"graph_id": hid, "measured_at": stamp}
-            for fk in RECORD_NUM_FIELDS:
-                if fk == "media_count":
-                    continue                                    # volume ages on its own stamp, below
-                fv = _num(metrics.get(fk))
-                if fv is not None:
-                    rec[fk] = fv
-            # An empty / Reel-less Top sample must not ERASE trend evidence a previous pass bought:
-            # Instagram serves a photo-only grid transiently, and that is not proof of no Reels.
-            if "current_top_reel_play_max_7d" not in rec:
-                for fk in ("current_top_reel_play_max_7d", "top_reel_sample_n"):
-                    fv = _num(prev.get(fk))
+            if isinstance(metrics, dict) and _metric(metrics) is not None:
+                prev = cache.get(tag) or {}
+                rec = {"graph_id": hid, "measured_at": stamp}
+                for fk in RECORD_NUM_FIELDS:
+                    if fk == "media_count":
+                        continue                                    # volume ages on its own stamp, below
+                    fv = _num(metrics.get(fk))
                     if fv is not None:
                         rec[fk] = fv
-            vol = _num(media_count)
-            if vol is not None:
-                rec["media_count"] = vol; rec["media_count_at"] = stamp
-            else:                                               # resolve skipped / served nothing: carry
-                pv = _num(prev.get("media_count"))
-                if pv is not None:
-                    rec["media_count"] = pv
-                    rec["media_count_at"] = prev.get("media_count_at") or prev.get("measured_at") or stamp
-            frm = attribution.get(tag)
-            if frm:
-                rec["from"] = {k: int(v) for k, v in frm.items()}
-            cache[tag] = rec; measured += 1
-            if measured % 5 == 0:                                 # mid-pass durable flush — crash loses ≤4 tags
-                mid = _records_for_write(cache, anchor_set=anchor_set,
-                                         cutoff=now - timedelta(days=_MAX_AGE_DAYS))
-                if prev_complete:
-                    mid[_COMPLETE_KEY] = prev_complete
-                cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
-                write_json_atomic(cfg.hashtags_path, mid)        # measurement durability ONLY — no derive here
-            if tried == 1 or tried % 5 == 0 or measured % 5 == 0:
-                log("hashtags", tag, "measured", tried=tried, measured=measured,
-                    queue_left=len(queue) - i, visibility=_metric(rec),
-                    rank_field=next((k for k in ("play_count", "like_count") if k in rec), None),
-                    media_count=rec.get("media_count"), parallel=parallel)
+                # An empty / Reel-less Top sample must not ERASE trend evidence a previous pass bought:
+                # Instagram serves a photo-only grid transiently, and that is not proof of no Reels.
+                if "current_top_reel_play_max_7d" not in rec:
+                    for fk in ("current_top_reel_play_max_7d", "top_reel_sample_n"):
+                        fv = _num(prev.get(fk))
+                        if fv is not None:
+                            rec[fk] = fv
+                vol = _num(media_count)
+                if vol is not None:
+                    rec["media_count"] = vol; rec["media_count_at"] = stamp
+                else:                                               # resolve skipped / served nothing: carry
+                    pv = _num(prev.get("media_count"))
+                    if pv is not None:
+                        rec["media_count"] = pv
+                        rec["media_count_at"] = prev.get("media_count_at") or prev.get("measured_at") or stamp
+                frm = attribution.get(tag)
+                if frm:
+                    rec["from"] = {k: int(v) for k, v in frm.items()}
+                cache[tag] = rec; measured += 1
+                if measured % 5 == 0:                                 # mid-pass durable flush — crash loses ≤4 tags
+                    mid = _records_for_write(cache, anchor_set=anchor_set,
+                                             cutoff=now - timedelta(days=_MAX_AGE_DAYS))
+                    if prev_complete:
+                        mid[_COMPLETE_KEY] = prev_complete
+                    cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
+                    write_json_atomic(cfg.hashtags_path, mid)        # measurement durability ONLY — no derive here
+                if tried == 1 or tried % 5 == 0 or measured % 5 == 0:
+                    log("hashtags", tag, "measured", tried=tried, measured=measured,
+                        queue_left=len(queue) - i, visibility=_metric(rec),
+                        rank_field=next((k for k in ("play_count", "like_count") if k in rec), None),
+                        media_count=rec.get("media_count"), parallel=parallel)
         if stop:
             break
     cooldown = None
