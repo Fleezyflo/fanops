@@ -29,6 +29,7 @@ def test_whisper_retry_reuses_cached_stem_skips_demucs(tmp_path, mocker, monkeyp
     with Ledger.transaction(cfg) as led:
         led = transcribe_source(led, cfg, "src_1")
     assert led.sources["src_1"].state is SourceState.error
+    assert led.sources["src_1"].meta.get("preserve_vocals_on_retry") is True  # MOL-814: stamped at timeout site
     iso.assert_called_once()                                      # first pass ran demucs
     (out_dir / "src_1.mp3").write_bytes(b"STEM")                  # demucs output landed before whisper died
     iso.reset_mock()
@@ -40,6 +41,7 @@ def test_whisper_retry_reuses_cached_stem_skips_demucs(tmp_path, mocker, monkeyp
 
 
 def test_force_reset_whisper_timeout_preserves_stem(tmp_path):
+    # MOL-814: preserve_vocals reads Source.meta["preserve_vocals_on_retry"], not error_reason prose.
     cfg = Config(root=tmp_path)
     path = str(tmp_path / "clip.mp4")
     _catalogued(cfg, sid="s1", path=path)
@@ -55,13 +57,37 @@ def test_force_reset_whisper_timeout_preserves_stem(tmp_path):
     with Ledger.transaction(cfg) as led:
         led.sources["s1"] = led.sources["s1"].model_copy(update={
             "state": SourceState.error,
-            "error_reason": "whisper timed out after 2700s",
-            "meta": {"transcribed": False},
+            "error_reason": "display only — not consulted for stem policy",
+            "meta": {"transcribed": False, "preserve_vocals_on_retry": True},
         })
         assert resume_source(led, "s1", from_stage="catalogued", force=True, cfg=cfg) is True
     assert not cache.exists()
     assert stem_mp3.exists()
     assert (demucs_dir / "vocals.mp3").exists()
+    assert "preserve_vocals_on_retry" not in Ledger.load(cfg).sources["s1"].meta
+
+
+def test_force_reset_prose_alone_does_not_preserve_stem(tmp_path):
+    # MOL-814: old substring sentinel is dead — whisper-looking prose without the meta flag purges stems.
+    cfg = Config(root=tmp_path)
+    path = str(tmp_path / "clip.mp4")
+    _catalogued(cfg, sid="s1", path=path)
+    out = cfg.agent_io / "transcripts"
+    out.mkdir(parents=True, exist_ok=True)
+    stem_mp3 = out / "clip.mp3"
+    stem_mp3.write_bytes(b"stem")
+    demucs_dir = out / "vocals" / "htdemucs" / "clip"
+    demucs_dir.mkdir(parents=True, exist_ok=True)
+    (demucs_dir / "vocals.mp3").write_bytes(b"vocals")
+    with Ledger.transaction(cfg) as led:
+        led.sources["s1"] = led.sources["s1"].model_copy(update={
+            "state": SourceState.error,
+            "error_reason": "whisper timed out after 2700s",
+            "meta": {"transcribed": False},
+        })
+        assert resume_source(led, "s1", from_stage="catalogued", force=True, cfg=cfg) is True
+    assert not stem_mp3.exists()
+    assert not demucs_dir.exists()
 
 
 def test_force_reset_generic_error_still_purges_stem(tmp_path):
@@ -79,6 +105,7 @@ def test_force_reset_generic_error_still_purges_stem(tmp_path):
         led.sources["s1"] = led.sources["s1"].model_copy(update={
             "state": SourceState.error,
             "error_reason": "toolchain missing: whisper (FileNotFoundError)",
+            "meta": {"preserve_vocals_on_retry": False},
         })
         assert resume_source(led, "s1", from_stage="catalogued", force=True, cfg=cfg) is True
     assert not stem_mp3.exists()

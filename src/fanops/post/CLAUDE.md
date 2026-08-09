@@ -55,10 +55,10 @@ tests `tests/test_zernio_idempotency.py`.
   includes `needs_reconcile`, so a candidate parked in `submission_id` would be polled, found live (of course —
   that is *why* Zernio rejected us as a duplicate) and promoted to `published` with **another post's
   permalink**. Never a poll key, never a promotion source, without an explicit operator identity decision.
-- **A 4xx `TerminalFailure` withholds the response body ON PURPOSE.** `error_reason` is substring-scanned by
-  `is_transient_failure_reason` (`"timeout"`, `"network error"`, `\((\d{3})\)`). A 4xx body echoing
-  `"upstream timeout"` would classify a terminal failure as transient and hand it to the daemon re-queue — a
-  loop. Bodies ride only `ReconciliationRequired` reasons, which are never auto-requeued.
+- **A 4xx `TerminalFailure` withholds the response body ON PURPOSE.** Bodies may echo auth headers or
+  vendor dumps that must never land in `error_reason` (display-only prose). Classification is
+  `ErrorKind` at the write site (MOL-781) — never substring-scanned from the reason string. Bodies ride
+  only `ReconciliationRequired` reasons, which are never auto-requeued.
 - **Idempotency does NOT replace the queued-only claim.** The ~5-min window cannot span the 600s daemon
   interval. The header closes the *within-attempt* hole; the claim closes the *cross-pass* hole. Both required.
 
