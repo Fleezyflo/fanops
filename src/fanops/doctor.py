@@ -80,16 +80,18 @@ def _hashtag_scrape_check(cfg: Config, *, open_client=None, probe_resolve=None) 
     """Hashtag Layer A needs a LIVE instagrapi scrape session that can RESOLVE a tag. Missing setup
     stays soft-ok (refresh still aborts); a session file that fails login OR whose hashtag_info
     returns login_required fails LOUD (MOL-687 / MOL-696). Never echoes password or session contents.
+    Multi-account (MOL-857): soft-ok when no listed user has a session yet; probe via open_client
+    (first usable user) when any session exists.
     `open_client` / `probe_resolve` are injectable so tests never hit Instagram."""
     from fanops.ig_hashtag_scrape import (ScrapeCheckpoint, ScrapeRefused, ScrapeThrottled,
-                                         ScrapeUnavailable, scrape_configured)
+                                         ScrapeUnavailable, any_scrape_session, scrape_configured)
     lbl = "hashtag Layer A scrape session live (instagrapi)"
     if not scrape_configured(cfg):
         return {"label": lbl, "ok": True,
                 "hint": "not configured — set FANOPS_IG_SCRAPE_USER (+ password or session), "
                         "install [igscrape], then `fanops hashtags scrape-login`"}
     # Password alone is setup-in-progress; the expiry bug is a SESSION that LOOKS fine but is dead.
-    if not cfg.ig_scrape_session_path.exists():
+    if not any_scrape_session(cfg):
         return {"label": lbl, "ok": True,
                 "hint": "credentials set but no session file — run `fanops hashtags scrape-login`"}
     try:

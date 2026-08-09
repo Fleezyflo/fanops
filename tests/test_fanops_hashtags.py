@@ -184,8 +184,10 @@ def test_scrape_checkpoint_classification(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
     monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "secret-must-not-leak")
     cfg = Config(root=tmp_path)
-    cfg.ig_scrape_session_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg.ig_scrape_session_path.write_text("{}")                 # probe path, not login()
+    from fanops.ig_hashtag_scrape import scrape_session_path
+    _sess = scrape_session_path(cfg, "u")
+    _sess.parent.mkdir(parents=True, exist_ok=True)
+    _sess.write_text("{}")                 # probe path, not login()
     class _Locked:
         def load_settings(self, _p): pass
         def account_info(self): raise ChallengeRequired("challenge_required")
@@ -551,6 +553,24 @@ def test_partial_progress_then_login_required_still_arms_a_cooldown(tmp_path, mo
     assert cd["until"] == (t0 + timedelta(seconds=_COOLDOWN_DELAYS_S[0])).isoformat()
 
 
+
+def test_scrape_login_loops_comma_users(tmp_path, monkeypatch):
+    """MOL-857: scrape-login walks every FANOPS_IG_SCRAPE_USER with allow_reauth=True."""
+    import fanops.ig_hashtag_scrape as igs
+    from fanops.fanops_hashtags import cmd_hashtags_scrape_login
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "a,b")
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
+    cfg = Config(root=tmp_path)
+    seen = []
+    def fake_open(_cfg, *, allow_reauth=False, user=None, **_k):
+        assert allow_reauth is True
+        seen.append(user)
+        return object()
+    monkeypatch.setattr(igs, "open_client", fake_open)
+    assert cmd_hashtags_scrape_login(cfg) == 0
+    assert seen == ["a", "b"]
+
+
 def test_scrape_login_ignores_and_clears_an_active_freeze(tmp_path, monkeypatch):
     """The operator escape hatch: scrape-login is an explicit human act AFTER an unlock, so it must run
     with a freeze armed and clear it on success — otherwise a fixed account stays frozen for 12h."""
@@ -582,8 +602,10 @@ def test_open_client_stale_session_refuses_without_login(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
     monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
     cfg = Config(root=tmp_path)
-    cfg.ig_scrape_session_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg.ig_scrape_session_path.write_text("{}")
+    from fanops.ig_hashtag_scrape import scrape_session_path
+    _sess = scrape_session_path(cfg, "u")
+    _sess.parent.mkdir(parents=True, exist_ok=True)
+    _sess.write_text("{}")
     seen = {"login": 0}
     class LoginRequired(Exception): pass
     class _Stale:
@@ -603,21 +625,23 @@ def test_open_client_stale_session_refuses_without_login(tmp_path, monkeypatch):
 
 
 def test_open_client_default_path_never_reads_password(tmp_path, monkeypatch):
-    """Default path must not touch ig_scrape_password — even when a stale session probes LoginRequired."""
-    from fanops.ig_hashtag_scrape import ScrapeUnavailable, open_client
+    """Default path must not touch scrape password — even when a stale session probes LoginRequired."""
+    import fanops.ig_hashtag_scrape as igs
+    from fanops.ig_hashtag_scrape import ScrapeUnavailable, open_client, scrape_session_path
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
     cfg = Config(root=tmp_path)
-    cfg.ig_scrape_session_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg.ig_scrape_session_path.write_text("{}")
+    _sess = scrape_session_path(cfg, "u")
+    _sess.parent.mkdir(parents=True, exist_ok=True)
+    _sess.write_text("{}")
     class LoginRequired(Exception): pass
     class _Stale:
         def load_settings(self, _p): pass
         def account_info(self): raise LoginRequired("login_required")
         def login(self, *_a, **_k): raise AssertionError("login must not run")
         def dump_settings(self, _p): pass
-    def _boom(_self):
-        raise AssertionError("default path must not read ig_scrape_password")
-    monkeypatch.setattr(Config, "ig_scrape_password", property(_boom))
+    def _boom(_user):
+        raise AssertionError("default path must not read scrape password")
+    monkeypatch.setattr(igs, "scrape_password_for", _boom)
     try:
         open_client(cfg, client_factory=_Stale)
         raise AssertionError("expected ScrapeUnavailable")
@@ -631,8 +655,10 @@ def test_open_client_allow_reauth_calls_login_relogin_once(tmp_path, monkeypatch
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
     monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
     cfg = Config(root=tmp_path)
-    cfg.ig_scrape_session_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg.ig_scrape_session_path.write_text("{}")
+    from fanops.ig_hashtag_scrape import scrape_session_path
+    _sess = scrape_session_path(cfg, "u")
+    _sess.parent.mkdir(parents=True, exist_ok=True)
+    _sess.write_text("{}")
     seen = []
     class LoginRequired(Exception): pass
     class _Stale:
@@ -652,8 +678,10 @@ def test_open_client_valid_session_skips_login_on_both_paths(tmp_path, monkeypat
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
     monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
     cfg = Config(root=tmp_path)
-    cfg.ig_scrape_session_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg.ig_scrape_session_path.write_text("{}")
+    from fanops.ig_hashtag_scrape import scrape_session_path
+    _sess = scrape_session_path(cfg, "u")
+    _sess.parent.mkdir(parents=True, exist_ok=True)
+    _sess.write_text("{}")
     for allow in (False, True):
         seen = {"login": 0}
         class _Ok:
@@ -671,7 +699,8 @@ def test_open_client_missing_session_refuses_on_default_path(tmp_path, monkeypat
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
     monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
     cfg = Config(root=tmp_path)
-    assert not cfg.ig_scrape_session_path.exists()
+    from fanops.ig_hashtag_scrape import scrape_session_path as _ssp
+    assert not _ssp(cfg, "u").exists()
     seen = {"login": 0}
     class _Cold:
         def load_settings(self, _p): pass
@@ -1128,8 +1157,10 @@ def test_open_client_sets_delay_range_on_the_client(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
     monkeypatch.delenv("FANOPS_HASHTAG_SCRAPE_DELAY", raising=False)
     cfg = Config(root=tmp_path)
-    cfg.ig_scrape_session_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg.ig_scrape_session_path.write_text("{}")
+    from fanops.ig_hashtag_scrape import scrape_session_path
+    _sess = scrape_session_path(cfg, "u")
+    _sess.parent.mkdir(parents=True, exist_ok=True)
+    _sess.write_text("{}")
     seen = {}
     class _Fake:
         def load_settings(self, _p): pass

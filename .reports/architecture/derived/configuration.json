@@ -125,9 +125,10 @@
     },
     "FANOPS_IG_SCRAPE_PASSWORD": {
       "read_at": [
-        "fanops.config:464"
+        "fanops.config:464",
+        "fanops.ig_hashtag_scrape:104"
       ],
-      "reader_count": 1
+      "reader_count": 2
     },
     "FANOPS_IG_SCRAPE_USER": {
       "read_at": [
