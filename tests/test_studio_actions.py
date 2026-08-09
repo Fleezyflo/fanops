@@ -257,21 +257,28 @@ def test_edit_caption_clean_still_persists(tmp_path):
     assert Ledger.load(cfg).posts["p_edit"].caption == "raw energy, all gas no brakes"
 
 def test_snooze_pushes_all_clip_posts_far_out(tmp_path):
+    # MOL-870: same-account multi-platform must get DISTINCT times (not one shared z) with gaps ≥
+    # cadence floor (30m default). Second editable post shares account "a" so the batch spread applies.
+    from fanops.studio.actions import SNOOZE_DAYS
+    from fanops.timeutil import parse_iso
     cfg = Config(root=tmp_path); led = _seed(cfg)
-    led.add_post(Post(id="p2", parent_id="clip_1", account="b", account_id="2",
-                      platform=Platform.youtube, caption="y", state=PostState.queued,
+    led.add_post(Post(id="p2", parent_id="clip_1", account="a", account_id="1",
+                      platform=Platform.tiktok, caption="y", state=PostState.queued,
                       scheduled_time=_z(NOW + timedelta(hours=4))))
     # one imminent post on the same clip should be left alone
     led.add_post(Post(id="p_imm", parent_id="clip_1", account="c", account_id="3",
-                      platform=Platform.tiktok, caption="t", state=PostState.queued,
+                      platform=Platform.youtube, caption="t", state=PostState.queued,
                       scheduled_time=_z(NOW + timedelta(minutes=2))))
     led.save()
     res = snooze_clip(cfg, "clip_1", now=NOW)
     assert res.ok is True and res.detail["count"] == 2   # p_edit + p2 (not p_imm)
     out = Ledger.load(cfg)
-    from fanops.timeutil import parse_iso
-    assert parse_iso(out.posts["p_edit"].scheduled_time) >= NOW + timedelta(days=364)
-    assert parse_iso(out.posts["p2"].scheduled_time) >= NOW + timedelta(days=364)
+    horizon = NOW + timedelta(days=SNOOZE_DAYS)
+    t_edit, t2 = parse_iso(out.posts["p_edit"].scheduled_time), parse_iso(out.posts["p2"].scheduled_time)
+    assert t_edit != t2
+    assert t_edit >= horizon and t2 >= horizon
+    assert t_edit <= horizon + timedelta(hours=2) and t2 <= horizon + timedelta(hours=2)  # ≈ snooze horizon
+    assert abs((t_edit - t2).total_seconds()) / 60.0 >= 30   # cadence floor
     assert out.posts["p_imm"].scheduled_time == _z(NOW + timedelta(minutes=2))   # untouched
 
 # ---- M5.1: release a brand-risk-held clip back into the caption gate (UI twin of `fanops unhold`) ----

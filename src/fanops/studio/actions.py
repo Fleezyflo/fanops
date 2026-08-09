@@ -535,23 +535,25 @@ def answer_gate(cfg: Config, kind: str, key: str, data: dict) -> ActionResult:
 
 def snooze_clip(cfg: Config, clip_id: str, *, now: Optional[datetime] = None) -> ActionResult:
     """Push every non-imminent queued post of a clip ~SNOOZE_DAYS into the future, in ONE
-    transaction (atomic — never a partial snooze). Computes the snooze time directly (iso_z) and
-    applies an inline per-post imminence + state check — it does not use _guard_editable_post/_normalize_z
-    (it operates over many posts of a clip, not one editable post)."""
+    transaction (atomic — never a partial snooze). Spreads via suggest_times_for_batch (lead base =
+    now+SNOOZE_DAYS) so same-account multi-platform posts don't lockstep. Inline imminence + state
+    check — does not use _guard_editable_post/_normalize_z (many posts of a clip, not one)."""
+    from fanops.studio.views_common import suggest_times_for_batch
     now = _now(now)
-    z = iso_z(now + timedelta(days=SNOOZE_DAYS))
+    horizon = now + timedelta(days=SNOOZE_DAYS)
     with Ledger.transaction(cfg) as led:
         if clip_id not in led.clips:
             return ActionResult(ok=False, error=f"no such clip: {clip_id}")
-        count = 0
-        for p in led.posts.values():
-            # bump both approved (queued) and pre-approval (awaiting_approval) posts — Review shows the
-            # latter, so a Review-card snooze must actually move something (not a silent 0-count no-op).
-            if (p.parent_id == clip_id and p.state in (PostState.queued, PostState.awaiting_approval)
-                    and not _imminent(p.scheduled_time, now)):
-                p.scheduled_time = z
-                count += 1
-    return ActionResult(ok=True, detail={"clip_id": clip_id, "count": count, "scheduled_time": z})
+        # bump both approved (queued) and pre-approval (awaiting_approval) posts — Review shows the
+        # latter, so a Review-card snooze must actually move something (not a silent 0-count no-op).
+        posts = [p for p in led.posts.values()
+                 if p.parent_id == clip_id and p.state in (PostState.queued, PostState.awaiting_approval)
+                 and not _imminent(p.scheduled_time, now)]
+        sched = suggest_times_for_batch(cfg, posts, now=horizon)
+        for p in posts:
+            p.scheduled_time = sched[p.id]
+    z = min(sched.values()) if sched else iso_z(horizon)   # UI banner (_result.html) still wants one time
+    return ActionResult(ok=True, detail={"clip_id": clip_id, "count": len(posts), "scheduled_time": z})
 
 
 def repost_post(cfg: Config, post_id: str) -> ActionResult:
