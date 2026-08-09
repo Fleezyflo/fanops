@@ -36,10 +36,10 @@
   {% set buckets = {'editable':'Awaiting approval','prepared':'Ready to prepare','held':'Held for review','recent':'Recently shipped'} %}
   {% for key, label in buckets.items() %}
     {% set group = cards | selectattr('bucket','equalto',key) | list %}
-    {% if group %}
-      {# T2.7: the header counts the FULL scoped bucket (bucket_totals, pre-pagination), not the page slice —
-         it used to read "(24)" beside a progress line saying 301. The slice is named only when it differs. #}
-      {% set bucket_total = bucket_totals[key] %}
+    {# T2.7 + MOL-835: gate on the PRE-pagination total, not the page slice — a bucket with cards only on
+       page 2 used to vanish from page 1 entirely (operator couldn't tell "none" from "elsewhere"). #}
+    {% set bucket_total = bucket_totals[key] %}
+    {% if bucket_total %}
       <h3>{{ label }} ({{ bucket_total }}){% if group|length != bucket_total %} <span class="muted">· showing {{ group|length }}</span>{% endif %}</h3>
       {% if key == 'editable' %}
         <p class="meta review-hint">Use the action bar at the bottom — tick surfaces, or approve by moment / account / batch.</p>
