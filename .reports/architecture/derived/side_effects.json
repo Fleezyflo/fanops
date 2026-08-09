@@ -381,11 +381,11 @@
     "fanops.fanops_hashtags": [
       {
         "call": "fcntl.flock",
-        "line": 371
+        "line": 369
       },
       {
         "call": "fcntl.flock",
-        "line": 377
+        "line": 375
       }
     ],
     "fanops.ledger": [
