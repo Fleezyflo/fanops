@@ -343,8 +343,10 @@ def test_checkpoint_freezes_layer_a_and_stops_reopening_scrape(tmp_path, monkeyp
     assert out["refreshed"] is False and out["aborted"] == "checkpoint"
     assert opens["n"] == 1
     cd = json.loads(_cooldown_path(cfg).read_text())
-    assert cd["reason"] == "checkpoint"
-    assert cd["until"] == (t0 + timedelta(seconds=_CHECKPOINT_DELAY_S)).isoformat()
+    # MOL-858: freeze nests under accounts[user]; legacy top-level only when no user.
+    rec = (cd.get("accounts") or {}).get("u") or cd
+    assert rec["reason"] == "checkpoint"
+    assert rec["until"] == (t0 + timedelta(seconds=_CHECKPOINT_DELAY_S)).isoformat()
     # Every tick inside the freeze must skip WITHOUT touching Instagram — the whole point.
     for mins in (1, 60, 600):
         skip = refresh_store_if_due(cfg, max_age_s=1, now=t0 + timedelta(minutes=mins))
@@ -393,9 +395,10 @@ def test_expired_session_at_open_arms_the_login_cooldown(tmp_path, monkeypatch):
     out = refresh_store_if_due(cfg, max_age_s=1, now=t0)
     assert out["refreshed"] is False and out["aborted"] == "login_required"   # not `no_scrape`
     cd = json.loads(_cooldown_path(cfg).read_text())
-    assert cd["reason"] == "login_required" and cd["streak"] == 1
-    assert cd["until"] == (t0 + timedelta(seconds=_COOLDOWN_DELAYS_S[0])).isoformat()
-    assert out["cooldown_until"] == cd["until"] and out["cooldown_streak"] == 1
+    rec = (cd.get("accounts") or {}).get("u") or cd
+    assert rec["reason"] == "login_required" and rec["streak"] == 1
+    assert rec["until"] == (t0 + timedelta(seconds=_COOLDOWN_DELAYS_S[0])).isoformat()
+    assert out["cooldown_until"] == rec["until"] and out["cooldown_streak"] == 1
     for mins in (1, 20, 29):                               # inside the floor: no client opened at all
         skip = refresh_store_if_due(cfg, max_age_s=1, now=t0 + timedelta(minutes=mins))
         assert skip["refreshed"] is False and skip["reason"] == "cooldown"
@@ -405,7 +408,8 @@ def test_expired_session_at_open_arms_the_login_cooldown(tmp_path, monkeypatch):
     # The ladder still decays: the next pass after the floor deepens the streak (never a flat retry).
     refresh_store_if_due(cfg, max_age_s=1, now=t0 + timedelta(minutes=31))
     cd2 = json.loads(_cooldown_path(cfg).read_text())
-    assert cd2["streak"] == 2 and opens["n"] == 2
+    rec2 = (cd2.get("accounts") or {}).get("u") or cd2
+    assert rec2["streak"] == 2 and opens["n"] == 2
 
 
 def _log_recs(cfg, outcome=None):
@@ -1251,3 +1255,129 @@ def test_refresh_store_early_aborts_on_login_required(tmp_path, monkeypatch):
     assert out["tried"] == 1, f"must abort after first refusal, tried={out['tried']}"
     assert not cfg.hashtags_path.exists()
     assert len(client.info_calls) == 1
+
+
+def test_per_account_freeze_rotates_via_open_client(tmp_path, monkeypatch):
+    """MOL-858: open_client skips a frozen peer and opens the next session-bearing account."""
+    from datetime import datetime, timezone
+    from fanops.ig_hashtag_scrape import open_client, scrape_session_path
+    from fanops.fanops_hashtags import _persist_cooldown, _read_active_cooldown
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "dead,live")
+    cfg = Config(root=tmp_path)
+    t0 = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
+    for u in ("dead", "live"):
+        sess = scrape_session_path(cfg, u)
+        sess.parent.mkdir(parents=True, exist_ok=True)
+        sess.write_text("{}")
+    _persist_cooldown(cfg, t0, reason="login_required", user="dead")
+    seen = []
+    class _Ok:
+        def load_settings(self, p): seen.append(p)
+        def account_info(self): pass
+        def login(self, *_a, **_k): raise AssertionError("must not login")
+        def dump_settings(self, _p): pass
+    c = open_client(cfg, client_factory=_Ok, now=t0)
+    assert str(scrape_session_path(cfg, "live")) in seen[0]
+    assert getattr(c, "_fanops_scrape_user", None) == "live"
+    assert _read_active_cooldown(cfg, t0) is None   # live peer keeps the tick open
+
+
+def test_all_peers_frozen_skips_refresh(tmp_path, monkeypatch):
+    """MOL-858: skip with cooldown only when every scrape peer is frozen/budgeted."""
+    from datetime import datetime, timezone, timedelta
+    from fanops.ig_hashtag_scrape import scrape_session_path
+    from fanops.fanops_hashtags import (refresh_store_if_due, _cooldown_path, _SCRAPE_DAY_BUDGET)
+    from fanops.controlio import write_json_atomic
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "a,b")
+    cfg = Config(root=tmp_path); _persona(cfg)
+    t0 = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
+    cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.hashtags_path.write_text(json.dumps({
+        "last_complete_pass": (t0 - timedelta(hours=13)).isoformat()}))
+    for u in ("a", "b"):
+        sess = scrape_session_path(cfg, u)
+        sess.parent.mkdir(parents=True, exist_ok=True)
+        sess.write_text("{}")
+    write_json_atomic(_cooldown_path(cfg), {
+        "accounts": {
+            "a": {"until": (t0 + timedelta(hours=1)).isoformat(), "streak": 1,
+                  "reason": "throttle", "day": "2026-07-01", "used": 1},
+            "b": {"day": "2026-07-01", "used": _SCRAPE_DAY_BUDGET},
+        }})
+    nxt = _FakeClient({"#hiphop": 50})
+    skip = refresh_store_if_due(cfg, max_age_s=1, scrape_client=nxt, now=t0)
+    assert skip["refreshed"] is False and skip["reason"] == "cooldown"
+    assert skip.get("cooldown_reason") in ("throttle", "budget")
+    assert nxt.info_calls == [] and nxt.media_calls == []
+
+
+def test_scrape_login_clears_only_that_user_freeze(tmp_path, monkeypatch):
+    """MOL-858: scrape-login success clears THAT user's freeze; peer freeze remains."""
+    from datetime import datetime, timezone
+    import fanops.ig_hashtag_scrape as igs
+    from fanops.fanops_hashtags import (cmd_hashtags_scrape_login, _cooldown_path, _persist_cooldown)
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "a,b")
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
+    cfg = Config(root=tmp_path)
+    t0 = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
+    _persist_cooldown(cfg, t0, reason="checkpoint", delay_s=12 * 3600, user="a")
+    _persist_cooldown(cfg, t0, reason="throttle", user="b")
+    def fake_open(_cfg, *, allow_reauth=False, user=None, **_k):
+        assert allow_reauth is True
+        if user == "a":
+            return object()
+        raise igs.ScrapeUnavailable("skip b")
+    monkeypatch.setattr(igs, "open_client", fake_open)
+    assert cmd_hashtags_scrape_login(cfg) == 0
+    blob = json.loads(_cooldown_path(cfg).read_text())
+    assert "until" not in blob.get("accounts", {}).get("a", {})
+    assert "until" in blob["accounts"]["b"] and blob["accounts"]["b"]["reason"] == "throttle"
+
+
+def test_per_account_throttle_persists_under_accounts_user(tmp_path, monkeypatch):
+    """MOL-858: in-pass throttle arms accounts[user] (not a global top-level until) when user is known."""
+    from datetime import datetime, timezone, timedelta
+    import fanops.ig_hashtag_scrape as igs
+    from fanops.ig_hashtag_scrape import ScrapeThrottled, scrape_session_path
+    from fanops.fanops_hashtags import refresh_store, _cooldown_path, _COOLDOWN_DELAYS_S
+    from hashtag_scrape_fakes import _Media
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u1")
+    cfg = Config(root=tmp_path); _persona(cfg)
+    t0 = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
+    sess = scrape_session_path(cfg, "u1")
+    sess.parent.mkdir(parents=True, exist_ok=True)
+    sess.write_text("{}")
+    # Prior streak=2 with expired until so u1 is still pickable (not actively frozen).
+    from fanops.controlio import write_json_atomic
+    write_json_atomic(_cooldown_path(cfg), {"accounts": {"u1": {
+        "streak": 2, "until": (t0 - timedelta(hours=1)).isoformat(),
+        "reason": "throttle", "day": "2026-07-01", "used": 0}}})
+    class _Partial:
+        def __init__(self):
+            self.media_calls = []
+        def load_settings(self, _p): pass
+        def account_info(self): pass
+        def login(self, *_a, **_k): raise AssertionError("no login")
+        def dump_settings(self, _p): pass
+        def hashtag_info(self, name):
+            class _Info: id = f"id-{name}"; media_count = 10
+            return _Info()
+        def hashtag_medias_top(self, name, amount=9):
+            self.media_calls.append(name)
+            if len(self.media_calls) == 1:
+                return [_Media(play_count=50, caption_text="#alpha")]
+            raise ScrapeThrottled("please_wait")
+    def fake_open(cfg, *, client_factory=None, allow_reauth=False, user=None, **_k):
+        assert user == "u1"
+        c = _Partial()
+        c._fanops_scrape_user = "u1"
+        return c
+    monkeypatch.setattr(igs, "open_client", fake_open)
+    out = refresh_store(cfg, now=t0)
+    assert out["measured"] == 1 and out["throttled"] is True and out["written"] is True
+    cd = json.loads(_cooldown_path(cfg).read_text())
+    assert "until" not in cd                                  # no global top-level freeze
+    rec = cd["accounts"]["u1"]
+    assert rec["reason"] == "throttle" and rec["streak"] == 3  # no sawtooth clear
+    assert rec["until"] == (t0 + timedelta(seconds=_COOLDOWN_DELAYS_S[2])).isoformat()
+    assert rec["day"] == "2026-07-01" and rec["used"] >= 1

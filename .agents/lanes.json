@@ -53,7 +53,7 @@
     },
     "ci": {
       "branch_prefixes": ["ci/"],
-      "tickets": ["MOL-836", "MOL-854"],
+      "tickets": ["MOL-836", "MOL-854", "MOL-858"],
       "owns_note": "CI / infra / tooling. No src/fanops hot files, so it is compatible with any source lane running in parallel.",
       "linear": {
         "labels": [],

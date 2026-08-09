@@ -81,6 +81,10 @@
       "fanops.track"
     ],
     [
+      "fanops.fanops_hashtags",
+      "fanops.ig_hashtag_scrape"
+    ],
+    [
       "fanops.pipeline",
       "fanops.pipeline_status"
     ],
@@ -683,6 +687,7 @@
         "fanops.hashtags"
       ],
       "lazy": [
+        "fanops.fanops_hashtags",
         "fanops.secret_provider"
       ],
       "optional": [],
@@ -2575,6 +2580,14 @@
       "to_level": 1
     },
     {
+      "from": "fanops.ig_hashtag_scrape",
+      "from_level": 3,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.fanops_hashtags",
+      "to_level": 3
+    },
+    {
       "from": "fanops.keyframes",
       "from_level": 1,
       "jump": 0,
@@ -3643,13 +3656,13 @@
     "G1_sccs_total": 136,
     "G1c_levels": 11,
     "G2_largest_scc_size": 55,
-    "G2_module_sccs_total": 67,
-    "G2_non_trivial_sccs": 7,
+    "G2_module_sccs_total": 66,
+    "G2_non_trivial_sccs": 8,
     "compile_edges_G1": 574,
-    "lazy_edges": 348,
-    "lazy_edges_lateral": 45,
+    "lazy_edges": 349,
+    "lazy_edges_lateral": 46,
     "lazy_edges_strictly_upward": 70,
-    "lazy_edges_to_equal_or_higher_level": 115,
+    "lazy_edges_to_equal_or_higher_level": 116,
     "modules": 136,
     "optional_edges": 0,
     "typing_only_edges": 7
