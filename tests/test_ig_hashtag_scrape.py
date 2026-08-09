@@ -16,9 +16,79 @@ def test_scrape_configured_needs_user_and_session_or_password(tmp_path, monkeypa
     monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
     assert scrape_configured(cfg) is True
     monkeypatch.delenv("FANOPS_IG_SCRAPE_PASSWORD", raising=False)
-    cfg.ig_scrape_session_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg.ig_scrape_session_path.write_text("{}")
+    from fanops.ig_hashtag_scrape import scrape_session_path
+    _sess = scrape_session_path(cfg, "u")
+    _sess.parent.mkdir(parents=True, exist_ok=True)
+    _sess.write_text("{}")
     assert scrape_configured(cfg) is True
+
+
+
+def test_scrape_configured_any_of_comma_users(tmp_path, monkeypatch):
+    """MOL-857: configured when ANY listed user has session or password."""
+    from fanops.ig_hashtag_scrape import scrape_session_path
+    monkeypatch.delenv("FANOPS_IG_SCRAPE_PASSWORD", raising=False)
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "a,b,perca.late")
+    cfg = Config(root=tmp_path)
+    assert scrape_configured(cfg) is False
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD_B", "secret-b")
+    assert scrape_configured(cfg) is True
+    monkeypatch.delenv("FANOPS_IG_SCRAPE_PASSWORD_B", raising=False)
+    legacy = cfg.control / "ig_scrape_session.json"
+    legacy.parent.mkdir(parents=True, exist_ok=True)
+    legacy.write_text("{}")
+    assert scrape_configured(cfg) is True   # legacy session → perca.late
+    assert scrape_session_path(cfg, "perca.late") == legacy
+
+
+def test_open_client_picks_first_usable_user(tmp_path, monkeypatch):
+    """MOL-857: preference order in FANOPS_IG_SCRAPE_USER; first with session|password wins."""
+    from fanops.ig_hashtag_scrape import open_client, scrape_session_path
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "dead,live,other")
+    monkeypatch.delenv("FANOPS_IG_SCRAPE_PASSWORD", raising=False)
+    cfg = Config(root=tmp_path)
+    sess = scrape_session_path(cfg, "live")
+    sess.parent.mkdir(parents=True, exist_ok=True)
+    sess.write_text("{}")
+    seen = []
+    class _Ok:
+        def load_settings(self, p): seen.append(p)
+        def account_info(self): pass
+        def login(self, *_a, **_k): raise AssertionError("valid session must not login")
+        def dump_settings(self, p): seen.append(("dump", p))
+    open_client(cfg, client_factory=_Ok)
+    assert str(sess) in seen[0]
+    assert seen[1] == ("dump", str(cfg.control / "ig_scrape_session_live.json"))
+
+
+
+def test_open_client_unattended_prefers_session_over_earlier_password(tmp_path, monkeypatch):
+    """Unattended open_client must not stall on a password-only earlier user when a later session exists."""
+    from fanops.ig_hashtag_scrape import open_client, scrape_session_path
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "pwonly,sessuser")
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD_PWONLY", "x")
+    monkeypatch.delenv("FANOPS_IG_SCRAPE_PASSWORD", raising=False)
+    cfg = Config(root=tmp_path)
+    sess = scrape_session_path(cfg, "sessuser")
+    sess.parent.mkdir(parents=True, exist_ok=True)
+    sess.write_text("{}")
+    seen = []
+    class _Ok:
+        def load_settings(self, p): seen.append(p)
+        def account_info(self): pass
+        def login(self, *_a, **_k): raise AssertionError("must not login")
+        def dump_settings(self, _p): pass
+    open_client(cfg, client_factory=_Ok)
+    assert str(sess) in seen[0]
+
+
+def test_scrape_password_for_prefers_per_user_env(monkeypatch):
+    from fanops.ig_hashtag_scrape import scrape_password_for
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "shared")
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD_PERCA_LATE", "specific")
+    assert scrape_password_for("perca.late") == "specific"
+    monkeypatch.delenv("FANOPS_IG_SCRAPE_PASSWORD_PERCA_LATE", raising=False)
+    assert scrape_password_for("perca.late") == "shared"
 
 
 def test_resolve_hashtag_scrape_returns_id(tmp_path):

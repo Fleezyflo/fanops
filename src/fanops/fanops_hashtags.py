@@ -807,20 +807,35 @@ def cmd_hashtags_scrape_login(cfg: Config) -> int:
 
     Sole `allow_reauth=True` call site: the unattended tick validates a restored session via
     `account_info()` and NEVER calls `login()` (a full password re-auth on a stale session earned the
-    2026-07-29T22:01Z native checkpoint). Only this verb may re-authenticate."""
-    from fanops.ig_hashtag_scrape import ScrapeCheckpoint, ScrapeUnavailable, open_client
-    try:
-        open_client(cfg, allow_reauth=True)
-    except ScrapeCheckpoint as e:                          # a lock: retrying the login only deepens it
-        get_logger(cfg)("hashtags", "-", "scrape_login_checkpoint", level="error", reason=str(e)[:200])
+    2026-07-29T22:01Z native checkpoint). Only this verb may re-authenticate.
+
+    Multi-account (MOL-857): loop every FANOPS_IG_SCRAPE_USER, dump each session. Clears the global
+    cooldown on any success (per-user freeze lands in MOL-858)."""
+    from fanops.ig_hashtag_scrape import (ScrapeCheckpoint, ScrapeUnavailable, open_client,
+                                          scrape_session_path, scrape_users)
+    users = scrape_users(cfg)
+    if not users:
+        get_logger(cfg)("hashtags", "-", "scrape_login_failed", level="error",
+                        reason="FANOPS_IG_SCRAPE_USER unset")
         return 2
-    except ScrapeUnavailable as e:
-        get_logger(cfg)("hashtags", "-", "scrape_login_failed", level="error", reason=str(e)[:160])
-        return 2
-    _clear_cooldown(cfg)
-    get_logger(cfg)("hashtags", "-", "scrape_login_ok", user=(cfg.ig_scrape_user or "")[:40],
-                    session=str(cfg.ig_scrape_session_path), cooldown="cleared")
-    return 0
+    ok_n = 0
+    for user in users:
+        try:
+            open_client(cfg, allow_reauth=True, user=user)
+        except ScrapeCheckpoint as e:                      # a lock: retrying the login only deepens it
+            get_logger(cfg)("hashtags", "-", "scrape_login_checkpoint", level="error",
+                            user=user[:40], reason=str(e)[:200])
+            continue
+        except ScrapeUnavailable as e:
+            get_logger(cfg)("hashtags", "-", "scrape_login_failed", level="error",
+                            user=user[:40], reason=str(e)[:160])
+            continue
+        # MOL-858: clear per-user cooldown when freeze is split; today cooldown is still global.
+        _clear_cooldown(cfg)
+        ok_n += 1
+        get_logger(cfg)("hashtags", "-", "scrape_login_ok", user=user[:40],
+                        session=str(scrape_session_path(cfg, user)), cooldown="cleared")
+    return 0 if ok_n else 2
 
 
 def cmd_hashtags_discover(cfg: Config) -> int:

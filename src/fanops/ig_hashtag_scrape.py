@@ -68,13 +68,61 @@ class ScrapeRefused(Exception):
         super().__init__(self.message)
 
 
+_LEGACY_SESSION_USER = "perca.late"  # sole owner of control/ig_scrape_session.json (MOL-857)
+
+
+def scrape_users(cfg: Config) -> list[str]:
+    """Parse FANOPS_IG_SCRAPE_USER — comma-separated preference order (MOL-857). Empty when unset."""
+    raw = (cfg.ig_scrape_user or "").strip()
+    if not raw:
+        return []
+    return [p.strip() for p in raw.split(",") if p.strip()]
+
+
+def scrape_session_path(cfg: Config, user: str):
+    """Per-user session under cfg.control. Legacy ig_scrape_session.json maps to perca.late only."""
+    named = cfg.control / f"ig_scrape_session_{user}.json"
+    if user != _LEGACY_SESSION_USER:
+        return named
+    return named if named.exists() else (cfg.control / "ig_scrape_session.json")
+
+
+def _scrape_password_env_key(user: str) -> str:
+    """Sanitize username → FANOPS_IG_SCRAPE_PASSWORD_<KEY> (uppercase; non-alnum → _)."""
+    key = "".join(c if c.isalnum() else "_" for c in user.upper())
+    return f"FANOPS_IG_SCRAPE_PASSWORD_{key}"
+
+
+def scrape_password_for(user: str) -> str | None:
+    """Per-user password env, then shared FANOPS_IG_SCRAPE_PASSWORD. Never logged.
+
+    Per-user lookup uses `os.environ` membership + subscript (not `os.getenv(computed)`): the arch
+    extractor treats a non-literal getenv key as UNKNOWN_IMPACT (MOL-857). Same secret resolution.
+    """
+    from fanops.secret_provider import resolve_secret
+    specific_key = _scrape_password_env_key(user)
+    raw = os.environ[specific_key] if specific_key in os.environ else None
+    specific = resolve_secret(specific_key, raw.strip() if raw and raw.strip() else None)
+    if specific:
+        return specific
+    shared = os.getenv("FANOPS_IG_SCRAPE_PASSWORD")
+    return resolve_secret("FANOPS_IG_SCRAPE_PASSWORD",
+                          shared.strip() if shared and shared.strip() else None)
+
+
+def scrape_user_usable(cfg: Config, user: str) -> bool:
+    """True when this user has a session file or a resolvable password."""
+    return scrape_session_path(cfg, user).exists() or bool(scrape_password_for(user))
+
+
+def any_scrape_session(cfg: Config) -> bool:
+    """True when any listed scrape user has a session file on disk (doctor soft-ok gate)."""
+    return any(scrape_session_path(cfg, u).exists() for u in scrape_users(cfg))
+
+
 def scrape_configured(cfg: Config) -> bool:
-    """True when a scrape login can be attempted: user set AND (session file OR password)."""
-    if not (cfg.ig_scrape_user or "").strip():
-        return False
-    if cfg.ig_scrape_session_path.exists():
-        return True
-    return bool(cfg.ig_scrape_password)
+    """True when ANY listed scrape user has a session file OR a password (MOL-857)."""
+    return any(scrape_user_usable(cfg, u) for u in scrape_users(cfg))
 
 
 def _is_throttle(exc: BaseException) -> bool:
@@ -111,7 +159,7 @@ def _classify_auth_exc(exc: BaseException) -> Exception:
     return ScrapeUnavailable(f"scrape login failed: {_trunc(exc)}")
 
 
-def open_client(cfg: Config, *, client_factory=None, allow_reauth: bool = False):
+def open_client(cfg: Config, *, client_factory=None, allow_reauth: bool = False, user: str | None = None):
     """Open an authenticated instagrapi Client, PACED. Lazy-imports; dumps session after success.
     Never echoes password or session contents. Raises ScrapeUnavailable on miss.
 
@@ -121,11 +169,28 @@ def open_client(cfg: Config, *, client_factory=None, allow_reauth: bool = False)
     earned the 2026-07-29T22:01Z native checkpoint when the tick still called `login()` every pass.
     Only `fanops hashtags scrape-login` passes `allow_reauth=True`.
 
+    Multi-account (MOL-857): when `user` is omitted, pick the first listed FANOPS_IG_SCRAPE_USER
+    that can actually open: with `allow_reauth=False` that means a session file (password alone
+    cannot open unattended); with `allow_reauth=True` session OR password. Rotation/freeze is MOL-858.
+
     `delay_range` is set before any network call, so every request this client ever makes — the
     probe / login included — carries the jitter (MOL-698); the whole Layer A pass runs on this one client."""
-    user = (cfg.ig_scrape_user or "").strip()
-    if not user:
+    users = scrape_users(cfg)
+    if not users:
         raise ScrapeUnavailable("FANOPS_IG_SCRAPE_USER unset")
+    if user is None:
+        if allow_reauth:
+            chosen = next((u for u in users if scrape_user_usable(cfg, u)), None)
+        else:
+            # Unattended: never open on password alone — prefer first listed user that has a session.
+            chosen = next((u for u in users if scrape_session_path(cfg, u).exists()), None)
+        if chosen is None:
+            if scrape_configured(cfg) and not allow_reauth:
+                raise ScrapeUnavailable("no scrape session — run fanops hashtags scrape-login")
+            raise ScrapeUnavailable("no scrape session or password for any FANOPS_IG_SCRAPE_USER")
+        user = chosen
+    elif user not in users:
+        raise ScrapeUnavailable(f"scrape user {user!r} not in FANOPS_IG_SCRAPE_USER")
     try:
         if client_factory is None:
             from instagrapi import Client  # lazy: [igscrape] extra
@@ -134,7 +199,9 @@ def open_client(cfg: Config, *, client_factory=None, allow_reauth: bool = False)
         raise ScrapeUnavailable("instagrapi not installed — pip install -e '.[igscrape]'") from e
     client = client_factory()
     client.delay_range = _scrape_delay_range()
-    sess = cfg.ig_scrape_session_path
+    sess = scrape_session_path(cfg, user)
+    # Always dump to the per-user named path (migrate legacy perca.late off ig_scrape_session.json).
+    dump_sess = cfg.control / f"ig_scrape_session_{user}.json"
     try:
         if sess.exists():
             client.load_settings(str(sess))
@@ -145,7 +212,7 @@ def open_client(cfg: Config, *, client_factory=None, allow_reauth: bool = False)
                 if isinstance(classified, (ScrapeThrottled, ScrapeCheckpoint)):
                     raise classified from e
                 if allow_reauth and _is_login_required(e):
-                    pw = cfg.ig_scrape_password or ""
+                    pw = scrape_password_for(user) or ""
                     client.login(user, pw, relogin=True)    # explicit human re-auth only
                 elif not allow_reauth and _is_login_required(e):
                     # Password never read — unattended tick must not re-authenticate.
@@ -156,10 +223,10 @@ def open_client(cfg: Config, *, client_factory=None, allow_reauth: bool = False)
         else:
             if not allow_reauth:
                 raise ScrapeUnavailable("no scrape session — run fanops hashtags scrape-login")
-            pw = cfg.ig_scrape_password or ""
+            pw = scrape_password_for(user) or ""
             client.login(user, pw)                          # cold-start: operator scrape-login only
-        sess.parent.mkdir(parents=True, exist_ok=True)
-        client.dump_settings(str(sess))
+        dump_sess.parent.mkdir(parents=True, exist_ok=True)
+        client.dump_settings(str(dump_sess))
     except (ScrapeUnavailable, ScrapeThrottled):
         raise
     except Exception as e:                                  # noqa: BLE001 — login surface is opaque

@@ -189,6 +189,7 @@ class Settings(BaseSettings):
     FANOPS_HASHTAG_SCRAPE_COTAG_ENQUEUE: int = 40
     FANOPS_HASHTAG_SCRAPE_PARALLEL: int = 1
     FANOPS_HASHTAG_SCRAPE_DELAY: str = ""
+    # Comma-separated usernames OK (MOL-857); _opt_str strips edges, keeps commas.
     FANOPS_IG_SCRAPE_USER: str | None = None
     FANOPS_IG_SCRAPE_PASSWORD: str | None = None
     FANOPS_REQUIRE_FULL_OBJECTIVE: BoolEnv = ""

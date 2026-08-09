@@ -538,6 +538,24 @@ def test_doctor_hashtag_scrape_session_check(tmp_path, monkeypatch):
     assert row2["ok"] is True and "scrape-login" in row2["hint"]
 
 
+
+def test_doctor_hashtag_scrape_soft_ok_when_any_session_among_users(tmp_path, monkeypatch):
+    """MOL-857: any listed user session is enough to leave soft-ok and probe via open_client."""
+    from fanops import doctor
+    from fanops.config import Config
+    from fanops.ig_hashtag_scrape import scrape_session_path
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "a,b")
+    monkeypatch.delenv("FANOPS_IG_SCRAPE_PASSWORD", raising=False)
+    cfg = Config(root=tmp_path)
+    # credentials incomplete until a session or password exists — write b's session
+    sess = scrape_session_path(cfg, "b")
+    sess.parent.mkdir(parents=True, exist_ok=True)
+    sess.write_text("{}")
+    row = doctor._hashtag_scrape_check(cfg, open_client=lambda _c: object(),
+                                       probe_resolve=lambda _c, _t: ("1", 1.0))
+    assert row["ok"] is True and row["hint"] == ""
+
+
 def test_doctor_hashtag_scrape_session_dead_fails_loud(tmp_path, monkeypatch):
     """MOL-687: a session file that fails login must fail doctor — not report green on a dead cache."""
     from fanops import doctor
@@ -546,8 +564,10 @@ def test_doctor_hashtag_scrape_session_dead_fails_loud(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
     monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "secret-password-must-not-leak")
     cfg = Config(root=tmp_path)
-    cfg.ig_scrape_session_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg.ig_scrape_session_path.write_text("{}")
+    from fanops.ig_hashtag_scrape import scrape_session_path
+    _sess = scrape_session_path(cfg, "u")
+    _sess.parent.mkdir(parents=True, exist_ok=True)
+    _sess.write_text("{}")
     def boom(_cfg):
         raise ScrapeUnavailable("scrape login failed: login_required")
     row = doctor._hashtag_scrape_check(cfg, open_client=boom)
@@ -569,8 +589,10 @@ def test_doctor_hashtag_scrape_checkpoint_names_the_only_real_remedy(tmp_path, m
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
     monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "secret-password-must-not-leak")
     cfg = Config(root=tmp_path)
-    cfg.ig_scrape_session_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg.ig_scrape_session_path.write_text("{}")
+    from fanops.ig_hashtag_scrape import scrape_session_path
+    _sess = scrape_session_path(cfg, "u")
+    _sess.parent.mkdir(parents=True, exist_ok=True)
+    _sess.write_text("{}")
     def locked(_cfg):
         raise ScrapeCheckpoint("account checkpointed by Instagram — verify the login in the official "
                                "Instagram app or web, then re-run scrape-login (challenge_required)")
@@ -588,8 +610,10 @@ def test_doctor_hashtag_scrape_probe_login_required_fails_loud(tmp_path, monkeyp
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
     monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "secret-password-must-not-leak")
     cfg = Config(root=tmp_path)
-    cfg.ig_scrape_session_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg.ig_scrape_session_path.write_text("{}")
+    from fanops.ig_hashtag_scrape import scrape_session_path
+    _sess = scrape_session_path(cfg, "u")
+    _sess.parent.mkdir(parents=True, exist_ok=True)
+    _sess.write_text("{}")
     def probe(_client, _tag):
         raise ScrapeRefused("login_required")
     row = doctor._hashtag_scrape_check(cfg, open_client=lambda _c: object(), probe_resolve=probe)
