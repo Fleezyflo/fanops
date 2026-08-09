@@ -44,7 +44,9 @@ _REFRESH_CADENCE_S = 12 * 60 * 60   # the tick's refresh window, and the yardsti
 # Scrape is ~5–7s/tag. Caps bound a pass so co-tag harvest cannot run unbounded; incomplete passes do NOT
 # stamp last_complete_pass. Tests may monkeypatch these module attrs; env overrides win when set.
 # MOL-854: try_cap is a small per-pass ceiling (25); the UTC day budget on the cooldown blob is the
-# local governor (~40 request-units/day). Due-tiered queue (MOL-855); MOL-858 nests budget+freeze under accounts[user].
+# local governor (~40 request-units/day). Due-tiered queue (MOL-855) means the cap need not clear every
+# cached tag each pass — only unmeasured anchors + aged volume + ≥30d remesure + co-tag headroom.
+# MOL-858 nests budget+freeze under accounts[user].
 _SCRAPE_TRY_CAP = 25
 _SCRAPE_DAY_BUDGET = 40        # request-units per UTC day per scrape account (accounts[user].used)
 _SCRAPE_COTAG_ENQUEUE_CAP = 40
@@ -170,13 +172,13 @@ def _posting_personas(cfg: Config) -> list:
 
 
 def _volume_due(rec, cutoff: datetime) -> bool:
-    """True when Instagram's own tag VOLUME (`media_count`) must be re-resolved via hashtag_info.
+    """True when a cached tag must enter the queue for missing / aged Instagram VOLUME (`media_count`).
 
     Volume was previously fetched only on a tag's very first pass: once `graph_id` was cached the
     hashtag_info call was skipped forever, so 131 of 300 live records carried no `media_count` at all
-    and could never acquire one (MOL-691). Volume now ages on its OWN `media_count_at` stamp — a legacy
-    row falls back to `measured_at`, so the first pass after this ships does not re-resolve all 300 tags
-    at once. Volume moves far slower than plays; the 12h trend pass must not drag it along."""
+    and could never acquire one (MOL-691). Queue membership ages on its OWN `media_count_at` stamp — a
+    legacy row falls back to `measured_at`. Once a tag is due (this tier or remesure), `_fetch` always
+    runs hashtag_info + medias_top together (MOL-856) — there is no volume-only / medias_top-only split."""
     if not isinstance(rec, dict):
         return True
     if _num(rec.get("media_count")) is None:
@@ -684,15 +686,13 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
     parallel = 1                                               # sequential fetch (MOL-855); retained in summary
 
     def _fetch(tag: str):
-        """Resolve+measure one tag. Returns (status, tag, hid|None, media_count|None, metrics|None, cotags|exc)."""
+        """Resolve+measure one tag. Returns (status, tag, hid|None, media_count|None, metrics|None, cotags|exc).
+
+        MOL-856: a due visit always spends BOTH hashtag_info (volume) and medias_top (visibility).
+        Fresh tags stay off the queue (MOL-855); there is no path that remesures Top while skipping
+        volume, and no volume-only remesure split."""
         try:
-            # A cached graph_id skips the hashtag_info call, but VOLUME only ever arrives on that call —
-            # so a tag whose id was already known could never acquire a media_count (MOL-691). Spend the
-            # extra resolve when volume is missing or older than its own stamp, never every pass.
-            if tag in ids and not _volume_due(cache.get(tag), volume_cutoff):
-                hid, media_count = ids[tag], None
-            else:
-                hid, media_count = resolve_hashtag_scrape(client, tag)
+            hid, media_count = resolve_hashtag_scrape(client, tag)
             if not hid:
                 return ("no_match", tag, None, None, None, {})
             metrics, cotags = measure_and_harvest_scrape(client, tag, now=now)
@@ -772,7 +772,7 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
                 vol = _num(media_count)
                 if vol is not None:
                     rec["media_count"] = vol; rec["media_count_at"] = stamp
-                else:                                               # resolve skipped / served nothing: carry
+                else:                                               # hashtag_info served no volume: carry prior
                     pv = _num(prev.get("media_count"))
                     if pv is not None:
                         rec["media_count"] = pv

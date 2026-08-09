@@ -931,6 +931,35 @@ def test_refresh_pass_priority_queue_due_tiers(tmp_path, monkeypatch):
     assert out["written"] is True
     assert "freshnoise" not in client.media_calls, "sub-30d measured tag must stay off the remesure queue"
     assert client.media_calls[:4] == ["newroot", "missingvol", "oldermeasure", "newermeasure"]
+    # MOL-856: every due visit spends hashtag_info too (no medias_top-only remesure).
+    for tag in ("newroot", "missingvol", "oldermeasure", "newermeasure"):
+        assert tag in client.info_calls
+    assert "freshnoise" not in client.info_calls
+
+
+def test_due_remesure_always_calls_hashtag_info_and_medias_top(tmp_path, monkeypatch):
+    """MOL-856: remesure with a still-fresh media_count_at still spends hashtag_info + medias_top."""
+    from datetime import datetime, timezone, timedelta
+    from fanops import personas as P
+    now = datetime(2026, 7, 29, 12, 0, tzinfo=timezone.utc)
+    cfg = Config(root=tmp_path)
+    P.add_persona(cfg, name="A", voice="x", niche=["hiphop"], id="a")
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": [
+        {"handle": "a", "platforms": ["instagram"], "status": "active", "persona_id": "a"}]}))
+    cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.hashtags_path.write_text(json.dumps({
+        "#hiphop": {"graph_id": "id-hiphop", "like_count": 10.0, "media_count": 100.0,
+                    "media_count_at": (now - timedelta(days=2)).isoformat(),
+                    "measured_at": (now - timedelta(days=40)).isoformat()},
+        "last_complete_pass": (now - timedelta(days=2)).isoformat()}))
+    client = _FakeClient({"#hiphop": 55}, media_count_by_tag={"#hiphop": 999})
+    out = refresh_store(cfg, scrape_client=client, now=now)
+    assert out["written"] is True and out["measured"] == 1
+    assert "hiphop" in client.info_calls, "due remesure must call hashtag_info"
+    assert "hiphop" in client.media_calls, "due remesure must call medias_top"
+    rec = load_measurements(cfg)["#hiphop"]
+    assert rec["media_count"] == 999.0 and rec["like_count"] == 55.0
 
 
 def test_stalest_remeasure_reaches_known_before_fresh_anchor(tmp_path, monkeypatch):
