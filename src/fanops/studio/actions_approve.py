@@ -73,6 +73,15 @@ def _approve_ids_with_render(cfg: Config, *, resolve_ids: Callable[[Ledger], Seq
                 led.approve_post(pid, now_iso=now_iso, suggested_iso=sugg)
                 approved += 1
                 approved_ids.append(pid)
+            # MOL-869: approve_post keeps still-future mint times, so identical futures lockstep.
+            # Re-spread each approved account's full queued set (no occupied — same as
+            # accept_suggested_account) inside this open transaction.
+            approved_accts = {led.posts[i].account for i in approved_ids if i in led.posts}
+            for handle in sorted(approved_accts):
+                posts = [p for p in led.posts.values() if p.state is PostState.queued and p.account == handle]
+                for pid, t in suggest_times_for_batch(cfg, posts, now=now).items():
+                    p = led.posts[pid]
+                    if p.scheduled_time != t: p.scheduled_time = t
             audited_ids = [i for i in approved_ids if i in led.posts]   # audit what PROMOTED, not what was offered
     except Exception as exc:
         return ActionResult(ok=False, error=f"approve failed: {str(exc)[:160]}")
