@@ -192,9 +192,10 @@ def approve_with_hook(cfg: Config, clip_id: str, *, now: Optional[datetime] = No
                 led.clips[clip_id] = led.clips[clip_id].model_copy(
                     update={"meta_captions": _inherit_captions(orig.meta_captions)})
                 led.set_clip_state(clip_id, orig.state)
+            batch_posts = [led.posts[pid] for pid in admitted if pid in led.posts]
+            sched = suggest_times_for_batch(cfg, batch_posts, now=now)
             for pid in admitted:
-                post = led.posts.get(pid)
-                sugg = suggest_time(cfg, post, now=now) if post is not None else None
+                sugg = sched.get(pid)
                 led.approve_post(pid, now_iso=now_iso, suggested_iso=sugg)
                 approved += 1
     except Exception as exc:

@@ -269,6 +269,38 @@ def test_approve_with_hook_untimed_gets_suggestion_not_now(tmp_path, monkeypatch
     pu = Ledger.load(cfg).posts["p_untimed"]
     assert pu.state is PostState.queued and parse_iso(pu.scheduled_time) > now and pu.scheduled_time != now_iso
 
+
+def test_approve_with_hook_multi_surface_spreads_times(tmp_path, monkeypatch):
+    # MOL-871: one clip, ≥2 awaiting surfaces — batch suggest, not per-post suggest_time (M4 collide).
+    monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "0")
+    monkeypatch.setenv("FANOPS_POSTER", "dryrun")
+    from datetime import timedelta
+    from fanops.timeutil import iso_z, parse_iso
+    cfg = Config(root=tmp_path); now = _approval_now()
+    stale = iso_z(now - timedelta(days=1))
+    _seed_two_accounts(cfg)
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="src_1", source_path="/v/s.mp4", language="en"))
+        led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
+                              reason="r", state=MomentState.clipped))
+        led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c/clip_1.mp4", aspect=Fmt.r9x16,
+                          state=ClipState.captioned))
+        for pid, acct, aid in (("p_a0", "a", "1"), ("p_a1", "a", "1"), ("p_b0", "b", "2")):
+            led.add_post(Post(id=pid, parent_id="clip_1", account=acct, account_id=aid,
+                              platform=Platform.instagram, caption="x", state=PostState.awaiting_approval,
+                              scheduled_time=stale, public_url=f"dryrun://{pid}"))
+    r = actions.approve_with_hook(cfg, "clip_1", now=now)
+    assert r.ok and r.detail["approved"] == 3
+    led = Ledger.load(cfg)
+    times = [led.posts[pid].scheduled_time for pid in ("p_a0", "p_a1", "p_b0")]
+    assert len(set(times)) == 3, f"hook-approve collided: times={times}"
+    for t in times:
+        assert parse_iso(t) > now
+    a_dts = sorted(parse_iso(led.posts[pid].scheduled_time) for pid in ("p_a0", "p_a1"))
+    gap_min = (a_dts[1] - a_dts[0]).total_seconds() / 60.0
+    assert gap_min >= 30, f"per-account cadence floor violated: gap_min={gap_min}"
+
+
 def test_approve_as_is_untimed_gets_suggestion_not_now(tmp_path):
     from fanops.timeutil import iso_z, parse_iso
     cfg = Config(root=tmp_path); now = _approval_now(); now_iso = iso_z(now)
