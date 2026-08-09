@@ -125,15 +125,18 @@ def test_reschedule_cadence_2_to_3_hours_jittered(tmp_path, monkeypatch):
     led = Ledger.load(cfg)
     clip = _seed_clip(led)
     yesterday_iso = iso_z(FIXED_DT - timedelta(days=1))
-    _seed_queued_posts(led, clip, n=5, base_iso=yesterday_iso)
+    from fanops.studio.views_common import _DAILY_ACCOUNT_CAP
+    # Stay inside one local day so the 2-3h band is not confused with overnight day-cap spill.
+    n = _DAILY_ACCOUNT_CAP
+    _seed_queued_posts(led, clip, n=n, base_iso=yesterday_iso)
     led.save()
 
     from fanops.studio.actions import reschedule_bucket
     res = reschedule_bucket(cfg, now=FIXED_DT)
-    assert res.ok is True and res.detail["rescheduled"] == 5, (
-        f"expected 5 respread, got {res.detail}")
+    assert res.ok is True and res.detail["rescheduled"] == n, (
+        f"expected {n} respread, got {res.detail}")
     reloaded = Ledger.load(cfg)
-    dts = sorted(parse_iso(reloaded.posts[f"p_{k}"].scheduled_time) for k in range(5))
+    dts = sorted(parse_iso(reloaded.posts[f"p_{k}"].scheduled_time) for k in range(n))
     gaps_min = [(b - a).total_seconds() / 60.0 for a, b in zip(dts, dts[1:])]
     assert all(g >= 120.0 for g in gaps_min), (
         f"realistic cadence gap floor 2h violated: gaps_min={gaps_min}")
