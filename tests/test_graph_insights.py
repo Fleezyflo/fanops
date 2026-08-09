@@ -176,7 +176,7 @@ def test_media_insights_no_creds_returns_none(tmp_path, monkeypatch):
 # ---- M2 residual: an unresolved product_type must NOT build an empty-metric request --------------
 
 def test_media_insights_none_product_type_builds_no_request(tmp_path, monkeypatch):
-    # LIVE RESIDUAL (post_4eb7c0802e79): media_id resolved but product_type=None -> insights_metrics_for(None)
+    # LIVE RESIDUAL (post_4eb7c0802e79): media_id resolved but post_type=None -> insights_metrics_for(None)
     # is [] -> today media_insights sends an EMPTY `metric=` -> Meta 400 OAuthException -> _is_scope_error
     # (untouched) writes a FALSE scope-block. Honor the docstring ("the client skips an unresolved one"):
     # an empty derived set must be refused PRE-FLIGHT -> ZERO HTTP calls (None, transient-shaped, re-resolve
@@ -194,10 +194,10 @@ from fanops.models import Post, PostState, Platform
 from fanops.post.metrics import GraphInsightsClient
 
 
-def _ig_post(pid, media_id, *, cut_seconds=None, sub=None, product_type="REELS"):
+def _ig_post(pid, media_id, *, cut_seconds=None, sub=None, post_type="REELS"):
     return Post(id=pid, parent_id="c", account="a", account_id="acc1", platform=Platform.instagram,
                 caption="x", state=PostState.published, media_id=media_id, cut_seconds=cut_seconds,
-                product_type=product_type, submission_id=sub or f"real_{pid}",
+                post_type=post_type, submission_id=sub or f"real_{pid}",
                 public_url=f"https://www.instagram.com/reel/{pid}/")   # R1: a published post has a permalink
 
 
@@ -250,14 +250,14 @@ def test_graph_client_requests_the_posts_real_product_type(tmp_path, monkeypatch
     # The client must send the media's REAL product_type (stamped at resolve), NOT a hard-coded REELS —
     # so media_insights derives the matching metric set (a FEED post gets the feed set, no reels-only
     # avg-watch -> no 400). It is guaranteed present past the media_id guard (single stamp site), so there
-    # is no skip / fallback: the client simply forwards p.product_type.
+    # is no skip / fallback: the client simply forwards p.post_type.
     cfg = _cfg(tmp_path, monkeypatch)
     seen = []
     def spy(mid, pt):
         seen.append((mid, pt))
         return {"reach": 5}
-    feed = _ig_post("p1", "M1", cut_seconds=20.0, product_type="FEED")
-    reel = _ig_post("p2", "M2", cut_seconds=20.0, product_type="REELS")
+    feed = _ig_post("p1", "M1", cut_seconds=20.0, post_type="FEED")
+    reel = _ig_post("p2", "M2", cut_seconds=20.0, post_type="REELS")
     GraphInsightsClient(cfg, posts=[feed, reel], insights_fn=spy).list_posts()
     assert ("M1", "FEED") in seen                                # feed post -> feed type, not REELS
     assert ("M2", "REELS") in seen
@@ -310,7 +310,7 @@ def test_none_product_type_post_writes_no_scope_block_end_to_end(tmp_path, monke
     # no block. The injected `get` proves it: it is never invoked.
     cfg = _cfg(tmp_path, monkeypatch)
     assert meta_graph.insights_blocked_signal(cfg) is False      # clean by default
-    p1 = _ig_post("p1", "M1", cut_seconds=20.0, product_type=None)   # media_id resolved, type NOT yet
+    p1 = _ig_post("p1", "M1", cut_seconds=20.0, post_type=None)   # media_id resolved, type NOT yet
     got = _get(_Resp(400, {"error": {"code": 100, "type": "OAuthException",
                                      "message": "(#100) metric[0] must be one of the following values: ..."}}))
     rows = GraphInsightsClient(cfg, posts=[p1],

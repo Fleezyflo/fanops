@@ -167,11 +167,11 @@
     "fanops.reconcile": [
       {
         "call": "Ledger.transaction",
-        "line": 591
+        "line": 593
       },
       {
         "call": "Ledger.transaction",
-        "line": 716
+        "line": 718
       }
     ],
     "fanops.responder": [
@@ -391,31 +391,31 @@
     "fanops.ledger": [
       {
         "call": "fcntl.flock",
-        "line": 288
+        "line": 312
       },
       {
         "call": "fcntl.flock",
-        "line": 298
+        "line": 322
       },
       {
         "call": "store.lock",
-        "line": 490
+        "line": 514
       },
       {
         "call": "self._store.lock",
-        "line": 520
+        "line": 544
       },
       {
         "call": "store.lock",
-        "line": 546
+        "line": 570
       },
       {
         "call": "store.lock",
-        "line": 565
+        "line": 589
       },
       {
         "call": "_file_lock",
-        "line": 568
+        "line": 592
       }
     ],
     "fanops.ledger_bridge": [

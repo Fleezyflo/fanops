@@ -48,7 +48,7 @@ def test_post_submission_started_at_is_additive_with_default():
              platform=Platform.instagram, caption="x")
     assert p.submission_started_at is None
     from fanops.ledger import SCHEMA_VERSION
-    assert SCHEMA_VERSION == 11, "an additive-with-default field must not bump the schema"
+    assert SCHEMA_VERSION == 12, "MOL-824 renamed Post.product_type→post_type with a v12 migration"
 
 def test_post_postiz_state_defaults_none_on_old_ledger_rows():
     # MOL-784: additive Optional[str]=None. A PRODUCTION row written before the field existed must load

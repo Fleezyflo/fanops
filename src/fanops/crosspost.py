@@ -230,7 +230,7 @@ def _mint_surface_post(led: Ledger, cfg: Config, clip, m, surf, i: int, *,
             existing = None
     if existing is not None:
         return 0
-    # product_type: Postiz IG service vocab ("post"); TikTok stays None — Zernio OpenAPI v1.0.4
+    # post_type: Postiz IG service vocab ("post"); TikTok stays None — Zernio OpenAPI v1.0.4
     # POST /v1/posts (createPost) has no post-type enum (TikTokPlatformData.mediaType is video|photo only).
     led.add_post(Post(
         # BORN awaiting_approval (post-approval-lifecycle): nothing publishes until the operator
@@ -241,7 +241,7 @@ def _mint_surface_post(led: Ledger, cfg: Config, clip, m, surf, i: int, *,
         caption=caption, hashtags=cap.get("hashtags", []), aspect=aspect,
         scheduled_time=sched, created_at=iso_z(datetime.now(timezone.utc)),   # wall-clock BIRTH (NOT in the pid)
         media_urls=media_urls,
-        product_type=("post" if surf.platform is Platform.instagram else None),
+        post_type=("post" if surf.platform is Platform.instagram else None),
         # AUDIT H1: stamp a stable, content-addressed CLIENT idempotency token at birth so
         # an ambiguous publish is ALWAYS pollable (a real backend id overwrites it on
         # publish). pid is content-addressed -> a re-run computes the identical token.

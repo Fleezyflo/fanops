@@ -193,7 +193,28 @@ def _migrate_v10_drop_selections(raw: dict) -> dict:
     return out
 
 
-SCHEMA_VERSION = 11
+
+def _migrate_v12_rename_post_type(raw: dict) -> dict:
+    """v11->v12 (MOL-824): rename Post on-disk key `product_type` → `post_type`. Pure on the RAW dict
+    (runs before unit construction). Does NOT touch `imported_media` — ImportedMedia.product_type stays
+    (Meta vocabulary). Prefer an existing `post_type` when both keys are present; always pop the old key.
+    Idempotent: a second run finds nothing to rename (count-before-write: zero bytes when already clean).
+    Without this hop, pydantic extra='ignore' would silently DROP every live declaration on load."""
+    out = dict(raw)
+    posts = dict(out.get("posts", {}))
+    for pid, p in list(posts.items()):
+        if not isinstance(p, dict) or "product_type" not in p:
+            continue
+        row = dict(p)
+        if "post_type" not in row:
+            row["post_type"] = row["product_type"]
+        del row["product_type"]
+        posts[pid] = row
+    out["posts"] = posts
+    return out
+
+
+SCHEMA_VERSION = 12
 # version N <- transform from N-1. v0 (pre-versioning) -> v1: shape unchanged, identity stamp.
 # v1 -> v2 (M3): inject the new top-level stitch_plans map (additive; old ledgers had no such key).
 # v2 -> v3 (content-lifecycle): backfill created_at on every Source + Post (Source <- file mtime, Post <-
@@ -221,6 +242,8 @@ SCHEMA_VERSION = 11
 # its Graph media_id). Old ledgers load with imported_media={} — same injection shape as v5/v6/v7/v9. A naive
 # add that skips this step AND the load/save lines silently DROPS the map on the next save (pydantic doesn't
 # own a top-level map); the round-trip test pins it.
+# v11 -> v12 (MOL-824): rename Post on-disk key product_type → post_type (persistence migration; without it
+# extra='ignore' silently drops the declaration). ImportedMedia.product_type is untouched.
 # Additive + idempotent + never-raising. The ledger is NEVER wiped — every migration is copy-on-write.
 _MIGRATIONS = {1: lambda raw: raw,
                2: lambda raw: {**raw, "stitch_plans": raw.get("stitch_plans", {})},
@@ -232,7 +255,8 @@ _MIGRATIONS = {1: lambda raw: raw,
                8: lambda raw: raw,
                9: _migrate_v8_account_selections,
                10: lambda raw: {**raw, "imported_media": raw.get("imported_media", {})},
-               11: _migrate_v10_drop_selections}
+               11: _migrate_v10_drop_selections,
+               12: _migrate_v12_rename_post_type}
 
 # M1: an ingested source file is named "{sid}{ext}" where sid = make_id("src", sha) = "src_" + sha1[:12]
 # (lowercase hex). rebuild_catalog uses this shape to tell a genuinely-orphaned source file from junk

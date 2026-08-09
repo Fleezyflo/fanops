@@ -26,7 +26,7 @@ from fanops.reconcile import (reconcile_posts, resolve_media_ids, _UNVERIFIED_PR
 
 
 def _post(led, pid, state, *, platform=Platform.instagram, sub=None, url=None, media_id=None,
-          product_type=None, account="a", published_at=None, error_reason=None):
+          post_type=None, account="a", published_at=None, error_reason=None):
     # a terminal-with-URL state needs a public_url to satisfy the R1 model invariant; callers pass a real
     # https url when the test is about the rest-gate, else a synthetic dryrun:// only to construct the row.
     from fanops.models import _POST_TERMINAL_REQUIRES_URL
@@ -34,7 +34,7 @@ def _post(led, pid, state, *, platform=Platform.instagram, sub=None, url=None, m
         url = f"dryrun://{pid}"
     led.add_post(Post(id=pid, parent_id="c", account=account, account_id="1", platform=platform,
                       caption="x", state=state, submission_id=sub, public_url=url, media_id=media_id,
-                      product_type=product_type, published_at=published_at, error_reason=error_reason))
+                      post_type=post_type, published_at=published_at, error_reason=error_reason))
 
 
 # ---------------------------------------------------------------- IG: unmatched permalink quarantines ----
@@ -241,7 +241,7 @@ def test_prod_shaped_ledger_unmatched_rest_matched_stamps(tmp_path, mocker):
     for i in range(1, 4):
         _post(led, f"other{i}", PostState.analyzed, url=f"https://www.instagram.com/reel/OTH{i}/", media_id=None)
     _post(led, "ok", PostState.analyzed, url="https://www.instagram.com/reel/OK/", media_id="M_ok",
-          product_type="REELS")   # already matched -> resolve_media_ids skips it (fully resolved)
+          post_type="REELS")   # already matched -> resolve_media_ids skips it (fully resolved)
     # live media contains ONLY the matched permalink (markmakmouly's); the others belong to feeds we can't enumerate.
     _enumerate_returns([{"id": "M_ok", "permalink": "https://www.instagram.com/reel/OK/",
                          "media_product_type": "REELS"}])(mocker)

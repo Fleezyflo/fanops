@@ -564,16 +564,17 @@ class GraphInsightsClient:
     def __init__(self, cfg: Config, *, posts: Optional[list] = None, insights_fn=None):
         self.cfg = cfg
         self.posts = posts or []
-        # each post -> (media_id, product_type). The insights request is DERIVED from the media's real
-        # product_type (stamped at resolve, meta_graph.insights_metrics_for) — a feed video is never asked
-        # for a reels-only metric. The client forwards p.product_type verbatim (no default, no guess); when
-        # it is still unresolved (None — a legacy row stamped before product_type was carried), media_insights
-        # refuses the empty-metric request PRE-FLIGHT and returns None, so this post transient-skips (below)
-        # and re-resolves its type next reconcile pass — never a malformed request, never a false scope-block.
-        # The injected insights_fn (the test seam) is a 2-arg (media_id, product_type) callable and is used
-        # verbatim (byte-identical). The DEFAULT path resolves PER-ACCOUNT creds from each post's handle (the
-        # per-handle-creds gap) so an authored IG post is measured with ITS handle's token, not the single
-        # global one — a handle with no per-account creds resolves the global (byte-identical single-account).
+        # each post -> (media_id, post_type). The insights request is DERIVED from the media's type
+        # (stamped at resolve into Post.post_type, meta_graph.insights_metrics_for) — a feed video is never
+        # asked for a reels-only metric. The client forwards p.post_type verbatim (no default, no guess);
+        # when it is still unresolved (None — a legacy row stamped before the type was carried),
+        # media_insights refuses the empty-metric request PRE-FLIGHT and returns None, so this post
+        # transient-skips (below) and re-resolves its type next reconcile pass — never a malformed request,
+        # never a false scope-block. The injected insights_fn (the test seam) is a 2-arg (media_id,
+        # post_type) callable and is used verbatim (byte-identical). The DEFAULT path resolves PER-ACCOUNT
+        # creds from each post's handle (the per-handle-creds gap) so an authored IG post is measured with
+        # ITS handle's token, not the single global one — a handle with no per-account creds resolves the
+        # global (byte-identical single-account).
         self._insights = insights_fn
         self.insights_blocked = False
 
@@ -591,7 +592,8 @@ class GraphInsightsClient:
             if not (media_id and sid):
                 continue                                        # unresolved -> skip (keeps prior snapshot)
             try:
-                pt = getattr(p, "product_type", None)
+                # No getattr default: a missed rename must raise, not silent-None into transient_skip (MOL-824).
+                pt = getattr(p, "post_type")
                 raw = (self._insights(media_id, pt) if self._insights is not None
                        else self._default_insights(media_id, pt, getattr(p, "account", None)))
             except MetaInsightsScopeError:
