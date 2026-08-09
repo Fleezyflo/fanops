@@ -17,9 +17,9 @@ def _write(cfg, raw):
         cfg.ledger_path.unlink()
 
 
-def test_schema_version_is_eleven():
-    # P12 (MOL-154) bumped 10->11; imported_media arrived at v10.
-    assert SCHEMA_VERSION == 11
+def test_schema_version_is_twelve():
+    # MOL-824 bumped 11->12 (Post.product_type→post_type key rename).
+    assert SCHEMA_VERSION == 12
 
 
 def test_migration_v2_to_v3_round_trip(tmp_path):

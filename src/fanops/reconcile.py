@@ -271,15 +271,17 @@ def _pick_media(cands: list[dict], post) -> Optional[dict]:
     return min(cands, key=_dist)
 
 def resolve_media_ids(led: Ledger, cfg: Config, *, get=None, scoped: list[tuple] | None = None) -> Ledger:
-    """Stamp each published/analyzed IG post's Graph `media_id` AND real `product_type` by matching its
-    permalink against the live /{ig_user}/media list. Runs INSIDE the automatic pull path (pull_metrics) so
-    the unattended daemon resolves new posts itself — the sole-source insights read keys on media_id AND
-    derives its request from product_type, so a post missing EITHER is un-measurable. Idempotent (a FULLY
-    resolved post — media_id AND product_type both set — is skipped) and fail-open (an empty media list
-    resolves nobody, never crashes). A media_id-bearing row whose product_type is still None (an older row
-    stamped before product_type was carried — the live post_4eb7c0802e79 shape) is RE-TARGETED and the real
-    type is back-stamped, so the insights request is no longer empty and never false-blocks. An unmatched
-    post is breadcrumbed, NEVER given a fabricated id.
+    """Stamp each published/analyzed IG post's Graph `media_id` AND `post_type` (from live
+    `media_product_type`) by matching its permalink against the live /{ig_user}/media list. Runs INSIDE
+    the automatic pull path (pull_metrics) so the unattended daemon resolves new posts itself — the
+    sole-source insights read keys on media_id AND derives its request from post_type, so a post missing
+    EITHER is un-measurable. Idempotent (a FULLY resolved post — media_id AND post_type both set — is
+    skipped) and fail-open (an empty media list resolves nobody, never crashes). A media_id-bearing row
+    whose post_type is still None (an older row stamped before the type was carried — the live
+    post_4eb7c0802e79 shape) is RE-TARGETED and the real type is back-stamped, so the insights request
+    is no longer empty and never false-blocks. An unmatched post is breadcrumbed, NEVER given a fabricated
+    id. NOTE (MOL-824/775): this path may still write a Meta token into Post.post_type until MOL-775
+    retires it — the rename relocates the field; it does not delete this writer.
 
     When `scoped` is prefetched (lock-free enumerate_scoped_media at the caller), skip the in-lock network
     enumeration — the apply path is a pure ledger match."""
@@ -287,7 +289,7 @@ def resolve_media_ids(led: Ledger, cfg: Config, *, get=None, scoped: list[tuple]
     from fanops import meta_graph
     log = get_logger(cfg)
     targets = [p for p in led.posts.values()
-               if p.platform is Platform.instagram and (p.media_id is None or p.product_type is None)
+               if p.platform is Platform.instagram and (p.media_id is None or p.post_type is None)
                and p.state in (PostState.published, PostState.analyzed)
                and _norm_permalink(p.public_url) is not None]
     if not targets:
@@ -313,12 +315,12 @@ def resolve_media_ids(led: Ledger, cfg: Config, *, get=None, scoped: list[tuple]
         if cands:
             picked = _pick_media(cands, p)
             mid = picked.get("id")
-            # stamp the media's REAL product_type alongside media_id (same live record) so the insights
-            # request is derived from what the media IS — a feed video is never asked for a reels-only metric.
+            # stamp live media_product_type into Post.post_type alongside media_id (same live record) so
+            # the insights request is derived from what the media IS — until MOL-775 retires this writer.
             led.posts[p.id] = p.model_copy(update={"media_id": mid,
-                                                   "product_type": picked.get("media_product_type")})
+                                                   "post_type": picked.get("media_product_type")})
             log("reconcile", p.id, "media_id_resolved", media_id=mid,
-                product_type=picked.get("media_product_type"))
+                post_type=picked.get("media_product_type"))
         else:
             # IG-liveness fix (SPLIT liveness from enrichment): we enumerated live media and this permalink
             # wasn't among it — but with ONE global Meta credential we only ever see ONE account's feed, so a
@@ -341,7 +343,7 @@ def prefetch_media_scope(led: Ledger, cfg: Config, *, get=None) -> list[tuple] |
     from fanops.models import Platform
     from fanops import meta_graph
     targets = [p for p in led.posts.values()
-               if p.platform is Platform.instagram and (p.media_id is None or p.product_type is None)
+               if p.platform is Platform.instagram and (p.media_id is None or p.post_type is None)
                and p.state in (PostState.published, PostState.analyzed)
                and _norm_permalink(p.public_url) is not None]
     if not targets:

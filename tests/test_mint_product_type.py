@@ -45,8 +45,8 @@ def test_mint_surface_post_declares_ig_post_and_tiktok_none(tmp_path, mocker):
                                    "a/tiktok": {"caption": "tt", "hashtags": ["#y"]}})
     led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
     by = {p.platform: p for p in led.posts.values()}
-    assert by[Platform.instagram].product_type == "post"
-    assert by[Platform.tiktok].product_type is None   # Zernio createPost: no post-type enum
+    assert by[Platform.instagram].post_type == "post"
+    assert by[Platform.tiktok].post_type is None   # Zernio createPost: no post-type enum
 
 
 def test_repost_post_declares_ig_post_never_copies_meta_vocab(tmp_path):
@@ -57,10 +57,10 @@ def test_repost_post_declares_ig_post_never_copies_meta_vocab(tmp_path):
         led.add_post(Post(id="p1", parent_id="clip_1", account="a", account_id="ig_1",
                           platform=Platform.instagram, caption="fire", state=PostState.published,
                           scheduled_time="2026-06-01T00:00:00Z", public_url="https://ig/reel/x",
-                          product_type="REELS"))   # legacy Meta vocab on the shipped row
+                          post_type="REELS"))   # legacy Meta vocab on the shipped row
     new_id = actions.repost_post(cfg, "p1").detail["post_id"]
     np = Ledger.load(cfg).posts[new_id]
-    assert np.product_type == "post"                 # declared service vocab, not "REELS"
+    assert np.post_type == "post"                 # declared service vocab, not "REELS"
 
 
 def test_repost_post_tiktok_declares_none(tmp_path):
@@ -70,9 +70,9 @@ def test_repost_post_tiktok_declares_none(tmp_path):
         led.add_post(Post(id="p1", parent_id="clip_1", account="a", account_id="tt_1",
                           platform=Platform.tiktok, caption="fire", state=PostState.published,
                           scheduled_time="2026-06-01T00:00:00Z", public_url="https://tiktok.com/x",
-                          product_type="video"))     # would-be Zernio mediaType — must NOT be copied
+                          post_type="video"))     # would-be Zernio mediaType — must NOT be copied
     new_id = actions.repost_post(cfg, "p1").detail["post_id"]
-    assert Ledger.load(cfg).posts[new_id].product_type is None
+    assert Ledger.load(cfg).posts[new_id].post_type is None
 
 
 def test_crosspost_to_account_declares_ig_post_and_tiktok_none(tmp_path):
@@ -97,8 +97,8 @@ def test_crosspost_to_account_declares_ig_post_and_tiktok_none(tmp_path):
     tt = actions.crosspost_to_account(cfg, "clip_0", "b", "tiktok", now=now)
     assert ig.ok and tt.ok
     led = Ledger.load(cfg)
-    assert led.posts[ig.detail["post_id"]].product_type == "post"
-    assert led.posts[tt.detail["post_id"]].product_type is None
+    assert led.posts[ig.detail["post_id"]].post_type == "post"
+    assert led.posts[tt.detail["post_id"]].post_type is None
 
 
 def test_minted_ig_row_survives_build_postiz_payload(tmp_path):
@@ -110,12 +110,12 @@ def test_minted_ig_row_survives_build_postiz_payload(tmp_path):
         led.add_post(Post(id="p1", parent_id="clip_1", account="a", account_id="ig_1",
                           platform=Platform.instagram, caption="fire", state=PostState.published,
                           scheduled_time="2026-06-01T00:00:00Z", public_url="https://ig/reel/x",
-                          product_type="REELS"))
+                          post_type="REELS"))
     new_id = actions.repost_post(cfg, "p1").detail["post_id"]
     minted = Ledger.load(cfg).posts[new_id]
-    assert minted.product_type == "post"
+    assert minted.post_type == "post"
     payload = build_postiz_payload(
         integration_id=minted.account_id, platform=minted.platform.value, content=minted.caption,
         media_urls=["m1|https://cdn/a.mp4"], scheduled_time="2026-06-02T18:00:00Z",
-        post_type=minted.product_type)
+        post_type=minted.post_type)
     assert payload["posts"][0]["settings"] == {"__type": "instagram", "post_type": "post"}

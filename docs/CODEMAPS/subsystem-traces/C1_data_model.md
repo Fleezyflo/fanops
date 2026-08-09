@@ -64,7 +64,7 @@ One per (clip, account, platform) posting surface. `parent_id` → Clip.id.
 - `account: str`, `account_id: str`, `platform: Platform`
 - `caption: str`, `hashtags: list[str]`, `media_urls: list[str]`, `aspect: Fmt`
 - `scheduled_time: Optional[str]`, `submission_id: Optional[str]` (fanops_ prefix = idempotency token, not real backend id — see `is_real_submission_id`)
-- `public_url: Optional[str]`, `media_id: Optional[str]` (IG Graph media id), `product_type: Optional[str]`
+- `public_url: Optional[str]`, `media_id: Optional[str]` (IG Graph media id), `post_type: Optional[str]`
 - `error_reason`, `metrics: dict` (latest snapshot), `metrics_series: list[dict]` (append-only time series, P3)
 - `render_id: Optional[str]` → Render.id
 - `variant_key`, `variant_hook` (read-only mirror of Render.hook_text)

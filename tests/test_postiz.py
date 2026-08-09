@@ -32,7 +32,7 @@ def _post(pid="p1", acct_id="intg_1"):
     # the publish path that's MEANT to capture/keep public_url None on failure (D2 fail-closed).
     # product_type is declared: MOL-822 removed the publish-path `or "post"` guess.
     return Post(id=pid, parent_id="c1", account="a", account_id=acct_id, platform=Platform.instagram,
-                caption="fire", state=PostState.submitting, product_type="post",
+                caption="fire", state=PostState.submitting, post_type="post",
                 media_urls=["https://uploads.postiz.com/x.mp4"], scheduled_time="2099-01-01T00:00:00Z")
 
 def _led(cfg, post):
@@ -221,12 +221,12 @@ def test_publish_undeclared_product_type_raises_before_any_network(tmp_path, mon
     # Postiz never receives a product nobody declared. `_post()` defaults to declared; this fixture is the
     # legacy stand-in (product_type None) that used to slip through as a Reel.
     from fanops.studio.views_results import classify_failure
-    cfg = _cfg(tmp_path, monkeypatch); post = _post(); post.product_type = None
+    cfg = _cfg(tmp_path, monkeypatch); post = _post(); post.post_type = None
     led = _led(cfg, post); cap = _capture(mocker)
     with pytest.raises(ValueError) as e:
         PostizPoster(cfg).publish(led, "p1")
     msg = str(e.value)
-    assert "undeclared product_type" in msg
+    assert "undeclared post_type" in msg
     # Typed kind on a synthetic failed post: ValueError path stamps bad_payload, never transient
     assert classify_failure(type("P", (), {"error_reason": msg, "error_kind": ErrorKind.bad_payload,
                                            "state": PostState.failed})()) == "bad_payload"
@@ -235,7 +235,7 @@ def test_publish_undeclared_product_type_raises_before_any_network(tmp_path, mon
 
 def test_publish_declared_story_sends_story(tmp_path, monkeypatch, mocker):
     # The declaration — not a hardcoded literal — reaches the vendor.
-    cfg = _cfg(tmp_path, monkeypatch); post = _post(); post.product_type = "story"
+    cfg = _cfg(tmp_path, monkeypatch); post = _post(); post.post_type = "story"
     led = _led(cfg, post); cap = _capture(mocker)
     PostizPoster(cfg).publish(led, "p1")
     assert _settings(cap) == {"__type": "instagram", "post_type": "story"}
@@ -245,7 +245,7 @@ def test_publish_declared_story_sends_story(tmp_path, monkeypatch, mocker):
 def test_publish_empty_media_raises_before_any_network(tmp_path, monkeypatch, mocker, token):
     # A LEDGER post always carries media (_ensure_media fills it pre-publish), so an empty set is a defect
     # whatever the declared token — and the refusal happens BEFORE the request is built.
-    cfg = _cfg(tmp_path, monkeypatch); post = _post(); post.media_urls = []; post.product_type = token
+    cfg = _cfg(tmp_path, monkeypatch); post = _post(); post.media_urls = []; post.post_type = token
     led = _led(cfg, post); cap = _capture(mocker)
     with pytest.raises(ValueError) as e:
         PostizPoster(cfg).publish(led, "p1")
@@ -282,7 +282,7 @@ def test_publish_single_video_ig_post_passes_the_invariant(tmp_path, monkeypatch
 def test_publish_story_is_not_held_to_the_single_video_rule(tmp_path, monkeypatch, mocker):
     # The invariant is scoped to what it explains: 'post' -> REELS. A story carries whatever it carries.
     cfg = _cfg(tmp_path, monkeypatch); post = _post()
-    post.product_type = "story"; post.media_urls = ["m1|https://cdn/a.jpg"]
+    post.post_type = "story"; post.media_urls = ["m1|https://cdn/a.jpg"]
     led = _led(cfg, post); cap = _capture(mocker)
     PostizPoster(cfg).publish(led, "p1")
     assert _settings(cap)["post_type"] == "story"
@@ -302,7 +302,7 @@ def test_validation_valueerror_lands_the_post_failed_via_publish_one(tmp_path, m
         led.add_clip(Clip(id="c1", parent_id="mom_1", path=str(f), state=ClipState.queued))
         led.add_post(Post(id="p1", parent_id="c1", account="a", account_id="intg_1",
                           platform=Platform.instagram, caption="c", state=PostState.queued,
-                          product_type="post",
+                          post_type="post",
                           created_at="2026-07-16T13:31:00Z", scheduled_time="2020-01-01T00:00:00Z",
                           media_urls=["m1|https://cdn/a.mp4", "m2|https://cdn/b.mp4"]))
     mocker.patch("fanops.post.run._ensure_media", return_value=None)   # media already resolved on the row
@@ -323,7 +323,7 @@ def test_publish_leg_drives_real_postiz_poster_not_dryrun(tmp_path, monkeypatch,
     with Ledger.transaction(cfg) as led:
         led.add_post(Post(id="p1", parent_id="c1", account="a", account_id="intg_1", platform=Platform.instagram,
                           caption="fire", media_urls=["https://uploads.postiz.com/x.mp4"],   # already uploaded -> no media network
-                          state=PostState.queued, product_type="post", public_url="dryrun://p1"))
+                          state=PostState.queued, post_type="post", public_url="dryrun://p1"))
     mocker.patch("fanops.post.postiz.requests.post", return_value=_R(201, {"id": "postiz_1"}))
     final = _publish_one(cfg, "p1", "postiz")
     led = Ledger.load(cfg)

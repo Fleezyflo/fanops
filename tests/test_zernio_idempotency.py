@@ -507,7 +507,7 @@ def test_41_an_old_row_without_the_key_loads_as_none(tmp_path, monkeypatch):
 def test_42_schema_version_is_unchanged():
     # Additive Optional[str]=None: no migration, no bump (precedent: media_id / product_type).
     from fanops.ledger import SCHEMA_VERSION
-    assert SCHEMA_VERSION == 11
+    assert SCHEMA_VERSION == 12
 
 def test_43_extra_ignore_forward_compat_is_unbroken():
     # extra="ignore" is deliberate, pinned forward-compat: an OLDER binary drops this new key rather than

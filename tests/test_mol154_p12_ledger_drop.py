@@ -14,8 +14,8 @@ def _write(cfg, raw):
         cfg.ledger_path.unlink()
 
 
-def test_schema_version_is_11():
-    assert SCHEMA_VERSION == 11
+def test_schema_version_is_12():
+    assert SCHEMA_VERSION == 12
 
 
 def test_migration_v10_to_v11_drops_selections(tmp_path):
@@ -40,7 +40,7 @@ def test_migration_v10_to_v11_drops_selections(tmp_path):
     with Ledger.transaction(cfg):
         pass
     saved = Ledger.load(cfg)._to_doc()
-    assert saved["schema_version"] == 11
+    assert saved["schema_version"] == 12
     assert "selection_facts" not in saved and "account_selections" not in saved
 
 
@@ -59,7 +59,7 @@ def test_v8_ledger_upgrades_through_v11(tmp_path):
     with Ledger.transaction(cfg):
         pass
     saved = Ledger.load(cfg)._to_doc()
-    assert saved["schema_version"] == 11
+    assert saved["schema_version"] == 12
     assert "account_selections" not in saved and "selection_facts" not in saved
 
 

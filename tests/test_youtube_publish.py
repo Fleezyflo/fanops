@@ -16,7 +16,7 @@ def _yt_post(**kw):
     # (YouTube settings ignore the token; the declaration is still required on the publish path).
     base = dict(id="p1", parent_id="clip_1", account="a", account_id="yt_intg",
                 platform=Platform.youtube, caption="full description here",
-                product_type="post", media_urls=["m1|http://x/m.mp4"])
+                post_type="post", media_urls=["m1|http://x/m.mp4"])
     base.update(kw)
     return Post(**base)
 

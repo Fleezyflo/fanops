@@ -424,12 +424,12 @@ class PostizPoster:
         sched = post.scheduled_time or iso_z(datetime.now(timezone.utc))
         media_urls = [rewrite_media_base(u, self.cfg) for u in (post.media_urls or [])]
         # The payload's post_type is RENDERED from the post's own declaration — never guessed here.
-        # An undeclared row (product_type None/blank) is refused BEFORE any network; `_publish_one`
+        # An undeclared row (post_type None/blank) is refused BEFORE any network; `_publish_one`
         # lands it `failed` with ErrorKind.bad_payload (MOL-781).
-        declared = (post.product_type or "").strip()
+        declared = (post.post_type or "").strip()
         if not declared:
             raise ValueError(
-                f"{post.platform.value} post {post.id} reached publish with undeclared product_type "
+                f"{post.platform.value} post {post.id} reached publish with undeclared post_type "
                 f"— refusing to guess post|story"
             )
         _validate_ledger_media(post, declared, media_urls)
