@@ -1,9 +1,8 @@
 # tests/test_imported_projection.py — ledger-rebuild M2: the INVERSE projection.
-# The forward direction (list_user_media + resolve_media_ids: match a live media to a ledger post by
-# permalink, enrich it) ALREADY SHIPPED and is NOT retested here. The NEW work: iterate the live media
-# inventory -> a live media that matches NO ledger post becomes an ImportedMedia record ("viewed there,
-# not authored here"). Idempotent (re-run UPSERTS by media_id, never duplicates). Scoped to the
-# CREDENTIALED handle (META_IG_USER_ID is single-handle). Pure-fixture (injected `get=`), no real network.
+# Authored posts are skipped by permalink match; a live media that matches NO ledger post becomes an
+# ImportedMedia record ("viewed there, not authored here"). Idempotent (re-run UPSERTS by media_id,
+# never duplicates). Scoped to the CREDENTIALED handle (META_IG_USER_ID is single-handle).
+# Pure-fixture (injected `get=`), no real network.
 from fanops.config import Config
 from fanops.models import Post, PostState, Platform
 from fanops.ledger import Ledger
@@ -116,7 +115,7 @@ def test_projection_preserves_metrics_on_reimport(tmp_path, monkeypatch):
 
 
 def test_projection_fail_open_no_creds(tmp_path, monkeypatch):
-    # No creds -> list_user_media returns [] -> nothing imported, no crash (mirrors resolve_media_ids).
+    # No creds -> list_user_media returns [] -> nothing imported, no crash (fail-open).
     cfg = _cfg(tmp_path, monkeypatch, token=None, ig=None)
     led = _led(cfg, [])
     reconcile.project_imported_media(led, cfg, get=_media_get([_page([

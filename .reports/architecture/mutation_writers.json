@@ -24,7 +24,7 @@
     "account_id": {"writers": 2, "writer_sites": ["crosspost.py:239 (frozen at mint)", "post/run.py:280 (re-resolved at publish)"], "conflict_policy": "IN-FLIGHT WINS — FINALIZE writes it ONLY when changed (run.py:356), so a concurrent Go-Live remap to a DIFFERENT channel is not churn-clobbered", "stale_possible": true},
     "error_reason": {"writers": 14, "validated_by": "redact(..., postiz_api_key, zernio_api_key) — run.py:327,340", "replay_safe": false, "note": "CARRIES MACHINE STATE — see couplings.json COUP-03. Three parsers read structure out of it."},
     "metrics / metrics_series": {"writers": 1, "writer_sites": ["track.record_metrics"], "note": "metrics_series is APPEND-ONLY, never rewritten (track.py:191); idempotent per cadence offset"},
-    "media_id / product_type": {"writers": 1, "writer_sites": ["reconcile.py:295 (resolve_media_ids)"], "idempotent": true},
+    "media_id / post_type": {"writers": 1, "writer_sites": ["post mint / Postiz promotion (MOL-775)"], "idempotent": true},
     "scheduled_time": {"writers": 5, "writer_sites": ["crosspost.py:241", "ledger.py:591 (approve_post)", "studio/actions.py (reschedule/clear)", "post/run.py:426 (daemon retry)"], "validated_by": "schedule_utc — unparseable => post FAILED (run.py:385-391)", "ordering_matters": true, "ordering_rule": "clear_time MUST un-approve BEFORE clearing, else a queued-and-timeless post exists. Defence-in-depth: a timeless queued post PARKS (run.py:381)."},
     "publish_hour / publish_dow": {"writers": 2, "writer_sites": ["post/run.py:311", "reconcile.py:722"], "validated_by": "publish_buckets — FAILS CLOSED to UTC"},
     "media_urls": {"writers": 2, "writer_sites": ["post/run.py:206,224 (_ensure_media)", "compress.py:113 (post-shrink)"]}

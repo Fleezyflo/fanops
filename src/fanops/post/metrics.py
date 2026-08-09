@@ -564,8 +564,8 @@ class GraphInsightsClient:
     def __init__(self, cfg: Config, *, posts: Optional[list] = None, insights_fn=None):
         self.cfg = cfg
         self.posts = posts or []
-        # each post -> (media_id, post_type). The insights request is DERIVED from the media's type
-        # (stamped at resolve into Post.post_type, meta_graph.insights_metrics_for) — a feed video is never
+        # each post -> (media_id, post_type). The insights request is DERIVED from the declared type
+        # (Post.post_type at mint, meta_graph.insights_metrics_for) — a feed video is never
         # asked for a reels-only metric. The client forwards p.post_type verbatim (no default, no guess);
         # when it is still unresolved (None — a legacy row stamped before the type was carried),
         # media_insights refuses the empty-metric request PRE-FLIGHT and returns None, so this post

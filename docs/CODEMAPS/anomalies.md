@@ -97,10 +97,8 @@ re-requests every tick with no operator-visible terminal). That class is now nam
 
 - `learn_doctor.py:70-80` `load_verdict` — zero in-repo callers; either dead or M4 reads the sidecar file directly, bypassing it. Candidate for removal or wiring into `doctor_report`.
 - `timing_bias.py:113-122` `timing_prior_hour` — docstring claims "the schedule seam calls this" but zero in-repo callers found; likely orphaned, worth a repo-wide grep to confirm.
-- `track.py:291-294` `pull_metrics` — broad `except Exception` around the `resolve_media` call; intentional fail-open with a logged breadcrumb, but a genuine bug inside `resolve_media_ids` would be masked as a soft skip rather than surfacing.
 - `variant_amplify.py:177`, `p4_dim_bias.py:70,79`, `moment_hook_learning.py:47` — broad outer-guard excepts in every bias actuator; all deliberately broad ("fail-safe, not fail-silent"), all log before swallowing.
 - `meta_graph.py:337-338` `_read_queries` — `except (OSError, JSONDecodeError, ValueError, TypeError): return None` with **no logging**, unlike sibling `insights_blocked_signal` which does log. A corrupt hashtag-budget file is undetectable from the log stream (fail-closed direction is safe, but silent).
-- Asymmetric daemon-tick coverage: `reconcile.resolve_media_ids` runs automatically inside `track.pull_metrics`, but its documented "inverse" sibling `reconcile.project_imported_media` is called only from the manual `cli.cmd_map_media` CLI verb. May be an intentional scope choice or a gap — worth confirming with the author.
 - No bias-scope violations found; no TODO/FIXME/XXX anywhere in the cluster.
 
 ## C8 — Ops, CLI & daemon
