@@ -44,7 +44,7 @@ from fanops.config import Config
 from fanops.errors import AuthError
 from fanops.ledger import Ledger
 from fanops.log import get_logger
-from fanops.models import PostState, is_real_submission_id, ImportedMedia
+from fanops.models import ErrorKind, PostState, is_real_submission_id, ImportedMedia
 from fanops.text import safe_public_url
 from fanops.timeutil import parse_iso, iso_z, publish_buckets
 from datetime import datetime, timezone, timedelta
@@ -876,7 +876,7 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
             if new_sub: upd["submission_id"] = new_sub
             led.posts[post.id] = post.model_copy(update=upd)
             # state + clear error_reason via owner (MOL-779); a transient poll-error reason must not survive a successful publish
-            led.set_post_state(post.id, PostState.published, error_reason=None)
+            led.set_post_state(post.id, PostState.published, error_reason=None, error_kind=None)
             if new_sub is None:                           # published but still no real id -> attribution can't bind
                 log("reconcile", post.id, "published_no_real_id")   # first-class: a logged outcome, not silence
             try:                                          # CULM-Q3: archive includes reconcile-recovered posts
@@ -903,7 +903,7 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
                         f"re-queueable (report 11 §5)")[:400])
                 log("reconcile", post.id, "failed_held_unverified_candidate", candidate=cand)
                 continue
-            led.set_post_state(post.id, PostState.failed, error_reason=(
+            led.set_post_state(post.id, PostState.failed, error_kind=ErrorKind.unknown, error_reason=(
                 f"reconciled: poster reports failed ({info.get('errorMessage', 'no detail')})"))
             log("reconcile", post.id, "failed")
         else:

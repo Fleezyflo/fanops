@@ -17,7 +17,7 @@ from fanops.accounts import Accounts
 from fanops.controlio import write_text_atomic
 from fanops.errors import AuthError, redact
 from fanops.ledger import Ledger
-from fanops.models import Post, PostState, is_real_submission_id
+from fanops.models import ErrorKind, Post, PostState, is_real_submission_id
 from fanops.post import get_poster, get_media_uploader
 from fanops.post.media import ensure_clip_media, _uploader_kwargs
 from fanops.timeutil import parse_iso as _parse, iso_z, publish_buckets as _publish_buckets, is_scheduled_due, schedule_utc
@@ -119,7 +119,7 @@ def _is_fatal_auth_error(exc: Exception) -> bool:
 # Report 11 §5: reconcile_candidate_id rides here for ONE reason — a poster writes it on the throwaway
 # network ledger, so without it in this union the write is silently DISCARDED at finalize and the operator
 # loses the only pointer a 409 handed back. It is propagation only; run.py never reads or acts on it.
-_NET_POST_FIELDS = ("state", "submission_id", "error_reason", "public_url", "media_urls", "published_at", "account_id",
+_NET_POST_FIELDS = ("state", "submission_id", "error_reason", "error_kind", "public_url", "media_urls", "published_at", "account_id",
                     "reconcile_candidate_id")
 
 # Sprint 2: per-(backend, integration) publish throttle — in-process only (daemon is single-process).
@@ -377,11 +377,13 @@ def _publish_one(cfg: Config, post_id: str, backend: str, *, accounts: "Accounts
                         from fanops.studio.views_common import transient_daemon_retry_count
                         n = transient_daemon_retry_count(post.error_reason)
                         msg = "publish failed: " + red
-                        led.set_post_state(post_id, PostState.failed, error_reason=(
+                        led.set_post_state(post_id, PostState.failed, error_kind=ErrorKind.transient,
+                                           error_reason=(
                             f"transient_daemon_retry={n}/{_DAEMON_TRANSIENT_MAX}|{msg}" if n else msg))
                         post = led.posts[post_id]
                 else:
-                    led.set_post_state(post_id, PostState.failed, error_reason=(
+                    kind = ErrorKind.bad_payload if isinstance(exc, ValueError) else ErrorKind.unknown
+                    led.set_post_state(post_id, PostState.failed, error_kind=kind, error_reason=(
                         "publish failed: " + redact(str(exc), cfg.postiz_api_key, cfg.zernio_api_key)))  # scrub any leaked key
                     post = led.posts[post_id]
             break
@@ -434,7 +436,7 @@ def _due_or_fail(cfg: Config, post: Post, cutoff: datetime) -> bool:
         with Ledger.transaction(cfg) as led:
             p = led.posts.get(post.id)
             if p is not None and p.state is PostState.queued:
-                led.set_post_state(post.id, PostState.failed,
+                led.set_post_state(post.id, PostState.failed, error_kind=ErrorKind.unknown,
                                    error_reason=f"bad schedule time {post.scheduled_time!r}: unparseable")
         return False
     return is_scheduled_due(post, cutoff)
@@ -443,13 +445,13 @@ def _due_or_fail(cfg: Config, post: Post, cutoff: datetime) -> bool:
 def _requeue_transient_failed_for_daemon(cfg: Config) -> int:
     """MOL-125: before publish_due, re-queue failed transient posts (no real submission_id) for another
     daemon attempt. Bounded by _DAEMON_TRANSIENT_MAX — after that they stay terminal failed."""
-    from fanops.studio.views_common import is_transient_failure_reason, transient_daemon_retry_count
+    from fanops.studio.views_common import is_transient_failure, transient_daemon_retry_count
     from fanops.timeutil import iso_z
     requeued = 0
     led = Ledger.load(cfg)
     candidates = [p for p in led.posts_in_state(PostState.failed)
                   if not is_real_submission_id(p.submission_id)
-                  and is_transient_failure_reason(p.error_reason)
+                  and is_transient_failure(p)
                   and transient_daemon_retry_count(p.error_reason) < _DAEMON_TRANSIENT_MAX]
     if not candidates:
         return 0
@@ -462,7 +464,7 @@ def _requeue_transient_failed_for_daemon(cfg: Config) -> int:
                     continue
                 if is_real_submission_id(cur.submission_id):
                     continue
-                if not is_transient_failure_reason(cur.error_reason):
+                if not is_transient_failure(cur):
                     continue
                 n = transient_daemon_retry_count(cur.error_reason) + 1
                 if n > _DAEMON_TRANSIENT_MAX:
@@ -470,7 +472,7 @@ def _requeue_transient_failed_for_daemon(cfg: Config) -> int:
                 cur.submission_id = None
                 if not (cur.scheduled_time or "").strip():
                     cur.scheduled_time = iso_z(now)
-                lg.set_post_state(cur.id, PostState.queued,
+                lg.set_post_state(cur.id, PostState.queued, error_kind=None,
                                   error_reason=f"transient_daemon_retry={n}/{_DAEMON_TRANSIENT_MAX}|")
                 requeued += 1
     except Exception:

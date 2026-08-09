@@ -6,12 +6,12 @@ import pytest
 from fanops.config import Config
 from fanops.errors import PostizAuthError
 from fanops.ledger import Ledger
-from fanops.models import Post, Platform, PostState
+from fanops.models import ErrorKind, Post, Platform, PostState
 from fanops.post.postiz import (PostizPoster, build_postiz_payload, postiz_upload_media,
                                 postiz_list_integrations, postiz_check_auth, PostizIntegration,
                                 _extract_postiz_id, rewrite_media_base, _mirror_media_to_r2)
 from fanops.post import get_poster, get_media_uploader
-from fanops.studio.views_common import is_transient_failure_reason
+from fanops.studio.views_common import is_transient_failure
 
 
 class _R:
@@ -82,7 +82,7 @@ def test_payload_rejects_an_unknown_token_before_any_network(mocker):
                              media_urls=["mid_9|https://uploads.postiz.com/x.mp4"],
                              scheduled_time="2099-01-01T00:00:00Z", post_type="weird")
     assert "expected post|story" in str(e.value)
-    assert not is_transient_failure_reason(str(e.value))   # a validation defect must classify PERMANENT
+    # MOL-781: classification is typed at the failed write site, not from exception prose
     sent.assert_not_called()
 
 
@@ -227,8 +227,9 @@ def test_publish_undeclared_product_type_raises_before_any_network(tmp_path, mon
         PostizPoster(cfg).publish(led, "p1")
     msg = str(e.value)
     assert "undeclared product_type" in msg
-    assert not is_transient_failure_reason(msg)
-    assert classify_failure(type("P", (), {"error_reason": msg, "state": PostState.failed})()) != "transient"
+    # Typed kind on a synthetic failed post: ValueError path stamps bad_payload, never transient
+    assert classify_failure(type("P", (), {"error_reason": msg, "error_kind": ErrorKind.bad_payload,
+                                           "state": PostState.failed})()) == "bad_payload"
     cap["mock"].assert_not_called()
 
 
@@ -249,7 +250,6 @@ def test_publish_empty_media_raises_before_any_network(tmp_path, monkeypatch, mo
     with pytest.raises(ValueError) as e:
         PostizPoster(cfg).publish(led, "p1")
     assert "no media" in str(e.value)
-    assert not is_transient_failure_reason(str(e.value))
     cap["mock"].assert_not_called()
 
 
@@ -267,7 +267,6 @@ def test_publish_ig_post_requires_exactly_one_video(tmp_path, monkeypatch, mocke
     with pytest.raises(ValueError) as e:
         PostizPoster(cfg).publish(led, "p1")
     assert "not a single video" in str(e.value)
-    assert not is_transient_failure_reason(str(e.value))
     cap["mock"].assert_not_called()
 
 
@@ -311,7 +310,8 @@ def test_validation_valueerror_lands_the_post_failed_via_publish_one(tmp_path, m
     _publish_one(cfg, "p1", "postiz")
     p = Ledger.load(cfg).posts["p1"]
     assert p.state is PostState.failed
-    assert not is_transient_failure_reason(p.error_reason)   # a validation defect is never re-queued as a blip
+    assert p.error_kind is ErrorKind.bad_payload
+    assert not is_transient_failure(p)   # validation defect never re-queued as a blip
     sent.assert_not_called()
 
 def test_publish_leg_drives_real_postiz_poster_not_dryrun(tmp_path, monkeypatch, mocker):

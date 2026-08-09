@@ -396,8 +396,8 @@ def postiz_autostart_hint(cfg: Config, *, now: "float | None" = None) -> dict:
             "show": bool(banner.get("show")), "status": banner.get("status")}
 
 
-# MOL-125: shared transient-network failure classifier for publish error_reason strings (Studio recovery +
-# daemon re-queue). Distinct from run._is_transient_publish_error (Exception-typed publish path).
+# MOL-125 / MOL-812: daemon retry-count still lives in the error_reason prefix until MOL-812 moves it.
+# MOL-781: transient classification reads Post.error_kind — never substring-scans error_reason.
 
 _TRANSIENT_DAEMON_PREFIX = _re.compile(r"^transient_daemon_retry=(\d+)/(\d+)\|", _re.I)
 
@@ -412,35 +412,11 @@ def strip_transient_daemon_prefix(error_reason: str | None) -> str:
     return _TRANSIENT_DAEMON_PREFIX.sub("", er, count=1) if er else ""
 
 
-def is_transient_failure_reason(error_reason: str | None) -> bool:
-    """True for DNS/read-timeout/connection blips in a stored error_reason (failed-tab recovery + daemon).
-    Permanent 4xx/auth/validation -> False."""
-    er = strip_transient_daemon_prefix(error_reason).lower()
-    if not er:
-        return False
-    if "publish transient error" in er:
-        return True
-    if any(x in er for x in ("401", "403", "unauthorized", "auth rejected", "credentials rejected")):
-        return False
-    if any(x in er for x in ("413", "oversize", "too large", "entity too large")):
-        return False
-    if any(x in er for x in ("400", "bad request", "bad media", "invalid media", "422")):
-        return False
-    if "429" in er or "rate limit" in er or "too many requests" in er:
-        return False
-    if any(x in er for x in ("nameresolution", "name resolution", "failed to resolve",
-                             "read timed out", "timed out", "timeout", "connection refused",
-                             "connection error", "connection reset", "max retries exceeded",
-                             "network error", "unreachable", "connection aborted")):
-        return True
-    m = _re.search(r'\((\d{3})\)', er)
-    if m:
-        code = int(m.group(1))
-        if 500 <= code < 600:
-            return True
-        if 400 <= code < 500:
-            return False
-    return False
+def is_transient_failure(post) -> bool:
+    """True when the failure site stamped ErrorKind.transient (Studio recovery + daemon re-queue)."""
+    from fanops.models import ErrorKind
+    kind = getattr(post, "error_kind", None)
+    return kind is ErrorKind.transient
 
 
 def lineage_maps(led: Ledger) -> tuple[dict, dict, dict]:

@@ -56,11 +56,26 @@ from fanops.config import Config
 from fanops.errors import ZernioAuthError, fail_open, redact
 from fanops.ledger import Ledger
 from fanops.log import get_logger
-from fanops.models import PostState
+from fanops.models import ErrorKind, PostState, error_kind_for_http_status
 from fanops.text import safe_public_url
 from fanops.post.compress import maybe_shrink_for_cap
 from fanops.post.zernio_outcome import (Created, IdempotentReplay, ReconciliationRequired, TerminalFailure,
                                         ZernioCreateResult)
+
+
+def _error_kind_for_terminal(result: TerminalFailure) -> ErrorKind:
+    """Stamp ErrorKind from a TerminalFailure.reason at the sole mapping site (MOL-781)."""
+    r = result.reason or ""
+    if r.startswith("http_"):
+        try:
+            return error_kind_for_http_status(int(r.removeprefix("http_")))
+        except ValueError:
+            return ErrorKind.unknown
+    if r == "missing_request_identity":
+        return ErrorKind.bad_payload
+    if r == "connect_timeout":
+        return ErrorKind.transient
+    return ErrorKind.unknown
 
 _log = logging.getLogger("fanops.post.zernio")
 _MAX_RETRIES = 4
@@ -151,9 +166,8 @@ def _require_request_identity(post) -> TerminalFailure | None:
     rest on an unenforced observation. Defaulting a missing component to "", to post.id, or to a fresh stamp
     is NOT an option: the first two make two different incarnations collide on ONE x-request-id, the third
     makes every attempt unique and silently disables idempotency altogether. Failing loudly is the only
-    correct behavior — the reason is precise, the operator sees it in Review, and it is deliberately NOT
-    phrased as a transient (is_transient_failure_reason must not match it, or the daemon would re-queue a
-    row that cannot possibly succeed until its data is repaired). Pinned by the reason-classifier test."""
+    correct behavior — the reason is precise, the operator sees it in Review, and the write stamps
+    ErrorKind.bad_payload so the daemon never re-queues it as a blip (MOL-781)."""
     missing = [n for n, v in (("created_at", post.created_at), ("account_id", post.account_id),
                               ("platform", getattr(post.platform, "value", None))) if not (v or "").strip()]
     if missing:
@@ -536,9 +550,8 @@ class ZernioPoster:
                 return ReconciliationRequired("rate_limited_may_be_live",
                                               f"429 and the retry budget ({_RETRY_DEADLINE_S:.0f}s) is spent — the create "
                                               f"may already have landed; body withheld")
-            # Other 4xx: a verdict re-sending cannot change. The body stays WITHHELD (as before this fix) —
-            # this error_reason is scanned by is_transient_failure_reason for the daemon re-queue, and a
-            # response body echoing "timeout" or "(503)" would flip a terminal 4xx into a re-queue loop.
+            # Other 4xx: a verdict re-sending cannot change. The body stays WITHHELD — display prose must
+            # never carry a status dump that could confuse operators; classification is ErrorKind at write.
             return TerminalFailure(f"http_{resp.status_code}", f"({resp.status_code}) body withheld")
         # Unreachable: every branch returns or continues, and the last iteration cannot continue
         # (attempt < _MAX_RETRIES - 1 is False there). Belt-and-braces, never the re-queueable direction.
@@ -573,6 +586,6 @@ class ZernioPoster:
             # forward-compat), so an OLDER binary loading this ledger drops the new key entirely — the
             # mirror is then the only surviving copy. (error_reason set via set_post_state above.)
         else:                                            # TerminalFailure — the ONLY re-queueable verdict
-            led.set_post_state(post_id, PostState.failed,
+            led.set_post_state(post_id, PostState.failed, error_kind=_error_kind_for_terminal(result),
                                error_reason=f"zernio {result.reason}: {result.evidence}"[:400])
         return led

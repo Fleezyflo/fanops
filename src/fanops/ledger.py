@@ -585,7 +585,7 @@ class Ledger:
     # reassignment makes the new object the one every later reader (and serialization) sees.
     # MOL-779: optional error_reason= expresses the canary compound write (and every other state+reason
     # stamp). Kw-only + _UNSET so a bare set_*_state(id, st) leaves error_reason untouched; pass
-    # error_reason=None to clear. Shaped so MOL-781 can add error_kind= the same way without a signature break.
+    # error_reason=None to clear. MOL-781: set_post_state also carries error_kind= the same way.
     def set_source_state(self, uid: str, st: SourceState, *, error_reason=_UNSET) -> None:
         upd: dict = {"state": st}
         if error_reason is not _UNSET: upd["error_reason"] = error_reason
@@ -598,9 +598,10 @@ class Ledger:
         upd: dict = {"state": st}
         if error_reason is not _UNSET: upd["error_reason"] = error_reason
         self.clips[uid] = self.clips[uid].model_copy(update=upd)
-    def set_post_state(self, uid: str, st: PostState, *, error_reason=_UNSET) -> None:
+    def set_post_state(self, uid: str, st: PostState, *, error_reason=_UNSET, error_kind=_UNSET) -> None:
         upd: dict = {"state": st}
         if error_reason is not _UNSET: upd["error_reason"] = error_reason
+        if error_kind is not _UNSET: upd["error_kind"] = error_kind
         self.posts[uid] = self.posts[uid].model_copy(update=upd)
     def set_batch_state(self, uid: str, st: BatchState, *, error_reason=_UNSET) -> None:
         upd: dict = {"state": st}

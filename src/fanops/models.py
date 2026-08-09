@@ -157,6 +157,28 @@ class RenderState(str, Enum):
     # artifact never entangles with the shared substrate Clip's caption/stitch states.
     rendered = "rendered"; queued = "queued"; published = "published"; analyzed = "analyzed"; retired = "retired"
 
+class ErrorKind(str, Enum):
+    # MOL-781: typed failure kind written ONCE at the failure site. Readers (Studio recovery, daemon
+    # re-queue) consume this field — never substring-scan error_reason. Optional/default None on Post so
+    # old ledgers and non-failure rows load unchanged; None reads as unknown (no legacy fallback ladder).
+    rate_limit = "rate_limit"
+    oversize = "oversize"
+    bad_payload = "bad_payload"
+    transient = "transient"
+    unknown = "unknown"
+
+
+def error_kind_for_http_status(code: int) -> ErrorKind:
+    """Map a known HTTP status at the failure site to ErrorKind. Not a prose parser."""
+    if code == 429:
+        return ErrorKind.rate_limit
+    if code == 413:
+        return ErrorKind.oversize
+    if 400 <= code < 500:
+        return ErrorKind.bad_payload
+    return ErrorKind.unknown
+
+
 class PostState(str, Enum):
     # awaiting_approval: a crossposted post is BORN here (post-approval-lifecycle). It is NOT publishable
     # — publish_due/publish_now iterate only `queued`, so an unapproved post is structurally never
@@ -445,7 +467,8 @@ class Post(BaseModel):
                                                 # (Postiz/IG: post|story). None = undeclared / legacy / non-IG (TikTok:
                                                 # Zernio createPost has no post-type enum). reconcile.resolve_media_ids
                                                 # may still overwrite IG rows from live Graph until 774-D lands.
-    error_reason: Optional[str] = None
+    error_reason: Optional[str] = None          # Display-only prose. NOTHING classifies from this field (MOL-781).
+    error_kind: Optional[ErrorKind] = None      # MOL-781: typed failure kind; written with failed/error via set_post_state
     metrics: dict = Field(default_factory=dict)
     # P3 append-only metrics time-series: one sparse row per captured cadence offset, each a superset of
     # a `metrics` snapshot + {"offset","captured_at"} provenance. `metrics` above stays EXACTLY the LATEST

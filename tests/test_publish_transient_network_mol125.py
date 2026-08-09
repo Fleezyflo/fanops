@@ -3,9 +3,9 @@
 import requests as _rq
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.models import Post, Clip, PostState, ClipState, Platform
+from fanops.models import ErrorKind, Post, Clip, PostState, ClipState, Platform
 from fanops.post.run import _publish_one, _is_transient_publish_error, _requeue_transient_failed_for_daemon
-from fanops.studio.views_common import is_transient_failure_reason
+from fanops.studio.views_common import is_transient_failure
 from fanops.studio.views_results import classify_failure, _RETRYABLE_FAILURES
 
 
@@ -25,9 +25,9 @@ def _queued(cfg, pid="p1", cid="c1", *, sub=None):
                           submission_id=sub))
 
 
-def _fail_post(pid, reason):
+def _fail_post(pid, reason, *, kind=None):
     return Post(id=pid, parent_id="c1", account="a", account_id="1", platform=Platform.tiktok,
-                caption="x", state=PostState.failed, error_reason=reason)
+                caption="x", state=PostState.failed, error_reason=reason, error_kind=kind)
 
 
 def test_is_transient_publish_error_dns_and_read_timeout():
@@ -39,12 +39,17 @@ def test_is_transient_publish_error_dns_and_read_timeout():
     assert _is_transient_publish_error(RuntimeError("publish failed: zernio.com Read timed out (read timeout=30)")) is True
 
 
-def test_is_transient_failure_reason_classifies_legacy_failed_posts():
-    assert is_transient_failure_reason("publish failed: zernio.com Read timed out (read timeout=30)") is True
-    assert is_transient_failure_reason(
-        "publish failed: HTTPSConnectionPool(host='zernio.com'): NameResolutionError") is True
-    assert classify_failure(_fail_post("dns", "publish failed: NameResolutionError for zernio.com")) == "transient"
-    assert classify_failure(_fail_post("to", "publish failed: zernio.com Read timed out (read timeout=30)")) == "transient"
+def test_is_transient_failure_reads_typed_error_kind():
+    assert is_transient_failure(_fail_post("to", "publish failed: zernio.com Read timed out (read timeout=30)",
+                                           kind=ErrorKind.transient)) is True
+    assert is_transient_failure(_fail_post("dns", "publish failed: NameResolutionError for zernio.com",
+                                           kind=ErrorKind.transient)) is True
+    assert classify_failure(_fail_post("dns", "publish failed: NameResolutionError for zernio.com",
+                                       kind=ErrorKind.transient)) == "transient"
+    assert classify_failure(_fail_post("to", "publish failed: zernio.com Read timed out (read timeout=30)",
+                                       kind=ErrorKind.transient)) == "transient"
+    # Untyped legacy row: no prose fallback — unknown
+    assert classify_failure(_fail_post("legacy", "publish failed: NameResolutionError for zernio.com")) == "unknown"
     assert "transient" in _RETRYABLE_FAILURES
 
 
@@ -74,7 +79,8 @@ def test_transient_pre_send_exhausted_lands_failed_requeueable(tmp_path, monkeyp
     _publish_one(cfg, "p1", "zernio")
     p = Ledger.load(cfg).posts["p1"]
     assert p.state is PostState.failed
-    assert is_transient_failure_reason(p.error_reason)
+    assert is_transient_failure(p)
+    assert p.error_kind is ErrorKind.transient
     assert not p.submission_id
 
 
@@ -92,7 +98,8 @@ def test_permanent_4xx_still_fails_immediately(tmp_path, monkeypatch, mocker):
     p = Ledger.load(cfg).posts["p1"]
     assert p.state is PostState.failed
     assert calls["n"] == 1
-    assert classify_failure(_fail_post("x", p.error_reason)) != "transient"
+    assert p.error_kind is not ErrorKind.transient
+    assert classify_failure(p) != "transient"
 
 
 def test_daemon_transient_requeue_bounded_then_stays_failed(tmp_path, monkeypatch, mocker):
@@ -100,8 +107,9 @@ def test_daemon_transient_requeue_bounded_then_stays_failed(tmp_path, monkeypatc
     cfg = Config(root=tmp_path)
     _queued(cfg)
     with Ledger.transaction(cfg) as led:
-        led.posts["p1"] = led.posts["p1"].model_copy(update={"state": PostState.failed})
-        led.posts["p1"].error_reason = "publish failed: NameResolutionError zernio.com"
+        led.posts["p1"] = led.posts["p1"].model_copy(
+            update={"state": PostState.failed, "error_kind": ErrorKind.transient,
+                    "error_reason": "publish failed: NameResolutionError zernio.com"})
     import fanops.post.run as run
     max_d = run._DAEMON_TRANSIENT_MAX
     for i in range(max_d):
@@ -109,9 +117,10 @@ def test_daemon_transient_requeue_bounded_then_stays_failed(tmp_path, monkeypatc
         assert n == 1
         with Ledger.transaction(cfg) as led:
             assert led.posts["p1"].state is PostState.queued
-            led.posts["p1"] = led.posts["p1"].model_copy(update={"state": PostState.failed})
-            led.posts["p1"].error_reason = (
-                f"transient_daemon_retry={i + 1}/{max_d}|publish failed: NameResolutionError zernio.com")
+            led.posts["p1"] = led.posts["p1"].model_copy(
+                update={"state": PostState.failed, "error_kind": ErrorKind.transient,
+                        "error_reason": (
+                f"transient_daemon_retry={i + 1}/{max_d}|publish failed: NameResolutionError zernio.com")})
     assert _requeue_transient_failed_for_daemon(cfg) == 0
     assert Ledger.load(cfg).posts["p1"].state is PostState.failed
 
@@ -127,7 +136,8 @@ def test_recover_posts_retries_transient_failed(tmp_path):
     led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7, reason="r",
                           state=MomentState.clipped))
     led.add_clip(Clip(id="c1", parent_id="mom_1", path="/c1.mp4", state=ClipState.captioned))
-    led.add_post(_fail_post("dns", "publish failed: zernio.com Read timed out (read timeout=30)"))
+    led.add_post(_fail_post("dns", "publish failed: zernio.com Read timed out (read timeout=30)",
+                            kind=ErrorKind.transient))
     led.save()
     res = recover_posts(cfg, ["dns"], action="retry", reason="studio_retry_transient")
     assert res.ok and res.detail["retried"] == 1
