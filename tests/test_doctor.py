@@ -604,7 +604,8 @@ def test_doctor_hashtag_scrape_checkpoint_names_the_only_real_remedy(tmp_path, m
 
 
 def test_doctor_hashtag_scrape_probe_login_required_fails_loud(tmp_path, monkeypatch):
-    """MOL-696: open_client can succeed while hashtag_info returns login_required — doctor must fail."""
+    """MOL-696 / MOL-879: open_client can succeed while hashtag_info returns login_required — doctor
+    must fail loud with live ScrapeRefused text only (no scrape-login prescription)."""
     from fanops import doctor
     from fanops.config import Config
     from fanops.ig_hashtag_scrape import ScrapeRefused
@@ -619,5 +620,5 @@ def test_doctor_hashtag_scrape_probe_login_required_fails_loud(tmp_path, monkeyp
         raise ScrapeRefused("login_required")
     row = doctor._hashtag_scrape_check(cfg, open_client=lambda _c: object(), probe_resolve=probe)
     assert row["ok"] is False
-    assert "scrape-login" in row["hint"] and "login_required" in row["hint"]
+    assert "login_required" in row["hint"] and "scrape-login" not in row["hint"]
     assert "secret-password" not in row["hint"]
