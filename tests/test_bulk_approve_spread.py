@@ -310,6 +310,49 @@ def test_window_day_cap_overflow_does_not_stack_at_open(tmp_path, monkeypatch):
     assert hm.get("09:00:00", 0) <= 1, f"overflow pile: {hm}"
 
 
+def test_multi_account_overflow_opens_are_not_lockstep(tmp_path, monkeypatch):
+    """Cross-account: per-account anchors must survive _roll_into_window. Zeroing open to :00 made
+    every handle share the identical 09:00:00 on overflow days (operator: 'every account posting
+    at the same second')."""
+    monkeypatch.setenv("FANOPS_POSTER", "dryrun")
+    monkeypatch.setenv("FANOPS_OPERATOR_TZ", "America/New_York")
+    cfg = Config(root=tmp_path)
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": [
+        {"handle": "@a", "account_id": "ia", "platforms": ["instagram"], "status": "active",
+         "daily_window": [9, 23]},
+        {"handle": "@b", "account_id": "ib", "platforms": ["instagram"], "status": "active",
+         "daily_window": [9, 23]},
+        {"handle": "@c", "account_id": "ic", "platforms": ["instagram"], "status": "active",
+         "daily_window": [9, 23]},
+        {"handle": "@d", "account_id": "id", "platforms": ["instagram"], "status": "active",
+         "daily_window": [9, 23]}]}))
+    from zoneinfo import ZoneInfo
+    from fanops.studio.views_common import suggest_times_for_batch, _DAILY_ACCOUNT_CAP
+    posts = (_bare_posts("a", _DAILY_ACCOUNT_CAP + 2)
+             + _bare_posts("b", _DAILY_ACCOUNT_CAP + 2, account_id="ib")
+             + _bare_posts("c", _DAILY_ACCOUNT_CAP + 2, account_id="ic")
+             + _bare_posts("d", _DAILY_ACCOUNT_CAP + 2, account_id="id"))
+    sched = suggest_times_for_batch(cfg, posts, now=FIXED_DT)
+    assert len(set(sched.values())) == len(sched), f"batch not pairwise-distinct: {sorted(sched.values())}"
+    zone = ZoneInfo("America/New_York")
+    days = sorted({parse_iso(t).astimezone(zone).date() for t in sched.values()})
+    assert len(days) >= 2
+    overflow = days[1]
+    opens = {}
+    for p in posts:
+        local = parse_iso(sched[p.id]).astimezone(zone)
+        if local.date() != overflow:
+            continue
+        cur = opens.get(p.account)
+        if cur is None or local < cur:
+            opens[p.account] = local
+    assert len(opens) == 4, opens
+    # Not all four first-of-day slots share the same wall-clock minute
+    stamps = {dt.replace(second=0, microsecond=0) for dt in opens.values()}
+    assert len(stamps) >= 2, f"all accounts opened lockstep: {opens}"
+
+
 def test_an_untimed_or_garbage_occupied_post_holds_no_day(tmp_path, monkeypatch):
     """MOL-710 — occupancy is per-DAY, so a post with no (or an unparseable) scheduled_time occupies
     nothing: it has not claimed a slot. Fail-safe, and it keeps a torn row from silently eating capacity."""
