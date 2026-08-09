@@ -107,35 +107,19 @@ def _apply_age_terminal(post, now) -> dict | None:
     return None
 
 
-# ---- Leg 2 (Insight) identify: resolve each live IG post's Graph media_id from its permalink ----------
+# ---- REST-gate quarantine sentinel (publish-verify at the transition) ---------------------------------
 
-# REST-gate quarantine sentinel (publish-verify at the transition): the prefix on error_reason marking a
-# TikTok post the REST gate refused to let rest in a terminal-positive state (published/analyzed) because its
-# LIVENESS is NOT confirmed — no live-verifiable url (oEmbed author != reported username) / no real
-# submission_id. (IG NO LONGER uses this prefix: with the IG-liveness fix, IG liveness is confirmed by Postiz
-# — status==published + a real releaseURL — and the Graph media_id match is opportunistic enrichment, not a
-# gate; an unmatched IG post RESTS on the Postiz confirmation and carries the non-fatal enrichment note below,
-# never this quarantine sentinel.) It is now the ONLY prefix reconcile writes to error_reason — the give-up
-# terminal and the "stuck …" breadcrumb that once shared the field are gone (the mirror answers what they
-# guessed at). A TikTok post carrying it is QUARANTINED to needs_reconcile:
+# Prefix on error_reason marking a TikTok post the REST gate refused to let rest in a terminal-positive
+# state (published/analyzed) because its LIVENESS is NOT confirmed — no live-verifiable url (oEmbed author
+# != reported username) / no real submission_id. IG does NOT use this prefix: IG liveness is confirmed by
+# Postiz (status==published + a real releaseURL) or by resolve_ig_media / confirm_post_live; media_id arrives
+# at promotion from Postiz releaseId and post_type is declared at mint. It is now the ONLY prefix reconcile
+# writes to error_reason — the give-up terminal and the "stuck …" breadcrumb that once shared the field are
+# gone (the mirror answers what they guessed at). A TikTok post carrying it is QUARANTINED to needs_reconcile:
 # reconcile_posts refuses to re-promote it while still unconfirmed, and the digest surfaces it.
 _UNVERIFIED_PREFIX = "unverified:"
-# (The former _UNVERIFIED_IG_MEDIA quarantine reason was REMOVED with the IG-liveness fix: an IG post whose
-# permalink is absent from the single-credential Graph feed is no longer quarantined — see below. The
-# _UNVERIFIED_PREFIX sentinel now marks ONLY the TikTok park; the IG path uses the enrichment note instead.)
-# IG-liveness fix: a NON-fatal ENRICHMENT breadcrumb — DELIBERATELY not the `_UNVERIFIED_PREFIX` sentinel, so
-# reconcile_posts never re-parks on it (that prefix is the quarantine trigger). The corrected contract splits
-# LIVENESS from ENRICHMENT for IG: liveness is authoritatively Postiz (status==published + a real releaseURL,
-# which the mirror observation carries ONLY on a published row); the Graph media_id match is opportunistic METRICS enrichment.
-# With one global Meta credential (META_IG_USER_ID) we can enumerate only ONE account's /media, so an IG post
-# published to ANOTHER credentialed handle (perca.late, cisumwolfhom) is Postiz-confirmed-live yet can never
-# appear in the enumerable feed. resolve_media_ids used to read "not in the one feed I can see" as "not live"
-# and quarantine it (the 6-stuck-posts bug). Now it leaves such a post RESTING (published/analyzed untouched),
-# media_id None (never fabricated), and stamps this note — enrichment simply isn't available for that account.
-_IG_MEDIA_ENRICH_UNRESOLVED = ("ig_media_id_unresolved: this post's permalink is not in the enumerated "
-                               "(single-credential) Graph feed, so reach/media_id enrichment is unavailable — "
-                               "liveness stands on the Postiz-confirmed releaseURL. Add this account's own "
-                               "ig_user_id credential to enable Graph reach metrics; the post is live and rests.")
+# (The former _UNVERIFIED_IG_MEDIA quarantine reason and the ig_media_id_unresolved enrichment note were
+# REMOVED: IG liveness is not gated on feed enumeration, and the authored-post feed-match leg is gone.)
 _UNVERIFIED_TIKTOK = (_UNVERIFIED_PREFIX + " TikTok post not live-verified — needs a real backend "
                       "submission_id AND a public_url proven live for this handle (oEmbed author==handle). "
                       "Backend reported published but the URL/id could not be confirmed; parked, not rested.")
@@ -251,108 +235,6 @@ def _norm_permalink(url: Optional[str]) -> Optional[str]:
     path = u.path.rstrip("/")
     return f"{host}{path}" if host else None
 
-def _pick_media(cands: list[dict], post) -> Optional[dict]:
-    """From ≥1 live media sharing a post's normalized permalink, pick the one whose `timestamp` is nearest the
-    post's `published_at` (a re-share can duplicate a permalink; the nearest ship time is the real match, never
-    first-seen). One candidate -> it. No parseable published_at or no media timestamps -> first (stable)."""
-    if len(cands) == 1:
-        return cands[0]
-    try:
-        pub = parse_iso(post.published_at) if post.published_at else None
-    except Exception:
-        pub = None
-    if pub is None:
-        return cands[0]
-    def _dist(m):
-        try:
-            return abs((parse_iso(m.get("timestamp")) - pub).total_seconds())
-        except Exception:
-            return float("inf")
-    return min(cands, key=_dist)
-
-def resolve_media_ids(led: Ledger, cfg: Config, *, get=None, scoped: list[tuple] | None = None) -> Ledger:
-    """Stamp each published/analyzed IG post's Graph `media_id` AND `post_type` (from live
-    `media_product_type`) by matching its permalink against the live /{ig_user}/media list. Runs INSIDE
-    the automatic pull path (pull_metrics) so the unattended daemon resolves new posts itself — the
-    sole-source insights read keys on media_id AND derives its request from post_type, so a post missing
-    EITHER is un-measurable. Idempotent (a FULLY resolved post — media_id AND post_type both set — is
-    skipped) and fail-open (an empty media list resolves nobody, never crashes). A media_id-bearing row
-    whose post_type is still None (an older row stamped before the type was carried — the live
-    post_4eb7c0802e79 shape) is RE-TARGETED and the real type is back-stamped, so the insights request
-    is no longer empty and never false-blocks. An unmatched post is breadcrumbed, NEVER given a fabricated
-    id. NOTE (MOL-824/775): this path may still write a Meta token into Post.post_type until MOL-775
-    retires it — the rename relocates the field; it does not delete this writer.
-
-    When `scoped` is prefetched (lock-free enumerate_scoped_media at the caller), skip the in-lock network
-    enumeration — the apply path is a pure ledger match."""
-    from fanops.models import Platform
-    from fanops import meta_graph
-    log = get_logger(cfg)
-    targets = [p for p in led.posts.values()
-               if p.platform is Platform.instagram and (p.media_id is None or p.post_type is None)
-               and p.state in (PostState.published, PostState.analyzed)
-               and _norm_permalink(p.public_url) is not None]
-    if not targets:
-        return led                                               # nothing to resolve -> no network call
-    if scoped is None:
-        # Per-account creds (the per-handle-creds gap): enumerate EACH credentialed IG handle's media with its
-        # OWN creds and combine into one permalink index — an IG permalink belongs to exactly one account, so a
-        # post matches whichever handle's media holds it (no longer capped at the single global handle). Restrict
-        # the fan-out to handles that actually have a target post; if none are per-account-credentialed, fall
-        # back to the single global enumeration ([None]) — byte-identical to before.
-        target_handles = {p.account for p in targets}
-        handles = [h for h in meta_graph.credentialed_ig_handles(cfg) if h in target_handles] or [None]
-        scoped = meta_graph.enumerate_scoped_media(cfg, handles, get=get)
-    if not scoped:
-        return led                                               # couldn't enumerate (no creds / transport) ->
-        #                                                          stay re-resolvable, DON'T false-breadcrumb "unmatched"
-    by_key: dict[str, list[dict]] = {}
-    for _src_handle, m in scoped:
-        k = _norm_permalink(m.get("permalink"))
-        if k: by_key.setdefault(k, []).append(m)
-    for p in targets:
-        cands = by_key.get(_norm_permalink(p.public_url))
-        if cands:
-            picked = _pick_media(cands, p)
-            mid = picked.get("id")
-            # stamp live media_product_type into Post.post_type alongside media_id (same live record) so
-            # the insights request is derived from what the media IS — until MOL-775 retires this writer.
-            led.posts[p.id] = p.model_copy(update={"media_id": mid,
-                                                   "post_type": picked.get("media_product_type")})
-            log("reconcile", p.id, "media_id_resolved", media_id=mid,
-                post_type=picked.get("media_product_type"))
-        else:
-            # IG-liveness fix (SPLIT liveness from enrichment): we enumerated live media and this permalink
-            # wasn't among it — but with ONE global Meta credential we only ever see ONE account's feed, so a
-            # post published to another credentialed handle (perca.late/cisumwolfhom) is Postiz-confirmed-live
-            # yet structurally absent here. That is a missing ENRICHMENT source, NOT proof the post isn't live
-            # (the old code quarantined it -> the 6-stuck-posts bug). LEAVE IT RESTING in published/analyzed
-            # (liveness stands on the Postiz-confirmed releaseURL), keep media_id None (never fabricated), and
-            # stamp a NON-fatal enrichment note. NOT the _UNVERIFIED_PREFIX sentinel, so reconcile_posts never
-            # re-parks on it. Idempotent: re-stamp only when the note isn't already set (a matched-later post
-            # clears it via the branch above), so a resting post never churns its ledger row each daemon tick.
-            if p.error_reason != _IG_MEDIA_ENRICH_UNRESOLVED:
-                led.posts[p.id] = p.model_copy(update={"error_reason": _IG_MEDIA_ENRICH_UNRESOLVED})
-                log("reconcile", p.id, "media_id_unmatched: enrichment-only, rests on Postiz liveness")
-    return led
-
-
-def prefetch_media_scope(led: Ledger, cfg: Config, *, get=None) -> list[tuple] | None:
-    """Lock-free half of resolve_media_ids: enumerate live IG media for posts needing enrichment.
-    Returns None when there are no targets (no network needed); else the scoped media list."""
-    from fanops.models import Platform
-    from fanops import meta_graph
-    targets = [p for p in led.posts.values()
-               if p.platform is Platform.instagram and (p.media_id is None or p.post_type is None)
-               and p.state in (PostState.published, PostState.analyzed)
-               and _norm_permalink(p.public_url) is not None]
-    if not targets:
-        return None
-    target_handles = {p.account for p in targets}
-    handles = [h for h in meta_graph.credentialed_ig_handles(cfg) if h in target_handles] or [None]
-    return meta_graph.enumerate_scoped_media(cfg, handles, get=get)
-
-
 def _capture_publish_fields(info: dict, post) -> tuple[str | None, str | None, str | None, str | None]:
     """Shared published-row capture: (captured_url, reported_username, new_sub, release_id)."""
     real = next((info[k] for k in ("postSubmissionId", "id", "submissionId")
@@ -393,11 +275,10 @@ def _enrich_poll_liveness(cfg: Config, post, info: dict, *, cred_ig, confirm, gr
     info["liveness"] = liv
 
 
-# ---- ledger-rebuild M2 (Instagram is the source of truth): the INVERSE projection -----------------
-# resolve_media_ids is the FORWARD direction (a live media matched to a ledger post ENRICHES that post).
-# project_imported_media is the INVERSE: a live media matched to NO ledger post is IMPORTED as an
-# ImportedMedia record — "viewed there, not authored here". Together they make the ledger a PROJECTION of
-# what is really on IG: every live media is either an enriched authored Post or a mirrored ImportedMedia.
+# ---- ledger-rebuild M2 (Instagram is the source of truth): import live-only media ------------------
+# project_imported_media: a live media matched to NO ledger post is IMPORTED as an ImportedMedia record
+# ("viewed there, not authored here"). Authored posts are skipped by permalink; their media_id/post_type
+# are minted at publish time, not by feed match.
 
 def project_imported_media(led: Ledger, cfg: Config, *, get=None) -> Ledger:
     """Iterate the live /{ig_user}/media inventory; a media whose permalink matches an EXISTING ledger post
@@ -407,8 +288,8 @@ def project_imported_media(led: Ledger, cfg: Config, *, get=None) -> Ledger:
     (M3) already filled (the /media list carries no insights). SINGLE-HANDLE scope: META_IG_USER_ID is one
     credential, so this enumerates ONE handle's media and stamps that credentialed handle on every record
     (the Live library / wipe-preview scope label). FAIL-OPEN (no creds / empty list / transport failure ->
-    imports nobody, never crashes; mirrors resolve_media_ids). fan-accounts-repost-freely: an ImportedMedia
-    MIRRORS live — it never blocks reposting; there is no supersede/dedupe here."""
+    imports nobody, never crashes). fan-accounts-repost-freely: an ImportedMedia MIRRORS live — it never
+    blocks reposting; there is no supersede/dedupe here."""
     from fanops import meta_graph
     from datetime import datetime, timezone
     log = get_logger(cfg)

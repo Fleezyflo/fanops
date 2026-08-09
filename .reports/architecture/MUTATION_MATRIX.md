@@ -77,7 +77,7 @@ a concurrent writer's *other* fields are never clobbered.
 | `publish_hour` / `publish_dow` | [run.py:311](src/fanops/post/run.py:311), [reconcile.py:722](src/fanops/reconcile.py:722) | `publish_buckets` — **fails CLOSED to UTC** | YES (2) | — | ✅ | ✅ | no |
 | `error_reason` | ~14 sites across run/postiz/zernio/reconcile | **`redact(…, postiz_api_key, zernio_api_key)`** [run.py:327,340](src/fanops/post/run.py:327) | **YES (14)** | — | ⚠️ **carries a counter** (`transient_daemon_retry=n/3`) [run.py:336](src/fanops/post/run.py:336) | ✅ | no |
 | `metrics` / `metrics_series` | `track.record_metrics` (sole writer) | `_missing_high_weight` → `lift_degraded` marker | 1 | series is **append-only**, never rewritten [track.py:191](src/fanops/track.py:191) | ✅ idempotent per `offset` | ✅ | no |
-| `media_id` / `product_type` | `reconcile.resolve_media_ids` (sole writer) [reconcile.py:295](src/fanops/reconcile.py:295) | `_norm_permalink` match | 1 | — | ✅ (skips resolved rows) | ✅ | no |
+| `media_id` / `post_type` | mint/promotion (Postiz `releaseId` + declared `post_type`) — feed-match writer deleted MOL-775 | declared at publish | 1 | — | ✅ | ✅ | no |
 | `scheduled_time` | crosspost mint; `approve_post` [ledger.py:591](src/fanops/ledger.py:591); reschedule/clear actions; daemon retry [run.py:426](src/fanops/post/run.py:426) | `schedule_utc` — unparseable ⇒ **post `failed`** [run.py:385-391](src/fanops/post/run.py:385) | **YES (5)** | **YES** — `clear_time` must un-approve **before** clearing, else a `queued`-and-timeless post exists | ✅ | ✅ | no (a timeless `queued` post now **parks**, [run.py:381](src/fanops/post/run.py:381)) |
 
 **`error_reason` is a control channel, not just a message.** Three separate parsers read structure out

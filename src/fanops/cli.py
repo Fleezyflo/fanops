@@ -219,11 +219,10 @@ def cmd_reconcile(cfg: Config, *, report_terminals: bool = False) -> int:
     return 0
 
 def cmd_map_media(cfg: Config) -> int:
-    # Leg 2 (Insight) on-demand: resolve each published/analyzed IG post's Graph media_id from the live
-    # media list (matched by permalink). READ-ONLY w.r.t. Instagram (a GET on /{ig_user}/media, needs only
-    # instagram_basic). The metrics pull path no longer auto-enumerates (MOL-790); this verb remains the
-    # explicit resolve leg until MOL-775 retires the corpse. Fail-open (no creds -> resolves nobody, exit 0).
-    from fanops.reconcile import resolve_media_ids, project_imported_media
+    # Mirror live-only IG media into ImportedMedia (project_imported_media) and fill their insights.
+    # READ-ONLY w.r.t. Instagram (GET /{ig_user}/media). Authored-post media_id/post_type arrive at
+    # publish time — this verb does not feed-match authored rows. Fail-open (no creds -> imports nobody).
+    from fanops.reconcile import project_imported_media
     from fanops.track import pull_imported_insights
     led0 = Ledger.load(cfg)
     recorded: list = []
@@ -237,12 +236,10 @@ def cmd_map_media(cfg: Config) -> int:
         r = recorded[idx[0]] if idx[0] < len(recorded) else None
         idx[0] += 1
         return r
-    resolve_media_ids(led0, cfg, get=recording_get)
     project_imported_media(led0, cfg, get=recording_get)
     pull_imported_insights(led0, cfg, get=recording_get)
     with Ledger.transaction(cfg) as led:
         idx[0] = 0
-        resolve_media_ids(led, cfg, get=replay_get)
         project_imported_media(led, cfg, get=replay_get)
         pull_imported_insights(led, cfg, get=replay_get)
         mapped = sum(1 for p in led.posts.values() if p.media_id)

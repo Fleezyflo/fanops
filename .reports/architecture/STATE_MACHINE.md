@@ -214,7 +214,7 @@ reconcile (daemon)                                    reconcile.py
   ├─ poll backend → failed                            reconcile.py:737  [P15]
   ├─ 72h + fake token: submitting → needs_reconcile   reconcile.py:746  [P16]
   ├─ 72h + fake token: needs_reconcile → GAVE UP:     reconcile.py:757  [P17]
-  └─ resolve_media_ids: stamp media_id + product_type reconcile.py:295  (IG only, published/analyzed)
+  └─ media_id/post_type: stamped at mint/promotion (feed-match deleted MOL-775)
 
 track.pull_metrics                                    track.py
   └─ published → analyzed (+metrics, metrics_series)  track.py:193  [P13]

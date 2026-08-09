@@ -269,7 +269,7 @@ def test_pull_metrics_mixed_backends_analyzes_both(tmp_path, monkeypatch, mocker
         return _R(200, [])                                                 # IG doesn't hit requests.get (Graph mocked)
     mocker.patch("fanops.post.metrics.requests.get", side_effect=by_url)
     # media_insights is patched (not list_user_media) — the IG post already carries media_id via _mixed_ledger,
-    # so resolve_media_ids is a no-op and the Graph reader lands the row directly.
+    # so the Graph reader lands the row directly (media_id already present).
     mocker.patch("fanops.meta_graph.media_insights", return_value={"saves": 20})
     led = pull_metrics(led, cfg)
     assert led.posts["tt"].state is PostState.analyzed and led.posts["tt"].metrics["saves"] == 50.0

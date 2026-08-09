@@ -29,11 +29,11 @@ All 12 files were read in full via the Read tool (not from memory), and cross-ch
    heal_stranded_submitting()    submitting + no submission_id + >15min → queued (crash heal)
    reconcile_due()               pre-polls (network, lock-free) → reconcile_posts() (apply, under Ledger lock)
    reconcile_posts()             per-post poll of postiz/zernio status → published | failed | left-parked
-   resolve_media_ids()           (Leg 2, called inside pull_metrics) match public_url → Graph media_id + product_type
+   (authored media_id/post_type arrive at publish — feed-match leg deleted MOL-775)
    project_imported_media()      (ledger-rebuild M2) live-media-not-authored-here → ImportedMedia rows
 
 3. PULL METRICS (track.py)
-   pull_metrics()                 → resolve_media_ids() → _default_list_posts() (postiz/zernio/Graph per-platform)
+   pull_metrics()                 → _default_list_posts() (postiz/zernio/Graph per-platform)
                                      → record_metrics() per matched row (due_offset gates time-series append)
    pull_imported_insights()       → same shape for ImportedMedia rows (Graph media_insights, sole IG source)
 
@@ -68,9 +68,7 @@ Purpose: resolves posts stranded in `submitting`/`submitted`/`needs_reconcile` b
 
 - **`_parked_age(post, now)`** — `now - parse_iso(post.scheduled_time)`, or `None` if unschedulable/unparseable. Pure. Callers: `heal_stranded_submitting`, `reconcile_posts`.
 - **`_is_fake_token(post)`** — True iff `submission_id` still starts with the birth token prefix `"fanops_"`. Pure. Callers: `reconcile_posts`.
-- **`_norm_permalink(url)`** — canonicalizes a public URL for matching. Pure. Callers: `resolve_media_ids`, `project_imported_media`.
-- **`_pick_media(cands, post)`** — picks nearest-timestamp Graph media candidate. Pure. Callers: `resolve_media_ids`.
-- **`resolve_media_ids(led, cfg, *, get=None)`** — network (Graph), mutates `led.posts` with `media_id`/`product_type`. Callers: `track.pull_metrics`, `cli.cmd_map_media`.
+- **`_norm_permalink(url)`** — canonicalizes a public URL for matching. Pure. Callers: `project_imported_media`.
 - **`project_imported_media(led, cfg, *, get=None)`** — network (Graph), upserts `led.imported_media`. Callers: `cli.cmd_map_media`.
 - **`_status_client_for(cfg, backend, led)`** — builds the per-backend `GetStatus` closure. Callers: `_default_get_status`.
 - **`_reconcilable_routing(cfg, led)`** — disk read (accounts), returns `{submission_id: backend}`. Callers: `_default_get_status`, `reconcile_due`.
@@ -93,7 +91,7 @@ Purpose: pull per-post analytics, score lift, merge into ledger, and auto-valida
 - **`pull_imported_insights(led, cfg, *, get=None, now=None)`** — same pattern for `ImportedMedia`. Network (Graph). Callers: `cli.cmd_map_media`.
 - **`_metrics_client_for(cfg, backend, submission_ids)`** — lazy factory for Postiz/Zernio metrics clients. Callers: `_default_list_posts`.
 - **`_default_list_posts(cfg, *, submission_ids=None, posts=None)`** — composite per-platform fetcher (IG always via Graph). Callers: `cli._learn_pass`, `cli.cmd_track`, `studio.actions.pull_metrics_studio`, `pull_metrics`.
-- **`pull_metrics(led, cfg, *, list_posts=None, window="30d", now=None, resolve_media=None)`** — orchestrator: resolve_media → fetch → match → record_metrics → auto-validate. Network + mutation + log. Callers: `cli._learn_pass`, `cli.cmd_track`, `studio.actions.pull_metrics_studio`.
+- **`pull_metrics(led, cfg, *, list_posts=None, window="30d", now=None)`** — orchestrator: fetch → match → record_metrics → auto-validate. Network + mutation + log. Callers: `cli._learn_pass`, `cli.cmd_track`, `studio.actions.pull_metrics_studio`.
 - **`_auto_validate_metrics_shape(led, cfg)`** — auto-unfreeze: first proving analyzed row on a live backend stamps `cutover.json["metrics_confirmed"]=True`. Callers: `pull_metrics` (always, at end).
 
 ### `meta_graph.py`
@@ -107,8 +105,8 @@ Purpose: read-only, budget-aware Meta Graph client — hashtag trend sampling, p
 - **`trend_score(cfg, tag, *, get=None)`** — sums engagement over top_media. Callers: `discover_candidates`, `sample_trends`, `tag_metrics`.
 - **`list_user_media(cfg, *, get=None, creds=None)`** — paginated media list, capped 50 pages. Callers: `enumerate_scoped_media`.
 - **`_next_path(cfg, next_url)`** — strips base URL from paging cursor. Callers: `list_user_media`.
-- **`credentialed_ig_handles(cfg)`** — active handles with own `ig_user_id`. Disk read. Callers: `reconcile.project_imported_media`, `reconcile.resolve_media_ids`.
-- **`enumerate_scoped_media(cfg, handles, *, get=None)`** — flattens media across handles, fail-open per-handle. Callers: `reconcile.project_imported_media`, `reconcile.resolve_media_ids`.
+- **`credentialed_ig_handles(cfg)`** — active handles with own `ig_user_id`. Disk read. Callers: `reconcile.project_imported_media`.
+- **`enumerate_scoped_media(cfg, handles, *, get=None)`** — flattens media across handles, fail-open per-handle. Callers: `reconcile.project_imported_media`.
 - **`insights_metrics_for(product_type)`** — metric-list builder by product type. Pure. Callers: `media_insights`.
 - **`_is_scope_error(body)`** — classifies permission-refusal vs transient. Pure. Callers: `media_insights`.
 - **`media_insights(cfg, media_id, product_type, *, get=None, creds=None)`** — the sole IG analytics read; raises `MetaInsightsScopeError` on real permission refusal. Callers: `post.metrics.GraphInsightsClient._default_insights`, `track.pull_imported_insights`.
@@ -190,8 +188,6 @@ Purpose: read-only, budget-aware Meta Graph client — hashtag trend sampling, p
 
 1. **`learn_doctor.load_verdict`** (`learn_doctor.py:70-80`) — zero in-repo callers per call graph. Either dead or M4 reads the sidecar file directly rather than through this function. Candidate for removal or wiring into `doctor_report`.
 2. **`timing_bias.timing_prior_hour`** (`timing_bias.py:113-122`) — docstring claims "the schedule seam calls this" but zero in-repo callers per call graph; `timing_bias_hour_for` (the actual consumer per the docstring) is called only by `crosspost._mint_surface_post` and does not appear to route through this function. Likely orphaned — worth a repo-wide grep to confirm.
-3. **Broad `except Exception` in `pull_metrics`'s `resolve_media` call** (`track.py:291-294`) — intentional fail-open with a logged breadcrumb, but broader than `learn_doctor.cmd_learn_doctor`'s narrowed catch (`learn_doctor.py:105`); a genuine bug inside `resolve_media_ids` would be masked as a soft skip rather than surfacing.
 4. **Similarly broad `except Exception` in every bias actuator's outer guard** (`variant_amplify.py:177`, `p4_dim_bias.py:70,79`, `moment_hook_learning.py:47`) — all deliberately broad per "fail-safe, not fail-silent" design; all log before swallowing. No bare `except: pass` found anywhere in the cluster.
 5. **`meta_graph._read_queries`** (`meta_graph.py:337-338`) — `except (OSError, JSONDecodeError, ValueError, TypeError): return None` with NO logging, unlike its sibling `insights_blocked_signal` which does log. A corrupt hashtag-budget file is undetectable from the log stream (fail-closed direction is safe, but silent).
 6. **No bias-scope violations found** — every amplify-only actuator imports exclusively `adjust.amplify`, never `retire`/cascade/state-setters; `timing_bias` never imports `adjust` at all and only writes a schedule-prior file. No TODO/FIXME/XXX markers anywhere in the 12 files.
-7. **Asymmetric daemon-tick coverage**: `reconcile.resolve_media_ids` is called from the automatic `track.pull_metrics` path (`track.py:290`), but its documented "inverse" sibling `reconcile.project_imported_media` is called ONLY from the manual `cli.cmd_map_media` CLI verb — not part of the automatic daemon tick, despite the module docstring presenting them as a matched forward/inverse pair. May be an intentional scope choice (importing live-only media might be considered heavier/rarer) or a gap — worth confirming against `pipeline.py`'s daemon-tick call list.

@@ -57,37 +57,41 @@ def test_media_metrics_table_is_v21_valid(tmp_path, monkeypatch):
     assert _cfg(tmp_path, monkeypatch).meta_graph_url.endswith("v21.0")
 
 
-def test_insights_metrics_for_reels_includes_avg_watch():
-    m = meta_graph.insights_metrics_for("REELS")
-    assert "ig_reels_avg_watch_time" in m                        # REELS-only metric IS in the reels set
+def test_insights_metrics_for_post_includes_avg_watch():
+    m = meta_graph.insights_metrics_for("post")                  # service token → REELS metric set
+    assert "ig_reels_avg_watch_time" in m                        # REELS-only metric IS in the post/reels set
     for k in ("reach", "views", "likes", "comments", "saved", "shares"):
         assert k in m                                            # the shared metrics land too
 
 
-def test_insights_metrics_for_feed_excludes_reels_only_metric():
-    m = meta_graph.insights_metrics_for("FEED")
-    assert "ig_reels_avg_watch_time" not in m                    # REELS-only -> UN-addable for FEED (not "dropped")
-    for k in ("reach", "views", "likes", "comments", "saved"):
-        assert k in m                                            # feed's valid metrics per Meta
+def test_insights_metrics_for_rejects_meta_vocabulary():
+    # MOL-775: raw Meta AD|FEED|STORY|REELS is not accepted on the authored path (service tokens only).
+    # ImportedMedia still resolves Meta keys via _metrics_for_graph_product_type / media_insights fallback.
+    for pt in ("REELS", "FEED", "STORY", "AD", "reels", None, "unexpected"):
+        assert meta_graph.insights_metrics_for(pt) == [], pt
 
 
 def test_insights_metrics_for_never_contains_a_deprecated_name():
-    # The whole class killer: no derived set for ANY product_type can contain a deprecated metric,
+    # The whole class killer: no derived set for ANY accepted token can contain a deprecated metric,
     # because the table doesn't hold one. This is what made `plays` unrequestable.
-    for pt in ("REELS", "FEED", "STORY", "AD", None, "unexpected"):
+    for pt in ("post", "story", None, "unexpected", "REELS"):
         derived = meta_graph.insights_metrics_for(pt)
         assert not (set(derived) & set(_DEPRECATED)), (pt, derived)
 
 
-def test_insights_metrics_for_case_insensitive():
-    assert meta_graph.insights_metrics_for("reels") == meta_graph.insights_metrics_for("REELS")
+def test_metrics_for_graph_product_type_feed_excludes_reels_only():
+    m = meta_graph._metrics_for_graph_product_type("FEED")
+    assert "ig_reels_avg_watch_time" not in m
+    for k in ("reach", "views", "likes", "comments", "saved"):
+        assert k in m
 
 
 def test_insights_metrics_for_service_tokens():
-    # Service post-type tokens (Postiz) must resolve to the same metric sets as Meta vocabulary so
-    # rows carrying them stay measurable; None/unknown still yield [] (caller skips, never guesses).
-    assert meta_graph.insights_metrics_for("post") == meta_graph.insights_metrics_for("REELS")
-    assert meta_graph.insights_metrics_for("story") == meta_graph.insights_metrics_for("STORY")
+    # Service post-type tokens (Postiz) map to the Meta table keys used in _MEDIA_METRICS.
+    post_m = meta_graph.insights_metrics_for("post")
+    story_m = meta_graph.insights_metrics_for("story")
+    assert "ig_reels_avg_watch_time" in post_m
+    assert "ig_reels_avg_watch_time" not in story_m
     assert meta_graph.insights_metrics_for(None) == []
     assert meta_graph.insights_metrics_for("weird") == []
 

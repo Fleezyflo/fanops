@@ -499,16 +499,27 @@ _MEDIA_METRICS: dict[str, frozenset[str]] = {
 }
 
 def insights_metrics_for(product_type: str | None) -> list[str]:
-    """The metrics Meta declares valid for this media's `product_type`, derived from `_MEDIA_METRICS` — the
-    SOLE builder of the insights request `metric=` list. An unknown/None type intersects nothing -> [], so
-    the caller must resolve the real type first (the client skips an unresolved one, never guesses). Order
-    follows the table for a stable request string."""
-    # Postiz submits media_type=REELS for a SINGLE .mp4 with post_type:'post' (instagram.provider.js:393-397); >1 media → VIDEO, image → FEED. The post→REELS map below is valid only under the single-video invariant enforced pre-network at PostizPoster.publish (MOL-786). Never stored, never extended without a vendor citation.
+    """Metrics for an authored Post's service `post_type` (post|story), derived via `_MEDIA_METRICS`.
+    Raw Meta vocabulary (AD|FEED|STORY|REELS) is NOT accepted here — ledger rows carry service tokens
+    only (MOL-775/785). Unknown/None -> [] so the caller skips, never guesses. Order follows the table."""
+    # Postiz submits media_type=REELS for a SINGLE .mp4 with post_type:'post' (instagram.provider.js:393-397);
+    # >1 media → VIDEO, image → FEED. The post→REELS map is valid only under the single-video invariant
+    # enforced pre-network at PostizPoster.publish (MOL-786). Never stored, never extended without a vendor citation.
     if product_type == "post":
-        product_type = "REELS"
+        pt = "REELS"
     elif product_type == "story":
-        product_type = "STORY"
-    pt = (product_type or "").upper()
+        pt = "STORY"
+    else:
+        return []
+    return [m for m, types in _MEDIA_METRICS.items() if pt in types]
+
+
+def _metrics_for_graph_product_type(media_product_type: str | None) -> list[str]:
+    """Graph `media_product_type` (AD|FEED|STORY|REELS) → metric list. Used for ImportedMedia rows that
+    still carry Meta vocabulary from /media; not the authored-Post path."""
+    pt = (media_product_type or "").upper()
+    if not pt:
+        return []
     return [m for m, types in _MEDIA_METRICS.items() if pt in types]
 
 # Graph metric name -> our lift/row key. `saved` is our `saves`; ig_reels_avg_watch_time lands as raw
@@ -558,7 +569,9 @@ def media_insights(cfg: Config, media_id: str, product_type: str | None, *, get=
     creds = creds or resolve_meta_creds(cfg)
     if not (creds.token and creds.ig_user_id):
         return None                                              # no creds -> transient-shaped (keep prior snapshot)
-    metrics = insights_metrics_for(product_type)                 # SOLE source: Meta's per-type valid set
+    # Authored Posts use service tokens (insights_metrics_for); ImportedMedia still carries Graph
+    # media_product_type and resolves through the Meta-key helper.
+    metrics = insights_metrics_for(product_type) or _metrics_for_graph_product_type(product_type)
     if not metrics:                                              # unresolved/unknown product_type -> empty set:
         # honor the docstring above — SKIP an unresolved one, never build a request with an empty `metric=`.
         # Meta 400s an empty metric list as an OAuthException, which the scope classifier would misread as a

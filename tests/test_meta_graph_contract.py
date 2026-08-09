@@ -42,8 +42,8 @@ def test_media_insights_real_shape_is_a_data_list_of_named_values():
     Recorded from a real published REELS media. Pins the exact keys media_insights() parses."""
     cfg = _cfg()
     creds = resolve_meta_creds(cfg)
-    metrics = insights_metrics_for("REELS")
-    assert metrics, "REELS must resolve to a non-empty metric set (else no request is ever built)"
+    metrics = insights_metrics_for("post")
+    assert metrics, "post must resolve to a non-empty metric set (else no request is ever built)"
     # A REAL published REELS media id (from the ledger) so the recording captures Graph's true 200 shape.
     # A placeholder id would 400 on record AND, on a replay-miss, VCR echoes the UNFILTERED request URI —
     # leaking the token into the error. A real id records a clean 200; thereafter this replays offline.

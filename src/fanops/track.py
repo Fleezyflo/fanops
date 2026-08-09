@@ -295,22 +295,15 @@ def _default_list_posts(cfg: Config, *, submission_ids: Optional[list[str]] = No
     return fetch
 
 def pull_metrics(led: Ledger, cfg: Config, *, list_posts: Optional[ListPosts] = None,
-                 window: str = "30d", now: Optional[datetime] = None,
-                 resolve_media: Optional[Callable[[Ledger, Config], object]] = None) -> Ledger:
+                 window: str = "30d", now: Optional[datetime] = None) -> Ledger:
     # Clock injected (tests pass `now`; real callers default to UTC now — mirrors approve_post's
     # now_iso). The fetch id-set + match-set are PUBLISHED OR ANALYZED (P3): an analyzed post stays
     # re-pollable so its series accumulates later cadence offsets. due_offset returns None once a post's
     # series is complete (or the post predates published_at), so a finished/timeline-less post is still
     # fetched + flipped/updated but records no new row. Inert id-thread for any non-postiz backend (ignored).
+    # No feed enumeration on the pull path (MOL-790/775): media_id arrives at promotion from Postiz
+    # releaseId; post_type at mint.
     now = now or datetime.now(timezone.utc)
-    # MOL-790: resolve_media=None means NO feed enumeration on the pull path (media_id arrives at
-    # promotion from Postiz releaseId; product_type at mint). The injectable seam stays for tests /
-    # explicit callers — a passed callable is still honored (fail-open). Corpse resolver = MOL-775.
-    if resolve_media is not None:
-        try:
-            resolve_media(led, cfg)
-        except Exception as exc:
-            get_logger(cfg)("track", "resolve_media", "error", err=str(exc)[:160])   # fail-open, breadcrumb
     pollable = (PostState.published, PostState.analyzed)
     fetch = list_posts or _default_list_posts(
         cfg, posts=[p for p in led.posts.values()
