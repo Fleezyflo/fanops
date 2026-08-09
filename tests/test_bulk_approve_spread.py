@@ -9,9 +9,9 @@ clip × same account × same platform (re-approval / repost variants) the SHA1 s
 same minute too.
 
 These tests pin the FIX-CONTRACT: a bulk-approve of N stale-time posts MUST produce N pairwise-
-distinct future times, obeying a per-account minimum gap. A future operator-set time MUST be
-preserved. Today's code FAILS (1) and (2) and is correct on (3); the GREEN implementation must
-keep (3) while fixing (1) and (2)."""
+distinct future times, obeying a per-account minimum gap. After promote, MOL-869 re-spreads each
+approved account's queued set so identical future mint times do not lockstep — spread wins.
+"""
 from __future__ import annotations
 import json
 from datetime import datetime, timezone, timedelta
@@ -323,25 +323,64 @@ def test_a_second_bulk_approve_cannot_refill_a_full_day(tmp_path, monkeypatch):
     assert per_day == [10, 10], f"expected the overflow batch on the next day: per_day={per_day}"
 
 
-def test_bulk_approve_preserves_operator_future_time(tmp_path, monkeypatch):
-    """GREEN-CONTRACT (already passes — pinned characterization): a post whose scheduled_time is
-    a strictly-FUTURE operator-set value must NOT be rewritten by approval. The existing `keep`
-    branch in Ledger.approve_post enforces this; the M4 spread engine MUST preserve it (don't
-    silently re-time an operator-edited schedule)."""
+def _assert_account_spread(cfg, ids, *, min_gap_min: int) -> None:
+    """Per-account pairwise-distinct times with consecutive gaps >= min_gap_min."""
+    reloaded = Ledger.load(cfg)
+    by_account: dict[str, list[datetime]] = {}
+    for pid in ids:
+        p = reloaded.posts[pid]
+        by_account.setdefault(p.account, []).append(parse_iso(p.scheduled_time))
+    for handle, dts in by_account.items():
+        dts.sort()
+        assert len(set(dts)) == len(dts), f"{handle} collided: {[iso_z(d) for d in dts]}"
+        gaps_min = [(b - a).total_seconds() / 60.0 for a, b in zip(dts, dts[1:])]
+        assert all(g >= min_gap_min for g in gaps_min), (
+            f"{handle} gap floor {min_gap_min} violated: gaps_min={gaps_min}; "
+            f"times={[iso_z(d) for d in dts]}")
+
+
+def test_bulk_approve_spread_wins_over_identical_futures(tmp_path, monkeypatch):
+    """MOL-869: approve N posts on one account that share the SAME future mint time. Ledger.approve_post
+    keeps those futures (lockstep); the post-promote suggest_times_for_batch pass must overwrite so the
+    queued set is pairwise-distinct with gaps >= 30m (realistic off)."""
     monkeypatch.setenv("FANOPS_POSTER", "dryrun")
     monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "0")
     cfg = Config(root=tmp_path); _seed_accounts(cfg)
     led = Ledger.load(cfg)
     clip = _seed_clip(led)
-    future_iso = iso_z(FIXED_DT + timedelta(hours=12))      # strictly-future, operator-chosen
-    ids = _born_posts(led, clip, n_per_account=1, stale_iso=future_iso)
+    future_iso = iso_z(FIXED_DT + timedelta(hours=12))      # identical futures — keep would lockstep
+    ids = []
+    for k in range(4):
+        pid = f"p_a_{k}"
+        led.add_post(Post(id=pid, parent_id=clip.id, account="a", account_id="ia",
+                          platform=Platform.instagram, caption="a", state=PostState.awaiting_approval,
+                          scheduled_time=future_iso, media_urls=["file:///clip_1_9x16.mp4"],
+                          public_url="dryrun://sweep"))
+        ids.append(pid)
     led.save()
 
-    res = approve_posts(cfg, ids, now=FIXED_DT)
-    assert res.ok is True
+    assert approve_posts(cfg, ids, now=FIXED_DT).ok is True
+    _assert_account_spread(cfg, ids, min_gap_min=MIN_PER_ACCOUNT_GAP_MIN)
 
-    reloaded = Ledger.load(cfg)
-    for pid in ids:
-        assert reloaded.posts[pid].scheduled_time == future_iso, (
-            f"approval rewrote a future operator-set time: {pid} -> "
-            f"{reloaded.posts[pid].scheduled_time} (expected {future_iso})")
+
+def test_bulk_approve_spread_wins_realistic_cadence(tmp_path, monkeypatch):
+    """MOL-869: same identical-future lockstep, with FANOPS_REALISTIC_CADENCE on — gaps >= 120m."""
+    monkeypatch.setenv("FANOPS_POSTER", "dryrun")
+    monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "0")
+    monkeypatch.setenv("FANOPS_REALISTIC_CADENCE", "1")
+    cfg = Config(root=tmp_path); _seed_accounts(cfg)
+    led = Ledger.load(cfg)
+    clip = _seed_clip(led)
+    future_iso = iso_z(FIXED_DT + timedelta(hours=12))
+    ids = []
+    for k in range(3):
+        pid = f"p_a_r_{k}"
+        led.add_post(Post(id=pid, parent_id=clip.id, account="a", account_id="ia",
+                          platform=Platform.instagram, caption="a", state=PostState.awaiting_approval,
+                          scheduled_time=future_iso, media_urls=["file:///clip_1_9x16.mp4"],
+                          public_url="dryrun://sweep"))
+        ids.append(pid)
+    led.save()
+
+    assert approve_posts(cfg, ids, now=FIXED_DT).ok is True
+    _assert_account_spread(cfg, ids, min_gap_min=120)

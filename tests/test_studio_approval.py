@@ -249,10 +249,15 @@ def test_approve_posts_untimed_gets_suggestion_not_now(tmp_path):
     r = actions.approve_posts(cfg, ["p_untimed", "p_future"], now=now)
     assert r.ok
     led = Ledger.load(cfg)
-    pu = led.posts["p_untimed"]
-    assert pu.state is PostState.queued and pu.scheduled_time is not None
-    assert parse_iso(pu.scheduled_time) > now and pu.scheduled_time != now_iso   # a strictly-future suggestion, not now
-    assert led.posts["p_future"].scheduled_time == far          # operator's future time preserved across the batch
+    pu = led.posts["p_untimed"]; pf = led.posts["p_future"]
+    assert pu.state is PostState.queued and pf.state is PostState.queued
+    assert pu.scheduled_time and pf.scheduled_time
+    assert parse_iso(pu.scheduled_time) > now and pu.scheduled_time != now_iso   # strictly-future, not now
+    assert parse_iso(pf.scheduled_time) > now
+    # MOL-869: post-promote respread — same-account batch is pairwise-distinct (keep-future would lockstep)
+    assert pu.scheduled_time != pf.scheduled_time
+    gap_min = abs((parse_iso(pu.scheduled_time) - parse_iso(pf.scheduled_time)).total_seconds()) / 60.0
+    assert gap_min >= 30.0, f"per-account cadence floor violated: gap_min={gap_min}"
 
 def test_approve_with_hook_untimed_gets_suggestion_not_now(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "0")        # M3d: approve_with_hook is the OFF-mode moment-restore flow
