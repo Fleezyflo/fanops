@@ -153,7 +153,7 @@ def _classify_auth_exc(exc: BaseException) -> Exception:
         return ScrapeThrottled(_trunc(exc))
     if _is_checkpoint(exc):
         return ScrapeCheckpoint(f"{type(exc).__name__}: {_trunc(exc)}")
-    return ScrapeUnavailable(f"scrape login failed: {_trunc(exc)}")
+    return ScrapeUnavailable(f"scrape login failed: {type(exc).__name__}: {_trunc(exc)}")
 
 
 def open_client(cfg: Config, *, client_factory=None, allow_reauth: bool = False, user: str | None = None,
