@@ -155,19 +155,18 @@ def test_refresh_store_no_scrape_aborts_loudly(tmp_path, monkeypatch):
 
 
 def test_refresh_store_checkpoint_is_its_own_abort(tmp_path, monkeypatch):
-    """A locked account must abort as `checkpoint`, not `no_scrape` — the remedies differ (in-app
-    verification vs re-running scrape-login), and the cache stays untouched either way."""
+    """A locked account must abort as `checkpoint`, not `no_scrape` — the remedies differ
+    (honest challenge/type cues vs re-running scrape-login), and the cache stays untouched either way."""
     import fanops.ig_hashtag_scrape as igs
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
     monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
     cfg = Config(root=tmp_path); _persona(cfg)
     def locked(_cfg, **_k):
-        raise igs.ScrapeCheckpoint("account checkpointed by Instagram — verify the login in the "
-                                   "official Instagram app or web, then re-run scrape-login")
+        raise igs.ScrapeCheckpoint("ChallengeRequired: challenge_required")
     monkeypatch.setattr(igs, "open_client", locked)
     out = refresh_store(cfg)
     assert out["written"] is False and out["aborted"] == "checkpoint"
-    assert "Instagram app" in out["reason"]
+    assert "ChallengeRequired" in out["reason"]
     assert not cfg.hashtags_path.exists()
 
 
@@ -197,7 +196,10 @@ def test_scrape_checkpoint_classification(tmp_path, monkeypatch):
         open_client(cfg, client_factory=_Locked)
         raise AssertionError("expected ScrapeCheckpoint")
     except ScrapeCheckpoint as e:
-        assert "Instagram app" in str(e) and "secret-must-not-leak" not in str(e)
+        msg = str(e)
+        assert "ChallengeRequired" in msg
+        assert "Instagram app" not in msg and "account checkpointed" not in msg
+        assert "secret-must-not-leak" not in msg
 
 
 def test_cmd_hashtags_discover_reports_and_writes_nothing(tmp_path, monkeypatch):
@@ -337,7 +339,7 @@ def test_checkpoint_freezes_layer_a_and_stops_reopening_scrape(tmp_path, monkeyp
     opens = {"n": 0}
     def locked(_cfg, **_k):
         opens["n"] += 1
-        raise igs.ScrapeCheckpoint("account checkpointed by Instagram — verify the login in the app")
+        raise igs.ScrapeCheckpoint("ChallengeRequired: challenge_required")
     monkeypatch.setattr(igs, "open_client", locked)
     out = refresh_store_if_due(cfg, max_age_s=1, now=t0)
     assert out["refreshed"] is False and out["aborted"] == "checkpoint"

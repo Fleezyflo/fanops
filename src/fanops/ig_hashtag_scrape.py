@@ -133,8 +133,6 @@ def _is_throttle(exc: BaseException) -> bool:
     return any(k in blob for k in ("please_wait", "pleasewait", "rate", "feedback_required", "waitafewminutes"))
 
 
-CHECKPOINT_HINT = "verify the login in the official Instagram app or web, then re-run scrape-login"
-
 def _is_checkpoint(exc: BaseException) -> bool:
     """Account-lock detect (challenge / checkpoint), NOT an expired session. Narrow on purpose: a plain
     `login_required` is an expiry the operator fixes with scrape-login and must stay classified as such."""
@@ -154,8 +152,7 @@ def _classify_auth_exc(exc: BaseException) -> Exception:
     if _is_throttle(exc):
         return ScrapeThrottled(_trunc(exc))
     if _is_checkpoint(exc):
-        return ScrapeCheckpoint(f"account checkpointed by Instagram — {CHECKPOINT_HINT} "
-                                f"({_trunc(exc, 80)})")
+        return ScrapeCheckpoint(f"{type(exc).__name__}: {_trunc(exc)}")
     return ScrapeUnavailable(f"scrape login failed: {_trunc(exc)}")
 
 
