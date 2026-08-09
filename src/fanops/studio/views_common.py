@@ -130,12 +130,13 @@ _BULK_APPROVE_MIN_GAP_MIN = 30
 _BULK_APPROVE_JITTER_MAX_MIN = 7   # < _STEP so the per-account schedule stays strictly monotonic
 _REALISTIC_MIN_GAP_MIN = 120       # M2: 2h floor on the human-cadence band
 _REALISTIC_JITTER_MAX_MIN = 60     # M2: up to +1h jitter -> the band reaches ~3h (2-3h band)
-# MOL-708: per-account DAILY ceiling, in OPERATOR-LOCAL calendar days. The cadence floor above bounds
-# the gap between two posts; it says nothing about volume, so a large backlog walked straight through
-# midnight at cadence (the incident: 106 approved videos landing 47/43/16 on three days). A module
-# constant, not an env knob: a knob would need a settings field + docs/CONFIG.md + the architecture
-# kb declaration and buys no safety — the number is a product invariant, not a per-run dial.
-_DAILY_ACCOUNT_CAP = 10
+# Operator product invariant: consecutive same-account slots must not drift more than 6h apart
+# on the walk (step+jitter is clamped). Overnight after a full day still rolls to the next open.
+_MAX_GAP_MIN = 360
+# MOL-708: per-account DAILY ceiling, in OPERATOR-LOCAL calendar days. Cap is 5 — more than five
+# queued/published posts on one operator-local day per account is not acceptable. A module
+# constant, not an env knob (product invariant, not a per-run dial).
+_DAILY_ACCOUNT_CAP = 5
 
 
 def _cadence_for(cfg: Config) -> "tuple[int, int]":
@@ -192,7 +193,7 @@ def suggest_times_for_batch(cfg: Config, posts, *, now: datetime, occupied=None)
     per-account, inside the per-account loop).
 
     MOL-710: `occupied` is the posts already holding a slot OUTSIDE this batch — without it the cap only
-    ever bounds the batch in hand, so approving batch A (10/day) then batch B (10/day) put 20 on one day.
+    ever bounds the batch in hand, so approving batch A (5/day) then batch B (5/day) put 10 on one day.
     It seeds each account's day tally, so an already-full day is skipped rather than refilled. Default
     None keeps every existing caller byte-identical. The caller supplies it because this function is pure
     and lock-free: making it load the ledger would put I/O and a second lock acquisition inside the three
@@ -257,7 +258,8 @@ def suggest_times_for_batch(cfg: Config, posts, *, now: datetime, occupied=None)
             # the same local open minute — Re-spread's overflow-day 09:00 pile.
             cursor_min = max(cursor_min, int((t - now).total_seconds() // 60))
             jitter = rng.randint(0, jitter_max - 1)
-            cursor_min += step + jitter   # forward-only walk: gap >= STEP
+            # gap >= STEP by construction; also gap <= _MAX_GAP_MIN (operator: never more than 6h apart)
+            cursor_min += min(step + jitter, _MAX_GAP_MIN)
     return out
 
 
