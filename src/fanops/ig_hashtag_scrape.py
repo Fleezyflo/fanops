@@ -155,7 +155,8 @@ def _classify_auth_exc(exc: BaseException) -> Exception:
     return ScrapeUnavailable(f"scrape login failed: {_trunc(exc)}")
 
 
-def open_client(cfg: Config, *, client_factory=None, allow_reauth: bool = False, user: str | None = None):
+def open_client(cfg: Config, *, client_factory=None, allow_reauth: bool = False, user: str | None = None,
+                now: datetime | None = None):
     """Open an authenticated instagrapi Client, PACED. Lazy-imports; dumps session after success.
     Never echoes password or session contents. Raises ScrapeUnavailable on miss.
 
@@ -165,9 +166,10 @@ def open_client(cfg: Config, *, client_factory=None, allow_reauth: bool = False,
     earned the 2026-07-29T22:01Z native checkpoint when the tick still called `login()` every pass.
     Only `fanops hashtags scrape-login` passes `allow_reauth=True`.
 
-    Multi-account (MOL-857): when `user` is omitted, pick the first listed FANOPS_IG_SCRAPE_USER
-    that can actually open: with `allow_reauth=False` that means a session file (password alone
-    cannot open unattended); with `allow_reauth=True` session OR password. Rotation/freeze is MOL-858.
+    Multi-account (MOL-857/858): when `user` is omitted, pick the first listed FANOPS_IG_SCRAPE_USER
+    that can actually open and is not freeze/budget-blocked: with `allow_reauth=False` that means a
+    session file (password alone cannot open unattended); with `allow_reauth=True` session OR
+    password. Operator scrape-login ignores freeze (allow_reauth=True).
 
     `delay_range` is set before any network call, so every request this client ever makes — the
     probe / login included — carries the jitter (MOL-698); the whole Layer A pass runs on this one client."""
@@ -175,13 +177,22 @@ def open_client(cfg: Config, *, client_factory=None, allow_reauth: bool = False,
     if not users:
         raise ScrapeUnavailable("FANOPS_IG_SCRAPE_USER unset")
     if user is None:
+        # Lazy import: fanops_hashtags imports open_client inside functions — no cycle at import time.
+        from fanops.fanops_hashtags import scrape_user_blocked
+        now = now or datetime.now(timezone.utc)
         if allow_reauth:
+            # Operator path: freeze does not block an explicit login attempt.
             chosen = next((u for u in users if scrape_user_usable(cfg, u)), None)
         else:
-            # Unattended: never open on password alone — prefer first listed user that has a session.
-            chosen = next((u for u in users if scrape_session_path(cfg, u).exists()), None)
+            # Unattended: session required; skip frozen / day-budget-exhausted peers (MOL-858).
+            chosen = next((u for u in users
+                           if scrape_session_path(cfg, u).exists()
+                           and not scrape_user_blocked(cfg, u, now)), None)
         if chosen is None:
             if scrape_configured(cfg) and not allow_reauth:
+                # Distinguish "all frozen" from "no session" when any session exists on disk.
+                if any(scrape_session_path(cfg, u).exists() for u in users):
+                    raise ScrapeUnavailable("all scrape accounts frozen or day-budget exhausted")
                 raise ScrapeUnavailable("no scrape session — run fanops hashtags scrape-login")
             raise ScrapeUnavailable("no scrape session or password for any FANOPS_IG_SCRAPE_USER")
         user = chosen
@@ -227,6 +238,10 @@ def open_client(cfg: Config, *, client_factory=None, allow_reauth: bool = False,
         raise
     except Exception as e:                                  # noqa: BLE001 — login surface is opaque
         raise _classify_auth_exc(e) from e
+    try:
+        client._fanops_scrape_user = user                   # Layer A persist/clear target (MOL-858)
+    except Exception:                                       # noqa: BLE001 — fakes may be slots-less
+        pass
     return client
 
 

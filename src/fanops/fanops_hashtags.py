@@ -44,9 +44,9 @@ _REFRESH_CADENCE_S = 12 * 60 * 60   # the tick's refresh window, and the yardsti
 # Scrape is ~5–7s/tag. Caps bound a pass so co-tag harvest cannot run unbounded; incomplete passes do NOT
 # stamp last_complete_pass. Tests may monkeypatch these module attrs; env overrides win when set.
 # MOL-854: try_cap is a small per-pass ceiling (25); the UTC day budget on the cooldown blob is the
-# local governor (~40 request-units/day). Queue rewrite / dual-call / multi-account are later tickets.
+# local governor (~40 request-units/day). MOL-858 nests that budget + freeze under accounts[user].
 _SCRAPE_TRY_CAP = 25
-_SCRAPE_DAY_BUDGET = 40        # request-units per UTC day (global until MOL-858 nests under accounts{})
+_SCRAPE_DAY_BUDGET = 40        # request-units per UTC day per scrape account (accounts[user].used)
 _SCRAPE_COTAG_ENQUEUE_CAP = 40
 _SCRAPE_PARALLEL = 1          # tags per wave. 1 = ONE in-flight private-API call, the only safe default:
                               # 4 clone-clients on one session (MOL-698) earned a challenge_required lock,
@@ -226,20 +226,33 @@ def _cooldown_delay_s(streak: int) -> int:
     return _COOLDOWN_DELAYS_S[i]
 
 
-def _read_active_cooldown(cfg: Config, now: datetime) -> dict | None:
-    """Return the cooldown blob when `until` is still in the future, or when the UTC day budget is
-    exhausted (reason=budget). Corrupt / unreadable / unparseable → fail OPEN. Never sleeps."""
+def _load_cooldown_blob(cfg: Config) -> dict:
+    """Raw cooldown JSON or {}. Corrupt / missing → {} (fail open)."""
     p = _cooldown_path(cfg)
     if not p.exists():
-        return None
+        return {}
     try:
         import json
         raw = json.loads(p.read_text())
     except (OSError, ValueError, TypeError):
+        return {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def _utc_day(now: datetime) -> str:
+    return now.astimezone(timezone.utc).date().isoformat()
+
+
+def _utc_day_end(now: datetime) -> datetime:
+    u = now.astimezone(timezone.utc)
+    return datetime(u.year, u.month, u.day, tzinfo=timezone.utc) + timedelta(days=1)
+
+
+def _block_view_for_rec(rec: dict, now: datetime) -> dict | None:
+    """Return a freeze/budget view for one account record, or None when that account is healthy."""
+    if not isinstance(rec, dict):
         return None
-    if not isinstance(raw, dict):
-        return None
-    until = raw.get("until")
+    until = rec.get("until")
     try:
         ts = datetime.fromisoformat(until) if isinstance(until, str) else None
     except ValueError:
@@ -248,48 +261,110 @@ def _read_active_cooldown(cfg: Config, now: datetime) -> dict | None:
         if ts.tzinfo is None:
             ts = ts.replace(tzinfo=timezone.utc)
         if now < ts:
-            return raw
-    # Ladder clear — still gate on the local UTC day budget (MOL-854). Additive schema: day/used at
-    # top level; accounts{} reserved for MOL-858 per-account nesting.
-    today = now.astimezone(timezone.utc).date().isoformat()
-    used = raw.get("used")
-    if raw.get("day") == today and isinstance(used, (int, float)) and int(used) >= _SCRAPE_DAY_BUDGET:
-        end = datetime(now.astimezone(timezone.utc).year, now.astimezone(timezone.utc).month,
-                       now.astimezone(timezone.utc).day, tzinfo=timezone.utc) + timedelta(days=1)
-        out = dict(raw)
+            return dict(rec)
+    today = _utc_day(now)
+    used = rec.get("used")
+    if rec.get("day") == today and isinstance(used, (int, float)) and int(used) >= _SCRAPE_DAY_BUDGET:
+        out = dict(rec)
         out["reason"] = "budget"
-        out["until"] = end.isoformat()
+        out["until"] = _utc_day_end(now).isoformat()
         return out
     return None
 
 
+def _account_rec(blob: dict, user: str) -> dict:
+    """accounts[user] when present; else legacy top-level fields when accounts{} is still empty."""
+    accounts = blob.get("accounts") if isinstance(blob.get("accounts"), dict) else {}
+    rec = accounts.get(user)
+    if isinstance(rec, dict):
+        return rec
+    if accounts:
+        return {}
+    # Pre-MOL-858 global blob — treat as this user's state until nested writes replace it.
+    if any(k in blob for k in ("until", "streak", "reason", "day", "used")):
+        return {k: blob[k] for k in ("until", "streak", "reason", "day", "used", "updated_at")
+                if k in blob}
+    return {}
+
+
+def scrape_user_blocked(cfg: Config, user: str, now: datetime | None = None) -> bool:
+    """True when this scrape user is frozen or day-budget-exhausted (MOL-858). Fail-open."""
+    now = now or datetime.now(timezone.utc)
+    return _block_view_for_rec(_account_rec(_load_cooldown_blob(cfg), user), now) is not None
+
+
+def _pick_healthy_scrape_user(cfg: Config, now: datetime, *, allow_reauth: bool = False) -> str | None:
+    """First FANOPS_IG_SCRAPE_USER that can open and is not frozen/budget-exhausted."""
+    from fanops.ig_hashtag_scrape import scrape_session_path, scrape_user_usable, scrape_users
+    for user in scrape_users(cfg):
+        if scrape_user_blocked(cfg, user, now):
+            continue
+        if allow_reauth:
+            if scrape_user_usable(cfg, user):
+                return user
+        elif scrape_session_path(cfg, user).exists():
+            return user
+    return None
+
+
+def _read_active_cooldown(cfg: Config, now: datetime) -> dict | None:
+    """Return a blocking cooldown view only when NO healthy under-budget scrape peer remains.
+
+    Per-account freeze lives under accounts[user]={until,streak,reason,day,used} (MOL-858). A single
+    dead account must not idle the tick while a peer can still scrape. With no scrape-user list,
+    fall back to the pre-MOL-858 top-level until/budget gate (injected-client / single-budget tests).
+    Corrupt / unreadable → fail OPEN. Never sleeps."""
+    raw = _load_cooldown_blob(cfg)
+    if not raw:
+        return None
+    from fanops.ig_hashtag_scrape import scrape_users
+    users = scrape_users(cfg)
+    if users:
+        # Healthy = under freeze/budget AND openable unattended (session on disk). A password-only
+        # peer without a freeze must not clear the gate while every session-bearing peer is dead.
+        if _pick_healthy_scrape_user(cfg, now) is not None:
+            return None
+        for user in users:
+            view = _block_view_for_rec(_account_rec(raw, user), now)
+            if view is not None:
+                return view
+        return None
+    return _block_view_for_rec(raw, now)
+
+
 def _persist_cooldown(cfg: Config, now: datetime, *, reason: str = "throttle",
-                      delay_s: int | None = None, used_delta: int = 0) -> dict:
+                      delay_s: int | None = None, used_delta: int = 0,
+                      user: str | None = None) -> dict:
     """Arm the read-and-skip freeze that refresh_store_if_due checks BEFORE opening scrape: bump the
     consecutive streak and write `until` from the ladder (30m→1h→2h→6h cap), or from `delay_s` when the
     failure is not a rate limit and the ladder would be wrong (a checkpoint LOCK — MOL-699).
 
-    `reason` records WHICH failure armed it, so the skip can say why. Additive: day/used/accounts ride
-    along (MOL-854 local day budget; MOL-858 may nest spend under accounts{}). Pre-MOL-699 rows without
-    those keys still gate on `until` alone."""
-    import json
+    When `user` is set (MOL-858), nest under accounts[user]={until,streak,reason,day,used} so a peer
+    can keep scraping. Without `user`, keep the legacy top-level shape (day/used/accounts) for
+    injected-client tests and single-budget callers."""
     p = _cooldown_path(cfg)
-    streak = 0
-    today = now.astimezone(timezone.utc).date().isoformat()
-    used = 0
-    accounts: dict = {}
-    if p.exists():
-        try:
-            prev = json.loads(p.read_text())
-            if isinstance(prev, dict):
-                if isinstance(prev.get("streak"), (int, float)):
-                    streak = int(prev["streak"])
-                if prev.get("day") == today and isinstance(prev.get("used"), (int, float)):
-                    used = int(prev["used"])
-                if isinstance(prev.get("accounts"), dict):
-                    accounts = prev["accounts"]
-        except (OSError, ValueError, TypeError):
-            streak = 0
+    today = _utc_day(now)
+    prev = _load_cooldown_blob(cfg)
+    accounts: dict = dict(prev["accounts"]) if isinstance(prev.get("accounts"), dict) else {}
+    # Drop non-dict junk entries so a corrupt accounts value cannot poison the write.
+    accounts = {k: dict(v) for k, v in accounts.items() if isinstance(k, str) and isinstance(v, dict)}
+    if user:
+        rec = _account_rec(prev, user)
+        streak = int(rec["streak"]) if isinstance(rec.get("streak"), (int, float)) else 0
+        used = int(rec["used"]) if rec.get("day") == today and isinstance(rec.get("used"), (int, float)) else 0
+        streak = max(streak, 0) + 1
+        used = max(used, 0) + max(int(used_delta), 0)
+        delay = _cooldown_delay_s(streak) if delay_s is None else int(delay_s)
+        until = (now + timedelta(seconds=delay)).isoformat()
+        accounts[user] = {"streak": streak, "until": until, "updated_at": now.isoformat(),
+                          "reason": reason, "day": today, "used": used}
+        # Per-account write: strip legacy top-level freeze so one dead user cannot global-block.
+        blob = {"accounts": accounts, "updated_at": now.isoformat()}
+        cfg.control.mkdir(parents=True, exist_ok=True)
+        write_json_atomic(p, blob)
+        return accounts[user]
+    streak = int(prev["streak"]) if isinstance(prev.get("streak"), (int, float)) else 0
+    used = int(prev["used"]) if prev.get("day") == today and isinstance(prev.get("used"), (int, float)) else 0
     streak = max(streak, 0) + 1
     used = max(used, 0) + max(int(used_delta), 0)
     delay = _cooldown_delay_s(streak) if delay_s is None else int(delay_s)
@@ -301,34 +376,51 @@ def _persist_cooldown(cfg: Config, now: datetime, *, reason: str = "throttle",
     return blob
 
 
-def _clear_cooldown(cfg: Config, *, now: datetime | None = None, used_delta: int = 0) -> None:
-    """Clear streak/until/reason. Preserve day/used/accounts so a clean success cannot wipe the UTC
-    day budget (MOL-854). Operator scrape-login also lands here — same preservation. When `now` is
-    given, `used_delta` request-units are charged to today's budget before the streak fields drop."""
-    import json
+def _clear_cooldown(cfg: Config, *, now: datetime | None = None, used_delta: int = 0,
+                    user: str | None = None) -> None:
+    """Clear streak/until/reason. Preserve day/used so a clean success cannot wipe the UTC day
+    budget (MOL-854). When `user` is set (MOL-858), clear THAT account's freeze only — peers keep
+    theirs. Operator scrape-login lands here per successful user. When `now` is given, `used_delta`
+    request-units are charged to today's budget before the streak fields drop."""
     p = _cooldown_path(cfg)
+    prev = _load_cooldown_blob(cfg)
+    accounts: dict = dict(prev["accounts"]) if isinstance(prev.get("accounts"), dict) else {}
+    accounts = {k: dict(v) for k, v in accounts.items() if isinstance(k, str) and isinstance(v, dict)}
+    if user:
+        rec = dict(_account_rec(prev, user))
+        today = _utc_day(now) if now is not None else (rec.get("day") if isinstance(rec.get("day"), str) else None)
+        used = 0
+        if today is not None and rec.get("day") == today and isinstance(rec.get("used"), (int, float)):
+            used = int(rec["used"])
+        if now is not None:
+            today = _utc_day(now)
+            used = max(used, 0) + max(int(used_delta), 0)
+        kept_rec: dict = {}
+        if today is not None:
+            kept_rec["day"] = today
+            kept_rec["used"] = max(used, 0)
+        accounts[user] = kept_rec
+        # Drop legacy top-level freeze keys; keep peer accounts.
+        blob: dict = {"accounts": accounts}
+        if now is not None:
+            blob["updated_at"] = now.isoformat()
+        try:
+            cfg.control.mkdir(parents=True, exist_ok=True)
+            write_json_atomic(p, blob)
+        except OSError:
+            pass
+        return
     today = None
     used = 0
-    accounts: dict = {}
-    if p.exists():
-        try:
-            prev = json.loads(p.read_text())
-            if isinstance(prev, dict):
-                if now is not None:
-                    today = now.astimezone(timezone.utc).date().isoformat()
-                    if prev.get("day") == today and isinstance(prev.get("used"), (int, float)):
-                        used = int(prev["used"])
-                elif isinstance(prev.get("day"), str):
-                    today = prev["day"]
-                    if isinstance(prev.get("used"), (int, float)):
-                        used = int(prev["used"])
-                if isinstance(prev.get("accounts"), dict):
-                    accounts = prev["accounts"]
-        except (OSError, ValueError, TypeError):
-            pass
     if now is not None:
-        today = now.astimezone(timezone.utc).date().isoformat()
+        today = _utc_day(now)
+        if prev.get("day") == today and isinstance(prev.get("used"), (int, float)):
+            used = int(prev["used"])
         used = max(used, 0) + max(int(used_delta), 0)
+    elif isinstance(prev.get("day"), str):
+        today = prev["day"]
+        if isinstance(prev.get("used"), (int, float)):
+            used = int(prev["used"])
     kept: dict = {}
     if today is not None:
         kept["day"] = today
@@ -508,17 +600,33 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
     except ControlFileError as e:                          # corrupt personas.json: ABORT, cache UNTOUCHED
         return {"written": False, "aborted": "corrupt_personas", "reason": str(e)}
     injected = scrape_client is not None
+    scrape_user = None
     if scrape_client is None:
+        from fanops.ig_hashtag_scrape import scrape_users as _scrape_users
+        listed = _scrape_users(cfg)
+        if listed:
+            scrape_user = _pick_healthy_scrape_user(cfg, now)
+            if scrape_user is None:
+                # Every peer frozen or day-budgeted — same skip surface as refresh_store_if_due.
+                cool = _read_active_cooldown(cfg, now) or {"reason": "cooldown"}
+                return {"written": False, "aborted": "cooldown", "reason": cool.get("reason") or "cooldown",
+                        "backend": "scrape", "cooldown_until": cool.get("until"),
+                        "cooldown_streak": cool.get("streak")}
         try:
-            scrape_client = open_client(cfg)
+            scrape_client = (open_client(cfg, user=scrape_user, now=now) if scrape_user
+                            else open_client(cfg, now=now))
+            if scrape_user is None:
+                # open_client chose; mirror that choice for per-account persist (MOL-858).
+                scrape_user = getattr(scrape_client, "_fanops_scrape_user", None)
         except ScrapeUnavailable as e:                     # ScrapeCheckpoint (a LOCK) is a distinct abort
             if isinstance(e, ScrapeCheckpoint):
                 # FREEZE (MOL-699). Without this the abort wrote nothing, so the next due tick logged in
                 # again against a locked account — repeated failed logins are what deepen a lock. Only
                 # in-app verification (or scrape-login, which clears this) can end it.
-                cd = _persist_cooldown(cfg, now, reason="checkpoint", delay_s=_CHECKPOINT_DELAY_S)
+                cd = _persist_cooldown(cfg, now, reason="checkpoint", delay_s=_CHECKPOINT_DELAY_S,
+                                       user=scrape_user)
                 get_logger(cfg)("hashtags", "-", "scrape_cooldown", level="error", reason="checkpoint",
-                                until=cd.get("until"),
+                                until=cd.get("until"), user=(scrape_user or "")[:40],
                                 detail="Layer A frozen — verify in the Instagram app, then scrape-login")
                 return {"written": False, "aborted": "checkpoint", "reason": str(e), "backend": "scrape",
                         "cooldown_until": cd.get("until"), "cooldown_streak": cd.get("streak")}
@@ -526,9 +634,9 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
                 # Same ladder the IN-PASS login_required refusal gets. Without this an expiry returned
                 # `no_scrape` with NO backoff, so every due tick re-probed a dead session forever — the
                 # exact every-tick hammering MOL-699 armed the ladder to stop, just one seam earlier.
-                cd = _persist_cooldown(cfg, now, reason="login_required")
+                cd = _persist_cooldown(cfg, now, reason="login_required", user=scrape_user)
                 get_logger(cfg)("hashtags", "-", "scrape_cooldown", level="error", reason="login_required",
-                                until=cd.get("until"),
+                                until=cd.get("until"), user=(scrape_user or "")[:40],
                                 detail="Layer A abort — run fanops hashtags scrape-login")
                 return {"written": False, "aborted": "login_required", "reason": str(e), "backend": "scrape",
                         "cooldown_until": cd.get("until"), "cooldown_streak": cd.get("streak")}
@@ -717,21 +825,24 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
     # MOL-854: NEVER clear when ig_throttled / login_dead — clear-then-rearm reset the streak to 1 and
     # wiped day-budget keys (cooldown sawtooth). Clean success / scrape-login remain the only clears.
     if ig_throttled:
-        cooldown = _persist_cooldown(cfg, now, reason="throttle", used_delta=tried)
+        # MOL-854/858: NEVER clear-then-rearm — that sawtooth reset streak to 1. Persist only.
+        cooldown = _persist_cooldown(cfg, now, reason="throttle", used_delta=tried, user=scrape_user)
         log("hashtags", "-", "scrape_cooldown",
             level=_outage_level(cooldown.get("streak"), _age_s(prev_complete, now)),   # re-arming gets LOUDER
-            reason="throttle", streak=cooldown.get("streak"), until=cooldown.get("until"))
+            reason="throttle", streak=cooldown.get("streak"), until=cooldown.get("until"),
+            user=(scrape_user or "")[:40])
     elif login_dead:
         # A dead session was re-probed EVERY tick before MOL-699. An expiry IS transient, so it gets the
         # ladder (unlike a lock) — a decaying retry instead of one login attempt per tick, forever.
-        cooldown = _persist_cooldown(cfg, now, reason="login_required", used_delta=tried)
+        cooldown = _persist_cooldown(cfg, now, reason="login_required", used_delta=tried, user=scrape_user)
         log("hashtags", "-", "scrape_cooldown",
             level=_outage_level(cooldown.get("streak"), _age_s(prev_complete, now)),   # re-arming gets LOUDER
-            reason="login_required", streak=cooldown.get("streak"), until=cooldown.get("until"))
+            reason="login_required", streak=cooldown.get("streak"), until=cooldown.get("until"),
+            user=(scrape_user or "")[:40])
     elif measured > 0:
-        _clear_cooldown(cfg, now=now, used_delta=tried)    # clean progress only — streak reset, budget kept
+        _clear_cooldown(cfg, now=now, used_delta=tried, user=scrape_user)  # clean progress only
     elif tried > 0:
-        _clear_cooldown(cfg, now=now, used_delta=tried)    # charge day budget; no streak to clear
+        _clear_cooldown(cfg, now=now, used_delta=tried, user=scrape_user)  # charge day budget
     cutoff = now - timedelta(days=_MAX_AGE_DAYS)
     fresh = _records_for_write(cache, anchor_set=anchor_set, cutoff=cutoff)
     tag_mutated = fresh != pre_write
@@ -773,10 +884,12 @@ def refresh_store_if_due(cfg: Config, *, max_age_s: int = _REFRESH_CADENCE_S, sc
     a refresh: refresh_store aborts (cache untouched) and this REPORTS the abort so the tick never logs a
     false success on a broken control file.
 
-    Instagram ScrapeThrottled cooldown (MOL-695) is checked BEFORE opening scrape — never sleeps. A skip
-    under a freeze that has outlived the cadence also emits `scrape_outage` at `_outage_level` (MOL-794),
-    and returns that `level`: the skip is what an ongoing outage LOOKS like from here, so it cannot stay
-    quieter than the arming it repeats."""
+    Instagram ScrapeThrottled cooldown (MOL-695) is checked BEFORE opening scrape — never sleeps.
+    MOL-858: the gate is global only when EVERY scrape peer is frozen or day-budget-exhausted; otherwise
+    `refresh_store` rotates to the next healthy under-budget account. A skip under a freeze that has
+    outlived the cadence also emits `scrape_outage` at `_outage_level` (MOL-794), and returns that
+    `level`: the skip is what an ongoing outage LOOKS like from here, so it cannot stay quieter than
+    the arming it repeats."""
     from fanops.ig_hashtag_scrape import scrape_configured
     if not scrape_configured(cfg) and scrape_client is None:
         return {"refreshed": False, "reason": "no scrape session"}
@@ -844,8 +957,8 @@ def cmd_hashtags_scrape_login(cfg: Config) -> int:
     `account_info()` and NEVER calls `login()` (a full password re-auth on a stale session earned the
     2026-07-29T22:01Z native checkpoint). Only this verb may re-authenticate.
 
-    Multi-account (MOL-857): loop every FANOPS_IG_SCRAPE_USER, dump each session. Clears the global
-    cooldown on any success (per-user freeze lands in MOL-858)."""
+    Multi-account (MOL-857/858): loop every FANOPS_IG_SCRAPE_USER, dump each session. Clears THAT
+    user's freeze on success — peers keep their own cooldown."""
     from fanops.ig_hashtag_scrape import (ScrapeCheckpoint, ScrapeUnavailable, open_client,
                                           scrape_session_path, scrape_users)
     users = scrape_users(cfg)
@@ -865,8 +978,7 @@ def cmd_hashtags_scrape_login(cfg: Config) -> int:
             get_logger(cfg)("hashtags", "-", "scrape_login_failed", level="error",
                             user=user[:40], reason=str(e)[:160])
             continue
-        # MOL-858: clear per-user cooldown when freeze is split; today cooldown is still global.
-        _clear_cooldown(cfg)
+        _clear_cooldown(cfg, user=user)                    # MOL-858: clear THIS user only
         ok_n += 1
         get_logger(cfg)("hashtags", "-", "scrape_login_ok", user=user[:40],
                         session=str(scrape_session_path(cfg, user)), cooldown="cleared")
