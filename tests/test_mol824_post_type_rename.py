@@ -35,7 +35,10 @@ def test_post_comment_has_no_meta_vocab():
     assert "AD|FEED|STORY|REELS" not in post_body
     assert "post|story" in post_body
     assert "_POSTIZ_POST_TYPES" in post_body
-    im_body = text[end:end + 800]
+    # ImportedMedia keeps Meta vocabulary on its own product_type field (next class after Post).
+    im_end = text.index("class MomentRequest", end)
+    im_body = text[end:im_end]
+    assert "product_type: Optional[str]" in im_body
     assert "AD|FEED|STORY|REELS" in im_body
 
 
