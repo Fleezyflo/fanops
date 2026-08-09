@@ -940,7 +940,6 @@ def main(argv: list[str] | None = None) -> int:
     posts_sub.add_parser("census-retired", help="census: posts under a RETIRED lineage "
                          "(read-only; suppression is derived, never written; "
                          "renamed from reconcile-retired)")
-    sub.add_parser("close-product-type", help="one-shot: close legacy IG product_type None|REELS → post (zero network)")
     p_audit = sub.add_parser("audit", help="(R3) operator audit-trail commands")
     audit_sub = p_audit.add_subparsers(dest="audit_cmd")
     p_at = audit_sub.add_parser("tail", help="print the last N lines of 00_control/studio_audit.log")
@@ -1557,9 +1556,6 @@ def _dispatch(cfg: Config, args) -> int:
         if args.posts_cmd == "census-retired":
             from fanops.stranded_posts import cmd_posts_reconcile_retired   # lazy, same precedent
             return cmd_posts_reconcile_retired(cfg, args)
-    if args.cmd == "close-product-type":
-        from fanops.product_closure import cmd_close_product_type   # lazy, same precedent
-        return cmd_close_product_type(cfg, args)
     if args.cmd == "daemon":   return cmd_daemon(cfg, args)
     if args.cmd == "autopilot": return cmd_autopilot(cfg, args)
     if args.cmd == "up":       return cmd_up(cfg, args)
