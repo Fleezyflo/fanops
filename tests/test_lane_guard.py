@@ -83,11 +83,10 @@ def test_owned_hot_file_by_own_lane_is_allowed():
 
 def test_straying_onto_another_lanes_hot_file_is_flagged():
     m = _manifest()
-    # publish lane editing a picking-ONLY hot file (ledger.py stays exclusive; models.py is
-    # temporarily co-owned picking+publish for MOL-775 comment scrub — cannot serve as the NC).
-    lane, strays = lane_guard.evaluate(["src/fanops/ledger.py"], "publish/mol-1-x", m)
+    # publish lane editing a picking-owned hot file
+    lane, strays = lane_guard.evaluate(["src/fanops/models.py"], "publish/mol-1-x", m)
     assert lane == "publish"
-    assert strays == ["src/fanops/ledger.py"]
+    assert strays == ["src/fanops/models.py"]
 
 
 def test_non_hot_files_are_never_restricted():

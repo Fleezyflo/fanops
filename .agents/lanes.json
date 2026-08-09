@@ -4,13 +4,13 @@
     "_doc": "Lane resolution is not prefix-only: a branch embedding `mol-<n>` maps via `tickets` (offline) or Linear `linear` blocks (when LINEAR_API_KEY is set / CI --use-linear). Unmapped ticket-shaped branches FAIL CLOSED. Non-ticket branches with no lane WARN and proceed without ownership checks. Only files listed in `hot_files` are restricted; every other path is unrestricted. `owner` may be a single lane or a list (a genuinely shared hot file, coordinated in TIME by the orchestrator, not by this static guard).",
     "hot_files": {
       "src/fanops/config.py": "publish",
-      "src/fanops/reconcile.py": ["publish", "picking"],
+      "src/fanops/reconcile.py": "publish",
       "src/fanops/post/run.py": "publish",
-      "src/fanops/post/postiz.py": ["publish", "picking"],
+      "src/fanops/post/postiz.py": "publish",
       "src/fanops/post/zernio.py": "publish",
       "src/fanops/post/__init__.py": "publish",
       "src/fanops/studio/views_common.py": "publish",
-      "src/fanops/models.py": ["picking", "publish"],
+      "src/fanops/models.py": "picking",
       "src/fanops/crosspost.py": "picking",
       "src/fanops/ledger.py": "picking",
       "src/fanops/casting.py": "picking",
@@ -32,8 +32,8 @@
     },
     "picking": {
       "branch_prefixes": ["picking/", "pick/"],
-      "tickets": ["MOL-824", "MOL-775"],
-      "owns_note": "Clip/moment/casting generation core (models, crosspost, ledger, casting, clip, moments, prompts). MOL-775: models.py temporarily co-owned with publish for comment scrub of deleted feed-match symbols.",
+      "tickets": ["MOL-851"],
+      "owns_note": "Clip/moment/casting generation core (models, crosspost, ledger, casting, clip, moments, prompts).",
       "linear": {
         "labels": ["PRD:hook-viewer-pov"],
         "project": "",
