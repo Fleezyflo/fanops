@@ -91,7 +91,6 @@
     "fanops.post.zernio_outcome",
     "fanops.postiz_lifecycle",
     "fanops.produce",
-    "fanops.product_closure",
     "fanops.prompts",
     "fanops.recaption",
     "fanops.reconcile",
@@ -237,7 +236,6 @@
     "fanops.post.zernio_outcome": "S12_publish",
     "fanops.postiz_lifecycle": "S12_publish",
     "fanops.produce": "S09_render",
-    "fanops.product_closure": "S19_maintenance",
     "fanops.prompts": "S07_agent_gate",
     "fanops.recaption": "S15_orchestration",
     "fanops.reconcile": "S13_reconcile_metrics",
@@ -291,9 +289,9 @@
     "fanops.vocals": "S06_media_analysis"
   },
   "totals": {
-    "assigned": 137,
+    "assigned": 136,
     "ghosts": 0,
-    "modules": 137,
+    "modules": 136,
     "unassigned": 0
   },
   "unassigned_modules": []
