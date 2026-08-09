@@ -278,15 +278,18 @@ def _roll_into_window(t: datetime, window, cfg) -> datetime:
         if open_h <= close_h:                    # window does NOT cross midnight
             if open_h <= h < close_h:
                 return t
-            # outside the band -> jump to today's open if it's still ahead, else tomorrow's open
-            local_open = local.replace(hour=open_h, minute=0, second=0, microsecond=0)
+            # outside the band -> jump to today's open if it's still ahead, else tomorrow's open.
+            # Keep the candidate's minute/second: zeroing them wiped per-account anchors and made
+            # every handle land on the identical open second after a day-cap rollover (Re-spread
+            # calendar: four accounts all at 09:00:00).
+            local_open = local.replace(hour=open_h, microsecond=0)
             if h >= close_h:
                 local_open = local_open + timedelta(days=1)
             t = local_open.astimezone(t.tzinfo)
         else:                                    # window crosses midnight (e.g. 22 -> 4)
             if h >= open_h or h < close_h:
                 return t
-            local_open = local.replace(hour=open_h, minute=0, second=0, microsecond=0)
+            local_open = local.replace(hour=open_h, microsecond=0)
             t = local_open.astimezone(t.tzinfo)
         # safety break: at most one iteration is ever needed
         return t
