@@ -586,6 +586,7 @@ class Ledger:
     # MOL-779: optional error_reason= expresses the canary compound write (and every other state+reason
     # stamp). Kw-only + _UNSET so a bare set_*_state(id, st) leaves error_reason untouched; pass
     # error_reason=None to clear. MOL-781: set_post_state also carries error_kind= the same way.
+    # MOL-812: daemon_transient_retry= is the int counter that used to live in an error_reason prefix.
     def set_source_state(self, uid: str, st: SourceState, *, error_reason=_UNSET) -> None:
         upd: dict = {"state": st}
         if error_reason is not _UNSET: upd["error_reason"] = error_reason
@@ -598,10 +599,12 @@ class Ledger:
         upd: dict = {"state": st}
         if error_reason is not _UNSET: upd["error_reason"] = error_reason
         self.clips[uid] = self.clips[uid].model_copy(update=upd)
-    def set_post_state(self, uid: str, st: PostState, *, error_reason=_UNSET, error_kind=_UNSET) -> None:
+    def set_post_state(self, uid: str, st: PostState, *, error_reason=_UNSET, error_kind=_UNSET,
+                       daemon_transient_retry=_UNSET) -> None:
         upd: dict = {"state": st}
         if error_reason is not _UNSET: upd["error_reason"] = error_reason
         if error_kind is not _UNSET: upd["error_kind"] = error_kind
+        if daemon_transient_retry is not _UNSET: upd["daemon_transient_retry"] = daemon_transient_retry
         self.posts[uid] = self.posts[uid].model_copy(update=upd)
     def set_batch_state(self, uid: str, st: BatchState, *, error_reason=_UNSET) -> None:
         upd: dict = {"state": st}

@@ -469,6 +469,8 @@ class Post(BaseModel):
                                                 # may still overwrite IG rows from live Graph until 774-D lands.
     error_reason: Optional[str] = None          # Display-only prose. NOTHING classifies from this field (MOL-781).
     error_kind: Optional[ErrorKind] = None      # MOL-781: typed failure kind; written with failed/error via set_post_state
+    daemon_transient_retry: int = 0             # MOL-812: daemon re-queue cycles consumed for failed-transient (no submission_id).
+                                                # Cap is post/run._DAEMON_TRANSIENT_MAX — never copied into error_reason.
     metrics: dict = Field(default_factory=dict)
     # P3 append-only metrics time-series: one sparse row per captured cadence offset, each a superset of
     # a `metrics` snapshot + {"offset","captured_at"} provenance. `metrics` above stays EXACTLY the LATEST
