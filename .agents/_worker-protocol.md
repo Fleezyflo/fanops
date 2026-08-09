@@ -10,9 +10,11 @@ how you work in this repo. Your brief names your unit (`MOL-xxx`) and your role:
   them locally — tests run ONLY in GitHub CI on your PR (in Claude Code `.claude/settings.json`
   `permissions.deny` refuses `pytest`; in Cursor nothing does — parallel local suites crash the
   operator's machine either way). `./scripts/check.sh` (scoped lint) green, push a feature
-  branch (`cursor/mol-<id>-<slug>` or the Linear `gitBranchName`), open a PR tagged `MOL-xxx`, wait
-  for CI. Failing checks, merge conflicts, rebases, cleanup: also worker jobs — never the
-  orchestrator's.
+  branch that embeds `mol-<id>` (Linear `gitBranchName`, `cursor/mol-<id>-<slug>`, or
+  `bycreamco/mol-<id>-…` — same matcher; list the ticket under the lane's `tickets` in
+  `.agents/lanes.json` when offline / no Linear key, or use a `<lane>/` prefix), open a PR tagged
+  `MOL-xxx`, wait for CI. Failing checks, merge conflicts, rebases, cleanup: also worker jobs —
+  never the orchestrator's.
 - **verify** — you are spawned only for units the land contract demands a record for (lane hot files
   or broad diffs; small non-hot units land on green CI without you). The hook that once enforced that
   demand is DORMANT (`.orchestration/SPEC.md`) — the orchestrator applies the tier by convention.
