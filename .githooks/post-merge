@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# FanOps post-merge — regenerate architecture derived artifacts (MOL-833).
+#
+# Pair with `.gitattributes` `merge=ours` on `.reports/architecture/derived/**`.
+# That attribute avoids a conflict on the generated files; this hook replaces the
+# stale "ours" placeholder with a pure function of the merged source via the
+# existing `python -m tools.arch regen`. It does NOT commit — review and commit
+# the working-tree refresh (or let CI drift fail loudly if someone forgets).
+#
+# post-merge runs only after a *clean* merge. A conflict that is not purely
+# generated content still stops the merge; this hook never fires then, so it
+# cannot silently regenerate a real conflict away.
+#
+# Wired via: git config --local core.hooksPath .githooks  (./scripts/setup-hooks.sh).
+
+if [[ "${ECC_SKIP_GIT_HOOKS:-0}" == "1" || "${FANOPS_SKIP_POST_MERGE_ARCH_REGEN:-0}" == "1" ]]; then
+  exit 0
+fi
+
+if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  exit 0
+fi
+
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT"
+
+if [[ ! -f "$ROOT/.gitattributes" ]] \
+  || ! grep -qE '^\.reports/architecture/derived/\*\*[[:space:]]+merge=ours' "$ROOT/.gitattributes"; then
+  exit 0
+fi
+
+if [[ ! -d "$ROOT/.reports/architecture/derived" ]]; then
+  exit 0
+fi
+
+PY="$ROOT/.venv/bin/python"
+if [[ ! -x "$PY" ]]; then
+  echo "[fanops post-merge] ERROR: .venv/bin/python missing — cannot regen derived/." >&2
+  echo "[fanops post-merge] Create the worktree venv, then run: python -m tools.arch regen" >&2
+  exit 1
+fi
+
+echo "[fanops post-merge] regenerating .reports/architecture/derived/ from merged source (MOL-833)..."
+if ! "$PY" -m tools.arch regen; then
+  echo "[fanops post-merge] ERROR: tools.arch regen failed — fix before committing." >&2
+  exit 1
+fi
+
+if ! git diff --quiet -- .reports/architecture/derived/; then
+  echo "[fanops post-merge] derived/ updated in the working tree — review and commit (not auto-committed)."
+else
+  echo "[fanops post-merge] derived/ already matched the merged source."
+fi
+exit 0

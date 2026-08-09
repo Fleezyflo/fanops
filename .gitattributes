@@ -1,0 +1,10 @@
+# MOL-833: concurrent PRs that each shift a scanned source line both rewrite
+# .reports/architecture/derived/*.json. Without this, every merge conflicts on
+# those generated files and the only correct resolution is a manual regen.
+#
+# merge=ours takes the current branch's copy during a clean merge so the paths
+# never conflict. Requires `merge.ours.driver=true` (wired by setup-hooks.sh).
+# .githooks/post-merge then runs `tools.arch regen` against the *merged* source
+# and leaves a fresh working tree (commit is a follow-up). Do NOT use a custom
+# merge driver that regens mid-merge — other paths may still be unmerged then.
+.reports/architecture/derived/** merge=ours
