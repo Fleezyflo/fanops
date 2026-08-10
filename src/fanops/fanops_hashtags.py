@@ -877,8 +877,8 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
                     return out
                 return {"written": False, "aborted": "no_scrape", "reason": "no scrape session",
                         "backend": "scrape"}
-            throttled = i < len(queue)
-            if throttled and tried > 0:
+            throttled = (i < len(queue)) or platform_stop
+            if throttled and tried > 0 and not platform_stop:
                 log("hashtags", "-", "pass_try_cap", tried=tried, queue_left=len(queue) - i,
                     cap=try_cap)
 
