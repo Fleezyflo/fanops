@@ -582,10 +582,10 @@ def test_doctor_hashtag_scrape_session_dead_fails_loud(tmp_path, monkeypatch):
 
 def test_doctor_hashtag_scrape_checkpoint_names_the_only_real_remedy(tmp_path, monkeypatch):
     """A native challenge (`lock: true`) is NOT an expiry: scrape-login cannot clear it, so doctor
-    fails loud with the live/honest checkpoint text (type/challenge cues), not a canned app remedy."""
+    fails loud with the live/honest platform text, not a canned app remedy."""
     from fanops import doctor
     from fanops.config import Config
-    from fanops.ig_hashtag_scrape import ScrapeCheckpoint
+    from instagrapi.exceptions import ChallengeRequired
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
     monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "secret-password-must-not-leak")
     cfg = Config(root=tmp_path)
@@ -594,21 +594,21 @@ def test_doctor_hashtag_scrape_checkpoint_names_the_only_real_remedy(tmp_path, m
     _sess.parent.mkdir(parents=True, exist_ok=True)
     _sess.write_text("{}")
     def locked(_cfg):
-        raise ScrapeCheckpoint("ChallengeRequired: challenge_required")
+        raise ChallengeRequired("challenge_required")
     row = doctor._hashtag_scrape_check(cfg, open_client=locked)
     assert row["ok"] is False
     hint = row["hint"]
-    assert "ChallengeRequired" in hint or "challenge" in hint.lower()
+    assert hint == "challenge_required"  # byte-identical to str() of what platform raised
     assert "Instagram app" not in hint
     assert "secret-password" not in hint
 
 
 def test_doctor_hashtag_scrape_probe_login_required_fails_loud(tmp_path, monkeypatch):
     """MOL-696 / MOL-879: open_client can succeed while hashtag_info returns login_required — doctor
-    must fail loud with live ScrapeRefused text only (no scrape-login prescription)."""
+    must fail loud with live platform text only (no scrape-login prescription)."""
     from fanops import doctor
     from fanops.config import Config
-    from fanops.ig_hashtag_scrape import ScrapeRefused
+    from instagrapi.exceptions import LoginRequired
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
     monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "secret-password-must-not-leak")
     cfg = Config(root=tmp_path)
@@ -617,8 +617,8 @@ def test_doctor_hashtag_scrape_probe_login_required_fails_loud(tmp_path, monkeyp
     _sess.parent.mkdir(parents=True, exist_ok=True)
     _sess.write_text("{}")
     def probe(_client, _tag):
-        raise ScrapeRefused("login_required")
+        raise LoginRequired("login_required")
     row = doctor._hashtag_scrape_check(cfg, open_client=lambda _c: object(), probe_resolve=probe)
     assert row["ok"] is False
-    assert "login_required" in row["hint"] and "scrape-login" not in row["hint"]
+    assert row["hint"] == "login_required" and "scrape-login" not in row["hint"]
     assert "secret-password" not in row["hint"]

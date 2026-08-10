@@ -1,6 +1,6 @@
 # Unit: ig_hashtag_scrape resolve / measure / harvest / configured (no network).
 from fanops.config import Config
-from fanops.ig_hashtag_scrape import (ScrapeRefused, ScrapeThrottled, ScrapeUnavailable,
+from fanops.ig_hashtag_scrape import (ScrapeUnavailable,
                                        measure_and_harvest_scrape, resolve_hashtag_scrape,
                                        scrape_configured)
 from hashtag_scrape_fakes import _FakeClient, _Media
@@ -97,26 +97,28 @@ def test_resolve_hashtag_scrape_returns_id(tmp_path):
     assert "hiphop" in c.info_calls
 
 
-def test_resolve_maps_throttle(tmp_path):
-    class Boom(Exception): pass
+def test_resolve_passes_platform_throttle_through(tmp_path):
+    """Bare hashtag_info — platform exception is the caller exception (identity)."""
+    class PleaseWaitFewMinutes(Exception): pass
     c = _FakeClient({})
-    def boom(name): raise Boom("PleaseWaitFewMinutes")
+    def boom(name): raise PleaseWaitFewMinutes("please_wait")
     c.hashtag_info = boom
     try:
         resolve_hashtag_scrape(c, "#a"); assert False
-    except ScrapeThrottled:
-        pass
+    except PleaseWaitFewMinutes as e:
+        assert "please_wait" in str(e)
 
 
-def test_resolve_maps_refuse(tmp_path):
-    class Boom(Exception): pass
+def test_resolve_passes_platform_refuse_through(tmp_path):
+    """Bare hashtag_info — non-throttle platform error is not retyped."""
+    class ClientNotFoundError(Exception): pass
     c = _FakeClient({})
-    def boom(name): raise Boom("not found")
+    def boom(name): raise ClientNotFoundError("not found")
     c.hashtag_info = boom
     try:
         resolve_hashtag_scrape(c, "#a"); assert False
-    except ScrapeRefused as e:
-        assert "not found" in e.message
+    except ClientNotFoundError as e:
+        assert "not found" in str(e)
 
 
 def test_measure_median_like_and_harvest(tmp_path):

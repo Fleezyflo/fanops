@@ -93,11 +93,12 @@ What governs spend now (MOL-854):
   fields only — day budget keys are preserved.
 - **`graph_id` cached** on every record — a known tag skips `hashtag_info` and still re-measures via
   `hashtag_medias_top`, so resolve funds novel discovery only.
-- **Throttle** (please_wait / rate / feedback_required) ⇒ `ScrapeThrottled` ends the pass; evidence accrued
-  so far is written. `_refresh_pass` never `_clear_cooldown` when `ig_throttled` or `login_dead` (that
-  clear-on-progress sawtooth reset the ladder and wiped day-budget keys).
-- **Any other scrape error** ⇒ `ScrapeRefused` (truncated message, optional code) recorded in `unresolved`;
-  a later pass retries.
+- **Platform stop** (any non-404 instagrapi exception) ⇒ ends the account's slice; evidence accrued so
+  far is written. `_freeze_for` maps `ChallengeError` → checkpoint + 12h; else the exception class name
+  rides the ladder. `_refresh_pass` never `_clear_cooldown` on a platform stop (that clear-on-progress
+  sawtooth reset the ladder and wiped day-budget keys).
+- **Tag 404** (`ClientNotFoundError`) ⇒ recorded in `unresolved` and the pass continues to the next tag.
+  Other platform errors stop the slice; a later pass retries.
 
 ## Layer B — derivation (ZERO network)
 

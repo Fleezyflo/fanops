@@ -32,40 +32,9 @@ def _scrape_delay_range():
     return vals
 
 
-def _trunc(msg: object, n: int = 160) -> str:
-    s = str(msg or "").replace("\n", " ").strip()
-    return s[:n]
-
-
 class ScrapeUnavailable(Exception):
-    """instagrapi missing, no user, or login/session cannot open — Layer A cannot run."""
-
-
-class ScrapeThrottled(Exception):
-    """Instagram asked us to wait / rate-limited — end the pass, keep accrued evidence."""
-
-
-class ScrapeCheckpoint(ScrapeUnavailable):
-    """Instagram locked the account behind a NATIVE challenge (`lock: true`, no `step_name`): correct
-    credentials, structurally intact session, and NO api path — only in-app confirmation clears it.
-    A ScrapeUnavailable subclass so every existing abort path keeps working; the distinction exists so
-    the operator is not told to re-run scrape-login, which cannot clear a lock and only adds login
-    pressure to a checkpointed account."""
-
-
-class ScrapeSessionExpired(ScrapeUnavailable):
-    """The stored session no longer authenticates (`login_required` on the probe): TRANSIENT, and
-    `fanops hashtags scrape-login` is the remedy. A ScrapeUnavailable subclass so every existing abort
-    path keeps working; the distinction exists so Layer A can arm the SAME laddered backoff an in-pass
-    `login_required` refusal already gets, instead of re-probing a dead session every tick (MOL-727).
-    Classified by TYPE, so no caller has to grep this module's message text."""
-
-
-class ScrapeRefused(Exception):
-    """A non-throttle Instagram refusal for one tag. `code` is optional; message is truncated."""
-    def __init__(self, message: str, code=None):
-        self.message = _trunc(message); self.code = code
-        super().__init__(self.message)
+    """OUR scrape state — unset user, no session, extra missing, user not listed, all frozen.
+    Must stay importable without [igscrape]. Platform errors are never wrapped into this."""
 
 
 _LEGACY_SESSION_USER = "perca.late"  # sole owner of control/ig_scrape_session.json (MOL-857)
@@ -125,37 +94,6 @@ def scrape_configured(cfg: Config) -> bool:
     return any(scrape_user_usable(cfg, u) for u in scrape_users(cfg))
 
 
-def _is_throttle(exc: BaseException) -> bool:
-    """Fail-safe throttle detect: class name / message cues. Unknown errors are refusals, not invented throttles."""
-    name = type(exc).__name__.lower()
-    msg = str(exc).lower()
-    blob = f"{name} {msg}"
-    return any(k in blob for k in ("please_wait", "pleasewait", "rate", "feedback_required", "waitafewminutes"))
-
-
-def _is_checkpoint(exc: BaseException) -> bool:
-    """Account-lock detect (challenge / checkpoint), NOT an expired session. Narrow on purpose: a plain
-    `login_required` is an expiry the operator fixes with scrape-login and must stay classified as such."""
-    blob = f"{type(exc).__name__.lower()} {str(exc).lower()}"
-    return any(k in blob for k in ("challenge", "checkpoint", "consent_required"))
-
-
-def _is_login_required(exc: BaseException) -> bool:
-    """Expired / invalidated session — scrape-login (allow_reauth) fixes it; the unattended tick must not."""
-    name = type(exc).__name__.lower().replace("_", "")
-    msg = str(exc).lower()
-    return "loginrequired" in name or "login_required" in msg
-
-
-def _classify_auth_exc(exc: BaseException) -> Exception:
-    """Map an opaque instagrapi auth/probe failure onto ScrapeThrottled / ScrapeCheckpoint / ScrapeUnavailable."""
-    if _is_throttle(exc):
-        return ScrapeThrottled(_trunc(exc))
-    if _is_checkpoint(exc):
-        return ScrapeCheckpoint(f"{type(exc).__name__}: {_trunc(exc)}")
-    return ScrapeUnavailable(f"scrape login failed: {type(exc).__name__}: {_trunc(exc)}")
-
-
 def open_client(cfg: Config, *, client_factory=None, allow_reauth: bool = False, user: str | None = None,
                 now: datetime | None = None):
     """Open an authenticated instagrapi Client, PACED. Lazy-imports; dumps session after success.
@@ -210,35 +148,22 @@ def open_client(cfg: Config, *, client_factory=None, allow_reauth: bool = False,
     sess = scrape_session_path(cfg, user)
     # Always dump to the per-user named path (migrate legacy perca.late off ig_scrape_session.json).
     dump_sess = cfg.control / f"ig_scrape_session_{user}.json"
-    try:
-        if sess.exists():
-            client.load_settings(str(sess))
-            try:
-                client.account_info()                       # validate WITHOUT login() — no re-auth path
-            except Exception as e:                          # noqa: BLE001 — probe surface is opaque
-                classified = _classify_auth_exc(e)
-                if isinstance(classified, (ScrapeThrottled, ScrapeCheckpoint)):
-                    raise classified from e
-                if allow_reauth and _is_login_required(e):
-                    pw = scrape_password_for(user) or ""
-                    client.login(user, pw, relogin=True)    # explicit human re-auth only
-                elif not allow_reauth and _is_login_required(e):
-                    # Password never read — unattended tick must not re-authenticate.
-                    raise ScrapeSessionExpired(f"session expired — run fanops hashtags scrape-login: {_trunc(e)}") from e
-                else:
-                    raise classified from e
-            # Valid session (or successful operator re-auth): persist and return. No login() on the happy path.
-        else:
+    if sess.exists():
+        client.load_settings(str(sess))
+        try:
+            client.account_info()                       # validate WITHOUT login() — no re-auth path
+        except Exception:                               # noqa: BLE001 — probe surface is opaque
             if not allow_reauth:
-                raise ScrapeUnavailable("no scrape session — run fanops hashtags scrape-login")
-            pw = scrape_password_for(user) or ""
-            client.login(user, pw)                          # cold-start: operator scrape-login only
-        dump_sess.parent.mkdir(parents=True, exist_ok=True)
-        client.dump_settings(str(dump_sess))
-    except (ScrapeUnavailable, ScrapeThrottled):
-        raise
-    except Exception as e:                                  # noqa: BLE001 — login surface is opaque
-        raise _classify_auth_exc(e) from e
+                raise                                   # unattended: never re-authenticate
+            client.login(user, scrape_password_for(user) or "", relogin=True)
+        # Valid session (or successful operator re-auth): persist and return. No login() on the happy path.
+    else:
+        if not allow_reauth:
+            raise ScrapeUnavailable("no scrape session — run fanops hashtags scrape-login")
+        pw = scrape_password_for(user) or ""
+        client.login(user, pw)                          # cold-start: operator scrape-login only
+    dump_sess.parent.mkdir(parents=True, exist_ok=True)
+    client.dump_settings(str(dump_sess))
     setattr(client, "_fanops_scrape_user", user)            # Layer A persist/clear target (MOL-858); fakes OK
     return client
 
@@ -279,14 +204,7 @@ def resolve_hashtag_scrape(client, tag: str) -> tuple[Optional[str], Optional[fl
     name = _norm(tag).lstrip("#")
     if not name:
         return None, None
-    try:
-        info = client.hashtag_info(name)
-    except Exception as e:                                  # noqa: BLE001
-        if isinstance(e, ScrapeRefused):
-            raise
-        if _is_throttle(e):
-            raise ScrapeThrottled(f"{type(e).__name__}: {_trunc(e)}") from e
-        raise ScrapeRefused(f"{type(e).__name__}: {_trunc(e)}") from e
+    info = client.hashtag_info(name)
     hid = getattr(info, "id", None)
     if hid is None:
         return None, None
@@ -312,14 +230,7 @@ def measure_and_harvest_scrape(client, tag: str, *, now=None) -> tuple[Optional[
     if not name:
         return None, {}
     cutoff = (now or datetime.now(timezone.utc)) - timedelta(days=_REEL_TREND_DAYS)
-    try:
-        medias = client.hashtag_medias_top(name, amount=TOP_SAMPLE_N)
-    except Exception as e:                                  # noqa: BLE001
-        if isinstance(e, ScrapeRefused):
-            raise
-        if _is_throttle(e):
-            raise ScrapeThrottled(f"{type(e).__name__}: {_trunc(e)}") from e
-        raise ScrapeRefused(f"{type(e).__name__}: {_trunc(e)}") from e
+    medias = client.hashtag_medias_top(name, amount=TOP_SAMPLE_N)
     if not medias:
         return None, {}
     likes: list[float] = []; plays: list[float] = []

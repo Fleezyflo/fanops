@@ -234,7 +234,7 @@ Authority: `docs/CODEMAPS/hashtag-lifecycle.md`. Summary:
   `_aligned_pool`, `derive_corpus`, `refresh_corpora_if_due` (fingerprint-gated safety net).
 - [hashtags.py](../../../src/fanops/hashtags.py) — `vet_hashtags` / measurement cache readers.
 - [ig_hashtag_scrape.py](../../../src/fanops/ig_hashtag_scrape.py) — Layer A network (`resolve_hashtag_scrape`,
-  `measure_and_harvest_scrape`); refusals typed (`ScrapeRefused` / `ScrapeThrottled` / `ScrapeUnavailable`).
+  `measure_and_harvest_scrape`); OUR-state `ScrapeUnavailable`; platform errors pass through untouched.
 - [meta_graph.py](../../../src/fanops/meta_graph.py) — Graph hashtag helpers deferred (`resolve_hashtag`,
   `measure_and_harvest` kept for later).
 - [fanops_hashtags.py](../../../src/fanops/fanops_hashtags.py) — `refresh_store` +
