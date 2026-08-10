@@ -577,6 +577,21 @@ def reconcile_due(cfg: Config) -> dict[str, int]:
                                           graph_get=None)
                 mirror[p.submission_id] = info
             log("reconcile", "-", "mirror_window", rows=len(window), posts=len(mirrored))
+            failed_sids = sorted(sid for sid, i in mirror.items() if i.get("status") == "failed")
+            if failed_sids:
+                # The window's ERROR rows carry no cause (the public API hides Post.error), so the
+                # stamp below would read "no detail" for every one of them. postiz_errors reads the
+                # self-host's own Postgres for the stored failure and classifies it; a shortfall
+                # (remote stack, no docker, timeout) leaves the info dict untouched — same stamp as
+                # before, and the failed= vs detailed= counts on this event surface the degradation.
+                from fanops.post.postiz_errors import classify_error_text, fetch_error_details
+                details = fetch_error_details(failed_sids)
+                for sid, text in details.items():
+                    kind, why = classify_error_text(text)
+                    if why:
+                        mirror[sid]["errorMessage"] = why
+                        mirror[sid]["errorKind"] = kind
+                log("reconcile", "-", "error_detail", failed=len(failed_sids), detailed=len(details))
     results: dict[str, object] = {}                      # sid -> info dict OR captured Exception
     if polled:
         poll = _default_get_status(cfg, snapshot)        # only built when Zernio work exists; never dryrun
@@ -786,7 +801,8 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
                         f"re-queueable (report 11 §5)")[:400])
                 log("reconcile", post.id, "failed_held_unverified_candidate", candidate=cand)
                 continue
-            led.set_post_state(post.id, PostState.failed, error_kind=ErrorKind.unknown, error_reason=(
+            led.set_post_state(post.id, PostState.failed,
+                error_kind=info.get("errorKind") or ErrorKind.unknown, error_reason=(
                 f"reconciled: poster reports failed ({info.get('errorMessage', 'no detail')})"))
             log("reconcile", post.id, "failed")
         else:

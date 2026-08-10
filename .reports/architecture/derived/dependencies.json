@@ -1177,6 +1177,14 @@
       "optional": [],
       "typing": []
     },
+    "fanops.post.postiz_errors": {
+      "compile": [
+        "fanops.models"
+      ],
+      "lazy": [],
+      "optional": [],
+      "typing": []
+    },
     "fanops.post.providers": {
       "compile": [
         "fanops.config"
@@ -1304,6 +1312,7 @@
         "fanops.meta_graph",
         "fanops.models",
         "fanops.post.metrics",
+        "fanops.post.postiz_errors",
         "fanops.post.run",
         "fanops.postiz_lifecycle"
       ],
@@ -2043,6 +2052,7 @@
     "compile": [
       "__future__",
       "argparse",
+      "base64",
       "calendar",
       "collections",
       "concurrent",
@@ -2190,7 +2200,7 @@
     "fanops.log": 38,
     "fanops.meta_graph": 1,
     "fanops.metrics_schedule": 1,
-    "fanops.models": 50,
+    "fanops.models": 51,
     "fanops.moment_hook_learning": 1,
     "fanops.moments": 4,
     "fanops.overlay": 3,
@@ -2210,6 +2220,7 @@
     "fanops.post.media": 3,
     "fanops.post.metrics": 0,
     "fanops.post.postiz": 3,
+    "fanops.post.postiz_errors": 0,
     "fanops.post.providers": 0,
     "fanops.post.run": 1,
     "fanops.post.zernio": 2,
@@ -2348,6 +2359,7 @@
     "fanops.post.media": 2,
     "fanops.post.metrics": 6,
     "fanops.post.postiz": 5,
+    "fanops.post.postiz_errors": 1,
     "fanops.post.providers": 1,
     "fanops.post.run": 10,
     "fanops.post.zernio": 8,
@@ -2409,7 +2421,7 @@
   "generated_by": "tools/arch",
   "generator_version": "arch/1.0.0",
   "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",
-  "lazy_downward_count": 233,
+  "lazy_downward_count": 234,
   "lazy_lateral": [
     {
       "from": "fanops.accounts",
@@ -3422,6 +3434,7 @@
     "fanops.post.media": 3,
     "fanops.post.metrics": 4,
     "fanops.post.postiz": 3,
+    "fanops.post.postiz_errors": 2,
     "fanops.post.providers": 1,
     "fanops.post.run": 4,
     "fanops.post.zernio": 3,
@@ -3546,6 +3559,7 @@
       "fanops.ledger",
       "fanops.pipeline_run",
       "fanops.post.compress",
+      "fanops.post.postiz_errors",
       "fanops.router",
       "fanops.variant_learning"
     ],
@@ -3653,17 +3667,17 @@
   ],
   "totals": {
     "G1_non_trivial_sccs": 0,
-    "G1_sccs_total": 136,
+    "G1_sccs_total": 137,
     "G1c_levels": 11,
     "G2_largest_scc_size": 55,
-    "G2_module_sccs_total": 66,
+    "G2_module_sccs_total": 67,
     "G2_non_trivial_sccs": 8,
-    "compile_edges_G1": 574,
-    "lazy_edges": 349,
+    "compile_edges_G1": 575,
+    "lazy_edges": 350,
     "lazy_edges_lateral": 46,
     "lazy_edges_strictly_upward": 70,
     "lazy_edges_to_equal_or_higher_level": 116,
-    "modules": 136,
+    "modules": 137,
     "optional_edges": 0,
     "typing_only_edges": 7
   }

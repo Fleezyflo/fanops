@@ -1037,3 +1037,13 @@ def test_delivery_audit_counts_buckets(tmp_path):
     aud = delivery_audit(led)
     assert aud["live_trackable"] == 1 and aud["inflight"] == 1
     assert aud["buckets"]["rate_limit"] == 1 and aud["failed"] == 1
+
+
+def test_auth_failures_are_labeled_and_never_retryable():
+    # The auth kind exists so a dead channel credential (Postiz refreshNeeded) stops masquerading as
+    # a retryable "unknown": recover_posts consumes _RETRYABLE_FAILURES directly, so this pin is the
+    # behavior "retry skips auth-dead posts instead of re-burning them until reconnect".
+    from fanops.studio.views_results import _FAILURE_KINDS, _RETRYABLE_FAILURES, failure_label
+    assert "auth" in _FAILURE_KINDS
+    assert "auth" not in _RETRYABLE_FAILURES
+    assert failure_label("auth") == "Reconnect account"

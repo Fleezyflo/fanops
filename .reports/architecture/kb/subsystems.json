@@ -131,6 +131,7 @@
         "post.media",
         "post.metrics",
         "post.postiz",
+        "post.postiz_errors",
         "post.providers",
         "post.run",
         "post.zernio",

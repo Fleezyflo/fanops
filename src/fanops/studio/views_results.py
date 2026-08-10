@@ -562,16 +562,18 @@ class PostedRow:
     submission_id: Optional[str] = None   # inflight rows: backend id awaiting permalink
     error_reason: Optional[str] = None      # inflight/failed: last reconcile error (truncated in UI)
     raw_state: Optional[str] = None         # ledger PostState.value for detail rows
-    failure_kind: Optional[str] = None      # failed rows: rate_limit | oversize | bad_payload | transient | unknown
+    failure_kind: Optional[str] = None      # failed rows: one of _FAILURE_KINDS
     is_archived: bool = False               # R2: row from 06_published/ supplement (read-only, no repost/crosspost)
 
 
-_FAILURE_KINDS = ("rate_limit", "oversize", "bad_payload", "transient", "unknown")
+_FAILURE_KINDS = ("rate_limit", "oversize", "bad_payload", "transient", "auth", "unknown")
+# auth is deliberately NOT retryable: a dead channel credential re-fails every attempt until the
+# operator reconnects the account, so retry skipping it is the honest affordance.
 _RETRYABLE_FAILURES = frozenset({"rate_limit", "oversize", "bad_payload", "transient", "unknown"})
 
 
 _FAILURE_LABELS = {"rate_limit": "Rate limited", "oversize": "Too large", "bad_payload": "Bad upload",
-                   "transient": "Network blip", "unknown": "Failed"}
+                   "transient": "Network blip", "auth": "Reconnect account", "unknown": "Failed"}
 
 
 def failure_label(kind: str | None) -> str:

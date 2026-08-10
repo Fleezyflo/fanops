@@ -53,6 +53,7 @@
       "fanops.llm",
       "fanops.overlay",
       "fanops.post.compress",
+      "fanops.post.postiz_errors",
       "fanops.postiz_lifecycle",
       "fanops.reframe",
       "fanops.reframe_apply",
@@ -68,7 +69,7 @@
     "mkdtemp_sites": 2,
     "network_sites_literal_requests": 15,
     "rmtree_sites": 6,
-    "subprocess_sites": 39
+    "subprocess_sites": 40
   },
   "how_to_raise": "In the same PR that adds a site: (1) raise the matching ceiling by the number of new sites, (2) list every newly side-effecting module under approved_sites.<key>. Never copy a census total into kb/side_effects.json \u2014 ARCH-008 still forbids that restatement.",
   "purpose": "Approved ceilings and module allowlists for AST-censused side-effect sites. The census lives only in derived/side_effects.json. This file is DECLARED POLICY: raising a ceiling (and listing a new module) is a deliberate human decision visible in the PR diff. Rule ARCH-008 checks both against the derived census at CI time."

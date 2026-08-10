@@ -167,6 +167,7 @@ class ErrorKind(str, Enum):
     oversize = "oversize"
     bad_payload = "bad_payload"
     transient = "transient"
+    auth = "auth"          # dead channel credential (revoked/expired session) — reconnect the account; a retry re-fails
     unknown = "unknown"
 
 

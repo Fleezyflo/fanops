@@ -802,6 +802,44 @@ def test_an_error_row_on_a_pending_post_still_resolves_it_failed(tmp_path, monke
     assert p.postiz_state == "ERROR"
 
 
+def test_a_failed_row_carries_the_real_cause_when_the_db_read_resolves(tmp_path, monkeypatch, mocker):
+    # The window's ERROR row carries no cause (the public API hides Post.error), so reconcile enriches
+    # from the self-host's Postgres. A resolved read must land BOTH halves on the ledger row: the typed
+    # kind (auth -> Studio retry skips it) and a reason a human can act on — while keeping the
+    # "poster reports failed" prefix the reason-scanners pin.
+    from fanops.models import ErrorKind
+    import fanops.post.postiz_errors as pe
+    _mirror_env(monkeypatch)
+    cfg = Config(root=tmp_path)
+    _seed(cfg, "pn", PostState.needs_reconcile, "postiz_1")
+    _serve_window(mocker, [{"id": "postiz_1", "state": "ERROR", "releaseURL": None, "releaseId": None}])
+    monkeypatch.setattr(pe, "fetch_error_details", lambda sids: {"postiz_1": "Refresh channel needed"})
+    reconcile_due(cfg)
+    p = Ledger.load(cfg).posts["pn"]
+    assert p.state is PostState.failed
+    assert p.error_kind is ErrorKind.auth
+    assert "poster reports failed" in p.error_reason
+    assert "reconnect" in p.error_reason.lower()
+
+
+def test_a_failed_row_without_detail_stamps_exactly_the_old_no_detail(tmp_path, monkeypatch, mocker):
+    # The degrade contract: a shortfall of the DB read (remote stack, no docker, timeout) must leave
+    # the stamp byte-identical to the pre-enrichment behavior — unknown kind, "(no detail)" reason —
+    # never a half-invented cause.
+    from fanops.models import ErrorKind
+    import fanops.post.postiz_errors as pe
+    _mirror_env(monkeypatch)
+    cfg = Config(root=tmp_path)
+    _seed(cfg, "pn", PostState.needs_reconcile, "postiz_1")
+    _serve_window(mocker, [{"id": "postiz_1", "state": "ERROR", "releaseURL": None, "releaseId": None}])
+    monkeypatch.setattr(pe, "fetch_error_details", lambda sids: {})
+    reconcile_due(cfg)
+    p = Ledger.load(cfg).posts["pn"]
+    assert p.state is PostState.failed
+    assert p.error_kind is ErrorKind.unknown
+    assert p.error_reason.endswith("(no detail)")
+
+
 def test_a_second_pass_over_unchanged_rows_writes_nothing(tmp_path, monkeypatch, mocker):
     # THE ZERO-BYTE PROPERTY. The mirror runs on every daemon tick over the whole corpus; if an identical
     # row counted as a write, every published post in the ledger would be rewritten forever, and every
