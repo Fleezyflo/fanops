@@ -1138,9 +1138,9 @@ def test_refresh_store_absent_personas_is_not_an_abort(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path)
     assert not cfg.personas_path.exists()
     out = refresh_store(cfg, scrape_client=_FakeClient({}))
-    # No personas → empty queue → measured=0 no-progress (MOL-695); still not a corrupt abort.
-    assert out.get("aborted") != "corrupt_personas"
-    assert out.get("written") is False and out.get("reason") == "zero measured"
+    # No personas → early discovery_skip_no_niche (honest); still not a corrupt abort.
+    assert out.get("aborted") == "discovery_skip_no_niche"
+    assert out.get("written") is False and out.get("reason") == "no personas have a declared niche"
 
 
 def test_refresh_store_if_due_corrupt_personas_reports_reason_never_raises(tmp_path, monkeypatch):
