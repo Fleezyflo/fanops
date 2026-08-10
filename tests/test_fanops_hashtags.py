@@ -658,7 +658,7 @@ def test_open_client_default_path_never_reads_password(tmp_path, monkeypatch):
 
 
 def test_open_client_allow_reauth_calls_login_relogin_once(tmp_path, monkeypatch):
-    """Operator path: LoginRequired → login(..., relogin=True) exactly once."""
+    """Operator path: any probe Exception with allow_reauth=True → login(..., relogin=True) exactly once."""
     from fanops.ig_hashtag_scrape import open_client
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
     monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
@@ -668,10 +668,10 @@ def test_open_client_allow_reauth_calls_login_relogin_once(tmp_path, monkeypatch
     _sess.parent.mkdir(parents=True, exist_ok=True)
     _sess.write_text("{}")
     seen = []
-    class LoginRequired(Exception): pass
+    from instagrapi.exceptions import LoginRequired as _LR
     class _Stale:
         def load_settings(self, _p): pass
-        def account_info(self): raise LoginRequired("login_required")
+        def account_info(self): raise _LR("login_required")
         def login(self, user, pw, relogin=False):
             seen.append((user, pw, relogin))
         def dump_settings(self, _p): pass
@@ -1331,7 +1331,7 @@ def test_per_account_throttle_persists_under_accounts_user(tmp_path, monkeypatch
     from datetime import datetime, timezone, timedelta
     import fanops.ig_hashtag_scrape as igs
     from fanops.ig_hashtag_scrape import scrape_session_path
-    from instagrapi.exceptions import PleaseWaitFewMinutes
+    from instagrapi.exceptions import RateLimitError
     from fanops.fanops_hashtags import refresh_store, _cooldown_path, _COOLDOWN_DELAYS_S
     from hashtag_scrape_fakes import _Media
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u1")
@@ -1359,7 +1359,7 @@ def test_per_account_throttle_persists_under_accounts_user(tmp_path, monkeypatch
             self.media_calls.append(name)
             if len(self.media_calls) == 1:
                 return [_Media(play_count=50, caption_text="#alpha")]
-            raise PleaseWaitFewMinutes("please_wait")
+            raise RateLimitError(**{"message": "", "error_type": "rate_limit_error", "status": "fail"})
     def fake_open(cfg, *, client_factory=None, allow_reauth=False, user=None, **_k):
         assert user == "u1"
         c = _Partial()
@@ -1371,7 +1371,7 @@ def test_per_account_throttle_persists_under_accounts_user(tmp_path, monkeypatch
     cd = json.loads(_cooldown_path(cfg).read_text())
     assert "until" not in cd                                  # no global top-level freeze
     rec = cd["accounts"]["u1"]
-    assert rec["reason"] == "PleaseWaitFewMinutes" and rec["streak"] == 3  # no sawtooth clear
+    assert rec["reason"] == "RateLimitError" and rec["streak"] == 3  # no sawtooth clear
     assert rec["until"] == (t0 + timedelta(seconds=_COOLDOWN_DELAYS_S[2])).isoformat()
     assert rec["day"] == "2026-07-01" and rec["used"] >= 1
 
@@ -1421,7 +1421,7 @@ def test_refresh_pass_head_throttle_peer_continues(tmp_path, monkeypatch):
     from datetime import datetime, timezone
     import fanops.ig_hashtag_scrape as igs
     from fanops.ig_hashtag_scrape import scrape_session_path
-    from instagrapi.exceptions import PleaseWaitFewMinutes
+    from instagrapi.exceptions import RateLimitError
     from fanops.fanops_hashtags import refresh_store, _cooldown_path
     from fanops import personas as P
     from hashtag_scrape_fakes import _Media
@@ -1448,7 +1448,7 @@ def test_refresh_pass_head_throttle_peer_continues(tmp_path, monkeypatch):
         def hashtag_medias_top(self, name, amount=9):
             self.n += 1
             if self.user == "u1":
-                raise PleaseWaitFewMinutes("please_wait")
+                raise RateLimitError(**{"message": "", "error_type": "rate_limit_error", "status": "fail"})
             return [_Media(play_count=50, caption_text="#x"), _Media(play_count=50, caption_text="#x")]
 
     def fake_open(cfg, *, client_factory=None, allow_reauth=False, user=None, **_k):
@@ -1461,7 +1461,7 @@ def test_refresh_pass_head_throttle_peer_continues(tmp_path, monkeypatch):
     out = refresh_store(cfg, now=t0)
     assert out["measured"] >= 1
     cd = json.loads(_cooldown_path(cfg).read_text())
-    assert cd["accounts"]["u1"]["reason"] == "PleaseWaitFewMinutes"
+    assert cd["accounts"]["u1"]["reason"] == "RateLimitError"
     assert "until" in cd["accounts"]["u1"]
     assert cd["accounts"].get("u2", {}).get("used", 0) > 0
 
