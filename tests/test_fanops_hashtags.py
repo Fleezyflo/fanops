@@ -1383,3 +1383,108 @@ def test_per_account_throttle_persists_under_accounts_user(tmp_path, monkeypatch
     assert rec["reason"] == "throttle" and rec["streak"] == 3  # no sawtooth clear
     assert rec["until"] == (t0 + timedelta(seconds=_COOLDOWN_DELAYS_S[2])).isoformat()
     assert rec["day"] == "2026-07-01" and rec["used"] >= 1
+
+
+def test_refresh_pass_two_ready_users_both_charged(tmp_path, monkeypatch):
+    """MOL-900: one pass opens and charges ≥2 session-ready users on the same due queue."""
+    from datetime import datetime, timezone
+    import fanops.ig_hashtag_scrape as igs
+    from fanops.ig_hashtag_scrape import scrape_session_path
+    from fanops.fanops_hashtags import refresh_store, _cooldown_path
+    from fanops import personas as P
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u1,u2")
+    monkeypatch.setenv("FANOPS_HASHTAG_SCRAPE_TRY_CAP", "2")
+    cfg = Config(root=tmp_path)
+    niches = [f"seed{i}" for i in range(6)]
+    P.add_persona(cfg, name="Multi", voice="x", niche=niches, id="multi")
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": [
+        {"handle": "a", "platforms": ["instagram"], "status": "active", "persona_id": "multi"}]}))
+    for u in ("u1", "u2"):
+        sess = scrape_session_path(cfg, u)
+        sess.parent.mkdir(parents=True, exist_ok=True)
+        sess.write_text("{}")
+    opened: list[str] = []
+    metrics = {f"#{n}": float(10 + i) for i, n in enumerate(niches)}
+
+    def fake_open(cfg, *, client_factory=None, allow_reauth=False, user=None, **_k):
+        assert allow_reauth is False
+        assert user in ("u1", "u2")
+        opened.append(user)
+        c = _FakeClient(metrics)
+        c._fanops_scrape_user = user
+        return c
+
+    monkeypatch.setattr(igs, "open_client", fake_open)
+    t0 = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
+    out = refresh_store(cfg, now=t0)
+    assert out.get("written") is True and out["measured"] >= 2
+    assert opened == ["u1", "u2"]
+    cd = json.loads(_cooldown_path(cfg).read_text())
+    assert cd["accounts"]["u1"].get("used", 0) > 0
+    assert cd["accounts"]["u2"].get("used", 0) > 0
+
+
+def test_refresh_pass_head_throttle_peer_continues(tmp_path, monkeypatch):
+    """MOL-900: head in-loop throttle freezes head; peer continues same queue cursor."""
+    from datetime import datetime, timezone
+    import fanops.ig_hashtag_scrape as igs
+    from fanops.ig_hashtag_scrape import ScrapeThrottled, scrape_session_path
+    from fanops.fanops_hashtags import refresh_store, _cooldown_path
+    from fanops import personas as P
+    from hashtag_scrape_fakes import _Media
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u1,u2")
+    monkeypatch.setenv("FANOPS_HASHTAG_SCRAPE_TRY_CAP", "10")
+    cfg = Config(root=tmp_path)
+    niches = [f"seed{i}" for i in range(4)]
+    P.add_persona(cfg, name="Multi", voice="x", niche=niches, id="multi")
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": [
+        {"handle": "a", "platforms": ["instagram"], "status": "active", "persona_id": "multi"}]}))
+    for u in ("u1", "u2"):
+        sess = scrape_session_path(cfg, u)
+        sess.parent.mkdir(parents=True, exist_ok=True)
+        sess.write_text("{}")
+
+    class _HeadThenPeer:
+        def __init__(self, user):
+            self.user = user
+            self.n = 0
+        def hashtag_info(self, name):
+            class _Info: id = f"id-{name}"; media_count = 10
+            return _Info()
+        def hashtag_medias_top(self, name, amount=9):
+            self.n += 1
+            if self.user == "u1":
+                raise ScrapeThrottled("please_wait")
+            return [_Media(play_count=50, caption_text="#x"), _Media(play_count=50, caption_text="#x")]
+
+    def fake_open(cfg, *, client_factory=None, allow_reauth=False, user=None, **_k):
+        c = _HeadThenPeer(user)
+        c._fanops_scrape_user = user
+        return c
+
+    monkeypatch.setattr(igs, "open_client", fake_open)
+    t0 = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
+    out = refresh_store(cfg, now=t0)
+    assert out["measured"] >= 1
+    cd = json.loads(_cooldown_path(cfg).read_text())
+    assert cd["accounts"]["u1"]["reason"] == "throttle"
+    assert "until" in cd["accounts"]["u1"]
+    assert cd["accounts"].get("u2", {}).get("used", 0) > 0
+
+
+def test_refresh_pass_injected_client_no_roster_walk(tmp_path, monkeypatch):
+    """MOL-900: scrape_client= stays single-client; does not open FANOPS_IG_SCRAPE_USER peers."""
+    import fanops.ig_hashtag_scrape as igs
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u1,u2")
+    cfg = Config(root=tmp_path); _persona(cfg)
+    opens = []
+
+    def boom_open(*_a, **_k):
+        opens.append(1)
+        raise AssertionError("open_client must not run when scrape_client injected")
+
+    monkeypatch.setattr(igs, "open_client", boom_open)
+    out = refresh_store(cfg, scrape_client=_FakeClient({"#hiphop": 10}))
+    assert out["written"] is True and opens == []

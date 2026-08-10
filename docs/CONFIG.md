@@ -116,9 +116,9 @@ Speech-trust filtering is **invariant always-on** — there is no env switch for
 | Var | Default | Effect | Set |
 |---|---|---|---|
 | `FANOPS_CORPUS_TARGET` | 80 | Ceiling on a persona's DERIVED corpus (never padded to reach it) | .env |
-| `FANOPS_IG_SCRAPE_USER` | None | Instagram username(s) for hashtag Layer A (instagrapi). Comma-separated preference order, e.g. `markmakmouly,cisumwolfhom,perca.late` (MOL-857) | .env |
+| `FANOPS_IG_SCRAPE_USER` | None | Instagram username(s) for hashtag Layer A (instagrapi). Comma-separated list order = who measures first in a pass; each qualifying user (session on disk, not frozen, under day budget) may spend up to `FANOPS_HASHTAG_SCRAPE_TRY_CAP` attempts in that pass (MOL-857/900) | .env |
 | `FANOPS_IG_SCRAPE_PASSWORD` | None | Shared Instagram password for hashtag Layer A scrape-login (write-only; never logged). Optional per-user override: append `_` + sanitized username (uppercase, non-alnum → `_`), e.g. user `perca.late` → `…_PASSWORD_PERCA_LATE` | .env |
-| `FANOPS_HASHTAG_SCRAPE_TRY_CAP` | 25 | Max hashtag measure attempts per Layer A scrape pass. Paired with the UTC day budget on `.hashtag_scrape_cooldown.json` (~40 request-units/day); a pass that hits this cap is incomplete and does not advance `last_complete_pass` | .env |
+| `FANOPS_HASHTAG_SCRAPE_TRY_CAP` | 25 | Max hashtag measure attempts **per qualifying scrape user** per Layer A pass (bounded by that user’s UTC day budget ~40 on `.hashtag_scrape_cooldown.json` `accounts[user].used`). Incomplete if the due queue remains after all qualifying users; then `last_complete_pass` does not advance (MOL-900) | .env |
 | `FANOPS_HASHTAG_SCRAPE_COTAG_ENQUEUE` | 40 | Max NEW co-tags enqueued to measure per Layer A scrape pass | .env |
 | `FANOPS_HASHTAG_SCRAPE_PARALLEL` | 1 | Tags per Layer A wave. Layer A is single-client and serialized (`client_lock`) since MOL-698 — the session-clone fan-out that made this concurrent on the wire earned an account lock, and instagrapi is not thread-safe. Raising it groups tags into a wave; it does NOT emit concurrent requests | .env |
 | `FANOPS_HASHTAG_SCRAPE_DELAY` | `1,3` | instagrapi `delay_range` for Layer A: `"lo,hi"` seconds of jitter between private-API calls. `0` disables pacing; anything unparseable/negative/inverted falls back to `1,3` | .env |
