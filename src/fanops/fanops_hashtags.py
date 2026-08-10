@@ -49,10 +49,6 @@ _REFRESH_CADENCE_S = 12 * 60 * 60   # the tick's refresh window, and the yardsti
 _SCRAPE_TRY_CAP = 25
 _SCRAPE_DAY_BUDGET = 40        # request-units per UTC day per scrape account (accounts[user].used)
 _SCRAPE_COTAG_ENQUEUE_CAP = 40
-_SCRAPE_PARALLEL = 1          # legacy env knob (FANOPS_HASHTAG_SCRAPE_PARALLEL). MOL-855 fetch is sequential;
-                              # this no longer sizes a wave. Pace with FANOPS_HASHTAG_SCRAPE_DELAY.
-
-
 def _scrape_try_cap() -> int:
     raw = os.getenv("FANOPS_HASHTAG_SCRAPE_TRY_CAP")
     if raw is None:
@@ -73,17 +69,6 @@ def _scrape_cotag_enqueue_cap() -> int:
     except ValueError:
         return _SCRAPE_COTAG_ENQUEUE_CAP
     return v if v >= 0 else _SCRAPE_COTAG_ENQUEUE_CAP
-
-
-def _scrape_parallel() -> int:
-    raw = os.getenv("FANOPS_HASHTAG_SCRAPE_PARALLEL")
-    if raw is None:
-        return _SCRAPE_PARALLEL
-    try:
-        v = int(raw)
-    except ValueError:
-        return _SCRAPE_PARALLEL
-    return v if v >= 1 else _SCRAPE_PARALLEL
 
 
 def _rederive_posting_corpora(cfg: Config, *, now=None) -> None:
@@ -437,10 +422,17 @@ def _clear_cooldown(cfg: Config, *, now: datetime | None = None, used_delta: int
         pass
 
 
-_OUTAGE_REMEDY = {"login_required": "run fanops hashtags scrape-login",
-                  "checkpoint": "verify in the Instagram app, then run fanops hashtags scrape-login",
-                  "throttle": "Instagram is rate-limiting; the ladder clears it, no operator action does",
-                  "budget": "local UTC day scrape budget exhausted; waits for next UTC day"}
+_OUTAGE_REMEDY = {
+    # Producers after MOL-909 write class names (or "checkpoint" / "budget"); legacy blob keys kept
+    # so pre-909 cooldown files still get a remedy line instead of the inspect fallback.
+    "LoginRequired": "run fanops hashtags scrape-login",
+    "login_required": "run fanops hashtags scrape-login",
+    "checkpoint": "verify in the Instagram app, then run fanops hashtags scrape-login",
+    "RateLimitError": "Instagram is rate-limiting; the ladder clears it, no operator action does",
+    "PleaseWaitFewMinutes": "Instagram is rate-limiting; the ladder clears it, no operator action does",
+    "throttle": "Instagram is rate-limiting; the ladder clears it, no operator action does",
+    "budget": "local UTC day scrape budget exhausted; waits for next UTC day",
+}
 
 
 def _freeze_for(exc: BaseException) -> tuple[str, int | None]:
@@ -658,7 +650,6 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
     unresolved: list[dict] = []
     log = get_logger(cfg)
     try_cap = _scrape_try_cap(); cotag_cap = _scrape_cotag_enqueue_cap()
-    parallel = 1                                               # sequential fetch (MOL-855); retained in summary
     client = scrape_client
     scrape_user = None
     cooldown = None
@@ -755,7 +746,7 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
                     log("hashtags", tag, "measured", tried=tried, measured=measured,
                         queue_left=len(queue) - i, visibility=_metric(rec),
                         rank_field=next((k for k in ("play_count", "like_count") if k in rec), None),
-                        media_count=rec.get("media_count"), parallel=parallel)
+                        media_count=rec.get("media_count"))
         return user_tried, None
 
     def _charge_user(user: str | None, user_tried: int, stop_exc: BaseException | None) -> dict | None:
@@ -886,18 +877,18 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
     fresh = _records_for_write(cache, anchor_set=anchor_set, cutoff=cutoff)
     tag_mutated = fresh != pre_write
     if measured == 0 and not tag_mutated:
-        # platform_stop → aborted = _freeze_for reason word; false niche else left for MOL-912
+        # platform_stop → aborted = _freeze_for reason word; else honest zero-measured (MOL-912)
         if platform_stop:
             reason = stop_reason_word or "platform_stop"
             out = {"written": False, "measured": 0, "discovered": discovered,
                    "total": len(pre_write), "throttled": throttled, "tried": tried,
-                   "unresolved": unresolved, "backend": "scrape", "parallel": parallel,
+                   "unresolved": unresolved, "backend": "scrape",
                    "reason": reason, "aborted": reason}
         else:
-            reason = "no personas have a declared niche"
+            reason = "zero measured"
             out = {"written": False, "measured": 0, "discovered": discovered,
                    "total": len(pre_write), "throttled": throttled, "tried": tried,
-                   "unresolved": unresolved, "backend": "scrape", "parallel": parallel,
+                   "unresolved": unresolved, "backend": "scrape",
                    "reason": reason}
         if cooldown is not None:
             out["cooldown_until"] = cooldown.get("until"); out["cooldown_streak"] = cooldown.get("streak")
@@ -912,7 +903,7 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
         _rederive_posting_corpora(cfg, now=now)
     out = {"written": True, "measured": measured, "discovered": discovered,
            "total": len([t for t in fresh if t != _COMPLETE_KEY]), "throttled": throttled,
-           "tried": tried, "unresolved": unresolved, "backend": "scrape", "parallel": parallel}
+           "tried": tried, "unresolved": unresolved, "backend": "scrape"}
     if cooldown is not None:
         out["cooldown_until"] = cooldown.get("until"); out["cooldown_streak"] = cooldown.get("streak")
     return out

@@ -762,7 +762,7 @@ def test_zero_progress_pass_preserves_hashtags_bytes_and_skips_rederive(tmp_path
     # Age past complete gate but refuse the only due work → measured=0, cache unchanged.
     out = refresh_store(cfg, scrape_client=_FakeClient({}, refuse_tags={"#hiphop", "hiphop"}),
                         now=t0 + timedelta(hours=25))
-    assert out["measured"] == 0 and out["written"] is False and out.get("reason") == "no personas have a declared niche"
+    assert out["measured"] == 0 and out["written"] is False and out.get("reason") == "zero measured"
     assert cfg.hashtags_path.read_bytes() == before
     assert cfg.hashtags_path.stat().st_mtime_ns == mtime
     assert json.loads(cfg.hashtags_path.read_text())["last_complete_pass"] == stamp
@@ -1140,7 +1140,7 @@ def test_refresh_store_absent_personas_is_not_an_abort(tmp_path, monkeypatch):
     out = refresh_store(cfg, scrape_client=_FakeClient({}))
     # No personas → empty queue → measured=0 no-progress (MOL-695); still not a corrupt abort.
     assert out.get("aborted") != "corrupt_personas"
-    assert out.get("written") is False and out.get("reason") == "no personas have a declared niche"
+    assert out.get("written") is False and out.get("reason") == "zero measured"
 
 
 def test_refresh_store_if_due_corrupt_personas_reports_reason_never_raises(tmp_path, monkeypatch):
@@ -1170,15 +1170,6 @@ def test_cmd_hashtags_refresh_corrupt_personas_exits_2_and_no_keyerror(tmp_path,
     assert "personas.json invalid:" in aborted.get("reason", "")
 
 
-def test_refresh_store_reports_parallel_one_when_client_injected(tmp_path, monkeypatch):
-    """MOL-855: fetch is sequential — summary parallel stays 1 even if the legacy knob is raised."""
-    import fanops.fanops_hashtags as fh
-    monkeypatch.setattr(fh, "_SCRAPE_PARALLEL", 8)
-    cfg = Config(root=tmp_path); _persona(cfg)
-    out = refresh_store(cfg, scrape_client=_FakeClient({"#hiphop": 10}))
-    assert out.get("parallel") == 1 and out["written"] is True
-
-
 def test_layer_a_emits_one_client_no_session_clones(tmp_path, monkeypatch):
     """MOL-698/MOL-855: no session clones; _refresh_pass is sequential (no ThreadPool / Lock / waves)."""
     import fanops.fanops_hashtags as fh
@@ -1188,8 +1179,7 @@ def test_layer_a_emits_one_client_no_session_clones(tmp_path, monkeypatch):
     assert "session_client" not in src
     assert "ThreadPoolExecutor" not in src
     assert "threading" not in src
-    monkeypatch.delenv("FANOPS_HASHTAG_SCRAPE_PARALLEL", raising=False)
-    assert fh._scrape_parallel() == 1                       # legacy knob default; unused by fetch
+    assert "parallel" not in inspect.getsource(fh._refresh_pass)
 
 
 def test_scrape_delay_range_paces_requests(monkeypatch):
