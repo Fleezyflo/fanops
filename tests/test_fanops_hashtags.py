@@ -170,28 +170,29 @@ def test_refresh_store_checkpoint_is_its_own_abort(tmp_path, monkeypatch):
     assert not cfg.hashtags_path.exists()
 
 
-def test_open_client_probe_challenge_flows_through_untouched(tmp_path, monkeypatch):
-    """A4: probe ChallengeRequired re-raises as-is when allow_reauth=False; login() never called."""
-    from fanops.ig_hashtag_scrape import open_client
-    from instagrapi.exceptions import ChallengeRequired
+def test_open_client_unattended_skips_account_info_probe(tmp_path, monkeypatch):
+    """MOL-910: allow_reauth=False never calls account_info(); login() never called."""
+    from fanops.ig_hashtag_scrape import open_client, scrape_session_path
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
     monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "secret-must-not-leak")
     cfg = Config(root=tmp_path)
-    from fanops.ig_hashtag_scrape import scrape_session_path
     _sess = scrape_session_path(cfg, "u")
     _sess.parent.mkdir(parents=True, exist_ok=True)
     _sess.write_text("{}")
-    class _Locked:
-        def load_settings(self, _p): pass
-        def account_info(self): raise ChallengeRequired("challenge_required")
-        def login(self, *_a, **_k): raise AssertionError("default path must not call login()")
-        def dump_settings(self, _p): pass
-    try:
-        open_client(cfg, client_factory=_Locked)
-        raise AssertionError("expected ChallengeRequired")
-    except ChallengeRequired as e:
-        assert str(e) == "challenge_required"
-        assert "secret-must-not-leak" not in str(e)
+    calls: list[str] = []
+    class _Rec:
+        def load_settings(self, _p): calls.append("load_settings")
+        def account_info(self):
+            calls.append("account_info")
+            raise AssertionError("unattended must not probe account_info")
+        def login(self, *_a, **_k):
+            calls.append("login")
+            raise AssertionError("default path must not call login()")
+        def dump_settings(self, _p): calls.append("dump_settings")
+    c = open_client(cfg, client_factory=_Rec)
+    assert c is not None
+    assert calls == ["load_settings", "dump_settings"]
+    assert (cfg.control / "ig_scrape_session_u.json").exists()
 
 
 def test_cmd_hashtags_discover_reports_and_writes_nothing(tmp_path, monkeypatch):
@@ -372,40 +373,42 @@ def test_login_required_arms_the_laddered_cooldown(tmp_path, monkeypatch):
     assert not cfg.hashtags_path.exists()
 
 
-def test_expired_session_at_open_arms_the_login_cooldown(tmp_path, monkeypatch):
-    """MOL-727: the IN-PASS login_required refusal got the ladder, but an expiry raised while OPENING
-    the client returned `no_scrape` with NO backoff — so every due tick re-probed a dead session
-    forever. Same account, same failure, same remedy: same cooldown, one seam earlier."""
+def test_expired_session_at_fetch_arms_the_login_cooldown(tmp_path, monkeypatch):
+    """MOL-727/MOL-910: dead session discovered at first hashtag_info (not open probe) still arms
+    LoginRequired cooldown so due ticks do not re-hit a dead session forever."""
     from datetime import datetime, timezone, timedelta
-    import fanops.ig_hashtag_scrape as igs
     from fanops.fanops_hashtags import refresh_store_if_due, _cooldown_path, _COOLDOWN_DELAYS_S
+    from instagrapi.exceptions import LoginRequired
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u"); monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
     cfg = Config(root=tmp_path); _persona(cfg)
     t0 = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
-    opens = {"n": 0}
-    from instagrapi.exceptions import LoginRequired
-    def expired(_cfg, **_k):
-        opens["n"] += 1
-        raise LoginRequired("login_required")
-    monkeypatch.setattr(igs, "open_client", expired)
-    out = refresh_store_if_due(cfg, max_age_s=1, now=t0)
+    clients: list[_FakeClient] = []
+    def make_client():
+        c = _FakeClient({}, refuse=LoginRequired("login_required"))
+        c._fanops_scrape_user = "u"
+        clients.append(c)
+        return c
+    out = refresh_store_if_due(cfg, max_age_s=1, now=t0, scrape_client=make_client())
     assert out["refreshed"] is False and out["aborted"] == "LoginRequired"   # not `no_scrape`
     cd = json.loads(_cooldown_path(cfg).read_text())
     rec = (cd.get("accounts") or {}).get("u") or cd
     assert rec["reason"] == "LoginRequired" and rec["streak"] == 1
     assert rec["until"] == (t0 + timedelta(seconds=_COOLDOWN_DELAYS_S[0])).isoformat()
     assert out["cooldown_until"] == rec["until"] and out["cooldown_streak"] == 1
-    for mins in (1, 20, 29):                               # inside the floor: no client opened at all
-        skip = refresh_store_if_due(cfg, max_age_s=1, now=t0 + timedelta(minutes=mins))
+    assert len(clients[0].info_calls) == 1
+    for mins in (1, 20, 29):                               # inside the floor: no further work
+        skip = refresh_store_if_due(cfg, max_age_s=1, now=t0 + timedelta(minutes=mins),
+                                    scrape_client=make_client())
         assert skip["refreshed"] is False and skip["reason"] == "cooldown"
         assert skip["cooldown_reason"] == "LoginRequired"  # run.log says WHY
-    assert opens["n"] == 1, f"re-probed a dead session {opens['n']} times"
+    assert sum(len(c.info_calls) for c in clients) == 1, "re-hit a dead session inside the floor"
     assert not cfg.hashtags_path.exists()                  # cache untouched on the abort path
     # The ladder still decays: the next pass after the floor deepens the streak (never a flat retry).
-    refresh_store_if_due(cfg, max_age_s=1, now=t0 + timedelta(minutes=31))
+    refresh_store_if_due(cfg, max_age_s=1, now=t0 + timedelta(minutes=31), scrape_client=make_client())
     cd2 = json.loads(_cooldown_path(cfg).read_text())
     rec2 = (cd2.get("accounts") or {}).get("u") or cd2
-    assert rec2["streak"] == 2 and opens["n"] == 2
+    assert rec2["streak"] == 2
+    assert sum(len(c.info_calls) for c in clients) == 2
 
 
 def _log_recs(cfg, outcome=None):
@@ -607,54 +610,45 @@ def test_instagrapi_floor_validates_saved_sessions(tmp_path):
     assert ver >= (2, 18, 12)
 
 
-def test_open_client_stale_session_refuses_without_login(tmp_path, monkeypatch):
-    """Unattended path: LoginRequired from account_info flows through untouched; login() never called."""
-    from fanops.ig_hashtag_scrape import open_client
-    from instagrapi.exceptions import LoginRequired
+def test_open_client_stale_session_opens_without_probe_or_login(tmp_path, monkeypatch):
+    """MOL-910 unattended: session file → load + dump; no account_info, no login (dead session
+    surfaces later at the first work call)."""
+    from fanops.ig_hashtag_scrape import open_client, scrape_session_path
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
     monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
     cfg = Config(root=tmp_path)
-    from fanops.ig_hashtag_scrape import scrape_session_path
     _sess = scrape_session_path(cfg, "u")
     _sess.parent.mkdir(parents=True, exist_ok=True)
     _sess.write_text("{}")
-    seen = {"login": 0}
+    seen = {"login": 0, "account_info": 0}
     class _Stale:
         def load_settings(self, _p): pass
-        def account_info(self): raise LoginRequired("login_required")
+        def account_info(self): seen["account_info"] += 1
         def login(self, *_a, **_k): seen["login"] += 1
         def dump_settings(self, _p): pass
-    try:
-        open_client(cfg, client_factory=_Stale)
-        raise AssertionError("expected LoginRequired")
-    except LoginRequired as e:
-        assert str(e) == "login_required"
-    assert seen["login"] == 0
+    c = open_client(cfg, client_factory=_Stale)
+    assert c is not None
+    assert seen == {"login": 0, "account_info": 0}
 
 
 def test_open_client_default_path_never_reads_password(tmp_path, monkeypatch):
-    """Default path must not touch scrape password — even when a stale session probes LoginRequired."""
+    """Default path must not touch scrape password — even with a session file on disk."""
     import fanops.ig_hashtag_scrape as igs
     from fanops.ig_hashtag_scrape import open_client, scrape_session_path
-    from instagrapi.exceptions import LoginRequired
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
     cfg = Config(root=tmp_path)
     _sess = scrape_session_path(cfg, "u")
     _sess.parent.mkdir(parents=True, exist_ok=True)
     _sess.write_text("{}")
-    class _Stale:
+    class _Ok:
         def load_settings(self, _p): pass
-        def account_info(self): raise LoginRequired("login_required")
+        def account_info(self): raise AssertionError("unattended must not probe")
         def login(self, *_a, **_k): raise AssertionError("login must not run")
         def dump_settings(self, _p): pass
     def _boom(_user):
         raise AssertionError("default path must not read scrape password")
     monkeypatch.setattr(igs, "scrape_password_for", _boom)
-    try:
-        open_client(cfg, client_factory=_Stale)
-        raise AssertionError("expected LoginRequired")
-    except LoginRequired as e:
-        assert str(e) == "login_required"
+    open_client(cfg, client_factory=_Ok)
 
 
 def test_open_client_allow_reauth_calls_login_relogin_once(tmp_path, monkeypatch):
@@ -681,24 +675,26 @@ def test_open_client_allow_reauth_calls_login_relogin_once(tmp_path, monkeypatch
 
 
 def test_open_client_valid_session_skips_login_on_both_paths(tmp_path, monkeypatch):
-    """account_info success → return client; login() never called, with or without allow_reauth."""
-    from fanops.ig_hashtag_scrape import open_client
+    """Session on disk → return client; login() never called. Operator path may probe; unattended does not."""
+    from fanops.ig_hashtag_scrape import open_client, scrape_session_path
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
     monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
     cfg = Config(root=tmp_path)
-    from fanops.ig_hashtag_scrape import scrape_session_path
     _sess = scrape_session_path(cfg, "u")
     _sess.parent.mkdir(parents=True, exist_ok=True)
     _sess.write_text("{}")
     for allow in (False, True):
-        seen = {"login": 0}
+        seen = {"login": 0, "account_info": 0}
         class _Ok:
             def load_settings(self, _p): pass
-            def account_info(self): return {"pk": 1}
+            def account_info(self):
+                seen["account_info"] += 1
+                return {"pk": 1}
             def login(self, *_a, **_k): seen["login"] += 1
             def dump_settings(self, _p): pass
         open_client(cfg, client_factory=_Ok, allow_reauth=allow)
         assert seen["login"] == 0, allow
+        assert seen["account_info"] == (1 if allow else 0), allow
 
 
 def test_open_client_missing_session_refuses_on_default_path(tmp_path, monkeypatch):
@@ -1213,12 +1209,12 @@ def test_scrape_delay_range_paces_requests(monkeypatch):
 
 
 def test_open_client_sets_delay_range_on_the_client(tmp_path, monkeypatch):
-    """The pacing must land ON the client instagrapi actually uses — set before any call."""
-    from fanops.ig_hashtag_scrape import open_client
+    """The pacing must land ON the client instagrapi actually uses — set before any network call."""
+    from fanops.ig_hashtag_scrape import open_client, scrape_session_path
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
     monkeypatch.delenv("FANOPS_HASHTAG_SCRAPE_DELAY", raising=False)
     cfg = Config(root=tmp_path)
-    from fanops.ig_hashtag_scrape import scrape_session_path
     _sess = scrape_session_path(cfg, "u")
     _sess.parent.mkdir(parents=True, exist_ok=True)
     _sess.write_text("{}")
@@ -1228,9 +1224,13 @@ def test_open_client_sets_delay_range_on_the_client(tmp_path, monkeypatch):
         def account_info(self): seen["delay_at_probe"] = self.delay_range
         def login(self, *_a, **_k): raise AssertionError("valid session must not login")
         def dump_settings(self, _p): pass
+    # Unattended: delay set even though no probe runs.
     c = open_client(cfg, client_factory=_Fake)
     assert c.delay_range == [1.0, 3.0]
-    assert seen["delay_at_probe"] == [1.0, 3.0]             # paced through the probe, not just fetches
+    assert "delay_at_probe" not in seen
+    # Operator path: probe still sees delay_range already set (MOL-698).
+    open_client(cfg, client_factory=_Fake, allow_reauth=True)
+    assert seen["delay_at_probe"] == [1.0, 3.0]
 
 
 def test_refresh_store_early_aborts_on_login_required(tmp_path, monkeypatch):

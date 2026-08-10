@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 from fanops.config import Config
 from fanops.hashtags import CAPTION_TAG_RE, HARVEST_CAP, TOP_SAMPLE_N, _norm, _num
+from fanops.log import get_logger
 
 _REEL_TREND_DAYS = 7            # a Reel older than this is history, not "currently trending"
 _REEL_PRODUCT_TYPE = "clips"    # Instagram's own product_type for a Reel
@@ -99,11 +100,12 @@ def open_client(cfg: Config, *, client_factory=None, allow_reauth: bool = False,
     """Open an authenticated instagrapi Client, PACED. Lazy-imports; dumps session after success.
     Never echoes password or session contents. Raises ScrapeUnavailable on miss.
 
-    `allow_reauth` defaults False: a restored session is validated via `account_info()` ONLY and
-    `login()` is never called. Unattended callers (Layer A tick, doctor) MUST leave this False —
-    instagrapi>=2.18.12 escalates LoginRequired inside `login()` into a full password re-auth, which
-    earned the 2026-07-29T22:01Z native checkpoint when the tick still called `login()` every pass.
-    Only `fanops hashtags scrape-login` passes `allow_reauth=True`.
+    `allow_reauth` defaults False: unattended open loads a session file and returns — no
+    `account_info()` probe and never `login()`. The first real hashtag call validates the session.
+    Unattended callers (Layer A tick, doctor) MUST leave this False — instagrapi>=2.18.12 escalates
+    LoginRequired inside `login()` into a full password re-auth, which earned the 2026-07-29T22:01Z
+    native checkpoint when the tick still called `login()` every pass.
+    Only `fanops hashtags scrape-login` passes `allow_reauth=True` (probe decides whether to relogin).
 
     Multi-account (MOL-857/858): when `user` is omitted, pick the first listed FANOPS_IG_SCRAPE_USER
     that can actually open and is not freeze/budget-blocked: with `allow_reauth=False` that means a
@@ -111,7 +113,8 @@ def open_client(cfg: Config, *, client_factory=None, allow_reauth: bool = False,
     password. Operator scrape-login ignores freeze (allow_reauth=True).
 
     `delay_range` is set before any network call, so every request this client ever makes — the
-    probe / login included — carries the jitter (MOL-698); the whole Layer A pass runs on this one client."""
+    operator probe / login included — carries the jitter (MOL-698); the whole Layer A pass runs on
+    this one client."""
     users = scrape_users(cfg)
     if not users:
         raise ScrapeUnavailable("FANOPS_IG_SCRAPE_USER unset")
@@ -150,13 +153,13 @@ def open_client(cfg: Config, *, client_factory=None, allow_reauth: bool = False,
     dump_sess = cfg.control / f"ig_scrape_session_{user}.json"
     if sess.exists():
         client.load_settings(str(sess))
-        try:
-            client.account_info()                       # validate WITHOUT login() — no re-auth path
-        except Exception:                               # noqa: BLE001 — probe surface is opaque
-            if not allow_reauth:
-                raise                                   # unattended: never re-authenticate
-            client.login(user, scrape_password_for(user) or "", relogin=True)
-        # Valid session (or successful operator re-auth): persist and return. No login() on the happy path.
+        if allow_reauth:                                # operator scrape-login only: the probe DECIDES login()
+            try:
+                client.account_info()
+            except Exception as e:                      # noqa: BLE001 — probe surface is opaque
+                get_logger(cfg)("hashtags", user, "scrape_reauth", err=type(e).__name__)
+                client.login(user, scrape_password_for(user) or "", relogin=True)
+        # Unattended: load_settings → dump → return (session validated by the first work call).
     else:
         if not allow_reauth:
             raise ScrapeUnavailable("no scrape session — run fanops hashtags scrape-login")
