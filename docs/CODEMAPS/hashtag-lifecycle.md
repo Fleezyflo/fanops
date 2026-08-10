@@ -189,7 +189,7 @@ hook/clip/account, not the hashtag. Pinned by `tests/test_hashtag_attribution_se
 
 ## Config
 
-- `FANOPS_IG_SCRAPE_USER` + session (`ig_scrape_session.json`) or `FANOPS_IG_SCRAPE_PASSWORD` — instagrapi scrape. Absent ⇒ refresh aborts (`no_scrape`); the cache stands as-is (selection ships whatever is already measured, or short). Graph token is NOT used for Layer A refresh.
+- `FANOPS_IG_SCRAPE_USER` + per-user sessions (`ig_scrape_session_<user>.json`; legacy `ig_scrape_session.json` maps to `perca.late`) or `FANOPS_IG_SCRAPE_PASSWORD` / per-user password keys — instagrapi scrape. A Layer A pass walks qualifying users in list order against the existing due queue (one client at a time). Absent ⇒ refresh aborts (`no_scrape`); the cache stands as-is. Graph token is NOT used for Layer A refresh.
 - `FANOPS_CORPUS_TARGET` (default 80) — how many measured tags a derived corpus aims to hold. A ceiling, not
   a quota: derivation never pads to reach it.
 - `Account.persona_id` / `personas.json` — the per-persona link; the persona's niche is the lever.
