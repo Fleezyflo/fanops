@@ -684,7 +684,8 @@
     "fanops.ig_hashtag_scrape": {
       "compile": [
         "fanops.config",
-        "fanops.hashtags"
+        "fanops.hashtags",
+        "fanops.log"
       ],
       "lazy": [
         "fanops.fanops_hashtags",
@@ -2187,7 +2188,7 @@
     "fanops.ledger_wipe": 1,
     "fanops.lever_docs": 0,
     "fanops.llm": 1,
-    "fanops.log": 38,
+    "fanops.log": 39,
     "fanops.meta_graph": 1,
     "fanops.metrics_schedule": 1,
     "fanops.models": 50,
@@ -2312,7 +2313,7 @@
     "fanops.hookcheck": 0,
     "fanops.hookscore": 1,
     "fanops.ids": 0,
-    "fanops.ig_hashtag_scrape": 2,
+    "fanops.ig_hashtag_scrape": 3,
     "fanops.impact_cut": 1,
     "fanops.ingest": 7,
     "fanops.init_flow": 2,
@@ -3658,7 +3659,7 @@
     "G2_largest_scc_size": 55,
     "G2_module_sccs_total": 66,
     "G2_non_trivial_sccs": 8,
-    "compile_edges_G1": 574,
+    "compile_edges_G1": 575,
     "lazy_edges": 349,
     "lazy_edges_lateral": 46,
     "lazy_edges_strictly_upward": 70,

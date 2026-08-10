@@ -95,7 +95,7 @@
     },
     "FANOPS_HASHTAG_SCRAPE_DELAY": {
       "read_at": [
-        "fanops.ig_hashtag_scrape:21"
+        "fanops.ig_hashtag_scrape:22"
       ],
       "reader_count": 1
     },
@@ -126,7 +126,7 @@
     "FANOPS_IG_SCRAPE_PASSWORD": {
       "read_at": [
         "fanops.config:464",
-        "fanops.ig_hashtag_scrape:77"
+        "fanops.ig_hashtag_scrape:78"
       ],
       "reader_count": 2
     },
