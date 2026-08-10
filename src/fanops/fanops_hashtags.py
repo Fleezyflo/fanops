@@ -49,9 +49,7 @@ _REFRESH_CADENCE_S = 12 * 60 * 60   # the tick's refresh window, and the yardsti
 _SCRAPE_TRY_CAP = 25
 _SCRAPE_DAY_BUDGET = 40        # request-units per UTC day per scrape account (accounts[user].used)
 _SCRAPE_COTAG_ENQUEUE_CAP = 40
-_SCRAPE_PARALLEL = 1          # legacy env knob (FANOPS_HASHTAG_SCRAPE_PARALLEL). Fetch is sequential
-                              # (MOL-855); knob is still read so an .env pin is not a silent no-op to arch,
-                              # but nothing sizes a wave from it. Pace with FANOPS_HASHTAG_SCRAPE_DELAY.
+_SCRAPE_PARALLEL = 1  # FANOPS_HASHTAG_SCRAPE_PARALLEL read retained; fetch sequential (MOL-855/912)
 
 
 def _scrape_parallel() -> int:
@@ -438,17 +436,14 @@ def _clear_cooldown(cfg: Config, *, now: datetime | None = None, used_delta: int
         pass
 
 
-_OUTAGE_REMEDY = {
-    # Producers after MOL-909 write class names (or "checkpoint" / "budget"); legacy blob keys kept
-    # so pre-909 cooldown files still get a remedy line instead of the inspect fallback.
+_OUTAGE_REMEDY = {  # class-name keys post-909; login_required/throttle = legacy blob aliases
     "LoginRequired": "run fanops hashtags scrape-login",
     "login_required": "run fanops hashtags scrape-login",
     "checkpoint": "verify in the Instagram app, then run fanops hashtags scrape-login",
     "RateLimitError": "Instagram is rate-limiting; the ladder clears it, no operator action does",
     "PleaseWaitFewMinutes": "Instagram is rate-limiting; the ladder clears it, no operator action does",
     "throttle": "Instagram is rate-limiting; the ladder clears it, no operator action does",
-    "budget": "local UTC day scrape budget exhausted; waits for next UTC day",
-}
+    "budget": "local UTC day scrape budget exhausted; waits for next UTC day"}
 
 
 def _freeze_for(exc: BaseException) -> tuple[str, int | None]:
