@@ -1,6 +1,10 @@
 # Shared instagrapi fakes for hashtag Layer A tests (no network).
 from __future__ import annotations
-from fanops.ig_hashtag_scrape import ScrapeRefused, ScrapeThrottled
+try:
+    from instagrapi.exceptions import ClientNotFoundError, RateLimitError
+except ImportError:  # base install: collection still works; tests needing these skip via importorskip
+    ClientNotFoundError = None  # type: ignore[misc, assignment]
+    RateLimitError = None  # type: ignore[misc, assignment]
 
 
 class _Media:
@@ -18,11 +22,22 @@ class _Hashtag:
         self.id = id; self.media_count = media_count
 
 
+def _client_not_found():
+    if ClientNotFoundError is None:
+        raise RuntimeError("instagrapi required for refuse_tags fakes")
+    # ClientError setattr from last_json — give a code like production
+    return ClientNotFoundError(message="not found", code=18, status="fail")
+
+
+def _rate_limit():
+    if RateLimitError is None:
+        raise RuntimeError("instagrapi required for throttle_after fakes")
+    return RateLimitError(**{"message": "", "error_type": "rate_limit_error", "status": "fail"})
+
+
 class _FakeClient:
-    """Fake instagrapi Client. `metric_by_tag` maps '#tag' -> like_count (simple) OR a list of
-    `_Media` / dicts with like_count/play_count/caption(_text). `cooccur` is the default caption when
-    using scalar metrics. `media_count_by_tag` seeds hashtag_info.media_count. `refuse` /
-    `refuse_tags` raise ScrapeRefused; `throttle_after` raises ScrapeThrottled after N medias_top calls."""
+    """Fake instagrapi Client. `refuse_tags` raise ClientNotFoundError (tag 404 continue-fork);
+    `throttle_after` raises RateLimitError after N medias_top calls."""
     def __init__(self, metric_by_tag=None, *, cooccur="", refuse=None, refuse_tags=None,
                  throttle_after=None, media_by_tag=None, media_count_by_tag=None):
         self.metric_by_tag = dict(metric_by_tag or {})
@@ -34,7 +49,7 @@ class _FakeClient:
         self.throttle_after = throttle_after
         self.info_calls: list[str] = []
         self.media_calls: list[str] = []
-        self.amounts: list[int] = []            # amount= each medias_top call asked for (MOL-691)
+        self.amounts: list[int] = []
         self._media_n = 0
 
     def _medias_for(self, name: str):
@@ -55,20 +70,17 @@ class _FakeClient:
             return out
         if tag not in self.metric_by_tag:
             return []
-        # Other keys in this fake's metric map ride the caption so measuring a harvested cotag can
-        # inbound-see the niche anchors (production: niche words appear on the candidate's Top).
         others = " ".join(sorted(t for t in self.metric_by_tag if t != tag))
         cap = f"{self.cooccur} {others}".strip()
-        # Two Top rows so inbound `from` hits can clear MOL-665 relatedness (hits>=2).
         return [_Media(self.metric_by_tag[tag], cap), _Media(self.metric_by_tag[tag], cap)]
 
     def hashtag_info(self, name):
         self.info_calls.append(name)
         if self.refuse is not None:
-            raise self.refuse if isinstance(self.refuse, BaseException) else ScrapeRefused(str(self.refuse))
+            raise self.refuse if isinstance(self.refuse, BaseException) else _client_not_found()
         tag = "#" + name
         if tag in self.refuse_tags or name in self.refuse_tags:
-            raise ScrapeRefused("refused", code=18)
+            raise _client_not_found()
         mc = self.media_count_by_tag.get(tag, self.media_count_by_tag.get(name))
         return _Hashtag("id-" + name, media_count=mc)
 
@@ -77,10 +89,10 @@ class _FakeClient:
         self.amounts.append(amount)
         self._media_n += 1
         if self.throttle_after is not None and self._media_n > self.throttle_after:
-            raise ScrapeThrottled("please_wait")
+            raise _rate_limit()
         if self.refuse is not None:
-            raise self.refuse if isinstance(self.refuse, BaseException) else ScrapeRefused(str(self.refuse))
+            raise self.refuse if isinstance(self.refuse, BaseException) else _client_not_found()
         tag = "#" + name
         if tag in self.refuse_tags or name in self.refuse_tags:
-            raise ScrapeRefused("refused", code=18)
+            raise _client_not_found()
         return self._medias_for(name)

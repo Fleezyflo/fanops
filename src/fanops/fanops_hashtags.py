@@ -19,9 +19,8 @@ Visibility numbers are Instagram's own fields only (see ig_hashtag_scrape): Top-
 A tag with neither plays nor likes in the Top grid is UNMEASURED and absent — measured tags only.
 
 Missing scrape (no [igscrape] / no user / no session file) aborts LOUDLY (`written:False`,
-`aborted:no_scrape`) — there is no silent Graph fallback. An EXPIRED session aborts as `login_required`
-and arms the backoff ladder, so a dead session is not re-probed every tick (MOL-727). A throttle ends the
-pass but still writes accrued evidence."""
+`aborted:no_scrape`) — there is no silent Graph fallback. Platform exceptions flow through untouched
+and arm cooldown via `_freeze_for` (ChallengeError → checkpoint; else class-name reason on the ladder)."""
 from __future__ import annotations
 import os
 from contextlib import contextmanager
@@ -37,7 +36,7 @@ _VOLUME_MAX_AGE_DAYS = 30     # `media_count` re-resolve age (aligned with remes
                               # slowly — the 12h trend pass must not spend hashtag_info every tick (MOL-691).
 _MEASURE_MAX_AGE_DAYS = 30    # remesure (medias_top) only when measured_at is older than this (MOL-855)
 _COMPLETE_KEY = "last_complete_pass"   # sibling of tag records; gates the 12h tick (NOT file mtime)
-_COOLDOWN_NAME = ".hashtag_scrape_cooldown.json"  # Instagram ScrapeThrottled backoff (MOL-695); never sleep
+_COOLDOWN_NAME = ".hashtag_scrape_cooldown.json"  # Instagram platform-stop backoff (MOL-695); never sleep
 _COOLDOWN_DELAYS_S = (30 * 60, 60 * 60, 2 * 60 * 60, 6 * 60 * 60)  # streak 1..N → 30m, 1h, 2h, 6h cap
 _CHECKPOINT_DELAY_S = 12 * 60 * 60  # a LOCK is not a rate limit: one long freeze, never the ladder (MOL-699)
 _REFRESH_CADENCE_S = 12 * 60 * 60   # the tick's refresh window, and the yardstick an outage is measured in
@@ -444,6 +443,18 @@ _OUTAGE_REMEDY = {"login_required": "run fanops hashtags scrape-login",
                   "budget": "local UTC day scrape budget exhausted; waits for next UTC day"}
 
 
+def _freeze_for(exc: BaseException) -> tuple[str, int | None]:
+    """Map a platform stop onto (cooldown reason, optional flat delay_s). ChallengeError → checkpoint + 12h;
+    everything else labels with its class name and rides the ladder (`delay_s=None`)."""
+    try:
+        from instagrapi.exceptions import ChallengeError
+    except ImportError:
+        ChallengeError = ()  # fail closed: never checkpoint-classify without the lib
+    if isinstance(exc, ChallengeError):
+        return ("checkpoint", _CHECKPOINT_DELAY_S)
+    return (type(exc).__name__, None)
+
+
 def _outage_level(streak, stalled_s: float | None, cadence_s: float = _REFRESH_CADENCE_S) -> str:
     """How loud an ONGOING scrape freeze is, derived from state ALREADY on disk: the cooldown `streak`
     and the age of `last_complete_pass`. One skipped tick is routine (`info`); a freeze that has outlived
@@ -545,7 +556,7 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
     """Run one measurement pass and rewrite the cache. Returns a summary dict.
 
     Order of work (MOL-855 due tiers — NOT every cached tag every pass):
-      1. never-measured anchors (must discover)
+      1. unmeasured anchors (niche roots never measured)
       2. records missing / due `media_count` (rare volume backfill; `_VOLUME_MAX_AGE_DAYS`)
       3. remesure only when `measured_at` is older than `_MEASURE_MAX_AGE_DAYS` (oldest first)
       4. novel (uncached) co-tags inserted mid-pass ahead of remaining remesure (existing cotag cap)
@@ -563,7 +574,7 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
     Live multi-account (MOL-900): scrape identity is not bound for the whole due queue. Qualifying
     users in `FANOPS_IG_SCRAPE_USER` order each open alone, measure consecutive tags up to
     `min(_scrape_try_cap(), day room)`, charge that user, then the next user continues the same
-    queue cursor. Account throttle / login_required / checkpoint stops that user only — peers keep
+    queue cursor. Account platform stop (via `_freeze_for`) stops that user only — peers keep
     the pass. Injected `scrape_client` keeps the single-client path. `_pick_healthy_scrape_user`
     remains for cooldown gates and `open_client(user=None)`.
 
@@ -578,15 +589,14 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
     ABORTS without writing when personas.json is CORRUPT, or when scrape cannot open (`no_scrape`).
     `last_complete_pass` advances ONLY when the due queue was finished (throttled is False).
 
-    Every failure class that means "stop touching this account" arms that account's cooldown via
-    `_persist_cooldown` (MOL-699/858): `throttle` and `login_required` on the ladder, `checkpoint` on
-    a flat 12h freeze. An expiry raised while OPENING the client arms it too (`ScrapeSessionExpired`).
+    Every platform failure that means "stop touching this account" arms that account's cooldown via
+    `_freeze_for` + `_persist_cooldown` (MOL-699/858): ChallengeError → checkpoint + 12h; else the
+    exception class name on the ladder. OUR-state `ScrapeUnavailable` stays `no_scrape` (no freeze).
 
     PROGRESS and the STOP SIGNAL are INDEPENDENT (MOL-727): measuring a tag resets the streak, but a
-    same-pass throttle / login_required still arms a fresh cooldown from streak 1 for that user."""
+    same-pass platform stop still arms a fresh cooldown from streak 1 for that user."""
     from fanops.errors import ControlFileError
-    from fanops.ig_hashtag_scrape import (ScrapeCheckpoint, ScrapeRefused, ScrapeSessionExpired,
-                                          ScrapeThrottled, ScrapeUnavailable, measure_and_harvest_scrape,
+    from fanops.ig_hashtag_scrape import (ScrapeUnavailable, measure_and_harvest_scrape,
                                           open_client, resolve_hashtag_scrape, scrape_session_path,
                                           scrape_users)
     from fanops.persona_research import persona_terms
@@ -604,7 +614,7 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
         if listed and _pick_healthy_scrape_user(cfg, now) is None:
             # Only short-circuit when a freeze/budget actually blocks every peer. A listed user
             # with password but no session file is NOT "frozen" — open_client must still run so
-            # checkpoint / login_required / no_scrape classify (MOL-858 + MOL-699 tests).
+            # platform errors / no_scrape classify (MOL-858 + MOL-699 tests).
             cool = _read_active_cooldown(cfg, now)
             if cool is not None:
                 return {"written": False, "aborted": "cooldown",
@@ -643,7 +653,8 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
     _extend_tier([t for t in cache if _volume_due(cache[t], volume_cutoff)])
     _extend_tier([t for t in cache if _measured_due(cache[t], measure_cutoff)])
     measured = 0; discovered = 0; throttled = False; tried = 0; cotag_enqueued = 0
-    login_dead = False
+    platform_stop = False
+    stop_reason_word: str | None = None
     unresolved: list[dict] = []
     log = get_logger(cfg)
     try_cap = _scrape_try_cap(); cotag_cap = _scrape_cotag_enqueue_cap()
@@ -665,16 +676,19 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
                 return ("no_match", tag, None, None, None, {})
             metrics, cotags = measure_and_harvest_scrape(client, tag, now=now)
             return ("ok", tag, hid, media_count, metrics, cotags)
-        except ScrapeThrottled:
-            return ("throttle", tag, None, None, None, {})
-        except ScrapeRefused as e:
-            return ("refused", tag, None, None, None, e)
+        except Exception as e:                                  # noqa: BLE001 — platform errors flow as payload
+            get_logger(cfg)("hashtags", tag, "unresolved", reason="error", message=str(e), tried=tried)
+            return ("error", tag, None, None, None, e)
 
-    def _measure_slice(user_cap: int) -> tuple[int, str | None]:
-        """Measure up to user_cap tags from shared queue cursor. Returns (user_tried, stop_reason).
+    def _measure_slice(user_cap: int) -> tuple[int, BaseException | None]:
+        """Measure up to user_cap tags from shared queue cursor. Returns (user_tried, stop_exc|None).
 
-        stop_reason is 'throttle', 'login_required', or None (cap / queue exhausted)."""
+        Continue-on-tag only for ClientNotFoundError (lazy isinstance); any other platform error stops."""
         nonlocal i, tried, measured, discovered, cotag_enqueued
+        try:
+            from instagrapi.exceptions import ClientNotFoundError
+        except ImportError:
+            ClientNotFoundError = ()  # fail closed: never continue-classify without the lib
         user_tried = 0
         while i < len(queue) and user_tried < user_cap:
             tag = queue[i]
@@ -682,22 +696,15 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
             user_tried += 1
             tried += 1
             status, tag, hid, media_count, metrics, payload = _fetch(tag)
-            if status == "throttle":
-                return user_tried, "throttle"
+            if status == "error":
+                e = payload
+                unresolved.append({"tag": tag, "reason": "refused", "code": getattr(e, "code", None),
+                                   "message": str(e)})
+                if isinstance(payload, ClientNotFoundError):
+                    continue
+                return user_tried, e
             if status == "no_match":
                 unresolved.append({"tag": tag, "reason": "no_match"})
-                continue
-            if status == "refused":
-                e = payload
-                msg = (getattr(e, "message", None) or str(e) or "")
-                unresolved.append({"tag": tag, "reason": "refused", "code": getattr(e, "code", None),
-                                   "message": getattr(e, "message", str(e))})
-                log("hashtags", tag, "unresolved", reason="refused",
-                    message=msg[:120], tried=tried)
-                if "login_required" in msg.lower():
-                    log("hashtags", "-", "pass_login_required", level="error", tried=tried,
-                        err=msg[:120])
-                    return user_tried, "login_required"
                 continue
             ids[tag] = hid
             cotags = payload if isinstance(payload, dict) else {}
@@ -751,28 +758,24 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
                         media_count=rec.get("media_count"), parallel=parallel)
         return user_tried, None
 
-    def _charge_user(user: str | None, user_tried: int, stop_reason: str | None) -> dict | None:
-        nonlocal login_dead
-        if stop_reason == "throttle":
-            cd = _persist_cooldown(cfg, now, reason="throttle", used_delta=user_tried, user=user)
+    def _charge_user(user: str | None, user_tried: int, stop_exc: BaseException | None) -> dict | None:
+        nonlocal platform_stop, stop_reason_word
+        if stop_exc is not None:
+            platform_stop = True
+            reason, delay_s = _freeze_for(stop_exc)
+            stop_reason_word = reason
+            cd = _persist_cooldown(cfg, now, reason=reason, delay_s=delay_s,
+                                   used_delta=user_tried, user=user)
             log("hashtags", "-", "scrape_cooldown",
                 level=_outage_level(cd.get("streak"), _age_s(prev_complete, now)),
-                reason="throttle", streak=cd.get("streak"), until=cd.get("until"),
-                user=(user or "")[:40])
-            return cd
-        if stop_reason == "login_required":
-            login_dead = True
-            cd = _persist_cooldown(cfg, now, reason="login_required", used_delta=user_tried, user=user)
-            log("hashtags", "-", "scrape_cooldown",
-                level=_outage_level(cd.get("streak"), _age_s(prev_complete, now)),
-                reason="login_required", streak=cd.get("streak"), until=cd.get("until"),
+                reason=reason, streak=cd.get("streak"), until=cd.get("until"),
                 user=(user or "")[:40])
             return cd
         if user_tried > 0:
             _clear_cooldown(cfg, now=now, used_delta=user_tried, user=user)
         return None
 
-    def _open_single_fallback() -> str | None:
+    def _open_single_fallback() -> tuple[str, str] | None:
         """Open one client when no session-ready walk list (inject-like / password-only classify)."""
         nonlocal client, scrape_user, cooldown
         scrape_user = None
@@ -787,29 +790,23 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
             if scrape_user is None:
                 scrape_user = getattr(client, "_fanops_scrape_user", None)
         except ScrapeUnavailable as e:
-            if isinstance(e, ScrapeCheckpoint):
-                cd = _persist_cooldown(cfg, now, reason="checkpoint", delay_s=_CHECKPOINT_DELAY_S,
-                                       user=scrape_user)
-                get_logger(cfg)("hashtags", "-", "scrape_cooldown", level="error", reason="checkpoint",
-                                until=cd.get("until"), user=(scrape_user or "")[:40],
-                                err=str(e)[:160])
-                return "checkpoint:" + str(e)
-            if isinstance(e, ScrapeSessionExpired):
-                cd = _persist_cooldown(cfg, now, reason="login_required", user=scrape_user)
-                get_logger(cfg)("hashtags", "-", "scrape_cooldown", level="error", reason="login_required",
-                                until=cd.get("until"), user=(scrape_user or "")[:40],
-                                err=str(e)[:160])
-                return "login_required:" + str(e)
-            return "no_scrape:" + str(e)
+            return ("no_scrape", str(e))
+        except Exception as e:                                  # noqa: BLE001 — platform errors from open_client
+            reason, delay_s = _freeze_for(e)
+            cd = _persist_cooldown(cfg, now, reason=reason, delay_s=delay_s, user=scrape_user)
+            cooldown = cd
+            get_logger(cfg)("hashtags", "-", "scrape_cooldown", level="error", reason=reason,
+                            until=cd.get("until"), user=(scrape_user or "")[:40], err=str(e))
+            return (reason, str(e))
         return None
 
     if injected:
         client = scrape_client
         scrape_user = getattr(scrape_client, "_fanops_scrape_user", None)
-        user_tried, stop_reason = _measure_slice(try_cap)
-        cooldown = _charge_user(scrape_user, user_tried, stop_reason)
-        throttled = (i < len(queue)) or (stop_reason is not None)
-        if stop_reason is None and user_tried >= try_cap and i < len(queue):
+        user_tried, stop_exc = _measure_slice(try_cap)
+        cooldown = _charge_user(scrape_user, user_tried, stop_exc)
+        throttled = (i < len(queue)) or (stop_exc is not None)
+        if stop_exc is None and user_tried >= try_cap and i < len(queue):
             throttled = True
             log("hashtags", "-", "pass_try_cap", tried=tried, queue_left=len(queue) - i, cap=try_cap)
     else:
@@ -830,59 +827,50 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
         if not walk:
             err = _open_single_fallback()
             if err is not None:
-                kind, _, reason = err.partition(":")
-                out = {"written": False, "aborted": kind, "reason": reason, "backend": "scrape"}
-                if kind in ("checkpoint", "login_required"):
+                kind, detail = err
+                out = {"written": False, "aborted": kind, "reason": detail, "backend": "scrape"}
+                if kind != "no_scrape":
                     raw = _load_cooldown_blob(cfg)
                     rec = _account_rec(raw, scrape_user) if scrape_user else raw
                     out["cooldown_until"] = rec.get("until"); out["cooldown_streak"] = rec.get("streak")
                 return out
-            user_tried, stop_reason = _measure_slice(try_cap)
-            cooldown = _charge_user(scrape_user, user_tried, stop_reason)
-            throttled = (i < len(queue)) or (stop_reason is not None)
-            if stop_reason is None and user_tried >= try_cap and i < len(queue):
+            user_tried, stop_exc = _measure_slice(try_cap)
+            cooldown = _charge_user(scrape_user, user_tried, stop_exc)
+            throttled = (i < len(queue)) or (stop_exc is not None)
+            if stop_exc is None and user_tried >= try_cap and i < len(queue):
                 throttled = True
                 log("hashtags", "-", "pass_try_cap", tried=tried, queue_left=len(queue) - i, cap=try_cap)
         else:
             opened_any = False
-            last_open_abort: str | None = None
+            last_open_abort: tuple[str, str] | None = None
             for u, user_cap in walk:
                 if i >= len(queue):
                     break
                 try:
                     client = open_client(cfg, user=u, now=now)
                 except ScrapeUnavailable as e:
-                    if isinstance(e, ScrapeCheckpoint):
-                        cd = _persist_cooldown(cfg, now, reason="checkpoint", delay_s=_CHECKPOINT_DELAY_S,
-                                               user=u)
-                        cooldown = cd
-                        last_open_abort = "checkpoint:" + str(e)
-                        get_logger(cfg)("hashtags", "-", "scrape_cooldown", level="error",
-                                        reason="checkpoint", until=cd.get("until"), user=u[:40],
-                                        err=str(e)[:160])
-                        continue
-                    if isinstance(e, ScrapeSessionExpired):
-                        cd = _persist_cooldown(cfg, now, reason="login_required", user=u)
-                        cooldown = cd
-                        last_open_abort = "login_required:" + str(e)
-                        get_logger(cfg)("hashtags", "-", "scrape_cooldown", level="error",
-                                        reason="login_required", until=cd.get("until"), user=u[:40],
-                                        err=str(e)[:160])
-                        continue
-                    last_open_abort = "no_scrape:" + str(e)
+                    last_open_abort = ("no_scrape", str(e))
+                    continue
+                except Exception as e:                          # noqa: BLE001 — platform errors from open_client
+                    reason, delay_s = _freeze_for(e)
+                    cd = _persist_cooldown(cfg, now, reason=reason, delay_s=delay_s, user=u)
+                    cooldown = cd
+                    last_open_abort = (reason, str(e))
+                    get_logger(cfg)("hashtags", "-", "scrape_cooldown", level="error",
+                                    reason=reason, until=cd.get("until"), user=u[:40], err=str(e))
                     continue
                 opened_any = True
                 scrape_user = u
-                user_tried, stop_reason = _measure_slice(user_cap)
-                cd = _charge_user(u, user_tried, stop_reason)
+                user_tried, stop_exc = _measure_slice(user_cap)
+                cd = _charge_user(u, user_tried, stop_exc)
                 if cd is not None:
                     cooldown = cd
                 # refresh room view for later peers after charges
                 blob = _load_cooldown_blob(cfg)
             if not opened_any:
                 if last_open_abort:
-                    kind, _, reason = last_open_abort.partition(":")
-                    out = {"written": False, "aborted": kind, "reason": reason, "backend": "scrape"}
+                    kind, detail = last_open_abort
+                    out = {"written": False, "aborted": kind, "reason": detail, "backend": "scrape"}
                     if cooldown is not None:
                         out["cooldown_until"] = cooldown.get("until")
                         out["cooldown_streak"] = cooldown.get("streak")
@@ -898,13 +886,19 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
     fresh = _records_for_write(cache, anchor_set=anchor_set, cutoff=cutoff)
     tag_mutated = fresh != pre_write
     if measured == 0 and not tag_mutated:
-        reason = "login_required" if login_dead else "no personas have a declared niche"
-        out = {"written": False, "measured": 0, "discovered": discovered,
-               "total": len(pre_write), "throttled": throttled, "tried": tried,
-               "unresolved": unresolved, "backend": "scrape", "parallel": parallel,
-               "reason": reason}
-        if login_dead:
-            out["aborted"] = "login_required"
+        # platform_stop → aborted = _freeze_for reason word; false niche else left for MOL-912
+        if platform_stop:
+            reason = stop_reason_word or "platform_stop"
+            out = {"written": False, "measured": 0, "discovered": discovered,
+                   "total": len(pre_write), "throttled": throttled, "tried": tried,
+                   "unresolved": unresolved, "backend": "scrape", "parallel": parallel,
+                   "reason": reason, "aborted": reason}
+        else:
+            reason = "no personas have a declared niche"
+            out = {"written": False, "measured": 0, "discovered": discovered,
+                   "total": len(pre_write), "throttled": throttled, "tried": tried,
+                   "unresolved": unresolved, "backend": "scrape", "parallel": parallel,
+                   "reason": reason}
         if cooldown is not None:
             out["cooldown_until"] = cooldown.get("until"); out["cooldown_streak"] = cooldown.get("streak")
         return out
@@ -925,6 +919,7 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
 
 
 
+
 def refresh_store_if_due(cfg: Config, *, max_age_s: int = _REFRESH_CADENCE_S, scrape_client=None,
                          now=None) -> dict:
     """The constant-update hook the run loop calls each tick: refresh at most once per `max_age_s`
@@ -935,7 +930,7 @@ def refresh_store_if_due(cfg: Config, *, max_age_s: int = _REFRESH_CADENCE_S, sc
     a refresh: refresh_store aborts (cache untouched) and this REPORTS the abort so the tick never logs a
     false success on a broken control file.
 
-    Instagram ScrapeThrottled cooldown (MOL-695) is checked BEFORE opening scrape — never sleeps.
+    Instagram platform-stop cooldown (MOL-695) is checked BEFORE opening scrape — never sleeps.
     MOL-858: the gate is global only when EVERY scrape peer is frozen or day-budget-exhausted; otherwise
     `refresh_store` rotates to the next healthy under-budget account. A skip under a freeze that has
     outlived the cadence also emits `scrape_outage` at `_outage_level` (MOL-794), and returns that
@@ -970,7 +965,7 @@ def refresh_store_if_due(cfg: Config, *, max_age_s: int = _REFRESH_CADENCE_S, sc
             return {"refreshed": False, **r}
         return {"refreshed": True, **r}
     except Exception as exc:                                  # noqa: BLE001 — the tick must never die here
-        return {"refreshed": False, "reason": f"error: {str(exc)[:120]}"}
+        return {"refreshed": False, "reason": f"error: {str(exc)}"}
 
 
 def cmd_hashtags_refresh(cfg: Config) -> int:
@@ -992,7 +987,7 @@ def cmd_hashtags_refresh(cfg: Config) -> int:
     for u in unresolved[:20]:                                    # cap log blast; full list is in the return
         get_logger(cfg)("hashtags", u.get("tag") or "-", "unresolved",
                         reason=u.get("reason"), code=u.get("code"),
-                        message=(u.get("message") or "")[:160])
+                        message=(u.get("message") or ""))
     return 0
 
 
@@ -1010,8 +1005,7 @@ def cmd_hashtags_scrape_login(cfg: Config) -> int:
 
     Multi-account (MOL-857/858): loop every FANOPS_IG_SCRAPE_USER, dump each session. Clears THAT
     user's freeze on success — peers keep their own cooldown."""
-    from fanops.ig_hashtag_scrape import (ScrapeCheckpoint, ScrapeUnavailable, open_client,
-                                          scrape_session_path, scrape_users)
+    from fanops.ig_hashtag_scrape import ScrapeUnavailable, open_client, scrape_session_path, scrape_users
     users = scrape_users(cfg)
     if not users:
         get_logger(cfg)("hashtags", "-", "scrape_login_failed", level="error",
@@ -1021,13 +1015,13 @@ def cmd_hashtags_scrape_login(cfg: Config) -> int:
     for user in users:
         try:
             open_client(cfg, allow_reauth=True, user=user)
-        except ScrapeCheckpoint as e:                      # a lock: retrying the login only deepens it
-            get_logger(cfg)("hashtags", "-", "scrape_login_checkpoint", level="error",
-                            user=user[:40], reason=str(e)[:200])
-            continue
         except ScrapeUnavailable as e:
             get_logger(cfg)("hashtags", "-", "scrape_login_failed", level="error",
-                            user=user[:40], reason=str(e)[:160])
+                            user=user[:40], reason=str(e))
+            continue
+        except Exception as e:                                  # noqa: BLE001 — platform errors unsliced
+            get_logger(cfg)("hashtags", "-", "scrape_login_failed", level="error",
+                            user=user[:40], reason=str(e))
             continue
         _clear_cooldown(cfg, user=user)                    # MOL-858: clear THIS user only
         ok_n += 1

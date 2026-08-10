@@ -13,7 +13,6 @@ from fanops.hashtags import METRIC_FIELD, _metric, load_measurements, ranked_tag
 from fanops.fanops_hashtags import refresh_store
 from fanops.personas import Personas, add_persona, apply_auto_corpus
 from fanops.persona_research import persona_terms, derive_corpus
-from fanops.ig_hashtag_scrape import ScrapeRefused
 from hashtag_scrape_fakes import _FakeClient
 
 
@@ -277,7 +276,7 @@ def test_cached_tag_metric_moves_when_due_not_every_pass(tmp_path, monkeypatch):
     assert load_measurements(cfg)["#hiphop"]["measured_at"] == stamp0
     refused = [u for u in (out_near.get("unresolved") or []) if u.get("tag") == "#lyricism"]
     assert refused and refused[0].get("code") == 18 and refused[0].get("reason") == "refused"
-    assert out_near.get("throttled") is False, "code 18 must not abort the pass as ScrapeThrottled"
+    assert out_near.get("throttled") is False, "ClientNotFoundError must continue the pass, not abort"
 
     # Age measured_at into remesure while leaving media_count_at <30d — MOL-856 still spends hashtag_info.
     import json
@@ -687,7 +686,9 @@ def test_accrual_never_clobbers_on_a_dead_pass(tmp_path, monkeypatch):
     pid = _persona(cfg, voice="hiphop"); _link_active(cfg, pid)
     media = {"#hiphop": [{"caption": "", "like_count": 42, "comments_count": 0}]}
     refresh_store(cfg, scrape_client=_client(media))
-    out = refresh_store(cfg, scrape_client=_FakeClient(refuse=ScrapeRefused("down", code=1)))
+    from instagrapi.exceptions import ClientNotFoundError
+    _ref = ClientNotFoundError("down"); _ref.code = 1
+    out = refresh_store(cfg, scrape_client=_FakeClient(refuse=_ref))
     assert _metric(load_measurements(cfg)["#hiphop"]) == 42
     assert out["unresolved"], "a dead pass must surface refusals, not swallow them"
 

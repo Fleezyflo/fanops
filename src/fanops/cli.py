@@ -1290,7 +1290,7 @@ def _cmd_run_pass(cfg: Config, base_time: str) -> dict | None:
         elif r.get("reason") and r.get("reason") != "fresh":
             get_logger(cfg)("hashtags", "-", "store_refresh_skipped", reason=r.get("reason", ""))
     except Exception as e:
-        get_logger(cfg)("hashtags", "-", "refresh_error", err=f"{type(e).__name__}: {str(e)[:120]}")
+        get_logger(cfg)("hashtags", "-", "refresh_error", err=f"{type(e).__name__}: {e}")
     # U3: throttled IG follower snapshot — own try/except; refresh_account_stats_if_due never raises.
     try:
         from fanops.fanops_account_stats import refresh_account_stats_if_due

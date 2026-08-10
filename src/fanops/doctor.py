@@ -83,8 +83,7 @@ def _hashtag_scrape_check(cfg: Config, *, open_client=None, probe_resolve=None) 
     Multi-account (MOL-857): soft-ok when no listed user has a session yet; probe via open_client
     (first usable user) when any session exists.
     `open_client` / `probe_resolve` are injectable so tests never hit Instagram."""
-    from fanops.ig_hashtag_scrape import (ScrapeCheckpoint, ScrapeRefused, ScrapeThrottled,
-                                         ScrapeUnavailable, any_scrape_session, scrape_configured)
+    from fanops.ig_hashtag_scrape import (ScrapeUnavailable, any_scrape_session, scrape_configured)
     lbl = "hashtag Layer A scrape session live (instagrapi)"
     if not scrape_configured(cfg):
         return {"label": lbl, "ok": True,
@@ -103,15 +102,12 @@ def _hashtag_scrape_check(cfg: Config, *, open_client=None, probe_resolve=None) 
         if probe is None:
             from fanops.ig_hashtag_scrape import resolve_hashtag_scrape as probe
         probe(client, "#hiphop")
-    except ScrapeThrottled as e:
-        return _check(lbl, True, f"scrape probe throttled ({str(e)[:80]}) — Layer A will retry")
-    except ScrapeCheckpoint as e:
-        # A LOCK, not an expiry: scrape-login alone cannot clear it, so never make that the whole remedy.
-        return _check(lbl, False, str(e)[:160])
-    except ScrapeRefused as e:
-        return _check(lbl, False, str(e)[:120])
     except ScrapeUnavailable as e:
-        return _check(lbl, False, f"{str(e)[:120]} — run `fanops hashtags scrape-login`")
+        return _check(lbl, False, f"{e} — run `fanops hashtags scrape-login`")
+    except Exception as e:                                 # noqa: BLE001 — the platform's own error, untouched
+        from fanops.log import get_logger
+        get_logger(cfg)("doctor", "-", "hashtag_scrape_probe_failed", err=str(e))
+        return _check(lbl, False, str(e))
     return _check(lbl, True, "")
 
 def _meta_token_expiry_check(cfg: Config, *, get=None):
