@@ -276,10 +276,10 @@ def test_scrape_throttle_cooldown_backoff_and_success_reset(tmp_path, monkeypatc
     t0 = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
     # Empty cache + immediate throttle → measured=0 no-progress (no hashtags.json write) but cooldown lands.
     out0 = refresh_store(cfg, scrape_client=_FakeClient({"#hiphop": 50}, throttle_after=0), now=t0)
-    assert out0["throttled"] is True and out0.get("aborted") == "PleaseWaitFewMinutes"
+    assert out0["throttled"] is True and out0.get("aborted") == "RateLimitError"
     assert out0["written"] is False and not cfg.hashtags_path.exists()
     cd = json.loads(_cooldown_path(cfg).read_text())
-    assert cd["streak"] == 1 and cd["reason"] == "PleaseWaitFewMinutes"
+    assert cd["streak"] == 1 and cd["reason"] == "RateLimitError"
     assert cd["until"] == (t0 + timedelta(seconds=_COOLDOWN_DELAYS_S[0])).isoformat()
     client = _FakeClient({"#hiphop": 50}, throttle_after=0)
     blocked = refresh_store_if_due(cfg, max_age_s=1, scrape_client=client,
@@ -520,7 +520,7 @@ def test_partial_progress_then_throttle_still_arms_a_cooldown(tmp_path, monkeypa
     assert "#hiphop" in raw                                # partial evidence is still durable
     assert "last_complete_pass" not in raw                 # an early stop never buys the 12h silence
     cd = json.loads(_cooldown_path(cfg).read_text())
-    assert cd["reason"] == "PleaseWaitFewMinutes"
+    assert cd["reason"] == "RateLimitError"
     assert cd["streak"] == 3                               # prior 2 NOT cleared — bump to 3 (no sawtooth)
     assert cd["until"] == (t0 + timedelta(seconds=_COOLDOWN_DELAYS_S[2])).isoformat()   # 2h rung
     assert cd["day"] == "2026-07-01" and cd["used"] >= 1 and isinstance(cd.get("accounts"), dict)
