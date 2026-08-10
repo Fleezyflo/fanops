@@ -49,6 +49,22 @@ _REFRESH_CADENCE_S = 12 * 60 * 60   # the tick's refresh window, and the yardsti
 _SCRAPE_TRY_CAP = 25
 _SCRAPE_DAY_BUDGET = 40        # request-units per UTC day per scrape account (accounts[user].used)
 _SCRAPE_COTAG_ENQUEUE_CAP = 40
+_SCRAPE_PARALLEL = 1          # legacy env knob (FANOPS_HASHTAG_SCRAPE_PARALLEL). Fetch is sequential
+                              # (MOL-855); knob is still read so an .env pin is not a silent no-op to arch,
+                              # but nothing sizes a wave from it. Pace with FANOPS_HASHTAG_SCRAPE_DELAY.
+
+
+def _scrape_parallel() -> int:
+    raw = os.getenv("FANOPS_HASHTAG_SCRAPE_PARALLEL")
+    if raw is None:
+        return _SCRAPE_PARALLEL
+    try:
+        v = int(raw)
+    except ValueError:
+        return _SCRAPE_PARALLEL
+    return v if v >= 1 else _SCRAPE_PARALLEL
+
+
 def _scrape_try_cap() -> int:
     raw = os.getenv("FANOPS_HASHTAG_SCRAPE_TRY_CAP")
     if raw is None:
@@ -650,6 +666,7 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
     unresolved: list[dict] = []
     log = get_logger(cfg)
     try_cap = _scrape_try_cap(); cotag_cap = _scrape_cotag_enqueue_cap()
+    _ = _scrape_parallel()  # retain env read (MOL-912); value unused — fetch is sequential
     client = scrape_client
     scrape_user = None
     cooldown = None

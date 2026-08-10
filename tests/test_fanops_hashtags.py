@@ -1179,7 +1179,9 @@ def test_layer_a_emits_one_client_no_session_clones(tmp_path, monkeypatch):
     assert "session_client" not in src
     assert "ThreadPoolExecutor" not in src
     assert "threading" not in src
-    assert "parallel" not in inspect.getsource(fh._refresh_pass)
+    assert "\"parallel\"" not in inspect.getsource(fh._refresh_pass)  # summary key gone (MOL-912)
+    monkeypatch.delenv("FANOPS_HASHTAG_SCRAPE_PARALLEL", raising=False)
+    assert fh._scrape_parallel() == 1
 
 
 def test_scrape_delay_range_paces_requests(monkeypatch):
