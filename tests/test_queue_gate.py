@@ -94,6 +94,29 @@ def test_release_all_held(tmp_path, mocker):
     assert all(s.state is SourceState.catalogued for s in led.sources.values())
 
 
+def test_prepare_releases_bound_held_footage(tmp_path, mocker, monkeypatch):
+    """Make clips carries queued footage the WHOLE way. run_prepare used to call advance() only, which
+    enters at `catalogued` — so the operator clicked Make clips, got a green summary, and every held
+    source sat untouched. Prepare now releases each BOUND held source first; unbound (no batch, so no
+    target accounts) stays held."""
+    monkeypatch.setenv("FANOPS_RESPONDER", "manual")
+    cfg = Config(root=tmp_path); _put_video(cfg, mocker, "a.mp4"); _put_video(cfg, mocker, "b.mp4")
+    _seed_accounts(cfg, ["a", "b"])
+    actions.catalogue_inbox(cfg)
+    led = Ledger.load(cfg)
+    sids = sorted(led.sources)
+    assert actions.bind_queue(cfg, source_ids=[sids[0]], batch_name="Bound", target_accounts=["a"]).ok
+    mocker.patch("fanops.produce.run_all")
+    mocker.patch("fanops.transcribe._transcribe_toolchain_present", return_value=True)
+    res = actions.run_prepare(cfg, base_time="2026-06-02T18:00:00Z", confirmed=True)
+    assert res.ok and res.detail["released"] == 1
+    led = Ledger.load(cfg)
+    assert led.sources[sids[0]].state is SourceState.catalogued
+    assert led.sources[sids[1]].state is SourceState.pending
+    # Idempotent: nothing left held on the bound line, so a second click releases zero.
+    assert actions.run_prepare(cfg, base_time="2026-06-02T18:00:00Z", confirmed=True).detail["released"] == 0
+
+
 def test_gate_off_byte_identical_birth_and_autobatch(tmp_path, mocker, monkeypatch):
     monkeypatch.setenv("FANOPS_QUEUE_GATE", "0")
     cfg = Config(root=tmp_path); _put_video(cfg, mocker)
