@@ -732,6 +732,52 @@ def test_open_client_callers_keep_reauth_default(tmp_path):
     assert "allow_reauth=True" in src_login
 
 
+def test_clear_cooldown_keeps_per_account_updated_at(tmp_path):
+    """Per-user clear must not wipe accounts[user].updated_at that _persist_cooldown wrote."""
+    from datetime import datetime, timezone, timedelta
+    from fanops.fanops_hashtags import (_clear_cooldown, _cooldown_path, _persist_cooldown)
+    cfg = Config(root=tmp_path)
+    t0 = datetime(2026, 8, 11, 12, 0, tzinfo=timezone.utc)
+    _persist_cooldown(cfg, t0, reason="checkpoint", delay_s=12 * 3600, user="mark", used_delta=1)
+    frozen = json.loads(_cooldown_path(cfg).read_text())["accounts"]["mark"]
+    assert frozen.get("updated_at") == t0.isoformat()
+    t1 = t0 + timedelta(minutes=5)
+    _clear_cooldown(cfg, now=t1, used_delta=2, user="mark")
+    rec = json.loads(_cooldown_path(cfg).read_text())["accounts"]["mark"]
+    assert "until" not in rec and "streak" not in rec and "reason" not in rec
+    assert rec.get("updated_at") == t1.isoformat()
+    assert rec.get("used") == 3
+    # clear without now preserves prior account updated_at
+    _clear_cooldown(cfg, user="mark")
+    rec2 = json.loads(_cooldown_path(cfg).read_text())["accounts"]["mark"]
+    assert rec2.get("updated_at") == t1.isoformat()
+
+
+def test_healthy_scrape_users_lru_oldest_updated_at_first(tmp_path, monkeypatch):
+    """LRU policy: missing updated_at first; then oldest; open_client(user=None) uses that head."""
+    from datetime import datetime, timezone
+    from fanops.fanops_hashtags import (_clear_cooldown, _healthy_scrape_users, _persist_cooldown)
+    from fanops.ig_hashtag_scrape import open_client, scrape_session_path
+    cfg = Config(root=tmp_path)
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "a,b,c")
+    t0 = datetime(2026, 8, 11, 12, 0, tzinfo=timezone.utc)
+    for u in ("a", "b", "c"):
+        p = scrape_session_path(cfg, u)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("{}")
+    _persist_cooldown(cfg, t0, reason="throttle", user="a", used_delta=1)
+    _clear_cooldown(cfg, now=t0, used_delta=0, user="a")
+    _persist_cooldown(cfg, t0, reason="throttle", user="b", used_delta=1)
+    _clear_cooldown(cfg, now=t0.replace(minute=30), used_delta=0, user="b")
+    assert _healthy_scrape_users(cfg, t0) == ["c", "a", "b"]
+    class _C:
+        def __init__(self):
+            self.delay_range = None
+        def load_settings(self, _p): pass
+        def dump_settings(self, _p): pass
+    assert open_client(cfg, client_factory=_C, now=t0)._fanops_scrape_user == "c"
+
+
 def test_corrupt_cooldown_fails_open(tmp_path, monkeypatch):
     from datetime import datetime, timezone
     from fanops.fanops_hashtags import refresh_store_if_due, _cooldown_path
