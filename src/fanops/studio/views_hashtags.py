@@ -20,7 +20,6 @@ from fanops.log import get_logger
 from fanops.hashtags import (SIZE_FIELD, TREND_FIELD, _norm, load_measurements, ranked_tags,
                              size_rank_key, tag_size, tag_trend)
 from fanops.personas import Personas
-from fanops.persona_research import _persona_row
 from fanops.studio.views_results import _EXPOSURE_STATES
 
 # TWO different Instagram fields, shown separately and never merged into one "score" (MOL-692): SIZE is
@@ -37,7 +36,7 @@ class CorpusRow:
     pid: str
     name: str
     size: int
-    last_refreshed: Optional[str]      # max `measured_at` across this persona's hashtag_corpus_meta
+    last_refreshed: Optional[str]      # Layer A `last_complete_pass` (last finished check), not tag sample age
     top3: list                         # the 3 biggest corpus tags (size-first), truncated
     edit_href: str = ""                # url_for('personas_view') — the "edit →" link
 
@@ -116,19 +115,17 @@ def rotation_health(led: Ledger, *, n: int = 5) -> list:
 
 
 def _corpora_rows(cfg: Config, *, edit_href: str = "") -> list:
-    """Section 1 read: one row per persona — corpus size, its stalest measurement, the 3 BIGGEST tags
-    (`size_rank_key`). Byte-truth: everything comes straight from personas.json + the cache."""
+    """Section 1 read: one row per persona — corpus size, last Layer A complete pass, the 3 BIGGEST tags
+    (`size_rank_key`). Byte-truth: personas.json + hashtags.json `last_complete_pass`."""
+    from fanops.fanops_hashtags import _read_complete_pass
     m = load_measurements(cfg)
+    last_check = _read_complete_pass(cfg)
     rows: list[CorpusRow] = []
     for per in Personas.load(cfg).all():
-        row = _persona_row(cfg, per.id) or {}
-        meta = row.get("hashtag_corpus_meta") if isinstance(row.get("hashtag_corpus_meta"), dict) else {}
         corpus = [_norm(t) for t in (per.hashtag_corpus or []) if isinstance(t, str) and _norm(t)]
-        stamps = [v.get("measured_at") for v in meta.values()
-                  if isinstance(v, dict) and isinstance(v.get("measured_at"), str)]
         top3 = sorted(corpus, key=lambda t: size_rank_key(t, m.get(t) or {}))[:3]
         rows.append(CorpusRow(pid=per.id, name=per.name or per.id, size=len(corpus),
-                              last_refreshed=(max(stamps) if stamps else None), top3=top3,
+                              last_refreshed=last_check, top3=top3,
                               edit_href=edit_href))
     return rows
 

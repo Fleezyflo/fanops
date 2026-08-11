@@ -160,6 +160,9 @@ def test_corpus_rows_read_only(tmp_path):
     cfg = Config(root=tmp_path)
     pid = core.add_persona(cfg, name="Music Blogger", niche=["hiphop"])
     _cache(cfg, {"#rap": 100, "#hiphop": 900})
+    blob = json.loads(cfg.hashtags_path.read_text())
+    blob["last_complete_pass"] = "2026-08-11T12:00:00+00:00"
+    cfg.hashtags_path.write_text(json.dumps(blob))
     core.apply_auto_corpus(cfg, pid, tags=["#rap", "#hiphop"], meta={
         "#rap": {METRIC_FIELD: 100.0, "measured_at": "2026-07-20T00:00:00+00:00", "from": "#rap"},
         "#hiphop": {METRIC_FIELD: 900.0, "measured_at": "2026-07-21T00:00:00+00:00", "from": "#rap"}})
@@ -167,7 +170,7 @@ def test_corpus_rows_read_only(tmp_path):
     row = next(r for r in rows if r.pid == pid)
     assert row.size == 2                                 # byte-truth from personas.json
     assert row.top3 == ["#hiphop", "#rap"]               # biggest first (media_count 900 vs 100)
-    assert row.last_refreshed == "2026-07-21T00:00:00+00:00"   # the newest measurement stamp
+    assert row.last_refreshed == "2026-08-11T12:00:00+00:00"   # Layer A last_complete_pass
     # The section-1 HTML must carry NO add/remove/research/ban controls (the corpus is DERIVED).
     html = _client(cfg).get("/hashtags").data.decode()
     section1 = html.split("<h3>Measurement cache</h3>")[0]   # everything before section 2 is section 1 + header
