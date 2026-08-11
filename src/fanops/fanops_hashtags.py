@@ -291,18 +291,33 @@ def scrape_user_blocked(cfg: Config, user: str, now: datetime | None = None) -> 
     return _block_view_for_rec(_account_rec(_load_cooldown_blob(cfg), user), now) is not None
 
 
-def _pick_healthy_scrape_user(cfg: Config, now: datetime, *, allow_reauth: bool = False) -> str | None:
-    """First FANOPS_IG_SCRAPE_USER that can open and is not frozen/budget-exhausted."""
+def _healthy_scrape_users(cfg: Config, now: datetime, *, allow_reauth: bool = False) -> list[str]:
+    """Healthy scrape peers, LRU-oldest accounts[user].updated_at first; env order tiebreak."""
     from fanops.ig_hashtag_scrape import scrape_session_path, scrape_user_usable, scrape_users
-    for user in scrape_users(cfg):
+    users = scrape_users(cfg)
+    blob = _load_cooldown_blob(cfg)
+    eligible: list[str] = []
+    for user in users:
         if scrape_user_blocked(cfg, user, now):
             continue
         if allow_reauth:
             if scrape_user_usable(cfg, user):
-                return user
+                eligible.append(user)
         elif scrape_session_path(cfg, user).exists():
-            return user
-    return None
+            eligible.append(user)
+
+    def _lru_key(user: str) -> tuple[str, int]:
+        at = _account_rec(blob, user).get("updated_at")
+        stamp = at if isinstance(at, str) else ""
+        return (stamp, users.index(user))
+
+    return sorted(eligible, key=_lru_key)
+
+
+def _pick_healthy_scrape_user(cfg: Config, now: datetime, *, allow_reauth: bool = False) -> str | None:
+    """LRU-oldest healthy scrape peer, or None."""
+    peers = _healthy_scrape_users(cfg, now, allow_reauth=allow_reauth)
+    return peers[0] if peers else None
 
 
 def _read_active_cooldown(cfg: Config, now: datetime) -> dict | None:
@@ -580,11 +595,11 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
     is not thread-safe.
 
     Live multi-account (MOL-900): scrape identity is not bound for the whole due queue. Qualifying
-    users in `FANOPS_IG_SCRAPE_USER` order each open alone, measure consecutive tags up to
-    `min(_scrape_try_cap(), day room)`, charge that user, then the next user continues the same
-    queue cursor. Account platform stop (via `_freeze_for`) stops that user only — peers keep
-    the pass. Injected `scrape_client` keeps the single-client path. `_pick_healthy_scrape_user`
-    remains for cooldown gates and `open_client(user=None)`.
+    users from `_healthy_scrape_users` (LRU; env list = membership/tiebreak) each open alone, measure
+    consecutive tags up to `min(_scrape_try_cap(), day room)`, charge that user, then the next user
+    continues the same queue cursor. Account platform stop (via `_freeze_for`) stops that user only —
+    peers keep the pass. Injected `scrape_client` keeps the single-client path. `_pick_healthy_scrape_user`
+    (LRU head) remains for cooldown gates and `open_client(user=None)`.
 
     Layer B runs ONCE, when the pass ENDS (complete or early-stopped) and only when `measured>0`
     (MOL-694). A mid-pass flush is measurement durability alone — deriving on each one recomputed every
@@ -605,8 +620,7 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
     same-pass platform stop still arms a fresh cooldown from streak 1 for that user."""
     from fanops.errors import ControlFileError
     from fanops.ig_hashtag_scrape import (ScrapeUnavailable, measure_and_harvest_scrape,
-                                          open_client, resolve_hashtag_scrape, scrape_session_path,
-                                          scrape_users)
+                                          open_client, resolve_hashtag_scrape, scrape_users)
     from fanops.persona_research import persona_terms
     now = now or datetime.now(timezone.utc)
     stamp = now.isoformat()
@@ -787,16 +801,9 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
         """Open one client when no session-ready walk list (inject-like / password-only classify)."""
         nonlocal client, scrape_user, cooldown
         scrape_user = None
-        if listed:
-            for u in listed:
-                if not scrape_user_blocked(cfg, u, now):
-                    scrape_user = u
-                    break
         try:
-            client = (open_client(cfg, user=scrape_user, now=now) if scrape_user
-                      else open_client(cfg, now=now))
-            if scrape_user is None:
-                scrape_user = getattr(client, "_fanops_scrape_user", None)
+            client = open_client(cfg, now=now)
+            scrape_user = getattr(client, "_fanops_scrape_user", None)
         except ScrapeUnavailable as e:
             return ("no_scrape", str(e))
         except Exception as e:                                  # noqa: BLE001 — platform errors from open_client
@@ -821,11 +828,7 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
         today = _utc_day(now)
         blob = _load_cooldown_blob(cfg)
         walk: list[tuple[str, int]] = []
-        for u in listed:
-            if scrape_user_blocked(cfg, u, now):
-                continue
-            if not scrape_session_path(cfg, u).exists():
-                continue
+        for u in _healthy_scrape_users(cfg, now, allow_reauth=False):
             rec = _account_rec(blob, u)
             used = int(rec["used"]) if rec.get("day") == today and isinstance(rec.get("used"), (int, float)) else 0
             room = _SCRAPE_DAY_BUDGET - max(used, 0)

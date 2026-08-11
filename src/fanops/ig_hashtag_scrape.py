@@ -107,10 +107,10 @@ def open_client(cfg: Config, *, client_factory=None, allow_reauth: bool = False,
     native checkpoint when the tick still called `login()` every pass.
     Only `fanops hashtags scrape-login` passes `allow_reauth=True` (probe decides whether to relogin).
 
-    Multi-account (MOL-857/858): when `user` is omitted, pick the first listed FANOPS_IG_SCRAPE_USER
-    that can actually open and is not freeze/budget-blocked: with `allow_reauth=False` that means a
-    session file (password alone cannot open unattended); with `allow_reauth=True` session OR
-    password. Operator scrape-login ignores freeze (allow_reauth=True).
+    Multi-account (MOL-857/858): when `user` is omitted, pick via `_pick_healthy_scrape_user`
+    (LRU among healthy peers; env order is tiebreak only). Unattended needs a session file;
+    `allow_reauth=True` may use password-usable peers and ignores freeze. scrape-login passes
+    an explicit `user` per account.
 
     `delay_range` is set before any network call, so every request this client ever makes — the
     operator probe / login included — carries the jitter (MOL-698); the whole Layer A pass runs on
@@ -120,16 +120,9 @@ def open_client(cfg: Config, *, client_factory=None, allow_reauth: bool = False,
         raise ScrapeUnavailable("FANOPS_IG_SCRAPE_USER unset")
     if user is None:
         # Lazy import: fanops_hashtags imports open_client inside functions — no cycle at import time.
-        from fanops.fanops_hashtags import scrape_user_blocked
+        from fanops.fanops_hashtags import _pick_healthy_scrape_user
         now = now or datetime.now(timezone.utc)
-        if allow_reauth:
-            # Operator path: freeze does not block an explicit login attempt.
-            chosen = next((u for u in users if scrape_user_usable(cfg, u)), None)
-        else:
-            # Unattended: session required; skip frozen / day-budget-exhausted peers (MOL-858).
-            chosen = next((u for u in users
-                           if scrape_session_path(cfg, u).exists()
-                           and not scrape_user_blocked(cfg, u, now)), None)
+        chosen = _pick_healthy_scrape_user(cfg, now, allow_reauth=allow_reauth)
         if chosen is None:
             if scrape_configured(cfg) and not allow_reauth:
                 # Distinguish "all frozen" from "no session" when any session exists on disk.
