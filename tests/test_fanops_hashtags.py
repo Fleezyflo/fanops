@@ -30,8 +30,8 @@ def _persona(cfg, *, pid="curator"):
 
 def test_refresh_store_atomic_write_preserves_prior_on_crash(tmp_path, monkeypatch):
     # L08: a crash mid-write must leave the PRIOR valid hashtags.json intact (write_json_atomic).
-    # The prior file must be established by a REAL measure: a pass with nothing due writes nothing
-    # at all (MOL-695 zero-progress), so an empty fake would leave no file to preserve.
+    # The prior file must be established by a REAL measure: empty-due alone only advances the
+    # complete stamp; the atomic-crash proof needs a measured tag record on disk to preserve.
     from fanops import controlio
     cfg = Config(root=tmp_path); _persona(cfg)
     client = _FakeClient({"#hiphop": 10})                   # no media_count -> volume-due next pass
@@ -767,6 +767,37 @@ def test_zero_progress_pass_preserves_hashtags_bytes_and_skips_rederive(tmp_path
     assert cfg.hashtags_path.stat().st_mtime_ns == mtime
     assert json.loads(cfg.hashtags_path.read_text())["last_complete_pass"] == stamp
     assert calls["n"] == 0
+
+
+def test_empty_due_queue_with_sessions_advances_complete_stamp(tmp_path, monkeypatch):
+    """Empty due queue must not fake no_scrape when session peers exist; advance last_complete_pass."""
+    from datetime import datetime, timezone, timedelta
+    from unittest.mock import patch
+    from fanops.ig_hashtag_scrape import scrape_session_path
+    cfg = Config(root=tmp_path); _persona(cfg)
+    now = datetime(2026, 8, 11, 12, 0, tzinfo=timezone.utc)
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "markmakmouly,cisumwolfhom,perca.late")
+    for u in ("markmakmouly", "cisumwolfhom", "perca.late"):
+        p = scrape_session_path(cfg, u)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("{}")
+    measured_at = (now - timedelta(days=1)).isoformat()
+    old_stamp = (now - timedelta(hours=13)).isoformat()
+    cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.hashtags_path.write_text(json.dumps({
+        "last_complete_pass": old_stamp,
+        "#hiphop": {"graph_id": "1", "play_count": 100.0, "like_count": 10.0,
+                    "media_count": 50_000.0, "media_count_at": measured_at,
+                    "measured_at": measured_at},
+    }))
+    def boom_open(*a, **k):
+        raise AssertionError("open_client must not run when due queue is empty")
+    with patch("fanops.ig_hashtag_scrape.open_client", boom_open):
+        out = refresh_store(cfg, now=now)
+    blob = json.loads(cfg.hashtags_path.read_text())
+    assert out.get("written") is True and out.get("tried") == 0
+    assert out.get("aborted") is None
+    assert blob["last_complete_pass"] == now.isoformat()
 
 
 def test_zero_progress_still_writes_when_tag_records_mutate(tmp_path, monkeypatch):

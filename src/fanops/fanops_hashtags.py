@@ -878,8 +878,9 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
                         out["cooldown_until"] = cooldown.get("until")
                         out["cooldown_streak"] = cooldown.get("streak")
                     return out
-                return {"written": False, "aborted": "no_scrape", "reason": "no scrape session",
-                        "backend": "scrape"}
+                if queue:  # due work remained; never opened anyone
+                    return {"written": False, "aborted": "no_scrape", "reason": "no scrape session",
+                            "backend": "scrape"}
             throttled = (i < len(queue)) or platform_stop
             if throttled and tried > 0 and not platform_stop:
                 log("hashtags", "-", "pass_try_cap", tried=tried, queue_left=len(queue) - i,
@@ -888,8 +889,9 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
     cutoff = now - timedelta(days=_MAX_AGE_DAYS)
     fresh = _records_for_write(cache, anchor_set=anchor_set, cutoff=cutoff)
     tag_mutated = fresh != pre_write
-    if measured == 0 and not tag_mutated:
-        # platform_stop → aborted = _freeze_for reason word; else honest zero-measured (MOL-912)
+    if measured == 0 and not tag_mutated and tried > 0:
+        # platform_stop → aborted = _freeze_for reason word; else honest zero-measured (MOL-912).
+        # tried==0 (empty due queue) falls through so last_complete_pass can advance.
         if platform_stop:
             reason = stop_reason_word or "platform_stop"
             out = {"written": False, "measured": 0, "discovered": discovered,
