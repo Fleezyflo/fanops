@@ -753,6 +753,31 @@ def test_clear_cooldown_keeps_per_account_updated_at(tmp_path):
     assert rec2.get("updated_at") == t1.isoformat()
 
 
+def test_healthy_scrape_users_lru_oldest_updated_at_first(tmp_path, monkeypatch):
+    """LRU policy: missing updated_at first; then oldest; open_client(user=None) uses that head."""
+    from datetime import datetime, timezone
+    from fanops.fanops_hashtags import (_clear_cooldown, _healthy_scrape_users, _persist_cooldown)
+    from fanops.ig_hashtag_scrape import open_client, scrape_session_path
+    cfg = Config(root=tmp_path)
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "a,b,c")
+    t0 = datetime(2026, 8, 11, 12, 0, tzinfo=timezone.utc)
+    for u in ("a", "b", "c"):
+        p = scrape_session_path(cfg, u)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("{}")
+    _persist_cooldown(cfg, t0, reason="throttle", user="a", used_delta=1)
+    _clear_cooldown(cfg, now=t0, used_delta=0, user="a")
+    _persist_cooldown(cfg, t0, reason="throttle", user="b", used_delta=1)
+    _clear_cooldown(cfg, now=t0.replace(minute=30), used_delta=0, user="b")
+    assert _healthy_scrape_users(cfg, t0) == ["c", "a", "b"]
+    class _C:
+        def __init__(self):
+            self.delay_range = None
+        def load_settings(self, _p): pass
+        def dump_settings(self, _p): pass
+    assert open_client(cfg, client_factory=_C, now=t0)._fanops_scrape_user == "c"
+
+
 def test_corrupt_cooldown_fails_open(tmp_path, monkeypatch):
     from datetime import datetime, timezone
     from fanops.fanops_hashtags import refresh_store_if_due, _cooldown_path
