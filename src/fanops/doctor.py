@@ -93,22 +93,52 @@ def _hashtag_scrape_check(cfg: Config, *, open_client=None, probe_resolve=None) 
     if not any_scrape_session(cfg):
         return {"label": lbl, "ok": True,
                 "hint": "credentials set but no session file — run `fanops hashtags scrape-login`"}
+    # Multi-account: platform stop on the preferred user must arm cooldown (same ledger Layer A
+    # uses) then retry open_client once so a healthy peer can PASS. ScrapeUnavailable on the first
+    # open stays the setup failure; after a platform fail, a later ScrapeUnavailable means peers
+    # are exhausted — report the platform text, not a scrape-login prescription (MOL-879).
+    opener = open_client
+    if opener is None:
+        from fanops.ig_hashtag_scrape import open_client as opener
+    probe = probe_resolve
+    if probe is None:
+        from fanops.ig_hashtag_scrape import resolve_hashtag_scrape as probe
+    from datetime import datetime, timezone
+    from fanops.fanops_hashtags import _freeze_for, _persist_cooldown
+    from fanops.log import get_logger
+    now = datetime.now(timezone.utc)
+    last_user, last_exc = "", None
     try:
-        opener = open_client
-        if opener is None:
-            from fanops.ig_hashtag_scrape import open_client as opener
-        client = opener(cfg)
-        probe = probe_resolve
-        if probe is None:
-            from fanops.ig_hashtag_scrape import resolve_hashtag_scrape as probe
-        probe(client, "#hiphop")
+        for _ in range(2):
+            user = ""
+            try:
+                client = opener(cfg)
+            except ScrapeUnavailable:
+                if last_exc is not None:
+                    break
+                raise
+            except Exception as e:                          # noqa: BLE001 — open raised platform error
+                last_exc = e
+                get_logger(cfg)("doctor", "-", "hashtag_scrape_probe_failed", err=str(e))
+                break
+            user = getattr(client, "_fanops_scrape_user", "") or ""
+            try:
+                probe(client, "#hiphop")
+                return _check(lbl, True, "")
+            except ScrapeUnavailable:
+                raise
+            except Exception as e:                          # noqa: BLE001 — probe platform error
+                last_user, last_exc = user, e
+                get_logger(cfg)("doctor", "-", "hashtag_scrape_probe_failed",
+                                err=str(e), user=user[:40])
+                if not user:
+                    break
+                reason, delay_s = _freeze_for(e)
+                _persist_cooldown(cfg, now, reason=reason, delay_s=delay_s, user=user)
+        return _check(lbl, False,
+                      f"@{last_user}: {last_exc}" if last_user else str(last_exc))
     except ScrapeUnavailable as e:
         return _check(lbl, False, f"{e} — run `fanops hashtags scrape-login`")
-    except Exception as e:                                 # noqa: BLE001 — the platform's own error, untouched
-        from fanops.log import get_logger
-        get_logger(cfg)("doctor", "-", "hashtag_scrape_probe_failed", err=str(e))
-        return _check(lbl, False, str(e))
-    return _check(lbl, True, "")
 
 def _meta_token_expiry_check(cfg: Config, *, get=None):
     """T9: build the 'Meta Graph token not expiring' check dict, or None when no Meta token is configured (the
