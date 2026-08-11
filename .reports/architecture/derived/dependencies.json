@@ -1837,11 +1837,12 @@
         "fanops.hashtags",
         "fanops.ledger",
         "fanops.log",
-        "fanops.persona_research",
         "fanops.personas",
         "fanops.studio.views_results"
       ],
-      "lazy": [],
+      "lazy": [
+        "fanops.fanops_hashtags"
+      ],
       "optional": [],
       "typing": []
     },
@@ -2200,7 +2201,7 @@
     "fanops.paths_rebase": 0,
     "fanops.persona_directives": 1,
     "fanops.persona_levers": 4,
-    "fanops.persona_research": 2,
+    "fanops.persona_research": 1,
     "fanops.persona_store": 1,
     "fanops.personas": 7,
     "fanops.pipeline": 2,
@@ -2391,7 +2392,7 @@
     "fanops.studio.thumb_media": 3,
     "fanops.studio.views": 12,
     "fanops.studio.views_common": 4,
-    "fanops.studio.views_hashtags": 7,
+    "fanops.studio.views_hashtags": 6,
     "fanops.studio.views_library": 4,
     "fanops.studio.views_live": 3,
     "fanops.studio.views_results": 7,
@@ -2411,7 +2412,7 @@
   "generated_by": "tools/arch",
   "generator_version": "arch/1.0.0",
   "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",
-  "lazy_downward_count": 233,
+  "lazy_downward_count": 234,
   "lazy_lateral": [
     {
       "from": "fanops.accounts",
@@ -3668,8 +3669,8 @@
     "G2_largest_scc_size": 55,
     "G2_module_sccs_total": 66,
     "G2_non_trivial_sccs": 8,
-    "compile_edges_G1": 575,
-    "lazy_edges": 350,
+    "compile_edges_G1": 574,
+    "lazy_edges": 351,
     "lazy_edges_lateral": 47,
     "lazy_edges_strictly_upward": 70,
     "lazy_edges_to_equal_or_higher_level": 117,
