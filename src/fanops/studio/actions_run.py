@@ -538,7 +538,11 @@ def run_prepare(cfg: Config, base_time: Optional[str] = None, *, confirmed: bool
     Review WITHOUT the operator hand-writing a caption. With FANOPS_RESPONDER=llm the gates answer
     themselves (the one-click/autopilot path); in manual mode the responder writes nothing and the
     gates stay for the Gates tab. Same live-publish confirm + accounts guards as run_advance — a
-    prepare pass still crossposts/publishes due posts on a live backend. Mirrors cmd_run's loop."""
+    prepare pass still crossposts/publishes due posts on a live backend. Mirrors cmd_run's loop.
+
+    This is the Make-clips click, so it carries queued footage the WHOLE way: every bound held source
+    (queue-gate `pending` + a batch) is released to `catalogued` first, then respond+advance cuts it.
+    `detail["released"]` reports how many it took."""
     from fanops.pipeline import advance
     from fanops.accounts import Accounts
     from fanops.responder import get_responder
@@ -556,10 +560,24 @@ def run_prepare(cfg: Config, base_time: Optional[str] = None, *, confirmed: bool
     responder = get_responder(cfg)
     summary = None
     done = False
+    released = 0
     try:
         from fanops.pipeline_run import run_lease
         from fanops.errors import RunBusyError
+        from fanops.models import SourceState
         with run_lease(cfg):
+            # MAKE-CLIPS CONTRACT: the queue gate births new footage at SourceState.pending and advance()
+            # enters at `catalogued`, so held sources are INVISIBLE to the loop below — prepare used to run
+            # to a clean green summary while every queued source sat untouched (operator clicks Make clips,
+            # nothing moves, nothing says why). Prepare IS that click and has already cleared the SAME
+            # live-publish confirm release_batch demands, so it releases every BOUND held source first.
+            # Unbound (no batch_id) stays held on purpose: no batch means no target accounts, so there is
+            # nothing to cut it for. Released INSIDE the lease so the release and the advance that consumes
+            # it are one owned window — no daemon tick can interleave between them.
+            with Ledger.transaction(cfg) as led:
+                for sid, s in list(led.sources.items()):
+                    if s.state is SourceState.pending and s.batch_id:
+                        led.set_source_state(sid, SourceState.catalogued); released += 1
             for _ in range(10):                                # respond -> advance until stable (no gate left)
                 try:
                     responder.answer_pending(cfg)              # llm answers the gates; manual writes nothing
@@ -579,8 +597,10 @@ def run_prepare(cfg: Config, base_time: Optional[str] = None, *, confirmed: bool
     # instead of a green "prepared" the operator would wrongly trust (ecc audit: code+python MEDIUM).
     # In manual mode the responder writes nothing, so remaining gates are EXPECTED (they wait in the
     # Gates tab) — that stays ok=True.
+    # `released` rides in the detail on BOTH exits: it is the only proof the click moved held footage, and
+    # its absence is exactly what made the old silent no-op look like success.
     if not done and cfg.responder_mode == "llm":
-        return ActionResult(ok=False, detail=summary,
+        return ActionResult(ok=False, detail={**(summary or {}), "released": released},
                             error="auto-prepare did not finish — gates still pending after 10 passes "
                             "(is the LLM CLI working?); run Prepare again or answer them in the Gates tab")
-    return ActionResult(ok=True, detail=summary)
+    return ActionResult(ok=True, detail={**(summary or {}), "released": released})

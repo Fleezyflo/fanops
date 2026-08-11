@@ -358,6 +358,10 @@
       {
         "call": "Ledger.transaction",
         "line": 480
+      },
+      {
+        "call": "Ledger.transaction",
+        "line": 577
       }
     ],
     "fanops.studio.actions_segments": [
@@ -799,7 +803,7 @@
   },
   "totals": {
     "env_write_sites": 2,
-    "ledger_transaction_sites": 80,
+    "ledger_transaction_sites": 81,
     "lock_sites": 22,
     "mkdtemp_sites": 2,
     "network_sites_literal_requests": 15,
