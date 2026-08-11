@@ -397,6 +397,11 @@ def _clear_cooldown(cfg: Config, *, now: datetime | None = None, used_delta: int
         if today is not None:
             kept_rec["day"] = today
             kept_rec["used"] = max(used, 0)
+        # Keep/bump per-account updated_at — do not wipe what _persist_cooldown wrote.
+        if now is not None:
+            kept_rec["updated_at"] = now.isoformat()
+        elif isinstance(rec.get("updated_at"), str) and rec["updated_at"]:
+            kept_rec["updated_at"] = rec["updated_at"]
         accounts[user] = kept_rec
         # Drop legacy top-level freeze keys; keep peer accounts.
         blob: dict = {"accounts": accounts}
