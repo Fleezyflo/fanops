@@ -622,3 +622,61 @@ def test_doctor_hashtag_scrape_probe_login_required_fails_loud(tmp_path, monkeyp
     assert row["ok"] is False
     assert row["hint"] == "login_required" and "scrape-login" not in row["hint"]
     assert "secret-password" not in row["hint"]
+
+
+def test_doctor_hashtag_scrape_probe_freezes_and_retries_peer(tmp_path, monkeypatch):
+    """Probe Challenge on preferred user arms cooldown; peer open+probe → PASS; accounts not empty."""
+    from fanops import doctor
+    from fanops.config import Config
+    from fanops.fanops_hashtags import _load_cooldown_blob
+    from instagrapi.exceptions import ChallengeRequired
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "mark,peer")
+    cfg = Config(root=tmp_path)
+    from fanops.ig_hashtag_scrape import scrape_session_path
+    for u in ("mark", "peer"):
+        p = scrape_session_path(cfg, u)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("{}")
+    opens = {"n": 0}
+    def opener(_cfg):
+        opens["n"] += 1
+        c = type("C", (), {})()
+        if opens["n"] == 1:
+            c._fanops_scrape_user = "mark"
+            return c
+        c._fanops_scrape_user = "peer"
+        return c
+    def probe(client, _tag):
+        if getattr(client, "_fanops_scrape_user", None) == "mark":
+            raise ChallengeRequired("challenge_required")
+        return ("1", 1.0)
+    row = doctor._hashtag_scrape_check(cfg, open_client=opener, probe_resolve=probe)
+    assert row["ok"] is True and row["hint"] == ""
+    assert opens["n"] == 2
+    rec = _load_cooldown_blob(cfg).get("accounts", {}).get("mark") or {}
+    assert rec.get("reason") == "checkpoint"
+
+
+def test_doctor_hashtag_scrape_probe_names_user_when_peers_exhausted(tmp_path, monkeypatch):
+    """All peers fail probe → FAIL hint names @user; cooldown armed; no scrape-login prescription."""
+    from fanops import doctor
+    from fanops.config import Config
+    from fanops.fanops_hashtags import _load_cooldown_blob
+    from fanops.ig_hashtag_scrape import scrape_session_path
+    from instagrapi.exceptions import ChallengeRequired
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "only")
+    cfg = Config(root=tmp_path)
+    p = scrape_session_path(cfg, "only")
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text("{}")
+    def opener(_cfg):
+        c = type("C", (), {})()
+        c._fanops_scrape_user = "only"
+        return c
+    def probe(_c, _t):
+        raise ChallengeRequired("challenge_required")
+    row = doctor._hashtag_scrape_check(cfg, open_client=opener, probe_resolve=probe)
+    assert row["ok"] is False
+    assert row["hint"] == "@only: challenge_required"
+    assert "scrape-login" not in row["hint"]
+    assert (_load_cooldown_blob(cfg).get("accounts", {}).get("only") or {}).get("reason") == "checkpoint"
