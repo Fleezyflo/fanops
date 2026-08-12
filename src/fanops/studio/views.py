@@ -25,6 +25,21 @@ from fanops.studio.views_live import (LiveMediaRow, live_library, live_library_s
 from fanops.studio.views_library import (STAGES, library_catalog, source_pipeline_map, source_progress)  # noqa: F401
 
 
+def led_for_request(cfg: Config) -> Ledger:
+    """One Ledger.load per Studio HTTP request. Outside a request (CLI/tests): load normally."""
+    try:
+        from flask import g, has_request_context
+        if has_request_context():
+            led = getattr(g, "fanops_ledger", None)
+            if led is None:
+                led = Ledger.load(cfg)
+                g.fanops_ledger = led
+            return led
+    except Exception:
+        pass
+    return Ledger.load(cfg)
+
+
 @dataclass
 class GoLiveChannel:
     platform: str
@@ -188,13 +203,15 @@ def pipeline_status(cfg: Config) -> dict:
     """Lock-free counts for the Run tab's status line: where the unit chain stands + how many gates
     are waiting + the active poster backend. Lets the operator see, in one glance, whether the next
     move is 'ingest', 'run a pass', or 'answer a gate'."""
-    from fanops.agentstep import pending
-    from fanops.pipeline_status import status_control_lines, source_backlog
+    from collections import Counter
+    from fanops.pipeline_status import PendingIndex, status_control_lines, source_backlog
     from fanops.pipeline_run import run_stage_snapshot
-    led = Ledger.load(cfg)
-    run_line, wait_line = status_control_lines(cfg, led)
-    bl = source_backlog(led, cfg)
+    led = led_for_request(cfg)
+    idx = PendingIndex.build(cfg, led)
+    run_line, wait_line = status_control_lines(cfg, led, idx)
+    bl = source_backlog(led, cfg, idx)
     snap = run_stage_snapshot(cfg)
+    by_kind = Counter(kind for _, kind, _ in idx.ordered)
     run_chip = f"{snap['stage']}:{snap['unit']}" if snap else None
     pending_unbound, queue_lines, held_pending = [], [], 0
     if cfg.queue_gate:
@@ -253,9 +270,9 @@ def pipeline_status(cfg: Config) -> dict:
         "awaiting": awaiting_moment_count(led),   # S3: ACTIONABLE — MOMENTS (== Home/Review worklist), not raw posts
         "published": len(led.posts_in_state(PostState.published)),
         "holds": sum(1 for c in led.clips.values() if c.held),
-        "pending_moments": len(pending(cfg, kind="moments")),
-        "pending_moment_hooks": len(pending(cfg, kind="moment_hooks")),
-        "pending_captions": len(pending(cfg, kind="captions")),
+        "pending_moments": by_kind.get("moments", 0),
+        "pending_moment_hooks": by_kind.get("moment_hooks", 0),
+        "pending_captions": by_kind.get("captions", 0),
         "run_line": run_line,
         "wait_line": wait_line,
         # R3-followup: the UI mode label MUST be the per-channel truth, not the legacy global. On a live
@@ -771,7 +788,7 @@ def build_system_strip(cfg: Config) -> dict:
         blocked = 0; recoverable = 0; errored_first_id = None
     failed = 0
     try:
-        failed = sum(1 for p in Ledger.load(cfg).posts.values() if p.state is PostState.failed)
+        failed = sum(1 for p in led_for_request(cfg).posts.values() if p.state is PostState.failed)
     except Exception as exc:
         get_logger(cfg)("system_strip", "-", "failed_scan_error", err=str(exc)[:160])
         failed = 0
@@ -781,7 +798,7 @@ def build_system_strip(cfg: Config) -> dict:
     errored = recoverable if recoverable else 0
     if not errored:
         try:
-            errored = sum(1 for s in Ledger.load(cfg).sources.values() if s.state in _RECOVERABLE_SOURCE_STATES)
+            errored = sum(1 for s in led_for_request(cfg).sources.values() if s.state in _RECOVERABLE_SOURCE_STATES)
         except Exception as exc:
             get_logger(cfg)("system_strip", "-", "errored_scan_error", err=str(exc)[:160])
             errored = 0
@@ -976,7 +993,7 @@ def home_status(cfg: Config) -> HomeStatus:
     mode = _publish_mode_label(cfg)                    # provider-aware (M3); 'dryrun' when not live
     try:
         from collections import Counter
-        led = Ledger.load(cfg)
+        led = led_for_request(cfg)
         att = led.attention_counts()        # T2.5: the OWNED worklist, loaded ONCE for this view — never per row
         st = led.state_histogram()
         inflight = (st[PostState.needs_reconcile] + st[PostState.submitting] + st[PostState.submitted])

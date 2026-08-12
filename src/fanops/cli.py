@@ -1368,6 +1368,18 @@ def _studio_port_busy(host: str, port: int) -> bool:
         return False
 
 
+def _studio_ipv6_foreign_listener(port: int) -> bool:
+    """True when ::1:port accepts but is not FanOps /_fingerprint (e.g. Cursor MCP → 'Not found.')."""
+    import socket
+    from fanops import daemon
+    try:
+        with socket.create_connection(("::1", port), timeout=1.0):
+            pass
+    except OSError:
+        return False
+    return daemon._studio_get_fingerprint("::1", port) is None
+
+
 def _reframe_mutation(paths, args) -> int:
     """The MUTATION verbs. Split out so cmd_reframe's read-only path stays exactly what it was."""
     import json as _json, time as _time
@@ -1670,6 +1682,11 @@ def _dispatch(cfg: Config, args) -> int:
             print(f"Studio already serving at http://{args.host}:{args.port}")
             print("  open that URL, or stop that instance first to run a new one here")
             return 0
+        if sys.platform == "darwin" and _studio_ipv6_foreign_listener(args.port):
+            print(f"REFUSED: something else is answering http://[::1]:{args.port} (not FanOps).")
+            print(f"  Browsers that open http://localhost:{args.port} hit that process, not Studio.")
+            print(f"  Use http://127.0.0.1:{args.port}/ or free ::1:{args.port}.")
+            return 2
         from fanops.studio.app import create_app
         from fanops.health import ensure_up, system_health
         # Launch the WHOLE system, not just the UI: bring up any down dependency the system knows how to

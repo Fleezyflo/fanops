@@ -333,7 +333,10 @@ def create_app(cfg: Config) -> Flask:
 
     @app.context_processor
     def _inject_system_strip():
-        return {"system_strip": views.build_system_strip(cfg)}
+        from flask import g
+        strip = views.build_system_strip(cfg)
+        g.fanops_system_strip = strip
+        return {"system_strip": strip}
 
     @app.context_processor
     def _inject_account_session():
@@ -367,8 +370,11 @@ def create_app(cfg: Config) -> Flask:
         here = _SPINE_HERE.get(request.endpoint, _SPINE_SKIP)
         if here is _SPINE_SKIP:
             return {}
-        st = views.home_status(cfg)
-        strip = views.build_system_strip(cfg)
+        from flask import g
+        st = views.home_status(cfg)  # still direct — same fail-open rule as today
+        strip = getattr(g, "fanops_system_strip", None)
+        if strip is None:
+            strip = views.build_system_strip(cfg)
         np: dict = {}
         if st.counts.get("awaiting", 0) > 0:
             np = views.review_nav_params(cfg, _account_arg())

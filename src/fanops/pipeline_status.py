@@ -133,9 +133,9 @@ def source_wait_line(cfg: Config, led, source_id: str, idx: PendingIndex | None 
     return wait_for_gate(cfg, led, kind=kind, key=key)
 
 
-def status_control_lines(cfg: Config, led) -> tuple[str, str | None]:
+def status_control_lines(cfg: Config, led, idx: PendingIndex | None = None) -> tuple[str, str | None]:
     """(run_status_line, top_wait_line) for fanops status / Studio pipeline_status."""
-    return run_status_line(cfg), top_wait_line(cfg, led)
+    return run_status_line(cfg), top_wait_line(cfg, led, idx)
 
 
 @dataclass(frozen=True)
@@ -174,11 +174,12 @@ def _source_bucket(led, source_id: str, s, idx: PendingIndex) -> str:
     return "actionable"
 
 
-def source_backlog(led, cfg: Config) -> SourceBacklog:
+def source_backlog(led, cfg: Config, idx: PendingIndex | None = None) -> SourceBacklog:
     """Canonical projection: asset inventory vs actionable backlog. Every consumer (Studio, CLI, doctor)
     must derive source counts from here — never re-count raw ledger states."""
     from fanops.artifacts import artifact_summary
-    idx = PendingIndex.build(cfg, led)   # ONE scan of the request dir — makes this render O(files), not O(sources)
+    if idx is None:
+        idx = PendingIndex.build(cfg, led)   # ONE scan of the request dir — makes this render O(files), not O(sources)
     rows: list[SourceBacklogRow] = []
     counts = {"actionable": 0, "blocked_on_gates": 0, "recoverable": 0, "inventory": 0, "held": 0}
     for sid, s in sorted(led.sources.items()):
