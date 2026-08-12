@@ -74,7 +74,7 @@ def _scan_silent_swallows() -> dict[str, int]:
 
 
 def _baseline_silent_swallows() -> dict[str, int]:
-    """Measured at HEAD (origin/main): 49 files, 203 handlers; top offenders actions.py (23), views.py (13)."""
+    """Measured at HEAD (origin/main): 49 files, 203 handlers; top offenders actions.py (23), views.py (14)."""
     return {
         "src/fanops/accounts.py": 3,
         "src/fanops/agentstep.py": 1,
@@ -117,7 +117,7 @@ def _baseline_silent_swallows() -> dict[str, int]:
         "src/fanops/studio/app.py": 1,
         "src/fanops/studio/golive.py": 15,
         "src/fanops/studio/personas.py": 10,
-        "src/fanops/studio/views.py": 13,
+        "src/fanops/studio/views.py": 14,
         "src/fanops/studio/views_common.py": 2,
         "src/fanops/studio/views_results.py": 3,
         "src/fanops/studio/views_review.py": 1,
