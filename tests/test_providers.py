@@ -4,6 +4,7 @@ milestone is BYTE-IDENTICAL — the adapters return the exact same poster classe
 old hand-written dispatch did; only the wiring location moves. Adding a provider later (YouTube-direct) is a
 new registry entry, not edits across the publish path."""
 from pathlib import Path
+import pytest
 from fanops.config import Config
 from fanops.post import get_poster, get_media_uploader
 from fanops.post.providers import PROVIDERS, get_provider, Provider
@@ -52,14 +53,32 @@ def test_get_media_uploader_delegates(tmp_path):
     assert callable(get_media_uploader(cfg, "dryrun"))             # the file:// lambda
 
 
-def test_get_media_uploader_unknown_falls_back_to_dryrun(tmp_path):
-    # Blotato removed: the else-branch now falls back to the dryrun uploader (a fail-safe file:// URL,
-    # not a crash). No live account routes to an unknown backend.
+def test_get_media_uploader_unknown_falls_back_to_dryrun(tmp_path, monkeypatch):
+    # Not-live: unknown backend keeps the dryrun file:// fail-safe (no crash on local/preview paths).
+    monkeypatch.delenv("FANOPS_LIVE", raising=False); monkeypatch.delenv("FANOPS_POSTER", raising=False)
     up = get_media_uploader(Config(root=tmp_path), "nonsense")
     assert up(Config(root=tmp_path), Path("/x/y.mp4")).startswith("file://")
 
 
-def test_dryrun_uploader_is_offline(tmp_path):
+def test_get_media_uploader_unknown_raises_when_live(tmp_path, monkeypatch):
+    # LIVE + unknown: RAISE (mirror get_poster's live+dryrun refusal) — never mint a silent file:// URL.
+    monkeypatch.setenv("FANOPS_LIVE", "1")
+    with pytest.raises(RuntimeError, match=r"get_media_uploader: refused.*LIVE"):
+        get_media_uploader(Config(root=tmp_path), "nonsense")
+
+
+def test_get_media_uploader_known_backends_ok_when_live(tmp_path, monkeypatch):
+    # LIVE + known hosted backend still resolves (refusal is unknown-only, not every live call).
+    monkeypatch.setenv("FANOPS_LIVE", "1")
+    from fanops.post.postiz import postiz_upload_media
+    from fanops.post.zernio import zernio_upload_media
+    cfg = Config(root=tmp_path)
+    assert get_media_uploader(cfg, "postiz") is postiz_upload_media
+    assert get_media_uploader(cfg, "zernio") is zernio_upload_media
+
+
+def test_dryrun_uploader_is_offline(tmp_path, monkeypatch):
+    monkeypatch.delenv("FANOPS_LIVE", raising=False); monkeypatch.delenv("FANOPS_POSTER", raising=False)
     up = get_media_uploader(Config(root=tmp_path), "dryrun")
     assert up(Config(root=tmp_path), Path("/x/y.mp4")).startswith("file://")   # no network
 
