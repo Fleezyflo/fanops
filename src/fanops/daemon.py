@@ -99,10 +99,9 @@ def _daemon_path() -> str:
 
 def resolve_responder(cfg: Config) -> str:
     """The responder a hands-off `fanops run` fire WILL use — `Config.responder_mode` is the SINGLE
-    source of truth (.env `FANOPS_RESPONDER`, else 'llm' when `claude` is on PATH, else 'manual'). The
+    source of truth (.env `FANOPS_RESPONDER`; empty/unset → 'llm'; typo → warn+'manual'). The
     daemon plist is responder-AGNOSTIC: SCHEDULING (the launchd agent) and the AI SWITCH (.env) are
-    decoupled, so installing the driver never silently turns the LLM on — this just reports what the run
-    resolves at fire time, which the CLI/Studio then DISCLOSE."""
+    decoupled — this just reports what the run resolves at fire time, which the CLI/Studio then DISCLOSE."""
     return cfg.responder_mode
 
 def format_interval(secs: int) -> str:

@@ -402,8 +402,10 @@ class Settings(BaseSettings):
         return v  # type: ignore[return-value]
 
     def responder_mode(self) -> str:
+        # Empty/unset → llm (locked; matches Config.responder_mode + docs/CONFIG.md).
+        # Typo/unknown → warn + manual (safe refuse; empty alone is llm).
         v = (self.FANOPS_RESPONDER or "").strip().lower()
-        if not v: return "manual"
+        if not v: return "llm"
         if v not in _VALID_RESPONDERS:
             _log.warning("ignoring unknown FANOPS_RESPONDER=%r (using manual); valid: llm, manual", v)
             return "manual"

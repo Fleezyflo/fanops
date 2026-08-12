@@ -41,8 +41,11 @@ def test_render_plist_bakes_no_responder(tmp_path):
 
 
 def test_resolve_responder_reports_fire_time_mode(tmp_path, monkeypatch):
-    # resolve_responder == Config.responder_mode: what a hands-off fire WILL run as. Explicit env wins.
+    # resolve_responder == Config.responder_mode: what a hands-off fire WILL run as. Explicit env wins;
+    # empty/unset resolves to llm (foundation honesty).
     cfg = Config(root=tmp_path)
+    monkeypatch.delenv("FANOPS_RESPONDER", raising=False)
+    assert daemon.resolve_responder(cfg) == "llm"
     monkeypatch.setenv("FANOPS_RESPONDER", "manual")
     assert daemon.resolve_responder(cfg) == "manual"
     monkeypatch.setenv("FANOPS_RESPONDER", "llm")
