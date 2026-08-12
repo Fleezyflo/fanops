@@ -9,6 +9,20 @@ def test_manual_responder_is_noop(tmp_path, monkeypatch):
     assert isinstance(r, ManualResponder)
     assert r.answer_pending(cfg) == 0                # writes nothing; a human does
 
+
+def test_manual_responder_logs_when_pending(tmp_path, monkeypatch):
+    # Wave 7: ManualResponder still writes nothing, but pending>0 leaves a surfaced breadcrumb.
+    from fanops.agentstep import write_request
+    monkeypatch.setenv("FANOPS_RESPONDER", "manual")
+    cfg = Config(root=tmp_path)
+    write_request(cfg, kind="moments", key="src_1",
+                  payload={"source_id": "src_1", "duration": 10.0, "transcript": [], "signal_peaks": []})
+    events = []
+    monkeypatch.setattr("fanops.responder.get_logger", lambda cfg: (lambda *a, **k: events.append((a, k))))
+    r = get_responder(cfg)
+    assert r.answer_pending(cfg) == 0
+    assert any(ev[0][2] == "pending_unanswered" and ev[1].get("n") == 1 for ev in events)
+
 def test_responder_screens_text_once(tmp_path, monkeypatch):
     # MOL-166: model-authored text is screened ONCE at the responder boundary — em-dashes never land on disk.
     monkeypatch.setenv("FANOPS_RESPONDER", "llm")
@@ -715,6 +729,7 @@ def test_toolchain_error_ceiling_terminates_moments_source(tmp_path, monkeypatch
 def test_toolchain_error_ceiling_moment_hooks_writes_clean_response(tmp_path, monkeypatch):
     # Test 1 (part a): after _GATE_DETERMINISTIC_MAX toolchain failures on moment_hooks, gate has clean
     # response (hook=None) — NOT SourceState.error. Enrichment gates fail open, not terminal.
+    # Wave 7: empty-success stamps Source.degraded_reason (fail-open clean), not silent health.
     from fanops.responder import LlmResponder, _GATE_DETERMINISTIC_MAX
     from fanops.llm import LlmToolchainError
     from fanops.agentstep import response_path
@@ -727,9 +742,10 @@ def test_toolchain_error_ceiling_moment_hooks_writes_clean_response(tmp_path, mo
     r = LlmResponder(cfg, model=toolchain_fail)
     for _ in range(_GATE_DETERMINISTIC_MAX):
         assert r.answer_pending(cfg) == 0
-    # Source must NOT be error
-    assert Ledger.load(cfg).sources["src_1"].state is not SourceState.error
-    # Gate has a clean fail-open response
+    src = Ledger.load(cfg).sources["src_1"]
+    assert src.state is not SourceState.error
+    assert src.degraded_reason and "fail-open clean" in src.degraded_reason
+    assert "moment_hooks" in src.degraded_reason
     rp = response_path(cfg, "moment_hooks", key)
     assert rp.exists()
     data = json.loads(rp.read_text())
@@ -756,13 +772,16 @@ def test_toolchain_error_moment_hooks_ceiling_ingests_decided(tmp_path, monkeypa
     assert m.state is MomentState.decided and m.hook is None
     assert led.sources["src_1"].state is SourceState.moments_decided
     assert led.sources["src_1"].state is not SourceState.error
+    assert led.sources["src_1"].degraded_reason and "fail-open clean" in led.sources["src_1"].degraded_reason
 
 
 def test_toolchain_error_ceiling_captions_writes_empty_response(tmp_path, monkeypatch):
-    # Test 2 (part a): captions gate ceiling with toolchain error writes clean items=[] response
+    # Test 2 (part a): captions gate ceiling with toolchain error writes clean items=[] response.
+    # Wave 7: empty-success stamps Source.degraded_reason (fail-open clean) on the owning source.
     from fanops.responder import LlmResponder, _GATE_DETERMINISTIC_MAX
     from fanops.llm import LlmToolchainError
     from fanops.agentstep import response_path
+    from fanops.ledger import Ledger
     monkeypatch.setenv("FANOPS_RESPONDER", "llm")
     cfg = Config(root=tmp_path)
     _seed_captions_gate_for_responder(cfg)
@@ -770,6 +789,9 @@ def test_toolchain_error_ceiling_captions_writes_empty_response(tmp_path, monkey
     r = LlmResponder(cfg, model=toolchain_fail)
     for _ in range(_GATE_DETERMINISTIC_MAX):
         assert r.answer_pending(cfg) == 0
+    src = Ledger.load(cfg).sources["src_1"]
+    assert src.degraded_reason and "fail-open clean" in src.degraded_reason
+    assert "captions" in src.degraded_reason
     rp = response_path(cfg, "captions", "clip_1")
     assert rp.exists()
     data = json.loads(rp.read_text())
@@ -910,3 +932,40 @@ def test_toolchain_error_captions_ceiling_ingests_captioned(tmp_path, monkeypatc
     led = Ledger.load(cfg)
     led = ingest_captions(led, cfg, "clip_1")
     assert led.clips["clip_1"].state is ClipState.captioned
+    assert led.sources["src_1"].degraded_reason and "fail-open clean" in led.sources["src_1"].degraded_reason
+
+
+def test_terminate_gate_source_moment_hooks_stamps_degraded(tmp_path, monkeypatch):
+    # Wave 7: _terminate_gate_source itself owns the fail-open degraded_reason stamp (not only the caller).
+    from fanops.responder import LlmResponder
+    from fanops.agentstep import response_path, latest_request_id
+    from fanops.ledger import Ledger
+    from fanops.models import SourceState
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    cfg = Config(root=tmp_path)
+    _led, _mid, key = _seed_picked_moment_for_responder(cfg)
+    rid = latest_request_id(cfg, "moment_hooks", key)
+    LlmResponder(cfg)._terminate_gate_source(cfg, "moment_hooks", key, "unit test ceiling")
+    src = Ledger.load(cfg).sources["src_1"]
+    assert src.state is not SourceState.error
+    assert src.degraded_reason and "fail-open clean" in src.degraded_reason
+    assert "moment_hooks" in src.degraded_reason
+    data = json.loads(response_path(cfg, "moment_hooks", key).read_text())
+    assert data.get("hook") is None and data.get("request_id") == rid
+
+
+def test_terminate_gate_source_captions_stamps_degraded(tmp_path, monkeypatch):
+    # Wave 7: captions clean fail-open stamps owning source degraded_reason + items=[].
+    from fanops.responder import LlmResponder
+    from fanops.agentstep import response_path, latest_request_id
+    from fanops.ledger import Ledger
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    cfg = Config(root=tmp_path)
+    _seed_captions_gate_for_responder(cfg)
+    rid = latest_request_id(cfg, "captions", "clip_1")
+    LlmResponder(cfg)._terminate_gate_source(cfg, "captions", "clip_1", "unit test ceiling")
+    src = Ledger.load(cfg).sources["src_1"]
+    assert src.degraded_reason and "fail-open clean" in src.degraded_reason
+    assert "captions" in src.degraded_reason
+    data = json.loads(response_path(cfg, "captions", "clip_1").read_text())
+    assert data.get("items") == [] and data.get("request_id") == rid

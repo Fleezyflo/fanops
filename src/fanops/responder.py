@@ -56,7 +56,13 @@ class ManualResponder:
     def __init__(self, cfg: Config): self.cfg = cfg
     def answer_pending(self, cfg: Config, *, kinds: tuple[str, ...] | list[str] | None = None,
                        parallel: bool | None = None) -> int:
-        return 0                                    # a human (or external cron) writes responses
+        # Wave 7: still a no-op write path (human owns *.response.json), but pending>0 is no longer silent.
+        allow = set(kinds) if kinds is not None else None
+        waiting = sum(len(pending(cfg, kind=kind)) for kind in _SCHEMA
+                      if allow is None or kind in allow)
+        if waiting:
+            get_logger(cfg)("responder", "manual", "pending_unanswered", n=waiting)
+        return 0
 
 def _default_claude_model(kind: str, payload: dict, *, cfg: Config | None = None, log=None) -> dict:
     """The production model: hand claude -p the committed prompt + the gate's JSON schema, PINNED to
@@ -155,12 +161,16 @@ class LlmResponder:
 
     def _terminate_gate_source(self, cfg: Config, kind: str, key: str, reason: str) -> None:
         """MOL-235 ceiling: moments gate -> SourceState.error (fail-closed). Enrichment gates
-        (moment_hooks, captions) synthesize a clean fail-open response so ingest can proceed."""
+        (moment_hooks, captions) synthesize a clean fail-open response so ingest can proceed.
+        Wave 7 empty-success honesty: every clean fail-open stamps Source.degraded_reason via
+        _mark_gate_degraded — empty hook/items must not look like a healthy LLM answer."""
         log = get_logger(cfg)
         if kind == "moment_hooks":
             rid = latest_request_id(cfg, kind, key)
             if rid is None:
                 return
+            self._mark_gate_degraded(cfg, kind, key,
+                                    f"agent gate {kind} fail-open clean: {reason}"[:200])
             obj = screen_model_text(MomentHookDecision(hook=None, request_id=rid))
             write_response(cfg, kind, key, obj.model_dump_json(indent=2))
             log("responder", f"{kind}:{key}", "gate_failopen_clean")
@@ -169,6 +179,8 @@ class LlmResponder:
             rid = latest_request_id(cfg, kind, key)
             if rid is None:
                 return
+            self._mark_gate_degraded(cfg, kind, key,
+                                    f"agent gate {kind} fail-open clean: {reason}"[:200])
             obj = screen_model_text(CaptionSet(items=[], request_id=rid))
             write_response(cfg, kind, key, obj.model_dump_json(indent=2))
             log("responder", f"{kind}:{key}", "gate_failopen_clean")
