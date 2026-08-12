@@ -9,6 +9,7 @@ import logging
 import shutil
 from fanops.config import Config
 from fanops.accounts import Accounts
+from fanops.personas import Personas
 from fanops.validation_gate import learning_validated
 
 
@@ -363,6 +364,14 @@ def _assemble_doctor_checks(cfg: Config, *, get=None, postiz_probe=None, zernio_
         problems = [str(e)[:160]]
     checks.append(_check("accounts.json valid (every active channel mapped to an id)", not problems,
                          "; ".join(problems) + " — add accounts + map each channel in the Studio Go-Live tab"))
+    # personas.json valid — same MOL-79 surface as accounts: per-row skips promote via validate(),
+    # corrupt JSON / wrong top-level shape fail the check (never a silent pass).
+    try:
+        persona_problems = Personas.load(cfg).validate()
+    except Exception as e:
+        persona_problems = [str(e)[:160]]
+    checks.append(_check("personas.json valid (malformed rows skipped loud)", not persona_problems,
+                         "; ".join(persona_problems) + " — fix the row in personas.json"))
     # ECC fix #14: read cutover state ONCE here and reuse in BOTH the postiz branch and the notes
     # block below (it was read twice per doctor_report — two cutover.json reads on every call).
     lv = learning_validated(cfg)
