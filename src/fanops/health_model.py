@@ -1,9 +1,12 @@
 # src/fanops/health_model.py — MOL-298: ONE typed health owner; doctor/health/learn_doctor are views
 from __future__ import annotations
+import logging
 from dataclasses import dataclass, field
 from typing import NamedTuple
 
 from fanops.config import Config
+
+_log = logging.getLogger("fanops.health")
 
 
 class DepHealth(NamedTuple):
@@ -127,6 +130,7 @@ def _docker_dep() -> DepHealth:
         r = subprocess.run(["docker", "info"], capture_output=True, timeout=_DOCKER_INFO_TIMEOUT)
         return DepHealth("docker", r.returncode == 0, "daemon up" if r.returncode == 0 else "daemon down")
     except Exception as exc:
+        _log.warning("_docker_dep: docker info failed (%s)", exc)
         return DepHealth("docker", False, f"{type(exc).__name__}")
 
 
@@ -195,6 +199,7 @@ def postiz_doctor_check(cfg: Config, *, probe=None) -> dict | None:
         healthy = bool(getattr(h, "healthy", False))
         hint = getattr(h, "hint", "") or ""
     except Exception as e:
+        _log.warning("postiz_doctor_check: probe failed (%s)", type(e).__name__)
         healthy = False
         hint = f"Postiz probe error ({str(e)[:120]}); see docs/POSTIZ_OPS.md."
     if not hint:
@@ -251,7 +256,8 @@ def heartbeat_stale(cfg: Config, *, interval: int | None = None) -> tuple[float 
     iv = interval if interval is not None else (daemon.installed_interval(cfg) or _DAEMON_DEFAULT_INTERVAL_S)
     try:
         age = daemon._heartbeat_age_s(cfg)
-    except Exception:
+    except Exception as exc:
+        _log.warning("heartbeat_stale: heartbeat read failed (%s)", exc)
         age = None
     stale = age is None or age > _DAEMON_STALE_TICKS * iv
     return age, stale, iv
@@ -266,7 +272,8 @@ def build_field_shape(cfg: Config, *, led=None, list_posts=None) -> dict | None:
     led = led or Ledger.load(cfg)
     try:
         return _field_shape_report_core(led, cfg, list_posts=list_posts)
-    except Exception:
+    except Exception as exc:
+        _log.warning("build_field_shape: field-shape report failed (%s)", exc)
         return None
 
 
@@ -290,7 +297,8 @@ def _bounded_live_confirm_check(cfg: Config, *, get=None) -> dict | None:
         ok = bool(res.get("confirmed"))
         return {"label": "recent publish still live on platform (bounded sample)", "ok": ok,
                 "hint": "" if ok else "the most recent published post could not be confirmed live — check platform / creds"}
-    except Exception:
+    except Exception as exc:
+        _log.warning("_bounded_live_confirm_check: live confirm failed (%s)", exc)
         return None
 
 

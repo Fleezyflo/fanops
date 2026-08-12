@@ -215,13 +215,11 @@ def vocab_due_reason(per, data: dict, *, siblings=()) -> str | None:
 
 def expand_vocab_if_due(cfg: Config, *, model=None) -> dict:
     """Tick hook: expand vocab for every posting persona whose own or sibling prompt inputs CHANGED (or
-    that has no usable vocab yet), when FANOPS_RESPONDER=llm. There is NO routine regeneration and no
+    that has no usable vocab yet). There is NO routine regeneration and no
     global marker — the per-persona `input_fp` in `hashtag_vocab.json` is the whole freshness truth
     (MOL-693: the old blind 12h loop re-billed every persona twice a day for zero input change, and its
     single marker stamped even when a persona had failed). Never raises."""
     try:
-        if cfg.responder_mode != "llm":
-            return {"refreshed": False, "reason": "responder_manual"}
         from fanops.fanops_hashtags import _posting_personas
         personas = _posting_personas(cfg)
         data = load_vocab(cfg)

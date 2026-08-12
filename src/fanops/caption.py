@@ -99,7 +99,8 @@ def caption_request_stale(cfg: Config, clip_id: str, want_surfaces: list[tuple[s
         return True
     try:
         got, _, surface_platform, *_ = _request_surfaces(cfg, clip_id)
-    except Exception:
+    except Exception as exc:
+        logger.warning("caption staleness: request surfaces unreadable for %s (%s); regenerating", clip_id, exc)
         return True
     if got != want:
         return True
@@ -180,7 +181,8 @@ def _per_account_hashtag_stores(cfg: Config, accounts) -> dict[str, list[str]]:
         from fanops.persona_research import _aligned_pool
         reg = Personas.load(cfg)
         meas = load_measurements(cfg)
-    except Exception:
+    except Exception as exc:
+        logger.warning("caption corpus: persona/measurement load failed (%s); no per-account corpus", exc)
         return {}
     out: dict[str, list[str]] = {}
     for a in accounts.accounts:

@@ -1,18 +1,15 @@
-"""`fanops autopilot` — the one-command "make me autonomous". Collapses the tribal knowledge of
-"set FANOPS_RESPONDER=llm, then supervise the run" into a single, gated verb so the operator never
-hand-answers a caption/moment gate again:
+"""`fanops autopilot` — the one-command "make me autonomous". Gates are always answered by the LLM (the
+manual responder was retired), so autopilot no longer flips an AI switch; it wires up unattended
+operation and reports readiness:
 
-  1. Enable the `llm` responder DURABLY by writing FANOPS_RESPONDER=llm to .env (idempotent, every
-     OTHER key/secret preserved) — so every run (manual or daemon) answers its own gates via the
-     operator's `claude` login.
-  2. Install the supervising launchd daemon (the unattended loop) unless --no-daemon; off-darwin it
+  1. Install the supervising launchd daemon (the unattended loop) unless --no-daemon; off-darwin it
      is skipped with a note, never a crash (the rest still applies).
-  3. Return a readiness report (reused from `doctor`) so the operator sees what — if anything — is
-     left for go-live.
+  2. Return a readiness report (reused from `doctor`) so the operator sees what — if anything — is
+     left for go-live (including that the LLM CLI is present on PATH).
 
 dryrun by default (produces fully-scheduled posts, publishes NOTHING). Going live is a
 SEPARATE, deliberate step via Postiz (self-hosted) or the manual publish-queue — never assumed here.
-This module enables autonomy of the per-clip WORK; it never publishes and never edits the ledger."""
+This module wires autonomy of the per-clip WORK; it never publishes and never edits the ledger."""
 from __future__ import annotations
 import os
 from pathlib import Path
@@ -73,12 +70,10 @@ def unset_env_var(env_path: Path, key: str) -> None:
 
 
 def autopilot(cfg: Config, *, interval: int, install_daemon: bool = True) -> dict:
-    """Make FanOps autonomous: persist the llm responder, optionally install the daemon, and return a
-    readiness dict {responder, backend, checks, notes, daemon, daemon_note}. Off-darwin (or with
-    install_daemon=False) the daemon is skipped — llm is still enabled. Never publishes (dryrun-safe)."""
-    set_env_var(cfg.root / ".env", "FANOPS_RESPONDER", "llm")
-    os.environ["FANOPS_RESPONDER"] = "llm"               # make THIS process autonomous too (and the report below)
-
+    """Make FanOps autonomous: optionally install the supervising daemon and return a readiness dict
+    {responder, backend, checks, notes, daemon, daemon_note}. Gates are always answered by the LLM, so
+    there is no AI switch to flip — `responder` is REPORTED (cfg.responder_mode, validate-or-refuse),
+    never written. Off-darwin (or with install_daemon=False) the daemon is skipped. Never publishes."""
     from fanops.doctor import doctor_report
     report = doctor_report(cfg)
 
@@ -87,14 +82,14 @@ def autopilot(cfg: Config, *, interval: int, install_daemon: bool = True) -> dic
     if install_daemon:
         from fanops import daemon
         try:
-            daemon_res = daemon.install(cfg, interval=interval, responder="llm")
-        except RuntimeError as e:                        # non-darwin: enable llm but skip the launchd agent
+            daemon_res = daemon.install(cfg, interval=interval)
+        except RuntimeError as e:                        # non-darwin: skip the launchd agent, the rest still applies
             daemon_note = str(e)
     else:
         daemon_note = "daemon install skipped (--no-daemon)"
 
     return {
-        "responder": "llm",
+        "responder": cfg.responder_mode,                 # always 'llm' (validate-or-refuse); reported, never written
         # UI-LIE-FIX: per-channel truth (M3), not the legacy global. The autopilot summary is shown
         # to the operator; lying about the publish mode here was the same bug as the Studio status.
         "backend": cfg.effective_publish_mode(),

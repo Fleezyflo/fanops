@@ -7,6 +7,7 @@
 from __future__ import annotations
 from fanops.ledger import Ledger
 from fanops.models import validate_account_handle
+from fanops.log import get_logger
 from fanops.studio.actions_common import ActionResult
 
 
@@ -25,6 +26,7 @@ def cast_add(cfg, source_id: str, account: str, moment_id: str) -> ActionResult:
                 return ActionResult.failure(f"unknown moment {moment_id} for source {source_id}")
             led.moments[moment_id].affinities = sorted(set(m.affinities or []) | {account})
     except Exception as exc:
+        get_logger(cfg)("cast", moment_id, "cast_add_failed", account=account, err=str(exc)[:120])
         return ActionResult.failure(f"cast add failed: {str(exc)[:160]}")
     return ActionResult.success({"source": source_id, "account": account, "moment": moment_id, "added": True})
 
@@ -43,5 +45,6 @@ def cast_remove(cfg, source_id: str, account: str, moment_id: str) -> ActionResu
                 return ActionResult.success({"source": source_id, "account": account, "moment": moment_id, "noop": True})
             led.moments[moment_id].affinities = sorted(set(m.affinities or []) - {account})
     except Exception as exc:
+        get_logger(cfg)("cast", moment_id, "cast_remove_failed", account=account, err=str(exc)[:120])
         return ActionResult.failure(f"cast remove failed: {str(exc)[:160]}")
     return ActionResult.success({"source": source_id, "account": account, "moment": moment_id, "removed": True})

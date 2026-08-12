@@ -64,13 +64,19 @@ _SUBMITTING_HEAL_AFTER = timedelta(minutes=15)
 
 def _parked_age(post, now: datetime):
     """now - scheduled_time for a parked post; None if there's no/invalid schedule (-> no breadcrumb, never a
-    false alarm). The post is submitted when scheduled_time <= now, so this is a sound 'stuck since' proxy."""
+    false alarm). The post is submitted when scheduled_time <= now, so this is a sound 'stuck since' proxy.
+    Narrow catch: parse_iso/fromisoformat raises ValueError; bad types raise TypeError/AttributeError."""
     if not post.scheduled_time:
         return None
     try:
         return now - parse_iso(post.scheduled_time)
-    except Exception:
+    except (ValueError, TypeError, AttributeError):
         return None
+
+
+def _capture_poll_exc(results: dict, sid: str, exc: BaseException) -> None:
+    """Stash a poll failure for in-lock re-raise; reconcile_posts' per-post except logs it (no double-log here)."""
+    results[sid] = exc
 
 
 def _apply_age_terminal(post, now) -> dict | None:
@@ -156,7 +162,8 @@ def _tiktok_url_confirmed(cfg: Config, post, url: Optional[str], sub: Optional[s
     try:
         from fanops.post.metrics import verify_tiktok_permalink   # live oEmbed author == Zernio-reported username
         return bool(verify_tiktok_permalink(cfg, ok, reported_username, get=get))
-    except Exception:
+    except Exception as exc:
+        get_logger(cfg)("reconcile", post.id, "tiktok_verify_error", err=str(exc)[:120])
         return False                                         # an unimportable/erroring verifier is NOT proof it is live
 
 
@@ -200,7 +207,8 @@ def _ig_rest_verdict(cfg: Config, post, media_id, credentialed_handles, confirm,
     cand = post.model_copy(update={"media_id": probe_id})    # the resolve INPUT is the just-captured releaseId
     try:
         res = confirm(cfg, cand, get=_probed_get)
-    except Exception:
+    except Exception as exc:
+        get_logger(cfg)("reconcile", post.id, "ig_confirm_seam_error", err=str(exc)[:120])
         return _GATE_FAILOPEN                                # an erroring seam is NOT a verdict -> retry next tick
     if res.get("confirmed") and _owner_matches(res.get("owner"), handle):
         return _GATE_REST                                    # platform-confirmed AND owned by the intended handle
@@ -568,7 +576,7 @@ def reconcile_due(cfg: Config) -> dict[str, int]:
         except AuthError:
             raise                                        # bad key: every read fails -> halt, don't grind
         except Exception as exc:
-            log("reconcile", "-", "mirror_fetch_error", err=str(exc)[:200], posts=len(mirrored))
+            get_logger(cfg)("reconcile", "-", "mirror_fetch_error", err=str(exc)[:200], posts=len(mirrored))
         if window is not None:
             for p in mirrored:
                 info = _mirror_info(window.get(p.submission_id))
@@ -591,7 +599,7 @@ def reconcile_due(cfg: Config) -> dict[str, int]:
             except AuthError:
                 raise                                    # bad key (Zernio): every poll fails -> halt
             except Exception as exc:
-                results[p.submission_id] = exc           # captured; re-raised in the apply -> logged, no write
+                _capture_poll_exc(results, p.submission_id, exc)  # re-raised in apply -> logged, no write
     def cached(sid: str) -> dict:
         r = results.get(sid, {})
         if isinstance(r, Exception): raise r             # reconcile_posts' per-post except logs it
@@ -661,7 +669,7 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
                     led.posts[post.id] = post.model_copy(update=term["update"])
                     log("reconcile", post.id, term["log"])
                     continue
-                log("reconcile", post.id, "poll-error", err=str(exc)[:200])   # the detail rides the log stream
+                get_logger(cfg)("reconcile", post.id, "poll-error", err=str(exc)[:200])   # the detail rides the log stream
                 continue
         mirror_upd = _mirror_update(post, info)           # {} unless the observed row token actually moved
         if mirror_upd:
@@ -717,7 +725,7 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
                             captured_url = _u or captured_url
                             reported_username = reported_username or _un
                         except Exception as exc:
-                            log("reconcile", post.id, "tiktok_analytics_fallback_error", err=str(exc)[:120])
+                            get_logger(cfg)("reconcile", post.id, "tiktok_analytics_fallback_error", err=str(exc)[:120])
                 if not (captured_url or "").strip():
                     led.set_post_state(post.id, PostState.needs_reconcile, error_reason=(
                         "publish_missing_url_at_reconcile: backend reports published but no valid "
@@ -766,7 +774,7 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
                 from fanops.post.run import _archive_published   # lazy: reconcile must not import the publish stage eagerly
                 _archive_published(cfg, led.posts[post.id])
             except Exception as exc:
-                log("reconcile", post.id, "archive_error", err=str(exc)[:120])   # fail-open: never block a recovered publish
+                get_logger(cfg)("reconcile", post.id, "archive_error", err=str(exc)[:120])   # fail-open: never block a recovered publish
             log("reconcile", post.id, "published")
         elif status == "failed":
             # Report 11 §5 (I-7): a `failed` poll of THIS row's OWN submission_id does NOT disprove a

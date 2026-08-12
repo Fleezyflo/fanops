@@ -289,15 +289,18 @@ def test_preflight_blocks_llm_when_claude_absent_via_advance(tmp_path, monkeypat
     assert "claude" in err and "Traceback" not in err
 
 
-def test_preflight_passes_explicit_manual_dryrun(tmp_path, monkeypatch):
-    # Explicit manual + dryrun poster (no creds) must pass cleanly. Empty responder is llm now.
+def test_preflight_refuses_manual_responder(tmp_path, monkeypatch, capsys):
+    # The no-op manual responder was retired: FANOPS_RESPONDER=manual is a HARD REFUSE at preflight
+    # (exit 2 + one clean stderr line), NEVER a silent no-LLM run. There is no manual mode to fall back to.
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("FANOPS_RESPONDER", "manual")
     monkeypatch.delenv("FANOPS_POSTER", raising=False)
     monkeypatch.delenv("BLOTATO_API_KEY", raising=False)
     from fanops.config import Config
     from fanops.cli import _check_preflight
-    assert _check_preflight(Config(root=tmp_path)) == 0
+    assert _check_preflight(Config(root=tmp_path)) == 2
+    err = capsys.readouterr().err
+    assert "FANOPS_RESPONDER" in err and "Traceback" not in err
 
 
 def test_preflight_blocks_default_llm_when_claude_absent(tmp_path, monkeypatch, mocker, capsys):

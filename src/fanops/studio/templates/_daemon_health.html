@@ -3,8 +3,7 @@
 {% if daemon %}
 {% if daemon.verdict == "alive" %}
 <p class="meta daemon-ok">Hands-off processing running{% if daemon.heartbeat_age_s is not none %} · last tick {{ daemon.heartbeat_age_s|int }}s ago{% endif %}{% if daemon.run_line %} · {{ daemon.run_line }}{% endif %}
-  {%- if daemon.responder == 'llm' %} · <span class="ok">AI on</span>{% if daemon.pending_gates is not none %} · {{ daemon.pending_gates }} gate{{ '' if daemon.pending_gates == 1 else 's' }} pending{% if daemon.pending_gates == 0 %} (idle — no <code>claude</code>){% else %} (<code>claude</code> runs only to answer these){% endif %}{% endif %}
-  {%- else %} · AI off (no <code>claude</code>){% endif %} — <a href="{{ url_for('run_panel') }}">Make tab</a></p>
+  {%- if daemon.pending_gates is not none %} · {{ daemon.pending_gates }} gate{{ '' if daemon.pending_gates == 1 else 's' }} pending{% if daemon.pending_gates == 0 %} (idle — no <code>claude</code>){% else %} (<code>claude</code> runs only to answer these){% endif %}{% endif %} — <a href="{{ url_for('run_panel') }}">Make tab</a></p>
 {% elif daemon.installed and not daemon.loaded %}
 {# READINESS ALARM — plist on disk but launchctl unloaded (the 24h-silent-death case). Loud, not opt-in. #}
 <div class="banner warn" data-daemon-warn="{{ daemon.verdict }}" role="alert">
@@ -13,7 +12,7 @@
 </div>
 {% elif not daemon.loaded %}
 {# OFF — optional, opt-in. Never alarmist; disclose the recurring-LLM cost when hands-off would run llm. #}
-<p class="meta daemon-off">Hands-off processing is <strong>off</strong> (optional). Turn it on to auto-ingest, advance &amp; reconcile every {{ ((daemon.interval or 600) // 60) }} min — run <code>fanops daemon install</code>.{% if daemon.discloses_llm %} Heads-up: each tick runs the AI responder (invokes <code>claude</code>); add <code>--responder manual</code> for no-LLM scheduling.{% endif %}</p>
+<p class="meta daemon-off">Hands-off processing is <strong>off</strong> (optional). Turn it on to auto-ingest, advance &amp; reconcile every {{ ((daemon.interval or 600) // 60) }} min — run <code>fanops daemon install</code>. Each tick answers pending gates with the LLM (invokes <code>claude</code>).</p>
 {% else %}
 {# Installed but not firing — the ONLY genuine fault. #}
 <div class="banner warn" data-daemon-warn="{{ daemon.verdict }}" role="alert">

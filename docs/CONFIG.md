@@ -44,7 +44,7 @@ Docker+Postiz plane (see the bring-up brief `docs/design/briefs/16-one-step-brin
 ## LLM gates (the AI switch + models)
 | Var | Default | Effect | Set |
 |---|---|---|---|
-| `FANOPS_RESPONDER` | `manual` | THE explicit AI switch (`llm`/`manual`); presence of `claude` never auto-enables | S |
+| `FANOPS_RESPONDER` | `llm` | Gates are answered ONLY by the LLM — leave unset or set `llm`; ANY other value is a hard refuse (`doctor`/preflight fail). The `manual` no-op responder was retired. | .env |
 | `FANOPS_LLM_TRANSPORT` | `claude` | LLM CLI transport (`claude` / `cursor`) | S |
 | `FANOPS_LLM_MODEL` | per-gate | Force ONE model across all gates | .env |
 | `ANTHROPIC_API_KEY` | None | VESTIGIAL — responder uses the `claude` subscription; not required | .env |
@@ -121,7 +121,7 @@ Speech-trust filtering is **invariant always-on** — there is no env switch for
 | `FANOPS_HASHTAG_SCRAPE_TRY_CAP` | 25 | Max hashtag measure attempts **per qualifying scrape user** per Layer A pass (bounded by that user’s UTC day budget ~40 on `.hashtag_scrape_cooldown.json` `accounts[user].used`). Incomplete if the due queue remains after all qualifying users; then `last_complete_pass` does not advance (MOL-900) | .env |
 | `FANOPS_HASHTAG_SCRAPE_COTAG_ENQUEUE` | 40 | Max NEW co-tags enqueued to measure per Layer A scrape pass | .env |
 | `FANOPS_HASHTAG_SCRAPE_PARALLEL` | 1 | Tags per Layer A wave. Layer A is single-client and serialized (`client_lock`) since MOL-698 — the session-clone fan-out that made this concurrent on the wire earned an account lock, and instagrapi is not thread-safe. Raising it groups tags into a wave; it does NOT emit concurrent requests | .env |
-| `FANOPS_HASHTAG_SCRAPE_DELAY` | `1,3` | instagrapi `delay_range` for Layer A: `"lo,hi"` seconds of jitter between private-API calls. `0` disables pacing; anything unparseable/negative/inverted falls back to `1,3` | .env |
+| `FANOPS_HASHTAG_SCRAPE_DELAY` | `1,3` | instagrapi `delay_range` for Layer A: `"lo,hi"` seconds of jitter between private-API calls. `0` disables pacing. The runtime falls back to `1,3` on anything unparseable/negative/inverted (never drops pacing mid-run), but the SAME shared parser makes `fanops doctor`/`Settings.strict_validate` FAIL LOUD on it (`config.parse_scrape_delay`) | .env |
 | `META_GRAPH_TOKEN` | None | Meta Graph token for IG insights / media verification (write-only). Not used by hashtag Layer A refresh (deferred Graph hashtag path) | .env |
 | `META_GRAPH_TOKEN__<SLUG>` | falls back to global | Per-handle Graph token (dynamic key, write-only) | S |
 | `META_IG_USER_ID` | None | IG Business account id (insights / deferred Graph hashtag helpers; set into accounts.json) | .env |
@@ -139,10 +139,11 @@ Speech-trust filtering is **invariant always-on** — there is no env switch for
 | `FANOPS_UPLOAD_MAX_MB` | 2048 | Studio upload body ceiling per request — legacy single-shot POST and each chunked PUT (clamped ≥1) | .env |
 | `FANOPS_SOURCE_SHARD_MIN` | 45 | Native inbox videos longer than this (minutes) split once at catalogue into stream-copy parts; 0 = off (clamped ≥0) | .env |
 | `FANOPS_SHOW_EXTRAS` | off | Show Footage + Stitches in the Studio Library rail group (U13); default OFF hides the power-user extras | .env |
+| `FANOPS_AUTO_ADOPT` | on | Daemon code-drift self-heal: the keeper kickstarts the pump when the SHA it reports in its heartbeat differs from the SHA on disk (`daemon.ensure`). A registered `BoolEnv` — off-words disable, a typo keeps the default ON (was a raw `!= "0"` read where `false`/`off` stayed ON) | .env |
 
-Set **`FANOPS_AUTO_ADOPT=0`** to disable the daemon's code-drift self-heal (default on): the keeper kickstarts
-the pump when the SHA it reports in its heartbeat differs from the SHA on disk (`daemon.ensure`). Read via a raw
-`os.getenv` (not a `Settings` field — like `FANOPS_POSTIZ_ONDEMAND`), so it lives here in prose, not the table.
+`FANOPS_POSTIZ_ONDEMAND` (above) is the one remaining path override read directly (not a `Settings` field); when it
+is set but points at a missing script, `fanops doctor` adds an informational note (the on-demand plane is a
+`fanops up` bring-up concern, not a publish gate).
 
 **`FANOPS_STUDIO_GENERATION`** is **written by the daemon, never by an operator** — do not set it in `.env`.
 `daemon.install_studio` stamps a fresh token into the Studio LaunchAgent plist's `EnvironmentVariables`; Studio

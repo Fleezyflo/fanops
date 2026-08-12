@@ -3,6 +3,7 @@ provenance chips + per-surface differentiation), the moment×account matrix, the
 bucketing/counting helpers the Review surface renders. Pure (no HTTP/Flask). Depends on views_common for the
 shared time/pagination primitives; never on a sibling surface module (schedule/posted/cockpit) — acyclic."""
 from __future__ import annotations
+import logging
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -17,6 +18,8 @@ from fanops.bands import band_for
 from fanops.timeutil import parse_iso
 from fanops.studio.views_common import PREPARABLE_STATES, RECENT_WINDOW_HOURS, _imminent, suggest_time
 from fanops.studio.actions_common import RENDER_PENDING_REASON
+
+_log = logging.getLogger("fanops.studio.views_review")
 
 
 def _handle_display_map(acct_by_handle: dict) -> dict[str, str]:
@@ -198,7 +201,8 @@ def provenance_chips(surface) -> list[ProvChip]:
             chips.append(ProvChip("shared-hook", "no per-account hook — fell back to shared", "warn"))
         if getattr(surface, "cast_cause", None):
             chips.append(ProvChip("cast", surface.cast_cause, ""))
-    except Exception:
+    except Exception as exc:
+        _log.warning("provenance_chips: partial chips for surface (%s)", exc)
         return chips
     return chips
 

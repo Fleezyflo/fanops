@@ -5,6 +5,7 @@ resume (FIX F11). Media is ensured ONCE PER CLIP (FIX F44). Failed submit -> Pos
 (retryable), never analyzed (FIX F22). Held/retired clips never reach here (crosspost skips)."""
 from __future__ import annotations
 import json
+import logging
 import os
 import random
 import re
@@ -45,8 +46,8 @@ def _archive_published(cfg: Config, post: Post) -> None:
         hook = ""
         try:
             hook = _moment_hook(Ledger.load(cfg), post)
-        except Exception:
-            pass
+        except Exception as exc:                          # hook lookup is best-effort enrichment — archive without it
+            get_logger(cfg)("publish", post.id, "archive_hook_lookup_failed", err=str(exc)[:120])
         rec = {"post_id": post.id, "clip_id": post.parent_id, "account": post.account,
                "platform": post.platform.value, "caption": post.caption, "hashtags": list(post.hashtags or []),
                "public_url": post.public_url, "scheduled_time": post.scheduled_time,
@@ -60,8 +61,11 @@ def _archive_published(cfg: Config, post: Post) -> None:
         # the final-path open produced. The swapped-in inode carries 0600 outright, so no tighten-after chmod.
         write_text_atomic(ap, json.dumps(rec, indent=2, ensure_ascii=False), mode=0o600)
     except Exception as exc:
-        try: get_logger(cfg)("publish", post.id, "archive_error", err=str(exc)[:160])
-        except Exception: pass
+        try:
+            get_logger(cfg)("publish", post.id, "archive_error", err=str(exc)[:160])
+        except Exception as log_exc:                      # even the breadcrumb write failed — fall back to stdlib, never re-raise
+            logging.getLogger("fanops.post.run").warning(
+                "_archive_published: breadcrumb write failed for %s (%s)", post.id, log_exc)
 
 _PUBLISH_TRANSIENT_MAX = 3   # MOL-115: bounded retry for pre-send / upload transients; never a hot loop
 _DAEMON_TRANSIENT_MAX = 3    # MOL-125: daemon re-queue cycles for failed-but-transient (no submission_id)
@@ -473,7 +477,8 @@ def _requeue_transient_failed_for_daemon(cfg: Config) -> int:
                 lg.set_post_state(cur.id, PostState.queued, error_kind=None, error_reason=None,
                                   daemon_transient_retry=n)
                 requeued += 1
-    except Exception:
+    except Exception as exc:                             # a re-queue txn hiccup must not sink the publish pass (fail-open)
+        get_logger(cfg)("publish", "-", "requeue_transient_failed", err=str(exc)[:120], requeued=requeued)
         return requeued
     return requeued
 
@@ -530,7 +535,7 @@ def publish_due(cfg: Config, *, now: str | None = None, account: str | None = No
             try:                                          # processed, so the would-send preview sidecar is written HERE
                 write_preview(cfg, post)                  # (DryRunPoster.publish is never reached post-M1). Fail-open:
             except Exception as exc:                      # a preview-write error must still leave the post cleanly queued.
-                log("publish", post.id, "preview_write_failed", err=str(exc)[:120])
+                get_logger(cfg)("publish", post.id, "preview_write_failed", err=str(exc)[:120])
             log("publish", post.id, "dryrun_not_distributed",   # halts here at the processing<->distribution seam,
                 account=post.account, platform=post.platform.value)   # staying `queued` — never claimed, never a
             continue                                   # phantom-published row. A live-flip re-derives this each pass.

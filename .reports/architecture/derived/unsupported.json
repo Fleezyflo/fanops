@@ -3,23 +3,29 @@
   "confidence": "CERTAIN",
   "constructs": [
     {
+      "evidence": "tests/test_swallow_ratchet.py::_baseline_silent_swallows",
+      "kind": "unparsed_swallow_baseline",
+      "module": "<ratchets>",
+      "why": "the baseline dict literal could not be read; the budget cannot be cross-checked"
+    },
+    {
       "evidence": "os.getenv",
       "kind": "computed_env_key",
-      "line": 1166,
+      "line": 1203,
       "module": "fanops.config",
       "why": "env key is not a string literal; the variable name is not statically known"
     },
     {
       "evidence": "__import__",
       "kind": "dynamic_import",
-      "line": 277,
+      "line": 281,
       "module": "fanops.studio.actions_run",
       "why": "the import target is computed at runtime; no static edge is derivable"
     },
     {
       "evidence": "__import__",
       "kind": "dynamic_import",
-      "line": 297,
+      "line": 301,
       "module": "fanops.studio.actions_run",
       "why": "the import target is computed at runtime; no static edge is derivable"
     }
@@ -48,6 +54,6 @@
     "src/fanops/**/*.py"
   ],
   "totals": {
-    "unsupported_constructs": 3
+    "unsupported_constructs": 4
   }
 }

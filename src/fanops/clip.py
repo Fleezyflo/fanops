@@ -1159,7 +1159,8 @@ def render_account_cut(led: Ledger, cfg: Config, moment_id: str, *, aspect: Fmt,
         # case — it must propagate LOUDLY so the render refuses instead of silently emitting a centered cut.
         # (The caller does NOT fall back to burn_hook_only on this; the pipeline halts on the missing toolchain.)
         raise
-    except Exception:
+    except Exception as exc:
+        get_logger(cfg)("clip", moment_id, "account_cut_failed", err=str(exc)[:120])
         return False, None                                    # fail-open by contract: a clip is never blocked on its variant
     finally:
         # sweep BOTH render artifacts on EVERY exit path (success, fail-open return, or a raise before the

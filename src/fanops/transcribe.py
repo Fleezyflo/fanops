@@ -19,7 +19,7 @@ ENGINE: prefers faster-whisper (the [asr] extra, via the fanops._fwrun runner) a
 (int8 makes even large-v3 practical on CPU). FAILS OPEN to the legacy `whisper` CLI (turbo) when
 faster-whisper is absent (CI / air-gapped), so transcription always runs."""
 from __future__ import annotations
-import contextlib, json, shutil, subprocess, sys, time
+import contextlib, json, logging, shutil, subprocess, sys, time
 from pathlib import Path
 from fanops.config import Config
 from fanops.ledger import Ledger
@@ -28,6 +28,8 @@ from fanops.errors import ToolchainMissingError
 from fanops.models import SourceState
 from fanops.stage_lock import stage_lock
 from fanops.vocals import isolate_vocals
+
+_log = logging.getLogger("fanops.transcribe")
 
 _DEFAULT_DEMUCS_MODEL = "htdemucs"
 
@@ -67,7 +69,10 @@ def _resolve_model(model: str) -> str:
     try:
         import whisper
         known = whisper.available_models()
-    except Exception:
+    except ImportError:
+        return model                                  # whisper extra not installed -> keep requested name (fail-open)
+    except Exception as exc:
+        _log.warning("_pick_model: whisper present but model list failed (%s); keeping %s", exc, model)
         return model
     if model not in known:
         model = "turbo" if "turbo" in known else (known[0] if known else model)
@@ -128,7 +133,7 @@ def _fw_available() -> bool:
     """True iff the faster-whisper engine (the [asr] extra) is importable. When False,
     transcribe_source degrades to the legacy `whisper` CLI — fail-open, today's behavior."""
     try: import faster_whisper; return True       # noqa: F401  (probe only)
-    except Exception: return False
+    except ImportError: return False              # the [asr] extra isn't installed -> legacy whisper CLI path
 
 def fw_cmd(src: str, out_dir: str, model: str, language: str = "") -> list[str]:
     # faster-whisper runner invocation (`python -m fanops._fwrun`). Same --model/--output_dir flags

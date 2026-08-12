@@ -250,7 +250,7 @@ def _stage_structural_hooks(led: Ledger, cfg: Config, log) -> Ledger:
             led = mine_suggestions(led, cfg, log, strategies=strategies)   # ranked, top-N-capped, multi-strategy
             led = render_approved_stitches(led, cfg, strategies=strategies)  # adopts prewarmed mp4s
         except Exception as e:
-            log("structural_hooks", "-", "error", err=str(e)[:120])
+            get_logger(cfg)("structural_hooks", "-", "error", err=str(e)[:120])
     n = approved_disabled_count(led, enabled=strategies)
     if n:
         log("structural_hooks", "-", "warn",
@@ -281,7 +281,7 @@ def _stage_refresh_caption_requests(led: Ledger, cfg: Config, accts: Accounts, l
             led = request_captions(led, cfg, c.id, want, accounts=accts)
             log("captions", c.id, "request_refreshed", surfaces=len(want), missing=len(need - have))
         except Exception as e:
-            log("captions", c.id, "refresh_failed", err=str(e)[:120])
+            get_logger(cfg)("captions", c.id, "refresh_failed", err=str(e)[:120])
     return led
 
 
@@ -309,7 +309,7 @@ def _stage_crosspost(led: Ledger, cfg: Config, accts: Accounts, base_time: str, 
     except AuthError:
         raise
     except Exception as e:
-        log("crosspost", "-", "error", err=str(e)[:120])
+        get_logger(cfg)("crosspost", "-", "error", err=str(e)[:120])
         return led
 
 
@@ -326,7 +326,7 @@ def _reconcile_safe(cfg: Config, log) -> None:
         except AuthError:
             raise                                        # bad key: every poll fails -> halt
         except Exception as e:                           # status API hiccup must not wedge the pass
-            log("reconcile", "-", "error", err=str(e)[:120])
+            get_logger(cfg)("reconcile", "-", "error", err=str(e)[:120])
 
 
 def _publish_safe(cfg: Config, log) -> None:
@@ -340,7 +340,7 @@ def _publish_safe(cfg: Config, log) -> None:
     except AuthError:
         raise                                            # F52: halt the run on a bad key
     except Exception as e:
-        log("publish", "-", "error", err=str(e)[:120])
+        get_logger(cfg)("publish", "-", "error", err=str(e)[:120])
 
 
 # WS2 (audit x-f2/xc-3): the ONE canonical list of agent-gate kinds. Every surface that enumerates gates —
@@ -534,14 +534,14 @@ def advance(cfg: Config, *, base_time: str) -> RunSummary:
         # Task 9 scoreboard: one read-only digest line of hook quality on EVERY pass — independent of any
         # subsystem flag, so the operator's hook-quality visibility stays on by default. Read-only + fail-open.
         try: log_hook_quality(led, cfg)
-        except Exception as e: log("hookscore", "-", "error", err=str(e)[:120])
+        except Exception as e: get_logger(cfg)("hookscore", "-", "error", err=str(e)[:120])
         # M2 structural-hooks router (opt-in, observe-only): classify each decided hook into a hook_strategy
         # reason BEFORE the render loop. Renders nothing; fail-open. Default OFF -> byte-identical to today.
         if cfg.hook_router:
             try:
                 led = route_moments(led, cfg)
             except Exception as e:
-                log("router", "-", "error", err=str(e)[:120])
+                get_logger(cfg)("router", "-", "error", err=str(e)[:120])
         note_stage(cfg, "render", "-")
         led = _stage_render_and_caption(led, cfg, accts, aspects, log)
         note_stage(cfg, "structural_hooks", "-")

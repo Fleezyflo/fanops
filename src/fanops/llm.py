@@ -74,7 +74,7 @@ def _extract_json_object(text: str) -> dict | None:
     for cand in _json_candidates(text):
         try:
             obj = json.loads(cand)
-        except Exception:
+        except (json.JSONDecodeError, ValueError):
             continue
         if isinstance(obj, dict):
             return obj
@@ -185,7 +185,7 @@ def _rate_limit_status(returncode: int, stdout: str) -> int | None:
         return None
     try:
         env = json.loads(stdout)
-    except Exception:
+    except (json.JSONDecodeError, ValueError):
         return None
     status = env.get("api_error_status") if isinstance(env, dict) else None
     return status if status in _RATELIMIT_STATUSES else None

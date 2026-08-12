@@ -28,6 +28,7 @@ def _docker_health() -> DepHealth:
         r = subprocess.run(["docker", "info"], capture_output=True, timeout=_DOCKER_INFO_TIMEOUT)
         return DepHealth("docker", r.returncode == 0, "daemon up" if r.returncode == 0 else "daemon down")
     except Exception as exc:
+        _log.warning("_docker_health: docker info failed (%s)", exc)
         return DepHealth("docker", False, f"{type(exc).__name__}")
 
 
@@ -73,6 +74,7 @@ def _start_postiz(compose_dir: Path, log: list[str]) -> None:
                        capture_output=True, timeout=180)
         log.append(f"bringing up Postiz ({compose_dir})…")
     except Exception as exc:
+        _log.warning("_start_postiz: bring-up failed (%s)", exc)
         log.append(f"  Postiz bring-up failed: {type(exc).__name__}")
 
 

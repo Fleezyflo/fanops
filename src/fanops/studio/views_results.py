@@ -152,7 +152,8 @@ def publish_readiness(led: Ledger, post, cfg: Config | None = None) -> tuple[boo
                         cap_mb = max(1, cap // (1024 * 1024))
                         return (False, f"too large ({mb} MB > {cap_mb} MB cap) — auto-shrink on ship")
         return (ready, reason)
-    except Exception:
+    except Exception as exc:
+        logger.warning("publish readiness check failed (unverified): %s", exc)
         return (False, "unverified")
 
 
@@ -197,7 +198,8 @@ def schedule_rows(led: Ledger, cfg: Config, *, now: datetime,
         editable = (p.state is PostState.queued and lane != "inflight" and not imm)
         try:
             backend = accts.effective_provider(p.account, p.platform) or cfg.poster_backend or "dryrun"
-        except Exception:
+        except Exception as exc:
+            logger.warning("schedule_rows: backend resolve failed for %s (%s); defaulting", p.id, exc)
             backend = cfg.poster_backend or "dryrun"
         row = ScheduleRow(
             post_id=p.id, scheduled_time=p.scheduled_time, account=p.account,
@@ -822,7 +824,8 @@ def account_median_deltas(rows) -> None:
             if len(measured) < 2: continue     # a median vs a single data point is degenerate
             med = statistics.median(r.lift_score for r in measured)
             for r in measured: r.delta_vs_account_median = round(r.lift_score - med, 4)
-    except Exception:
+    except Exception as exc:
+        logger.warning("delta_vs_account_median: stats pass failed (%s)", exc)
         return   # fail-open (mirrors lineage_stats): additive field stays at its None default, never a raise
 
 

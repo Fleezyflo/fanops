@@ -8,7 +8,7 @@ like fanops.compose / vocals: absent cv2, no detection, a timeout, or any error 
 crops centered (today's behavior). Detection is DETERMINISTIC per (source, window) so the result is cached
 to a per-source sidecar, mirroring signals.detect_signals — the in-lock commit re-probes nothing."""
 from __future__ import annotations
-import json, os
+import json, logging, os
 from dataclasses import dataclass
 from pathlib import Path
 from statistics import median
@@ -18,6 +18,7 @@ from fanops.framing_outcomes import (HARD_FAILURE_EVENTS, NEGATIVE_RESULT_EVENTS
                                      ResolverInvariantError, StrategyAttempt, StrategyState, record as _rec)
 from fanops.transcribe import window_has_trusted_speech as _window_has_speech
 
+_log = logging.getLogger("fanops.framing")
 _SIDECAR_V = 6               # track-sidecar schema (v6: + per-observation face WIDTH for the horizontal safe-area; v5: min-shot-duration merge)
 _KF_COUNT = 5                # frames sampled across the window — enough for a stable median, cheap to probe
 _KF_WIDTH = 960              # detection sampling width: Haar/YuNet need real pixels — a 480px face (~37px on a
@@ -31,7 +32,10 @@ def _cv2():
     try:
         import cv2                                            # noqa: PLC0415 — lazy by design (optional extra)
         return cv2
-    except Exception:
+    except ImportError:
+        return None                                          # the [framing] extra simply isn't installed — the expected OFF state
+    except Exception as exc:                                 # cv2 present but broken (bad .so / ABI) -> breadcrumb, still centre-crop
+        _log.warning("_cv2: OpenCV is present but failed to import (%s); centre-cropping", exc)
         return None
 
 def _model_path() -> Path:
@@ -49,7 +53,8 @@ def _detector(cv2):
         if not mp.exists():
             return None                                       # model asset missing -> no detection (center crop)
         return cv2.FaceDetectorYN.create(str(mp), "", (320, 320), _SCORE_THRESH)
-    except Exception:
+    except Exception as exc:
+        _log.warning("_detector: YuNet detector could not be built (%s); no detection", exc)
         return None                                           # old cv2 without FaceDetectorYN, or any build error
 
 class _FramingRuntime:
@@ -154,7 +159,8 @@ def _detect_faces(cv2, det, img_path: str) -> list[tuple[float, float, float, fl
             try: sc = round(min(1.0, max(0.0, float(f[14]))), 4)                  # YuNet score at index 14
             except (IndexError, ValueError, TypeError): sc = 0.0                  # missing score -> 0 (fail-open)
             out.append((round(cx, 4), round(cy, 4), round(fh, 4), round(ey, 4), sc, round(fw, 4)))
-    except Exception:
+    except Exception as exc:
+        _log.warning("_detect_faces: unreadable/undetectable frame %s (%s)", img_path, exc)
         return out                                            # a single bad frame never sinks the window
     return out
 
@@ -237,6 +243,7 @@ def detect_window(cfg, src, *, start: float, end: float, _rt=None, _trace=None) 
                 stats = {"fps": _DETECT_FPS,
                          "frames": [[list(t) for t in _detect_faces(cv2, det, fp)] for fp in frames]}
         except Exception as exc:
+            _log.warning("detect_window: detection pass failed (%s: %s); centering", type(exc).__name__, str(exc)[:120])
             _rec(_trace, _FE.DETECTOR_RUNTIME_FAILED, exc_type=type(exc).__name__)
             stats = None                                      # fail-open by contract
         if stats is None:
@@ -378,7 +385,8 @@ def _mouth_roi(cv2, img, face):
         x0, y0 = max(0, x0), max(0, y0); x1, y1 = min(w, x1), min(h, y1)
         if x1 - x0 < 4 or y1 - y0 < 4: return None
         return cv2.resize(cv2.cvtColor(img[y0:y1, x0:x1], cv2.COLOR_BGR2GRAY), (48, 32))
-    except Exception:
+    except Exception as exc:
+        _log.warning("_mouth_roi: could not crop mouth ROI (%s)", exc)
         return None                                           # one unreadable frame never sinks the bin (fail-open)
 
 def _track_sidecar(cfg, source_id: str) -> Path:
@@ -421,7 +429,8 @@ def _track_observe(cv2, det, frames: list[str]) -> list[dict]:
                         motion = float(np.mean(np.abs(roi.astype(int) - prev_roi[side].astype(int))))
                     if roi is not None: prev_roi[side] = roi
                     per[side] = ((round(cx, 4), round(cy, 4), round(fh, 4), round(ey, 4), round(fw, 4)), motion)
-        except Exception:
+        except Exception as exc:
+            _log.warning("_track_observe: unreadable frame %s (%s)", fp, exc)
             per = {}                                          # a single bad frame never sinks the window (fail-open)
         obs.append(per)
     return obs
@@ -554,9 +563,10 @@ def speaker_track(cfg, src, *, start: float, end: float, src_w: int, src_h: int,
         else:
             result = _compute_track(cv2, det, cfg, src, start, end, _trace=_trace)
     except Exception as exc:
-        # ONE broad handler on purpose: the swallow ratchet counts them per file, and splitting this
-        # into two typed handlers would add one. StageBusyError is a producer lock we could not take —
-        # an actionable, distinct cause, never a generic strategy blowup.
+        # ONE broad handler on purpose: splitting into two typed handlers would add another swallow.
+        # StageBusyError is a producer lock we could not take — an actionable, distinct cause, never a
+        # generic strategy blowup. Log first (the _trace record is a no-op when _trace is None).
+        _log.warning("speaker_track: %s (%s); static focus", type(exc).__name__, str(exc)[:120])
         _rec(_trace, _FE.STAGE_LOCK_BUSY if isinstance(exc, StageBusyError) else _FE.STRATEGY_RAISED,
              exc_type=type(exc).__name__)
         result = None; hard = True                            # fail-open by contract -> static focus
@@ -652,7 +662,8 @@ def _saliency_centroid(cv2, frames: list[str]):
                 d = np.abs(a - prev)
                 acc = d if acc is None else acc + d
             prev = a
-        except Exception:
+        except Exception as exc:
+            _log.warning("_saliency_centroid: unreadable frame %s (%s)", fp, exc)
             continue                                          # a bad frame never sinks the window
     if acc is None or float(acc.sum()) <= 0.0:
         return None
@@ -707,6 +718,7 @@ def motion_saliency(cfg, src, *, start: float, end: float, _rt=None, _trace=None
     try:
         result = _saliency_centroid(cv2, frames) if frames else None
     except Exception as exc:
+        _log.warning("motion_saliency: saliency pass failed (%s: %s); centering", type(exc).__name__, str(exc)[:120])
         _rec(_trace, _FE.DETECTOR_RUNTIME_FAILED, exc_type=type(exc).__name__)
         result = None; hard = True
     if result is None:

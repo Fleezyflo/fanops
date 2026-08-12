@@ -3,6 +3,7 @@ from __future__ import annotations
 from fanops.ledger import Ledger
 from fanops.models import Moment, _validate_segments
 from fanops.moments import _content_token
+from fanops.log import get_logger
 from fanops.studio.actions_common import ActionResult
 
 
@@ -20,6 +21,7 @@ def set_segments(cfg, source_id: str, moment_id: str,
             token = _content_token(updated.start, updated.end, updated.segments)
             led.moments[moment_id] = updated.model_copy(update={"content_token": token})
     except Exception as exc:
+        get_logger(cfg)("segments", moment_id, "set_segments_failed", err=str(exc)[:120])
         return ActionResult.failure(f"set segments failed: {str(exc)[:160]}")
     return ActionResult.success({"source": source_id, "moment": moment_id, "segments": len(segs)})
 
@@ -34,5 +36,6 @@ def clear_segments(cfg, source_id: str, moment_id: str) -> ActionResult:
             token = _content_token(m.start, m.end, [])
             led.moments[moment_id] = m.model_copy(update={"segments": [], "content_token": token})
     except Exception as exc:
+        get_logger(cfg)("segments", moment_id, "clear_segments_failed", err=str(exc)[:120])
         return ActionResult.failure(f"clear segments failed: {str(exc)[:160]}")
     return ActionResult.success({"source": source_id, "moment": moment_id, "cleared": True})

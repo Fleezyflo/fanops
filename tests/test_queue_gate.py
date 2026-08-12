@@ -99,7 +99,9 @@ def test_prepare_releases_bound_held_footage(tmp_path, mocker, monkeypatch):
     enters at `catalogued` — so the operator clicked Make clips, got a green summary, and every held
     source sat untouched. Prepare now releases each BOUND held source first; unbound (no batch, so no
     target accounts) stays held."""
-    monkeypatch.setenv("FANOPS_RESPONDER", "manual")
+    # Gates are answered ONLY by the LLM now; the hermetic fixture stubs the LLM seam so answer_pending is a
+    # no-op (gates stay pending) — the same convergence this test relied on under the old manual responder.
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
     cfg = Config(root=tmp_path); _put_video(cfg, mocker, "a.mp4"); _put_video(cfg, mocker, "b.mp4")
     _seed_accounts(cfg, ["a", "b"])
     actions.catalogue_inbox(cfg)

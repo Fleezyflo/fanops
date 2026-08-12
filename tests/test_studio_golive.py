@@ -224,7 +224,7 @@ def test_go_live_does_not_force_llm_responder(tmp_path, monkeypatch):
     res = golive.go_live(cfg, confirmed=True)
     assert res.ok is True
     assert "FANOPS_RESPONDER" not in (tmp_path / ".env").read_text()        # NOT written by go-live
-    assert os.environ.get("FANOPS_RESPONDER") in (None, "", "manual")       # not force-set in-process
+    assert os.environ.get("FANOPS_RESPONDER") in (None, "")                 # not force-set in-process
 
 
 # ---- go_dryrun: always allowed (safe direction), no confirm; writes FANOPS_LIVE=0 ----
@@ -765,18 +765,7 @@ def test_golive_off_renders_casting_toggle_control(tmp_path, monkeypatch):
     assert "Turn on (per-account casting)" in html
 
 
-# ---- Hands-off processing (Slice 2): the explicit AI switch + daemon control, entirely in Studio ----
-def test_set_ai_responder_toggles_dual_write(tmp_path, monkeypatch):
-    # THE explicit AI switch: dual-write (.env durable + os.environ in-process), both directions.
-    cfg = _clean(monkeypatch, tmp_path)
-    res = golive.set_ai_responder(cfg, True)
-    assert res.ok and res.detail["responder"] == "llm"
-    assert "FANOPS_RESPONDER=llm" in (tmp_path / ".env").read_text()
-    assert cfg.responder_mode == "llm"                              # in-process immediately, no restart
-    res = golive.set_ai_responder(cfg, False)
-    assert res.ok and res.detail["responder"] == "manual"
-    assert cfg.responder_mode == "manual"
-    assert "FANOPS_RESPONDER=manual" in (tmp_path / ".env").read_text()
+# ---- Hands-off processing (Slice 2): daemon control, entirely in Studio (the AI on/off switch was retired) ----
 
 def test_install_daemon_action_non_darwin_is_clean(tmp_path, monkeypatch):
     from fanops import daemon
@@ -832,19 +821,14 @@ def test_golive_llm_transport_route_flips_cursor(tmp_path, monkeypatch):
     assert cfg.llm_transport == "cursor"
     assert "Switch to Claude" in r.get_data(as_text=True)
 
-def test_golive_responder_route_toggles_on(tmp_path, monkeypatch):
-    from fanops.studio.app import create_app
-    cfg = _clean(monkeypatch, tmp_path)
-    app = create_app(cfg); app.config.update(TESTING=True)
-    r = app.test_client().post("/golive/responder", data={"on": "1"})
-    assert r.status_code == 200
-    assert cfg.responder_mode == "llm"                             # the explicit opt-in took effect
-    assert "Turn off (manual" in r.get_data(as_text=True)         # panel re-renders showing the ON state
 
 def test_golive_panel_shows_hands_off_section(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path)
     html = _client(cfg).get("/golive").get_data(as_text=True)
-    assert "Hands-off processing" in html and "AI responder" in html and "LLM transport" in html
+    assert "Hands-off processing" in html and "LLM transport" in html
+    # The AI on/off toggle was retired: gates are always answered by the LLM, Review still gates publish.
+    assert "AI responder" not in html
+    assert "Review" in html
 
 def test_golive_panel_renders_the_pause_control(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path)

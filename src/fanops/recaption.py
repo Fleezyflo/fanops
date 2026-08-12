@@ -137,9 +137,6 @@ def run_recaption(cfg: Config, *, apply: bool = False, responder=None, now: date
                                 "earliest": min((led.posts[i].scheduled_time or led.posts[i].created_at or "") for i in pids)})
     if not apply:
         return summary
-    if cfg.responder_mode != "llm" and responder is None:
-        summary["error"] = "responder_off"               # the same single AI switch every gate obeys
-        return summary
     journal = _load_journal(cfg)
     pending_clips = [(cid, pids) for cid, pids in targets if cid not in journal["done"]]
     if not pending_clips:
@@ -215,10 +212,6 @@ def cmd_posts_recaption(cfg: Config, args) -> int:
     apply = bool(getattr(args, "apply", False))
     if apply and getattr(args, "dry_run", False):
         print("--apply and --dry-run are mutually exclusive"); return 2
-    if apply and cfg.responder_mode != "llm":
-        print("AI responder is off — recaption re-runs the caption model, so it obeys the same "
-              "single switch as every other gate (Go-Live -> AI Responder / FANOPS_RESPONDER=llm).")
-        return 2
     s = run_recaption(cfg, apply=apply)
     for r in s["rows"]:
         print(f"[{r['state']:>10}] clip {r['clip']}  posts={r['posts']}  earliest={r['earliest']}")

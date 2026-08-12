@@ -4,7 +4,7 @@
   "enums": {
     "fanops.accounts": [
       {
-        "line": 19,
+        "line": 22,
         "members": [
           "active",
           "planned",
@@ -274,7 +274,7 @@
           "selection_scope",
           "status"
         ],
-        "line": 58,
+        "line": 61,
         "name": "Account"
       }
     ],

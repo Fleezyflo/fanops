@@ -52,6 +52,7 @@ def _ig_user_id_check(cfg: Config) -> tuple[bool, str]:
     try:
         active_ig = [a for a in Accounts.load(cfg).active() if Platform.instagram in a.platforms]
     except Exception as e:                                # corrupt/unreadable accounts.json -> fail CLOSED (unknown != pass)
+        logging.getLogger("fanops.doctor").debug("ig_user_id accounts read failed: %s", e)
         return False, f"accounts.json unreadable -- cannot verify per-account ig_user_id ({str(e)[:120]}); fix it in the Studio Go-Live tab"
     own = {a.handle: ((a.ig_user_id or "").strip() or None) for a in active_ig}
     borrowers = [h for h, i in own.items() if i is None]
@@ -152,7 +153,8 @@ def _meta_token_expiry_check(cfg: Config, *, get=None):
     from fanops.meta_graph import resolvable_meta_tokens, debug_token_expiry
     try:
         toks = resolvable_meta_tokens(cfg)
-    except Exception:
+    except Exception as exc:
+        logging.getLogger("fanops.doctor").debug("meta token enumeration failed: %s", exc)
         toks = []                                        # never crash the report over enumeration
     if not toks:
         return None                                      # no Meta token to introspect -> check N/A
@@ -208,11 +210,13 @@ def _zernio_reach_check(cfg: Config, *, auth=None):
     except ZernioAuthError:
         return _check(lbl, False, "Zernio rejected the API key (401) — check ZERNIO_API_KEY (Studio Go-Live); see docs/POSTIZ_OPS.md.")
     except Exception as e:
+        logging.getLogger("fanops.doctor").debug("zernio reach probe failed: %s", e)
         return _check(lbl, False, f"Zernio probe error ({str(e)[:120]}); see docs/POSTIZ_OPS.md.")
 
 
 _DAEMON_STALE_TICKS = 3                                    # heartbeat older than this many install intervals == dead pump (mirrors daemon.status)
 _DAEMON_DEFAULT_INTERVAL_S = 600                           # fallback tick interval when the daemon isn't installed / interval unknown
+_GATE_STALE_TICKS = 3                                      # a pending agent-gate older than this many ticks is WARN-worthy (responder may be stuck)
 
 
 def _daemon_liveness_check(cfg: Config) -> dict:
@@ -232,7 +236,8 @@ def _daemon_liveness_check(cfg: Config) -> dict:
     lbl = "publish daemon alive + queue draining (heartbeat + past-due backlog)"
     try:
         st = daemon.status(cfg, interval=interval)
-    except Exception:
+    except Exception as exc:
+        logging.getLogger("fanops.doctor").debug("daemon status read failed: %s", exc)
         st = {"installed": False, "loaded": False, "verdict": "unknown", "heartbeat_age_s": None}
     if st.get("installed") and not st.get("loaded"):
         return _check(lbl, False, f"{st['verdict']} — reload with `fanops daemon install` then `fanops daemon status`")
@@ -243,7 +248,8 @@ def _daemon_liveness_check(cfg: Config) -> dict:
         age = st.get("heartbeat_age_s")
         if age is None:
             age = daemon._heartbeat_age_s(cfg)
-    except Exception:
+    except Exception as exc:
+        logging.getLogger("fanops.doctor").debug("daemon heartbeat age read failed: %s", exc)
         age = None                                        # a read hiccup -> treat as no signal (fail-closed)
     # (b) past-due backlog — fail-open ledger read
     now = datetime.now(timezone.utc)
@@ -317,7 +323,94 @@ def _doctor_notes(cfg: Config) -> list[str]:
     if n:
         notes.append(f"review queue: {n} candidate(s) in 00_review/ awaiting Finder approval — "
                      "move keepers to 00_review/approved/ then `fanops intake`")
+    # Approval backlog is INFO only — nothing auto-publishes, so a queue awaiting the operator is the
+    # EXPECTED steady state, never a warning (the human Review gate is deliberately kept, not automated).
+    try:
+        from fanops.ledger import Ledger
+        from fanops.models import PostState
+        aw = Ledger.load(cfg).state_histogram().get(PostState.awaiting_approval, 0)
+        if aw:
+            notes.append(f"approval backlog: {aw} post(s) awaiting your approval in Review "
+                         "(expected — nothing auto-publishes)")
+    except Exception as e:
+        logging.getLogger("fanops.doctor").debug("approval-backlog note failed: %s", e)
+    # FANOPS_POSTIZ_ONDEMAND is a bootstrap-only path override (read directly, not a Settings field). If it
+    # is set but points at a missing script, note it — a `fanops up` bring-up concern, not a publish gate.
+    import os
+    from pathlib import Path
+    ond = (os.getenv("FANOPS_POSTIZ_ONDEMAND") or "").strip()
+    if ond and not Path(ond).expanduser().exists():
+        notes.append(f"FANOPS_POSTIZ_ONDEMAND points at {ond} which does not exist — `fanops up` bring-up "
+                     "cannot find the Postiz on-demand script (set it or install the script)")
     return notes
+
+
+def _operational_sensor_checks(cfg: Config) -> list[dict]:
+    """WARN-tier operational sensors. These are NORMAL running states, not setup gaps, so every one keeps
+    ok=True (never flips the doctor exit code, never blocks go-live) and rides the `warn`/`warn_hint`
+    channel. They surface a live backlog the operator would otherwise not see: a stale pending agent-gate,
+    sources awaiting a gate answer, degraded/errored sources, parked machine re-opens, and an active
+    hashtag-scrape cooldown (with the honest reason + remedy). Fail-open: any read error logs a breadcrumb
+    and drops that one sensor rather than crashing the report. No auto-approve, no mutation — pure reads."""
+    from datetime import datetime, timezone
+    log = logging.getLogger("fanops.doctor")
+    out: list[dict] = []
+
+    # 1. pending agent-gates — WARN only when the OLDEST has aged past _GATE_STALE_TICKS ticks. A fresh
+    #    pending gate is normal transient work the responder is clearing, so it is not surfaced.
+    try:
+        from fanops import pipeline_status, daemon
+        gates = pipeline_status._pending_gates(cfg)              # (mtime, kind, key) oldest-first
+        if gates:
+            oldest_mtime = gates[0][0]
+            age_s = max(0.0, datetime.now(timezone.utc).timestamp() - oldest_mtime) if oldest_mtime else 0.0
+            interval = daemon.installed_interval(cfg) or _DAEMON_DEFAULT_INTERVAL_S
+            if oldest_mtime and age_s > _GATE_STALE_TICKS * interval:
+                out.append({"label": "no stale agent gates (responder answering)", "ok": True, "warn": True,
+                            "warn_hint": f"{len(gates)} pending agent gate(s); oldest ~{int(age_s // 60)}m old "
+                                         f"(> {_GATE_STALE_TICKS}x the {interval}s tick) — the LLM responder may be "
+                                         f"stuck; check `fanops status` and that the daemon gates loop is running"})
+    except Exception as e:
+        log.debug("pending-gate sensor failed: %s", e)
+
+    # 2-4. ledger-derived backlog: sources awaiting a gate answer, degraded/errored sources, parked re-opens.
+    try:
+        from fanops.ledger import Ledger
+        from fanops.pipeline_status import source_backlog
+        led = Ledger.load(cfg)
+        bl = source_backlog(led, cfg)
+        if bl.blocked_on_gates:
+            out.append({"label": "no sources awaiting gate answers", "ok": True, "warn": True,
+                        "warn_hint": f"{bl.blocked_on_gates} source(s) awaiting gate answer(s) — answer in "
+                                     f"Studio Gates or run `fanops status`"})
+        if bl.recoverable:
+            out.append({"label": "no degraded/errored sources", "ok": True, "warn": True,
+                        "warn_hint": f"{bl.recoverable} source(s) in error/moments-empty — Resume/Reset in "
+                                     f"Studio Make or run `fanops status`"})
+        parked = sum(1 for src in led.sources.values() if src.meta.get("pending_reopen"))
+        if parked:
+            out.append({"label": "no parked machine re-opens", "ok": True, "warn": True,
+                        "warn_hint": f"{parked} source(s) hold a parked amplify re-open (FANOPS_QUEUE_GATE) — "
+                                     f"release them in Studio Make"})
+    except Exception as e:
+        log.debug("backlog sensor failed: %s", e)
+
+    # 5. hashtag-scrape cooldown — surface WHY Layer A is frozen (login_required / checkpoint / throttle /
+    #    budget) with the honest remedy from _OUTAGE_REMEDY. Read-only (reads the cooldown blob); WARN only
+    #    when NO healthy peer remains (scrape is actually blocked, not one account merely resting).
+    try:
+        from fanops.fanops_hashtags import _read_active_cooldown, _OUTAGE_REMEDY
+        cool = _read_active_cooldown(cfg, datetime.now(timezone.utc))
+        if cool:
+            reason = cool.get("reason") or "cooldown"
+            remedy = _OUTAGE_REMEDY.get(reason, "wait for the cooldown to clear")
+            until = cool.get("until") or "?"
+            out.append({"label": "hashtag Layer A not in cooldown", "ok": True, "warn": True,
+                        "warn_hint": f"scrape frozen ({reason}) until {until} — {remedy}"})
+    except Exception as e:
+        log.debug("scrape-cooldown sensor failed: %s", e)
+
+    return out
 
 
 def _assemble_doctor_checks(cfg: Config, *, get=None, postiz_probe=None, zernio_auth=None) -> list[dict]:
@@ -335,19 +428,37 @@ def _assemble_doctor_checks(cfg: Config, *, get=None, postiz_probe=None, zernio_
                          "falls back to the legacy whisper CLI"))
     checks.append(_check("yt-dlp on PATH (only for `fanops pull <url>`)", shutil.which("yt-dlp") is not None,
                          "pip install yt-dlp"))
-    # 2. autonomous responder needs the LLM CLI ONLY when FANOPS_RESPONDER=llm (mirrors preflight)
-    if cfg.responder_mode == "llm":
-        from fanops.llm import _CURSOR_SUPPORTS_VISION
-        cli_bin = cfg.llm_cli_binary
-        hint = ("install Cursor CLI, or set LLM transport to claude in Studio Go-Live"
-                if cli_bin == "cursor-agent"
-                else "install Claude Code + run `claude login` (uses your subscription, no API key)")
-        checks.append(_check(f"{cli_bin} on PATH (FANOPS_RESPONDER=llm)", shutil.which(cli_bin) is not None, hint))
-        if cfg.llm_transport == "cursor" and not _CURSOR_SUPPORTS_VISION:
-            # Absolute transport: cursor cannot run vision gates — operator must flip the ONE switch.
-            checks.append(_check("LLM transport can run vision gates", False,
-                                 "set LLM transport to claude in Studio Go-Live "
-                                 "(single switch; no silent claude fallback when transport=cursor)"))
+    # 2. gates are answered ONLY by the LLM, so the LLM CLI is ALWAYS required on PATH (mirrors preflight —
+    # no longer gated on FANOPS_RESPONDER=llm, since there is no other responder). A bad FANOPS_RESPONDER
+    # value is surfaced as its own failing check rather than a traceback.
+    from fanops.llm import _CURSOR_SUPPORTS_VISION
+    try:
+        cfg.responder_mode                               # validate FANOPS_RESPONDER (empty/'llm' ok; anything else raises)
+        responder_err = None
+    except ValueError as e:
+        responder_err = str(e)
+    checks.append(_check("FANOPS_RESPONDER valid (llm-only)", responder_err is None,
+                         responder_err or "leave FANOPS_RESPONDER unset, or set it to 'llm' — it has no other valid value"))
+    cli_bin = cfg.llm_cli_binary
+    hint = ("install Cursor CLI, or set LLM transport to claude in Studio Go-Live"
+            if cli_bin == "cursor-agent"
+            else "install Claude Code + run `claude login` (uses your subscription, no API key)")
+    cli_check = _check(f"{cli_bin} on PATH", shutil.which(cli_bin) is not None, hint)
+    if cli_check["ok"]:
+        # PATH presence is NOT proof of an authenticated login, and there is no cheap, non-mutating auth
+        # probe (a real check would burn a gate call). Surface the gap as a WARN rather than a false-green
+        # PASS: an expired login only reveals itself when a gate fails at run time (ok stays True — this
+        # never blocks setup, it just refuses to claim more than "on PATH").
+        login_cmd = "cursor-agent login" if cli_bin == "cursor-agent" else "claude login"
+        cli_check["warn"] = True
+        cli_check["warn_hint"] = (f"{cli_bin} is on PATH but that is NOT proof it is logged in — if gates "
+                                  f"start failing with auth errors, run `{login_cmd}`")
+    checks.append(cli_check)
+    if cfg.llm_transport == "cursor" and not _CURSOR_SUPPORTS_VISION:
+        # Absolute transport: cursor cannot run vision gates — operator must flip the ONE switch.
+        checks.append(_check("LLM transport can run vision gates", False,
+                             "set LLM transport to claude in Studio Go-Live "
+                             "(single switch; no silent claude fallback when transport=cursor)"))
     # 2b. brand brief present + non-empty. context.md is injected verbatim into every moment +
     # caption decision (the #1 output lever); its absence used to be SILENT (load_guidance now warns,
     # but a preflight is the visible gate). Read directly + safely so the report never crashes.
@@ -361,6 +472,7 @@ def _assemble_doctor_checks(cfg: Config, *, get=None, postiz_probe=None, zernio_
     try:
         problems = Accounts.load(cfg).validate()
     except Exception as e:                                # malformed accounts.json -> a check failure, not a crash
+        logging.getLogger("fanops.doctor").debug("accounts.json validate failed: %s", e)
         problems = [str(e)[:160]]
     checks.append(_check("accounts.json valid (every active channel mapped to an id)", not problems,
                          "; ".join(problems) + " — add accounts + map each channel in the Studio Go-Live tab"))
@@ -369,6 +481,7 @@ def _assemble_doctor_checks(cfg: Config, *, get=None, postiz_probe=None, zernio_
     try:
         persona_problems = Personas.load(cfg).validate()
     except Exception as e:
+        logging.getLogger("fanops.doctor").debug("personas.json validate failed: %s", e)
         persona_problems = [str(e)[:160]]
     checks.append(_check("personas.json valid (malformed rows skipped loud)", not persona_problems,
                          "; ".join(persona_problems) + " — fix the row in personas.json"))
@@ -394,17 +507,26 @@ def _assemble_doctor_checks(cfg: Config, *, get=None, postiz_probe=None, zernio_
     # FANOPS_POSTER (W4 -> dryrun) with no live per-channel backend — is the HALF-LIVE state: the banner
     # would say LIVE while every publish halts in `queued`. Flag it LOUD with the fix. A not-live config or
     # a genuinely-live one (any live route) passes. Guarded so a bad accounts.json can't crash the report.
+    half_live_err = None
     try:
         half_live = cfg.is_live and not cfg.live_route_exists
     except Exception as exc:
-        from fanops.log import get_logger     # a route-read hiccup falls to not-half-live — record it, don't hide it
+        from fanops.log import get_logger     # a route-read hiccup: record it, and DO NOT present a silent healthy pass
         get_logger(cfg)("doctor", "-", "half_live_error", err=str(exc)[:160])
         half_live = False
+        half_live_err = str(exc)[:160]
     if cfg.is_live:
-        checks.append(_check("live route exists (FANOPS_LIVE=1 actually publishes)", not half_live,
-                             "LIVE flag set but nothing routes live — FANOPS_POSTER is a legacy bridge, not "
-                             "the switch. Route a channel to a provider with creds (Studio Go-Live tab), or "
-                             "`fanops` back to dryrun. Every publish stays stuck in `queued` until then."))
+        c = _check("live route exists (FANOPS_LIVE=1 actually publishes)", not half_live,
+                   "LIVE flag set but nothing routes live — FANOPS_POSTER is a legacy bridge, not "
+                   "the switch. Route a channel to a provider with creds (Studio Go-Live tab), or "
+                   "`fanops` back to dryrun. Every publish stays stuck in `queued` until then.")
+        if half_live_err and c["ok"]:
+            # The coherence check could not be COMPUTED. Half-live must never fail-open to a silent green:
+            # surface a WARN so the operator knows the live route was NOT actually confirmed here.
+            c["warn"] = True
+            c["warn_hint"] = (f"could not compute the live-route coherence check ({half_live_err}) — treated "
+                              "as not-half-live but NOT confirmed; re-run `fanops doctor` and check accounts.json")
+        checks.append(c)
 
     # Leg 2 (Insight): the ONE external gate — a persisted breadcrumb means a Graph media-insights read was
     # refused for lack of the instagram_manage_insights scope, so IG posts kept their PRIOR snapshot (fail-
@@ -459,6 +581,10 @@ def _assemble_doctor_checks(cfg: Config, *, get=None, postiz_probe=None, zernio_
     # heartbeat). The past-due gate mirrors the pump's own due-check (timeutil.is_due_or_past).
     dchk = _daemon_liveness_check(cfg)
     checks.append(dchk)
+    # Operational WARN-tier sensors (never FAIL — normal running states, not setup gaps): stale pending
+    # gates, sources awaiting a gate answer, degraded/errored sources, parked machine re-opens, hashtag
+    # scrape cooldown. These make a live backlog legible without blocking the exit code or go-live.
+    checks.extend(_operational_sensor_checks(cfg))
     checks.extend(_sibling_launchd_checks())
     schk = _studio_resident_check()
     if schk is not None:
@@ -517,6 +643,7 @@ def _accounts_problems(cfg: Config) -> list[str]:
     try:
         return Accounts.load(cfg).validate()
     except Exception as e:
+        logging.getLogger("fanops.doctor").debug("accounts problems read failed: %s", e)
         return [str(e)[:160]]
 
 
@@ -528,7 +655,8 @@ def setup_state(cfg: Config) -> str:
         return SetupState.CONFIGURED
     try:
         ready = bool(Accounts.load(cfg).live_ready_channels())
-    except Exception:
+    except Exception as exc:
+        logging.getLogger("fanops.doctor").debug("setup_state live_ready read failed: %s", exc)
         ready = False
     if not ready:
         return SetupState.CONNECTED

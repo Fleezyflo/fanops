@@ -27,7 +27,7 @@ from fanops.studio.views_library import (STAGES, library_catalog, source_pipelin
 
 def led_for_request(cfg: Config) -> Ledger:
     """One Ledger.load per Studio HTTP request. Outside a request (CLI/tests): load normally."""
-    try:
+    with fail_open("studio.views.led_for_request"):
         from flask import g, has_request_context
         if has_request_context():
             led = getattr(g, "fanops_ledger", None)
@@ -35,8 +35,6 @@ def led_for_request(cfg: Config) -> Ledger:
                 led = Ledger.load(cfg)
                 g.fanops_ledger = led
             return led
-    except Exception:
-        pass
     return Ledger.load(cfg)
 
 
@@ -89,7 +87,7 @@ class GoLiveStatus:
     learning_validated: bool = False   # M3: cutover.json metrics_confirmed — the loop is unfrozen on this backend
     account_casting: bool = False      # per-account moment casting ON (FANOPS_ACCOUNT_CASTING) — distinct moment sets per account
     clip_profile: str = "talk"         # clip-length band (FANOPS_CLIP_PROFILE): talk 12-22s / song 18-35s
-    responder_mode: str = "llm"        # THE AI switch (FANOPS_RESPONDER): empty/unset → llm; 'manual' = human/pending
+    responder_mode: str = "llm"        # FANOPS_RESPONDER resolves to 'llm' (validate-or-refuse); gates answered by the LLM
     llm_transport: str = "claude"      # FANOPS_LLM_TRANSPORT: claude | cursor (which CLI shells for gates)
     llm_cli_binary: str = "claude"     # resolved binary name for operator copy (claude | cursor-agent)
     daemon: Optional[dict] = None      # launchd pipeline-driver health (verdict/loaded/interval/responder), None off-darwin
@@ -184,10 +182,8 @@ def publish_queue(cfg: Config, *, now: Optional[datetime] = None,
             continue
         due = False
         if p.scheduled_time:
-            try:
+            with fail_open("studio.views.publish_queue"):
                 due = parse_iso(p.scheduled_time) <= now
-            except Exception:
-                due = False
         rows.append({"post_id": p.id, "clip_id": p.parent_id, "account": p.account,
                      "platform": p.platform.value, "caption": p.caption, "state": p.state.value,
                      "scheduled_time": p.scheduled_time, "due": due})
@@ -300,12 +296,10 @@ def errored_sources(led: Ledger) -> list[dict]:
     for s in led.sources.values():
         if s.state not in _RECOVERABLE_SOURCE_STATES:
             continue
-        try:
+        with fail_open("studio.views.errored_sources"):
             out.append({"id": s.id, "state": s.state.value, "error_reason": s.error_reason or "",
                         "batch_id": s.batch_id, "created_at": s.created_at,
                         "name": Path(s.source_path).name if s.source_path else s.id})
-        except Exception:
-            continue
     return out
 
 
@@ -592,14 +586,13 @@ def _corpus_tag_rows(cfg: Config, persona) -> tuple[list, str]:
 def _corpora_marker_ts(cfg: Config) -> str:
     """U9: the S12 .corpora_refresh.json `ts` fallback (persona_research.refresh_corpora_if_due writes it) —
     the last time the auto-refresh swept ALL personas. Read-only; "" when the marker is absent/unreadable."""
-    try:
+    with fail_open("studio.views._corpora_marker_ts"):
         marker = cfg.control / ".corpora_refresh.json"
         if not marker.exists(): return ""
         raw = json.loads(marker.read_text())
         ts = raw.get("ts") if isinstance(raw, dict) else None
         return ts if isinstance(ts, str) else ""
-    except Exception:
-        return ""
+    return ""
 
 
 @dataclass
@@ -660,14 +653,13 @@ def personas_page(cfg: Config, *, led: Optional[Ledger] = None) -> "PersonasPage
             acct_prov = []
         lev_detail = _lever_detail_rows(cfg, p, mf, _cat, _fx)
         corpus_rows, corpus_refreshed = _corpus_tag_rows(cfg, p)   # U9: the derived-zone corpus projection (S12 meta), fail-open ([], "")
-        try:
+        discovery = []
+        with fail_open("studio.views.personas_page.discovery"):
             from fanops.hashtag_vocab import vocab_terms_for
             from fanops.persona_research import relatedness_terms, niche_terms
             _rel = set(relatedness_terms(p, cfg)); _niche = set(niche_terms(p))
             discovery = [{"term": t, "role": ("unique" if t in _rel and t not in _niche else "search-only")}
                          for t in vocab_terms_for(cfg, p.id)]
-        except Exception:
-            discovery = []
         cards.append(PersonaCard(id=p.id, name=p.name, voice=p.voice,
                          corpus=_ranked(p.hashtag_corpus), niche=list(p.niche),
                          discovery_roots=discovery,
@@ -750,13 +742,12 @@ def _post_live_today(p, now: datetime) -> bool:
     t = p.published_at or p.scheduled_time
     if not t:
         return False
-    try:
+    with fail_open("studio.views._post_live_today"):
         dt = parse_iso(t)
         if dt.tzinfo is None:
             return False
         return dt >= now - timedelta(hours=24)
-    except Exception:
-        return False
+    return False
 
 
 def _half_live_state(cfg: Config) -> tuple[bool, str]:
@@ -872,7 +863,7 @@ def review_handoff(cfg: Config) -> dict:
     if not best_h or not best_n:
         return {}
     out = {"account": best_h, "awaiting": best_n}
-    try:
+    with fail_open("studio.views.review_handoff"):
         led = led_for_request(cfg)
         by_batch: dict[str, int] = {}
         # T2.5: pick the dominant batch off the OWNED worklist. Off a raw state tally this handoff link could
@@ -882,15 +873,13 @@ def review_handoff(cfg: Config) -> dict:
                 by_batch[p.batch_id] = by_batch.get(p.batch_id, 0) + 1
         if by_batch:
             out["batch"] = max(by_batch, key=by_batch.get)
-    except Exception:
-        pass
     return out
 
 
 def zero_post_clips(cfg: Config) -> list[dict]:
     """Captioned/queued clips with no Post born — the silent crosspost drop surfaced for Home."""
     from fanops.models import ClipState
-    try:
+    with fail_open("studio.views.zero_post_clips"):
         led = Ledger.load(cfg)
         out = []
         for clip in led.clips.values():
@@ -902,15 +891,14 @@ def zero_post_clips(cfg: Config) -> list[dict]:
             out.append({"clip_id": clip.id, "moment_id": clip.parent_id,
                         "window": f"{int(mom.start)}–{int(mom.end)}" if mom else "—"})
         return out[:5]
-    except Exception:
-        return []
+    return []
 
 
 def metrics_stale_hint(cfg: Config) -> bool:
     """True when live trackable posts exist but most lack analyzed metrics."""
     if not cfg.is_live:
         return False
-    try:
+    with fail_open("studio.views.metrics_stale_hint"):
         from fanops.studio.views_results import _classify_channel
         led = Ledger.load(cfg)
         live = [p for p in led.posts.values()
@@ -920,8 +908,7 @@ def metrics_stale_hint(cfg: Config) -> bool:
             return False
         thin = sum(1 for p in live if (p.metrics or {}).get("lift_score") is None)
         return thin >= max(1, len(live) // 2)
-    except Exception:
-        return False
+    return False
 
 
 def review_nav_params(cfg: Config, account: str | None = None) -> dict:
@@ -936,7 +923,7 @@ def review_nav_params(cfg: Config, account: str | None = None) -> dict:
     if h:
         out["account"] = h
         if batch is None:
-            try:
+            with fail_open("studio.views.review_nav_params"):
                 led = led_for_request(cfg)
                 by_batch: dict[str, int] = {}
                 for p in led.review_posts():           # T2.5: same owned worklist as review_handoff above
@@ -944,8 +931,6 @@ def review_nav_params(cfg: Config, account: str | None = None) -> dict:
                         by_batch[p.batch_id] = by_batch.get(p.batch_id, 0) + 1
                 if by_batch:
                     batch = max(by_batch, key=by_batch.get)
-            except Exception:
-                pass
     if batch:
         out["batch"] = batch
     return out
@@ -955,7 +940,7 @@ def account_work_counts(cfg: Config) -> dict[str, dict]:
     """Per-handle work queue counts for Home rows and the account session bar."""
     from collections import defaultdict
     out: dict[str, dict] = defaultdict(lambda: {"awaiting": 0, "scheduled": 0, "failed": 0, "inflight": 0, "review_batch": None})
-    try:
+    with fail_open("studio.views.account_work_counts"):
         led = led_for_request(cfg)
         now = datetime.now(timezone.utc)
         # awaiting stays the owned worklist predicate (can_promote); scheduled is a time predicate on
@@ -975,8 +960,6 @@ def account_work_counts(cfg: Config) -> dict[str, dict]:
                 out[h]["inflight"] = inflight
             if failed:
                 out[h]["failed"] = failed
-    except Exception:
-        pass
     for h in out:
         if out[h]["awaiting"]:
             out[h]["review_batch"] = review_nav_params(cfg, h).get("batch")
@@ -1038,45 +1021,39 @@ def daemon_health(cfg: Config) -> Optional[dict]:
     keeps the launchd/subprocess dependency off the core view path; htmx-loaded on-demand (mirrors
     /golive/health) so it never runs a subprocess on the spine's every-surface home_status read.
 
-    Enriched with `interval`/`responder`/`discloses_llm` so the banner can (a) frame a NOT-INSTALLED driver
-    as OPT-IN rather than a fault and (b) DISCLOSE the recurring-LLM cost when hands-off would run llm."""
-    try:
+    Enriched with `interval`/`pending_gates` so the banner can frame a NOT-INSTALLED driver as OPT-IN
+    rather than a fault; gates are always answered by the LLM, so there is no AI on/off to disclose."""
+    with fail_open("studio.views.daemon_health"):
         from fanops import daemon
         from fanops import pipeline
         interval = daemon.installed_interval(cfg) or 600
         rep = daemon.status(cfg, interval=interval)
-        responder = daemon.resolve_responder(cfg)
-        try:
+        pending_gates = None                                   # never let a torn agent_io dir 500 the banner
+        with fail_open("studio.views.daemon_health.pending_gates"):
             pending_gates = pipeline.pending_gate_count(cfg)   # need-aware truth: claude runs ONLY to answer these
-        except Exception:
-            pending_gates = None                               # never let a torn agent_io dir 500 the banner
         siblings = daemon.sibling_agents_status()
         from fanops.pipeline_run import run_status_line
-        out = {**rep, "interval": interval, "responder": responder, "discloses_llm": responder == "llm",
+        out = {**rep, "interval": interval,
                "pending_gates": pending_gates, "siblings": siblings}
         run_line = run_status_line(cfg)
         if run_line != "run=idle":
             out["run_line"] = run_line
         return out
-    except Exception:
-        return None
+    return None
 
 
 def daemon_health_strip(cfg: Config) -> Optional[dict]:
     from fanops.health import read_daemon_strip_snapshot
     from fanops.health_model import heartbeat_stale
-    from fanops import daemon, pipeline
+    from fanops import pipeline
     from fanops.pipeline_run import run_status_line
     snap = read_daemon_strip_snapshot(cfg)
     if snap is None:
         return None
     out = dict(snap)
-    out["responder"] = daemon.resolve_responder(cfg)
-    out["discloses_llm"] = out["responder"] == "llm"
-    try:
+    out["pending_gates"] = None
+    with fail_open("studio.views.daemon_health_strip.pending_gates"):
         out["pending_gates"] = pipeline.pending_gate_count(cfg)
-    except Exception:
-        out["pending_gates"] = None
     age, stale, iv = heartbeat_stale(cfg, interval=out.get("interval") or 600)
     out["heartbeat_age_s"] = age
     if out.get("loaded"):
@@ -1471,7 +1448,7 @@ def golive_status(cfg: Config) -> GoLiveStatus:
         learning_validated=learning_validated(cfg),    # M3: shows whether the loop is unfrozen (cutover done)
         account_casting=cfg.account_casting,           # per-account moment casting toggle state (persona diff)
         clip_profile=cfg.clip_profile,                 # clip-length band (talk/song)
-        responder_mode=cfg.responder_mode,             # THE AI switch state (llm/manual) — surfaced for the toggle
+        responder_mode=cfg.responder_mode,             # always 'llm' now (validate-or-refuse); gates answered by the LLM
         llm_transport=cfg.llm_transport, llm_cli_binary=cfg.llm_cli_binary,
         daemon=daemon_health(cfg),                     # launchd driver health for the Go-Live daemon control (None off-darwin)
         paused=_paused(cfg),                           # 00_control/paused — operator brake on the unattended pump
@@ -1499,11 +1476,13 @@ def gate_rows(cfg: Config) -> list[dict]:
                 continue
             try:
                 payload = json.loads(request_path(cfg, kind, key).read_text())
-            except Exception:
+            except Exception as exc:
+                from fanops.log import get_logger
+                get_logger(cfg)("gates", key, "request_read_failed", kind=kind, err=str(exc)[:160])
                 continue                               # torn/unreadable request file: SKIP it (match the
                                                        # docstring) rather than render an empty, unanswerable
                                                        # gate form whose blank submit could write a bad answer
-                                                       # (ecc audit). The corruption is already logged by
+                                                       # (ecc audit). The corruption is also logged by
                                                        # latest_request_id during pending().
             if kind == "moments" and payload.get("transcript"):
                 lang = payload.get("language")

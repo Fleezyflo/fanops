@@ -83,17 +83,25 @@ def test_doctor_flags_empty_brand_brief(tmp_path):
     assert bc is not None and bc["ok"] is False
 
 
-def test_doctor_claude_check_only_when_llm(tmp_path, monkeypatch):
-    # Empty/unset → llm: doctor must surface the CLI check. Explicit manual skips it.
+def test_doctor_always_checks_llm_cli(tmp_path, monkeypatch):
+    # Gates are answered ONLY by the LLM (the manual responder was retired), so the CLI check is ALWAYS
+    # surfaced — empty/unset OR the literal 'llm' both resolve to llm; there is no responder that skips it.
     monkeypatch.delenv("FANOPS_RESPONDER", raising=False)
     rep = doctor.doctor_report(Config(root=tmp_path))
     assert any("claude" in c["label"].lower() for c in rep["checks"])
-    monkeypatch.setenv("FANOPS_RESPONDER", "manual")
-    rep2 = doctor.doctor_report(Config(root=tmp_path))
-    assert not any("claude" in c["label"].lower() for c in rep2["checks"])
     monkeypatch.setenv("FANOPS_RESPONDER", "llm")
-    rep3 = doctor.doctor_report(Config(root=tmp_path))
-    assert any("claude" in c["label"].lower() for c in rep3["checks"])
+    rep2 = doctor.doctor_report(Config(root=tmp_path))
+    assert any("claude" in c["label"].lower() for c in rep2["checks"])
+
+
+def test_doctor_flags_bad_responder_and_still_checks_cli(tmp_path, monkeypatch):
+    # An unknown FANOPS_RESPONDER is a HARD REFUSE surfaced as its OWN failing check (never a traceback);
+    # the CLI check is still emitted because it is unconditional now.
+    monkeypatch.setenv("FANOPS_RESPONDER", "manual")
+    rep = doctor.doctor_report(Config(root=tmp_path))
+    resp_checks = [c for c in rep["checks"] if "FANOPS_RESPONDER" in c["label"]]
+    assert resp_checks and all(not c["ok"] for c in resp_checks)
+    assert any("claude" in c["label"].lower() for c in rep["checks"])
 
 
 def test_doctor_cursor_transport_checks_cursor_agent(tmp_path, monkeypatch):
@@ -684,3 +692,94 @@ def test_doctor_hashtag_scrape_probe_names_user_when_peers_exhausted(tmp_path, m
     assert row["hint"] == "@only: challenge_required"
     assert "scrape-login" not in row["hint"]
     assert (_load_cooldown_blob(cfg).get("accounts", {}).get("only") or {}).get("reason") == "checkpoint"
+
+
+# ---- Wave 4: doctor operational sensors (WARN unless fatal) + honesty guards ----
+
+def _by_label(rep, needle):
+    return next((c for c in rep["checks"] if needle in c["label"]), None)
+
+
+def test_cli_on_path_is_warn_not_a_silent_authenticated_pass(tmp_path, monkeypatch):
+    """PATH ok != authenticated. When the LLM CLI binary is present, the check stays PASS (ok=True, it
+    never blocks setup) but rides a WARN making explicit that PATH presence is NOT proof of login — the
+    only honest thing to say without burning a real gate call."""
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    monkeypatch.setattr(doctor.shutil, "which", lambda _b: "/usr/local/bin/stub")
+    rep = doctor.doctor_report(Config(root=tmp_path))
+    cli = _by_label(rep, "on PATH")
+    assert cli is not None and cli["ok"] is True
+    assert cli.get("warn") is True and "NOT proof" in cli.get("warn_hint", "")
+
+
+def test_half_live_never_fails_open_to_a_silent_healthy_pass(tmp_path, monkeypatch):
+    """If the live-route coherence check cannot be COMPUTED (route read raises), half-live must not present
+    a silent green. is_live stays True, the check keeps ok=True (not-half-live, unconfirmed) but carries a
+    WARN saying the live route was NOT actually confirmed — the Wave 2b breadcrumb, surfaced not hidden."""
+    monkeypatch.setenv("FANOPS_LIVE", "1")
+    def _boom(self):
+        raise RuntimeError("route read hiccup")
+    monkeypatch.setattr(type(Config(root=tmp_path)), "live_route_exists", property(_boom))
+    rep = doctor.doctor_report(Config(root=tmp_path))
+    lr = _by_label(rep, "live route exists")
+    assert lr is not None and lr["ok"] is True
+    assert lr.get("warn") is True and "not confirmed" in lr.get("warn_hint", "").lower()
+
+
+def test_operational_sensors_warn_on_backlog_and_parked_reopen(tmp_path, monkeypatch):
+    """blocked_on_gates, degraded/errored sources, and parked machine re-opens each surface as a WARN-tier
+    sensor — visible without blocking (ok stays True on every one, never a FAIL)."""
+    from fanops import pipeline_status
+    from fanops.pipeline_status import SourceBacklog
+    cfg = Config(root=tmp_path)
+    fake = SourceBacklog(actionable=0, blocked_on_gates=2, recoverable=1, inventory=0, held=0, rows=[])
+    monkeypatch.setattr(pipeline_status, "source_backlog", lambda led, c, *a, **k: fake)
+    class _Src:
+        meta = {"pending_reopen": {"origin": "amplify"}}
+    class _Led:
+        sources = {"s1": _Src()}
+    monkeypatch.setattr("fanops.ledger.Ledger.load", classmethod(lambda cls, c: _Led()))
+    checks = doctor._operational_sensor_checks(cfg)
+    labels = {c["label"]: c for c in checks}
+    assert labels["no sources awaiting gate answers"]["warn"] is True
+    assert labels["no degraded/errored sources"]["warn"] is True
+    assert labels["no parked machine re-opens"]["warn"] is True
+    assert all(c["ok"] is True for c in checks)              # operational sensors NEVER FAIL
+
+
+def test_operational_sensor_warns_on_stale_pending_gate(tmp_path, monkeypatch):
+    """A pending agent-gate older than _GATE_STALE_TICKS ticks WARNs (the LLM responder may be stuck); a
+    fresh gate would not. Still ok=True — a backlog is not a setup failure."""
+    from datetime import datetime, timezone
+    from fanops import pipeline_status, daemon
+    cfg = Config(root=tmp_path)
+    old = datetime.now(timezone.utc).timestamp() - 10_000
+    monkeypatch.setattr(pipeline_status, "_pending_gates", lambda c: [(old, "moments", "k1")])
+    monkeypatch.setattr(daemon, "installed_interval", lambda c: 600)
+    monkeypatch.setattr("fanops.ledger.Ledger.load",
+                        classmethod(lambda cls, c: (_ for _ in ()).throw(RuntimeError("isolate gate sensor"))))
+    gate = next((c for c in doctor._operational_sensor_checks(cfg) if "stale agent gates" in c["label"]), None)
+    assert gate is not None and gate["ok"] is True and gate.get("warn") is True
+
+
+def test_approval_backlog_is_info_note_only_not_a_warn(tmp_path, monkeypatch):
+    """Approval backlog is EXPECTED (nothing auto-publishes) — it appears as an INFO note, never as a
+    warn-tier check, because the human Review gate is deliberately kept."""
+    from fanops.models import PostState
+    cfg = Config(root=tmp_path)
+    class _Led:
+        def state_histogram(self, **k):
+            return {PostState.awaiting_approval: 3}
+    monkeypatch.setattr("fanops.ledger.Ledger.load", classmethod(lambda cls, c: _Led()))
+    notes = doctor._doctor_notes(cfg)
+    assert any("approval backlog" in n.lower() and "3" in n for n in notes)
+    # ...and it is NOT emitted as an operational (warn) sensor.
+    assert not any("approval" in c["label"].lower() for c in doctor._operational_sensor_checks(cfg))
+
+
+def test_postiz_ondemand_missing_script_is_an_info_note(tmp_path, monkeypatch):
+    """FANOPS_POSTIZ_ONDEMAND is a bootstrap-only path override. If set to a missing script, doctor emits
+    a lean INFO note (a `fanops up` bring-up concern) — not a publish-path failure."""
+    monkeypatch.setenv("FANOPS_POSTIZ_ONDEMAND", str(tmp_path / "nope" / "postiz-ondemand.sh"))
+    notes = doctor._doctor_notes(Config(root=tmp_path))
+    assert any("FANOPS_POSTIZ_ONDEMAND" in n and "does not exist" in n for n in notes)

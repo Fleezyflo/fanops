@@ -454,7 +454,8 @@ class PostizPoster:
                 sid = None
                 try:
                     sid = _extract_postiz_id(resp.json())
-                except Exception:
+                except Exception as exc:                 # unparseable 2xx body -> parks needs_reconcile below (no id)
+                    _log.warning("postiz publish: could not parse 2xx body for %s (%s)", post_id, exc)
                     sid = None
                 if not sid:
                     led.set_post_state(post_id, PostState.needs_reconcile,

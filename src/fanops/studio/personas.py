@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from fanops.config import Config
 from fanops import personas as core
+from fanops.errors import fail_open
+from fanops.log import get_logger
 from fanops.accounts import link_persona as _link_persona
 from fanops.studio.actions import ActionResult
 
@@ -42,11 +44,9 @@ def preview_compose(cfg: Config, form) -> ActionResult:
         pid = (form.get("id") or "").strip()
         corpus: list = []
         if pid:                                          # an existing persona keeps its curated corpus (not a form field)
-            try:
+            with fail_open("studio.personas.preview_compose"):
                 saved = core.Personas.load(cfg).get(pid)
                 if saved is not None: corpus = list(saved.hashtag_corpus)
-            except Exception:
-                corpus = []
         policy = [c for c in form.getlist("cut_policy") if c]
         for c in policy:
             if c not in CUT_POLICY: raise ValueError(f"unknown cut_policy: {c}")
@@ -60,6 +60,7 @@ def preview_compose(cfg: Config, form) -> ActionResult:
     except ValueError as exc:
         return ActionResult(ok=False, error=str(exc))
     except Exception as exc:
+        get_logger(cfg)("personas", "-", "compose_failed", err=str(exc)[:160])
         return ActionResult(ok=False, error=f"could not compose: {str(exc)[:160]}")
     return ActionResult(ok=True, detail=core.compose_breakdown(cfg, per))
 
@@ -79,6 +80,7 @@ def create_persona(cfg: Config, name: str, voice: str = "",
     except ValueError as exc:                            # blank name / empty niche / unknown lean or lever / duplicate id
         return ActionResult(ok=False, error=str(exc))
     except Exception as exc:
+        get_logger(cfg)("personas", name, "create_failed", err=str(exc)[:160])
         return ActionResult(ok=False, error=f"could not create persona: {str(exc)[:160]}")
     return ActionResult(ok=True, detail={"created": pid})
 
@@ -102,6 +104,7 @@ def edit_persona(cfg: Config, pid: str, name: str = "", voice: str = "",
     except ValueError as exc:                            # unknown lean or lever / blank name
         return ActionResult(ok=False, error=str(exc))
     except Exception as exc:
+        get_logger(cfg)("personas", pid, "edit_failed", err=str(exc)[:160])
         return ActionResult(ok=False, error=f"could not save {pid}: {str(exc)[:160]}")
     return ActionResult(ok=True, detail={"saved": pid})
 
@@ -117,6 +120,7 @@ def delete_persona(cfg: Config, pid: str) -> ActionResult:
     except KeyError:
         return ActionResult(ok=False, error=f"no such persona: {pid}")
     except Exception as exc:
+        get_logger(cfg)("personas", pid, "delete_failed", err=str(exc)[:160])
         return ActionResult(ok=False, error=f"could not delete {pid}: {str(exc)[:160]}")
     return ActionResult(ok=True, detail={"deleted": pid})
 
@@ -138,6 +142,7 @@ def connect_account(cfg: Config, handle: str, persona_id: str) -> ActionResult:
     except KeyError:
         return ActionResult(ok=False, error=f"no such account: {handle}")
     except Exception as exc:
+        get_logger(cfg)("personas", handle, "connect_failed", err=str(exc)[:160])
         return ActionResult(ok=False, error=f"could not connect {handle}: {str(exc)[:160]}")
     return ActionResult(ok=True, detail={"handle": handle, "persona_id": pid or None})
 
@@ -156,6 +161,7 @@ def set_niche(cfg: Config, pid: str, niche: str = "") -> ActionResult:
     except ValueError as exc:
         return ActionResult(ok=False, error=str(exc))
     except Exception as exc:
+        get_logger(cfg)("personas", pid, "set_niche_failed", err=str(exc)[:160])
         return ActionResult(ok=False, error=f"could not save the niche: {str(exc)[:160]}")
     return ActionResult(ok=True, detail={"persona": pid, "niche": _parse_niche(niche)})
 
@@ -166,5 +172,6 @@ def run_migration(cfg: Config) -> ActionResult:
     try:
         out = core.migrate_from_accounts(cfg)
     except Exception as exc:
+        get_logger(cfg)("personas", "-", "migration_failed", err=str(exc)[:160])
         return ActionResult(ok=False, error=f"migration failed: {str(exc)[:160]}")
     return ActionResult(ok=True, detail=out)

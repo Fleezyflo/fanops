@@ -207,6 +207,8 @@ def run_ingest(cfg: Config, *, batch_name: str = "", target_accounts=(), burn_su
         _archive_staged(cfg, staged)
         write_digest(Ledger.load(cfg), cfg)
     except Exception as exc:
+        from fanops.log import get_logger
+        get_logger(cfg)("run", "-", "ingest_failed", err=str(exc)[:160])
         return ActionResult(ok=False, error=f"ingest failed: {str(exc)[:160]}")
     if added >= 1: kick_prepare(cfg)                        # WS-D1: new footage -> drive NOW (best-effort; daemon backstops). Covers the one-click upload path too (it delegates here).
     detail = {"sources": n, "added": added}
@@ -240,6 +242,8 @@ def run_pull(cfg: Config, url: str) -> ActionResult:
         _archive_staged(cfg, staged)
         write_digest(Ledger.load(cfg), cfg)
     except Exception as exc:
+        from fanops.log import get_logger
+        get_logger(cfg)("run", "-", "pull_failed", err=str(exc)[:160])
         return ActionResult(ok=False, error=f"pull failed: {str(exc)[:160]}")
     if added >= 1 and not cfg.queue_gate: kick_prepare(cfg)
     return ActionResult(ok=True, detail={"sources": n, "added": added})
@@ -485,6 +489,8 @@ def run_ingest_thirdparty(cfg: Config) -> ActionResult:
         _archive_staged(cfg, staged)
         write_digest(Ledger.load(cfg), cfg)
     except Exception as exc:
+        from fanops.log import get_logger
+        get_logger(cfg)("run", "-", "thirdparty_ingest_failed", err=str(exc)[:160])
         return ActionResult(ok=False, error=f"third-party ingest failed: {str(exc)[:160]}")
     return ActionResult(ok=True, detail={"sources": n, "added": added, "excluded": excluded})
 
@@ -506,6 +512,8 @@ def run_advance(cfg: Config, base_time: Optional[str] = None, *, confirmed: bool
     try:
         problems = Accounts.load(cfg).validate()       # malformed accounts.json -> clean error, not 500
     except Exception as exc:
+        from fanops.log import get_logger
+        get_logger(cfg)("run", "-", "advance_accounts_failed", err=str(exc)[:160])
         return ActionResult(ok=False, error=f"accounts.json: {str(exc)[:160]}")
     if problems:
         return ActionResult(ok=False, error="accounts.json: " + "; ".join(problems))
@@ -528,17 +536,18 @@ def run_advance(cfg: Config, base_time: Optional[str] = None, *, confirmed: bool
         key = Config.auth_key_name_from_error(exc)
         return ActionResult(ok=False, error=f"FATAL auth failure — check {key}: {str(exc)[:160]}")
     except Exception as exc:
+        from fanops.log import get_logger
+        get_logger(cfg)("run", "-", "advance_failed", err=str(exc)[:160])
         return ActionResult(ok=False, error=f"advance failed: {str(exc)[:160]}")
     return ActionResult(ok=True, detail=summary)
 
 
 def run_prepare(cfg: Config, base_time: Optional[str] = None, *, confirmed: bool = True) -> ActionResult:
-    """Auto-prepare (review-first, milestone 1): answer every pending moment/caption gate via the
-    configured responder, then advance — looped until no gate remains — so finished clips land in
-    Review WITHOUT the operator hand-writing a caption. With FANOPS_RESPONDER=llm the gates answer
-    themselves (the one-click/autopilot path); in manual mode the responder writes nothing and the
-    gates stay for the Gates tab. Same live-publish confirm + accounts guards as run_advance — a
-    prepare pass still crossposts/publishes due posts on a live backend. Mirrors cmd_run's loop.
+    """Auto-prepare (review-first, milestone 1): answer every pending moment/caption gate via the LLM
+    responder, then advance — looped until no gate remains — so finished clips land in Review WITHOUT
+    the operator hand-writing a caption. Gates are answered ONLY by the LLM, so the gates always answer
+    themselves (the one-click/autopilot path). Same live-publish confirm + accounts guards as
+    run_advance — a prepare pass still crossposts/publishes due posts on a live backend. Mirrors cmd_run's loop.
 
     This is the Make-clips click, so it carries queued footage the WHOLE way: every bound held source
     (queue-gate `pending` + a batch) is released to `catalogued` first, then respond+advance cuts it.
@@ -553,6 +562,8 @@ def run_prepare(cfg: Config, base_time: Optional[str] = None, *, confirmed: bool
     try:
         problems = Accounts.load(cfg).validate()       # malformed/empty-id accounts -> clean error, not 500
     except Exception as exc:
+        from fanops.log import get_logger
+        get_logger(cfg)("run", "-", "prepare_accounts_failed", err=str(exc)[:160])
         return ActionResult(ok=False, error=f"accounts.json: {str(exc)[:160]}")
     if problems:
         return ActionResult(ok=False, error="accounts.json: " + "; ".join(problems))
@@ -580,26 +591,27 @@ def run_prepare(cfg: Config, base_time: Optional[str] = None, *, confirmed: bool
                         led.set_source_state(sid, SourceState.catalogued); released += 1
             for _ in range(10):                                # respond -> advance until stable (no gate left)
                 try:
-                    responder.answer_pending(cfg)              # llm answers the gates; manual writes nothing
+                    responder.answer_pending(cfg)              # the LLM responder answers the gates
                     summary = advance(cfg, base_time=bt)
                 except AuthError as exc:
                     # UI-LIE-FIX: derive the auth-key name from the EXCEPTION CLASS — the structural truth.
                     key = Config.auth_key_name_from_error(exc)
                     return ActionResult(ok=False, error=f"FATAL auth failure — check {key}: {str(exc)[:160]}")
                 except Exception as exc:
+                    from fanops.log import get_logger
+                    get_logger(cfg)("run", "-", "prepare_failed", err=str(exc)[:160])
                     return ActionResult(ok=False, error=f"prepare failed: {str(exc)[:160]}")
                 if summary["awaiting"]["moments"] == 0 and summary["awaiting"]["captions"] == 0:
                     done = True; break
     except RunBusyError:
         return ActionResult(ok=False, error="pipeline busy — a run is driving")
-    # In llm mode the responder is SUPPOSED to drain the gates; hitting the 10-pass cap with gates
-    # still pending means it isn't converging (malformed answers / gates regenerating) — surface that
-    # instead of a green "prepared" the operator would wrongly trust (ecc audit: code+python MEDIUM).
-    # In manual mode the responder writes nothing, so remaining gates are EXPECTED (they wait in the
-    # Gates tab) — that stays ok=True.
+    # The LLM responder is SUPPOSED to drain the gates; hitting the 10-pass cap with gates still pending
+    # means it isn't converging (malformed answers / gates regenerating) — surface that ALWAYS (gates are
+    # answered only by the LLM, so there is no "manual mode" where remaining gates are expected) instead of
+    # a green "prepared" the operator would wrongly trust (ecc audit: code+python MEDIUM).
     # `released` rides in the detail on BOTH exits: it is the only proof the click moved held footage, and
     # its absence is exactly what made the old silent no-op look like success.
-    if not done and cfg.responder_mode == "llm":
+    if not done:
         return ActionResult(ok=False, detail={**(summary or {}), "released": released},
                             error="auto-prepare did not finish — gates still pending after 10 passes "
                             "(is the LLM CLI working?); run Prepare again or answer them in the Gates tab")

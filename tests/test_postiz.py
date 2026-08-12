@@ -24,7 +24,7 @@ def _cfg(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_POSTER", "postiz")
     monkeypatch.setenv("POSTIZ_URL", "https://postiz.example.com")
     monkeypatch.setenv("POSTIZ_API_KEY", "k")
-    monkeypatch.setenv("FANOPS_RESPONDER", "manual")   # hermetic: postiz creds alone must pass preflight
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")      # hermetic: LLM CLI is stubbed present, so postiz creds alone pass preflight
     return Config(root=tmp_path)
 
 def _post(pid="p1", acct_id="intg_1"):

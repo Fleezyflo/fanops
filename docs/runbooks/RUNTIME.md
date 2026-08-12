@@ -42,8 +42,8 @@ Environment variables (read at runtime from `.env`, see `src/fanops/config.py`):
 | `POSTIZ_URL` | URL | Base URL of your Postiz instance (required when any channel routes to `postiz`). |
 | `POSTIZ_API_KEY` | string | Postiz public API key (`x-api-key`). Required when any channel routes to `postiz`. |
 | `ZERNIO_API_KEY` | string | Zernio API key. Required when any channel routes to `zernio` (TikTok). |
-| `FANOPS_RESPONDER` | `manual` (default) \| `llm` | `manual` = a human/cron writes the response files; `llm` = the LLM responder answers gates via plain `claude -p` (the operator's existing Claude subscription/login — NO API key). With `llm`, `advance`/`run` **hard-fail (exit 2) unless `claude` is on PATH** — the cutover-safety preflight (see below); the operator must `claude login` once on the host. |
-| `claude` (CLI, logged in) | — | Required for `FANOPS_RESPONDER=llm`. The responder shells plain `claude -p` (NOT `--bare`), so it uses the host's `claude login` session — **no `ANTHROPIC_API_KEY` needed**. `claude` absent with `llm` ⇒ `advance`/`run` exit 2 (the silent-zero-output guard). `--strict-mcp-config --allowedTools ""` keep it a clean no-tool/no-MCP generator. (`ANTHROPIC_API_KEY` is NOT required; if set, `claude` will use it, but the subscription login is the supported path.) |
+| `FANOPS_RESPONDER` | `llm` (only) | Gates are answered ONLY by the LLM responder via plain `claude -p` (the operator's existing Claude subscription/login — NO API key). Leave unset (resolves to `llm`) or set `llm`; **any other value is a hard refuse** (`doctor`/`advance`/`run` exit non-zero). `advance`/`run` also **hard-fail (exit 2) unless `claude` is on PATH** — the cutover-safety preflight (see below); the operator must `claude login` once on the host. |
+| `claude` (CLI, logged in) | — | ALWAYS required — gates are answered only by the LLM. The responder shells plain `claude -p` (NOT `--bare`), so it uses the host's `claude login` session — **no `ANTHROPIC_API_KEY` needed**. `claude` absent ⇒ `advance`/`run` exit 2 (the silent-zero-output guard). `--strict-mcp-config --allowedTools ""` keep it a clean no-tool/no-MCP generator. (`ANTHROPIC_API_KEY` is NOT required; if set, `claude` will use it, but the subscription login is the supported path.) |
 | `FANOPS_ARTIST_NAME` | string (optional) | Artist **display name** used as the YouTube title fallback when a post has no explicit title (audit h). Default `"Moh Flow"` (unchanged). Distinct from the `@mohflow` caption mention (`tagging.ARTIST_HANDLE`). |
 | `FANOPS_BURN_SUBS` | `1`/`true`/… (default **ON**) \| `0`/`false`/`no`/`off` | Burn the transcript-derived subtitles + top-third hook into each rendered clip. **DEFAULT ON** — an unset env burns subs, so the feature is live with no operator action; only the explicit off-words `0`/`false`/`no`/`off` (case-insensitive) disable it. **Fail-open**: if this ffmpeg lacks the text filter or the source has no transcript, the clip still renders (plain), logging one `subs_skipped` line. Requires a **text-capable ffmpeg (libass)** — see the note below. |
 | `FANOPS_SUBTITLE_FONT` | string (optional) | Font face for the `.ass` subtitles. Default `"Arial Unicode MS"` — an Arabic-capable face so RTL captions render. Override if the host lacks that font or you prefer another Unicode/Arabic typeface. |
@@ -89,7 +89,7 @@ doing any work, right after `_check_accounts`. It **refuses to run (exit 2, one-
 stderr, no traceback)** for the two env mismatches that would otherwise make the pipeline do
 credentialless *nothing* — the #1 cutover trap:
 
-- **`FANOPS_RESPONDER=llm` but `claude` is not on PATH (or not logged in)** — the responder
+- **`claude` is not on PATH (or not logged in)** — the responder
   shells plain `claude -p` (your existing subscription/login; no API key). With no `claude`
   binary it would fail every gate, clear nothing, and publish nothing **without crashing**
   (the preflight hard-blocks the binary-absent case; a logged-out `claude` surfaces via the
@@ -140,9 +140,11 @@ fanops advance                  # now the normal pipeline clips/captions/schedul
 
 ---
 
-## Daily loop (manual responder)
+## Daily loop (hand-answering gates)
 
-This is the default, human-in-the-loop cadence (`FANOPS_RESPONDER=manual`).
+Gates are answered ONLY by the LLM (`fanops respond`/`run` shell `claude -p`), but you can still
+review and hand-answer them in the Studio Gates tab — or, at the file layer, by writing the
+`*.response.json` files yourself. This section describes that human-in-the-loop cadence.
 
 1. **`fanops advance`** — ingests any drops, transcribes, detects signals, and opens the
    pending **moment** requests. It pauses there; `status`/`digest` show
@@ -152,8 +154,8 @@ This is the default, human-in-the-loop cadence (`FANOPS_RESPONDER=manual`).
    is a `CaptionSet`. (Each request carries a `request_id` you echo back so the response
    correlates — see `agentstep.py`.) The creative instructions you are answering *to*
    live in `context.md` and are injected into each request as `guidance`.
-   - Or, with `FANOPS_RESPONDER=llm` and `claude` on `PATH` (authenticated), run
-     **`fanops respond`** to answer them automatically (the autonomous LLM responder).
+   - Or run **`fanops respond`** to answer them automatically with the LLM responder
+     (`claude -p`, using your `claude login` session — this is the default answer path).
 3. **`fanops advance`** again — ingests the moment decisions, renders the per-aspect
    clips, and opens the **caption** requests. Answer those the same way (or `respond`),
    then `advance` once more to crosspost and publish what is due.
@@ -182,12 +184,10 @@ silently-unauthed responder).
 fanops run [--base-time T]
 ```
 
-`run` drives the gates with the configured responder and advances until the pipeline is
-**stable** (no pending moments **and** no pending captions), up to **10 iterations**. It
-only makes progress if the responder actually answers gates — so for unattended
-operation set `FANOPS_RESPONDER=llm` with `claude` on `PATH` and authenticated (the
-autonomous LLM responder — see below); with the default `manual` responder there is
-nothing to drain and it will stop after one pass.
+`run` drives the gates with the LLM responder and advances until the pipeline is
+**stable** (no pending moments **and** no pending captions), up to **10 iterations**. Gates
+are answered ONLY by the LLM, so unattended operation just needs `claude` on `PATH` and
+authenticated (`claude login` — see below); the preflight hard-fails (exit 2) if it is missing.
 
 **The learning loop closes inside `run` (E1).** After the respond→advance loop converges,
 `run` runs one `track`+`adjust` pass — `pull_metrics → classify_outcomes → amplify → retire`
@@ -602,6 +602,48 @@ These cannot be automated and gate a live run:
 
 ---
 
+## Human gates (KEEP — confirm-gated by design)
+
+These authority boundaries are **human-by-design**: no flag, daemon tick, or self-heal may
+cross them. Each is enforced at the cited symbol, not by convention. Removing a confirm here
+is a product change, never a "cleanup".
+
+| Gate | Where enforced | Why it stays human |
+|---|---|---|
+| **Review → approve** | `ledger.approve_post` — the ONLY promotion `awaiting_approval → queued`; publish paths iterate `queued` only. Bulk approve adds a batch confirm above `actions_approve.BULK_APPROVE_CONFIRM_AT` (15). | Approval is the single structural barrier to a live post. Approved ≠ live; nothing auto-promotes. |
+| **Go live** | `golive.go_live(confirmed=True)` — accounts-valid → ≥1 live-ready channel → backlog check → explicit confirm → `_dual_write("FANOPS_LIVE", …)`. `go_dryrun` (safe direction) needs no confirm. | The dryrun↔live flip is the blast-radius switch; a stray POST must never flip it. |
+| **Route a channel live** | `golive.set_account_backend(confirmed=True)` (creds present + confirm); `golive.adopt_channels(confirmed=True)`; `golive.validate_learning(confirmed=True)` posts ONE operator-selected throwaway, never auto-picked. | Each maps a REAL account to a live provider — creds alone are not consent. |
+| **Wipe ledger** | `actions_wipe.confirm_wipe` — typed `CONFIRM_WORD = "REMOVE"` → mandatory snapshot → `snapshot_is_restorable` → `execute_wipe` (re-checks confirm). | Ledger state is production data; a typed word + restorable snapshot is the floor. |
+| **Hashtag scrape login** | `fanops hashtags scrape-login` → `cmd_hashtags_scrape_login` is the SOLE `open_client(allow_reauth=True)` call site. The unattended daemon tick always opens `allow_reauth=False` (loads a session or aborts — never logs in). | A cold login is an interactive/checkpoint act; the daemon must never re-auth an Instagram account on its own. |
+| **Meta token mint / rotation** | Off-platform + Studio Go-Live write (`META_GRAPH_TOKEN` / `META_GRAPH_TOKEN__<slug>`, write-only). See `docs/META_CREDS_OPS.md`. | Minting/rotating a Graph token is a human credential act; the doctor only WARNs before expiry (it cannot rotate). |
+| **Release parked footage / re-opens** | `FANOPS_QUEUE_GATE` (default ON) holds new footage pending and PARKS machine-origin re-opens (`adjust.amplify`); the operator releases via the Studio **Make** tab (`actions_run.release_reopens` / `release_batch` / `release_all_held`, live path requires `confirmed=True`). | Auto-ingest and machine re-opens are held so a human decides what enters production. |
+| **Cutover to a real account** | `cutover` requires `CONFIRM_FLAG = "--i-understand-this-posts-to-a-real-account"` (`cutover_postiz` refuses without it). | It posts to a real channel to confirm lift-field shape; the flag is the explicit acknowledgment. |
+
+**Explicitly OUT OF SCOPE (do not build):** a CLI `approve` that bypasses `ledger.approve_post`;
+auto-promotion of `awaiting_approval → queued`; daemon self-heal of IG/Meta credentials
+(re-login, token mint/rotate). These are human gates on purpose.
+
+## Named wedges — surface honesty, not auto-ship
+
+Failure classes where the system keeps *looking* healthy while making no real progress. The
+design goal is **honest surfacing** (a loud doctor check / logged breadcrumb), NOT auto-remediation
+— each fix is an operator act. Point `fanops doctor` at these; do not silence them.
+
+| Wedge | Surfaced by | Operator fix |
+|---|---|---|
+| **Half-live / one-valid-channel** (banner says LIVE, every publish halts in `queued`) | doctor check *"live route exists (FANOPS_LIVE=1 actually publishes)"* (`is_live and not live_route_exists`); a route-read hiccup logs a `half_live_error` breadcrumb rather than a silent pass. | Route a channel to a provider with creds in Go-Live, or `fanops` back to dryrun. |
+| **`FANOPS_ROOT` shell vs daemon plist divergence** (CLI roots at cwd, daemon pinned elsewhere → two ledgers) | `daemon.root_divergence` → one-line `WARN` on stderr from any `fanops` verb + both roots in `fanops daemon status`. See `docs/CONFIG.md` (Bootstrap). | Export `FANOPS_ROOT` (or `cd` to the workspace) so shell and daemon share one ledger. |
+| **Credentials soft-stall** (creds present but dead/logged-out → keeps running, ships/verifies nothing, no crash) | doctor checks *"`claude`/`cursor-agent` on PATH"* (logged-in responder), *"Meta Graph token valid + not near expiry"*, Postiz/Zernio reach; at runtime the heartbeat's `published_in_run == 0` across N runs + the digest's **Pending agent gates** list. | Re-auth the named surface (`claude login`, rotate the token, fix the key) — grep `run.log` for repeated `Not logged in`. |
+| **Postiz nginx-green / Node crash-loop** (docker health-check passes while the Node backend crash-loops) | doctor check *"Postiz backend reachable (real /integrations probe, not the nginx health-check)"* (`postiz_doctor_check`, probes PAST nginx). | Restart / rebuild the Postiz stack; see `docs/POSTIZ_OPS.md`. |
+| **Daemon stale heartbeat** (pump dead/stopped → approved posts silently never send) | doctor check *"publish daemon alive + queue draining (heartbeat + past-due backlog)"* (`_daemon_liveness_check`; FAIL-CLOSED when the heartbeat is absent or older than 3× the tick, or queued posts are past-due). | Restart the pump (`fanops daemon install` / `fanops daemon status`). |
+| **Responder pending-forever** (gates never clear → pipeline alive but stuck) | the digest's **`## Pending agent gates (responder has not cleared)`** section (same gate re-named across runs) + the heartbeat zero-delta; doctor's *"FANOPS_RESPONDER valid"* + LLM-CLI-on-PATH checks catch the misconfig up front. | Fix the KEY, not the scheduler: `claude login`, correct `FANOPS_RESPONDER`, then re-run. |
+
+**Explicitly OUT OF SCOPE (do not build):** daemon self-heal of IG/Meta credentials, and any
+auto-remediation that ships or promotes content to clear a wedge. Wedges are surfaced for a
+human to resolve.
+
+---
+
 ## Operator runbook — fresh checkout → first real post
 
 The bridge from "code-complete" to "live." Everything below the dashed line in step 5 is
@@ -636,7 +678,7 @@ cp .env.example .env
 
 ```bash
 claude login                              # one-time: authenticate the subscription on this host
-echo 'FANOPS_RESPONDER=llm' >> .env       # opt into the autonomous responder (default `manual` is a no-op — a human/cron writes the response files)
+# FANOPS_RESPONDER defaults to llm — no need to set it; gates are always answered by the LLM
 claude -p 'say ok' --output-format json   # smoke: confirms the logged-in session works headless (no API key)
 ```
    NOTE: cron/launchd runs as your user and inherits the same `~/.claude` login, so a `claude

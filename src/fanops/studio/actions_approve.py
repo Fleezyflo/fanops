@@ -8,6 +8,7 @@ from fanops.ledger import Ledger
 from fanops.models import ClipState, PostState, PLATFORM_MAX_SECONDS, validate_account_handle
 from fanops.audit import write_audit
 from fanops.log import get_logger
+from fanops.errors import fail_open
 from fanops.timeutil import iso_z
 from fanops.studio.views import suggest_time
 from fanops.studio.views_common import suggest_times_for_batch
@@ -84,20 +85,20 @@ def _approve_ids_with_render(cfg: Config, *, resolve_ids: Callable[[Ledger], Seq
                     if p.scheduled_time != t: p.scheduled_time = t
             audited_ids = [i for i in approved_ids if i in led.posts]   # audit what PROMOTED, not what was offered
     except Exception as exc:
+        get_logger(cfg)("approve", "-", "approve_failed", err=str(exc)[:160])
         return ActionResult(ok=False, error=f"approve failed: {str(exc)[:160]}")
     if approved and audited_ids:
         write_audit(cfg, "approve", audited_ids, reason="studio_approve_batch", approved=approved, now=now_iso)
     sched_detail: dict = {}
     if approved and audited_ids:
-        try:
+        sched_detail = {"outcome": "approved_scheduled"}
+        with fail_open("studio.actions_approve._approve_ids_with_render.sched_detail"):
             led2 = Ledger.load(cfg)
             times = sorted(t for i in audited_ids if (p := led2.posts.get(i)) and p.scheduled_time for t in [led2.posts[i].scheduled_time])
             accts = list({led2.posts[i].account for i in audited_ids if i in led2.posts})
             sched_detail = {"outcome": "approved_scheduled", "next_time": times[0] if times else None,
                             "last_time": times[-1] if times else None,
                             "schedule_account": accts[0] if len(accts) == 1 else None}
-        except Exception:
-            sched_detail = {"outcome": "approved_scheduled"}
     return ActionResult(ok=True, detail={**detail, "approved": approved, "render_pending": 0,
                                          "skipped_retired": skipped_retired, "cut_over_cap": cut_over_cap, **sched_detail})
 
@@ -123,6 +124,7 @@ def reject_posts(cfg: Config, ids: Sequence[str]) -> ActionResult:
                            and p.state is PostState.awaiting_approval]
             for pid in sel: led.reject_post(pid)
     except Exception as exc:
+        get_logger(cfg)("reject", "-", "reject_failed", err=str(exc)[:160])
         return ActionResult(ok=False, error=f"reject failed: {str(exc)[:160]}")
     if audited_ids:
         write_audit(cfg, "reject", audited_ids, reason="studio_reject_batch", rejected=len(audited_ids))
@@ -135,6 +137,7 @@ def unapprove_post(cfg: Config, post_id: str) -> ActionResult:
             if post_id not in led.posts: return ActionResult(ok=False, error=f"no such post: {post_id}")
             led.unapprove_post(post_id)
     except Exception as exc:
+        get_logger(cfg)("unapprove", post_id, "unapprove_failed", err=str(exc)[:160])
         return ActionResult(ok=False, error=f"unapprove failed: {str(exc)[:160]}")
     return ActionResult(ok=True, detail={"post_id": post_id})
 
@@ -199,6 +202,7 @@ def approve_with_hook(cfg: Config, clip_id: str, *, now: Optional[datetime] = No
                 led.approve_post(pid, now_iso=now_iso, suggested_iso=sugg)
                 approved += 1
     except Exception as exc:
+        get_logger(cfg)("approve_with_hook", clip_id, "approve_failed", err=str(exc)[:160])
         return ActionResult(ok=False, error=f"approve-with-hook failed: {str(exc)[:160]}")
     return ActionResult(ok=True, detail={"approved": approved, "clip_id": clip_id, "hook": bool(removed),
                                          "cut_over_cap": cut_over_cap})
@@ -290,6 +294,7 @@ def approve_stitches(cfg: Config, ids: Sequence[str]) -> ActionResult:
         with Ledger.transaction(cfg) as led:
             for pid in sel: led.approve_stitch_plan(pid)
     except Exception as exc:
+        get_logger(cfg)("approve_stitches", "-", "approve_failed", err=str(exc)[:160])
         return ActionResult(ok=False, error=f"approve failed: {str(exc)[:160]}")
     return ActionResult(ok=True, detail={"approved": len(sel)})
 
@@ -299,6 +304,7 @@ def dismiss_stitches(cfg: Config, ids: Sequence[str]) -> ActionResult:
         with Ledger.transaction(cfg) as led:
             for pid in sel: led.dismiss_stitch_plan(pid)
     except Exception as exc:
+        get_logger(cfg)("dismiss_stitches", "-", "dismiss_failed", err=str(exc)[:160])
         return ActionResult(ok=False, error=f"dismiss failed: {str(exc)[:160]}")
     return ActionResult(ok=True, detail={"dismissed": len(sel)})
 
@@ -317,6 +323,7 @@ def release_stitches(cfg: Config, ids: Sequence[str]) -> ActionResult:
                 led.set_clip_state(cid, ClipState.captioned)
                 released += 1
     except Exception as exc:
+        get_logger(cfg)("release_stitches", "-", "release_failed", err=str(exc)[:160])
         return ActionResult(ok=False, error=f"release failed: {str(exc)[:160]}")
     return ActionResult(ok=True, detail={"released": released})
 

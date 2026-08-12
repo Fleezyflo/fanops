@@ -1,15 +1,17 @@
 """Hashtag Layer A network via instagrapi (Graph hashtag path deferred)."""
 from __future__ import annotations
+import logging
 import os
 from datetime import datetime, timedelta, timezone
 from typing import Optional
-from fanops.config import Config
+from fanops.config import Config, parse_scrape_delay, _SCRAPE_DELAY_DEFAULT
 from fanops.hashtags import CAPTION_TAG_RE, HARVEST_CAP, TOP_SAMPLE_N, _norm, _num
 from fanops.log import get_logger
 
+_log = logging.getLogger("fanops.ig_hashtag_scrape")
+
 _REEL_TREND_DAYS = 7            # a Reel older than this is history, not "currently trending"
 _REEL_PRODUCT_TYPE = "clips"    # Instagram's own product_type for a Reel
-_DELAY_RANGE = (1.0, 3.0)       # instagrapi's own between-request jitter, seconds (MOL-698)
 
 
 def _scrape_delay_range():
@@ -17,20 +19,16 @@ def _scrape_delay_range():
     pacing at all. Unset before MOL-698, so a pass fired back-to-back at ~2.4 req/s from a single
     account; that emission profile is what earned the 2026-07-29 `challenge_required`.
     FANOPS_HASHTAG_SCRAPE_DELAY takes a `"lo,hi"` pair; `"0"` opts out entirely (fakes / tests).
-    Anything else — unparseable, negative, inverted, wrong arity — falls back to the default: a
-    fat-fingered env var must never remove the pacing or break Layer A."""
-    raw = (os.getenv("FANOPS_HASHTAG_SCRAPE_DELAY") or "").strip()
-    if not raw:
-        return list(_DELAY_RANGE)
-    if raw == "0":
-        return None
+    Parsing is the SHARED `config.parse_scrape_delay` — the SAME rule Settings.strict_validate runs, so
+    doctor fails loud on a malformed value; here it is caught and the default pacing is kept, because a
+    fat-fingered env var must never remove the pacing or break Layer A (fail-open with a breadcrumb)."""
+    raw = os.getenv("FANOPS_HASHTAG_SCRAPE_DELAY")
     try:
-        vals = [float(p) for p in raw.replace(" ", "").split(",")]
-    except ValueError:
-        return list(_DELAY_RANGE)
-    if len(vals) != 2 or vals[0] < 0 or vals[1] < vals[0]:
-        return list(_DELAY_RANGE)
-    return vals
+        return parse_scrape_delay(raw)
+    except ValueError as e:
+        _log.warning("ignoring FANOPS_HASHTAG_SCRAPE_DELAY (%s); keeping default pacing %s",
+                     e, list(_SCRAPE_DELAY_DEFAULT))
+        return list(_SCRAPE_DELAY_DEFAULT)
 
 
 class ScrapeUnavailable(Exception):
