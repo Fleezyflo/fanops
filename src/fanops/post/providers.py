@@ -50,7 +50,7 @@ PROVIDERS: dict[str, Provider] = {
 
 
 def get_provider(cfg: Config, name: str) -> Optional[Provider]:
-    """The Provider for `name`, or None when unrecognized — the CALLER picks the fallback. Both the poster
-    and uploader fall back to dryrun for an unknown backend (a fail-safe file:// URL, not a crash): no live
-    account routes to an unknown backend (all route postiz/zernio), so this path is a defensive default."""
+    """The Provider for `name`, or None when unrecognized — the CALLER picks the fallback.
+    get_poster falls back to DryRunPoster when not refused by its live+dryrun guard; get_media_uploader
+    falls back to the dryrun file:// uploader only when not live, and RAISES when live+unknown."""
     return PROVIDERS.get(name)

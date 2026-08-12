@@ -51,7 +51,7 @@ def ledger_lock_is_free(cfg) -> bool:
 # (credentials, tuning numbers, and the four read directly by config.py with no Settings field).
 _NON_FLAG_LEAKY = ("FANOPS_ROOT", "FANOPS_POSTER", "BLOTATO_API_KEY", "POSTIZ_API_KEY", "POSTIZ_URL", "FANOPS_MEDIA_PUBLIC_BASE",
               "R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET", "FANOPS_HOOK_JUDGE",
-              "FANOPS_RESPONDER",   # defaults to llm when `claude` is on PATH — must not leak across tests/CI
+              "FANOPS_RESPONDER",   # explicit llm/manual switch (PATH never auto-enables) — must not leak across tests/CI
               # LLM transport/model: the operator persists FANOPS_LLM_TRANSPORT=cursor (+ an optional
               # FANOPS_LLM_MODEL) to the repo .env — must not leak into the dispatch-default/AUTO tests.
               "FANOPS_LLM_TRANSPORT", "FANOPS_LLM_MODEL",
