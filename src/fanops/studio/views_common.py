@@ -3,12 +3,10 @@ account-universe extraction, the time helpers (imminence + the deterministic per
 batch-title lookup that several surfaces reuse. Imports ONLY fanops.* — never a sibling views_* module — so
 every surface module AND the views.py facade can depend on it without an import cycle.
 
-Exception (D13b): postiz_health_for_banner is the ONE read-model here that touches the network (a single
-cheap GET, cached ~30s) — the Postiz backend health probe the Studio banner derives from. Kept here (not a
-new module) because it's a global-strip read like the others, and it imports only fanops.post.postiz."""
+postiz_health_for_banner is snapshot-only (deps_health.json via read_dep_snapshot); it does not touch the
+network."""
 from __future__ import annotations
 import logging
-import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -304,12 +302,7 @@ def _batch_title(led: Ledger, bid: Optional[str]) -> Optional[str]:
     return b.name if b is not None else None
 
 
-# D13b: the Postiz-down banner read-model. A Studio render hits build_system_strip on EVERY page, so a
-# raw probe-per-render would slam Postiz — cache the typed probe result for _POSTIZ_HEALTH_TTL_S. Keyed by
-# postiz_url so a URL change re-probes immediately. Process-local (a Studio worker); a stale-by-30s outage
-# signal is fine (the banner is informational, self-clears within the TTL of a Postiz recovery).
-_POSTIZ_HEALTH_TTL_S = 30.0
-_postiz_health_cache: "dict[str, tuple[float, object]]" = {}
+# D13b: the Postiz-down banner read-model. Snapshot-only — reads deps_health.json; never probes.
 
 
 def _any_channel_routes_to_postiz(cfg: Config) -> bool:
@@ -331,48 +324,47 @@ def _any_channel_routes_to_postiz(cfg: Config) -> bool:
 
 
 def postiz_health_for_banner(cfg: Config, *, now: "float | None" = None) -> dict:
-    """D13b read-model for the Studio Postiz-down banner. Returns {show, danger, status, hint}. `danger` is True
-    ONLY when the probe is unhealthy AND at least one due postiz-routed post is waiting — a reaper-idle stack
-    with nothing to publish is muted idle, not a stall. `show` is True for danger OR the muted idle hint when
-    a channel routes to postiz and the probe is down. No banner when healthy or no postiz channel. The probe
-    result is cached ~30s (keyed by postiz_url). Fail-open: any error -> {show: False} (must never block a page).
-    `now` is injected for deterministic cache tests; defaults to time.monotonic()."""
+    """D13b read-model for the Studio Postiz-down banner. Returns {show, danger, status, hint}. Snapshot-only
+    (deps_health.json); no network. `danger` is True ONLY when the postiz row is unhealthy AND at least one
+    due postiz-routed post is waiting — a reaper-idle stack with nothing to publish is muted idle, not a stall.
+    `show` is True for danger OR the muted idle hint when a channel routes to postiz and the row is down. No
+    banner when healthy, snapshot missing, no postiz row, or no postiz channel. Fail-open: any error ->
+    {show: False} (must never block a page). `now` is unused (kept so callers that pass now= don't TypeError)."""
     if not _any_channel_routes_to_postiz(cfg):
         return {"show": False, "danger": False, "status": None, "hint": ""}
-    key = cfg.postiz_url or ""
-    t = now if now is not None else time.monotonic()
-    cached = _postiz_health_cache.get(key)
-    if cached is not None and (t - cached[0]) < _POSTIZ_HEALTH_TTL_S:
-        health = cached[1]
-    else:
-        from fanops.post.postiz import postiz_health_probe
-        try:
-            health = postiz_health_probe(cfg)
-        except Exception as e:                       # postiz_health_probe never raises, but stay defensive
-            _log.warning("postiz_health_probe raised in banner read (suppressing banner): %s", e)
-            return {"show": False, "danger": False, "status": None, "hint": ""}
-        _postiz_health_cache[key] = (t, health)
-    if health.healthy:
-        return {"show": False, "danger": False, "status": health.status_code, "hint": ""}
-    status = health.status_code
-    postiz_due = 0
     try:
-        from fanops.studio.views_results import due_publish_plan
-        postiz_due = due_publish_plan(cfg).postiz_due
+        from fanops.health import read_dep_snapshot
+        snap = read_dep_snapshot(cfg)
+        if not isinstance(snap, dict):
+            return {"show": False, "danger": False, "status": None, "hint": ""}
+        row = next((d for d in (snap.get("deps") or [])
+                    if isinstance(d, dict) and d.get("name") == "postiz"), None)
+        if row is None:
+            return {"show": False, "danger": False, "status": None, "hint": ""}
+        status = row.get("status_code")
+        if row.get("ok"):
+            return {"show": False, "danger": False, "status": status, "hint": ""}
+        postiz_due = 0
+        try:
+            from fanops.studio.views_results import due_publish_plan
+            postiz_due = due_publish_plan(cfg).postiz_due
+        except Exception as e:
+            _log.debug("due_publish_plan failed in banner read (treat as idle): %s", e)
+        if postiz_due <= 0:
+            if _postiz_local_autostart(cfg):
+                hint = "Postiz idle (starts on publish)"
+            else:
+                where = f" (status: {status})" if status is not None else ""
+                hint = f"Postiz API unreachable{where}"
+            return {"show": True, "danger": False, "status": status, "hint": hint}
+        where = f" (status: {status})" if status is not None else ""
+        return {"show": True, "danger": True, "status": status,
+                "hint": (f"Postiz API unhealthy{where} — publishes via Postiz are stalled. The container's "
+                         "health check is nginx-only and can lie; check `docker logs postiz` (see "
+                         "docs/POSTIZ_OPS.md).")}
     except Exception as e:
-        _log.debug("due_publish_plan failed in banner read (treat as idle): %s", e)
-    if postiz_due <= 0:
-        if _postiz_local_autostart(cfg):
-            hint = "Postiz idle (starts on publish)"
-        else:
-            where = f" (status: {status})" if status is not None else ""
-            hint = f"Postiz API unreachable{where}"
-        return {"show": True, "danger": False, "status": status, "hint": hint}
-    where = f" (status: {status})" if status is not None else ""
-    return {"show": True, "danger": True, "status": status,
-            "hint": (f"Postiz API unhealthy{where} — publishes via Postiz are stalled. The container's "
-                     "health check is nginx-only and can lie; check `docker logs postiz` (see "
-                     "docs/POSTIZ_OPS.md).")}
+        _log.warning("postiz banner snapshot read failed (suppressing banner): %s", e)
+        return {"show": False, "danger": False, "status": None, "hint": ""}
 
 
 def _postiz_local_autostart(cfg: Config) -> bool:
@@ -387,7 +379,7 @@ def _postiz_local_autostart(cfg: Config) -> bool:
 
 def postiz_autostart_hint(cfg: Config, *, now: "float | None" = None) -> dict:
     """S10 golive/strip presentation: parked local Postiz (reaper-idle) vs a real publish stall.
-    Returns {parked, hint, danger, block_alert, show, status}. Reuses postiz_health_for_banner probe cache."""
+    Returns {parked, hint, danger, block_alert, show, status}. Reuses postiz_health_for_banner (snapshot-only)."""
     banner = postiz_health_for_banner(cfg, now=now)
     local_autostart = _postiz_local_autostart(cfg)
     danger = bool(banner.get("danger"))

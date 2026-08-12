@@ -7,18 +7,30 @@
       "fanops.adjust",
       "fanops.agentstep",
       "fanops.artifacts",
+      "fanops.autopilot",
       "fanops.caption",
       "fanops.clip",
+      "fanops.compose",
       "fanops.config",
       "fanops.control",
       "fanops.crosspost",
+      "fanops.cutover",
+      "fanops.cutover_postiz",
+      "fanops.daemon",
       "fanops.digest",
+      "fanops.doctor",
+      "fanops.fanops_hashtags",
       "fanops.framing",
       "fanops.hashtag_hygiene",
       "fanops.hashtags",
+      "fanops.health",
+      "fanops.health_model",
       "fanops.hookscore",
+      "fanops.ig_hashtag_scrape",
       "fanops.ingest",
+      "fanops.intro_match",
       "fanops.keyframes",
+      "fanops.learn_doctor",
       "fanops.ledger",
       "fanops.ledger_bridge",
       "fanops.ledger_sqlite",
@@ -32,7 +44,9 @@
       "fanops.persona_research",
       "fanops.persona_store",
       "fanops.personas",
+      "fanops.pipeline",
       "fanops.pipeline_run",
+      "fanops.pipeline_status",
       "fanops.post",
       "fanops.post.compress",
       "fanops.post.dryrun",
@@ -43,6 +57,7 @@
       "fanops.post.run",
       "fanops.post.zernio",
       "fanops.postiz_lifecycle",
+      "fanops.produce",
       "fanops.reconcile",
       "fanops.reframe",
       "fanops.reframe_apply",
@@ -50,10 +65,13 @@
       "fanops.settings",
       "fanops.signals",
       "fanops.stage_lock",
+      "fanops.stitch_render",
       "fanops.studio.views_common",
       "fanops.studio.views_results",
+      "fanops.studio.views_review",
       "fanops.tagging",
       "fanops.timing_bias",
+      "fanops.track",
       "fanops.transcribe",
       "fanops.validation_gate",
       "fanops.variant_amplify",
@@ -67,26 +85,6 @@
       "fanops.studio.app_routes_review",
       "fanops.studio.app_routes_run",
       "fanops.studio.app_routes_schedule"
-    ],
-    [
-      "fanops.autopilot",
-      "fanops.daemon",
-      "fanops.doctor",
-      "fanops.health",
-      "fanops.health_model"
-    ],
-    [
-      "fanops.cutover",
-      "fanops.cutover_postiz",
-      "fanops.track"
-    ],
-    [
-      "fanops.fanops_hashtags",
-      "fanops.ig_hashtag_scrape"
-    ],
-    [
-      "fanops.pipeline",
-      "fanops.pipeline_status"
     ],
     [
       "fanops.studio.actions",
@@ -319,6 +317,7 @@
         "fanops.studio.app",
         "fanops.studio.views",
         "fanops.studio.views_results",
+        "fanops.studio_desktop",
         "fanops.track"
       ],
       "optional": [],
@@ -631,7 +630,15 @@
         "fanops.health_model"
       ],
       "lazy": [
-        "fanops.health_model"
+        "fanops",
+        "fanops.controlio",
+        "fanops.daemon",
+        "fanops.health_model",
+        "fanops.ledger",
+        "fanops.models",
+        "fanops.pipeline_status",
+        "fanops.post.postiz",
+        "fanops.timeutil"
       ],
       "optional": [],
       "typing": []
@@ -1627,6 +1634,7 @@
       ],
       "lazy": [
         "fanops.health",
+        "fanops.health_model",
         "fanops.studio",
         "fanops.studio.views_common"
       ],
@@ -1795,6 +1803,8 @@
         "fanops.doctor",
         "fanops.hashtag_vocab",
         "fanops.hashtags",
+        "fanops.health",
+        "fanops.health_model",
         "fanops.lever_docs",
         "fanops.log",
         "fanops.meta_graph",
@@ -1822,8 +1832,8 @@
       "lazy": [
         "fanops.accounts",
         "fanops.crosspost",
+        "fanops.health",
         "fanops.models",
-        "fanops.post.postiz",
         "fanops.postiz_lifecycle",
         "fanops.studio.views_results",
         "fanops.timeutil"
@@ -1915,6 +1925,12 @@
       "lazy": [
         "fanops.studio.views_results"
       ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.studio_desktop": {
+      "compile": [],
+      "lazy": [],
       "optional": [],
       "typing": []
     },
@@ -2124,6 +2140,7 @@
       "time",
       "urllib",
       "urllib3",
+      "webview",
       "whisper"
     ],
     "optional": [
@@ -2259,6 +2276,7 @@
     "fanops.studio.views_live": 1,
     "fanops.studio.views_results": 2,
     "fanops.studio.views_review": 1,
+    "fanops.studio_desktop": 0,
     "fanops.tagging": 1,
     "fanops.text": 4,
     "fanops.timeutil": 18,
@@ -2397,6 +2415,7 @@
     "fanops.studio.views_live": 3,
     "fanops.studio.views_results": 7,
     "fanops.studio.views_review": 9,
+    "fanops.studio_desktop": 0,
     "fanops.tagging": 2,
     "fanops.text": 0,
     "fanops.timeutil": 0,
@@ -2412,7 +2431,7 @@
   "generated_by": "tools/arch",
   "generator_version": "arch/1.0.0",
   "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",
-  "lazy_downward_count": 234,
+  "lazy_downward_count": 244,
   "lazy_lateral": [
     {
       "from": "fanops.accounts",
@@ -2573,6 +2592,14 @@
       "same_scc": false,
       "to": "fanops.persona_research",
       "to_level": 3
+    },
+    {
+      "from": "fanops.health",
+      "from_level": 2,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.ledger",
+      "to_level": 2
     },
     {
       "from": "fanops.health_model",
@@ -2751,14 +2778,6 @@
       "to_level": 9
     },
     {
-      "from": "fanops.studio.views_common",
-      "from_level": 3,
-      "jump": 0,
-      "same_scc": false,
-      "to": "fanops.post.postiz",
-      "to_level": 3
-    },
-    {
       "from": "fanops.studio.views_results",
       "from_level": 4,
       "jump": 0,
@@ -2792,6 +2811,14 @@
     }
   ],
   "lazy_upward": [
+    {
+      "from": "fanops.health",
+      "from_level": 2,
+      "jump": 6,
+      "same_scc": false,
+      "to": "fanops.pipeline_status",
+      "to_level": 8
+    },
     {
       "from": "fanops.compose",
       "from_level": 0,
@@ -3153,6 +3180,14 @@
       "to_level": 3
     },
     {
+      "from": "fanops.health",
+      "from_level": 2,
+      "jump": 1,
+      "same_scc": false,
+      "to": "fanops.post.postiz",
+      "to_level": 3
+    },
+    {
       "from": "fanops.health_model",
       "from_level": 1,
       "jump": 1,
@@ -3479,6 +3514,7 @@
     "fanops.studio.views_live": 3,
     "fanops.studio.views_results": 4,
     "fanops.studio.views_review": 5,
+    "fanops.studio_desktop": 0,
     "fanops.tagging": 3,
     "fanops.text": 0,
     "fanops.timeutil": 0,
@@ -3514,6 +3550,7 @@
       "fanops.secret_provider",
       "fanops.studio",
       "fanops.studio.actions_common",
+      "fanops.studio_desktop",
       "fanops.text",
       "fanops.timeutil"
     ],
@@ -3664,17 +3701,17 @@
   ],
   "totals": {
     "G1_non_trivial_sccs": 0,
-    "G1_sccs_total": 136,
+    "G1_sccs_total": 137,
     "G1c_levels": 11,
-    "G2_largest_scc_size": 55,
-    "G2_module_sccs_total": 66,
-    "G2_non_trivial_sccs": 8,
+    "G2_largest_scc_size": 73,
+    "G2_module_sccs_total": 57,
+    "G2_non_trivial_sccs": 4,
     "compile_edges_G1": 574,
-    "lazy_edges": 351,
+    "lazy_edges": 363,
     "lazy_edges_lateral": 47,
-    "lazy_edges_strictly_upward": 70,
-    "lazy_edges_to_equal_or_higher_level": 117,
-    "modules": 136,
+    "lazy_edges_strictly_upward": 72,
+    "lazy_edges_to_equal_or_higher_level": 119,
+    "modules": 137,
     "optional_edges": 0,
     "typing_only_edges": 7
   }

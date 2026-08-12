@@ -178,3 +178,30 @@ def test_ensure_up_noop_when_all_up(tmp_path, monkeypatch):
     health.ensure_up(cfg)
     assert not any("open" in x for x in run.joined())                          # nothing to start
     assert not any("compose" in x and "up" in x for x in run.joined())
+
+
+def test_read_snapshots_missing_are_none(tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path, monkeypatch)
+    assert health.read_dep_snapshot(cfg) is None
+    assert health.read_daemon_strip_snapshot(cfg) is None
+    assert health.read_strip_metrics(cfg) is None
+
+
+def test_refresh_runtime_snapshots_writes_three_json_files(tmp_path, monkeypatch):
+    from fanops.post.postiz import PostizHealth
+    cfg = _cfg(tmp_path, monkeypatch)
+    monkeypatch.setattr("fanops.post.postiz.postiz_health_probe",
+                        lambda c: PostizHealth(True, 200, ""))
+    monkeypatch.setattr("fanops.daemon.installed_interval", lambda c: 600)
+    monkeypatch.setattr("fanops.daemon.status", lambda c, interval=600: {
+        "installed": False, "loaded": False, "pid": None, "last_exit": None,
+        "heartbeat_age_s": None, "verdict": "not installed"})
+    monkeypatch.setattr("fanops.daemon.sibling_agents_status", lambda: [])
+    health.refresh_runtime_snapshots(cfg)
+    assert cfg.deps_health_path.exists()
+    assert cfg.daemon_strip_path.exists()
+    assert cfg.strip_metrics_path.exists()
+    assert health.read_dep_snapshot(cfg) is not None
+    assert health.read_daemon_strip_snapshot(cfg) is not None
+    assert health.read_strip_metrics(cfg) is not None
+

@@ -778,11 +778,11 @@ def build_system_strip(cfg: Config) -> dict:
     """Global system strip read-model: LIVE/DRYRUN mode + blocked gate count + failed-post alert. Health dots lazy-load via htmx."""
     from fanops.log import get_logger                     # a strip sub-read failure is RECORDED, never a silently-zeroed badge
     try:
-        ps = pipeline_status(cfg)
-        blocked = ps.get("sources_blocked", 0) or (ps.get("pending_moments", 0) + ps.get("pending_moment_hooks", 0)
-                                                   + ps.get("pending_captions", 0))
-        recoverable = ps.get("sources_recoverable", 0)
-        errored_first_id = (ps.get("errored") or [{}])[0].get("id")
+        from fanops.health import read_strip_metrics
+        m = read_strip_metrics(cfg) or {}
+        blocked = int(m.get("blocked_gates") or 0)
+        recoverable = int(m.get("recoverable_sources") or 0)
+        errored_first_id = m.get("errored_first_id")
     except Exception as exc:
         get_logger(cfg)("system_strip", "-", "pipeline_status_error", err=str(exc)[:160])
         blocked = 0; recoverable = 0; errored_first_id = None
@@ -811,9 +811,8 @@ def build_system_strip(cfg: Config) -> dict:
         get_logger(cfg)("system_strip", "-", "insights_blocked_error", err=str(exc)[:160])
         insights_blocked = False
     half_live, half_live_hint = _half_live_state(cfg)
-    # D13b: Postiz-down banner — the backend health probe (past the nginx-only container check) is unhealthy
-    # AND at least one channel routes to postiz. Delegated to views_common (30s-cached) so a Studio render
-    # doesn't slam Postiz every hit; fail-open to not-shown so a probe hiccup never blocks the page.
+    # D13b: Postiz-down banner — snapshot-only (deps_health.json); fail-open to not-shown so a
+    # missing/unreadable snapshot never blocks the page.
     try:
         postiz_down = views_common.postiz_health_for_banner(cfg)
     except Exception as exc:
@@ -874,7 +873,7 @@ def review_handoff(cfg: Config) -> dict:
         return {}
     out = {"account": best_h, "awaiting": best_n}
     try:
-        led = Ledger.load(cfg)
+        led = led_for_request(cfg)
         by_batch: dict[str, int] = {}
         # T2.5: pick the dominant batch off the OWNED worklist. Off a raw state tally this handoff link could
         # point the operator at a batch made entirely of dead lineage — a Review page that then shows nothing.
@@ -938,7 +937,7 @@ def review_nav_params(cfg: Config, account: str | None = None) -> dict:
         out["account"] = h
         if batch is None:
             try:
-                led = Ledger.load(cfg)
+                led = led_for_request(cfg)
                 by_batch: dict[str, int] = {}
                 for p in led.review_posts():           # T2.5: same owned worklist as review_handoff above
                     if p.account == h and p.batch_id:
@@ -957,7 +956,7 @@ def account_work_counts(cfg: Config) -> dict[str, dict]:
     from collections import defaultdict
     out: dict[str, dict] = defaultdict(lambda: {"awaiting": 0, "scheduled": 0, "failed": 0, "inflight": 0, "review_batch": None})
     try:
-        led = Ledger.load(cfg)
+        led = led_for_request(cfg)
         now = datetime.now(timezone.utc)
         # awaiting stays the owned worklist predicate (can_promote); scheduled is a time predicate on
         # queued rows — neither is a pure PostState census. inflight/failed read Ledger.state_histogram.
@@ -1061,6 +1060,36 @@ def daemon_health(cfg: Config) -> Optional[dict]:
         return out
     except Exception:
         return None
+
+
+def daemon_health_strip(cfg: Config) -> Optional[dict]:
+    from fanops.health import read_daemon_strip_snapshot
+    from fanops.health_model import heartbeat_stale
+    from fanops import daemon, pipeline
+    from fanops.pipeline_run import run_status_line
+    snap = read_daemon_strip_snapshot(cfg)
+    if snap is None:
+        return None
+    out = dict(snap)
+    out["responder"] = daemon.resolve_responder(cfg)
+    out["discloses_llm"] = out["responder"] == "llm"
+    try:
+        out["pending_gates"] = pipeline.pending_gate_count(cfg)
+    except Exception:
+        out["pending_gates"] = None
+    age, stale, iv = heartbeat_stale(cfg, interval=out.get("interval") or 600)
+    out["heartbeat_age_s"] = age
+    if out.get("loaded"):
+        if age is None:
+            out["verdict"] = "loaded but no heartbeat yet"
+        elif stale:
+            out["verdict"] = f"loaded but stale (last heartbeat {int(age)}s ago)"
+        else:
+            out["verdict"] = "alive"
+    run_line = run_status_line(cfg)
+    if run_line != "run=idle":
+        out["run_line"] = run_line
+    return out
 
 
 def home_batches(cfg: Config) -> list[HomeBatch]:

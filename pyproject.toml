@@ -20,6 +20,10 @@ transcribe = ["openai-whisper>=20231117"]
 # Local web cockpit (spec §10). Flask is OPTIONAL: `pip install -e .` (core CLI) stays Flask-free;
 # only `pip install -e '.[studio]'` pulls it. The CLI imports it LAZILY so a no-[studio] install runs.
 studio = ["flask>=3.0"]
+# Native Studio window (optional). pywebview is OPTIONAL + lazy like [studio]: `pip install -e .`
+# stays pywebview-free; only `pip install -e '.[desktop]'` pulls it. The CLI imports it LAZILY
+# so a no-[desktop] install runs. Window-only — the Flask server is `fanops studio --install`.
+desktop = ["pywebview>=5"]
 # Produced-clip compositing (operator-chosen 2026-06-14): multi-layer template cards, dynamic text
 # titles, and crossfade transitions via MoviePy. OPTIONAL + lazy-imported like [studio]/[transcribe]
 # — `pip install -e .` stays MoviePy-free; only `.[compose]` pulls it (drags numpy/Pillow/imageio).

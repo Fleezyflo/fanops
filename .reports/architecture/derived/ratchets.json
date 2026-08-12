@@ -76,11 +76,12 @@
   "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",
   "measured": {
     "print_calls_by_module": {
-      "fanops.cli": 172,
+      "fanops.cli": 173,
       "fanops.log": 1,
       "fanops.paths_rebase": 2,
       "fanops.recaption": 5,
-      "fanops.stranded_posts": 5
+      "fanops.stranded_posts": 5,
+      "fanops.studio_desktop": 1
     },
     "silent_broad_except_by_file": {
       "src/fanops/accounts.py": 3,
@@ -123,7 +124,7 @@
       "src/fanops/studio/app.py": 1,
       "src/fanops/studio/golive.py": 15,
       "src/fanops/studio/personas.py": 8,
-      "src/fanops/studio/views.py": 14,
+      "src/fanops/studio/views.py": 15,
       "src/fanops/studio/views_common.py": 2,
       "src/fanops/studio/views_results.py": 3,
       "src/fanops/studio/views_review.py": 1,

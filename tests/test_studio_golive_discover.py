@@ -47,6 +47,16 @@ def _chan(cid, name, platform):
     return types.SimpleNamespace(id=cid, name=name, platform=platform)
 
 
+
+def _seed_deps(cfg, rows):
+    cfg.control.mkdir(parents=True, exist_ok=True)
+    cfg.deps_health_path.write_text(json.dumps({
+        "checked_at": "2026-01-01T00:00:00Z",
+        "deps": [{"name": d[0], "ok": d[1], "detail": d[2], "status_code": d[3] if len(d) > 3 else None}
+                 for d in rows],
+    }))
+
+
 def test_discover_route_lists_connected_channels(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path); _seed(cfg, [])
     monkeypatch.setenv("POSTIZ_API_KEY", "pk"); monkeypatch.setenv("ZERNIO_API_KEY", "zk")
@@ -101,14 +111,13 @@ def test_adopt_route_ignores_unticked_rows(tmp_path, monkeypatch):
 
 
 def test_golive_health_route_renders_dependency_strip(tmp_path, monkeypatch):
-    # Issue 1: /golive/health renders the live dependency strip. system_health is mocked (hermetic — no
-    # real Docker/network); a DOWN dependency must be shown, not hidden.
+    # Issue 1: /golive/health renders the dependency strip from deps_health.json. A DOWN row must show.
     cfg = _clean(monkeypatch, tmp_path); _seed(cfg, [])
-    import fanops.health as health
-    monkeypatch.setattr(health, "system_health", lambda c: [
-        health.DepHealth("docker", True, "daemon up"),
-        health.DepHealth("postiz", False, "unreachable"),
-        health.DepHealth("zernio", True, "reachable")])
+    _seed_deps(cfg, [
+        ("docker", True, "daemon up"),
+        ("postiz", False, "unreachable", 502),
+        ("zernio", True, "reachable"),
+    ])
     r = _client(cfg).get("/golive/health")
     assert r.status_code == 200
     body = r.data.decode()
@@ -121,11 +130,11 @@ def test_golive_health_failing_dep_row_carries_loud_class(tmp_path, monkeypatch)
     # row. The failing <li> keeps class "err" (the CSS Tier-1 hook); prove the render still emits it
     # for a down dep so the studio.css .checks li.err solid-fill treatment lands on it.
     cfg = _clean(monkeypatch, tmp_path); _seed(cfg, [])
-    import fanops.health as health
-    monkeypatch.setattr(health, "system_health", lambda c: [
-        health.DepHealth("docker", True, "daemon up"),
-        health.DepHealth("postiz", False, "unreachable"),
-        health.DepHealth("zernio", True, "reachable")])
+    _seed_deps(cfg, [
+        ("docker", True, "daemon up"),
+        ("postiz", False, "unreachable", 502),
+        ("zernio", True, "reachable"),
+    ])
     body = _client(cfg).get("/golive/health").data.decode()
     # the postiz row is the failing one — it must carry the loud err class.
     assert re.search(r'class="[^"]*\berr\b[^"]*"[^>]*>[^<]*postiz', body), \
@@ -151,11 +160,11 @@ def test_golive_health_emits_banner_alert_when_a_dependency_is_down(tmp_path, mo
         led.add_post(Post(id="due_p1", parent_id="clip_1", account="ig", account_id="1", platform=Platform.instagram,
                           caption="fire", state=PostState.queued, scheduled_time="2020-01-01T12:00:00Z",
                           public_url="dryrun://clip_1"))
-    import fanops.health as health
-    monkeypatch.setattr(health, "system_health", lambda c: [
-        health.DepHealth("docker", True, "daemon up"),
-        health.DepHealth("postiz", False, "unreachable"),
-        health.DepHealth("zernio", True, "reachable")])
+    _seed_deps(cfg, [
+        ("docker", True, "daemon up"),
+        ("postiz", False, "unreachable", 502),
+        ("zernio", True, "reachable"),
+    ])
     body = _client(cfg).get("/golive/health").data.decode()
     assert "dep-alert" in body, "a real Postiz stall must raise a banner-level alert above the strip"
     assert "postiz" in body.split("dep-alert", 1)[1][:200], "the alert must name the down dependency (postiz)"
@@ -165,10 +174,31 @@ def test_golive_health_emits_banner_alert_when_a_dependency_is_down(tmp_path, mo
 def test_golive_health_no_banner_when_all_deps_up(tmp_path, monkeypatch):
     # the banner is failure-only: all-green must NOT raise it (no false alarm).
     cfg = _clean(monkeypatch, tmp_path); _seed(cfg, [])
-    import fanops.health as health
-    monkeypatch.setattr(health, "system_health", lambda c: [
-        health.DepHealth("docker", True, "daemon up"),
-        health.DepHealth("postiz", True, "reachable"),
-        health.DepHealth("zernio", True, "reachable")])
+    _seed_deps(cfg, [
+        ("docker", True, "daemon up"),
+        ("postiz", True, "reachable", 200),
+        ("zernio", True, "reachable"),
+    ])
     body = _client(cfg).get("/golive/health").data.decode()
     assert "dep-alert" not in body, "all-green health must not raise a dependency alert banner"
+
+
+def test_golive_health_compact_does_not_refresh(tmp_path, monkeypatch, mocker):
+    cfg = _clean(monkeypatch, tmp_path); _seed(cfg, [])
+    _seed_deps(cfg, [("docker", True, "daemon up")])
+    spy = mocker.patch("fanops.health.refresh_runtime_snapshots")
+    r = _client(cfg).get("/golive/health?compact=1")
+    assert r.status_code == 200
+    spy.assert_not_called()
+    r = _client(cfg).get("/golive/health?compact=1&refresh=1")
+    assert r.status_code == 200
+    spy.assert_not_called()
+
+
+def test_golive_health_refresh_writes_snapshots(tmp_path, monkeypatch, mocker):
+    cfg = _clean(monkeypatch, tmp_path); _seed(cfg, [])
+    spy = mocker.patch("fanops.health.refresh_runtime_snapshots",
+                       side_effect=lambda c: _seed_deps(c, [("docker", True, "up")]))
+    r = _client(cfg).get("/golive/health?refresh=1")
+    assert r.status_code == 200
+    spy.assert_called_once()

@@ -7,7 +7,6 @@ from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import (Source, Moment, MomentState, Clip, Post, Platform, PostState, ClipState)
 from fanops.studio import views
-from fanops.studio import views_common
 
 
 def _live_clip(led, *, sid="s_lin", mid="m", cid="c1"):
@@ -131,22 +130,22 @@ def test_index_never_calls_account_overview(tmp_path, monkeypatch):
 
 
 def test_home_no_contradictory_postiz_wording(tmp_path, monkeypatch, mocker):
-    views_common._postiz_health_cache.clear()
     cfg = Config(root=tmp_path); _accounts(cfg)
     monkeypatch.setenv("FANOPS_LIVE", "1")
     monkeypatch.setenv("POSTIZ_URL", "http://127.0.0.1:5000")
     monkeypatch.setenv("POSTIZ_API_KEY", "pk")
-    import fanops.health as health
-    monkeypatch.setattr(health, "system_health", lambda c: [
-        health.DepHealth("docker", True, "up"),
-        health.DepHealth("postiz", False, "down"),
-        health.DepHealth("zernio", True, "skipped")])
-    class _R:
-        status_code = 502
-        text = "Bad Gateway"
-        def json(s): return {}
-    mocker.patch("fanops.post.postiz.requests.get", return_value=_R())
+    cfg.control.mkdir(parents=True, exist_ok=True)
+    cfg.deps_health_path.write_text(json.dumps({
+        "checked_at": "2026-01-01T00:00:00Z",
+        "deps": [
+            {"name": "docker", "ok": True, "detail": "up", "status_code": None},
+            {"name": "postiz", "ok": False, "detail": "down", "status_code": 502},
+            {"name": "zernio", "ok": True, "detail": "skipped", "status_code": None},
+        ],
+    }))
+    probe = mocker.patch("fanops.post.postiz.postiz_health_probe")
     html = _client(cfg).get("/").data.decode().lower()
+    probe.assert_not_called()
     strip = views.build_system_strip(cfg)
     hint = ((strip.get("postiz_down") or {}).get("hint") or "").lower()
     if "stalled" in hint:

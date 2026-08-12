@@ -115,6 +115,8 @@ def test_studio_daemon_health_surfaces_unloaded_sibling_alarm(tmp_path, monkeypa
     cfg = Config(root=tmp_path)
     monkeypatch.setattr(daemon.sys, "platform", "darwin")
     monkeypatch.setattr(daemon.subprocess, "run", _fake_launchctl(**{label: (1, ""), "list": (1, "")}))
+    from fanops.health import refresh_daemon_strip_snapshot
+    refresh_daemon_strip_snapshot(cfg)
     app = create_app(cfg)
     with app.test_client() as client:
         html = client.get("/home/daemon-health").data.decode()

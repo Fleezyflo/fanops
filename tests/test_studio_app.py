@@ -82,7 +82,7 @@ def test_home_includes_daemon_health_loader(tmp_path):
 def test_daemon_health_banner_when_not_alive(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path); _seed(cfg, tmp_path)
     import fanops.studio.views as V
-    monkeypatch.setattr(V, "daemon_health", lambda c: {"verdict": "loaded but stale (last heartbeat 99999s ago)",
+    monkeypatch.setattr(V, "daemon_health_strip", lambda c: {"verdict": "loaded but stale (last heartbeat 99999s ago)",
                         "loaded": True, "last_exit": 0, "pid": None, "heartbeat_age_s": 99999})
     html = _client(cfg).get("/home/daemon-health").data.decode()
     assert "data-daemon-warn" in html and "stale" in html        # loud banner carries the verdict
@@ -90,15 +90,15 @@ def test_daemon_health_banner_when_not_alive(tmp_path, monkeypatch):
 def test_daemon_health_silent_when_alive(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path); _seed(cfg, tmp_path)
     import fanops.studio.views as V
-    monkeypatch.setattr(V, "daemon_health", lambda c: {"verdict": "alive", "loaded": True,
+    monkeypatch.setattr(V, "daemon_health_strip", lambda c: {"verdict": "alive", "loaded": True,
                         "last_exit": 0, "pid": 1, "heartbeat_age_s": 5})
     assert b"data-daemon-warn" not in _client(cfg).get("/home/daemon-health").data
 
 def test_daemon_health_none_is_silent_not_500(tmp_path, monkeypatch):
-    # non-darwin / launchctl absent -> daemon_health None -> no banner, no 500, no false alarm on a dev box.
+    # missing snapshot / non-darwin -> daemon_health_strip None -> no banner, no 500, no false alarm on a dev box.
     cfg = Config(root=tmp_path); _seed(cfg, tmp_path)
     import fanops.studio.views as V
-    monkeypatch.setattr(V, "daemon_health", lambda c: None)
+    monkeypatch.setattr(V, "daemon_health_strip", lambda c: None)
     r = _client(cfg).get("/home/daemon-health")
     assert r.status_code == 200 and b"data-daemon-warn" not in r.data
 
@@ -107,7 +107,7 @@ def test_daemon_health_off_is_optin_not_fault(tmp_path, monkeypatch):
     # no warn banner — a neutral card that DISCLOSES the recurring-LLM cost when hands-off would run llm.
     cfg = Config(root=tmp_path); _seed(cfg, tmp_path)
     import fanops.studio.views as V
-    monkeypatch.setattr(V, "daemon_health", lambda c: {"verdict": "not installed", "loaded": False,
+    monkeypatch.setattr(V, "daemon_health_strip", lambda c: {"verdict": "not installed", "loaded": False,
                         "last_exit": None, "pid": None, "heartbeat_age_s": None, "interval": 600,
                         "responder": "llm", "discloses_llm": True})
     html = _client(cfg).get("/home/daemon-health").data.decode()
@@ -120,11 +120,18 @@ def test_daemon_health_off_no_llm_disclosure_when_manual(tmp_path, monkeypatch):
     # When the resolved responder is manual, the opt-in card must NOT warn about claude (no false cost claim).
     cfg = Config(root=tmp_path); _seed(cfg, tmp_path)
     import fanops.studio.views as V
-    monkeypatch.setattr(V, "daemon_health", lambda c: {"verdict": "not installed", "loaded": False,
+    monkeypatch.setattr(V, "daemon_health_strip", lambda c: {"verdict": "not installed", "loaded": False,
                         "last_exit": None, "pid": None, "heartbeat_age_s": None, "interval": 600,
                         "responder": "manual", "discloses_llm": False})
     html = _client(cfg).get("/home/daemon-health").data.decode()
     assert "data-daemon-warn" not in html and "claude" not in html.lower()
+
+def test_home_daemon_health_does_not_call_daemon_status(tmp_path, monkeypatch, mocker):
+    cfg = Config(root=tmp_path); _seed(cfg, tmp_path)
+    spy = mocker.patch("fanops.daemon.status")
+    r = _client(cfg).get("/home/daemon-health")
+    assert r.status_code == 200
+    spy.assert_not_called()
 
 def test_home_metrics_per_account(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg, tmp_path)
