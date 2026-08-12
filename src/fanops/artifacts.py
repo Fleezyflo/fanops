@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from fanops.config import Config
 from fanops.controlio import write_json_atomic
+from fanops.errors import fail_open
 from fanops.ledger import Ledger
 from fanops.models import SourceState
 
@@ -66,11 +67,11 @@ def transcript_sidecar_path(cfg: Config, source_path: str) -> Path:
 
 def manifest_stage_times(cfg: Config, source_id: str) -> dict[str, str]:
     """Fail-open {stage: at_iso} from the advisory manifest — timestamps only, never status authority."""
-    try:
+    out: dict[str, str] = {}
+    with fail_open("artifacts.manifest_stage_times"):
         stages = _load_manifest(cfg, source_id).get("stages") or {}
-        return {k: v["at"] for k, v in stages.items() if isinstance(v, dict) and v.get("at")}
-    except Exception:
-        return {}
+        out = {k: v["at"] for k, v in stages.items() if isinstance(v, dict) and v.get("at")}
+    return out
 
 
 def disk_stage_flags(cfg: Config, source_id: str, source_path: str) -> dict[str, bool]:
