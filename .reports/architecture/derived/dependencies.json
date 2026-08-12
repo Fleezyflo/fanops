@@ -144,6 +144,7 @@
     "fanops.agentstep": {
       "compile": [
         "fanops.config",
+        "fanops.errors",
         "fanops.ids",
         "fanops.log"
       ],
@@ -155,6 +156,7 @@
       "compile": [
         "fanops.config",
         "fanops.controlio",
+        "fanops.errors",
         "fanops.ledger",
         "fanops.models"
       ],
@@ -173,7 +175,8 @@
     },
     "fanops.audit": {
       "compile": [
-        "fanops.config"
+        "fanops.config",
+        "fanops.errors"
       ],
       "lazy": [],
       "optional": [],
@@ -1098,6 +1101,7 @@
       "compile": [
         "fanops.agentstep",
         "fanops.config",
+        "fanops.errors",
         "fanops.gate_keys",
         "fanops.models",
         "fanops.pipeline",
@@ -2181,7 +2185,7 @@
     "fanops.digest": 4,
     "fanops.discover": 1,
     "fanops.doctor": 1,
-    "fanops.errors": 32,
+    "fanops.errors": 36,
     "fanops.fanops_account_stats": 0,
     "fanops.fanops_hashtags": 0,
     "fanops.frames": 1,
@@ -2296,10 +2300,10 @@
     "fanops._fwrun": 1,
     "fanops.accounts": 6,
     "fanops.adjust": 5,
-    "fanops.agentstep": 3,
-    "fanops.artifacts": 4,
+    "fanops.agentstep": 4,
+    "fanops.artifacts": 5,
     "fanops.audio_energy": 0,
-    "fanops.audit": 1,
+    "fanops.audit": 2,
     "fanops.autopilot": 1,
     "fanops.bands": 0,
     "fanops.batches": 2,
@@ -2364,7 +2368,7 @@
     "fanops.personas": 6,
     "fanops.pipeline": 27,
     "fanops.pipeline_run": 3,
-    "fanops.pipeline_status": 6,
+    "fanops.pipeline_status": 7,
     "fanops.post": 2,
     "fanops.post.compress": 2,
     "fanops.post.dryrun": 3,
@@ -3668,7 +3672,7 @@
     "G2_largest_scc_size": 73,
     "G2_module_sccs_total": 57,
     "G2_non_trivial_sccs": 4,
-    "compile_edges_G1": 575,
+    "compile_edges_G1": 579,
     "lazy_edges": 364,
     "lazy_edges_lateral": 42,
     "lazy_edges_strictly_upward": 72,

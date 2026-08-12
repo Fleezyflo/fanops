@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Type, TypeVar
 from pydantic import BaseModel, ValidationError
 from fanops.config import Config
+from fanops.errors import fail_open
 from fanops.ids import _hash
 from fanops.log import get_logger
 
@@ -141,8 +142,9 @@ def _attempts_path(cfg: Config, kind: str, key: str) -> Path:
 def bump_attempts(cfg: Config, kind: str, key: str) -> int:
     _ensure_dir(cfg)                           # create the request dir at WRITE time (readers never mkdir)
     p = _attempts_path(cfg, kind, key)
-    try: n = json.loads(p.read_text()).get("n", 0)
-    except Exception: n = 0
+    n = 0
+    with fail_open("agentstep.bump_attempts"):
+        n = json.loads(p.read_text()).get("n", 0)
     n += 1
     p.write_text(json.dumps({"n": n}))
     return n
