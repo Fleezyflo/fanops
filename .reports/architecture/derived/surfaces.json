@@ -27,17 +27,17 @@
       "verb": "audit"
     },
     {
-      "line": 961,
+      "line": 966,
       "module": "fanops.cli",
       "verb": "auth"
     },
     {
-      "line": 1018,
+      "line": 1023,
       "module": "fanops.cli",
       "verb": "autopilot"
     },
     {
-      "line": 1033,
+      "line": 1038,
       "module": "fanops.cli",
       "verb": "baseline"
     },
@@ -47,12 +47,12 @@
       "verb": "bulk-send-to-review"
     },
     {
-      "line": 1022,
+      "line": 1027,
       "module": "fanops.cli",
       "verb": "canary"
     },
     {
-      "line": 1031,
+      "line": 1036,
       "module": "fanops.cli",
       "verb": "cancel"
     },
@@ -62,7 +62,7 @@
       "verb": "census-retired"
     },
     {
-      "line": 1034,
+      "line": 1039,
       "module": "fanops.cli",
       "verb": "compare"
     },
@@ -77,12 +77,12 @@
       "verb": "config"
     },
     {
-      "line": 959,
+      "line": 964,
       "module": "fanops.cli",
       "verb": "cutover"
     },
     {
-      "line": 1007,
+      "line": 1012,
       "module": "fanops.cli",
       "verb": "daemon"
     },
@@ -92,7 +92,7 @@
       "verb": "digest"
     },
     {
-      "line": 1030,
+      "line": 1035,
       "module": "fanops.cli",
       "verb": "discard"
     },
@@ -102,17 +102,17 @@
       "verb": "discover"
     },
     {
-      "line": 997,
+      "line": 1002,
       "module": "fanops.cli",
       "verb": "discover"
     },
     {
-      "line": 1000,
+      "line": 1005,
       "module": "fanops.cli",
       "verb": "docs"
     },
     {
-      "line": 1003,
+      "line": 1008,
       "module": "fanops.cli",
       "verb": "docs"
     },
@@ -122,12 +122,12 @@
       "verb": "doctor"
     },
     {
-      "line": 992,
+      "line": 997,
       "module": "fanops.cli",
       "verb": "doctor"
     },
     {
-      "line": 1015,
+      "line": 1020,
       "module": "fanops.cli",
       "verb": "ensure"
     },
@@ -137,7 +137,7 @@
       "verb": "gc"
     },
     {
-      "line": 993,
+      "line": 998,
       "module": "fanops.cli",
       "verb": "hashtags"
     },
@@ -157,7 +157,7 @@
       "verb": "init"
     },
     {
-      "line": 1009,
+      "line": 1014,
       "module": "fanops.cli",
       "verb": "install"
     },
@@ -167,22 +167,22 @@
       "verb": "intake"
     },
     {
-      "line": 990,
+      "line": 995,
       "module": "fanops.cli",
       "verb": "learn"
     },
     {
-      "line": 998,
+      "line": 1003,
       "module": "fanops.cli",
       "verb": "lever"
     },
     {
-      "line": 967,
+      "line": 972,
       "module": "fanops.cli",
       "verb": "lift"
     },
     {
-      "line": 1017,
+      "line": 1022,
       "module": "fanops.cli",
       "verb": "logs"
     },
@@ -192,7 +192,7 @@
       "verb": "map-media"
     },
     {
-      "line": 965,
+      "line": 970,
       "module": "fanops.cli",
       "verb": "metrics"
     },
@@ -202,7 +202,7 @@
       "verb": "p4-bias"
     },
     {
-      "line": 988,
+      "line": 993,
       "module": "fanops.cli",
       "verb": "paths-rebase"
     },
@@ -212,7 +212,7 @@
       "verb": "pause"
     },
     {
-      "line": 962,
+      "line": 967,
       "module": "fanops.cli",
       "verb": "post"
     },
@@ -222,7 +222,7 @@
       "verb": "posts"
     },
     {
-      "line": 1024,
+      "line": 1029,
       "module": "fanops.cli",
       "verb": "prepare"
     },
@@ -242,7 +242,7 @@
       "verb": "pull"
     },
     {
-      "line": 976,
+      "line": 981,
       "module": "fanops.cli",
       "verb": "purge"
     },
@@ -267,7 +267,7 @@
       "verb": "reframe"
     },
     {
-      "line": 995,
+      "line": 1000,
       "module": "fanops.cli",
       "verb": "refresh"
     },
@@ -282,7 +282,7 @@
       "verb": "respond"
     },
     {
-      "line": 986,
+      "line": 991,
       "module": "fanops.cli",
       "verb": "restore"
     },
@@ -307,12 +307,12 @@
       "verb": "retry-source"
     },
     {
-      "line": 1004,
+      "line": 1009,
       "module": "fanops.cli",
       "verb": "run"
     },
     {
-      "line": 996,
+      "line": 1001,
       "module": "fanops.cli",
       "verb": "scrape-login"
     },
@@ -322,12 +322,12 @@
       "verb": "status"
     },
     {
-      "line": 1014,
+      "line": 1019,
       "module": "fanops.cli",
       "verb": "status"
     },
     {
-      "line": 1016,
+      "line": 1021,
       "module": "fanops.cli",
       "verb": "stop"
     },
@@ -342,7 +342,7 @@
       "verb": "tail"
     },
     {
-      "line": 1001,
+      "line": 1006,
       "module": "fanops.cli",
       "verb": "threshold"
     },
@@ -357,7 +357,7 @@
       "verb": "unhold"
     },
     {
-      "line": 1020,
+      "line": 1025,
       "module": "fanops.cli",
       "verb": "up"
     },
@@ -367,7 +367,7 @@
       "verb": "verify-live"
     },
     {
-      "line": 969,
+      "line": 974,
       "module": "fanops.cli",
       "verb": "wipe"
     }
@@ -458,7 +458,7 @@
     {
       "decorator": "app.get",
       "handler": "index",
-      "line": 421,
+      "line": 417,
       "methods": [
         "GET"
       ],
@@ -469,7 +469,7 @@
     {
       "decorator": "app.get",
       "handler": "fingerprint",
-      "line": 400,
+      "line": 396,
       "methods": [
         "GET"
       ],
@@ -480,7 +480,7 @@
     {
       "decorator": "app.get",
       "handler": "candidates",
-      "line": 494,
+      "line": 490,
       "methods": [
         "GET"
       ],
@@ -491,7 +491,7 @@
     {
       "decorator": "app.post",
       "handler": "do_approve_candidate",
-      "line": 499,
+      "line": 495,
       "methods": [
         "POST"
       ],
@@ -546,7 +546,7 @@
     {
       "decorator": "app.get",
       "handler": "clip_thumb",
-      "line": 636,
+      "line": 632,
       "methods": [
         "GET"
       ],
@@ -557,7 +557,7 @@
     {
       "decorator": "app.get",
       "handler": "clip_media",
-      "line": 584,
+      "line": 580,
       "methods": [
         "GET"
       ],
@@ -568,7 +568,7 @@
     {
       "decorator": "app.get",
       "handler": "gates",
-      "line": 545,
+      "line": 541,
       "methods": [
         "GET"
       ],
@@ -579,7 +579,7 @@
     {
       "decorator": "app.post",
       "handler": "do_answer_gate",
-      "line": 551,
+      "line": 547,
       "methods": [
         "POST"
       ],
@@ -590,7 +590,7 @@
     {
       "decorator": "app.post",
       "handler": "do_dismiss_gate",
-      "line": 563,
+      "line": 559,
       "methods": [
         "POST"
       ],
@@ -689,7 +689,7 @@
     {
       "decorator": "app.get",
       "handler": "golive_accounts_page",
-      "line": 189,
+      "line": 199,
       "methods": [
         "GET"
       ],
@@ -755,7 +755,7 @@
     {
       "decorator": "app.get",
       "handler": "golive_connect",
-      "line": 184,
+      "line": 194,
       "methods": [
         "GET"
       ],
@@ -799,7 +799,7 @@
     {
       "decorator": "app.post",
       "handler": "do_golive_dryrun",
-      "line": 228,
+      "line": 238,
       "methods": [
         "POST"
       ],
@@ -854,7 +854,7 @@
     {
       "decorator": "app.get",
       "handler": "golive_live_page",
-      "line": 194,
+      "line": 204,
       "methods": [
         "GET"
       ],
@@ -865,7 +865,7 @@
     {
       "decorator": "app.post",
       "handler": "do_golive_live",
-      "line": 221,
+      "line": 231,
       "methods": [
         "POST"
       ],
@@ -887,7 +887,7 @@
     {
       "decorator": "app.post",
       "handler": "do_golive_map",
-      "line": 199,
+      "line": 209,
       "methods": [
         "POST"
       ],
@@ -953,7 +953,7 @@
     {
       "decorator": "app.post",
       "handler": "do_golive_validate",
-      "line": 232,
+      "line": 242,
       "methods": [
         "POST"
       ],
@@ -997,7 +997,7 @@
     {
       "decorator": "app.get",
       "handler": "home_daemon_health",
-      "line": 452,
+      "line": 448,
       "methods": [
         "GET"
       ],
@@ -1008,7 +1008,7 @@
     {
       "decorator": "app.get",
       "handler": "home_gallery",
-      "line": 430,
+      "line": 426,
       "methods": [
         "GET"
       ],
@@ -1019,7 +1019,7 @@
     {
       "decorator": "app.post",
       "handler": "do_home_pull_metrics",
-      "line": 436,
+      "line": 432,
       "methods": [
         "POST"
       ],
@@ -1030,7 +1030,7 @@
     {
       "decorator": "app.post",
       "handler": "do_home_reconcile",
-      "line": 440,
+      "line": 436,
       "methods": [
         "POST"
       ],
@@ -1041,7 +1041,7 @@
     {
       "decorator": "app.post",
       "handler": "do_home_retry_oversize",
-      "line": 448,
+      "line": 444,
       "methods": [
         "POST"
       ],
@@ -1052,7 +1052,7 @@
     {
       "decorator": "app.post",
       "handler": "do_home_retry_rate_limit",
-      "line": 444,
+      "line": 440,
       "methods": [
         "POST"
       ],
@@ -1063,7 +1063,7 @@
     {
       "decorator": "app.get",
       "handler": "keyframe",
-      "line": 610,
+      "line": 606,
       "methods": [
         "GET"
       ],
@@ -1074,7 +1074,7 @@
     {
       "decorator": "app.get",
       "handler": "keyframe",
-      "line": 610,
+      "line": 606,
       "methods": [
         "GET"
       ],
@@ -1206,7 +1206,7 @@
     {
       "decorator": "app.get",
       "handler": "media_preview",
-      "line": 576,
+      "line": 572,
       "methods": [
         "GET"
       ],
@@ -1217,7 +1217,7 @@
     {
       "decorator": "app.get",
       "handler": "media",
-      "line": 569,
+      "line": 565,
       "methods": [
         "GET"
       ],
@@ -1228,7 +1228,7 @@
     {
       "decorator": "app.get",
       "handler": "metrics",
-      "line": 414,
+      "line": 410,
       "methods": [
         "GET"
       ],
@@ -1536,7 +1536,7 @@
     {
       "decorator": "app.get",
       "handler": "publish_panel",
-      "line": 512,
+      "line": 508,
       "methods": [
         "GET"
       ],
@@ -1547,7 +1547,7 @@
     {
       "decorator": "app.post",
       "handler": "do_publish_now",
-      "line": 531,
+      "line": 527,
       "methods": [
         "POST"
       ],
@@ -1558,7 +1558,7 @@
     {
       "decorator": "app.post",
       "handler": "do_mark_posted",
-      "line": 526,
+      "line": 522,
       "methods": [
         "POST"
       ],
@@ -1580,7 +1580,7 @@
     {
       "decorator": "app.get",
       "handler": "reconcile_strip_partial",
-      "line": 539,
+      "line": 535,
       "methods": [
         "GET"
       ],
@@ -1646,7 +1646,7 @@
     {
       "decorator": "app.get",
       "handler": "review_thumb",
-      "line": 503,
+      "line": 499,
       "methods": [
         "GET"
       ],
@@ -2020,7 +2020,7 @@
     {
       "decorator": "app.get",
       "handler": "source_media",
-      "line": 595,
+      "line": 591,
       "methods": [
         "GET"
       ],
@@ -2031,7 +2031,7 @@
     {
       "decorator": "app.get",
       "handler": "stitches",
-      "line": 471,
+      "line": 467,
       "methods": [
         "GET"
       ],
@@ -2042,7 +2042,7 @@
     {
       "decorator": "app.post",
       "handler": "do_approve_stitches",
-      "line": 481,
+      "line": 477,
       "methods": [
         "POST"
       ],
@@ -2053,7 +2053,7 @@
     {
       "decorator": "app.post",
       "handler": "do_dismiss_stitches",
-      "line": 485,
+      "line": 481,
       "methods": [
         "POST"
       ],
@@ -2064,7 +2064,7 @@
     {
       "decorator": "app.post",
       "handler": "do_release_stitches",
-      "line": 489,
+      "line": 485,
       "methods": [
         "POST"
       ],
@@ -2075,7 +2075,7 @@
     {
       "decorator": "app.get",
       "handler": "thumb_clip",
-      "line": 631,
+      "line": 627,
       "methods": [
         "GET"
       ],
@@ -2086,7 +2086,7 @@
     {
       "decorator": "app.get",
       "handler": "thumb_source",
-      "line": 626,
+      "line": 622,
       "methods": [
         "GET"
       ],

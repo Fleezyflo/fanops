@@ -953,6 +953,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="UNSAFE DEV ONLY: run Studio in the foreground with automatic source reload",
     )
+    p_studio.add_argument(
+        "--app",
+        action="store_true",
+        help="open a native window onto the already-running Studio (does not start the server)",
+    )
     st_grp = p_studio.add_mutually_exclusive_group()
     st_grp.add_argument("--install", action="store_true", help="install + load as launchd KeepAlive resident (macOS)")
     st_grp.add_argument("--uninstall", action="store_true", help="unload the launchd Studio agent and remove its plist")
@@ -1668,6 +1673,17 @@ def _dispatch(cfg: Config, args) -> int:
             res = daemon.stop_studio(cfg, remove=True)
             print(f"Studio service stopped -> {res['plist']}" + (" (plist removed)" if res.get("removed") else ""))
             return 0 if res.get("stopped") else 1
+        if args.app:
+            url = f"http://{args.host}:{args.port}"
+            if not _studio_port_busy(args.host, args.port):
+                print(
+                    f"REFUSED: Studio is not serving at {url}. "
+                    "Use `fanops studio --install` to start the managed service, then retry `--app`.",
+                    file=sys.stderr,
+                )
+                return 2
+            from fanops.studio_desktop import open_studio_window
+            return open_studio_window(url)
         if not args.managed and not args.dev_reload:
             print(
                 "REFUSED: unmanaged foreground Studio can serve stale code indefinitely. "
@@ -1733,6 +1749,8 @@ def _dispatch(cfg: Config, args) -> int:
                 try:
                     if (s := _cmd_run_pass(cfg, base_time)) is not None:
                         _heartbeat(cfg, s, origin="loop"); print(s)
+                        from fanops.health import refresh_runtime_snapshots
+                        refresh_runtime_snapshots(cfg)
                 except RunBusyError as e:
                     print(str(e), file=sys.stderr)   # skip this tick; next --interval retries
                 except Exception as e:

@@ -136,15 +136,27 @@ def test_lift_still_301(tmp_path):
 
 
 # ---- Add & run blocked-gates badge ----
+def _seed_strip_metrics(cfg, *, blocked_gates=0, recoverable_sources=0, errored_first_id=None):
+    cfg.control.mkdir(parents=True, exist_ok=True)
+    cfg.strip_metrics_path.write_text(json.dumps({
+        "checked_at": "2026-01-01T00:00:00Z",
+        "blocked_gates": blocked_gates,
+        "recoverable_sources": recoverable_sources,
+        "errored_first_id": errored_first_id,
+    }))
+
+
 def test_badge_absent_when_no_blocked_gates(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg)
+    # missing snapshot -> 0 is OK (strip is snapshot-only for blocked_gates)
     assert views.build_system_strip(cfg)["blocked_gates"] == 0
     html = _client(cfg).get("/").data.decode()
     assert 'data-testid="rail-badge"' not in html      # no chip when nothing is blocked
 
 
 def test_badge_present_with_count_when_gates_blocked(tmp_path):
-    cfg = Config(root=tmp_path); _seed(cfg); _seed_caption_gate(cfg)
+    cfg = Config(root=tmp_path); _seed(cfg)
+    _seed_strip_metrics(cfg, blocked_gates=3)
     n = views.build_system_strip(cfg)["blocked_gates"]
     assert n > 0
     html = _client(cfg).get("/").data.decode()
@@ -156,9 +168,19 @@ def test_badge_present_with_count_when_gates_blocked(tmp_path):
 
 def test_badge_links_to_gates_via_system_strip(tmp_path):
     # The blocked count deep-links to /gates from the system strip (the badge's semantic target).
-    cfg = Config(root=tmp_path); _seed(cfg); _seed_caption_gate(cfg)
+    cfg = Config(root=tmp_path); _seed(cfg)
+    _seed_strip_metrics(cfg, blocked_gates=2)
     html = _client(cfg).get("/").data.decode()
     assert 'href="/gates"' in html                     # the strip alert links to the (unrailed) gates page
+
+
+def test_build_system_strip_does_not_call_pipeline_status(tmp_path, monkeypatch):
+    cfg = Config(root=tmp_path); _seed(cfg)
+    _seed_strip_metrics(cfg, blocked_gates=1)
+    monkeypatch.setattr(views, "pipeline_status", lambda c: (_ for _ in ()).throw(
+        AssertionError("pipeline_status must not run on the strip path")))
+    strip = views.build_system_strip(cfg)
+    assert strip["blocked_gates"] == 1
 
 
 # ---- folded live lens content parity ----

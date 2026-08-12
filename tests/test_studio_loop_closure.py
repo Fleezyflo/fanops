@@ -149,6 +149,6 @@ def test_studio_publish_guard_blocks_unmapped_channel(tmp_path, monkeypatch):
     assert not res.ok and "not mapped" in res.error.lower()
 
 def test_daemon_health_shows_ok_when_alive(tmp_path, monkeypatch):
-    monkeypatch.setattr(views, "daemon_health", lambda _cfg: type("D", (), {"verdict": "alive", "heartbeat_age_s": 12})())
+    monkeypatch.setattr(views, "daemon_health_strip", lambda _cfg: {"verdict": "alive", "heartbeat_age_s": 12})
     html = _client(Config(root=tmp_path)).get("/home/daemon-health").data.decode()
     assert "daemon-ok" in html and "running" in html.lower()

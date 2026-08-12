@@ -119,6 +119,7 @@ def test_golive_health_renders_dep_alert_for_degraded_postiz(tmp_path, monkeypat
     from jinja2 import Environment, FileSystemLoader
     tpl_dir = Path(__file__).resolve().parents[1] / "src" / "fanops" / "studio" / "templates"
     env = Environment(loader=FileSystemLoader(str(tpl_dir)))
+    env.globals["url_for"] = lambda *a, **k: "/golive/health?refresh=1"  # template-only render; no Flask app
     rows = [health.DepHealth("docker", True, "daemon up"),
             health.DepHealth("postiz", False, "answers HTTP but API unhealthy (502) — publishes stalled"),
             health.DepHealth("zernio", True, "reachable")]
@@ -147,6 +148,7 @@ def test_ensure_up_brings_up_postiz_when_down(tmp_path, monkeypatch):
     compose = tmp_path / "compose"; compose.mkdir()
     cfg = _cfg(tmp_path, monkeypatch, POSTIZ_URL="http://localhost:4007/api",
                FANOPS_POSTIZ_COMPOSE_DIR=str(compose))
+    monkeypatch.setattr(health, "refresh_runtime_snapshots", lambda c: None)  # writer side-effect; this test owns bring-up only
     monkeypatch.setattr(health.shutil, "which", lambda n: "/usr/bin/" + (n or "x"))
     run = _Run({"docker info": 0})                       # docker UP
     monkeypatch.setattr(health.subprocess, "run", run)
@@ -160,6 +162,7 @@ def test_ensure_up_brings_up_postiz_when_down(tmp_path, monkeypatch):
 
 def test_ensure_up_starts_docker_when_daemon_down(tmp_path, monkeypatch):
     cfg = _cfg(tmp_path, monkeypatch, POSTIZ_URL="http://localhost:4007/api")
+    monkeypatch.setattr(health, "refresh_runtime_snapshots", lambda c: None)  # writer side-effect; this test owns bring-up only
     monkeypatch.setattr(health.shutil, "which", lambda n: "/usr/bin/" + (n or "x"))
     run = _Run({"docker info": 1})                       # docker stays DOWN
     monkeypatch.setattr(health.subprocess, "run", run)
@@ -171,6 +174,7 @@ def test_ensure_up_starts_docker_when_daemon_down(tmp_path, monkeypatch):
 
 def test_ensure_up_noop_when_all_up(tmp_path, monkeypatch):
     cfg = _cfg(tmp_path, monkeypatch, POSTIZ_URL="http://localhost:4007/api")
+    monkeypatch.setattr(health, "refresh_runtime_snapshots", lambda c: None)  # writer side-effect; this test owns bring-up only
     monkeypatch.setattr(health.shutil, "which", lambda n: "/usr/bin/" + (n or "x"))
     run = _Run({"docker info": 0})                       # docker UP
     monkeypatch.setattr(health.subprocess, "run", run)
@@ -178,3 +182,30 @@ def test_ensure_up_noop_when_all_up(tmp_path, monkeypatch):
     health.ensure_up(cfg)
     assert not any("open" in x for x in run.joined())                          # nothing to start
     assert not any("compose" in x and "up" in x for x in run.joined())
+
+
+def test_read_snapshots_missing_are_none(tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path, monkeypatch)
+    assert health.read_dep_snapshot(cfg) is None
+    assert health.read_daemon_strip_snapshot(cfg) is None
+    assert health.read_strip_metrics(cfg) is None
+
+
+def test_refresh_runtime_snapshots_writes_three_json_files(tmp_path, monkeypatch):
+    from fanops.post.postiz import PostizHealth
+    cfg = _cfg(tmp_path, monkeypatch)
+    monkeypatch.setattr("fanops.post.postiz.postiz_health_probe",
+                        lambda c: PostizHealth(True, 200, ""))
+    monkeypatch.setattr("fanops.daemon.installed_interval", lambda c: 600)
+    monkeypatch.setattr("fanops.daemon.status", lambda c, interval=600: {
+        "installed": False, "loaded": False, "pid": None, "last_exit": None,
+        "heartbeat_age_s": None, "verdict": "not installed"})
+    monkeypatch.setattr("fanops.daemon.sibling_agents_status", lambda: [])
+    health.refresh_runtime_snapshots(cfg)
+    assert cfg.deps_health_path.exists()
+    assert cfg.daemon_strip_path.exists()
+    assert cfg.strip_metrics_path.exists()
+    assert health.read_dep_snapshot(cfg) is not None
+    assert health.read_daemon_strip_snapshot(cfg) is not None
+    assert health.read_strip_metrics(cfg) is not None
+

@@ -730,6 +730,28 @@ def test_studio_refuses_unmanaged_foreground(tmp_path, monkeypatch, capsys):
     assert "--dev-reload" in err
 
 
+def test_studio_app_refuses_when_not_serving(tmp_path, monkeypatch, capsys, mocker):
+    monkeypatch.chdir(tmp_path)
+    import fanops.cli as cli
+    mocker.patch.object(cli, "_studio_port_busy", return_value=False)
+    opener = mocker.patch("fanops.studio_desktop.open_studio_window")
+    rc = cli.main(["studio", "--app", "--host", "127.0.0.1", "--port", "9999"])
+    assert rc != 0
+    err = capsys.readouterr().err
+    assert "unmanaged foreground" not in err
+    assert "--install" in err
+    opener.assert_not_called()
+
+
+def test_studio_app_opens_window_when_serving(tmp_path, monkeypatch, mocker):
+    monkeypatch.chdir(tmp_path)
+    import fanops.cli as cli
+    mocker.patch.object(cli, "_studio_port_busy", return_value=True)
+    opener = mocker.patch("fanops.studio_desktop.open_studio_window", return_value=0)
+    assert cli.main(["studio", "--app", "--host", "127.0.0.1", "--port", "8787"]) == 0
+    opener.assert_called_once_with("http://127.0.0.1:8787")
+
+
 def test_studio_managed_path_runs_without_reloader(tmp_path, monkeypatch, mocker):
     monkeypatch.chdir(tmp_path)
     import fanops.cli as cli

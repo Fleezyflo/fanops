@@ -15,10 +15,10 @@ actions, views) changes still require a Studio restart.
 - **`actions*.py` mutate through exactly ONE `Ledger.transaction`** (the lock-safe load→mutate→save). Transactors:
   `actions.py`, `actions_approve.py`, `actions_casting.py`, `actions_run.py`. Helpers (no transaction):
   `actions_common.py`, `actions_wipe.py`. Never mutate the ledger outside a transaction.
-- **`views*.py` are pure reads** — projections of `Ledger.load`, no ledger/control-file writes. Two sanctioned
-  exceptions (not layering breaks): `views_common.postiz_health_for_banner` does one cached live GET;
-  `views_results.lineage_stats` mutates its own transient args (that's MOL-70, an immutability nit, not a safety
-  bug). `suggest_time`/`clear_time` live in `views_common.py`/`actions.py` and are re-exported by
+- **`views*.py` are pure reads** — projections of `Ledger.load`, no ledger/control-file writes. The sanctioned
+  live-GET exception is gone; `views_common.postiz_health_for_banner` is snapshot-only. Remaining exception
+  (not a layering break): `views_results.lineage_stats` mutates its own transient args (that's MOL-70, an
+  immutability nit, not a safety bug). `suggest_time`/`clear_time` live in `views_common.py`/`actions.py` and are re-exported by
   `views.py`/`actions.py` — the re-export is why grep for the definition and the call site land in different files.
 
 ## Approval lifecycle + tab semantics (this file owns them)
