@@ -65,13 +65,13 @@ def test_report_is_healthy_fails_on_bad_check():
     assert report_is_healthy(rep) is False
 
 
-def test_healthz_route_returns_json(tmp_path, monkeypatch):
+def test_healthz_route_returns_json(tmp_path, monkeypatch, mocker):
     monkeypatch.chdir(tmp_path)
+    spy = mocker.patch("fanops.health_model.build_health_report")
     from fanops.studio.app import create_app
     app = create_app(Config(root=tmp_path))
     client = app.test_client()
     r = client.get("/healthz")
-    assert r.is_json
-    data = r.get_json()
-    assert "healthy" in data and "deps" in data
-    assert r.status_code in (200, 503)
+    assert r.status_code == 200
+    assert r.get_json() == {"ok": True}
+    spy.assert_not_called()

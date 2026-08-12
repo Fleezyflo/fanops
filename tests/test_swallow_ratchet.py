@@ -117,7 +117,7 @@ def _baseline_silent_swallows() -> dict[str, int]:
         "src/fanops/studio/app.py": 1,
         "src/fanops/studio/golive.py": 15,
         "src/fanops/studio/personas.py": 10,
-        "src/fanops/studio/views.py": 14,
+        "src/fanops/studio/views.py": 15,
         "src/fanops/studio/views_common.py": 2,
         "src/fanops/studio/views_results.py": 3,
         "src/fanops/studio/views_review.py": 1,

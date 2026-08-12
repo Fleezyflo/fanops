@@ -206,6 +206,9 @@ class Config:
         self.insights_blocked_path = self.control / "insights_blocked.json"  # Leg 2: the LOUD fail-closed breadcrumb when Graph media-insights is refused for lack of the instagram_manage_insights scope; doctor + Home read it, a clean pull clears it
         self.timing_bias_path = self.control / "timing_bias.json"  # Leg 3 (timing): the reach-winning operator-local publish HOUR prior; absent -> no timing bias (byte-identical). apply_timing_bias writes it, surface_time's caller reads it (window-clamped)
         self.learn_doctor_path = self.control / "learn_doctor.json"   # F2 read-only learning field-shape verdict; M4 gates on it
+        self.deps_health_path = self.control / "deps_health.json"
+        self.daemon_strip_path = self.control / "daemon_strip.json"
+        self.strip_metrics_path = self.control / "strip_metrics.json"
         self.log_path = self.reports / "run.log"
 
     def render_path(self, batch_id, source_id, render_id: str, aspect) -> str:

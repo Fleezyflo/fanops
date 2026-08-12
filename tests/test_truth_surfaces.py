@@ -9,7 +9,6 @@ from fanops.ledger import Ledger
 from fanops.models import (Source, SourceState, Moment, MomentState, Clip, ClipState,
                             Post, PostState, Platform, Fmt)
 from fanops.studio import views
-from fanops.studio import views_common
 
 _ENV_KEYS = ("FANOPS_LIVE", "FANOPS_POSTER", "POSTIZ_URL", "POSTIZ_API_KEY", "ZERNIO_API_KEY",
              "FANOPS_POSTIZ_AUTOSTART")
@@ -23,9 +22,7 @@ def _z(dt):
 
 @pytest.fixture(autouse=True)
 def _restore_env():
-    views_common._postiz_health_cache.clear()
     yield
-    views_common._postiz_health_cache.clear()
     for k, v in _ENV_BASELINE.items():
         os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
 
@@ -65,21 +62,16 @@ def _seed_due_postiz_post(cfg, *, when="2020-01-01T12:00:00Z"):
                           scheduled_time=when, public_url="dryrun://clip_1"))
 
 
-def _mock_postiz_down_health(monkeypatch):
-    import fanops.health as health
-    monkeypatch.setattr(health, "system_health", lambda c: [
-        health.DepHealth("docker", True, "daemon up"),
-        health.DepHealth("postiz", False, "unreachable"),
-        health.DepHealth("zernio", True, "skipped (not configured)")])
-
-
-class _R:
-    def __init__(s, code, body=None, text=""):
-        s.status_code = code
-        s._b = body if body is not None else {}
-        s.text = text
-    def json(s):
-        return s._b
+def _seed_postiz_down_snapshot(cfg, *, status_code=502):
+    cfg.control.mkdir(parents=True, exist_ok=True)
+    cfg.deps_health_path.write_text(json.dumps({
+        "checked_at": "2026-01-01T00:00:00Z",
+        "deps": [
+            {"name": "docker", "ok": True, "detail": "daemon up", "status_code": None},
+            {"name": "postiz", "ok": False, "detail": "unreachable", "status_code": status_code},
+            {"name": "zernio", "ok": True, "detail": "skipped (not configured)", "status_code": None},
+        ],
+    }))
 
 
 def test_golive_postiz_parked_matches_strip_no_blocker(tmp_path, monkeypatch, mocker):
@@ -88,9 +80,10 @@ def test_golive_postiz_parked_matches_strip_no_blocker(tmp_path, monkeypatch, mo
     monkeypatch.setenv("POSTIZ_URL", "http://127.0.0.1:5000")
     monkeypatch.setenv("POSTIZ_API_KEY", "pk")
     _seed_accounts(cfg)
-    _mock_postiz_down_health(monkeypatch)
-    mocker.patch("fanops.post.postiz.requests.get", return_value=_R(502, text="Bad Gateway"))
+    _seed_postiz_down_snapshot(cfg)
+    probe = mocker.patch("fanops.post.postiz.postiz_health_probe")
     body = _client(cfg).get("/golive/health").data.decode()
+    probe.assert_not_called()
     assert "dep-alert" not in body or "cannot ship" not in body.lower()
     assert "starts on publish" in body.lower()
     assert "parked" in body.lower() or "idle" in body.lower()
@@ -103,9 +96,10 @@ def test_golive_postiz_stall_still_blocks(tmp_path, monkeypatch, mocker):
     monkeypatch.setenv("POSTIZ_API_KEY", "pk")
     _seed_accounts(cfg)
     _seed_due_postiz_post(cfg)
-    _mock_postiz_down_health(monkeypatch)
-    mocker.patch("fanops.post.postiz.requests.get", return_value=_R(502, text="Bad Gateway"))
+    _seed_postiz_down_snapshot(cfg)
+    probe = mocker.patch("fanops.post.postiz.postiz_health_probe")
     body = _client(cfg).get("/golive/health").data.decode()
+    probe.assert_not_called()
     assert "dep-alert" in body
     assert "cannot ship" in body.lower()
     strip = views.build_system_strip(cfg)
@@ -120,8 +114,10 @@ def test_postiz_header_honest_when_autostart_off(tmp_path, monkeypatch, mocker):
     monkeypatch.setenv("POSTIZ_URL", "https://postiz.example.com")
     monkeypatch.setenv("POSTIZ_API_KEY", "pk")
     _seed_accounts(cfg)
-    mocker.patch("fanops.post.postiz.requests.get", return_value=_R(502, text="Bad Gateway"))
+    _seed_postiz_down_snapshot(cfg)
+    probe = mocker.patch("fanops.post.postiz.postiz_health_probe")
     strip = views.build_system_strip(cfg)
+    probe.assert_not_called()
     pd = strip.get("postiz_down") or {}
     hint = (pd.get("hint") or "").lower()
     assert pd.get("show") is True

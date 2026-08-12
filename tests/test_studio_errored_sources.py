@@ -3,6 +3,7 @@
 # fatal TimeoutExpired while the Studio strip read "idle" — the operator's only signal was absence. This
 # surfaces the error state (strip count + Run-tab list with the reason) and a Resume button wired to the
 # SAME stage-aware helper the CLI uses (pipeline.resume_source, MOL-121) — no parallel implementation.
+import json
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Source, SourceState
@@ -23,9 +24,20 @@ def _add_errored(cfg, sid="src_1", *, reason="TimeoutExpired: ffmpeg ... timed o
 
 # ── system strip: errored-source count ──
 
+def _seed_strip_metrics(cfg, *, blocked_gates=0, recoverable_sources=0, errored_first_id=None):
+    cfg.control.mkdir(parents=True, exist_ok=True)
+    cfg.strip_metrics_path.write_text(json.dumps({
+        "checked_at": "2026-01-01T00:00:00Z",
+        "blocked_gates": blocked_gates,
+        "recoverable_sources": recoverable_sources,
+        "errored_first_id": errored_first_id,
+    }))
+
+
 def test_strip_reports_errored_source_count(tmp_path, monkeypatch):
     cfg = _cfg(tmp_path, monkeypatch)
     _add_errored(cfg, "src_1"); _add_errored(cfg, "src_2")
+    _seed_strip_metrics(cfg, recoverable_sources=2, errored_first_id="src_1")
     strip = views.build_system_strip(cfg)
     assert strip["errored_sources"] == 2
 
@@ -33,6 +45,7 @@ def test_strip_clean_when_no_errored_sources(tmp_path, monkeypatch):
     cfg = _cfg(tmp_path, monkeypatch)
     with Ledger.transaction(cfg) as led:
         led.add_source(Source(id="ok", source_path="/x/ok.mp4", state=SourceState.transcribed, origin_kind="native"))
+    _seed_strip_metrics(cfg, recoverable_sources=0)
     strip = views.build_system_strip(cfg)
     assert strip["errored_sources"] == 0             # healthy source -> no false alarm
 
@@ -84,6 +97,7 @@ def test_strip_errored_links_library_detail(tmp_path, monkeypatch):
     pytest.importorskip("flask")
     cfg = _cfg(tmp_path, monkeypatch)
     _add_errored(cfg, "src_1")
+    _seed_strip_metrics(cfg, recoverable_sources=1, errored_first_id="src_1")
     from fanops.studio.app import create_app
     app = create_app(cfg); app.config.update(TESTING=True)
     html = app.test_client().get("/").data.decode()

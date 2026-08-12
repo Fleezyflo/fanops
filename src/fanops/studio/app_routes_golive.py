@@ -170,12 +170,22 @@ def register_golive_routes(app, cfg):
 
     @app.get("/golive/health")
     def do_golive_health():
-        from fanops.health import system_health
+        from fanops.health import read_dep_snapshot, refresh_runtime_snapshots
+        from fanops.health_model import DepHealth
         from fanops.studio import views_common
-        health = system_health(cfg)
+        compact = request.args.get("compact")
+        if request.args.get("refresh") == "1" and not compact:
+            refresh_runtime_snapshots(cfg)
+        snap = read_dep_snapshot(cfg)
+        health = []
+        for d in ((snap.get("deps") if isinstance(snap, dict) else None) or []):
+            if not isinstance(d, dict):
+                continue
+            health.append(DepHealth(name=d.get("name") or "", ok=bool(d.get("ok")),
+                                    detail=d.get("detail") or ""))
         postiz_hint = views_common.postiz_autostart_hint(cfg)
         blocking_deps = [d for d in health if not d.ok and not (d.name == "postiz" and postiz_hint.get("parked"))]
-        if request.args.get("compact"):
+        if compact:
             return render_template("_health_pills.html", health=health)
         return render_template("_golive_health.html", health=health, postiz_hint=postiz_hint,
                                blocking_deps=blocking_deps)

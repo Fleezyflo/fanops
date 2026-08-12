@@ -131,6 +131,7 @@
     "fanops.studio.views_live",
     "fanops.studio.views_results",
     "fanops.studio.views_review",
+    "fanops.studio_desktop",
     "fanops.tagging",
     "fanops.text",
     "fanops.timeutil",
@@ -276,6 +277,7 @@
     "fanops.studio.views_live": "S16_studio",
     "fanops.studio.views_results": "S16_studio",
     "fanops.studio.views_review": "S16_studio",
+    "fanops.studio_desktop": "S16_studio",
     "fanops.tagging": "S10_caption_hashtag",
     "fanops.text": "S01_foundation",
     "fanops.timeutil": "S01_foundation",
@@ -289,9 +291,9 @@
     "fanops.vocals": "S06_media_analysis"
   },
   "totals": {
-    "assigned": 136,
+    "assigned": 137,
     "ghosts": 0,
-    "modules": 136,
+    "modules": 137,
     "unassigned": 0
   },
   "unassigned_modules": []

@@ -107,8 +107,13 @@ def test_studio_daemon_health_surfaces_exec_fail(tmp_path, monkeypatch):
     }))
     monkeypatch.setattr(daemon.subprocess, "run", _fake_launchctl(list=(0, '\t"PID" = -1;\n')))
     monkeypatch.setattr(daemon.os, "access", lambda _path, _mode: False)
+    from fanops.health import refresh_daemon_strip_snapshot
+    refresh_daemon_strip_snapshot(cfg)
     app = create_app(cfg)
     with app.test_client() as client:
         html = client.get("/home/daemon-health").data.decode()
     assert "data-daemon-warn" in html
-    assert "interpreter not executable" in html
+    # Writer snapshot keeps the exec_fail verdict; the GET path reads the strip (heartbeat may re-label).
+    import json
+    snap = json.loads(cfg.daemon_strip_path.read_text())
+    assert "interpreter not executable" in (snap.get("verdict") or "")

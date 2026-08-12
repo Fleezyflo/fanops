@@ -36,12 +36,7 @@ _BASELINE = {k: os.environ.get(k) for k in _KEYS}
 
 @pytest.fixture(autouse=True)
 def _restore_env():
-    # The Postiz health banner caches the probe ~30s keyed by postiz_url (process-local). Two tests here
-    # share the same URL with opposite mocked backend states, so clear the cache per test for isolation
-    # (the TTL is a production concern, not a test one).
-    views_common._postiz_health_cache.clear()
     yield
-    views_common._postiz_health_cache.clear()
     for k, v in _BASELINE.items():
         os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
 
@@ -56,6 +51,22 @@ def _clean(monkeypatch, tmp_path):
 def _seed(cfg, accounts):
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.accounts_path.write_text(json.dumps({"accounts": accounts}))
+
+
+def _seed_deps(cfg, deps):
+    cfg.control.mkdir(parents=True, exist_ok=True)
+    cfg.deps_health_path.write_text(json.dumps({
+        "checked_at": "2026-01-01T00:00:00Z",
+        "deps": deps,
+    }))
+
+
+def _seed_postiz_row(cfg, *, ok, status_code):
+    _seed_deps(cfg, [
+        {"name": "docker", "ok": True, "detail": "daemon up", "status_code": None},
+        {"name": "postiz", "ok": ok, "detail": "seeded", "status_code": status_code},
+        {"name": "zernio", "ok": True, "detail": "skipped (not configured)", "status_code": None},
+    ])
 
 
 def _seed_due_postiz_post(cfg, *, pid="due_p1", when="2020-01-01T12:00:00Z", account="ig", account_id="1"):
@@ -136,9 +147,10 @@ def test_postiz_health_for_banner_absent_when_no_channel_routes_to_postiz(tmp_pa
     monkeypatch.setenv("FANOPS_LIVE", "1"); monkeypatch.setenv("ZERNIO_API_KEY", "sk")
     _seed(cfg, [{"handle": "@tk", "account_id": "a", "platforms": ["tiktok"], "status": "active",
                  "integrations": {"tiktok": "tk_1"}, "backends": {"tiktok": "zernio"}}])
-    mocker.patch("fanops.post.postiz.requests.get", return_value=_R(502, text="Bad Gateway"))
+    probe = mocker.patch("fanops.post.postiz.postiz_health_probe")
     banner = views_common.postiz_health_for_banner(cfg)
     assert banner["show"] is False
+    probe.assert_not_called()
 
 
 def test_studio_renders_postiz_down_banner_when_unhealthy(tmp_path, monkeypatch, mocker):
@@ -149,13 +161,15 @@ def test_studio_renders_postiz_down_banner_when_unhealthy(tmp_path, monkeypatch,
     monkeypatch.setenv("POSTIZ_URL", "https://postiz.example.com"); monkeypatch.setenv("POSTIZ_API_KEY", "pk")
     _seed(cfg, [{"handle": "@ig", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
     _seed_due_postiz_post(cfg)
-    mocker.patch("fanops.post.postiz.requests.get", return_value=_R(502, text="Bad Gateway"))
+    _seed_postiz_row(cfg, ok=False, status_code=502)
+    probe = mocker.patch("fanops.post.postiz.postiz_health_probe")
     strip = views.build_system_strip(cfg)
     pd = strip.get("postiz_down")
     assert pd and pd.get("show") is True and pd.get("danger") is True
     assert "502" in str(pd.get("status"))
     assert "stalled" in pd.get("hint", "").lower()
     assert "POSTIZ_OPS.md" in pd.get("hint", "")
+    probe.assert_not_called()
 
 
 # ------------------------------------------------------------------ MOL-124: idle-by-design vs real stall ----
@@ -165,10 +179,12 @@ def test_postiz_banner_muted_idle_when_down_and_no_due_postiz_posts(tmp_path, mo
     monkeypatch.setenv("FANOPS_LIVE", "1"); monkeypatch.setenv("FANOPS_POSTER", "postiz")
     monkeypatch.setenv("POSTIZ_URL", "https://postiz.example.com"); monkeypatch.setenv("POSTIZ_API_KEY", "pk")
     _seed(cfg, [{"handle": "@ig", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
-    mocker.patch("fanops.post.postiz.requests.get", return_value=_R(502, text="Bad Gateway"))
+    _seed_postiz_row(cfg, ok=False, status_code=502)
+    probe = mocker.patch("fanops.post.postiz.postiz_health_probe")
     banner = views_common.postiz_health_for_banner(cfg)
     assert banner.get("danger") is not True
     assert "stalled" not in (banner.get("hint") or "").lower()
+    probe.assert_not_called()
 
 
 def test_postiz_banner_danger_when_down_and_due_postiz_post(tmp_path, monkeypatch, mocker):
@@ -177,10 +193,12 @@ def test_postiz_banner_danger_when_down_and_due_postiz_post(tmp_path, monkeypatc
     monkeypatch.setenv("POSTIZ_URL", "https://postiz.example.com"); monkeypatch.setenv("POSTIZ_API_KEY", "pk")
     _seed(cfg, [{"handle": "@ig", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
     _seed_due_postiz_post(cfg)
-    mocker.patch("fanops.post.postiz.requests.get", return_value=_R(502, text="Bad Gateway"))
+    _seed_postiz_row(cfg, ok=False, status_code=502)
+    probe = mocker.patch("fanops.post.postiz.postiz_health_probe")
     banner = views_common.postiz_health_for_banner(cfg)
     assert banner.get("show") is True and banner.get("danger") is True
     assert "stalled" in (banner.get("hint") or "").lower()
+    probe.assert_not_called()
 
 
 def test_postiz_down_banner_absent_when_healthy(tmp_path, monkeypatch, mocker):
@@ -188,9 +206,11 @@ def test_postiz_down_banner_absent_when_healthy(tmp_path, monkeypatch, mocker):
     monkeypatch.setenv("FANOPS_POSTER", "postiz")
     monkeypatch.setenv("POSTIZ_URL", "https://postiz.example.com"); monkeypatch.setenv("POSTIZ_API_KEY", "pk")
     _seed(cfg, [{"handle": "@ig", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
-    mocker.patch("fanops.post.postiz.requests.get", return_value=_R(200, []))
+    _seed_postiz_row(cfg, ok=True, status_code=200)
+    probe = mocker.patch("fanops.post.postiz.postiz_health_probe")
     strip = views.build_system_strip(cfg)
     assert strip.get("postiz_down", {}).get("show") is False
+    probe.assert_not_called()
 
 
 # ------------------------------------------------------------------ D14: POSTIZ_OPS.md ----

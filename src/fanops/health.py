@@ -3,6 +3,7 @@
 MOL-298: runtime dependency verdicts are a THIN VIEW over health_model (one Postiz probe owner).
 `system_health(cfg)` -> health_model.dep_health_list; `ensure_up` unchanged bring-up behavior."""
 from __future__ import annotations
+import json
 import logging
 import shutil
 import subprocess
@@ -85,4 +86,95 @@ def ensure_up(cfg: Config) -> list[str]:
         _start_postiz(compose_dir, log)
     for line in log:
         _log.info(line)
+    refresh_runtime_snapshots(cfg)
     return log
+
+
+def refresh_runtime_snapshots(cfg: Config) -> None:
+    refresh_dep_snapshot(cfg)
+    refresh_daemon_strip_snapshot(cfg)
+    refresh_strip_metrics(cfg)
+
+
+def refresh_dep_snapshot(cfg: Config) -> list:
+    """Exactly one Postiz network call when configured (dep_health_list postiz_probe= seam)."""
+    from fanops.health_model import dep_health_list
+    from fanops.post.postiz import postiz_health_probe
+    from fanops.controlio import write_json_atomic
+    from fanops.timeutil import iso_z
+    from datetime import datetime, timezone
+    held = []
+    def _once(c):
+        if not held:
+            held.append(postiz_health_probe(c))
+        return held[0]
+    deps = dep_health_list(cfg, postiz_probe=_once)
+    postiz_status = held[0].status_code if held else None
+    write_json_atomic(cfg.deps_health_path, {
+        "checked_at": iso_z(datetime.now(timezone.utc)),
+        "deps": [{"name": d.name, "ok": d.ok, "detail": d.detail,
+                  "status_code": (postiz_status if d.name == "postiz" else None)} for d in deps],
+    })
+    return deps
+
+
+def refresh_daemon_strip_snapshot(cfg: Config) -> dict:
+    from fanops import daemon
+    from fanops.controlio import write_json_atomic
+    from fanops.timeutil import iso_z
+    from datetime import datetime, timezone
+    interval = daemon.installed_interval(cfg) or 600
+    rep = daemon.status(cfg, interval=interval)
+    siblings = daemon.sibling_agents_status()
+    blob = {**rep, "siblings": siblings, "interval": interval,
+            "checked_at": iso_z(datetime.now(timezone.utc))}
+    write_json_atomic(cfg.daemon_strip_path, blob)
+    return blob
+
+
+def refresh_strip_metrics(cfg: Config) -> dict:
+    """PendingIndex runs HERE (writer), never in build_system_strip.
+    Uses Ledger + fanops.pipeline_status only — does NOT import studio.views."""
+    from collections import Counter
+    from fanops.ledger import Ledger
+    from fanops.models import SourceState
+    from fanops.pipeline_status import PendingIndex, source_backlog
+    from fanops.controlio import write_json_atomic
+    from fanops.timeutil import iso_z
+    from datetime import datetime, timezone
+    led = Ledger.load(cfg)
+    idx = PendingIndex.build(cfg, led)
+    bl = source_backlog(led, cfg, idx)
+    by_kind = Counter(kind for _, kind, _ in idx.ordered)
+    blocked = bl.blocked_on_gates or (
+        by_kind.get("moments", 0) + by_kind.get("moment_hooks", 0) + by_kind.get("captions", 0))
+    errored_ids = [sid for sid, s in sorted(led.sources.items())
+                   if s.state in (SourceState.error, SourceState.moments_empty)]
+    blob = {
+        "checked_at": iso_z(datetime.now(timezone.utc)),
+        "blocked_gates": int(blocked),
+        "recoverable_sources": int(bl.recoverable),
+        "errored_first_id": errored_ids[0] if errored_ids else None,
+    }
+    write_json_atomic(cfg.strip_metrics_path, blob)
+    return blob
+
+
+def _read_snapshot(p: Path) -> dict | None:
+    """File read only; missing or unreadable → None. Never probes network/launchctl/PendingIndex."""
+    try:
+        return json.loads(p.read_text()) if p.exists() else None
+    except (OSError, ValueError):
+        return None
+
+
+def read_dep_snapshot(cfg: Config) -> dict | None:
+    return _read_snapshot(cfg.deps_health_path)
+
+
+def read_daemon_strip_snapshot(cfg: Config) -> dict | None:
+    return _read_snapshot(cfg.daemon_strip_path)
+
+
+def read_strip_metrics(cfg: Config) -> dict | None:
+    return _read_snapshot(cfg.strip_metrics_path)

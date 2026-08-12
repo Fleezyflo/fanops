@@ -388,13 +388,9 @@ def create_app(cfg: Config) -> Flask:
 
     @app.get("/healthz")
     def healthz():
-        """MOL-299: first machine-readable Studio route — unified health model as JSON."""
+        """Liveness: process is up. Doctor / Go-Live keep build_health_report."""
         from flask import jsonify
-        from fanops.health_model import build_health_report
-        rep = build_health_report(cfg)
-        body = rep.to_json_dict()
-        code = 200 if body["healthy"] else 503
-        return jsonify(body), code
+        return jsonify({"ok": True}), 200
 
     @app.get("/_fingerprint")
     def fingerprint():
@@ -452,8 +448,8 @@ def create_app(cfg: Config) -> Flask:
     def home_daemon_health():
         # WS-D1 Phase 2: the launchd PIPELINE-DRIVER liveness banner, htmx-loaded on Home (mirrors
         # /golive/health) so a dead/stale driver surfaces where the operator looks instead of rotting
-        # exit-127 unseen. Fail-open: daemon_health is None on non-darwin/launchctl-absent -> empty partial.
-        return render_template("_daemon_health.html", daemon=views.daemon_health(cfg))
+        # exit-127 unseen. Fail-open: daemon_health_strip is None when the snapshot is missing -> empty partial.
+        return render_template("_daemon_health.html", daemon=views.daemon_health_strip(cfg))
 
     from fanops.studio.app_routes_review import register_review_routes
     register_review_routes(app, cfg)
