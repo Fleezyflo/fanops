@@ -128,7 +128,7 @@ Purpose: read-only, budget-aware Meta Graph client — hashtag trend sampling, p
 - **`_default_fetch(led, cfg)`** — lazy Postiz client factory. Callers: `field_shape_report`.
 - **`field_shape_report(led, cfg, *, window="30d", list_posts=None)`** — PASS/FAIL/NO-DATA verdict on `reach` signal. Network. Callers: `cmd_learn_doctor`.
 - **`_mapped_lift_keys()`** — lazy import of Postiz label map. Callers: `field_shape_report`.
-- **`load_verdict(cfg)`** — reads persisted verdict sidecar. **Zero in-repo callers** — see Anomalies.
+- ~~`load_verdict(cfg)`~~ — **REMOVED** from `src/` (Wave 3); sidecar is still written by `_persist_verdict` for M4.
 - **`_persist_verdict(cfg, report)`** — atomic write. Callers: `cmd_learn_doctor`.
 - **`cmd_learn_doctor(cfg, *, list_posts=None)`** — CLI entry, narrow except, always returns 0. Callers: `cli._dispatch`.
 
@@ -161,7 +161,7 @@ Purpose: read-only, budget-aware Meta Graph client — hashtag trend sampling, p
 - **`_in_window(hour, window)`** — wrap-safe window check. Pure. Callers: `timing_bias_hour_for`.
 - **`timing_bias_hour_for(led, cfg, handle)`** — window-clamped per-account suggestion. Callers: `crosspost._mint_surface_post`.
 - **`apply_timing_bias(led, cfg)`** — actuator; kill switch + `learning_validated`; writes/deletes `cfg.timing_bias_path`; never touches ledger state. Callers: `cli._dispatch`.
-- **`timing_prior_hour(cfg)`** — reads the persisted prior hour. **Zero in-repo callers** — see Anomalies.
+- ~~`timing_prior_hour(cfg)`~~ — **REMOVED** from `src/` (Wave 3); live consumer is `timing_bias_hour_for` → `crosspost._mint_surface_post`.
 
 ## Learning-gate trace (exact thresholds, file:line)
 
@@ -186,8 +186,8 @@ Purpose: read-only, budget-aware Meta Graph client — hashtag trend sampling, p
 
 ## Anomalies found (file:line)
 
-1. **`learn_doctor.load_verdict`** (`learn_doctor.py:70-80`) — zero in-repo callers per call graph. Either dead or M4 reads the sidecar file directly rather than through this function. Candidate for removal or wiring into `doctor_report`.
-2. **`timing_bias.timing_prior_hour`** (`timing_bias.py:113-122`) — docstring claims "the schedule seam calls this" but zero in-repo callers per call graph; `timing_bias_hour_for` (the actual consumer per the docstring) is called only by `crosspost._mint_surface_post` and does not appear to route through this function. Likely orphaned — worth a repo-wide grep to confirm.
+1. **`learn_doctor.load_verdict`** — **REMOVED** from `src/` (Wave 3 re-verified absent). Sidecar write path `_persist_verdict` remains.
+2. **`timing_bias.timing_prior_hour`** — **REMOVED** from `src/` (Wave 3 re-verified absent). Schedule seam uses `timing_bias_hour_for`.
 4. **Similarly broad `except Exception` in every bias actuator's outer guard** (`variant_amplify.py:177`, `p4_dim_bias.py:70,79`, `moment_hook_learning.py:47`) — all deliberately broad per "fail-safe, not fail-silent" design; all log before swallowing. No bare `except: pass` found anywhere in the cluster.
 5. **`meta_graph._read_queries`** (`meta_graph.py:337-338`) — `except (OSError, JSONDecodeError, ValueError, TypeError): return None` with NO logging, unlike its sibling `insights_blocked_signal` which does log. A corrupt hashtag-budget file is undetectable from the log stream (fail-closed direction is safe, but silent).
 6. **No bias-scope violations found** — every amplify-only actuator imports exclusively `adjust.amplify`, never `retire`/cascade/state-setters; `timing_bias` never imports `adjust` at all and only writes a schedule-prior file. No TODO/FIXME/XXX markers anywhere in the 12 files.

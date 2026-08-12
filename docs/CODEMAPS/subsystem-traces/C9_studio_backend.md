@@ -107,9 +107,9 @@ through a named `actions.*` function, never touching `led.posts[...]` directly f
   - Sets `app.config["FANOPS_CFG"] = cfg` and `app.config["MAX_CONTENT_LENGTH"] = cfg.upload_max_bytes`
     (`app.py:249-250`) — the upload-size cap enforced by Werkzeug before any view runs.
   - Registers Jinja filters/globals (`localdt`, `localinput`, `group_review_by_batch`,
-    `group_schedule_by_account`, `group_review_by_account_surface`, `provenance_chips`,
+    `group_review_by_source`, `provenance_chips`,
     `run_next_step`, `bar_pct`, `term_def`, `operator_error`, `failure_label`) — all delegating to
-    pure `views.*` functions (`app.py:255-279`).
+    pure `views.*` functions (`app.py`). (`group_review_by_account_surface` / `group_schedule_by_account` were **REMOVED**.)
   - 5 `@app.context_processor` functions injecting global template context on every render:
     `_inject_nav_account` (nav filter state, `app.py:282-309`), `_inject_system_strip`
     (`views.build_system_strip(cfg)`, `app.py:311-313`), `_inject_account_session`

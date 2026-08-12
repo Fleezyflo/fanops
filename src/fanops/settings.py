@@ -4,10 +4,8 @@ import logging
 import math
 import os
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Annotated, Literal
 
-from dotenv import load_dotenv
 from pydantic import BeforeValidator, Field, ValidationError, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -425,16 +423,6 @@ class Settings(BaseSettings):
         # silently contradicted its own default for a typo. The shared rule falls back to `default`
         # for every unrecognized word, which is what every Config boolean property already does.
         return env_bool(raw, default=default)
-
-    @classmethod
-    def runtime_load(cls, root: Path) -> tuple[Settings, dict[str, str | None]]:
-        load_dotenv(root / ".env", override=True)
-        enriched = _enriched_env(dict(os.environ))
-        secrets = {k: enriched.get(k) for k in enriched if _is_resolved_secret_key(k)}
-        try:
-            return cls.model_validate(enriched), secrets
-        except ValidationError as exc:
-            return _coerce_from_errors(enriched, exc), secrets
 
     @classmethod
     def strict_validate(cls, env: dict[str, str] | None = None) -> Settings:

@@ -112,17 +112,19 @@ callbacks). Outcome:
 - **Confirmed genuinely dead** (no caller anywhere — re-verified against source with an alias-and-lazy-import sweep):
   - `accounts.py:set_channel_routing`, `set_framing` (C4) — two unwired account-mutation primitives; `set_channel_routing` is notable as "the documented fix for the cisumwolfhom incident" per its own docstring, never actually wired into a route.
   - `persona_levers.py:is_exempt`, `channels` (C4) — the latter's own docstring claim of being read by "the M4 manifest" is inaccurate (manifest calls `channels_of` instead).
-  - `learn_doctor.py:load_verdict` (C7) — either dead or a sidecar-file direct-read bypasses it.
-  - `timing_bias.py:timing_prior_hour` (C7) — docstring claims a caller that doesn't exist.
-  - `caption.py:normalize_variation_axis`, `coherent_variation` (C5) — dormant P2 creative-variation-axis machinery, a tracked follow-up not an oversight.
-  - `timeutil.py:is_past_due` (C8) — sibling `is_due_or_past` is used instead.
   - `ingest.py:download_source` (C2) — own docstring says "kept for any direct caller/test"; the real CLI path composes `download_url`+`ingest_drops` separately.
+- **Already removed from `src/`** (do not re-list as present dead code; Wave 3 re-verified absent):
+  - `learn_doctor.load_verdict`, `timing_bias.timing_prior_hour` (C7)
+  - `caption.normalize_variation_axis`, `caption.coherent_variation` (C5)
+  - `timeutil.is_past_due` (C8) — live sibling remains `is_due_or_past`
+  - `views_review.group_review_by_account_surface` (C10)
 - **Plausible-but-unconfirmed** (likely template-only Jinja consumers, not verified against
   `templates/` line-by-line in this pass): `views.py:run_next_step`, `zero_post_clips`,
   `metrics_stale_hint`; `views_common.py:accounts_in`, `term_def`; `views_results.py:operator_error`,
-  `bar_pct`; `views_review.py:provenance_chips`, `group_review_by_account_surface`,
-  `group_review_by_batch` (all C10). Of these, `zero_post_clips` is separately confirmed as a **real
-  bug** below (referenced by a template but never passed by the view), not merely unreferenced.
+  `bar_pct`; `views_review.py:provenance_chips`, `group_review_by_batch` (all C10). Of these,
+  `zero_post_clips` is separately confirmed as a **real bug** below (referenced by a template but
+  never passed by the view), not merely unreferenced. `provenance_chips` / `group_review_by_batch`
+  are registered on the Jinja env in `studio/app.py` (live).
 
 Full per-candidate detail with file:line citations lives in each cluster's own trace document.
 
