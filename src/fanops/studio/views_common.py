@@ -319,7 +319,7 @@ def _any_channel_routes_to_postiz(cfg: Config) -> bool:
                 if accounts.effective_provider(a.handle, p) == "postiz":
                     return True
     except Exception as e:
-        _log.debug("postiz-route check failed (banner suppressed): %s", e)
+        _log.warning("postiz-route check failed (banner suppressed): %s", e)
     return False
 
 
@@ -349,7 +349,7 @@ def postiz_health_for_banner(cfg: Config, *, now: "float | None" = None) -> dict
             from fanops.studio.views_results import due_publish_plan
             postiz_due = due_publish_plan(cfg).postiz_due
         except Exception as e:
-            _log.debug("due_publish_plan failed in banner read (treat as idle): %s", e)
+            _log.warning("due_publish_plan failed in banner read (treat as idle): %s", e)
         if postiz_due <= 0:
             if _postiz_local_autostart(cfg):
                 hint = "Postiz idle (starts on publish)"
