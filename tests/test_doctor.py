@@ -84,12 +84,16 @@ def test_doctor_flags_empty_brand_brief(tmp_path):
 
 
 def test_doctor_claude_check_only_when_llm(tmp_path, monkeypatch):
+    # Empty/unset → llm: doctor must surface the CLI check. Explicit manual skips it.
     monkeypatch.delenv("FANOPS_RESPONDER", raising=False)
     rep = doctor.doctor_report(Config(root=tmp_path))
-    assert not any("claude" in c["label"].lower() for c in rep["checks"])
-    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    assert any("claude" in c["label"].lower() for c in rep["checks"])
+    monkeypatch.setenv("FANOPS_RESPONDER", "manual")
     rep2 = doctor.doctor_report(Config(root=tmp_path))
-    assert any("claude" in c["label"].lower() for c in rep2["checks"])
+    assert not any("claude" in c["label"].lower() for c in rep2["checks"])
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    rep3 = doctor.doctor_report(Config(root=tmp_path))
+    assert any("claude" in c["label"].lower() for c in rep3["checks"])
 
 
 def test_doctor_cursor_transport_checks_cursor_agent(tmp_path, monkeypatch):

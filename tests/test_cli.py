@@ -289,15 +289,29 @@ def test_preflight_blocks_llm_when_claude_absent_via_advance(tmp_path, monkeypat
     assert "claude" in err and "Traceback" not in err
 
 
-def test_preflight_passes_default_dryrun_manual(tmp_path, monkeypatch):
-    # The default cutover config (manual responder + dryrun poster, no creds) must pass cleanly.
+def test_preflight_passes_explicit_manual_dryrun(tmp_path, monkeypatch):
+    # Explicit manual + dryrun poster (no creds) must pass cleanly. Empty responder is llm now.
     monkeypatch.chdir(tmp_path)
-    monkeypatch.delenv("FANOPS_RESPONDER", raising=False)
+    monkeypatch.setenv("FANOPS_RESPONDER", "manual")
     monkeypatch.delenv("FANOPS_POSTER", raising=False)
     monkeypatch.delenv("BLOTATO_API_KEY", raising=False)
     from fanops.config import Config
     from fanops.cli import _check_preflight
     assert _check_preflight(Config(root=tmp_path)) == 0
+
+
+def test_preflight_blocks_default_llm_when_claude_absent(tmp_path, monkeypatch, mocker, capsys):
+    # Fail closed: empty/unset FANOPS_RESPONDER → llm, so missing CLI refuses the same as explicit llm.
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("FANOPS_RESPONDER", raising=False)
+    monkeypatch.delenv("BLOTATO_API_KEY", raising=False)
+    mocker.patch("shutil.which", return_value=None)
+    from fanops.config import Config
+    from fanops.cli import _check_preflight
+    rc = _check_preflight(Config(root=tmp_path))
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "claude" in err and "Traceback" not in err
 
 
 def test_preflight_passes_llm_when_claude_present_no_api_key(tmp_path, monkeypatch, mocker):
