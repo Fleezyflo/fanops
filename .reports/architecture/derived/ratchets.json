@@ -18,7 +18,7 @@
     },
     "swallow": {
       "baseline": {
-        "src/fanops/accounts.py": 3,
+        "src/fanops/accounts.py": 2,
         "src/fanops/agentstep.py": 1,
         "src/fanops/artifacts.py": 1,
         "src/fanops/audit.py": 2,
@@ -84,7 +84,7 @@
       "fanops.studio_desktop": 1
     },
     "silent_broad_except_by_file": {
-      "src/fanops/accounts.py": 3,
+      "src/fanops/accounts.py": 2,
       "src/fanops/agentstep.py": 1,
       "src/fanops/artifacts.py": 1,
       "src/fanops/audit.py": 2,
@@ -95,7 +95,7 @@
       "src/fanops/crosspost.py": 1,
       "src/fanops/cutover.py": 1,
       "src/fanops/daemon.py": 5,
-      "src/fanops/doctor.py": 8,
+      "src/fanops/doctor.py": 9,
       "src/fanops/fanops_hashtags.py": 2,
       "src/fanops/framing.py": 9,
       "src/fanops/health.py": 2,
