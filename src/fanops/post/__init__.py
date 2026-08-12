@@ -31,11 +31,20 @@ def get_poster(cfg: Config, backend: str | None = None) -> "Poster":
 def get_media_uploader(cfg: Config, backend: str | None = None) -> Callable[[Config, Path], str]:
     """Return the (cfg, Path) -> hosted-URL function for `backend` (defaults to the global
     cfg.poster_backend — back-compat). dryrun -> file:// (no network); postiz -> Postiz upload; zernio ->
-    Zernio upload. Resolved through the provider registry. An UNKNOWN backend falls back to the dryrun
-    uploader (a fail-safe file:// URL, not a crash) — no live account routes to an unknown backend."""
+    Zernio upload. Resolved through the provider registry. An UNKNOWN backend on a non-live system falls
+    back to the dryrun uploader (fail-safe file://). LIVE + unknown RAISES — same honesty posture as
+    get_poster's live+dryrun refusal (no silent file:// on a live publish path)."""
+    resolved = backend or cfg.poster_backend
     from fanops.post.providers import get_provider
-    provider = get_provider(cfg, backend or cfg.poster_backend)
+    provider = get_provider(cfg, resolved)
     if provider is not None:
         return provider.make_uploader(cfg)
+    # ROOT FIX (mirror get_poster live+dryrun): a LIVE system must not silently mint file:// URLs for an
+    # unrecognized backend. Not-live keeps the dryrun fail-safe so local/preview paths stay crash-free.
+    if cfg.is_live:
+        raise RuntimeError(
+            f"get_media_uploader: refused to construct dryrun file:// uploader on a LIVE system "
+            f"(cfg.is_live=True, backend={resolved!r}). A per-channel provider must resolve to "
+            f"postiz/zernio/etc., NOT an unknown backend. Fix the account's backends mapping in accounts.json.")
     from fanops.post.providers import _dryrun_uploader
     return _dryrun_uploader(cfg)
