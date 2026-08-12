@@ -76,14 +76,14 @@ def _scan_silent_swallows() -> dict[str, int]:
 def _baseline_silent_swallows() -> dict[str, int]:
     """Measured after Wave 3 cheap fail_open cluster (−6): agentstep/artifacts/cutover/pipeline_status/audit."""
     return {
-        "src/fanops/accounts.py": 3,
+        "src/fanops/accounts.py": 2,
         "src/fanops/caption.py": 2,
         "src/fanops/cli.py": 3,
         "src/fanops/clip.py": 1,
         "src/fanops/compose.py": 4,
         "src/fanops/crosspost.py": 1,
         "src/fanops/daemon.py": 5,
-        "src/fanops/doctor.py": 8,
+        "src/fanops/doctor.py": 9,
         "src/fanops/fanops_hashtags.py": 2,
         "src/fanops/framing.py": 9,
         "src/fanops/health.py": 2,

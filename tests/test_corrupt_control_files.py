@@ -77,6 +77,27 @@ def test_personas_load_corrupt_json_raises_control_file_error(tmp_path):
     assert "Traceback" not in msg
 
 
+def test_personas_load_schema_violation_skips_row_and_surfaces_in_validate(tmp_path):
+    # Accounts.load parity: one bad row skips; siblings load; validate names the skip.
+    cfg = Config(root=tmp_path)
+    _write(cfg.personas_path, json.dumps({"personas": [
+        {"name": "no-id", "voice": "x", "niche": ["hiphop"]},
+        {"id": "ok", "name": "Ok", "voice": "v", "niche": ["hiphop"]},
+    ]}))
+    reg = Personas.load(cfg)
+    assert [p.id for p in reg.personas] == ["ok"]
+    problems = reg.validate()
+    assert any("row 0" in p and "malformed, skipped" in p for p in problems)
+
+
+def test_personas_load_wrong_toplevel_shape_raises_control_file_error(tmp_path):
+    cfg = Config(root=tmp_path)
+    _write(cfg.personas_path, json.dumps([{"id": "a"}]))
+    with pytest.raises(ControlFileError) as ei:
+        Personas.load(cfg)
+    assert "personas.json invalid:" in str(ei.value)
+
+
 def test_ledger_load_valid_still_works(tmp_path):
     cfg = Config(root=tmp_path)
     _write_legacy_json(cfg, json.dumps({"sources": {}, "moments": {}, "clips": {}, "posts": {}}))
