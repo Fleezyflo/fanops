@@ -8,6 +8,7 @@
 #      (never the plain LIVE banner) + a doctor finding; a genuinely-live config is byte-identical to today.
 # ALL HTTP is mocked (never a real Postiz/Meta endpoint); env via monkeypatch (raising=False); accounts via tmp_path.
 import json
+import logging
 import os
 from pathlib import Path
 import pytest
@@ -151,6 +152,32 @@ def test_postiz_health_for_banner_absent_when_no_channel_routes_to_postiz(tmp_pa
     banner = views_common.postiz_health_for_banner(cfg)
     assert banner["show"] is False
     probe.assert_not_called()
+
+
+# ------------------------------------------------------------------ foundation-honesty Wave 2: banner fail-open at WARNING ----
+def test_any_channel_routes_to_postiz_logs_warning_on_failure(tmp_path, monkeypatch, mocker, caplog):
+    # Fail-open False must stay, but the route-check exception must be WARNING (operators see banner suppressions).
+    cfg = _clean(monkeypatch, tmp_path)
+    mocker.patch("fanops.accounts.load_accounts_safe", side_effect=RuntimeError("registry boom"))
+    with caplog.at_level(logging.WARNING, logger="fanops.studio.views_common"):
+        assert views_common._any_channel_routes_to_postiz(cfg) is False
+    assert any(r.levelno >= logging.WARNING and "postiz-route check failed" in r.getMessage()
+               for r in caplog.records)
+
+
+def test_postiz_health_for_banner_due_plan_fail_logs_warning(tmp_path, monkeypatch, mocker, caplog):
+    # Unhealthy snapshot + due_publish_plan raise → treat as idle (muted), log WARNING (not debug).
+    cfg = _clean(monkeypatch, tmp_path)
+    monkeypatch.setenv("FANOPS_LIVE", "1"); monkeypatch.setenv("FANOPS_POSTER", "postiz")
+    monkeypatch.setenv("POSTIZ_URL", "https://postiz.example.com"); monkeypatch.setenv("POSTIZ_API_KEY", "pk")
+    _seed(cfg, [{"handle": "@ig", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    _seed_postiz_row(cfg, ok=False, status_code=502)
+    mocker.patch("fanops.studio.views_results.due_publish_plan", side_effect=RuntimeError("due plan boom"))
+    with caplog.at_level(logging.WARNING, logger="fanops.studio.views_common"):
+        banner = views_common.postiz_health_for_banner(cfg)
+    assert banner.get("show") is True and banner.get("danger") is not True
+    assert any(r.levelno >= logging.WARNING and "due_publish_plan failed" in r.getMessage()
+               for r in caplog.records)
 
 
 def test_studio_renders_postiz_down_banner_when_unhealthy(tmp_path, monkeypatch, mocker):
