@@ -65,43 +65,43 @@
       },
       {
         "call": "Ledger.transaction",
-        "line": 1241
+        "line": 1243
       },
       {
         "call": "Ledger.transaction",
-        "line": 1253
+        "line": 1255
       },
       {
         "call": "Ledger.transaction",
-        "line": 1264
+        "line": 1266
       },
       {
         "call": "Ledger.transaction",
-        "line": 1491
+        "line": 1493
       },
       {
         "call": "Ledger.transaction",
-        "line": 1504
+        "line": 1506
       },
       {
         "call": "Ledger.transaction",
-        "line": 1591
+        "line": 1593
       },
       {
         "call": "Ledger.transaction",
-        "line": 1599
+        "line": 1601
       },
       {
         "call": "Ledger.transaction",
-        "line": 1624
+        "line": 1626
       },
       {
         "call": "Ledger.transaction",
-        "line": 1631
+        "line": 1633
       },
       {
         "call": "Ledger.transaction",
-        "line": 1640
+        "line": 1642
       }
     ],
     "fanops.ledger_wipe": [
@@ -485,7 +485,7 @@
     "fanops.cli": [
       {
         "call": "tempfile.mkdtemp",
-        "line": 1443
+        "line": 1445
       }
     ],
     "fanops.post.compress": [
@@ -578,7 +578,7 @@
     "fanops.cli": [
       {
         "call": "shutil.rmtree",
-        "line": 1475
+        "line": 1477
       }
     ],
     "fanops.post.compress": [
@@ -643,35 +643,35 @@
     "fanops.daemon": [
       {
         "call": "subprocess.run",
-        "line": 203
+        "line": 202
       },
       {
         "call": "subprocess.run",
-        "line": 274
+        "line": 273
       },
       {
         "call": "subprocess.run",
-        "line": 279
+        "line": 278
       },
       {
         "call": "subprocess.run",
-        "line": 939
+        "line": 938
       },
       {
         "call": "subprocess.run",
-        "line": 965
+        "line": 964
       },
       {
         "call": "subprocess.run",
-        "line": 970
+        "line": 969
       },
       {
         "call": "subprocess.run",
-        "line": 998
+        "line": 997
       },
       {
         "call": "subprocess.run",
-        "line": 1071
+        "line": 1070
       }
     ],
     "fanops.discover": [
