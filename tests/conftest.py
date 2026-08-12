@@ -136,6 +136,10 @@ def _hermetic_publish_env():
     # isolate reframe/fingerprint/hook wiring and must not write .ass files. Tests that exercise subs
     # opt back in explicitly (monkeypatch delenv/setenv burn_subs).
     os.environ["FANOPS_BURN_SUBS"] = "0"
+    # Production empty FANOPS_RESPONDER → llm, but the hermetic unit suite has no Claude CLI.
+    # Pin manual here so pipeline/cli tests are not refused by preflight; tests that assert the
+    # production default must monkeypatch.delenv("FANOPS_RESPONDER") explicitly.
+    os.environ["FANOPS_RESPONDER"] = "manual"
     try:
         yield
     finally:

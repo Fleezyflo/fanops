@@ -113,10 +113,10 @@ def test_expand_filters_sibling_owned_terms_after_llm(tmp_path, monkeypatch):
 
 
 def test_expand_if_due_noop_when_responder_manual(tmp_path, monkeypatch):
-    """Fail-open: without FANOPS_RESPONDER=llm, vocab expand is a no-op (no LLM call)."""
+    """Fail-open: with FANOPS_RESPONDER=manual, vocab expand is a no-op (no LLM call)."""
     cfg = Config(root=tmp_path)
     pid = _persona(cfg); _link_active(cfg, pid)
-    monkeypatch.delenv("FANOPS_RESPONDER", raising=False)
+    monkeypatch.setenv("FANOPS_RESPONDER", "manual")
     called = []
 
     def _boom(*a, **k):

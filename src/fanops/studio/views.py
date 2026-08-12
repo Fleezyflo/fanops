@@ -89,7 +89,7 @@ class GoLiveStatus:
     learning_validated: bool = False   # M3: cutover.json metrics_confirmed — the loop is unfrozen on this backend
     account_casting: bool = False      # per-account moment casting ON (FANOPS_ACCOUNT_CASTING) — distinct moment sets per account
     clip_profile: str = "talk"         # clip-length band (FANOPS_CLIP_PROFILE): talk 12-22s / song 18-35s
-    responder_mode: str = "manual"     # THE AI switch (FANOPS_RESPONDER): 'llm' = pipeline answers gates via LLM CLI, 'manual' = human/pending
+    responder_mode: str = "llm"        # THE AI switch (FANOPS_RESPONDER): empty/unset → llm; 'manual' = human/pending
     llm_transport: str = "claude"      # FANOPS_LLM_TRANSPORT: claude | cursor (which CLI shells for gates)
     llm_cli_binary: str = "claude"     # resolved binary name for operator copy (claude | cursor-agent)
     daemon: Optional[dict] = None      # launchd pipeline-driver health (verdict/loaded/interval/responder), None off-darwin

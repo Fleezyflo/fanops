@@ -1130,13 +1130,15 @@ def _check_preflight(cfg: Config) -> int:
         logged-out `claude` then surfaces loudly via the run's `run halted`/heartbeat path, not a
         traceback.)
 
-    The default dryrun+manual config (no creds) trips neither and passes cleanly (exit 0)."""
+    Explicit FANOPS_RESPONDER=manual + dryrun poster (no creds) trips neither and passes cleanly
+    (exit 0). Empty/unset responder resolves to llm, so missing CLI fails closed (same as explicit llm)."""
     import shutil
     from fanops.llm import _CURSOR_SUPPORTS_VISION
     problems = []
     if cfg.responder_mode == "llm":
         cli_bin = cfg.llm_cli_binary
         if shutil.which(cli_bin) is None:
+            # Fail closed for both explicit FANOPS_RESPONDER=llm and empty/unset (default llm).
             if cli_bin == "cursor-agent":
                 problems.append(
                     "FANOPS_RESPONDER=llm but `cursor-agent` is not on PATH — the autonomous responder "
