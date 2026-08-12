@@ -530,19 +530,14 @@ class Config:
 
     @property
     def responder_mode(self) -> str:
-        # NO haphazard claude (ROOT): the AI responder is an EXPLICIT opt-in, mirroring is_live's .env gate.
-        # It is 'llm' ONLY when the operator set FANOPS_RESPONDER=llm (via .env — the Studio AI-Responder
-        # toggle, `fanops autopilot`, or `daemon install --responder llm`). The mere PRESENCE of `claude` on
-        # PATH must NEVER auto-enable it: that fired `claude -p` on every run/kick/daemon-tick without intent.
-        # Default is 'manual' (gates stay pending until llm is explicitly enabled or a human/cron answers) —
-        # this single gate makes EVERY downstream responder path (run/respond/run_prepare/kick/daemon/
-        # intro_match) opt-in by construction, so no per-site guard is needed. An UNKNOWN value (a .env
-        # typo like 'llmm') must NOT slip through: get_responder only matches =='llm', so a typo silently
-        # ran manual while the operator believed the AI was on. Validate + warn + fall back to manual,
-        # mirroring poster_backend's guard above.
+        # Foundation honesty: empty/unset FANOPS_RESPONDER resolves to 'llm' (matches docs/CONFIG.md).
+        # Presence of `claude` on PATH never auto-toggles anything — only this env (or Studio/autopilot/
+        # daemon --responder writes) sets the mode. Fail-closed: doctor + preflight refuse when mode is
+        # llm and the LLM CLI is missing. Typo policy (safe refuse): UNKNOWN values (e.g. 'llmm') warn
+        # and fall back to 'manual' — never treat a typo as llm. Empty/unset alone is llm; typos stay manual.
         v = (os.getenv("FANOPS_RESPONDER") or "").strip().lower()
         if not v:
-            return "manual"
+            return "llm"
         if v not in {"llm", "manual"}:
             _log.warning("ignoring unknown FANOPS_RESPONDER=%r (using manual); valid: llm, manual", v)
             return "manual"

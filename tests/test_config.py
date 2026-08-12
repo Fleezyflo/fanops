@@ -125,19 +125,21 @@ def test_clip_profile_env_trimmed(monkeypatch, tmp_path):
     monkeypatch.setenv("FANOPS_CLIP_PROFILE", "  song\n")   # a .env value can carry surrounding ws
     assert Config(root=tmp_path).clip_profile == "song"
 
-def test_responder_defaults_manual_when_unset(monkeypatch, tmp_path):
-    # NO haphazard claude: with FANOPS_RESPONDER unset, the responder is manual regardless of whether
-    # `claude` is on PATH — presence never auto-enables the LLM (that fired claude on every run/tick).
+def test_responder_defaults_llm_when_unset(monkeypatch, tmp_path):
+    # Foundation honesty: empty/unset FANOPS_RESPONDER resolves to llm (docs/CONFIG.md). Presence of
+    # `claude` on PATH never auto-toggles — only this env resolution does. Whitespace-empty is unset.
     monkeypatch.delenv("FANOPS_RESPONDER", raising=False)
-    assert Config(root=tmp_path).responder_mode == "manual"
+    assert Config(root=tmp_path).responder_mode == "llm"
+    monkeypatch.setenv("FANOPS_RESPONDER", "  ")
+    assert Config(root=tmp_path).responder_mode == "llm"
 
 def test_responder_manual_explicit(monkeypatch, tmp_path):
     monkeypatch.setenv("FANOPS_RESPONDER", "manual")
     assert Config(root=tmp_path).responder_mode == "manual"
 
-def test_responder_llm_only_on_explicit_optin(monkeypatch, tmp_path):
+def test_responder_llm_explicit(monkeypatch, tmp_path):
     monkeypatch.setenv("FANOPS_RESPONDER", "llm")
-    assert Config(root=tmp_path).responder_mode == "llm"        # explicit opt-in still works
+    assert Config(root=tmp_path).responder_mode == "llm"
 
 def test_llm_transport_defaults_claude_when_unset(monkeypatch, tmp_path):
     monkeypatch.delenv("FANOPS_LLM_TRANSPORT", raising=False)
@@ -178,9 +180,8 @@ def test_is_live_backend_postiz_uses_postiz_key(monkeypatch, tmp_path):
     assert Config(root=tmp_path).is_live_backend is True         # postiz + postiz key → live
 
 def test_responder_mode_unknown_falls_back_to_manual(monkeypatch, tmp_path, caplog):
-    # Contract: responder_mode ∈ {llm, manual}. A typo (FANOPS_RESPONDER=llmm) slipped through verbatim,
-    # and get_responder only matches =="llm" -> the operator THINKS they enabled the AI but silently gets
-    # manual with no signal. Validate + warn + fall back to manual, mirroring poster_backend's guard.
+    # Typo policy (safe refuse): unknown FANOPS_RESPONDER (e.g. llmm) warns and treats as manual.
+    # Empty/unset alone is llm — typos must NOT resolve to llm.
     monkeypatch.setenv("FANOPS_RESPONDER", "llmm")               # typo of "llm"
     with caplog.at_level(logging.WARNING):
         mode = Config(root=tmp_path).responder_mode
@@ -534,6 +535,14 @@ def test_settings_poster_empty_ok_at_boundary(monkeypatch):
     from fanops.settings import Settings
     monkeypatch.delenv("FANOPS_POSTER", raising=False)
     assert Settings().poster_backend() == "dryrun"
+
+
+def test_settings_responder_defaults_llm_when_unset(monkeypatch):
+    from fanops.settings import Settings
+    monkeypatch.delenv("FANOPS_RESPONDER", raising=False)
+    assert Settings().responder_mode() == "llm"
+    monkeypatch.setenv("FANOPS_RESPONDER", "")
+    assert Settings().responder_mode() == "llm"
 
 
 def test_settings_responder_typo_raises_at_boundary(monkeypatch):
