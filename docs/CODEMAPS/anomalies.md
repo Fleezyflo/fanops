@@ -75,8 +75,7 @@ re-requests every tick with no operator-visible terminal). That class is now nam
 
 ## C5 — Caption, hooks & hashtags
 
-- `caption.py:45` `normalize_variation_axis` — dead code; dormant P2 creative-variation-axis machinery, a tracked follow-up.
-- `caption.py:51` `coherent_variation` — dead code; T2 coherence gate for the same dormant loop.
+- `caption.py` `normalize_variation_axis` / `coherent_variation` — **REMOVED** (no longer in `src/`); do not re-list as present dead code. `VARIATION_AXES` remains as an unused constant only.
 - `llm.py:180` `claude_json` — flagged zero-caller by the call graph; **false positive**, actually called via `studio/actions.py:138-139` (`from fanops.llm import claude_json; model = claude_json`), a name-alias the graph missed.
 - `prompts.py:166,242,361` (`moment_pick_prompt`, `moment_hook_prompt`, `caption_prompt`) — all flagged zero-caller; false positives, invoked via `responder.py`'s `_PROMPT[kind](payload)` dict-dispatch. (`moment_casting_prompt` removed P11.)
 - `hashtags.py:179-193` `vet_hashtags` reserved-floor logic evaluates against `kept[:max_tags]` (the cap window) rather than the full `kept` list — deliberate per inline comment, but subtle enough that a naive re-implementation could silently break the floor guarantee. Design note, not a bug.
@@ -95,15 +94,15 @@ re-requests every tick with no operator-visible terminal). That class is now nam
 
 ## C7 — Metrics, reconcile & learning
 
-- `learn_doctor.py:70-80` `load_verdict` — zero in-repo callers; either dead or M4 reads the sidecar file directly, bypassing it. Candidate for removal or wiring into `doctor_report`.
-- `timing_bias.py:113-122` `timing_prior_hour` — docstring claims "the schedule seam calls this" but zero in-repo callers found; likely orphaned, worth a repo-wide grep to confirm.
+- `learn_doctor.py` `load_verdict` — **REMOVED** (no longer in `src/`); `_persist_verdict` still writes the sidecar for M4.
+- `timing_bias.py` `timing_prior_hour` — **REMOVED** (no longer in `src/`); live path is `timing_bias_hour_for` → `crosspost._mint_surface_post`.
 - `variant_amplify.py:177`, `p4_dim_bias.py:70,79`, `moment_hook_learning.py:47` — broad outer-guard excepts in every bias actuator; all deliberately broad ("fail-safe, not fail-silent"), all log before swallowing.
 - `meta_graph.py:337-338` `_read_queries` — `except (OSError, JSONDecodeError, ValueError, TypeError): return None` with **no logging**, unlike sibling `insights_blocked_signal` which does log. A corrupt hashtag-budget file is undetectable from the log stream (fail-closed direction is safe, but silent).
 - No bias-scope violations found; no TODO/FIXME/XXX anywhere in the cluster.
 
 ## C8 — Ops, CLI & daemon
 
-- `timeutil.py:70` `is_past_due` — dead code; sibling `is_due_or_past` is used instead.
+- `timeutil.py` `is_past_due` — **REMOVED** (no longer in `src/`); live sibling is `is_due_or_past`.
 - `timeutil.py:110,124` `to_local_display`/`to_local_input` — flagged zero-caller; likely Jinja-filter registration blind spots (not verified dead).
 - `cli.py:522` `_http_url` — flagged zero-caller; registered as an argparse `type=` callback, confirmed NOT dead.
 - `audit.py:29-47` `write_audit` — entire body wrapped in a top-level `except Exception: pass`, the broadest swallow in the cluster, but explicitly contracted: "the action must complete even if the audit write fails (audit is observability, never a blocker)."
@@ -127,7 +126,7 @@ re-requests every tick with no operator-visible terminal). That class is now nam
 - `views.py:173` `run_next_step`, `:528` `zero_post_clips`, `:547` `metrics_stale_hint` — zero-caller flags. `zero_post_clips` confirmed as a **real bug** (see full-trace-index.md "Real bugs found" — referenced by `home.html` but never passed by the view). The other two likely template-only, not separately confirmed.
 - `views_common.py:74` `accounts_in`, `:68` `term_def` — zero-caller flags; `term_def` explicitly documented as a Jinja-macro-only consumer.
 - `views_results.py:422` `operator_error`, `:621` `bar_pct` — zero-caller flags; plausibly template-only (`bar_pct` almost certainly is), `operator_error` possibly superseded by `failure_label`.
-- `views_review.py:162` `provenance_chips`, `:663` `group_review_by_account_surface`, `:684` `group_review_by_batch` — zero-caller flags; `provenance_chips` documented template-macro-consumed. The two groupers' docstrings claim mutual mirroring but neither has a confirmed live caller — worth verifying whether the batch-grouped display was refactored away, leaving these genuinely dead.
+- `views_review.py` `provenance_chips`, `group_review_by_batch` — zero-caller AST flags; both are live Jinja consumers (`app.jinja_env.globals` / `.filters`). `group_review_by_account_surface` — **REMOVED** (no longer in `src/`).
 - `call_graph.json` lists `fanops.compose._moviepy_render` as a caller of `views_review._card` — almost certainly a name-collision false positive (no plausible reason `compose.py` would call a Studio Review-card builder).
 - **`views.py:build_system_strip`** — runs on every page load; 4 of its 5 internal try/except blocks are silent (no `get_logger` call): `pipeline_status` failure → `blocked=0`; posts-scan failure → `failed=0`; `insights_blocked` failure → `False`; `half_live` computation failure → `False,""`. Sibling read-models earlier in the same file (`asset_catalog`, `golive_accounts`, `home_status`) all log on failure. **The one real legibility gap in C10** — a persistent bug in any of the 5 sub-computations would degrade the nav strip's warning badges invisibly, with no log breadcrumb. (The 5th, `postiz_down`, is silent too but is an acceptable double-guard since `postiz_health_for_banner` is already internally fail-open.)
 - `views.py:523,585` (`review_handoff`, `account_work_counts`) — undocumented-as-logged `except Exception: pass`, each with a sensible partial-result fallback.

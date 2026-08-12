@@ -113,9 +113,7 @@ hookscore.narration_signature / hook_quality / log_hook_quality  — READ-ONLY S
 
 - `logger` (module var) — `logging.getLogger(__name__)`.
 - `_TAG_RE` (module var, compiled regex `#\S+`) — used by `_tags_in`.
-- `VARIATION_AXES = ("hook_string", "caption_angle", "hook_placement")` (module var) — the P2 "cheap-text" axes a variant may legitimately move; render-expensive frame/length axes are out of scope for this dormant machinery.
-- `normalize_variation_axis(value) -> str | None` — pure: canonicalizes a free-text axis label (case/space/dash-insensitive) to one of `VARIATION_AXES`, or `None` if unrecognized (never crashes on a bad label). **No callers found anywhere in `src/`** (dead code candidate — part of the dormant creative-variation A/B machinery).
-- `coherent_variation(hook, rationale, *, siblings=frozenset()) -> bool` — pure: T2 coherence gate for the dormant variation A/B loop — requires a non-empty rationale AND a non-empty hook that clears `is_weak_hook` against `siblings`. Docstring notes `is_weak_hook` no longer judges QUALITY (moved to a reasoning critic that doesn't run on caption siblings), so a quality-weak variant can now pass. **No callers found anywhere in `src/`** (dead code candidate — dormant variation machinery, per module comments at lines 432-436 this is a documented `/ecc:prp-plan` follow-up, not yet wired).
+- `VARIATION_AXES = ("hook_string", "caption_angle", "hook_placement")` (module var) — remnant constant; the former `normalize_variation_axis` / `coherent_variation` helpers were **REMOVED** from `src/` (do not treat as present dead code).
 - `_tags_in(caption: str | None) -> list[str]` — pure: regex-extracts `#tag` tokens from a caption string; the fallback source of hashtags when the model's structured `hashtags` array is empty. Called by `ingest_captions`.
 - `_platform_of(surface: str, *, cfg: Config | None = None) -> Platform` — pure-ish (logs via `get_logger` when `cfg` given): parses the platform tail of an `account/platform` surface key; unknown/malformed tail coerces to `Platform.instagram`, LOUDLY logged (`platform_coerced` breadcrumb) when `cfg` is threaded in — never crashes on a typo'd key. Called by `_platform_for_surface`.
 - `_risk_re(cfg: Config | None) -> re.Pattern` — pure: resolves the effective brand-risk regex — the precompiled default `_RE` with no cfg/no tuning override, else compiles from `cfg.tuning()["offbrand_en"/"offbrand_ar"]` (operator override REPLACES, not appends, the corresponding language's list); a malformed override regex falls back to the default; both lists emptied -> a never-matching pattern. Called by `brand_risk_flag`.
@@ -165,7 +163,7 @@ Confirms: `fanops_hashtags.py` is NOT part of the caption gate — the caption p
 
 - `_TEMPLATE_PREFIX_TOKENS = 3`, `_TEMPLATE_CLUSTER_MAX = 3` (module vars) — the opening-template clustering constants. Docstring records a v2.1 tuning history: 2 tokens/max 2 over-fired (killed distinct hooks sharing only a 2-word opener); 3 tokens/max 3 catches real ×6 templates while letting genuine variation through.
 - `_prefix_key(text: str) -> tuple` — pure: the first `_TEMPLATE_PREFIX_TOKENS` (3) word tokens of a lowercased hook, as a tuple key. Called by `is_weak_hook`.
-- `is_weak_hook(text: str | None, used: set[str] = frozenset(), *, cluster_scope: set[str] | None = None) -> bool` — **THE hook-purity gate**, MECHANICAL ONLY (traced in detail below). Called by `caption.coherent_variation`, `moments.ingest_moment_hooks` (C4 — the real hook-authoring gate).
+- `is_weak_hook(text: str | None, used: set[str] = frozenset(), *, cluster_scope: set[str] | None = None) -> bool` — **THE hook-purity gate**, MECHANICAL ONLY (traced in detail below). Called by `moments.ingest_moment_hooks` (C4 — the real hook-authoring gate).
 
 ### `hookscore.py` — the read-only hook-quality scoreboard (measurement, never a gate)
 
@@ -243,10 +241,11 @@ Everything else passes — **quality is explicitly out of scope** (superlative/h
 
 ## Anomalies found
 
-**Dead code candidates (zero call sites anywhere in `src/`, confirmed via call graph + grep):**
-- `src/fanops/caption.py:45` `normalize_variation_axis` — no caller anywhere; part of the dormant P2 creative-variation-axis machinery.
-- `src/fanops/caption.py:51` `coherent_variation` — no caller anywhere; the T2 coherence gate for the SAME dormant variation A/B loop. The module's own comment at `caption.py:432-436` (inside `caption_prompt`, actually — cross-referenced in `prompts.py`) documents this is a deliberate, tracked follow-up ("the dormant variation machinery ... is a `/ecc:prp-plan` deeper-fix follow-up next session"), not an oversight.
-- `src/fanops/llm.py:180` `claude_json` — call graph shows `called_by_in_repo: []`, but this is a **false positive for "dead"**: grep confirms `src/fanops/studio/actions.py:138-139` does `from fanops.llm import claude_json; model = claude_json`, a real caller outside this cluster's exact file list that the call graph's cross-module resolution apparently missed (or the call-graph JSON's scope only covers callers within the same top-level clustering pass). Flagging as NOT dead, but noting the call-graph data was misleading here — verify against source, not the graph, for this one.
+**Removed from `src/` (Wave 3 re-verified absent — do not re-list as present dead code):**
+- `caption.normalize_variation_axis`, `caption.coherent_variation` — former dormant P2 variation helpers; gone. `VARIATION_AXES` constant may still exist unused.
+
+**False positive for "dead" (real caller outside this cluster):**
+- `src/fanops/llm.py:180` `claude_json` — call graph shows `called_by_in_repo: []`, but grep confirms `src/fanops/studio/actions.py:138-139` does `from fanops.llm import claude_json; model = claude_json`, a real caller the call graph missed.
 
 **Not dead code despite zero-caller call-graph entries (dispatch-table false positives, verified real via `responder.py`):**
 - `src/fanops/prompts.py:166` `moment_pick_prompt`, `:242` `moment_hook_prompt`, `:361` `caption_prompt` — all show `called_by_in_repo: []` in `call_graph.json` because they are invoked via `responder.py`'s `_PROMPT[kind](payload)` dict-dispatch (`responder.py:46-47,66`), which the AST-based call graph cannot trace back to the literal function names. All three are genuinely load-bearing — this is the exact "check call_graph.json, but verify" trap the C2/C4 reports also flagged for other dispatch-table patterns in this codebase.
