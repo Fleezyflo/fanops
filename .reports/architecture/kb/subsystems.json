@@ -196,7 +196,8 @@
         "studio.views_library",
         "studio.views_live",
         "studio.views_results",
-        "studio.views_review"
+        "studio.views_review",
+        "studio_desktop"
       ]
     },
     "S17_cli_daemon": {
