@@ -337,6 +337,25 @@ def test_pipeline_status_counts(tmp_path):
     assert st["sources"] == 1 and "pending_moments" in st and st["backend"] == "dryrun"
 
 
+def test_pipeline_status_builds_pending_index_once(tmp_path, monkeypatch):
+    """Studio status must not re-scan the request dir: one PendingIndex.build per pipeline_status."""
+    from fanops.pipeline_status import PendingIndex
+    cfg = Config(root=tmp_path)
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="s1", source_path="x.mp4", state=SourceState.catalogued))
+    calls = {"n": 0}
+    real = PendingIndex.build
+
+    def counted(cls, cfg, led):
+        calls["n"] += 1
+        return real(cfg, led)
+
+    monkeypatch.setattr(PendingIndex, "build", classmethod(counted))
+    st = views.pipeline_status(cfg)
+    assert calls["n"] == 1
+    assert st["pending_moments"] == 0 and st["pending_moment_hooks"] == 0 and st["pending_captions"] == 0
+
+
 def test_pipeline_status_awaiting_counts_moments_not_posts(tmp_path):
     # The Make tab's "Next: N ready" must speak the SAME unit as Home/Review (MOMENTS), not the raw awaiting-post
     # count — a clip fans out to many surface posts, so counting posts made Make say "57" next to "Clips ready 17".
